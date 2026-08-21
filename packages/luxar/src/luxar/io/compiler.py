@@ -44,7 +44,7 @@ from ..encoding import (
     EncodingMode,
 )
 from ..io.reader import DEFAULT_COMP
-from ..io.writer import ZarrWriterProtocol
+from ..io.writer import RollbackState, ZarrWriterProtocol
 from ..typing_utils.aliases import ChunkSpec, MaxShape, NodePath, PointsMetadata
 from ..typing_utils.config import DEFAULT_VERSION
 from ..utils.arbol_warnings import arbol_warnings
@@ -457,6 +457,54 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             del attrs[key]
             group.attrs.clear()
             group.attrs.update(attrs)
+
+    def node_exists(self, path: NodePath) -> bool:
+        """Return whether a node path exists for an internal rollback guard."""
+        self._check_not_finalized("node_exists")
+        normalized_path = path.lstrip("/")
+        return not normalized_path or normalized_path in self.store
+
+    def delete_node(self, path: NodePath) -> None:
+        """Delete a subtree during rollback, without editing the scene graph."""
+        self._check_not_finalized("delete_node")
+        normalized_path = path.lstrip("/")
+        if not normalized_path:
+            raise ValueError("Cannot delete the scene root")
+        if normalized_path in self.store:
+            del self.store[normalized_path]
+
+    def snapshot_rollback_state(self) -> RollbackState:
+        """Capture compiler state that deleted geometry writes may have changed."""
+        self._check_not_finalized("snapshot_rollback_state")
+        scene_bounds = (
+            None
+            if self._scene_bounds is None
+            else {key: list(values) for key, values in self._scene_bounds.items()}
+        )
+        return (
+            scene_bounds,
+            frozenset(self._authoring_warnings),
+            self._lut_tone_mapping_warned,
+            self._encoder.snapshot(),
+        )
+
+    def restore_rollback_state(self, state: RollbackState) -> None:
+        """Restore compiler state captured before a rolled-back write."""
+        self._check_not_finalized("restore_rollback_state")
+        (
+            scene_bounds,
+            authoring_warnings,
+            lut_tone_mapping_warned,
+            encoder_state,
+        ) = state
+        self._scene_bounds = (
+            None
+            if scene_bounds is None
+            else {key: list(values) for key, values in scene_bounds.items()}
+        )
+        self._authoring_warnings = set(authoring_warnings)
+        self._lut_tone_mapping_warned = lut_tone_mapping_warned
+        self._encoder.restore(encoder_state)
 
     @arbol_warnings()
     def write_points(  # type: ignore[override]

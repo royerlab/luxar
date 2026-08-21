@@ -3,10 +3,44 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import typer
 from arbol import aprint
+
+
+def _write_optional_script(path: Path, script: Optional[str]) -> None:
+    if script:
+        path.write_text(script)
+
+
+def _persist_job_ids(
+    output_dir: Path,
+    manifest: Any,
+    *,
+    calibrate_job_id: Optional[int] = None,
+    denoise_job_id: Optional[int] = None,
+    floor_job_id: Optional[int] = None,
+    fit_job_id: Optional[int] = None,
+    preemptible_job_id: Optional[int] = None,
+    merge_job_id: Optional[int] = None,
+) -> None:
+    """Persist submitted job ids without clobbering concurrent manifest updates."""
+    from luxar.gsplats.batch.manifest import load_manifest, save_manifest
+
+    job_ids = {
+        "calibrate_job_id": calibrate_job_id,
+        "denoise_job_id": denoise_job_id,
+        "floor_job_id": floor_job_id,
+        "array_job_id": fit_job_id,
+        "preemptible_job_id": preemptible_job_id,
+        "merge_job_id": merge_job_id,
+    }
+    persisted = load_manifest(output_dir)
+    for field, job_id in job_ids.items():
+        setattr(persisted, field, job_id)
+        setattr(manifest, field, job_id)
+    save_manifest(persisted, output_dir)
 
 
 def submit_batch_jobs(
@@ -18,6 +52,7 @@ def submit_batch_jobs(
     preamble: str,
     calibrate_script: Optional[str],
     denoise_script: Optional[str],
+    floor_script: Optional[str],
     preempt_fit_script: Optional[str],
     total_tasks: int,
     preempt_partition: Optional[str],
@@ -39,12 +74,10 @@ def submit_batch_jobs(
     fit_path.write_text(fit_script)
     merge_path.write_text(merge_script)
     env_path.write_text(preamble)
-    if calibrate_script:
-        (out / "calibrate.sbatch").write_text(calibrate_script)
-    if denoise_script:
-        (out / "denoise_array.sbatch").write_text(denoise_script)
-    if preempt_fit_script:
-        (out / "fit_array_preempt.sbatch").write_text(preempt_fit_script)
+    _write_optional_script(out / "calibrate.sbatch", calibrate_script)
+    _write_optional_script(out / "denoise_array.sbatch", denoise_script)
+    _write_optional_script(out / "resolve_floor.sbatch", floor_script)
+    _write_optional_script(out / "fit_array_preempt.sbatch", preempt_fit_script)
     save_manifest(manifest, out)
 
     def _parse_job_id(stdout: str) -> Optional[int]:
@@ -86,6 +119,7 @@ def submit_batch_jobs(
         )
         if result.returncode != 0:
             aprint(f"Error submitting denoise job: {result.stderr}")
+            _persist_job_ids(out, manifest, calibrate_job_id=calibrate_job_id)
             raise typer.Exit(1)
         denoise_job_id = _parse_job_id(result.stdout)
         manifest.denoise_job_id = denoise_job_id
@@ -102,8 +136,21 @@ def submit_batch_jobs(
         denoise_total = denoise_n_t * denoise_n_c
         aprint(f"  Denoise array job: {denoise_job_id} ({denoise_total} tasks)")
 
-    # Submit fitting array (depends on denoise or calibrate)
-    fit_dep_id = denoise_job_id or calibrate_job_id
+    floor_dep_id = denoise_job_id or calibrate_job_id
+    try:
+        floor_job_id = _submit_floor_job(out, floor_script, floor_dep_id, _parse_job_id)
+    except typer.Exit:
+        _persist_job_ids(
+            out,
+            manifest,
+            calibrate_job_id=calibrate_job_id,
+            denoise_job_id=denoise_job_id,
+        )
+        raise
+    manifest.floor_job_id = floor_job_id
+
+    # Submit fitting array (depends on floor, denoise, or calibration)
+    fit_dep_id = floor_job_id or floor_dep_id
     aprint("Submitting fitting array job...")
     fit_cmd = ["sbatch"]
     if fit_dep_id:
@@ -117,9 +164,26 @@ def submit_batch_jobs(
     )
     if result.returncode != 0:
         aprint(f"Error submitting fit job: {result.stderr}")
+        _persist_job_ids(
+            out,
+            manifest,
+            calibrate_job_id=calibrate_job_id,
+            denoise_job_id=denoise_job_id,
+            floor_job_id=floor_job_id,
+        )
         raise typer.Exit(1)
 
     fit_job_id = _parse_job_id(result.stdout)
+    if fit_job_id is None:
+        aprint(f"Error: could not parse fit job id from sbatch output: {result.stdout}")
+        _persist_job_ids(
+            out,
+            manifest,
+            calibrate_job_id=calibrate_job_id,
+            denoise_job_id=denoise_job_id,
+            floor_job_id=floor_job_id,
+        )
+        raise typer.Exit(1)
     aprint(f"  Fitting array job: {fit_job_id} ({total_tasks} tasks)")
 
     # Submit preemptible fit array (if enabled)
@@ -171,9 +235,47 @@ def submit_batch_jobs(
     else:
         aprint(f"  Warning: merge job submission failed: {result.stderr}")
 
-    manifest.array_job_id = fit_job_id
-    manifest.merge_job_id = merge_job_id
-    save_manifest(manifest, out)
+    _persist_job_ids(
+        out,
+        manifest,
+        calibrate_job_id=calibrate_job_id,
+        denoise_job_id=denoise_job_id,
+        floor_job_id=floor_job_id,
+        fit_job_id=fit_job_id,
+        preemptible_job_id=preemptible_job_id,
+        merge_job_id=merge_job_id,
+    )
 
     aprint(f"\nManifest: {out / 'manifest.json'}")
     aprint(f"Check status: luxar gsplat batch-fit status {out}")
+
+
+def _submit_floor_job(
+    out: Path,
+    floor_script: Optional[str],
+    dependency_id: Optional[int],
+    parse_job_id: Callable[[str], Optional[int]],
+) -> Optional[int]:
+    import subprocess  # nosec B404
+
+    if not floor_script:
+        return None
+    aprint("Submitting denoised floor-resolution job...")
+    floor_cmd = ["sbatch"]
+    if dependency_id:
+        floor_cmd.append(f"--dependency=afterok:{dependency_id}")
+    floor_cmd.append(str(out / "resolve_floor.sbatch"))
+    result = subprocess.run(  # nosec B603
+        floor_cmd, capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        aprint(f"Error submitting floor job: {result.stderr}")
+        raise typer.Exit(1)
+    job_id = parse_job_id(result.stdout)
+    if job_id is None:
+        aprint(
+            f"Error: could not parse floor job id from sbatch output: {result.stdout}"
+        )
+        raise typer.Exit(1)
+    aprint(f"  Floor resolution job: {job_id}")
+    return job_id

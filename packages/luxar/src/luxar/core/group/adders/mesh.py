@@ -52,6 +52,7 @@ from ..compositing import (
     funnel_add_error,
     is_broadcast_color,
     position_bounds_from_array,
+    preflight_extend_to_all,
     reject_lines_only_join,
     slice_optional_array,
     strip_absent_attr_kwargs,
@@ -462,8 +463,7 @@ def _maybe_add_mesh_substitutive_lod(
 
     from ..lod.mesh import resolve_substitutive_axis_mesh
 
-    if extend_to_all is not None:
-        scene._resolve_extend_to_all(extend_to_all, vert_arr, "mesh")
+    preflight_extend_to_all(scene, extend_to_all, vert_arr, "mesh")
 
     substitutive_spec = resolve_substitutive_axis_mesh(substitutive_lod)
     if substitutive_spec is None:

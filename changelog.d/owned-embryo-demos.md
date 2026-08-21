@@ -42,7 +42,6 @@ licenses do not permit redistributing even the derived product — so their
 in-repo Git-LFS copies have been removed. The demos that used them now take
 their own fetch-the-raw-source-and-refit path instead of pointing you at a
 `git lfs pull` for a file that is no longer there, and their catalog entries say
-so (a GPU is needed for the refit; the Gaia catalog has no *automatic* build path
-yet — `scripts/generate_galaxy_simple.py` rebuilds it by hand until #1575 does
-that on first run — so it reads a file placed in `~/.cache/luxar/`). A cached
-copy from an earlier run is still used untouched.
+so (a GPU is needed for the refit; Gaia instead offers an opt-in archive query
+and CPU build with `--build-catalog`). A cached copy from an earlier run is
+still used untouched.

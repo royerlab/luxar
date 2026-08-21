@@ -371,6 +371,16 @@ resolvers:
   applied independently per substitutive level. `dict(...)` computes a ladder on
   any level missing one via `gsplats.lod.additive.make_additive_lod` (default
   `n_lods=4`); `False` flattens each level to a single additive sub-LOD.
+- `resolve_additive_rungs(spec, *, stored_rungs, n_splats)` — the same vocabulary
+  stated a second time, ordering-free: it answers only "how many rungs would this
+  leave on one leaf?", without building anything (#1632). `None` means UNKNOWN
+  (energy-fraction breakpoints, or a spec the resolver will reject on its own
+  terms), and it is a statement about the SPEC, never about the input — a caller
+  that cannot read the kwarg must fall back to what it already knows, not assume
+  the ladder went away. It exists for gates that must know whether a ladder will
+  exist before the data does; the live one is the file/graft partition-vs-ladder
+  gate, which runs above `graft_gsplat_node`'s wrapper build. The two functions
+  are one contract stated twice — change either and you change both.
 
 Convention throughout: the **finest** substitutive level is index 0; LOD-group
 children are stored coarsest→finest (finest last).

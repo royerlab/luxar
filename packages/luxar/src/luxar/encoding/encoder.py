@@ -17,7 +17,7 @@ from ._encoders.cholesky import CholeskyEncoderMixin
 from ._encoders.perchannel import PerChannelEncoderMixin
 from ._encoders.structural import StructuralEncoderMixin
 from .modes import EncodingMode
-from .registry import ArrayRefRegistry
+from .registry import ArrayRefRegistry, ArrayRefRegistrySnapshot
 from .semantic_types import SemanticType
 
 __all__ = ["ArrayEncoder"]
@@ -323,6 +323,14 @@ class ArrayEncoder(
     def reset(self) -> None:
         """Clear registry (call between independent scenes)."""
         self._registry.clear()
+
+    def snapshot(self) -> ArrayRefRegistrySnapshot:
+        """Capture deduplication state for a transactional writer operation."""
+        return self._registry.snapshot()
+
+    def restore(self, state: ArrayRefRegistrySnapshot) -> None:
+        """Restore deduplication state after a transactional writer rollback."""
+        self._registry.restore(state)
 
     def _encode_dtype(
         self,

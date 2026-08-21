@@ -307,6 +307,34 @@ class TestComputeVertexChunkBounds:
         assert bounds[0, 0, 0] == pytest.approx(-_BARRIER_BOUND_EPS)
         assert bounds[0, 0, 1] == pytest.approx(_BARRIER_BOUND_EPS)
 
+    def test_barrier_epsilon_survives_the_float32_store_at_large_coordinates(
+        self,
+    ) -> None:
+        """The barrier pad is absolute, so it vanishes at large coordinates.
+
+        ``chunk_bounds`` is float32; past ``|x| ~ 2**23`` the ULP exceeds 1, so
+        adding ``± _BARRIER_BOUND_EPS`` in float32 (1e-3 against a half-ULP of
+        1.0 at ``|x| = 2e7``) rounds straight back to the exact category value
+        and a query landing a float ULP off it misses the chunk. Vertices carry
+        no spatial pad, so the barrier axis is the only one at risk here.
+        """
+        base = 2.0e7
+        vertices = np.array([[base, 5.0, 5.0], [base, 6.0, 6.0]], dtype=np.float32)
+
+        bounds = compute_vertex_chunk_bounds(vertices, chunk_size=2, slice_dims=[0])
+
+        assert bounds.dtype == np.float32
+        assert np.float64(bounds[0, 0, 0]) < np.float64(base)
+        assert np.float64(bounds[0, 0, 1]) > np.float64(base)
+        # The spatial axes stay EXACT: a vertex carries no pad, so there is
+        # nothing for the cast to swallow and the outward store must leave the
+        # bound alone. Equality (not <=/>=) is what pins the "only when the cast
+        # moved it the wrong way" half of the contract — a store that widened
+        # every bound by an ULP unconditionally would satisfy an inequality.
+        for dim in (1, 2):
+            assert np.float64(bounds[0, dim, 0]) == 5.0
+            assert np.float64(bounds[0, dim, 1]) == 6.0
+
 
 class TestComputeSegmentChunkBounds:
     """Test segment chunk bounds computation with width expansion."""
@@ -379,14 +407,66 @@ class TestComputeSegmentChunkBounds:
             vertices, segments, widths, chunk_size=1, slice_dims=[0]
         )
 
-        # Time dimension (discrete) should NOT expand by width
-        # First segment time=0: bounds should be ~0 (epsilon-padded), not ±width
-        assert bounds[0, 0, 0] >= -0.6
-        assert bounds[0, 0, 1] <= 0.6
+        # Time dimension (discrete) should NOT expand by width: exactly
+        # ±_BARRIER_BOUND_EPS, pinned to the value rather than merely "small".
+        # A loose ±0.6 bracket cannot tell the 1e-3 epsilon from the legacy ±0.5
+        # pad this codebase deliberately removed — mirrors the vertex twin,
+        # test_vertex_bounds_discrete_dims.
+        assert bounds[0, 0, 0] == pytest.approx(-_BARRIER_BOUND_EPS)
+        assert bounds[0, 0, 1] == pytest.approx(_BARRIER_BOUND_EPS)
 
         # Spatial dimensions SHOULD expand by width
         assert bounds[0, 1, 0] == pytest.approx(-5.0)  # x min
         assert bounds[0, 1, 1] == pytest.approx(15.0)  # x max
+
+    def test_width_extent_survives_the_float32_store_at_large_coordinates(
+        self,
+    ) -> None:
+        """A line width must still widen the bound under half an ULP.
+
+        The pad is the FULL per-segment max endpoint width, not half of it
+        (``p ± max_w``, no ``/2`` — see the ``_ordering`` README).
+        ``chunk_bounds`` is float32 while the width extent is a small ABSOLUTE
+        quantity. At ``|x| = 2e7`` the ULP is 2.0, so ``p ± max_w`` accumulated
+        and stored in float32 with a unit width loses the pad entirely on the
+        min side (and rounds asymmetrically on the max side): the stored bound
+        is TIGHTER than the ribbon the renderer draws, so a query at the
+        segment's own edge drops it.
+        """
+        base = 2.0e7
+        width = 1.0
+        vertices = np.array(
+            [[base, 0.0, 0.0], [base + 10.0, 0.0, 0.0]], dtype=np.float32
+        )
+        segments = np.array([[0, 1]], dtype=np.uint32)
+        widths = np.full(2, width, dtype=np.float32)
+
+        bounds = compute_segment_chunk_bounds(vertices, segments, widths, chunk_size=1)
+
+        assert bounds.dtype == np.float32
+        assert np.float64(bounds[0, 0, 0]) <= np.float64(base) - width
+        assert np.float64(bounds[0, 0, 1]) >= np.float64(base) + 10.0 + width
+
+    def test_segment_barrier_epsilon_survives_the_float32_store_at_large_coords(
+        self,
+    ) -> None:
+        """The barrier pad is absolute too, so it vanishes the same way.
+
+        Mirrors the vertex-bounds case: a categorical axis with large values
+        (a millisecond timestamp, say) collapses onto the exact category value
+        when ``± _BARRIER_BOUND_EPS`` is added in float32.
+        """
+        base = 2.0e7
+        vertices = np.array([[base, 0.0, 0.0], [base, 10.0, 10.0]], dtype=np.float32)
+        segments = np.array([[0, 1]], dtype=np.uint32)
+        widths = np.full(2, 5.0, dtype=np.float32)
+
+        bounds = compute_segment_chunk_bounds(
+            vertices, segments, widths, chunk_size=1, slice_dims=[0]
+        )
+
+        assert np.float64(bounds[0, 0, 0]) < np.float64(base)
+        assert np.float64(bounds[0, 0, 1]) > np.float64(base)
 
 
 class TestIntegration:

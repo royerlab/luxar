@@ -248,6 +248,7 @@ _NON_REWRITE: Dict[str, str] = {
     "batch-fit cancel": "cancels Slurm jobs",
     "batch-fit denoise-calibrate": "operates on a volume, writes JSON",
     "batch-fit denoise-preprocess": "operates on a volume",
+    "batch-fit resolve-floor": "resolves a floor level, writes JSON/manifest",
 }
 
 

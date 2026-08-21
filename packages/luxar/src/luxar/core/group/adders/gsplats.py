@@ -20,6 +20,7 @@ from ..compositing import (
     funnel_add_error,
     is_broadcast_color,
     position_bounds_from_array,
+    preflight_extend_to_all,
     reject_lines_only_join,
     slice_optional_array,
     strip_absent_attr_kwargs,
@@ -198,6 +199,7 @@ def add_gsplats_impl(
                 len(parts), int(parts[0].size) if parts else 0, max_elements, name
             )
             if len(parts) > 1:
+                preflight_extend_to_all(scene, extend_to_all, ctr_arr, "splats")
                 return add_gsplats_partition_wrapper_impl(
                     group,
                     name=name,

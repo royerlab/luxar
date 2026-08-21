@@ -257,6 +257,27 @@ into LOD levels:
 The result of `make_additive_lod` is a multi-LOD `GSplatData` whose
 `additive_prefix(k)` returns a valid additive prefix.
 
+`additive_rung_count(n, n_lods, breakpoints)` answers "how many rungs would this
+spec leave on a leaf of `n` splats?" without ordering anything. The exactness
+comes from SHARING the builder's own `_resolve_breakpoints`: the three
+count-based kinds above are counted off the very cuts the build would consume,
+never re-derived. The loop also mirrors the builder's `if end <= prev: continue`
+de-duplication, but as a mirror only — against a future cut resolver that emits a
+duplicate — since `_resolve_breakpoints` returns strictly-increasing positive
+cuts on every non-energy path, making that branch unreachable today. It
+returns `None` (UNKNOWN, never a raise) for energy fractions — those need the
+ordering and the energy curve, the expensive half this query exists to avoid —
+and for any spec `_resolve_breakpoints` would reject, leaving the real build to
+report the fault at its own site. `None` is a statement about the SPEC, not about
+the leaf, so a caller that cannot read it should fall back to what it already
+knows rather than assume "no ladder". Callers are gates that must know whether a
+ladder will EXIST before paying to build one: `partition=` and a multi-rung
+ladder are mutually exclusive, and the scene's file/graft door has to settle that
+before it writes a `kind=partition` wrapper it would otherwise strand (#1632).
+Note the converse too — a fault past the cut resolver (a bad `method`, a stray
+`substitutive_level` key) does not move the count, so a gate refusing on it masks
+that fault instead of letting the builder report it.
+
 ## Complexity
 
 | Step                      | Cost                                          |
