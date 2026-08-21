@@ -605,35 +605,18 @@ def _graft_gsplat_node_transaction(
     path = f"{parent_node.path}/{name}" if parent_node.path else name
     children_before = list(parent_node.children)
     try:
-        rollback_state = writer.snapshot_rollback_state()
-    except Exception:
-        rollback_state = None
-    try:
-        path_existed = writer.node_exists(path)
-    except Exception:
-        path_existed = True
-    try:
-        return graft_gsplat_node(
-            group,
-            name=name,
-            node=node,
-            parent=parent,
-            extend_to_all=extend_to_all,
-            _under_partition=is_partition_bound(parent_node),
-            **attrs,
-        )
-    except BaseException as error:
+        with writer.transaction(path):
+            return graft_gsplat_node(
+                group,
+                name=name,
+                node=node,
+                parent=parent,
+                extend_to_all=extend_to_all,
+                _under_partition=is_partition_bound(parent_node),
+                **attrs,
+            )
+    except BaseException:
         parent_node.children[:] = children_before
-        if rollback_state is not None:
-            try:
-                writer.restore_rollback_state(rollback_state)
-            except BaseException as rollback_error:
-                error.add_note(f"Graft state rollback also failed: {rollback_error}")
-        if not path_existed:
-            try:
-                writer.delete_node(path)
-            except BaseException as rollback_error:
-                error.add_note(f"Graft store rollback also failed: {rollback_error}")
         raise
 
 
@@ -683,10 +666,11 @@ def graft_gsplat_node(
     ``add_gsplats_from_file`` per part into a hand-built ``kind=partition``" case
     derives its thresholds in
     :func:`~luxar.core.group.gsplats_pipeline.lod_dispatch.add_gsplats_as_lod_group_impl`
-    (via ``derive_coverage_fractions``), not in this function. That matrix-shaped
-    route is not generally transactional. Explicit ``extend_to_all`` values are
-    preflighted before its wrapper is written, but another per-child failure can
-    still leave that wrapper behind.
+    (via ``derive_coverage_fractions``), not in this function. The public
+    ``Group.add_gsplats_from_file`` entry covers that matrix-shaped route with
+    the same outer writer transaction as this graft path. Explicit
+    ``extend_to_all`` values are still preflighted before its wrapper is written
+    so that known failures keep the caller-facing node name.
     """
     if _under_partition is None:
         return _graft_gsplat_node_transaction(
