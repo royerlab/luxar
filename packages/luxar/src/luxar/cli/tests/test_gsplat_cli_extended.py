@@ -5723,6 +5723,13 @@ class TestLODCarriesAuthoredAppearance:
         "layer": False,
         "visible": False,
         "nd_transform": {"time": {"scale": 2.0, "offset": 1.0}},
+        # A builtin name that is NOT the writer's manufactured default
+        # ("gray"): the default would coincide with what the writer stamps on a
+        # colorless leaf anyway, so a dropped carry would still look right.
+        # Not "custom" either — that sentinel names a sibling colormap_lut
+        # ARRAY the attrs-only carry deliberately refuses to fake (see
+        # ``read_authored_appearance``).
+        "colormap": "inferno",
     }
 
     #: Carried by the registry but not exercised here, each for a stated reason.
@@ -6672,6 +6679,47 @@ class TestAxesSpec:
         out = _apply_axes_spec(arr, "t,z,c,y,x", channel=1, timepoint=2)
         assert out.shape == (4, 5, 6)
         np.testing.assert_array_equal(out, arr[2, :, 1, :, :])
+
+    def test_apply_axes_spec_decodes_folded_channel_axes(self) -> None:
+        from luxar.io.volume import _apply_axes_spec
+
+        arr = np.arange(2 * 3 * 2 * 4 * 5 * 6, dtype=np.float32).reshape(
+            2, 3, 2, 4, 5, 6
+        )
+        out = _apply_axes_spec(
+            arr,
+            "camera,time,channel,z,y,x",
+            channel=2,
+            timepoint=1,
+        )
+        np.testing.assert_array_equal(out, arr[1, 1, 0])
+
+    def test_apply_axes_spec_reports_folded_channel_shape(self) -> None:
+        from luxar.io.volume import _apply_axes_spec
+
+        arr = np.zeros((2, 3, 2, 4, 5, 6), dtype=np.float32)
+        with pytest.raises(
+            ValueError,
+            match=r"--channel.*camera=2.*channel=2",
+        ):
+            _apply_axes_spec(
+                arr,
+                "camera,time,channel,z,y,x",
+                channel=4,
+                timepoint=1,
+            )
+
+    def test_apply_axes_spec_rejects_multiple_time_axes(self) -> None:
+        from luxar.io.volume import _apply_axes_spec
+
+        arr = np.zeros((4, 3, 2, 3, 4), dtype=np.float32)
+        with pytest.raises(ValueError, match="more than one time axis"):
+            _apply_axes_spec(
+                arr,
+                "time,t,z,y,x",
+                channel=None,
+                timepoint=2,
+            )
 
     def test_apply_axes_spec_defaults_to_zero(self) -> None:
         from luxar.io.volume import _apply_axes_spec

@@ -52,6 +52,7 @@ from ..compositing import (
     funnel_add_error,
     is_broadcast_color,
     position_bounds_from_array,
+    preflight_extend_to_all,
     reject_lines_only_join,
     slice_optional_array,
     strip_absent_attr_kwargs,
@@ -462,8 +463,7 @@ def _maybe_add_mesh_substitutive_lod(
 
     from ..lod.mesh import resolve_substitutive_axis_mesh
 
-    if extend_to_all is not None:
-        scene._resolve_extend_to_all(extend_to_all, vert_arr, "mesh")
+    preflight_extend_to_all(scene, extend_to_all, vert_arr, "mesh")
 
     substitutive_spec = resolve_substitutive_axis_mesh(substitutive_lod)
     if substitutive_spec is None:
@@ -1188,7 +1188,7 @@ def add_mesh_substitutive_lod_wrapper_impl(
     is the same degenerate-path behaviour the Points wrapper has.
     """
     from ....io._compiler.geometry_writers.mesh import validate_mesh_arrays
-    from ....mesh.decimate import decimate_cluster
+    from ....mesh.decimate import decimate_ladder
     from ..lod.group import resolve_coarsen_dims, resolve_lod_ladder
 
     # Fail-fast pre-write gate, part two: the ARRAYS, run BEFORE any decimation
@@ -1281,24 +1281,27 @@ def add_mesh_substitutive_lod_wrapper_impl(
         else None
     )
 
+    targets = [
+        n_vertices // (compression_factor**power)
+        for power in range(levels, 0, -1)
+        if n_vertices // (compression_factor**power) >= 4
+    ]
+    candidates = decimate_ladder(
+        vert_arr,
+        faces_arr.reshape(-1, 3).astype(np.uint32),
+        target_vertices=targets,
+        method=spec["method"],
+        normals=normals if normals is not None else None,
+        # Normals live in their own 3D FRAME, not necessarily the coarsening axes.
+        normal_dims=tuple(normal_dims) if normal_dims is not None else None,
+        colors=per_vertex_colors,
+        scalars=per_vertex_scalars,
+        spatial_dims=spatial_dims,
+    )
+
     coarse: List[Any] = []
     previous = 0
-    for power in range(levels, 0, -1):
-        target = n_vertices // (compression_factor**power)
-        if target < 4:
-            continue
-        level = decimate_cluster(
-            vert_arr,
-            faces_arr.reshape(-1, 3).astype(np.uint32),
-            target_vertices=target,
-            normals=normals if normals is not None else None,
-            # The normal FRAME, which is not the coarsening axes — a grid may merge
-            # over any number of dims while a normal always lives in exactly three.
-            normal_dims=tuple(normal_dims) if normal_dims is not None else None,
-            colors=per_vertex_colors,
-            scalars=per_vertex_scalars,
-            spatial_dims=spatial_dims,
-        )
+    for level in candidates:
         count = int(level.vertices.shape[0])
         # Strictly between the previous (coarser) level and the original, or it
         # adds nothing: a duplicate would still be handed its own halving of

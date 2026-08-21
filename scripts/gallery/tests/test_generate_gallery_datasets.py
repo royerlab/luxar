@@ -7,21 +7,23 @@ explicit path argument OVERRIDES ``testpaths``. Run in isolation with:
     hatch run pytest scripts/gallery/tests/test_generate_gallery_datasets.py -q
 
 What is guarded is the *demote-on-failure* rule. A demo whose ``DEMO_META``
-declares an un-fetchable ``local_data`` (``manual-file`` / ``kaggle-auth``) exits 1
-wherever that input is absent, which used to make the whole gallery build report a
-hard failure and return 1 — on a fresh clone that meant ``make generate-gallery``
-aborted. Such an entry is now still RUN (so the machine that has the input keeps
-regenerating its tile, ``--force`` included) and only demoted to the soft
-``manual-data`` bucket if it actually fails. The scoping is the delicate part: a
-``git-lfs`` demo must keep failing hard, and a ``timeout`` / ``no-output`` / death
-by signal stays hard even for a demoted mode.
+declares machine-local ``local_data`` exits 1 wherever that input is absent,
+which used to make the whole gallery build report a hard failure and return 1 —
+on a fresh clone that meant ``make generate-gallery`` aborted. Such an entry is
+still RUN (so the machine that has the input keeps regenerating its tile,
+``--force`` included) and only demoted to the soft ``manual-data`` bucket if it
+actually fails. ``git-lfs`` is demoted only while a declared payload is absent
+or still a pointer, so a release machine with pulled payloads keeps hard-failure
+signal. A ``timeout`` / ``no-output`` / death by signal stays hard for every mode.
 
-Everything runs against a synthetic manifest + synthetic demo files: the subject
-is the rule, not today's contents of ``scripts/gallery/manifest.json``.
+Behavioral cases run against a synthetic manifest + synthetic demo files;
+separate invariant tests read the real manifests to keep ``script: null`` and
+the Git LFS cache-to-payload mapping honest.
 """
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -48,19 +50,25 @@ DEMO_META = {{
         "gpu": "none",
         "local_data": {local_data},
     }},
-    "caches": [],
+    "caches": {caches},
     "outputs": ["{key}"],
 }}
 '''
 
 
-def _write_demo(demos_dir: Path, key: str, local_data: Optional[str]) -> str:
+def _write_demo(
+    demos_dir: Path,
+    key: str,
+    local_data: Optional[str],
+    caches: tuple[str, ...] = (),
+) -> str:
     """Write a synthetic ``demo_<key>.py``; return its filename."""
     name = f"demo_{key}.py"
     (demos_dir / name).write_text(
         _DEMO_TEMPLATE.format(
             key=key,
             local_data="None" if local_data is None else f'"{local_data}"',
+            caches=repr(list(caches)),
         )
     )
     return name
@@ -136,22 +144,27 @@ def _setup(
     present: tuple[str, ...] = (),
     missing_script: tuple[str, ...] = (),
     capture_only: tuple[str, ...] = (),
+    lfs_states: Optional[dict[str, str]] = None,
 ) -> _Recorder:
     """Point the harness at a synthetic tree; return the recorded-calls list.
 
     ``specs`` is ``(id, local_data, outcome)`` per manifest entry; ``present``
     names ids whose dataset already exists on disk; ``missing_script`` names ids
     whose demo file is deliberately never written (the ``missing-script`` shape);
-    ``capture_only`` names ids whose manifest entry declares ``script: null`` (the
-    feature-branch shape — three real entries look like this).
+    ``capture_only`` names ids whose manifest entry declares ``script: null``
+    (the feature-branch shape).
     """
     demos_dir = tmp_path / "demos"
     demos_dir.mkdir()
     monkeypatch.setattr(gen, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(gen, "DEMOS_DIR", demos_dir)
+    data_manifest = tmp_path / "data_manifest.json"
+    monkeypatch.setattr(gen, "DATA_MANIFEST", data_manifest)
 
     manifest: list[dict[str, Any]] = []
+    data_datasets: dict[str, Any] = {}
     outcomes: dict[str, str] = {}
+    lfs_states = lfs_states or {}
     for demo_id, local_data, outcome in specs:
         script: Optional[str]
         if demo_id in capture_only:
@@ -159,7 +172,23 @@ def _setup(
         elif demo_id in missing_script:
             script = f"demo_{demo_id}.py"  # never written to disk
         else:
-            script = _write_demo(demos_dir, demo_id, local_data)
+            caches = (demo_id,) if local_data == "git-lfs" else ()
+            script = _write_demo(demos_dir, demo_id, local_data, caches)
+            if caches:
+                data_datasets[demo_id] = {
+                    "dir": demo_id,
+                    "files": [{"name": "input.bin"}],
+                }
+                state = lfs_states.get(demo_id, "payload")
+                input_path = demos_dir / "data" / demo_id / "input.bin"
+                if state != "missing":
+                    input_path.parent.mkdir(parents=True, exist_ok=True)
+                    if state == "pointer":
+                        input_path.write_text(
+                            "version https://git-lfs.github.com/spec/v1\n"
+                        )
+                    else:
+                        input_path.write_bytes(b"pulled payload")
         if script is not None:
             outcomes[script] = outcome
         manifest.append(
@@ -173,6 +202,7 @@ def _setup(
         (tmp_path / f"datasets/demos/{demo_id}.luxar.zarr").mkdir(parents=True)
 
     monkeypatch.setattr(gen, "load_manifest", lambda: manifest)
+    data_manifest.write_text(json.dumps({"datasets": data_datasets}))
     calls = _Recorder()
     monkeypatch.setattr(gen.subprocess, "run", _fake_run(tmp_path, calls, outcomes))
     return calls
@@ -187,16 +217,14 @@ def _run_main(monkeypatch: pytest.MonkeyPatch, *argv: str) -> int:
 def test_a_failing_local_input_demo_is_demoted_not_failed(
     tmp_path, monkeypatch, capsys, mode
 ) -> None:
-    # Both modes are un-fetchable by the demo itself. `kaggle-auth` matters as
-    # much as `manual-file`: the manifest has two Kaggle entries, so a fresh
-    # clone returned 1 (and `make generate-gallery` aborted) even after the
-    # manual-file case was handled.
+    # Each mode can legitimately be absent on the machine running the gallery:
+    # hand-placed files and Kaggle credentials are provisioned outside the demo.
     calls = _setup(tmp_path, monkeypatch, [("needs_input", mode, "fail")])
 
     code = _run_main(monkeypatch)
     out = capsys.readouterr().out
 
-    assert code == 0, "a missing hand-placed input must not red the whole build"
+    assert code == 0, "a missing machine-local input must not red the whole build"
     assert "manual-data" in out
     assert "failed" not in out  # the summary lists only non-empty buckets
     # Demoted, not pre-skipped: the demo really ran…
@@ -206,6 +234,146 @@ def test_a_failing_local_input_demo_is_demoted_not_failed(
     # The advice names the mode that was actually declared: telling a Kaggle
     # failure to hand-place a file would send the reader down the wrong path.
     assert mode in out
+
+
+def test_a_git_lfs_demo_with_payload_still_fails_hard(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    # A release machine with the LFS payload pulled must not hide a real demo bug.
+    # The id deliberately shares the "input" token with the demoted entries, so
+    # an id heuristic in place of the DEMO_META read cannot pass here.
+    calls = _setup(tmp_path, monkeypatch, [("needs_input_lfs", "git-lfs", "fail")])
+
+    code = _run_main(monkeypatch)
+    out = capsys.readouterr().out
+
+    assert calls == ["demo_needs_input_lfs.py"]
+    assert code == 1
+    assert "failed" in out
+    assert "manual-data" not in out
+
+
+@pytest.mark.parametrize("state", ["missing", "pointer"])
+def test_a_git_lfs_demo_without_payload_is_demoted(
+    tmp_path, monkeypatch, capsys, state
+) -> None:
+    calls = _setup(
+        tmp_path,
+        monkeypatch,
+        [("needs_input_lfs", "git-lfs", "fail")],
+        lfs_states={"needs_input_lfs": state},
+    )
+
+    code = _run_main(monkeypatch)
+    out = capsys.readouterr().out
+
+    assert calls == ["demo_needs_input_lfs.py"]
+    assert code == 0
+    assert "manual-data" in out
+    assert "git-lfs" in out
+    assert "failed" not in out
+
+
+def test_one_missing_file_in_a_git_lfs_cache_is_enough_to_demote(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    calls = _setup(
+        tmp_path,
+        monkeypatch,
+        [("needs_input_lfs", "git-lfs", "fail")],
+    )
+    manifest = json.loads(gen.DATA_MANIFEST.read_text())
+    manifest["datasets"]["needs_input_lfs"]["files"].append(
+        {"name": "second-input.bin"}
+    )
+    gen.DATA_MANIFEST.write_text(json.dumps(manifest))
+
+    code = _run_main(monkeypatch)
+    out = capsys.readouterr().out
+
+    assert calls == ["demo_needs_input_lfs.py"]
+    assert code == 0
+    assert "manual-data" in out
+    assert "failed" not in out
+
+
+@pytest.mark.parametrize(
+    "state, expected_code, expected_bucket",
+    [("pointer", 0, "manual-data"), ("payload", 1, "failed")],
+)
+def test_a_git_lfs_manifest_without_dir_uses_the_cache_key(
+    tmp_path, monkeypatch, capsys, state, expected_code, expected_bucket
+) -> None:
+    calls = _setup(
+        tmp_path,
+        monkeypatch,
+        [("needs_input_lfs", "git-lfs", "fail")],
+        lfs_states={"needs_input_lfs": state},
+    )
+    manifest = json.loads(gen.DATA_MANIFEST.read_text())
+    del manifest["datasets"]["needs_input_lfs"]["dir"]
+    gen.DATA_MANIFEST.write_text(json.dumps(manifest))
+
+    code = _run_main(monkeypatch)
+    out = capsys.readouterr().out
+
+    assert calls == ["demo_needs_input_lfs.py"]
+    assert code == expected_code
+    assert expected_bucket in out
+    other_bucket = ({"manual-data", "failed"} - {expected_bucket}).pop()
+    assert other_bucket not in out
+
+
+@pytest.mark.parametrize(
+    "stale_record",
+    [None, {}, {"dir": "stale", "files": []}, {"dir": "stale", "files": [{}]}],
+)
+def test_an_unresolvable_git_lfs_cache_does_not_hide_a_missing_sibling(
+    tmp_path, monkeypatch, capsys, stale_record
+) -> None:
+    calls = _setup(
+        tmp_path,
+        monkeypatch,
+        [("needs_input_lfs", "git-lfs", "fail")],
+        lfs_states={"needs_input_lfs": "missing"},
+    )
+    _write_demo(
+        gen.DEMOS_DIR,
+        "needs_input_lfs",
+        "git-lfs",
+        ("stale_cache_key", "needs_input_lfs"),
+    )
+    if stale_record is not None:
+        manifest = json.loads(gen.DATA_MANIFEST.read_text())
+        manifest["datasets"]["stale_cache_key"] = stale_record
+        gen.DATA_MANIFEST.write_text(json.dumps(manifest))
+
+    code = _run_main(monkeypatch)
+    out = capsys.readouterr().out
+
+    assert calls == ["demo_needs_input_lfs.py"]
+    assert code == 0
+    assert "manual-data" in out
+    assert "failed" not in out
+
+
+def test_a_cacheless_git_lfs_demo_still_fails_hard(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    calls = _setup(
+        tmp_path,
+        monkeypatch,
+        [("cacheless_lfs", "git-lfs", "fail")],
+    )
+    _write_demo(gen.DEMOS_DIR, "cacheless_lfs", "git-lfs")
+
+    code = _run_main(monkeypatch)
+    out = capsys.readouterr().out
+
+    assert calls == ["demo_cacheless_lfs.py"]
+    assert code == 1
+    assert "failed" in out
+    assert "manual-data" not in out
 
 
 def test_the_child_command_contract(tmp_path, monkeypatch) -> None:
@@ -254,32 +422,16 @@ def test_a_local_input_demo_that_succeeds_is_generated(
     assert "manual-data" not in out
 
 
-def test_a_git_lfs_demo_still_fails_hard(tmp_path, monkeypatch, capsys) -> None:
-    # The scoping test. `git-lfs` data is provisioned by `git lfs pull`, so a
-    # failure there is a real problem — widening the predicate to "declares any
-    # local_data" would silently green ~20 demos that produced no tile.
-    # The id deliberately SHARES the "input" token with the demoted entries'
-    # ids, so an id heuristic in place of the DEMO_META read cannot pass here.
-    calls = _setup(tmp_path, monkeypatch, [("needs_input_lfs", "git-lfs", "fail")])
-
-    code = _run_main(monkeypatch)
-    out = capsys.readouterr().out
-
-    assert calls == ["demo_needs_input_lfs.py"]
-    assert code == 1
-    assert "failed" in out
-    assert "manual-data" not in out
-
-
 @pytest.mark.parametrize(
     "outcome,bucket", [("timeout", "timeout"), ("silent", "no-output")]
 )
+@pytest.mark.parametrize("mode", ["manual-file", "kaggle-auth", "git-lfs"])
 def test_timeout_and_no_output_stay_hard_for_a_local_input_demo(
-    tmp_path, monkeypatch, capsys, outcome, bucket
+    tmp_path, monkeypatch, capsys, outcome, bucket, mode
 ) -> None:
     # Demotion is scoped to a non-zero exit. A demo that hangs, or that exits 0
     # having written nothing, is a bug in the demo — not a missing input.
-    _setup(tmp_path, monkeypatch, [("needs_input", "manual-file", outcome)])
+    _setup(tmp_path, monkeypatch, [("needs_input", mode, outcome)])
 
     code = _run_main(monkeypatch)
     out = capsys.readouterr().out
@@ -289,7 +441,7 @@ def test_timeout_and_no_output_stay_hard_for_a_local_input_demo(
     assert "manual-data" not in out
 
 
-@pytest.mark.parametrize("mode", ["manual-file", "kaggle-auth"])
+@pytest.mark.parametrize("mode", ["manual-file", "kaggle-auth", "git-lfs"])
 def test_a_signal_killed_local_input_demo_stays_hard(
     tmp_path, monkeypatch, capsys, mode
 ) -> None:
@@ -309,6 +461,44 @@ def test_a_signal_killed_local_input_demo_stays_hard(
     assert "failed" in out
     assert "manual-data" not in out
     assert "appears not to have" not in out
+
+
+def test_capture_only_entries_have_no_runnable_demo_on_disk() -> None:
+    """Guard the currently unused ``script: null`` shape against stale entries."""
+    from luxar.demos.registry import extract_demo_meta
+
+    on_disk = {
+        extract_demo_meta(path)["key"]: path.name
+        for path in gen.DEMOS_DIR.glob("demo_*.py")
+    }
+    for entry in gen.load_manifest():
+        if entry.get("script") is None:
+            assert entry["id"] not in on_disk, (
+                f"{entry['id']}: manifest says capture-only, but "
+                f"{on_disk[entry['id']]} is on disk and can generate the dataset"
+            )
+
+
+def test_gallery_git_lfs_caches_resolve_to_manifest_files() -> None:
+    """Keep the generator's cache-to-payload probe valid for the real tree."""
+    from luxar.demos.registry import extract_demo_meta
+
+    datasets = json.loads(gen.DATA_MANIFEST.read_text())["datasets"]
+    for entry in gen.load_manifest():
+        script = entry.get("script")
+        if script is None:
+            continue
+        meta = extract_demo_meta(gen.DEMOS_DIR / script)
+        if meta["requirements"]["local_data"] != "git-lfs" or not meta["caches"]:
+            continue
+        for cache_key in meta["caches"]:
+            record = datasets.get(cache_key)
+            assert isinstance(record, dict), (
+                f"{entry['id']}: cache {cache_key!r} has no data-manifest record"
+            )
+            assert isinstance(record.get("files"), list) and record["files"], (
+                f"{entry['id']}: cache {cache_key!r} has no flat payload file list"
+            )
 
 
 def test_a_present_local_input_entry_reports_already_present(
@@ -390,9 +580,9 @@ def test_only_on_a_failing_local_input_entry_is_still_soft(
 def test_a_capture_only_entry_is_reported_and_is_not_a_hard_failure(
     tmp_path, monkeypatch, capsys
 ) -> None:
-    # `script: null` describes three real manifest entries (feature-branch demos
-    # whose dataset is kept locally). Nothing to spawn, and never a failure —
-    # folding this bucket into the hard list would red every machine forever.
+    # A feature-branch demo may have only a locally kept dataset and no script in
+    # this checkout. Nothing to spawn, and never a failure — folding this bucket
+    # into the hard list would red every machine forever.
     calls = _setup(
         tmp_path,
         monkeypatch,
@@ -489,12 +679,13 @@ def test_only_still_warns_about_an_unknown_id(tmp_path, monkeypatch, capsys) -> 
 def test_list_marks_local_input_entries_and_generates_nothing(
     tmp_path, monkeypatch, capsys, mode
 ) -> None:
-    # Parametrized over BOTH modes: a mark narrowed to manual-file would silently
-    # leave the two real kaggle-auth entries unannotated.
+    # Parametrized over every mode: narrowing the mark would leave some
+    # machine-local entries unannotated.
     calls = _setup(
         tmp_path,
         monkeypatch,
         [("needs_input", mode, "ok"), ("plain", None, "ok")],
+        lfs_states={"needs_input": "missing"} if mode == "git-lfs" else None,
     )
 
     code = _run_main(monkeypatch, "--list")

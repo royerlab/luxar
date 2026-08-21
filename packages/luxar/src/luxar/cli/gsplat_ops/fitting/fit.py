@@ -30,6 +30,26 @@ from .fit_utils import (
 )
 
 
+def _parse_norm_range(value: Optional[str]) -> "Optional[tuple[float, float]]":
+    """Parse the internal ``--norm-range LO,HI`` worker handoff."""
+    if value is None:
+        return None
+    try:
+        parts = [float(part.strip()) for part in value.split(",")]
+    except ValueError as exc:
+        raise typer.BadParameter("--norm-range must be LO,HI") from exc
+    if len(parts) != 2:
+        raise typer.BadParameter("--norm-range must be LO,HI")
+    from luxar.gsplats.fitting.validation import _validate_norm_range
+
+    norm_range = (parts[0], parts[1])
+    try:
+        _validate_norm_range(norm_range)
+    except ValueError as exc:
+        raise typer.BadParameter(f"--norm-range: {exc}") from exc
+    return norm_range
+
+
 def _stamp_source_dtype(fit_config: dict, source_info: dict) -> None:
     """Carry the loader-observed source dtype into the fit config.
 
@@ -143,8 +163,9 @@ def run_fit_volume(
         "--axes",
         help="Per-dimension axis labels overriding the positional "
         "TCZYX/CZYX/ZYX heuristic, e.g. 'z,c,y,x' or 't,z,y,x'. Use when your "
-        "data's axis order differs. Time/channel axes are sliced (by "
-        "--timepoint/--channel) and dropped; spatial axes kept in the given order.",
+        "data's axis order differs. Time/channel axes are sliced and dropped; "
+        "--channel is a flat row-major index across all channel-like axes, and "
+        "more than one time axis is rejected. Spatial axes stay in the given order.",
         rich_help_panel="Input selection",
     ),
     # Frequently used fit params
@@ -155,13 +176,24 @@ def run_fit_volume(
         help="Background floor / DC-offset suppression before normalization "
         "(default: auto). auto = histogram-mode estimate (capped at median; "
         "no-op on clean data) | pN = Nth percentile (e.g. p10) | <float> = "
-        "fixed value | none = disable (hard-min normalization). Unset lets a "
+        "fixed value | none or 0 = disable (hard-min normalization). auto and "
+        "pN ignore exact-zero padding. Negative user levels are rejected; a "
+        "negative estimate from dark-frame-corrected data is preserved. The "
+        "erase-all guard compares against a `norm_range:` supplied in "
+        "--config; "
+        "otherwise it uses the data maximum, not the configured normalization "
+        "percentile's high endpoint. A configured "
+        "norm_percentile may still raise the applied low endpoint above the "
+        "requested floor. Unset lets a "
         "`floor:` in --config/preset apply, else defaults to auto. Under any "
         "--tiling the spec is resolved against the WHOLE volume — never a tile "
-        "or box crop — so every tile/box works from the same level. (Uniform "
-        "tiles subtract it before apodization, so their boundaries match; a "
-        "--tiling content box whose crop lies entirely above the level still "
-        "normalizes against its own crop minimum.)",
+        "or box crop — so every tile/box works from the same level.",
+    ),
+    norm_range: Optional[str] = typer.Option(
+        None,
+        "--norm-range",
+        hidden=True,
+        help="Internal worker handoff: raw-input normalization range LO,HI.",
     ),
     seed_method: Optional[str] = typer.Option(
         None, "--seed-method", help="Seed generation method"
@@ -562,6 +594,7 @@ def run_fit_volume(
     if not input_path.exists():
         aprint(f"Error: Input file not found: {input_path}")
         raise typer.Exit(1)
+    parsed_norm_range = _parse_norm_range(norm_range)
 
     try:
         from luxar.gsplats import fit_gaussian_splats
@@ -630,6 +663,7 @@ def run_fit_volume(
                 axes=axes,
                 lr=lr,
                 floor=floor,
+                norm_range=parsed_norm_range,
                 seed_method=seed_method,
                 verbose=verbose,
                 downscale=downscale,
@@ -731,6 +765,7 @@ def run_fit_volume(
                     loss=loss,
                     lr=lr,
                     floor=floor,
+                    norm_range=parsed_norm_range,
                     cull_retention=cull_retention,
                     device=device,
                     jobs=jobs,

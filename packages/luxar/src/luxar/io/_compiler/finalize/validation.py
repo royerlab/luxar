@@ -1,4 +1,4 @@
-"""Finalize-time validation: discrete-dimension range vs. data-extent checks."""
+"""Finalize-time tree cleanup and discrete-dimension validation."""
 
 from __future__ import annotations
 
@@ -6,6 +6,32 @@ import warnings
 from typing import Dict, List, Optional
 
 import zarr
+
+from ....typing_utils._format_contract import NODE_KINDS
+
+
+def prune_childless_wrappers(store: zarr.Group) -> None:
+    """Remove childless partition/LOD wrappers before publishing the scene."""
+
+    def visit(group: zarr.Group, path: str) -> bool:
+        child_names = list(group.group_keys())
+        for child_name in child_names:
+            child_path = f"{path}/{child_name}" if path else child_name
+            if visit(group[child_name], child_path):
+                del group[child_name]
+
+        kind = group.attrs.get("kind")
+        if path and kind in NODE_KINDS and not list(group.group_keys()):
+            warnings.warn(
+                f"Pruning childless kind={kind} wrapper at '{path}'; "
+                "it was created but never populated.",
+                UserWarning,
+                stacklevel=3,
+            )
+            return True
+        return False
+
+    visit(store, "")
 
 
 def validate_discrete_dimension_ranges(

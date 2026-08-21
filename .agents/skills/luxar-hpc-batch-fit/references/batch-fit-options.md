@@ -45,13 +45,22 @@ box takes its budget from the shared density plan.
 `--floor` (default `auto`, same as `fit`/`cal`): subtract a background floor /
 DC-offset (clip at 0) before normalization, so amplitudes are background-relative.
 `auto` = histogram-mode estimate (capped at median; no-op on clean data);
-`pNN` = subtract that percentile; a number = fixed value; `none` = disable.
+`pNN` = subtract that percentile of non-zero voxels; a number = fixed value;
+`none` or `0` = disable.
 
 The spec is resolved to **one global level for the whole timelapse** at plan time,
 recorded in the manifest (`floor_level`), and handed as a concrete number to every
 `(t, c)` task and every tile/box. It is deliberately *not* re-estimated per
 timepoint or per tile: that would be a time-varying pedestal, i.e. brightness
 flicker across the merged partition.
+
+Without denoising, the plan likewise records one sampled raw-input normalization
+range (`norm_range`) and forwards it to every task, keeping normalized optimizer
+thresholds consistent across timepoints, channels, and spatial partitions.
+Denoising runs leave that sampled range unset so each task resolves on the data it
+fits: denoise-corrected input for a uniform tile, the denoised store in `preprocess`
+mode, or its own `(t, c)` volume for a content box (content boxes do not yet denoise;
+#1813). A deliberately configured range remains an intentional override.
 
 That one level is the **minimum** of the levels resolved on a bounded set of at
 most 16 evenly spaced `(t, c)` slices spanning the store's **full** extent: up to 4

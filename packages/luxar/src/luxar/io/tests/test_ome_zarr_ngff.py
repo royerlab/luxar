@@ -26,7 +26,11 @@ import pytest
 import typer
 
 from luxar._zarr_compat import create_array, open_group
-from luxar.io.ome_zarr import discover_ome_zarr_shape, resolve_ngff_attrs
+from luxar.io.ome_zarr import (
+    _dataset_path_matches,
+    discover_ome_zarr_shape,
+    resolve_ngff_attrs,
+)
 
 _TCZYX = ("t", "c", "z", "y", "x")
 _TZYX = ("t", "z", "y", "x")
@@ -530,8 +534,17 @@ def test_an_unambiguous_3d_store_stays_quiet(
     assert "--axes" not in capsys.readouterr().out
 
 
-def test_a_bioformats2raw_layout_names_its_selectable_level(tmp_path: Path) -> None:
-    """Auto-selection cannot choose a group, but discovery names the workaround."""
+def test_a_bioformats2raw_layout_resolves_its_level_with_no_key_at_all(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """``"0"`` is an image GROUP here, and discovery descends INTO it (#1777).
+
+    Auto-selection used to refuse such a store, naming ``--array-key 0/0`` as the
+    workaround. It now resolves the level itself, and — the half that is easy to
+    lose — reads the 0.5 ``multiscales`` off the IMAGE GROUP that declares it. The
+    root carries only ``bioformats2raw.layout``, so a reader that consults the
+    root alone lands on the 4D ``CZYX`` heuristic with no voxel size, silently.
+    """
     path = tmp_path / "b2r.zarr"
     root = open_group(path, mode="w", zarr_format=3)
     image = root.create_group("0")
@@ -544,12 +557,16 @@ def test_a_bioformats2raw_layout_names_its_selectable_level(tmp_path: Path) -> N
     }
     root.attrs["ome"] = {"version": "0.5", "bioformats2raw.layout": 3}
 
-    with pytest.raises(ValueError, match=r"levels under '0': \['0'\].*--array-key 0/0"):
-        discover_ome_zarr_shape(path)
+    # Naming the level explicitly must describe it the same way, or the store
+    # plans one way with a key and another without it.
+    for key in (None, "0", "0/0"):
+        info = discover_ome_zarr_shape(path, array_key=key)
+        assert info.shape == (2, 8, 16, 16), key
+        assert info.axes == list(_TZYX), key
+        assert (info.n_timepoints, info.n_channels) == (2, 1), key
+        assert info.voxel_size == (2.0, 0.3, 0.3), key
 
-    info = discover_ome_zarr_shape(path, array_key="0/0")
-    assert info.axes == list(_TZYX)
-    assert info.voxel_size == (2.0, 0.3, 0.3)
+    assert "GUESSED" not in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------
@@ -945,9 +962,8 @@ def test_a_6d_store_with_no_metadata_is_refused_without_faking_an_axes_string(
     """The honest message: ``dim0…dim5`` is not an ``--axes`` spelling.
 
     ``volume._axis_kind`` rejects every one of those labels, so quoting them back
-    prints a command that fails — and ``plan_batch``'s override path is lenient
-    enough to ACCEPT it first, folding the unknown label into the tile grid so
-    that every worker dies later instead.
+    would print a command that fails. The planner preflights the same strict
+    worker vocabulary, so it withholds that invalid suggestion.
     """
     src = _write_store(tmp_path / "bare6d.zarr", (2, 2, 3, 8, 16, 16))
 
@@ -986,23 +1002,20 @@ def test_the_suggested_axes_string_is_one_that_actually_works(tmp_path: Path) ->
     assert _worker_loaded_volume(plan.manifest).shape == (32, 32)
 
 
-def test_no_axes_spec_is_quoted_for_a_second_channel_like_axis(
+def test_axes_spec_is_quoted_for_folded_channel_like_axes(
     tmp_path: Path,
 ) -> None:
-    """A vocabulary check is not enough: ``--axes`` cannot address a fold.
-
-    ``_apply_axes_spec`` pins EVERY channel-kind axis with the same ``--channel``
-    value — it never decodes the flat channel index the tasks carry. So on this
-    ``camera,time,channel`` store, following a quoted spec would plan 4 channel
-    tasks of which task 1 silently loads (camera 1, channel 1) and tasks 2-3 die
-    out of range. Both halves are asserted below: the suggestion is withdrawn,
-    and the reason it had to be is real.
-    """
+    """A flat task channel addresses every folded channel-like coordinate."""
     from luxar.io.volume import load_volume
 
+    data = np.empty((2, 3, 2, 8, 16, 16), dtype=np.float32)
+    for camera in range(2):
+        for channel in range(2):
+            data[camera, :, channel] = 10 * camera + channel
     src = _write_store(
         tmp_path / "camera_time_channel.zarr",
-        (2, 3, 2, 8, 16, 16),
+        data.shape,
+        data=data,
         extra_attrs={"axes": ["camera", "time", "channel", "z", "y", "x"]},
     )
     spec = "camera,time,channel,z,y,x"
@@ -1011,16 +1024,35 @@ def test_no_axes_spec_is_quoted_for_a_second_channel_like_axis(
         _plan(src, tmp_path / "out_ctc")
     message = str(excinfo.value)
 
-    assert f"--axes {spec}" not in message  # it would not have worked
-    assert "more than one channel-like axis" in message
-    assert "'camera'" in message and "'channel'" in message
+    assert f"Pass '--axes {spec}'" in message
 
-    # Why it would not have worked, measured against the real slicer.
     forced = _plan_axes(src, tmp_path / "out_ctc_axes", spec.split(","))
-    assert forced.manifest.n_channels == 4  # camera x channel
-    assert load_volume(src, channel=1, timepoint=0, axes=spec).shape == (8, 16, 16)
-    with pytest.raises(ValueError, match="out of range for the 'camera' axis"):
-        load_volume(src, channel=2, timepoint=0, axes=spec)
+    manifest = forced.manifest
+    assert manifest.n_channels == 4  # camera x channel
+    assert len(manifest.jobs) == 12  # 3 timepoints x 4 folded channels
+    for job in manifest.jobs:
+        loaded = load_volume(
+            src, channel=job.channel, timepoint=job.timepoint, axes=spec
+        )
+        camera, channel = job.channel_coords
+        np.testing.assert_array_equal(loaded, data[camera, job.timepoint, channel])
+
+
+def test_axes_spec_is_not_quoted_for_folded_time_axes(tmp_path: Path) -> None:
+    """One flat ``--timepoint`` cannot address two discovered time axes."""
+    src = _write_store(
+        tmp_path / "folded_time.zarr",
+        (3, 2, 4, 8, 8),
+        extra_attrs={"axes": ["t", "time", "z", "y", "x"]},
+    )
+
+    with pytest.raises(typer.BadParameter) as excinfo:
+        _plan(src, tmp_path / "out_folded_time")
+
+    message = str(excinfo.value)
+    assert "more than one time axis ('t', 'time')" in message
+    assert "one --timepoint cannot address them independently" in message
+    assert "Pass '--axes t,time,z,y,x'" not in message
 
 
 # ---------------------------------------------------------------------------
@@ -1177,6 +1209,59 @@ def test_a_malformed_axes_entry_degrades_instead_of_raising(
     out = capsys.readouterr().out
     assert "no OME-Zarr/NGFF metadata found" not in out
     assert "no `axes` list" in out
+
+
+@pytest.mark.parametrize("axes", [5, {"0": "z"}, "zyx"])
+def test_a_custom_axes_attribute_that_is_not_a_list_degrades_instead_of_raising(
+    tmp_path: Path, axes: Any, capsys: pytest.CaptureFixture
+) -> None:
+    """The bare-``axes`` sibling of the ``multiscales.axes`` case above.
+
+    ``len(custom_axes)`` measures whatever is there, so a root attribute
+    ``{"axes": 5}`` is a ``TypeError`` straight out of ``discover_ome_zarr_shape``
+    — the one failure mode this module promises never to produce. (``"zyx"`` IS
+    sized, so it pins the other half: a string must never be mistaken for three
+    labels.)
+    """
+    path = _write_store(
+        tmp_path / "custom_axes.zarr", (2, 3, 8, 16, 16), extra_attrs={"axes": axes}
+    )
+
+    info = discover_ome_zarr_shape(path)
+
+    assert info.spatial_shape == (8, 16, 16)  # the 5D heuristic
+    out = capsys.readouterr().out
+    assert "no OME-Zarr/NGFF metadata found" not in out
+    assert "not a list of labels" in out
+
+
+def test_an_owner_axes_is_used_when_the_roots_own_list_is_unusable(
+    tmp_path: Path,
+) -> None:
+    """Root-first is a PRECEDENCE, and an UNUSABLE root list still yields to it.
+
+    The absent-root case is covered next door; this is the other branch of the
+    same fallback — the root declares an ``axes`` list of the wrong length, so it
+    cannot be used, and the owner's six labels must still be read rather than the
+    6-D generic ``dim0…dim5`` heuristic (which reports T=1, C=1).
+    """
+    path = tmp_path / "root_axes_unusable.zarr"
+    root = open_group(path, mode="w", zarr_format=3)
+    group = root.create_group("h2afva")
+    create_array(
+        group,
+        "fused",
+        data=np.zeros((2, 2, 3, 4, 4, 4), dtype=np.float32),
+        compressor="auto",
+    )
+    root.attrs["axes"] = ["t", "z", "y"]  # 3 labels for a 6-D array
+    group.attrs["axes"] = ["time", "camera", "channel", "z", "y", "x"]
+
+    info = discover_ome_zarr_shape(path)
+
+    assert info.axes == ["time", "camera", "channel", "z", "y", "x"]
+    assert (info.n_timepoints, info.n_channels) == (2, 6)
+    assert info.spatial_shape == (4, 4, 4)
 
 
 @pytest.mark.parametrize(
@@ -1391,6 +1476,74 @@ def test_an_unmatched_array_key_in_a_pyramid_reports_no_voxel_size(
     }
 
     assert discover_ome_zarr_shape(path, array_key="fused/b").voxel_size is None
+
+
+@pytest.mark.parametrize("zarr_format", (2, 3))
+def test_an_explicitly_relative_dataset_path_still_names_its_level(
+    tmp_path: Path, zarr_format: int
+) -> None:
+    """``"./0"`` and ``"0"`` are the same child, so the match must see through it.
+
+    Writers do emit the explicitly relative spelling. Comparing the raw strings
+    made every entry of such a pyramid unmatchable, and a multi-LEVEL pyramid has
+    no single-level fall-back to ``datasets[0]``, so the store silently lost its
+    voxel size — silently because the block itself parses, so not even the
+    "present but unusable" notice fires. Each level carries its OWN spacing here,
+    so this pins that the right ENTRY matched, not merely that some entry did.
+    """
+    path = tmp_path / "relative_paths.zarr"
+    root = open_group(path, mode="w", zarr_format=zarr_format)
+    create_array(
+        root, "0", data=np.zeros((2, 8, 16, 16), dtype=np.float32), compressor="auto"
+    )
+    create_array(
+        root, "1", data=np.zeros((2, 4, 8, 8), dtype=np.float32), compressor="auto"
+    )
+    root.attrs["multiscales"] = [
+        {
+            "version": "0.4",
+            "axes": _axes_meta(_TZYX),
+            "datasets": [
+                {
+                    "path": "./0",
+                    "coordinateTransformations": [
+                        {"type": "scale", "scale": [1.0, 2.0, 0.5, 0.5]}
+                    ],
+                },
+                {
+                    "path": "./1",
+                    "coordinateTransformations": [
+                        {"type": "scale", "scale": [1.0, 4.0, 1.0, 1.0]}
+                    ],
+                },
+            ],
+        }
+    ]
+
+    assert discover_ome_zarr_shape(path).voxel_size == (2.0, 0.5, 0.5)
+    assert discover_ome_zarr_shape(path, array_key="0").voxel_size == (2.0, 0.5, 0.5)
+    assert discover_ome_zarr_shape(path, array_key="1").voxel_size == (4.0, 1.0, 1.0)
+
+
+@pytest.mark.parametrize(
+    ("declared", "matches"),
+    [
+        ("0", True),
+        ("/0", True),
+        ("./0", True),
+        # A bare current-directory path names the OWNER, not a level inside it,
+        # and `a/./b` is a path zarr refuses outright — neither may be collapsed
+        # into a match for whichever level happens to be selected.
+        (".", False),
+        ("./", False),
+        ("0/./0", False),
+        ("", False),
+    ],
+)
+def test_which_dataset_path_spellings_name_the_level_zero_array(
+    declared: str, matches: bool
+) -> None:
+    assert _dataset_path_matches({"path": declared}, "0") is matches
 
 
 def test_a_single_level_pyramid_still_answers_for_an_unmatched_key(

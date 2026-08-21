@@ -941,7 +941,7 @@ def _resolve_floor(V: np.ndarray, floor: "str | float | None") -> "float | None"
     ``image_min`` (hard ``min``/``norm_percentile``). Accepted forms:
 
     - ``"auto"`` → histogram-mode estimate (see :func:`estimate_floor`).
-    - ``"pN"`` (e.g. ``"p10"``) → the Nth intensity percentile.
+    - ``"pN"`` (e.g. ``"p10"``) → the Nth percentile of non-zero intensities.
     - ``"none"`` / ``"0"`` / ``0`` / ``None`` → disabled (returns ``None``).
     - ``float`` / numeric string → that fixed intensity value.
     """
@@ -957,7 +957,9 @@ def _resolve_floor(V: np.ndarray, floor: "str | float | None") -> "float | None"
             return float(estimate_floor(V, method="mode"))
         if f.startswith("p"):
             pct = float(f[1:])
-            return float(np.percentile(V, pct))
+            V = np.asarray(V)
+            values = V[V != 0.0] if np.any(V != 0.0) else V
+            return float(np.percentile(values, pct))
         value = float(f)  # numeric string
     else:
         value = float(floor)
@@ -1064,6 +1066,18 @@ def _sample_volume_for_floor(volume: Any, budget: int) -> "np.ndarray | None":
 NORM_RANGE_MIN_SPAN = 1e-12
 
 
+def _norm_range_has_usable_span(norm_range: tuple[float, float]) -> bool:
+    """Whether a resolved shared range is safe to forward to another fit."""
+    lo, hi = float(norm_range[0]), float(norm_range[1])
+    span = hi - lo
+    return (
+        np.isfinite(lo)
+        and np.isfinite(hi)
+        and np.isfinite(span)
+        and span > NORM_RANGE_MIN_SPAN
+    )
+
+
 def resolve_volume_norm_range(
     volume: Any,
     norm_percentile: float,
@@ -1114,14 +1128,11 @@ def resolve_volume_norm_range(
     -----
     Determinism matters as much as it does for the floor: the sample is a pure
     function of ``volume.shape`` and the fixed budget, so independent workers
-    (``--tile k/M``, ``-j N``, batch-fit) all resolve the SAME range for the
-    volume they are HANDED, without coordinating. That scope is where this
-    stops short of the floor: a ``batch-fit`` task is handed one ``(t, c)``
-    sub-volume, so its tiles share a range while two timepoints do not,
-    whereas the floor level is pinned once for the whole run in the manifest.
-    Amplitudes stay physically comparable either way (``finalize_results``
-    rescales by ``intensity_range``); what differs across timepoints is the
-    absolute convergence tolerance. #1616 tracks the remaining scopes.
+    (``--tile k/M``, ``-j N``) resolve the SAME range for the volume they are
+    HANDED, without coordinating. Batch-fit instead resolves one range across
+    its bounded plan-time ``(t, c)`` samples, records it in the manifest, and
+    forwards it to every task, so spatial and temporal children share the same
+    normalization scale.
     """
     sample = _sample_volume_for_floor(volume, int(FLOOR_SAMPLE_BUDGET_VOXELS))
     if sample is None or sample.size == 0:
@@ -1139,11 +1150,84 @@ def resolve_volume_norm_range(
     return (lo, hi)
 
 
+def resolve_volume_norm_range_denoised(
+    volume: Any,
+    norm_percentile: float,
+    *,
+    denoise_h: float | None,
+    denoise_params: dict[str, Any] | None,
+    subtract: float | None = None,
+    probe_cache: dict[str, Any] | None = None,
+    verbose: bool = False,
+) -> tuple[float, float]:
+    """Resolve the shared normalization range on the data tiles will fit.
+
+    With denoising disabled this is exactly :func:`resolve_volume_norm_range`.
+    Otherwise, when the whole volume fits the bounded probe budget, the raw
+    whole-volume range is shifted by the denoise-induced
+    endpoint change measured on the deterministic shape-preserving probe used
+    for floor correction.  When the volume fits the probe budget, the probe is
+    the whole volume and the result exactly matches resolving after a full
+    denoise, as the non-tiled path does. Above that budget the raw range is kept:
+    a bounded max-shift did not converge in measurement and is not worth an NLM pass.
+    """
+    raw_lo, raw_hi = resolve_volume_norm_range(volume, norm_percentile)
+    if (
+        denoise_h is None
+        or denoise_params is None
+        or not _volume_fits_probe_budget(volume, DENOISE_PROBE_BUDGET_VOXELS)
+    ):
+        lo, hi = raw_lo, raw_hi
+    else:
+        try:
+            probe = _denoise_probe_arrays(
+                volume, float(denoise_h), denoise_params, probe_cache
+            )
+            if probe is None:
+                lo, hi = raw_lo, raw_hi
+            else:
+                raw_probe, denoised_probe = probe
+                if norm_percentile == 0.0:
+                    probe_raw_lo = float(np.min(raw_probe))
+                    probe_raw_hi = float(np.max(raw_probe))
+                    probe_denoised_lo = float(np.min(denoised_probe))
+                    probe_denoised_hi = float(np.max(denoised_probe))
+                else:
+                    probe_raw_lo = float(np.percentile(raw_probe, norm_percentile))
+                    probe_raw_hi = float(
+                        np.percentile(raw_probe, 100.0 - norm_percentile)
+                    )
+                    probe_denoised_lo = float(
+                        np.percentile(denoised_probe, norm_percentile)
+                    )
+                    probe_denoised_hi = float(
+                        np.percentile(denoised_probe, 100.0 - norm_percentile)
+                    )
+                lo = probe_denoised_lo + (raw_lo - probe_raw_lo)
+                hi = probe_denoised_hi + (raw_hi - probe_raw_hi)
+                if not np.isfinite(lo) or not np.isfinite(hi):
+                    lo, hi = raw_lo, raw_hi
+        except Exception as exc:
+            aprint(
+                "Denoised normalization-range probe failed "
+                f"({exc}); keeping the raw-basis range."
+            )
+            lo, hi = raw_lo, raw_hi
+
+    if subtract is not None:
+        lo = max(0.0, lo - float(subtract))
+        hi = max(lo + NORM_RANGE_MIN_SPAN, hi - float(subtract))
+    if verbose:
+        aprint(f"Whole-volume normalization range: [{lo:.6g}, {hi:.6g}]")
+    return (lo, hi)
+
+
 def _floor_level_and_sample_max(
     volume: Any,
     floor: "str | float | None",
     *,
     guard_numeric: bool = False,
+    sample_budget: int | None = None,
 ) -> "tuple[float | None, float | None]":
     """The resolved whole-volume floor level AND the sampled max it was judged on.
 
@@ -1175,7 +1259,8 @@ def _floor_level_and_sample_max(
         # 0 disables; a negative level is legitimate (see Notes).
         return _resolve_floor(np.empty(0, dtype=np.float32), floor), None
 
-    sample = _sample_volume_for_floor(volume, int(FLOOR_SAMPLE_BUDGET_VOXELS))
+    budget = FLOOR_SAMPLE_BUDGET_VOXELS if sample_budget is None else sample_budget
+    sample = _sample_volume_for_floor(volume, int(budget))
     if sample is None:
         return None, None
 
@@ -1197,6 +1282,7 @@ def resolve_volume_floor(
     floor: "str | float | None",
     *,
     guard_numeric: bool = False,
+    sample_budget: "int | None" = None,
     verbose: bool = False,
 ) -> "float | None":
     """Resolve a ``floor`` spec against a whole volume, without loading it all.
@@ -1222,6 +1308,9 @@ def resolve_volume_floor(
         levels already resolved and guarded upstream (e.g. the concrete level
         the parent hands each tile worker), preserving the read-free
         short-circuit.
+    sample_budget : int, optional
+        Override the bounded sample voxel budget. ``None`` uses
+        :data:`FLOOR_SAMPLE_BUDGET_VOXELS`.
     verbose : bool, default False
         Print the resolved level via arbol.
 
@@ -1253,7 +1342,10 @@ def resolve_volume_floor(
       ``guard_numeric=True``.
     """
     resolved, sample_max = _floor_level_and_sample_max(
-        volume, floor, guard_numeric=guard_numeric
+        volume,
+        floor,
+        guard_numeric=guard_numeric,
+        sample_budget=sample_budget,
     )
     if resolved is None:
         return None
@@ -1399,12 +1491,46 @@ def _sample_blocks_for_denoise_probe(
     return blocks
 
 
+def _denoise_probe_arrays(
+    volume: Any,
+    denoise_h: float,
+    denoise_params: "dict[str, Any]",
+    probe_cache: "dict[str, Any] | None" = None,
+) -> "tuple[np.ndarray, np.ndarray] | None":
+    """Read and denoise the bounded probe once, optionally caching both arrays."""
+    if probe_cache is not None and "raw" in probe_cache:
+        return probe_cache["raw"], probe_cache["denoised"]
+
+    from luxar.gsplats.preprocessing.denoise_pipeline import denoise_volume_array
+
+    blocks = _sample_blocks_for_denoise_probe(volume, int(DENOISE_PROBE_BUDGET_VOXELS))
+    if not blocks:
+        return None
+    denoised = [
+        denoise_volume_array(block, h=float(denoise_h), **denoise_params)
+        for block in blocks
+    ]
+    raw_flat = np.concatenate([block.ravel() for block in blocks])
+    denoised_flat = np.concatenate(
+        [np.asarray(block, dtype=np.float32).ravel() for block in denoised]
+    )
+    # Check the OUTPUT, not just the input: estimate_floor on NaN-bearing data
+    # can return a finite, plausible ~0.001 and silently disable suppression.
+    if not bool(np.isfinite(denoised_flat).all()):
+        raise ValueError("denoise probe produced non-finite values")
+    if probe_cache is not None:
+        probe_cache["raw"] = raw_flat
+        probe_cache["denoised"] = denoised_flat
+    return raw_flat, denoised_flat
+
+
 def _denoise_probe_correction(
     volume: Any,
     floor: "str | float | None",
     level_raw: float,
     denoise_h: float,
     denoise_params: "dict[str, Any]",
+    probe_cache: "dict[str, Any] | None" = None,
 ) -> "tuple[float, float, int] | None":
     """Shift ``level_raw`` onto the denoised basis with a bounded probe.
 
@@ -1428,13 +1554,11 @@ def _denoise_probe_correction(
     :func:`resolve_volume_floor`, tiled or not, so there is nothing here for a
     second test to improve. Today's kernels emit none of this; it is insurance.
     """
-    from luxar.gsplats.preprocessing.denoise_pipeline import denoise_volume_array
-
     try:
-        blocks = _sample_blocks_for_denoise_probe(
-            volume, int(DENOISE_PROBE_BUDGET_VOXELS)
+        probe = _denoise_probe_arrays(
+            volume, float(denoise_h), denoise_params, probe_cache
         )
-        if not blocks:
+        if probe is None:
             # Defensive only: an empty volume has no floor sample either, so
             # `level_raw` never got this far. Kept so a future sampler change
             # cannot turn "no probe" into a TypeError mid-fit.
@@ -1443,24 +1567,7 @@ def _denoise_probe_correction(
                 f"background level {level_raw:.6g}."
             )
             return None
-        denoised = [
-            denoise_volume_array(block, h=float(denoise_h), **denoise_params)
-            for block in blocks
-        ]
-        raw_flat = np.concatenate([b.ravel() for b in blocks])
-        denoised_flat = np.concatenate(
-            [np.asarray(b, dtype=np.float32).ravel() for b in denoised]
-        )
-        if not bool(np.isfinite(denoised_flat).all()):
-            # Checked on the probe OUTPUT, not just on the level it produces: a
-            # NaN does not always propagate to the level. `estimate_floor` on a
-            # NaN-bearing array returns ~0.001, which is finite, plausible, and
-            # would silently disable floor suppression for the whole run.
-            aprint(
-                "Note: the denoise floor probe produced non-finite values; "
-                f"keeping the raw-basis background level {level_raw:.6g}."
-            )
-            return None
+        raw_flat, denoised_flat = probe
         probe_raw = _resolve_floor(raw_flat, floor)
         probe_denoised = _resolve_floor(denoised_flat, floor)
     except Exception as exc:  # noqa: BLE001 - never let a probe break a fit
@@ -1503,6 +1610,8 @@ def resolve_volume_floor_denoised(
     denoise_h: "float | None" = None,
     denoise_params: "dict[str, Any] | None" = None,
     guard_numeric: bool = False,
+    sample_budget: int | None = None,
+    probe_cache: dict[str, Any] | None = None,
     verbose: bool = False,
 ) -> "float | None":
     """Resolve a ``floor`` spec as a property of the DENOISED data.
@@ -1540,6 +1649,9 @@ def resolve_volume_floor_denoised(
         ``denoise_h=None``.
     guard_numeric : bool, default False
         Forwarded to :func:`resolve_volume_floor` (see there).
+    sample_budget : int, optional
+        Override the bounded raw floor-sample voxel budget. ``None`` uses
+        :data:`FLOOR_SAMPLE_BUDGET_VOXELS`.
     verbose : bool, default False
         Print the raw level, the correction and the final level. Forwarded to
         :func:`resolve_volume_floor` on the paths that delegate to it.
@@ -1644,7 +1756,11 @@ def resolve_volume_floor_denoised(
         # Denoise off, or a user absolute no measurement may move: identical to
         # the pre-#1178 behaviour, with no probe and no extra read.
         return resolve_volume_floor(
-            volume, floor, guard_numeric=guard_numeric, verbose=verbose
+            volume,
+            floor,
+            guard_numeric=guard_numeric,
+            sample_budget=sample_budget,
+            verbose=verbose,
         )
 
     # REGIME 2, decided from `volume.shape` alone — before any read, and in
@@ -1655,7 +1771,11 @@ def resolve_volume_floor_denoised(
         volume, int(DENOISE_PROBE_BUDGET_VOXELS)
     ) and not _floor_spec_is_percentile(floor):
         level = resolve_volume_floor(
-            volume, floor, guard_numeric=guard_numeric, verbose=verbose
+            volume,
+            floor,
+            guard_numeric=guard_numeric,
+            sample_budget=sample_budget,
+            verbose=verbose,
         )
         if level is not None:
             aprint(
@@ -1673,7 +1793,10 @@ def resolve_volume_floor_denoised(
     # The sampled max comes back with the level so the guard below can judge the
     # CORRECTED level on the very same basis, without a second bounded read.
     level_raw, raw_sample_max = _floor_level_and_sample_max(
-        volume, floor, guard_numeric=guard_numeric
+        volume,
+        floor,
+        guard_numeric=guard_numeric,
+        sample_budget=sample_budget,
     )
     if level_raw is None:
         # Disabled, or refused by the "erases all signal" guard — nothing to
@@ -1681,7 +1804,12 @@ def resolve_volume_floor_denoised(
         return None
 
     corrected = _denoise_probe_correction(
-        volume, floor, float(level_raw), float(denoise_h), denoise_params
+        volume,
+        floor,
+        float(level_raw),
+        float(denoise_h),
+        denoise_params,
+        probe_cache,
     )
     if corrected is None:
         # Nothing to correct, or nothing trustworthy to correct with — the helper
@@ -1745,6 +1873,53 @@ def _resolve_norm_bounds(
     )
 
 
+def _resolve_applied_norm_bounds(
+    V: np.ndarray,
+    norm_percentile: float,
+    verbose: bool,
+    floor: "str | float | None" = None,
+    norm_range: "tuple[float, float] | None" = None,
+) -> tuple[float, float, "float | None"]:
+    """Resolve the normalization bounds and effective floor for one fit."""
+    # Configurable normalization - store parameters for intensity rescaling
+    image_min, image_max = _resolve_norm_bounds(V, norm_percentile, verbose, norm_range)
+
+    # Background floor suppression: raise image_min to the resolved floor.
+    resolved_floor = _resolve_floor(V, floor)
+    applied_floor: "float | None" = None
+    if resolved_floor is not None:
+        guard_max = image_max if norm_range is not None else float(np.max(V))
+        if resolved_floor >= guard_max:
+            # A floor at/above the normalization ceiling would leave no usable
+            # range. Refuse it and keep the default image_min.
+            if verbose:
+                aprint(
+                    f"Warning: floor {resolved_floor:.6g} >= image max "
+                    f"{guard_max:.6g}; ignoring (would erase all signal)"
+                )
+        else:
+            # Only ever RAISE image_min (never below the percentile-based value
+            # chosen above): the floor is orthogonal to norm_percentile's low-end
+            # clipping. Clamp into [image_min, image_max) so the range stays
+            # strictly positive. (When norm_percentile==0, image_min == min(V),
+            # so this reduces to max(resolved_floor, min(V)) as before.)
+            image_min = float(max(resolved_floor, image_min))
+            if image_min >= image_max:
+                image_max = float(np.max(V))
+                if verbose:
+                    aprint(
+                        f"Normalization: expanding high endpoint to data max "
+                        f"{image_max:.6g} so floor {image_min:.6g} preserves signal"
+                    )
+            applied_floor = image_min
+            if verbose:
+                aprint(
+                    f"Floor suppression: subtracting background level {image_min:.6g}"
+                )
+
+    return image_min, image_max, applied_floor
+
+
 def _normalize_data(
     V: np.ndarray,
     norm_percentile: float,
@@ -1758,7 +1933,9 @@ def _normalize_data(
     chosen: an explicit background level raises ``image_min`` so the pedestal
     is clipped to 0 by the existing ``np.clip((V - image_min) / range, 0, 1)``.
     ``norm_percentile`` still governs ``image_max`` (bright-outlier clipping),
-    so the two are orthogonal.
+    so the two are normally orthogonal. If the floor overtakes a
+    percentile-derived high endpoint, that endpoint expands to the data maximum,
+    dropping bright-outlier clipping to preserve usable signal.
 
     ``norm_range`` supplies ``(image_min, image_max)`` outright, bypassing
     ``norm_percentile``'s derivation from ``V``. Tiled fitting passes a range
@@ -1769,33 +1946,9 @@ def _normalize_data(
     a bounded sample, a value above ``image_max`` is real signal rather than an
     outlier and is left unclipped when ``norm_percentile == 0``.
     """
-    # Configurable normalization - store parameters for intensity rescaling
-    image_min, image_max = _resolve_norm_bounds(V, norm_percentile, verbose, norm_range)
-
-    # Background floor suppression: raise image_min to the resolved floor.
-    resolved_floor = _resolve_floor(V, floor)
-    applied_floor: "float | None" = None
-    if resolved_floor is not None:
-        if resolved_floor >= image_max:
-            # A floor at/above the brightest voxel would erase all signal
-            # (empty [0,1] range). Refuse it and keep the default image_min.
-            if verbose:
-                aprint(
-                    f"Warning: floor {resolved_floor:.6g} >= image max "
-                    f"{image_max:.6g}; ignoring (would erase all signal)"
-                )
-        else:
-            # Only ever RAISE image_min (never below the percentile-based value
-            # chosen above): the floor is orthogonal to norm_percentile's low-end
-            # clipping. Clamp into [image_min, image_max) so the range stays
-            # strictly positive. (When norm_percentile==0, image_min == min(V),
-            # so this reduces to max(resolved_floor, min(V)) as before.)
-            image_min = float(max(resolved_floor, image_min))
-            applied_floor = image_min
-            if verbose:
-                aprint(
-                    f"Floor suppression: subtracting background level {image_min:.6g}"
-                )
+    image_min, image_max, applied_floor = _resolve_applied_norm_bounds(
+        V, norm_percentile, verbose, floor, norm_range
+    )
 
     intensity_range = image_max - image_min
 

@@ -16,6 +16,8 @@ import {
   effectiveSegmentLoad,
   resolveLinePrimitive,
   resolveLinePrimitiveForNode,
+  sceneEffectiveLineLoad,
+  setSceneLineLoad,
   setLinePrimitiveOverride,
   setLinePrimitivePolicy,
 } from '../../../../types/line-primitive';
@@ -23,10 +25,30 @@ import { loadUserSettings, defaultUserSettings } from '../../../../config/user-s
 import { StorageKeys } from '../../../../utils/storage-keys';
 
 afterEach(() => {
+  setSceneLineLoad(0);
   setLinePrimitiveOverride(null);
   setLinePrimitivePolicy('auto');
   localStorage.clear();
 });
+
+function lineNode(nSegments: number, attrs: Record<string, unknown> = {}) {
+  return {
+    path: `/line-${nSegments}`,
+    type: 'lines',
+    attrs: { n_segments: nSegments, ...attrs },
+    hasSpatialIndex: false,
+  };
+}
+
+function groupNode(kind: 'lod' | 'partition' | undefined, children: ReturnType<typeof lineNode>[]) {
+  return {
+    path: '/group',
+    type: kind ? 'group' : 'scene',
+    attrs: kind ? { kind } : {},
+    hasSpatialIndex: false,
+    children,
+  };
+}
 
 /** Store a settings object with one advanced field overridden, then load. */
 function loadWithStoredPolicy(value: string) {
@@ -109,6 +131,31 @@ describe('resolveLinePrimitiveForNode', () => {
     expect(resolveLinePrimitiveForNode({})).toBe(DEFAULT_LINE_PRIMITIVE);
   });
 
+  it('auto: uses the aggregate concurrent scene load uniformly across sibling nodes', () => {
+    const largeScene = groupNode(
+      undefined,
+      Array.from({ length: 10 }, () => lineNode(1_200_000))
+    );
+    setSceneLineLoad(sceneEffectiveLineLoad(largeScene));
+    expect(resolveLinePrimitiveForNode({ nSegments: 1_200_000 })).toBe('screen-space');
+    expect(resolveLinePrimitiveForNode({ nSegments: 100 })).toBe('screen-space');
+
+    const smallScene = groupNode(
+      undefined,
+      Array.from({ length: 10 }, () => lineNode(100_000))
+    );
+    setSceneLineLoad(sceneEffectiveLineLoad(smallScene));
+    expect(resolveLinePrimitiveForNode({ nSegments: 100_000 })).toBe('capsule');
+  });
+
+  it('keeps URL and forced-policy overrides stronger than the aggregate scene load', () => {
+    setSceneLineLoad(10_000_000);
+    setLinePrimitivePolicy('capsule');
+    expect(resolveLinePrimitiveForNode({ nSegments: 100 })).toBe('capsule');
+    setLinePrimitiveOverride('screen-space');
+    expect(resolveLinePrimitiveForNode({ nSegments: 100 })).toBe('screen-space');
+  });
+
   it('a forced policy replaces the auto rule in both directions', () => {
     setLinePrimitivePolicy('quad');
     expect(resolveLinePrimitiveForNode({ nSegments: 10 })).toBe('screen-space');
@@ -128,6 +175,37 @@ describe('resolveLinePrimitiveForNode', () => {
     expect(resolveLinePrimitive()).toBe('screen-space');
     // An explicit caller value still wins over the forced policy.
     expect(resolveLinePrimitive('capsule')).toBe('capsule');
+  });
+});
+
+describe('sceneEffectiveLineLoad', () => {
+  it('composes partition sums over substitutive LOD maxima', () => {
+    const lod = groupNode('lod', [lineNode(400_000), lineNode(1_200_000)]);
+    const partition = {
+      ...groupNode('partition', [lineNode(900_000)]),
+      children: [lineNode(900_000), lod],
+    };
+    const scene = { ...groupNode(undefined, []), children: [partition] };
+    expect(sceneEffectiveLineLoad(scene)).toBe(2_100_000);
+  });
+
+  it('takes the maximum substitutive LOD level instead of summing the pyramid', () => {
+    const lod = groupNode('lod', [lineNode(400_000), lineNode(1_200_000), lineNode(700_000)]);
+    expect(sceneEffectiveLineLoad(lod)).toBe(1_200_000);
+  });
+
+  it('uses the same authored width normalization as per-node material resolution', () => {
+    const wide = lineNode(300_000, {
+      max_width: 15,
+      position_bounds: { min: [0, 0], max: [NOMINAL_VIEWPORT_PX, 0] },
+    });
+    expect(sceneEffectiveLineLoad(wide)).toBeCloseTo(
+      effectiveSegmentLoad({
+        nSegments: 300_000,
+        maxWidth: 15,
+        bboxDiagonal: NOMINAL_VIEWPORT_PX,
+      })
+    );
   });
 });
 

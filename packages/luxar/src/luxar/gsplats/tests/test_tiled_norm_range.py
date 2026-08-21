@@ -18,7 +18,9 @@ from luxar.gsplats.fit_tiled_gsplats import _tile_norm_range
 from luxar.gsplats.fitting.preprocessing import (
     NORM_RANGE_MIN_SPAN,
     _normalize_data,
+    resolve_volume_floor_denoised,
     resolve_volume_norm_range,
+    resolve_volume_norm_range_denoised,
 )
 
 
@@ -80,6 +82,116 @@ def test_subtract_shifts_the_range_into_post_floor_terms(ramp_volume):
     shifted = resolve_volume_norm_range(ramp_volume, 0.0, subtract=10.0)
     assert shifted[0] == pytest.approx(0.0)
     assert shifted[1] == pytest.approx(plain[1] - 10.0)
+
+
+def test_tiled_range_tracks_the_denoised_basis(monkeypatch):
+    """The shared top must describe the array tiles fit, not the raw input."""
+    volume = np.arange(8 * 16 * 16, dtype=np.float32).reshape(8, 16, 16)
+
+    def _compress_extremes(block, h, **kwargs):
+        del h, kwargs
+        return np.asarray(block, dtype=np.float32) * 0.5
+
+    monkeypatch.setattr(
+        "luxar.gsplats.preprocessing.denoise_pipeline.denoise_volume_array",
+        _compress_extremes,
+    )
+
+    resolved = _tile_norm_range(
+        volume,
+        {"_denoise_h": 0.04, "_denoise_params": {}},
+        None,
+    )
+
+    assert resolved == pytest.approx((0.0, float(volume.max()) * 0.5))
+
+
+def test_denoised_range_endpoint_shift_is_bit_exact(monkeypatch):
+    from luxar.gsplats.fitting import preprocessing
+
+    raw_endpoint = 1_000_000.5
+    denoised_endpoint = 123_456.78
+    monkeypatch.setattr(
+        preprocessing,
+        "resolve_volume_norm_range",
+        lambda *_args, **_kwargs: (raw_endpoint, raw_endpoint),
+    )
+    monkeypatch.setattr(
+        preprocessing,
+        "_denoise_probe_arrays",
+        lambda *_args, **_kwargs: (
+            np.asarray([raw_endpoint]),
+            np.asarray([denoised_endpoint]),
+        ),
+    )
+
+    resolved = resolve_volume_norm_range_denoised(
+        np.asarray([raw_endpoint]),
+        0.0,
+        denoise_h=0.04,
+        denoise_params={},
+    )
+
+    assert resolved == (denoised_endpoint, denoised_endpoint)
+
+
+def test_floor_and_norm_range_reuse_one_denoise_probe(monkeypatch):
+    volume = np.arange(8 * 16 * 16, dtype=np.float32).reshape(8, 16, 16)
+    calls = 0
+
+    def _denoise(block, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return np.asarray(block, dtype=np.float32) * 0.5
+
+    monkeypatch.setattr(
+        "luxar.gsplats.preprocessing.denoise_pipeline.denoise_volume_array",
+        _denoise,
+    )
+    cache: dict[str, object] = {}
+
+    floor = resolve_volume_floor_denoised(
+        volume, "p10", denoise_h=0.04, denoise_params={}, probe_cache=cache
+    )
+    resolved = resolve_volume_norm_range_denoised(
+        volume,
+        0.0,
+        denoise_h=0.04,
+        denoise_params={},
+        probe_cache=cache,
+    )
+
+    assert floor is not None
+    assert resolved == pytest.approx((0.0, float(volume.max()) * 0.5))
+    assert calls == 1
+
+
+def test_oversized_norm_range_skips_denoise_probe(monkeypatch):
+    volume = np.arange(64, dtype=np.float32).reshape(4, 4, 4)
+    monkeypatch.setattr(
+        "luxar.gsplats.fitting.preprocessing._volume_fits_probe_budget",
+        lambda _volume, _budget: False,
+    )
+    monkeypatch.setattr(
+        "luxar.gsplats.preprocessing.denoise_pipeline.denoise_volume_array",
+        lambda *_args, **_kwargs: pytest.fail("oversized range must not denoise"),
+    )
+
+    assert resolve_volume_norm_range_denoised(
+        volume, 0.0, denoise_h=0.04, denoise_params={}
+    ) == pytest.approx((0.0, 63.0))
+
+
+def test_norm_range_probe_read_failure_keeps_raw_range(monkeypatch):
+    volume = np.arange(64, dtype=np.float32).reshape(4, 4, 4)
+    monkeypatch.setattr(
+        "luxar.gsplats.fitting.preprocessing._denoise_probe_arrays",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("read failed")),
+    )
+
+    assert resolve_volume_norm_range_denoised(
+        volume, 0.0, denoise_h=0.04, denoise_params={}
+    ) == pytest.approx((0.0, 63.0))
 
 
 def test_subtract_clamps_at_zero(ramp_volume):
@@ -293,6 +405,54 @@ def test_fit_tiled_resolves_a_declined_range_once_for_the_grid(monkeypatch):
     assert len(calls) == 1
 
 
+def test_supplied_raw_range_is_shifted_to_the_floor_subtracted_tile_basis():
+    """Batch workers receive raw units; tile fitting consumes post-floor units."""
+    from luxar.gsplats import fit_tiled_gsplats as ftg
+
+    fit_kwargs = {"norm_range": (10.0, 110.0)}
+    ftg._ensure_tile_norm_range(
+        np.zeros((4, 4, 4), dtype=np.float32), fit_kwargs, applied_floor=30.0
+    )
+    assert fit_kwargs["norm_range"] == pytest.approx((0.0, 80.0))
+
+    collapsed = {"norm_range": (10.0, 30.0)}
+    ftg._ensure_tile_norm_range(
+        np.zeros((4, 4, 4), dtype=np.float32), collapsed, applied_floor=30.0
+    )
+    assert collapsed["norm_range"] is None
+
+
+def test_fit_tiled_marks_a_supplied_range_after_shifting_it_once(monkeypatch):
+    """The orchestrator's converted range must not be shifted again by fit_tile."""
+    from luxar.gsplats import fit_tiled_gsplats as ftg
+
+    seen = {}
+
+    class _Stop(Exception):
+        pass
+
+    def _capture(volume, spec, **fit_kwargs):
+        seen.update(fit_kwargs)
+        raise _Stop
+
+    monkeypatch.setattr(ftg, "fit_tile", _capture)
+    volume = np.full((8, 8, 8), 50.0, dtype=np.float32)
+    volume[4, 4, 4] = 100.0
+
+    with pytest.raises(_Stop):
+        ftg.fit_tiled(
+            volume,
+            tile_size=8,
+            overlap=0,
+            floor=30.0,
+            norm_range=(10.0, 110.0),
+            verbose=False,
+        )
+
+    assert seen["norm_range"] == pytest.approx((0.0, 80.0))
+    assert seen["_norm_range_resolved"] is True
+
+
 def test_collapsed_range_would_amplify_signal_by_1e12():
     """Pin the hazard the decline above avoids, so that guard is not vacuous."""
     tile = np.zeros((4, 8, 8), dtype=np.float32)
@@ -344,6 +504,7 @@ def test_progressive_residual_passes_drop_the_shared_range(monkeypatch):
         max_passes=2,
         device="cpu",
         verbose=False,
+        floor="none",
         norm_range=(0.0, 4.0),
     )
 

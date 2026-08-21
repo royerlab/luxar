@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 from luxar.cli.gsplat_ops.batch.denoise_workers import (
     run_batch_denoise_calibrate_cmd,
     run_batch_denoise_preprocess_cmd,
+    run_batch_resolve_floor_cmd,
 )
 from luxar.cli.gsplat_ops.batch.merge_command import run_batch_merge_cmd
 from luxar.cli.gsplat_ops.batch.run import run_batch_run
@@ -104,3 +105,6 @@ app_batch.command("denoise-calibrate", hidden=True)(run_batch_denoise_calibrate_
 
 
 app_batch.command("denoise-preprocess", hidden=True)(run_batch_denoise_preprocess_cmd)
+
+
+app_batch.command("resolve-floor", hidden=True)(run_batch_resolve_floor_cmd)

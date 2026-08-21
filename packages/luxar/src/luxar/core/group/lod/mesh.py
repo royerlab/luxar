@@ -152,8 +152,8 @@ def resolve_substitutive_axis_mesh(spec: Any) -> Optional[Dict[str, Any]]:
       (alias ``n_lods``), ``method``, ``coverage_fractions``, ``coarsen_dims``.
 
     ``method`` accepts :data:`MESH_SUBSTITUTIVE_METHODS`. ``auto`` resolves to
-    ``cluster`` today; it stays the default so that gaining a second tier
-    (``qem``, issue #1348) is not a behaviour change for anyone who wrote it.
+    topology-preserving ``qem`` through 10,000 vertices and vectorized ``cluster``
+    above that performance envelope.
 
     Raises:
         TypeError: If ``spec`` is neither ``None``, a bool, nor a dict.

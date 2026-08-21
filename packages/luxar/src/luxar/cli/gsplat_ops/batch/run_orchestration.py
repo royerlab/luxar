@@ -3,10 +3,46 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import typer
 from arbol import aprint
+
+if TYPE_CHECKING:
+    from luxar.gsplats.batch.manifest import BatchManifest
+
+
+def _resolve_local_deferred_floor(
+    manifest: "BatchManifest", output_dir: Path
+) -> "BatchManifest":
+    """Resolve a local denoise-dependent floor after calibrating NLM if needed.
+
+    A deferred percentile floor pins one calibrated ``h`` per selected channel
+    into both the global floor resolver and subsequent local workers. Non-deferred
+    ``auto`` runs retain their historical per-worker self-calibration.
+    """
+    from luxar.cli.gsplat_ops.batch.denoise_workers import resolve_deferred_batch_floor
+    from luxar.gsplats.batch.manifest import load_manifest, save_manifest
+    from luxar.gsplats.preprocessing.denoise_pipeline import calibrate_all_channels
+
+    if manifest.denoise_h is None:
+        h_values = calibrate_all_channels(
+            input_path=Path(manifest.input_path),
+            n_timepoints=manifest.n_timepoints,
+            n_channels=manifest.n_channels,
+            channel_indices=manifest.channel_indices,
+            timepoint_indices=manifest.timepoint_indices,
+            array_key=manifest.array_key,
+            axes=manifest.axes,
+            calibration_samples=manifest.calibration_samples,
+            patch_size=manifest.denoise_patch_size,
+            search_distance=manifest.denoise_search_distance,
+            backend=manifest.denoise_backend,
+        )
+        manifest.denoise_h_values = {str(key): value for key, value in h_values.items()}
+    save_manifest(manifest, output_dir)
+    resolve_deferred_batch_floor(output_dir)
+    return load_manifest(output_dir)
 
 
 def run_batch_local_orchestration(
@@ -224,6 +260,9 @@ def run_batch_local_orchestration(
     if dry_run:
         aprint("Dry run -- omit --dry-run to actually fit.")
         raise typer.Exit(0)
+
+    if manifest.floor_deferred:
+        manifest = _resolve_local_deferred_floor(manifest, output_dir)
 
     final_path = run_batch_local(
         manifest,
