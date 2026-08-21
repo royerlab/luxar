@@ -1,9 +1,9 @@
 """A Dimension built from numpy scalars must still serialise.
 
-``Dimension.to_dict`` emits ``range``, ``step`` and ``scale`` verbatim, so a
-producer that measures its bounds off an array -- the obvious way to do it --
-used to write values ``json.dumps`` refuses with "Object of type float32 is not
-JSON serializable".
+``Dimension.to_dict`` emits its scalar fields verbatim, so a producer that
+derives values from an array -- the obvious way to do it -- used to write
+values ``json.dumps`` refuses with "Object of type float32 is not JSON
+serializable".
 
 That failure is nastier than it sounds: zarr raises it while SAVING, by which
 point the compiler has already created the store, so the run dies leaving a
@@ -42,6 +42,22 @@ def test_step_and_scale_are_coerced_too() -> None:
     d = Dimension("t", range=(0.0, 1.0), step=np.float64(0.25), scale=np.float32(2.0))
     assert isinstance(d.step, float) and not isinstance(d.step, np.generic)
     assert isinstance(d.scale, float) and not isinstance(d.scale, np.generic)
+    json.dumps(d.to_dict())
+
+
+def test_numpy_boolean_fields_are_json_serialisable() -> None:
+    d = Dimension(
+        "t",
+        range=(0, 5),
+        display=np.bool_(False),
+        discrete=np.bool_(True),
+        cyclic=np.bool_(True),
+        spatial=np.bool_(False),
+    )
+    values = (d.display, d.discrete, d.cyclic, d.spatial)
+    assert values == (False, True, True, False)
+    assert all(isinstance(value, bool) for value in values)
+    assert not any(isinstance(value, np.generic) for value in values)
     json.dumps(d.to_dict())
 
 

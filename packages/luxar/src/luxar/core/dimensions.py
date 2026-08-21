@@ -80,7 +80,7 @@ class Dimension:
     def __post_init__(self) -> None:
         """Validate dimension parameters and auto-determine spatial flag."""
         # Normalise numpy scalars to builtins BEFORE anything else reads them.
-        # `to_dict` emits these three verbatim, and a numpy scalar there makes
+        # `to_dict` emits these fields verbatim, and a numpy scalar there makes
         # the scene unserialisable at save time -- after the compiler has
         # already created the store, so the failure leaves a stub directory
         # rather than nothing (see demo_ppi_flow_field).
@@ -90,7 +90,11 @@ class Dimension:
         # an unpacking error. Non-iterables pass through for the same reason.
         self.range = _as_builtin_range(self.range)
         self.step = _as_builtin(self.step)
+        self.display = _as_builtin(self.display)
+        self.discrete = _as_builtin(self.discrete)
+        self.cyclic = _as_builtin(self.cyclic)
         self.scale = _as_builtin(self.scale)
+        self.spatial = _as_builtin(self.spatial)
 
         # Validate and handle categorical dimensions
         self.categories = _validate_categories(self.categories)
