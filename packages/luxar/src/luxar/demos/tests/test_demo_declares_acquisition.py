@@ -43,6 +43,12 @@ _IS_ITS_OWN_SOURCE = {
         "the volume is evaluated from a closed-form wavefunction, so it has no "
         "acquisition at all"
     ),
+    "demo_storm_3d_microtubules.py": (
+        "the fitted volume is synthesized directly from localization-event photon "
+        "counts and a PSF, so that float32 raster is the source; treating the CSV "
+        "event table as an image acquisition would measure format conversion rather "
+        "than volume compression"
+    ),
 }
 
 #: Demos still to be wired. SHRINKS to empty; entries are work, not exemptions.
