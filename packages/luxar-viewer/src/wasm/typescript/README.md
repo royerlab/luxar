@@ -11,16 +11,16 @@ here automatically — not just when WASM is missing.
 
 ## Files
 
-| File                    | Role                                                                                                                                                                                                                             |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `index.ts`              | Barrel re-exporting every kernel and the `TypeScriptFallback` class implementing the `WasmModule` interface                                                                                                                      |
-| `lines-clipping.ts`     | Liang-Barsky segment clipping, batched position/scalar/color interpolation, segment lengths, and per-endpoint cap suppression; frounds every float step in the Rust op order for exact WASM parity                           |
-| `mesh-culling.ts`       | Whole-triangle nD culling: per-vertex slab membership + face compaction preserving original vertex indices. `Math.fround`s the slab bounds                                                                                       |
-| `gsplats-processing.ts` | Marginal Cholesky factorization, Mahalanobis distance, fused nD→3D projection (`project_gsplats_nd_to_3d`). Frounds every float step in the Rust op order (#1820); exact vs WASM except `exp`/`log`                              |
-| `effective-radii.ts`    | `calculate_effective_radii` — `R_eff = sqrt(R² − D²)` for nD points sliced by a hyperplane. Frounds every float step in the Rust op order (#1820); bit-exact vs WASM                                                             |
-| `decode.ts`             | LUT / quantized / log-scalar / geolog-scalar / per-channel (linear, log, signed-log, geolog) decoders + `decode_broadcasted`; frounds Rust-f32 inputs and arithmetic, with a ≤1-ULP `expm1f` residual tracked by #1843        |
-| `projection.ts`         | nD→3D position extraction (`extract_3d_positions`)                                                                                                                                                                               |
-| `depth-sort.ts`         | `sort_splats_by_depth` — back-to-front splat ordering; frounds every float step in the Rust op order so WASM↔TS parity is exact-permutation                                                                                      |
+| File                    | Role                                                                                                                                                                                                                   |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `index.ts`              | Barrel re-exporting every kernel and the `TypeScriptFallback` class implementing the `WasmModule` interface                                                                                                            |
+| `lines-clipping.ts`     | Liang-Barsky segment clipping, batched position/scalar/color interpolation, segment lengths, and per-endpoint cap suppression; frounds every float step in the Rust op order for exact WASM parity                     |
+| `mesh-culling.ts`       | Whole-triangle nD culling: per-vertex slab membership + face compaction preserving original vertex indices. `Math.fround`s the slab bounds                                                                             |
+| `gsplats-processing.ts` | Marginal Cholesky factorization, Mahalanobis distance, fused nD→3D projection (`project_gsplats_nd_to_3d`). Frounds every float step in the Rust op order (#1820); exact vs WASM except `exp`/`log`                    |
+| `effective-radii.ts`    | `calculate_effective_radii` — `R_eff = sqrt(R² − D²)` for nD points sliced by a hyperplane. Frounds every float step in the Rust op order (#1820); bit-exact vs WASM                                                   |
+| `decode.ts`             | LUT / quantized / log-scalar / geolog-scalar / per-channel (linear, log, signed-log, geolog) decoders + `decode_broadcasted`; frounds Rust-f32 inputs and arithmetic, with a ≤1-ULP `expm1f` residual tracked by #1843 |
+| `projection.ts`         | nD→3D position extraction (`extract_3d_positions`)                                                                                                                                                                     |
+| `depth-sort.ts`         | `sort_splats_by_depth` — back-to-front splat ordering; frounds every float step in the Rust op order so WASM↔TS parity is exact-permutation                                                                            |
 
 ## Public surface
 
@@ -61,15 +61,15 @@ mismatches against the real WASM — and it is tracked as **#1830**.
 
 This directory is **not** uniformly verified. Current state:
 
-| File                    | f32 discipline                                                                                                                             |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `depth-sort.ts`         | Frounded; sort permutation exact vs WASM                                                                                                   |
-| `mesh-culling.ts`       | Slab bounds frounded; parity-tested                                                                                                        |
-| `effective-radii.ts`    | Frounded end to end (#1820); bit-exact vs WASM over a 20k randomized sweep                                                                 |
-| `gsplats-processing.ts` | Frounded end to end (#1820); bit-exact except the `exp`/`log` residual (#1830)                                                             |
-| `decode.ts`             | Frounds Rust-f32 inputs and decode arithmetic; log-scalar output remains within one ULP of Rust's `expm1f` pending #1843                   |
-| `lines-clipping.ts`     | Frounded end to end (#1821); exact parity cases cover slab boundaries and t-parameter accumulation                                        |
-| `projection.ts`         | Pure copy, no arithmetic                                                                                                                   |
+| File                    | f32 discipline                                                                                                           |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `depth-sort.ts`         | Frounded; sort permutation exact vs WASM                                                                                 |
+| `mesh-culling.ts`       | Slab bounds frounded; parity-tested                                                                                      |
+| `effective-radii.ts`    | Frounded end to end (#1820); bit-exact vs WASM over a 20k randomized sweep                                               |
+| `gsplats-processing.ts` | Frounded end to end (#1820); bit-exact except the `exp`/`log` residual (#1830)                                           |
+| `decode.ts`             | Frounds Rust-f32 inputs and decode arithmetic; log-scalar output remains within one ULP of Rust's `expm1f` pending #1843 |
+| `lines-clipping.ts`     | Frounded end to end (#1821); exact parity cases cover slab boundaries and t-parameter accumulation                       |
+| `projection.ts`         | Pure copy, no arithmetic                                                                                                 |
 
 ### Where `Math.fround` is mandatory
 
