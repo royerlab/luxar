@@ -888,6 +888,44 @@ class TestAncestorAuthoredColormapNotShadowed:
             store = zarr.open(str(path), mode="r")
             assert store["layer/gs"].attrs["colormap"] == "inferno"
 
+    def test_empty_colors_still_use_authored_colormap(self) -> None:
+        """An empty colours array encodes no colour channel."""
+        from luxar.io._compiler.gsplat_assembly import (
+            apply_gsplat_group_attrs,
+            write_gsplat_arrays,
+        )
+        from luxar.io._compiler.gsplat_tree import make_dataset_ctx
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.gsplats.zarr"
+            centers, amplitudes, chol = _splat_arrays()
+            store = zarr.open_group(str(path), mode="w")
+            store.attrs["colormap"] = "inferno"
+            leaf = store.require_group("leaf")
+            metadata = write_gsplat_arrays(
+                leaf,
+                centers=centers,
+                amplitudes=amplitudes,
+                cholesky_factors=chol,
+                colors=np.empty((0, 3), dtype=np.uint8),
+                n_splats=len(centers),
+                n_dims=3,
+                cholesky_is_uniform=False,
+                ordering_data=None,
+                ctx=make_dataset_ctx(),
+            )
+            apply_gsplat_group_attrs(
+                leaf,
+                metadata,
+                {},
+                store,
+                scene_tone_mapping=None,
+                lut_tone_mapping_warned=False,
+            )
+
+            assert leaf.attrs["has_colors"] is False
+            assert "colormap" not in leaf.attrs
+
     def test_scene_root_colormap_suppresses_gray(self) -> None:
         """The scene ROOT counts as an ancestor too."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -962,6 +1000,38 @@ class TestAncestorAuthoredColormapNotShadowed:
                 assert "colormap" not in store[f"part_{i}"].attrs, (
                     f"part_{i} manufactured a gray that shadows the root palette"
                 )
+
+    def test_standalone_wrapper_custom_colormap_keeps_lut(self) -> None:
+        """Resolving wrapper attrs must retain the sibling LUT array."""
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.tree import GSplatLeaf, GSplatPartition
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = Path(tmpdir) / "part.gsplats.zarr"
+            centers, amplitudes, chol = _splat_arrays(20)
+            parts = [
+                GSplatLeaf(
+                    additive_sublods=[
+                        AdditiveSubLOD(
+                            centers=centers[i * 10 : (i + 1) * 10],
+                            amplitudes=amplitudes[i * 10 : (i + 1) * 10],
+                            cholesky_factors=chol[i * 10 : (i + 1) * 10],
+                        )
+                    ]
+                )
+                for i in range(2)
+            ]
+            lut = np.arange(256 * 3, dtype=np.uint8).reshape(256, 3)
+            write_gsplats_tree(
+                out,
+                GSplatPartition(children=parts, max_elements=10),
+                root_attrs={"colormap": lut},
+            )
+
+            store = zarr.open(str(out), mode="r")
+            assert store.attrs["colormap"] == "custom"
+            np.testing.assert_array_equal(store["colormap_lut"][:], lut)
 
     def test_standalone_tree_without_root_colormap_still_grays(self) -> None:
         """Unchanged behaviour for a tree whose root authored no palette."""
