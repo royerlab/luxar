@@ -50,7 +50,11 @@ export function decode_quantized_u16(
  * Decode log-space quantized uint8 data to float32.
  * Decoding: expm1(normalized * maxLog)
  */
-export function decode_log_scalar_u8(data: Uint8Array, maxLog: number, output: Float32Array): void {
+export function decode_log_scalar_u8(
+  data: ArrayLike<number>,
+  maxLog: number,
+  output: Float32Array
+): void {
   const limit = Math.fround(maxLog);
   const invMax = Math.fround(limit / 255);
   for (let i = 0; i < data.length; i++) {
@@ -64,7 +68,7 @@ export function decode_log_scalar_u8(data: Uint8Array, maxLog: number, output: F
  * Decode log-space quantized uint16 data to float32.
  */
 export function decode_log_scalar_u16(
-  data: Uint16Array,
+  data: ArrayLike<number>,
   maxLog: number,
   output: Float32Array
 ): void {

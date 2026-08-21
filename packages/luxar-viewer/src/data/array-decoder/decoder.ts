@@ -520,12 +520,10 @@ export class ArrayDecoder {
     let decode: (output: Float32Array) => void;
     if (dtype === 'uint8' || dtype === '<u1' || dtype === '|u1') {
       max_int = 255;
-      const codes = data instanceof Uint8Array ? data : Uint8Array.from(data);
-      decode = (output) => decode_log_scalar_u8(codes, maxLog, output);
+      decode = (output) => decode_log_scalar_u8(data, maxLog, output);
     } else if (dtype === 'uint16' || dtype === '<u2' || dtype === '>u2' || dtype === '|u2') {
       max_int = 65535;
-      const codes = data instanceof Uint16Array ? data : Uint16Array.from(data);
-      decode = (output) => decode_log_scalar_u16(codes, maxLog, output);
+      decode = (output) => decode_log_scalar_u16(data, maxLog, output);
     } else {
       throw new Error(`Unsupported log_scalar dtype: ${dtype}`);
     }
