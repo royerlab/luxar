@@ -324,13 +324,16 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    `BoundingBox`, mapping nD axes onto X/Y/Z via the current
    `displayDims`.
 2. Lift that box to world space through the group's `matrixWorld`
-   (`transformBoundingBox`).
-3. **Off-screen gate**: if the world box is entirely outside the
-   camera frustum, hold the group at its coarsest _ready_ level
-   instead of loading a fine level the renderer would frustum-cull.
-4. Otherwise, project the 8 world corners to NDC and measure how much
-   of the screen the group covers, in the units its `selector` attr
-   names. A DERIVED ladder stamps `screen-area`: the metric is the
+   (`transformBoundingBox`). When any child publishes `lodBounds`, fold
+   a second box the same way for metric sizing, falling back per child
+   to `positionBounds`.
+3. **Off-screen gate**: if the complete-geometry world box is entirely
+   outside the camera frustum, hold the group at its coarsest _ready_
+   level instead of loading a fine level the renderer would
+   frustum-cull. Eviction also keeps using this complete-geometry box.
+4. Otherwise, project the 8 corners of the metric world box to NDC and
+   measure how much of the screen the group covers, in the units its
+   `selector` attr names. A DERIVED ladder stamps `screen-area`: the metric is the
    screen-space AABB's **area** as a fraction of the viewport area
    (`projectBoxAreaFraction` — each NDC axis spans 2, so the fraction is
    the product of the per-axis half-extents after clipping to the
