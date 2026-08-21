@@ -452,8 +452,9 @@ export class LayerStateManager {
         // that isn't would misreport an actively colormapped partition/lod
         // layer as "(direct colors)" in the dropdown and hide it from the
         // legend.
-        const colormap =
-          (node.attrs.colormap as string | undefined) || deriveColormapFromDescendants(node);
+        const composedColormap = getEffectiveAttrs(root, node.path).colormap;
+        const colormap = composedColormap || deriveColormapFromDescendants(node);
+        const scalarWindow = !!colormap || usesColormap(node);
         const supportsColormap = node.type === 'group' || !!node.attrs.has_scalars || !!colormap;
         const colormapScalarRange =
           scalarRange || ampRange || deriveScalarRangeFromDescendants(node);
@@ -489,7 +490,7 @@ export class LayerStateManager {
         // colormap currently wins) so `setColormapWindow` can restore these
         // bounds when the colormap is switched off.
         const colorDataRange = deriveColorRangeFromDescendants(node);
-        const colorRange = usesColormap(node) ? undefined : colorDataRange;
+        const colorRange = scalarWindow ? undefined : colorDataRange;
         const dataMin = Math.min(dataRange[0], displayMin, colorRange?.[0] ?? Infinity);
         const dataMax = Math.max(dataRange[1], displayMax, colorRange?.[1] ?? -Infinity);
 
@@ -625,7 +626,7 @@ export class LayerStateManager {
           supportsColormap,
           scalarDataRange: colormapScalarRange,
           colorDataRange,
-          scalarWindow: usesColormap(node),
+          scalarWindow,
           lodGroupChildCount,
           partCount,
           nestedLodGroupPaths,

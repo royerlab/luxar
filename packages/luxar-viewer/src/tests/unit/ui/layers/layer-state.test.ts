@@ -156,6 +156,37 @@ describe('LayerStateManager', () => {
     expect(mgr.getLayer('d')!.type).toBe('group');
   });
 
+  it('reports an ancestor palette on a nested leaf layer', () => {
+    const graph: SceneNode = {
+      path: '',
+      type: 'scene',
+      attrs: {},
+      hasSpatialIndex: false,
+      children: [
+        {
+          path: 'palette',
+          type: 'group',
+          attrs: { colormap: 'plasma' },
+          hasSpatialIndex: false,
+          children: [
+            {
+              path: 'palette/gs',
+              type: 'gsplats',
+              attrs: { layer: true, amplitude_data_range: [2, 8] },
+              hasSpatialIndex: true,
+            },
+          ],
+        },
+      ],
+    };
+
+    mgr.initFromSceneGraph(graph);
+    const layer = mgr.getLayer('palette/gs')!;
+    expect(layer.colormap).toBe('plasma');
+    expect(layer.scalarWindow).toBe(true);
+    expect(layer.scalarDataRange).toEqual([2, 8]);
+  });
+
   it('honors the `visible` attr for initial visibility', () => {
     const graph: SceneNode = {
       path: '',
