@@ -42,8 +42,8 @@ DEMO_META = {
     "caches": ["laniakea"],
     "outputs": ["cosmicflows_laniakea_full", "cosmicflows_laniakea"],
     "citation": {
-        "short": "Tully et al. 2014 (Laniakea)",
-        "doi": "10.1038/nature13674",
+        "short": "Tully et al. 2023 (Cosmicflows-4); Laniakea, Tully et al. 2014",
+        "doi": "10.3847/1538-4357/ac94d8",
     },
 }
 
