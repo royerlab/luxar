@@ -20,6 +20,14 @@ import {
   decode_broadcasted,
 } from '../../../../wasm/typescript';
 
+const floatBits = new Uint32Array(1);
+const floatValues = new Float32Array(floatBits.buffer);
+
+function toFloatBits(value: number): number {
+  floatValues[0] = value;
+  return floatBits[0];
+}
+
 describe('decode: quantized functions', () => {
   // wasm.md O6 / Phase E4: the four `decode: quantized` tests form a
   // 2x2 grid of {u8, u16} × {linear, log-space}. Each previously used
@@ -91,6 +99,13 @@ describe('decode: quantized functions', () => {
     expect(output[1]).toBeGreaterThan(10);
     expect(output[1]).toBeLessThan(13);
     expect(output[2]).toBeCloseTo(Math.expm1(maxLog), 1);
+  });
+
+  it('matches Rust expm1f at a known host-math mismatch', () => {
+    const output = new Float32Array(1);
+    decode_log_scalar_u16(new Uint16Array([29]), 9, output);
+
+    expect(toFloatBits(output[0])).toBe(0x3b82c31f);
   });
 });
 

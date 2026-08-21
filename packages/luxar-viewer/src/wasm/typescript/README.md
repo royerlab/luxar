@@ -19,6 +19,7 @@ here automatically — not just when WASM is missing.
 | `gsplats-processing.ts` | Marginal Cholesky factorization, Mahalanobis distance, fused nD→3D projection (`project_gsplats_nd_to_3d`)                                                                                         |
 | `effective-radii.ts`    | `calculate_effective_radii` — `R_eff = sqrt(R² − D²)` for nD points sliced by a hyperplane                                                                                                         |
 | `decode.ts`             | LUT / quantized / log-scalar / geolog-scalar / per-channel (linear, log, signed-log, geolog) decoders + `decode_broadcasted`                                                                       |
+| `float32-math.ts`       | Exact TypeScript ports of Rust/WASM float32 transcendentals used where host `Math.*` routines can round to a different f32                                                                         |
 | `projection.ts`         | nD→3D position extraction (`extract_3d_positions`)                                                                                                                                                 |
 | `depth-sort.ts`         | `sort_splats_by_depth` — back-to-front splat ordering; frounds every float step in the Rust op order so WASM↔TS parity is exact-permutation                                                        |
 
@@ -50,7 +51,11 @@ that difference is observable and must be closed with `Math.fround` at each step
 in the Rust operation order:
 
 - `depth-sort.ts` frounds every step so the sort permutation is exact.
-- `decode.ts` frounds the per-channel anchors, which arrive as f32 in WASM.
+- `decode.ts` frounds the log-scalar parameters and arithmetic, then uses
+  `float32-math.ts`'s `expm1f`; rounding host `Math.expm1` afterward can still
+  choose the neighboring f32. The geolog scalar decoders deliberately remain
+  different: Rust evaluates their `exp` in f64 before narrowing, so TypeScript
+  keeps `Math.exp` in f64 too rather than using the f32 port.
 - `mesh-culling.ts` frounds the slab bounds. The f64 difference of two f32 values
   is _exact_ while Rust's f32 subtraction rounds; the gap is under half an ulp,
   but when the rounding goes DOWN the rounded bound is itself a legal f32 vertex

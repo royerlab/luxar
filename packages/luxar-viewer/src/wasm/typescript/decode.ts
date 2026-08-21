@@ -4,6 +4,8 @@
  * TypeScript reference implementation matching decode.rs
  */
 
+import { expm1f } from './float32-math';
+
 /**
  * Decode quantized uint8 data to float32.
  * Maps uint8 [0, 255] to [minVal, maxVal] linearly.
@@ -41,10 +43,11 @@ export function decode_quantized_u16(
  * Decoding: expm1(normalized * maxLog)
  */
 export function decode_log_scalar_u8(data: Uint8Array, maxLog: number, output: Float32Array): void {
-  const invMax = maxLog / 255;
+  const limit = Math.fround(maxLog);
+  const invMax = Math.fround(limit / 255);
   for (let i = 0; i < data.length; i++) {
-    const normalized = data[i] * invMax;
-    output[i] = Math.expm1(normalized);
+    const normalized = Math.fround(data[i] * invMax);
+    output[i] = expm1f(normalized);
   }
 }
 
@@ -56,10 +59,11 @@ export function decode_log_scalar_u16(
   maxLog: number,
   output: Float32Array
 ): void {
-  const invMax = maxLog / 65535;
+  const limit = Math.fround(maxLog);
+  const invMax = Math.fround(limit / 65535);
   for (let i = 0; i < data.length; i++) {
-    const normalized = data[i] * invMax;
-    output[i] = Math.expm1(normalized);
+    const normalized = Math.fround(data[i] * invMax);
+    output[i] = expm1f(normalized);
   }
 }
 

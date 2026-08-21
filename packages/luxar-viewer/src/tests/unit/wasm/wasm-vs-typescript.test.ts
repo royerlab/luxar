@@ -449,6 +449,23 @@ describe('WASM vs TypeScript Comparison', () => {
       expect(arraysAlmostEqual(wasmOutput, tsOutput)).toBe(true);
     });
 
+    it.skipIf(!wasmFilesExist)('log-scalar decoders exactly match across every code', () => {
+      const u8Data = Uint8Array.from({ length: 256 }, (_, code) => code);
+      const u16Data = Uint16Array.from({ length: 65536 }, (_, code) => code);
+      const tsU8 = new Float32Array(u8Data.length);
+      const wasmU8 = new Float32Array(u8Data.length);
+      const tsU16 = new Float32Array(u16Data.length);
+      const wasmU16 = new Float32Array(u16Data.length);
+
+      tsModule.decode_log_scalar_u8(u8Data, 9, tsU8);
+      wasmModule!.decode_log_scalar_u8(u8Data, 9, wasmU8);
+      tsModule.decode_log_scalar_u16(u16Data, 9, tsU16);
+      wasmModule!.decode_log_scalar_u16(u16Data, 9, wasmU16);
+
+      expect(arraysEqual(tsU8, wasmU8)).toBe(true);
+      expect(arraysEqual(tsU16, wasmU16)).toBe(true);
+    });
+
     it.skipIf(!wasmFilesExist)('decode_geolog_scalar_u8 should match', () => {
       // level 0 = reserved exact zero; min/max-anchored true-log grid
       const data = new Uint8Array([0, 1, 50, 128, 255]);
