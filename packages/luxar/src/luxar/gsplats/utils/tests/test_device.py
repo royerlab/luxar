@@ -45,6 +45,11 @@ def test_resolve_auto_honors_accelerator_opt_outs(monkeypatch) -> None:
     assert device.type == "cpu"
 
 
+def test_resolve_auto_is_case_sensitive() -> None:
+    with pytest.raises(RuntimeError, match="device type"):
+        resolve_torch_device("AUTO")
+
+
 def test_resolve_honors_accelerator_opt_outs(monkeypatch) -> None:
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
     monkeypatch.setattr(torch.backends, "mps", _FakeMPSBackend(True), raising=False)

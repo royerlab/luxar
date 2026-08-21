@@ -4,6 +4,9 @@ Use :func:`resolve_torch_device` for default-device auto-selection (CUDA > MPS
 > CPU) and :func:`is_mps_available` for guarded availability checks. Memory
 operations such as ``torch.cuda.empty_cache()`` should keep using ``torch.cuda``
 directly since they are not about device selection.
+
+Here, ``device="auto"`` selects one PyTorch device; ``--gpus auto`` separately
+selects every CUDA device that clears the free-memory floor.
 """
 
 from __future__ import annotations
@@ -43,9 +46,7 @@ def resolve_torch_device(
     ``None``. Auto-selection prefers CUDA over MPS/Metal, and both accelerator
     classes honor their corresponding opt-in flags before falling back to CPU.
     """
-    if device is not None and not (
-        isinstance(device, str) and device.strip().lower() == "auto"
-    ):
+    if device is not None and device != "auto":
         return torch.device(device)
 
     if use_cuda and torch.cuda.is_available():

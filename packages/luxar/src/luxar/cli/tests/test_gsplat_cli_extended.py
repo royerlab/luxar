@@ -2081,6 +2081,29 @@ class TestSliceCommand:
 
 
 class TestCompareCommand:
+    def test_compare_accepts_auto_device(
+        self,
+        runner: CliRunner,
+        sample_gsplats: Path,
+        small_volume_npy: Path,
+    ) -> None:
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "compare",
+                str(sample_gsplats),
+                str(small_volume_npy),
+                "--shape",
+                "16,16,16",
+                "--device",
+                "auto",
+            ],
+        )
+
+        assert result.exit_code == 0, f"compare failed: {result.stdout}"
+        assert "Rendering on auto" not in result.stdout
+
     def test_compare_basic(
         self,
         runner: CliRunner,

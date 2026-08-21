@@ -18,21 +18,6 @@ if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import GSplatData
 
 
-def auto_detect_device() -> str:
-    """Auto-detect the best available device for rendering.
-
-    Priority: CUDA > MPS > CPU
-
-    Returns
-    -------
-    str
-        Device string: "cuda", "mps", or "cpu"
-    """
-    from luxar.gsplats.utils.device import resolve_torch_device
-
-    return str(resolve_torch_device())
-
-
 def render_to_volume_tensor(
     gsplat_data: GSplatData,
     shape: Tuple[int, ...],
