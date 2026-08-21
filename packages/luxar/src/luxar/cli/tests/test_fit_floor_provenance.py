@@ -319,8 +319,12 @@ def test_parallel_content_fit_rejects_an_external_plan_for_another_grid(
         called = True
         return _stub_leaf()
 
+    def _unexpected_floor_scan(*args: Any, **kwargs: Any) -> Any:
+        pytest.fail("grid mismatch must be rejected before floor preprocessing")
+
     monkeypatch.setattr(parallel_module, "fit_planned_parallel", _fake_parallel)
     monkeypatch.setattr(fit_tiled_parallel, "resolve_jobs", lambda *args, **kwargs: 2)
+    monkeypatch.setattr(planner, "resolve_shared_floor", _unexpected_floor_scan)
 
     with pytest.raises(typer.BadParameter, match="does not match the plan grid"):
         planner.run_content_fit(

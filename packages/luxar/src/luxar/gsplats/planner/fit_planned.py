@@ -422,7 +422,7 @@ def fit_planned(
             # stats reach the merge instead of being rebuilt away (#1637).
             regions.append(region)
             region_boxes.append(i)
-        if verbose:
+        if verbose and progress_callback is None:
             from arbol import aprint
 
             aprint(f"  box {i + 1}/{n}: kept {n_kept:,} splats")

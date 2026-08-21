@@ -12,15 +12,30 @@ from arbol import aprint
 from luxar.gsplats.gsplat_data import GSplatData
 
 #: Upper bound, in GiB, on the memory a merged-quality score may hold resident.
-#: Above it the score is skipped and announced. An explicit
-#: ``LUXAR_TILED_QUALITY_MAX_GB`` overrides this ceiling and the free-memory
-#: fraction below.
+#: Above it the score is SKIPPED — and says so out loud, because an archive that
+#: silently carries no PSNR is the failure this scoring exists to end. Override
+#: with ``LUXAR_TILED_QUALITY_MAX_GB`` when the machine can take more, or set it
+#: to ``0`` to decline scoring outright. This is a CEILING, not the budget: the
+#: default is additionally held under a share of the memory actually free (see
+#: :func:`_default_quality_budget_gb`), since a fixed number describes whichever
+#: machine it was written on and not the one running the fit.
 _QUALITY_BUDGET_GB = 24.0
 
-#: Share of currently-free physical memory the default budget may consume.
+#: Share of currently-free physical memory the default budget will commit to a
+#: score. Deliberately well under 1: the peak below is an estimate, the fit
+#: process is holding the merged splats too, and being wrong in this direction
+#: costs a metric while being wrong in the other costs the whole fit.
 _QUALITY_BUDGET_MEM_FRACTION = 0.5
 
-#: Float32 volume equivalents resident at the SSIM scoring peak.
+#: Full-size float32 volumes live at the scoring peak, which sits inside SSIM
+#: rather than at the render: the reconstruction and the reference, plus the
+#: convolution intermediates :func:`luxar.gsplats.metrics._ssim_nd` keeps live
+#: (``_SSIM_PEAK_TENSOR_COUNT``, the same count that function's own tiled
+#: fallback is sized by — and that fallback only engages on CUDA, so on CPU this
+#: is the true peak). Counting only the reconstruction and the reference
+#: under-reports it fourfold, and the shortfall does not merely cost a metric:
+#: scoring runs BEFORE the archive is written, so thrashing or an OOM kill here
+#: loses the whole fit.
 _QUALITY_PEAK_VOLUMES = 8
 
 
@@ -37,7 +52,16 @@ def _available_ram_gb() -> "float | None":
 
 
 def _default_quality_budget_gb() -> float:
-    """The default budget: the ceiling, held under a share of free memory."""
+    """The default budget: the ceiling, held under a share of free memory.
+
+    The ceiling alone is a number about some other machine. Scoring materializes
+    the whole volume — during the fit it is only ever read tile by tile — so on a
+    host smaller than the ceiling the guard would wave through a peak the machine
+    cannot hold, and the OOM kill lands BEFORE the archive is written, losing the
+    finished fit. That is the one outcome this budget exists to prevent, so the
+    default is the smaller of the two. An explicit override still wins outright:
+    the operator knows what the machine can take.
+    """
     available = _available_ram_gb()
     if available is None:  # pragma: no cover - platform
         return _QUALITY_BUDGET_GB
@@ -45,7 +69,12 @@ def _default_quality_budget_gb() -> float:
 
 
 def _quality_budget_gb() -> float:
-    """Resident-memory budget for scoring — the env override, or the default."""
+    """Resident-memory budget for scoring — the env override, or the default.
+
+    A malformed override falls back to the default with a note rather than
+    raising: this runs after every tile has been fitted, so an unparseable
+    environment variable must not be what loses a finished fit.
+    """
     default = _default_quality_budget_gb()
     raw = os.environ.get("LUXAR_TILED_QUALITY_MAX_GB")
     if raw is None:
@@ -54,6 +83,11 @@ def _quality_budget_gb() -> float:
         value = float(raw)
     except ValueError:
         value = math.nan
+    # NaN is the one malformed value that would DISABLE the guard instead of
+    # tripping it: `float("nan")` parses, and every comparison against it is
+    # False, so the over-budget test would silently pass whatever the volume
+    # size. Treated like any other unusable override. `inf` is left alone — it
+    # is a coherent way to say "score it no matter how big".
     if math.isnan(value):
         aprint(
             f"⚠️  Ignoring LUXAR_TILED_QUALITY_MAX_GB={raw!r} (not a usable "
@@ -78,7 +112,16 @@ def _compare_recourse(*, partition: "bool | None") -> str:
 
 
 def announce_unscored_merge(reason: str, *, partition: "bool | None" = False) -> None:
-    """Explain why a merged result carries no whole-volume quality metrics."""
+    """Explain why a merged result carries no whole-volume quality metrics.
+
+    Parameters
+    ----------
+    reason : str
+        The reason scoring was unavailable.
+    partition : bool or None, default False
+        ``False`` when the result is known to be flat, ``True`` when it is a
+        partition, and ``None`` when the caller cannot determine its kind.
+    """
     aprint(
         f"No merged quality metrics: {reason}. {_compare_recourse(partition=partition)}"
     )
@@ -110,15 +153,27 @@ def stamp_merged_quality(
     device: Optional[str],
     verbose: bool,
 ) -> None:
-    """Score the merged reconstruction against the whole reference in place.
+    """Score the MERGED reconstruction against the whole volume, in place.
 
-    Regional scores do not compose after overlap blending or content-box core
-    masking, so this renders the result that will actually be written. The
-    reference is ``volume`` exactly as supplied: a subtracted pedestal is not
-    restored, and per-region denoising is not applied to it. Under denoising,
-    the reconstruction therefore targets denoised data while this reference
-    retains acquisition noise; that is a different measurement from a
-    whole-volume denoise that scores against its own smoothed reference.
+    Each tile already scores itself, but those numbers are about crops of an
+    apodized decomposition: the tiles overlap, so their errors do not compose
+    into the merged one, and none of them can speak for the archive that
+    actually ships. Without this a tiled archive carries no PSNR at all — which
+    is exactly what a published dataset is asked for.
+
+    The reference is ``volume`` exactly as the caller handed it in: the pedestal
+    the tiles subtracted is NOT put back and per-tile denoising is not applied to
+    it, so the score is against the acquisition — the same basis
+    ``luxar gsplat compare`` uses, and the same one the non-tiled path scores a
+    floor-suppressed fit against (its consequences are issue #1173's, not this
+    function's; matching it is what keeps the two paths' numbers comparable).
+    Under ``--denoise`` that parity ends, and not in this path's favor: the tiles
+    reconstruct denoised data while the reference here keeps its noise, so the
+    score is capped by that noise, whereas ``--tiling none`` denoises the whole
+    volume up front and scores against its own smoothed copy. Neither number is
+    wrong, but they are not the same measurement — a gap between them under
+    ``--denoise`` is not a tiling artifact. A lazy source is materialized here — during the fit it
+    is only ever read tile-by-tile — which is what the budget below bounds.
     """
     if merged.n_splats == 0:
         return
@@ -156,6 +211,10 @@ def stamp_merged_quality(
                 )
                 quality = compute_quality_metrics(rendered, reference)
         finally:
+            # Released whether or not the score succeeded: the failure this most
+            # often takes is an OOM inside SSIM, and leaving the peak reserved
+            # would carry it into whatever the caller does next (a `--recipe`
+            # reduction runs on the same device seconds later).
             del rendered, reference
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()

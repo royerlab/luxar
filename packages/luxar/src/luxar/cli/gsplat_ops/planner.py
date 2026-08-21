@@ -315,6 +315,9 @@ def run_content_fit(
         )
 
     vol = _load_vol()
+    loaded_fitplan = FitPlan.from_json(plan) if plan is not None else None
+    if loaded_fitplan is not None:
+        _require_plan_volume_shape(vol, loaded_fitplan)
 
     # ── background floor: ONE level for the whole volume ──
     # Boxes are core-kept and abutting, so a per-box estimate (what forwarding
@@ -353,8 +356,9 @@ def run_content_fit(
     # the parallel staging dir, so concurrent content fits to the SAME output
     # can't clobber each other's plan or in-progress boxes (issue #1040).
     token = _invocation_token()
-    if plan is not None:
-        fitplan = FitPlan.from_json(plan)
+    if loaded_fitplan is not None:
+        fitplan = loaded_fitplan
+        assert plan is not None
         plan_json_path: Path = Path(plan)
     else:
         scan_metric = feature_metric or density.feature_method
@@ -417,8 +421,6 @@ def run_content_fit(
         plan_json_path.parent.mkdir(parents=True, exist_ok=True)
         fitplan.to_json(plan_json_path)
         created_plan = True
-
-    _require_plan_volume_shape(vol, fitplan)
 
     if plan_only:  # --plan-only with an explicit --plan: nothing to compute
         if verbose:
