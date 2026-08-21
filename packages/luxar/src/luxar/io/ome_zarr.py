@@ -196,6 +196,15 @@ class OMEZarrInfo:
     """Path to the zarr store."""
 
 
+# The one reason string for "the store declared `multiscales`, but there is no
+# block in it to read". Shared by :func:`_usable_multiscales` (root) and
+# :func:`_owner_ngff_attrs` (owning group) so the SAME malformed declaration is
+# not reported two different ways depending on which node carries it.
+_EMPTY_MULTISCALES_REASON = (
+    "its `multiscales` attribute is empty or not a list of blocks"
+)
+
+
 def _relative_key(owner: Any, key_path: str) -> Optional[str]:
     """``key_path`` (store-root-relative) re-expressed relative to ``owner``.
 
@@ -258,10 +267,19 @@ def _owner_ngff_attrs(
     the give-up notice say "no OME-Zarr/NGFF metadata found" would be a lie about
     a store whose one fixable detail is that its ``datasets[*].path`` entries do
     not resolve to the array that was selected.
+
+    A PRESENT but falsy ``multiscales`` is that same lie one step earlier, so it
+    is told apart from an absent one and reported with the very reason
+    :func:`_usable_multiscales` gives for the identical declaration sitting on the
+    ROOT — the two must not describe one malformed store differently depending on
+    which node carries it. An explicit ``null`` is the one falsy value that stays
+    "nothing declared", again matching :func:`_usable_multiscales`.
     """
     block = resolve_ngff_attrs(owner_attrs).get("multiscales")
-    if not block:
+    if block is None:
         return None, None
+    if not block:
+        return None, _EMPTY_MULTISCALES_REASON
     if not (_declares_array(owner, arr) if declares is None else declares):
         return None, (
             "the group owning the selected array declares a `multiscales` "
@@ -452,7 +470,7 @@ def _usable_multiscales(
         return None, None
     ms = multiscales[0] if isinstance(multiscales, list) and multiscales else None
     if not isinstance(ms, Mapping):
-        return None, "its `multiscales` attribute is empty or not a list of blocks"
+        return None, _EMPTY_MULTISCALES_REASON
     axes = ms.get("axes")
     if not isinstance(axes, (list, tuple)):
         return None, "its `multiscales` block declares no `axes` list"

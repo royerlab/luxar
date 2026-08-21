@@ -606,6 +606,112 @@ class TestAnImageGroupWithNoArrayIsTerminal:
         # …and the caller can still reach the image it does hold.
         assert discover_ome_zarr_shape(path, array_key="1").shape == (3, 6, 6, 6)
 
+    @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
+    def test_the_auto_route_does_not_blame_a_key_the_caller_never_passed(
+        self, tmp_path: Path, zarr_format: int
+    ) -> None:
+        """No ``--array-key`` was typed, so the message must not quote one.
+
+        ``"0"`` was picked by the OME-NGFF convention, not by the caller. "Array
+        key '0' names a zarr group holding no array" sends the reader hunting
+        their own command line for a ``0`` that is not in it. The keyed spelling,
+        where a key WAS typed, must keep quoting it.
+        """
+        path = tmp_path / "stub_first.zarr"
+        root = open_group(path, mode="w", zarr_format=zarr_format)
+        root.create_group("0")
+        create_array(root.create_group("1"), "0", data=_ramp((3, 6, 6, 6), 99))
+
+        with pytest.raises(ValueError) as auto:
+            discover_ome_zarr_shape(path)
+        assert "OME-NGFF resolution level '0'" in str(auto.value)
+        assert "Array key" not in str(auto.value)
+
+        with pytest.raises(ValueError) as keyed:
+            discover_ome_zarr_shape(path, array_key="0")
+        assert "Array key '0'" in str(keyed.value)
+
+    @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
+    def test_the_terminal_error_names_the_arrays_the_store_does_hold(
+        self, tmp_path: Path, zarr_format: int
+    ) -> None:
+        """Unrecoverable without a key, so the message names keys that WORK.
+
+        ``"0"`` is an empty stub and the real image is at ``"1"``. Listing the
+        root's members (``['0', '1', 'OME']``) leaves the reader to guess which of
+        those is an image and how deep its levels sit; the sweep answers with the
+        key they can paste.
+        """
+        path = tmp_path / "stub_then_real.zarr"
+        root = open_group(path, mode="w", zarr_format=zarr_format)
+        root.create_group("OME")
+        root.create_group("0")
+        create_array(root.create_group("1"), "0", data=_ramp((3, 6, 6, 6), 99))
+
+        with pytest.raises(ValueError) as excinfo:
+            discover_ome_zarr_shape(path)
+        message = str(excinfo.value)
+        assert "Arrays this store does hold: '1/0'" in message
+
+        # And it is a key that actually resolves — the whole point of quoting it.
+        assert discover_ome_zarr_shape(path, array_key="1/0").shape == (3, 6, 6, 6)
+
+    @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
+    def test_a_store_with_no_array_anywhere_says_so_instead_of_suggesting_nothing(
+        self, tmp_path: Path, zarr_format: int
+    ) -> None:
+        """Advice to pass an array_key is unfollowable when the store holds none."""
+        path = tmp_path / "no_arrays.zarr"
+        root = open_group(path, mode="w", zarr_format=zarr_format)
+        root.create_group("0").create_group("res")
+
+        with pytest.raises(ValueError, match="holds no array anywhere"):
+            discover_ome_zarr_shape(path)
+
+
+class TestTheOwnerBlockIsResolvedOnce:
+    """``owner_declares`` exists to spare the owner a SECOND resolution.
+
+    ``_image_group_array`` reports ``declares=False`` only after running
+    ``_declared_levels`` on that very group and finding nothing resolvable. Asking
+    ``_declaring_owner`` to start the walk AT that group re-opens it and re-walks
+    every ``datasets[*].path`` in its block — reintroducing exactly the doubling
+    the plumbed-through fact was introduced to avoid.
+    """
+
+    @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
+    def test_a_stale_block_is_walked_once_not_twice(
+        self, tmp_path: Path, zarr_format: int, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = tmp_path / "stale_block.zarr"
+        root = open_group(path, mode="w", zarr_format=zarr_format)
+        image = root.create_group("0")
+        for level in range(4):
+            create_array(image, str(level), data=_ramp((2, 4, 4, 4)))
+        # A stale hand-written block: four entries, none of which resolve.
+        image.attrs["multiscales"] = _multiscales(
+            ["t", "z", "y", "x"], [f"gone/{level}" for level in range(4)]
+        )
+
+        lookups: List[str] = []
+        original = zarr.Group.__getitem__
+
+        def spy(self: zarr.Group, key: str) -> Any:
+            lookups.append(f"{str(getattr(self, 'path', '') or '/')}::{key}")
+            return original(self, key)
+
+        monkeypatch.setattr(zarr.Group, "__getitem__", spy)
+        info = discover_ome_zarr_shape(path)
+        monkeypatch.undo()
+
+        # The selection is unchanged — the point is the cost, not the answer.
+        assert info.shape == (2, 4, 4, 4)
+        for level in range(4):
+            assert lookups.count(f"0::gone/{level}") == 1, lookups
+        assert len(lookups) == len(set(lookups)), (
+            f"{len(lookups) - len(set(lookups))} repeated lookups: {lookups}"
+        )
+
 
 class TestEveryKeySpellingReportsTheSameOwner:
     """One array, one owner — whatever the caller typed to reach it.
@@ -640,6 +746,45 @@ class TestEveryKeySpellingReportsTheSameOwner:
             assert info.axes == ["t", "z", "y", "x"], key
             assert (info.n_timepoints, info.n_channels) == (2, 1), key
             assert info.voxel_size == (2.0, 0.3, 0.3), key
+
+    @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
+    def test_the_no_key_sweep_reads_the_declaration_a_key_would_have(
+        self, tmp_path: Path, zarr_format: int
+    ) -> None:
+        """No ``"0"`` at the root, so the WHOLE-STORE sweep decides.
+
+        That sweep reports the level's IMMEDIATE PARENT (``img/res``), which
+        declares nothing — the declaring group is ``img``, one further up. Every
+        keyed spelling re-derived the owner and read the declaration; the no-key
+        spelling adopted the sweep's report verbatim, so this one store answered
+        ``['c','z','y','x']`` with no spacing when nothing was typed and
+        ``['t','z','y','x']`` at (7.0, 0.25, 0.25) when anything was — the same
+        selected array either way (``img/res/0``), fanned out over a different
+        axis by ``batch-fit``.
+        """
+        path = tmp_path / "sweep_spellings.zarr"
+        root = open_group(path, mode="w", zarr_format=zarr_format)
+        image = root.create_group("img")
+        levels = image.create_group("res")
+        create_array(levels, "0", data=_ramp((2, 4, 4, 4)))
+        create_array(levels, "1", data=_ramp((2, 2, 2, 2)))
+        image.attrs["multiscales"] = _multiscales(
+            ["t", "z", "y", "x"], ["res/0", "res/1"], scale=[1.0, 7.0, 0.25, 0.25]
+        )
+
+        for key in (None, "img", "img/res", "img/res/0"):
+            info = discover_ome_zarr_shape(path, array_key=key)
+
+            # Pinned against the DECLARED values, not against mutual agreement:
+            # four spellings could agree on the heuristic's guess and still be
+            # wrong about the store.
+            assert info.shape == (2, 4, 4, 4), key
+            assert info.axes == ["t", "z", "y", "x"], key
+            assert (info.n_timepoints, info.n_channels) == (2, 1), key
+            assert info.voxel_size == (7.0, 0.25, 0.25), key
+
+        # …and the array that was selected is the one those values describe.
+        assert tuple(open_volume_lazy(path).shape) == (2, 4, 4, 4)
 
 
 class TestTheOwnerIsAskedWhenTheSelectionNeverDecided:
@@ -772,6 +917,70 @@ class TestSelectionIsDeterministic:
             np.asarray(open_volume_lazy(path)[...]), lowest_path
         )
         np.testing.assert_array_equal(load_volume(path), lowest_path.astype(np.float32))
+
+
+class TestAFalsyOwnerBlockIsStillADeclaration:
+    """Nothing-declared vs declared-but-unusable cannot depend on the NODE.
+
+    The give-up notice's whole job is telling those two apart, and a PRESENT but
+    empty ``multiscales`` is the second one. Reading the owner's block with a bare
+    truthiness test collapsed it into the first, so the identical malformed
+    declaration was reported one way sitting on the root and another sitting on
+    the image group — "no OME-Zarr/NGFF metadata found" being a lie about a store
+    that declared something.
+    """
+
+    @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
+    @pytest.mark.parametrize(
+        "attrs",
+        [{"multiscales": []}, {"ome": {"version": "0.5", "multiscales": []}}],
+        ids=["v04-top-level", "v05-nested"],
+    )
+    def test_an_empty_owner_multiscales_reports_the_same_reason_as_the_root(
+        self,
+        tmp_path: Path,
+        zarr_format: int,
+        attrs: Dict[str, Any],
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        reasons = []
+        for where in ("owner", "root"):
+            path = tmp_path / f"empty_block_{where}.zarr"
+            root = open_group(path, mode="w", zarr_format=zarr_format)
+            image = root.create_group("0")
+            create_array(image, "0", data=_ramp((2, 4, 4, 4)))
+            for key, value in attrs.items():
+                (image if where == "owner" else root).attrs[key] = value
+
+            info = discover_ome_zarr_shape(path)
+            out = capsys.readouterr().out
+
+            assert info.shape == (2, 4, 4, 4), where
+            assert "no OME-Zarr/NGFF metadata found" not in out, where
+            assert "empty or not a list of blocks" in out, where
+            reasons.append(out[out.index("(") : out.index(")") + 1])
+
+        assert reasons[0] == reasons[1]
+
+    @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
+    def test_an_explicit_null_multiscales_is_still_nothing_declared(
+        self, tmp_path: Path, zarr_format: int, capsys: pytest.CaptureFixture
+    ) -> None:
+        """The one falsy value that is NOT a declaration — matching the root rule.
+
+        ``_usable_multiscales`` reads a ``null`` as "the store declared no
+        ``multiscales`` at all", so the owner has to as well or the two nodes
+        disagree again, in the other direction.
+        """
+        path = tmp_path / "null_block.zarr"
+        root = open_group(path, mode="w", zarr_format=zarr_format)
+        image = root.create_group("0")
+        create_array(image, "0", data=_ramp((2, 4, 4, 4)))
+        image.attrs["multiscales"] = None
+
+        discover_ome_zarr_shape(path)
+
+        assert "no OME-Zarr/NGFF metadata found" in capsys.readouterr().out
 
 
 class TestTheRootBlockWinsUnlessTheOwnerDeclaresTheSelectedArray:

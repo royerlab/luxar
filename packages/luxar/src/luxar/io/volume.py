@@ -411,6 +411,16 @@ def _find_all_arrays(
     return results
 
 
+def _largest_first(candidate: Tuple[str, Any, Any]) -> Tuple[int, str]:
+    """Sort key ordering candidates largest-first, ties broken on the key path.
+
+    Split out of :func:`_pick_largest` so a caller that already knows its list is
+    non-empty can ``min()`` directly and get a non-``Optional`` result, without a
+    second copy of the ordering.
+    """
+    return (-int(np.prod(candidate[1].shape)), candidate[0])
+
+
 def _pick_largest(candidates: list) -> Optional[Tuple[str, Any, Any]]:
     """The candidate with the most elements; the LOWEST key path breaks a tie.
 
@@ -426,9 +436,7 @@ def _pick_largest(candidates: list) -> Optional[Tuple[str, Any, Any]]:
     """
     if not candidates:
         return None
-    best: Tuple[str, Any, Any] = min(
-        candidates, key=lambda kv: (-int(np.prod(kv[1].shape)), kv[0])
-    )
+    best: Tuple[str, Any, Any] = min(candidates, key=_largest_first)
     return best
 
 
@@ -579,8 +587,11 @@ def _image_group_array(
         elif isinstance(item, zarr.Group):
             subgroups.append((key_path, item))
     if direct:
-        best = _pick_largest(direct)
-        return None if best is None else (best[0], best[1], best[2], False)
+        # `direct` is non-empty inside this branch, so the ordering always
+        # answers — `_pick_largest`'s empty-list `None` was unreachable here, and
+        # handling it read as though a direct array child could vanish.
+        best = min(direct, key=_largest_first)
+        return best[0], best[1], best[2], False
 
     nested: List[Tuple[str, Any, Any]] = []
     for key_path, subgroup in subgroups:
@@ -589,7 +600,9 @@ def _image_group_array(
     return None if found is None else (found[0], found[1], found[2], None)
 
 
-def _declaring_owner(root: Any, key_path: str, array: Any) -> Tuple[Any, bool]:
+def _declaring_owner(
+    root: Any, key_path: str, array: Any, asked: Any = None
+) -> Tuple[Any, bool]:
     """The NEAREST ancestor of ``key_path`` whose ``multiscales`` declares ``array``.
 
     For a path whose parent the caller does NOT already hold open (an explicit
@@ -601,6 +614,13 @@ def _declaring_owner(root: Any, key_path: str, array: Any) -> Tuple[Any, bool]:
     That is the immediate parent in the ordinary case, but NOT when the parent is
     one of the implicit groups described below: the reported owner is then the
     deepest ancestor that actually opened.
+
+    ``asked`` is the array's immediate parent when the CALLER has already run
+    :func:`_declared_levels` on it and found nothing resolvable
+    (:func:`_image_group_array`'s branch 2 reports exactly that). The walk then
+    starts one level ABOVE it and falls back to it, so the answer is identical
+    while the group's ``multiscales`` is resolved once instead of twice — the
+    doubling the plumbed-through ``owner_declares`` fact exists to avoid.
 
     An explicit ``array_key`` must land on the same owner the auto-selection paths
     report for the same array, or two invocations describe one array differently:
@@ -622,11 +642,13 @@ def _declaring_owner(root: Any, key_path: str, array: Any) -> Tuple[Any, bool]:
     the array itself is already open, so the read still answers.
 
     The final iteration is the store ROOT with no lookup at all, so ``deepest`` is
-    always set by the time the loop ends.
+    always set by the time the loop ends — except when ``asked`` skipped it, in
+    which case ``asked`` IS the root and seeded ``deepest`` already.
     """
     segments = key_path.strip("/").split("/")[:-1]
-    deepest: Any = None
-    for depth in range(len(segments), -1, -1):
+    deepest: Any = asked
+    start = len(segments) - 1 if asked is not None else len(segments)
+    for depth in range(start, -1, -1):
         prefix = "/".join(segments[:depth])
         try:
             group = root[prefix] if prefix else root
@@ -639,8 +661,14 @@ def _declaring_owner(root: Any, key_path: str, array: Any) -> Tuple[Any, bool]:
     return deepest, False
 
 
+# How many alternative array paths the terminal error lists before eliding. A
+# store can hold thousands (every level of every series); the point is to name a
+# usable `--array-key`, not to dump an inventory.
+_MAX_SUGGESTED_ARRAYS = 8
+
+
 def _no_array_in_group_error(
-    group: Any, node: Any, path: Path, key_label: str
+    group: Any, node: Any, path: Path, subject: str
 ) -> ValueError:
     """The error for a group that resolves to no array of its own.
 
@@ -650,36 +678,83 @@ def _no_array_in_group_error(
     ``"0"`` holds nothing but ``labels/`` used to raise this for ``--array-key 0``
     while the very same store, with no key, fell through to the unscoped
     whole-store sweep and silently selected the segmentation MASK.
+
+    Same message, different SUBJECT. ``subject`` is the phrase naming what led
+    here, because only one of the two routes involves a key the caller typed: with
+    no ``--array-key`` at all, "Array key '0' names a zarr group…" sends the reader
+    hunting their command line for a ``0`` they never wrote, when what actually
+    picked ``"0"`` was the OME-NGFF convention.
+
+    The condition is unrecoverable without a key, so the message names the keys
+    that WOULD work: a store whose ``"0"`` is an empty stub with the real image at
+    ``"1"`` otherwise reports only that the root holds ``['0', '1', 'OME']``,
+    leaving the reader to guess which of those is an image and how deep its levels
+    sit. The paths are swept from the store itself, so they are keys that exist —
+    ``labels/`` included, since a mask this rule refuses to select SILENTLY is
+    still a legitimate thing to ask for explicitly.
+
+    That sweep is best-effort: it descends every subgroup, and one of them failing
+    to open (the metadata-less intermediate group :func:`_declaring_owner`
+    tolerates) must not replace the caller's diagnosis with a ``KeyError`` from the
+    code that was only trying to be helpful about it.
     """
+    elsewhere: Optional[List[str]]
+    try:
+        elsewhere = [key_path for key_path, _, _ in _find_all_arrays(node)]
+    except (KeyError, ValueError, OSError, TypeError):
+        # Unswept, which is NOT the same as "there are none" — say neither.
+        elsewhere = None
+    if elsewhere:
+        shown = ", ".join(repr(k) for k in elsewhere[:_MAX_SUGGESTED_ARRAYS])
+        if len(elsewhere) > _MAX_SUGGESTED_ARRAYS:
+            shown += f", … ({len(elsewhere)} in total)"
+        advice = (
+            f" Arrays this store does hold: {shown} — pass one of those as an "
+            f"array_key (--array-key)."
+        )
+    elif elsewhere is None:
+        advice = " — pass an array_key (--array-key) naming an array."
+    else:
+        advice = " That store holds no array anywhere; there is nothing to select."
     return ValueError(
-        f"Array key '{key_label}' names a zarr group holding no array "
+        f"{subject} names a zarr group holding no array "
         f"in {path}. That group holds {sorted(group.keys())}; the "
-        f"store holds {sorted(node.keys())} — pass an array_key "
-        f"(--array-key) naming an array."
+        f"store holds {sorted(node.keys())}.{advice}"
     )
 
 
 def _resolved_group_selection(
     root: Any, found: Tuple[str, Any, Any, Optional[bool]]
 ) -> Tuple[Any, str, Any, Optional[bool]]:
-    """An :func:`_image_group_array` result with its owner resolved the ONE way.
+    """A SEARCH result with its owner resolved the ONE way.
 
-    :func:`_image_group_array` reports the group it happened to search when its
-    own ``multiscales`` did not declare the array (branches 2 and 3), which is not
-    necessarily the group that DECLARES it — an ancestor may. Adopting that report
-    verbatim gave the same underlying array two different owners depending on how
-    the caller spelled the key: for ``datasets[0].path == "res/0"`` on image group
-    ``"0"``, ``--array-key 0/res`` searched the ``res`` subgroup and reported
-    ``res`` (which declares nothing), so that spelling alone fell through to the
-    ndim heuristic while ``0``, ``0/res/0`` and no key at all read the declaration.
+    :func:`_image_group_array` (and the whole-store sweep) reports the group it
+    happened to search when that group's own ``multiscales`` did not declare the
+    array, which is not necessarily the group that DECLARES it — an ancestor may.
+    Adopting that report verbatim gave the same underlying array two different
+    owners depending on how the caller spelled the key: for ``datasets[0].path ==
+    "res/0"`` on image group ``"0"``, ``--array-key 0/res`` searched the ``res``
+    subgroup and reported ``res`` (which declares nothing), so that spelling alone
+    fell through to the ndim heuristic while ``0``, ``0/res/0`` and no key at all
+    read the declaration. The no-key SWEEP had the identical defect one route
+    over: on a store with no ``"0"`` at the root it reported the level's immediate
+    parent, so ``img/res`` won over the ``img`` that declared it and the no-key
+    spelling alone lost the axes and voxel size.
 
     So whenever the search did not itself find a declaration (``declares`` is not
     ``True``), the owner is re-derived with :func:`_declaring_owner` — the same
-    rule the explicit-array-key branch uses — and the two spellings converge.
+    rule the explicit-array-key branch uses — and every spelling converges.
+
+    ``declares is False`` is stronger than ``None``: it means the search ALREADY
+    ran :func:`_declared_levels` on the reported owner and found nothing there, so
+    that group is handed over as ``asked`` and the walk resumes above it rather
+    than resolving its block a second time.
     """
     key_path, array, owner, declares = found
     if declares is not True:
-        owner, declares = _declaring_owner(root, key_path, array)
+        owner, declares = _declaring_owner(
+            root, key_path, array, asked=owner if declares is False else None
+        )
     return array, key_path, owner, declares
 
 
@@ -717,7 +792,7 @@ def _keyed_zarr_array(
     # handing back a Group whose `.shape` the caller is about to read.
     found = _image_group_array(selected, key)
     if found is None:
-        raise _no_array_in_group_error(selected, node, path, array_key)
+        raise _no_array_in_group_error(selected, node, path, f"Array key {array_key!r}")
     return _resolved_group_selection(node, found)
 
 
@@ -746,16 +821,23 @@ def _auto_zarr_array(node: Any, path: Path) -> Tuple[Any, str, Any, Optional[boo
             # intent this branch exists to preserve. The same store already
             # raised for an explicit `--array-key 0`, so answering three
             # different ways depending on the spelling was the real defect.
-            raise _no_array_in_group_error(level_zero, node, path, "0")
+            # Named as the CONVENTION, not as a key: nothing was passed, so
+            # "Array key '0'" would send the reader hunting their command line.
+            raise _no_array_in_group_error(
+                level_zero, node, path, "The OME-NGFF resolution level '0'"
+            )
         return _resolved_group_selection(node, found)
 
     # Largest array anywhere in the group, searching recursively into
-    # sub-groups (e.g. h2afva/fused, mezzo/fused). Nothing here inspected the
-    # owner's `multiscales`, so the declares fact is UNDETERMINED.
+    # sub-groups (e.g. h2afva/fused, mezzo/fused). The sweep reports the array's
+    # IMMEDIATE PARENT and inspected nobody's `multiscales`, so the owner goes
+    # through the same resolution every other route uses — otherwise the declaring
+    # group being one level up (levels at `img/res/0` declared by `img`) makes this
+    # spelling, and only this spelling, fall through to the ndim heuristic.
     largest = _largest_array(node)
     if largest is None:
         raise ValueError(f"No arrays found in zarr group: {path}")
-    return largest[1], largest[0], largest[2], None
+    return _resolved_group_selection(node, (largest[0], largest[1], largest[2], None))
 
 
 def _select_zarr_array(
@@ -797,10 +879,14 @@ def _select_zarr_array(
     owner DECLARES the chosen array as one of its own levels.
 
     The owner is the array's immediate parent, except for a DECLARED level, where
-    it is the group whose ``multiscales`` block declared it. That is resolved by
-    ONE rule wherever the search did not find the declaration itself
-    (:func:`_declaring_owner`, via :func:`_resolved_group_selection`) — two rules
-    gave the same array different owners depending on how the key was spelled.
+    it is the group whose ``multiscales`` block declared it. EVERY route that does
+    not find the declaration itself resolves that by the ONE rule
+    (:func:`_declaring_owner`, reached through :func:`_resolved_group_selection`
+    for the two searches and called directly for an explicit key that names an
+    array) — the explicit-key branch, the image-group branch and the whole-store
+    sweep alike. Anything less than all of them is not a rule: each route left out
+    gave the same array a different owner, and so a different set of axes and a
+    different voxel size, decided by nothing but how the key was spelled.
 
     ``owner_declares`` is the SELECTION's own answer to
     :func:`_declares_array`, plumbed through rather than re-derived: resolving a

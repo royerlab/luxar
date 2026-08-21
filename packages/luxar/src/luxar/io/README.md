@@ -399,11 +399,17 @@ a *different series*, both silently, and both on a store that already raised for
 an explicit `--array-key 0`. The whole-store fallback is therefore reached only
 when there is no `"0"` key at all (the `h2afva/fused` layout), and it sweeps every
 group recursively, `labels/` included, as it always has. A store with no array
-anywhere is still a clear `ValueError`, naming the key and what the store does
-hold. Whichever spelling reaches an array — no key, the image group, an
-intermediate group, or the level itself — its **owner** is resolved by one rule
-(the nearest ancestor whose `multiscales` declares it), so all of them describe
-the store the same way.
+anywhere is still a clear `ValueError`, naming what led there — the key, or the
+OME-NGFF `"0"` convention when no key was passed, since blaming a key the caller
+never typed sends them hunting their own command line — what the store does hold,
+and the array keys that *would* work. Whichever spelling reaches an array — no
+key at all (the whole-store sweep included, which reports the level's immediate
+parent), the image group, an intermediate group, or the level itself — its
+**owner** is resolved by one rule (the nearest ancestor whose `multiscales`
+declares it), so all of them describe the store the same way. Leaving any single
+route out of that is not a rule: the one left out gives the same array a
+different owner, hence different axes and a different voxel size, decided by
+nothing but the spelling.
 
 These are domain-layer helpers (no CLI dependency); the gsplat CLI re-exports
 them. Dimension inference from a splat bounding box lives in
