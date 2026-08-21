@@ -567,9 +567,10 @@ export function project_gsplats_nd_to_3d(
       // Consequence worth stating plainly: the VISIBLE SET can still differ
       // between the two backends for splats sitting exactly on the shell. At
       // production defaults (`GSPLAT_DEFAULT_TRUNCATION_RADIUS` 2.75,
-      // `MIN_AMPLITUDE` 1e-6), 200 000 splats placed with their hidden
-      // coordinate in [2.7495, 2.7505] emit 94 550 from WASM and 94 540 from
-      // this backend — 10 splats apart. The f32 rounding makes that class much
+      // `MIN_AMPLITUDE` 1e-6), 200 000 splats with amplitudes uniform in
+      // [0.2, 1.2] and their hidden coordinate in [2.7495, 2.7505] emit 94 550
+      // from WASM and 94 540 from this backend — 10 splats apart. The f32
+      // rounding makes that class much
       // rarer (it used to reach any splat whose amplitude sat within thousands
       // of ulps of the gate); it does not remove it, and it cannot while `exp`
       // differs at all. Do not write a test that asserts count equality as a

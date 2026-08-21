@@ -1255,15 +1255,33 @@ describe('WASM vs TypeScript Comparison', () => {
 
     function maxUlp(ts: ArrayLike<number>, wasm: ArrayLike<number>): number {
       let m = 0;
-      for (let i = 0; i < ts.length; i++) m = Math.max(m, ulpDistance(ts[i], wasm[i]));
+      const n = Math.max(ts.length, wasm.length);
+      for (let i = 0; i < n; i++) {
+        if (i >= ts.length || i >= wasm.length) return Infinity;
+        m = Math.max(m, ulpDistance(ts[i], wasm[i]));
+      }
       return m;
     }
 
     function maxAbs(ts: ArrayLike<number>, wasm: ArrayLike<number>): number {
       let m = 0;
-      for (let i = 0; i < ts.length; i++) m = Math.max(m, Math.abs(ts[i] - wasm[i]));
+      const n = Math.max(ts.length, wasm.length);
+      for (let i = 0; i < n; i++) {
+        if (i >= ts.length || i >= wasm.length) return Infinity;
+        m = Math.max(m, Math.abs(ts[i] - wasm[i]));
+      }
       return m;
     }
+
+    it('metric helpers reject a length mismatch on either side', () => {
+      const shorter = new Float32Array([1]);
+      const longer = new Float32Array([1, 2]);
+
+      expect(maxUlp(shorter, longer)).toBe(Infinity);
+      expect(maxUlp(longer, shorter)).toBe(Infinity);
+      expect(maxAbs(shorter, longer)).toBe(Infinity);
+      expect(maxAbs(longer, shorter)).toBe(Infinity);
+    });
 
     /**
      * `invOneMinusC` for a given truncation radius, in the kernel's own
@@ -1946,7 +1964,7 @@ describe('WASM vs TypeScript Comparison', () => {
         expect(Array.from(w.centers.subarray(0, 3))).toEqual([1, 0, 0]);
         // Marginal over {dim 0} alone is [L00] = 2.5; both phantom diagonals
         // take that same value, and every off-diagonal is 0.
-        expect(w.chol[0]).toBeCloseTo(2.5, 6);
+        expect(w.chol[0]).toBe(2.5);
         expect(w.chol[1]).toBe(0);
         expect(w.chol[3]).toBe(0);
         expect(w.chol[4]).toBe(0);
