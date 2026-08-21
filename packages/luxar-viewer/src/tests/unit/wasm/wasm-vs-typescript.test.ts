@@ -1052,6 +1052,140 @@ describe('WASM vs TypeScript Comparison', () => {
   // LINES CLIPPING MODULE
   // ============================================================================
   describe('lines_clipping functions', () => {
+    it.skipIf(!wasmFilesExist)('agrees exactly at a sub-ulp f32 slab boundary', () => {
+      const slice = Math.fround(1.0);
+      const tol = Math.fround(0.1);
+      const exactBound = slice - tol;
+      const f32Bound = Math.fround(exactBound);
+
+      expect(f32Bound).toBeLessThan(exactBound);
+
+      const p1 = new Float32Array([0, 0, 0, f32Bound]);
+      const p2 = new Float32Array([1, 1, 1, slice]);
+      const slicePos = new Float32Array([0, 0, 0, slice]);
+      const tolerance = new Float32Array([1e10, 1e10, 1e10, tol]);
+      const displayDims = new Uint32Array([0, 1, 2]);
+
+      const tsSingle = tsModule.clip_segment_single(p1, p2, slicePos, tolerance, displayDims, 4);
+      const wasmSingle = wasmModule!.clip_segment_single(
+        p1,
+        p2,
+        slicePos,
+        tolerance,
+        displayDims,
+        4
+      );
+      expect(Array.from(tsSingle)).toEqual(Array.from(wasmSingle));
+
+      const positions = new Float32Array([...p1, ...p2]);
+      const segments = new Uint32Array([0, 1]);
+      const tsVisibility = new Uint8Array(1);
+      const tsT1 = new Float32Array(1);
+      const tsT2 = new Float32Array(1);
+      const wasmVisibility = new Uint8Array(1);
+      const wasmT1 = new Float32Array(1);
+      const wasmT2 = new Float32Array(1);
+
+      const tsCount = tsModule.clip_segments_batch(
+        positions,
+        segments,
+        slicePos,
+        tolerance,
+        displayDims,
+        4,
+        1,
+        tsVisibility,
+        tsT1,
+        tsT2
+      );
+      const wasmCount = wasmModule!.clip_segments_batch(
+        positions,
+        segments,
+        slicePos,
+        tolerance,
+        displayDims,
+        4,
+        1,
+        wasmVisibility,
+        wasmT1,
+        wasmT2
+      );
+
+      expect(tsCount).toBe(wasmCount);
+      expect(Array.from(tsVisibility)).toEqual(Array.from(wasmVisibility));
+      expect(Array.from(tsT1)).toEqual(Array.from(wasmT1));
+      expect(Array.from(tsT2)).toEqual(Array.from(wasmT2));
+    });
+
+    it.skipIf(!wasmFilesExist)('matches f32 reciprocal and t-range accumulation exactly', () => {
+      const positions = new Float32Array([
+        0, 0, 0, -0.2653183341026306, -0.5240607261657715, 1, 1, 1, 0.3167182207107544,
+        -0.13231058418750763,
+      ]);
+      const segments = new Uint32Array([0, 1]);
+      const slicePos = new Float32Array(5);
+      const tolerance = new Float32Array([
+        1e10, 1e10, 1e10, 0.23722794651985168, 0.35342466831207275,
+      ]);
+      const displayDims = new Uint32Array([0, 1, 2]);
+      const p1 = positions.subarray(0, 5);
+      const p2 = positions.subarray(5, 10);
+      const dv = Math.fround(p2[4] - p1[4]);
+      const numerator = Math.fround(-tolerance[4] - p1[4]);
+      const rustOrderT = Math.fround(numerator * Math.fround(1.0 / dv));
+      const directDivisionT = Math.fround((-tolerance[4] - p1[4]) / (p2[4] - p1[4]));
+
+      expect(rustOrderT).not.toBe(directDivisionT);
+
+      const tsSingle = tsModule.clip_segment_single(p1, p2, slicePos, tolerance, displayDims, 5);
+      const wasmSingle = wasmModule!.clip_segment_single(
+        p1,
+        p2,
+        slicePos,
+        tolerance,
+        displayDims,
+        5
+      );
+      expect(Array.from(tsSingle)).toEqual(Array.from(wasmSingle));
+
+      const tsVisibility = new Uint8Array(1);
+      const tsT1 = new Float32Array(1);
+      const tsT2 = new Float32Array(1);
+      const wasmVisibility = new Uint8Array(1);
+      const wasmT1 = new Float32Array(1);
+      const wasmT2 = new Float32Array(1);
+
+      const tsCount = tsModule.clip_segments_batch(
+        positions,
+        segments,
+        slicePos,
+        tolerance,
+        displayDims,
+        5,
+        1,
+        tsVisibility,
+        tsT1,
+        tsT2
+      );
+      const wasmCount = wasmModule!.clip_segments_batch(
+        positions,
+        segments,
+        slicePos,
+        tolerance,
+        displayDims,
+        5,
+        1,
+        wasmVisibility,
+        wasmT1,
+        wasmT2
+      );
+
+      expect(tsCount).toBe(wasmCount);
+      expect(Array.from(tsVisibility)).toEqual(Array.from(wasmVisibility));
+      expect(Array.from(tsT1)).toEqual(Array.from(wasmT1));
+      expect(Array.from(tsT2)).toEqual(Array.from(wasmT2));
+    });
+
     it.skipIf(!wasmFilesExist)('clip_segment_single should match', () => {
       const p1 = new Float32Array([0, 0, 0, 0]);
       const p2 = new Float32Array([10, 10, 10, 10]);

@@ -81,8 +81,8 @@ export function clip_segment_single(
 
     const tol = tolerance[dim];
     const sliceCenter = slicePosition[dim];
-    const sliceMin = sliceCenter - tol;
-    const sliceMax = sliceCenter + tol;
+    const sliceMin = Math.fround(sliceCenter - tol);
+    const sliceMax = Math.fround(sliceCenter + tol);
 
     const v1 = p1[dim];
     const v2 = p2[dim];
@@ -114,13 +114,17 @@ export function clip_segment_single(
     }
 
     // Compute intersection parameters
-    const dv = v2 - v1;
+    const dv = Math.fround(v2 - v1);
     if (Math.abs(dv) < SEGMENT_PARALLEL_EPSILON) {
       continue; // Parallel to slice
     }
 
-    const tMin = (sliceMin - v1) / dv;
-    const tMax = (sliceMax - v1) / dv;
+    // Match each f32 operation in the Rust kernel. In particular, Rust rounds
+    // the reciprocal before multiplying; a single JS division can differ by
+    // one ulp and then change the accumulated range or its early-out.
+    const invDv = Math.fround(1.0 / dv);
+    const tMin = Math.fround(Math.fround(sliceMin - v1) * invDv);
+    const tMax = Math.fround(Math.fround(sliceMax - v1) * invDv);
 
     // Clip t1 (entry) and t2 (exit)
     if (dv > 0) {
@@ -190,8 +194,8 @@ export function clip_segments_batch(
 
       const tol = tolerance[dim];
       const sliceCenter = slicePosition[dim];
-      const sliceMin = sliceCenter - tol;
-      const sliceMax = sliceCenter + tol;
+      const sliceMin = Math.fround(sliceCenter - tol);
+      const sliceMax = Math.fround(sliceCenter + tol);
 
       const v1Val = positions[p1Offset + dim];
       const v2Val = positions[p2Offset + dim];
@@ -219,13 +223,14 @@ export function clip_segments_batch(
         }
       }
 
-      const dv = v2Val - v1Val;
+      const dv = Math.fround(v2Val - v1Val);
       if (Math.abs(dv) < SEGMENT_PARALLEL_EPSILON) {
         continue;
       }
 
-      const tMin = (sliceMin - v1Val) / dv;
-      const tMax = (sliceMax - v1Val) / dv;
+      const invDv = Math.fround(1.0 / dv);
+      const tMin = Math.fround(Math.fround(sliceMin - v1Val) * invDv);
+      const tMax = Math.fround(Math.fround(sliceMax - v1Val) * invDv);
 
       if (dv > 0) {
         t1 = maxIgnoringNaN(t1, tMin);
