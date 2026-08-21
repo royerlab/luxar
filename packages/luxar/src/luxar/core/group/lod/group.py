@@ -141,8 +141,9 @@ if TYPE_CHECKING:
 #:    keep the legacy selector, so this constant IS their ceiling);
 #: 2. automatically, via :func:`partitioned_coverage_fractions` — what every
 #:    partition-bound producer derives (the ``adaptive`` / ``overview`` gsplat
-#:    recipes, the two gsplat writers' topology-aware fallback, and the scene
-#:    adders through :func:`derive_coverage_fractions`);
+#:    recipes, the two gsplat writers' topology-aware fallback, scene adders
+#:    inserted under a partition ancestor, and the Points overview composition
+#:    after it verifies a multi-part fine branch);
 #: 3. a hand-authored per-child ``coverage_fraction=`` on ``add_lod_group`` (the
 #:    shape ``examples/partition_of_lod_example.py`` builds), for which
 #:    :func:`validate_lod_group` is the only guard — it bypasses the resolvers

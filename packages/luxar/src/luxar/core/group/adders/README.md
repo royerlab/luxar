@@ -121,8 +121,8 @@ per-case explanation.
 
 Each `*_impl` walks the same ordered decision tree. Above all of it, as the first
 statement inside each of the four `try` blocks — above every consumer of `attrs`,
-and below only the argument-composition refusals `points.py`, `lines.py` and
-`mesh.py` raise ahead of their `try` (which judge `partition` /
+and below only the argument-composition refusals `lines.py` and `mesh.py` raise
+ahead of their `try` (which judge `partition` /
 `substitutive_lod` / `additive_lod` against each other and never touch these two
 keys) — sits `strip_absent_attr_kwargs(attrs, ABSENT_WHEN_NONE_RENDER_ATTRS)`: a
 present-but-`None` `colormap` or `coverage_fraction` is deleted so it means
@@ -200,12 +200,15 @@ signatures and can never reach `**attrs`.
    `kind=lod` group. Before that wrapper is written, validate an explicit
    `extend_to_all` once against the scene; `None` remains child-only because its
    candidate analysis warns once per written child. Fires before
-   (auto-)partition.
+   (auto-)partition. For Points, an explicit `partition=` is resolved here and
+   becomes the finest child of an overview LOD; a one-part result keeps the
+   ordinary whole-object ladder.
 7. **Resolve auto-partition** via `resolve_auto_partition(scene, n, partition)`
    — an opt-in compiler heuristic (default off). A user-explicit `partition=`
    always wins. (Lines does not yet wire the auto-partition heuristic; it
    honors only explicit `partition=`.)
-8. **Partition branch** (when `partition` is set and `D >= 2`): run a BSP
+8. **Partition branch** (when `partition` is set and `D >= 2`, except the Points
+   overview composition already handled in step 6): run a BSP
    (`median` / `midpoint` / `sah`) capped at `max_elements`, and if it yields
    more than one part, validate an explicit `extend_to_all` immediately before
    delegating to the partition wrapper. The preflight sits below partition-spec,

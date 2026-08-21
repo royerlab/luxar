@@ -97,7 +97,8 @@ def add_lines_impl(
     if substitutive_lod is not None and partition is not None:
         raise ValueError(
             "partition= and substitutive_lod= cannot be combined yet "
-            "(partition-of-substitutive is not implemented). Use one or the other."
+            "(Points supports a global overview LOD above partitioned fine detail; "
+            "Lines does not implement that topology yet). Use one or the other."
         )
     try:
         # "An explicit None means absent" (#1574), applied ONCE here rather than
