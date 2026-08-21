@@ -309,13 +309,31 @@ def _run(
         node_name=None,
         levels=2,
         compression_factor=4,
-        method="auto",
+        method="cluster",
         overwrite=overwrite,
     )
 
 
 class TestMeshLod:
     """`luxar mesh lod` — a scene's mesh node rewritten as a `kind=lod` ladder."""
+
+    def test_explicit_qem_builds_a_ladder(self, tmp_path: Path) -> None:
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+
+        source = tmp_path / "src.luxar.zarr"
+        _write_source(source)
+        out = tmp_path / "out.luxar.zarr"
+        counts = run_lod(
+            input_path=source,
+            output_path=out,
+            node_name=None,
+            levels=2,
+            compression_factor=4,
+            method="qem",
+            overwrite=False,
+        )
+        assert len(counts) == 3
+        assert LuxarScene.load(out).get_node_metadata("surf")["kind"] == "lod"
 
     def test_the_source_transform_and_appearance_survive_the_rewrite(
         self, tmp_path: Path
@@ -383,8 +401,8 @@ class TestMeshLod:
     ) -> None:
         """`--overwrite` used to delete the destination before validating anything.
 
-        So `--subst-method qem` (a real name, not yet a real tier) removed the
-        output and only then exited 1, having written nothing in its place.
+        So an invalid `--subst-method` removed the output and only then exited 1,
+        having written nothing in its place.
         """
         from luxar.cli.mesh_ops.lod_commands import run_lod
 
@@ -395,6 +413,41 @@ class TestMeshLod:
         (out / "keepme.txt").write_text("previous output")
 
         with pytest.raises(ValueError, match="method"):
+            run_lod(
+                input_path=source,
+                output_path=out,
+                node_name=None,
+                levels=2,
+                compression_factor=4,
+                method="bogus",
+                overwrite=True,
+            )
+        assert (out / "keepme.txt").read_text() == "previous output"
+
+    def test_two_dimensional_qem_refusal_leaves_existing_output_intact(
+        self, tmp_path: Path
+    ) -> None:
+        from luxar import Dimension, Dimensions, LuxarZarrCompiler
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+
+        source = tmp_path / "src.luxar.zarr"
+        vertices, faces = _grid_mesh()
+        dimensions = Dimensions(
+            [
+                Dimension("x", unit="um", display=True),
+                Dimension("y", unit="um", display=True),
+                Dimension("t", unit="s", display=False, discrete=True),
+            ]
+        )
+        with LuxarZarrCompiler(source) as compiler:
+            scene = compiler.create_scene(dimensions=dimensions)
+            scene.add_mesh("surf", vertices, faces)
+
+        out = tmp_path / "out.luxar.zarr"
+        out.mkdir()
+        (out / "keepme.txt").write_text("previous output")
+
+        with pytest.raises(ValueError, match="requires at least 3 coarsening"):
             run_lod(
                 input_path=source,
                 output_path=out,
@@ -1310,7 +1363,7 @@ class TestMeshLod:
     ) -> None:
         """Reviewer round 2: the drop report must sit AFTER the validators.
 
-        `--method qem` aborts before `add_mesh` is ever called and before
+        An invalid method aborts before `add_mesh` is ever called and before
         anything is written; the drop warnings, printed earlier in the
         function, used to fire anyway and announce drops that never
         happened.
@@ -1333,7 +1386,7 @@ class TestMeshLod:
                 node_name=None,
                 levels=2,
                 compression_factor=4,
-                method="qem",
+                method="bogus",
                 overwrite=False,
             )
 
@@ -1519,11 +1572,8 @@ class TestMeshLodOutputPaths:
 def test_every_method_named_in_the_help_EXAMPLES_is_a_real_method() -> None:
     """A copy-pasteable example must not name a method the command rejects.
 
-    `luxar mesh lod --help` advertised `--subst-method qem`, and
-    `MESH_SUBSTITUTIVE_METHODS` is `{"auto", "cluster"}` — so the one example a
-    user is most likely to copy failed with a validation error. `qem` is a real
-    algorithm the docs discuss as a possible second tier (#1348); it is simply not
-    implemented, and the example outlived the plan.
+    This guards every copy-pasteable `--subst-method` example against drifting
+    away from the methods the command actually accepts.
 
     Derived from the docstring rather than pinning the current text, so the
     example set can grow freely and only an INVALID method fails. The help text is

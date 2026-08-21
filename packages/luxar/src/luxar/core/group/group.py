@@ -383,7 +383,7 @@ class Group(Node):
         finest child is the original. Its vocabulary is shorter than the sibling
         adders' — no ``truncation_radius`` / ``max_aspect`` / ``device`` / ``seed``,
         because those exist only for geometries that coarsen by lifting to gsplats,
-        and ``method`` is ``{'auto', 'cluster'}`` rather than the Gaussian-mixture
+        and ``method`` is ``{'auto', 'cluster', 'qem'}`` rather than the Gaussian-mixture
         reducers. See :func:`luxar.core.group.lod.mesh.resolve_substitutive_axis_mesh`.
 
         ``partition`` IS supported too. Returns the ``kind=partition`` wrapper
