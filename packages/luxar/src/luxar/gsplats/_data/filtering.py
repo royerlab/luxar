@@ -340,6 +340,17 @@ def _stats_after_content_change(
     return refresh_reduction_lod_stats(result, source)
 
 
+def _substitutive_counts_changed(
+    before: "_GSplatDataOps", after: "_GSplatDataOps"
+) -> bool:
+    before_levels = before.substitutive_levels
+    after_levels = after.substitutive_levels
+    return len(before_levels) != len(after_levels) or any(
+        old.n_splats_total != new.n_splats_total
+        for old, new in zip(before_levels, after_levels)
+    )
+
+
 def _is_crop(bbox: object, n_before: int, n_after: int) -> bool:
     """Whether a filter actually RESTRICTED the region the splats represent.
 
@@ -670,7 +681,7 @@ class FilteringMixin(_GSplatDataOps):
             # the key stamped just below (the single-level path gets the same order
             # for free, scrubbing inside `self.filter(mask)`).
             out = _stats_after_content_change(
-                out, changed=out.n_splats != self.n_splats, source=self
+                out, changed=_substitutive_counts_changed(self, out), source=self
             )
             out.stats.update(
                 {

@@ -1,4 +1,15 @@
-"""Lightweight artifact-local Gaussian self-energy measurements."""
+"""Lightweight artifact-local Gaussian self-energy measurements.
+
+The viewer combines each level's measured approximation quality ``Q`` with its
+additive-prefix energy fraction ``e(k)``. Partition aggregation weights those
+qualities by the finest content's self-energy ``w``. Amplitudes use the same
+alpha-effective ``A·α`` convention as rendering, so transparent splats carry no
+energy weight.
+
+This module re-derives ``Σ aᵢ²·π^(D/2)·|Σᵢ|^(1/2)`` instead of importing
+``lod._kernels.gaussian_self_energy_numpy`` because ``_kernels`` imports Torch at
+module scope and ordinary filtering/reduction paths must remain Torch-free.
+"""
 
 from __future__ import annotations
 

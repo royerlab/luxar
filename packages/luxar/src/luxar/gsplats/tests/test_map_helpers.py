@@ -58,7 +58,7 @@ def test_map_additive_advances_offset_and_preserves_structure() -> None:
     assert np.array_equal(out.amplitudes, expected_amps)
     # per-sub-LOD stats carried through
     assert [lod.stats["pass_index"] for lod in out.additive_sublods] == [0, 1, 2]
-    assert out._finest_leaf().meta["coverage_fraction"] == 0.75
+    assert "coverage_fraction" not in out._finest_leaf().meta
 
 
 def _pyramid() -> GSplatData:

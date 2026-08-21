@@ -807,11 +807,10 @@ store must apply both rules:
   level's stamps are statements about that coarse level and a plain accessor keeps
   them exactly as authored; the scene-authoring path builds every coarse child of
   a `kind=lod` group through `at_substitutive` and copies those numbers onto it. A
-  content-changing rewrite, however, **recomputes** the counts, e(k), the
-  group-consistent finest-content w and any authored Q from the rewritten
-  artifact. It does not drop the pair: `gsplat annotate-quality` writes a
-  leaf-local `reference_energy` only when none is present, so deleting w would
-  license a group-inconsistent replacement that then looks correctly stamped.
+  content-changing rewrite, however, **recomputes** the counts, e(k), and the
+  group-consistent finest-content w from the rewritten artifact. It removes
+  stale Q rather than hiding its expensive Torch kNN measurement inside ordinary
+  filtering; `gsplat annotate-quality --with-quality` restores it explicitly.
   A `--refine l2|volume` level's `level_stats.refine_stats` (`mse_seed` /
   `mse_refit`) is source-volume measured and cannot be remeasured by a rewriter;
   a reduction removes that nested block while keeping the descriptive `refine`

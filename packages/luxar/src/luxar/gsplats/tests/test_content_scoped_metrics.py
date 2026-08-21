@@ -218,6 +218,31 @@ def _pyramid() -> GSplatData:
     )
 
 
+def _replace_level_amplitudes(
+    data: GSplatData, level_index: int, amplitudes: List[float]
+) -> GSplatData:
+    levels = data.substitutive_levels
+    level = levels[level_index]
+    lod = level.additive_sublods[0]
+    levels[level_index] = SubstitutiveLevel(
+        additive_sublods=[
+            AdditiveSubLOD(
+                centers=lod.centers,
+                amplitudes=np.asarray(amplitudes, dtype=np.float32),
+                cholesky_factors=lod.cholesky_factors,
+                colors=lod.colors,
+                stats=dict(lod.stats),
+                truncation_radius=lod.truncation_radius,
+            )
+        ],
+        compression_factor=level.compression_factor,
+        parent_method=level.parent_method,
+        level_index=level.level_index,
+        stats=dict(level.stats),
+    )
+    return GSplatData.from_substitutive_levels(levels, stats=dict(data.stats))
+
+
 def _decimate(
     target: object, method: str = "auto"
 ) -> Callable[[GSplatData], GSplatData]:
@@ -633,8 +658,6 @@ def test_a_reduced_view_does_not_inherit_the_score(
             assert lod.stats["energy_fraction_cum"] == 0.6923, (
                 f"{case_id} rung {i} lost e(k)"
             )
-    # (An `additive_prefix` view is built from bare rungs, so it has no level
-    # stats to keep; the substitutive views carry the level's own Q/w.)
     if case_id.startswith("at_substitutive"):
         level_stats = view.substitutive_levels[0].stats
         assert level_stats["reference_energy"] == 1234.5, f"{case_id} lost w"
@@ -703,11 +726,11 @@ def test_a_pyramid_scrubs_its_rebuilt_top_level(
         pytest.param(lambda gs: gs.scale_intensity(0.5), id="scale_intensity"),
     ],
 )
-def test_a_reduction_recomputes_the_q_e_ladder_stamps(
+def test_a_reduction_recomputes_energy_stamps_and_drops_quality(
     op: Callable[[GSplatData], GSplatData],
 ) -> None:
-    """Artifact-local Q·e stamps and counts describe the rewritten splats."""
-    from luxar.gsplats.lod.quality import mixture_quality, total_self_energy
+    """Cheap artifact-local energy stamps describe the rewritten splats."""
+    from luxar.gsplats.lod.quality import total_self_energy
 
     source = _pyramid()
     from luxar.gsplats.tree import iter_leaves
@@ -723,16 +746,10 @@ def test_a_reduction_recomputes_the_q_e_ladder_stamps(
     levels = out.substitutive_levels
     finest = out.at_substitutive(0).flattened()
     expected_w = total_self_energy(finest)
-    for index, level in enumerate(levels):
+    for level in levels:
         assert level.stats["n_splats_total"] == level.n_splats_total
         assert level.stats["reference_energy"] == pytest.approx(expected_w)
-        expected_q = (
-            1.0
-            if index == 0
-            else mixture_quality(out.at_substitutive(index).flattened(), finest).quality
-        )
-        assert level.stats["quality"] == pytest.approx(expected_q)
-        assert level.stats["quality"] != 0.9 or expected_q == pytest.approx(0.9)
+        assert "quality" not in level.stats
         assert "refine_stats" not in level.stats
 
         cumulative_n = 0
@@ -752,6 +769,34 @@ def test_a_reduction_recomputes_the_q_e_ladder_stamps(
             )
 
 
+def test_filter_restamps_when_only_a_coarse_level_changes() -> None:
+    source = _replace_level_amplitudes(_pyramid(), 1, [0.01, 0.2])
+    out = source.filter_by(amplitude_min=0.1)
+    coarse = out.substitutive_levels[1]
+    assert out.n_splats == source.n_splats
+    assert coarse.n_splats_total == 1
+    assert coarse.stats["n_splats_total"] == 1
+    assert coarse.additive_sublods[0].stats["lod_cumulative_n"] == 1
+    assert "quality" not in coarse.stats
+
+
+def test_intensity_restamps_when_only_a_coarse_level_changes() -> None:
+    source = _replace_level_amplitudes(_pyramid(), 1, [4.0, 0.2])
+    out = source.clamp_intensity(max=1.0)
+    coarse = out.substitutive_levels[1]
+    assert np.array_equal(out.amplitudes, source.amplitudes)
+    assert coarse.stats["reference_energy"] != pytest.approx(1234.5)
+    assert "quality" not in coarse.stats
+
+
+def test_nonfinite_energy_is_reset_and_fraction_is_removed() -> None:
+    source = _replace_level_amplitudes(_pyramid(), 0, [np.inf, 0.7, 0.4, 0.2])
+    out = source.scale_intensity(0.5)
+    for level in out.substitutive_levels:
+        assert level.stats["reference_energy"] == 0.0
+    assert "energy_fraction_cum" not in out.additive_sublods[0].stats
+
+
 def test_decimate_recomputes_a_complete_single_rung_stamp() -> None:
     from luxar.gsplats.lod.quality import total_self_energy
 
@@ -762,7 +807,7 @@ def test_decimate_recomputes_a_complete_single_rung_stamp() -> None:
     assert lod.stats["lod_cumulative_n"] == out.n_splats
     assert lod.stats["energy_fraction_cum"] == 1.0
     assert level.stats["n_splats_total"] == out.n_splats
-    assert level.stats["quality"] == 1.0
+    assert "quality" not in level.stats
     assert level.stats["reference_energy"] == pytest.approx(total_self_energy(out))
 
 
@@ -790,8 +835,8 @@ def test_reveal_ladder_stays_without_energy_compensation_after_reduction() -> No
     assert all("energy_fraction_cum" not in lod.stats for lod in out.additive_sublods)
 
 
-def test_tree_restamp_measures_lod_children_against_one_finest_level() -> None:
-    from luxar.gsplats.lod.quality import mixture_quality, total_self_energy
+def test_tree_restamp_shares_finest_energy_and_drops_quality() -> None:
+    from luxar.gsplats.lod.quality import total_self_energy
     from luxar.gsplats.lod.restamp import refresh_reduction_lod_tree
     from luxar.gsplats.tree import map_leaves
 
@@ -804,15 +849,8 @@ def test_tree_restamp_measures_lod_children_against_one_finest_level() -> None:
     data = GSplatData.from_tree(result)
     finest = data.at_substitutive(0).flattened()
     expected_w = total_self_energy(finest)
-    for index, level in enumerate(data.substitutive_levels):
-        expected_q = (
-            1.0
-            if index == 0
-            else mixture_quality(
-                data.at_substitutive(index).flattened(), finest
-            ).quality
-        )
-        assert level.stats["quality"] == pytest.approx(expected_q)
+    for level in data.substitutive_levels:
+        assert "quality" not in level.stats
         assert level.stats["reference_energy"] == pytest.approx(expected_w)
 
 

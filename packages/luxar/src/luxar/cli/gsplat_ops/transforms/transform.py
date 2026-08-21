@@ -149,6 +149,16 @@ class _IntensityChangeRecorder:
             drop_content_scoped_stats(stats)
 
 
+def _restamp_tree_after_intensity(
+    node: "GSplatNode", source: "GSplatNode", *, changed: bool
+) -> "GSplatNode":
+    if not changed:
+        return node
+    from luxar.gsplats.lod.restamp import refresh_reduction_lod_tree
+
+    return refresh_reduction_lod_tree(node, source)
+
+
 def run_transform_dataset(
     *,
     input_path: Path,
@@ -482,10 +492,9 @@ def run_transform_dataset(
                                 ),
                             )
                 intensity.scrub_root(stats)
-                if intensity.changed:
-                    from luxar.gsplats.lod.restamp import refresh_reduction_lod_tree
-
-                    node = refresh_reduction_lod_tree(node, source_node)
+                node = _restamp_tree_after_intensity(
+                    node, source_node, changed=intensity.changed
+                )
                 # Scrub the coverage_fraction LOD-switch threshold from EVERY node
                 # (leaves AND group nodes — an overview partition child, an adaptive
                 # per-part lod group) after a geometry transform so the writer

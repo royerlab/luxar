@@ -7,7 +7,6 @@ every per-level op in the sibling mixins rebuilds its ladder through.
 
 from __future__ import annotations
 
-from dataclasses import replace
 from typing import TYPE_CHECKING, Callable, List
 
 import numpy as np
@@ -93,10 +92,7 @@ class TransformsMixin(_GSplatDataOps):
         )
         node = rebuilt.tree
         assert isinstance(node, GSplatLeaf)
-        return GSplatData.from_tree(
-            replace(node, meta={**self._finest_leaf().meta, **node.meta}),
-            stats=dict(self.stats),
-        )
+        return GSplatData.from_tree(node, stats=dict(self.stats))
 
     def transform(self, matrix: np.ndarray) -> "GSplatData":
         """Apply affine transformation to all splats.

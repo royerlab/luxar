@@ -431,6 +431,21 @@ def test_overview_does_not_stamp_the_input_score_on_its_merged_cap(
                 f"leaf {i} rung {j} publishes the input fit's {survivors}"
             )
 
+    transformed = tmp_path / "ov_scaled.gsplats.zarr"
+    _run(("transform", "{in}", "{out}", "--scale-intensity", "0.5"), out, transformed)
+    node, _ = load_gsplat_node(transformed, include_stats=True)
+    from luxar.gsplats.tree import GSplatLodGroup, GSplatPartition
+
+    assert isinstance(node, GSplatLodGroup)
+    partitions = [
+        child for child in node.children if isinstance(child, GSplatPartition)
+    ]
+    assert partitions, "overview output has no fine partition child"
+    for partition in partitions:
+        assert "stats" not in partition.meta, (
+            "tree restamp invented level_stats on a non-leaf partition child"
+        )
+
 
 @pytest.mark.parametrize("name", sorted(_NO_PROVENANCE))
 def test_no_provenance_commands_publish_no_scores(tmp_path: Path, name: str) -> None:

@@ -93,9 +93,21 @@ class IntensityMixin(_GSplatDataOps):
         ``filter_by`` / ``cull`` do on their own multi-substitutive branch.
         """
         out = self._map_substitutive(fn)
+        before_levels = self.substitutive_levels
+        after_levels = out.substitutive_levels
         return _stats_after_content_change(
             out,
-            changed=amplitudes_changed(self.amplitudes, out.amplitudes),
+            changed=len(before_levels) != len(after_levels)
+            or any(
+                len(old.additive_sublods) != len(new.additive_sublods)
+                or any(
+                    amplitudes_changed(old_lod.amplitudes, new_lod.amplitudes)
+                    for old_lod, new_lod in zip(
+                        old.additive_sublods, new.additive_sublods
+                    )
+                )
+                for old, new in zip(before_levels, after_levels)
+            ),
             source=self,
         )
 
