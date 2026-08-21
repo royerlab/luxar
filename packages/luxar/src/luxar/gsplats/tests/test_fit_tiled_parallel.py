@@ -421,6 +421,32 @@ class TestFitTiledParallel:
         # omits the flatten step tracebacks on the tiled default.
         assert "gsplat flatten" in out
 
+    def test_scores_the_partition_when_given_the_reference(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture
+    ) -> None:
+        """The CLI parent can hand the worker merge its matching reference."""
+        volume = np.zeros((8, 8, 16), dtype=np.float32)
+        volume[2:6, 2:6, 3:13] = 1.0
+        m = self._specs_count(shape=volume.shape, tile=8, overlap=0)
+        merged = fit_tiled_parallel(
+            num_tiles=m,
+            jobs=2,
+            tmp_dir=tmp_path / "tiles",
+            worker_cmd_builder=_fake_worker_builder(n_per_tile=5),
+            volume_shape=volume.shape,
+            volume=volume,
+            device="cpu",
+            tile_size=8,
+            overlap=0,
+            progressive=False,
+            cull_retention=None,
+            partition=True,
+            verbose=False,
+        )
+
+        assert "psnr_db" in merged.meta["fit_stats"]
+        assert "No merged quality metrics" not in capsys.readouterr().out
+
     def test_keep_tiles(self, tmp_path: Path) -> None:
         m = self._specs_count()
         fit_tiled_parallel(

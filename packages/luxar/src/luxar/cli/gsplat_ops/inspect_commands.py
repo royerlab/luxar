@@ -929,6 +929,10 @@ def _print_gsplat_tree_summary(path: Path) -> None:
         pb = root.attrs.get("position_bounds")
         if pb:
             aprint(f"Position bounds: min={pb.get('min')} max={pb.get('max')}")
+        if "fitting" in root:
+            aprint("\nFitting (fitting/):")
+            for key, value in sorted(dict(root["fitting"].attrs).items()):
+                aprint(f"  {key}: {value}")
         _print_normalization_block(root)
     finally:
         if tmp is not None and tmp.exists():

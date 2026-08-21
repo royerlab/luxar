@@ -38,10 +38,7 @@ from luxar.gsplats.fitting.preprocessing import (
 from luxar.gsplats.fitting.results import stamp_voxels_per_splat
 from luxar.gsplats.fitting.validation import _validate_floor
 from luxar.gsplats.gsplat_data import GSplatData
-from luxar.gsplats.merged_quality import (
-    announce_unscored_partition_merge,
-    stamp_merged_quality,
-)
+from luxar.gsplats.merged_quality import stamp_merged_quality
 from luxar.gsplats.tiling import (
     TileSpec,
     compute_tile_specs,
@@ -730,10 +727,10 @@ def fit_tiled(
     -------
     GSplatData
         Merged result with all splats in global coordinates.
-        Multi-LOD if progressive=True. With ``partition=False`` the merged
-        reconstruction is also scored against the whole volume and the metrics
-        (``psnr_db``, ``ssim``, ``mse``, ``foreground_*``) land in ``stats`` —
-        see the merged-quality note below.
+        Multi-LOD if progressive=True. The merged reconstruction is also scored
+        against the whole volume. Metrics land in ``stats`` for a flat result
+        and in the root node's in-memory ``meta["fit_stats"]`` for a tree, ready
+        for the CLI writer to persist at the store root.
 
     Notes
     -----
@@ -743,10 +740,9 @@ def fit_tiled(
     volume, so it is bounded by a memory budget — half the memory actually free,
     held under a 24 GiB ceiling, with ``LUXAR_TILED_QUALITY_MAX_GB`` overriding
     both (``0`` declines outright). Over budget, or on a failure, it says so even
-    when ``verbose=False``. ``partition=True`` merges are not scored (the tree
-    node has no fit-stats dict and this path threads none through on save) and
-    say so too; ``luxar gsplat compare`` is the recourse, after
-    ``luxar gsplat flatten``.
+    when ``verbose=False``. A partition is scored by rendering each surviving
+    tile-part and summing the volumes in place, matching how the viewer composes
+    the parts without flattening or copying the full splat set.
 
     **GPU utilization with progressive**: When ``progressive=True``, each
     per-pass fit uses fewer splats (``max_splats_per_pass``), which may
@@ -885,36 +881,9 @@ def fit_tiled(
         # every tile's splats were offset by `origin * voxel_size`, so the
         # partition's split planes need the same factor (#1587).
         grid_scale=grid_scale,
+        volume=volume,
+        device=fit_kwargs.get("device"),
     )
-    # Flat merges only, and for a pipeline reason rather than a format one: the
-    # tree writer does take `fitting_info` for any node kind, but the merged
-    # partition is a frozen tree node with no `stats` dict to stamp into, and
-    # this path calls the writer with no `fitting_info` at all — so a score taken
-    # here would have nowhere to go without threading it through first. The
-    # caller's array is still in hand here, which is what makes scoring the WHOLE
-    # reconstruction possible at all.
-    if not partition:
-        stamp_merged_quality(
-            merged,
-            volume,
-            volume_shape=volume_shape,
-            grid_scale=grid_scale,
-            # `device` rides in **fit_kwargs (it is a per-tile fit knob); score
-            # on whatever the tiles used rather than re-detecting.
-            device=fit_kwargs.get("device"),
-            verbose=verbose,
-        )
-    else:
-        # Said even on a quiet run: `--tiling uniform` asks for a
-        # `kind=partition` merge by default, and nothing about the omission
-        # reaches the store, so this notice is the only place it is ever stated.
-        # A degenerate partition request with one surviving region hands back a
-        # matrix-shaped part (a leaf or LOD group), so derive the compare
-        # recourse from the returned node rather than insisting on a no-op
-        # flatten step.
-        announce_unscored_partition_merge(
-            merged, suffix=", and this path threads none through on save"
-        )
     return merged
 
 
@@ -938,6 +907,8 @@ def merge_tile_results(
     source_dtype: Optional[str] = None,
     source_itemsize: Optional[int] = None,
     source_stored_bytes: Optional[int] = None,
+    volume: "Any | None" = None,
+    device: Optional[str] = None,
 ) -> "Any":
     """Merge per-tile fit results into a single (optionally multi-LOD) dataset.
 
@@ -998,11 +969,9 @@ def merge_tile_results(
         a crop. ``source_shape`` is for a caller that decimated before tiling
         (``volume_shape`` is then the fitted grid, not the acquisition); the
         dtype/itemsize are the element type the volume was STORED in, without
-        which no compression ratio can be quoted. Only the flat merge carries
-        them: a ``partition=True`` tree has nowhere to persist fit stats (the
-        writer takes them from a flat leaf's ``stats``) — the normalization
-        block above is the one exception, promoted from the root node's ``meta``
-        into ``pipeline/`` by the tree writer.
+        which no compression ratio can be quoted. A partition carries the merged
+        block in its root ``meta["fit_stats"]``; :func:`save_fit_output` routes
+        that block through the same fitting/pipeline split as a flat leaf.
 
     Returns
     -------
@@ -1061,6 +1030,38 @@ def merge_tile_results(
         # node's meta and `write_gsplats_tree` promotes it into the store's
         # `pipeline/` group on save.
         _stamp_merge_normalization(node.meta, regions, applied_floor)
+        fit_stats = {
+            "tiled_fitting": True,
+            "progressive": progressive,
+            "num_tiles": num_tiles,
+            "tile_size": tile_size,
+            "overlap": overlap,
+            "volume_shape": volume_shape,
+            "time_seconds": elapsed,
+            "splats_per_tile": [r.n_splats for r in results],
+            "n_splats": node.n_splats,
+        }
+        fit_stats.update(
+            _tiled_source_grid_stats(
+                volume_shape,
+                source_shape,
+                source_dtype,
+                source_itemsize,
+                source_stored_bytes,
+            )
+        )
+        stamp_voxels_per_splat(fit_stats, node.n_splats)
+        if volume is not None:
+            stamp_merged_quality(
+                regions,
+                volume,
+                volume_shape=volume_shape,
+                grid_scale=grid_scale,
+                device=device,
+                verbose=verbose,
+                stats=fit_stats,
+            )
+        node.meta["fit_stats"] = fit_stats
         if verbose:
             lod_note = f", per-part recipe={recipe}" if recipe else ""
             aprint(
@@ -1120,6 +1121,16 @@ def merge_tile_results(
     # Density counts the splats actually DELIVERED, so it is set after the cull
     # above rather than beside the other source-grid stamps.
     stamp_voxels_per_splat(merged.stats, merged.n_splats)
+
+    if volume is not None:
+        stamp_merged_quality(
+            merged,
+            volume,
+            volume_shape=volume_shape,
+            grid_scale=grid_scale,
+            device=device,
+            verbose=verbose,
+        )
 
     return merged
 

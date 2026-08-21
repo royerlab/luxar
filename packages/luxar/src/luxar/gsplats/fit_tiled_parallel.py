@@ -261,6 +261,8 @@ def fit_tiled_parallel(
     grid_scale: Optional[tuple[float, ...]] = None,
     source_shape: Optional[Sequence[int]] = None,
     source_dtype: Optional[str] = None,
+    volume: "Any | None" = None,
+    device: Optional[str] = None,
 ) -> "Any":  # GSplatData (flat) or a GSplatNode (partition)
     """Fit all tiles via concurrent worker subprocesses, then merge.
 
@@ -310,10 +312,14 @@ def fit_tiled_parallel(
         two are the same grid, or the stamp would claim a measurement was a
         declaration.
     source_dtype : str, optional
-        Element type the volume was STORED in. This function is handed only the
-        tile grid's shape, not the array, so it cannot be observed here — the
-        caller has to pass it, and without it the merged result records a source
-        grid with no byte count and ``info`` prints no compression ratio at all.
+        Element type the volume was STORED in. The reloaded worker stores no
+        longer expose it, so the caller has to pass it.
+    volume : array-like, optional
+        Reference volume on the ``volume_shape`` grid. When supplied, the parent
+        scores the merged reconstruction; a direct caller that omits it gets the
+        existing unconditional notice and can run ``gsplat compare`` later.
+    device : str, optional
+        Device used to render the merged reconstruction for quality scoring.
 
     Returns
     -------
@@ -449,22 +455,15 @@ def fit_tiled_parallel(
         grid_scale=grid_scale,
         source_shape=source_shape,
         source_dtype=source_dtype,
+        volume=volume,
+        device=device,
     )
 
-    # No merged quality score here, unlike the in-process `fit_tiled`: this
-    # function is handed only the tile grid's shape (`volume_shape`, and
-    # `source_dtype` above), never the array itself — the CLI's
-    # `dispatch_parallel_tiled` is what holds it — so there is nothing here to
-    # score the reconstruction against without re-reading the source. Say so
-    # rather than shipping an unexplained gap — an archive that silently carries
-    # no PSNR is the failure the sequential path's scoring exists to end. Said
-    # even on a quiet run: nothing about the omission reaches the store, so this
-    # notice is the only place it is ever stated.
-    announce_unscored_merge(
-        "the parallel tiled path receives only the tile grid's shape, not the "
-        "reference volume",
-        partition=None,
-    )
+    if volume is None:
+        announce_unscored_merge(
+            "this direct parallel tiled call was not given the reference volume",
+            partition=None,
+        )
 
     if not keep_tiles:
         shutil.rmtree(tmp_dir, ignore_errors=True)

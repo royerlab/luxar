@@ -180,13 +180,14 @@ def _to_voxel_frame(merged: GSplatData, scale: Optional[Sequence[float]]) -> GSp
 
 
 def stamp_merged_quality(
-    merged: GSplatData,
+    merged: "GSplatData | Sequence[GSplatData]",
     volume: Any,
     *,
     volume_shape: tuple[int, ...],
     grid_scale: Optional[Sequence[float]],
     device: Optional[str],
     verbose: bool,
+    stats: "dict[str, Any] | None" = None,
 ) -> None:
     """Score the MERGED reconstruction against the whole volume, in place.
 
@@ -210,8 +211,12 @@ def stamp_merged_quality(
     ``--denoise`` is not a tiling artifact. A lazy source is materialized here — during the fit it
     is only ever read tile-by-tile — which is what the budget below bounds.
     """
-    if merged.n_splats == 0:
+    parts = [merged] if isinstance(merged, GSplatData) else list(merged)
+    if not parts or sum(part.n_splats for part in parts) == 0:
         return
+    target_stats = merged.stats if isinstance(merged, GSplatData) else stats
+    if target_stats is None:
+        raise ValueError("partition merged-quality scoring requires a stats target")
     budget_gb = _quality_budget_gb()
     needed_gb = _QUALITY_PEAK_VOLUMES * 4 * float(np.prod(volume_shape)) / 1024**3
     if needed_gb > budget_gb:
@@ -230,17 +235,23 @@ def stamp_merged_quality(
         from luxar.gsplats.metrics import compute_quality_metrics
         from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
 
-        scored = _to_voxel_frame(merged, grid_scale)
         rendered: Any = None
         reference: Any = None
         try:
             with torch.no_grad():
-                rendered = render_to_volume_tensor(
-                    scored,
-                    shape=volume_shape,
-                    device=device,
-                    truncate=scored.truncation_radius,
-                )
+                for part in parts:
+                    scored = _to_voxel_frame(part, grid_scale)
+                    part_render = render_to_volume_tensor(
+                        scored,
+                        shape=volume_shape,
+                        device=device,
+                        truncate=scored.truncation_radius,
+                    )
+                    if rendered is None:
+                        rendered = part_render
+                    else:
+                        rendered.add_(part_render)
+                        del part_render
                 reference = torch.as_tensor(
                     np.asarray(volume, dtype=np.float32), device=rendered.device
                 )
@@ -253,7 +264,7 @@ def stamp_merged_quality(
             del rendered, reference
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-        merged.stats.update(
+        target_stats.update(
             {
                 "mse": quality["mse"],
                 "psnr_db": quality["psnr_db"],

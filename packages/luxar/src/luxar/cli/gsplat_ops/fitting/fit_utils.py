@@ -627,7 +627,7 @@ def dispatch_parallel_tiled(
         luxar_argv0,
         resolve_jobs,
     )
-    from luxar.gsplats.fitting.downscale import normalize_downscale
+    from luxar.gsplats.fitting.downscale import downscale_volume, normalize_downscale
     from luxar.gsplats.tiling import compute_tile_specs, resolve_grid_scale
 
     # Compute the tile grid on the POST-downscale shape (shape math
@@ -644,6 +644,9 @@ def dispatch_parallel_tiled(
         )
     else:
         grid_shape = tuple(volume.shape)
+    reference_volume = (
+        downscale_volume(volume, ds_factors) if ds_factors is not None else volume
+    )
 
     specs = compute_tile_specs(grid_shape, ctx.tile_size, ctx.tile_overlap)
     n_tiles = len(specs)
@@ -786,6 +789,8 @@ def dispatch_parallel_tiled(
                     [int(s) for s in volume.shape] if ds_factors is not None else None
                 ),
                 source_dtype=fit_config.get("source_dtype"),
+                volume=reference_volume,
+                device=ctx.device,
             )
 
         with asection(f"Saving to {ctx.output_path.name}"):
@@ -1472,9 +1477,20 @@ def save_fit_output(
         result.save(output_path, compress=compress)
         n = int(result.n_splats)
     else:  # a partition / tree node has no flat-matrix equivalent
-        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.io.save_gsplats import split_fitting_info, write_gsplats_tree
 
-        write_gsplats_tree(output_path, result, compress=compress)
+        fitting, config, provenance, pipeline = split_fitting_info(
+            result.meta.get("fit_stats", {}), include_fitting_info=True
+        )
+        write_gsplats_tree(
+            output_path,
+            result,
+            compress=compress,
+            fitting_info=fitting,
+            fitting_config=config,
+            provenance_info=provenance,
+            pipeline_info=pipeline,
+        )
         n = int(getattr(result, "n_splats", 0))
     if verbose:
         aprint(f"Saved {n:,} splats")

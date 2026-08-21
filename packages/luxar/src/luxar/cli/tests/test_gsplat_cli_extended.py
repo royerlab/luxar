@@ -7584,6 +7584,7 @@ class TestParallelTiledDownscaleFactorsThreading:
         )
         # The grid IS in downscaled voxels, per axis (48 -> 48, 48 -> 24)...
         assert captured["volume_shape"] == (48, 24)
+        assert captured["volume"].shape == (48, 24)
         # ...so the factors that lift it back must travel with it, in that
         # same axis order.
         assert captured["grid_scale"] == (1.0, 2.0)
@@ -7594,6 +7595,7 @@ class TestParallelTiledDownscaleFactorsThreading:
         """Without ``--downscale`` the two frames already agree — no factors."""
         captured = self._run(runner, tmp_path, monkeypatch, [], "plain")
         assert captured["volume_shape"] == (48, 48)
+        assert captured["volume"].shape == (48, 48)
         assert captured["grid_scale"] is None
 
     def test_voxel_size_composes_with_the_downscale_factors(

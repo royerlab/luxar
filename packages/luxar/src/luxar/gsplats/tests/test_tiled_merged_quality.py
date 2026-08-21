@@ -14,6 +14,7 @@ number, so it is checked against the same fit scored with no conversion at all.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -74,6 +75,46 @@ def test_a_tiled_fit_records_merged_quality(
     # The unscored notice is unconditional on its own branch, so nothing else
     # would catch a change that printed it next to a store carrying `psnr_db`.
     assert "No merged quality metrics" not in capsys.readouterr().out
+
+
+def test_partition_merge_records_the_same_whole_volume_score(
+    volume: np.ndarray, capsys: pytest.CaptureFixture
+) -> None:
+    """The default partition path scores the parts as one reconstruction."""
+    flat = _fit(volume, partition=False, cull_retention=None)
+    partition = _fit(volume, partition=True, cull_retention=None)
+
+    stats = partition.meta["fit_stats"]
+    missing = [key for key in _QUALITY_KEYS if key not in stats]
+    assert not missing, f"the partition merge lost {missing}"
+    assert stats["psnr_db"] == pytest.approx(flat.stats["psnr_db"], abs=0.5)
+    assert "No merged quality metrics" not in capsys.readouterr().out
+
+
+def test_partition_quality_reaches_the_archive_and_info(
+    volume: np.ndarray,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """Root fitting metrics are persisted and visible through ``gsplat info``."""
+    from luxar.cli.gsplat_ops.fitting.fit_utils import save_fit_output
+    from luxar.cli.gsplat_ops.inspect_commands import _print_gsplat_tree_summary
+
+    result = _fit(volume, partition=True)
+    output = tmp_path / "partition.gsplats.zarr"
+    save_fit_output(result, output, compress=None, verbose=False)
+
+    import zarr
+
+    root = zarr.open_group(str(output), mode="r")
+    fitting = dict(root["fitting"].attrs)
+    assert fitting["psnr_db"] == pytest.approx(result.meta["fit_stats"]["psnr_db"])
+    assert fitting["n_splats"] == result.n_splats
+
+    _print_gsplat_tree_summary(output)
+    info = capsys.readouterr().out
+    assert "Fitting (fitting/):" in info
+    assert "psnr_db" in info
 
 
 def test_the_merged_score_survives_the_physical_coordinate_round_trip(
