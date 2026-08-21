@@ -560,18 +560,35 @@ class TestDecimateQEM:
             assert radii.min() > 0.9
             assert radii.max() < 1.15
 
+    def test_distant_component_does_not_zero_local_face_quadrics(self) -> None:
+        vertices, faces = octasphere(2)
+        far = np.array(
+            [[1e9, 0, 0], [1e9 + 1, 0, 0], [1e9, 1, 0]], dtype=np.float64
+        )
+        positions = np.concatenate([vertices.astype(np.float64), far])
+        all_faces = np.concatenate(
+            [faces, np.array([[len(vertices), len(vertices) + 1, len(vertices) + 2]])]
+        )
+
+        quadrics = _face_quadrics(positions[all_faces])
+
+        assert np.all(np.abs(quadrics[: len(faces)]).max(axis=(1, 2)) > 0.0)
+
     def test_nonspatial_columns_are_hard_collapse_barriers(self) -> None:
-        vertices, faces = octasphere(1)
-        barrier = np.arange(len(vertices), dtype=np.float32)[:, None]
-        stacked = np.concatenate([vertices, barrier], axis=1)
+        vertices, faces = octasphere(3)
+        barrier = (vertices[:, 2] >= 0).astype(np.float32)[:, None]
+        stacked = np.concatenate([barrier, vertices], axis=1)
         result = decimate_qem(
             stacked,
             faces,
-            target_vertices=4,
-            spatial_dims=(0, 1, 2),
+            target_vertices=80,
+            spatial_dims=(1, 2, 3),
         )
-        np.testing.assert_array_equal(result.vertices, stacked)
-        np.testing.assert_array_equal(result.faces, faces)
+        groups, counts = np.unique(result.vertices[:, 0], return_counts=True)
+
+        assert len(result.vertices) < len(vertices), "collapses must happen within groups"
+        assert groups.tolist() == [0.0, 1.0], "barrier values must not blend"
+        assert np.all(counts > 10), "each barrier group must keep its own surface"
 
     def test_unreferenced_vertices_do_not_consume_the_target_budget(self) -> None:
         vertices, faces = octasphere(3)

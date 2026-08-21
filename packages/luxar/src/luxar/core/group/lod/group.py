@@ -899,7 +899,7 @@ SUBSTITUTIVE_METHODS = frozenset(
 MESH_SUBSTITUTIVE_METHODS = frozenset({"auto", "cluster", "qem"})
 
 #: Default mesh coarsening method. ``auto`` uses topology-preserving QEM through
-#: 5k vertices and the vectorized clustering tier above that measured limit.
+#: 300 vertices and the vectorized clustering tier above that measured limit.
 DEFAULT_MESH_SUBSTITUTIVE_METHOD: str = "auto"
 
 

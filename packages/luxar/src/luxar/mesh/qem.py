@@ -32,11 +32,13 @@ def _face_quadrics(positions: NDArray[np.float64]) -> NDArray[np.float64]:
     quadrics = np.zeros((n_faces, ndim + 1, ndim + 1), dtype=np.float64)
     extent = _coordinate_extent(positions)
     if ndim == 3:
-        normal = np.cross(
-            positions[:, 1] - positions[:, 0], positions[:, 2] - positions[:, 0]
-        )
+        edge1 = positions[:, 1] - positions[:, 0]
+        edge2 = positions[:, 2] - positions[:, 0]
+        normal = np.cross(edge1, edge2)
         length = np.linalg.norm(normal, axis=1)
-        valid = length > extent**2 * _RELATIVE_GEOMETRY_TOLERANCE
+        valid = length > (
+            np.linalg.norm(edge1, axis=1) * np.linalg.norm(edge2, axis=1)
+        ) * _RELATIVE_GEOMETRY_TOLERANCE
         normal[valid] /= length[valid, None]
         plane = np.concatenate(
             [normal, -np.einsum("ij,ij->i", normal, positions[:, 0])[:, None]], axis=1

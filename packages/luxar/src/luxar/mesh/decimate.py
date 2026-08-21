@@ -65,6 +65,7 @@ import numpy as np
 from arbol import aprint
 from numpy.typing import NDArray
 
+# Worst-case 3-level K=4 annulus ladder: 300 vertices takes 1.83 s.
 QEM_AUTO_VERTEX_LIMIT = 300
 DECIMATION_METHODS = frozenset({"cluster", "qem"})
 
