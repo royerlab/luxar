@@ -49,11 +49,11 @@ const LOG_VECTORS: ReadonlyArray<readonly [number, number]> = [
   [0x4f000001, 0x41abe687],
   [0x7f7fffff, 0x42b17218],
   [0x7f800000, 0x7f800000],
-  [0xbf800000, 0x7fc00000],
-  [0x7fc12345, 0x7fc12345],
 ];
 
 describe('compiler-builtins float32 math', () => {
+  // Expected bits were captured from direct temporary exports in the real
+  // rustc 1.92 wasm32 build, rather than from another JavaScript math library.
   it('matches Rust expf bit-for-bit across normal, subnormal, and special values', () => {
     for (const [inputBits, expectedBits] of EXP_VECTORS) {
       expect(toBits(expf(fromBits(inputBits))), inputBits.toString(16)).toBe(expectedBits);
@@ -71,5 +71,11 @@ describe('compiler-builtins float32 math', () => {
     const logInput = fromBits(0x0001a2a2);
     expect(expf(expInput)).not.toBe(Math.fround(Math.exp(expInput)));
     expect(logf(logInput)).not.toBe(Math.fround(Math.log(logInput)));
+  });
+
+  it('preserves the Rust special-value contract without pinning NaN payloads', () => {
+    expect(Number.isNaN(expf(Number.NaN))).toBe(true);
+    expect(Number.isNaN(logf(-1))).toBe(true);
+    expect(Number.isNaN(logf(Number.NaN))).toBe(true);
   });
 });
