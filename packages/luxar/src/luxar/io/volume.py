@@ -596,8 +596,11 @@ def _declaring_owner(root: Any, key_path: str, array: Any) -> Tuple[Any, bool]:
     nested ``array_key``); the search helpers above report an owner directly.
     Walked from the array's immediate parent up to the store ROOT, returning at the
     FIRST declaring ancestor (so the common case reads one group's attributes and
-    stops). Falls back to ``(immediate parent, False)`` when no ancestor declares
-    it — which is definitive, the walk having asked every one of them.
+    stops). Falls back to ``(deepest OPENABLE ancestor, False)`` when no ancestor
+    declares it — which is definitive, the walk having asked every one of them.
+    That is the immediate parent in the ordinary case, but NOT when the parent is
+    one of the implicit groups described below: the reported owner is then the
+    deepest ancestor that actually opened.
 
     An explicit ``array_key`` must land on the same owner the auto-selection paths
     report for the same array, or two invocations describe one array differently:
@@ -613,22 +616,146 @@ def _declaring_owner(root: Any, key_path: str, array: Any) -> Tuple[Any, bool]:
     and `root["labels/cells"]` is then a ``KeyError`` even though
     ``root["labels/cells/1"]`` resolves perfectly well. The array is right there,
     so failing the whole read to ask a bookkeeping question about its ancestry
-    would be absurd — the walk simply carries on upward. The store ROOT always
-    opens, so the fallback below always has something to report.
+    would be absurd — the walk simply carries on upward. A TRANSIENT ``OSError``
+    from a remote store is swallowed by that same ``continue``, so a momentarily
+    unreachable ancestor is reported as "does not declare it" rather than raised;
+    the array itself is already open, so the read still answers.
+
+    The final iteration is the store ROOT with no lookup at all, so ``deepest`` is
+    always set by the time the loop ends.
     """
     segments = key_path.strip("/").split("/")[:-1]
-    parent: Any = None
+    deepest: Any = None
     for depth in range(len(segments), -1, -1):
         prefix = "/".join(segments[:depth])
         try:
             group = root[prefix] if prefix else root
         except (KeyError, ValueError, OSError, TypeError):
             continue
-        if parent is None:
-            parent = group
+        if deepest is None:
+            deepest = group
         if _declares_array(group, array):
             return group, True
-    return (parent if parent is not None else root), False
+    return deepest, False
+
+
+def _no_array_in_group_error(
+    group: Any, node: Any, path: Path, key_label: str
+) -> ValueError:
+    """The error for a group that resolves to no array of its own.
+
+    ONE message for both routes into :func:`_image_group_array` — an explicit
+    ``array_key`` naming a group, and the OME-NGFF ``"0"`` key that turns out to be
+    an image group. They have to answer the same way: a store whose image group
+    ``"0"`` holds nothing but ``labels/`` used to raise this for ``--array-key 0``
+    while the very same store, with no key, fell through to the unscoped
+    whole-store sweep and silently selected the segmentation MASK.
+    """
+    return ValueError(
+        f"Array key '{key_label}' names a zarr group holding no array "
+        f"in {path}. That group holds {sorted(group.keys())}; the "
+        f"store holds {sorted(node.keys())} — pass an array_key "
+        f"(--array-key) naming an array."
+    )
+
+
+def _resolved_group_selection(
+    root: Any, found: Tuple[str, Any, Any, Optional[bool]]
+) -> Tuple[Any, str, Any, Optional[bool]]:
+    """An :func:`_image_group_array` result with its owner resolved the ONE way.
+
+    :func:`_image_group_array` reports the group it happened to search when its
+    own ``multiscales`` did not declare the array (branches 2 and 3), which is not
+    necessarily the group that DECLARES it — an ancestor may. Adopting that report
+    verbatim gave the same underlying array two different owners depending on how
+    the caller spelled the key: for ``datasets[0].path == "res/0"`` on image group
+    ``"0"``, ``--array-key 0/res`` searched the ``res`` subgroup and reported
+    ``res`` (which declares nothing), so that spelling alone fell through to the
+    ndim heuristic while ``0``, ``0/res/0`` and no key at all read the declaration.
+
+    So whenever the search did not itself find a declaration (``declares`` is not
+    ``True``), the owner is re-derived with :func:`_declaring_owner` — the same
+    rule the explicit-array-key branch uses — and the two spellings converge.
+    """
+    key_path, array, owner, declares = found
+    if declares is not True:
+        owner, declares = _declaring_owner(root, key_path, array)
+    return array, key_path, owner, declares
+
+
+def _keyed_zarr_array(
+    node: Any, path: Path, array_key: str, key: str
+) -> Tuple[Any, str, Any, Optional[bool]]:
+    """The explicit-``array_key`` branch of :func:`_select_zarr_array`.
+
+    ``key`` is ``array_key`` with surrounding slashes stripped; ``array_key`` is
+    kept only so the error messages quote what the caller actually passed.
+    """
+    import zarr
+
+    try:
+        selected = node[key]
+    except (KeyError, ValueError, OSError, TypeError) as e:
+        # Not just KeyError: zarr 3 rejects a path with `..` segments or an
+        # embedded null byte with ValueError, and a segment longer than a
+        # filename surfaces as OSError(ENAMETOOLONG) from the store. All of
+        # those are "that key is not in this store" as far as a caller is
+        # concerned, and must report the documented message rather than
+        # zarr's internal one — but the underlying error is NAMED in it, not
+        # merely chained: an OSError from a remote store is a genuine I/O
+        # failure, and "not found" alone sends the reader hunting a typo.
+        raise ValueError(
+            f"Array key '{array_key}' not found in {path} "
+            f"({type(e).__name__}: {e}). "
+            f"Available keys: {sorted(node.keys())}"
+        ) from e
+    if isinstance(selected, zarr.Array):
+        owner, declares = _declaring_owner(node, key, selected)
+        return selected, key, owner, declares
+    # The key names a GROUP — an image group in a bioformats2raw store, or
+    # any multiscale group. Descend with the image-group rule rather than
+    # handing back a Group whose `.shape` the caller is about to read.
+    found = _image_group_array(selected, key)
+    if found is None:
+        raise _no_array_in_group_error(selected, node, path, array_key)
+    return _resolved_group_selection(node, found)
+
+
+def _auto_zarr_array(node: Any, path: Path) -> Tuple[Any, str, Any, Optional[bool]]:
+    """The no-``array_key`` branch of :func:`_select_zarr_array`."""
+    import zarr
+
+    if "0" in node:
+        level_zero = node["0"]
+        if isinstance(level_zero, zarr.Array):
+            # OME-NGFF convention: "0" is the highest resolution level.
+            return level_zero, "0", node, None
+        # bioformats2raw puts an image GROUP at "0" and its pyramid levels one
+        # level down ("0/0", "0/1", …). Resolve INSIDE that group only: the store
+        # root also holds the other series ("1", "2", …) and an `OME` metadata
+        # group, so a whole-store search could hand back level 0 of a DIFFERENT
+        # image. Scoping preserves the existing intent — full resolution of the
+        # first image.
+        found = _image_group_array(level_zero, "0")
+        if found is None:
+            # TERMINAL, not a fall-through to the whole-store sweep below. That
+            # sweep is unscoped — it descends `labels/` at every depth and every
+            # other series — so an image group holding only `0/labels/seg/0`
+            # silently selected the segmentation MASK, and one holding nothing
+            # silently selected a DIFFERENT series, defeating the "first image"
+            # intent this branch exists to preserve. The same store already
+            # raised for an explicit `--array-key 0`, so answering three
+            # different ways depending on the spelling was the real defect.
+            raise _no_array_in_group_error(level_zero, node, path, "0")
+        return _resolved_group_selection(node, found)
+
+    # Largest array anywhere in the group, searching recursively into
+    # sub-groups (e.g. h2afva/fused, mezzo/fused). Nothing here inspected the
+    # owner's `multiscales`, so the declares fact is UNDETERMINED.
+    largest = _largest_array(node)
+    if largest is None:
+        raise ValueError(f"No arrays found in zarr group: {path}")
+    return largest[1], largest[0], largest[2], None
 
 
 def _select_zarr_array(
@@ -648,11 +775,14 @@ def _select_zarr_array(
     that names a GROUP resolves through :func:`_image_group_array`, whose search
     is scoped to that image group and skips ``labels/`` at any depth, so an
     image's own segmentation masks cannot be selected as the image. That
-    guarantee is the IMAGE-GROUP branch's: the whole-store fallback below —
-    reached only when there is no ``"0"`` key at all, the pre-existing
-    ``h2afva/fused`` path — sweeps recursively and is not scoped that way. A size
-    tie is broken on the key path so two processes reading the same store cannot
-    disagree.
+    guarantee is the IMAGE-GROUP branch's, and it is TERMINAL: an image group that
+    resolves to no array of its own is a ``ValueError``, never a fall-through to
+    the whole-store sweep (which is unscoped and would answer with that image's
+    own mask, or with a different series). The whole-store fallback is therefore
+    reached only when there is no ``"0"`` key at all — the pre-existing
+    ``h2afva/fused`` path — and sweeps recursively, ``labels/`` included, as it
+    always has. A size tie is broken on the key path so two processes reading the
+    same store cannot disagree.
 
     When the store ROOT is itself an array, ``array_key`` is deliberately IGNORED
     (any value, including a non-string or a key that names nothing): there is
@@ -667,9 +797,10 @@ def _select_zarr_array(
     owner DECLARES the chosen array as one of its own levels.
 
     The owner is the array's immediate parent, except for a DECLARED level, where
-    it is the group whose ``multiscales`` block declared it — the nearest such
-    ancestor for an explicit ``array_key`` (:func:`_declaring_owner`), the
-    declaring group itself on the search paths (see :func:`_declared_levels`).
+    it is the group whose ``multiscales`` block declared it. That is resolved by
+    ONE rule wherever the search did not find the declaration itself
+    (:func:`_declaring_owner`, via :func:`_resolved_group_selection`) — two rules
+    gave the same array different owners depending on how the key was spelled.
 
     ``owner_declares`` is the SELECTION's own answer to
     :func:`_declares_array`, plumbed through rather than re-derived: resolving a
@@ -680,8 +811,9 @@ def _select_zarr_array(
 
     Raises:
         ValueError: If ``array_key`` is not a string, is not found, or names a
-            group holding no array; if the store holds no array at all; or if the
-            store is neither an array nor a group.
+            group holding no array; if the OME-NGFF ``"0"`` key is a group holding
+            no array; if the store holds no array at all; or if the store is
+            neither an array nor a group.
     """
     import zarr
 
@@ -702,65 +834,11 @@ def _select_zarr_array(
     # be descended by an unscoped search and could answer with a different image
     # entirely. Normalising here is what keeps the three entry points in
     # agreement (`open_volume_lazy` used to test a plain `if array_key:`).
-    key = array_key.strip("/") if array_key is not None else ""
-
-    if key:
-        try:
-            selected = node[key]
-        except (KeyError, ValueError, OSError, TypeError) as e:
-            # Not just KeyError: zarr 3 rejects a path with `..` segments or an
-            # embedded null byte with ValueError, and a segment longer than a
-            # filename surfaces as OSError(ENAMETOOLONG) from the store. All of
-            # those are "that key is not in this store" as far as a caller is
-            # concerned, and must report the documented message rather than
-            # zarr's internal one — but the underlying error is NAMED in it, not
-            # merely chained: an OSError from a remote store is a genuine I/O
-            # failure, and "not found" alone sends the reader hunting a typo.
-            raise ValueError(
-                f"Array key '{array_key}' not found in {path} "
-                f"({type(e).__name__}: {e}). "
-                f"Available keys: {sorted(node.keys())}"
-            ) from e
-        if isinstance(selected, zarr.Array):
-            owner, declares = _declaring_owner(node, key, selected)
-            return selected, key, owner, declares
-        # The key names a GROUP — an image group in a bioformats2raw store, or
-        # any multiscale group. Descend with the image-group rule rather than
-        # handing back a Group whose `.shape` the caller is about to read.
-        found = _image_group_array(selected, key)
-        if found is None:
-            raise ValueError(
-                f"Array key '{array_key}' names a zarr group holding no array "
-                f"in {path}. That group holds {sorted(selected.keys())}; the "
-                f"store holds {sorted(node.keys())} — pass an array_key "
-                f"(--array-key) naming an array."
-            )
-        return found[1], found[0], found[2], found[3]
-
-    chosen: Optional[Tuple[str, Any, Any, Optional[bool]]] = None
-    if "0" in node:
-        level_zero = node["0"]
-        if isinstance(level_zero, zarr.Array):
-            # OME-NGFF convention: "0" is the highest resolution level.
-            return level_zero, "0", node, None
-        # bioformats2raw puts an image GROUP at "0" and its pyramid levels one
-        # level down ("0/0", "0/1", …). Resolve INSIDE that group only: the store
-        # root also holds the other series ("1", "2", …) and an `OME` metadata
-        # group, so a whole-store search could hand back level 0 of a DIFFERENT
-        # image. Scoping preserves the existing intent — full resolution of the
-        # first image.
-        chosen = _image_group_array(level_zero, "0")
-
-    if chosen is None:
-        # Largest array anywhere in the group, searching recursively into
-        # sub-groups (e.g. h2afva/fused, mezzo/fused). Nothing here inspected the
-        # owner's `multiscales`, so the declares fact is UNDETERMINED.
-        largest = _largest_array(node)
-        if largest is not None:
-            chosen = (largest[0], largest[1], largest[2], None)
-    if chosen is None:
-        raise ValueError(f"No arrays found in zarr group: {path}")
-    return chosen[1], chosen[0], chosen[2], chosen[3]
+    if array_key is not None:
+        key = array_key.strip("/")
+        if key:
+            return _keyed_zarr_array(node, path, array_key, key)
+    return _auto_zarr_array(node, path)
 
 
 def _load_zarr_volume(

@@ -337,12 +337,16 @@ sources fed to gsplat fitting/calibration), independent of the compiled
   root, so reading the root alone would silently fall through to the shape
   heuristic. The override is gated on **evidence**, not on the block merely
   existing: one of the owner's `datasets[*].path` entries has to resolve to the
-  selected array, and its `datasets` has to be a list of entries this reader can
-  identify a level in. A same-length but permuted axis list is not evidence, and
+  selected array. A same-length but permuted axis list is not evidence, and
   adopting it would rewrite a T/C decomposition the root already had right — a
-  silently wrong `batch-fit` fan-out rather than an error. An owner block that
-  wins the evidence gate but is then unusable (wrong axis count, no `axes` list)
-  does not hide the root's; the root's is retried. Dataset paths are matched
+  silently wrong `batch-fit` fan-out rather than an error. Evidence is the *only*
+  gate — the parser degrades honestly on a malformed `datasets`, so a second
+  shape check could only discard a block that does describe the selected array.
+  An owner block that fails the evidence gate is reported as such in the give-up
+  notice ("declares a `multiscales` block that does not name it"), because the
+  store plainly declared something. An owner block that wins the evidence gate
+  but is then unusable (wrong axis count, no `axes` list) does not hide the
+  root's; the root's is retried. Dataset paths are matched
   exactly relative to whichever group won, so a same-named root pyramid level
   cannot be mistaken for a nested array. The custom (non-NGFF) bare `axes`
   attribute goes the other way round, **root first**, because such a list names
@@ -387,11 +391,19 @@ resolution of the *first* image. Within the image group the candidates are the
 levels its own `multiscales` block declares, else its direct array children, else
 (skipping `labels/` at any depth) whatever is nested below: NGFF puts an image's
 segmentation masks at `<image>/labels/<name>/<level>`, and inside an image group
-a mask as big as level 0 must never be selected as the image. That last
-guarantee belongs to the **image-group branch only** — the whole-store fallback
-(no `"0"` key at all: the `h2afva/fused` layout) sweeps every group recursively,
-`labels/` included, as it always has. A store with no array anywhere is still a
-clear `ValueError`, naming the key and what the store does hold.
+a mask as big as level 0 must never be selected as the image. That guarantee is
+**terminal**: an image group that resolves to no array of its own is a
+`ValueError`, never a fall-through to the whole-store sweep — an image group
+holding only `0/labels/seg/0` would otherwise select the *mask*, and an empty one
+a *different series*, both silently, and both on a store that already raised for
+an explicit `--array-key 0`. The whole-store fallback is therefore reached only
+when there is no `"0"` key at all (the `h2afva/fused` layout), and it sweeps every
+group recursively, `labels/` included, as it always has. A store with no array
+anywhere is still a clear `ValueError`, naming the key and what the store does
+hold. Whichever spelling reaches an array — no key, the image group, an
+intermediate group, or the level itself — its **owner** is resolved by one rule
+(the nearest ancestor whose `multiscales` declares it), so all of them describe
+the store the same way.
 
 These are domain-layer helpers (no CLI dependency); the gsplat CLI re-exports
 them. Dimension inference from a splat bounding box lives in

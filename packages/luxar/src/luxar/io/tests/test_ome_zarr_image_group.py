@@ -24,7 +24,7 @@ import numpy as np
 import pytest
 import zarr
 
-from luxar._zarr_compat import create_array
+from luxar._zarr_compat import create_array, open_group
 from luxar.io.ome_zarr import discover_ome_zarr_shape
 from luxar.io.volume import load_volume, open_volume_lazy
 
@@ -75,7 +75,7 @@ def _bioformats2raw_store(
 
     ``labels``, when given, becomes a segmentation mask under series ``0``.
     """
-    root = zarr.open_group(str(path), mode="w", zarr_format=zarr_format)
+    root = open_group(path, mode="w", zarr_format=zarr_format)
     # The metadata group bioformats2raw always writes beside the images: real
     # stores have a non-image sibling at the root, which is part of why the
     # largest-array search has to be scoped to the image group.
@@ -331,7 +331,7 @@ class TestExplicitArrayKey:
         self, tmp_path: Path, zarr_format: int
     ) -> None:
         path = tmp_path / "hollow.zarr"
-        root = zarr.open_group(str(path), mode="w", zarr_format=zarr_format)
+        root = open_group(path, mode="w", zarr_format=zarr_format)
         create_array(root.create_group("images"), "0", data=_ramp((2, 2, 2)))
         root.create_group("empty")
 
@@ -348,7 +348,7 @@ class TestExplicitArrayKey:
         self, tmp_path: Path, zarr_format: int
     ) -> None:
         path = tmp_path / "g.zarr"
-        root = zarr.open_group(str(path), mode="w", zarr_format=zarr_format)
+        root = open_group(path, mode="w", zarr_format=zarr_format)
         create_array(root, "a", data=_ramp((2, 2, 2)))
 
         for call in (
@@ -374,7 +374,7 @@ class TestExplicitArrayKey:
         instead of the message that names the key and lists what is there.
         """
         path = tmp_path / "g.zarr"
-        root = zarr.open_group(str(path), mode="w", zarr_format=zarr_format)
+        root = open_group(path, mode="w", zarr_format=zarr_format)
         create_array(root, "a", data=_ramp((2, 2, 2)))
 
         for call in (
@@ -403,7 +403,7 @@ class TestTheDeclaredLevelsBranch:
         declared = _ramp((2, 4, 4, 4))
         bigger = _ramp((4, 8, 8, 8), start=60_000)
         path = tmp_path / "declared.zarr"
-        root = zarr.open_group(str(path), mode="w", zarr_format=zarr_format)
+        root = open_group(path, mode="w", zarr_format=zarr_format)
         image = root.create_group("0")
         create_array(image, "0", data=declared)
         create_array(image, "9", data=bigger)
@@ -425,7 +425,7 @@ class TestTheDeclaredLevelsBranch:
         size — the exact failure the owner override exists to avoid.
         """
         path = tmp_path / "deep_declared.zarr"
-        root = zarr.open_group(str(path), mode="w", zarr_format=zarr_format)
+        root = open_group(path, mode="w", zarr_format=zarr_format)
         image = root.create_group("0")
         create_array(image.create_group("res"), "0", data=_ramp((2, 4, 4, 4)))
         image.attrs["multiscales"] = _tzyx_multiscales(1, paths=["res/0"])
@@ -439,23 +439,39 @@ class TestTheDeclaredLevelsBranch:
         assert info.unit == "micrometer"
 
     @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
+    @pytest.mark.parametrize("bad_path", ["../0/0", "nonexistent"])
     def test_a_declared_path_zarr_rejects_degrades_to_the_direct_children(
-        self, tmp_path: Path, zarr_format: int
+        self,
+        tmp_path: Path,
+        zarr_format: int,
+        bad_path: str,
+        capsys: pytest.CaptureFixture,
     ) -> None:
         """A ``..`` path is a ``ValueError`` from zarr 3, not a ``KeyError``.
 
         The docstring promises a half-written block degrades to the searches
         below; with ``except KeyError`` alone all three entry points raised
         instead, on a store whose ``0/0`` was right there.
+
+        The block loses the evidence gate (it names nothing that resolves), so
+        discovery ends on the heuristic — and the notice must say the store
+        DECLARED something. "No OME-Zarr/NGFF metadata found" is a plain lie about
+        a store carrying a well-formed TZYX block, and it hides the one detail
+        that makes it fixable.
         """
         image_data = _ramp((2, 4, 4, 4))
         path = tmp_path / "badpath.zarr"
-        root = zarr.open_group(str(path), mode="w", zarr_format=zarr_format)
+        root = open_group(path, mode="w", zarr_format=zarr_format)
         image = root.create_group("0")
         create_array(image, "0", data=image_data)
-        image.attrs["multiscales"] = _tzyx_multiscales(1, paths=["../0/0"])
+        image.attrs["multiscales"] = _tzyx_multiscales(1, paths=[bad_path])
 
-        assert discover_ome_zarr_shape(path).shape == image_data.shape
+        info = discover_ome_zarr_shape(path)
+        out = capsys.readouterr().out
+        assert info.shape == image_data.shape
+        assert "no OME-Zarr/NGFF metadata found" not in out
+        assert "declares a `multiscales` block that does not name it" in out
+
         np.testing.assert_array_equal(
             np.asarray(open_volume_lazy(path)[...]), image_data
         )
@@ -518,7 +534,7 @@ class TestLabelsAreNeverSelected:
         """
         image = _ramp((2, 8, 16, 16))
         path = tmp_path / "nested_labels.zarr"
-        root = zarr.open_group(str(path), mode="w", zarr_format=zarr_format)
+        root = open_group(path, mode="w", zarr_format=zarr_format)
         sub = root.create_group("0").create_group("sub")
         create_array(sub, "0", data=image)
         create_array(
@@ -535,6 +551,154 @@ class TestLabelsAreNeverSelected:
             np.testing.assert_array_equal(
                 load_volume(path, array_key=key), image.astype(np.float32)
             )
+
+
+class TestAnImageGroupWithNoArrayIsTerminal:
+    """``"0"`` resolving to nothing must RAISE, not fall through to the sweep.
+
+    The whole-store fallback is unscoped — it descends ``labels/`` at every depth
+    and every other series — so falling into it from the image-group branch throws
+    away the two guarantees that branch exists for. Both failures are plausible
+    wrong ANSWERS rather than errors, and the very same store already raised for
+    an explicit ``--array-key 0``, so one store answered three different ways
+    depending on how (or whether) the key was spelled.
+    """
+
+    @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
+    def test_an_image_group_holding_only_labels_does_not_select_the_mask(
+        self, tmp_path: Path, zarr_format: int
+    ) -> None:
+        """``0/labels/seg/0`` is a segmentation MASK; a fit would run against it."""
+        path = tmp_path / "only_labels.zarr"
+        root = open_group(path, mode="w", zarr_format=zarr_format)
+        _write_labels(root.create_group("0"), "seg", _ramp((2, 8, 16, 16), 50_000))
+
+        for call in (
+            lambda: discover_ome_zarr_shape(path),
+            lambda: load_volume(path),
+            lambda: open_volume_lazy(path),
+            # The explicit spelling already raised; it must keep doing so, and
+            # with the same message.
+            lambda: discover_ome_zarr_shape(path, array_key="0"),
+        ):
+            with pytest.raises(ValueError, match="names a zarr group holding no array"):
+                call()
+
+    @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
+    def test_an_empty_image_group_does_not_select_a_different_series(
+        self, tmp_path: Path, zarr_format: int
+    ) -> None:
+        """Series ``1`` is a DIFFERENT image — selecting it defeats "first image"."""
+        path = tmp_path / "empty_first.zarr"
+        root = open_group(path, mode="w", zarr_format=zarr_format)
+        root.create_group("0")
+        create_array(root.create_group("1"), "0", data=_ramp((3, 6, 6, 6), 99))
+
+        for call in (
+            lambda: discover_ome_zarr_shape(path),
+            lambda: load_volume(path),
+            lambda: open_volume_lazy(path),
+            lambda: discover_ome_zarr_shape(path, array_key="0"),
+        ):
+            with pytest.raises(ValueError, match="names a zarr group holding no array"):
+                call()
+
+        # …and the caller can still reach the image it does hold.
+        assert discover_ome_zarr_shape(path, array_key="1").shape == (3, 6, 6, 6)
+
+
+class TestEveryKeySpellingReportsTheSameOwner:
+    """One array, one owner — whatever the caller typed to reach it.
+
+    ``_image_group_array`` reports the group it happened to SEARCH when that
+    group's own block declared nothing, which is not necessarily the group that
+    DECLARES the array. On a store whose image group ``"0"`` declares
+    ``datasets[0].path == "res/0"``, ``--array-key 0/res`` searched ``res``,
+    adopted it as owner, found no declaration there and fell through to the ndim
+    heuristic — a different ``batch-fit`` T×C fan-out for the same array, decided
+    by nothing but the spelling.
+    """
+
+    @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
+    def test_all_four_spellings_of_a_deeply_declared_level_agree(
+        self, tmp_path: Path, zarr_format: int
+    ) -> None:
+        path = tmp_path / "spellings.zarr"
+        root = open_group(path, mode="w", zarr_format=zarr_format)
+        image = root.create_group("0")
+        create_array(image.create_group("res"), "0", data=_ramp((2, 4, 4, 4)))
+        image.attrs["multiscales"] = _multiscales(
+            ["t", "z", "y", "x"], ["res/0"], scale=[1.0, 2.0, 0.3, 0.3]
+        )
+
+        for key in (None, "0", "0/res", "0/res/0"):
+            info = discover_ome_zarr_shape(path, array_key=key)
+
+            # The DECLARED values, not merely the same values four times: the
+            # heuristic answers ['c','z','y','x'], (1, 2) and no spacing at all.
+            assert info.shape == (2, 4, 4, 4), key
+            assert info.axes == ["t", "z", "y", "x"], key
+            assert (info.n_timepoints, info.n_channels) == (2, 1), key
+            assert info.voxel_size == (2.0, 0.3, 0.3), key
+
+
+class TestTheOwnerIsAskedWhenTheSelectionNeverDecided:
+    """A block one group away from the selected array is still read.
+
+    In both stores below the owner's ``multiscales`` is the ONLY metadata there
+    is, and neither owner is the group the naive rules would consult: the first is
+    never inspected by the selection at all, the second is a group BELOW the image
+    group. Missing either drops the store onto the 4D ``CZYX`` heuristic, T and C
+    the wrong way round and no spacing.
+    """
+
+    @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
+    def test_a_whole_store_sweep_asks_the_owner_it_never_inspected(
+        self, tmp_path: Path, zarr_format: int
+    ) -> None:
+        """The ``h2afva/fused`` layout: no ``"0"`` key, so the sweep decides.
+
+        The one route that reports ``owner_declares`` as UNDETERMINED — the sweep
+        looked at no ``multiscales`` block — so reading that ``None`` as "does not
+        declare it" instead of ASKING loses this store's metadata outright.
+        """
+        path = tmp_path / "sweep_owner.zarr"
+        root = open_group(path, mode="w", zarr_format=zarr_format)
+        group = root.create_group("h2afva")
+        create_array(group, "fused", data=_ramp((2, 4, 4, 4)))
+        group.attrs["multiscales"] = _multiscales(
+            ["t", "z", "y", "x"], ["fused"], scale=[1.0, 2.0, 0.5, 0.5]
+        )
+
+        info = discover_ome_zarr_shape(path)
+
+        assert info.axes == ["t", "z", "y", "x"]
+        assert (info.n_timepoints, info.n_channels) == (2, 1)
+        assert info.voxel_size == (2.0, 0.5, 0.5)
+
+    @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
+    def test_a_level_nested_below_the_image_group_asks_its_own_parent(
+        self, tmp_path: Path, zarr_format: int
+    ) -> None:
+        """Levels at ``0/sub/0`` with the block on ``0/sub`` declaring ``"0"``.
+
+        The image-group search reaches this array through its recursive branch and
+        reports ``0/sub`` as the owner without ever having looked at its block;
+        the owner-resolution rule then asks, and finds the declaration there.
+        """
+        path = tmp_path / "nested_owner.zarr"
+        root = open_group(path, mode="w", zarr_format=zarr_format)
+        sub = root.create_group("0").create_group("sub")
+        create_array(sub, "0", data=_ramp((2, 4, 4, 4)))
+        sub.attrs["multiscales"] = _multiscales(
+            ["t", "z", "y", "x"], ["0"], scale=[1.0, 3.0, 0.25, 0.25]
+        )
+
+        info = discover_ome_zarr_shape(path)
+
+        assert info.axes == ["t", "z", "y", "x"]
+        assert (info.n_timepoints, info.n_channels) == (2, 1)
+        assert info.voxel_size == (3.0, 0.25, 0.25)
 
 
 class TestSelectionIsDeterministic:
@@ -576,7 +740,7 @@ class TestSelectionIsDeterministic:
         first = _ramp((2, 8, 16, 16))
         second = _ramp((4, 4, 16, 16), start=20_000)
         path = tmp_path / "tie_fallback.zarr"
-        root = zarr.open_group(str(path), mode="w", zarr_format=zarr_format)
+        root = open_group(path, mode="w", zarr_format=zarr_format)
         create_array(root.create_group("aaa"), "fused", data=first)
         create_array(root.create_group("bbb"), "fused", data=second)
 
@@ -600,7 +764,7 @@ class TestSelectionIsDeterministic:
         walked_first = _ramp((4, 4, 4))
         lowest_path = _ramp((4, 4, 4), start=30_000)
         path = tmp_path / "tiebreak.zarr"
-        root = zarr.open_group(str(path), mode="w", zarr_format=zarr_format)
+        root = open_group(path, mode="w", zarr_format=zarr_format)
         create_array(root.create_group("a"), "x", data=walked_first)
         create_array(root.create_group("a-b"), "y", data=lowest_path)
 
@@ -660,7 +824,7 @@ class TestTheRootBlockWinsUnlessTheOwnerDeclaresTheSelectedArray:
         on a store the root already had right.
         """
         path = tmp_path / "keller_permuted.zarr"
-        root = zarr.open_group(str(path), mode="w", zarr_format=zarr_format)
+        root = open_group(path, mode="w", zarr_format=zarr_format)
         group = root.create_group("h2afva")
         create_array(group, "fused", data=_ramp((2, 2, 3, 4, 4, 4)))
         group.attrs["axes"] = ["z", "y", "x", "time", "camera", "channel"]
@@ -679,7 +843,7 @@ class TestTheRootBlockWinsUnlessTheOwnerDeclaresTheSelectedArray:
     ) -> None:
         """Root-first is a PRECEDENCE, not a removal: the fallback still fires."""
         path = tmp_path / "owner_axes_only.zarr"
-        root = zarr.open_group(str(path), mode="w", zarr_format=zarr_format)
+        root = open_group(path, mode="w", zarr_format=zarr_format)
         group = root.create_group("h2afva")
         create_array(group, "fused", data=_ramp((2, 2, 3, 4, 4, 4)))
         group.attrs["axes"] = ["time", "camera", "channel", "z", "y", "x"]
@@ -692,18 +856,23 @@ class TestTheRootBlockWinsUnlessTheOwnerDeclaresTheSelectedArray:
     @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
     @pytest.mark.parametrize(
         "datasets",
-        [{"0": {"path": "0"}}, ["0"], ["0", {"path": "0"}]],
-        ids=["mapping", "strings", "mixed"],
+        [{"0": {"path": "0"}}, ["0"]],
+        ids=["mapping", "strings"],
     )
     def test_a_malformed_owner_datasets_falls_back_instead_of_raising(
-        self, tmp_path: Path, zarr_format: int, datasets: Any
+        self,
+        tmp_path: Path,
+        zarr_format: int,
+        datasets: Any,
+        capsys: pytest.CaptureFixture,
     ) -> None:
-        """A block accepted on arity alone crashed the NGFF parser outright.
+        """No entry of such a block can NAME an array, so it is never evidence.
 
-        ``_parse_ngff_metadata`` reads ``datasets[0].get(...)``, so a mapping gave
-        ``KeyError: 0`` and a bare string ``AttributeError``. Such a block must
-        fall back (here: the 4D ``CZYX`` heuristic), exactly as it did before the
-        owner was consulted at all.
+        Neither a mapping nor a list of bare strings can declare a level, so the
+        owner's block loses the evidence gate and discovery falls back (here: the
+        4D ``CZYX`` heuristic), exactly as it did before the owner was consulted
+        at all — but the notice must SAY that a block was declared, since "no
+        metadata found" is a lie about this store.
         """
         block = [
             {
@@ -724,13 +893,61 @@ class TestTheRootBlockWinsUnlessTheOwnerDeclaresTheSelectedArray:
         assert info.shape == (2, 4, 4, 4)
         assert info.axes == ["c", "z", "y", "x"]
         assert (info.n_timepoints, info.n_channels) == (1, 2)
+        out = capsys.readouterr().out
+        assert "no OME-Zarr/NGFF metadata found" not in out
+        assert "declares a `multiscales` block that does not name it" in out
+
+    @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
+    def test_a_mixed_owner_datasets_list_is_still_read_when_it_names_the_array(
+        self, tmp_path: Path, zarr_format: int
+    ) -> None:
+        """``["0", {"path": "0", …}]``: the dict entry is what selected the array.
+
+        This is the ONE malformed shape that can reach the owner test with
+        evidence in hand, and the parser reads it completely — axes, level count
+        and spacing. A shape gate on ``datasets`` therefore only ever discarded a
+        block that WAS about the selected array, dropping this 4D ``TZYX`` store
+        onto the ``CZYX`` heuristic: the silently wrong ``batch-fit`` fan-out the
+        gate was meant to prevent, caused by the gate.
+        """
+        block = [
+            {
+                "version": "0.4",
+                "axes": [
+                    {"name": name, "type": _AXIS_TYPES.get(name, "space")}
+                    for name in ("t", "z", "y", "x")
+                ],
+                "datasets": [
+                    "0",
+                    {
+                        "path": "0",
+                        "coordinateTransformations": [
+                            {"type": "scale", "scale": [1.0, 2.0, 0.5, 0.5]}
+                        ],
+                    },
+                ],
+            }
+        ]
+        path = _bioformats2raw_store(
+            tmp_path / "mixed.zarr",
+            zarr_format,
+            [("0", [_ramp((2, 4, 4, 4))])],
+            image_attrs={"multiscales": block},
+        )
+
+        info = discover_ome_zarr_shape(path)
+
+        assert info.shape == (2, 4, 4, 4)
+        assert info.axes == ["t", "z", "y", "x"]
+        assert (info.n_timepoints, info.n_channels) == (2, 1)
+        assert info.voxel_size == (2.0, 0.5, 0.5)
 
     @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
     def test_a_root_multiscales_survives_an_owner_axes_of_the_wrong_length(
         self, tmp_path: Path, zarr_format: int
     ) -> None:
         path = tmp_path / "rootmeta.zarr"
-        root = zarr.open_group(str(path), mode="w", zarr_format=zarr_format)
+        root = open_group(path, mode="w", zarr_format=zarr_format)
         image = root.create_group("img")
         create_array(image, "0", data=_ramp((2, 8, 16, 16)))
         create_array(image, "1", data=_ramp((2, 4, 8, 8), start=40_000))
@@ -759,7 +976,7 @@ class TestTheRootBlockWinsUnlessTheOwnerDeclaresTheSelectedArray:
         only one of them was ever caught.
         """
         path = tmp_path / "keller.zarr"
-        root = zarr.open_group(str(path), mode="w", zarr_format=zarr_format)
+        root = open_group(path, mode="w", zarr_format=zarr_format)
         group = root.create_group("h2afva")
         create_array(group, "fused", data=_ramp((2, 2, 3, 4, 4, 4)))
         group.attrs["axes"] = ["a", "b", "c"]
@@ -858,7 +1075,7 @@ class TestAnExplicitKeyDescribesTheArrayTheWayNoKeyDoes:
         self, tmp_path: Path, zarr_format: int
     ) -> None:
         path = tmp_path / "deep_key.zarr"
-        root = zarr.open_group(str(path), mode="w", zarr_format=zarr_format)
+        root = open_group(path, mode="w", zarr_format=zarr_format)
         image = root.create_group("0")
         create_array(image.create_group("res"), "0", data=_ramp((3, 10, 4, 5, 5)))
         # A CTZYX block — the heuristic's 5D guess is TCZYX, so adopting the
@@ -895,7 +1112,7 @@ class TestADroppedDeclaredLevelIsReported:
         full = _ramp((2, 8, 16, 16))
         half = _ramp((2, 4, 8, 8), start=40_000)
         path = tmp_path / "half_written.zarr"
-        root = zarr.open_group(str(path), mode="w", zarr_format=zarr_format)
+        root = open_group(path, mode="w", zarr_format=zarr_format)
         image = root.create_group("0")
         create_array(image, "0", data=full)
         create_array(image, "1", data=half)
@@ -967,7 +1184,7 @@ class TestTheConsoleLine:
         self, tmp_path: Path, zarr_format: int, capsys: pytest.CaptureFixture
     ) -> None:
         path = tmp_path / "ngff.zarr"
-        root = zarr.open_group(str(path), mode="w", zarr_format=zarr_format)
+        root = open_group(path, mode="w", zarr_format=zarr_format)
         create_array(root, "0", data=_ramp((4, 4, 4)))
 
         load_volume(path)
@@ -986,7 +1203,7 @@ class TestUnchangedBehaviour:
     ) -> None:
         full = _ramp((8, 8, 8))
         path = tmp_path / "ngff.zarr"
-        root = zarr.open_group(str(path), mode="w", zarr_format=zarr_format)
+        root = open_group(path, mode="w", zarr_format=zarr_format)
         create_array(root, "0", data=full)
         create_array(root, "1", data=full[::2, ::2, ::2])
 
@@ -1001,7 +1218,7 @@ class TestUnchangedBehaviour:
         self, tmp_path: Path, zarr_format: int
     ) -> None:
         path = tmp_path / "empty.zarr"
-        zarr.open_group(str(path), mode="w", zarr_format=zarr_format)
+        open_group(path, mode="w", zarr_format=zarr_format)
 
         for call in (
             lambda: discover_ome_zarr_shape(path),

@@ -1192,6 +1192,59 @@ def test_a_malformed_axes_entry_degrades_instead_of_raising(
     assert "no `axes` list" in out
 
 
+@pytest.mark.parametrize("axes", [5, {"0": "z"}, "zyx"])
+def test_a_custom_axes_attribute_that_is_not_a_list_degrades_instead_of_raising(
+    tmp_path: Path, axes: Any, capsys: pytest.CaptureFixture
+) -> None:
+    """The bare-``axes`` sibling of the ``multiscales.axes`` case above.
+
+    ``len(custom_axes)`` measures whatever is there, so a root attribute
+    ``{"axes": 5}`` is a ``TypeError`` straight out of ``discover_ome_zarr_shape``
+    — the one failure mode this module promises never to produce. (``"zyx"`` IS
+    sized, so it pins the other half: a string must never be mistaken for three
+    labels.)
+    """
+    path = _write_store(
+        tmp_path / "custom_axes.zarr", (2, 3, 8, 16, 16), extra_attrs={"axes": axes}
+    )
+
+    info = discover_ome_zarr_shape(path)
+
+    assert info.spatial_shape == (8, 16, 16)  # the 5D heuristic
+    out = capsys.readouterr().out
+    assert "no OME-Zarr/NGFF metadata found" not in out
+    assert "not a list of labels" in out
+
+
+def test_an_owner_axes_is_used_when_the_roots_own_list_is_unusable(
+    tmp_path: Path,
+) -> None:
+    """Root-first is a PRECEDENCE, and an UNUSABLE root list still yields to it.
+
+    The absent-root case is covered next door; this is the other branch of the
+    same fallback — the root declares an ``axes`` list of the wrong length, so it
+    cannot be used, and the owner's six labels must still be read rather than the
+    6-D generic ``dim0…dim5`` heuristic (which reports T=1, C=1).
+    """
+    path = tmp_path / "root_axes_unusable.zarr"
+    root = open_group(path, mode="w", zarr_format=3)
+    group = root.create_group("h2afva")
+    create_array(
+        group,
+        "fused",
+        data=np.zeros((2, 2, 3, 4, 4, 4), dtype=np.float32),
+        compressor="auto",
+    )
+    root.attrs["axes"] = ["t", "z", "y"]  # 3 labels for a 6-D array
+    group.attrs["axes"] = ["time", "camera", "channel", "z", "y", "x"]
+
+    info = discover_ome_zarr_shape(path)
+
+    assert info.axes == ["time", "camera", "channel", "z", "y", "x"]
+    assert (info.n_timepoints, info.n_channels) == (2, 6)
+    assert info.spatial_shape == (4, 4, 4)
+
+
 @pytest.mark.parametrize(
     ("axes_raw", "expected_axes"),
     [

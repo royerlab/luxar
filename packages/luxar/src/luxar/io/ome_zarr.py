@@ -196,34 +196,6 @@ class OMEZarrInfo:
     """Path to the zarr store."""
 
 
-def _parseable_datasets(block: Any) -> bool:
-    """Is an OWNING group's ``multiscales`` block SHAPED the way the parser reads?
-
-    ``datasets``, if present, has to be a list of dicts. This gate applies to the
-    owner's block ONLY — the root's keeps whatever behaviour it had — and it is
-    the second half of the owner test; the first and decisive half is EVIDENCE
-    (:func:`~luxar.io.volume._declares_array`, see :func:`_owner_ngff_attrs`).
-
-    A block whose ``datasets`` is a mapping or holds a bare string describes no
-    level this reader can identify, so adopting it over the root's would trade a
-    usable pyramid for one that can answer neither the level count nor the
-    spacing. Such a block must fall back to the root or the heuristic, exactly as
-    it did before the owner was consulted at all.
-
-    Axis arity is deliberately NOT checked here: that is
-    :func:`_usable_multiscales`' job for every block, owner or root, and two
-    predicates answering it would be two places to keep in step.
-    """
-    if not (isinstance(block, list) and block and isinstance(block[0], dict)):
-        return False
-    datasets = block[0].get("datasets")
-    if datasets is None:
-        return True
-    return isinstance(datasets, list) and all(
-        isinstance(entry, dict) for entry in datasets
-    )
-
-
 def _relative_key(owner: Any, key_path: str) -> Optional[str]:
     """``key_path`` (store-root-relative) re-expressed relative to ``owner``.
 
@@ -268,19 +240,32 @@ def _owner_ngff_attrs(
     requests a multi-level store costs); ``None`` means it never needed one, so
     ask.
 
+    EVIDENCE is the whole test. There is deliberately no second, SHAPE gate on the
+    block's ``datasets``: the parser does not crash on a malformed one (it
+    type-checks every entry it reads and only takes ``len()`` for the level
+    count), so the gate could only throw away a block that IS about the selected
+    array. The one shape that ever reached it with evidence in hand — a MIXED
+    ``["0", {"path": "0", …}]`` list, whose dict entry is what resolved to the
+    array in the first place — is exactly the one the parser reads completely,
+    axes, voxel size and all, and rejecting it dropped a 4D ``TZYX`` store onto
+    the ``CZYX`` heuristic: the silently wrong ``batch-fit`` fan-out this module
+    exists to prevent, caused by the guard against it.
+
     Returns ``(attrs, problem)`` — ``attrs`` is ``None`` whenever the root's block
     stands, which is both the plain OME-NGFF case (there the owner IS the root)
-    and the safe answer for a group carrying a block about something else.
+    and the safe answer for a group carrying a block about something else. The
+    latter carries a ``problem``: the store DID declare NGFF metadata, so letting
+    the give-up notice say "no OME-Zarr/NGFF metadata found" would be a lie about
+    a store whose one fixable detail is that its ``datasets[*].path`` entries do
+    not resolve to the array that was selected.
     """
     block = resolve_ngff_attrs(owner_attrs).get("multiscales")
     if not block:
         return None, None
     if not (_declares_array(owner, arr) if declares is None else declares):
-        return None, None
-    if not _parseable_datasets(block):
         return None, (
-            "the group owning the selected array declares `multiscales` "
-            "`datasets` that are not a list of entries"
+            "the group owning the selected array declares a `multiscales` "
+            "block that does not name it"
         )
     return owner_attrs, None
 
@@ -321,9 +306,17 @@ def discover_ome_zarr_shape(
         array_key: Key path to a specific array within the zarr store
             (e.g. ``"h2afva/fused"``).  When provided, skips auto-selection
             and navigates directly to this array (which may itself be a group —
-            then its own full-resolution level is taken), and selects the
-            matching ``datasets[]`` entry for the voxel size (so a coarser
-            pyramid level reports its own spacing, not level 0's).
+            then its own full-resolution level is taken).
+
+            The ``datasets[]`` entry for the voxel size is matched against the
+            array that was SELECTED, whether or not a key was passed — so a
+            coarser pyramid level reports its own spacing, not level 0's, and
+            that holds for the auto path too (which can perfectly well land on a
+            coarser level, e.g. when level 0's declared path does not resolve).
+            The price is that a block whose ``datasets[*].path`` spells the
+            selected array non-canonically (``"./0"`` for the array at ``"0"``)
+            no longer matches, and reports no spacing rather than level 0's; see
+            :func:`_selected_dataset`.
 
     Returns:
         :class:`OMEZarrInfo` with discovered metadata.
@@ -593,14 +586,20 @@ def _selected_dataset(
 ) -> Optional[Mapping[str, Any]]:
     """The ``datasets[]`` entry describing the selected array, or ``None``.
 
-    ``array_key`` may select a coarser pyramid LEVEL, which has its own entry;
-    quoting level 0's spacing for it halves every number. Matched on the entry's
-    ``path`` (see :func:`_dataset_path_matches`).
+    ``array_key`` is the SELECTED array named relative to the group whose block
+    this is, and discovery supplies it on every call — not only when the user
+    passed a key. The selection can land on a coarser pyramid LEVEL with no key at
+    all (level 0's declared path may not resolve), and quoting level 0's spacing
+    for it halves every number. Matched on the entry's ``path`` (see
+    :func:`_dataset_path_matches`). ``None`` is passed only for a store whose
+    selected array has no name relative to the owner at all.
 
-    ``None`` — "unknowable", not "level 0" — when an ``array_key`` was asked for
-    and nothing matched, unless the unmatched key is flat and the pyramid has one
+    ``None`` — "unknowable", not "level 0" — when a key was matched against and
+    nothing matched, unless the unmatched key is flat and the pyramid has one
     level. A nested unmatched key names an array outside the block's owner, so even
-    a single-level pyramid cannot describe it.
+    a single-level pyramid cannot describe it. A block that spells its own level
+    non-canonically (``"./0"`` for the array at ``"0"``) therefore reports no
+    spacing; an exact match is the only one that can identify a level safely.
 
     Never raises: a ``datasets`` that is not a list of mappings is metadata this
     cannot read.
