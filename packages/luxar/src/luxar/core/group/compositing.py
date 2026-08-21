@@ -47,7 +47,7 @@ Exposed:
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Union
 
 import numpy as np
 
@@ -69,6 +69,22 @@ _GEOMETRY_WORDS = ("points", "lines", "mesh", "gsplats")
 _NESTED_ADD_ERROR_PREFIX_RE = re.compile(
     r"^Could not add (" + "|".join(_GEOMETRY_WORDS) + r") '[^']*': "
 )
+
+
+def preflight_extend_to_all(
+    scene: Any,
+    extend_to_all: Optional[Union[List[str], str]],
+    positions: Any,
+    data_type: str,
+) -> None:
+    """Validate an explicit scene-level spec before a wrapper is written.
+
+    The explicit branches are position-independent and can be judged once at
+    the wrapper door. ``None`` stays leaf-only because its candidate analysis
+    emits one advisory warning per written child.
+    """
+    if extend_to_all is not None:
+        scene._resolve_extend_to_all(extend_to_all, positions, data_type)
 
 
 def unnest_add_error(geometry: str, name: str, exc: BaseException) -> str:

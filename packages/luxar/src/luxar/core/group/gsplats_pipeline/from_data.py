@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from ..compositing import (
     ABSENT_WHEN_NONE_RENDER_ATTRS,
+    preflight_extend_to_all,
     strip_absent_attr_kwargs,
 )
 from .lod_dispatch import (
@@ -404,16 +405,6 @@ def resolve_partition_beside_an_additive_ladder(
     )
 
 
-def _preflight_wrapper_extend_to_all(
-    group: "Group",
-    extend_to_all: Optional[Union[List[str], str]],
-    centers: Any,
-) -> None:
-    """Validate an explicit scene-level spec before a LOD wrapper exists."""
-    if extend_to_all is not None:
-        group._find_scene()._resolve_extend_to_all(extend_to_all, centers, "splats")
-
-
 def _reject_before_wrapper(
     group: "Group",
     *,
@@ -659,11 +650,7 @@ def _reject_before_wrapper(
         # function exists to prevent, one key over — see the helper, which also
         # states why ``False`` and a sub-2-D width are skipped rather than judged.
         reject_bad_partition_spec(attrs, effective_ndim)
-        # This scene-level spec does not depend on a particular LOD child. An
-        # explicit invalid value must be refused before ``add_lod_group`` writes
-        # the wrapper; ``None`` remains child-only so its advisory warning is not
-        # emitted once more for the unsplit source array.
-        _preflight_wrapper_extend_to_all(group, extend_to_all, centers)
+        preflight_extend_to_all(group._find_scene(), extend_to_all, centers, "splats")
         # The leaf's WHOLE colours validator, run against EVERY rung of EVERY
         # level, for the same reason the colours/colormap question above is asked
         # of every level — and below the width, because that is where the flat
