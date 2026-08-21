@@ -306,7 +306,8 @@ def fit_planned(
     boundaries. The CLI resolves it once against the whole volume before calling
     here (``luxar.cli.gsplat_ops.fitting.fit_utils.resolve_shared_floor``). What
     is shared is the floor ARGUMENT, not the input: every box is still handed its
-    own crop, but the resolved level remains its physical zero point.
+    own crop. The whole-volume ``norm_range`` below gives those crops the same
+    effective lower bound even when its low endpoint exceeds the resolved level.
 
     ``fit_kwargs["norm_range"]`` should likewise describe the whole source volume
     in raw input units. When omitted, this function resolves it once from

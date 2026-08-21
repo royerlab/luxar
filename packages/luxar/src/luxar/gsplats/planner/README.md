@@ -80,10 +80,10 @@ Both drivers expect the background floor to arrive as a **concrete level** (or
 same number to every box and to the density scan. A spec (`auto`/`pNN`) forwarded
 into the per-box fit would be re-estimated against each box CROP, so abutting
 core-kept boxes would subtract wildly different pedestals — visible brightness
-steps at box boundaries. The resolved level remains every crop's physical zero
-point. The raw normalization range is likewise resolved once against the whole
-volume and handed to every box, so absolute optimizer thresholds do not vary with
-local crop contrast.
+steps at box boundaries. The raw normalization range is likewise resolved once
+against the whole volume and handed to every box, so every crop uses the same
+effective lower bound and absolute optimizer thresholds do not vary with local
+crop contrast.
 
 ## Consumers
 
