@@ -71,6 +71,12 @@ This directory is **not** uniformly verified. Current state:
 | `lines-clipping.ts`     | Frounded end to end (#1821); exact parity cases cover slab boundaries and t-parameter accumulation                       |
 | `projection.ts`         | Pure copy, no arithmetic                                                                                                 |
 
+The viewer's full-array and range-based `ArrayDecoder` log-scalar paths delegate to
+`decode_log_scalar_u8` / `decode_log_scalar_u16` here. The Rust/WASM f32 kernel is the
+viewer decode contract, so worker, main-thread, and worker-fallback ranges cannot choose
+different arithmetic for the same encoded array. The Python decoder remains a separate
+f64 metadata helper.
+
 ### Where `Math.fround` is mandatory
 
 JS numbers are f64. Reading a `Float32Array` yields an exact f32 widened to f64,

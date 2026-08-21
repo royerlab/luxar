@@ -39,6 +39,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { ArrayDecoder, ArrayRefRegistry } from '../../../../data/array-decoder/decoder';
 import type { ArrayMetadata } from '../../../../data/array-decoder/decoder';
 import * as zarr from '../../../../data/zarr';
+import { decode_log_scalar_u8, decode_log_scalar_u16 } from '../../../../wasm/typescript/decode';
 import { FileSystemStore } from '@zarrita/storage';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
@@ -1828,6 +1829,36 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
   });
 
   describe('decodeLogScalar via dequantizeRange — log-space boundaries', () => {
+    it.each([
+      { dtype: 'uint8', maxLog: 9 },
+      { dtype: 'uint8', maxLog: Math.log(10) },
+      { dtype: 'uint16', maxLog: 9 },
+      { dtype: 'uint16', maxLog: Math.log(10) },
+    ])('matches the shared $dtype kernel exactly at maxLog=$maxLog', ({ dtype, maxLog }) => {
+      const decoder = new ArrayDecoder(new ArrayRefRegistry());
+      const codes =
+        dtype === 'uint8'
+          ? Uint8Array.from({ length: 256 }, (_, index) => index)
+          : Uint16Array.from({ length: 65536 }, (_, index) => index);
+      const expected = new Float32Array(codes.length);
+      if (codes instanceof Uint8Array) {
+        decode_log_scalar_u8(codes, maxLog, expected);
+      } else {
+        decode_log_scalar_u16(codes, maxLog, expected);
+      }
+
+      const actual = decoder.dequantizeRange(codes, {
+        bounds: [0, maxLog],
+        dtype,
+        isLogSpace: true,
+      });
+      const expectedBits = new Uint32Array(expected.buffer);
+      const actualBits = new Uint32Array(actual.buffer);
+      const firstMismatch = expectedBits.findIndex((bits, index) => bits !== actualBits[index]);
+
+      expect(firstMismatch).toBe(-1);
+    });
+
     it('maps index 0 → ~0 and max_int → ~1000 (expm1 inverse of log1p)', () => {
       // Log-space stores log1p(value)/max_log → uint. Decoding applies
       // expm1(normalized * max_log). With max_log = ln(1001) ≈ 6.908755,
