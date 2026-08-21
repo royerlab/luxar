@@ -558,6 +558,7 @@ def test_the_invariant_helper_rejects_a_mismatched_pair() -> None:
 
 #: The name every routed producer must reach.
 _RESOLVER = "resolve_lod_ladder"
+_DERIVATION_HELPERS = ("coverage_fractions", "partitioned_coverage_fractions")
 
 #: Every module that builds a ``kind=lod`` group from a scene adder, relative to
 #: the ``luxar`` package root. Kept in step with ``_LOD_GROUP_CALLERS`` below,
@@ -704,6 +705,11 @@ def test_every_producer_calls_the_shared_resolver(rel: str) -> None:
     through the module's ``ImportFrom`` nodes). Any of them routes the decision
     through the shared helper, which is the whole assertion.
 
+    The same scan also forbids either derivation helper directly. Without that
+    half, a second arm in an already-listed producer can call
+    ``partitioned_coverage_fractions`` and hand-stamp the selector while another
+    arm keeps this file-level resolver-presence check green.
+
     **What it does NOT prove, stated honestly.** This is a NAME check: a producer
     that defined its own local ``def resolve_lod_ladder(...)`` implementing the
     rule WRONGLY passes this guard and the two structural ones beside it. So the
@@ -713,8 +719,20 @@ def test_every_producer_calls_the_shared_resolver(rel: str) -> None:
     copy leaves all three structural guards green and turns three behavioural
     tests red.
     """
-    assert _calls_resolver(_luxar_root() / rel, filename=rel), (
+    path = _luxar_root() / rel
+    assert _calls_resolver(path, filename=rel), (
         f"{rel} builds a kind=lod group but does not call resolve_lod_ladder"
+    )
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=rel)
+    called = _called_names(tree)
+    direct = sorted(
+        helper
+        for helper in _DERIVATION_HELPERS
+        if called & _aliases_of(tree, helper)
+    )
+    assert not direct, (
+        f"{rel} calls derivation helpers directly ({direct}) instead of routing "
+        "every ladder arm through resolve_lod_ladder"
     )
 
 
