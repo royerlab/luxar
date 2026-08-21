@@ -30,7 +30,6 @@ def _face_quadrics(positions: NDArray[np.float64]) -> NDArray[np.float64]:
     """One homogeneous squared-distance quadric per triangle."""
     n_faces, _, ndim = positions.shape
     quadrics = np.zeros((n_faces, ndim + 1, ndim + 1), dtype=np.float64)
-    extent = _coordinate_extent(positions)
     if ndim == 3:
         edge1 = positions[:, 1] - positions[:, 0]
         edge2 = positions[:, 2] - positions[:, 0]
@@ -46,6 +45,7 @@ def _face_quadrics(positions: NDArray[np.float64]) -> NDArray[np.float64]:
         quadrics[valid] = np.einsum("fi,fj->fij", plane[valid], plane[valid])
         return quadrics
 
+    extent = _coordinate_extent(positions)
     identity = np.eye(ndim)
     for index, triangle in enumerate(positions):
         edges = (triangle[1:] - triangle[0]).T
