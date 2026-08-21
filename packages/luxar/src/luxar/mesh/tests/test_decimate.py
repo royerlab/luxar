@@ -536,6 +536,14 @@ class TestDecimateQEM:
         rank_deficient[-1] = rank_deficient[-2]
         assert _solve_system(rank_deficient, np.ones(ndim)) is None
 
+    def test_non_three_dimensional_solver_rejects_near_singularity(self) -> None:
+        matrix = np.diag([1.0, 1.0, 1.0, 1e-15])
+        rhs = np.ones(4)
+
+        assert np.linalg.matrix_rank(matrix, tol=1e-12) == 3
+        assert np.linalg.norm(np.linalg.solve(matrix, rhs)) > 1e14
+        assert _solve_system(matrix, rhs) is None
+
     def test_a_flat_four_dimensional_ladder_stays_inside_its_input_bounds(
         self,
     ) -> None:
@@ -645,6 +653,23 @@ class TestDecimateQEM:
         _, target = _edge_target(0, 1, positions, quadrics)
 
         np.testing.assert_allclose(target, [0.5, 0.0, 0.0])
+
+    def test_edge_target_rejects_an_out_of_envelope_solve(self) -> None:
+        positions = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
+        quadrics = np.zeros((2, 4, 4), dtype=np.float64)
+        quadrics[:, :3, :3] = np.diag([1.0, 1.0, 1e-13]) / 2.0
+        quadrics[:, :3, 3] = quadrics[:, 3, :3] = np.array([-0.5, 0.0, 1e-3]) / 2.0
+
+        solved = _solve_system(
+            (quadrics[0] + quadrics[1])[:3, :3],
+            -(quadrics[0] + quadrics[1])[:3, 3],
+        )
+        assert solved is not None
+        assert solved[2] == pytest.approx(-1e10)
+
+        _, target = _edge_target(0, 1, positions, quadrics)
+
+        np.testing.assert_array_equal(target, [0.5, 0.0, 0.0])
 
     def test_an_at_target_mesh_is_returned_unchanged(self) -> None:
         vertices, faces = octasphere(1)

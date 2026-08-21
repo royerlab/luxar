@@ -125,6 +125,9 @@ def _edge_target(
     candidates = [positions[u], positions[v], 0.5 * (positions[u] + positions[v])]
     solved = _solve_system(matrix, rhs)
     if solved is not None and np.isfinite(solved).all():
+        # An ill-conditioned solve can escape far beyond the edge, especially in nD
+        # where there is no face-orientation veto. Keeping every accepted placement
+        # inside this envelope also keeps every decimated level inside the input bbox.
         lower = np.minimum(positions[u], positions[v])
         upper = np.maximum(positions[u], positions[v])
         midpoint = candidates[-1]
