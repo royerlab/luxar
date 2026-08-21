@@ -31,6 +31,7 @@ from ..compositing import (
     funnel_add_error,
     is_broadcast_color,
     position_bounds_from_array,
+    preflight_extend_to_all,
     reject_lines_only_join,
     reject_mesh_only_appearance,
     slice_optional_array,
@@ -216,6 +217,7 @@ def add_points_impl(
 
             substitutive_spec = resolve_substitutive_axis_points(substitutive_lod)
             if substitutive_spec is not None:
+                preflight_extend_to_all(scene, extend_to_all, pos_arr, "points")
                 return add_points_substitutive_lod_wrapper_impl(
                     group,
                     name=name,
@@ -278,6 +280,7 @@ def add_points_impl(
                 len(parts), int(parts[0].size) if parts else 0, max_elements, name
             )
             if len(parts) > 1:
+                preflight_extend_to_all(scene, extend_to_all, pos_arr, "points")
                 return add_points_partition_wrapper_impl(
                     group,
                     name=name,

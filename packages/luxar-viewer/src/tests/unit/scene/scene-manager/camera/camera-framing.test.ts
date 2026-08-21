@@ -380,6 +380,38 @@ describe('fitCameraToBounds', () => {
     expect(minZoom).toBeCloseTo(ortho.zoom / ZOOM_OUT_FACTOR, 9);
   });
 
+  it('orthographic: ignores pure depth when fitting the projected bounds', () => {
+    const ortho = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 1000);
+    const { controls } = makeControls();
+    fitCameraToBounds(ortho, controls, makeBounds([0, 0, 0], [1, 1, 100]), {
+      lookAtTarget: new THREE.Vector3(0.5, 0.5, 50),
+    });
+
+    expect(ortho.zoom).toBeCloseTo(7.5, 6);
+  });
+
+  it('perspective: frames a line aligned with the view axis in front of the camera', () => {
+    const { controls, setDistanceLimits } = makeControls();
+    fitCameraToBounds(perspectiveCamera, controls, makeBounds([0, 0, 0], [0, 0, 100]), {
+      lookAtTarget: new THREE.Vector3(0, 0, 50),
+    });
+
+    expect(perspectiveCamera.position.z).toBeGreaterThan(100);
+    expect(setDistanceLimits).toHaveBeenCalledTimes(1);
+  });
+
+  it('orthographic: frames a line aligned with the view axis and resets zoom limits', () => {
+    const ortho = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 1000);
+    ortho.zoom = 9;
+    const { controls, setZoomLimits } = makeControls();
+    fitCameraToBounds(ortho, controls, makeBounds([0, 0, 0], [0, 0, 100]), {
+      lookAtTarget: new THREE.Vector3(0, 0, 50),
+    });
+
+    expect(ortho.zoom).toBeCloseTo(0.075, 6);
+    expect(setZoomLimits).toHaveBeenCalledTimes(1);
+  });
+
   // G2: degenerate-but-nonzero geometry. A flat slab (zero Y extent) still has
   // a positive diagonal, so the perspective path must frame it (return > 0,
   // set scene scale) rather than short-circuit like the zero-extent case.
@@ -404,6 +436,18 @@ describe('fitCameraToBounds', () => {
     });
     expect(setTarget).not.toHaveBeenCalled();
     expect(reinitialize).toHaveBeenCalledTimes(1);
+  });
+
+  it('perspective: fits relative to a preserved off-center target', () => {
+    const { controls } = makeControls();
+    const target = new THREE.Vector3(0, 0, 0);
+    fitCameraToBounds(perspectiveCamera, controls, makeBounds([0, 0, 0], [10, 10, 10]), {
+      lookAtTarget: target,
+      preserveControlsTarget: true,
+    });
+
+    const halfFov = THREE.MathUtils.degToRad(perspectiveCamera.fov) / 2;
+    expect(perspectiveCamera.position.z).toBeCloseTo(10 + 10 / 0.75 / Math.tan(halfFov), 6);
   });
 
   // Regression: orbiting overwrites camera.up every frame, so a Home/F fit
@@ -442,7 +486,7 @@ describe('fitCameraToBounds', () => {
   it('orthographic: returns 0 and short-circuits on a zero-extent box (scene.md G11)', () => {
     // [scene.md/G11][P5] Perspective zero-extent is covered above; the
     // ortho path was not. Both paths must early-return without touching
-    // zoom/distance limits or setSceneScale when maxDim===0.
+    // zoom/distance limits or setSceneScale when the diagonal is zero.
     const ortho = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 1000);
     const { controls, setSceneScale, setZoomLimits, setDistanceLimits } = makeControls();
     const result = fitCameraToBounds(ortho, controls, makeBounds([2, 2, 2], [2, 2, 2]), {

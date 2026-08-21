@@ -21,7 +21,7 @@ A mesh layer's `blendingMode` is stored **resolved**, not as composed: `volumetr
 
 The five mesh appearance values are the one control group that does **not** compose along the ancestry, and are applied through their own `applyMeshAppearance` rather than through `applyComposed`: a shade floor is a per-surface appearance choice with no composition rule (multiplying two ambients would mean nothing), and the writer never stamps them on a group. A group layer over meshes therefore does not offer them, since a group control would have to mean "set all descendants" — a different verb from every other control here.
 
-Rendering attributes compose along the scene graph per the Luxar composition spec: `opacity`, `absorption`, `gamma`, and `intensity` multiply through ancestors; `offset` adds; `blending_mode` takes the nearest ancestor's choice — except inside the edited layer's own subtree, where the layer's single Blend control wins (see [Blending mode inside a layer's subtree](#blending-mode-inside-a-layers-subtree)). Every panel mutation recomposes the effective attributes for each affected data-leaf (the layer itself, or every data descendant of a group layer) using live panel state for `layer=true` nodes and authoring-time zarr attrs for the rest. Colormap is the one exception — it applies per-leaf rather than composing.
+Rendering attributes compose along the scene graph per the Luxar composition spec: `opacity`, `absorption`, `gamma`, and `intensity` multiply through ancestors; `offset` adds; `blending_mode` takes the nearest ancestor's choice — except inside the edited layer's own subtree, where the layer's single Blend control wins (see [Blending mode inside a layer's subtree](#blending-mode-inside-a-layers-subtree)). Every panel mutation recomposes the effective attributes for each affected data-leaf (the layer itself, or every data descendant of a group layer) using live panel state for `layer=true` nodes and authoring-time zarr attrs for the rest. `colormap` composes nearest-setter-wins too (#1600), so a palette authored on a group reaches every descendant that can use one; the panel's own colormap control still fans out **imperatively** to each affected leaf material rather than going through composition, because a live dropdown change has no authored attr to compose from.
 
 Edits made in the panel are viewer-only and not persisted back to the zarr store; reload the page to return to the authored state.
 
@@ -147,10 +147,10 @@ offset    = -min / (max - min)
 The window maps the **rendered value** to `[0, 1]`, so the default depends on
 what that value is (`layer-state.ts::initialDisplayRange`):
 
-| Layer renders                                               | Starting window                                                                                                                | Why                                                                                                                                                                                                                     |
-| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| through a colormap (`colormap` on the node or a descendant) | `scalar_data_range`, else `amplitude_data_range`, else a descendant leaf's (`deriveScalarRangeFromDescendants`), else `[0, 1]` | the value is a scalar; gsplat amplitudes are heavily right-skewed, so a linear `[0, 1]` window renders near-black (#522)                                                                                                |
-| direct RGB colours                                          | `[0, 1]` — the identity                                                                                                        | the value IS authored colour. Windowing it on `color_data_range` is an unrequested contrast stretch: a uniform grey `(0.72, 0.74, 0.78)` has range `[0.72, 0.78]` → gain 16.7 / offset −12 → renders **saturated blue** |
+| Layer renders                                                           | Starting window                                                                                                                | Why                                                                                                                                                                                                                     |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| through an effective colormap (own, descendant, or consumable ancestor) | `scalar_data_range`, else `amplitude_data_range`, else a descendant leaf's (`deriveScalarRangeFromDescendants`), else `[0, 1]` | the value is a scalar; gsplat amplitudes are heavily right-skewed, so a linear `[0, 1]` window renders near-black (#522)                                                                                                |
+| direct RGB colours                                                      | `[0, 1]` — the identity                                                                                                        | the value IS authored colour. Windowing it on `color_data_range` is an unrequested contrast stretch: a uniform grey `(0.72, 0.74, 0.78)` has range `[0.72, 0.78]` → gain 16.7 / offset −12 → renders **saturated blue** |
 
 `color_data_range` therefore never sets the starting window — it only widens the
 **slider bounds** for direct-colour layers, so stretching authored colours stays
@@ -161,6 +161,10 @@ own row with its own colormap control, so a palette derived from it would be a
 snapshot that goes stale on the first inner edit. Writers route `layer` onto the
 wrapper only, so a `kind=partition` / `kind=lod` layer never has layer
 descendants and is unaffected.
+
+An ancestor palette counts only when the layer can actually consume it:
+gsplats always can, while points / lines / mesh require scalar data. A wrapper
+group inherits only when at least one data descendant meets the same rule.
 
 Bounds are the union of the starting window, the recovered authored
 `intensity`/`offset` window, and (direct colour only) `color_data_range` —
@@ -186,7 +190,7 @@ Two things the select handler must do that are easy to miss:
   window and the first drag writes it back, reverting the re-default.
 - **Honour the fail-closed guard.** `applyColormap` returns whether any leaf
   actually took the LUT. The C1 guard suppresses it on leaves with no scalar
-  data bound (a group layer over scalar-less points still offers the dropdown);
+  data bound (for example, an explicitly colormapped group over scalar-less points);
   such a layer keeps rendering direct colour, so the handler puts the identity
   window back rather than applying a scalar range as a colour gain.
 

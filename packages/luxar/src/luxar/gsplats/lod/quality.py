@@ -59,12 +59,12 @@ import numpy as np
 import torch
 
 from luxar.gsplats.gsplat_data import GSplatData
-from luxar.gsplats.lod._kernels import gaussian_self_energy_numpy
 from luxar.gsplats.lod._substitutive.refine import (
     L2RefineConfig,
     _hash_cell_size,
     _pair_K_sum_chunked,
 )
+from luxar.gsplats.lod.energy import total_self_energy
 from luxar.gsplats.utils.alpha import effective_amplitudes
 from luxar.gsplats.utils.device import resolve_torch_device
 from luxar.gsplats.utils.trils import unpack_tril
@@ -88,31 +88,6 @@ _PAIR_EXPECTED_BUDGET = 96
 #: Hard cap on the adaptive per-query neighbour count (safety on top of the
 #: radius shrink, e.g. pathologically clustered mixtures).
 _PAIR_K_MAX = 1024
-
-
-def _sqrt_det(data: GSplatData) -> np.ndarray:
-    """Per-splat ``|Σᵢ|^{1/2}`` = |product of Cholesky diagonals| (float64)."""
-    diag = data._cholesky_diag_elements()  # (N, d)
-    out: np.ndarray = np.abs(np.prod(diag.astype(np.float64), axis=1))
-    return out
-
-
-def total_self_energy(data: GSplatData) -> float:
-    """Exact total self-energy ``Σᵢ aᵢ²·π^{D/2}·|Σᵢ|^{1/2}`` (float64, O(N)).
-
-    ``aᵢ`` is the ALPHA-EFFECTIVE amplitude ``A·α`` (raw amplitude times the
-    per-splat color-alpha opacity for RGBA splats; equal to the raw amplitude
-    when there is no RGBA alpha) — the same rendered mass the additive ladder
-    scores by, so build- and annotate-time stamps stay on one convention.
-
-    This is the ``reference_energy`` weight ``w`` stamped per leaf: partition
-    aggregates combine child qualities as the ``w``-weighted mean (disjoint
-    regions ⇒ L² decomposes additively over parts).
-    """
-    if data.n_splats == 0:
-        return 0.0
-    amps = np.asarray(effective_amplitudes(data), dtype=np.float64)
-    return float(gaussian_self_energy_numpy(amps, _sqrt_det(data), data.ndim).sum())
 
 
 @dataclass(frozen=True)

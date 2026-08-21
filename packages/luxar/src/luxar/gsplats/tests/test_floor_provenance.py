@@ -312,15 +312,7 @@ def test_progressive_fit_records_the_level_it_subtracted(tmp_path: Path) -> None
 
 
 def test_progressive_and_flat_agree_on_a_floor_below_the_data_minimum() -> None:
-    """The same volume and the same ``--floor`` must yield the same ``floor``.
-
-    A level BELOW the volume's minimum is where the two paths used to diverge:
-    the flat fitter raises it to the minimum (``image_min = max(resolved_floor,
-    image_min)``) and records THAT, while the progressive fitter subtracted the
-    requested level up front and then let pass 0 remove the remaining minimum on
-    top — recording only the requested level, understating the pedestal that
-    actually came out and contradicting its own ``image_min``.
-    """
+    """Progressive and flat fits resolve the same effective baseline."""
     pytest.importorskip("torch")
     from luxar.gsplats import fit_gaussian_splats
     from luxar.gsplats.fit_progressive_gsplats import fit_progressive_gaussian_splats
@@ -330,8 +322,11 @@ def test_progressive_and_flat_agree_on_a_floor_below_the_data_minimum() -> None:
     V = np.full((12, 12, 12), 100.0, np.float32)
     V += rng.normal(0, 0.5, V.shape).astype(np.float32)
     V[4:8, 4:8, 4:8] += 300.0
+    V[0, 0, 0] = 5000.0
 
-    common: dict[str, Any] = dict(floor=5.0, device="cpu", verbose=False)
+    common: dict[str, Any] = dict(
+        floor=5.0, norm_percentile=1.0, device="cpu", verbose=False
+    )
     progressive = fit_progressive_gaussian_splats(
         V,
         max_splats=20,
@@ -343,13 +338,64 @@ def test_progressive_and_flat_agree_on_a_floor_below_the_data_minimum() -> None:
     )
     flat = fit_gaussian_splats(V, n_splats=20, iterations=10, **common)
 
-    assert flat.stats["floor"] == pytest.approx(float(V.min()), abs=1e-3)
+    assert flat.stats["floor"] > 5.0
     assert progressive.stats["floor"] == pytest.approx(flat.stats["floor"], abs=1e-3)
-    # And the block stays self-consistent: the recorded level IS the recorded
-    # minimum, on both paths (the spec's "they coincide whenever suppression ran").
     assert progressive.stats["floor"] == pytest.approx(
         progressive.stats["image_min"], abs=1e-3
     )
+    assert progressive.stats["image_max"] == pytest.approx(
+        flat.stats["image_max"], abs=1e-3
+    )
+
+
+def test_progressive_shifts_a_supplied_range_after_floor_subtraction() -> None:
+    pytest.importorskip("torch")
+    from luxar.gsplats import fit_gaussian_splats
+    from luxar.gsplats.fit_progressive_gsplats import fit_progressive_gaussian_splats
+
+    V = np.full((8, 8, 8), 100.0, np.float32)
+    V[2:6, 2:6, 2:6] = 350.0
+    common: dict[str, Any] = dict(
+        floor=5.0,
+        norm_range=(10.0, 400.0),
+        device="cpu",
+        verbose=False,
+    )
+    progressive = fit_progressive_gaussian_splats(
+        V,
+        max_splats=8,
+        max_splats_per_pass=8,
+        iters_per_pass=2,
+        residual_pass_min_iters=2,
+        max_passes=1,
+        **common,
+    )
+    flat = fit_gaussian_splats(V, n_splats=8, iterations=2, **common)
+
+    for key in ("floor", "image_min", "image_max", "intensity_range"):
+        assert progressive.stats[key] == pytest.approx(flat.stats[key], abs=1e-3)
+
+
+def test_progressive_fit_announces_floor_suppression_once(capsys) -> None:
+    pytest.importorskip("torch")
+    from luxar.gsplats.fit_progressive_gsplats import fit_progressive_gaussian_splats
+
+    V = np.full((8, 8, 8), 100.0, np.float32)
+    V[2:6, 2:6, 2:6] = 350.0
+    fit_progressive_gaussian_splats(
+        V,
+        floor=5.0,
+        max_splats=8,
+        max_splats_per_pass=8,
+        iters_per_pass=2,
+        residual_pass_min_iters=2,
+        max_passes=1,
+        device="cpu",
+        verbose=True,
+    )
+
+    output = capsys.readouterr().out
+    assert output.count("Floor suppression:") == 1
 
 
 def test_progressive_fit_records_a_disabled_floor_as_null() -> None:

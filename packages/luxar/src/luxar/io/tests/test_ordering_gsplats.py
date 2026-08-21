@@ -107,6 +107,61 @@ class TestComputeChunkBoundsGSplats:
                     expected,
                 )
 
+    def test_sigma_extent_survives_the_float32_store_at_large_coordinates(
+        self,
+    ) -> None:
+        """A small σ must still widen the bound where it is under half an ULP.
+
+        ``chunk_bounds`` is float32 while the σ-extent is a small ABSOLUTE
+        quantity. Past ``|x| ~ 2**23`` the ULP exceeds 1, so accumulating
+        ``center ± coverage_sigma·σ`` in float32 (and storing it round-to-
+        nearest) lands back on the unpadded center: the stored bound is TIGHTER
+        than the ellipsoid the renderer draws and the splat is dropped from
+        queries at its own edge. Pins both the per-splat and the uniform
+        (shared ``(1, k)`` row) Cholesky paths.
+        """
+        # ULP is 2.0 at 2e7, so a 0.3 extent rounds away without the fix.
+        base = 2.0e7
+        sigma, coverage = 0.1, 3.0
+        extent = sigma * coverage
+        centers = np.array([[base, base, base], [base, base, base]], dtype=np.float32)
+        row = np.array([sigma, 0, sigma, 0, 0, sigma], dtype=np.float32)
+
+        # (1, k) exercises the shared-row broadcast path, (N, k) the per-splat one.
+        for chol in (row.reshape(1, 6), np.tile(row, (2, 1))):
+            bounds = compute_chunk_bounds_gsplats(
+                centers, chol, chunk_size=2, coverage_sigma=coverage
+            )
+            assert bounds.dtype == np.float32
+            assert bounds.shape == (1, 3, 2)
+            for dim in range(3):
+                lo = np.float64(bounds[0, dim, 0])
+                hi = np.float64(bounds[0, dim, 1])
+                assert lo <= np.float64(base) - extent, (chol.shape, dim, lo)
+                assert hi >= np.float64(base) + extent, (chol.shape, dim, hi)
+
+    def test_barrier_epsilon_survives_the_float32_store_at_large_coordinates(
+        self,
+    ) -> None:
+        """The barrier pad is absolute too, so it vanishes the same way.
+
+        A categorical axis whose values are large (a millisecond timestamp, an
+        acquisition index offset into an experiment) gets ``± _BARRIER_BOUND_EPS``
+        added in float32; at ``|x| = 2e7`` that is ~1e-3 against a half-ULP of
+        1.0, so the stored bound collapses onto the exact category value and a
+        query landing a float ULP off it misses the chunk.
+        """
+        base = 2.0e7
+        centers = np.array([[base, 0.0, 0.0]], dtype=np.float32)
+        chol = np.array([[1.0, 0, 1.0, 0, 0, 1.0]], dtype=np.float32)
+
+        bounds = compute_chunk_bounds_gsplats(
+            centers, chol, chunk_size=1, coverage_sigma=3.0, slice_dims=[0]
+        )
+
+        assert np.float64(bounds[0, 0, 0]) < np.float64(base)
+        assert np.float64(bounds[0, 0, 1]) > np.float64(base)
+
     def test_barrier_axis_is_not_sigma_expanded(self) -> None:
         # Two splats at time=0 and time=1 (axis 0), each with a LARGE axis-0
         # Cholesky value. Without a barrier the time axis would balloon by

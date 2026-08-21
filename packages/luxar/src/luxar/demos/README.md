@@ -578,7 +578,7 @@ Real Milky Way stars from Gaia DR3: top 3M brightest stars with real photometric
 
 **Run**: `luxar demo run gaia_milky_way`
 
-**Requires**: The Gaia catalog present at `~/.cache/luxar/milky_way_gaia_3m/milky_way_gaia_3m.zarr.zip` — it is CC BY-NC, so it is not distributed with Luxar. Rebuild it there by hand with `hatch run python scripts/generate_galaxy_simple.py --count 3000000 --output ~/.cache/luxar/milky_way_gaia_3m/milky_way_gaia_3m.zarr` (the `--output` stem is load-bearing: the zip must contain a top-level `milky_way_gaia_3m.zarr/` directory) — that rebuild runs from a source checkout only (the script is not in the wheel), needs `astroquery` + `astropy` (no Luxar extra provides astroquery), and takes ~90 minutes for 3M stars; doing it automatically on first run is issue #1575. Substitutive Points LOD needs `luxar[gsplats]` (torch + scipy); without it the scene builds as a flat, fully viewable point cloud.
+**Requires**: The Gaia catalog is CC BY-NC, so it is not distributed with Luxar. Run `luxar demo deps --install`, then opt into the cached local build with `luxar demo run gaia_milky_way -- --build-catalog`; an interactive first run also offers the build. The ESA query and CPU transform take about 90 minutes for 3M stars, retain the completed raw table for resume, and write `~/.cache/luxar/milky_way_gaia_3m/milky_way_gaia_3m.zarr.zip`. Use `--recompute` to replace a cached copy. Substitutive Points LOD needs `luxar[gsplats]` (torch + scipy); without it the scene builds as a flat, fully viewable point cloud.
 
 **Demonstrates**: Real astronomical data (Gaia space telescope), 3M star dataset, BP-RP photometric color-to-RGB conversion, galactocentric coordinate system, magnitude-dependent point radii, volumetric emission-absorption compositing on a mixed substitutive ladder, per-marker hover labels and a colour-swatch HTML legend built from the marker nodes.
 
@@ -655,9 +655,9 @@ Microtubule cytoskeleton at nanometer resolution using real STORM super-resoluti
 
 **Run**: `luxar demo run storm_3d_microtubules`
 
-**Requires**: Internet access (downloads STORM localization data).
+**Requires**: Internet access on first run (downloads the size-verified STORM localization CSV) and an NVIDIA CUDA GPU for an uncached widefield fit.
 
-**Demonstrates**: STORM/PALM super-resolution data (~20 nm resolution), localization uncertainty as Gaussian splat size, 3D astigmatism-based z encoding, photon count-based coloring, microtubule cytoskeleton structure.
+**Demonstrates**: Two Gaussian-splat provenance classes in one categorical view: a compact basis fitted to a photon-weighted, diffraction-blurred widefield volume, and measured STORM localization ellipsoids whose per-axis σ combines CRLB with 17 nm antibody-linkage uncertainty (about 18-19 nm and linkage-dominated in this dataset). The default 5M-row frame-ordered prefix is used for both views, so its widefield image is explicitly a partial acquisition.
 
 ---
 

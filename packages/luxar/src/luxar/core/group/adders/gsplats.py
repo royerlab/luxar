@@ -19,7 +19,9 @@ from ..compositing import (
     COMPOSITING_ATTRS,
     funnel_add_error,
     is_broadcast_color,
+    mirror_written_colormap,
     position_bounds_from_array,
+    preflight_extend_to_all,
     reject_lines_only_join,
     reject_mesh_only_appearance,
     slice_optional_array,
@@ -200,6 +202,7 @@ def add_gsplats_impl(
                 len(parts), int(parts[0].size) if parts else 0, max_elements, name
             )
             if len(parts) > 1:
+                preflight_extend_to_all(scene, extend_to_all, ctr_arr, "splats")
                 return add_gsplats_partition_wrapper_impl(
                     group,
                     name=name,
@@ -246,11 +249,12 @@ def add_gsplats_impl(
         # Sync colormap attr with what the compiler wrote to zarr
         sync_custom_colormap_attr(attrs)
 
-        # The compiler sets default "gray" colormap for gsplats without
-        # colors/colormap. Propagate that to the Node attrs so the
-        # in-memory node matches the zarr state.
-        if not metadata.get("has_colors") and "colormap" not in attrs:
-            attrs["colormap"] = "gray"
+        # The compiler sets a default "gray" colormap for gsplats without
+        # colors/colormap — unless an ancestor authored a palette, which the
+        # gray would shadow (#1600). Mirror whatever it actually wrote onto the
+        # Node attrs, so the in-memory node matches the zarr state and its own
+        # attr write-back cannot put on disk what the writer declined.
+        mirror_written_colormap(attrs, writer, path)
 
         if labels is not None:
             scene._notify_labels_added()

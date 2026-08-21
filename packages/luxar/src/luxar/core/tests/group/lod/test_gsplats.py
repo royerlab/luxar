@@ -26,6 +26,7 @@ from luxar.core.group.lod.group import (
 )
 from luxar.core.group.lod.gsplats import (
     resolve_additive_axis_gsplats,
+    resolve_additive_rungs,
     resolve_substitutive_axis_gsplats,
 )
 from luxar.gsplats.gsplat_data import GSplatData
@@ -232,6 +233,172 @@ class TestResolveAdditiveAxisGsplats:
         ``make_additive_lod`` and rejected, rather than silently ignored."""
         with pytest.raises(ValueError, match="method must be one of"):
             resolve_additive_axis_gsplats(flat, {"method": "poisson-disk"})
+
+
+# ────────────────────────────────────────────────────────────────────────
+# resolve_additive_rungs — the same vocabulary as an ordering-free COUNT
+# ────────────────────────────────────────────────────────────────────────
+
+
+#: Every spec whose rung count both functions must agree on. ``True`` is here
+#: too, but only the LADDERED half of the matrix runs it (see the test).
+#:
+#: The dicts WITHOUT ``n_lods`` are not padding: the wrapper repeats the
+#: resolver's ``n_lods=4`` default by hand (``kwargs.get("n_lods", 4)`` against
+#: ``kwargs.setdefault("n_lods", 4)``), and only a spec that leaves the key unset
+#: scores the two defaults against each other. Likewise the ``breakpoints``
+#: entries, which are the only ones that reach the counts-validation half of the
+#: wrapper at all.
+_RUNG_PARITY_SPECS = [
+    None,
+    True,
+    False,
+    {},
+    {"recompute": True},
+    {"method": "radial"},
+    {"n_lods": 1},
+    {"n_lods": 3},
+    {"n_lods": 1, "recompute": True},
+    {"n_lods": 3, "recompute": True},
+    # Explicit cumulative counts that FIT the leaf (64 splats): the in-range
+    # path, where the strict validator passes and the clamp has nothing to do.
+    {"breakpoints": [16, 32, 48]},
+    {"recompute": True, "breakpoints": [16, 32, 48]},
+    {"recompute": True, "breakpoints": [64]},
+]
+
+
+class TestResolveAdditiveRungs:
+    """``resolve_additive_rungs`` must AGREE with ``resolve_additive_axis_gsplats``.
+
+    The gate in ``gsplats_pipeline.from_io._reject_a_partition_beside_a_stored_ladder``
+    refuses a call on the strength of this count, before any data exists, on the
+    claim that "the two are one contract stated twice" (#1632). That claim was
+    prose only; these tests make it a measurement, by scoring the count against
+    the ladder the resolver actually builds for the same spec.
+    """
+
+    @pytest.mark.parametrize("spec", _RUNG_PARITY_SPECS)
+    @pytest.mark.parametrize("laddered", [False, True])
+    def test_the_count_matches_what_the_resolver_builds(self, spec, laddered) -> None:
+        data = _make_random_gsplat(n=64, seed=7)
+        if laddered:
+            data = make_additive_lod(data, n_lods=3)
+        stored = data.substitutive_levels[0].n_additive_lods
+        assert stored == (3 if laddered else 1)
+
+        if spec is True and not laddered:
+            # The one combination with no count to compare: the resolver raises
+            # ("requires every substitutive level to already carry an additive
+            # ladder") rather than returning data. The query answers 1, which is
+            # honest but is a rung count, not a verdict — pinned as its own case
+            # below, and documented as out of scope in the docstring.
+            pytest.skip("resolve_additive_axis_gsplats raises; nothing to compare")
+
+        built = resolve_additive_axis_gsplats(data, spec)
+        assert (
+            resolve_additive_rungs(spec, stored_rungs=stored, n_splats=data.n_splats)
+            == built.substitutive_levels[0].n_additive_lods
+        )
+
+    def test_true_on_an_unladdered_input_counts_the_ladder_that_is_there(self) -> None:
+        """The deliberate non-parity case: ``True`` never BUILDS, it only asserts.
+
+        ``resolve_additive_axis_gsplats`` raises on this call; the count is still
+        1, which is what the gate needs to hear (there is no ladder, so no
+        partition conflict) and lets the resolver report the invalid call itself.
+        """
+        data = _make_random_gsplat(n=64, seed=8)
+        assert resolve_additive_rungs(True, stored_rungs=1, n_splats=data.n_splats) == 1
+        with pytest.raises(ValueError, match="additive ladder"):
+            resolve_additive_axis_gsplats(data, True)
+
+    @pytest.mark.parametrize(
+        "spec",
+        [
+            {"recompute": True, "breakpoints": [0.3, 1.0]},  # energy fractions
+            {"recompute": True, "n_lods": 0},  # malformed
+            "stream",  # not None, not a bool, not a dict
+            1.5,
+        ],
+    )
+    def test_an_uncountable_spec_is_unknown_rather_than_a_guess(self, spec) -> None:
+        """``None`` says "this vocabulary cannot read the spec", never "no ladder".
+
+        Callers must fall back to what they already know — the gate falls back to
+        ``stored_rungs``, since an unreadable kwarg cannot be trusted to have
+        removed a ladder that is demonstrably in the store.
+        """
+        assert resolve_additive_rungs(spec, stored_rungs=3, n_splats=64) is None
+
+    def test_an_out_of_range_counts_list_is_unknown_where_the_resolver_raises(
+        self,
+    ) -> None:
+        """STRICT FIRST, CLAMP SECOND — the order the resolver itself uses.
+
+        ``resolve_additive_axis_gsplats`` validates an explicit ``counts:`` list
+        against ``substitutive_levels[0].n_splats_total`` BEFORE its per-level
+        clamp loop, so a list larger than the data ABORTS rather than shrinking.
+        A single grafted leaf is that finest level, so the wrapper must validate
+        too: clamping first turned ``[100]`` into ``[64]`` and answered a
+        confident ONE rung for a call that cannot run at all — which is how the
+        gate came to skip a doomed call and strand a childless wrapper (#1632).
+        Both halves are asserted, because "answers None" alone would also pass if
+        the resolver had quietly clamped.
+        """
+        data = _make_random_gsplat(n=64, seed=9)
+        spec = {"recompute": True, "breakpoints": [100]}
+        with pytest.raises(ValueError, match="largest breakpoint 100 exceeds N=64"):
+            resolve_additive_axis_gsplats(data, spec)
+        assert resolve_additive_rungs(spec, stored_rungs=1, n_splats=64) is None
+
+    def test_a_coarser_substitutive_level_is_unknown_where_the_resolver_clamps(
+        self, pyramid
+    ) -> None:
+        """A DELIBERATE DIVERGENCE, pinned as such — not parity.
+
+        Every other case in this class scores the two functions as equals. This
+        one records where they are documented NOT to agree, and it takes a
+        MULTI-substitutive input to see: the rest of the matrix is single-level
+        ``_make_random_gsplat`` data, on which a leaf always IS
+        ``substitutive_levels[0]`` and the divergence cannot arise.
+
+        ``resolve_additive_axis_gsplats`` validates an explicit ``counts:`` list
+        ONCE against the finest level and CLAMPS the coarser ones, so
+        ``[n_finest]`` builds a single rung on every level. The query is asked per
+        LEAF, so a coarser (smaller) level validates the same list against its own
+        N, fails, and answers UNKNOWN where the resolver quietly clamped. Per-leaf
+        strict validation is the right rule at the query's live caller — a grafted
+        leaf really is the resolver's ``substitutive_levels[0]`` — so the cost is
+        paid on the matrix-shaped branch, where it over-refuses a call that would
+        have worked, refusing with an empty store rather than stranding anything.
+        See the ``resolve_additive_rungs`` docstring's "Where that OVER-REFUSES".
+        """
+        laddered = resolve_additive_axis_gsplats(pyramid, {"n_lods": 2})
+        sizes = [
+            laddered.at_substitutive(s).n_splats for s in range(laddered.n_substitutive)
+        ]
+        assert len(sizes) > 1 and sizes[0] == max(sizes)  # finest is index 0
+
+        spec = {"recompute": True, "breakpoints": [sizes[0]]}
+        built = resolve_additive_axis_gsplats(laddered, spec)
+        # The resolver builds ONE rung everywhere: the finest level's cut is its
+        # own N, and every coarser level's is clamped to its own N.
+        assert [
+            built.substitutive_levels[s].n_additive_lods
+            for s in range(built.n_substitutive)
+        ] == [1] * built.n_substitutive
+
+        counts = [
+            resolve_additive_rungs(
+                spec,
+                stored_rungs=laddered.substitutive_levels[s].n_additive_lods,
+                n_splats=sizes[s],
+            )
+            for s in range(laddered.n_substitutive)
+        ]
+        assert counts[0] == 1  # the finest level agrees
+        assert all(c is None for c in counts[1:])  # every coarser one is UNKNOWN
 
 
 # ────────────────────────────────────────────────────────────────────────

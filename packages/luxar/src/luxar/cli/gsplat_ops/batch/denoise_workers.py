@@ -11,6 +11,102 @@ from luxar._zarr_compat import create_array, open_group
 from luxar.encoding.compression import WIDTH_AWARE_DEFAULT, resolve_compressor
 
 
+def resolve_deferred_batch_floor(output_dir: Path) -> None:
+    """Resolve a denoise-dependent global floor and persist it for fit workers."""
+    import json
+
+    from luxar.cli.gsplat_ops.batch.planning import resolve_batch_floor
+    from luxar.gsplats.batch.manifest import load_manifest, save_manifest
+    from luxar.gsplats.batch.slurm_gen import _preprocessed_axes
+
+    manifest = load_manifest(output_dir)
+    if not manifest.floor_deferred:
+        return
+
+    if manifest.denoise_mode == "preprocess":
+        source = Path(manifest.denoised_zarr_path or output_dir / "denoised.zarr")
+        canonical_axes = _preprocessed_axes(manifest)
+        axes_labels = canonical_axes.split(",") if canonical_axes is not None else None
+        level, forward = resolve_batch_floor(
+            source,
+            manifest.floor_spec,
+            n_timepoints=manifest.n_timepoints,
+            n_channels=manifest.n_channels,
+            array_key="data",
+            axes=canonical_axes,
+            axes_labels=axes_labels,
+            channel_shape=(manifest.n_channels,),
+            spatial_shape=tuple(manifest.spatial_shape),
+        )
+    else:
+        from luxar.cli.gsplat_config import discover_ome_zarr_shape
+
+        if manifest.denoise_h is not None:
+            channels = manifest.channel_indices or list(range(manifest.n_channels))
+            numeric_h = {channel: manifest.denoise_h for channel in channels}
+        else:
+            h_values = manifest.denoise_h_values
+            if h_values is None:
+                h_path = output_dir / "denoise_h_values.json"
+                if not h_path.exists():
+                    raise RuntimeError("denoise_h_values.json not found")
+                h_values = json.loads(h_path.read_text())
+            numeric_h = {int(key): float(value) for key, value in h_values.items()}
+        axes_override = manifest.axes.split(",") if manifest.axes else None
+        source_info = discover_ome_zarr_shape(
+            Path(manifest.input_path),
+            axes_override=axes_override,
+            array_key=manifest.array_key,
+        )
+        level, forward = resolve_batch_floor(
+            Path(manifest.input_path),
+            manifest.floor_spec,
+            n_timepoints=source_info.n_timepoints,
+            n_channels=source_info.n_channels,
+            array_key=manifest.array_key,
+            axes=manifest.axes,
+            axes_labels=list(source_info.axes),
+            channel_shape=tuple(manifest.channel_shape),
+            spatial_shape=tuple(manifest.spatial_shape),
+            denoise_h_values=numeric_h,
+            denoise_params={
+                "patch_size": manifest.denoise_patch_size,
+                "search_distance": manifest.denoise_search_distance,
+                "backend": manifest.denoise_backend,
+                "device": manifest.fit_args.get("device"),
+                "use_2d": manifest.denoise_2d,
+            },
+        )
+
+    (output_dir / "floor_level.json").write_text(
+        json.dumps(
+            {
+                "level": level if isinstance(forward, (int, float)) else None,
+                "forward": forward,
+            },
+            indent=2,
+        )
+    )
+    manifest.floor_level = level if isinstance(forward, (int, float)) else None
+    manifest.fit_args["floor"] = forward
+    manifest.floor_deferred = False
+    save_manifest(manifest, output_dir)
+
+
+def run_batch_resolve_floor_cmd(
+    output_dir: Path = typer.Argument(..., exists=True, help="Batch output directory"),
+) -> None:
+    """[Internal] Resolve the batch floor after denoise prerequisites finish."""
+    try:
+        with asection("Resolving denoised batch floor"):
+            resolve_deferred_batch_floor(output_dir)
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        aprint(f"Error: {exc}")
+        raise typer.Exit(1) from exc
+
+
 def run_batch_denoise_calibrate_cmd(
     output_dir: Path = typer.Argument(..., exists=True, help="Batch output directory"),
 ) -> None:
@@ -43,6 +139,7 @@ def run_batch_denoise_calibrate_cmd(
                 ),
                 timepoint_indices=manifest.timepoint_indices,
                 array_key=manifest.array_key,
+                axes=manifest.axes,
                 calibration_samples=manifest.calibration_samples,
                 patch_size=manifest.denoise_patch_size,
                 search_distance=manifest.denoise_search_distance,
@@ -85,12 +182,14 @@ def run_batch_denoise_preprocess_cmd(
 
         manifest = load_manifest(output_dir)
 
-        # Read calibrated h values
-        h_path = output_dir / "denoise_h_values.json"
-        if not h_path.exists():
-            aprint("Error: denoise_h_values.json not found. Run calibration first.")
-            raise typer.Exit(1)
-        h_values = json.loads(h_path.read_text())
+        if manifest.denoise_h is None:
+            h_path = output_dir / "denoise_h_values.json"
+            if not h_path.exists():
+                aprint("Error: denoise_h_values.json not found. Run calibration first.")
+                raise typer.Exit(1)
+            h_values = json.loads(h_path.read_text())
+        else:
+            h_values = {}
 
         # Decode task_id -> (t_idx, c_idx) within selected indices
         n_c = manifest.n_channels
@@ -103,15 +202,29 @@ def run_batch_denoise_preprocess_cmd(
         t_real = t_indices[t_idx]
         c_real = c_indices[c_idx]
 
-        h = h_values.get(str(c_real), 0.04)
+        h = (
+            manifest.denoise_h
+            if manifest.denoise_h is not None
+            else h_values.get(str(c_real), 0.04)
+        )
 
         with asection(f"Denoising T={t_real} C={c_real} (h={h:.4f})"):
             # Load volume
             volume = load_volume(
                 Path(manifest.input_path),
-                channel=c_real if manifest.n_channels > 1 else None,
-                timepoint=t_real if manifest.n_timepoints > 1 else None,
+                channel=(
+                    c_real
+                    if manifest.n_channels > 1 or manifest.channel_indices is not None
+                    else None
+                ),
+                timepoint=(
+                    t_real
+                    if manifest.n_timepoints > 1
+                    or manifest.timepoint_indices is not None
+                    else None
+                ),
                 array_key=manifest.array_key,
+                axes=manifest.axes,
             )
             aprint(f"Loaded: shape={volume.shape}")
 

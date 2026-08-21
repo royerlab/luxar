@@ -424,6 +424,39 @@ class TestDefaultWorkerCmdBuilder:
         b2 = _default_worker_cmd_builder("in.zarr", "plan.json")
         assert "--floor" not in [str(c) for c in b2(0, tmp_path / "box0.gsplats.zarr")]
 
+    def test_forwards_shared_raw_normalization_range(self, tmp_path):
+        from luxar.gsplats.planner.fit_planned_parallel import (
+            _default_worker_cmd_builder,
+        )
+
+        builder = _default_worker_cmd_builder(
+            "in.zarr", "plan.json", norm_range=(10.25, 999.5)
+        )
+        cmd = builder(0, tmp_path / "box0.gsplats.zarr")
+        assert cmd[cmd.index("--norm-range") + 1] == "10.25,999.5"
+
+    def test_declines_a_degenerate_shared_normalization_range(self):
+        from luxar.gsplats.planner.fit_planned import _ensure_planned_norm_range
+
+        fit_kwargs = {"norm_percentile": 1.0}
+        volume = np.full((32, 32, 32), 100.0, np.float32)
+        volume.flat[:100] = 200.0
+
+        _ensure_planned_norm_range(volume, fit_kwargs, False)
+
+        assert fit_kwargs.get("norm_range") is None
+
+    def test_future_denoising_boxes_do_not_inherit_a_raw_shared_range(self):
+        """Keep the #1813 forward guard from sharing a raw range."""
+        from luxar.gsplats.planner.fit_planned import _ensure_planned_norm_range
+
+        fit_kwargs = {"_denoise_h": 0.04, "_denoise_params": {}}
+        volume = np.linspace(10.0, 110.0, 32**3, dtype=np.float32).reshape(32, 32, 32)
+
+        _ensure_planned_norm_range(volume, fit_kwargs, False)
+
+        assert "norm_range" not in fit_kwargs
+
     def test_forwards_the_runs_fit_configuration(self, tmp_path):
         # `truncate:` is settable ONLY through a YAML --config (no preset sets it,
         # there is no --truncate flag), so an unforwarded config made every `-j N`
@@ -1306,6 +1339,37 @@ class TestPlannedFitTruncationRadius:
         assert merged.n_splats == 3
         # Summing the boxes would give 3000s; wall clock here is a fraction of one.
         assert merged.stats["time_seconds"] < 60.0
+
+    def test_planned_fit_resolves_one_range_for_every_box(self, monkeypatch):
+        import importlib
+
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.utils.trils import tril_size
+
+        fp = importlib.import_module("luxar.gsplats.planner.fit_planned")
+        seen = []
+
+        def _capture(volume, box, overlap, cap, **fit_kwargs):
+            seen.append(fit_kwargs["norm_range"])
+            return GSplatData(
+                centers=np.array([[1.0, 1.0, 1.0]], np.float32),
+                amplitudes=np.ones((1,), np.float32),
+                cholesky_factors=np.zeros((1, tril_size(3)), np.float32),
+            )
+
+        monkeypatch.setattr(fp, "_fit_one_box", _capture)
+        plan = _toy_plan(n_boxes=3)
+        volume = np.linspace(
+            10.0,
+            110.0,
+            num=int(np.prod(plan.volume_shape)),
+            dtype=np.float32,
+        ).reshape(plan.volume_shape)
+
+        fp.fit_planned(volume, plan)
+
+        assert len(seen) == 3
+        assert all(item == pytest.approx((10.0, 110.0)) for item in seen)
 
     def test_core_mask_rescopes_the_box_stats(self):
         """The kept subset's stats must describe IT, not the padded crop."""

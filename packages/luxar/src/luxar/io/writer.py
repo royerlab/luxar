@@ -29,6 +29,12 @@ if TYPE_CHECKING:
 PositionArray = Union[NDArray[np.float32], NDArray[np.float16]]
 ColorArray = Union[NDArray[np.float32], NDArray[np.uint8], NDArray[np.uint16]]
 ScalarArray = Union[NDArray[np.float32], NDArray[np.float16], NDArray[np.uint8]]
+RollbackState = Tuple[
+    Optional[dict[str, List[float]]],
+    frozenset[Tuple[str, str]],
+    bool,
+    Tuple[dict[tuple, tuple[str, str]], dict[str, str]],
+]
 
 
 class ZarrWriterProtocol(Protocol):
@@ -337,6 +343,22 @@ class ZarrWriterProtocol(Protocol):
             path: Path within the Zarr store for the group
             key: Attribute key to remove
         """
+        ...
+
+    def node_exists(self, path: NodePath) -> bool:
+        """Return whether a node path exists for an internal rollback guard."""
+        ...
+
+    def delete_node(self, path: NodePath) -> None:
+        """Delete a subtree during rollback, without editing the scene graph."""
+        ...
+
+    def snapshot_rollback_state(self) -> RollbackState:
+        """Capture compiler state that deleted geometry writes may have changed."""
+        ...
+
+    def restore_rollback_state(self, state: RollbackState) -> None:
+        """Restore compiler state captured before a rolled-back write."""
         ...
 
     def finalize(self) -> None:

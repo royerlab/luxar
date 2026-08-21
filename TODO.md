@@ -188,8 +188,8 @@ to ship after). Sequencing is at the bottom.
     taught to read the manifest: an absent `local-compute` dataset now prints its
     licensing reason and returns `None` (→ the demo rebuilds from the raw source)
     instead of the old "run `git lfs pull`", which pointed at a file that no
-    longer exists. The Gaia demo had no download path at all and now resolves
-    cache-first with an actionable error (see #1575 for the ESA-archive build).
+    longer exists. The Gaia demo resolves cache-first and now offers an opt-in
+    ESA-archive build with `--build-catalog`.
   - **🔴 REMOVAL IS NOT COMPLETE UNTIL HISTORY IS CLEANED — one launch-time
     operation, and it is gated.** GitHub serves LFS objects for any commit and
     does NOT garbage-collect unreferenced ones (docs: *"the Git LFS objects still
@@ -303,15 +303,10 @@ to ship after). Sequencing is at the bottom.
         resolved.
       - `milky_way_gaia_3m` — CC BY-**NC** 3.0 IGO (**non-commercial**). Decision
         2026-07-21: **do NOT host it** — the NC clause is incompatible with a
-        cleanly-reusable demo-data host. **Still to build:** the Gaia demo will
-        query the ESA Gaia archive and build the point cloud on the user's
-        machine on first run, caching to `~/.cache/luxar/` (compute once, stays
-        cached), with the mandatory ESA/Gaia/DPAC acknowledgement. No GPU needed
-        (it's a point cloud, not a fit) — only a catalog query. Today the
-        committed `data/milky_way_gaia_3m.zarr.zip` is gone and
-        `demo_gaia_milky_way_3m.py` reads `~/.cache/luxar/`; the TAP query is
-        already executable as `scripts/generate_galaxy_simple.py`, so what is
-        pending is only wiring it up as an automatic first-run build.
+        cleanly-reusable demo-data host. The Gaia demo now offers an opt-in TAP
+        query and CPU build on first run, caching to `~/.cache/luxar/` (compute
+        once, stays cached) with the mandatory ESA/Gaia/DPAC acknowledgement.
+        No GPU is needed; `--recompute` replaces an existing cached catalog.
       The gsplat cases total only ~35 MB, so the cost is a GPU-gated first run for
       those demos, not storage; Gaia needs only an archive query + CPU build.
       (Optional: email tng/acto3d/tribolium sources for written redistribution
@@ -400,9 +395,8 @@ to ship after). Sequencing is at the bottom.
     ones that still ship data run off in-repo LFS, and the `local-compute` four
     (whose in-repo copies were removed) rebuild or read a placed file instead.
     Nothing has regressed, but nothing has moved either: the Gaia demo now
-    reads `~/.cache/luxar/` instead of a committed `milky_way_gaia_3m.zarr.zip`
-    (the TAP query is executable as `scripts/generate_galaxy_simple.py`, just not
-    wired up as an automatic first-run build), and the neuromast +
+    reads or builds `~/.cache/luxar/milky_way_gaia_3m/` instead of a committed
+    `milky_way_gaia_3m.zarr.zip`, and the neuromast +
     h2afva uploads remain pending. Next concrete action is still step 2 of the
     plan: create the Sandbox rehearsal record, then production.
     *(2026-08-12: the replacement-demos + dataset-removal work is now in flight
@@ -424,7 +418,7 @@ to ship after). Sequencing is at the bottom.
     uploaded. Delivered alongside, on the Gaia demo that reads a placed file: the
     appearance-tuning ask **#1461** — the `gaia_milky_way` rename, per-marker
     hover labels, and the 0.5/0.12/0.175 volumetric retune. The first-run ESA
-    rebuild (#1575) is still not wired up, so the catalog is still hand-placed.
+    rebuild is now wired up as an opt-in cached build with `--build-catalog`.
     Next action is unchanged: the Sandbox rehearsal (point a record's
     `base_url` at Sandbox — that override is deliberately NOT gated by
     `published`, so the production records stay drafts through it), then publish.
@@ -890,9 +884,9 @@ to ship after). Sequencing is at the bottom.
      half #1515, integrating through **draft holding PR #1499**, with design
      follow-ups filed (#1506 cumulative-vs-per-level counts, #1507 prefix
      contiguity on closed surfaces, #1514 stacked-nD sequencing, #1517
-     per-level vs per-node budgets). **Decimation-quality backlog:** qem tier
-     for manifoldness (#1348), colour loss/corruption for non-uint8 inputs
-     (#1355), `luxar mesh lod` dropping transform/scalars/labels/siblings
+     per-level vs per-node budgets). **Decimation-quality backlog:** colour
+     loss/corruption for non-uint8 inputs (#1355), `luxar mesh lod` dropping
+     transform/scalars/labels/siblings
      (#1357). Related: the nD-clipping deferral measurement is item 29.
 
 22 - ~~**Level-of-Detail (LOD) with PartitionNode**~~: **DONE for release** (code-verified 2026-07-11). Beyond the core (archive item 22-core), the 2026-07 wave shipped: intent-first `--recipe` topologies (flat/stream/levels/tiles/overview/adaptive) with stream ladders on by default, viewport-relative coverage-fraction switching (`sqrt(N_i/N_finest)`, self-calibrating — no threshold knob), Q·e quality stamps + energy-gated upgrade release (`e(k) ≥ 0.6`), the never-downgrade display gate with subtree aggregation and refinement kick, sibling-aware ladders, per-part LOD at fit/merge time (`--recipe` on tiled fits and batch-fit merges), coverage inflation + mass conservation + `--refine l2|volume`, `annotate-quality` retrofitting, and byte-budget VRAM residency (coarse eager levels stay resident; fine lazy levels load on demand and evict off-screen-first under pressure). The advanced refinements formerly listed here were re-verified against the code (2026-07-11: 3 missing, 4 partial) and **demoted to Future/Exploratory item 25** — none is release-gating.

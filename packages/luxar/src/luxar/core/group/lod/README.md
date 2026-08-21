@@ -371,6 +371,16 @@ resolvers:
   applied independently per substitutive level. `dict(...)` computes a ladder on
   any level missing one via `gsplats.lod.additive.make_additive_lod` (default
   `n_lods=4`); `False` flattens each level to a single additive sub-LOD.
+- `resolve_additive_rungs(spec, *, stored_rungs, n_splats)` — the same vocabulary
+  stated a second time, ordering-free: it answers only "how many rungs would this
+  leave on one leaf?", without building anything (#1632). `None` means UNKNOWN
+  (energy-fraction breakpoints, or a spec the resolver will reject on its own
+  terms), and it is a statement about the SPEC, never about the input — a caller
+  that cannot read the kwarg must fall back to what it already knows, not assume
+  the ladder went away. It exists for gates that must know whether a ladder will
+  exist before the data does; the live one is the file/graft partition-vs-ladder
+  gate, which runs above `graft_gsplat_node`'s wrapper build. The two functions
+  are one contract stated twice — change either and you change both.
 
 Convention throughout: the **finest** substitutive level is index 0; LOD-group
 children are stored coarsest→finest (finest last).
@@ -385,11 +395,12 @@ tried after reading the Points docs.
 
 - `resolve_substitutive_axis_mesh(spec)` — the `substitutive_lod=` axis. Keys:
   `compression_factor` (`K`), `levels` (`n_lods`), `method`
-  (`{'auto', 'cluster'}`; `auto` → `cluster` today), `coverage_fractions`,
+  (`{'auto', 'cluster', 'qem'}`; `auto` uses QEM through 10,000 vertices), `coverage_fractions`,
   `coarsen_dims`. Refuses `truncation_radius` / `max_aspect` / `device` / `seed` —
   all four exist only for a lift to gsplats. `coarsen_dims` is the authoring name
   for the decimator's `spatial_dims`. `add_mesh_substitutive_lod_wrapper_impl`
-  (`adders/mesh.py`) then decimates via `luxar.mesh.decimate.decimate_cluster` and
+  (`adders/mesh.py`) then decimates via `luxar.mesh.decimate.decimate_ladder`
+  (sharing one QEM collapse sequence for a multi-level ladder) and
   assembles a `kind=lod` group whose finest child is the original surface.
 - `resolve_additive_axis_mesh(spec)` — the `additive_lod=` axis. Keys: `method`,
   `n_lods`, `counts` (alias `breakpoints`), `reveal_centre`, `spatial_dims`.

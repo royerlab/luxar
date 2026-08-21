@@ -217,6 +217,19 @@ The root `.zattrs` file contains scene-wide configuration:
 }
 ```
 
+Additional JSON-serializable scene metadata may be authored through
+`scene.attrs`, for example `title`, `description`, or `sample`. Mutations made
+while the `LuxarZarrCompiler` is open write through to the root `.zattrs`;
+mutating the live mapping after finalization only updates its in-memory cache
+and emits a warning.
+
+The structured root attrs Luxar owns — `scene_dimensions`, `viewer_config`,
+`citation` — each have a dedicated validating API (`Scene.dimensions`,
+`Scene.viewer_config`, `create_scene(citation=...)`). Author them there, not
+through `scene.attrs`: the mapping accepts free-form keys at the root, so
+writing one of those by hand skips its validation and leaves the `Scene`
+object's own copy stale.
+
 ### `citation` (optional root attr)
 
 `citation` credits whoever produced the data the scene shows. It is written to
@@ -289,6 +302,10 @@ Group nodes organize the scene hierarchy and can contain child nodes.
   "blending_mode": "additive",  // normal, additive, max, opaque, luminous, volumetric — written
                            //   only when explicitly set; unset ⇒ inherited from the
                            //   nearest ancestor that sets it (viewer default: additive)
+  "colormap": "viridis",   // Optional palette; nearest-setter-wins for rendering. GSplats
+                           //   inherit it directly; Points / Lines / Mesh scalar leaves must
+                           //   still author their own colormap today (see Rendering Attribute
+                           //   Composition)
   "layer": false,          // Optional: if true, node appears in the viewer's Layers panel
   "visible": true,         // Optional: initial visibility when the scene loads (default true)
   "child_index": 0         // Insertion order among siblings (stamped on add). The viewer
@@ -426,6 +443,18 @@ default (the finest level the `.centers` accessor returns).
   below `--max-elements` yields exactly that shape. The scene-side adders are the
   one path that cannot check it (part 0's ladder is derived before part 1 exists);
   the compiler's finalize pass warns when it sees the result, without rewriting it.
+- A child MAY carry `"lod_bounds": {"min": [...], "max": [...]}` with the
+  same nD axis order and shape as `position_bounds`. This is a producer-chosen
+  robust extent (for example percentile bounds that exclude a sparse tail), used
+  **only** to size the node for either LOD selector metric. Frustum gating,
+  eviction, framing, clipping, and scene ranges continue to use the complete
+  `position_bounds`, so excluded outliers remain visible and resident when they
+  should. The robust bound must stay within `position_bounds`; a bound that is
+  not contained is rejected and the child falls back to `position_bounds`.
+  Missing or malformed `lod_bounds` fall back to that child's `position_bounds`;
+  producers should therefore stamp every child in a ladder when they want one
+  consistent robust extent. Decimation, culling, and filtering must recompute or
+  remove the derived bound. Producer-side authoring policy is tracked in #1655.
 - Children themselves are standard nodes — they retain their own
   `type` (`gsplats` / `points` / `lines` / `group`, possibly with their
   own `kind` attr) and full attr set.
@@ -1123,13 +1152,20 @@ eye icon in the panel and is **not** persisted back to zarr.
 
 ### Rendering Attribute Composition
 
-Rendering attributes compose along the scene graph (root → leaf):
+Rendering attributes compose along the scene graph (nearest data/group root → leaf):
 
 - `opacity`, `absorption`, `gamma`, `intensity` — multiplied (`absorption`
   has identity 1.0, is floored at 0, and has no upper clamp)
 - `offset` — summed
-- `blending_mode`, `join` — the nearest ancestor that sets it wins
-  (`join` is lines-only)
+- `blending_mode`, `join`, `colormap` — the nearest ancestor that sets it wins
+  (`join` is lines-only; a `colormap='custom'` carries its sibling
+  `colormap_lut` bytes down with the name, and a leaf that names a different
+  palette does *not* inherit those bytes)
+
+The scene root is a carrier and is excluded from this composition chain. Put a
+scene-wide palette on a Group containing the geometry rather than on the scene
+root. A standalone `.gsplats.zarr` root is a data node, not a scene root, so its
+palette does compose into its children.
 
 Example: a group with `opacity=0.5` and a child with `opacity=0.5` yields
 an effective opacity of `0.25` for the child's material. Unset values are
@@ -1145,6 +1181,22 @@ it (with the other compositing attrs) onto the wrapper only — see
 `COMPOSITING_ATTRS` in `core/group/compositing.py`. Correspondingly, within a
 layer's own subtree the panel treats the layer's mode as authoritative and
 ignores a mode authored on a non-layer descendant.
+
+An inherited `colormap` is offered to every descendant at render time, but the
+current Python adders still require Points / Lines / Mesh scalar leaves to
+author a `colormap` themselves. Those types require a scalar channel
+(`has_scalars`) and otherwise keep rendering direct colours, while a
+GSplats leaf is always colormap-capable — its amplitude *is* the scalar — so an
+ancestor's palette overrides even per-splat colours there. This matches what the
+layers panel's colormap dropdown already does when it fans a palette out over a
+group. Note the corollary: the writers stamp the implicit `colormap="gray"` on a
+colorless gsplats leaf *only* when no ancestor authored a palette, since a
+manufactured value nearer the leaf would shadow the authored one.
+
+For GSplats, author the group palette before adding its children (normally by
+passing `colormap=...` to `add_group`). The writer consults ancestors while each
+leaf is created; assigning `group.attrs["colormap"]` afterwards does not
+retroactively remove a gray already stamped on existing leaves.
 
 ### Edits Are Viewer-Only
 
@@ -1313,7 +1365,8 @@ consumers must treat missing and `"none"` identically.
 - **Compression:** Blosc with zstd, level 9 (width-aware shuffle policy)
 - **Description:** Bounding box [min, max] for each dimension of each chunk
 - **Example:** For chunk 5 in a 4D dataset: `chunk_bounds[5, :, :]` = `[[x_min, x_max], [y_min, y_max], [z_min, z_max], [t_min, t_max]]`
-- **Note:** Bounds include point radii extent to ensure hyperspheres are found. A node with no `radii/` array is bounded by `DEFAULT_POINT_RADIUS` (0.5) — the radius it will be drawn at — not by zero. Discrete/barrier axes get no radius extent at all, only a tiny float-boundary epsilon, so a categorical value never bleeds into its neighbour.
+- **Note:** Bounds include point radii extent to ensure hyperspheres are found. A node with no `radii/` array is bounded by `DEFAULT_POINT_RADIUS` (0.5) — the radius it will be drawn at — not by zero. Discrete/barrier axes get no radius extent at all, only a tiny float-boundary epsilon, so a categorical value never bleeds into its neighbour. **A stored interval is never tighter than the chunk's footprint of the AUTHORED coordinates, at any coordinate magnitude**: every pad is a small *absolute* quantity that would fall under half a float32 ULP past `|x| ~ 2**23`, so producers accumulate the interval in float64 and narrow it to this float32 array by rounding each end *away* from the interval (a bound moves one ULP outward only when the cast moved it the wrong way, so a padless axis still stores its coordinates exactly). Consumers may rely on containment; they may not assume the bound is tight.
+- **Note (known slack — quantised coordinates):** the containment guarantee above is stated against the coordinates as authored. `chunk_bounds` is always float32, but the coordinate arrays themselves are stored as **per-axis uint16 fixed point** under the default AUTO encoding, so a *decoded* coordinate can land up to half a quantum (`extent/131070`) outside its own chunk's bound on a **non-gridded** axis — 7.6e-3 at an axis extent of 1000, far above the float32 ULP the outward store closes. A **gridded** axis (a stacked integer time/channel axis) is snapped so its values round-trip exactly and is unaffected, and gsplats escalate a centers axis to float32 whenever half its grid step exceeds the per-splat marginal σ for more than 0.1% of the splats. Points and lines have no equivalent rail; encode coordinates as `PRECISION` (float32) if a consumer needs decoded containment.
 
 #### Per-Element Labels (CSR-style)
 

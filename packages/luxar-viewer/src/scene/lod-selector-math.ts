@@ -5,9 +5,8 @@
  * registry file holds the policy/state machine and this module holds the
  * (individually unit-testable) math:
  *
- * - {@link computeEntryWorldBox} — fold a group's per-child nD
- *   ``positionBounds`` into one world-space box via ``displayDims`` +
- *   ``matrixWorld``.
+ * - {@link computeEntryWorldBox} — fold a group's per-child nD raw or robust
+ *   bounds into one world-space box via ``displayDims`` + ``matrixWorld``.
  * - {@link projectBoxDiagonalPx} — project that box through the camera to a
  *   screen-space pixel diagonal (with near-plane saturation). The legacy
  *   ``selector: 'coverage'`` metric.
@@ -335,31 +334,37 @@ export interface WorldBoxSource {
   /** Per-child raw nD position bounds (unprojected — displayDims can change). */
   children: readonly {
     positionBounds: { min: readonly number[]; max: readonly number[] };
+    /** Optional robust bounds used only for LOD metric sizing. */
+    lodBounds?: { min: readonly number[]; max: readonly number[] };
   }[];
 }
 
 /**
- * Fold an entry's children nD ``positionBounds`` into a single world-space
+ * Fold an entry's children nD bounds into a single world-space
  * :type:`BoundingBox`, mapping nD axes onto X/Y/Z via the current
  * ``displayDims`` and lifting through the group's ``matrixWorld``. Returns
  * ``null`` when no child has usable bounds (mismatched/empty min-max). Shared
- * by the auto selector (either metric's projection + the frustum gate) and the
- * eviction ranking so both reason over identical geometry. Children with bogus
- * bounds are skipped. Uses the caller-owned ``localBoxScratch`` (per-entry) and
- * ``matrixScratch`` (per-registry); ``transformBoundingBox`` allocates the
- * returned box, so it is independent of those scratches and safe to keep past
- * the next call.
+ * by the auto selector and eviction ranking. With ``useLodBounds`` true, each
+ * child's optional ``lodBounds`` sizes the LOD metric and falls back to its raw
+ * ``positionBounds`` when absent; callers keep the default raw bounds for
+ * frustum gating and eviction so visible outliers remain part of the geometry.
+ * Children with bogus bounds are skipped. Uses the caller-owned
+ * ``localBoxScratch`` (per-entry) and ``matrixScratch`` (per-registry);
+ * ``transformBoundingBox`` allocates the returned box, so it is independent of
+ * those scratches and safe to keep past the next call.
  */
 export function computeEntryWorldBox(
   entry: WorldBoxSource,
   displayDims: readonly number[],
   localBoxScratch: BoundingBox,
-  matrixScratch: number[]
+  matrixScratch: number[],
+  useLodBounds: boolean = false
 ): BoundingBox | null {
   const local = localBoxScratch;
   let any = false;
   for (let ci = 0; ci < entry.children.length; ci++) {
-    const pb = entry.children[ci].positionBounds;
+    const child = entry.children[ci];
+    const pb = useLodBounds ? (child.lodBounds ?? child.positionBounds) : child.positionBounds;
     if (pb.min.length === 0 || pb.max.length === 0 || pb.min.length !== pb.max.length) {
       continue;
     }

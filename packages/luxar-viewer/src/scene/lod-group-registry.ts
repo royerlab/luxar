@@ -4,13 +4,16 @@
  * Tracks every `lod_group` scene-graph node currently loaded. For each
  * one, every frame:
  *
- *   1. Fold each child's nD ``positionBounds`` directly into a cached
- *      per-entry **local-space** :type:`BoundingBox`, using the current
- *      ``displayDims`` to map nD axes onto X/Y/Z. (No intermediate
- *      per-child boxes — the union is computed in place.)
- *   2. Transform the local box into world space via
+ *   1. Fold each child's raw nD ``positionBounds`` into a cached per-entry
+ *      **local-space** :type:`BoundingBox`, using the current ``displayDims``
+ *      to map nD axes onto X/Y/Z, then transform it to world space for the
+ *      frustum gate. Eviction uses the same full-geometry box.
+ *   2. When any child publishes optional robust ``lodBounds``, fold them the
+ *      same way (falling back per child to ``positionBounds``) for metric
+ *      sizing only, so excluded outliers remain visible and resident.
+ *   3. Transform the metric box into world space via
  *      :func:`transformBoundingBox` and the lod_group's ``matrixWorld``.
- *   3. Project the 8 corners through the camera and reduce them to the
+ *   4. Project the 8 corners through the camera and reduce them to the
  *      dimensionless **coverage metric**, on whichever scale the entry's
  *      ``selector`` names — the two branches of ``evaluateEntry``:
  *      - ``'screen-area'`` (what every derived ladder stamps): the fraction of
@@ -22,10 +25,10 @@
  *        extent ``calculateCameraDistance`` actually fits; see the
  *        ``FILL_FACTOR`` doc), so 1.0 == the object's projected diagonal has
  *        reached ``FILL_FACTOR`` of the fitted axis.
- *   4. Pick the **finest** child whose ``coverage_fraction`` threshold is
+ *   5. Pick the **finest** child whose ``coverage_fraction`` threshold is
  *      satisfied by that coverage metric, with 10% asymmetric hysteresis on
  *      the downgrade direction to suppress threshold-edge flicker.
- *   5. If the desired child differs from the current active one, swap
+ *   6. If the desired child differs from the current active one, swap
  *      visibility atomically — gated by the **never-downgrade display
  *      gate**: a fresh aspiration whose additive ladder is still streaming
  *      is not shown while the previously-displayed level looks strictly
@@ -132,47 +135,32 @@ const FINE_RELOAD_SETTLE_TICKS = 8;
  * an ultrawide monitor (#1361's blur, returning at wide aspects).
  *
  * ``fittedAxisPx`` is exactly the extent ``calculateCameraDistance`` fits in
- * each regime — ``height`` for aspect ≥ 1, ``width`` for aspect < 1 — and this
- * is provably, not just empirically, the fix for the aspect ≥ 1 case: distance
- * there has no aspect dependence at all, so a box's camera-relative corner
- * positions (and hence its Y-axis NDC projection) are IDENTICAL for every
- * aspect ≥ 1, and the X-axis projection's aspect-dependent scaling exactly
- * cancels against the viewport-width term when converting NDC to pixels —
- * leaving the projected pixel diagonal EXACTLY proportional to ``height``,
- * independent of both aspect and absolute viewport size (verified to 12
- * significant digits for every shape in the test matrix, at 1:1/16:9/21:9/32:9
- * viewports of differing absolute size). The aspect < 1 branch is the mirror
- * image (distance ∝ 1/aspect) and is exactly invariant to viewport SIZE at a
- * fixed aspect, but only APPROXIMATELY invariant across different aspect < 1
- * values for a box whose depth (extent along the view axis) is a large
- * fraction of its in-plane size: there, unlike the aspect ≥ 1 branch, the
- * camera distance itself changes with aspect, so the near/far corner
- * correction from the box's own depth no longer cancels exactly. Measured at
- * the opening framing, 9:16 vs. the (exact) aspect ≥ 1 value: a cube (depth ==
- * width) is off by ~14%, "umap-ish" 100×80×60 by ~8%, while the two thin
- * shapes (an in-plane rod, a flat pancake) are off by ~0.1% — all comfortably
- * inside the headroom below.
+ * each regime — ``height`` for aspect ≥ 1, ``width`` for aspect < 1. The fit
+ * uses the larger X/Y extent at the box's nearest face: ``halfDepth +
+ * inPlane/(2·fitRatio·tan(halfFov))`` (and divides the second term by aspect in
+ * portrait). The near-face distance is therefore proportional to the fitted
+ * axis in both regimes, so the projected pixel diagonal divided by
+ * ``fittedAxisPx`` is EXACTLY invariant across aspect and absolute viewport
+ * size for the default centre fit modelled here. Preserving an authored
+ * off-centre controls target changes which depth face bounds each side of the
+ * projected rectangle. The identity remains exact while the target lies inside
+ * the box's screen-plane footprint and at or behind its near face (``target.z
+ * <= box.max.z``). It degrades when either condition is violated: for an
+ * 8×8×100 box, a target 20 units off-axis drifts 23.8%, while a centred target
+ * 10 units in front of the near face drifts 50.8%. The test matrix verifies the
+ * centre-fit identity to 9 decimal digits for a cube, pancake, in-plane rod,
+ * UMAP-like box, and a 1×1×100 view-axis rod from 1:4 portrait through 32:9
+ * ultrawide.
  *
  * Why 0.5 and not 1.0: at 1.0 the finest level only activates once the object
  * OVERFILLS the fitted axis, reproducing the original #1361 symptom at the
  * default opening framing. Measured opening-framing ``diagonalPx /
- * fittedAxisPx`` across all four shapes in the test matrix, at 1:1, 16:9, 9:16,
- * 21:9 and 32:9, ranges **0.626 (in-plane rod, worst case) – 1.214 (cube, best
- * case)**. Dividing by 0.5 turns that into a metric of **1.25 – 2.43** — past
- * the finest threshold of 1.0 with **~25% headroom even in the worst case** —
- * and, unlike the old anchor, this range barely moves across aspect ratio (see
- * above), so there is no longer a wide-canvas crossover where a shape drops
- * back below the threshold.
- *
- * 0.5 was chosen specifically to keep the metric's VALUE unchanged at the
- * mainstream 16:9 reference, not re-tuned from scratch: at 16:9,
- * ``fittedAxisPx == height`` and ``diagonalPx / height == (diagonalPx / hypot)
- * × hypot(16, 9) / 9 ≈ (diagonalPx / hypot) × 2.0398``, so ``new metric == old
- * metric × 2.0398 / 2 ≈ old metric × 1.02`` — measured as *exactly* a ×1.0199
- * factor for every shape at 16:9 (it is a pure viewport-geometry constant,
- * independent of the shape being measured). Every existing ``coverage_fraction``
- * threshold, the hysteresis band, and the cross-fade band therefore keep their
- * meaning; the only behavioural change is that the wide-canvas drift is gone.
+ * fittedAxisPx`` across all five shapes and seven aspect ratios in the test
+ * matrix ranges **0.750 (in-plane rod) – 1.061 (cube, pancake, and view-axis
+ * rod)**. Dividing by 0.5 turns that into a metric of **1.50 – 2.12** — past
+ * the finest threshold of 1.0 with **50% headroom in the worst case**. The
+ * factor remains necessary: at 1.0 the in-plane rod would still open below the
+ * finest rung even though the framing itself is now aspect-exact.
  *
  * **Coupled constant.** Python's ``MAX_COVERAGE_FRACTION`` (the upper bound on
  * any ``coverage_fraction``, authored or derived — a partition-bound ladder
@@ -217,13 +205,12 @@ const FINE_RELOAD_SETTLE_TICKS = 8;
  * 16:9 geometric value it stands for (so the two constants can't silently
  * compensate for each other).
  *
- * Also deliberately NOT covered: a cloud elongated along the VIEW axis (e.g.
- * 1×1×100) measures a metric of only ~0.024 at the default opening framing on a
- * 16:9 viewport (still far below 1.0), because ``calculateCameraDistance``
- * sizes the distance from the largest dimension even when that dimension is
- * pure depth and barely contributes to the projected AABB. That is a
- * camera-framing quirk, not a normalisation one — the fitted-axis change here
- * does not touch it; see issue #1410's "Related" note.
+ * **View-axis depth fix (#1543).** A 1×1×100 cloud previously measured only
+ * ~0.024 at the default 16:9 framing because the distance was sized from its
+ * pure-depth dimension plus a hardcoded 20% margin. The exact near-face fit
+ * above raises it to **2.121**, so it opens on the finest rung like the other
+ * full-scene shapes. The same fit removes the margin: keeping both would count
+ * depth twice and pull ordinary 3D scenes unnecessarily far back.
  *
  * **Known limitation: resize without a re-fit (out of scope here).**
  * ``updateCameraAspect`` (``utils/camera-utils.ts``) only updates
@@ -329,6 +316,14 @@ export interface LODGroupChild {
    * selector re-projects each frame.
    */
   positionBounds: { min: readonly number[]; max: readonly number[] };
+  /**
+   * Optional robust nD bounds from the child's ``lod_bounds`` zarr attribute.
+   * The selector uses these only to size the node for either LOD metric;
+   * frustum gating and eviction keep the full ``positionBounds`` so visible
+   * outliers are never treated as absent. Missing bounds fall back to
+   * ``positionBounds`` for legacy stores.
+   */
+  lodBounds?: { min: readonly number[]; max: readonly number[] };
   /**
    * Lazy-loading readiness. ``undefined`` means "always ready" (eagerly
    * loaded — the default for callers that don't opt into lazy loading,
@@ -511,6 +506,8 @@ interface LODGroupEntryCache {
    * way the list is viewport-independent and needs no per-frame rebuild.
    */
   thresholds: number[];
+  /** Whether any child needs the optional robust-bounds metric fold. */
+  hasLodBounds: boolean;
   localBoxScratch: BoundingBox;
 }
 
@@ -683,6 +680,7 @@ export class LODGroupRegistry {
     this.entries.set(entry.path, entry);
     this.caches.set(entry.path, {
       thresholds: entry.children.map((c) => c.coverageFraction),
+      hasLodBounds: entry.children.some((c) => c.lodBounds != null),
       localBoxScratch: {
         min: { x: 0, y: 0, z: 0 },
         max: { x: 0, y: 0, z: 0 },
@@ -1072,42 +1070,60 @@ export class LODGroupRegistry {
       if (!forceFinest && !frustum.intersectsBox(WORLD_BOX3_SCRATCH)) {
         desired = this.coarsestReadyIndex(entry);
         entry.offScreen = true;
-      } else if (entry.selector === 'screen-area') {
-        // Screen-area selector: the metric IS the fraction of the viewport
-        // area the group's projected bbox rect covers (viewport-size
-        // independent by construction — see projectBoxAreaFraction). The
-        // thresholds are literal area fractions ([0, …, 1/4, 1/2] whole-object;
-        // a partition tile anchors at 1.0), so no FILL_FACTOR normalisation.
-        // Camera inside the box → +Infinity → finest, same as the diagonal
-        // path; ``?lod-finest`` forces Infinity → always finest.
-        coverageMetric = forceFinest
-          ? Infinity
-          : projectBoxAreaFraction(worldBox, camera, FRUSTUM_MATRIX_SCRATCH);
-        desired = pickChildWithHysteresis(cache.thresholds, entry.activeChildIndex, coverageMetric);
-        entry.offScreen = false;
       } else {
-        // Legacy 'coverage' selector (the default for older stores).
-        // Reuse the per-frame projection×view product (FRUSTUM_MATRIX_SCRATCH,
-        // built in evaluatePerFrame) instead of recomputing it per group.
-        const diagonalPx = projectBoxDiagonalPx(worldBox, camera, viewport, FRUSTUM_MATRIX_SCRATCH);
-        // Normalise the projected pixel diagonal to a dimensionless **coverage
-        // metric** (1.0 == the projected diagonal has reached FILL_FACTOR of the
-        // FITTED AXIS) so the viewport-relative coverage_fraction thresholds
-        // anchor the finest at half the fitted screen axis — any normal
-        // full-frame view — on any monitor OR aspect ratio (see the
-        // ``FILL_FACTOR`` doc for why this denominator, unlike the viewport
-        // diagonal it replaces, stays (near-)invariant across aspect ratio).
-        // diagonalPx == +Infinity (camera inside the box) → Infinity →
-        // finest, unchanged. fittedAxisPx is > 0 here (evaluatePerFrame guards
-        // width/height == 0). ``?lod-finest`` forces Infinity → always finest.
-        //
-        // fittedAxisPx mirrors calculateCameraDistance's own fit selection
-        // (bounds-math.ts): that function fits the VERTICAL fov for aspect >= 1
-        // (distance independent of width) and the HORIZONTAL fov for aspect < 1
-        // (distance ∝ 1/aspect) — i.e. ``min(width, height)`` in pixel space is
-        // exactly the extent the opening framing fits, on both sides of aspect 1.
-        const fittedAxisPx = Math.min(viewport.width, viewport.height);
-        coverageMetric = forceFinest ? Infinity : diagonalPx / (FILL_FACTOR * fittedAxisPx);
+        if (forceFinest) {
+          coverageMetric = Infinity;
+        } else {
+          const metricWorldBox = cache.hasLodBounds
+            ? (this.computeWorldBox(entry, displayDims, true) ?? worldBox)
+            : worldBox;
+          if (entry.selector === 'screen-area') {
+            // Screen-area selector: the metric IS the fraction of the viewport
+            // area the group's projected bbox rect covers (viewport-size
+            // independent by construction — see projectBoxAreaFraction). The
+            // thresholds are literal area fractions ([0, …, 1/4, 1/2] whole-object;
+            // a partition tile anchors at 1.0), so no FILL_FACTOR normalisation.
+            // Camera inside the box → +Infinity → finest, same as the diagonal path.
+            coverageMetric = projectBoxAreaFraction(metricWorldBox, camera, FRUSTUM_MATRIX_SCRATCH);
+            if (cache.hasLodBounds) {
+              // The thin-rectangle ramp is not monotone under box containment:
+              // trimming the thin axis can increase the robust metric. Robust
+              // bounds may only keep or reduce the raw-bounds selection.
+              coverageMetric = Math.min(
+                coverageMetric,
+                projectBoxAreaFraction(worldBox, camera, FRUSTUM_MATRIX_SCRATCH)
+              );
+            }
+          } else {
+            // Legacy 'coverage' selector (the default for older stores).
+            // Reuse the per-frame projection×view product (FRUSTUM_MATRIX_SCRATCH,
+            // built in evaluatePerFrame) instead of recomputing it per group.
+            const diagonalPx = projectBoxDiagonalPx(
+              metricWorldBox,
+              camera,
+              viewport,
+              FRUSTUM_MATRIX_SCRATCH
+            );
+            // Normalise the projected pixel diagonal to a dimensionless **coverage
+            // metric** (1.0 == the projected diagonal has reached FILL_FACTOR of the
+            // FITTED AXIS) so the viewport-relative coverage_fraction thresholds
+            // anchor the finest at half the fitted screen axis — any normal
+            // full-frame view — on any monitor OR aspect ratio (see the
+            // ``FILL_FACTOR`` doc for why this denominator, unlike the viewport
+            // diagonal it replaces, stays invariant across aspect ratio).
+            // diagonalPx == +Infinity (camera inside the box) → Infinity →
+            // finest, unchanged. fittedAxisPx is > 0 here (evaluatePerFrame guards
+            // width/height == 0).
+            //
+            // fittedAxisPx mirrors calculateCameraDistance's own fit selection
+            // (bounds-math.ts): that function fits the VERTICAL fov for aspect >= 1
+            // (distance independent of width) and the HORIZONTAL fov for aspect < 1
+            // (distance ∝ 1/aspect) — i.e. ``min(width, height)`` in pixel space is
+            // exactly the extent the opening framing fits, on both sides of aspect 1.
+            const fittedAxisPx = Math.min(viewport.width, viewport.height);
+            coverageMetric = diagonalPx / (FILL_FACTOR * fittedAxisPx);
+          }
+        }
         desired = pickChildWithHysteresis(cache.thresholds, entry.activeChildIndex, coverageMetric);
         entry.offScreen = false;
       }
@@ -1417,22 +1433,30 @@ export class LODGroupRegistry {
   }
 
   /**
-   * Fold an entry's children nD ``positionBounds`` into a single world-space
+   * Fold an entry's children nD bounds into one world-space
    * :type:`BoundingBox` (see {@link computeEntryWorldBox} in
-   * ``lod-selector-math.ts`` for the math). Shared by the auto selector
-   * (diagonal pick + frustum gate) and the eviction ranking so both reason
-   * over identical geometry. This wrapper supplies the per-entry
-   * ``localBoxScratch`` and the registry's ``matrixScratch``;
+   * ``lod-selector-math.ts`` for the math). The default uses raw
+   * ``positionBounds`` for frustum gating and eviction; ``useLodBounds`` uses
+   * robust bounds with a per-child raw fallback for selector metrics. This
+   * wrapper supplies the per-entry ``localBoxScratch`` and the registry's
+   * ``matrixScratch``;
    * ``transformBoundingBox`` allocates the returned box, so it is independent
    * of those scratches and safe to keep past the next call.
    */
   private computeWorldBox(
     entry: LODGroupEntry,
-    displayDims: readonly number[]
+    displayDims: readonly number[],
+    useLodBounds: boolean = false
   ): BoundingBox | null {
     const cache = this.caches.get(entry.path);
     if (!cache) return null;
-    return computeEntryWorldBox(entry, displayDims, cache.localBoxScratch, this.matrixScratch);
+    return computeEntryWorldBox(
+      entry,
+      displayDims,
+      cache.localBoxScratch,
+      this.matrixScratch,
+      useLodBounds
+    );
   }
 
   /**
@@ -1717,8 +1741,8 @@ export class LODGroupRegistry {
    * Bound resident LOD geometry to the GPU-pool byte budget — see
    * {@link enforceResidentByteBudget} (``lod-eviction.ts``) for the full
    * policy. This wrapper supplies the registry's entries, the pool-accounting
-   * deps, and the shared per-entry world-box fold (so eviction and the auto
-   * selector reason over identical geometry).
+   * deps, and the raw per-entry world-box fold, so eviction matches the
+   * selector's frustum gate rather than its optional robust metric bounds.
    */
   private enforceByteBudget(
     camera: THREE.Camera,

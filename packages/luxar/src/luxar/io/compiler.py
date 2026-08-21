@@ -44,7 +44,7 @@ from ..encoding import (
     EncodingMode,
 )
 from ..io.reader import DEFAULT_COMP
-from ..io.writer import ZarrWriterProtocol
+from ..io.writer import RollbackState, ZarrWriterProtocol
 from ..typing_utils.aliases import ChunkSpec, MaxShape, NodePath, PointsMetadata
 from ..typing_utils.config import DEFAULT_VERSION
 from ..utils.arbol_warnings import arbol_warnings
@@ -422,6 +422,19 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             path = _validate_node_path(path)
             group = self.store.require_group(path)
 
+        # Resolve a custom colormap (ndarray LUT, or a matplotlib/colorcet
+        # name) into a sibling ``colormap_lut`` array on THIS node, exactly as
+        # the leaf writers do. A GROUP is now a legitimate place to author a
+        # colormap — the viewer composes it root→leaf (#1600) — and an
+        # unresolved ndarray would not even serialize into the group's attrs,
+        # while an unresolved non-builtin NAME would reach the viewer, which
+        # only knows the builtins, and silently fall back to viridis. Leaves
+        # come through here too (``Node.__init__`` writes every node's attrs
+        # via this method), but their colormap has already been resolved to the
+        # ``"custom"`` sentinel by then, which the helper passes through.
+        if attrs.get("colormap") is not None:
+            self._write_colormap_lut_if_needed(group, attrs)
+
         # Update attributes - preserve existing ones
         if attrs:
             # Get existing attributes
@@ -457,6 +470,54 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             del attrs[key]
             group.attrs.clear()
             group.attrs.update(attrs)
+
+    def node_exists(self, path: NodePath) -> bool:
+        """Return whether a node path exists for an internal rollback guard."""
+        self._check_not_finalized("node_exists")
+        normalized_path = path.lstrip("/")
+        return not normalized_path or normalized_path in self.store
+
+    def delete_node(self, path: NodePath) -> None:
+        """Delete a subtree during rollback, without editing the scene graph."""
+        self._check_not_finalized("delete_node")
+        normalized_path = path.lstrip("/")
+        if not normalized_path:
+            raise ValueError("Cannot delete the scene root")
+        if normalized_path in self.store:
+            del self.store[normalized_path]
+
+    def snapshot_rollback_state(self) -> RollbackState:
+        """Capture compiler state that deleted geometry writes may have changed."""
+        self._check_not_finalized("snapshot_rollback_state")
+        scene_bounds = (
+            None
+            if self._scene_bounds is None
+            else {key: list(values) for key, values in self._scene_bounds.items()}
+        )
+        return (
+            scene_bounds,
+            frozenset(self._authoring_warnings),
+            self._lut_tone_mapping_warned,
+            self._encoder.snapshot(),
+        )
+
+    def restore_rollback_state(self, state: RollbackState) -> None:
+        """Restore compiler state captured before a rolled-back write."""
+        self._check_not_finalized("restore_rollback_state")
+        (
+            scene_bounds,
+            authoring_warnings,
+            lut_tone_mapping_warned,
+            encoder_state,
+        ) = state
+        self._scene_bounds = (
+            None
+            if scene_bounds is None
+            else {key: list(values) for key, values in scene_bounds.items()}
+        )
+        self._authoring_warnings = set(authoring_warnings)
+        self._lut_tone_mapping_warned = lut_tone_mapping_warned
+        self._encoder.restore(encoder_state)
 
     @arbol_warnings()
     def write_points(  # type: ignore[override]

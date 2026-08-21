@@ -254,15 +254,13 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
           // material-manager so the same blending / dispatch logic
           // production uses applies. Picking material is intentionally
           // skipped — the synthetic scenarios don't exercise picking.
-          // Mirror createLinesNode's per-node auto-policy sizing so the
-          // synthetic path builds the same primitive production would for
-          // a node of this size — count AND the rendered-width factor,
-          // normalized by the generation volume the walk fills (a wide
-          // scene crosses the auto threshold well below 2 M segments,
-          // exactly as an authored wide node does, so a count-swept bench
-          // arm can't measure a primitive production wouldn't build). An
-          // explicit ?linePrimitive= arm still wins inside the resolver,
-          // so bench A/B arms are unaffected.
+          // Mirror createLinesNode's authored per-node inputs; the resolver
+          // also applies the installed scene load. The perf bench's bootstrap
+          // scene is far below the threshold, so the count AND rendered-width
+          // factor (normalized by the generation volume the walk fills) still
+          // select the same primitive production would for a node of this
+          // size. An explicit ?linePrimitive= arm still wins inside the
+          // resolver, so bench A/B arms are unaffected.
           const material = materialManager.getLineMaterial({
             blendingMode,
             opacity: 1.0,

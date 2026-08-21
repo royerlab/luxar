@@ -298,7 +298,7 @@ luxar gsplat fit --dump-config --preset hifi > config.yaml  # Generate config te
 # estimate (capped at the median; a no-op on clean data with no pedestal).
 #
 # STAY ON `auto` UNLESS YOU HAVE MEASURED OTHERWISE. A `pN` floor subtracts the
-# Nth percentile OF ALL VOXELS, which on sparse data lands wherever the sparsity
+# Nth percentile OF NON-ZERO VOXELS, which on sparse data lands wherever the sparsity
 # puts it, not where the noise ends. On a 96x640x640 crop of a sparse light-sheet
 # brain (1.01% of voxels foreground = >10% of max; 12.9% in the dim band 1-10%),
 # p99 sat at 1.34% of THAT CROP's max — squarely inside signal. (Over the whole
@@ -330,9 +330,10 @@ luxar gsplat fit volume.tiff splats.gsplats.zarr --floor none    # disable (hard
 # culling); pass `--flat` for a single flat leaf. Whole-volume fits
 # (`--tiling none`/small auto) stay a single leaf.
 # An integer `--seeds K` is a WHOLE-VOLUME budget (what a default `cal`
-# reports): a tiled fit DIVIDES it across its tiles instead of giving each
-# tile the full count. Not an exact count — signal-free tiles are skipped
-# (sparse volumes realize less) and K below the tile count gives 1 per tile.
+# reports): a tiled fit DIVIDES it across the tiles that survive the resolved
+# floor plus Hann window instead of giving each tile the full count. Every
+# worker derives the same non-empty count; K below it gives 1 per such tile.
+# The share is equal, not occupancy-weighted, so uneven grids can misallocate K.
 
 # Uniform tiled fitting for large volumes (Hann cosine apodization, seamless stitching)
 luxar gsplat fit large.zarr splats.gsplats.zarr --tiling uniform --tile-size 256 --overlap 32

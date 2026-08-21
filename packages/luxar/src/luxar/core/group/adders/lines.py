@@ -30,6 +30,7 @@ from ..compositing import (
     funnel_add_error,
     is_broadcast_color,
     position_bounds_from_array,
+    preflight_extend_to_all,
     reject_mesh_only_appearance,
     slice_optional_array,
     strip_absent_attr_kwargs,
@@ -225,6 +226,7 @@ def add_lines_impl(
                 # finest child is written LAST, so a malformed edge list was
                 # refused only after the coarse levels were already on disk.
                 validate_line_indices_before_split(indices, n_vertices, line_type)
+                preflight_extend_to_all(scene, extend_to_all, vert_arr, "lines")
                 return add_lines_substitutive_lod_wrapper_impl(
                     group,
                     name=name,
@@ -329,6 +331,7 @@ def add_lines_impl(
                 name,
             )
             if len(polyline_parts) > 1:
+                preflight_extend_to_all(scene, extend_to_all, vert_arr, "lines")
                 return add_lines_partition_wrapper_impl(
                     group,
                     name=name,

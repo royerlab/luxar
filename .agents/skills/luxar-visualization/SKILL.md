@@ -4,7 +4,7 @@ description: >-
   Build a Luxar visualization for a dataset. Use when a user wants to turn data
   (point clouds, trajectories/lines, nD images, volumes, time series, multichannel
   stacks) into a .luxar.zarr scene and view it in the web viewer. Covers the
-  LuxarZarrCompiler -> create_scene -> add_points/add_lines/add_gsplats ->
+  LuxarZarrCompiler → create_scene → add_points/add_lines/add_gsplats →
   serve/export flow, Dimensions, transforms, hierarchy, and the demo/example
   patterns that are the canonical source of know-how.
 ---
@@ -176,7 +176,7 @@ scene = compiler.create_scene(
 )
 ```
 
-Two things this formula gets wrong if you write it from intuition:
+Two decisions this formula makes explicit:
 
 - **`fov` is VERTICAL**, so visible width scales with the LIVE viewport aspect
   while a baked distance cannot. A wide object therefore has no single distance
@@ -184,15 +184,14 @@ Two things this formula gets wrong if you write it from intuition:
   the width, a WIDER window leaves margin, a NARROWER one crops. (That is the
   direction — it is easy to write it backwards.) The design aspect is a declared
   calibration point, not a safety margin, so say which one you picked. Framing for
-  a square viewport is the no-crop-ever choice; it still beats the viewer's own
-  default (which fits a cube of the LARGEST dimension into 75% of the frame and
-  then adds 20% margin, so roughly `1.6 · maxDim / (2 tan(fov/2))`) by ~1.3-1.5x,
-  but on a wide object it leaves the thing filling only ~2/3 of the width at a
-  normal landscape aspect. Work out both numbers before choosing.
-- **Fit at the NEAR FACE, not the target plane.** The frustum narrows towards the
-  camera, so a deep object's camera-facing side has the least room: fit at
-  `d - depth/2` and add the half-depth back. Fitting at the centre plane silently
-  pushes the near corners outside the frame.
+  a square viewport is the no-crop-ever choice; the viewer default uses that same
+  shorter-axis rule with `fill = 0.75`, while an explicit camera can choose a
+  tighter fill and a declared landscape calibration aspect. Work out both numbers
+  before choosing.
+- **Fit at the NEAR FACE, not the target plane.** This matches the viewer default:
+  the frustum narrows towards the camera, so a deep object's camera-facing side has
+  the least room. Fit at `d - depth/2` and add the half-depth back; otherwise the
+  near corners silently leave the frame.
 
 A test that merely asserts the camera block *exists* is vacuous — a silent revert
 to the default still loads a valid scene. Assert the geometry, and prefer one

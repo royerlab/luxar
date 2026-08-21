@@ -112,8 +112,8 @@ const CAMERA_POS_SCRATCH = new THREE.Vector3();
  * preserving the no-churn retention property — the per-entry world-box /
  * frustum / distance math here only runs on that rare over-budget frame.
  *
- * ``computeWorldBox`` is the registry's per-entry world-box fold (shared with
- * the auto selector so both reason over identical geometry).
+ * ``computeWorldBox`` is the registry's raw per-entry world-box fold, matching
+ * the auto selector's frustum gate rather than its optional robust metric bounds.
  */
 export function enforceResidentByteBudget<E extends EvictableEntry>(opts: {
   entries: Iterable<E>;
