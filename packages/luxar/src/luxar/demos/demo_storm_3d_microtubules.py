@@ -198,6 +198,7 @@ def _widefield_cache_path(
         WIDEFIELD_FLOOR,
         WIDEFIELD_OUTPUT_SPACE,
         WIDEFIELD_ENABLE_DYNAMIC_OPS,
+        "stream",
     )
     digest = hashlib.sha256(repr(cache_spec).encode()).hexdigest()[:12]
     return CACHE_DIR / f"{csv_path.stem}_widefield_{digest}.gsplats.zarr.zip"
@@ -664,6 +665,7 @@ def fit_widefield_gsplats(
             return result
 
     from luxar.demos import detect_device
+    from luxar.demos._lod_policy import save_with_lod
     from luxar.encoding import EncodingMode
     from luxar.gsplats import fit_tiled
 
@@ -689,19 +691,23 @@ def fit_widefield_gsplats(
             voxel_size=WIDEFIELD_VOXEL_SIZE_UM,
             output_space=WIDEFIELD_OUTPUT_SPACE,
             floor=WIDEFIELD_FLOOR,
+            source_shape=volume.shape,
+            source_dtype=str(volume.dtype),
             verbose=True,
             enable_dynamic_ops=WIDEFIELD_ENABLE_DYNAMIC_OPS,
         ).translate(origin_zyx)
         aprint(f"✓ Fitted {len(result.amplitudes):,} widefield splats")
-        result.save(
+        save_with_lod(
+            result,
             cache_file,
+            recipe="stream",
             encoding_mode=EncodingMode.MEMORY,
             include_fitting_info=True,
             compress="zip",
             zip_deflate=True,
         )
         aprint(f"✓ Cached {cache_file.name}")
-    return result
+    return GSplatData.load(cache_file, include_stats=False)
 
 
 def _make_superresolution_gsplats(
