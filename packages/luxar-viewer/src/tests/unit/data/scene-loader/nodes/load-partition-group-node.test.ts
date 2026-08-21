@@ -369,10 +369,11 @@ describe('loadPartitionGroupNode', () => {
   });
 
   it.each([
-    ['duplicates a leaf label', { axis: 0, split: 0, left: { part: 0 }, right: { part: 0 } }],
-    ['uses an absent 2D axis', { axis: 2, split: 0, left: { part: 0 }, right: { part: 1 } }],
-    ['has no right subtree', { axis: 0, split: 0, left: { part: 0 } }],
-  ])('drops a malformed bsp_tree that %s', async (_reason, bspTree) => {
+    ['duplicates a leaf label', { axis: 0, split: 0, left: { part: 0 }, right: { part: 0 } }, 2],
+    ['uses an absent 2D axis', { axis: 2, split: 0, left: { part: 0 }, right: { part: 1 } }, 2],
+    ['has no right subtree', { axis: 0, split: 0, left: { part: 0 } }, 2],
+    ['omits a partition part', { axis: 0, split: 0, left: { part: 0 }, right: { part: 1 } }, 3],
+  ])('drops a malformed bsp_tree that %s', async (_reason, bspTree, partCount) => {
     attachStubChildren();
     const ctx = makeCtx();
     const parts = [
@@ -383,6 +384,13 @@ describe('loadPartitionGroupNode', () => {
         position_bounds: { min: [-0.5, 0], max: [2, 1] },
       }),
     ];
+    if (partCount === 3) {
+      parts.push(
+        makePartNode('/partition/part_2', 'points', {
+          position_bounds: { min: [1.5, 0], max: [4, 1] },
+        })
+      );
+    }
     const node = makePartitionGroupNode(parts, { bsp_tree: bspTree });
 
     const wrapper = await loadPartitionGroupNode(
@@ -428,24 +436,30 @@ describe('loadPartitionGroupNode', () => {
   });
 
   it.each([
-    ['has no right subtree', { axis: 0, split: 0, left: { part: 0 } }],
-    ['has a null right subtree', { axis: 0, split: 0, left: { part: 0 }, right: null }],
-    ['uses a non-integer axis', { axis: 0.5, split: 0, left: { part: 0 }, right: { part: 1 } }],
-    ['uses an out-of-range axis', { axis: 5, split: 0, left: { part: 0 }, right: { part: 1 } }],
+    ['has no right subtree', { axis: 0, split: 0, left: { part: 0 } }, 2],
+    ['has a null right subtree', { axis: 0, split: 0, left: { part: 0 }, right: null }, 2],
+    ['uses a non-integer axis', { axis: 0.5, split: 0, left: { part: 0 }, right: { part: 1 } }, 2],
+    ['uses an out-of-range axis', { axis: 5, split: 0, left: { part: 0 }, right: { part: 1 } }, 2],
     [
       'uses a non-finite split',
       { axis: 0, split: Infinity, left: { part: 0 }, right: { part: 1 } },
+      2,
     ],
-    ['duplicates a leaf label', { axis: 0, split: 0, left: { part: 0 }, right: { part: 0 } }],
+    ['duplicates a leaf label', { axis: 0, split: 0, left: { part: 0 }, right: { part: 0 } }, 2],
+    ['omits a partition part', { axis: 0, split: 0, left: { part: 0 }, right: { part: 1 } }, 3],
+    [
+      'uses an out-of-range leaf label',
+      { axis: 0, split: 0, left: { part: 0 }, right: { part: 7 } },
+      2,
+    ],
   ])(
     'drops a structurally malformed bsp_tree without part bounds that %s',
-    async (_reason, bspTree) => {
+    async (_reason, bspTree, partCount) => {
       attachStubChildren();
       const ctx = makeCtx();
-      const parts = [
-        makePartNode('/partition/part_0', 'points', { child_index: 0 }),
-        makePartNode('/partition/part_1', 'points', { child_index: 1 }),
-      ];
+      const parts = Array.from({ length: partCount }, (_, partIndex) =>
+        makePartNode(`/partition/part_${partIndex}`, 'points', { child_index: partIndex })
+      );
       const node = makePartitionGroupNode(parts, { bsp_tree: bspTree });
 
       const wrapper = await loadPartitionGroupNode(

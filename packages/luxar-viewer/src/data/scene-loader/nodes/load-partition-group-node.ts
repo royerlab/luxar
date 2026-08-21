@@ -111,6 +111,7 @@ function mergeSummaries(left: BspBoundsSummary, right: BspBoundsSummary): BspBou
   };
 }
 
+// Deliberately the bounds-free subset of summarizeStraddlingTree's structural checks.
 function bspTreeStructureIsValid(node: unknown, partCount: number, seenParts: boolean[]): boolean {
   if (!node || typeof node !== 'object') return false;
   const record = node as Record<string, unknown>;
