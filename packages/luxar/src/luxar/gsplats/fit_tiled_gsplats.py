@@ -229,11 +229,12 @@ def _stamp_merged_quality(
 ) -> None:
     """Score the MERGED reconstruction against the whole volume, in place.
 
-    Each tile already scores itself, but those numbers are about crops of an
-    apodized decomposition: the tiles overlap, so their errors do not compose
-    into the merged one, and none of them can speak for the archive that
-    actually ships. Without this a tiled archive carries no PSNR at all — which
-    is exactly what a published dataset is asked for.
+    Each fitted region may already score itself, but those numbers describe its
+    crop before the merge. Uniform tiles overlap and are apodized; content boxes
+    are fitted with a halo and then core-masked. Neither set of regional errors
+    composes into the merged reconstruction, so none can speak for the archive
+    that actually ships. Without this a regional fit carries no merged PSNR at
+    all — exactly the number a published dataset is asked for.
 
     The reference is ``volume`` exactly as the caller handed it in: the pedestal
     the tiles subtracted is NOT put back and per-tile denoising is not applied to

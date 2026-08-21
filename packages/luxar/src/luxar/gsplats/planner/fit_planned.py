@@ -60,6 +60,48 @@ def _announce_unscored_planned_merge(reason: str, *, partition: bool = False) ->
     aprint(f"No merged quality metrics: {reason}. {recourse}")
 
 
+def _score_planned_flat_merge(
+    merged: "GSplatData",
+    volume: Any,
+    *,
+    plan_shape: tuple[int, ...],
+    device: Optional[str],
+    verbose: bool,
+) -> None:
+    """Score a flat planned merge, or explain why no score can be recorded."""
+    if volume is None:
+        _announce_unscored_planned_merge(
+            "this parallel merge was not given a reference volume"
+        )
+        return
+
+    shape = getattr(volume, "shape", None)
+    if shape is None:
+        _announce_unscored_planned_merge(
+            "the supplied reference volume does not expose a shape"
+        )
+        return
+
+    reference_shape = tuple(int(s) for s in shape)
+    if reference_shape != plan_shape:
+        _announce_unscored_planned_merge(
+            f"reference shape {reference_shape} does not match the plan grid "
+            f"{plan_shape}"
+        )
+        return
+
+    from luxar.gsplats.fit_tiled_gsplats import _stamp_merged_quality
+
+    _stamp_merged_quality(
+        merged,
+        volume,
+        volume_shape=plan_shape,
+        grid_scale=None,
+        device=device,
+        verbose=verbose,
+    )
+
+
 def _ensure_planned_norm_range(
     volume: np.ndarray, fit_kwargs: dict[str, Any], verbose: bool
 ) -> None:
@@ -426,22 +468,13 @@ def fit_planned(
             "time_seconds": float(elapsed),
         }
     )
-    plan_shape = tuple(int(s) for s in plan.volume_shape)
-    if tuple(V.shape) != plan_shape:
-        _announce_unscored_planned_merge(
-            f"reference shape {tuple(V.shape)} does not match the plan grid {plan_shape}"
-        )
-    else:
-        from luxar.gsplats.fit_tiled_gsplats import _stamp_merged_quality
-
-        _stamp_merged_quality(
-            merged,
-            V,
-            volume_shape=plan_shape,
-            grid_scale=None,
-            device=device,
-            verbose=verbose,
-        )
+    _score_planned_flat_merge(
+        merged,
+        V,
+        plan_shape=tuple(int(s) for s in plan.volume_shape),
+        device=device,
+        verbose=verbose,
+    )
     return merged
 
 

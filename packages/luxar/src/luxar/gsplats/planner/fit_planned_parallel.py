@@ -32,7 +32,11 @@ from arbol import aprint, asection
 from luxar.gsplats.batch.task_pool import cancel_pool_on_interrupt
 from luxar.gsplats.fit_tiled_parallel import luxar_argv0
 
-from .fit_planned import _announce_unscored_planned_merge, _padded_bounds
+from .fit_planned import (
+    _announce_unscored_planned_merge,
+    _padded_bounds,
+    _score_planned_flat_merge,
+)
 from .spec import FitPlan
 
 # Builds the argv for plan box ``i`` writing to a given output path.
@@ -346,29 +350,13 @@ def fit_planned_parallel(
                 "time_seconds": float(elapsed),
             }
         )
-        plan_shape = tuple(int(s) for s in plan.volume_shape)
-        if volume is None:
-            _announce_unscored_planned_merge(
-                "this parallel merge was not given a reference volume"
-            )
-        else:
-            reference_shape = tuple(int(s) for s in volume.shape)
-            if reference_shape != plan_shape:
-                _announce_unscored_planned_merge(
-                    f"reference shape {reference_shape} does not match the plan grid "
-                    f"{plan_shape}"
-                )
-            else:
-                from luxar.gsplats.fit_tiled_gsplats import _stamp_merged_quality
-
-                _stamp_merged_quality(
-                    result,
-                    volume,
-                    volume_shape=plan_shape,
-                    grid_scale=None,
-                    device=device,
-                    verbose=verbose,
-                )
+        _score_planned_flat_merge(
+            result,
+            volume,
+            plan_shape=tuple(int(s) for s in plan.volume_shape),
+            device=device,
+            verbose=verbose,
+        )
 
     if not keep_boxes:
         shutil.rmtree(tmp_dir, ignore_errors=True)
