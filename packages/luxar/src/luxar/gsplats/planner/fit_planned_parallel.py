@@ -51,6 +51,7 @@ def _default_worker_cmd_builder(
     cull_retention: Optional[float] = None,
     device: Optional[str] = None,
     floor: "Optional[str | float]" = None,
+    norm_range: "Optional[tuple[float, float]]" = None,
     channel: Optional[int] = None,
     timepoint: Optional[int] = None,
     array_key: Optional[str] = None,
@@ -104,6 +105,12 @@ def _default_worker_cmd_builder(
         ("--cull-retention", None if cull_retention is None else str(cull_retention)),
         ("--device", device or None),
         ("--floor", None if floor is None else str(floor)),
+        (
+            "--norm-range",
+            None
+            if norm_range is None
+            else f"{float(norm_range[0]):.17g},{float(norm_range[1]):.17g}",
+        ),
         ("--channel", None if channel is None else str(channel)),
         ("--timepoint", None if timepoint is None else str(timepoint)),
         ("--array-key", array_key or None),

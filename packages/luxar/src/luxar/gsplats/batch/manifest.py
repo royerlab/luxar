@@ -114,6 +114,16 @@ class BatchManifest:
     floor_deferred: bool = False
     """Whether a dependent runtime stage resolves ``floor_spec`` on denoised data."""
 
+    norm_range: Optional[Tuple[float, float]] = None
+    """The ONE raw-input normalization range forwarded to every fit task.
+
+    The range is measured from bounded samples of the same representative slices
+    used for ``floor_level``. Denoising runs leave it unset unless the user supplied
+    an explicit range, so each task resolves against the data it actually fits.
+    ``None`` means the manifest predates shared normalization or no usable range
+    could be resolved, so tasks retain their historical per-sub-volume behavior.
+    """
+
     grid_scale: Optional[List[float]] = None
     """Per-axis factor mapping the VOXEL tile grid onto the frame the fit tasks'
     splats actually come back in (``uniform`` mode; #1587).
@@ -310,6 +320,8 @@ def load_manifest(output_dir: Path) -> BatchManifest:
     # Convert tuple-valued fields back to tuples
     data["spatial_shape"] = tuple(data.get("spatial_shape", ()))
     data["channel_shape"] = tuple(data.get("channel_shape", ()))
+    if data.get("norm_range") is not None:
+        data["norm_range"] = tuple(data["norm_range"])
 
     # Filter to known fields (forward-compatible with newer manifests)
     known_fields = {f.name for f in dataclasses.fields(BatchManifest)}
