@@ -425,6 +425,26 @@ describe('WASM vs TypeScript Comparison', () => {
       expect(arraysAlmostEqual(wasmOutput, tsOutput)).toBe(true);
     });
 
+    it.skipIf(!wasmFilesExist)(
+      'decode_quantized_u16 should exactly match for f64 metadata bounds',
+      () => {
+        const data = Uint16Array.from({ length: 65536 }, (_, code) => code);
+        const tsOutput = new Float32Array(data.length);
+        const wasmOutput = new Float32Array(data.length);
+        const minVal = -12.3456789012345;
+        const maxVal = 98.7654321098765;
+
+        tsModule.decode_quantized_u16(data, minVal, maxVal, tsOutput);
+        wasmModule!.decode_quantized_u16(data, minVal, maxVal, wasmOutput);
+
+        let mismatchCount = 0;
+        for (let i = 0; i < data.length; i++) {
+          if (tsOutput[i] !== wasmOutput[i]) mismatchCount++;
+        }
+        expect(mismatchCount).toBe(0);
+      }
+    );
+
     it.skipIf(!wasmFilesExist)('decode_log_scalar_u8 should match', () => {
       const data = new Uint8Array([0, 50, 100, 150, 255]);
 

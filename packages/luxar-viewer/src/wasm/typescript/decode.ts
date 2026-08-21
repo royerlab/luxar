@@ -30,9 +30,13 @@ export function decode_quantized_u16(
   maxVal: number,
   output: Float32Array
 ): void {
-  const scale = (maxVal - minVal) / 65535;
+  const lo = Math.fround(minVal);
+  const hi = Math.fround(maxVal);
+  const range = Math.fround(hi - lo);
+  const scale = Math.fround(range / 65535);
   for (let i = 0; i < data.length; i++) {
-    output[i] = minVal + data[i] * scale;
+    const scaled = Math.fround(data[i] * scale);
+    output[i] = Math.fround(lo + scaled);
   }
 }
 
