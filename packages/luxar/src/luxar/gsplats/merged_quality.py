@@ -128,7 +128,14 @@ def announce_unscored_merge(reason: str, *, partition: "bool | None" = False) ->
 
 
 def _to_voxel_frame(merged: GSplatData, scale: Optional[Sequence[float]]) -> GSplatData:
-    """Return the same mixture expressed on the fit grid's voxel frame."""
+    """The same mixture expressed on the tile grid's own voxel frame.
+
+    A real-space tiled fit emits physical coordinates, so the merged splats do
+    not sit on ``volume_shape``'s grid and cannot be rendered against it. The
+    frames differ by one per-axis factor (see :func:`resolve_grid_scale`), which
+    scales centers directly and Cholesky ROW ``i`` by ``scale[i]`` — so dividing
+    both undoes it exactly. Amplitudes are untouched by the conversion.
+    """
     if scale is None:
         return merged
     voxel_scale = np.asarray(scale, dtype=np.float64)
