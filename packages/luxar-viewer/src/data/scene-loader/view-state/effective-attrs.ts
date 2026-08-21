@@ -3,7 +3,8 @@
  *
  * Pure helper: given a scene graph and a node, return a copy of the
  * node's attrs with `opacity`, `absorption`, `gamma`, `intensity`,
- * `offset`, `blending_mode`, and `join` replaced by the values from
+ * `offset`, `blending_mode`, `join`, and `colormap` (with its
+ * `customLutBytes`) replaced by the values from
  * {@link getEffectiveAttrs}. Falls back to the raw attrs when the
  * scene graph is unavailable.
  *
@@ -37,5 +38,11 @@ export function applyEffectiveAttrs(
     offset: eff.offset,
     blending_mode: eff.blending_mode,
     join: eff.join,
+    // `colormap` used to survive only inside the `...node.attrs` spread, so
+    // every consumer read the node's OWN value and an ancestor-authored
+    // palette never arrived (#1600). The LUT bytes come from the same node the
+    // winning name did — never mixed with this node's own leftovers.
+    colormap: eff.colormap,
+    customLutBytes: eff.customLutBytes,
   };
 }

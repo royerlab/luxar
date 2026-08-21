@@ -92,6 +92,18 @@ def write_colormap_lut_if_needed(
             # Built-in name — viewer resolves it directly, no LUT needed
             return lut_tone_mapping_warned
 
+        if colormap == "custom":
+            # THIS function's own output sentinel, meaning "the LUT is the
+            # sibling ``colormap_lut`` array". Idempotent by necessity: a node
+            # can reach this resolver twice now that a GROUP can author a
+            # colormap (``LuxarZarrCompiler.write_group`` resolves one, and the
+            # Node constructor routes every leaf's already-synced attrs back
+            # through it — see ``sync_custom_colormap_attr``). Re-resolving it
+            # would ask ``resolve_colormap('custom')``, which is not a palette
+            # name and raises. ``validate_colormap`` already accepts the
+            # sentinel on the same grounds.
+            return lut_tone_mapping_warned
+
         # Non-built-in name (matplotlib/colorcet) — resolve to LUT and
         # store as "custom" so the viewer can render it without needing
         # matplotlib/colorcet at display time.

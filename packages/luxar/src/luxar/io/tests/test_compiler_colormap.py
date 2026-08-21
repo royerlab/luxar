@@ -798,3 +798,218 @@ class TestSignedColormapScalars:
 
             store = zarr.open(str(path), mode="r")
             assert "p" not in store, "float32-overflow left a partial node"
+
+
+def _splat_arrays(n: int = 50) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Minimal 3D gsplat inputs (centers, amplitudes, packed Cholesky)."""
+    rng = np.random.default_rng(0)
+    centers = rng.random((n, 3)).astype(np.float32)
+    amplitudes = rng.random(n).astype(np.float32)
+    chol = np.tile(np.array([1.0, 0.0, 1.0, 0.0, 0.0, 1.0], dtype=np.float32), (n, 1))
+    return centers, amplitudes, chol
+
+
+class TestAncestorAuthoredColormapNotShadowed:
+    """The gray default must not shadow an ancestor-authored colormap (#1600).
+
+    ``apply_gsplat_group_attrs`` manufactures ``colormap="gray"`` on a colorless
+    gsplats leaf. Because that value sits NEARER the leaf than an ancestor's,
+    and the viewer composes ``colormap`` nearest-setter-wins, the manufactured
+    value silently won and a group-level palette could never reach the geometry.
+
+    Both write paths are covered: the scene compiler (ancestors are already on
+    disk, so the writer walks the store) and the standalone ``.gsplats.zarr``
+    tree writer (a wrapper's attrs are written AFTER its children, so the value
+    has to ride down the recursion instead).
+    """
+
+    def test_scene_ancestor_group_colormap_suppresses_gray(self) -> None:
+        """A colormap on an enclosing Group leaves the leaf palette-less."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.luxar.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            centers, amplitudes, chol = _splat_arrays()
+            with LuxarZarrCompiler(path) as c:
+                scene = c.create_scene(dimensions=dims)
+                grp = scene.add_group("layer", colormap="plasma", layer=True)
+                grp.add_gsplats("gs", centers, amplitudes, chol)
+
+            store = zarr.open(str(path), mode="r")
+            assert store["layer"].attrs["colormap"] == "plasma"
+            assert "colormap" not in store["layer/gs"].attrs, (
+                "manufactured gray shadowed the ancestor's plasma"
+            )
+
+    def test_scene_ancestor_group_colormap_not_mirrored_onto_node(self) -> None:
+        """The in-memory node must agree — it writes its attrs back to zarr.
+
+        ``Node.__init__`` re-writes the returned node's attrs through
+        ``write_group``, so an adder-side mirror that stamps a gray the WRITER
+        declined would put it on disk after all.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.luxar.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            centers, amplitudes, chol = _splat_arrays()
+            with LuxarZarrCompiler(path) as c:
+                scene = c.create_scene(dimensions=dims)
+                grp = scene.add_group("layer", colormap="plasma")
+                node = grp.add_gsplats("gs", centers, amplitudes, chol)
+                assert "colormap" not in node.attrs
+
+            store = zarr.open(str(path), mode="r")
+            assert "colormap" not in store["layer/gs"].attrs
+
+    def test_scene_no_ancestor_still_defaults_to_gray(self) -> None:
+        """Unchanged behaviour when nothing above authored a palette."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.luxar.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            centers, amplitudes, chol = _splat_arrays()
+            with LuxarZarrCompiler(path) as c:
+                scene = c.create_scene(dimensions=dims)
+                grp = scene.add_group("layer", opacity=0.5)
+                grp.add_gsplats("gs", centers, amplitudes, chol)
+
+            store = zarr.open(str(path), mode="r")
+            assert store["layer/gs"].attrs["colormap"] == "gray"
+
+    def test_scene_leaf_colormap_still_wins_over_ancestor(self) -> None:
+        """A leaf's own palette is untouched by the ancestor rule."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.luxar.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            centers, amplitudes, chol = _splat_arrays()
+            with LuxarZarrCompiler(path) as c:
+                scene = c.create_scene(dimensions=dims)
+                grp = scene.add_group("layer", colormap="plasma")
+                grp.add_gsplats("gs", centers, amplitudes, chol, colormap="inferno")
+
+            store = zarr.open(str(path), mode="r")
+            assert store["layer/gs"].attrs["colormap"] == "inferno"
+
+    def test_scene_root_colormap_suppresses_gray(self) -> None:
+        """The scene ROOT counts as an ancestor too."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.luxar.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            centers, amplitudes, chol = _splat_arrays()
+            with LuxarZarrCompiler(path) as c:
+                scene = c.create_scene(dimensions=dims)
+                c.write_group("/", colormap="turbo")
+                scene.add_gsplats("gs", centers, amplitudes, chol)
+
+            store = zarr.open(str(path), mode="r")
+            assert "colormap" not in store["gs"].attrs
+
+    def test_scene_group_ndarray_colormap_resolved_to_lut(self) -> None:
+        """An ndarray palette on a GROUP resolves to a sibling colormap_lut.
+
+        ``write_group`` did not run the custom-colormap resolver, so an
+        authored LUT on a group could not even be serialized — and a
+        matplotlib/colorcet NAME would have reached the viewer, which only
+        knows the builtins.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.luxar.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            lut = np.zeros((256, 3), dtype=np.uint8)
+            lut[:, 0] = np.arange(256, dtype=np.uint8)
+            centers, amplitudes, chol = _splat_arrays()
+            with LuxarZarrCompiler(path) as c:
+                scene = c.create_scene(dimensions=dims)
+                grp = scene.add_group("layer", colormap=lut)
+                assert grp.attrs["colormap"] == "custom"
+                grp.add_gsplats("gs", centers, amplitudes, chol)
+
+            store = zarr.open(str(path), mode="r")
+            assert store["layer"].attrs["colormap"] == "custom"
+            assert store["layer"]["colormap_lut"].shape == (256, 3)
+            assert "colormap" not in store["layer/gs"].attrs
+
+    def test_standalone_tree_wrapper_colormap_rides_down(self) -> None:
+        """A ``root_attrs`` colormap on a kind=partition wrapper reaches parts.
+
+        The standalone writer emits a wrapper's own attrs only AFTER its
+        children, so an on-disk ancestor walk finds nothing — the value has to
+        be threaded down the recursion.
+        """
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.tree import GSplatLeaf, GSplatPartition
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = Path(tmpdir) / "part.gsplats.zarr"
+            centers, amplitudes, chol = _splat_arrays(20)
+            parts = [
+                GSplatLeaf(
+                    additive_sublods=[
+                        AdditiveSubLOD(
+                            centers=centers[i * 10 : (i + 1) * 10],
+                            amplitudes=amplitudes[i * 10 : (i + 1) * 10],
+                            cholesky_factors=chol[i * 10 : (i + 1) * 10],
+                        )
+                    ]
+                )
+                for i in range(2)
+            ]
+            node = GSplatPartition(children=parts, max_elements=10)
+            write_gsplats_tree(out, node, root_attrs={"colormap": "plasma"})
+
+            store = zarr.open(str(out), mode="r")
+            assert store.attrs["colormap"] == "plasma"
+            for i in range(2):
+                assert "colormap" not in store[f"part_{i}"].attrs, (
+                    f"part_{i} manufactured a gray that shadows the root palette"
+                )
+
+    def test_standalone_tree_without_root_colormap_still_grays(self) -> None:
+        """Unchanged behaviour for a tree whose root authored no palette."""
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.tree import GSplatLeaf, GSplatPartition
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = Path(tmpdir) / "part.gsplats.zarr"
+            centers, amplitudes, chol = _splat_arrays(20)
+            parts = [
+                GSplatLeaf(
+                    additive_sublods=[
+                        AdditiveSubLOD(
+                            centers=centers[i * 10 : (i + 1) * 10],
+                            amplitudes=amplitudes[i * 10 : (i + 1) * 10],
+                            cholesky_factors=chol[i * 10 : (i + 1) * 10],
+                        )
+                    ]
+                )
+                for i in range(2)
+            ]
+            node = GSplatPartition(children=parts, max_elements=10)
+            write_gsplats_tree(out, node)
+
+            store = zarr.open(str(out), mode="r")
+            for i in range(2):
+                assert store[f"part_{i}"].attrs["colormap"] == "gray"
+
+    def test_standalone_leaf_root_colormap_still_wins(self) -> None:
+        """A leaf-rooted tree keeps the root_attrs palette on the leaf itself."""
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.tree import GSplatLeaf
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = Path(tmpdir) / "flat.gsplats.zarr"
+            centers, amplitudes, chol = _splat_arrays(20)
+            leaf = GSplatLeaf(
+                additive_sublods=[
+                    AdditiveSubLOD(
+                        centers=centers,
+                        amplitudes=amplitudes,
+                        cholesky_factors=chol,
+                    )
+                ]
+            )
+            write_gsplats_tree(out, leaf, root_attrs={"colormap": "inferno"})
+
+            store = zarr.open(str(out), mode="r")
+            assert store.attrs["colormap"] == "inferno"

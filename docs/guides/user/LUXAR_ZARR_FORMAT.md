@@ -302,6 +302,9 @@ Group nodes organize the scene hierarchy and can contain child nodes.
   "blending_mode": "additive",  // normal, additive, max, opaque, luminous, volumetric — written
                            //   only when explicitly set; unset ⇒ inherited from the
                            //   nearest ancestor that sets it (viewer default: additive)
+  "colormap": "viridis",   // Optional palette; also nearest-setter-wins, so a value on a
+                           //   group reaches every descendant (see Rendering Attribute
+                           //   Composition)
   "layer": false,          // Optional: if true, node appears in the viewer's Layers panel
   "visible": true,         // Optional: initial visibility when the scene loads (default true)
   "child_index": 0         // Insertion order among siblings (stamped on add). The viewer
@@ -1136,8 +1139,10 @@ Rendering attributes compose along the scene graph (root → leaf):
 - `opacity`, `absorption`, `gamma`, `intensity` — multiplied (`absorption`
   has identity 1.0, is floored at 0, and has no upper clamp)
 - `offset` — summed
-- `blending_mode`, `join` — the nearest ancestor that sets it wins
-  (`join` is lines-only)
+- `blending_mode`, `join`, `colormap` — the nearest ancestor that sets it wins
+  (`join` is lines-only; a `colormap='custom'` carries its sibling
+  `colormap_lut` bytes down with the name, and a leaf that names a different
+  palette does *not* inherit those bytes)
 
 Example: a group with `opacity=0.5` and a child with `opacity=0.5` yields
 an effective opacity of `0.25` for the child's material. Unset values are
@@ -1153,6 +1158,16 @@ it (with the other compositing attrs) onto the wrapper only — see
 `COMPOSITING_ATTRS` in `core/group/compositing.py`. Correspondingly, within a
 layer's own subtree the panel treats the layer's mode as authoritative and
 ignores a mode authored on a non-layer descendant.
+
+An inherited `colormap` is offered to every descendant, but whether it applies
+is the geometry type's own decision: Points / Lines / Mesh require a scalar
+channel (`has_scalars`) and otherwise keep rendering direct colours, while a
+GSplats leaf is always colormap-capable — its amplitude *is* the scalar — so an
+ancestor's palette overrides even per-splat colours there. This matches what the
+layers panel's colormap dropdown already does when it fans a palette out over a
+group. Note the corollary: the writers stamp the implicit `colormap="gray"` on a
+colorless gsplats leaf *only* when no ancestor authored a palette, since a
+manufactured value nearer the leaf would shadow the authored one.
 
 ### Edits Are Viewer-Only
 

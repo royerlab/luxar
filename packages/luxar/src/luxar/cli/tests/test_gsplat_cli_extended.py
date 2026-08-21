@@ -5723,6 +5723,13 @@ class TestLODCarriesAuthoredAppearance:
         "layer": False,
         "visible": False,
         "nd_transform": {"time": {"scale": 2.0, "offset": 1.0}},
+        # A builtin name that is NOT the writer's manufactured default
+        # ("gray"): the default would coincide with what the writer stamps on a
+        # colorless leaf anyway, so a dropped carry would still look right.
+        # Not "custom" either — that sentinel names a sibling colormap_lut
+        # ARRAY the attrs-only carry deliberately refuses to fake (see
+        # ``read_authored_appearance``).
+        "colormap": "inferno",
     }
 
     #: Carried by the registry but not exercised here, each for a stated reason.
