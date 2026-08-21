@@ -65,6 +65,7 @@ DEMO_META = {
     "citation": {
         "short": "Barron et al. 2022 (Mip-NeRF 360)",
         "doi": "10.1109/CVPR52688.2022.00539",
+        "license": "Research / non-commercial (INRIA 3DGS)",
     },
 }
 

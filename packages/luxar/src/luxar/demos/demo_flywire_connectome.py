@@ -93,7 +93,7 @@ DEMO_META = {
     "caches": ["flywire"],
     "outputs": ["flywire_connectome"],
     "citation": {
-        "short": "FlyWire Consortium 2024",
+        "short": "FlyWire Consortium 2024; Schlegel et al. 2024 annotations",
         "doi": "10.5281/zenodo.10676866",
         "license": "CC BY 4.0",
     },

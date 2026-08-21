@@ -88,7 +88,7 @@ DEMO_META = {
     "caches": ["ocean_currents_earth"],
     "outputs": ["ocean_currents_earth"],
     "citation": {
-        "short": "HYCOM GOFS 3.1 (Chassignet et al. 2007)",
+        "short": "HYCOM GOFS 3.1 (Chassignet et al. 2007); NASA Blue Marble",
         "doi": "10.1016/j.jmarsys.2005.09.016",
     },
 }
