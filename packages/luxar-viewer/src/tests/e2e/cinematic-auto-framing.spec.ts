@@ -8,7 +8,7 @@ const ROOT_METADATA = `${DATASET}/zarr.json`;
 
 test('cinematic FOV preserves auto-framed screen occupancy', async ({ browser }) => {
   const loadAndMeasure = async (cinematic: boolean) => {
-    const context = await browser.newContext({ baseURL: 'http://127.0.0.1:5173' });
+    const context = await browser.newContext();
     const page = await context.newPage();
     await page.route(ROOT_METADATA, async (route) => {
       if (route.request().method() !== 'GET') {
@@ -36,6 +36,7 @@ test('cinematic FOV preserves auto-framed screen occupancy', async ({ browser })
       const distance = debug.camera.position.distanceTo(debug.controls.getFocusTarget());
       return {
         fov: debug.camera.fov as number,
+        // The fixture is planar, so nearestDepth is zero and this is the exact fitted span.
         halfFrameSpan: distance * Math.tan((debug.camera.fov * Math.PI) / 360),
       };
     });

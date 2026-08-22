@@ -80,6 +80,7 @@ The authoritative list is the directory itself — run
 | **cache-hardening.spec.ts** | Cache health/demand/network/prefetch diagnostics + cache-monitor UI fields |
 | **cache-persistence.spec.ts** | Cache persistence across reloads |
 | **cache-system.spec.ts** | Three-level cache system (L0/L1/L2) incl. real browser OPFS behavior |
+| **cinematic-auto-framing.spec.ts** | Cinematic FOV is resolved before first-load auto-framing |
 | **colormap-system.spec.ts** | Colormap application and switching |
 | **context-restore.spec.ts** | Post-processing pipeline survives WebGL context loss/restore |
 | **controls-interaction.spec.ts** | Keyboard, mouse, camera |
@@ -113,7 +114,6 @@ The authoritative list is the directory itself — run
 | **points-rendering-perf.spec.ts** | Points FPS diagnostic — multi-sample min/median/max (developer diagnostic, JSON artifact) |
 | **position-bounds-clipping.spec.ts** | Boundary testing |
 | **post-processing-pipeline.spec.ts** | Bloom, cinematic mode (vignette/chromatic distortion), exposure, WebGL stability |
-| **cinematic-auto-framing.spec.ts** | Cinematic FOV is resolved before first-load auto-framing |
 | **python-typescript-integration.spec.ts** | ⭐ Cross-language E2E |
 | **real-dataset-loading.spec.ts** | Real `.luxar.zarr` files + dataset switching |
 | **recording-panel.spec.ts** | Screenshot/video capture panel |
