@@ -885,9 +885,8 @@ class TestGraftedFilePartitionSpec:
     down to each part's own ``add_gsplats``, where it drives that leaf's BSP
     split. So the spec was judged one level down, AFTER ``graft_gsplat_node`` had
     already built the ``kind=partition`` wrapper from the on-disk tree. Measured
-    through the public file door, all four shapes below: ``Could not add gsplats
-    'part_0': partition must be None, True, or dict; got str`` (and its three
-    siblings), with ``g`` surviving ``finalize()`` as a childless
+    through the public file door, every malformed shape below was refused from
+    inside ``part_0``, with ``g`` surviving ``finalize()`` as a childless
     ``kind=partition`` group. Identical to the ``lod_group=`` door's bug in the
     lod/ sibling, and closed the same way — one call in the slot that already
     holds this door's ``strip_absent_attr_kwargs`` / ``reject_data_owned_channels``
@@ -977,7 +976,7 @@ class TestGraftedFilePartitionSpec:
         (``TestTheGSplatsPartitionSpecCheckSkipsASubTwoDimensionScene``); this is
         the graft counterpart, and the only test that reads the ``node_ndim(node)``
         argument at all. Measured with that argument replaced by a constant ``3``:
-        the six tests above all stay green and this one answers ``Could not add
+        the tests above all stay green and this one answers ``Could not add
         gsplats 'g': partition must be None, True, or dict; got str`` — a refusal
         the flat path does not make.
         """

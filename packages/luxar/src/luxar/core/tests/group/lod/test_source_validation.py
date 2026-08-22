@@ -1636,9 +1636,8 @@ class TestGSplatsFromDataRefusesABadPartitionSpecBeforeTheWrapper:
     VALID spec can reach each child's own BSP split (the sibling class pins
     that). Pre-fix that exclusion also carried the INVALID ones through unread,
     to be refused one level down inside ``child_0`` — by which point
-    ``add_lod_group`` had created the ``kind=lod`` wrapper. Measured on main, all
-    four spec shapes below: ``Could not add gsplats 'child_0': partition must be
-    None, True, or dict; got str`` (and its three siblings), with ``g`` surviving
+    ``add_lod_group`` had created the ``kind=lod`` wrapper. Measured on main,
+    every malformed shape below was refused from inside ``child_0``, with ``g`` surviving
     ``finalize()`` as a childless ``kind=lod`` group. Same pair #1529/#1534 closed
     elsewhere — a wrapper that strands, and a message blaming an internal child
     for the caller's own kwarg.
