@@ -95,11 +95,8 @@ function attachStubChildren() {
   });
 }
 
-function pythonWrongFramePartition(): SceneNode {
-  const fixture = path.resolve(
-    __dirname,
-    '../../../../../../tests/fixtures/test_partition_wrong_frame.luxar.zarr'
-  );
+function pythonPartition(fixtureName: string): SceneNode {
+  const fixture = path.resolve(__dirname, `../../../../../../tests/fixtures/${fixtureName}`);
   const attrs = (relativePath: string): SceneNode['attrs'] => {
     const docName = ROOT_ATTR_DOCS.find((candidate) =>
       existsSync(path.join(fixture, relativePath, candidate))
@@ -539,7 +536,7 @@ describe('loadPartitionGroupNode', () => {
     attachStubChildren();
 
     const wrapper = await loadPartitionGroupNode(
-      pythonWrongFramePartition(),
+      pythonPartition('test_partition_wrong_frame.luxar.zarr'),
       new THREE.Group(),
       makeStubLoc(),
       makeCtx(),
@@ -547,5 +544,20 @@ describe('loadPartitionGroupNode', () => {
     );
 
     expect(wrapper.userData.bspTree).toBeUndefined();
+  });
+
+  it('keeps a valid tree written by the Python scene compiler', async () => {
+    attachStubChildren();
+    const node = pythonPartition('test_partition_layer.luxar.zarr');
+
+    const wrapper = await loadPartitionGroupNode(
+      node,
+      new THREE.Group(),
+      makeStubLoc(),
+      makeCtx(),
+      loadSceneNodesMock
+    );
+
+    expect(wrapper.userData.bspTree).toEqual(node.attrs.bsp_tree);
   });
 });
