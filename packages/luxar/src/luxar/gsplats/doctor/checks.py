@@ -98,11 +98,13 @@ def check_partition_split_planes(root: "zarr.Group") -> List[Finding]:
       still returns a plausible permutation — the ordering is confidently wrong
       instead of falling back. Repaired by recovering planes when possible, and
       by REMOVING the tree when not: the centroid fallback is at least honest.
-    * **Approximate.** Overlapping parts cannot be separated exactly. A stored
-      tree is reported as a note when every cut remains plausible within the
-      measured overlap band and its per-axis tolerance floor. A cut outside
-      that band is repaired when its
-      position can be recovered safely, or removed when it cannot.
+    * **Approximate.** Some producer planes are center-based rather than exact
+      separators of the written part bounds: uniform tiles overlap, while lines
+      and mesh split polyline/face centroids whose vertices can cross a cut. A
+      stored tree is reported as a note when every cut remains plausible under
+      the viewer's center-straddle rule and per-axis tolerance floor. A cut
+      outside that band is repaired when its position can be recovered safely,
+      or removed when it cannot.
     """
     from luxar.core.group.partition import (
         reconstruct_serialized_bsp_tree,

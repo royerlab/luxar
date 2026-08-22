@@ -502,14 +502,16 @@ def serialized_bsp_tree_straddles_centers(
     tree: Optional[Dict[str, Any]],
     boxes: "Sequence[tuple[NDArray[np.floating], NDArray[np.floating]]]",
 ) -> bool:
-    """True when every plane is plausible for the overlapping parts below it.
+    """True when every plane is plausible for the part centers below it.
 
     A uniform tiled fit keeps its apodization halo, so neighbouring part boxes
     overlap and no plane can separate their faces exactly. Their box centers
-    should still straddle the producer's split plane. The largest measured
-    interpenetration on each axis is the tolerance floor for that axis, so
-    sparse content cannot erase the known halo scale while a plane in a
-    different coordinate frame still does not pass.
+    should still straddle the producer's split plane. Centroid-split lines and
+    mesh can have the same shape even when the part boxes are disjoint: a valid
+    plane can cross one part's vertex extent while remaining between the child
+    centers. The largest measured interpenetration on each axis is the tolerance
+    floor for that axis, so sparse content cannot erase a known halo scale while
+    a plane in a different coordinate frame still does not pass.
 
     Requires leaf labels ``0..len(boxes)-1`` exactly once, and returns ``False``
     for malformed or non-finite stored metadata.
