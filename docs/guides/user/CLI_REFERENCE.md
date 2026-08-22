@@ -202,7 +202,7 @@ in [Formats & migration](./FORMAT_AND_MIGRATION.md).
 
 ```bash
 luxar gsplat info              # Dataset statistics (splat count, dimensions, bounds, LOD structure)
-luxar gsplat doctor           # Diagnose known problems (--fix repairs what is recoverable, in place)
+luxar gsplat doctor           # Diagnose standalone gsplats or scene partitions (--fix repairs in place)
 luxar gsplat napari           # Open a dataset in napari for visual inspection
 luxar gsplat view             # Open a .gsplats.zarr directly in the web viewer
 luxar gsplat compare          # Compare reconstruction quality vs a reference volume (PSNR/SSIM/MSE)

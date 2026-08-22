@@ -1119,11 +1119,14 @@ def doctor(
     if histograms:
         info = True
     if info:
-        from luxar._zarr_compat import open_group
-
-        root = open_group(path, mode="r")
-        if root.attrs.get("format_type") == "gsplats_zarr":
+        if not path.is_dir():
             info_dataset(path, show_histograms=histograms, bins=40)
+        else:
+            from luxar._zarr_compat import open_group
+
+            root = open_group(path, mode="r")
+            if root.attrs.get("format_type") == "gsplats_zarr":
+                info_dataset(path, show_histograms=histograms, bins=40)
 
     with asection(f"Diagnosing: {path.name}"):
         try:

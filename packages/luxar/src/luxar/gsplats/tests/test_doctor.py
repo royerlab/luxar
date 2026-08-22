@@ -659,9 +659,10 @@ class TestStoreGuards:
             assert reopened.attrs["content_hash"] != before
             node_attrs = read_node_attrs(path / group_path)
             assert node_attrs is not None
-            assert node_attrs["bsp_tree"] == read_consolidated_attrs(path)[group_path][
-                "bsp_tree"
-            ]
+            assert (
+                node_attrs["bsp_tree"]
+                == read_consolidated_attrs(path)[group_path]["bsp_tree"]
+            )
             assert diagnose_store(path).findings == []
 
     def test_a_non_gsplats_store_is_refused(self) -> None:
