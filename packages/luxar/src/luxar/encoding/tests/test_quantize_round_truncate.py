@@ -123,6 +123,27 @@ def test_custom_bounded_scalar_truncates() -> None:
     assert g["a"].attrs["encoding"]["name"] == "bounded_scalar_uint8"
 
 
+def test_float16_sdr_color_quantization_uses_float64_affine_map() -> None:
+    data = np.array(
+        [[0.00392, 0.00784, 0.011765], [0.06274, 0.1098, 0.1255]],
+        dtype=np.float16,
+    )
+    group = memory_group()
+    ArrayEncoder().encode(
+        data,
+        group,
+        "colors",
+        SemanticType.COLOR,
+        mode=EncodingMode.AUTO,
+        color_mode="sdr",
+        allow_lut=False,
+        deduplicate=False,
+    )
+
+    np.testing.assert_array_equal(group["colors"], [[0, 1, 2], [15, 27, 31]])
+    assert group["colors"].attrs["encoding"]["name"] == "rgb_uint8"
+
+
 @pytest.mark.parametrize(
     ("encoder_name", "data"),
     [

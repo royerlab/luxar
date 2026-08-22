@@ -634,7 +634,5 @@ class StructuralEncoderMixin(BaseEncoderMixin):
         max_int = 255 if "uint8" in encoder_name else 65535
         encoded_data = np.clip(
             data.astype(np.float64, copy=False) * max_int, 0, max_int
-        ).astype(
-            np.uint8 if "uint8" in encoder_name else np.uint16
-        )
+        ).astype(np.uint8 if "uint8" in encoder_name else np.uint16)
         return encoded_data, {"name": encoder_name, "original_dtype": original_dtype}
