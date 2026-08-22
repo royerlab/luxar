@@ -39,9 +39,16 @@ import { describe, it, expect, vi } from 'vitest';
 import { ArrayDecoder, ArrayRefRegistry } from '../../../../data/array-decoder/decoder';
 import type { ArrayMetadata } from '../../../../data/array-decoder/decoder';
 import * as zarr from '../../../../data/zarr';
+import { decode_log_scalar_u8, decode_log_scalar_u16 } from '../../../../wasm/typescript/decode';
 import { FileSystemStore } from '@zarrita/storage';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
+import {
+  decode_geolog_scalar_u8,
+  decode_geolog_scalar_u16,
+  decode_quantized_u8,
+  decode_quantized_u16,
+} from '../../../../wasm/typescript/decode';
 
 // Get the directory name for ES modules
 const __filename = fileURLToPath(import.meta.url);
@@ -1827,7 +1834,139 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
     });
   });
 
+  describe('dequantizeRange — shared kernel exact parity', () => {
+    const expectExactFloat32 = (
+      actual: Float32Array,
+      expected: Float32Array,
+      label: string
+    ): void => {
+      const actualBits = new Uint32Array(actual.buffer, actual.byteOffset, actual.length);
+      const expectedBits = new Uint32Array(expected.buffer, expected.byteOffset, expected.length);
+      const mismatch = actualBits.findIndex((bits, index) => bits !== expectedBits[index]);
+      expect(
+        mismatch,
+        mismatch < 0
+          ? label
+          : `${label}: code ${mismatch}, actual=0x${actualBits[mismatch].toString(16)}, expected=0x${expectedBits[mismatch].toString(16)}`
+      ).toBe(-1);
+    };
+
+    it.each([
+      {
+        dtype: 'uint8' as const,
+        data: Uint8Array.from({ length: 256 }, (_, code) => code),
+        bounds: [-12.3456789012345, 98.7654321098765] as [number, number],
+        kernel: decode_quantized_u8,
+      },
+      {
+        dtype: 'uint16' as const,
+        data: Uint16Array.from({ length: 65536 }, (_, code) => code),
+        bounds: [2.6769986296248494e-5, 6.059071789834555] as [number, number],
+        kernel: decode_quantized_u16,
+      },
+    ])('matches the $dtype linear kernel for every code', ({ dtype, data, bounds, kernel }) => {
+      const decoder = new ArrayDecoder(new ArrayRefRegistry());
+      const expected = new Float32Array(data.length);
+      kernel(data, bounds[0], bounds[1], expected);
+
+      for (const [label, input] of [
+        ['native integer input', data],
+        ['full-array Float32 input', new Float32Array(data)],
+      ] as const) {
+        const actual = decoder.dequantizeRange(input, {
+          bounds,
+          dtype,
+          isLogSpace: false,
+        });
+        expectExactFloat32(actual, expected, `${dtype} ${label}`);
+      }
+    });
+
+    it.each([
+      {
+        dtype: 'uint8' as const,
+        data: Uint8Array.from({ length: 256 }, (_, code) => code),
+        bounds: [Math.log(1e-3), Math.log(1e3)] as [number, number],
+        kernel: decode_geolog_scalar_u8,
+      },
+      {
+        dtype: 'uint16' as const,
+        data: Uint16Array.from({ length: 65536 }, (_, code) => code),
+        bounds: [Math.log(0.5), Math.log(12345.6789)] as [number, number],
+        kernel: decode_geolog_scalar_u16,
+      },
+    ])('matches the $dtype geolog kernel for every code', ({ dtype, data, bounds, kernel }) => {
+      const decoder = new ArrayDecoder(new ArrayRefRegistry());
+      const expected = new Float32Array(data.length);
+      kernel(data, bounds[0], bounds[1], expected);
+
+      for (const [label, input] of [
+        ['native integer input', data],
+        ['full-array Float32 input', new Float32Array(data)],
+      ] as const) {
+        const actual = decoder.dequantizeRange(input, {
+          bounds,
+          dtype,
+          isLogSpace: false,
+          isGeologSpace: true,
+        });
+        expectExactFloat32(actual, expected, `${dtype} ${label}`);
+      }
+    });
+  });
+
   describe('decodeLogScalar via dequantizeRange — log-space boundaries', () => {
+    it.each([
+      { dtype: 'uint8', maxLog: 9 },
+      { dtype: 'uint8', maxLog: Math.log(10) },
+      { dtype: 'uint16', maxLog: 9 },
+      { dtype: 'uint16', maxLog: Math.log(10) },
+    ])('matches the shared $dtype kernel exactly at maxLog=$maxLog', ({ dtype, maxLog }) => {
+      const decoder = new ArrayDecoder(new ArrayRefRegistry());
+      const codes =
+        dtype === 'uint8'
+          ? Uint8Array.from({ length: 256 }, (_, index) => index)
+          : Uint16Array.from({ length: 65536 }, (_, index) => index);
+      const expected = new Float32Array(codes.length);
+      if (codes instanceof Uint8Array) {
+        decode_log_scalar_u8(codes, maxLog, expected);
+      } else {
+        decode_log_scalar_u16(codes, maxLog, expected);
+      }
+
+      const expectedBits = new Uint32Array(expected.buffer);
+      const repeatedCodes =
+        codes instanceof Uint8Array
+          ? new Uint8Array(codes.length * 2)
+          : new Uint16Array(codes.length * 2);
+      repeatedCodes.set(codes);
+      repeatedCodes.set(codes, codes.length);
+
+      for (const [inputLabel, input] of [
+        ['integer codes', codes],
+        ['Float32Array-widened codes', Float32Array.from(codes)],
+        ['repeated integer codes', repeatedCodes],
+        ['repeated Float32Array-widened codes', Float32Array.from(repeatedCodes)],
+      ] as const) {
+        const actual = decoder.dequantizeRange(input, {
+          bounds: [0, maxLog],
+          dtype,
+          isLogSpace: true,
+        });
+        const actualBits = new Uint32Array(actual.buffer);
+        const mismatch = actualBits.findIndex(
+          (bits, index) => bits !== expectedBits[index % expectedBits.length]
+        );
+        const context =
+          mismatch === -1
+            ? `${dtype} ${inputLabel} matched the shared kernel`
+            : `${dtype} ${inputLabel} code ${input[mismatch]} at index ${mismatch}: ` +
+              `expected bits 0x${expectedBits[mismatch % expectedBits.length].toString(16)}, ` +
+              `actual bits 0x${actualBits[mismatch].toString(16)}`;
+        expect(mismatch, context).toBe(-1);
+      }
+    });
+
     it('maps index 0 → ~0 and max_int → ~1000 (expm1 inverse of log1p)', () => {
       // Log-space stores log1p(value)/max_log → uint. Decoding applies
       // expm1(normalized * max_log). With max_log = ln(1001) ≈ 6.908755,

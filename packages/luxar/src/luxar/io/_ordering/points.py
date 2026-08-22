@@ -5,11 +5,17 @@ from __future__ import annotations
 from typing import Literal, Optional
 
 import numpy as np
+from numpy.typing import NDArray
 
 from luxar.core import Dimension
 from luxar.typing_utils.constants import DEFAULT_POINT_RADIUS
 
-from .bounds import _BARRIER_BOUND_EPS, _normalise_slice_dims, _store_outward_f32
+from .bounds import (
+    _BARRIER_BOUND_EPS,
+    _normalise_coord_slack,
+    _normalise_slice_dims,
+    _store_outward_f32,
+)
 from .compound import _compound_sort
 
 
@@ -44,6 +50,8 @@ def compute_chunk_bounds_points(
     radii: Optional[np.ndarray | float],
     chunk_size: int,
     slice_dims: Optional[list[int]] = None,
+    *,
+    coord_slack: Optional[NDArray[np.float64]] = None,
 ) -> np.ndarray:
     """Compute chunk bounding boxes for Points (includes radius extent).
 
@@ -52,21 +60,42 @@ def compute_chunk_bounds_points(
     bound is right in both directions rather than merely wide enough. The
     interval is computed in float64 and narrowed to the float32 store with
     OUTWARD rounding (see :func:`_store_outward_f32`), so the "never tighter"
-    half holds at every coordinate magnitude — not only where a 0.5 pad happens
-    to survive a round-to-nearest store. (With per-point uint8-encoded radii the
-    encoder's rounding can move a stored radius by up to one quantum AFTER these
-    bounds are computed, so that half of the claim holds only up to that
-    sub-quantum slack.)
+    half holds against the AUTHORED radii at every coordinate magnitude — not
+    only where a 0.5 pad happens to survive a round-to-nearest store.
 
-    KNOWN SLACK (larger than the radii one above): these bounds are computed from
-    the AUTHORED positions, but under the default AUTO encoding the positions
+    KNOWN GAP — THE DECODED RADIUS IS NOT COVERED. ``radii`` is a
+    POSITIVE_SCALAR and is quantised in its own right (``bounded_scalar_uint8``
+    under AUTO for a typical range), and these bounds are built from the values
+    as handed in, so a DECODED radius can be up to half a quantum LARGER than
+    the one the pad was sized for and the footprint the renderer draws escapes
+    the stored bound by that much. Measured on 20,000 points over a 1000-unit
+    axis with ``radii ~ U(0.1, 5.0)``: decoded − authored up to 9.6e-3, putting
+    5 of 5 chunks marginally outside their own bound (worst 9.3e-3). Note this
+    is the SCALAR half of the footprint: ``coord_slack`` below closes the
+    COORDINATE half (issue #1655) and does nothing for this one, which needs
+    the same treatment — a per-array round-trip slack from the encoder, added
+    to the radius before the pad. The identical caveat applies to a line's
+    widths; see
+    :func:`~luxar.io._ordering.lines.compute_segment_chunk_bounds`.
+
+    QUANTISATION SLACK (``coord_slack``): these bounds are computed from the
+    positions AS HANDED IN, but under the default AUTO encoding the positions
     themselves are stored as per-axis uint16 fixed point (the COORDINATE path in
-    ``luxar.encoding._encoders.perchannel``), so a DECODED position can land up to half a quantum (``extent/131070``)
-    outside its own chunk's stored bound on a non-gridded axis — 7.6e-3 at an
-    extent of 1000, well above the float32 ULP the outward store closes. A
-    GRIDDED axis is snapped to round-trip exactly, so ordinary integer
-    time/channel axes are safe; gsplats additionally escalate offending centers
-    to float32, and Points has no equivalent rail (issue #1655).
+    ``luxar.encoding._encoders.perchannel``), so a DECODED position can land up
+    to half a quantum (``extent/131070``) outside a bound derived from the
+    authored one — 7.6e-3 at an extent of 1000, well above the float32 ULP the
+    outward store closes, and enough for the reader to skip the chunk entirely.
+    ``coord_slack`` is that displacement, per axis, and is added outward on
+    EVERY dimension: on top of the radius on a spatial axis and on top of
+    ``_BARRIER_BOUND_EPS`` on a barrier axis (the epsilon is float-boundary
+    safety, the slack is a displacement — they add). The compiler supplies it
+    from the encoder's own predicate
+    (:meth:`~luxar.encoding.encoder.ArrayEncoder.coordinate_round_trip_slack`),
+    which returns zero for an axis the encoder stores exactly (a gridded
+    time/channel axis, a constant axis, a float32 fallback — and the whole array
+    when the write will really store a LUT, which the caller declares with that
+    predicate's ``allow_lut``). A direct caller that omits it gets bounds for the
+    authored coordinates only (issue #1655).
 
     ``radii=None`` does not mean "no extent" — a points node that stores no radii
     array is drawn with the renderer's default radius, so the bounds are expanded
@@ -104,6 +133,10 @@ def compute_chunk_bounds_points(
                    expansion should NOT be applied. Default: None (apply to all
                    dims). An index outside ``[0, d)`` raises ``ValueError``
                    (see :func:`_normalise_slice_dims`).
+        coord_slack: Per-axis outward pad, shape ``(d,)``, covering how far the
+                   STORE can move a coordinate from the value passed here (see
+                   the QUANTISATION SLACK note above). Default None ⇒ zero on
+                   every axis. Validated by :func:`_normalise_coord_slack`.
 
     Returns:
         chunk_bounds: Bounding boxes, shape (num_chunks, d, 2)
@@ -112,6 +145,7 @@ def compute_chunk_bounds_points(
     num_chunks = (n_points + chunk_size - 1) // chunk_size
 
     discrete_dims = _normalise_slice_dims(slice_dims, ndim)
+    slack = _normalise_coord_slack(coord_slack, ndim)
 
     chunk_bounds = np.zeros((num_chunks, ndim, 2), dtype=np.float32)
 
@@ -157,7 +191,12 @@ def compute_chunk_bounds_points(
                     mins_d = (coords - r).min()
                     maxs_d = (coords + r).max()
 
-            lo32, hi32 = _store_outward_f32(float(mins_d), float(maxs_d))
+            # The quantisation displacement applies to EVERY dim — spatial and
+            # barrier alike — and is added in float64, before the outward
+            # float32 store (which cannot recover a pad already rounded away).
+            lo32, hi32 = _store_outward_f32(
+                float(mins_d) - slack[d], float(maxs_d) + slack[d]
+            )
             chunk_bounds[chunk_idx, d, 0] = lo32
             chunk_bounds[chunk_idx, d, 1] = hi32
 

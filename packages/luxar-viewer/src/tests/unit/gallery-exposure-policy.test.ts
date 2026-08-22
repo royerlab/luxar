@@ -4,12 +4,12 @@
  * The real harness needs a dataset, a dev server and a GPU, so the policy is
  * exercised here against a synthetic "subject": a linear lit-luminance
  * distribution pushed through a monotone compressive tone curve. That is enough
- * to reproduce the failure the flat-subject pass fixes — a headlit shaded mesh
+ * to reproduce the failure the flat-subject pass fixes — a flat shaded mesh
  * whose lit histogram is only a few hundredths wide, parked deep in the tone
  * curve's shoulder, which the tail-based clip guard structurally cannot see.
  *
  * The simulation is NOT a model of ACES. To keep the assertions from encoding
- * one particular curve's geometry, the headlit case is run through TWO curves
+ * one particular curve's geometry, the flat-subject case is run through TWO curves
  * (each with its profile calibrated through its own inverse) and only
  * curve-independent claims are asserted: the median lands on TARGET_MID, and
  * exposure moves down substantially. The absolute size of that move is a
@@ -18,7 +18,7 @@
  * The pre-fix algorithm (p99 pass + clip guard, no mid-tone phase) is
  * reimplemented here as `referenceAutoExposure` so the assertions are genuine
  * regression guards: the emissive profile must land on EXACTLY the pre-fix
- * exposure with the same applies/measurements, and the headlit profile must
+ * exposure with the same applies/measurements, and the flat-subject profile must
  * land somewhere clearly else.
  */
 
@@ -193,14 +193,13 @@ async function referenceAutoExposure(io: ExposureIO): Promise<number> {
 // ---------------------------------------------------------------------------
 
 /**
- * HEADLIT shaded surface (a mesh isosurface). The view-anchored headlight gives
- * N·L ≈ 1 on every visible facet, so the lit luminances are tightly clustered.
- * Calibrated through the curve's own inverse at gain 2 (= the harness's starting
- * exposure of 1.0 stop) so that, whichever curve is used, the PRE-FIX algorithm
- * parks it at p10 ≈ 0.84, p50 ≈ 0.87, p99 ≈ 0.90 — the numbers measured on
- * `mesh_isosurface_cells3d`.
+ * Synthetic flat shaded surface. This deliberately preserves the narrow
+ * pre-fix failure distribution so the policy branch remains exercised across
+ * two tone curves. The current offset-key `mesh_isosurface_cells3d` capture
+ * instead measures p10 0.378 / p50 0.506 / p99 0.597 (spread 0.219) after the
+ * median pass; its p50 confirms the same policy still lands on TARGET_MID.
  */
-const headlit = (curve: ToneCurve): SubjectProfile => ({
+const flatShaded = (curve: ToneCurve): SubjectProfile => ({
   curve,
   linear: Array.from({ length: 401 }, (_, i) => curve.inv(0.835 + (0.07 * i) / 400) / 2),
   litFraction: 0.35,
@@ -228,9 +227,9 @@ const emissive = (curve: ToneCurve): SubjectProfile => ({
 // ---------------------------------------------------------------------------
 
 describe('gallery auto-exposure policy', () => {
-  describe('headlit (flat) subject', () => {
+  describe('flat shaded subject', () => {
     it('the pre-fix algorithm parks the whole subject in the tone-curve shoulder', async () => {
-      const profile = headlit(SHOULDER);
+      const profile = flatShaded(SHOULDER);
       const shot = capture(profile, await referenceAutoExposure(makeIO(profile)));
       expect(shot.midLuma).toBeGreaterThan(0.8);
       expect(shot.hiLuma - shot.loLuma).toBeLessThan(NARROW_SPREAD_MAX);
@@ -242,7 +241,7 @@ describe('gallery auto-exposure policy', () => {
       // below CLIP_LUMA by construction. That is exactly the point: the guard
       // is a tail test, and this failure mode has no tail, so no plausible
       // tuning of CLIP_FRAC_MAX / BG_LUMA_MAX would have caught it.
-      const profile = headlit(SHOULDER);
+      const profile = flatShaded(SHOULDER);
       const shot = capture(profile, await referenceAutoExposure(makeIO(profile)));
       expect(shot.hiLuma).toBeLessThan(CLIP_LUMA);
       expect(shot.clippedFrac).toBeLessThan(CLIP_FRAC_MAX);
@@ -251,7 +250,7 @@ describe('gallery auto-exposure policy', () => {
 
     for (const curve of CURVES) {
       it(`lands the lit median on TARGET_MID under ${curve.name}`, async () => {
-        const profile = headlit(curve);
+        const profile = flatShaded(curve);
         const io = makeIO(profile);
         const { stops, flatSubject } = await computeAutoExposure(io);
         const reference = await referenceAutoExposure(makeIO(profile));

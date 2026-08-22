@@ -42,6 +42,7 @@ from .network_simulation import (
     print_network_params,
 )
 from .optimise_command import register_optimise_command
+from .restamp_lod_command import register_restamp_lod_command
 from .serving import (
     DirectoryListingStaticFiles,
     _add_cors,
@@ -134,6 +135,10 @@ register_info_command(app)
 
 # Register the `optimise` re-chunking command (defined in optimise_command.py).
 register_optimise_command(app)
+
+# Register the `restamp-lod` LOD-threshold re-derivation command (defined in
+# restamp_lod_command.py).
+register_restamp_lod_command(app)
 
 
 def _start_data_server_thread(

@@ -20,8 +20,9 @@ class BaseEncoderMixin:
     resolve (and type-check) through a single base.
 
     ``ArrayEncoder.__init__`` assigns the instance attributes annotated below;
-    the two method stubs (``encode`` / ``_encode_dtype``) stay implemented on
-    ``ArrayEncoder`` but are declared here so mixins that call them type-check.
+    the three method stubs (``encode`` / ``_encode_dtype`` / ``encodes_as_lut``)
+    stay implemented on ``ArrayEncoder`` but are declared here so mixins that
+    call them type-check.
     """
 
     # Instance attributes assigned by ArrayEncoder.__init__.
@@ -66,6 +67,9 @@ class BaseEncoderMixin:
         compressor: Optional[Any],
         perchannel_bits: Optional[int] = None,
     ) -> None:
+        raise NotImplementedError
+
+    def encodes_as_lut(self, data: np.ndarray, semantic_type: SemanticType) -> bool:
         raise NotImplementedError
 
     def _is_uniform(self, data: np.ndarray) -> bool:

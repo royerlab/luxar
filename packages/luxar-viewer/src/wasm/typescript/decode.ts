@@ -4,16 +4,23 @@
  * TypeScript reference implementation matching decode.rs
  */
 
+import { expm1f } from './float32-math';
+
 /**
  * Decode quantized uint8 data to float32.
  * Maps uint8 [0, 255] to [minVal, maxVal] linearly.
  */
 export function decode_quantized_u8(
-  data: Uint8Array,
+  data: ArrayLike<number>,
   minVal: number,
   maxVal: number,
   output: Float32Array
 ): void {
+  // Callers provide integral codes in [0, 255]. ArrayLike also admits the
+  // Float32Array of widened codes produced by full-array zarr reads. Python
+  // `_decode_bounded_scalar` uses f64 with a different operand order; exact
+  // viewer expectations mirror this kernel in
+  // `tests/fixtures/generate_expectations.py::_viewer_kernel_decode`.
   const lo = Math.fround(minVal);
   const hi = Math.fround(maxVal);
   const range = Math.fround(hi - lo);
@@ -29,13 +36,14 @@ export function decode_quantized_u8(
  * Maps uint16 [0, 65535] to [minVal, maxVal] linearly.
  */
 export function decode_quantized_u16(
-  data: Uint16Array,
+  data: ArrayLike<number>,
   minVal: number,
   maxVal: number,
   output: Float32Array
 ): void {
-  // These linear kernels mirror the Rust/WASM f32 contract; ArrayDecoder.dequantize
-  // and Python _decode_bounded_scalar remain f64 metadata helpers with different operand order.
+  // Callers provide integral codes in [0, 65535]. ArrayLike also admits the
+  // Float32Array of widened codes produced by full-array zarr reads. See the
+  // uint8 kernel above for the Python and fixture-generator counterparts.
   const lo = Math.fround(minVal);
   const hi = Math.fround(maxVal);
   const range = Math.fround(hi - lo);
@@ -49,31 +57,41 @@ export function decode_quantized_u16(
 /**
  * Decode log-space quantized uint8 data to float32.
  * Decoding: expm1(normalized * maxLog)
+ * Callers provide integral codes in [0, 255]; ArrayLike also accepts widened Float32Array codes.
  */
-export function decode_log_scalar_u8(data: Uint8Array, maxLog: number, output: Float32Array): void {
+export function decode_log_scalar_u8(
+  data: ArrayLike<number>,
+  maxLog: number,
+  output: Float32Array
+): void {
+  // Single TypeScript log-scalar decode route: the worker's WASM-fallback and the
+  // main-thread ArrayDecoder both come through here, so the Rust f32 contract
+  // holds for both.
   const limit = Math.fround(maxLog);
   const invMax = Math.fround(limit / 255);
   for (let i = 0; i < data.length; i++) {
     const normalized = Math.fround(data[i] * invMax);
-    // Math.expm1 is f64; rounding its result can remain one ULP from Rust's expm1f.
-    output[i] = Math.fround(Math.expm1(normalized));
+    output[i] = expm1f(normalized);
   }
 }
 
 /**
  * Decode log-space quantized uint16 data to float32.
+ * Callers provide integral codes in [0, 65535]; ArrayLike also accepts widened Float32Array codes.
  */
 export function decode_log_scalar_u16(
-  data: Uint16Array,
+  data: ArrayLike<number>,
   maxLog: number,
   output: Float32Array
 ): void {
+  // Single TypeScript log-scalar decode route: the worker's WASM-fallback and the
+  // main-thread ArrayDecoder both come through here, so the Rust f32 contract
+  // holds for both.
   const limit = Math.fround(maxLog);
   const invMax = Math.fround(limit / 65535);
   for (let i = 0; i < data.length; i++) {
     const normalized = Math.fround(data[i] * invMax);
-    // Math.expm1 is f64; rounding its result can remain one ULP from Rust's expm1f.
-    output[i] = Math.fround(Math.expm1(normalized));
+    output[i] = expm1f(normalized);
   }
 }
 
@@ -83,11 +101,12 @@ export function decode_log_scalar_u16(
  * exp(minLog + (u-1)/254 * (maxLog - minLog)). Mirrors the Rust kernel 1:1.
  */
 export function decode_geolog_scalar_u8(
-  data: Uint8Array,
+  data: ArrayLike<number>,
   minLog: number,
   maxLog: number,
   output: Float32Array
 ): void {
+  // Callers provide integral codes in [0, 255]; see decode_quantized_u8.
   // fround the anchors: the WASM kernel receives them as f32, so the TS
   // reference must quantize them identically before the f64 math.
   const lo = Math.fround(minLog);
@@ -102,11 +121,12 @@ export function decode_geolog_scalar_u8(
  * Decode geometric-log quantized uint16 data to float32.
  */
 export function decode_geolog_scalar_u16(
-  data: Uint16Array,
+  data: ArrayLike<number>,
   minLog: number,
   maxLog: number,
   output: Float32Array
 ): void {
+  // Callers provide integral codes in [0, 65535]; see decode_quantized_u16.
   const lo = Math.fround(minLog);
   const inv = Math.max(Math.fround(maxLog) - lo, 0) / 65534;
   for (let i = 0; i < data.length; i++) {

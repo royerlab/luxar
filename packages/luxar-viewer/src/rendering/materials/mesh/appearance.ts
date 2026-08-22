@@ -17,15 +17,17 @@ import type { BlendingMode } from '../../../types/blending';
 /**
  * Mesh material defaults.
  *
- * `ambient` / `shadeExponent` parameterize the §6.2 headlight
- * `shade = mix(ambient, 1, pow(saturate(dot(N, V) * 0.5 + 0.5), shadeExponent))`:
+ * `ambient` / `shadeExponent` parameterize the §6.2 wrapped diffuse term, while
+ * `specular` / `shininess` parameterize its additive Blinn–Phong highlight:
  *
  * - `ambient` is the shade floor. It is what a surface facing *away* from the
- *   camera keeps, so it is what makes a silhouette readable rather than black.
- *   `1.0` collapses the whole term to 1 and reproduces the emissive look of the
- *   other three geometry types.
+ *   key light keeps, so it is what makes a silhouette readable rather than black.
+ *   `1.0` collapses the diffuse gradient; set `specular = 0.0` as well for a fully
+ *   emissive look.
  * - `shadeExponent` shapes the falloff between the head-on and edge-on extremes.
  *   `1.0` is the plain linear wrap.
+ * - `specular` is the highlight strength. `0.0` disables it.
+ * - `shininess` controls highlight width; larger values make it tighter.
  *
  * `alphaCutoff` is the `opaque`-mode cutout threshold (§6.2). `0.5` is the
  * conventional alpha-test midpoint, and — because node opacity folds INTO the
@@ -35,21 +37,26 @@ import type { BlendingMode } from '../../../types/blending';
 export const MESH_DEFAULTS = {
   ambient: 0.25,
   shadeExponent: 1.5,
+  specular: 0.12,
+  shininess: 24,
   alphaCutoff: 0.5,
 } as const;
 
+/** View-space key-light direction before normalization (§6.2). */
+export const MESH_LIGHT_DIRECTION = [-0.35, 0.55, 0.75] as const;
+
 /**
- * Clamp the headlight wrap exponent to a safe range, supplying the default when
+ * Clamp the wrapped-diffuse exponent to a safe range, supplying the default when
  * undefined.
  *
  * The same class of hazard `clampGamma` exists for, and the same `0.001` bound. The
- * shade term computes `pow(wrap, exponent)` where `wrap = saturate(N·V · 0.5 + 0.5)`,
+ * shade term computes `pow(wrap, exponent)` where `wrap = saturate(N·L · 0.5 + 0.5)`,
  * and `wrap` is **exactly 0** for any fragment whose normal faces directly away from
- * the camera (`N·V == -1`, which the two-sided flip leaves reachable on the
- * derivative-fallback path and on any unflipped geometry). GLSL leaves `pow(0, y)`
+ * the key light (`N·L == -1`, which remains reachable for valid surface normals).
+ * GLSL leaves `pow(0, y)`
  * undefined for `y <= 0`, so an author setting `shadeExponent = 0` — a perfectly
  * plausible "I want no gradient" value — produces driver-dependent output (1, 0 or
- * NaN) at precisely the silhouette.
+ * NaN) for those face-away fragments.
  *
  * Clamping keeps that fragment DEFINED and sensible: at `exponent = 0.001`,
  * `pow(0, 0.001)` is 0, so a face-away fragment shades at `ambient` — which is what
@@ -61,7 +68,17 @@ export const MESH_DEFAULTS = {
  * mesh is the only shaded type.
  */
 export function clampShadeExponent(exponent: number | undefined): number {
-  return Math.max(0.001, exponent ?? MESH_DEFAULTS.shadeExponent);
+  return clampPositiveExponent(exponent, MESH_DEFAULTS.shadeExponent);
+}
+
+/** Clamp the specular exponent to the same defined `pow()` domain as the shade exponent. */
+export function clampShininess(shininess: number | undefined): number {
+  return clampPositiveExponent(shininess, MESH_DEFAULTS.shininess);
+}
+
+function clampPositiveExponent(value: number | undefined, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  return Math.max(0.001, value);
 }
 
 /**

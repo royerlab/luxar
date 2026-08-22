@@ -15,11 +15,20 @@ import numpy as np
 # one timepoint) pull in the entire neighbouring category. Keep this tiny.
 #
 # KNOWN LIMIT (small steps): the pad is absolute while the reader's reach is
-# step-scaled (0.25 x step), so for pathological discrete steps below ~1.3e-3
-# the pad reaches past the neighbour category's quarter-step boundary and the
-# over-fetch returns. Step metadata is not plumbed into these bound
-# builders; discrete/categorical dims with milli-scale steps are not a
-# supported layout (rescale the axis instead).
+# step-scaled (0.25 x step), so a chunk at category `c` is pulled into a query
+# for `c + 1` as soon as `c + pad >= (c + step) - 0.25*step`, i.e. as soon as
+#   pad >= 0.75 * step   <=>   step <= pad / 0.75.
+# At the bare epsilon that is 1e-3 / 0.75 = ~1.3e-3: for pathological discrete
+# steps below that the over-fetch returns. Step metadata is not plumbed into
+# these bound builders; discrete/categorical dims with milli-scale steps are
+# not a supported layout (rescale the axis instead).
+#   Since the quantisation pad (#1655) the threshold is worse on a NON-GRIDDED
+#   barrier axis, because the compiler adds `coord_slack` on top of this
+#   epsilon: the effective pad is `1e-3 + extent/131070`, i.e. 8.63e-3 at an
+#   axis extent of 1000 — 8.6x wider, so by the SAME `pad / 0.75` rule steps
+#   below 8.63e-3 / 0.75 = ~1.2e-2 over-fetch there. An ordinary stacked
+#   integer time/channel axis is unaffected: it is GRIDDED, its slack is
+#   exactly 0, and it keeps the plain 1e-3.
 #
 # KNOWN LIMIT (large coordinates): the outward float32 store below never lets a
 # pad vanish, so the pad a barrier axis EFFECTIVELY gets is
@@ -104,6 +113,74 @@ def _normalise_slice_dims(slice_dims: Optional[Sequence[int]], ndim: int) -> set
             )
         out.add(idx)
     return out
+
+
+def _normalise_coord_slack(coord_slack: Optional[np.ndarray], ndim: int) -> np.ndarray:
+    """Coerce a ``coord_slack`` argument to a validated ``(ndim,)`` float64 pad.
+
+    ``coord_slack`` is the per-axis distance the STORE can move a coordinate
+    away from the value the bound builder was handed — under the default AUTO
+    encoding the coordinates are written as per-axis uint16 fixed point, so a
+    decoded coordinate can sit up to half a quantum outside a bound computed
+    from the authored one, and the reader then never fetches that chunk
+    (issue #1655). The compiler asks the encoder for it
+    (:meth:`~luxar.encoding.encoder.ArrayEncoder.coordinate_round_trip_slack`)
+    and hands it to the builders; ``None`` means "no displacement", i.e. zeros.
+
+    Validated here rather than in each builder for the same reason as
+    :func:`_normalise_slice_dims`: three builders take this argument and must
+    not diverge on what they accept. A wrong-LENGTH array is an error rather
+    than a broadcast, because the entries are positional per-axis quantities —
+    silently padding the wrong axis is exactly the failure this parameter
+    exists to prevent. A NEGATIVE entry would TIGHTEN the bound and drop
+    geometry; a non-finite one would poison every bound on that axis.
+
+    The ``dtype=np.float64`` coercion below accepts float32 (and a plain list)
+    rather than rejecting it the way :func:`_store_outward_f32_array` rejects a
+    float32 interval. The asymmetry is deliberate and is documented because it
+    otherwise reads as an inconsistency worth "fixing": that helper refuses
+    because a pad already lost to float32 ARITHMETIC cannot be recovered by
+    rounding outward, whereas this is a per-axis value a caller merely stored
+    narrowly, and it is added into a float64 accumulator before any store. No
+    in-tree caller needs it — the encoder's predicate returns float64 — but the
+    three builders are public through ``luxar.io.ordering``, so this is the
+    direct-caller door, pinned by
+    ``io/tests/test_ordering_properties.py::test_normalise_coord_slack_accepts_none_and_float32``.
+
+    Args:
+        coord_slack: Per-axis outward pad, shape ``(ndim,)``, or ``None``
+        ndim: Number of columns in the coordinate array
+
+    Returns:
+        The pad as a ``(ndim,)`` float64 array; all zeros when ``None``.
+
+    Raises:
+        ValueError: If the length is wrong, or an entry is negative or
+            non-finite.
+    """
+    if coord_slack is None:
+        return np.zeros(ndim, dtype=np.float64)
+    slack = np.asarray(coord_slack, dtype=np.float64)
+    if slack.shape != (ndim,):
+        raise ValueError(
+            f"coord_slack has shape {slack.shape} but the data is "
+            f"{ndim}-dimensional (expected ({ndim},)). These are positional "
+            "per-axis pads, so a length mismatch would pad the wrong axis and "
+            "leave the one that needed it short — the exact under-fetch this "
+            "argument exists to prevent."
+        )
+    if not np.all(np.isfinite(slack)):
+        raise ValueError(
+            f"coord_slack must be finite (got {coord_slack!r}): a non-finite "
+            "pad poisons every chunk bound on that axis."
+        )
+    if np.any(slack < 0.0):
+        raise ValueError(
+            f"coord_slack must be non-negative (got {coord_slack!r}): a "
+            "negative pad TIGHTENS the stored bound, which drops geometry the "
+            "reader can no longer find."
+        )
+    return slack
 
 
 def _store_outward_f32(lo: float, hi: float) -> tuple[np.float32, np.float32]:

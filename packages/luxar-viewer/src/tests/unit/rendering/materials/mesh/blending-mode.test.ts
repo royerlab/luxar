@@ -53,6 +53,8 @@ describe.each(BACKENDS)('MeshMaterial (%s) — construction defaults', (_label, 
     const m = make();
     expect(m.uniforms.uAmbient.value).toBe(MESH_DEFAULTS.ambient);
     expect(m.uniforms.uShadeExponent.value).toBe(MESH_DEFAULTS.shadeExponent);
+    expect(m.uniforms.uSpecular.value).toBe(MESH_DEFAULTS.specular);
+    expect(m.uniforms.uShininess.value).toBe(MESH_DEFAULTS.shininess);
     expect(m.uniforms.uAlphaCutoff.value).toBe(MESH_DEFAULTS.alphaCutoff);
   });
 
@@ -171,13 +173,22 @@ describe.each(BACKENDS)('MeshMaterial (%s) — the shading variant', (_label, ma
 
 describe.each(BACKENDS)('MeshMaterial (%s) — clone fidelity', (_label, make) => {
   it('round-trips the shade + cutout uniforms and the live `side`', () => {
-    const m = make({ ambient: 0.75, shadeExponent: 3, alphaCutoff: 0.125, gamma: 2.2 });
+    const m = make({
+      ambient: 0.75,
+      shadeExponent: 3,
+      specular: 0.3,
+      shininess: 48,
+      alphaCutoff: 0.125,
+      gamma: 2.2,
+    });
     // `side` is epoch state the commit owns, so it must be copied rather than
     // re-derived: a clone taken while an undecidable frame forced DoubleSide has to
     // keep drawing both faces until the next commit re-applies it.
     m.side = THREE.DoubleSide;
     const c = m.clone();
     expect(c.uniforms.uAmbient.value).toBe(0.75);
+    expect(c.uniforms.uSpecular.value).toBe(0.3);
+    expect(c.uniforms.uShininess.value).toBe(48);
     expect(c.uniforms.uShadeExponent.value).toBe(3);
     expect(c.uniforms.uAlphaCutoff.value).toBe(0.125);
     expect(c.userData.gamma).toBe(2.2);
@@ -307,7 +318,14 @@ describe('the two backends agree across the FULL flag cross-product', () => {
       }
       // The shade uniforms must seed identically too — including through the exponent
       // clamp, the one place a value is transformed on the way in.
-      for (const u of ['uAmbient', 'uShadeExponent', 'uAlphaCutoff', 'uInvGamma'] as const) {
+      for (const u of [
+        'uAmbient',
+        'uShadeExponent',
+        'uSpecular',
+        'uShininess',
+        'uAlphaCutoff',
+        'uInvGamma',
+      ] as const) {
         if (g.uniforms[u].value !== t.uniforms[u].value) {
           divergences.push(
             `${label}: ${u} glsl=${String(g.uniforms[u].value)} tsl=${String(t.uniforms[u].value)}`

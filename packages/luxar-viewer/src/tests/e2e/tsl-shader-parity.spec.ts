@@ -2199,9 +2199,10 @@ test.describe('TSL ↔ GLSL shader parity', () => {
 
     // (1) LIT, not collapsed to `uAmbient`. This is the assertion that catches a
     // derivative normal pointing AWAY from the camera: with V = +z_view, a
-    // back-pointing normal drives the wrap term to 0 and every fragment shades at
-    // the ambient floor (0.25 of the base colour). The fixture's quad faces the
-    // camera head-on, so a correct flat build shades at ~1.0.
+    // back-pointing normal drives the wrap term to ~0.12 under the offset key
+    // light, i.e. essentially the ambient floor (~0.28 of the base colour). The
+    // fixture's quad faces the camera head-on, so a correct flat build shades at
+    // ~0.87 plus the small additive specular highlight (~0.89 of the base colour).
     const litMean = (px: number[]): number => {
       let sum = 0;
       let n = 0;

@@ -3,7 +3,7 @@
 
 Marching-cubes **isosurfaces** of the two-channel scikit-image ``cells3d``
 volume — cell membranes and nuclei — added as two independent, toggleable
-``layer=True`` mesh nodes and shaded by Luxar's view-anchored headlight.
+``layer=True`` mesh nodes and shaded by Luxar's view-anchored offset key.
 
 This is the reference demo for the **Mesh** geometry type, and it is deliberately
 the same dataset as ``demo_gsplats_3d_cells3d_multichannel``: run both and you
@@ -196,7 +196,7 @@ def extract_isosurface(volume: np.ndarray, name: str) -> tuple:
     flag only controls FACE WINDING. Its ``"descent"`` default does
     ``np.fliplr(faces)``, which leaves each triangle's right-handed winding
     opposite the outward normals — so exterior triangles render back-facing and
-    the headlight shading inverts. We pass ``"ascent"`` to keep the winding
+    the lighting gradient inverts. We pass ``"ascent"`` to keep the winding
     consistent with the outward normals.
 
     NB: skimage documents ``"ascent"`` as "exterior was greater than object",

@@ -507,7 +507,10 @@ class Group(Node):
                 grows outward as it loads.
             **attrs: Additional attributes — ``opacity``, ``intensity``,
                 ``offset``, ``gamma``, ``colormap``, ``layer``, ``visible``,
-                ``transform``, ``nd_transform``, ``blending_mode``. Note
+                ``transform``, ``nd_transform``, ``blending_mode``, and the
+                mesh-only appearance controls ``ambient``, ``specular``,
+                ``alpha_cutoff`` (each in ``[0, 1]``), ``shade_exponent``, and
+                ``shininess`` (both strictly positive and finite). Note
                 ``volumetric`` blending is rejected — it has no meaning for an
                 opaque surface. An explicit ``None`` for ``colormap`` or
                 ``coverage_fraction`` means "absent" — identical to omitting the

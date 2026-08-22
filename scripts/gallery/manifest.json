@@ -159,7 +159,7 @@
       },
       "fillTarget": 0.69,
       "readme": true,
-      "note": "the first SHADED tile. EXPOSURE: a headlit surface has N.L~1 on every visible facet, so its lit histogram is only 0.06 wide (p10 0.840, p50 0.873, p99 0.903); driving that p99 to the 0.9 target parks the WHOLE subject in the ACES highlight rolloff, which desaturates toward white - membrane saturation measured 0.28 against 0.85 authored. The clip guard cannot catch it either, being a tail test on a distribution with no tail. That is the auto-exposure flat-subject pass's job: spread 0.063 is well under NARROW_SPREAD_MAX, so it re-targets the median and comes down on its own (measured -1.32 stops). These are the numbers exposure-policy.ts was calibrated on, so this tile deliberately carries NO exposure override - it is the case that pass exists for. ORBITUP+VIEWANGLE: the orbit hard-sets cam.up to the orbitUp axis, and the default WAS world-y at the time, which silently discarded this demo's baked up=(1,0,0) - the shipped animation was rolled ~90deg away from its own poster AND tumbled, subject aspect swinging 0.40..0.92 (130pct) over one rock. orbitUp x matches the baked up and makes the rock a real turntable, but positionForOrbitUp then parks the camera edge-on to this thin slab (aspect ~4.5, lit fraction 0.09, a sliver), so viewAngle 45/40 is REQUIRED alongside it, not optional; together they hold aspect at 1.46..1.50 (2.5pct swing). The default now derives from the camera's own up-vector and would reach x unaided, but orbitUp x is retained deliberately because it also triggers positionForOrbitUp, and the viewAngle 45/40 is calibrated against that parked pose. FILLTARGET: the fill loop closes on an OUTLIER-ROBUST percentile bbox, but what reaches the frame edge is exactly the outliers - detached membrane specks and the slab's far corners - so the robust metric reports a fit while the true extent is cropped. Measured over EVERY orbit frame (the README embeds the animation, not the still), border-lit pixels: 0.84 -> 3389, 0.75 -> 1256, 0.69 -> 0 across all 120 frames. Captured on an NVIDIA RTX PRO 6000; a macOS/Metal run reproduced the same three numbers within 1pct"
+      "note": "the first SHADED tile. EXPOSURE: the offset-key capture's frame 0 measures p10 0.378, p50 0.506, p99 0.597, spread 0.219 over 32,845 lit pixels. The p50 landing on TARGET_MID confirms the auto-exposure flat-subject pass still fired under the wider asymmetric lighting distribution. This tile deliberately carries NO exposure override because the policy already puts its median on target; the final-frame spread is an outcome measurement, not the post-phase-1 gate input used to calibrate NARROW_SPREAD_MAX. ORBITUP+VIEWANGLE: the orbit hard-sets cam.up to the orbitUp axis, and the default WAS world-y at the time, which silently discarded this demo's baked up=(1,0,0) - the shipped animation was rolled ~90deg away from its own poster AND tumbled, subject aspect swinging 0.40..0.92 (130pct) over one rock. orbitUp x matches the baked up and makes the rock a real turntable, but positionForOrbitUp then parks the camera edge-on to this thin slab (aspect ~4.5, lit fraction 0.09, a sliver), so viewAngle 45/40 is REQUIRED alongside it, not optional; together they hold aspect at 1.46..1.50 (2.5pct swing). The default now derives from the camera's own up-vector and would reach x unaided, but orbitUp x is retained deliberately because it also triggers positionForOrbitUp, and the viewAngle 45/40 is calibrated against that parked pose. FILLTARGET: the fill loop closes on an OUTLIER-ROBUST percentile bbox, but what reaches the frame edge is exactly the outliers - detached membrane specks and the slab's far corners - so the robust metric reports a fit while the true extent is cropped. Measured over EVERY orbit frame (the README embeds the animation, not the still), border-lit pixels: 0.84 -> 3389, 0.75 -> 1256, 0.69 -> 0 across all 120 frames. Captured on an NVIDIA RTX PRO 6000; a macOS/Metal run reproduced the same three numbers within 1pct"
     },
     {
       "id": "gsplats_3d_organoid_multichannel",
@@ -856,6 +856,21 @@
       "dataset": "datasets/demos/gsplats_2d_codex_pancreas.luxar.zarr",
       "citation": "Björklund et al. 2023",
       "lodFinest": false
+    },
+    {
+      "id": "gsplats_4d_cell_tracking_challenge",
+      "title": "4D Cell Tracking (zebrafish embryo matrix)",
+      "geometry": "mixed",
+      "category": "microscopy",
+      "script": "demo_gsplats_4d_cell_tracking_challenge.py",
+      "dataset": "datasets/demos/gsplats_4d_cell_tracking_challenge.luxar.zarr",
+      "citation": "CZ Biohub San Francisco; imaging by the Royer Group",
+      "lodFinest": false,
+      "timelapse": {
+        "framePoint": 0.85
+      },
+      "fillTarget": 0.75,
+      "note": "fillTarget:0.75 keeps the 3x2 matrix in frame: the default lit 22.9% of the capture-frame perimeter and 0.85 still lit 15.5%, despite coverage reading 92%. lodFinest:false lets coverage LOD draw the ~30K-splat coarse levels instead of forcing the ~24M-splat finest levels"
     }
   ]
 }
