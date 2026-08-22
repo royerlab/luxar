@@ -61,8 +61,9 @@ Options:
     --show-roundtrip: Show matplotlib comparison of original vs reconstructed volume
     --downsample=N:   Downsample factor for fitting (default: 1)
 
-By default, precomputed GSplats are loaded from package data (Git LFS).
-Use --recompute to re-fit from scratch (requires a GPU and, if uncached, network).
+By default, precomputed GSplats are loaded from the local cache under
+~/.cache/luxar/gsplats_tribolium. A cold cache re-fits from the raw source
+(requires a GPU and, if uncached, network).
 If the local Tribolium cache predates the 675-count floor, run once with
 --recompute, which reuses the downloaded archive and extracted TIFF.
 A stale fit is detected and warned about on load: the cache cannot be compared

@@ -29,6 +29,6 @@ in-place alongside the sweep that chose it, including the arm that over-floors a
 destroys the dim band, so it cannot be raised casually.
 
 A fit records the floor it used, so all four demos check the cache on load and
-warns when it finds a pre-floor one rather than quietly rendering the haze. Run any of
+warn when they find a pre-floor one rather than quietly rendering the haze. Run any of
 these demos once with `--recompute` to replace it; the downloaded archive and extracted
 TIFF are reused when already present.

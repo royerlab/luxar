@@ -468,6 +468,12 @@ def _calibrate_one_sample(
     }
 
 
+def _resolve_demo_floor(demo: Dict[str, Any]) -> float | None:
+    """Resolve a demo's explicit background floor (a value or a callable)."""
+    floor = demo.get("floor")
+    return floor() if callable(floor) else floor
+
+
 def _calibrate_demo(demo: Dict[str, Any], skip_existing: bool) -> Dict[str, Any]:
     name = demo["name"]
     out_dir = RESULTS_DIR / name
@@ -495,9 +501,7 @@ def _calibrate_demo(demo: Dict[str, Any], skip_existing: bool) -> Dict[str, Any]
         aprint("  Loading volumes...")
         t_load = time.perf_counter()
         try:
-            floor = demo.get("floor")
-            if callable(floor):
-                floor = floor()
+            floor = _resolve_demo_floor(demo)
             aprint(f"  Floor:   {floor if floor is not None else 'auto'}")
             samples = demo["loader"]()
         except Exception as e:
