@@ -21,6 +21,8 @@ from arbol import aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
 
+from ._caption import add_demo_caption
+
 
 def build_gsplats_cache(
     src: Path,
@@ -113,10 +115,11 @@ def build_interop_scene(
     matrix and partition caches embed through ``add_gsplats_from_file``, which
     grafts whatever node shape the recipe produced.
 
-    ``citation`` is the dataset credit written to the scene's root attr, so a
-    downloaded store carries its attribution rather than relying on the demo
-    source. These captures are all third-party and several are CC BY, which
-    requires attribution to travel with the data.
+    ``citation`` is the dataset credit written to the scene's root attr and the
+    compact reference appended to the in-scene caption, so a downloaded store
+    carries its attribution rather than relying on the demo source. These
+    captures are all third-party and several are CC BY, which requires
+    attribution to travel with the data.
 
     ``camera`` sets an initial viewer pose (overriding bounding-sphere
     auto-fit). Immersive 360° environment captures (e.g. Scaniverse room/yard
@@ -139,12 +142,6 @@ def build_interop_scene(
             if colormap is not None:
                 attrs["colormap"] = colormap
             scene.add_gsplats_from_file(name=layer_name, path=str(cache_file), **attrs)
-            scene.add_text(
-                credit,
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.5)",
-            )
+            add_demo_caption(scene, credit, citation)
         aprint(f"✓ Scene saved: {output_path}")
         return output_path

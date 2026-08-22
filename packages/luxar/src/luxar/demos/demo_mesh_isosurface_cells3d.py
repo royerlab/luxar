@@ -107,6 +107,7 @@ DEMO_META = {
     # header keeps that software citation where it belongs.
     "citation": {
         "short": "Allen Institute for Cell Science (scikit-image cells3d)",
+        "ref": "Allen Institute for Cell Science",
     },
 }
 
@@ -115,7 +116,12 @@ from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
-from luxar.demos import launch_viewer, parse_demo_flags, require_module
+from luxar.demos import (
+    add_demo_caption,
+    launch_viewer,
+    parse_demo_flags,
+    require_module,
+)
 from luxar.encoding import EncodingMode
 from luxar.utils.paths import get_demos_output_dir
 
@@ -317,6 +323,11 @@ def create_scene(output_path) -> None:
                     layer=True,
                 )
                 aprint(f"added '{channel['name']}' ({channel['label']})")
+            add_demo_caption(
+                scene,
+                "scikit-image cells3d • isosurfaces",
+                DEMO_META.get("citation"),
+            )
 
     aprint(f"Scene written to {output_path}")
 

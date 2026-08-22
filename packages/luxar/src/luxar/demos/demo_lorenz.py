@@ -45,7 +45,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import hsv_to_rgb, launch_viewer, parse_int_arg
+from luxar.demos import add_demo_caption, hsv_to_rgb, launch_viewer, parse_int_arg
 from luxar.utils.paths import get_demos_output_dir
 
 # Lorenz system parameters (classic values)
@@ -179,12 +179,10 @@ def generate_lorenz_attractor(
                 color="rgba(255,255,255,0.6)",
                 blend_mode="difference",
             )
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 "\u03c3=10, \u03c1=28, \u03b2=8/3 \u2022 500K points",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
 
         aprint(f"✓ Written to {output_path}")

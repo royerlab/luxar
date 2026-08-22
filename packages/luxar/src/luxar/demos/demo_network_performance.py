@@ -72,7 +72,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer
+from luxar.demos import add_demo_caption, launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
 
@@ -295,12 +295,10 @@ def generate_performance_test_dataset(
             )
 
             # Info
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 f"{len(positions):,} points \u2022 4D stress test",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
 
         total_points = len(positions)

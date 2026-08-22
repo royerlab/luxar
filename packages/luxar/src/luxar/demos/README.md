@@ -1179,6 +1179,7 @@ with asection("Writing to Zarr"):
 
 ```python
 from luxar.demos import (
+    add_demo_caption,  # standard bottom-right caption + DEMO_META credit
     launch_viewer,  # serve + open viewer (serve_args=[...] to pass e.g. --profile)
     cached_download,  # download once into ~/.cache/luxar/<name>/, skip-if-present
     cache_computed,  # cache an expensive result (UMAP, field) — versioned, param-keyed
@@ -1322,8 +1323,9 @@ checked too — so an exemption cannot outlive the layer it leans on.
 3. **Update docstring** with what it demonstrates
 4. **Implement generation** in the generate_* function (keep everything in that function!)
 5. **Expose the geometry** with `layer=True` (or a `layer=True` container group) — see §8
-6. **Test** by running: `hatch run python demo_yourname.py`
-7. **Ctrl+C** to stop and verify cleanup works
+6. **Add one caption** with `add_demo_caption(scene, ...)` so `DEMO_META` credit appears — see §6
+7. **Test** by running: `hatch run python demo_yourname.py`
+8. **Ctrl+C** to stop and verify cleanup works
 
 ## Tips
 

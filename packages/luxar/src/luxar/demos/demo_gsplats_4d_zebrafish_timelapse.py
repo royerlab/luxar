@@ -99,6 +99,7 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.demos import (
     MissingDependencyError,
+    add_demo_caption,
     launch_viewer,
     load_dataset_bundle,
     parse_demo_flags,
@@ -591,12 +592,10 @@ Navigation:
                     transition_duration=0.15,
                 )
 
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 f"{n_timepoints} timepoints \u2022 Confocal laser-scanning microscopy",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
 
         aprint(f"Scene saved: {output_path}")

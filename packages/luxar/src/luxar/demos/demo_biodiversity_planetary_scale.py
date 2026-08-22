@@ -323,6 +323,7 @@ DEMO_META = {
     "outputs": ["biodiversity_planetary_scale"],
     "citation": {
         "short": "GBIF occurrence snapshot; Movebank: humpback whales (Andrews-Goff et al. 2023), turkey vultures (Bildstein et al. 2014), white storks (Berthold et al. 2022), blue whales (Mate B.); NASA Blue Marble",
+        "ref": "GBIF / Movebank / NASA",
         "license": "CC BY 4.0 / CC0 1.0",
         "url": "https://www.gbif.org/citation-guidelines",
     },
@@ -347,6 +348,7 @@ from luxar.core.viewer_config import (
     ViewerConfig,
 )
 from luxar.demos import (
+    add_demo_caption,
     cache_computed,
     cached_download,
     launch_viewer,
@@ -2883,14 +2885,12 @@ def _add_overlays(scene: Any, sample: GbifSample, tracks: TrackSet) -> None:
         color="rgba(255,255,255,0.75)",
         blend_mode="difference",
     )
-    scene.add_text(
+    add_demo_caption(
+        scene,
         f"{sample.lat.size:,} GBIF occurrence records • "
         f"{tracks.n_individuals} tracked animals • "
         f"snapshot {sample.snapshot} • CC BY / CC0 records only",
-        position=(0.98, 0.97),
-        font_size=0.015,
-        anchor="bottom-right",
-        color="rgba(200,200,220,0.5)",
+        DEMO_META.get("citation"),
     )
 
 

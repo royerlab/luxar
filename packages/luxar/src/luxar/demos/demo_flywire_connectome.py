@@ -94,6 +94,7 @@ DEMO_META = {
     "outputs": ["flywire_connectome"],
     "citation": {
         "short": "FlyWire Consortium 2024; Schlegel et al. 2024 annotations",
+        "ref": "FlyWire Consortium 2024",
         "doi": "10.5281/zenodo.10676866",
         "license": "CC BY 4.0",
     },
@@ -110,7 +111,13 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
-from luxar.demos import cached_download, launch_viewer, parse_int_arg, parse_path_arg
+from luxar.demos import (
+    add_demo_caption,
+    cached_download,
+    launch_viewer,
+    parse_int_arg,
+    parse_path_arg,
+)
 from luxar.utils._umap_utils import format_label, get_categorical_color
 from luxar.utils.paths import get_demos_output_dir
 
@@ -743,13 +750,11 @@ def build_scene(
             )
 
             # Footer
-            scene.add_text(
-                f"{len(neurons):,} neurons · {len(edges):,} connections · "
+            add_demo_caption(
+                scene,
+                f"{len(neurons):,} neurons • {len(edges):,} connections • "
                 f"FlyWire release 783",
-                position=(0.98, 0.97),
-                font_size=0.012,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.5)",
+                DEMO_META.get("citation"),
             )
 
         aprint(
