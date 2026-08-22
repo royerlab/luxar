@@ -441,11 +441,16 @@ Each group lands in exactly one bucket:
 | verdict | meaning |
 |---|---|
 | `win` | strictly coarser under the re-derived ladder at EVERY tested aspect |
-| `no-op` | never coarser — re-deriving defers nothing on frame one |
+| `no-op` | no tested aspect picks a coarser level |
 | `fragile` | coarser at some aspects and not others; the answer depends on the window |
 | `off-screen` | the world box misses the frustum, so no metric is ever taken |
 | `already-current` | already `screen-area` — all `restamp-lod` looks at before skipping |
 | `skipped` | undecidable; `GroupScreening.reason` says why |
+
+A `[FINER]` row means the re-derived ladder would open on a more expensive
+level than today's ladder. It remains in `no-op` because that bucket means only
+that no tested aspect gets coarser; it does not promise an unchanged opening
+cost.
 
 Five things the screen is careful about, each of which a cruder measurement gets
 wrong:

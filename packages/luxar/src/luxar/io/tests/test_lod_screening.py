@@ -973,6 +973,38 @@ def test_aspect_ratio_can_flip_the_verdict(fragile_scene: Path) -> None:
     assert ultrawide.verdict == VERDICT_WIN
 
 
+def test_no_op_can_include_a_more_expensive_finer_opening_pick(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``no-op`` means no coarser pick, not necessarily the same opening cost."""
+    path = _handmade_store(
+        tmp_path / "finer-no-op.luxar.zarr",
+        root_max=1.0,
+        group_bounds={
+            "c0": _plain_child(0, 250, 0.0),
+            "c1": _plain_child(1, 1_000, 3.9),
+            "c2": _plain_child(2, 4_000, 4.0),
+        },
+    )
+
+    report = screen_stores([path])
+    group = report.scenes[0].groups[0]
+    assert group.verdict == VERDICT_NO_OP
+    assert [(m.today_index, m.rederived_index) for m in group.measurements] == [
+        (0, 2),
+        (0, 1),
+        (0, 0),
+    ]
+    assert (
+        group.measurements[0].rederived_elements > group.measurements[0].today_elements
+    )
+
+    print_screen_report(report)
+    output = capsys.readouterr().out
+    assert "L0 (250)" in output
+    assert "L2 (4,000) [FINER]" in output
+
+
 def test_the_legacy_metric_reads_the_viewport_shape_and_the_area_one_cannot() -> None:
     """Why ``--viewport-long`` exists, and why it is not needed for ``screen-area``.
 

@@ -199,8 +199,8 @@ DEFAULT_VIEWPORT_LONG_PX = 1920
 #: ladder — re-deriving genuinely defers detail on the opening shot.
 VERDICT_WIN = "win"
 
-#: No tested aspect picks a coarser level — re-deriving changes nothing visible
-#: on frame one (it may still be worth doing for what happens on zoom).
+#: No tested aspect picks a coarser level. A re-derived ladder may still pick a
+#: finer, more expensive level; the per-aspect report marks that as ``FINER``.
 VERDICT_NO_OP = "no-op"
 
 #: Coarser at some tested aspects and not at others. Reported as its own bucket
