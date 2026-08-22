@@ -161,6 +161,19 @@ def test_doctor_exits_nonzero_while_a_problem_stands() -> None:
         assert "No problems found" in again.stdout
 
 
+def test_doctor_prints_info_before_diagnosing_a_gsplat_store() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _partition_without_split_planes(Path(tmp))
+
+        result = CliRunner().invoke(app, ["gsplat", "doctor", str(path)])
+
+        assert result.exit_code == 1, result.stdout
+        assert result.stdout.index("DATASET INFORMATION") < result.stdout.index(
+            "Diagnosing:"
+        )
+        assert "no split planes" in result.stdout
+
+
 def test_doctor_writes_a_json_report() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         path = _partition_without_split_planes(Path(tmp))
