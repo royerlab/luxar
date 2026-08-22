@@ -19,6 +19,7 @@ scripts/
 | `check_documentation.py` | Baseline-driven ratchet over package README paths/content plus Python docstring and TypeScript JSDoc coverage (JSON output; fails only on new findings) |
 | `check_complexity.py` | Baseline-driven ratchet over ruff's `C901` cyclomatic-complexity rule (fails only on newly over-complex, or newly worse, functions) |
 | `check_demo_ladders.py` | Audit built demo scenes for missing or degenerate additive streaming ladders |
+| `check_fixture_env.py` | Assert the viewer-fixture Hatch environment is CPU-only and free of default-env tooling |
 | `check_version_consistency.py` | Verify the zero-padded Python CalVer and npm-normalized viewer version describe the same release |
 | `set_version.py` | Update the Python and viewer release versions together |
 | `release.sh` | Run release preflight checks, then create and push the release tag |
@@ -57,6 +58,29 @@ hatch run check-demo-ladders --max-share 0.6 --max-level-elements 1000000
 The command is included in `hatch run check`. A checkout without generated demo
 scenes reports that none were found and succeeds; unit tests still exercise the
 gate logic in CI.
+
+A second, independent pass lives behind `--screen` (`--screen-only` to skip the
+gate above): the LOD **opening-shot screen** from `luxar.io.lod_screening`. Per
+`kind=lod` group, would re-deriving the ladder onto the `screen-area` selector
+make the OPENING framing land on a coarser level? It is a REPORT ONLY — no
+verdict it produces can change the exit code, so `--screen-only` exits 0 for any
+store it can read (only a malformed flag still fails, as argparse).
+
+```bash
+hatch run check-demo-ladders --screen-only datasets/examples/*.luxar.zarr
+hatch run check-demo-ladders --screen-only --screen-verdict win --screen-render-fov 63 datasets/demos/*.luxar.zarr
+hatch run check-demo-ladders --screen --screen-aspect 4:3=1.3333
+```
+
+| flag | meaning |
+|---|---|
+| `--screen` | append the screen to the streaming-ladder gate |
+| `--screen-only` | run ONLY the screen; the gate is skipped |
+| `--screen-aspect` | aspects to measure at, as `label=value`, `W:H` or a bare number (default 1:1, 16:9, 21:9) |
+| `--screen-viewport-long` | pixels on the viewport's LONG axis; affects the legacy diagonal metric only |
+| `--screen-fit-fov` | vertical FOV the fitted camera DISTANCE uses (default 47, the viewer's own) |
+| `--screen-render-fov` | fallback vertical FOV where the store does not author `camera.fov` (pass 63 for the cinematic/35mm preset) |
+| `--screen-verdict` | show only these buckets (repeatable): `win`, `fragile`, `no-op`, `off-screen`, `already-current`, `skipped` |
 
 ---
 

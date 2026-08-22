@@ -106,19 +106,14 @@ subject occupancy intended for the lens. A returning visitor's stored FOV still
 takes precedence over the scene-authored value by design.
 
 An authored camera position is a stronger contract, because its distance was
-composed for one FOV, and the demos say which one in one of two ways. Seventeen
-**pin** `camera.fov` (38° to 50° where it is a literal, computed or named in
-seven): framing preserved, but they then wear the preset's 35 mm barrel
-distortion at a longer lens's framing — two lenses in one image — and those pins
-all predate the cinematic look (#1862). The five
-poses derived from a data extent or a fitted radius instead **compose for 63°**
-through `_cinematic_camera.py`: read `CINEMATIC_FOV_DEG` when the distance comes
-from the lens (a fitted radius through `asin(R/D)`), or call `pull_in()` to carry
-an empirically tuned pose over — it scales about the pose's target rather than
-the world origin, so an off-origin camera keeps looking where it was aimed. That
-keeps the lens whole and the framing exact, and costs the stronger perspective a
-wider lens gives. `test_demos_cinematic_mode.py` accepts either and rejects a
-bare authored position, whose FOV assumption nobody can read.
+composed for one FOV. Every authored pose **composes for 63°** through
+`_cinematic_camera.py`: read `CINEMATIC_FOV_DEG` when the distance comes from
+the lens, or use `framing_scale()` / `pull_in()` with the pose's original
+38°–50° FOV. Most poses preserve their authored framing exactly; the
+biodiversity globe preserves its silhouette, while the forest and embryo-line
+poses preserve camera clearance instead. `pull_in()` scales about the target,
+so an off-origin camera keeps its aim. The guard rejects both a mixed-lens FOV
+pin and a bare authored position whose FOV assumption nobody can read.
 
 Four demos pin scientific-fidelity exceptions. The two quantitative ortho demos
 suppress bloom, vignette, lens distortion and detector noise so their
@@ -892,7 +887,7 @@ The human head Gaussian-splatted in **true photographic color** from the NLM Vis
 
 **Run**: `luxar demo run gsplats_3d_visible_human_head [-- --recompute]`
 
-**Requires**: **~1.1 GB download + a fit (GPU strongly preferred; CPU works but is slow) on the first run today.** The shipped Git LFS pair is a fit plus a per-splat colors sidecar, but that sidecar was written in the wrong splat order and does not correspond to the fit it ships with (issue #1670) — the demo detects the mismatch on load, refuses to render it, and falls through to the download-and-refit path, which caches a verified pair for later runs. Once the artifact is regenerated this is "nothing extra by default" again. The refit auto-downloads the 377 color head slices (~1.1 GB) to `~/.cache/luxar/gsplats_visible_human_head/`, builds the masked RGB volume, fits luminance (GPU), and samples per-splat colors; `--recompute` forces that path regardless.
+**Requires**: nothing extra by default — the shipped Git LFS pair (a 1,911,192-splat fit plus its per-splat colors sidecar, ~25 MB together) is verified on load and used directly. With `--recompute` (or if the LFS assets aren't pulled), it auto-downloads the 377 color head slices (~1.1 GB) to `~/.cache/luxar/gsplats_visible_human_head/`, builds the masked RGB volume, fits luminance (GPU strongly preferred; CPU works but is slow), and samples per-splat colors from the stored splat order.
 
 **Demonstrates**: True-color volumetric anatomy → Gaussian splats via a **single luminance fit + per-splat color sampling** (one fit, real photographic color — vs. the scalar-intensity-plus-colormap microscopy demos), warm-vs-blue tissue masking to drop the frozen-gel background, ACES tone-mapping, self-contained download → mask → fit → cache-processed bootstrap. Data: [NLM Visible Human Project](https://www.nlm.nih.gov/research/visible/visible_human.html) (Male color cryosections, head subset; public domain).
 

@@ -352,7 +352,7 @@ MIN_NODE_MINOR := 22
 | `make stats-fast` | Generate project statistics without running tests (file counts only) |
 | `make shell` | Enter Hatch development shell |
 | `make show-env` | Show Hatch environments |
-| `make prune-env` | Remove unused Hatch environments |
+| `make prune-env` | Remove ALL Hatch environments |
 
 ### Release & Publishing
 
@@ -410,8 +410,14 @@ Hatch manages Python virtual environments for the project:
 # Common commands:
 hatch shell         # Activate environment
 hatch run test      # Run tests in environment
-hatch env prune     # Clean unused environments
+hatch env remove <name>  # Remove one environment
 ```
+
+Viewer fixture generation uses a separate `fixtures` environment so ordinary
+`pnpm test` and `make test-fixtures` do not build the CUDA-heavy development
+environment. Its first use creates roughly 1.2 GB alongside any existing
+`default` environment; `hatch env remove fixtures` reclaims that space without
+removing the default environment.
 
 **Which Python does `hatch run` use?** The `default` environment declares no
 `python`, so Hatch builds it with whatever interpreter **Hatch itself** runs
@@ -785,7 +791,7 @@ and each job runs its expensive steps only for the domain(s) it covers:
 
 | Domain | Set by | Gates |
 |--------|--------|-------|
-| `dom_py` | `*.py`, `pyproject.toml`, `*.pyx/*.pxd`, CUDA `*.cu/*.cuh` | `python-tests`, `wheel-viewer` |
+| `dom_py` | `*.py`, `Makefile`, `pyproject.toml`, `*.pyx/*.pxd`, CUDA `*.cu/*.cuh` | `python-tests`, `wheel-viewer` |
 | `dom_ts` | anything under `packages/luxar-viewer/`, root `tsconfig*.json`, `vitest*.{ts,js,mjs}` | `typescript-tests`, `release-readiness`, `wheel-viewer` |
 | `dom_rust` | `*.rs`, `Cargo.toml/lock` | `typescript-tests`, `release-readiness`, `wheel-viewer` |
 | `dom_go` | `*.go`, `go.mod/sum`, `cli/_launchers/` | `go-launcher` |
@@ -800,11 +806,12 @@ because its Python fixture generators feed the TypeScript tests.
 `python-tests`, so their non-Python inputs are classified as Python: the
 format-contract source (`format-contract/contract.yaml`) and its generated
 TypeScript half, the viewer `package.json` (the other end of the version
-consistency check), and the `demos/data` tree with its manifest. A check whose
-own inputs are unclassified is a check that skips for exactly the change it
-exists to catch. `.github/workflows/ci.yml` selects **all four** domains: it
-defines how every suite is invoked, so an edit that breaks a command or a
-condition is caught by the run that contains it.
+consistency check), the root `Makefile` and viewer fixture-generation entry
+points guarded by `test_fixture_environment.py`, and the `demos/data` tree with
+its manifest. A check whose own inputs are unclassified is a check that skips
+for exactly the change it exists to catch. `.github/workflows/ci.yml` selects
+**all four** domains: it defines how every suite is invoked, so an edit that
+breaks a command or a condition is caught by the run that contains it.
 
 A change that touches no domain at all — Markdown, `docs/`, `CHANGELOG.md` —
 runs no language suite. Those jobs still *run* (checkout plus skipped steps),

@@ -100,6 +100,7 @@ from luxar.demos import (
     parse_demo_flags,
     substitutive_lod_or_flat,
 )
+from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -745,13 +746,12 @@ def create_scene(
         radial = np.linalg.norm(positions.astype(np.float64), axis=1)
         r95 = float(np.percentile(radial, 95))
         r_max = float(radial.max())
-        fov_deg = 50.0
+        fov_deg = CINEMATIC_FOV_DEG
         cam_dist = 0.75 * r95 / np.tan(np.radians(fov_deg) / 2.0)
         camera = CameraConfig(
             position=(0.0, 0.0, cam_dist),
             target=SCENE_CAMERA_TARGET,
             up=(0.0, 1.0, 0.0),
-            fov=fov_deg,
             near=float(max(1.0, cam_dist * 0.005)),
             # Far must clear the whole cloud from the camera, which sits outside
             # it: worst case is the antipodal galaxy at cam_dist + r_max.

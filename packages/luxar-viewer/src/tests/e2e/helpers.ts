@@ -25,8 +25,8 @@ export async function waitForLuxarReady(page: Page, timeout = 45000): Promise<vo
  *
  * Deadline-bounded (#1651), like {@link getConsoleMessages}. This is the most
  * called probe in the suite — well over a hundred call sites, in most spec
- * files. Together with `getConsoleMessages` it is what the shared fixture and
- * the bulk of the specs depend on, and both are now bounded; the rest of this
+ * files. Together with `getConsoleMessages` it is what the bulk of the specs
+ * depend on, and both are now bounded; the rest of this
  * file's bare `page.evaluate` calls (`renderOnce`, `getWebGLErrors`,
  * `focusCanvas`, `captureCanvasRGBA`, `probeWebGPUBackend`, …) are not. Before
  * the bound, a starved page reported the stall as a bare
@@ -533,11 +533,17 @@ export async function waitForUIState(
  * Retrieves all console messages from the browser's console interceptor.
  * This is ESSENTIAL for detecting errors in data loading, decoding, and rendering.
  *
- * Deadline-bounded (#1651). This helper runs from the shared fixture's
- * teardown (`assertNoConsoleErrors`) for the specs that import `test` from
- * `./fixtures` — 58 of the 66, the other 8 importing `@playwright/test`
- * directly and getting no fixture teardown — so an unanswered probe used to
- * burn the ENTIRE remaining test budget and be reported as `Tearing down
+ * Deadline-bounded (#1651). WHO CALLS IT: the specs that call it directly
+ * (`all-examples-smoke-test`, `test-fixtures-rendering`,
+ * `worker-wasm-integration`), plus `assertNoConsoleErrors`,
+ * `assertConsoleContains`, `assertConsoleDoesNotContain` and
+ * `assertNoShaderErrors` and the specs that call those — some of them from
+ * their own `test.afterEach`. The shared fixture's teardown does NOT (#1760):
+ * it gates on `page.on('console')` + `page.on('pageerror')`, which covers the
+ * ERROR verdict from a strictly wider source, so the probe there was a
+ * narrower second opinion charging up to 45 s to each of the 59 of 67 specs
+ * that import `test` from `./fixtures`. Before the bound, an unanswered probe
+ * burned the ENTIRE remaining test budget and was reported as `Tearing down
  * "page" exceeded the test timeout` pending on the evaluate below. Failing
  * in `timeout` ms with a message that says what went unanswered is
  * strictly more informative.
@@ -548,13 +554,18 @@ export async function waitForUIState(
  * that used to pass into one that fails. That is a real cost rather than a
  * hypothetical — the stalls measured for #1651 lasted tens of seconds (a
  * trivial `page.evaluate` unanswered for 5 s twelve times running, ~78 s in
- * all, while the page went on rendering). The bound is worth paying anyway
- * because the alternative failure is opaque, but it is a trade, not a free
- * win.
+ * all, while the page went on rendering), and #1760 reproduced 95 s without
+ * one serviced round trip on a 2-CPU browser while Playwright's own
+ * `page.on('console')` stream kept delivering — the two channels starve
+ * independently. The bound is worth paying anyway because the alternative
+ * failure is opaque, and because every remaining caller asked for the in-page
+ * buffer specifically — its `warnings` / `logs` buckets have no
+ * Playwright-side gate at all — so learning the buffer could not be read
+ * beats proceeding on empty ones. It is a trade, not a free win.
  *
  * WHY 45 s: Playwright gives the After Hooks phase a FRESH timeout slot
  * (`afterHooksSlot = { timeout: calculateMaxTimeout(project.timeout,
- * testInfo.timeout) }` in its worker), so fixture teardown always has the
+ * testInfo.timeout) }` in its worker), so an `afterEach` gate always has the
  * full per-test timeout available — the config's 60 s, or more in a file that
  * raises its own — no matter how much the test
  * body already used. 45 s lands inside that slot — which is what makes the
@@ -627,10 +638,9 @@ export async function getConsoleMessages(
   const buckets = await raceEvaluate<Awaited<typeof probe> | null>(probe, timeout, null);
 
   if (buckets === null) {
-    // Deliberately NOT empty buckets: the fixture teardown feeds this
-    // into assertNoConsoleErrors, so returning `{errors: [], ...}` here
-    // would silently turn the console-error gate into a vacuous pass for
-    // every spec that imports `test` from `./fixtures`.
+    // Deliberately NOT empty buckets: every caller feeds this into a check,
+    // so returning `{errors: [], ...}` here would silently turn that check
+    // into a vacuous pass.
     throw new Error(
       `getConsoleMessages: the page never answered the console-buffer probe within ${timeout} ms — ` +
         'its main thread is saturated and starving the evaluate round trip, so the console-error ' +
@@ -644,7 +654,8 @@ export async function getConsoleMessages(
 /**
  * Assert no console errors (CRITICAL for all E2E tests)
  *
- * This should be called in EVERY E2E test after loading data.
+ * Opt-in per spec: the shared fixture does NOT call it (#1760), so call it
+ * after loading data wherever the in-page buffer's stricter verdict is wanted.
  * Catches errors in:
  * - Data loading
  * - Array decoding
