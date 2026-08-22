@@ -27,7 +27,6 @@ into a 45° field with 15% air, and the near/far planes are derived from the sam
 bounding radius. Rendering the resulting view off the built cloud gives an
 upright, front-on head-and-shoulders bust.
 
-Note that the shipped scene keeps its old framing until it is regenerated, and
-this demo cannot currently regenerate cheaply: its fast path is disabled (#1670,
-the shipped colors sidecar does not correspond to the shipped fit), so a rebuild
-means the full ~1.1 GB cryosection download and refit.
+The restored Visible Human fast path (#1670) can regenerate the scene from the
+verified shipped fit and colors pair, so this authored framing reaches rebuilt
+scenes without a cryosection download or refit.

@@ -455,15 +455,12 @@ jobs:
           sudo docker image prune --all --force 2>/dev/null || true
           df -h /
 
-      # LFS intentionally disabled — `hatch run test-cov` covers
-      # packages/luxar/src/luxar and none of its unit tests open the
-      # LFS-backed demo fixtures under packages/luxar/src/luxar/demos/data/.
-      # (The two demo tests that exist — test_demo_ppi_flow_field.py and
-      # test_demo_zebrahub_velocity_streamlines.py — exercise pure
-      # helpers, not the LFS payloads.) Keeping `lfs: true` here made
-      # every PR's checkout fail catastrophically when the repo's GitHub
-      # LFS budget was exhausted; the LFS pointer files in the work tree
-      # are sufficient for the test suite.
+      # LFS intentionally disabled. Payload-dependent tests detect unpulled
+      # pointer stubs and skip themselves. `check-data-manifest` still catches
+      # pointer/manifest drift, and the Visible Human pair has an additional
+      # CI-runnable manifest pin. Keeping `lfs: true` here made every PR's
+      # checkout fail catastrophically when the repo's GitHub LFS budget was
+      # exhausted; the LFS pointer files in the work tree are sufficient.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
