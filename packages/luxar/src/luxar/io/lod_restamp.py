@@ -147,6 +147,12 @@ HASH_RESTAMPED = "restamped"
 HASH_UNSTAMPABLE = "unstampable"
 
 
+def _carries_restampable_digest(root: zarr.Group) -> bool:
+    """Mirror :func:`~luxar.io.optimise._restamp_content_hash`'s marker gate."""
+    attrs = dict(root.attrs)
+    return attrs.get("type") == "scene" or "content_hash" in attrs
+
+
 @dataclass(frozen=True)
 class RestampedGroup:
     """One ``kind=lod`` group whose ladder was (or would be) re-derived."""
@@ -1132,8 +1138,7 @@ def restamp_lod_store(
                     )
 
             if dry_run and plans:
-                attrs = dict(root.attrs)
-                if attrs.get("type") != "scene" and "content_hash" not in attrs:
+                if not _carries_restampable_digest(root):
                     report.content_hash_status = HASH_UNSTAMPABLE
 
             # Only when something CHANGED: a clean no-op store must not have its
