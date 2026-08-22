@@ -610,6 +610,11 @@ class StructuralEncoderMixin(BaseEncoderMixin):
         bits = 8 if "uint8" in encoder_name else 16
         max_int = (2**bits) - 1
         max_val = float(np.max(data))
+        if not np.isfinite(max_val) or max_val <= 0.0:
+            raise ValueError(
+                f"{encoder_name} requires a finite, positive maximum value, "
+                f"got {max_val}"
+            )
         max_log = float(np.log1p(max_val))
         log_vals = np.log1p(data)
         normalized = log_vals / max_log

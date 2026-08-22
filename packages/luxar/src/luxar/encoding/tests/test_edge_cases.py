@@ -229,6 +229,25 @@ class TestModeEdgeCases:
 class TestCustomEncoders:
     """Test all custom encoder types."""
 
+    @pytest.mark.parametrize("encoder_name", ["log_scalar_uint8", "log_scalar_uint16"])
+    @pytest.mark.filterwarnings("error::RuntimeWarning")
+    def test_custom_log_scalar_rejects_all_zero_data(self, encoder_name):
+        """Test custom log scalar encoders reject an undefined log range."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(tmpdir, mode="w")
+            encoder = ArrayEncoder()
+
+            with pytest.raises(ValueError, match="finite, positive maximum"):
+                encoder._encode_custom(
+                    group,
+                    "test",
+                    np.zeros(5, dtype=np.float32),
+                    encoder_name,
+                    None,
+                )
+
+            assert "test" not in group
+
     def test_custom_log_scalar_uint16(self):
         """Test custom log_scalar_uint16 encoder."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -394,4 +413,3 @@ class TestBoundaryConditions:
             )
 
             assert group["test"].dtype == np.float16
-
