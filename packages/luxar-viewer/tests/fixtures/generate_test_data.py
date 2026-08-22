@@ -528,7 +528,7 @@ def generate_encoding_edge_cases_test() -> None:
         # Wide dynamic range (> 65536:1) AUTO positive scalar -> the writer's
         # geolog_scalar_uint16 (rescale-first, reserved zero level). Includes
         # exact zeros to pin the reserved level 0 round-trip.
-        wide = np.logspace(-4, 3, 32, dtype=np.float32)
+        wide = np.logspace(-4, 9, 32, dtype=np.float32)
         wide[::7] = 0.0
         encoder.encode(
             wide,
