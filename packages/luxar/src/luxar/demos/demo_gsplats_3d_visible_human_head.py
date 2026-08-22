@@ -87,7 +87,7 @@ the agreement number alone. ``--recompute`` is the supported route and writes a
 fresh fit AND a matching sidecar via :func:`save_and_sample_colors`. The cheaper
 repair, when the fit is fine and only the sidecar is lost, is not wired into the
 demo (see the refusal in :func:`load_or_build`) but is three calls:
-``assemble_volume(PNG_DIR)``, then :func:`sample_colors` at
+``vol, _ = assemble_volume(PNG_DIR)``, then :func:`sample_colors` at
 ``GSplatData.load(LFS_FIT).centers``, then :func:`_save_colors_u8` — which
 preserves the shipped fit and the 20 MB of Git LFS history that goes with it.
 

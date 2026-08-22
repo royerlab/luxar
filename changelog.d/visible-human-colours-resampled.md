@@ -59,5 +59,5 @@ environment escapes it: CI pins the verified fit and colors SHA-256 pair through
 `data_manifest.json`, which needs no LFS payload, while a slow test on a
 materialized Git-LFS checkout measures their actual same-voxel correspondence.
 Changing either asset without re-verifying and updating the pinned pair is a red
-test even where LFS payloads were never downloaded — and the only two
-sidecar-bearing demos in the tree are now both covered.
+test even where LFS payloads were never downloaded. The CT sibling's payload
+correspondence check still requires a materialized Git-LFS checkout.
