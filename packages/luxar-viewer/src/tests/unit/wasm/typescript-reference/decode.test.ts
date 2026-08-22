@@ -159,7 +159,13 @@ describe('decode: quantized functions', () => {
     }
   );
 
-  it.each([
+  it.each<{
+    label: string;
+    decode: (data: Uint8Array | Uint16Array, maxLog: number, output: Float32Array) => void;
+    data: Uint8Array | Uint16Array;
+    maxLog: number;
+    expectedBits: number[];
+  }>([
     {
       label: 'u8 code 7, maxLog=9',
       decode: decode_log_scalar_u8 as never,
@@ -188,16 +194,14 @@ describe('decode: quantized functions', () => {
       maxLog: Math.log(10),
       expectedBits: [0x3c66b85a],
     },
-  ])('log-space quantization: $label matches Rust expm1f', ({
-    decode,
-    data,
-    maxLog,
-    expectedBits,
-  }) => {
-    const output = new Float32Array(1);
-    decode(data, maxLog, output);
-    expectFloat32Bits(output, expectedBits);
-  });
+  ])(
+    'log-space quantization: $label matches Rust expm1f',
+    ({ decode, data, maxLog, expectedBits }) => {
+      const output = new Float32Array(1);
+      decode(data, maxLog, output);
+      expectFloat32Bits(output, expectedBits);
+    }
+  );
 });
 
 describe('decode: LUT functions', () => {
