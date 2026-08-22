@@ -43,7 +43,10 @@ genuinely stores `lut_uint8`. Measured on a 4D lines compile with a 250-value
 irregular palette (60,000 segments / 120,000 vertices): treating eligibility as
 exactness left 30 of 44 vertex chunks (8,203 rows) and 7 of 15 segment chunks
 (487 endpoints) outside their own bound; declaring `allow_lut=False` takes all
-four counts to zero.
+four counts to zero. Those counts are that fixture's — the segment half in
+particular depends on how the polylines are wired, and a connectivity that keeps
+every endpoint interior shows the vertex half alone. The zero after the fix is
+what holds regardless.
 
 Because the predicate is asked on every compile, its cost is part of the fix.
 The LUT probe is a whole-array `np.unique` and the dominant term whenever it
