@@ -507,8 +507,9 @@ ancestor-set modes.
 
 **`slice_dims` is read, not just recorded**: besides describing the compound
 ordering, the barrier (categorical) column indices it lists are the set
-`compute_chunk_bounds_gsplats` gave a tight epsilon pad instead of the
-`truncation_radius · σ` expansion — so the viewer's gsplats loader now CONSUMES it,
+`compute_chunk_bounds_gsplats` gave the fixed epsilon pad plus any encoder
+coordinate round-trip slack instead of the `truncation_radius · σ` expansion —
+so the viewer's gsplats loader now CONSUMES it,
 to classify each hidden dimension's chunk-fetch tolerance instead of inferring
 barrier-ness from the scene's `discrete` flags
 (`data/loaders/spatial-query/tolerance-computer.ts`). The on-disk format is

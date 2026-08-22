@@ -399,11 +399,12 @@ function regularizedHiddenBand(truncationRadius: number | undefined): number {
  * ## Which dims the premise applies to
  *
  * `compute_chunk_bounds_gsplats` applies the σ expansion to every dim NOT in its
- * `slice_dims` argument, and gives the ones that ARE only a tight
- * `_BARRIER_BOUND_EPS` pad. So "bounds already carry `truncation_radius · σ`" is a
- * statement about the dims OUTSIDE the write side's barrier set, and this arm is only
- * the right rule for exactly those dims — a barrier dim has tight bounds and wants
- * the (far wider) quarter-cell reach instead. Which dims those are is settled by
+ * `slice_dims` argument, and gives the ones that ARE the fixed
+ * `_BARRIER_BOUND_EPS` pad plus any encoder coordinate round-trip slack. So
+ * "bounds already carry `truncation_radius · σ`" is a statement about the dims
+ * OUTSIDE the write side's barrier set, and this arm is only the right rule for
+ * exactly those dims — a barrier dim has tight bounds and wants the (far wider)
+ * quarter-cell reach instead. Which dims those are is settled by
  * `isBarrierDim`, from the set the writer publishes; see its docstring for the
  * resolution rule, the legacy `discrete` fallback and the write-side
  * misclassification it does NOT fix.
