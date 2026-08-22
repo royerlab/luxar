@@ -896,10 +896,17 @@ class TestInitAmpsProvenance:
         declare ``seed_amps_background_relative=True``.
 
         It is the only production caller that passes a ``GSplatData`` as
-        ``seeds=``, and it passes no ``floor``, so it inherits the ``"auto"``
-        default — exactly the combination that double-subtracts the pedestal.
+        ``seeds=``, and when the input's basis is unknown it runs the inner fit at
+        ``"auto"`` — exactly the combination that double-subtracts the pedestal.
         Lives with the convention tests rather than in ``lod/tests`` because what
         is being pinned is this module's contract, not the re-fit engine's.
+
+        The floor is now passed EXPLICITLY rather than inherited (#1177): with a
+        known ``image_min`` the re-fit shifts the volume and passes ``"none"``,
+        which removes the hazard outright, and without one it passes ``"auto"`` —
+        behaviourally what it always did. This asserts the second, since that is
+        the branch where the declaration below is what prevents the double
+        subtraction.
         """
         import luxar.gsplats.fit_gsplats as fit_gsplats_mod
         from luxar.gsplats.lod.volume_refit import (
@@ -935,8 +942,9 @@ class TestInitAmpsProvenance:
             fit_gsplats_mod.fit_gaussian_splats = original
 
         assert recorded.get("seed_amps_background_relative") is True
-        # ...and it really does leave the floor at its "auto" default.
-        assert "floor" not in recorded
+        # ...and with no recorded basis it really does re-fit at "auto", which is
+        # the hazardous case the declaration above exists for.
+        assert recorded.get("floor") == "auto"
 
     def test_progressive_fitting_forces_floor_none(self) -> None:
         """``fit_progressive_gaussian_splats`` subtracts the floor from the volume

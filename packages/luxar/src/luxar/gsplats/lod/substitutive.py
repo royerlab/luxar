@@ -898,10 +898,20 @@ def make_substitutive_lod(
         eff_refine_iters = (
             int(refine_iters) if refine_iters is not None else VolumeRefitConfig().iters
         )
+        from luxar.gsplats.fit_basis import MISSING_BASIS_HINT, fit_image_min
+
+        # The ladder's basis comes from the INPUT fit, which is the only thing
+        # that knows what background was already removed. Without it the inner
+        # re-fit re-estimates one from the raw volume and the refined level can
+        # end up on a different basis from its siblings (#1177).
+        refit_image_min = fit_image_min(getattr(data, "stats", None))
+        if refit_image_min is None and verbose:
+            aprint(f"refine=volume: {MISSING_BASIS_HINT}")
         volume_cfg = replace(
             VolumeRefitConfig(),
             iters=eff_refine_iters,
             conserve_mass=bool(conserve_mass),
+            image_min=refit_image_min,
         )
         if device is not None and not (isinstance(device, str) and device == "auto"):
             refit_device = str(device)

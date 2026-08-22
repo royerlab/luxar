@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 import numpy as np
 from arbol import aprint, asection
 
+from luxar.gsplats.fit_basis import reference_on_fit_basis
 from luxar.gsplats.fitting.config import (
     FitConfig,
     OptimizationResults,
@@ -591,7 +592,19 @@ def finalize_results(
                 device=device,
                 truncate=config.truncate,
             )
-            ref = torch.from_numpy(config.V.astype(np.float32)).to(rendered.device)
+            # Score against the basis the fit actually reconstructs. The render
+            # is background-relative (``V - image_min``, never ``V``), so a raw
+            # reference charges the fit for the pedestal it deliberately did not
+            # represent — and the penalty grows with the floor, which inverts
+            # comparisons: a floor-suppressed fit of the SAME data scores worse
+            # than an unfloored one while being the better representation.
+            # `data_range` and `rel_l2` follow the reference, so shifting it here
+            # fixes their denominators too (#1173).
+            ref = torch.from_numpy(
+                reference_on_fit_basis(config.V, preprocessed_data.image_min).astype(
+                    np.float32
+                )
+            ).to(rendered.device)
             quality = compute_quality_metrics(rendered, ref)
             del rendered, ref
         if torch.cuda.is_available():

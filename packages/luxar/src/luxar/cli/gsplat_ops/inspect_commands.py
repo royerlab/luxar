@@ -695,6 +695,14 @@ def compare_quality(
         "-t",
         help="Truncation radius in sigma. Defaults to dataset's stored value.",
     ),
+    image_min: Optional[float] = typer.Option(
+        None,
+        "--image-min",
+        help="Background level the fit subtracted, for a dataset that does not "
+        "record one. A render is background-relative, so the reference is "
+        "shifted by this before scoring. Normally read from the dataset; pass it "
+        "only for stores fitted before the level was persisted.",
+    ),
     channel: Optional[int] = typer.Option(
         None, "--channel", "-c", help="Channel index for OME-Zarr reference"
     ),
@@ -726,9 +734,15 @@ def compare_quality(
     try:
         import json
 
+        import numpy as np
         import torch
 
         from luxar.cli.gsplat_config import load_volume, parse_shape
+        from luxar.gsplats.fit_basis import (
+            MISSING_BASIS_HINT,
+            fit_image_min,
+            reference_on_fit_basis,
+        )
         from luxar.gsplats.gsplat_data import GSplatData
         from luxar.gsplats.metrics import compute_quality_metrics
         from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
@@ -737,7 +751,11 @@ def compare_quality(
         with asection("Quality Comparison"):
             # Load gsplat dataset
             with asection("Loading gsplat dataset"):
-                data = GSplatData.load(gsplats_path, include_stats=False)
+                # `include_stats=True` so the normalization basis is reachable:
+                # a render is background-relative and the reference is raw, and
+                # without the stored `image_min` the two cannot be reconciled
+                # (#1173). This is metadata only — no extra array decode.
+                data = GSplatData.load(gsplats_path, include_stats=True)
                 n_splats = data.n_splats
                 ndim = data.ndim
                 aprint(f"Loaded {n_splats:,} splats ({ndim}D)")
@@ -752,6 +770,27 @@ def compare_quality(
                     reference_path, channel=channel, timepoint=timepoint
                 )
                 ref_shape = ref_np.shape
+
+                # Put the reference on the render's basis before anything scores
+                # it. An explicit --image-min wins over the stored level so a
+                # pre-provenance store is still comparable.
+                resolved_min = (
+                    float(image_min)
+                    if image_min is not None
+                    else fit_image_min(data.stats)
+                )
+                if resolved_min is None:
+                    aprint(f"WARNING: {MISSING_BASIS_HINT}")
+                elif resolved_min == 0.0:
+                    aprint("Basis: fit removed no background (image_min=0)")
+                else:
+                    source = "--image-min" if image_min is not None else "dataset"
+                    ref_np = reference_on_fit_basis(ref_np, resolved_min)
+                    aprint(
+                        f"Basis: reference shifted by image_min="
+                        f"{resolved_min:.6g} (from {source}); scores are "
+                        f"background-relative, matching the render"
+                    )
 
             # Determine rendering shape
             if shape is not None:
@@ -789,8 +828,14 @@ def compare_quality(
                         f"range [{rendered_t.min().item():.4f}, {rendered_t.max().item():.4f}]"
                     )
 
-                # Upload reference to same device
-                ref_t = torch.from_numpy(ref_np).to(rendered_t.device)
+                # Upload reference to same device, on the FIT's basis. Scoring
+                # a background-relative render against a pedestal-bearing
+                # reference charges the fit for background it never claimed to
+                # represent, which is the artifact this command most needed
+                # fixing (#1173).
+                ref_t = torch.from_numpy(np.ascontiguousarray(ref_np)).to(
+                    rendered_t.device
+                )
 
                 # Compute metrics (all on GPU)
                 with asection("Computing metrics"):
