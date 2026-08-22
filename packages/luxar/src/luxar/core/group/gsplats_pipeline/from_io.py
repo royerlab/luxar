@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 import numpy as np
 
-from ..compositing import strip_absent_attr_kwargs
+from ..compositing import reject_mesh_only_appearance, strip_absent_attr_kwargs
 from .from_data import (
     ABSENT_WHEN_NONE_ATTRS,
     GRAFT_REMEDY,
@@ -71,6 +71,7 @@ def add_gsplats_from_file_impl(
     # a missing file is not an attrs question at all.
     strip_absent_attr_kwargs(attrs, ABSENT_WHEN_NONE_ATTRS)
     reject_data_owned_channels(name, attrs)
+    reject_mesh_only_appearance("gsplats", name, attrs)
 
     # Classical (photogrammetric) splat files — INRIA/SuperSplat .ply,
     # antimatter15 .splat, Niantic .spz — are imported on the fly and embedded
@@ -728,6 +729,7 @@ def graft_gsplat_node(
     # depends on it; if you delete it, nothing observable changes.
     strip_absent_attr_kwargs(attrs, ABSENT_WHEN_NONE_ATTRS)
     reject_data_owned_channels(name, attrs)
+    reject_mesh_only_appearance("gsplats", name, attrs)
     _reject_a_partition_beside_a_stored_ladder(name, node, attrs)
     _reject_a_bad_partition_spec_on_a_graft(name, node, attrs)
     _reject_labels_on_a_grafted_wrapper(name, node, attrs)
