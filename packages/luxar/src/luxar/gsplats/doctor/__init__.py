@@ -1,4 +1,4 @@
-"""Diagnose — and, on request, repair — an existing ``.gsplats.zarr`` store.
+"""Diagnose — and, on request, repair — partition metadata in Luxar stores.
 
 A dataset can be perfectly loadable and still be missing something a later
 Luxar learned to record, or be carrying metadata that has quietly gone stale
@@ -45,12 +45,13 @@ def diagnose_store(
     fix: bool = False,
     checks: "Optional[List[Check]]" = None,
 ) -> DoctorReport:
-    """Run every check over a ``.gsplats.zarr`` store.
+    """Run every check over a ``.gsplats.zarr`` or ``.luxar.zarr`` store.
 
     Parameters
     ----------
     path
-        A ``.gsplats.zarr`` directory, or a ``.zip``/``.tar.gz`` archive. An
+        A ``.gsplats.zarr`` / ``.luxar.zarr`` directory, or a
+        ``.zip``/``.tar.gz`` archive. An
         archive is extracted to a temp directory and read from there, so it can
         be DIAGNOSED but not repaired: with ``fix=True`` it is rejected, for the
         same reason ``annotate-quality`` rejects one — there is nothing to write
@@ -71,7 +72,7 @@ def diagnose_store(
     path = Path(path)
     if fix and not path.is_dir():
         raise ValueError(
-            f"doctor --fix requires an uncompressed .gsplats.zarr directory; got "
+            f"doctor --fix requires an uncompressed zarr directory; got "
             f"{path} (unpack a .zip/.tar.gz first — an archive cannot be repaired "
             f"in place). Without --fix it can still be diagnosed."
         )
@@ -108,16 +109,13 @@ def _diagnose_opened(
     ``reported_path`` is what the user asked about (an archive keeps its own name
     in the report); ``store_path`` is the directory actually read.
     """
-    from luxar.gsplats.io.save_gsplats import _stamp_content_hash
-
     root = open_group(store_path, mode="r+" if fix else "r")
     fmt = root.attrs.get("format_type")
-    if fmt != "gsplats_zarr":
+    is_scene = root.attrs.get("type") == "scene" and "scene_dimensions" in root.attrs
+    if fmt != "gsplats_zarr" and not is_scene:
         raise ValueError(
-            f"{reported_path} is not a standalone .gsplats.zarr store "
-            f"(format_type={fmt!r}). "
-            f"Gsplats embedded in a scene are diagnosed by pointing doctor at the "
-            f"source .gsplats.zarr, and repaired by re-exporting the scene."
+            f"{reported_path} is not a Luxar scene or standalone .gsplats.zarr "
+            f"store (type={root.attrs.get('type')!r}, format_type={fmt!r})."
         )
 
     selected = ALL_CHECKS if checks is None else checks
@@ -142,7 +140,14 @@ def _diagnose_opened(
         # lands inside .zmetadata too. Consolidated metadata SHADOWS the per-node
         # .zattrs a fix just wrote, so skipping this would leave every repair
         # invisible to readers while looking applied on disk.
-        _stamp_content_hash(root)
+        if is_scene:
+            from luxar.io._compiler.finalize.hashing import compute_content_hashes
+
+            compute_content_hashes(root)
+        else:
+            from luxar.gsplats.io.save_gsplats import _stamp_content_hash
+
+            _stamp_content_hash(root)
         consolidate(root)
         # Then re-diagnose. A repair is not always a cure: removing a misleading
         # tree from parts that cannot be ordered exactly leaves the lesser

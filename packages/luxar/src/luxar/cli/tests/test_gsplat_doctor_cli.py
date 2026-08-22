@@ -47,6 +47,17 @@ def _partition_without_split_planes(tmp: Path) -> Path:
     return path
 
 
+def _scene_without_split_planes(tmp: Path) -> Path:
+    from luxar import Dimensions, LuxarZarrCompiler
+
+    source = _partition_without_split_planes(tmp)
+    path = tmp / "scene.luxar.zarr"
+    with LuxarZarrCompiler(path) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_gsplats_from_file("tiles", str(source))
+    return path
+
+
 def test_doctor_exits_nonzero_while_a_problem_stands() -> None:
     runner = CliRunner()
     with tempfile.TemporaryDirectory() as tmp:
@@ -77,3 +88,19 @@ def test_doctor_writes_a_json_report() -> None:
         assert payload["healthy"] is False
         assert payload["findings"][0]["check"] == "split-planes"
         assert payload["findings"][0]["fixable"] is True
+
+
+def test_doctor_accepts_and_repairs_a_scene_store() -> None:
+    runner = CliRunner()
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _scene_without_split_planes(Path(tmp))
+
+        result = runner.invoke(app, ["gsplat", "doctor", str(path), "--no-info"])
+        assert result.exit_code == 1, result.stdout
+        assert "tiles" in result.stdout
+        assert "no split planes" in result.stdout
+
+        fixed = runner.invoke(
+            app, ["gsplat", "doctor", str(path), "--no-info", "--fix"]
+        )
+        assert fixed.exit_code == 0, fixed.stdout

@@ -41,6 +41,18 @@ def _partition_store(tmp: Path, n: int = 400, parts_cap: int = 80) -> Path:
     return path
 
 
+def _partition_scene(tmp: Path) -> tuple[Path, str]:
+    """A real scene containing one grafted partition node."""
+    from luxar import Dimensions, LuxarZarrCompiler
+
+    source = _partition_store(tmp)
+    path = tmp / "scene.luxar.zarr"
+    with LuxarZarrCompiler(path) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_gsplats_from_file("tiles", str(source))
+    return path, "tiles"
+
+
 def _uniform_tiled_store(tmp: Path) -> Path:
     """A uniform-tiled partition on disk: overlapping parts, approximate planes.
 
@@ -626,11 +638,37 @@ class TestSplitPlanesCheck:
 
 
 class TestStoreGuards:
+    def test_a_scene_partition_is_diagnosed_and_repaired_in_place(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path, group_path = _partition_scene(Path(tmp))
+            root = zc_open_group(str(path), mode="r+")
+            group = root[group_path]
+            stale = dict(group.attrs["bsp_tree"])
+            stale["split"] = float(stale["split"]) + 1000.0
+            group.attrs["bsp_tree"] = stale
+            zc_consolidate(root)
+            before = root.attrs["content_hash"]
+
+            report = diagnose_store(path)
+            assert [finding.path for finding in report.findings] == [group_path]
+            assert report.findings[0].severity == "error"
+
+            fixed = diagnose_store(path, fix=True)
+            assert fixed.healthy
+            reopened = zc_open_group(str(path), mode="r")
+            assert reopened.attrs["content_hash"] != before
+            node_attrs = read_node_attrs(path / group_path)
+            assert node_attrs is not None
+            assert node_attrs["bsp_tree"] == read_consolidated_attrs(path)[group_path][
+                "bsp_tree"
+            ]
+            assert diagnose_store(path).findings == []
+
     def test_a_non_gsplats_store_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "plain.zarr"
             zarr.open_group(str(path), mode="w")
-            with pytest.raises(ValueError, match="not a standalone"):
+            with pytest.raises(ValueError, match="not a Luxar scene"):
                 diagnose_store(path)
 
     @staticmethod

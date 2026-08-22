@@ -1062,18 +1062,21 @@ def _print_report(report: "DoctorReport") -> None:
 
 def doctor(
     path: Path = typer.Argument(
-        ..., exists=True, help="Path to a .gsplats.zarr dataset (or .zip/.tar.gz)"
+        ...,
+        exists=True,
+        help="Path to a .gsplats.zarr dataset or .luxar.zarr scene (or .zip/.tar.gz)",
     ),
     fix: bool = typer.Option(
         False,
         "--fix",
         help="Repair what can be repaired, in place. Requires an UNCOMPRESSED "
-        ".gsplats.zarr directory. Without this, doctor only reports.",
+        "zarr directory. Without this, doctor only reports.",
     ),
     info: bool = typer.Option(
         True,
         "--info/--no-info",
-        help="Also print the full `gsplat info` report above the diagnosis.",
+        help="Also print the full `gsplat info` report above the diagnosis for "
+        "standalone .gsplats.zarr inputs.",
     ),
     histograms: bool = typer.Option(
         False,
@@ -1084,7 +1087,7 @@ def doctor(
         None, "--json", help="Write the findings to a JSON file as well."
     ),
 ) -> None:
-    """Examine a .gsplats.zarr, diagnose known problems, and optionally fix them.
+    """Examine Luxar partition metadata and optionally repair it.
 
     A dataset can load perfectly and still be missing something a later Luxar
     learned to record, or be carrying metadata that went stale under an edit —
@@ -1105,6 +1108,7 @@ def doctor(
 
     Examples:
         luxar gsplat doctor data.gsplats.zarr
+        luxar gsplat doctor scene.luxar.zarr --no-info
         luxar gsplat doctor data.gsplats.zarr --fix
         luxar gsplat doctor data.gsplats.zarr --no-info --json report.json
     """
@@ -1115,7 +1119,11 @@ def doctor(
     if histograms:
         info = True
     if info:
-        info_dataset(path, show_histograms=histograms, bins=40)
+        from luxar._zarr_compat import open_group
+
+        root = open_group(path, mode="r")
+        if root.attrs.get("format_type") == "gsplats_zarr":
+            info_dataset(path, show_histograms=histograms, bins=40)
 
     with asection(f"Diagnosing: {path.name}"):
         try:
