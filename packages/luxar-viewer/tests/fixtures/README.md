@@ -41,9 +41,14 @@ pnpm test:with-fixtures           # generate then run unit tests
 pnpm test                         # global-setup regenerates missing/stale ones automatically
 
 # Equivalent direct invocations (from repo root):
-hatch run python packages/luxar-viewer/tests/fixtures/generate_test_data.py
-hatch run python packages/luxar-viewer/tests/fixtures/generate_expectations.py
+hatch run fixtures:python packages/luxar-viewer/tests/fixtures/generate_test_data.py
+hatch run fixtures:python packages/luxar-viewer/tests/fixtures/generate_expectations.py
 ```
+
+The first of these commands creates a dedicated Hatch environment of roughly
+1.2 GB. It is separate from the larger default development environment, so both
+may occupy disk until the fixture environment is removed with
+`hatch env remove fixtures`.
 
 `src/tests/global-setup.ts` runs once before the Vitest suite, detects
 missing `test_*.zarr` archives or an out-of-date `roundtrip_expectations.json`
