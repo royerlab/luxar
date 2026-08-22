@@ -192,6 +192,7 @@ DENSITY_POWER = 1.9  #: emission probability ~ (water/gate)^this
 OPENING_PHASE = 0.55  #: the scene opens on the mature cloud, not on frame 0
 CALIBRATION_PHASES = (0.2, 0.35, 0.5, 0.65, 0.8)  #: probes for the point budget
 FRAMING_MARGIN = 1.30  #: headroom around the cloud in the opening shot
+FRAMING_QUANTILE = 0.995  #: share of the cloud the opening shot must contain
 #: Opening view direction, from the front, right and a little below — the
 #: angle you actually see a cumulus from, and the one that puts the flat
 #: base edge-on instead of hiding it underneath.
@@ -1107,7 +1108,16 @@ def compose_opening_camera(points: np.ndarray) -> CameraConfig:
         The opening :class:`CameraConfig`
     """
     centre = 0.5 * (points.min(axis=0) + points.max(axis=0))
-    radius = float(np.quantile(np.linalg.norm(points - centre, axis=1), 0.98))
+    radial = float(
+        np.quantile(np.linalg.norm(points - centre, axis=1), FRAMING_QUANTILE)
+    )
+    # The preset's field of view is VERTICAL, and this cloud is taller than it
+    # is wide, so the height is what the framing is actually up against. A
+    # radial quantile alone under-measures that — it averages the tall axis in
+    # with two short ones — and the opening shot cut the base off the bottom of
+    # the frame, which is the one feature the whole envelope exists to produce.
+    half_height = float(np.quantile(np.abs(points[:, 1] - centre[1]), FRAMING_QUANTILE))
+    radius = max(radial, half_height)
     distance = FRAMING_MARGIN * radius / math.sin(math.radians(CINEMATIC_FOV_DEG / 2))
 
     direction = np.array(VIEW_DIRECTION, dtype=np.float64)
