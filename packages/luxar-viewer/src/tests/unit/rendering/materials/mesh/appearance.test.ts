@@ -8,8 +8,10 @@
 import { describe, it, expect } from 'vitest';
 import {
   MESH_DEFAULTS,
+  MESH_LIGHT_DIRECTION,
   MESH_NORMAL_EPS_SQ,
   clampShadeExponent,
+  clampShininess,
   syncMeshEmissionDefines,
   MESH_SUPPORTED_BLENDING_MODES,
   resolveMeshBlendingMode,
@@ -80,16 +82,35 @@ describe('resolveMeshOutput', () => {
 });
 
 describe('MESH_DEFAULTS', () => {
-  it('shades: an ambient floor below 1 and a positive exponent', () => {
-    // `ambient === 1` would collapse the shade term to the emissive look of the
-    // other three types, which is the documented escape hatch — not the default.
+  it('shades with wrapped diffuse and a subtle specular by default', () => {
+    // `ambient === 1` removes the diffuse gradient (set `specular = 0` too for a
+    // fully emissive look — the escape hatch is two knobs now), not the default.
     expect(MESH_DEFAULTS.ambient).toBeGreaterThan(0);
     expect(MESH_DEFAULTS.ambient).toBeLessThan(1);
     expect(MESH_DEFAULTS.shadeExponent).toBeGreaterThan(0);
+    expect(MESH_DEFAULTS.specular).toBe(0.12);
+    expect(MESH_DEFAULTS.shininess).toBe(24);
+    expect(MESH_LIGHT_DIRECTION).toEqual([-0.35, 0.55, 0.75]);
   });
 
   it('cuts out at the alpha-test midpoint', () => {
     expect(MESH_DEFAULTS.alphaCutoff).toBe(0.5);
+  });
+});
+
+describe('mesh lighting exponents', () => {
+  it('clamps non-positive values and defaults non-finite values', () => {
+    expect(clampShadeExponent(0)).toBe(0.001);
+    expect(clampShadeExponent(NaN)).toBe(MESH_DEFAULTS.shadeExponent);
+    expect(clampShininess(-1)).toBe(0.001);
+    expect(clampShininess(Infinity)).toBe(MESH_DEFAULTS.shininess);
+  });
+
+  it('emits the offset key and additive specular in the GLSL reference', () => {
+    expect(MESH_FRAGMENT_SHADER).toContain('normalize(vec3(-0.35, 0.55, 0.75))');
+    expect(MESH_FRAGMENT_SHADER).toContain('dot(N, L)');
+    expect(MESH_FRAGMENT_SHADER).toContain('uSpecular * pow(max(dot(N, H), 0.0), uShininess)');
+    expect(MESH_FRAGMENT_SHADER).toContain('finalColor * shade + vec3(spec)');
   });
 });
 
@@ -125,9 +146,9 @@ describe('the normal-validity epsilon', () => {
 
 describe('clampShadeExponent — pow(0, y) is undefined for y <= 0', () => {
   it('floors a zero or negative exponent, which the shade term would otherwise hit at the silhouette', () => {
-    // `wrap = saturate(N·V · 0.5 + 0.5)` is EXACTLY 0 for a fragment facing directly
-    // away, so `pow(wrap, 0)` is undefined GLSL — driver-dependent 1, 0 or NaN. The
-    // clamp keeps that fragment defined (pow(0, 0.001) == 0 → shades at `ambient`).
+    // `wrap = saturate(N·L · 0.5 + 0.5)` is EXACTLY 0 for a fragment facing directly
+    // away from the key light, so `pow(wrap, 0)` is undefined GLSL — driver-dependent
+    // 1, 0 or NaN. The clamp keeps that fragment defined (pow(0, 0.001) == 0 → ambient).
     expect(clampShadeExponent(0)).toBeGreaterThan(0);
     expect(clampShadeExponent(-3)).toBeGreaterThan(0);
     expect(clampShadeExponent(0)).toBe(0.001);

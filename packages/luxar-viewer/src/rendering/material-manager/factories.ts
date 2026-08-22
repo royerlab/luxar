@@ -151,13 +151,17 @@ export interface MeshMaterialProperties {
   /** Shade from screen-space derivatives instead of the stored `normal` attribute. */
   flatNormal?: boolean;
   /**
-   * Headlight shade floor, clamped to `[0, 1]` (`1.0` = flat/emissive). Optional
+   * Wrapped-diffuse shade floor, clamped to `[0, 1]` (`1.0` = flat diffuse). Optional
    * because the writer never stamps it — it reaches here only when an author passed
    * it through `add_mesh(**attrs)`.
    */
   ambient?: number;
-  /** Headlight wrap exponent, clamped positive. */
+  /** Wrapped-diffuse exponent, clamped positive. */
   shadeExponent?: number;
+  /** Additive specular strength, clamped to `[0, 1]`. */
+  specular?: number;
+  /** Specular exponent, clamped positive. */
+  shininess?: number;
   /** `opaque`-mode cutout threshold, clamped to `[0, 1]`. */
   alphaCutoff?: number;
 }
