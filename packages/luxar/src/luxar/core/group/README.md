@@ -48,7 +48,7 @@ group/
 ├── __init__.py          # re-exports Group
 ├── group.py             # Group class: public add_* API (delegates to adders/ + gsplats_pipeline/)
 ├── auto_partition.py     # resolve_auto_partition — compiler-level opt-in auto-partition
-├── compositing.py        # COMPOSITING_ATTRS, AUTHORED_APPEARANCE_ATTRS, slice_optional_array, is_broadcast_color, validate_*_before_split, position_bounds_from_array, strip_absent_attr_kwargs
+├── compositing.py        # COMPOSITING_ATTRS, AUTHORED_APPEARANCE_ATTRS, WRITER_STAMPED_APPEARANCE_DEFAULTS, slice_optional_array, is_broadcast_color, validate_*_before_split, position_bounds_from_array, strip_absent_attr_kwargs
 ├── dim_order.py          # apply_dim_order_positions / apply_dim_order_cholesky
 ├── partition.py          # BSP splitters + PartitionSpec + validate_partition_group
 ├── adders/               # per-leaf add_<type> bodies (Points / Lines / GSplats)
@@ -176,6 +176,14 @@ LOD wrapper builders:
   the attr root→leaf (the `'custom'` sentinel is the one value not carried — its
   LUT lives in a sibling array the attrs-only read cannot reach). Read with
   `luxar.gsplats.io.load_gsplats.read_authored_appearance`.
+- `WRITER_STAMPED_APPEARANCE_DEFAULTS` (+ `IDENTITY_COMPOSITING_ATTRS`) — the
+  value the WRITER manufactures for an appearance attr nobody set, single-sourced
+  so the stamp sites (`node_common.apply_default_render_attrs`,
+  `gsplat_assembly.apply_gsplat_group_attrs`, and the `layer` stamp in
+  `gsplats/io/save_gsplats.py`) and the READER that has to recognise a stamp
+  cannot drift. `gsplat merge` uses it to tell "the author chose this" from
+  "nobody chose anything": a value equal to the manufactured default casts no
+  vote in the agreement rule.
 - `mirror_written_colormap(attrs, writer, path)` — copy the colormap the writer
   actually stamped onto the adder's attrs, so the returned node's attr
   write-back cannot put a manufactured `"gray"` on disk that the writer
