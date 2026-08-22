@@ -51,10 +51,16 @@ export function decode_quantized_u16(
 /**
  * Decode log-space quantized uint8 data to float32.
  * Decoding: expm1(normalized * maxLog)
+ * Callers provide integral codes in [0, 255]; ArrayLike also accepts widened Float32Array codes.
  */
-export function decode_log_scalar_u8(data: Uint8Array, maxLog: number, output: Float32Array): void {
-  // This worker/WASM fallback kernel follows the Rust f32 contract. The main-thread
-  // ArrayDecoder still uses f64 divide-then-multiply algebra; see #1847.
+export function decode_log_scalar_u8(
+  data: ArrayLike<number>,
+  maxLog: number,
+  output: Float32Array
+): void {
+  // Single TypeScript log-scalar decode route: the worker's WASM-fallback and the
+  // main-thread ArrayDecoder both come through here, so the Rust f32 contract
+  // holds for both.
   const limit = Math.fround(maxLog);
   const invMax = Math.fround(limit / 255);
   for (let i = 0; i < data.length; i++) {
@@ -65,14 +71,16 @@ export function decode_log_scalar_u8(data: Uint8Array, maxLog: number, output: F
 
 /**
  * Decode log-space quantized uint16 data to float32.
+ * Callers provide integral codes in [0, 65535]; ArrayLike also accepts widened Float32Array codes.
  */
 export function decode_log_scalar_u16(
-  data: Uint16Array,
+  data: ArrayLike<number>,
   maxLog: number,
   output: Float32Array
 ): void {
-  // This worker/WASM fallback kernel follows the Rust f32 contract. The main-thread
-  // ArrayDecoder still uses f64 divide-then-multiply algebra; see #1847.
+  // Single TypeScript log-scalar decode route: the worker's WASM-fallback and the
+  // main-thread ArrayDecoder both come through here, so the Rust f32 contract
+  // holds for both.
   const limit = Math.fround(maxLog);
   const invMax = Math.fround(limit / 65535);
   for (let i = 0; i < data.length; i++) {

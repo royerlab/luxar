@@ -18,7 +18,7 @@ here automatically — not just when WASM is missing.
 | `mesh-culling.ts`       | Whole-triangle nD culling: per-vertex slab membership + face compaction preserving original vertex indices. `Math.fround`s the slab bounds                                                                                        |
 | `gsplats-processing.ts` | Marginal Cholesky factorization, Mahalanobis distance, fused nD→3D projection (`project_gsplats_nd_to_3d`). Frounds every float step in the Rust op order (#1820); bit-exact vs WASM (`expf`/`logf` via `float32-math.ts`, #1830) |
 | `effective-radii.ts`    | `calculate_effective_radii` — `R_eff = sqrt(R² − D²)` for nD points sliced by a hyperplane. Frounds every float step in the Rust op order (#1820); bit-exact vs WASM                                                              |
-| `decode.ts`             | LUT / quantized / log-scalar / geolog-scalar / per-channel decoders + `decode_broadcasted`; log-scalar uses exact `expm1f` parity, while the main-thread `ArrayDecoder` remains different pending #1847                           |
+| `decode.ts`             | LUT / quantized / log-scalar / geolog-scalar / per-channel decoders + `decode_broadcasted`; log-scalar is bit-exact with WASM and is now the single route the main-thread `ArrayDecoder` uses too                                 |
 | `float32-math.ts`       | Exact TypeScript ports of Rust/WASM `expf`, `logf`, and `expm1f`, used where narrowing the host's f64 transcendental result can choose the neighboring f32 (#1830, #1843)                                                         |
 | `projection.ts`         | nD→3D position extraction (`extract_3d_positions`)                                                                                                                                                                                |
 | `depth-sort.ts`         | `sort_splats_by_depth` — back-to-front splat ordering; frounds every float step in the Rust op order so WASM↔TS parity is exact-permutation                                                                                       |
@@ -71,6 +71,12 @@ This directory is **not** uniformly verified. Current state:
 | `decode.ts`             | Frounds Rust-f32 inputs and decode arithmetic; log-scalar output is bit-exact with Rust's `expm1f` |
 | `lines-clipping.ts`     | Frounded end to end (#1821); exact parity cases cover slab boundaries and t-parameter accumulation |
 | `projection.ts`         | Pure copy, no arithmetic                                                                           |
+
+The viewer's full-array and range-based `ArrayDecoder` log-scalar paths delegate to
+`decode_log_scalar_u8` / `decode_log_scalar_u16` here. The Rust/WASM f32 kernel is the
+viewer decode contract, so the main-thread and TypeScript worker-fallback routes now use
+the same f32 operation order, and both are bit-exact with the Rust `expm1f` the WASM
+kernel runs (#1843). The Python decoder remains a separate f64 metadata helper.
 
 ### Where `Math.fround` is mandatory
 
@@ -129,8 +135,14 @@ performance.
 
 The exact `expm1f` port is about 4.4× slower than narrowing `Math.expm1`
 for the transcendental step (2 million u16 codes on Node 22). Log-scalar
-decoding uses it only in the wholesale TypeScript fallback selected when
-the WASM artifact fails to load, so exact parity is worth that bounded cost.
+decoding reaches it on two routes: the wholesale TypeScript fallback
+selected when the WASM artifact fails to load, and — since the main-thread
+`ArrayDecoder` was unified onto this kernel — every main-thread log-scalar
+decode, whether or not WASM loaded. For inputs larger than the code space,
+`ArrayDecoder` decodes the at-most-65,536-entry code space once and fills from
+that lookup table. On Node 22, 5M widened u16 codes measured ~50 ms through the
+lookup-table path versus ~395 ms through the kernel directly, while remaining
+bit-exact with the shared kernel.
 
 ## Constants
 
