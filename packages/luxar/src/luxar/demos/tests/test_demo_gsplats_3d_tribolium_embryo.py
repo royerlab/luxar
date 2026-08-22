@@ -122,25 +122,37 @@ def test_specimen_floor_is_a_count_level_inside_the_data_range() -> None:
     assert 400.0 < _DEMO_MODULE.SPECIMEN_BACKGROUND_COUNTS < 5000.0
 
 
-def test_empty_volume_is_rejected_before_fitting() -> None:
-    """An all-zero volume must fail loudly, not divide by zero.
+@pytest.mark.parametrize("maximum", [0.0, 400.0, 675.0])
+def test_volume_not_exceeding_specimen_floor_is_rejected_before_fitting(
+    maximum,
+) -> None:
+    """An empty or below-floor volume must fail loudly, not fit nonsense.
 
     Normalising by the volume's own maximum reintroduced a division the previous
-    min-max form guarded with `+ 1e-8`. Reaching this with an empty array means
-    the download or TIFF extraction produced nothing, which is worth a clear
-    error rather than a `ZeroDivisionError` or a fit against noise. The guard
-    runs before any fitting, so this needs no GPU.
+    min-max form guarded with `+ 1e-8`. A positive maximum at or below the floor
+    is equally invalid: it makes the surviving range non-positive and the fitter
+    ignores the floor. Both cases indicate an empty or corrupt source, and the
+    guard runs before any fitting, so this needs no GPU.
     """
-    with pytest.raises(ValueError, match="non-positive maximum"):
-        _DEMO_MODULE.fit_tribolium(np.zeros((4, 4, 4), dtype=np.float32))
+    volume = np.full((4, 4, 4), maximum, dtype=np.float32)
+    with pytest.raises(ValueError, match="does not exceed the specimen"):
+        _DEMO_MODULE.fit_tribolium(volume)
 
 
 @pytest.mark.parametrize(
     ("floor", "should_warn", "why"),
     [
         (None, True, "a pre-floor fit, or a reduction pass that rewrote pipeline/"),
-        (204.8 / 15902.0, True, "the ~205-count detector offset `auto` resolves to"),
-        (675.0 / 15902.0, False, "the specimen floor this demo now asks for"),
+        (
+            204.8 / _DEMO_MODULE.EXPECTED_VOLUME_MAX_COUNTS,
+            True,
+            "the ~205-count detector offset `auto` resolves to",
+        ),
+        (
+            675.0 / _DEMO_MODULE.EXPECTED_VOLUME_MAX_COUNTS,
+            False,
+            "the specimen floor this demo now asks for",
+        ),
         (675.0 / 1828.0, False, "--downsample lowers vmax, so the ratio RISES"),
     ],
 )
@@ -163,7 +175,7 @@ def test_stale_cache_warning_fires_only_on_a_pre_floor_fit(
     monkeypatch.setattr(
         _DEMO_MODULE.GSplatData, "load", classmethod(lambda cls, *a, **k: FakeData())
     )
-    _DEMO_MODULE._warn_if_cached_fit_predates_floor()
+    _DEMO_MODULE.warn_if_cached_tribolium_fit_predates_floor()
     warned = "predates the specimen background floor" in capsys.readouterr().out
     assert warned is should_warn, f"floor={floor!r} ({why})"
 
@@ -173,7 +185,7 @@ def test_stale_cache_check_is_silent_without_a_cache(
 ) -> None:
     """No cache is the fresh-clone case, not a stale one."""
     monkeypatch.setattr(_DEMO_MODULE, "CACHE_DIR", tmp_path)
-    _DEMO_MODULE._warn_if_cached_fit_predates_floor()
+    _DEMO_MODULE.warn_if_cached_tribolium_fit_predates_floor()
     assert capsys.readouterr().out == ""
 
 
@@ -186,5 +198,5 @@ def test_stale_cache_check_never_breaks_the_demo(monkeypatch, tmp_path, capsys) 
         raise RuntimeError("unreadable store")
 
     monkeypatch.setattr(_DEMO_MODULE.GSplatData, "load", classmethod(boom))
-    _DEMO_MODULE._warn_if_cached_fit_predates_floor()  # must not raise
+    _DEMO_MODULE.warn_if_cached_tribolium_fit_predates_floor()  # must not raise
     assert "could not read the cached fit's floor" in capsys.readouterr().out

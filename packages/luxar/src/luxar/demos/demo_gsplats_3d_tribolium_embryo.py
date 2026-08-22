@@ -64,8 +64,7 @@ Options:
 By default, precomputed GSplats are loaded from package data (Git LFS).
 Use --recompute to re-fit from scratch (requires a GPU and, if uncached, network).
 If the local Tribolium cache predates the 675-count floor, run once with
---recompute, which reuses the downloaded archive and extracted TIFF (or
-clear it with ``luxar demo cache clear gsplats_3d_tribolium_embryo``).
+--recompute, which reuses the downloaded archive and extracted TIFF.
 A stale fit is detected and warned about on load: the cache cannot be compared
 against the packaged LFS source (which does not exist for this
 non-redistributable dataset), so the recorded floor is checked instead.
@@ -182,6 +181,7 @@ MAX_SPLATS = 510000
 # PSNR collapses by 13 dB. Do not raise this without re-running that table: a
 # higher floor always looks cleaner in a MIP, which is exactly the trap.
 SPECIMEN_BACKGROUND_COUNTS = 675.0
+EXPECTED_VOLUME_MAX_COUNTS = 15902.0
 
 # Cache location
 CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_tribolium"
@@ -360,7 +360,7 @@ def _fit_intensity_scale(volume: np.ndarray) -> tuple[float, float, float]:
     """Return max, normalised floor, and surviving fit range.
 
     Raises:
-        ValueError: if the volume's maximum is not positive.
+        ValueError: if the volume's maximum does not exceed the specimen floor.
 
     The min-max normalisation this replaced divided by ``(vmax - vmin + 1e-8)``,
     and that epsilon was load-bearing: it kept an all-zero volume from dividing
@@ -370,12 +370,13 @@ def _fit_intensity_scale(volume: np.ndarray) -> tuple[float, float, float]:
     volume at this point says the download or TIFF extraction produced nothing.
     """
     vmax = float(volume.max())
-    if not vmax > 0.0:
+    if not vmax > SPECIMEN_BACKGROUND_COUNTS:
         raise ValueError(
-            f"Tribolium volume has non-positive maximum ({vmax}) — the download "
-            f"or TIFF extraction under {CACHE_DIR} is empty or corrupt. Clear it "
-            f"with `luxar demo cache clear gsplats_3d_tribolium_embryo` and "
-            f"re-run with --recompute."
+            f"Tribolium volume maximum ({vmax}) does not exceed the specimen "
+            f"background floor ({SPECIMEN_BACKGROUND_COUNTS}) — the download or "
+            f"TIFF extraction under {CACHE_DIR} is empty or corrupt. Clear it with "
+            f"`luxar demo cache clear gsplats_3d_tribolium_embryo` and re-run with "
+            f"--recompute."
         )
     floor_normalised = SPECIMEN_BACKGROUND_COUNTS / vmax
     return vmax, floor_normalised, 1.0 - floor_normalised
@@ -414,11 +415,10 @@ def fit_tribolium(volume: np.ndarray) -> GSplatData:
         # absolute numbers in that same space — `max_abs_error=0.01` is a
         # meaningful convergence test on [0, 1] data and unreachable on raw
         # counts, and `sigma_min_diag` / `amp_max` are likewise pinned there.
-        # Feeding raw counts therefore does not just rescale the result, it fits
+        # Feeding raw counts therefore does not just rescale the result: it fits
         # in a different numerical regime AND emits amplitudes larger by the
-        # volume's own maximum (~15900x here),
-        # which silently breaks the scene's `scale_intensity` and every display
-        # setting downstream of it.
+        # expected ~15900-count volume maximum. That silently breaks the scene's
+        # `scale_intensity` and every display setting downstream of it.
         #
         # So the floor is converted into the same normalised space instead of
         # being hardcoded there: dividing the MEASURED count level by this
@@ -680,7 +680,7 @@ def _prepare_roundtrip_comparison(
 # =============================================================================
 
 
-def _warn_if_cached_fit_predates_floor() -> None:
+def warn_if_cached_tribolium_fit_predates_floor() -> None:
     """Say so when the loaded cache was fitted before the specimen floor existed.
 
     Without this the fix applies only to whoever happens to have a cold cache: a
@@ -718,16 +718,16 @@ def _warn_if_cached_fit_predates_floor() -> None:
     floor = stats.get("floor")
     # Half the expected level: comfortably clear of 675 counts, comfortably above
     # the ~205-count offset it must catch.
-    suspicious = 0.5 * (SPECIMEN_BACKGROUND_COUNTS / 15902.0)
+    suspicious = 0.5 * (SPECIMEN_BACKGROUND_COUNTS / EXPECTED_VOLUME_MAX_COUNTS)
     if floor is None or float(floor) < suspicious:
         recorded = "none recorded" if floor is None else f"{float(floor):.6f}"
         aprint(
             f"WARNING: this cached fit predates the specimen background floor "
             f"(floor: {recorded}; expected about "
-            f"{SPECIMEN_BACKGROUND_COUNTS / 15902.0:.6f}). It still contains the "
+            f"{SPECIMEN_BACKGROUND_COUNTS / EXPECTED_VOLUME_MAX_COUNTS:.6f}). It "
+            f"still contains the "
             f"embryo's ~{SPECIMEN_BACKGROUND_COUNTS:.0f}-count autofluorescence "
-            f"haze, which obscures the nuclei. Re-run with --recompute, or clear "
-            f"it with `luxar demo cache clear gsplats_3d_tribolium_embryo`."
+            f"haze, which obscures the nuclei. Re-run with --recompute."
         )
 
 
@@ -761,7 +761,7 @@ def main():
 
     if precomputed is not None:
         gsplats_data = precomputed[0]
-        _warn_if_cached_fit_predates_floor()
+        warn_if_cached_tribolium_fit_predates_floor()
     else:
         # --recompute path: download raw data, fit from scratch
         warn_if_no_cuda_gpu()

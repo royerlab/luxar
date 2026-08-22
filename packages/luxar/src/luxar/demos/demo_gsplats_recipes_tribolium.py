@@ -632,6 +632,11 @@ def main() -> None:
         recompute=RECOMPUTE,
     )
     if precomputed is not None:
+        from luxar.demos.demo_gsplats_3d_tribolium_embryo import (
+            warn_if_cached_tribolium_fit_predates_floor,
+        )
+
+        warn_if_cached_tribolium_fit_predates_floor()
         base = precomputed[0]
     else:
         warn_if_no_cuda_gpu()
