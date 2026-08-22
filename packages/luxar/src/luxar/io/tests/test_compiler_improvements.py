@@ -2037,6 +2037,61 @@ class TestUnknownRenderAttrRejected:
 
         assert MESH_ONLY_APPEARANCE_ATTRS == _MESH_APPEARANCE_VALIDATORS.keys()
 
+    @pytest.mark.parametrize(
+        "attr,value",
+        [
+            ("ambient", 0.3),
+            ("shade_exponent", 1.5),
+            ("specular", 0.5),
+            ("shininess", 24.0),
+            ("alpha_cutoff", 0.2),
+        ],
+    )
+    @pytest.mark.parametrize("node_type", ["points", "lines", "gsplats", "group"])
+    def test_mesh_appearance_refused_via_write_through_attrs(
+        self, node_type: str, attr: str, value: float
+    ) -> None:
+        """The adder's refusal is worthless if the write-through mapping re-opens
+        the same door (#1782). ``node.attrs["specular"] = 0.5`` on a non-mesh node
+        persists straight to the store via the #1764 mapping, so it must be
+        refused there too — never left as dead metadata the viewer ignores."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            if node_type == "points":
+                node = scene.add_points("node", self.POS)
+            elif node_type == "lines":
+                node = scene.add_lines("node", self.POS, 0.5)
+            elif node_type == "gsplats":
+                node = scene.add_gsplats(
+                    "node",
+                    centers=self.POS,
+                    amplitudes=np.ones(len(self.POS), dtype=np.float32),
+                    cholesky_factors=np.ones((len(self.POS), 6), dtype=np.float32),
+                )
+            else:
+                node = scene.add_group("node")
+            with pytest.raises(ValueError, match="mesh-only attribute"):
+                node.attrs[attr] = value
+            assert attr not in node._attrs_cache
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert attr not in root["node"].attrs
+
+    def test_mesh_appearance_allowed_via_write_through_on_a_mesh_leaf(self) -> None:
+        """The write-through guard must not block a genuine mesh leaf — its
+        construction fills the attr cache directly (never through the setter), and
+        a post-hoc set is exactly how the Layers panel edits these."""
+        verts = np.random.RandomState(1).rand(12, 3).astype(np.float32)
+        faces = np.array([[0, 1, 2], [3, 4, 5], [6, 7, 8]], dtype=np.uint32)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            mesh = scene.add_mesh("m", verts, faces)
+            mesh.attrs["specular"] = 0.4
+            assert mesh._attrs_cache["specular"] == 0.4
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert root["m"].attrs["specular"] == 0.4
+
     @pytest.mark.parametrize("geometry_type", ["points", "gsplats", "mesh"])
     @pytest.mark.parametrize("via", ["property", "set_join"])
     def test_line_join_setter_refused_on_a_non_lines_leaf(
