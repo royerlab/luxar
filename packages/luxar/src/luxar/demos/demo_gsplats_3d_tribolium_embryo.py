@@ -45,7 +45,7 @@ WORKFLOW:
 
 1. **Download** ZIP from Zenodo (2.6 GB, with resume support)
 2. **Extract** multi-page TIFF stack from archive
-3. **Load** as 3D volume, normalise to [0, 1], optionally downsample
+3. **Load** as 3D volume in raw counts, optionally downsample
 4. **Fit** Gaussian splats with GPU acceleration + caching
 5. **Create 3D scene** in voxel coordinates
 6. **Visualise** — rotate, zoom, explore the embryo
@@ -124,6 +124,49 @@ VOXEL_SIZE_UM = 0.381  # Isotropic voxel size in micrometres
 # Fit parameters (fixed-K, seeds=K*)
 MAX_SPLATS = 510000
 
+# Specimen background level, in RAW CAMERA COUNTS, measured on this volume.
+#
+# This stack has TWO background levels, not one, and the difference is what
+# makes the default floor the wrong tool here:
+#
+#   ~204 counts   the medium OUTSIDE the embryo (detector offset). Very tight:
+#                 pooled corner cubes give p50 203, p99 224.
+#   ~675 counts   the specimen's OWN background INSIDE the embryo
+#                 (autofluorescence + scattered light). A gap between nuclei at
+#                 the volume centre reads p10 614 / p50 644 / p90 674, and the
+#                 interior histogram peaks flatly over 650-700.
+#
+# `floor="auto"` takes the histogram MODE over the whole box. Roughly 45% of this
+# FOV is empty medium, so the narrow 204-count medium peak is the tallest bin and
+# `auto` resolves to ~205 — it strips the detector offset and stops there. The
+# median cap cannot rescue it either, since the mode (204) is already BELOW the
+# median (333). The specimen's own 675-count haze is never seen, leaving 75.6% of
+# the interior MASS as background for the splats to spend themselves on; that
+# haze is what buried the nuclei.
+#
+# The estimator is not wrong, it is just being shown the wrong population: run
+# `auto` on a specimen-only crop and it lands on ~675 by itself. Hence an
+# explicit value here rather than a different spec. Measured on a 96x512x512
+# interior crop at 30k seeds, scoring reconstruction contrast between nuclei
+# (>1200 counts) and background (500-750), with the dim-nuclei band (800-1200)
+# as the guardrail against over-flooring:
+#
+#   floor   splats   nuclei/bg contrast   dim/nuclei   nuclei PSNR
+#   none    24,921            13.6x          0.286       32.74 dB
+#   500     24,499            16.1x          0.274       32.13 dB
+#   600     20,453             426x          0.202       29.90 dB
+#   675     18,467            3092x          0.147       28.33 dB   <- chosen
+#   750     18,110          41,319x          0.100       26.64 dB
+#   p90     17,039             inf           0.001       19.19 dB   <- destroys it
+#
+# 675 is the measured specimen background, and the guardrail is healthy there:
+# the dim band keeps 15% of the nuclei level and nuclei PSNR gives up 4.4 dB
+# against an unfloored fit. `p90` is the failure mode the repo warns about —
+# contrast looks infinite because the dim band is simply gone (0.001) and nuclei
+# PSNR collapses by 13 dB. Do not raise this without re-running that table: a
+# higher floor always looks cleaner in a MIP, which is exactly the trap.
+SPECIMEN_BACKGROUND_COUNTS = 675.0
+
 # Cache location
 CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_tribolium"
 
@@ -184,7 +227,9 @@ def extract_and_load_volume(zip_path: Path) -> np.ndarray:
         zip_path: Path to downloaded ZIP archive.
 
     Returns:
-        3D float32 volume normalised to [0, 1], shape (Z, Y, X).
+        3D float32 volume in raw camera counts, shape (Z, Y, X).
+        Deliberately NOT normalised: the fitter normalises internally, and
+        raw counts are what make ``SPECIMEN_BACKGROUND_COUNTS`` meaningful.
     """
     tifffile = require_module("tifffile")
 
@@ -244,13 +289,21 @@ def extract_and_load_volume(zip_path: Path) -> np.ndarray:
                 f"Expected 3D volume, got {volume.ndim}D with shape {volume.shape}"
             )
 
-        # Normalise to float32 [0, 1]
+        # Handed on in RAW CAMERA COUNTS. The scaling to [0, 1] still happens —
+        # the fit requires it — but it now lives in `fit_tribolium` next to the
+        # floor it has to agree with, rather than here where the two were a
+        # function call apart.
+        #
+        # The point is that a floor is only checkable in counts. In this stack the
+        # medium sits at ~204 and the specimen background at ~675, both readable
+        # straight off a histogram; expressed against the normalised volume the
+        # same level is 0.0424, a number nobody can sanity-check and which goes
+        # quietly wrong if the source maximum ever moves. So the measurement stays
+        # in counts and is converted at the point of use.
         volume = volume.astype(np.float32)
-        vmin, vmax = volume.min(), volume.max()
-        volume = (volume - vmin) / (vmax - vmin + 1e-8)
         aprint(
-            f"Normalised: shape={volume.shape}, "
-            f"range=[{volume.min():.3f}, {volume.max():.3f}], "
+            f"Loaded (raw counts): shape={volume.shape}, "
+            f"range=[{volume.min():.0f}, {volume.max():.0f}], "
             f"size={volume.nbytes / (1024**3):.1f} GB"
         )
 
@@ -290,7 +343,7 @@ def fit_tribolium(volume: np.ndarray) -> GSplatData:
     """Fit Gaussian splats to the Tribolium volume (no cache check — caller handles that).
 
     Args:
-        volume: 3D float32 volume (Z, Y, X), normalised to [0, 1].
+        volume: 3D float32 volume (Z, Y, X) in raw camera counts.
 
     Returns:
         Fitted GSplatData.
@@ -310,10 +363,41 @@ def fit_tribolium(volume: np.ndarray) -> GSplatData:
         aprint(f"Volume shape: {volume.shape}")
         aprint(f"Device: {DEVICE}")
 
+        # Scale to [0, 1] HERE rather than in the loader, so that the floor and
+        # the normalisation it rides on stay in one place and visibly agree.
+        #
+        # The fit must run on a [0, 1] volume, and not merely by convention:
+        # `fit_gaussian_splats` rescales the amplitudes it returns back into the
+        # units of whatever it was HANDED, and several of its defaults are
+        # absolute numbers in that same space — `max_abs_error=0.01` is a
+        # meaningful convergence test on [0, 1] data and unreachable on raw
+        # counts, and `sigma_min_diag` / `amp_max` are likewise pinned there.
+        # Feeding raw counts therefore does not just rescale the result, it fits
+        # in a different numerical regime AND emits amplitudes ~15000x larger,
+        # which silently breaks the scene's `scale_intensity` and every display
+        # setting downstream of it.
+        #
+        # So the floor is converted into the same normalised space instead of
+        # being hardcoded there: dividing the MEASURED count level by this
+        # volume's own maximum keeps `SPECIMEN_BACKGROUND_COUNTS` a checkable
+        # camera value and still tracks the data if the source ever changes.
+        vmax = float(volume.max())
+        floor_normalised = SPECIMEN_BACKGROUND_COUNTS / vmax
+        volume = (volume / vmax).astype(np.float32)
+        aprint(
+            f"Normalised by max {vmax:.0f} counts; floor "
+            f"{SPECIMEN_BACKGROUND_COUNTS:.0f} counts -> {floor_normalised:.6f}"
+        )
+
         result = fit_gaussian_splats(
             volume,
             seeds=MAX_SPLATS,
             device=DEVICE,
+            # Explicit specimen background rather than the default `auto`, which
+            # resolves to the ~205-count DETECTOR offset here and leaves the
+            # embryo's own ~675-count haze in place for the splats to fit. See
+            # SPECIMEN_BACKGROUND_COUNTS for the measurement and the floor sweep.
+            floor=floor_normalised,
             verbose=True,
         )
 
@@ -497,11 +581,28 @@ def show_roundtrip_comparison(
         return
 
     with asection("Round-trip reconstruction comparison"):
+        # `volume` arrives in RAW COUNTS while `render_to_volume` returns the
+        # fitter's normalised [0, 1] space, so the reference has to be put on the
+        # fit's own scale before differencing. Reproduce exactly what the fitter
+        # normalised against — floor subtracted, then divided by the surviving
+        # range — otherwise the comparison reports the floor as reconstruction
+        # error and every PSNR here is meaningless.
+        reference = np.clip(
+            (volume - SPECIMEN_BACKGROUND_COUNTS)
+            / (float(volume.max()) - SPECIMEN_BACKGROUND_COUNTS),
+            0.0,
+            1.0,
+        )
         with asection("Rendering reconstruction"):
             recon = gsplats_data.render_to_volume(shape=volume.shape, device=DEVICE)
-            mse = float(np.mean((volume - recon) ** 2))
+            mse = float(np.mean((reference - recon) ** 2))
             psnr = 10 * np.log10(1.0 / mse) if mse > 0 else float("inf")
             aprint(f"  PSNR: {psnr:.2f} dB, MSE: {mse:.6g}")
+            aprint(
+                f"  (reference is floor-suppressed at "
+                f"{SPECIMEN_BACKGROUND_COUNTS:.0f} counts, as fitted)"
+            )
+        volume = reference
 
         mid_z = volume.shape[0] // 2
         orig_slice = volume[mid_z]
@@ -511,7 +612,7 @@ def show_roundtrip_comparison(
         fig, axes = plt.subplots(1, 3, figsize=(14, 4.5))
 
         axes[0].imshow(orig_slice, cmap="gray", vmin=0, vmax=1)
-        axes[0].set_title("Original")
+        axes[0].set_title("Original (floor-suppressed)")
         axes[0].axis("off")
 
         axes[1].imshow(recon_slice, cmap="gray", vmin=0, vmax=1)
