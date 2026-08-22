@@ -207,11 +207,11 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                     # crisp.
                     #
                     # The Tribolium demo used to cite the same conclusion; it no
-                    # longer applies there and the two have diverged. That stack
-                    # turned out to carry a specimen-wide ~675-count haze that its
-                    # floor was not removing (only the ~205-count detector
-                    # offset), and `normal` was partly hiding the symptom. With the
-                    # haze actually subtracted, `volumetric` works there. THIS
+                    # longer applies there and the two have diverged. Strong
+                    # absorption coupled with low opacity made `volumetric` work
+                    # on that stack while its specimen-wide ~675-count haze was
+                    # still in the data. The haze has since been subtracted at fit
+                    # time. THIS
                     # dataset is a different shape — a bright yolk inside the
                     # shell, which is signal, not background — so the absorption
                     # measurement above still stands and this stays alpha-over.
