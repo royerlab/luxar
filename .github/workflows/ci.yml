@@ -112,7 +112,16 @@ jobs:
             # half (`check-contract`), the viewer package.json version (version
             # consistency), and the demos/data tree + its manifest
             # (`check-data-manifest`). None of those carries a Python extension.
-            printf '%s\n' "$changed" | grep -qE '(\.py$|^pyproject\.toml$|\.(pyx|pxd|cu|cuh)$|^format-contract/|^packages/luxar/src/luxar/demos/data|^packages/luxar-viewer/(package\.json$|src/types/format-contract\.ts$)|^scripts/complexity_baseline\.json$)' && dom_py=true || true
+            # Same reason for the non-.py files the pytest suite itself READS,
+            # each the only unclassified input of a test that would else skip:
+            # scripts/complexity_baseline.json (the C901 ratchet's only non-.py
+            # input — unclassified, a baseline-only diff went green in 7s without
+            # checking the baseline still MATCHES the tree, #1678), the Makefile
+            # (test_python_version_declarations.py, test_demo_commands.py),
+            # scripts/gallery/manifest.json (test_demo_meta.py cross-validates it
+            # against the demo registry) and docs/guides/user/CLI_REFERENCE.md
+            # (test_docs_command_coverage.py; .md alone runs only docs-quality).
+            printf '%s\n' "$changed" | grep -qE '(\.py$|^pyproject\.toml$|\.(pyx|pxd|cu|cuh)$|^Makefile$|^scripts/complexity_baseline\.json$|^scripts/gallery/manifest\.json$|^docs/guides/user/CLI_REFERENCE\.md$|^format-contract/|^packages/luxar/src/luxar/demos/data|^packages/luxar-viewer/(package\.json$|src/types/format-contract\.ts$))' && dom_py=true || true
             # TS domain = the WHOLE viewer package (its py fixture-generators feed TS tests -> hierarchy) + root TS config
             printf '%s\n' "$changed" | grep -qE '(^packages/luxar-viewer/|^tsconfig[^/]*\.json$|(^|/)vitest[^/]*\.(ts|js|mjs)$)' && dom_ts=true || true
             printf '%s\n' "$changed" | grep -qE '(\.rs$|^wasm/|(^|/)Cargo\.(toml|lock)$)' && dom_rust=true || true

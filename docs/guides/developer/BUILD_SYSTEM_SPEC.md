@@ -785,7 +785,7 @@ and each job runs its expensive steps only for the domain(s) it covers:
 
 | Domain | Set by | Gates |
 |--------|--------|-------|
-| `dom_py` | `*.py`, `pyproject.toml`, `*.pyx/*.pxd`, CUDA `*.cu/*.cuh` | `python-tests`, `wheel-viewer` |
+| `dom_py` | `*.py`, `pyproject.toml`, `*.pyx/*.pxd`, CUDA `*.cu/*.cuh`, the root `Makefile`, plus the extension-less gate inputs listed below | `python-tests`, `wheel-viewer` |
 | `dom_ts` | anything under `packages/luxar-viewer/`, root `tsconfig*.json`, `vitest*.{ts,js,mjs}` | `typescript-tests`, `release-readiness`, `wheel-viewer` |
 | `dom_rust` | `*.rs`, `Cargo.toml/lock` | `typescript-tests`, `release-readiness`, `wheel-viewer` |
 | `dom_go` | `*.go`, `go.mod/sum`, `cli/_launchers/` | `go-launcher` |
@@ -800,14 +800,21 @@ because its Python fixture generators feed the TypeScript tests.
 `python-tests`, so their non-Python inputs are classified as Python: the
 format-contract source (`format-contract/contract.yaml`) and its generated
 TypeScript half, the viewer `package.json` (the other end of the version
-consistency check), and the `demos/data` tree with its manifest. A check whose
-own inputs are unclassified is a check that skips for exactly the change it
-exists to catch. `.github/workflows/ci.yml` selects **all four** domains: it
-defines how every suite is invoked, so an edit that breaks a command or a
-condition is caught by the run that contains it.
+consistency check), and the `demos/data` tree with its manifest. It owns, for
+the same reason, the four data and documentation files the pytest suite itself
+reads: `scripts/complexity_baseline.json` (the C901 ratchet's only input that
+carries no Python extension), the root `Makefile` (the sub-floor interpreter
+check and the `clean-*` recipe tests), `scripts/gallery/manifest.json`
+(cross-validated against the demo registry) and
+`docs/guides/user/CLI_REFERENCE.md` (drift-guarded against the live Typer app).
+A check whose own inputs are unclassified is a check that skips for exactly the
+change it exists to catch. `.github/workflows/ci.yml` selects **all four**
+domains: it defines how every suite is invoked, so an edit that breaks a command
+or a condition is caught by the run that contains it.
 
-A change that touches no domain at all — Markdown, `docs/`, `CHANGELOG.md` —
-runs no language suite. Those jobs still *run* (checkout plus skipped steps),
+A change that touches no domain at all — Markdown, `docs/`, `CHANGELOG.md`, with
+`docs/guides/user/CLI_REFERENCE.md` the one exception noted above — runs no
+language suite. Those jobs still *run* (checkout plus skipped steps),
 so their required contexts (`python-tests (3.12)`, `typescript-tests`,
 `release-readiness`, `wheel-viewer`) report an explicit green in seconds
 instead of a grey "skipped", which is what keeps strict branch protection from
