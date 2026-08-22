@@ -19,13 +19,12 @@ from __future__ import annotations
 
 import gc
 import time
-from typing import TYPE_CHECKING, Any, Callable, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Optional, Sequence, Tuple
 
 import numpy as np
 
 from luxar.gsplats.merged_quality import (
     announce_unscored_merge,
-    announce_unscored_partition_merge,
     resolve_merged_reference,
     stamp_merged_quality,
 )
@@ -63,15 +62,47 @@ def _require_plan_volume_shape(volume: np.ndarray, plan: FitPlan) -> None:
         )
 
 
-def _score_planned_flat_merge(
-    merged: "GSplatData",
+def _planned_merge_stats(
+    regions: "Sequence[GSplatData]",
+    *,
+    n_boxes: int,
+    n_boxes_fit: int,
+    overlap: int,
+    volume_shape: tuple[int, ...],
+    elapsed: float,
+    parallel_jobs: Optional[int] = None,
+) -> dict[str, Any]:
+    """Build the common root stats for flat and partition planned merges."""
+    from luxar.gsplats.io.save_gsplats import agreed_normalization_stats
+
+    stats: dict[str, Any] = {
+        "concatenated_from": len(regions),
+        "splats_per_source": [region.n_splats for region in regions],
+        "planned_fit": True,
+        "n_boxes": n_boxes,
+        "n_boxes_fit": n_boxes_fit,
+        "overlap": overlap,
+        "volume_shape": list(volume_shape),
+        "time_seconds": float(elapsed),
+    }
+    if parallel_jobs is not None:
+        stats["parallel_jobs"] = int(parallel_jobs)
+        stats["elapsed_seconds"] = float(elapsed)
+    stats.update(agreed_normalization_stats([region.stats for region in regions]))
+    return stats
+
+
+def _score_planned_merge(
+    merged: "GSplatData | Sequence[GSplatData]",
     volume: Any,
     *,
     plan_shape: tuple[int, ...],
     device: Optional[str],
     verbose: bool,
+    stats: "dict[str, Any] | None" = None,
+    partition: bool = False,
 ) -> None:
-    """Score a flat planned merge, or explain why no score can be recorded."""
+    """Score a planned merge, or explain why no score can be recorded."""
     reference, unscored_reason = resolve_merged_reference(
         volume,
         plan_shape,
@@ -79,7 +110,7 @@ def _score_planned_flat_merge(
         missing_reason="this parallel merge was not given a reference volume",
     )
     if unscored_reason is not None:
-        announce_unscored_merge(unscored_reason)
+        announce_unscored_merge(unscored_reason, partition=partition)
         return
 
     # Forward guard for content-box denoising: once boxes can denoise, this
@@ -93,6 +124,7 @@ def _score_planned_flat_merge(
         grid_scale=None,
         device=device,
         verbose=verbose,
+        stats=stats,
     )
 
 
@@ -370,7 +402,9 @@ def fit_planned(
     ``kind=partition`` tree — one part per box (boxes are core-disjoint, so this
     is exact) — for viewer frustum culling; a :class:`~luxar.gsplats.tree.GSplatNode`
     is returned. With ``partition=False`` the boxes are concatenated into a single
-    flat :class:`GSplatData` leaf (``--flat``).
+    flat :class:`GSplatData` leaf (``--flat``). Both shapes are scored against
+    the whole reference volume; tree-shaped results carry the merged block in
+    their root ``meta["fit_stats"]`` for the CLI writer to persist.
 
     Boxes are fit **sequentially**. For concurrent fitting on one GPU use
     :func:`luxar.gsplats.planner.fit_planned_parallel.fit_planned_parallel`
@@ -439,7 +473,27 @@ def fit_planned(
             bsp_tree=plan.bsp_tree,
             region_labels=region_boxes,
         )
-        announce_unscored_partition_merge(result)
+        from luxar.gsplats.tree import GSplatPartition
+
+        fit_stats = _planned_merge_stats(
+            regions,
+            n_boxes=n,
+            n_boxes_fit=n_fit,
+            overlap=pad,
+            volume_shape=tuple(int(s) for s in V.shape),
+            elapsed=elapsed,
+        )
+        is_partition = isinstance(result, GSplatPartition)
+        _score_planned_merge(
+            regions if is_partition else regions[0],
+            V,
+            plan_shape=tuple(int(s) for s in plan.volume_shape),
+            device=device,
+            verbose=verbose,
+            stats=fit_stats,
+            partition=is_partition,
+        )
+        result.meta["fit_stats"] = fit_stats
         return result
 
     # `concatenate` (what the uniform tiled path's `merge_tile_results` uses)
@@ -448,19 +502,16 @@ def fit_planned(
     # It REPLACES stats with its own summary, so the planned-fit keys go on after.
     merged = GSplatData.concatenate(regions)
     merged.stats.update(
-        {
-            "planned_fit": True,
-            "n_boxes": n,
-            "n_boxes_fit": n_fit,
-            "overlap": pad,
-            "volume_shape": list(V.shape),
-            # Overwrite `concatenate`'s SUM of the boxes' own times with true
-            # wall clock, as the uniform tiled merge does (`merge_tile_results`):
-            # one key must not mean "summed fit time" here and "elapsed" there.
-            "time_seconds": float(elapsed),
-        }
+        _planned_merge_stats(
+            regions,
+            n_boxes=n,
+            n_boxes_fit=n_fit,
+            overlap=pad,
+            volume_shape=tuple(int(s) for s in V.shape),
+            elapsed=elapsed,
+        )
     )
-    _score_planned_flat_merge(
+    _score_planned_merge(
         merged,
         V,
         plan_shape=tuple(int(s) for s in plan.volume_shape),
