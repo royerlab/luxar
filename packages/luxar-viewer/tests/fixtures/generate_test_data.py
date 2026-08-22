@@ -263,7 +263,7 @@ def generate_lut_u16_test() -> None:
                 Dimension("z", unit="units", display=True),
             ]
         )
-        # Radius 0.1, not the 0.5 the small fixtures use. The reasoning is in
+        # Radius 0.1, not the 0.5 the small fixtures use (#1746). The reasoning is in
         # SCREEN pixels, not world-space area: the point shader clamps
         # `pointSize = clamp(basePointSize, 1.5, maxPointSize)`
         # (packages/luxar-viewer/src/rendering/materials/point/shader-glsl.ts),

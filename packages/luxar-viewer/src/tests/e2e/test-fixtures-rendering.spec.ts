@@ -43,9 +43,13 @@ const FIXTURES = {
 // so this number is a BACKSTOP, not a guarantee. What makes a failure
 // attributable is the probes being bounded and throwing by name; at 60 s the
 // wall beat even `goto` + `waitForLuxarReady` (105 s), so this arrived as a
-// bare `Test timeout of 60000ms exceeded` with no location, and at 120 s
-// those first two phases can report themselves. 120 s matches the two
-// in-tree precedents, webgl-errors.spec.ts and all-examples-smoke-test.spec.ts.
+// bare `Test timeout of 60000ms exceeded` with nothing to say which dataset
+// or which probe was pending (the same class of wall `getLuxarState`
+// documents in helpers.ts), and at 120 s those first two phases can report
+// themselves. 120 s matches the two in-tree `describe.configure` precedents
+// at this value, webgl-errors.spec.ts and all-examples-smoke-test.spec.ts;
+// frame-pacing.spec.ts uses the same mechanism at 300 s, and
+// points-rendering-perf.spec.ts reaches 120 s through `test.setTimeout`.
 // File scope, so both describe blocks (8 tests) carry it. Only the timeout
 // changes: this file keeps the config's `fullyParallel: true`.
 test.describe.configure({ timeout: 120000 });
@@ -405,6 +409,7 @@ test.describe('Test Fixture Rendering', () => {
   test('should render lut_uint16 encoded data (>256 unique colors)', async ({ page }) => {
     // The uint16 LUT tier end-to-end: Uint16Array indices through the
     // range loader -> worker -> WASM row kernel (only exercised in-browser).
+    const testStartedAt = Date.now();
     await page.goto(`/?src=${FIXTURES.lutU16}&debug`);
     await waitForLuxarReady(page);
     await waitForPointsLoaded(page, 1);
@@ -414,19 +419,38 @@ test.describe('Test Fixture Rendering', () => {
     const state = await getLuxarState(page);
     expect(state.totalPoints).toBe(100_000);
 
-    // The 100k-texel scan below is the heaviest probe in this file, and
     // `page.evaluate` carries no deadline of its own — only the test wall
     // stops it, which is precisely the unattributable failure the wall above
-    // is NOT meant to be. Bound it so a starved page names this probe instead
-    // of pointing at a line number (see `raceEvaluate`).
-    const SCAN_TIMEOUT_MS = 45000;
+    // is NOT meant to be. What starves one is main-thread task starvation, so
+    // no probe is exempt (see `raceEvaluate`); what exposes THIS test and not
+    // its five siblings is the SCENE — it renders 100k points where they
+    // render 20-1000, so only this page saturates the render loop. Bound it so
+    // a starved page names this probe instead of pointing at a line number,
+    // accepting the trade `changelog.d/1651.md` states: any bound can also cut
+    // short a stall that would have ended, so this is not a free win.
+    //
+    // The budget is what is LEFT of this test's wall rather than a fixed 45 s.
+    // A hard 45 s under the 120 s wall is only reachable when the bounded
+    // prefix (`goto` plus the three helpers above) finishes inside 75 s; a
+    // prefix between 75 s and 120 s lets the wall fire MID-scan, which is the
+    // bare unattributable timeout this bound exists to remove. 10 s stays in
+    // reserve for the throw, the assertions and teardown, and the 5 s floor
+    // keeps a nearly-exhausted test throwing by name rather than not at all.
+    const scanTimeoutMs = Math.max(
+      5000,
+      Math.min(45000, test.info().timeout - (Date.now() - testStartedAt) - 10000)
+    );
     // Sentinel, following the argument in `getLuxarState`: it must be a value
     // the in-page function can never return, compared by identity, because
     // `null` is a LEGITIMATE answer here (no points node, no element texture,
     // or no colors on it) and would otherwise be indistinguishable from a
-    // missed deadline. A Node-side `Symbol` is stronger than the fresh object
-    // that helper allocates: `page.evaluate` resolves with a value
-    // deserialized from the CDP protocol, which cannot carry a symbol at all.
+    // missed deadline. Collision-safety is identical to that helper's `{}` —
+    // `page.evaluate` resolves with a value deserialized from the CDP
+    // protocol, which can carry neither a Node-side object nor a symbol. A
+    // `unique symbol` is chosen for a TYPE-level reason instead: it is a unit
+    // type, so `colorStats === SCAN_TIMED_OUT` NARROWS the union and leaves
+    // the object-or-null the assertions below read, where a `const timedOut =
+    // {}` would type as `{}` and collapse that union.
     const SCAN_TIMED_OUT: unique symbol = Symbol('lutU16ColorScanTimedOut');
 
     const scanProbe = page.evaluate(() => {
@@ -462,7 +486,7 @@ test.describe('Test Fixture Rendering', () => {
 
     const colorStats = await raceEvaluate<Awaited<typeof scanProbe> | typeof SCAN_TIMED_OUT>(
       scanProbe,
-      SCAN_TIMEOUT_MS,
+      scanTimeoutMs,
       SCAN_TIMED_OUT
     );
 
@@ -472,8 +496,8 @@ test.describe('Test Fixture Rendering', () => {
       // checked — which is not the same as checking it and finding it sound.
       throw new Error(
         'lut_uint16 color scan: the page never answered the 100k-texel element-texture probe ' +
-          `within ${SCAN_TIMEOUT_MS} ms — its main thread is saturated and starving the evaluate ` +
-          'round trip, so the LUT round-trip assertions could not run. See issue #1651.'
+          `within ${scanTimeoutMs} ms — its main thread is saturated and starving the evaluate ` +
+          'round trip, so the LUT round-trip assertions could not run. See issues #1651 and #1746.'
       );
     }
 
