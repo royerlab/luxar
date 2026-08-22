@@ -58,8 +58,9 @@ export function decode_log_scalar_u8(
   maxLog: number,
   output: Float32Array
 ): void {
-  // Sole log-scalar decode route: the worker/WASM fallback and the main-thread
-  // ArrayDecoder both come through here, so the Rust f32 contract holds for both.
+  // Single TypeScript log-scalar decode route: the worker's WASM-fallback and the
+  // main-thread ArrayDecoder both come through here, so the Rust f32 contract
+  // holds for both.
   const limit = Math.fround(maxLog);
   const invMax = Math.fround(limit / 255);
   for (let i = 0; i < data.length; i++) {
@@ -77,8 +78,9 @@ export function decode_log_scalar_u16(
   maxLog: number,
   output: Float32Array
 ): void {
-  // Sole log-scalar decode route: the worker/WASM fallback and the main-thread
-  // ArrayDecoder both come through here, so the Rust f32 contract holds for both.
+  // Single TypeScript log-scalar decode route: the worker's WASM-fallback and the
+  // main-thread ArrayDecoder both come through here, so the Rust f32 contract
+  // holds for both.
   const limit = Math.fround(maxLog);
   const invMax = Math.fround(limit / 65535);
   for (let i = 0; i < data.length; i++) {

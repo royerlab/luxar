@@ -130,8 +130,15 @@ performance.
 
 The exact `expm1f` port is about 4.4× slower than narrowing `Math.expm1`
 for the transcendental step (2 million u16 codes on Node 22). Log-scalar
-decoding uses it only in the wholesale TypeScript fallback selected when
-the WASM artifact fails to load, so exact parity is worth that bounded cost.
+decoding reaches it on two routes: the wholesale TypeScript fallback
+selected when the WASM artifact fails to load, and — since the main-thread
+`ArrayDecoder` was unified onto this kernel — every main-thread log-scalar
+decode, whether or not WASM loaded. That second one is a real (if one-time,
+per-load) main-thread cost: measured end to end, decoding 5M u16 codes went
+from ~147 ms on the old f64 algebra to ~539 ms here. It is accepted because
+a value that differs by route is worse than a slower load; the whole-array
+main-thread path has no worker offload, so a very large log-scalar array is
+the case to watch.
 
 ## Constants
 
