@@ -872,7 +872,7 @@ Large isotropic 3D light-sheet volume of a developing beetle (*Tribolium castane
 
 **Requires**: Internet access (downloads ~2.6 GB from Zenodo), GPU recommended. 965 x 1871 x 991 voxels.
 
-**Demonstrates**: Large-volume Gaussian splatting, isotropic light-sheet microscopy, Zenodo/Cell Tracking Challenge data, Zeiss LightSheet Z.1 data, `volumetric` emission-absorption blending with strong absorption (κ=3.13) and low opacity (0.06) so the embryo reads as dense tissue without the diffuse background overwhelming it, plus a 0–1.085 display window tuned for the direct-colour layer.
+**Demonstrates**: Large-volume Gaussian splatting, isotropic light-sheet microscopy, Zenodo/Cell Tracking Challenge data, Zeiss LightSheet Z.1 data, `volumetric` emission-absorption blending with strong absorption (κ=3.13) and low opacity (0.06) so the embryo reads as dense tissue without the diffuse background overwhelming it, plus a 0–1.085 display window tuned for the direct-colour layer. Also demonstrates measuring a **specimen** background rather than trusting the default floor: this stack has two levels (a ~204-count detector offset outside the embryo and its own ~675-count autofluorescence inside), and subtracting only the first left ~84% of the emitted mass as haze.
 
 ---
 

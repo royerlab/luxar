@@ -64,7 +64,12 @@ Options:
 By default, precomputed GSplats are loaded from package data (Git LFS).
 Use --recompute to re-fit from scratch (requires a GPU and, if uncached, network).
 If the local Tribolium cache predates the 675-count floor, run once with
---recompute, which reuses the downloaded archive and extracted TIFF.
+--recompute, which reuses the downloaded archive and extracted TIFF (or
+clear it with ``luxar demo cache clear gsplats_3d_tribolium_embryo``).
+Nothing detects the stale fit automatically: the cache is only compared
+against the packaged LFS source, which does not exist for this
+non-redistributable dataset, and a loaded store does not report the floor it
+was fitted with.
 
 Output:
     - Scene saved to:  datasets/demos/gsplats_3d_tribolium_embryo.luxar.zarr
@@ -147,8 +152,9 @@ MAX_SPLATS = 510000
 #                 the volume centre reads p10 614 / p50 644 / p90 674, and the
 #                 interior histogram peaks flatly over 650-700.
 #
-# `floor="auto"` takes the histogram MODE over the whole box. Roughly 45% of this
-# FOV is empty medium, so the narrow 204-count medium peak is the tallest bin and
+# `floor="auto"` takes the histogram MODE over the whole box. MORE THAN HALF of
+# this FOV is empty medium (the embryo envelope covers ~44% of the box, so the
+# medium is ~56%), so the narrow 204-count medium peak is the tallest bin and
 # `auto` resolves to ~205 — it strips the detector offset and stops there. The
 # median cap cannot rescue it either, since the mode (204) is already BELOW the
 # median (333). The specimen's own 675-count haze is never seen, leaving 75.6% of
@@ -352,8 +358,26 @@ def load_tribolium_volume() -> np.ndarray:
 
 
 def _fit_intensity_scale(volume: np.ndarray) -> tuple[float, float, float]:
-    """Return max, normalised floor, and surviving fit range."""
+    """Return max, normalised floor, and surviving fit range.
+
+    Raises:
+        ValueError: if the volume's maximum is not positive.
+
+    The min-max normalisation this replaced divided by ``(vmax - vmin + 1e-8)``,
+    and that epsilon was load-bearing: it kept an all-zero volume from dividing
+    by zero. Scaling by ``vmax`` alone reintroduces that division, so it is
+    guarded here — the one place the division happens, which covers both the fit
+    and the round-trip caller — and reported for what it means, since an empty
+    volume at this point says the download or TIFF extraction produced nothing.
+    """
     vmax = float(volume.max())
+    if not vmax > 0.0:
+        raise ValueError(
+            f"Tribolium volume has non-positive maximum ({vmax}) — the download "
+            f"or TIFF extraction under {CACHE_DIR} is empty or corrupt. Clear it "
+            f"with `luxar demo cache clear gsplats_3d_tribolium_embryo` and "
+            f"re-run with --recompute."
+        )
     floor_normalised = SPECIMEN_BACKGROUND_COUNTS / vmax
     return vmax, floor_normalised, 1.0 - floor_normalised
 
@@ -392,7 +416,8 @@ def fit_tribolium(volume: np.ndarray) -> GSplatData:
         # meaningful convergence test on [0, 1] data and unreachable on raw
         # counts, and `sigma_min_diag` / `amp_max` are likewise pinned there.
         # Feeding raw counts therefore does not just rescale the result, it fits
-        # in a different numerical regime AND emits amplitudes ~15000x larger,
+        # in a different numerical regime AND emits amplitudes larger by the
+        # volume's own maximum (~15900x here),
         # which silently breaks the scene's `scale_intensity` and every display
         # setting downstream of it.
         #

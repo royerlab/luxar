@@ -105,3 +105,31 @@ def test_roundtrip_comparison_uses_the_fit_output_scale() -> None:
     )
     np.testing.assert_allclose(reference, expected)
     np.testing.assert_allclose(scaled_recon, expected)
+
+
+def test_specimen_floor_is_a_count_level_inside_the_data_range() -> None:
+    """The floor is stated in camera counts, so it must read as one.
+
+    Pinned because the value is only checkable as a count: the medium in this
+    stack sits at ~204 and the specimen background at ~675, and expressing the
+    same level against the normalised volume (0.0424) hides which of the two it
+    is. A floor that drifted below the medium peak, or above the data range,
+    would silently stop suppressing the haze.
+    """
+    assert _DEMO_MODULE.SPECIMEN_BACKGROUND_COUNTS == pytest.approx(675.0)
+    # Comfortably above the ~204-count detector offset it must NOT be confused
+    # with, and far below the stack's ~15900-count maximum.
+    assert 400.0 < _DEMO_MODULE.SPECIMEN_BACKGROUND_COUNTS < 5000.0
+
+
+def test_empty_volume_is_rejected_before_fitting() -> None:
+    """An all-zero volume must fail loudly, not divide by zero.
+
+    Normalising by the volume's own maximum reintroduced a division the previous
+    min-max form guarded with `+ 1e-8`. Reaching this with an empty array means
+    the download or TIFF extraction produced nothing, which is worth a clear
+    error rather than a `ZeroDivisionError` or a fit against noise. The guard
+    runs before any fitting, so this needs no GPU.
+    """
+    with pytest.raises(ValueError, match="non-positive maximum"):
+        _DEMO_MODULE.fit_tribolium(np.zeros((4, 4, 4), dtype=np.float32))
