@@ -37,11 +37,13 @@ def build_points_ordering(
         radii: Optional radii array
         ctx: Spatial-ordering configuration (enable flag + method).
         store: Root zarr group (read for ``scene_dimensions``).
-        dataset_ctx: Encoder configuration, used ONLY to ask how far the store
-            will move a position (see
+        dataset_ctx: Encoder configuration, used to ask how far the store will
+            move a position (see
             :meth:`~luxar.encoding.encoder.ArrayEncoder.coordinate_round_trip_slack`)
-            so the chunk bounds contain the DECODED positions, not just the
-            authored ones. ``None`` (a direct caller) ⇒ authored bounds.
+            and enlarge a radius (see
+            :meth:`~luxar.encoding.encoder.ArrayEncoder.positive_scalar_round_trip_slack`)
+            so spatial chunk bounds contain the DECODED footprint, not just
+            the authored one. ``None`` (a direct caller) ⇒ authored bounds.
 
     Returns:
         Dict with:
@@ -118,6 +120,16 @@ def build_points_ordering(
         if dataset_ctx is not None
         else None
     )
+    scalar_slack = (
+        dataset_ctx.encoder.positive_scalar_round_trip_slack(
+            np.asarray(sorted_radii),
+            dataset_ctx.encoding_mode,
+            # Must match write_positive_scalar's default used by write_radii.
+            positive_scalar_encoding="linear",
+        )
+        if dataset_ctx is not None and isinstance(sorted_radii, np.ndarray)
+        else None
+    )
 
     chunk_bounds = compute_chunk_bounds_points(
         sorted_positions,
@@ -125,6 +137,7 @@ def build_points_ordering(
         chunk_size,
         slice_dims=ordering_metadata["slice_dims"],
         coord_slack=coord_slack,
+        scalar_slack=scalar_slack,
     )
 
     aprint(

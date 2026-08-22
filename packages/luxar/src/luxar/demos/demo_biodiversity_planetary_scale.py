@@ -358,6 +358,7 @@ from luxar.demos import (
     require_module,
     substitutive_lod_or_flat,
 )
+from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
 from luxar.encoding import EncodingMode
 from luxar.utils.paths import get_demos_output_dir
 
@@ -1060,15 +1061,26 @@ def lonlat_to_xyz(lon: np.ndarray, lat: np.ndarray, relief: np.ndarray) -> np.nd
 
 
 def globe_camera(lon: float, lat: float, *, distance: float = 2.6) -> CameraConfig:
-    """A camera looking straight down at ``(lon, lat)`` from ``distance x R``."""
+    """Look down at ``(lon, lat)`` while preserving the 42° globe silhouette.
+
+    ``distance`` is the pre-cinematic 42° camera distance in globe radii; the
+    sphere silhouette, rather than a plane through the target, is held fixed.
+    """
     la, lo = math.radians(lat), math.radians(lon)
     cl = math.cos(la)
     normal = (cl * math.cos(lo), math.sin(la), -cl * math.sin(lo))
+    authored_fov_deg = 42.0
+    old_fill = math.tan(math.asin(1.0 / distance)) / math.tan(
+        math.radians(authored_fov_deg / 2.0)
+    )
+    angular_radius = math.atan(
+        old_fill * math.tan(math.radians(CINEMATIC_FOV_DEG) / 2.0)
+    )
+    composed_distance = 1.0 / math.sin(angular_radius)
     return CameraConfig(
-        position=tuple(n * RADIUS * distance for n in normal),
+        position=tuple(n * RADIUS * composed_distance for n in normal),
         target=(0.0, 0.0, 0.0),
         up=(0.0, 1.0, 0.0),
-        fov=42.0,
         near=RADIUS * 0.02,
         far=RADIUS * 40.0,
     )
@@ -2705,6 +2717,11 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
                 citation=DEMO_META["citation"],
                 dimensions=dims,
                 viewer_config=ViewerConfig(
+                    cinematic_mode=True,
+                    # Radius-dependent channel shifts/noise would corrupt the
+                    # categorical taxon hue encoded by the Neutral pin below.
+                    chromatic_lens_distortion_enabled=False,
+                    detector_noise_enabled=False,
                     # Neutral, not ACES (#1459): hue here is a CATEGORICAL
                     # encoding of taxonomic group, and the scene runs far over
                     # range (GLOBE_INTENSITY 4.88, OCCURRENCE_INTENSITY 100.0).

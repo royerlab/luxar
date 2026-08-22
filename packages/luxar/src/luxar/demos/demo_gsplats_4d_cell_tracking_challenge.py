@@ -118,6 +118,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler, transforms
+from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
     add_demo_caption,
     detect_device,
@@ -1103,7 +1104,9 @@ def create_luxar_scene(
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
             scene = compiler.create_scene(
-                citation=DEMO_META["citation"], dimensions=dims
+                citation=DEMO_META["citation"],
+                dimensions=dims,
+                viewer_config=ViewerConfig(cinematic_mode=True),
             )
 
             scene.attrs["title"] = (

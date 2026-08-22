@@ -54,6 +54,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import add_demo_caption, launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
@@ -333,7 +334,9 @@ def generate_sharpness_showcase(
         )
 
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                dimensions=dims, viewer_config=ViewerConfig(cinematic_mode=True)
+            )
 
             # Add all four examples
             create_sharpness_gradient_example(scene, n_points=gradient_points)

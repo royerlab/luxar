@@ -206,7 +206,7 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
             scene = compiler.create_scene(
                 citation=DEMO_META["citation"],
                 dimensions=dims,
-                viewer_config=ViewerConfig(tone_mapping="ACES"),
+                viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="ACES"),
             )
             scene.attrs["title"] = "GSplats: 4D Two-Channel Neuromast Timelapse"
             scene.attrs["description"] = (

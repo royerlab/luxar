@@ -550,8 +550,14 @@ def create_luxar_scene(
             # "None" is the documented alternative (#1459) — an exact
             # passthrough, as long as the render sits inside [0, 1].
             viewer_config = ViewerConfig(
+                cinematic_mode=True,
                 control_type="ortho",
                 tone_mapping="ACES",
+                # Preserve the projection-only scale bar and measured intensity.
+                bloom_enabled=False,
+                chromatic_lens_distortion_enabled=False,
+                detector_noise_enabled=False,
+                vignette_enabled=False,
                 ui=UIConfig(show_scale_bar=True),
             )
             scene = compiler.create_scene(

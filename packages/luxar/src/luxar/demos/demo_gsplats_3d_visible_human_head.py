@@ -42,22 +42,54 @@ store's own order (save → reload → sample), never from the in-memory fit. On
 the pair is verified against that invariant (splats sharing a voxel must share a
 color); a mismatched pair is reported and refitted rather than rendered.
 
-NO WORKING FAST PATH TODAY (#1670): the shipped ``vh_head_colors.npz`` was
-sampled in the pre-save splat order and does NOT correspond to the shipped
-``vh_head.gsplats.zarr.zip`` (measured same-voxel agreement 0.00097 over
-1,911,192 splats). The guard therefore REJECTS the shipped pair and every run
-falls through to the download-and-refit path below, until the artifact is
-regenerated. So on a fresh machine this demo bootstraps itself with no manual
-steps, but not instantly:
-  1. It downloads the 377 color slices (~1.1 GB) to
+On a fresh machine this demo bootstraps itself with no manual steps:
+  1. Fast path: the two Git LFS assets in
+     ``demos/data/gsplats_visible_human_head/`` — the 1,911,192-splat fit and
+     its colors sidecar — are loaded and verified against the invariant above.
+  2. If they aren't pulled, it downloads the 377 color slices (~1.1 GB) to
      ``~/.cache/luxar/gsplats_visible_human_head/``, builds the masked RGB
      volume, fits luminance on the GPU, caches the fit, then reloads it and
      samples the colors from the stored splat order — so subsequent runs load
      that (verified) local pair instantly.
-  2. The shipped Git LFS assets in ``demos/data/gsplats_visible_human_head/``
-     become the fast path again as soon as the sidecar is regenerated against
-     the store it ships with.
 ``--recompute`` forces the download + build + fit path.
+
+The fast path was broken for a while (#1670): the shipped sidecar had been
+sampled in the pre-save splat order, so it did not correspond to the shipped
+store (measured same-voxel agreement 0.00097 over 1,911,192 splats) and the
+guard rejected it on every run. Recovering it needed no refit — the fit itself
+was never wrong, only the color ORDER — so the volume was rebuilt and resampled
+at the shipped store's own centers. The sidecar carries no positions, so a
+mis-ordered one can never be repaired in place: resampling is the only route.
+
+That resample is exactly the operation ``load_or_build`` refuses to perform
+automatically, for the reason given at its rejection branch: agreement 1.0 does
+NOT prove the resample used the right coordinate frame, because splats sharing a
+voxel share an index in any frame whatsoever. It was therefore verified out of
+band, on three pieces of evidence this guard cannot produce:
+
+  * the rebuilt volume's shape, ``(636, 451, 896)``, matches the stored centers
+    spanning ``[0, 0, 0]``–``[635, 450, 895]`` exactly, so neither the crop box
+    nor the resample factor drifted;
+  * 99.96% of the stored centers land on non-zero (tissue) voxels, against a
+    32.93% tissue fraction for the volume as a whole — and every deliberately
+    misaligned frame scores lower (a 10-voxel shift 98.9%, 25 voxels 90.7%, a
+    y/x axis swap 22.0%, below the base rate);
+  * the regenerated colors preserve the previous sidecar's colour distribution
+    (total-variation distance 0.0065), which pins the SOURCE — the same volume,
+    masked the same way — independently of the ordering.
+
+The three are complementary, and none suffices alone: the distribution check
+would survive a small translation, the tissue-hit rate would survive a subtle
+resample change, and the shape check alone says nothing about content.
+
+Anyone regenerating this sidecar should reproduce all three rather than trusting
+the agreement number alone. ``--recompute`` is the supported route and writes a
+fresh fit AND a matching sidecar via :func:`save_and_sample_colors`. The cheaper
+repair, when the fit is fine and only the sidecar is lost, is not wired into the
+demo (see the refusal in :func:`load_or_build`) but is three calls:
+``vol, _ = assemble_volume(PNG_DIR)``, then :func:`sample_colors` at
+``GSplatData.load(LFS_FIT).centers``, then :func:`_save_colors_u8` — which
+preserves the shipped fit and the 20 MB of Git LFS history that goes with it.
 
 USAGE
 -----
@@ -74,19 +106,17 @@ DEMO_META = {
     "category": "medical",
     "geometry": "gsplats",
     "requirements": {
-        # 1100, not 25: the shipped `vh_head_colors.npz` sidecar does not
-        # correspond to the shipped fit (#1670), so the guard rejects the pair
-        # and the DEFAULT path is the full ~1.1 GB cryosection download + refit.
-        # Restore 25 once the artifact is regenerated (and the shipped pair
-        # passes `_colors_match_fit`). Read by `luxar demo run-all`, whose
-        # `--max-download-mb` default of 200 now skips this demo — correctly, it
-        # really does download 1.1 GB unattended.
-        "download_mb": 1100,
-        # "heavy", not "medium", for the same reason and with the same expiry:
-        # the default path today is a progressive fit of up to 4M splats over a
-        # ~10 GB RGB volume, not a cached load. Restore "medium" together with
-        # the 25 above once the artifact is regenerated.
-        "compute": "heavy",
+        # Back to 25 (#1670 resolved): the shipped sidecar was regenerated
+        # against the shipped fit and the pair now passes `_colors_match_fit`
+        # at agreement 1.0, so the DEFAULT path is the two Git-LFS assets —
+        # 20.6 MB fit + 5.0 MB colors — not the 1.1 GB cryosection download.
+        # Read by `luxar demo run-all`, whose `--max-download-mb` default of 200
+        # therefore stops skipping this demo.
+        "download_mb": 25,
+        # "medium" again for the same reason: the default path is a cached load
+        # of a 1.9M-splat store, not a progressive fit over a ~10 GB RGB volume.
+        # Only `--recompute` still pays that.
+        "compute": "medium",
         # Still "optional": the fit genuinely runs on CPU (slowly).
         "gpu": "optional",
         "local_data": "git-lfs",
@@ -119,6 +149,7 @@ from luxar.demos import (
     voxel_sampled_payload_agreement,
     warn_if_no_cuda_gpu,
 )
+from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
 from luxar.demos._lod_policy import save_with_lod
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
@@ -639,16 +670,14 @@ def create_luxar_scene(fit: GSplatData, colors: np.ndarray, output_path: Path) -
             np.abs(centered.centers.max(axis=0)),
             np.abs(centered.centers.min(axis=0)),
         )
-        fov_deg = 45.0
         # Fit the taller of (height, width) into the frame, with a little air.
         need = float(max(half[0], half[2])) * 1.15
-        cam_dist = need / np.tan(np.radians(fov_deg) / 2.0)
+        cam_dist = need / np.tan(np.radians(CINEMATIC_FOV_DEG) / 2.0)
         radius = float(np.linalg.norm(half))
         camera = CameraConfig(
             position=(0.0, -cam_dist, 0.0),
             target=(0.0, 0.0, 0.0),
             up=(-1.0, 0.0, 0.0),
-            fov=fov_deg,
             near=float(max(1.0, (cam_dist - radius) * 0.5)),
             far=float((cam_dist + radius) * 2.0),
         )
@@ -662,7 +691,9 @@ def create_luxar_scene(fit: GSplatData, colors: np.ndarray, output_path: Path) -
             scene = compiler.create_scene(
                 citation=DEMO_META["citation"],
                 dimensions=dims,
-                viewer_config=ViewerConfig(tone_mapping="ACES", camera=camera),
+                viewer_config=ViewerConfig(
+                    cinematic_mode=True, tone_mapping="ACES", camera=camera
+                ),
             )
             scene.attrs["title"] = "GSplats: Visible Human Head (NLM cryosections)"
             scene.add_gsplats(

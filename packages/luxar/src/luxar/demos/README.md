@@ -92,6 +92,36 @@ through. The choice applies from the next refit onwards — the
 hosted archives keep whatever topology they were written with until they are
 refitted and reuploaded, since the manifest pins their checksums.
 
+Every demo scene opens in the cinematic look, and it costs one keyword:
+`ViewerConfig(cinematic_mode=True)`, which the viewer's zarr bridge expands into
+ACES, a subtle wide bloom, detector noise, a vignette and a 35 mm chromatic lens
+for every field the scene did not set itself — so an explicit `tone_mapping`,
+`exposure` or bloom value still wins. `tests/test_demos_cinematic_mode.py` is the
+gate: no `create_scene` without a `viewer_config`, and no `ViewerConfig` without
+a literal `cinematic_mode=True`.
+
+The preset also expands the field of view from 47° to 63°. The viewer resolves
+that FOV before automatic framing, so an auto-framed scene keeps the fitted
+subject occupancy intended for the lens. A returning visitor's stored FOV takes
+precedence only for auto-framed scenes; an authored position is restored with
+the scene FOV it was composed for.
+
+An authored camera position is a stronger contract, because its distance was
+composed for one FOV. Every authored pose **composes for 63°** through
+`_cinematic_camera.py`: read `CINEMATIC_FOV_DEG` when the distance comes from
+the lens, or use `framing_scale()` / `pull_in()` with the pose's original
+38°–50° FOV. Most poses preserve their authored framing exactly; the
+biodiversity globe preserves its silhouette, while the forest and embryo-line
+poses preserve camera clearance instead. `pull_in()` scales about the target,
+so an off-origin camera keeps its aim. The guard rejects both a mixed-lens FOV
+pin and a bare authored position whose FOV assumption nobody can read.
+
+Four demos pin scientific-fidelity exceptions. The two quantitative ortho demos
+suppress bloom, vignette, lens distortion and detector noise so their
+projection-derived scale bars and measured intensities remain meaningful. The
+biodiversity globe and nD transform bench suppress lens distortion and detector
+noise because their categorical or exact RGB hues carry data.
+
 The three network demos (`caida_as_topology`, `huri_interactome`,
 `ppi_flow_field`) share `_graph_common.py`, but not all of it. All three use the
 cache-aware download and Louvain community detection; the sparse adjacency and
@@ -858,7 +888,7 @@ The human head Gaussian-splatted in **true photographic color** from the NLM Vis
 
 **Run**: `luxar demo run gsplats_3d_visible_human_head [-- --recompute]`
 
-**Requires**: **~1.1 GB download + a fit (GPU strongly preferred; CPU works but is slow) on the first run today.** The shipped Git LFS pair is a fit plus a per-splat colors sidecar, but that sidecar was written in the wrong splat order and does not correspond to the fit it ships with (issue #1670) — the demo detects the mismatch on load, refuses to render it, and falls through to the download-and-refit path, which caches a verified pair for later runs. Once the artifact is regenerated this is "nothing extra by default" again. The refit auto-downloads the 377 color head slices (~1.1 GB) to `~/.cache/luxar/gsplats_visible_human_head/`, builds the masked RGB volume, fits luminance (GPU), and samples per-splat colors; `--recompute` forces that path regardless.
+**Requires**: nothing extra by default — the shipped Git LFS pair (a 1,911,192-splat fit plus its per-splat colors sidecar, ~25 MB together) is verified on load and used directly. With `--recompute` (or if the LFS assets aren't pulled), it auto-downloads the 377 color head slices (~1.1 GB) to `~/.cache/luxar/gsplats_visible_human_head/`, builds the masked RGB volume, fits luminance (GPU strongly preferred; CPU works but is slow), and samples per-splat colors from the stored splat order.
 
 **Demonstrates**: True-color volumetric anatomy → Gaussian splats via a **single luminance fit + per-splat color sampling** (one fit, real photographic color — vs. the scalar-intensity-plus-colormap microscopy demos), warm-vs-blue tissue masking to drop the frozen-gel background, ACES tone-mapping, self-contained download → mask → fit → cache-processed bootstrap. Data: [NLM Visible Human Project](https://www.nlm.nih.gov/research/visible/visible_human.html) (Male color cryosections, head subset; public domain).
 

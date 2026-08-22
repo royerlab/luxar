@@ -108,6 +108,7 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
     add_demo_caption,
     launch_viewer,
@@ -534,7 +535,9 @@ def create_luxar_scene(
                 ]
             )
             scene = compiler.create_scene(
-                citation=DEMO_META["citation"], dimensions=dims
+                citation=DEMO_META["citation"],
+                dimensions=dims,
+                viewer_config=ViewerConfig(cinematic_mode=True),
             )
 
             scene.attrs["title"] = "GSplats: Mouse Embryo Heart E13.5 (Acto3D)"

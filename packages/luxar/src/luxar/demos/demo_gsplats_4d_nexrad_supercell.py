@@ -199,6 +199,7 @@ from luxar.demos import (
     require_module,
     warn_if_no_cuda_gpu,
 )
+from luxar.demos._cinematic_camera import pull_in
 from luxar.demos._lod_policy import save_with_lod
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
@@ -1399,9 +1400,11 @@ def create_luxar_scene(
         with LuxarZarrCompiler(
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
+            camera_target = (-66.0, 26.0, 6.0)
             scene = compiler.create_scene(
                 dimensions=dims,
                 viewer_config=ViewerConfig(
+                    cinematic_mode=True,
                     tone_mapping="ACES",
                     camera=CameraConfig(
                         # WORLD UP MUST BE +Z HERE. The displayed dims map
@@ -1417,14 +1420,17 @@ def create_luxar_scene(
                         # earlier pose was tuned for a 180x120 km domain and now
                         # sits inside the 300x300 km one, where the reference cube
                         # degenerates into a couple of stray edges crossing frame.
-                        # ~300 km out, not the ~510 km that would frame the entire
+                        # ~202 km out, not the ~347 km that would frame the entire
                         # 425 km diagonal: the appearance above was tuned at a close
                         # view, and at full-domain distance the low opacity reads as
                         # faint. This keeps the storm substantial with most of the
                         # reference cube still in frame.
-                        position=(84.0, -199.0, 132.0),
-                        target=(-66.0, 26.0, 6.0),
-                        fov=45.0,
+                        position=pull_in(
+                            (84.0, -199.0, 132.0),
+                            camera_target,
+                            from_fov_deg=45.0,
+                        ),
+                        target=camera_target,
                     ),
                 ),
                 citation=DEMO_META["citation"],

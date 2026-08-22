@@ -102,6 +102,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import add_demo_caption, cached_download, launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
@@ -579,7 +580,9 @@ def generate_nuclear_pore_complex(
                     ]
                 )
                 scene = compiler.create_scene(
-                    dimensions=dims, citation=DEMO_META["citation"]
+                    dimensions=dims,
+                    citation=DEMO_META["citation"],
+                    viewer_config=ViewerConfig(cinematic_mode=True),
                 )
 
                 # Sharpness for crisp, sharp protein atoms (normalized [0, 1] knob)

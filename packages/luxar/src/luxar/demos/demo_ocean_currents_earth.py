@@ -109,6 +109,7 @@ from luxar.demos import (
     parse_demo_flags,
     require_module,
 )
+from luxar.demos._cinematic_camera import pull_in
 from luxar.encoding import EncodingMode
 from luxar.utils.paths import get_demos_output_dir
 
@@ -500,11 +501,17 @@ def globe_camera(lon: float, lat: float, *, distance: float = 2.05) -> CameraCon
         [np.cos(la) * np.cos(lo), np.sin(la), -np.cos(la) * np.sin(lo)],
         dtype=np.float64,
     )
+    # This pose frames the local surface patch around a 0.9R target, so the
+    # target-relative planar pull-in is the intended invariant rather than the silhouette.
+    target = tuple((normal * RADIUS * 0.9).tolist())
     return CameraConfig(
-        position=tuple((normal * RADIUS * distance).tolist()),
-        target=tuple((normal * RADIUS * 0.9).tolist()),
+        position=pull_in(
+            tuple((normal * RADIUS * distance).tolist()),
+            target,
+            from_fov_deg=42.0,
+        ),
+        target=target,
         up=(0.0, 1.0, 0.0),
-        fov=42.0,
     )
 
 
@@ -616,6 +623,7 @@ def build_scene(hycom_path: Path, marble_path: Path, output_path: Path) -> Path:
                 citation=DEMO_META["citation"],
                 dimensions=dims,
                 viewer_config=ViewerConfig(
+                    cinematic_mode=True,
                     # No tone mapping at all (#1459): the ramp is an encoding of
                     # speed, and every colour here — Blue Marble texture and
                     # blue->white LUT alike — already sits inside [0, 1], so a

@@ -82,6 +82,9 @@ test('cinematic FOV preserves auto-framed screen occupancy', async ({ browser })
 });
 
 test('authored position carries its cinematic FOV past stored settings', async ({ browser }) => {
+  // This auto-framed leg proves SCENE_ID still matches the viewer's derived
+  // storage key; otherwise the authored-position assertion could pass without
+  // exercising stored-settings precedence at all.
   const storedAutoFrame = await loadAndMeasure(browser, {
     cinematic: true,
     storedFov: 47,

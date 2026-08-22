@@ -21,6 +21,7 @@ from arbol import aprint, asection
 from .fitting.fit_utils import (
     _invocation_token,
     resolve_shared_floor,
+    save_fit_output,
     validate_floor_spec,
 )
 
@@ -68,14 +69,7 @@ def _save_fit_result(
     compress: "Optional[Literal['zip', 'tar.gz']]" = None,
 ) -> None:
     """Save either a flat ``GSplatData`` leaf or a ``kind=partition`` tree node."""
-    from luxar.gsplats.gsplat_data import GSplatData
-
-    if isinstance(result, GSplatData):
-        result.save(output, include_fitting_info=True, compress=compress)
-    else:  # a GSplatNode (partition / leaf tree) has no flat-matrix equivalent
-        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
-
-        write_gsplats_tree(output, result, compress=compress)
+    save_fit_output(result, output, compress=compress, verbose=False)
 
 
 def _stamp_content_floor(

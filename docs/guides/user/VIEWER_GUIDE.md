@@ -390,7 +390,8 @@ with luxar.LuxarZarrCompiler("output.luxar.zarr") as compiler:
 
 Settings are resolved with the following priority (highest first):
 
-1. **localStorage overrides** -- per-scene user changes made in the browser
+1. **localStorage overrides** -- per-scene user changes made in the browser,
+   except that an authored camera position is restored with its resolved scene FOV
 2. **viewer_config** -- defaults stored in the Zarr file
 3. **Built-in defaults** -- the viewer's own defaults
 
@@ -429,9 +430,12 @@ can enable the look and still override, say, `bloom_strength` on top of it.
 Note that the preset also widens the camera to the 35 mm field of view (63°),
 which is applied before automatic framing so the fitted subject occupancy
 matches that lens. Pin `camera.fov` (or `camera.fov_preset`) only when composing
-an explicit camera pose for a specific lens. A returning visitor's stored FOV
-still takes precedence for auto-framed scenes; an authored camera position is
-always restored with the resolved scene FOV it was composed for.
+an explicit camera pose for a specific lens; the preset then leaves the authored
+FOV alone but still applies its 35 mm distortion to that different framing. The
+bundled demos instead leave the FOV unpinned and compose their authored positions
+for 63°. A returning visitor's stored FOV still takes precedence for auto-framed
+scenes; an authored camera position is always restored with the resolved scene FOV
+it was composed for.
 
 See `luxar.ViewerConfig` docstring for the full field list with types and
 valid ranges.

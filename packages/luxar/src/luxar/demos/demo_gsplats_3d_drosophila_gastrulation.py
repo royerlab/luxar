@@ -181,7 +181,7 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
                 dimensions=dims,
-                viewer_config=ViewerConfig(tone_mapping="ACES"),
+                viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="ACES"),
                 citation=DEMO_META["citation"],
             )
             scene.attrs["title"] = "GSplats: Drosophila Gastrulation (SiMView)"

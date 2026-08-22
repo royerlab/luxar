@@ -1,6 +1,7 @@
 """The set of demo-package modules the demo guards must scan.
 
-Eleven guards read this set: four in ``test_demos_dependencies.py``, one in
+Sixteen guards across nine modules read this set: four in
+``test_demos_dependencies.py``, one in
 ``test_no_entrypoint_dependency_preflight.py``, one in
 ``test_substitutive_lod_gated.py``, one in ``test_demo_layers.py`` (the
 Layers-panel lint — the first consumer that is not about optional dependencies;
@@ -14,17 +15,21 @@ module carries a justified exception; it too covers shared helpers, since
 ``_interop_common.build_interop_scene`` sets a scene's tone mapping by
 default), one in ``test_demo_fit_provenance.py`` (the fit-provenance lint —
 ``_interop_common.py`` saves gsplat stores, so an ``include_fitting_info=False``
-save could hide in a helper), and one in ``test_demo_caption_coverage.py`` (the
-standard-caption lint, including shared helpers that can author overlays). The
-dependency guards all used to enumerate ``demo_*.py`` only, which left the
-package's SHARED helper modules unscanned. That became a real blind spot when
-``_roundtrip_common.py`` moved a ``require_module("matplotlib.pyplot")`` gate out
-of five ``demo_*.py`` files into one shared module: the invariants those guards
-advertise — every gated module is in ``INSTALL_SPECS``, no runtime
-``pip install``, no unbounded install hint, no entry-point preflight, no ungated
-``substitutive_lod`` — silently stopped covering it. Shared helpers build scene
-nodes as well as gate imports, so the LOD guard needs the wider set for the same
-reason (``_interop_common.build_interop_scene`` calls ``add_gsplats_from_file``).
+save could hide in a helper), one in ``test_demo_caption_coverage.py`` (the
+standard-caption lint, including shared helpers that can author overlays), and
+five in ``test_demos_cinematic_mode.py`` (each scene passes a non-None viewer
+config, every config enables the preset, authored cameras leave the FOV unpinned
+and compose for 63°, scientific-fidelity overrides stay explicit, and the Python
+FOV constants match the viewer contract). The dependency guards
+all used to enumerate ``demo_*.py`` only, which left the package's SHARED helper
+modules unscanned. That became a real blind spot when ``_roundtrip_common.py``
+moved a ``require_module("matplotlib.pyplot")`` gate out of five ``demo_*.py``
+files into one shared module: the invariants those guards advertise — every
+gated module is in ``INSTALL_SPECS``, no runtime ``pip install``, no unbounded
+install hint, no entry-point preflight, no ungated ``substitutive_lod`` —
+silently stopped covering it. Shared helpers build scene nodes as well as gate
+imports, so the LOD guard needs the wider set for the same reason
+(``_interop_common.build_interop_scene`` calls ``add_gsplats_from_file``).
 
 Widening the file set is necessary but NOT sufficient for the last of those
 invariants: the preflight guard walks outward from ``main()``, so a module with
@@ -34,8 +39,8 @@ module-level ``def``s for such modules; the two changes only work together.
 
 The set is a DENYLIST on purpose: every ``*.py`` directly under ``demos/``
 *except* :data:`EXCLUDED`. An allowlist keyed on a filename pattern would be
-opt-in, so a future ``demos/_plot_helpers.py`` would escape all eleven guards and
-reopen the very blind spot this module exists to close.
+opt-in, so a future ``demos/_plot_helpers.py`` would escape all sixteen guards
+and reopen the very blind spot this module exists to close.
 
 The flip side of a denylist: ANY ``*.py`` dropped into ``demos/`` joins the
 guarded set, tracked by git or not. A scratch file such as ``demos/tmp_probe.py``
@@ -56,7 +61,7 @@ demo code, and one of them would produce a *false* positive:
 ``__init__.py``
     A pure re-export barrel; it holds no demo code and no gates.
 
-``registry.py`` is deliberately NOT excluded — it passes all eleven guards, so
+``registry.py`` is deliberately NOT excluded — it passes all sixteen guards, so
 there is no reason to carve it out.
 
 Not a test module and not a demo (no ``test_`` / ``demo_`` prefix), so neither

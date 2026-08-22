@@ -88,9 +88,13 @@ def run_decimate_dataset(
                 # Thread the (already scrubbed) provenance through the tree writer
                 # the same way `transform` does, so the output's `fitting/` /
                 # `provenance/` / `pipeline/` groups round-trip instead of being
-                # silently dropped.
+                # silently dropped. Both scrubs happened inside `decimate` itself:
+                # the measured reconstruction scores, and — because it returns ONE
+                # FLAT LEAF whatever it was handed — the input's LOD topology
+                # record (#1600). Nothing left to clean here.
                 fitting, config, provenance, pipeline = split_fitting_info(
-                    dict(reduced.stats), include_fitting_info=True
+                    reduced.stats,
+                    include_fitting_info=True,
                 )
                 write_gsplats_tree(
                     output_path,

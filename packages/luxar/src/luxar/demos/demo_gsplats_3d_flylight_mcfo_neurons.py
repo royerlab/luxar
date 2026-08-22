@@ -321,6 +321,7 @@ from luxar.demos import (
     require_module,
     warn_if_no_cuda_gpu,
 )
+from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.paths import get_demos_output_dir
@@ -420,7 +421,7 @@ COLOR_BALANCE_PERCENTILE = 99.99
 
 # Initial framing. <1 starts closer than a just-fits view of the bounding
 # sphere; the specimen tilt is MEASURED per sample, never hard-coded.
-CAMERA_FOV_DEG = 47.0
+CAMERA_FOV_DEG = CINEMATIC_FOV_DEG
 CAMERA_FRAMING = 0.60
 
 CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_flylight_mcfo"
@@ -1437,12 +1438,13 @@ def create_luxar_scene(
                 # as decoration, and the bloom gives the bright neurites the
                 # halo they have in the raw data.
                 #
-                # Each effect is spelled out because ``cinematic_mode`` alone
-                # would render none of them: the viewer applies its cinematic
-                # preset from the C-key toggle, and a scene's flag only sets the
-                # panel's summary state. The values below are that preset's, so
-                # the two agree; the flag stays so the toggle reads as already
-                # on. ACES is stated explicitly for the same reason.
+                # ``cinematic_mode=True`` now carries that look on its own — the
+                # zarr bridge expands the preset into every field a scene leaves
+                # unset (#1591), which it did NOT when this demo was written.
+                # The effects below are spelled out anyway, and they hold the
+                # preset's own values, so they are redundant rather than wrong:
+                # they keep this scene's grain and glow pinned at what it was
+                # tuned against if the shared preset is ever re-graded.
                 viewer_config=ViewerConfig(
                     tone_mapping="ACES",
                     cinematic_mode=True,
@@ -1464,7 +1466,6 @@ def create_luxar_scene(
                         # The un-negated version rolls the wrong way and still
                         # looks plausible — diagonal, just mirrored.
                         up=(float(-np.sin(tilt)), float(np.cos(tilt)), 0.0),
-                        fov=CAMERA_FOV_DEG,
                     ),
                 ),
                 citation=DEMO_META["citation"],

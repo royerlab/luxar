@@ -41,11 +41,13 @@ def build_lines_ordering(
         n_segments: Number of segments
         ctx: Spatial-ordering configuration (enable flag + method).
         store: Root zarr group (read for ``scene_dimensions``).
-        dataset_ctx: Encoder configuration, used ONLY to ask how far the store
-            will move a vertex (see
+        dataset_ctx: Encoder configuration, used to ask how far the store will
+            move a vertex (see
             :meth:`~luxar.encoding.encoder.ArrayEncoder.coordinate_round_trip_slack`)
-            so both sets of chunk bounds contain the DECODED vertices, not just
-            the authored ones. ``None`` (a direct caller) ⇒ authored bounds.
+            and enlarge a width (see
+            :meth:`~luxar.encoding.encoder.ArrayEncoder.positive_scalar_round_trip_slack`)
+            so spatial segment bounds contain the DECODED footprint, not just
+            the authored one. ``None`` (a direct caller) ⇒ authored bounds.
 
     Returns:
         Dict with sorted arrays, sort indices, chunk bounds, and ordering metadata.
@@ -140,6 +142,17 @@ def build_lines_ordering(
     else:
         widths_expanded = widths[vertex_sort_indices]  # Apply same reordering
 
+    scalar_slack = (
+        dataset_ctx.encoder.positive_scalar_round_trip_slack(
+            widths_expanded,
+            dataset_ctx.encoding_mode,
+            # Must match write_positive_scalar's default used below.
+            positive_scalar_encoding="linear",
+        )
+        if dataset_ctx is not None
+        else None
+    )
+
     segment_chunk_bounds = compute_segment_chunk_bounds(
         sorted_vertices,
         sorted_segments,
@@ -149,6 +162,7 @@ def build_lines_ordering(
             "slice_dims"
         ],  # Use D-space dims
         coord_slack=coord_slack,
+        scalar_slack=scalar_slack,
     )
 
     aprint(

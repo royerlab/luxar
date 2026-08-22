@@ -502,7 +502,7 @@ def create_luxar_scene(
                 # lifts highlights and shifts hue, and Neutral would subtract
                 # its offset and compress from peak 0.76 up — flattening
                 # exactly the shade steps the gallery is making.
-                viewer_config=ViewerConfig(tone_mapping="None"),
+                viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="None"),
             )
             scene.attrs["title"] = "GSplats: lod --recipe gallery — Tribolium Embryo"
             scene.attrs["description"] = """

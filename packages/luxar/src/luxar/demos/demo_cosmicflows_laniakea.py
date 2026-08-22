@@ -61,6 +61,7 @@ from arbol import aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, UIConfig, ViewerConfig
 from luxar.demos import add_demo_caption, cached_download, launch_viewer
+from luxar.demos._cinematic_camera import pull_in
 from luxar.utils.paths import get_demos_output_dir
 
 LANIAKEA_RAW_BASE: Final = "https://raw.githubusercontent.com/manlius/laniakea/main"
@@ -641,11 +642,11 @@ def write_laniakea_scene(
             ]
         )
         viewer_config = ViewerConfig(
+            cinematic_mode=True,
             camera=CameraConfig(
-                position=(1050.0, -1500.0, 780.0),
+                position=pull_in((1050.0, -1500.0, 780.0), from_fov_deg=42.0),
                 target=(0.0, 0.0, 0.0),
                 up=(0.0, 0.0, 1.0),
-                fov=42.0,
                 near=0.1,
                 far=5000.0,
             ),

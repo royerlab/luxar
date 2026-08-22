@@ -1041,26 +1041,26 @@ function disposeObject(object: THREE.Object3D) {
 
 ### SceneManager
 
-| Method                                           | Description                                                                                                     |
-| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
-| `init(options)`                                  | Build renderer, scene, camera, controls, post-processing                                                        |
-| `loadSceneData(src, loaderConfig?, options?)`    | Load zarr scene; `applyViewerConfigFov` gates pre-frame scene FOV under caller-resolved localStorage precedence |
-| `centerCameraOnScene()`                          | Frame camera on scene bounding box                                                                              |
-| `toggleCentering()`                              | Switch center mode (origin ↔ bbox)                                                                              |
-| `getCurrentCenter()`                             | Get active center point                                                                                         |
-| `setFov(degrees)`                                | Set an absolute validated perspective FOV                                                                       |
-| `updateFOV(delta)`                               | Adjust field of view                                                                                            |
-| `updateClippingPlanes(near, far)`                | Set camera clipping planes                                                                                      |
-| `autoAdjustClippingPlanes()`                     | Calculate optimal clipping from scene                                                                           |
-| `setDynamicClipping(enabled)`                    | Enable/disable per-frame clipping update                                                                        |
-| `getDynamicClippingState()`                      | Get current dynamic clipping state                                                                              |
-| `updateDynamicClippingPlanes()`                  | Manually trigger dynamic clipping update                                                                        |
-| `setControlType(type)` / `getControlType()`      | Switch / read current control type                                                                              |
-| `setAdaptivePixelRatio(dpr)`                     | Set DPR override (AdaptiveDPRManager)                                                                           |
-| `updateExposure/GlobalOffset/GlobalGamma(value)` | Update post-processing tone-mapping uniforms                                                                    |
-| `isWebGLContextLost()`                           | Query WebGL context-loss state                                                                                  |
-| `updateSize()`                                   | Handle resize (rAF-debounced)                                                                                   |
-| `dispose()`                                      | Clean up resources                                                                                              |
+| Method                                           | Description                                                                                                            |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `init(options)`                                  | Build renderer, scene, camera, controls, post-processing                                                               |
+| `loadSceneData(src, loaderConfig?, options?)`    | Load zarr scene; `applyViewerConfigFov` gates pre-frame scene FOV unless an authored position carries its resolved FOV |
+| `centerCameraOnScene()`                          | Frame camera on scene bounding box                                                                                     |
+| `toggleCentering()`                              | Switch center mode (origin ↔ bbox)                                                                                     |
+| `getCurrentCenter()`                             | Get active center point                                                                                                |
+| `setFov(degrees)`                                | Set an absolute validated perspective FOV                                                                              |
+| `updateFOV(delta)`                               | Adjust field of view                                                                                                   |
+| `updateClippingPlanes(near, far)`                | Set camera clipping planes                                                                                             |
+| `autoAdjustClippingPlanes()`                     | Calculate optimal clipping from scene                                                                                  |
+| `setDynamicClipping(enabled)`                    | Enable/disable per-frame clipping update                                                                               |
+| `getDynamicClippingState()`                      | Get current dynamic clipping state                                                                                     |
+| `updateDynamicClippingPlanes()`                  | Manually trigger dynamic clipping update                                                                               |
+| `setControlType(type)` / `getControlType()`      | Switch / read current control type                                                                                     |
+| `setAdaptivePixelRatio(dpr)`                     | Set DPR override (AdaptiveDPRManager)                                                                                  |
+| `updateExposure/GlobalOffset/GlobalGamma(value)` | Update post-processing tone-mapping uniforms                                                                           |
+| `isWebGLContextLost()`                           | Query WebGL context-loss state                                                                                         |
+| `updateSize()`                                   | Handle resize (rAF-debounced)                                                                                          |
+| `dispose()`                                      | Clean up resources                                                                                                     |
 
 ### AnimationController
 

@@ -337,7 +337,9 @@ def create_luxar_scene(gsplats_data: GSplatData, output_path: Path) -> Path:
             # is dust, not a scientific colour encoding.
             scene = compiler.create_scene(
                 dimensions=dims,
-                viewer_config=ViewerConfig(tone_mapping="ACES", exposure=-0.17),
+                viewer_config=ViewerConfig(
+                    cinematic_mode=True, tone_mapping="ACES", exposure=-0.17
+                ),
                 citation=DEMO_META["citation"],
             )
             scene.attrs["title"] = (

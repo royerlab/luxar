@@ -388,7 +388,9 @@ def create_luxar_scene(
                 # scene runs over range, where Neutral rolls the peaks off
                 # instead of clipping them flat. Moving it needs a live A/B, not
                 # a blind flip.
-                viewer_config=ViewerConfig(tone_mapping="Neutral", exposure=1.97),
+                viewer_config=ViewerConfig(
+                    cinematic_mode=True, tone_mapping="Neutral", exposure=1.97
+                ),
                 citation=DEMO_META["citation"],
             )
 

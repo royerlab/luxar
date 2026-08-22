@@ -106,6 +106,7 @@ from luxar.demos import (
     voxel_sampled_payload_agreement,
     warn_if_no_cuda_gpu,
 )
+from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
 from luxar.demos._lod_policy import save_with_lod
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
@@ -822,13 +823,12 @@ def create_luxar_scene(fit: GSplatData, labels: np.ndarray, output_path: Path) -
         hi = np.percentile(c, 99, axis=0)
         center = (lo + hi) / 2.0
         height = float(np.max(hi - lo))
-        fov_deg = 45.0
+        fov_deg = CINEMATIC_FOV_DEG
         cam_dist = (height * 0.5) / np.tan(np.radians(fov_deg) / 2.0) * 1.2
         camera = CameraConfig(
             position=(float(center[0]), float(center[1] - cam_dist), float(center[2])),
             target=(float(center[0]), float(center[1]), float(center[2])),
             up=(0.0, 0.0, 1.0),
-            fov=fov_deg,
             near=float(max(0.1, cam_dist * 0.01)),
             far=float(cam_dist * 10.0 + height * 5.0),
         )
@@ -837,7 +837,9 @@ def create_luxar_scene(fit: GSplatData, labels: np.ndarray, output_path: Path) -
         ) as compiler:
             scene = compiler.create_scene(
                 dimensions=dims,
-                viewer_config=ViewerConfig(tone_mapping="ACES", camera=camera),
+                viewer_config=ViewerConfig(
+                    cinematic_mode=True, tone_mapping="ACES", camera=camera
+                ),
                 citation=DEMO_META["citation"],
             )
             scene.attrs["title"] = "GSplats: CT Anatomical Atlas (TotalSegmentator)"
