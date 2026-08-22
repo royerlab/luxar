@@ -6402,9 +6402,13 @@ class TestLODCarriesAuthoredAppearance:
     def test_merge_help_matches_nd_transform_and_colormap_behavior(
         self, runner: CliRunner
     ) -> None:
-        result = runner.invoke(app, ["gsplat", "merge", "--help"])
+        result = runner.invoke(
+            app,
+            ["gsplat", "merge", "--help"],
+            env={"FORCE_COLOR": "1", "TERM": "xterm-256color"},
+        )
         assert result.exit_code == 0, result.stdout
-        help_text = " ".join(result.stdout.split())
+        help_text = " ".join(_plain(result.stdout).split())
         assert "nd_transform remains valid under --as-dimension" in help_text
         assert "when a colored input authored no palette" in help_text
         assert "when any input uses a custom LUT" in help_text
