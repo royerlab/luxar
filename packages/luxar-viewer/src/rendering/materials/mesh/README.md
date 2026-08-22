@@ -1,7 +1,7 @@
 # Mesh Material — Shaded Triangle Surfaces
 
 > The fourth per-geometry material stack, and the first one that **shades**. A
-> light-free view-anchored headlight over an indexed `THREE.BufferGeometry`, with
+> light-free view-anchored offset key light over an indexed `THREE.BufferGeometry`, with
 > the stored-normal / derivative-normal choice made as a compile-time shader
 > variant and per-vertex alpha as the sole coverage term.
 
@@ -35,13 +35,14 @@ Full design rationale: `docs/specs/MESH_NODE_SPEC.md` §6.
 ## The shading model (§6.2)
 
 ```
-shade = mix(uAmbient, 1.0, pow(saturate(dot(N, V) * 0.5 + 0.5), uShadeExponent))
+L = normalize(vec3(-0.35, 0.55, 0.75))
+H = normalize(L + vec3(0.0, 0.0, 1.0))
+shade = mix(uAmbient, 1.0, pow(saturate(dot(N, L) * 0.5 + 0.5), uShadeExponent))
+spec = uSpecular * pow(max(dot(N, H), 0.0), uShininess)
+rgb = rgb * shade + vec3(spec)
 ```
 
-`V` is the fixed view-space axis `(0, 0, 1)` — a camera headlight — so
-`dot(N, V)` reduces to the view-space normal's z. Nothing is added to the scene
-graph and no light node exists; `uAmbient = 1.0` collapses the term entirely and
-reproduces the emissive look of the other three types.
+`L` is a fixed above-left view-space key and `V` remains the fixed view axis `(0, 0, 1)`, making `H` constant too. Nothing is added to the scene graph and no light node exists. `uAmbient = 1.0` removes the diffuse gradient, while `uSpecular = 0.0` removes the highlight.
 
 The shade factor multiplies **RGB only**. It must never enter the coverage, or a
 silhouette fragment would also turn transparent — and, under the `opaque`
@@ -59,11 +60,11 @@ cutout, dissolve.
    NaN shading — and the upper bound matters for the same reason: an INFINITE normal
    component satisfies `>= eps`, and `inf * inversesqrt(inf)` is `inf * 0` = NaN,
    i.e. the guard's own failure mode arriving from the other end.
-3. **The two-sided flip applies to the stored normal only.** Without it a
-   back-facing fragment has `dot(N, V) < 0`, the wrap term lands in `[0, 0.5)`,
-   and the back side shades with a dimmed inverted gradient collapsing toward
-   `uAmbient` — visible immediately, because `double_sided` defaults true and the
-   whole-triangle cull exposes a sliced isosurface's interior faces. The
+3. **The two-sided flip applies to the stored normal only.** Without it the stored
+   back normal shades on the wrong side of its gradient, producing an inverted
+   result that can collapse toward `uAmbient`. This is visible immediately because
+   `double_sided` defaults true and the whole-triangle cull exposes a sliced
+   isosurface's interior faces. The
    derivative normal needs no flip, and flipping it would _reintroduce_ that
    inverted shade exactly at the degenerate vertices the guard exists to rescue.
    So the exemption is per **fragment**, not per variant.
@@ -153,20 +154,19 @@ re-applied per epoch by `applyMeshShading` because its
 
 ## The appearance knobs are author-reachable, and clamped
 
-`ambient`, `shade_exponent` and `alpha_cutoff` are read from the node's composed
-attrs. The writer never stamps them — they arrive only when passed through
-`add_mesh(**attrs)` — but they _were_ already reachable that way, so reading them is
-the difference between an authored value that works and one that silently does
-nothing.
+`ambient`, `shade_exponent`, `specular`, `shininess`, and `alpha_cutoff` are read from the mesh leaf attrs. The writer never stamps them — they arrive only when passed through
+`add_mesh(**attrs)`. This authoring path and the material reads landed together, so
+an accepted value always affects the rendered mesh rather than becoming dead metadata.
 
-All three are clamped at the material boundary, because they are **fractions and an
-exponent, not gains**:
+All five are clamped at the material boundary because they are fractions or exponents, not gains:
 
 | Knob             | Clamp      | Why it is not merely tidiness                                                                                                                                |
 | ---------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `ambient`        | `[0, 1]`   | It is the shade floor. `1e9` multiplies the surface to white.                                                                                                |
+| `specular`       | `[0, 1]`   | It is an additive white term. `1e9` overwhelms the surface colour and clips the result.                                                                      |
 | `alpha_cutoff`   | `[0, 1]`   | Compared against a coverage already in `[0, 1]`. `1e9` discards every fragment — the mesh vanishes with no diagnostic.                                       |
 | `shade_exponent` | `>= 0.001` | `pow(wrap, 0)` where `wrap` is exactly 0 (any face-away fragment) is **undefined** GLSL — driver-dependent 1, 0 or NaN. Same hazard `clampGamma` exists for. |
+| `shininess`      | `>= 0.001` | `pow(max(dot(N, H), 0), 0)` is likewise undefined where the half-vector term is 0; negative values can diverge there.                                        |
 
 NaN/Inf route to the documented default rather than to a range boundary, matching the
 sibling shaders' sanitizer policy: corruption resolves loudly, not to a value that

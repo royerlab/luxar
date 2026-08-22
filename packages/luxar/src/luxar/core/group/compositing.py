@@ -48,6 +48,12 @@ Exposed:
   points / gsplats / mesh leaf, where it would write cleanly and do nothing.
 * :func:`reject_lines_only_join_assignment` — the same refusal for the second
   door into the same attr, the ``node.join = ...`` property setter.
+* :func:`reject_mesh_only_appearance` — refuse mesh-only appearance attrs on
+  points / lines / gsplats leaves and on Groups, where they do not compose. The
+  second door into the same attrs (a post-hoc ``node.attrs[...] = ...``) is guarded
+  by ``core/node/node.py::_WriteThroughAttrs._reject_mesh_only_on_non_mesh``.
+* :data:`MESH_ONLY_APPEARANCE_ATTRS` — the five mesh-only appearance keys
+  refused on every non-mesh node by those two guards.
 * :func:`unnest_add_error` — strip a SAME-geometry inner adder's own ``Could
   not add <geometry> '<child>': …`` prefix from a caught exception's message,
   so a refusal from inside a synthesised same-kind split child (``child_3``,
@@ -71,6 +77,12 @@ import numpy as np
 #: never be mistaken for (or stripped as) a geometry adder's — see
 #: :func:`funnel_add_error`.
 _GEOMETRY_WORDS = ("points", "lines", "mesh", "gsplats")
+
+#: The five mesh-only appearance keys refused on every non-mesh node by the
+#: adder/group and write-through guards.
+MESH_ONLY_APPEARANCE_ATTRS = frozenset(
+    {"alpha_cutoff", "ambient", "shade_exponent", "shininess", "specular"}
+)
 
 #: Matches the prefix an adder's own funnel produces, e.g.
 #: ``Could not add points 'child_3': ...``. Anchored to the start of the
@@ -437,6 +449,21 @@ def reject_lines_only_join(
         raise ValueError(
             f"Cannot add {geometry_type} '{name}' with join={attrs['join']!r}. "
             + lines_only_join_reason(geometry_type)
+        )
+
+
+def reject_mesh_only_appearance(
+    node_type: str, name: str, attrs: Dict[str, Any]
+) -> None:
+    """Refuse mesh-only appearance attrs on non-mesh nodes."""
+    invalid = sorted(MESH_ONLY_APPEARANCE_ATTRS & attrs.keys())
+    if invalid:
+        raise ValueError(
+            f"Cannot add {node_type} '{name}' with mesh-only attribute(s) {invalid}. "
+            "The viewer applies these attributes only to mesh leaves, and they do "
+            "not compose through Groups. Remove them, set them on each mesh leaf "
+            "(part_<i> / child_<i>), or pass them to add_mesh(...), which stamps "
+            "every generated mesh leaf."
         )
 
 

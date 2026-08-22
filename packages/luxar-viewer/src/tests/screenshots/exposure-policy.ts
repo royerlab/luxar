@@ -31,19 +31,22 @@ export const EXPOSURE_MAX = 8;
 export const AUTO_EXPOSURE_ITERS = 3;
 
 /**
- * Flat-subject (mid-tone) pass. A SHADED subject lit by the view-anchored
- * headlight has N·L ≈ 1 on every visible facet, so its lit-luminance histogram
- * is intrinsically NARROW — `mesh_isosurface_cells3d` measured p10 0.840 /
- * p50 0.873 / p99 0.903 at the auto-chosen exposure. Driving p99 to 0.9 parks
- * that whole 0.063-wide distribution deep in the ACES highlight rolloff, which
- * desaturates toward white by design (authored saturations of 0.85/0.70
- * rendered as 0.28/0.14). The clip guard cannot see it: that is a TAIL test,
- * and a 0.063-wide distribution at 0.87 has no tail above CLIP_LUMA. So when
- * the spread is small, p99 is a meaningless anchor and we re-target the MEDIAN.
+ * Flat-subject (mid-tone) pass. A SHADED subject can have a narrow
+ * lit-luminance histogram even when it is not clipped, making p99 a poor anchor
+ * that parks the whole subject in the ACES highlight rolloff. The clip guard
+ * cannot see that failure because it is a TAIL test, so when the phase-1 spread
+ * is small we re-target the MEDIAN.
+ *
+ * After the offset-key shading change, frame 0 of the committed
+ * `mesh_isosurface_cells3d` media measured p10 0.378 / p50 0.506 / p99 0.597
+ * (spread 0.219, 32,845 lit pixels). Those are FINAL-frame values after the
+ * median pass, not the phase-1 values used by this gate; the p50 landing on
+ * TARGET_MID is the important outcome check.
  *
  * THE THRESHOLD IS EMPIRICAL, and deliberately conservative:
- *   - The one measured flat case has spread 0.063 — a ≈2× margin below 0.12.
- *   - Re-exposing the committed gallery media to the post-phase-1 state as a
+ *   - The threshold was set by the original manifest-wide sweep at the
+ *     post-phase-1 state, not by the final committed screenshot quoted above.
+ *   - Re-exposing the committed gallery media to that post-phase-1 state as a
  *     proxy, the TIGHTEST emissive tile measured (`gsplats_4d_celegans_tracking`,
  *     a README pick with auto-exposure on) came out at spread ≈0.167, only
  *     ≈40% above 0.12 — and its histogram is unimodal, so the comfortable
@@ -59,9 +62,8 @@ export const AUTO_EXPOSURE_ITERS = 3;
  * KNOWN OPPOSITE FAILURE MODE: with HI_PERCENTILE 0.99 and a p10 floor, the
  * gate reduces to "fewer than ~10% of the lit pixels are dim", so a
  * high-perimeter mesh whose antialiased silhouette covers more than ~10% of its
- * lit pixels will NOT trigger it and will stay over-exposed. It does trigger on
- * the measured case (p10 = 0.840 there, i.e. the silhouette is well under 10%),
- * but a lacier surface would need the per-demo override.
+ * lit pixels will NOT trigger it and will stay over-exposed. A lacier surface
+ * would need the per-demo override.
  */
 export const NARROW_SPREAD_MAX = 0.12; // p99 − p10 below this ⇒ "flat" subject
 /** Desired p50 luminance of a flat subject once the mid-tone pass converges. */
@@ -79,7 +81,7 @@ export const TARGET_MID = 0.5;
  * oscillate in the linear region.
  *
  * 10, not 8 — but the headroom is thin and the budget is NOT guaranteed to be
- * enough. Swept over display bands on the simulated headlit subject under a
+ * enough. Swept over display bands on the simulated flat-subject profile under a
  * Reinhard `x/(1+x)` curve: the 0.835-0.905 band early-exits on the 8th
  * iteration and a narrower 0.90-0.93 band needs 9, so the margin over the
  * measured worst case is ONE iteration. Bands starting higher still consume
@@ -157,7 +159,7 @@ const clampStops = (s: number): number => Math.max(EXPOSURE_MIN, Math.min(EXPOSU
  *      luminance, so a few log2 corrections converge.
  *   2. Flat-subject pass — if the lit histogram's spread (p99 − p10) is under
  *      NARROW_SPREAD_MAX the subject has essentially no internal dynamic range
- *      (a headlit shaded surface), so p99 is a meaningless anchor: re-target
+ *      (a flat shaded surface), so p99 is a meaningless anchor: re-target
  *      the MEDIAN to TARGET_MID instead. The spread is evaluated AFTER phase 1,
  *      i.e. at the exposure where p99 ≈ 0.9 for every subject, which is what
  *      makes one absolute threshold comparable across geometries. It is an

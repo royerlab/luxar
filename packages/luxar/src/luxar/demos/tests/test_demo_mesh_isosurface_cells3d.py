@@ -123,8 +123,8 @@ def test_normals_are_unit_length_and_point_outward(ball_surface) -> None:
     intensity — outward from a bright object — regardless of
     ``gradient_direction`` (that flag controls face winding, not the normal
     sign). If that ever flipped, every surface would shade as though lit from
-    behind: the §6.2 headlight's wrap term would land in [0, 0.5) and the whole
-    mesh would collapse toward its ambient floor. For a centred ball, "outward"
+    behind: the §6.2 lighting gradient would be evaluated against inward-facing
+    normals and invert on visible exterior faces. For a centred ball, "outward"
     is checkable exactly: the normal must agree with the vertex's own direction
     from the centre.
     """

@@ -143,6 +143,48 @@ def test_grafted_partition_parts_are_not_exposed_as_layers() -> None:
         assert n_layers == 1
 
 
+def test_grafted_partition_mesh_attr_refusal_names_the_requested_node() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        scene_path = Path(tmp) / "scene.luxar.zarr"
+        with pytest.raises(ValueError) as exc_info:
+            with LuxarZarrCompiler(
+                scene_path, encoding_mode=EncodingMode.PRECISION
+            ) as compiler:
+                scene = compiler.create_scene(dimensions=_scene_dims())
+                from luxar.core.group.gsplats_pipeline.from_io import graft_gsplat_node
+
+                graft_gsplat_node(
+                    scene,
+                    name="tiles",
+                    node=_two_clusters().to_spatial_partition(max_elements=30),
+                    specular=0.5,
+                )
+
+        message = str(exc_info.value)
+        assert "Cannot add gsplats 'tiles'" in message
+        assert "part_0" not in message
+        assert list(zarr.open_group(str(scene_path), mode="r").group_keys()) == []
+
+
+def test_partition_file_mesh_attr_refusal_names_the_requested_node() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        tmpdir = Path(tmp)
+        scene_path = tmpdir / "scene.luxar.zarr"
+        with pytest.raises(ValueError) as exc_info:
+            with LuxarZarrCompiler(
+                scene_path, encoding_mode=EncodingMode.PRECISION
+            ) as compiler:
+                scene = compiler.create_scene(dimensions=_scene_dims())
+                scene.add_gsplats_from_file(
+                    "tiles", str(_partition_file(tmpdir)), specular=0.5
+                )
+
+        message = str(exc_info.value)
+        assert "Cannot add gsplats 'tiles'" in message
+        assert "part_0" not in message
+        assert list(zarr.open_group(str(scene_path), mode="r").group_keys()) == []
+
+
 # ────────────────────────────────────────────────────────────────────────
 # Topology-aware coverage_fraction fallback (parity with the standalone writer)
 # ────────────────────────────────────────────────────────────────────────

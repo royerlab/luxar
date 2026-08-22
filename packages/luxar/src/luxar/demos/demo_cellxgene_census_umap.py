@@ -255,7 +255,15 @@ def build_scene(
                 # 10.7x total change only 2.36x undoes the cut (#1375).
                 opacity=0.39,
                 intensity=4.52,
-                absorption=6.5,
+                # Was 6.5. That figure was chosen as "deliberately heavy
+                # because the screening is what gives the lobes depth", and it
+                # overshot: at kappa=6.5 a single cell absorbs 0.92 of what is
+                # behind it and its own self-screening S(tau)=0.36 eats most of
+                # its emission, so the cloud reads as a shell with its interior
+                # screened out rather than as depth-ordered structure. 2.12
+                # keeps the near-absorbs-far cue that made volumetric worth
+                # choosing while letting more of each cell's emission survive.
+                absorption=2.12,
                 blending_mode="volumetric",
                 # Expose the single cells node in the viewer's Layers panel.
                 # With the substitutive-LOD wrapper this rides onto the

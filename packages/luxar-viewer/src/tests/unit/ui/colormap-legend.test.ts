@@ -41,6 +41,8 @@ function makeLayer(overrides: Partial<LayerInfo> = {}): LayerInfo {
     // across types) and inert for a points layer, exactly like `absorption` above.
     ambient: MESH_DEFAULTS.ambient,
     shadeExponent: MESH_DEFAULTS.shadeExponent,
+    specular: MESH_DEFAULTS.specular,
+    shininess: MESH_DEFAULTS.shininess,
     alphaCutoff: MESH_DEFAULTS.alphaCutoff,
     displayMin: 0,
     displayMax: 1,

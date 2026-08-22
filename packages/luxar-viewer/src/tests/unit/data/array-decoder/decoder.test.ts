@@ -43,6 +43,12 @@ import { decode_log_scalar_u8, decode_log_scalar_u16 } from '../../../../wasm/ty
 import { FileSystemStore } from '@zarrita/storage';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
+import {
+  decode_geolog_scalar_u8,
+  decode_geolog_scalar_u16,
+  decode_quantized_u8,
+  decode_quantized_u16,
+} from '../../../../wasm/typescript/decode';
 
 // Get the directory name for ES modules
 const __filename = fileURLToPath(import.meta.url);
@@ -1825,6 +1831,87 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
       // midpoint of [0,255] is 127.5, so codes 127 and 128 straddle 0.
       expect(result[1]).toBeCloseTo(0, 2);
       expect(result[2]).toBeCloseTo(0, 2);
+    });
+  });
+
+  describe('dequantizeRange — shared kernel exact parity', () => {
+    const expectExactFloat32 = (
+      actual: Float32Array,
+      expected: Float32Array,
+      label: string
+    ): void => {
+      const actualBits = new Uint32Array(actual.buffer, actual.byteOffset, actual.length);
+      const expectedBits = new Uint32Array(expected.buffer, expected.byteOffset, expected.length);
+      const mismatch = actualBits.findIndex((bits, index) => bits !== expectedBits[index]);
+      expect(
+        mismatch,
+        mismatch < 0
+          ? label
+          : `${label}: code ${mismatch}, actual=0x${actualBits[mismatch].toString(16)}, expected=0x${expectedBits[mismatch].toString(16)}`
+      ).toBe(-1);
+    };
+
+    it.each([
+      {
+        dtype: 'uint8' as const,
+        data: Uint8Array.from({ length: 256 }, (_, code) => code),
+        bounds: [-12.3456789012345, 98.7654321098765] as [number, number],
+        kernel: decode_quantized_u8,
+      },
+      {
+        dtype: 'uint16' as const,
+        data: Uint16Array.from({ length: 65536 }, (_, code) => code),
+        bounds: [2.6769986296248494e-5, 6.059071789834555] as [number, number],
+        kernel: decode_quantized_u16,
+      },
+    ])('matches the $dtype linear kernel for every code', ({ dtype, data, bounds, kernel }) => {
+      const decoder = new ArrayDecoder(new ArrayRefRegistry());
+      const expected = new Float32Array(data.length);
+      kernel(data, bounds[0], bounds[1], expected);
+
+      for (const [label, input] of [
+        ['native integer input', data],
+        ['full-array Float32 input', new Float32Array(data)],
+      ] as const) {
+        const actual = decoder.dequantizeRange(input, {
+          bounds,
+          dtype,
+          isLogSpace: false,
+        });
+        expectExactFloat32(actual, expected, `${dtype} ${label}`);
+      }
+    });
+
+    it.each([
+      {
+        dtype: 'uint8' as const,
+        data: Uint8Array.from({ length: 256 }, (_, code) => code),
+        bounds: [Math.log(1e-3), Math.log(1e3)] as [number, number],
+        kernel: decode_geolog_scalar_u8,
+      },
+      {
+        dtype: 'uint16' as const,
+        data: Uint16Array.from({ length: 65536 }, (_, code) => code),
+        bounds: [Math.log(0.5), Math.log(12345.6789)] as [number, number],
+        kernel: decode_geolog_scalar_u16,
+      },
+    ])('matches the $dtype geolog kernel for every code', ({ dtype, data, bounds, kernel }) => {
+      const decoder = new ArrayDecoder(new ArrayRefRegistry());
+      const expected = new Float32Array(data.length);
+      kernel(data, bounds[0], bounds[1], expected);
+
+      for (const [label, input] of [
+        ['native integer input', data],
+        ['full-array Float32 input', new Float32Array(data)],
+      ] as const) {
+        const actual = decoder.dequantizeRange(input, {
+          bounds,
+          dtype,
+          isLogSpace: false,
+          isGeologSpace: true,
+        });
+        expectExactFloat32(actual, expected, `${dtype} ${label}`);
+      }
     });
   });
 

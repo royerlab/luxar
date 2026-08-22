@@ -970,9 +970,13 @@ Two structural differences from the other three types:
   "ordering": "none",                // always "none" in v1 (no spatial index)
   // ... plus the standard render attrs (opacity, gamma, intensity, offset,
   //     absorption, blending_mode, colormap, layer, transform, nd_transform,
-  //     extend_to_all)
+  //     extend_to_all) and mesh-only appearance attrs (ambient, shade_exponent,
+  //     specular, shininess, alpha_cutoff)
 }
 ```
+
+The five mesh-only appearance attrs control the view-anchored shading model;
+they are rejected on points, lines, Gaussian splats, and groups.
 
 #### vertices/ (Required)
 - **Shape:** `(V, D)` — nD vertex positions, exactly like `Lines.vertices`.
@@ -1121,8 +1125,9 @@ Any scene-graph node — `points`, `lines`, `gsplats`, `mesh`, or a container
 `group` — may be exposed as a layer in the viewer's Layers panel by setting
 `layer: true` in its zarr attrs. The panel (toggled with **L**) provides
 per-layer visibility, display-range, gamma, opacity, absorption (volumetric
-mode's κ), blending mode, and colormap controls, plus three mesh-only shading
-controls (ambient, shade falloff, alpha cutoff).
+mode's κ), blending mode, and colormap controls, plus five mesh-only shading
+controls (ambient, shade falloff, specular, shininess, alpha cutoff). The five
+shading attrs are valid only on mesh leaves and do not inherit through groups.
 
 ```javascript
 {
@@ -1971,6 +1976,6 @@ with LuxarZarrCompiler("output.luxar.zarr", enable_spatial_index=True) as compil
 
 - Support for volumes
 - Material system with shading models (mesh ships one deliberately minimal,
-  light-free headlight — lights and richer shading models are still ahead)
+  light-free view-anchored offset key — scene lights and richer shading models are still ahead)
 - Temporal interpolation for smooth animations
 - Multi-resolution spatial indices for LOD
