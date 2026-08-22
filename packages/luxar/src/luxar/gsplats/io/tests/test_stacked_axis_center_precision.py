@@ -48,20 +48,42 @@ import pytest
 import zarr
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.encoding import EncodingMode
+from luxar.encoding import ArrayEncoder, EncodingMode
 from luxar.encoding.decoder import ArrayDecoder
 from luxar.gsplats import GSplatData
+from luxar.io._compiler.context import DatasetCtx
 from luxar.io._compiler.gsplat_assembly import (
     MAX_CENTER_DISPLACEMENT_SIGMAS,
     MAX_UNREPRESENTABLE_SPLAT_FRACTION,
     _center_quantization_offender,
+    _centers_mode_for_write,
+    _CentersEncodingPlan,
 )
+from luxar.io.reader import DEFAULT_COMP
 
 LOSSY_MODES = [EncodingMode.AUTO, EncodingMode.MEMORY]
 ALL_MODES = LOSSY_MODES + [EncodingMode.PRECISION]
 
 #: Diagonal positions of a packed row-major lower-triangular 4-D Cholesky row.
 _DIAG_4D = [0, 2, 5, 9]
+
+
+def test_cached_centers_mode_is_bound_to_the_requested_write_mode() -> None:
+    """A plan resolved for another context cannot drive dedup or encoding."""
+    rng = np.random.default_rng(1870)
+    centers = rng.random((512, 3)).astype(np.float32)
+    chol = np.zeros((512, 6), dtype=np.float32)
+    chol[:, [0, 2, 5]] = 1.0
+    ctx = DatasetCtx(ArrayEncoder(), EncodingMode.AUTO, DEFAULT_COMP)
+
+    stale = _CentersEncodingPlan(EncodingMode.PRECISION, EncodingMode.PRECISION)
+    assert _centers_mode_for_write(stale, centers, chol, 3, ctx) == EncodingMode.AUTO
+
+    matching = _CentersEncodingPlan(EncodingMode.AUTO, EncodingMode.PRECISION)
+    assert (
+        _centers_mode_for_write(matching, centers, chol, 3, ctx)
+        == EncodingMode.PRECISION
+    )
 
 
 def _frame(n_splats: int, seed: int) -> GSplatData:

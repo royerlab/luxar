@@ -67,7 +67,7 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
-from luxar.demos import launch_viewer
+from luxar.demos import add_demo_caption, launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
 # Per-fractal point budget. Rules that keep more than this are uniformly
@@ -616,12 +616,8 @@ def generate_4d_fractal_dataset(
                 )
 
             # Info
-            scene.add_text(
-                "6 fractal types • 4D space",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+            add_demo_caption(
+                scene, "6 fractal types • 4D space", DEMO_META.get("citation")
             )
 
         aprint(f"✓ Written to {output_path}")

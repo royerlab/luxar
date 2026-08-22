@@ -67,7 +67,7 @@ from scipy.ndimage import laplace
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
-from luxar.demos import launch_viewer
+from luxar.demos import add_demo_caption, launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
 
@@ -330,8 +330,13 @@ def generate_turing_patterns(
                 '<div style="font-size:1.3vh;color:rgba(200,200,200,0.5);font-family:monospace">'
                 "\u2202V/\u2202t = D\u2207\u00b2V + UV\u00b2 \u2212 (F+k)V"
                 "</div>",
-                position=(0.98, 0.97),
-                anchor="bottom-right",
+                position=(0.98, 0.02),
+                anchor="top-right",
+            )
+            add_demo_caption(
+                scene,
+                "Gray-Scott reaction-diffusion • 6 patterns",
+                DEMO_META.get("citation"),
             )
 
         aprint(f"✓ Written to {output_path}")

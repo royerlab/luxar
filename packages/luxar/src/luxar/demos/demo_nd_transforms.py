@@ -133,7 +133,7 @@ from luxar import (
     ViewerConfig,
     transforms,
 )
-from luxar.demos import launch_viewer, parse_demo_flags
+from luxar.demos import add_demo_caption, launch_viewer, parse_demo_flags
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
 from luxar.utils.paths import get_demos_output_dir
 
@@ -989,8 +989,8 @@ def _add_overlays(scene: Any) -> None:
         scene.add_html(
             _readout_html(f"EXPECTED AT WORLD CHANNEL = {cname}", rows),
             name=f"expected_channel_{c}",
-            position=(0.985, 0.975),
-            anchor="bottom-right",
+            position=(0.015, 0.025),
+            anchor="top-left",
             visible_range={"Channel": float(c)},
         )
 
@@ -1194,6 +1194,11 @@ def generate_demo(output_path: Path) -> int:
                 )
 
             _add_overlays(scene)
+            add_demo_caption(
+                scene,
+                "nD transform composition • visual test bench",
+                DEMO_META.get("citation"),
+            )
 
             # Self-check: every row's node must actually carry the composed
             # transform this file claims for it. In particular the nested row

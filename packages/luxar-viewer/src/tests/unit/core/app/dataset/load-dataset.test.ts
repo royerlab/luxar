@@ -147,19 +147,30 @@ describe('loadDataset', () => {
     );
   });
 
-  it('applyZarrDefaults runs only when hasStoredSettings=false AND viewerConfig present', async () => {
+  it('allows viewer-config FOV framing only when hasStoredSettings=false', async () => {
     const trace: Trace = { order: [], recordedViewerConfig: undefined };
-    await loadDataset('scene.zarr', makePorts(trace));
+    const ports = makePorts(trace);
+    await loadDataset('scene.zarr', ports);
 
+    expect(ports.sceneManager.loadSceneData).toHaveBeenCalledExactlyOnceWith(
+      'scene.zarr',
+      undefined,
+      { applyViewerConfigFov: true }
+    );
     expect(trace.order).toContain('applyZarrDefaults');
   });
 
-  it('applyZarrDefaults is SKIPPED when hasStoredSettings=true', async () => {
+  it('preserves stored FOV during framing and skips zarr defaults', async () => {
     const trace: Trace = { order: [], recordedViewerConfig: undefined };
     const ports = makePorts(trace);
     (ports.renderingControls.hasStoredSettings as ReturnType<typeof vi.fn>).mockReturnValue(true);
     await loadDataset('scene.zarr', ports);
 
+    expect(ports.sceneManager.loadSceneData).toHaveBeenCalledExactlyOnceWith(
+      'scene.zarr',
+      undefined,
+      { applyViewerConfigFov: false }
+    );
     expect(ports.renderingControls.applyZarrDefaults).not.toHaveBeenCalled();
   });
 
@@ -333,7 +344,8 @@ describe('loadDataset', () => {
 
     expect(ports.sceneManager.loadSceneData).toHaveBeenCalledExactlyOnceWith(
       'scene.zarr',
-      loaderConfig
+      loaderConfig,
+      { applyViewerConfigFov: true }
     );
   });
 });

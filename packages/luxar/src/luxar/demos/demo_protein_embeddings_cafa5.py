@@ -114,6 +114,7 @@ DEMO_META = {
     # Kaggle competition with no DOI of its own.
     "citation": {
         "short": "CAFA5 (Kaggle); embeddings by ProtT5 (Elnaggar et al. 2022)",
+        "ref": "Elnaggar et al. 2022",
         "doi": "10.1109/TPAMI.2021.3095381",
     },
 }
@@ -136,7 +137,7 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
-from luxar.demos import launch_viewer, require_module
+from luxar.demos import add_demo_caption, launch_viewer, require_module
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -1197,13 +1198,11 @@ def generate_protein_landscape(
                 anchor="bottom-left",
             )
 
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 f"{n_proteins:,} proteins • ProtT5 embeddings • 3D UMAP • "
                 "clusters named by UniProt keyword enrichment • Elnaggar et al. 2022",
-                position=(0.98, 0.97),
-                font_size=0.012,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
 
         aprint(f"✓ Visualization created with {n_proteins:,} proteins")

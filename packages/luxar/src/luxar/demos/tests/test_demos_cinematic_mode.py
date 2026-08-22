@@ -33,7 +33,9 @@ Five invariants, and they close different holes:
 ``test_every_authored_camera_uses_the_cinematic_lens``
     Every ``CameraConfig`` with an opening position leaves the preset's FOV
     unpinned and composes its distance for 63° through
-    ``demos/_cinematic_camera.py``. This keeps the 35 mm framing and distortion
+    ``demos/_cinematic_camera.py``. Automatic framing already uses the resolved
+    preset FOV, but an authored position suppresses that framing, so its distance
+    must still be composed for 63°. This keeps the 35 mm framing and distortion
     together instead of mixing two lenses in one image.
 ``test_scientific_fidelity_overrides_are_explicit``
     The four demos whose scale, intensity, or categorical hue would be damaged
@@ -55,11 +57,10 @@ and intensities remain meaningful, and the biodiversity globe disables the
 last two so its categorical hues remain exact. The nD transform bench also
 disables the last two to preserve its exact RGB corner palette.
 
-The preset's 63° FOV is applied after first-load auto-framing, which happens at
-the viewer's 47° default, and nothing re-frames afterwards — so an auto-framed
-scene opens 0.71x smaller linearly (half the screen area). The demos cannot fix
-that from here; closing it means applying the expanded fov before the fit, in the
-viewer (#1861).
+The preset's 63° FOV is resolved before automatic framing, so auto-framed scenes
+keep the fitted subject occupancy intended for that lens. Authored positions
+suppress automatic framing, so their distance must still state which FOV it was
+composed for.
 
 A demo that authors a camera position has a stronger contract, since its distance
 was composed for one specific FOV. Every authored pose is composed for 63°

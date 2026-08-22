@@ -100,12 +100,10 @@ for every field the scene did not set itself — so an explicit `tone_mapping`,
 gate: no `create_scene` without a `viewer_config`, and no `ViewerConfig` without
 a literal `cinematic_mode=True`.
 
-The preset also expands the field of view from 47° to 63°, but the viewer applies
-that expansion *after* first-load auto-framing and never re-frames, so an
-auto-framed cinematic scene opens 0.71x smaller linearly — half the screen area —
-than the same scene without the preset. That is a viewer-side ordering, not
-something a demo can correct; closing it means applying the expanded fov before
-the fit (#1861).
+The preset also expands the field of view from 47° to 63°. The viewer resolves
+that FOV before automatic framing, so an auto-framed scene keeps the fitted
+subject occupancy intended for the lens. A returning visitor's stored FOV still
+takes precedence over the scene-authored value by design.
 
 An authored camera position is a stronger contract, because its distance was
 composed for one FOV. Every authored pose **composes for 63°** through
@@ -1210,6 +1208,7 @@ with asection("Writing to Zarr"):
 
 ```python
 from luxar.demos import (
+    add_demo_caption,  # standard bottom-right caption + DEMO_META credit
     launch_viewer,  # serve + open viewer (serve_args=[...] to pass e.g. --profile)
     cached_download,  # download once into ~/.cache/luxar/<name>/, skip-if-present
     cache_computed,  # cache an expensive result (UMAP, field) — versioned, param-keyed
@@ -1353,8 +1352,9 @@ checked too — so an exemption cannot outlive the layer it leans on.
 3. **Update docstring** with what it demonstrates
 4. **Implement generation** in the generate_* function (keep everything in that function!)
 5. **Expose the geometry** with `layer=True` (or a `layer=True` container group) — see §8
-6. **Test** by running: `hatch run python demo_yourname.py`
-7. **Ctrl+C** to stop and verify cleanup works
+6. **Add one caption** with `add_demo_caption(scene, ...)` so `DEMO_META` credit appears — see §6
+7. **Test** by running: `hatch run python demo_yourname.py`
+8. **Ctrl+C** to stop and verify cleanup works
 
 ## Tips
 

@@ -107,6 +107,7 @@ DEMO_META = {
     "outputs": ["earthquakes"],
     "citation": {
         "short": "USGS ANSS Comprehensive Catalog",
+        "ref": "USGS ANSS",
         "doi": "10.5066/F7MS3QZH",
     },
 }
@@ -123,7 +124,7 @@ from PIL import Image
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
-from luxar.demos import cached_download, launch_viewer
+from luxar.demos import add_demo_caption, cached_download, launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -1391,12 +1392,10 @@ def generate_earthquake_scene(
                 color="rgba(255,255,255,0.6)",
                 blend_mode="difference",
             )
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 f"{n_lines:,} earthquakes • Magnitude 4.5+ • USGS",
-                position=(0.98, 0.97),
-                font_size=0.012,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
 
         aprint(f"✓ Written to {output_path}")

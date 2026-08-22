@@ -167,6 +167,7 @@ DEMO_META = {
     # attributed, so the credit is the archive itself.
     "citation": {
         "short": "NOAA NEXRAD Level II (KTLX, 2013-05-31)",
+        "ref": "NOAA NEXRAD 2013",
         "license": "Public domain (17 U.S.C. 105)",
         "url": "https://registry.opendata.aws/noaa-nexrad",
     },
@@ -187,6 +188,7 @@ from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import (
     BundleMemberNotFound,
     DatasetUnavailable,
+    add_demo_caption,
     cached_download,
     detect_device,
     launch_viewer,
@@ -1552,12 +1554,10 @@ def create_luxar_scene(
                     transition="fade",
                     transition_duration=0.15,
                 )
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 "NEXRAD Level II - KTLX Twin Lakes, OK - NOAA NODD (public domain)",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
 
     aprint(f"Scene written to {output_path}")

@@ -17,11 +17,10 @@ preset only fills fields a scene left unset, so every explicit `tone_mapping`,
 `exposure` and bloom value in the demos still wins — including the interop
 family's `"Neutral"` pin, which is deliberate for baked sRGB and is left alone.
 
-The preset widens the field of view from 47° to 63°, and the viewer applies that
-after its first-load auto-frame without re-framing, so auto-framed scenes open
-0.71x smaller linearly — half the screen area. That ordering is viewer-side and
-documented in `VIEWER_GUIDE.md`; a demo cannot correct it, and closing it means
-applying the expanded fov before the fit (#1861).
+The preset widens the field of view from 47° to 63°. The viewer resolves that FOV
+before automatic framing, so auto-framed scenes keep the fitted subject
+occupancy intended for the lens. A returning visitor's stored FOV remains
+authoritative by design.
 
 All demos with an authored camera position compose for 63° through the new
 `demos/_cinematic_camera.py`, so the lens stays whole (#1862):
