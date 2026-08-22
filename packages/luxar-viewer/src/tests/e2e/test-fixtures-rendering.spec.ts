@@ -431,7 +431,7 @@ test.describe('Test Fixture Rendering', () => {
     //
     // The budget is what is LEFT of this test's wall rather than a fixed 45 s.
     // A hard 45 s under the 120 s wall is only reachable when the bounded
-    // prefix (`goto` plus the three helpers above) finishes inside 75 s; a
+    // prefix (`goto` plus the four helpers above) finishes inside 75 s; a
     // prefix between 75 s and 120 s lets the wall fire MID-scan, which is the
     // bare unattributable timeout this bound exists to remove. 10 s stays in
     // reserve for the throw, the assertions and teardown, and the 5 s floor
