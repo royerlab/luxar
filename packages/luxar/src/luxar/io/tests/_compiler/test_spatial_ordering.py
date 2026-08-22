@@ -18,6 +18,7 @@ from luxar.io._compiler.spatial_ordering.points import (
     write_points_ordering_to_zarr,
 )
 from luxar.io._ordering.bounds import _BARRIER_BOUND_EPS, _store_outward_f32
+from luxar.io.ordering import sort_splats_spatial
 from luxar.io.reader import DEFAULT_COMP
 from luxar.typing_utils.constants import DEFAULT_POINT_RADIUS
 
@@ -566,8 +567,87 @@ def test_stored_gsplat_bounds_contain_decoded_continuous_barrier_centers(
     assert len(bounds) > 1
     assert _violations(decoded, bounds, chunk_size) == (0, 0)
 
+    sort_indices, _ = sort_splats_spatial(centers, method="hilbert", slice_dims=[0])
+    authored = centers[sort_indices, 0]
+    slack = 1000.0 / 131070.0
+    barrier_pad = _BARRIER_BOUND_EPS + slack
+    assert barrier_pad == pytest.approx(0.00862951094834821)
+    for k in range(bounds.shape[0]):
+        block = authored[k * chunk_size : (k + 1) * chunk_size]
+        lo32, hi32 = _store_outward_f32(
+            float(block.min()) - barrier_pad,
+            float(block.max()) + barrier_pad,
+        )
+        assert bounds[k, 0, 0] == lo32
+        assert bounds[k, 0, 1] == hi32
+
     # The large sigma footprint already covers spatial-axis displacement; this
     # regression is specifically the barrier axis that gets no sigma expansion.
     spatial = decoded[:, 1:]
     spatial_bounds = bounds[:, 1:, :]
     assert _violations(spatial, spatial_bounds, chunk_size) == (0, 0)
+
+
+def test_gridded_gsplat_barrier_bounds_keep_only_the_epsilon(tmp_path: Path) -> None:
+    """Grid-snapped gsplat centers get no coordinate-slack over-padding."""
+    rng = np.random.default_rng(1870)
+    n_splats = 12_000
+    centers = np.empty((n_splats, 4), dtype=np.float32)
+    centers[:, 0] = rng.integers(0, 10, n_splats)
+    centers[:, 1:] = rng.uniform(-10.0, 10.0, (n_splats, 3)).astype(np.float32)
+    cholesky = np.zeros((n_splats, 10), dtype=np.float32)
+    cholesky[:, 0] = 1e-7
+    cholesky[:, [2, 5, 9]] = 5.0
+
+    out = tmp_path / "gridded_barrier_gsplats.luxar.zarr"
+    with LuxarZarrCompiler(out, enable_spatial_index=True) as compiler:
+        compiler.create_scene(dimensions=_wide_scene_dims("time"))
+        compiler.write_gsplats("gsplats", centers, 1.0, cholesky)
+
+    node = zarr.open_group(out, mode="r")["gsplats"]
+    assert node["centers"].attrs["encoding"]["name"] == "linear_perchannel_u16"
+    decoded = _decode(node, "centers")
+    bounds = node["chunk_bounds"][:]
+    chunk_size = int(node.attrs["chunk_size"])
+    for k in range(bounds.shape[0]):
+        block = decoded[k * chunk_size : (k + 1) * chunk_size, 0]
+        lo32, hi32 = _store_outward_f32(
+            float(block.min()) - _BARRIER_BOUND_EPS,
+            float(block.max()) + _BARRIER_BOUND_EPS,
+        )
+        assert bounds[k, 0, 0] == lo32
+        assert bounds[k, 0, 1] == hi32
+
+
+def test_escalated_gsplat_barrier_bounds_keep_only_the_epsilon(tmp_path: Path) -> None:
+    """Float32-escalated centers are exact and receive no second slack pad."""
+    rng = np.random.default_rng(1871)
+    n_splats = 12_000
+    centers = np.empty((n_splats, 4), dtype=np.float32)
+    centers[:, 0] = rng.uniform(0.0, 1000.0, n_splats).astype(np.float32)
+    centers[:, 1:] = rng.uniform(-10.0, 10.0, (n_splats, 3)).astype(np.float32)
+    centers[0, 0] = 0.0
+    centers[1, 0] = 1000.0
+    cholesky = np.zeros((n_splats, 10), dtype=np.float32)
+    cholesky[:, 0] = 1e-7
+    cholesky[:, [2, 5, 9]] = 5.0
+
+    out = tmp_path / "escalated_barrier_gsplats.luxar.zarr"
+    with pytest.warns(UserWarning, match="stored as float32"):
+        with LuxarZarrCompiler(out, enable_spatial_index=True) as compiler:
+            compiler.create_scene(dimensions=_wide_scene_dims("time"))
+            compiler.write_gsplats("gsplats", centers, 1.0, cholesky)
+
+    node = zarr.open_group(out, mode="r")["gsplats"]
+    assert node["centers"].attrs["encoding"]["name"] == "float32"
+    decoded = _decode(node, "centers")
+    bounds = node["chunk_bounds"][:]
+    chunk_size = int(node.attrs["chunk_size"])
+    for k in range(bounds.shape[0]):
+        block = decoded[k * chunk_size : (k + 1) * chunk_size, 0]
+        lo32, hi32 = _store_outward_f32(
+            float(block.min()) - _BARRIER_BOUND_EPS,
+            float(block.max()) + _BARRIER_BOUND_EPS,
+        )
+        assert bounds[k, 0, 0] == lo32
+        assert bounds[k, 0, 1] == hi32
