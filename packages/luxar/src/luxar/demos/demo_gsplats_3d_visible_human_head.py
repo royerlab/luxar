@@ -633,7 +633,10 @@ def create_luxar_scene(fit: GSplatData, colors: np.ndarray, output_path: Path) -
         #
         # So: stand off along -y (in front of the face), look back at the
         # centroid, and point "up" along -x.
-        half = (centered.centers.max(axis=0) - centered.centers.min(axis=0)) / 2.0
+        half = np.maximum(
+            np.abs(centered.centers.max(axis=0)),
+            np.abs(centered.centers.min(axis=0)),
+        )
         fov_deg = 45.0
         # Fit the taller of (height, width) into the frame, with a little air.
         need = float(max(half[0], half[2])) * 1.15
