@@ -136,7 +136,8 @@ Exports:
   `(max_elements, rule)`. One spelling for all four adders and for the two
   gsplats pre-wrapper gates (`lod_group=` and the graft door), which have to
   judge the same spec one level above the leaf that consumes it (#1550). It
-  rejects `False`, deliberately: normalising the bypass away is the CALLER's job
+  rejects dict keys other than `max_elements` and `rule`. It also rejects
+  `False`, deliberately: normalising the bypass away is the CALLER's job
   (`resolve_auto_partition` for the adders, the gates' own skip), since by the
   time a spec is being resolved into a cap the decision to partition is made.
 - `DEFAULT_MAX_ELEMENTS = 1_000_000` — cap used for bare `partition=True`.

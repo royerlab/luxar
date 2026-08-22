@@ -874,6 +874,7 @@ _BAD_PARTITION_SPECS = [
     ("an_int", 3),
     ("max_elements_zero", {"max_elements": 0}),
     ("unknown_rule", {"rule": "bogus"}),
+    ("unknown_key", {"parts": 4}),
 ]
 
 
@@ -884,13 +885,13 @@ class TestGraftedFilePartitionSpec:
     down to each part's own ``add_gsplats``, where it drives that leaf's BSP
     split. So the spec was judged one level down, AFTER ``graft_gsplat_node`` had
     already built the ``kind=partition`` wrapper from the on-disk tree. Measured
-    through the public file door, all four shapes below: ``Could not add gsplats
-    'part_0': partition must be None, True, or dict; got str`` (and its three
-    siblings), with ``g`` surviving ``finalize()`` as a childless
-    ``kind=partition`` group. Identical to the ``lod_group=`` door's bug in the
-    lod/ sibling, and closed the same way — one call in the slot that already
-    holds this door's ``strip_absent_attr_kwargs`` / ``reject_data_owned_channels``
-    pair.
+    through the public file door, the four pre-existing malformed shapes below
+    were refused from inside ``part_0``, with ``g`` surviving ``finalize()`` as a
+    childless ``kind=partition`` group. The newly covered unknown key instead
+    succeeded: ``g`` kept the stored partition with two flat children because
+    ``parts`` was ignored. Identical to the ``lod_group=`` door's bug in the lod/
+    sibling, and closed the same way — one call in the slot that already holds
+    this door's ``strip_absent_attr_kwargs`` / ``reject_data_owned_channels`` pair.
     """
 
     def _file(self, tmp_path: Any, filename: str = "nested_part.gsplats.zarr") -> str:
@@ -976,7 +977,7 @@ class TestGraftedFilePartitionSpec:
         (``TestTheGSplatsPartitionSpecCheckSkipsASubTwoDimensionScene``); this is
         the graft counterpart, and the only test that reads the ``node_ndim(node)``
         argument at all. Measured with that argument replaced by a constant ``3``:
-        the six tests above all stay green and this one answers ``Could not add
+        the seven tests above all stay green and this one answers ``Could not add
         gsplats 'g': partition must be None, True, or dict; got str`` — a refusal
         the flat path does not make.
         """
@@ -2591,15 +2592,44 @@ def _coloured_element_count(geometry: str) -> int:
     return _MESH_N if geometry == "mesh" else _N
 
 
+class TestPartitionSpecKeys:
+    """Unknown keys must fail before the old silent flat-leaf fallback.
+
+    Before #1873, ``partition={"parts": 4}`` wrote a flat ``n`` leaf containing
+    every element and no partition wrapper. That is why the regression asserts
+    that ``n`` never reaches the store, rather than checking a child count.
+    """
+
+    @pytest.mark.parametrize("geometry", ["points", "lines", "gsplats", "mesh"])
+    def test_an_unknown_key_is_refused_before_any_node_is_written(
+        self, tmp_path: Any, geometry: str
+    ) -> None:
+        compiler, scene, path = open_scene(
+            tmp_path, f"unknown_partition_key_{geometry}.luxar.zarr"
+        )
+        colors = np.zeros((_coloured_element_count(geometry), 3), dtype=np.uint8)
+
+        with pytest.raises(
+            ValueError,
+            match=(
+                r"partition: unrecognized keys \['parts'\]\. "
+                r"Valid keys: max_elements, rule\."
+            ),
+        ):
+            _add_coloured(scene, geometry, colors, partition={"parts": 4})
+
+        assert "n" not in compiler.store
+        assert finalized_group_keys(compiler, path) == set()
+
+
 #: ``(id, partition spec)`` for the dtype cases. Two of these REALLY split at
 #: these counts — measured, uint8 colours, parts per geometry:
 #: ``max_elements=100`` → 2/2/2/4 (points/lines/gsplats/mesh) and
 #: ``max_elements=25`` → 8/12/8/20. ``partition=True`` does NOT: the default
 #: ``max_elements`` is 1,000,000, so it writes a plain leaf, and it is listed
 #: under a name that says so rather than dropped, because the refusal must hold
-#: on the fall-through path too. ``{"parts": N}`` is deliberately absent — no
-#: adder reads that key, so it was never a partition spec at all, only a plain
-#: leaf wearing the label.
+#: on the fall-through path too. ``{"parts": N}`` is deliberately absent because
+#: it is an unknown key, refused by :class:`TestPartitionSpecKeys` above.
 _PARTITION_SPECS = [
     ("default_no_split", True),
     ("max_elements_half", {"max_elements": _HALF}),
@@ -2631,12 +2661,11 @@ class TestPartitionRefusesAnUnwritableColorDtype:
     :data:`_PARTITION_SPECS` is the parametrization, and
     ``test_the_same_colours_as_uint8_still_partition`` runs over the SAME list —
     which is what keeps the class honest. An earlier cut parametrized over
-    ``partition=True`` and ``{"parts": 4}``: measured at these counts, NEITHER
-    splits (both give ``kind=leaf``, 0 children — no adder reads a ``"parts"``
-    key at all, and the ``max_elements`` default is 1,000,000), so two thirds of
-    the class silently re-ran the flat path while its control only ever exercised
-    the one spec that did split. ``default_no_split`` is kept deliberately and
-    named for what it is.
+    ``partition=True`` and ``{"parts": 4}``: before #1873, neither split at these
+    counts, so two thirds of the class silently re-ran the flat path while its
+    control only ever exercised the one spec that did split. The misspelled key
+    is now refused; ``default_no_split`` is kept deliberately and named for what
+    it is.
     """
 
     @pytest.mark.parametrize("geometry", ["points", "lines", "gsplats", "mesh"])
@@ -2707,8 +2736,9 @@ class TestPartitionRefusesAnUnwritableColorDtype:
         pins WHICH specs actually reach the wrapper: without that, a spec that
         quietly falls through to a plain leaf makes its refusal case a re-run of
         the flat path, asserting nothing about the partition gate. That is exactly
-        what ``{"parts": 4}`` was doing. ``default_no_split`` is asserted to be a
-        plain leaf, so the two claims cannot swap places unnoticed.
+        what ``{"parts": 4}`` did before unknown keys were refused (#1873).
+        ``default_no_split`` is asserted to be a plain leaf, so the two claims
+        cannot swap places unnoticed.
         """
         compiler, scene, path = open_scene(
             tmp_path, f"dtype_ok_{geometry}_{spec_id}.luxar.zarr"

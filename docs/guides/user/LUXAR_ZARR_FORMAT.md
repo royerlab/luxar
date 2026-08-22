@@ -573,6 +573,9 @@ part.add_points("part_0", subset0)
 part.add_points("part_1", subset1)
 ```
 
+`max_elements` and `rule` are the only accepted keys in a `partition` dict;
+unknown keys raise an error before any node is written.
+
 #### Multi-additive LOD (progressive loading) — Points / Lines / GSplats
 
 All three leaf types (Points, Lines, GSplats) support a uniform
