@@ -16,14 +16,14 @@ default), and one in ``test_demo_fit_provenance.py`` (the fit-provenance lint �
 ``_interop_common.py`` saves gsplat stores, so an ``include_fitting_info=False``
 save could hide in a helper), and one in ``test_demo_caption_coverage.py`` (the
 standard-caption lint, including shared helpers that can author overlays). The
-dependency guards all
-used to enumerate ``demo_*.py`` only, which left the package's SHARED helper
-modules unscanned. That became a real blind spot when ``_roundtrip_common.py``
-moved a ``require_module("matplotlib.pyplot")`` gate out of five ``demo_*.py``
-files into one shared module: the invariants those guards advertise — every gated
-module is in ``INSTALL_SPECS``, no runtime ``pip install``, no unbounded install
-hint, no entry-point preflight, no ungated ``substitutive_lod`` — silently
-stopped covering it. Shared helpers build scene nodes as well as gate imports
+dependency guards all used to enumerate ``demo_*.py`` only, which left the
+package's SHARED helper modules unscanned. That became a real blind spot when
+``_roundtrip_common.py`` moved a ``require_module("matplotlib.pyplot")`` gate
+out of five ``demo_*.py`` files into one shared module: the invariants those
+guards advertise — every gated module is in ``INSTALL_SPECS``, no runtime
+``pip install``, no unbounded install hint, no entry-point preflight, no ungated
+``substitutive_lod`` — silently stopped covering it. Shared helpers build scene
+nodes as well as gate imports
 (``_interop_common.build_interop_scene`` calls ``add_gsplats_from_file``), so
 the LOD guard needs the wider set for the same reason.
 
