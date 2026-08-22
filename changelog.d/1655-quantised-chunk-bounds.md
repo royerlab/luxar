@@ -43,7 +43,10 @@ genuinely stores `lut_uint8`. Measured on a 4D lines compile with a 250-value
 irregular palette (60,000 segments / 120,000 vertices): treating eligibility as
 exactness left 30 of 44 vertex chunks (8,203 rows) and 7 of 15 segment chunks
 (487 endpoints) outside their own bound; declaring `allow_lut=False` takes all
-four counts to zero.
+four counts to zero. Those counts are that fixture's — the segment half in
+particular depends on how the polylines are wired, and a connectivity that keeps
+every endpoint interior shows the vertex half alone. The zero after the fix is
+what holds regardless.
 
 Because the predicate is asked on every compile, its cost is part of the fix.
 The LUT probe is a whole-array `np.unique` and the dominant term whenever it
@@ -96,24 +99,11 @@ the pad (plus half a float32 ULP, the decode contract). Dropping the `allow_lut`
 gate, dropping the grid snap, or giving `_encode_coordinate` a lossier tier each
 turn it red.
 
-GSplats get no `coord_slack` here — they close most of the same gap from the
-other side, escalating an offending centers axis to float32 rather than padding
-the bound. Note that this is *most*, not all: the σ argument that justifies
-skipping the pad holds on a SPATIAL axis, where `truncation_radius · σ` absorbs
-the residual displacement, and not on a BARRIER axis, which by design gets only
-`_BARRIER_BOUND_EPS`. A gsplats barrier axis that is neither gridded nor
-LUT-encoded, on splats whose σ is large enough to keep the escalation rail
-quiet, can still decode outside its own chunk bound (reproduced: 2 of 12,000
-centers, worst 2.6e-3). That is out of scope here and is tracked separately; the
-format guide and `compute_chunk_bounds_gsplats` now say so instead of implying
-full coverage. The same is true of the SCALAR half of a points/lines footprint:
+GSplats close the corresponding decoded-center gap in the companion
+`1870-gsplat-barrier-bound-slack` entry by applying the same encoder-reported
+coordinate slack to their chunk bounds. The same issue remains in the SCALAR
+half of a points/lines footprint:
 `radii` and `widths` are quantised too, and the pad is built from the authored
 value, so a decoded radius/width can still escape by up to half its own quantum
 (measured 9.6e-3 on `radii ~ U(0.1, 5.0)`). Both docstrings now carry that
 caveat rather than claiming a guarantee they do not have.
-
-The gsplats bound builder does change in this release, just not here — see the
-companion entry on outward float32 rounding, which reworks
-`compute_chunk_bounds_gsplats` (and both lines builders) so a pad is never lost
-to a round-to-nearest float32 store. Read the two together: "no `coord_slack`
-for gsplats" is not "gsplats unchanged".

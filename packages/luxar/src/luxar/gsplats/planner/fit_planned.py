@@ -26,6 +26,7 @@ import numpy as np
 from luxar.gsplats.merged_quality import (
     announce_unscored_merge,
     announce_unscored_partition_merge,
+    resolve_merged_reference,
     stamp_merged_quality,
 )
 
@@ -71,21 +72,14 @@ def _score_planned_flat_merge(
     verbose: bool,
 ) -> None:
     """Score a flat planned merge, or explain why no score can be recorded."""
-    if volume is None:
-        announce_unscored_merge("this parallel merge was not given a reference volume")
-        return
-
-    shape = getattr(volume, "shape", None)
-    if shape is None:
-        announce_unscored_merge("the supplied reference volume does not expose a shape")
-        return
-
-    reference_shape = tuple(int(s) for s in shape)
-    if reference_shape != plan_shape:
-        announce_unscored_merge(
-            f"reference shape {reference_shape} does not match the plan grid "
-            f"{plan_shape}"
-        )
+    reference, unscored_reason = resolve_merged_reference(
+        volume,
+        plan_shape,
+        grid_name="plan grid",
+        missing_reason="this parallel merge was not given a reference volume",
+    )
+    if unscored_reason is not None:
+        announce_unscored_merge(unscored_reason)
         return
 
     # Forward guard for content-box denoising: once boxes can denoise, this
@@ -94,7 +88,7 @@ def _score_planned_flat_merge(
     # whole-volume denoise scored against its own smoothed reference.
     stamp_merged_quality(
         merged,
-        volume,
+        reference,
         volume_shape=plan_shape,
         grid_scale=None,
         device=device,

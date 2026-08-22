@@ -750,6 +750,9 @@ function computePointsHiddenTolerance(
  * occasionally-too-tight bounds; the quantised RADIUS/WIDTH itself is still an
  * open gap on the writer side — a decoded width can exceed the authored one the
  * pad was sized for by up to half its own quantum, ~9.6e-3 on typical data.)
+ * Barrier (discrete) dimensions use the shared quarter-cell query rule, or the
+ * half-cell membership rule for projection/clipping
+ * (`options.discreteRole === 'membership'`).
  *
  * `isBarrier` always comes from `DimensionInfo.discrete` here: `isBarrierDim` honours
  * the writer's published set for gsplats only, and this arm's literal `0` is exactly

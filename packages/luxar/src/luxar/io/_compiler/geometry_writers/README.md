@@ -39,7 +39,7 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
 2. **Setup**: `ctx.store.require_group(path)`
 
 3. **Spatial ordering**:
-   - `build_points_ordering(positions, n_points, n_dims, radii_for_ordering, ctx.ordering_ctx, ctx.store)` is called unconditionally; it returns `ordering_data` when spatial ordering applies and `None` when ordering is disabled or not applicable
+   - `build_points_ordering(positions, n_points, n_dims, radii_for_ordering, ctx.ordering_ctx, ctx.store, dataset_ctx=ctx.dataset_ctx)` is called unconditionally; it returns `ordering_data` when spatial ordering applies and `None` when ordering is disabled or not applicable
    - Apply `ordering_data["sort_order"]` to `positions` and all non-broadcasted arrays (skip arrays with `shape[0] == 1`)
 
 4. **Write arrays**:
@@ -94,7 +94,7 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
    - `convert_to_indexed(n_vertices, line_type, indices)` → a single `(S, 2)` uint32 `segments` array (the first arg is the vertex COUNT, not the vertices array); `n_segments = segments.shape[0]`
 
 4. **Spatial ordering** (dual-indexed: order both vertices AND segments):
-   - `build_lines_ordering(vertices, segments, widths, n_vertices, n_dims, n_segments, ctx.ordering_ctx, ctx.store)` → `ordering_data` or `None`
+   - `build_lines_ordering(vertices, segments, widths, n_vertices, n_dims, n_segments, ctx.ordering_ctx, ctx.store, dataset_ctx=ctx.dataset_ctx)` → `ordering_data` or `None`
    - Replace `vertices` / `segments` with `ordering_data["sorted_vertices"]` / `ordering_data["sorted_segments"]`
    - Permute all non-broadcasted per-vertex arrays (widths, colors, sharpness, scalars) by `ordering_data["vertex_sort_indices"]`; labels are likewise reordered per-vertex via `vertex_sort_indices` at write time. Only `segments` itself is segment-count.
 

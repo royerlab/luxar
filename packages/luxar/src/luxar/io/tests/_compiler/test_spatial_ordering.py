@@ -619,6 +619,39 @@ def test_gridded_gsplat_barrier_bounds_keep_only_the_epsilon(tmp_path: Path) -> 
         assert bounds[k, 0, 1] == hi32
 
 
+def test_lut_gsplat_barrier_bounds_keep_only_the_epsilon(tmp_path: Path) -> None:
+    """LUT-stored centers are exact and receive no coordinate-slack pad."""
+    rng = np.random.default_rng(1872)
+    n_splats = 12_000
+    palette = np.array(
+        [0.0, 3.7, 19.0, 55.0, 132.5, 610.0, 799.5, 1000.0],
+        dtype=np.float32,
+    )
+    centers = rng.choice(palette, size=(n_splats, 4)).astype(np.float32)
+    cholesky = np.zeros((n_splats, 10), dtype=np.float32)
+    cholesky[:, [0, 2, 5, 9]] = 5.0
+
+    out = tmp_path / "lut_barrier_gsplats.luxar.zarr"
+    with LuxarZarrCompiler(out, enable_spatial_index=True) as compiler:
+        compiler.create_scene(dimensions=_wide_scene_dims("time"))
+        compiler.write_gsplats("gsplats", centers, 1.0, cholesky)
+
+    node = zarr.open_group(out, mode="r")["gsplats"]
+    assert node["centers"].attrs["encoding"]["name"] == "lut_uint8"
+    decoded = _decode(node, "centers")
+    bounds = node["chunk_bounds"][:]
+    chunk_size = int(node.attrs["chunk_size"])
+    assert _violations(decoded, bounds, chunk_size) == (0, 0)
+    for k in range(bounds.shape[0]):
+        block = decoded[k * chunk_size : (k + 1) * chunk_size, 0]
+        lo32, hi32 = _store_outward_f32(
+            float(block.min()) - _BARRIER_BOUND_EPS,
+            float(block.max()) + _BARRIER_BOUND_EPS,
+        )
+        assert bounds[k, 0, 0] == lo32
+        assert bounds[k, 0, 1] == hi32
+
+
 def test_escalated_gsplat_barrier_bounds_keep_only_the_epsilon(tmp_path: Path) -> None:
     """Float32-escalated centers are exact and receive no second slack pad."""
     rng = np.random.default_rng(1871)

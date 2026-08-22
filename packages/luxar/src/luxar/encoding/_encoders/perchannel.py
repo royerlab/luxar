@@ -122,6 +122,8 @@ def _coordinate_u16_slack(
     for axis in range(arr.shape[1]):
         extent = float(hi[axis] - lo[axis])
         if extent <= 0.0:
+            # Constant axis: every value maps to level 0 and decodes to `lo`.
+            # One distinct value, so it cannot raise the maximum.
             continue
         uniq = np.unique(arr[:, axis])
         max_axis_distinct = max(max_axis_distinct, int(uniq.size))
@@ -129,6 +131,9 @@ def _coordinate_u16_slack(
             _gridded_step_from_uniques(uniq, float(lo[axis]), extent, COORDINATE_LEVELS)
             is not None
         ):
+            # `_snap_gridded_axes` will snap this axis onto the data's own
+            # spacing, and `gridded_axis_step` proved it round-trips exactly by
+            # replaying the encode and the decode.
             continue
         slack[axis] = extent / (2.0 * COORDINATE_LEVELS)
     return slack, max_axis_distinct
@@ -317,9 +322,12 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         if not slack.any():
             return None
 
-        if allow_lut and max_axis_distinct <= LUT_SCALAR_MAX_DISTINCT:
-            if self.encodes_as_lut(data, SemanticType.COORDINATE):
-                return None  # a LUT stores the values verbatim
+        if (
+            allow_lut
+            and max_axis_distinct <= LUT_SCALAR_MAX_DISTINCT
+            and self.encodes_as_lut(data, SemanticType.COORDINATE)
+        ):
+            return None  # a LUT stores the values verbatim
         return slack
 
     def _encode_coordinate(
