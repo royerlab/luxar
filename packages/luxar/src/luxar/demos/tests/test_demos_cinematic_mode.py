@@ -45,9 +45,12 @@ written before this rule.
 One interaction worth knowing when authoring, because this guard cannot see it:
 the preset also expands a 35 mm FOV (63°, against the viewer's 47° default), and
 ``camera.fov`` / ``camera.fov_preset`` count as ONE unit — pin either and the
-preset leaves both alone. A demo that COMPOSES its camera distance (a multiple
-of the data's extent, a fitted radius) must therefore pin ``fov``, or the wider
-lens re-frames the pose it computed. Every authored camera in the demos does.
+preset leaves both alone — which keeps a 50 mm framing while still receiving the
+35 mm distortion: two lenses in one image. So the house answer is NOT to pin, but to
+compose the pose for 63° — free for an auto-framed scene (the bounding-sphere
+fit divides by ``tan(fov / 2)``), and one helper call for a demo that states its
+own distance: see ``demos/_cinematic_camera.py`` (``CINEMATIC_FOV_DEG`` to
+derive a distance from the lens, ``pull_in`` to carry a tuned one over).
 """
 
 from __future__ import annotations

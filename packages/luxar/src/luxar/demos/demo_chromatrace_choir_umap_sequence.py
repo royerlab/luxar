@@ -71,6 +71,7 @@ from arbol import aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import launch_viewer, parse_path_arg
+from luxar.demos._cinematic_camera import pull_in
 from luxar.utils._umap_utils import format_label
 from luxar.utils.paths import get_demos_output_dir
 
@@ -467,13 +468,11 @@ def build_sequence_scene(
         viewer_config = ViewerConfig(
             cinematic_mode=True,
             camera=CameraConfig(
-                position=(cam_dist, cam_dist * 0.55, cam_dist),
+                # `cam_dist` is the framing tuned at the viewer's 47° default;
+                # `pull_in` restates it for the cinematic preset's 35 mm lens,
+                # which the scene takes whole by pinning no `fov` of its own.
+                position=pull_in((cam_dist, cam_dist * 0.55, cam_dist)),
                 target=(0.0, 0.0, 0.0),
-                # Pinned at the viewer default (50 mm, 47°) so that
-                # `cinematic_mode` leaves `cam_dist` meaning what it says: the
-                # preset otherwise expands a 35 mm lens (63°) and the 2.2x
-                # framing above would read ~1.4x looser than it was tuned for.
-                fov=47.0,
             ),
         )
 

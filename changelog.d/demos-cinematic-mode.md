@@ -17,14 +17,27 @@ preset only fills fields a scene left unset, so every explicit `tone_mapping`,
 `exposure` and bloom value in the demos still wins — including the interop
 family's `"Neutral"` pin, which is deliberate for baked sRGB and is left alone.
 
-Framing is unchanged too, which took one extra keyword in five demos. The preset
-also expands a 35 mm field of view (63°, against the viewer's 47° default), and a
-demo that composes its camera distance from the data's own extent would have been
-re-framed ~1.4x looser by that wider lens. Those five now pin `camera.fov=47.0`
-— quantum orbitals, the cells3d isosurface, the ChromaTrace sequence and the two
-interop scans whose fixed close pose exists to escape a sparse environment shell.
-`fov` and `fov_preset` count as one unit, so pinning either suppresses both and
-the rest of the preset still lands.
+The lens comes through whole, and framing is still unchanged. The preset expands
+a 35 mm field of view (63° vertical, against the viewer's 47° default) as well as
+the 35 mm barrel distortion, and `fov` / `fov_preset` are one unit — so pinning
+either would have kept a 50 mm framing while still taking 35 mm distortion, which
+is two different lenses in one image. No demo pins them. Instead the five demos
+that state their own camera distance now compose it for 63°, because such a pose
+specifies a distance rather than a framing: at a fixed distance the wider lens
+scales the subject to 0.71x linear, or HALF its screen area. (An auto-framed
+scene needs nothing — the bounding-sphere fit divides by `tan(fov / 2)` and moves
+the camera in by itself.)
+
+The new `demos/_cinematic_camera.py` holds that arithmetic once, so no demo
+carries a bare 0.709: `CINEMATIC_FOV_DEG` for a demo that derives its distance
+from the lens (quantum orbitals, whose `asin(R/D)` rule now reads 63° and which
+therefore just moves closer), and `pull_in()` for one carrying an empirically
+tuned pose (the cells3d isosurface, the ChromaTrace sequence, and the two interop
+scans whose close pose exists to escape a sparse environment shell). `pull_in`
+scales about the pose's TARGET, not the world origin, so the Mip-NeRF garden
+camera keeps pointing at the table rather than swinging off it. Only the framing
+carries over, not the image: a wider lens at a shorter distance foreshortens
+more, so these five are worth a look on the next gallery pass.
 
 A new lint (`test_demos_cinematic_mode.py`) keeps this true for demo 87: every
 `create_scene` must pass a `viewer_config`, and every `ViewerConfig` built in the

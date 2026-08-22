@@ -517,19 +517,32 @@ def test_camera_distance_beats_the_extent_multiple_that_shipped_clipped() -> Non
     subtends is the bounding SPHERE (27.32 a₀), and at distance 57.3 that is
     28.5° against a 23.5° half-FOV — 3pz filled the frame and clipped on every
     edge. Both mistakes are pinned here: the wrong radius and the wrong rule.
+
+    The clipping is asserted against a SPELLED-OUT 23.5° rather than against
+    ``VIEWER_FOV_DEGREES / 2``, because that constant has since moved to the
+    cinematic preset's 63° lens and 28.5° clears a 31.5° half-FOV. The bug is a
+    fact about the framing it was measured in; deriving its threshold from
+    today's wider lens would leave this guard asserting nothing. What the wider
+    lens is checked against instead is the live rule, below.
     """
     per_axis_extent, bounding_radius = 26.04, 27.32
-    half_fov = _demo.VIEWER_FOV_DEGREES / 2.0
+    historical_half_fov = 23.5
 
     shipped = 2.2 * per_axis_extent
-    assert math.degrees(math.asin(bounding_radius / shipped)) > half_fov, (
+    assert math.degrees(math.asin(bounding_radius / shipped)) > historical_half_fov, (
         "the historical formula must be demonstrably clipping, "
         "or this regression guard proves nothing"
     )
 
+    # The right rule still holds at whatever FOV the demo composes for today:
+    # farther out than the buggy pose, inside the frame, and at the intended
+    # fill fraction rather than merely un-clipped.
     fixed = camera_distance_for_radius(bounding_radius)
+    half_fov = _demo.VIEWER_FOV_DEGREES / 2.0
+    subtended = math.degrees(math.asin(bounding_radius / fixed))
     assert fixed > shipped
-    assert math.degrees(math.asin(bounding_radius / fixed)) < half_fov
+    assert subtended < half_fov
+    assert subtended == pytest.approx(_demo.CAMERA_FOV_FILL * half_fov)
 
 
 def test_camera_direction_is_offaxis_on_all_three_axes() -> None:

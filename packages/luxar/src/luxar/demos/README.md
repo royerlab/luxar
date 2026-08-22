@@ -92,6 +92,27 @@ through. The choice applies from the next refit onwards — the
 hosted archives keep whatever topology they were written with until they are
 refitted and reuploaded, since the manifest pins their checksums.
 
+Every demo scene opens in the cinematic look, and it costs one keyword:
+`ViewerConfig(cinematic_mode=True)`, which the viewer's zarr bridge expands into
+ACES, a subtle wide bloom, detector noise, a vignette and a 35 mm chromatic lens
+for every field the scene did not set itself — so an explicit `tone_mapping`,
+`exposure` or bloom value still wins. `tests/test_demos_cinematic_mode.py` is the
+gate: no `create_scene` without a `viewer_config`, and no `ViewerConfig` without
+a literal `cinematic_mode=True`.
+
+That preset also expands the 35 mm FIELD OF VIEW (63° vertical, against the
+viewer's 47° default), and `camera.fov` / `camera.fov_preset` are expanded as one
+unit — pinning either keeps a 50 mm framing while still receiving 35 mm
+distortion, which is two lenses in one image, so no demo pins them. A scene the
+viewer auto-frames needs nothing, because the bounding-sphere fit divides by
+`tan(fov / 2)` and moves the camera in by itself. A demo that states its own
+distance composes it for 63° through `_cinematic_camera.py`: read
+`CINEMATIC_FOV_DEG` when the distance is derived from the lens (a fitted radius
+through `asin(R/D)`), or call `pull_in()` to carry an empirically tuned pose over
+— it scales about the pose's target rather than the world origin, so an
+off-origin camera keeps looking where it was aimed. Leaving a pose at its 47°
+distance under the wider lens would halve the subject's screen area.
+
 The three network demos (`caida_as_topology`, `huri_interactome`,
 `ppi_flow_field`) share `_graph_common.py`, but not all of it. All three use the
 cache-aware download and Louvain community detection; the sparse adjacency and
