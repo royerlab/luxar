@@ -4,11 +4,8 @@ Every demo enables ``cinematic_mode``, and the preset the viewer expands from it
 includes a lens: a 35 mm barrel distortion AND the 35 mm field of view that
 distortion belongs to (63°, against the viewer's 47° default). ``camera.fov`` and
 ``camera.fov_preset`` are expanded as ONE unit, so a scene that pins either gets
-neither from the preset — it keeps a 50 mm framing while still receiving 35 mm
-distortion, which is two different lenses in one image. (Sixteen demos do pin an
-``fov`` of their own — 38° to 50° where it is a literal, computed in five — and
-those pins all predate the cinematic look. They are exactly that mismatch:
-their framing is safe, their lens is mixed. Unifying them is #1862.)
+neither from the preset — it keeps a longer-lens framing while still receiving
+35 mm distortion, which is two different lenses in one image.
 
 So a demo that states its own distance pins neither, and composes its pose for
 63° instead. Such a pose specifies a DISTANCE, not a framing, and at a fixed
@@ -58,8 +55,9 @@ CINEMATIC_FOV_DEG = 63.0
 #: what a demo pose composed before the demos opted into the cinematic look.
 VIEWER_DEFAULT_FOV_DEG = 47.0
 
-#: Distance scale that holds a subject's on-screen size fixed while the vertical
-#: FOV widens from :data:`VIEWER_DEFAULT_FOV_DEG` to :data:`CINEMATIC_FOV_DEG`:
+#: Default distance scale that holds a subject's on-screen size fixed while the
+#: vertical FOV widens from :data:`VIEWER_DEFAULT_FOV_DEG` to
+#: :data:`CINEMATIC_FOV_DEG`:
 #: ``tan(23.5°) / tan(31.5°)`` ≈ 0.709. Derived rather than written out so the
 #: two FOVs above stay the single source of truth.
 FRAMING_PULL_IN = math.tan(math.radians(VIEWER_DEFAULT_FOV_DEG / 2.0)) / math.tan(
@@ -70,8 +68,10 @@ FRAMING_PULL_IN = math.tan(math.radians(VIEWER_DEFAULT_FOV_DEG / 2.0)) / math.ta
 def pull_in(
     position: tuple[float, float, float],
     target: tuple[float, float, float] = (0.0, 0.0, 0.0),
+    *,
+    from_fov_deg: float = VIEWER_DEFAULT_FOV_DEG,
 ) -> tuple[float, float, float]:
-    """Move a pose toward its target so 63° frames what 47° used to.
+    """Move a pose toward its target so 63° preserves its authored framing.
 
     Scaling is about ``target``, NOT about the world origin: a pose's distance is
     measured from what it looks at, so scaling an off-origin pose about the
@@ -84,14 +84,18 @@ def pull_in(
     trust in the arithmetic.
 
     Args:
-        position: Camera position the demo composed for the viewer's 47° default.
+        position: Camera position the demo composed for ``from_fov_deg``.
         target: Point the camera looks at, and the point the pull-in is about.
+        from_fov_deg: Vertical FOV the authored position was composed for.
 
     Returns:
         The position that frames the same subject at :data:`CINEMATIC_FOV_DEG`.
     """
+    scale = math.tan(math.radians(from_fov_deg / 2.0)) / math.tan(
+        math.radians(CINEMATIC_FOV_DEG / 2.0)
+    )
     return (
-        target[0] + (position[0] - target[0]) * FRAMING_PULL_IN,
-        target[1] + (position[1] - target[1]) * FRAMING_PULL_IN,
-        target[2] + (position[2] - target[2]) * FRAMING_PULL_IN,
+        target[0] + (position[0] - target[0]) * scale,
+        target[1] + (position[1] - target[1]) * scale,
+        target[2] + (position[2] - target[2]) * scale,
     )

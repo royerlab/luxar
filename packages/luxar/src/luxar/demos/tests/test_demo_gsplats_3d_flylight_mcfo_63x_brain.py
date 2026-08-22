@@ -94,7 +94,7 @@ class TestCameraFramesTheBrain:
 
         root = zarr.open_group(str(out), mode="r")
         cam = dict(root.attrs)["viewer_config"]["camera"]
-        assert cam["fov"] == pytest.approx(_demo.CAMERA_FOV)
+        assert "fov" not in cam
         assert tuple(cam["up"]) == (0.0, 1.0, 0.0)
 
         bounds = dict(root.attrs)["position_bounds"]
@@ -119,7 +119,7 @@ class TestCameraFramesTheBrain:
         width, height = float(bmax[0] - bmin[0]), float(bmax[1] - bmin[1])
         half_depth = float(bmax[2] - bmin[2]) / 2.0
         near = float(position[2] - target[2]) - half_depth
-        visible_h = 2.0 * near * math.tan(math.radians(cam["fov"] / 2.0))
+        visible_h = 2.0 * near * math.tan(math.radians(_demo.CAMERA_FOV / 2.0))
         visible_w = visible_h * _demo.CAMERA_ASPECT
         assert max(width / visible_w, height / visible_h) == pytest.approx(
             _demo.CAMERA_FILL, rel=1e-6
@@ -144,7 +144,7 @@ class TestCameraFramesTheBrain:
         bmax = np.asarray(bounds["max"], dtype=float)
         eye = np.asarray(cam["position"], dtype=float)
 
-        tan_half = math.tan(math.radians(cam["fov"] / 2.0))
+        tan_half = math.tan(math.radians(_demo.CAMERA_FOV / 2.0))
         worst_x = worst_y = 0.0
         for xi in (bmin[0], bmax[0]):
             for yi in (bmin[1], bmax[1]):

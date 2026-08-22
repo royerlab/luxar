@@ -98,6 +98,7 @@ from arbol import aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, DimensionsConfig, ViewerConfig
 from luxar.demos import cache_computed, launch_viewer, parse_demo_flags, parse_int_arg
+from luxar.demos._cinematic_camera import pull_in
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -1733,10 +1734,9 @@ def _viewer_config() -> ViewerConfig:
         # Opening pose: low vantage from the forest edge at canopy height,
         # looking into the depth of the field — not the default top-down.
         camera=CameraConfig(
-            position=(-48.0, -42.0, 14.0),
+            position=pull_in((-48.0, -42.0, 14.0), (4.0, 6.0, 4.5), from_fov_deg=50.0),
             target=(4.0, 6.0, 4.5),
             up=(0.0, 0.0, 1.0),
-            fov=50.0,
             near=0.5,
             far=800.0,
         ),

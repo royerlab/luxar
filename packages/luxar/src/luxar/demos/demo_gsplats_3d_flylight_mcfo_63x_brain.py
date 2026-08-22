@@ -179,6 +179,7 @@ from arbol import aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import ensure_dataset, launch_viewer, parse_demo_flags
+from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
 from luxar.gsplats.io.load_gsplats import load_gsplat_node
 from luxar.gsplats.tree import center_bounds
 from luxar.utils.paths import get_demos_output_dir
@@ -244,7 +245,7 @@ ABSORPTION = 0.81
 # but the brain would then occupy only ~0.66 of the width at 1.4 and ~0.52 at
 # 16:9, instead of 0.92. That headroom nobody sees is most of what the explicit
 # camera is here to recover.
-CAMERA_FOV = 47.0
+CAMERA_FOV = CINEMATIC_FOV_DEG
 CAMERA_FILL = 0.92
 CAMERA_ASPECT = 1.4
 
@@ -336,7 +337,6 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                         position=(cx, cy, cz + distance),
                         target=(cx, cy, cz),
                         up=(0.0, 1.0, 0.0),
-                        fov=CAMERA_FOV,
                     ),
                 ),
                 citation=DEMO_META["citation"],

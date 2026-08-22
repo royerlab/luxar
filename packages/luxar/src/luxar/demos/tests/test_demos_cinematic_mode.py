@@ -30,15 +30,11 @@ Four invariants, and they close different holes:
     more fragile than the rule it enforces. The rule holds because in this
     package a ``ViewerConfig`` is only ever built to be handed to a scene — if
     that stops being true, this guard is where to say so.
-``test_every_authored_camera_states_the_lens_it_was_composed_for``
-    Every ``CameraConfig`` with an opening position says, one way or another,
-    which field of view its distance assumes — because the viewer expands the
-    cinematic FOV only AFTER it auto-frames, so a pose that quietly assumes the
-    47° default opens ~1.4x looser than it was tuned for. Pinning ``fov`` /
-    ``fov_preset`` says it; so does composing the pose for 63° through
-    ``demos/_cinematic_camera.py``, which is what the five extent- and
-    radius-derived poses do (and which keeps the preset's lens whole — see
-    below). What the guard rejects is neither: a bare authored position.
+``test_every_authored_camera_uses_the_cinematic_lens``
+    Every ``CameraConfig`` with an opening position leaves the preset's FOV
+    unpinned and composes its distance for 63° through
+    ``demos/_cinematic_camera.py``. This keeps the 35 mm framing and distortion
+    together instead of mixing two lenses in one image.
 ``test_scientific_fidelity_overrides_are_explicit``
     The three demos whose scale, intensity, or categorical hue would be damaged
     by lens distortion and detector noise keep those author overrides explicit.
@@ -62,23 +58,22 @@ that from here; closing it means applying the expanded fov before the fit, in th
 viewer.
 
 A demo that authors a camera position has a stronger contract, since its distance
-was composed for one specific FOV, and there are two honest ways to keep it.
-PINNING ``fov`` holds the framing but takes the preset's 35 mm barrel distortion
-at a 50 mm framing — two lenses in one image; sixteen demos are in that state,
-all with pins that predate the cinematic look. COMPOSING the pose for 63°
-(``demos/_cinematic_camera.py``) keeps the lens whole and preserves the framing
-exactly, at the cost of the stronger perspective a wider lens gives. The five
-poses derived from an extent or a fitted radius take the second route, which is a
-deliberate house choice rather than an oversight; the third invariant below
-accepts either, and rejects a pose that states neither.
+was composed for one specific FOV. Every authored pose is composed for 63°
+through ``demos/_cinematic_camera.py``: lens-derived poses use
+``CINEMATIC_FOV_DEG`` directly, and empirical poses use ``pull_in`` with the FOV
+they were tuned against. This preserves framing exactly while keeping the
+preset's 35 mm framing and distortion together.
 """
 
 from __future__ import annotations
 
 import ast
+import math
 from pathlib import Path
 
 import pytest
+
+from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG, pull_in
 
 from ._scanned_modules import scanned_demo_modules
 
@@ -214,24 +209,22 @@ def _composes_for_the_cinematic_lens(tree: ast.AST, call: ast.Call) -> bool:
 
 
 @pytest.mark.parametrize("path", MODULES, ids=_module_ids(MODULES))
-def test_every_authored_camera_states_the_lens_it_was_composed_for(path: Path) -> None:
+def test_every_authored_camera_uses_the_cinematic_lens(path: Path) -> None:
     tree = ast.parse(path.read_text(), filename=str(path))
     missing = [
         call.lineno
         for call in _camera_configs(tree)
         if _has_non_none_keyword(call, "position")
-        and not _has_non_none_keyword(call, "fov")
-        and not _has_non_none_keyword(call, "fov_preset")
-        and not _composes_for_the_cinematic_lens(tree, call)
+        and (
+            _has_non_none_keyword(call, "fov")
+            or _has_non_none_keyword(call, "fov_preset")
+            or not _composes_for_the_cinematic_lens(tree, call)
+        )
     ]
     assert not missing, (
-        f"{path.name}: CameraConfig at line(s) {missing} sets an opening position "
-        f"whose field of view is anybody's guess: it pins neither fov nor "
-        f"fov_preset, and nothing says it was composed for the cinematic 63°. "
-        f"Cinematic mode widens the lens only AFTER the viewer frames a scene, "
-        f"so an authored pose that assumes 47° silently opens ~1.4x looser — "
-        f"pin the fov you meant, or compose for 63° through "
-        f"demos/_cinematic_camera.py"
+        f"{path.name}: CameraConfig at line(s) {missing} does not take the "
+        f"cinematic 35 mm lens whole: leave fov/fov_preset unset and compose "
+        f"the position for 63° through demos/_cinematic_camera.py"
     )
 
 
@@ -302,8 +295,8 @@ def test_the_guard_reads_the_flag_it_claims_to(source: str, flagged: bool) -> No
 @pytest.mark.parametrize(
     ("source", "flagged"),
     [
-        ("CameraConfig(position=p, fov=47.0)", False),
-        ("CameraConfig(position=p, fov_preset='50mm')", False),
+        ("CameraConfig(position=p, fov=47.0)", True),
+        ("CameraConfig(position=p, fov_preset='50mm')", True),
         ("CameraConfig(position=p)", True),
         ("CameraConfig(position=p, fov=None)", True),
         ("CameraConfig(fov=47.0)", False),
@@ -322,15 +315,34 @@ def test_the_guard_reads_the_flag_it_claims_to(source: str, flagged: bool) -> No
 def test_the_guard_reads_authored_camera_framing(source: str, flagged: bool) -> None:
     tree = ast.parse(source)
     (call,) = _camera_configs(tree)
-    missing = (
+    missing = bool(
         _has_non_none_keyword(call, "position")
-        and not (
+        and (
             _has_non_none_keyword(call, "fov")
             or _has_non_none_keyword(call, "fov_preset")
+            or not _composes_for_the_cinematic_lens(tree, call)
         )
-        and not _composes_for_the_cinematic_lens(tree, call)
     )
     assert missing is flagged
+
+
+@pytest.mark.parametrize("from_fov_deg", [28.0, 38.0, 42.0, 45.0, 50.0])
+def test_pull_in_preserves_framing_from_every_authored_lens(
+    from_fov_deg: float,
+) -> None:
+    target = (4.0, -3.0, 2.0)
+    position = (14.0, 17.0, 32.0)
+    moved = pull_in(position, target, from_fov_deg=from_fov_deg)
+
+    old_distance = math.dist(position, target)
+    new_distance = math.dist(moved, target)
+    old_half_height = old_distance * math.tan(math.radians(from_fov_deg / 2.0))
+    new_half_height = new_distance * math.tan(math.radians(CINEMATIC_FOV_DEG / 2.0))
+
+    assert new_half_height == pytest.approx(old_half_height)
+    assert tuple(moved[i] - target[i] for i in range(3)) == pytest.approx(
+        tuple((position[i] - target[i]) * new_distance / old_distance for i in range(3))
+    )
 
 
 @pytest.mark.parametrize(
