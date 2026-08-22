@@ -137,7 +137,11 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         return lo, hi
 
     def coordinate_round_trip_slack(
-        self, data: np.ndarray, mode: EncodingMode
+        self,
+        data: np.ndarray,
+        mode: EncodingMode,
+        *,
+        allow_lut: bool = True,
     ) -> Optional[NDArray[np.float64]]:
         """How far can encoding ``data`` as a COORDINATE move a value, per axis?
 
@@ -164,22 +168,45 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         axis must not inflate the bounds of a snapped, exactly-stored time axis
         beside it.
 
-        Cost: one ``np.unique`` per non-degenerate axis, via
-        :func:`gridded_axis_step`, which is what proves an axis round-trips
-        bit-exactly. The gsplat sigma rail
-        (:func:`~luxar.io._compiler.gsplat_assembly._axis_center_offender`)
-        accepts the same cost for the same guarantee, but orders that check LAST
-        so it never runs on the common path; here every axis of every coordinate
-        array pays it once, which is one pass against the sort and the
-        per-chunk reductions the caller is already doing.
+        ``allow_lut`` MIRRORS :meth:`~luxar.encoding.encoder.ArrayEncoder.encode`'s
+        own parameter and must be passed the same value the write will use. A
+        LUT stores the values verbatim, so a LUT-eligible array is exact — but
+        only if the write is actually allowed to reach for a LUT. The lines
+        writer encodes ``vertices`` with ``allow_lut=False`` (the spatial-index
+        loader reads that array as raw chunked zarr), so a LUT-eligible lines
+        vertices array is quantized like any other and its bounds need the
+        pad; asking with the default ``True`` there would report "exact" and
+        write bounds the decoded vertices escape.
 
-        The exits below replay :meth:`_encode_coordinate`'s own, in its order,
-        and deliberately WITHOUT its warnings: this is a query, and a duplicate
-        warning at query time would be noise.
+        Cost, honestly: the LUT probe
+        (:meth:`~luxar.encoding.encoder.ArrayEncoder.encodes_as_lut`) is a
+        whole-ARRAY ``np.unique`` and is the DOMINANT term whenever it runs —
+        more than the grid loop and the reductions combined — and
+        :meth:`encode` recomputes the plan from scratch afterwards, so a caller
+        that asks and then encodes pays it twice. It is therefore asked LAST,
+        after the cheap exits and the per-axis grid loop, and only when some
+        axis came out with nonzero slack: if every axis is already exact the
+        answer is ``None`` regardless of the LUT, so the probe would be pure
+        waste. Measured on 1M×3 float32 (best of 3): an all-gridded array 64 ms
+        instead of 194 ms, and the lines path (``allow_lut=False``) 82 ms
+        instead of 323 ms. On the common points path — continuous coordinates,
+        LUT allowed — the probe genuinely can change the answer, so it still
+        runs and still dominates (229 ms of that 323 ms); this reordering does
+        not make that case cheaper, and memoizing ``_lut_plan`` would be the
+        fix there. The cheap exits first is also what the gsplat sigma rail
+        (:func:`~luxar.io._compiler.gsplat_assembly._axis_center_offender`)
+        does, and for the same reason.
+
+        The exits below replay :meth:`_encode_coordinate`'s own — reordered as
+        described, which is safe because they are independent tests of the same
+        array — and deliberately WITHOUT its warnings: this is a query, and a
+        duplicate warning at query time would be noise.
 
         Args:
             data: The coordinate array (N, d) exactly as it will be encoded
             mode: The encoding mode it will be encoded under
+            allow_lut: Whether the write will permit a LUT encoding, i.e. the
+                ``allow_lut`` the matching :meth:`encode` call passes.
 
         Returns:
             ``None`` if every axis round-trips exactly, else the per-axis slack.
@@ -192,15 +219,24 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
 
         arr = np.asarray(data).astype(np.float64)
         if arr.ndim != 2 or arr.shape[0] == 0:
+            # Not the (N, d) shape this predicate is defined for — NOT a claim
+            # of exactness. A 1-D COORDINATE array really is quantized (a
+            # `linspace(0, 1000, 5000)` moves by the full half-quantum), but the
+            # per-axis scales this answer is expressed in do not exist for it,
+            # and the bound builders all require (N, d) and never see anything
+            # else. An empty array has nothing to move.
             return None
 
         lo = arr.min(axis=0)
         hi = arr.max(axis=0)
+        if not (bool(np.all(np.isfinite(lo))) and bool(np.all(np.isfinite(hi)))):
+            # A NaN/inf coordinate has no meaningful displacement, and returning
+            # a NaN entry would trip the bound builders' own finiteness check
+            # with a misleading message. The compiler's fail-fast position gate
+            # rejects such data long before here; this is for a direct caller.
+            return None
         if float((hi - lo).max()) >= COORDINATE_U16_MAX_EXTENT:
             return None  # the extent rail falls back to float32 (exact)
-
-        if self.encodes_as_lut(data, SemanticType.COORDINATE):
-            return None  # a LUT stores the values verbatim
 
         slack = np.zeros(arr.shape[1], dtype=np.float64)
         for axis in range(arr.shape[1]):
@@ -222,6 +258,9 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
 
         if not slack.any():
             return None
+
+        if allow_lut and self.encodes_as_lut(data, SemanticType.COORDINATE):
+            return None  # a LUT stores the values verbatim
         return slack
 
     def _encode_coordinate(
@@ -282,7 +321,8 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         A caller that instead needs to know HOW FAR this method can move a value
         — the points/lines chunk-bounds writers, which must pad a bound the
         reader trusts — asks :meth:`coordinate_round_trip_slack`, directly above.
-        It replays these same exits without writing; keep the two in step.
+        It replays these same exits without writing (and takes the same
+        ``allow_lut`` the write will use); keep the two in step.
 
         Args:
             zarr_group: Zarr group to write to

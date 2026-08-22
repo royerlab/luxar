@@ -15,17 +15,41 @@ chunks and 5 of 5 segment chunks stored a bound their own decoded coordinates
 escaped.
 
 The encoder now answers the question directly.
-`ArrayEncoder.coordinate_round_trip_slack(data, mode)` returns the per-axis
-distance a COORDINATE write can move a value — `None` when the write is exact on
-every axis — by replaying `_encode_coordinate`'s own exits in its own order,
-without writing anything and without repeating its warnings. PRECISION, an empty
-or non-2D array, an extent at or above the 2^16 float32 fallback and a
-LUT-eligible array are all exact; per axis, a constant axis is exact and so is a
-gridded one (the grid snap makes it round-trip bit-exactly, and
-`gridded_axis_step` proves it by replaying the encode and the decode); anything
-else gets the conservative half-quantum. Keeping the predicate immediately next
-to the encoder it mirrors is the point — the two cannot drift apart in separate
-files.
+`ArrayEncoder.coordinate_round_trip_slack(data, mode, *, allow_lut=True)` returns
+the per-axis distance a COORDINATE write can move a value — `None` when the write
+is exact on every axis — by replaying `_encode_coordinate`'s own exits without
+writing anything and without repeating its warnings. PRECISION, an empty array
+and an extent at or above the 2^16 float32 fallback are exact; per axis, a
+constant axis is exact and so is a gridded one (the grid snap makes it round-trip
+bit-exactly, and `gridded_axis_step` proves it by replaying the encode and the
+decode); anything else gets the conservative half-quantum. A non-2D array
+answers `None` because it is not the `(N, d)` shape the per-axis answer is
+defined for — NOT because it is exact (a 1-D COORDINATE array is quantised like
+any other), and the bound builders all require `(N, d)`. Non-finite input
+answers `None` rather than a NaN entry that the bound validator would reject
+with a message pointing at the wrong culprit. Keeping the predicate immediately
+next to the encoder it mirrors is the point — the two cannot drift apart in
+separate files.
+
+`allow_lut` is the one exit the CALLER has to declare, and it mirrors
+`ArrayEncoder.encode`'s parameter of the same name. A LUT stores values verbatim,
+so a LUT-eligible array is exact — but only where the write is allowed to reach
+for a LUT. The lines writer encodes `vertices` with `allow_lut=False` (the
+spatial-index loader reads that array as raw chunked zarr), so a lines vertices
+array with ≤256 distinct values is quantised on disk while looking eligible; the
+lines glue passes `allow_lut=False` to match, and the points glue keeps the
+default because `write_positions` does not block LUT and such a points node
+genuinely stores `lut_uint8`. Measured on a 4D lines compile with a 250-value
+irregular palette (60,000 segments / 120,000 vertices): treating eligibility as
+exactness left 30 of 44 vertex chunks (8,203 rows) and 7 of 15 segment chunks
+(487 endpoints) outside their own bound; declaring `allow_lut=False` takes all
+four counts to zero. The LUT probe is a whole-array `np.unique` and the dominant
+cost of the predicate whenever it runs, so it is asked LAST — after the cheap
+exits and the per-axis grid loop, and only when some axis came out with nonzero
+slack, since otherwise the answer is `None` regardless. On 1M×3 float32 that
+takes an all-gridded array from 194 ms to 64 ms and the lines path from 323 ms to
+82 ms; the common points path (continuous coordinates, LUT genuinely allowed)
+still pays it, because there the probe can still change the answer.
 
 `compute_chunk_bounds_points`, `compute_vertex_chunk_bounds` and
 `compute_segment_chunk_bounds` take a new keyword-only `coord_slack` vector and

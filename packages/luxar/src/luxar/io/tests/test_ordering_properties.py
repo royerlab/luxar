@@ -19,7 +19,7 @@ import warnings
 
 import numpy as np
 import pytest
-from hypothesis import given
+from hypothesis import given, settings
 from hypothesis import strategies as st
 from hypothesis.extra import numpy as hnp
 
@@ -40,6 +40,11 @@ from luxar.io.ordering import (
 )
 
 
+# deadline=None on both equivariance tests: the Morton/Hilbert kernels are
+# Numba-JIT'd, and whichever test warms them first pays a ~400 ms compile inside
+# a single hypothesis example, blowing the default 200 ms per-example deadline.
+# That is a one-off compile, not a performance regression these tests can see.
+@settings(deadline=None)
 @given(
     n=st.integers(min_value=1, max_value=64),
     d=st.integers(min_value=1, max_value=4),
@@ -56,6 +61,7 @@ def test_morton_is_permutation_equivariant(n: int, d: int, data: st.DataObject) 
     np.testing.assert_array_equal(permuted, base[perm_arr])
 
 
+@settings(deadline=None)  # see the note above test_morton_is_permutation_equivariant
 @given(
     n=st.integers(min_value=1, max_value=64),
     d=st.integers(min_value=1, max_value=4),
@@ -253,6 +259,46 @@ def test_chunk_bounds_contain_the_footprint_at_every_magnitude(
         )
         # The chunk covers vertices 0..N-1 (every vertex appears in a segment).
         _assert_contains(seg_bounds, coords, pad32, f"segments pad={pad}")
+
+        # The quantisation slack (#1655) is another small ABSOLUTE pad added to
+        # the same float32 store, so it faces the same large-magnitude hazard
+        # and belongs in this sweep. Driven through the three builders that take
+        # it, with the FOOTPRINT set to zero so the whole pad IS the slack: a
+        # builder that dropped the slack term would leave the bound exactly on
+        # the coordinate and fail at every magnitude, not only the large ones.
+        # (Two pads SUMMING correctly is pinned separately, at small magnitude,
+        # by test_coord_slack_pads_spatial_and_barrier_dims_in_every_builder —
+        # it cannot be asserted up here, because past ~1e15 the two float64
+        # additions the builder does and the single one this helper does no
+        # longer agree, for the reason given in the _MAGNITUDES note.)
+        slack_vec = np.full(_NDIM, pad32, dtype=np.float64)
+        zero_widths = np.zeros(_N_ELEMENTS, dtype=np.float32)
+        _assert_contains(
+            compute_chunk_bounds_points(
+                coords, radii=0.0, chunk_size=_N_ELEMENTS, coord_slack=slack_vec
+            ),
+            coords,
+            pad32,
+            f"points slack={pad}",
+        )
+        _assert_contains(
+            compute_vertex_chunk_bounds(coords, _N_ELEMENTS, coord_slack=slack_vec),
+            coords,
+            pad32,
+            f"vertices slack={pad}",
+        )
+        _assert_contains(
+            compute_segment_chunk_bounds(
+                coords,
+                segments,
+                zero_widths,
+                chunk_size=len(segments),
+                coord_slack=slack_vec,
+            ),
+            coords,
+            pad32,
+            f"segments slack={pad}",
+        )
 
     # Barrier arm (all four builders pad a categorical axis by _BARRIER_BOUND_EPS
     # and nothing else). Axis 0 is the barrier; axes 1-2 keep their extent.
@@ -511,6 +557,46 @@ def test_coord_slack_pads_spatial_and_barrier_dims_in_every_builder() -> None:
     for d, extra in ((0, 0.25), (1, 0.25), (2, _BARRIER_BOUND_EPS)):
         assert segs[0, d, 0] == pytest.approx(0.0 - extra - slack[d])
         assert segs[0, d, 1] == pytest.approx(3.0 + extra + slack[d])
+
+
+def test_coord_slack_adds_to_PER_POINT_array_radii() -> None:
+    """The ``chunk_radii`` branch of the points builder, with a real slack.
+
+    ``compute_chunk_bounds_points`` has two footprint paths — a scalar radius
+    broadcast over the chunk, and a PER-POINT array, where the footprint is the
+    element-wise ``min(coord - r)`` / ``max(coord + r)`` rather than the chunk's
+    extreme coordinate offset by the chunk's max radius (a big point away from
+    the edge must not widen the bound). The test above only drives the scalar
+    path, so the array branch's interaction with ``coord_slack`` was untested.
+    The slack is a displacement of the STORED COORDINATE, so it applies once,
+    outside that reduction.
+    """
+    coords = np.array(
+        [[0.0, 0.0], [1.0, 1.0], [2.0, 2.0], [3.0, 3.0]], dtype=np.float32
+    )
+    # Two chunks of two points. Chunk 0's widest reach comes from DIFFERENT
+    # points at each end (0 - 0.125 low, 1 + 0.25 high); chunk 1's largest
+    # radius (2.0, on the low point) deliberately does not set the high end.
+    radii = np.array([0.125, 0.25, 2.0, 1.0], dtype=np.float32)
+    slack = np.array([0.5, 0.125], dtype=np.float64)
+
+    bounds = compute_chunk_bounds_points(
+        coords, radii=radii, chunk_size=2, coord_slack=slack
+    )
+    assert bounds.shape == (2, 2, 2)
+    for d in range(2):
+        assert bounds[0, d, 0] == pytest.approx(0.0 - 0.125 - slack[d])
+        assert bounds[0, d, 1] == pytest.approx(1.0 + 0.25 + slack[d])
+        assert bounds[1, d, 0] == pytest.approx(2.0 - 2.0 - slack[d])
+        assert bounds[1, d, 1] == pytest.approx(3.0 + 1.0 + slack[d])
+
+    # Same data with a barrier dim: the barrier axis takes the epsilon plus the
+    # slack and NOT the radius, on the array branch too.
+    barred = compute_chunk_bounds_points(
+        coords, radii=radii, chunk_size=2, slice_dims=[1], coord_slack=slack
+    )
+    assert barred[0, 1, 0] == pytest.approx(0.0 - _BARRIER_BOUND_EPS - slack[1])
+    assert barred[0, 1, 1] == pytest.approx(1.0 + _BARRIER_BOUND_EPS + slack[1])
 
 
 def test_coord_slack_defaults_leave_every_builder_byte_identical() -> None:

@@ -106,6 +106,11 @@ def build_points_ordering(
     # bounds must contain the DECODED positions, since that is what the reader
     # compares a slice query against (issue #1655). `sorted_positions` is the
     # very array `write_positions` later hands the encoder.
+    #
+    # `allow_lut` is deliberately left at its default here, unlike the lines
+    # glue: `write_positions` (dataset_writers/positions.py) does not pass
+    # `allow_lut=False`, so a LUT-eligible positions array really is stored
+    # verbatim as `lut_uint8` and really is exact. The two must agree.
     coord_slack = (
         dataset_ctx.encoder.coordinate_round_trip_slack(
             sorted_positions, dataset_ctx.encoding_mode

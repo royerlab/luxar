@@ -80,9 +80,10 @@ def compute_chunk_bounds_points(
     from the encoder's own predicate
     (:meth:`~luxar.encoding.encoder.ArrayEncoder.coordinate_round_trip_slack`),
     which returns zero for an axis the encoder stores exactly (a gridded
-    time/channel axis, a constant axis, a LUT or float32 fallback). A direct
-    caller that omits it gets bounds for the authored coordinates only
-    (issue #1655).
+    time/channel axis, a constant axis, a float32 fallback — and the whole array
+    when the write will really store a LUT, which the caller declares with that
+    predicate's ``allow_lut``). A direct caller that omits it gets bounds for the
+    authored coordinates only (issue #1655).
 
     ``radii=None`` does not mean "no extent" — a points node that stores no radii
     array is drawn with the renderer's default radius, so the bounds are expanded

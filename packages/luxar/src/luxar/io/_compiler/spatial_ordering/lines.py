@@ -107,9 +107,16 @@ def build_lines_ordering(
     # How far can the encoder move a vertex from what it is handed? Both bound
     # sets are in D-space over this same array — the very one the writer later
     # hands the encoder — so they share one slack vector (issue #1655).
+    #
+    # `allow_lut=False` MUST match what `write_lines_arrays` passes when it
+    # encodes `vertices` (geometry_writers/lines.py): the lines spatial-index
+    # loader reads that array as raw chunked zarr, so a LUT is blocked there.
+    # A LUT-eligible vertices array is therefore quantized like any other, and
+    # asking with the default would report "exact" and leave both bound sets
+    # unpadded around coordinates the store moved.
     coord_slack = (
         dataset_ctx.encoder.coordinate_round_trip_slack(
-            sorted_vertices, dataset_ctx.encoding_mode
+            sorted_vertices, dataset_ctx.encoding_mode, allow_lut=False
         )
         if dataset_ctx is not None
         else None

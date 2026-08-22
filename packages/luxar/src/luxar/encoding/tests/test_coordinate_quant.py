@@ -275,11 +275,40 @@ class TestCoordinateRoundTripSlack:
             ArrayEncoder().coordinate_round_trip_slack(empty, EncodingMode.AUTO) is None
         )
 
-    def test_non_2d_array_is_exact(self):
-        flat = np.linspace(0.0, 1000.0, 500, dtype=np.float32)
+    def test_non_2d_array_is_out_of_scope_not_exact(self):
+        """``None`` here means "not the (N, d) shape this predicate covers".
+
+        It is emphatically NOT a claim of exactness: a 1-D COORDINATE array is
+        stored as ``linear_perchannel_u16`` like any other and moves by the full
+        half-quantum. Pinned below so nobody reads the ``None`` as a guarantee.
+        The bound builders all require ``(N, d)`` and never see this shape.
+        """
+        flat = np.linspace(0.0, 1000.0, 5000, dtype=np.float32)
         assert (
             ArrayEncoder().coordinate_round_trip_slack(flat, EncodingMode.AUTO) is None
+        ), "the (N, d) shape guard must not answer for a 1-D array"
+        decoded, encoding, _stored = _roundtrip(flat, EncodingMode.AUTO)
+        assert encoding["name"] == "linear_perchannel_u16"
+        moved = float(
+            np.abs(decoded.astype(np.float64) - flat.astype(np.float64)).max()
         )
+        assert moved > 1e-3, (
+            "a 1-D COORDINATE array really is quantised — the None above is a "
+            f"scope guard, not an exactness claim (max |Δ| = {moved:.4g})"
+        )
+
+    def test_non_finite_input_returns_none(self):
+        """NaN/inf in, ``None`` out — never a NaN slack entry.
+
+        A NaN entry would reach ``_normalise_coord_slack`` and be rejected with
+        a "must be finite" message pointing at the CALLER rather than the data.
+        Unreachable through the compiler (its fail-fast position gate rejects
+        non-finite coordinates first), but this is public API.
+        """
+        enc = ArrayEncoder()
+        for bad in (np.nan, np.inf, -np.inf):
+            pos = np.array([[0.0, 1.0], [bad, 2.0]], dtype=np.float64)
+            assert enc.coordinate_round_trip_slack(pos, EncodingMode.AUTO) is None
 
     def test_extent_at_or_above_the_u16_rail_is_exact(self):
         """At/above 2**16 the encoder falls back to float32 — nothing moves."""
@@ -360,8 +389,15 @@ class TestCoordinateRoundTripSlack:
         Two decodes are checked, because the COORDINATE decode contract is
         float32 while the quantization itself is float64:
 
-        * The float64 dequantization is bounded by the slack EXACTLY — that is
-          the closed form, and it is what the chunk-bounds pad is derived from.
+        * The float64 dequantization is bounded by the slack up to float64
+          rounding in the encode/decode chain. The closed form
+          ``extent / 2·levels`` is the exact half-quantum, but the replay that
+          produces the decoded value is a few float64 operations, so the
+          measured ratio can exceed 1 in the last bits (worst observed over 300
+          random configs: 1.0000000008). Hence the ``1 + 1e-9`` below rather
+          than a bare ``<=``; it is what the chunk-bounds pad is derived from,
+          and containment is still safe because the float32 outward store below
+          absorbs a relative 1e-9 at any magnitude.
         * The stored float32 decode can exceed it by up to half a float32 ULP
           at the coordinate's own magnitude (measured ~1.07e-5 past a 7.62e-3
           slack at |x| ~ 500). That does NOT leak into the stored bound: the
@@ -391,7 +427,9 @@ class TestCoordinateRoundTripSlack:
         hi = np.asarray(encoding["col_hi"], dtype=np.float64)
         decoded64 = lo + stored.astype(np.float64) / 65535.0 * (hi - lo)
         moved64 = np.abs(decoded64 - pos.astype(np.float64)).max(axis=0)
-        assert np.all(moved64 <= slack), f"moved64={moved64} slack={slack}"
+        assert np.all(moved64 <= slack * (1.0 + 1e-9)), (
+            f"moved64={moved64} slack={slack}"
+        )
         # And the bound is tight enough to be useful: every axis really does
         # get within a few percent of it.
         assert np.all(moved64 >= 0.9 * slack)

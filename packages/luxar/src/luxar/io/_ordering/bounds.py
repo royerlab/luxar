@@ -20,6 +20,12 @@ import numpy as np
 # over-fetch returns. Step metadata is not plumbed into these bound
 # builders; discrete/categorical dims with milli-scale steps are not a
 # supported layout (rescale the axis instead).
+#   Since the quantisation pad (#1655) the threshold is worse than 1.3e-3 on a
+#   NON-GRIDDED barrier axis, because the compiler adds `coord_slack` on top of
+#   this epsilon: the effective pad is `1e-3 + extent/131070`, i.e. 8.63e-3 at
+#   an axis extent of 1000 — 8.6x wider, so steps below ~3.5e-2 over-fetch
+#   there. An ordinary stacked integer time/channel axis is unaffected: it is
+#   GRIDDED, its slack is exactly 0, and it keeps the plain 1e-3.
 #
 # KNOWN LIMIT (large coordinates): the outward float32 store below never lets a
 # pad vanish, so the pad a barrier axis EFFECTIVELY gets is
