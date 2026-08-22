@@ -1081,6 +1081,31 @@ def test_a_screen_area_group_is_already_current_whatever_its_ladder_says(
     assert report.restamped == []
 
 
+def test_a_screen_area_group_with_missing_threshold_is_still_already_current(
+    tmp_path: Path,
+) -> None:
+    """Selector-only parity survives hygiene details the command never reads."""
+    from luxar.io.lod_restamp import restamp_lod_store
+
+    path = _handmade_store(
+        tmp_path / "stamped-missing-threshold.luxar.zarr",
+        lod_attrs={"selector": "screen-area"},
+        group_bounds={
+            "c0": _plain_child(0, 10, None),
+            "c1": _plain_child(1, 40, 1.0),
+        },
+    )
+
+    group = screen_lod_store(path).groups[0]
+    assert group.verdict == VERDICT_ALREADY_CURRENT
+    assert "coverage_fraction" in group.reason
+    assert group.measurements == []
+
+    report = restamp_lod_store(path, dry_run=True)
+    assert [entry.path for entry in report.already_current] == ["lod"]
+    assert report.restamped == []
+
+
 def test_a_descending_stored_ladder_is_skipped_exactly_as_restamp_lod_skips_it(
     tmp_path: Path,
 ) -> None:

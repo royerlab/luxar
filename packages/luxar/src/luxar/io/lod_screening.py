@@ -1083,11 +1083,17 @@ def _near_far_for(distance: float, diagonal: float) -> Tuple[float, float]:
     return (scale * 1e-6, scale * 1e6)
 
 
-def _skip(facts: _LodGroupFacts, reason: str, rederived: List[float]) -> GroupScreening:
-    """A :data:`VERDICT_SKIPPED` record carrying whatever was already resolved."""
+def _skip(
+    facts: _LodGroupFacts,
+    reason: str,
+    rederived: List[float],
+    *,
+    verdict: str = VERDICT_SKIPPED,
+) -> GroupScreening:
+    """A refusal record carrying whatever was already resolved."""
     return GroupScreening(
         path=facts.path,
-        verdict=VERDICT_SKIPPED,
+        verdict=verdict,
         selector=facts.selector,
         partition_bound=facts.partition_bound,
         anchor_reason=facts.anchor_reason,
@@ -1166,17 +1172,19 @@ def _ladders_match(stored: Sequence[Optional[float]], derived: Sequence[float]) 
 def _preflight(facts: _LodGroupFacts) -> Tuple[List[float], Optional[GroupScreening]]:
     """Resolve the re-derived ladder, or the skip record saying why there is none.
 
-    Six states make a group undecidable, and each is reported rather than
-    guessed at. Four of them are ``restamp-lod``'s OWN refusals, applied through
-    its own predicates so the two can never drift: a selector outside the
-    vocabulary, an orphan ladder child
+    Six hygiene states can make a legacy group undecidable, and each is reported
+    rather than guessed at. Four of them are ``restamp-lod``'s OWN refusals,
+    applied through its own predicates so the two can never drift: a selector
+    outside the vocabulary, an orphan ladder child
     (:func:`~luxar.io.lod_restamp._orphan_ladder_child_refusal`), a DESCENDING
     stored ladder (:func:`~luxar.io.lod_restamp._descending_ladder_refusal`), and
     a ladder whose finest element count will not resolve. A group ``restamp-lod``
     refuses is a group it writes NOTHING for, so calling it a win would be a
     false positive. The remaining two are the screen's own: a child with no
     stored ``coverage_fraction`` (so TODAY's pick has no answer), and a
-    ``default_level`` pointing outside its own ladder.
+    ``default_level`` pointing outside its own ladder. A group already stamped
+    ``screen-area`` keeps the hygiene detail but remains ``already-current``:
+    ``restamp-lod`` returns on the selector before reading any of these fields.
 
     Args:
         facts: The group as read off the store.
@@ -1198,16 +1206,30 @@ def _preflight(facts: _LodGroupFacts) -> Tuple[List[float], Optional[GroupScreen
             ),
         )
 
+    refusal_verdict = (
+        VERDICT_ALREADY_CURRENT
+        if facts.selector == DERIVED_LOD_SELECTOR
+        else VERDICT_SKIPPED
+    )
     if facts.orphan_refusal:
-        return ([], _skip(facts, facts.orphan_refusal, []))
+        return (
+            [],
+            _skip(facts, facts.orphan_refusal, [], verdict=refusal_verdict),
+        )
 
     descending = _descending_ladder_refusal(facts.path, stored)
     if descending is not None:
-        return ([], _skip(facts, descending.detail, []))
+        return (
+            [],
+            _skip(facts, descending.detail, [], verdict=refusal_verdict),
+        )
 
     rederived, why_not = _rederived_ladder(facts)
     if why_not:
-        return (rederived, _skip(facts, why_not, rederived))
+        return (
+            rederived,
+            _skip(facts, why_not, rederived, verdict=refusal_verdict),
+        )
     if any(value is None for value in stored):
         return (
             rederived,
@@ -1216,6 +1238,7 @@ def _preflight(facts: _LodGroupFacts) -> Tuple[List[float], Optional[GroupScreen
                 "at least one child carries no 'coverage_fraction', so what the "
                 "viewer picks TODAY cannot be determined",
                 rederived,
+                verdict=refusal_verdict,
             ),
         )
     if not 0 <= facts.default_level < len(stored):
@@ -1226,6 +1249,7 @@ def _preflight(facts: _LodGroupFacts) -> Tuple[List[float], Optional[GroupScreen
                 f"default_level={facts.default_level} is outside the "
                 f"{len(stored)}-level ladder",
                 rederived,
+                verdict=refusal_verdict,
             ),
         )
     return (rederived, None)
@@ -1744,7 +1768,8 @@ def _print_group(group: GroupScreening) -> None:
                 "and writes nothing"
             )
         if group.reason:
-            aprint(f"skipped: {group.reason}")
+            label = "detail" if group.verdict == VERDICT_ALREADY_CURRENT else "skipped"
+            aprint(f"{label}: {group.reason}")
         for m in group.measurements:
             if m.off_screen:
                 aprint(
