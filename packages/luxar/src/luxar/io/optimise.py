@@ -805,8 +805,12 @@ def _copy_payload_files(source: zarr.Group, dest: zarr.Group) -> None:
     exists for, a probe for ``Zarr.json`` hands back the group's own
     ``zarr.json``: the dangling case would be invisible, every such store would
     be refused, and the refusal would quote the metadata document's byte count as
-    if it were the payload's. The listing is also why the probe happens BEFORE
-    the read — there is no point reading bytes the pass is about to refuse over.
+    if it were the payload's. The listing therefore GATES the read rather than
+    replacing it — the bytes are still read, for the count the refusal quotes,
+    but only for a name the store really lists, so the fold cannot happen. A key
+    that lists and yet reads back nothing is not a payload at all (a child group
+    or a plain subdirectory of that name), and takes the skip too: there are no
+    bytes to be unfaithful to and no file to rename.
 
     A named file that is simply ABSENT is skipped with a notice rather than
     raising, for the same reason: the source has no bytes to hand over, so
@@ -830,25 +834,31 @@ def _copy_payload_files(source: zarr.Group, dest: zarr.Group) -> None:
             )
             continue
         if filename.lower() in _METADATA_DOCS_LOWERCASED:
-            if filename not in list_raw_keys(source):
+            # The listing GATES the read: on a case-insensitive filesystem it can
+            # only ever report `zarr.json`, so the read that would fold onto the
+            # node document never happens and the dangling case stays visible.
+            # A key that lists but reads back `None` is not a payload either — a
+            # child group or a plain subdirectory of that name has no bytes to
+            # drop and nothing to rename — so it takes the same skip.
+            held = (
+                _read_payload_or_refuse(source, attr_key, filename)
+                if filename in list_raw_keys(source)
+                else None
+            )
+            if held is None:
                 aprint(
                     f"⚠ skipping payload {filename!r}: it names a zarr metadata "
                     f"document and the source holds no file there"
                 )
                 continue
-            # Read only for the byte count the refusal quotes. `None` needs a
-            # race with a concurrent delete to reach — the listing just found
-            # the key — so the count degrades rather than the refusal.
-            held = _read_payload_or_refuse(source, attr_key, filename)
-            amount = "the bytes" if held is None else f"{len(held)} bytes"
             raise ValueError(
                 f"optimise cannot copy the payload file {filename!r} named by "
                 f"{attr_key!r} on group {source.path or '/'!r}: on a "
                 f"case-insensitive filesystem that name resolves to the group's "
                 f"own zarr metadata document, so writing it would replace the "
                 f"document the whole store is read through. The re-chunk is "
-                f"refused rather than dropping {amount} the source really "
-                f"holds — rename the payload file and the {attr_key!r} "
+                f"refused rather than dropping the {len(held)} bytes the source "
+                f"really holds — rename the payload file and the {attr_key!r} "
                 f"attr that names it, then run optimise again."
             )
         payload = _read_payload_or_refuse(source, attr_key, filename)

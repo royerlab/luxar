@@ -596,11 +596,19 @@ def test_list_raw_keys_answers_case_exactly(tmp_path: Path) -> None:
     Python is folded by nothing."""
     root = zc.open_group(tmp_path / "s.zarr", mode="w", zarr_format=3)
     logo = root.create_group("overlays").create_group("logo")
-    (tmp_path / "s.zarr" / "overlays" / "logo" / "image.png").write_bytes(b"payload")
+    logo_dir = tmp_path / "s.zarr" / "overlays" / "logo"
+    (logo_dir / "image.png").write_bytes(b"payload")
+    # A name with real UPPERCASE in it, or a listing that lowercased everything
+    # it reported would pass every other assertion here: the two spellings the
+    # caller distinguishes would both be `logo.png`, and the fold this function
+    # exists to defeat would be back, inside the defence.
+    (logo_dir / "Logo.PNG").write_bytes(b"payload")
 
     keys = zc.list_raw_keys(logo)
     assert "image.png" in keys
     assert "missing.png" not in keys
+    assert "Logo.PNG" in keys
+    assert "logo.png" not in keys
     # The group's OWN document is a key like any other — which is the whole
     # point, since it is what a case-shifted payload name would collide with.
     assert "zarr.json" in keys
@@ -634,12 +642,16 @@ def test_list_raw_keys_is_store_agnostic(tmp_path: Path) -> None:
             if item.is_file():
                 out.write(item, item.relative_to(source).as_posix())
 
-    zipped = zarr.open_group(store=zarr.storage.ZipStore(archive, mode="r"), mode="r")
+    # Constructed OUTSIDE the call so an `open_group` raise still closes it:
+    # an open zip handle keeps the file locked on Windows and `tmp_path`
+    # teardown then fails with a second, unrelated error.
+    store = zarr.storage.ZipStore(archive, mode="r")
     try:
+        zipped = zarr.open_group(store=store, mode="r")
         assert "image.png" in zc.list_raw_keys(zipped["logo"])
         assert "missing.png" not in zc.list_raw_keys(zipped["logo"])
     finally:
-        zc.close(zipped)
+        store.close()
 
 
 def test_write_raw_bytes_round_trips_through_the_store(tmp_path: Path) -> None:

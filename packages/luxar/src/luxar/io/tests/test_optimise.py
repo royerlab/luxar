@@ -619,14 +619,48 @@ class TestPayloadFiles:
         assert attrs["type"] == "overlay_image"
         assert not any(p.name == "Zarr.json" for p in dst.rglob("*"))
 
+    def test_a_metadata_document_name_held_by_a_directory_is_skipped(
+        self, tmp_path: Path
+    ) -> None:
+        """:func:`list_raw_keys` reports every immediate child key — subgroups,
+        arrays and plain subdirectories, not only files. So a case-shifted
+        metadata-document name that is a DIRECTORY lists like a payload while
+        holding no bytes at all, and refusing over it would advise renaming a
+        file that does not exist to save bytes that do not exist. The read the
+        listing gates is what tells the two apart: it comes back empty-handed for
+        a directory, and the pass takes the same skip as for a dangling attr.
+        Case-sensitive filesystems only, as above."""
+        probe = tmp_path / "CaseProbe"
+        probe.write_text("x")
+        if (tmp_path / "caseprobe").exists():
+            pytest.skip("a case-insensitive filesystem cannot hold the fixture")
+        src = _store_with_a_payload_attr(
+            tmp_path / "src.luxar.zarr", "Zarr.json", payload=None
+        )
+        (src / "overlays" / "logo" / "Zarr.json").mkdir()
+        # The fixture really does pose the question: the name lists, so only the
+        # read outcome can separate it from the refusable shape.
+        logo = open_group(src, mode="r")["overlays/logo"]
+        assert "Zarr.json" in optimise_mod.list_raw_keys(logo)
+
+        dst = tmp_path / "out.luxar.zarr"
+        optimise_store(src, dst, verify=True)
+        attrs = dict(open_group(dst, mode="r")["overlays/logo"].attrs)
+        assert attrs["image_file"] == "Zarr.json"
+        assert attrs["type"] == "overlay_image"
+        assert not any(p.name == "Zarr.json" for p in dst.rglob("*"))
+
     def test_the_refusal_reports_the_payload_file_s_own_byte_count(
         self, tmp_path: Path
     ) -> None:
         """The count in the refusal is the user's evidence that something real is
-        at stake, and it has to come from the payload rather than from whatever
-        an open-by-name resolved to — quoting the node document's length would
-        advise renaming a file of a size that exists nowhere. Case-sensitive
-        filesystems only: elsewhere the fixture's two keys are one key."""
+        at stake, so the branch has to still fire for a genuine distinct file and
+        quote THAT file's own length — not the node document's, which would
+        advise renaming a file of a size that exists nowhere. What it pins is the
+        pairing: the listing must find the payload's exact spelling (an inverted
+        or empty or lowercasing :func:`list_raw_keys` all fail here) and the
+        length must be the one read back under it. Case-sensitive filesystems
+        only: elsewhere the fixture's two keys are one key."""
         probe = tmp_path / "CaseProbe"
         probe.write_text("x")
         if (tmp_path / "caseprobe").exists():
