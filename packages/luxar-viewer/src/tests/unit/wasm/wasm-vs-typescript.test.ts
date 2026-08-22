@@ -647,6 +647,8 @@ describe('WASM vs TypeScript Comparison', () => {
       expect(arraysAlmostEqual(wasmOutput, tsOutput)).toBe(true);
     });
 
+    // For these exhaustive bounds, the closest f64 result is 237 ULPs from a
+    // float32 rounding boundary, so a one-ULP libm difference cannot change bits.
     it.skipIf(!wasmFilesExist)(
       'decode_geolog_scalar_u8 should exactly match for every code',
       () => {

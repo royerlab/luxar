@@ -110,7 +110,11 @@ def _stats(array: np.ndarray) -> dict[str, float | None]:
 
 
 def _viewer_kernel_decode(array: zarr.Array, root: zarr.Group) -> np.ndarray | None:
-    """Decode scalar quantization in the viewer kernel's f32 operation order."""
+    """Decode in the f32 order of ``src/wasm/typescript/decode.ts``.
+
+    Python's scalar decoder uses f64 with a different operand order; keep this
+    transcription aligned with the TypeScript and Rust kernels.
+    """
     enc = array.attrs.get("encoding", None)
     if not isinstance(enc, dict):
         return None

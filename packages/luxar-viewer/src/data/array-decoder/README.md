@@ -33,6 +33,11 @@ from one entry point.
 `ArrayDecoder.decode()` checks encoding modes in a fixed order — the
 order MUST match the Python spec or behavior diverges:
 
+Main-thread branches that perform floating-point decoding delegate to
+the shared TypeScript worker-fallback kernels so worker routing cannot
+change decoded bits. `log_scalar` is the remaining holdout, tracked by
+#1848.
+
 1. **broadcasted** — single value replicated to `n_elements` × `k`. Reads
    one row from zarr, replicates in place, registers under `enc.hash` for
    later `array_ref` reuse.
@@ -47,19 +52,21 @@ order MUST match the Python spec or behavior diverges:
    BEFORE generic quantization because the name contains `uint`. Decodes
    via `expm1(normalized × max_log)`. Used for radii and other
    wide-dynamic-range positive scalars.
-5. **perchannel** (`log_perchannel_*`, `signed_log_perchannel_*`,
+5. **geolog scalar** (`geolog_scalar_uint8`, `geolog_scalar_uint16`) —
+   reserved zero plus geometric interpolation across the nonzero range.
+   Delegates to the shared f32-disciplined kernels.
+6. **perchannel** (`log_perchannel_*`, `signed_log_perchannel_*`,
    `linear_perchannel_*`, `geolog_perchannel_*`) — also checked before
    generic quantization. Per-column dequantization via the `col_lo` /
    `col_hi` scale arrays (column count from the array's own last
    dimension). Mirrors the RangeLoader's dedicated `'perchannel'` path
    and Python's `_decode_*_perchannel`.
-6. **quantized** (`rgb_uint8`, `rgb_uint16`, `bounded_scalar_uint8`,
-   `bounded_scalar_uint16`) and **geolog scalar** — delegate to the same
-   f32-disciplined TypeScript kernels used by worker fallback decoding, so
-   worker routing cannot change decoded bits. Linear bounds resolve from
+7. **quantized** (`rgb_uint8`, `rgb_uint16`, `bounded_scalar_uint8`,
+   `bounded_scalar_uint16`) — delegates to the shared f32-disciplined
+   kernels. Linear bounds resolve from
    `enc.bounds`, then `enc.min`/`enc.max`, then inferred (only `rgb_*` is
    inferrable → `[0, 1]`).
-7. **direct** — `undefined` / `'none'` / `float16` / `float32` /
+8. **direct** — `undefined` / `'none'` / `float16` / `float32` /
    `uint8` / `uint16` / `uint32` / `uint64` — raw zarr buffer converted
    to `Float32Array`. Registered under `enc.hash` if present.
 

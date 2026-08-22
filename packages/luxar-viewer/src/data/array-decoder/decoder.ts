@@ -466,6 +466,7 @@ export class ArrayDecoder {
    * Dequantize integer array to floats
    *
    * Format: uint8 or uint16 → float with bounds [min, max]
+   * Delegates to the TypeScript worker-fallback kernels for bit-exact routing parity.
    */
   private dequantize(
     data: ArrayLike<number>,
@@ -554,8 +555,9 @@ export class ArrayDecoder {
    *
    * Level 0 decodes to exactly 0; levels [1, 2^bits - 1] decode to
    * exp(minLog + (u - 1)/(2^bits - 2) * (maxLog - minLog)) — uniform
-   * relative precision across the array's own nonzero range. Mirrors
-   * Python `_decode_geolog_scalar` and the worker/WASM kernels exactly.
+   * relative precision across the array's own nonzero range. Matches the
+   * worker/WASM kernels bit-exactly; Python's f64 decode differs because the
+   * viewer rounds the logarithmic anchors to f32 first.
    */
   private decodeGeologScalar(
     data: ArrayLike<number>,

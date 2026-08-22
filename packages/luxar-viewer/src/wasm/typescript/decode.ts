@@ -15,7 +15,10 @@ export function decode_quantized_u8(
   output: Float32Array
 ): void {
   // Callers provide integral codes in [0, 255]. ArrayLike also admits the
-  // Float32Array of widened codes produced by full-array zarr reads.
+  // Float32Array of widened codes produced by full-array zarr reads. Python
+  // `_decode_bounded_scalar` uses f64 with a different operand order; exact
+  // viewer expectations mirror this kernel in
+  // `tests/fixtures/generate_expectations.py::_viewer_kernel_decode`.
   const lo = Math.fround(minVal);
   const hi = Math.fround(maxVal);
   const range = Math.fround(hi - lo);
@@ -37,7 +40,8 @@ export function decode_quantized_u16(
   output: Float32Array
 ): void {
   // Callers provide integral codes in [0, 65535]. ArrayLike also admits the
-  // Float32Array of widened codes produced by full-array zarr reads.
+  // Float32Array of widened codes produced by full-array zarr reads. See the
+  // uint8 kernel above for the Python and fixture-generator counterparts.
   const lo = Math.fround(minVal);
   const hi = Math.fround(maxVal);
   const range = Math.fround(hi - lo);
