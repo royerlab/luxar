@@ -7,9 +7,6 @@ the shared ``app_gsplat`` Typer.
 from __future__ import annotations
 
 import shutil
-import tarfile
-import zipfile
-import zlib
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -1123,14 +1120,9 @@ def doctor(
         info = True
     try:
         store_kind = resolve_store_kind(path)
-    except (
-        ValueError,
-        OSError,
-        EOFError,
-        zipfile.BadZipFile,
-        tarfile.TarError,
-        zlib.error,
-    ) as exc:
+    except typer.Exit:
+        raise
+    except Exception as exc:
         aprint(f"❌ {exc}")
         raise typer.Exit(1) from None
     if info:
@@ -1140,21 +1132,16 @@ def doctor(
             aprint("ℹ️ The gsplat info report does not apply to a Luxar scene.")
         else:
             aprint(
-                "ℹ️ The archive index could not classify this store; "
+                "ℹ️ Could not classify this store from its metadata; "
                 "skipping the optional info report."
             )
 
     with asection(f"Diagnosing: {path.name}"):
         try:
             report = diagnose_store(path, fix=fix)
-        except (
-            ValueError,
-            OSError,
-            EOFError,
-            zipfile.BadZipFile,
-            tarfile.TarError,
-            zlib.error,
-        ) as exc:
+        except typer.Exit:
+            raise
+        except Exception as exc:
             aprint(f"❌ {exc}")
             raise typer.Exit(1) from None
 

@@ -87,6 +87,57 @@ def _corrupt_zip_payload(path: Path) -> None:
     path.write_bytes(payload)
 
 
+def _mark_zip_member_encrypted(path: Path, *, metadata: bool) -> None:
+    """Set the encryption flag on one member without encrypting its payload."""
+    payload = bytearray(path.read_bytes())
+    with zipfile.ZipFile(path) as archive:
+        if metadata:
+            member = next(
+                info
+                for info in archive.infolist()
+                if not info.is_dir() and info.filename.endswith("zarr.json")
+            )
+        else:
+            member = next(
+                info
+                for info in archive.infolist()
+                if not info.is_dir()
+                and info.compress_type == zipfile.ZIP_DEFLATED
+                and info.compress_size > 8
+                and not info.filename.endswith(
+                    ("zarr.json", ".zattrs", ".zgroup", ".zmetadata")
+                )
+            )
+
+    local_flags = member.header_offset + 6
+    flags = struct.unpack_from("<H", payload, local_flags)[0]
+    struct.pack_into("<H", payload, local_flags, flags | 1)
+
+    central_offset = payload.find(b"PK\x01\x02")
+    while central_offset >= 0:
+        name_length, extra_length, comment_length = struct.unpack_from(
+            "<HHH", payload, central_offset + 28
+        )
+        name_start = central_offset + 46
+        name_end = name_start + name_length
+        if payload[name_start:name_end].decode() == member.filename:
+            central_flags = central_offset + 8
+            struct.pack_into(
+                "<H",
+                payload,
+                central_flags,
+                struct.unpack_from("<H", payload, central_flags)[0] | 1,
+            )
+            break
+        central_offset = payload.find(
+            b"PK\x01\x02", name_end + extra_length + comment_length
+        )
+    else:
+        raise AssertionError(f"central directory entry not found: {member.filename}")
+
+    path.write_bytes(payload)
+
+
 def test_doctor_exits_nonzero_while_a_problem_stands() -> None:
     runner = CliRunner()
     with tempfile.TemporaryDirectory() as tmp:
@@ -170,8 +221,20 @@ def test_doctor_diagnoses_archive_when_root_attr_peek_is_inconclusive(
 
         assert result.exit_code == 1, result.stdout
         assert "not a Luxar scene" not in result.stdout
-        assert "archive index could not classify" in result.stdout
+        assert "Could not classify this store from its metadata" in result.stdout
         assert "no split planes" in result.stdout
+
+
+def test_doctor_does_not_call_a_non_archive_input_an_archive() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "volume.npy"
+        np.save(path, np.zeros((2, 2, 2), dtype=np.float32))
+
+        result = CliRunner().invoke(app, ["gsplat", "doctor", str(path)])
+
+        assert result.exit_code == 1
+        assert "Could not classify this store from its metadata" in result.stdout
+        assert "archive index" not in result.stdout
 
 
 @pytest.mark.parametrize("name", ["broken.zip", "broken.tar.gz"])
@@ -233,4 +296,29 @@ def test_doctor_reports_a_corrupt_zip_payload_without_a_traceback() -> None:
         assert isinstance(result.exception, SystemExit)
         assert "Diagnosing:" in result.stdout
         assert "❌ " in result.stdout
+        assert "Traceback" not in result.stdout
+
+
+@pytest.mark.parametrize("metadata", [True, False])
+def test_doctor_reports_an_encrypted_zip_member_without_a_traceback(
+    metadata: bool,
+) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        store = _partition_without_split_planes(tmp_path)
+        archive = Path(
+            shutil.make_archive(
+                str(tmp_path / "part"),
+                "zip",
+                root_dir=str(tmp_path),
+                base_dir=store.name,
+            )
+        )
+        _mark_zip_member_encrypted(archive, metadata=metadata)
+
+        result = CliRunner().invoke(app, ["gsplat", "doctor", str(archive)])
+
+        assert result.exit_code == 1
+        assert isinstance(result.exception, SystemExit)
+        assert "encrypted, password required" in result.stdout
         assert "Traceback" not in result.stdout
