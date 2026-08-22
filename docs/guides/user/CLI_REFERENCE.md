@@ -211,11 +211,12 @@ luxar gsplat annotate-quality # Retrofit Q·e quality stamps onto an existing da
 
 `doctor` is for the problems you cannot see: a dataset written by an older Luxar
 loads and renders fine while missing something a later version learned to record,
-or carrying metadata that went stale under an edit. Given a dataset path it prints
-the `info` report (suppress with `--no-info`), then a diagnosis, and exits non-zero
+or carrying metadata that went stale under an edit. Given a standalone gsplat path
+it prints the `info` report (suppress with `--no-info`); for a scene it notes that
+the gsplat report does not apply. It then prints a diagnosis and exits non-zero
 while a problem is still standing — so it can gate a pipeline. Pass `--fix` to
-repair in place (an uncompressed `.gsplats.zarr` directory; unpack a `.zip` first),
-or `--json` to write the findings out for a machine.
+repair an uncompressed `.gsplats.zarr` or `.luxar.zarr` directory in place (unpack
+a `.zip` or `.tar.gz` first), or `--json` to write the findings out for a machine.
 
 It currently diagnoses a `kind=partition` whose split planes (`bsp_tree`) are
 missing, or are present but disagree with where the parts actually sit. Without

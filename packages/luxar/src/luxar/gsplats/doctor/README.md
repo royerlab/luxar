@@ -26,7 +26,7 @@ uncompressed directory store, the same rule `gsplat annotate-quality` follows.
 Diagnosing archives matters in practice: most bundled demo datasets ship as
 `.zip`, and refusing them would put the common case out of reach of a sweep.
 For a scene, findings name the store-relative partition path and `--fix`
-re-stamps the compiler's per-node content hashes before consolidating metadata.
+re-stamps the root `content_hash` before consolidating metadata.
 
 ```python
 from luxar.gsplats.doctor import diagnose_store
