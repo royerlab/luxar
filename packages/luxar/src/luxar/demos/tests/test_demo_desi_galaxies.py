@@ -16,6 +16,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from luxar._zarr_compat import consolidate, create_array, open_group
+
 _DEMO_PATH = Path(__file__).resolve().parents[1] / "demo_desi_galaxies.py"
 
 
@@ -406,6 +408,32 @@ class TestWarnIfSceneIsStale:
 
         assert "in one rung" not in capsys.readouterr().out
 
+    def test_warns_when_a_bounded_ladder_contains_only_the_old_sample(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        scene = tmp_path / "desi.luxar.zarr"
+        self._write_laddered(
+            scene,
+            [
+                2_000,
+                2_000,
+                4_000,
+                8_000,
+                16_000,
+                32_000,
+                64_000,
+                128_000,
+                900_000,
+                94_000,
+            ],
+        )
+
+        _demo.warn_if_scene_is_stale(scene)
+
+        out = capsys.readouterr().out
+        assert out.count("contains only 1,250,000 points") == 2
+        assert "full ~9.75M-object DR1 catalog" in out
+
 
 class TestStreamingBreakpoints:
     """The ladder shape is what makes the full catalog streamable.
@@ -429,13 +457,18 @@ class TestStreamingBreakpoints:
             assert cuts[0] == _demo.SCENE_FIRST_CHUNK, n
 
     def test_the_ceiling_binds_at_every_scale(self) -> None:
-        for n in (300_000, 1_250_000, 9_751_955, 40_000_000):
+        for n in (300_000, 1_218_970, 1_250_000, 9_751_955, 40_000_000):
             inc = self._increments(_demo.streaming_breakpoints(n))
             assert max(inc) <= _demo.SCENE_MAX_COMMIT, (n, max(inc))
             assert sum(inc) == n
             assert _demo.streaming_breakpoints(n) == sorted(
                 set(_demo.streaming_breakpoints(n))
             ), "cuts must be strictly increasing"
+
+    def test_middle_level_does_not_end_in_a_majority_rung(self) -> None:
+        increments = self._increments(_demo.streaming_breakpoints(1_218_970))
+        assert max(increments) == 512_000
+        assert max(increments) / sum(increments) < 0.5
 
     def test_a_level_smaller_than_the_first_chunk_is_one_rung(self) -> None:
         assert _demo.streaming_breakpoints(500) == [500]
@@ -604,6 +637,25 @@ class TestEnsureOriginFraming:
         assert camera["near"] == 32.7
         assert camera["far"] == 217921.16
         assert "Re-pinned" in capsys.readouterr().out
+
+    def test_repinning_preserves_the_consolidated_scene_index(
+        self, tmp_path: Path
+    ) -> None:
+        scene = tmp_path / "desi.luxar.zarr"
+        root = open_group(scene, mode="w")
+        root.attrs["viewer_config"] = {
+            "camera": {"position": [0.0, 0.0, 4000.0], "target": [0.0, 0.0, 1200.0]}
+        }
+        layer = root.create_group("By tracer type")
+        create_array(layer, "positions", data=np.zeros((2, 3), dtype=np.float32))
+        consolidate(root)
+        before = set(open_group(scene, mode="r").group_keys())
+
+        assert _demo.ensure_origin_framing(scene) is False
+
+        reopened = open_group(scene, mode="r")
+        assert set(reopened.group_keys()) == before == {"By tracer type"}
+        assert reopened["By tracer type"]["positions"].shape == (2, 3)
 
     def test_a_scene_with_no_camera_is_reported_not_invented(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

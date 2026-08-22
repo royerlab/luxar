@@ -39,7 +39,7 @@ DESI Collaboration (2025), "Data Release 1 of the Dark Energy Spectroscopic
 SELF-CONTAINED / CACHING
 ------------------------
 On a fresh machine this demo bootstraps itself with no manual steps:
-  1. Fast path: a fully-built scene (both LOD colorings, ~66 MB) shipped via
+  1. Fast path: a fully-built scene (both LOD colorings, ~73 MB) shipped via
      Git LFS (``demos/data/desi_galaxies/``); it is unzipped once into the demos
      output dir and loads instantly — no per-launch LOD build.
   2. If that asset isn't pulled, ``--recompute`` (or a missing asset)
@@ -65,7 +65,7 @@ DEMO_META = {
     "category": "astronomy",
     "geometry": "points",
     "requirements": {
-        "download_mb": 66,
+        "download_mb": 73,
         "compute": "heavy",
         "gpu": "none",
         "local_data": "git-lfs",
@@ -91,6 +91,7 @@ from luxar import (
     LuxarZarrCompiler,
     ViewerConfig,
 )
+from luxar._zarr_compat import consolidate, open_group
 from luxar.demos import (
     is_lfs_pointer,
     launch_viewer,
@@ -184,8 +185,9 @@ SCENE_INTENSITY = 0.05
 # 625K at the 1.25M cap. Capping the catalog shrank that final commit without
 # fixing its shape, and cost 87% of the survey to do it.
 #
-# `streaming_breakpoints` fixes the shape instead (see below), so the cap buys
-# nothing and is gone. `None` means "every row".
+# `streaming_breakpoints` fixes the shape instead (see below), so the production
+# demo leaves this at `None` (every row). The knob remains useful for focused
+# local rebuilds and tests that need to exercise the sampling path explicitly.
 SCENE_MAX_POINTS: int | None = None
 # The shipped archive is the canonical sample. This seed makes recomputation
 # repeatable within a NumPy release, not bit-stable across future NumPy releases.
@@ -213,10 +215,10 @@ def streaming_breakpoints(
     A pure ``stream:<c>`` ladder doubles all the way to ``n``, so its final
     increment is ``n/2`` — unstreamable once ``n`` is large, and the real reason
     the full catalog was thought to need a row cap. This keeps the geometric
-    ramp, which is what makes first paint cheap, but stops doubling at
-    ``max_commit`` and finishes in equal steps of that size. Largest commit is
-    therefore ``max_commit`` at ANY ``n``, while the ramp to it costs about
-    ``2·max_commit`` points in total.
+    ramp, which is what makes first paint cheap, but stops before its next
+    increment would exceed ``max_commit`` and finishes in equal steps of that
+    size. Largest commit is therefore ``max_commit`` at ANY ``n``; with the
+    defaults the geometric head totals 512,000 points.
 
     One list serves every substitutive level: ``_validate_counts`` clamps a
     cumulative list to the level's own ``n`` and stops there, so the 152K level
@@ -232,7 +234,7 @@ def streaming_breakpoints(
         return [n]
     cuts: list[int] = []
     cum = first_chunk
-    while cum < n and cum < max_commit:
+    while cum < n and cum <= 2 * max_commit:
         cuts.append(cum)
         cum *= 2
     cum = cuts[-1] if cuts else 0
@@ -247,6 +249,12 @@ def streaming_breakpoints(
 # `datasets/demos/` copy predates that gets a stale all-or-nothing scene and no
 # diagnostic, because `main()` short-circuits on an existing output directory.
 SCENE_MIN_SUBLODS = 3
+
+# A reused scene from the temporary #1812 cap can have a well-shaped ladder but
+# still contain only 1.25M of the fixed 9.75M-row DR1 catalog. Keep the threshold
+# below the exact count to tolerate metadata/version variation while making that
+# incomplete payload unmistakably stale.
+SCENE_MIN_POINTS = 9_000_000
 
 # The orbit pivot, in scene coordinates: the OBSERVER, i.e. the origin. See the
 # comment in `create_scene` for why a bounding-box centre is wrong for this
@@ -567,10 +575,8 @@ def ensure_origin_framing(scene_path: Path) -> bool:
 
     Returns True when the scene was already framed on the origin.
     """
-    import zarr
-
     try:
-        root = zarr.open(str(scene_path), mode="r+")
+        root = open_group(scene_path, mode="r+")
         viewer_config = dict(root.attrs.get("viewer_config") or {})
         camera = dict(viewer_config.get("camera") or {})
         target = camera.get("target")
@@ -600,6 +606,7 @@ def ensure_origin_framing(scene_path: Path) -> bool:
     camera["target"] = list(SCENE_CAMERA_TARGET)
     viewer_config["camera"] = camera
     root.attrs["viewer_config"] = viewer_config
+    consolidate(root)
     aprint(
         f"  🎥 Re-pinned this scene's orbit pivot to the observer at the origin "
         f"(it was {offset:,.0f} Mpc away, a bounding-box centre from an older "
@@ -609,13 +616,14 @@ def ensure_origin_framing(scene_path: Path) -> bool:
 
 
 def warn_if_scene_is_stale(scene_path: Path) -> None:
-    """Warn when a reused scene predates the streaming ladder or payload cap.
+    """Warn when a reused scene is incomplete or has an unsafe streaming ladder.
 
     ``main()`` reuses an existing ``datasets/demos/`` scene unconditionally, so a
-    user who built an older version would otherwise keep its all-or-nothing or
-    9.75M-point finest child forever. Warn loudly, name both remedies, and carry
-    on: the old scene still renders, just slowly. Both laddered layers are
-    checked, since they share the same LOD.
+    user who built an older version would otherwise keep either the temporary
+    1.25M-row sample or an all-or-nothing 9.75M-point finest child forever. Warn
+    loudly, name both remedies, and carry on: the old scene still renders, but
+    incompletely or slowly. Both laddered layers are checked, since they share
+    the same LOD.
     """
     import zarr
 
@@ -655,6 +663,17 @@ def warn_if_scene_is_stale(scene_path: Path) -> None:
                 f"ladder (n_additive_sublods={n_sublods}), so it will load "
                 "all-at-once and may freeze the browser for a long time. Rebuild "
                 "it with:\n"
+                "      luxar demo run desi_galaxies -- --recompute\n"
+                "    or delete the scene and re-run to unpack a current shipped "
+                "asset:\n"
+                f"      rm -rf {scene_path}"
+            )
+
+        if 0 < n_points < SCENE_MIN_POINTS:
+            aprint(
+                f"  ⚠ This scene's '{layer_name}' finest level contains only "
+                f"{n_points:,} points; the current scene carries the full "
+                f"~9.75M-object DR1 catalog. Rebuild it with:\n"
                 "      luxar demo run desi_galaxies -- --recompute\n"
                 "    or delete the scene and re-run to unpack a current shipped "
                 "asset:\n"

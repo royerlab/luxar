@@ -19,8 +19,9 @@ largest was 50%. `SCENE_MAX_POINTS` is gone; `None` means every row.
 
 No library change was needed. `_validate_counts` already clamps an explicit
 cumulative list to each level's own `n` and stops there, so one list serves the
-whole ladder: the 152K level takes just the geometric head (8 rungs) and the
-finest takes the whole thing (20). That also keeps the small levels laddered,
+whole ladder: the 152K level takes just the geometric head (8 rungs), the 1.22M
+middle level avoids a majority-sized final rung, and the finest takes the whole
+thing (20). That also keeps the small levels laddered,
 which a sibling-aware `stream:` base at this scale would not have — its base
 scales with `n`, so at 9.75M the first chunk alone would have been 609K.
 Reaching the coarser sibling's size, the point where swapping this level in is
@@ -35,6 +36,6 @@ ceiling it breached.
 
 Both ladders are unchanged in kind: three substitutive levels, each with an
 additive ladder beneath it. Only the additive rung schedule and the row count
-moved. The shipped Git-LFS scene is rebuilt from the full catalog (10 MB → 66 MB,
+moved. The shipped Git-LFS scene is rebuilt from the full catalog (10 MB → 73 MB,
 `data_manifest.json` checksum re-pinned, `download_mb` updated); the Zenodo copy
 still needs reuploading to match the new checksum.
