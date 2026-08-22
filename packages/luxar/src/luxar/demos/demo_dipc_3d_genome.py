@@ -23,9 +23,18 @@ WHAT THIS DEMO SHOWS
 --------------------
 - The 23 chromosomes of each haplotype (chr1..22, X), colored by chromosome and
   packed into a single Lines node.
+- A faint grey "all DNA (context)" scaffold carrying BOTH copies at once,
+  pinned visible at every haplotype slice, so the whole nucleus stays on screen.
 - A non-displayed categorical ``haplotype`` dimension (Maternal / Paternal):
   scrub it (select the dimension, then step) to isolate one genome copy; the
-  viewer culls the off-slice copy per-scrub. Opens showing the maternal copy.
+  viewer culls the off-slice copy per-scrub, but the scaffold keeps the other
+  copy present as context. Opens showing the maternal copy.
+
+  The two haplotypes are not two readings of one thing: they are distinct
+  physical molecules, folded independently, sharing one nucleus. Their union is
+  all the chromatin Dip-C reconstructed for this cell (chr1-22 + X, both copies
+  -- 46 chromosomes), which is why isolating one copy without the scaffold used
+  to hide half of what is actually there.
 - Hover a strand to read its chromosome and genomic coordinate.
 
 DATA SOURCE & CITATION
@@ -393,6 +402,12 @@ def load_or_build_polylines(recompute: bool) -> list[dict]:
 
 HAPLOTYPE_NAMES = ["Maternal", "Paternal"]
 
+#: Colour of the always-visible "all DNA" scaffold. Deliberately neutral grey
+#: and slightly cool, so it never competes with a chromosome hue: every
+#: chromosome colour in this demo is saturated, and a scaffold with any hue of
+#: its own would read as "one more chromosome" rather than as context.
+CONTEXT_COLOR = (0.52, 0.55, 0.60)
+
 
 def _position_gradient(base: np.ndarray, n: int) -> np.ndarray:
     """Per-vertex color: the chromosome hue brightening along the arm."""
@@ -526,6 +541,50 @@ def build_scene(output_path: Path, polylines: list[dict]) -> int:
                 # extend_to_all=[] is explicit: the genome copies live at their
                 # own haplotype coordinate and must be culled off-slice, NOT
                 # broadcast to every slice.
+                # --- Context: the WHOLE diploid genome, always on screen ---
+                #
+                # Scrubbing `haplotype` culls the off-slice copy outright, so
+                # isolating the maternal genome used to delete half the nucleus
+                # from view. But the two haplotypes are not alternative
+                # readings of the same thing — they are different physical
+                # molecules, folded independently, sharing one nucleus, and
+                # their UNION is all the chromatin Dip-C reconstructed for this
+                # cell. Half of what is really there should not vanish to
+                # highlight the other half.
+                #
+                # So the same beads are written twice: once here as a faint
+                # grey scaffold that `extend_to_all=["haplotype"]` keeps
+                # visible at EVERY haplotype slice, and once below in
+                # chromosome colour, culled per-scrub. The selected copy is
+                # then read in the context of the whole nucleus rather than
+                # against empty space. Thin and dim on purpose — it has to lose
+                # every contest for attention with the highlighted copy.
+                scene.add_lines(
+                    "all DNA (context)",
+                    vertices=all_verts,
+                    widths=0.002,
+                    colors=CONTEXT_COLOR,
+                    indices=all_edges,
+                    line_type="indexed",
+                    sharpness=0.3,
+                    opacity=0.10,
+                    intensity=0.12,
+                    # Emissive, NOT volumetric: this layer exists to be seen
+                    # THROUGH. Volumetric would let the scaffold absorb the
+                    # highlighted strand it is supposed to be framing.
+                    blending_mode="luminous",
+                    extend_to_all=["haplotype"],
+                    layer=True,
+                )
+
+                # One Lines node sliced by the non-displayed `haplotype` dim.
+                # Indexed authoring: unique per-bead vertices + an explicit
+                # edge list, so interior joints share their vertex index and
+                # the viewer draws continuous chromosome tubes (see
+                # `_haplotype_geometry`).
+                # extend_to_all=[] is explicit: the genome copies live at their
+                # own haplotype coordinate and must be culled off-slice, NOT
+                # broadcast to every slice.
                 scene.add_lines(
                     "genome",
                     vertices=all_verts,
@@ -535,9 +594,22 @@ def build_scene(output_path: Path, polylines: list[dict]) -> int:
                     indices=all_edges,
                     line_type="indexed",
                     sharpness=0.5,
-                    opacity=0.95,
-                    intensity=0.6,
-                    blending_mode="luminous",
+                    # Volumetric with a little absorption: chromosome
+                    # territories are volumes, and letting near strands occlude
+                    # far ones is what separates them. `luminous` summed
+                    # straight through the nucleus and the territories washed
+                    # into one another.
+                    blending_mode="volumetric",
+                    absorption=1.15,
+                    opacity=0.32,
+                    # Was 0.6. A direct-colour layer's display-range slider is
+                    # a pure gain on authored RGB — the viewer always starts it
+                    # at the identity [0, 1] and there is no attr to author a
+                    # different one (see `initialDisplayRange` in the viewer's
+                    # layers/layer-state.ts). Widening that window to [0, 2.75]
+                    # by hand is therefore exactly a 2.75x dim, and `intensity`
+                    # is where it belongs in the scene: 0.6 / 2.75 = 0.22.
+                    intensity=0.22,
                     extend_to_all=[],
                     layer=True,
                 )
