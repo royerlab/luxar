@@ -256,7 +256,9 @@ class AnimationConfig:
         if self.target_fps is not None and (
             not math.isfinite(self.target_fps) or self.target_fps <= 0
         ):
-            raise ValueError(f"target_fps must be finite and > 0, got {self.target_fps}")
+            raise ValueError(
+                f"target_fps must be finite and > 0, got {self.target_fps}"
+            )
         # Matches the viewer's own guard in `setStepSize`.
         if self.step_size is not None and (
             not math.isfinite(self.step_size) or self.step_size <= 0

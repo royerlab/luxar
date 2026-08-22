@@ -1468,7 +1468,11 @@ def generate_evolving_cloud(
         time_axis = names.index("time")
 
         opening_frame = int(round(OPENING_PHASE * (n_frames - 1)))
-        opening_points = all_positions[all_positions[:, time_axis] == opening_frame, :3]
+        populated_frames = np.flatnonzero(np.asarray(per_frame_counts) > 0)
+        camera_frame = int(
+            populated_frames[np.argmin(np.abs(populated_frames - opening_frame))]
+        )
+        opening_points = all_positions[all_positions[:, time_axis] == camera_frame, :3]
         viewer_config = ViewerConfig(
             cinematic_mode=True,
             camera=compose_opening_camera(opening_points),

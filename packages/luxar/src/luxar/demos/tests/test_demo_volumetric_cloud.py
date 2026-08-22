@@ -674,6 +674,27 @@ class TestScene:
                 target_points_per_frame=1,
             )
 
+    def test_an_empty_opening_frame_uses_the_nearest_populated_frame(
+        self, tmp_path
+    ) -> None:
+        path = tmp_path / "cloud.luxar.zarr"
+        cloud.generate_evolving_cloud(path, n_parcels=2, n_frames=4)
+
+        scene = LuxarScene.load(path)
+        positions = np.asarray(scene.get_points("EvolvingCloud").positions)
+        opening_frame = int(round(cloud.OPENING_PHASE * 3))
+        assert not np.any(positions[:, 3] == opening_frame)
+
+        populated_frames = np.unique(positions[:, 3]).astype(int)
+        camera_frame = min(populated_frames, key=lambda f: abs(f - opening_frame))
+        camera_points = positions[positions[:, 3] == camera_frame, :3]
+        expected = cloud.compose_opening_camera(camera_points)
+
+        config = scene.viewer_config
+        assert config is not None and config.camera is not None
+        assert config.camera.position == pytest.approx(expected.position)
+        assert config.camera.target == pytest.approx(expected.target)
+
     def test_the_scene_opens_on_a_turntable(self, tmp_path) -> None:
         """Auto-rotate is honoured on load.
 
