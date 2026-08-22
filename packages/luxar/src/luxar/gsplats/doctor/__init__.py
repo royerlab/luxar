@@ -1,4 +1,4 @@
-"""Diagnose — and, on request, repair — an existing ``.gsplats.zarr`` store.
+"""Diagnose — and, on request, repair — partition metadata in Luxar stores.
 
 A dataset can be perfectly loadable and still be missing something a later
 Luxar learned to record, or be carrying metadata that has quietly gone stale
@@ -8,9 +8,9 @@ named, explained, and — where the correct value is recoverable from the store
 itself — fixed in place, without re-fitting.
 
 Read-only by default: :func:`diagnose_store` reports, and only writes when
-``fix=True``. Repairs are metadata-level and go through one finalize
-(:func:`~luxar.gsplats.io.save_gsplats._stamp_content_hash` then
-``zarr.consolidate_metadata``, in the writer's order) so the consolidated
+``fix=True``. Repairs to standalone gsplat stores and scenes are metadata-level and
+go through one finalize (:func:`~luxar.gsplats.io.save_gsplats._stamp_content_hash`
+then ``zarr.consolidate_metadata``, in the writer's order) so the consolidated
 metadata cannot disagree with the per-node attrs it shadows, and the viewer's
 persistent cache invalidates on the change.
 
@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Literal, Mapping, Optional
 
 import zarr
 
@@ -36,7 +36,53 @@ __all__ = [
     "DoctorReport",
     "Finding",
     "diagnose_store",
+    "resolve_store_kind",
 ]
+
+StoreKind = Literal["gsplats", "scene", "unknown"]
+
+
+def _store_kind_from_attrs(attrs: Mapping[str, Any]) -> Optional[StoreKind]:
+    if attrs.get("format_type") == "gsplats_zarr":
+        return "gsplats"
+    if attrs.get("type") == "scene" and "scene_dimensions" in attrs:
+        return "scene"
+    return None
+
+
+def resolve_store_kind(path: "str | Path") -> StoreKind:
+    """Classify a Luxar store from its root attrs, including archives.
+
+    Returns
+    -------
+    StoreKind
+        ``"gsplats"`` or ``"scene"`` when the root attrs identify the store.
+        An inconclusive best-effort archive peek returns ``"unknown"`` so the
+        extracted store can remain authoritative during diagnosis.
+
+    Raises
+    ------
+    ValueError
+        If exact directory attrs do not identify a supported Luxar store.
+    """
+    path = Path(path)
+    if path.is_dir():
+        attrs = open_group(path, mode="r").attrs
+    else:
+        from luxar.gsplats.io._archive import read_archive_root_attrs
+
+        attrs = read_archive_root_attrs(path)
+
+    kind = _store_kind_from_attrs(attrs)
+    if kind is None:
+        if not path.is_dir():
+            return "unknown"
+        raise ValueError(
+            f"{path} is not a Luxar scene or standalone .gsplats.zarr store "
+            f"(type={attrs.get('type')!r}, "
+            f"format_type={attrs.get('format_type')!r})."
+        )
+    return kind
 
 
 def diagnose_store(
@@ -45,16 +91,16 @@ def diagnose_store(
     fix: bool = False,
     checks: "Optional[List[Check]]" = None,
 ) -> DoctorReport:
-    """Run every check over a ``.gsplats.zarr`` store.
+    """Run every check over a ``.gsplats.zarr`` or ``.luxar.zarr`` store.
 
     Parameters
     ----------
     path
-        A ``.gsplats.zarr`` directory, or a ``.zip``/``.tar.gz`` archive. An
-        archive is extracted to a temp directory and read from there, so it can
-        be DIAGNOSED but not repaired: with ``fix=True`` it is rejected, for the
-        same reason ``annotate-quality`` rejects one — there is nothing to write
-        back to in place. Unpack first to repair.
+        A ``.gsplats.zarr`` / ``.luxar.zarr`` directory, or a ``.zip``/``.tar.gz``
+        archive. An archive is extracted to a temp directory and read from there,
+        so it can be DIAGNOSED but not repaired: with ``fix=True`` it is rejected,
+        for the same reason ``annotate-quality`` rejects one — there is nothing to
+        write back to in place. Unpack first to repair.
     fix
         Apply the repairs the checks offer. Off by default: a diagnosis should
         never surprise anyone by writing.
@@ -71,7 +117,7 @@ def diagnose_store(
     path = Path(path)
     if fix and not path.is_dir():
         raise ValueError(
-            f"doctor --fix requires an uncompressed .gsplats.zarr directory; got "
+            f"doctor --fix requires an uncompressed zarr directory; got "
             f"{path} (unpack a .zip/.tar.gz first — an archive cannot be repaired "
             f"in place). Without --fix it can still be diagnosed."
         )
@@ -108,16 +154,12 @@ def _diagnose_opened(
     ``reported_path`` is what the user asked about (an archive keeps its own name
     in the report); ``store_path`` is the directory actually read.
     """
-    from luxar.gsplats.io.save_gsplats import _stamp_content_hash
-
     root = open_group(store_path, mode="r+" if fix else "r")
-    fmt = root.attrs.get("format_type")
-    if fmt != "gsplats_zarr":
+    if _store_kind_from_attrs(root.attrs) is None:
         raise ValueError(
-            f"{reported_path} is not a standalone .gsplats.zarr store "
-            f"(format_type={fmt!r}). "
-            f"Gsplats embedded in a scene are diagnosed by pointing doctor at the "
-            f"source .gsplats.zarr, and repaired by re-exporting the scene."
+            f"{reported_path} is not a Luxar scene or standalone .gsplats.zarr "
+            f"store (type={root.attrs.get('type')!r}, "
+            f"format_type={root.attrs.get('format_type')!r})."
         )
 
     selected = ALL_CHECKS if checks is None else checks
@@ -142,6 +184,8 @@ def _diagnose_opened(
         # lands inside .zmetadata too. Consolidated metadata SHADOWS the per-node
         # .zattrs a fix just wrote, so skipping this would leave every repair
         # invisible to readers while looking applied on disk.
+        from luxar.gsplats.io.save_gsplats import _stamp_content_hash
+
         _stamp_content_hash(root)
         consolidate(root)
         # Then re-diagnose. A repair is not always a cure: removing a misleading
