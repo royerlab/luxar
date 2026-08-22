@@ -231,7 +231,7 @@ describe('loadPartitionGroupNode', () => {
   it('stashes bsp_tree on the wrapper and tags each part with its child_index', async () => {
     // The depth-sort coordinator reads `userData.bspTree` off the wrapper and
     // `userData.partIndex` off each part object to map a `bsp_tree` leaf back
-    // to its render mesh for exact back-to-front ordering.
+    // to its render mesh for stable BSP back-to-front ordering.
     attachStubChildren();
     const ctx = makeCtx();
     const bspTree = { axis: 0, split: 0, left: { part: 0 }, right: { part: 1 } };

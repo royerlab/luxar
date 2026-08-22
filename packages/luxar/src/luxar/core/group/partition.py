@@ -31,8 +31,8 @@ This module hosts:
   unwritten regions, renumbers the surviving ``child_index`` labels, and stores
   the result on a partition wrapper.
 * :func:`median_bsp_partition` / :func:`midpoint_bsp_partition` /
-  :func:`sah_bsp_partition` and the matching polyline wrappers — flat-list
-  conveniences retained as parity oracles for the tree builders.
+  :func:`sah_bsp_partition`, plus the median/midpoint polyline wrappers —
+  flat-list conveniences retained as parity oracles for the tree builders.
 * :func:`prune_serialized_bsp_tree` / :func:`map_serialized_bsp_tree` /
   :func:`reconstruct_serialized_bsp_tree` / :func:`serialized_bsp_tree_separates` /
   :func:`serialized_bsp_tree_straddles_centers` /
