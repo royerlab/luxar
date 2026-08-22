@@ -19,7 +19,7 @@ from ..utils import _DEFAULT_CORS_ORIGIN, format_memory_size
 if TYPE_CHECKING:
     import numpy as np
 
-    from luxar.gsplats.doctor import DoctorReport, Finding
+    from luxar.gsplats.doctor import DoctorReport, Finding, StoreKind
 
 
 def _ascii_histogram(
@@ -1060,6 +1060,34 @@ def _print_report(report: "DoctorReport") -> None:
             _print_finding(finding)
 
 
+def _resolve_doctor_store_kind(path: Path) -> "StoreKind":
+    """Classify a doctor input while keeping CLI errors concise."""
+    from luxar.gsplats.doctor import resolve_store_kind
+
+    try:
+        return resolve_store_kind(path)
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        aprint(f"❌ {exc}")
+        raise typer.Exit(1) from None
+
+
+def _print_doctor_info(
+    path: Path, store_kind: "StoreKind", *, histograms: bool
+) -> None:
+    """Print the optional report appropriate for a doctor input."""
+    if store_kind == "gsplats":
+        info_dataset(path, show_histograms=histograms, bins=40)
+    elif store_kind == "scene":
+        aprint("ℹ️ The gsplat info report does not apply to a Luxar scene.")
+    else:
+        aprint(
+            "ℹ️ Could not classify this store from its metadata; "
+            "skipping the optional info report."
+        )
+
+
 def doctor(
     path: Path = typer.Argument(
         ...,
@@ -1114,27 +1142,13 @@ def doctor(
     """
     import json as _json
 
-    from luxar.gsplats.doctor import diagnose_store, resolve_store_kind
+    from luxar.gsplats.doctor import diagnose_store
 
     if histograms:
         info = True
-    try:
-        store_kind = resolve_store_kind(path)
-    except typer.Exit:
-        raise
-    except Exception as exc:
-        aprint(f"❌ {exc}")
-        raise typer.Exit(1) from None
+    store_kind = _resolve_doctor_store_kind(path)
     if info:
-        if store_kind == "gsplats":
-            info_dataset(path, show_histograms=histograms, bins=40)
-        elif store_kind == "scene":
-            aprint("ℹ️ The gsplat info report does not apply to a Luxar scene.")
-        else:
-            aprint(
-                "ℹ️ Could not classify this store from its metadata; "
-                "skipping the optional info report."
-            )
+        _print_doctor_info(path, store_kind, histograms=histograms)
 
     with asection(f"Diagnosing: {path.name}"):
         try:
