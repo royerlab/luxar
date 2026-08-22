@@ -147,6 +147,7 @@ COUNT = 100  # number of embryos along the line (override with --count=N)
 SPACING_FACTOR = 1.5  # center-to-center spacing as a multiple of embryo diameter
 JITTER_FRACTION = 0.18  # lateral/along-line jitter as a fraction of spacing
 SEED = 0  # RNG seed so the layout is reproducible
+AUTHORED_CAMERA_FOV_DEG = 50.0
 
 # Parse shared demo flags + this demo's extras.
 FLAGS = parse_demo_flags()
@@ -243,7 +244,7 @@ def camera_for_line(n: int, spacing: float, diameter: float) -> CameraConfig:
     near_standoff = (
         total_len
         * 0.12
-        * math.tan(math.radians(50.0 / 2.0))
+        * math.tan(math.radians(AUTHORED_CAMERA_FOV_DEG / 2.0))
         / math.tan(math.radians(CINEMATIC_FOV_DEG / 2.0))
     )
     position = (-near_standoff, diameter * 1.0, diameter * 2.2)

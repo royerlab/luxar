@@ -39,4 +39,6 @@ def test_embryo_camera_preserves_the_near_end_standoff() -> None:
     assert new_standoff > 0.0
     assert new_standoff * math.tan(
         math.radians(CINEMATIC_FOV_DEG / 2.0)
-    ) == pytest.approx(old_standoff * math.tan(math.radians(50.0 / 2.0)))
+    ) == pytest.approx(
+        old_standoff * math.tan(math.radians(embryo_line.AUTHORED_CAMERA_FOV_DEG / 2.0))
+    )
