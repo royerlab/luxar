@@ -650,15 +650,13 @@ class TestStoreGuards:
             path, group_path = _partition_scene(Path(tmp))
             root = zc_open_group(str(path), mode="r+")
             group = root[group_path]
-            stale = dict(group.attrs["bsp_tree"])
-            stale["split"] = float(stale["split"]) + 1000.0
-            group.attrs["bsp_tree"] = stale
-            zc_consolidate(root)
+            assert "bsp_tree" not in group.attrs
             before = root.attrs["content_hash"]
 
             report = diagnose_store(path)
             assert [finding.path for finding in report.findings] == [group_path]
             assert report.findings[0].severity == "error"
+            assert "no split planes" in report.findings[0].summary
 
             fixed = diagnose_store(path, fix=True)
             assert fixed.healthy
