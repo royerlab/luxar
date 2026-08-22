@@ -16,7 +16,7 @@
  * **What needs a graph rebuild.** The factory branches on JS-side conditionals for
  * the colormap path, the gamma/GOG fast paths, the flat-normal variant and the
  * emission shape, so each of those changes the *shape* of the graph and rebuilds.
- * Everything else — opacity, intensity, offset, ambient, shade exponent, alpha
+ * Everything else — opacity, intensity, offset, the four lighting controls, alpha
  * cutoff, scalar range, and the two near-fade inputs — is a plain runtime uniform
  * and never rebuilds. The near fade in particular must NOT be a build flag: the
  * ortho-mode toggle would otherwise recompile every mesh graph in the scene, which
@@ -34,6 +34,7 @@ import {
   MESH_DEFAULTS,
   clampAppearanceFraction,
   clampShadeExponent,
+  clampShininess,
   resolveMeshBlendingMode,
   resolveMeshOutput,
   syncMeshEmissionDefines,
@@ -67,6 +68,8 @@ interface MeshMaterialTSLNodeTable {
   uOffset: TSLNode;
   uAmbient: TSLNode;
   uShadeExponent: TSLNode;
+  uSpecular: TSLNode;
+  uShininess: TSLNode;
   uAlphaCutoff: TSLNode;
   uIsOrtho: TSLNode;
   uNearCull: TSLNode;
@@ -109,6 +112,8 @@ export class MeshTSLMaterial
       uOffset: uniform(materialConfig.offset ?? 0.0),
       uAmbient: uniform(clampAppearanceFraction(materialConfig.ambient, MESH_DEFAULTS.ambient)),
       uShadeExponent: uniform(clampShadeExponent(materialConfig.shadeExponent)),
+      uSpecular: uniform(clampAppearanceFraction(materialConfig.specular, MESH_DEFAULTS.specular)),
+      uShininess: uniform(clampShininess(materialConfig.shininess)),
       uAlphaCutoff: uniform(
         clampAppearanceFraction(materialConfig.alphaCutoff, MESH_DEFAULTS.alphaCutoff)
       ),
@@ -125,6 +130,8 @@ export class MeshTSLMaterial
       uOffset: proxyIUniform(this.tslNodes.uOffset),
       uAmbient: proxyIUniform(this.tslNodes.uAmbient),
       uShadeExponent: proxyIUniform(this.tslNodes.uShadeExponent),
+      uSpecular: proxyIUniform(this.tslNodes.uSpecular),
+      uShininess: proxyIUniform(this.tslNodes.uShininess),
       uAlphaCutoff: proxyIUniform(this.tslNodes.uAlphaCutoff),
       uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),
@@ -313,6 +320,14 @@ export class MeshTSLMaterial
     this.uniforms.uShadeExponent.value = clampShadeExponent(exponent);
   }
 
+  updateSpecular(specular: number): void {
+    this.uniforms.uSpecular.value = clampAppearanceFraction(specular, MESH_DEFAULTS.specular);
+  }
+
+  updateShininess(shininess: number): void {
+    this.uniforms.uShininess.value = clampShininess(shininess);
+  }
+
   updateAlphaCutoff(cutoff: number): void {
     this.uniforms.uAlphaCutoff.value = clampAppearanceFraction(cutoff, MESH_DEFAULTS.alphaCutoff);
   }
@@ -385,6 +400,8 @@ export class MeshTSLMaterial
       offset: this.uniforms.uOffset.value,
       ambient: this.uniforms.uAmbient.value,
       shadeExponent: this.uniforms.uShadeExponent.value,
+      specular: this.uniforms.uSpecular.value,
+      shininess: this.uniforms.uShininess.value,
       alphaCutoff: this.uniforms.uAlphaCutoff.value,
       blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'opaque',
       flatNormal: this.userData.flatNormal === true,

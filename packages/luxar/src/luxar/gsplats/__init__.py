@@ -12,12 +12,59 @@ clear install hint; an unexpected internal import error propagates loudly).
 The docstrings on the fallback definitions below describe what each real symbol
 does; when the ``gsplats`` extra is absent these names resolve to stubs that
 raise :class:`ImportError` (via :func:`_raise_gsplats_import_error`) on first
-use rather than at import time.
+use rather than at import time. ``GSplatData`` and its two LOD record types are
+the exception: they are pure NumPy and are always the real classes.
+
+The scope of that exception is CONSTRUCTING, SAVING and LOADING a
+``GSplatData`` — a hand-built ``AdditiveSubLOD`` ladder or ``SubstitutiveLevel``
+stack included — plus the purely geometric ``translate`` / ``transform`` /
+``center_at_centroid``, and grafting the result into a scene with
+``add_gsplats`` / ``add_gsplats_from_data`` / ``add_gsplats_from_file``. That
+covers core scene authoring: a core-only install can build, write and read back
+a ``.gsplats.zarr``.
+
+Content-EDITING still needs the extra, and raises a bare
+``ModuleNotFoundError`` rather than the friendly install hint, because the
+exception bypasses the stub guard. Which root is missing depends on the route:
+
+* ``'scipy'``, reached through ``luxar.gsplats.lod`` (whose ``lod/additive.py``
+  imports ``scipy.sparse``) when stats are recomputed — the intensity ops
+  (``scale_intensity`` / ``normalize_intensity`` / ``clamp_intensity`` /
+  ``affine_intensity``), a ``filter`` / ``filter_by`` that actually removes
+  splats, the heuristic ``cull`` methods ``cumulative`` /
+  ``amplitude_percentile`` / ``combined`` (hence a bare ``cull()``, whose
+  ``auto`` resolves to ``cumulative``), and
+  ``add_gsplats_from_data(..., additive_lod={...})``, which BUILDS a ladder —
+  unlike ``add_points(..., additive_lod=...)``, which does not go through
+  ``lod`` and works core-only.
+* ``'torch'``, imported earlier still — the rendering-based ``cull`` methods
+  ``error_budget`` / ``redundancy``, and therefore an ``auto`` handed a
+  ``target`` or a ``shape``.
+
+An operation that removes nothing (an all-passing filter, a ``cull`` whose
+retention keeps every splat) short-circuits before either import and works.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Optional
+
+# The in-memory splat container is pure NumPy: AUTHORING a ``.gsplats.zarr``
+# (build a GSplatData, ``.save()`` it, graft it into a scene) needs no
+# torch/scipy — only FITTING does. Import it unguarded, outside the try/except
+# below: stubbing it there would make ``from luxar.gsplats import GSplatData``
+# raise on a core-only install even though nothing it does requires the extra.
+#
+# This closure now sits OUTSIDE the degradation net, so a module-level
+# torch/scipy import added anywhere under ``gsplat_data`` / ``_data`` / ``tree``
+# would become a hard ``ModuleNotFoundError`` on every core-only install.
+# ``luxar/tests/test_lazy_imports.py`` blocks the WHOLE extra and compiles a
+# real scene to catch exactly that.
+from luxar.gsplats.gsplat_data import (
+    AdditiveSubLOD,
+    GSplatData,
+    SubstitutiveLevel,
+)
 
 _GSPLATS_IMPORT_ERROR: Optional[ImportError] = None
 
@@ -40,7 +87,6 @@ if TYPE_CHECKING:
     from luxar.gsplats.fit_progressive_gsplats import fit_progressive_gaussian_splats
     from luxar.gsplats.fit_tiled_gsplats import fit_tile, fit_tiled
     from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
-    from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData, SubstitutiveLevel
     from luxar.gsplats.lift import (
         coarse_substitutive_levels,
         compute_ray_integral_factor,
@@ -85,11 +131,6 @@ else:
         )
         from luxar.gsplats.fit_tiled_gsplats import fit_tile, fit_tiled
         from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
-        from luxar.gsplats.gsplat_data import (
-            AdditiveSubLOD,
-            GSplatData,
-            SubstitutiveLevel,
-        )
         from luxar.gsplats.lift import (
             coarse_substitutive_levels,
             compute_ray_integral_factor,
@@ -152,24 +193,6 @@ else:
 
         class GaussianSplatFitter:
             """Stateful Gaussian-splat fitter (needs the gsplats extra)."""
-
-            def __init__(self, *_args: Any, **_kwargs: Any) -> None:
-                _raise_gsplats_import_error()
-
-        class GSplatData:
-            """In-memory Gaussian-splat dataset / node tree (needs gsplats extra)."""
-
-            def __init__(self, *_args: Any, **_kwargs: Any) -> None:
-                _raise_gsplats_import_error()
-
-        class AdditiveSubLOD:
-            """One additive (prefix-sum) LOD sub-level (needs the gsplats extra)."""
-
-            def __init__(self, *_args: Any, **_kwargs: Any) -> None:
-                _raise_gsplats_import_error()
-
-        class SubstitutiveLevel:
-            """One substitutive (coarse->fine) LOD level (needs the gsplats extra)."""
 
             def __init__(self, *_args: Any, **_kwargs: Any) -> None:
                 _raise_gsplats_import_error()

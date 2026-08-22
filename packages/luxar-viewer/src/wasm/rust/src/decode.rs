@@ -56,8 +56,11 @@ pub fn decode_quantized_u16(data: &[u16], min_val: f32, max_val: f32, output: &m
         data.len()
     );
 
-    // These linear kernels define the Rust/WASM f32 contract; ArrayDecoder.dequantize
-    // and Python _decode_bounded_scalar remain f64 helpers with different operand order.
+    // These linear kernels define the Rust/WASM f32 contract. The main-thread
+    // ArrayDecoder routes through the TypeScript mirror; Python's
+    // _decode_bounded_scalar remains f64 with a different operand order. Exact
+    // viewer expectations mirror this order in
+    // tests/fixtures/generate_expectations.py::_viewer_kernel_decode.
     let scale = (max_val - min_val) / 65535.0;
 
     for i in 0..data.len() {
@@ -115,8 +118,9 @@ pub fn decode_log_scalar_u16(data: &[u16], max_log: f32, output: &mut [f32]) {
 /// Min/max-anchored true-log quantization with a RESERVED ZERO LEVEL:
 /// level 0 decodes to exactly 0.0; levels [1, 255] decode to
 /// `exp(min_log + (u - 1)/254 * (max_log - min_log))` — uniform relative
-/// precision over the array's own nonzero range. Mirrors the Python
-/// `_decode_geolog_scalar` and the TS reference exactly.
+/// precision over the array's own nonzero range. Mirrors the TS reference
+/// bit-for-bit; Python's f64 decoder can differ because its anchors are not
+/// rounded to f32 first.
 #[wasm_bindgen]
 pub fn decode_geolog_scalar_u8(data: &[u8], min_log: f32, max_log: f32, output: &mut [f32]) {
     debug_assert!(
@@ -126,9 +130,9 @@ pub fn decode_geolog_scalar_u8(data: &[u8], min_log: f32, max_log: f32, output: 
         data.len()
     );
 
-    // f64 internals: matches the Python decoder and the TS reference (JS
-    // number math) so all three backends agree to the last f32 ULP even at
-    // the top of a 7-decade range.
+    // F64 internals match the TS reference bit-for-bit. Python's f64 decode
+    // differs because the viewer rounds the anchors to f32 first, by roughly
+    // |max_log| / 2 ULPs of peak.
     let min_log = min_log as f64;
     let inv = ((max_log as f64) - min_log).max(0.0) / 254.0;
 
