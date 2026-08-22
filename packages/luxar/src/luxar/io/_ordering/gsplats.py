@@ -94,6 +94,16 @@ def compute_chunk_bounds_gsplats(
     bounds remain unchanged. A direct caller that omits ``coord_slack`` gets
     bounds for the authored centers only.
 
+    KNOWN GAP — THE DECODED CHOLESKY EXTENT IS NOT COVERED.
+    ``cholesky_factors`` is quantised in its own right (the diagonal uses
+    ``log_perchannel_u8`` under AUTO), and these bounds are built from the values
+    as handed in. A decoded diagonal can therefore produce a LARGER σ than the
+    one the ``coverage_sigma·σ`` pad was sized for, letting the rendered footprint
+    escape the stored bound. This is the extent half of the footprint:
+    ``coord_slack`` closes the center-coordinate half and does nothing for this
+    one, which needs the same encoder-reported round-trip treatment as decoded
+    point radii and line widths.
+
     Args:
         centers: Splat centers (already sorted), shape (N, d)
         cholesky_factors: Packed Cholesky factors (already sorted), shape

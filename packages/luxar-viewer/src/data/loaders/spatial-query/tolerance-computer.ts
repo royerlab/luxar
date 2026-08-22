@@ -421,8 +421,8 @@ function regularizedHiddenBand(truncationRadius: number | undefined): number {
  *
  * 1. `GSPLATS_CONTINUOUS_EPS_STEP_FRACTION × step` — a continuous dim along which
  *    the splats have **zero variance** (a stacked axis declared continuous rather
- *    than discrete) gets no σ expansion, and the write side pads only *discrete*
- *    dims, so its stored bound is the axis value itself. The dominant
+ *    than discrete) gets no σ expansion, so its stored bound is the axis value
+ *    plus any encoder coordinate round-trip slack. The dominant
  *    perturbation is that the bound is stored as **float32** (`chunk_bounds` is
  *    `dtype=np.float32`) while the query position is a float64 — ≈1.9e-7 of
  *    disagreement at a coordinate of 5.3. The `start + k × step` arithmetic drift
