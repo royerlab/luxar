@@ -722,7 +722,6 @@ def frustum_intersects_box(planes: np.ndarray, box: Box3) -> bool:
 class _LadderChild:
     """One ladder level, reduced to the plain data the screening math needs."""
 
-    name: str
     threshold: Optional[float]
     element_count: Optional[int]
     bounds: Optional[_BoundsPair]
@@ -807,11 +806,10 @@ def _lod_bounds_of(
     return (lod_lo, lod_hi)
 
 
-def _ladder_child(name: str, child: Any, attrs: Dict[str, Any]) -> _LadderChild:
+def _ladder_child(child: Any, attrs: Dict[str, Any]) -> _LadderChild:
     """Reduce one ladder child, validating robust bounds against complete bounds."""
     position_bounds = _bounds_of(attrs, "position_bounds")
     return _LadderChild(
-        name=name,
         threshold=_threshold_of(attrs),
         element_count=_count_of(child, attrs),
         bounds=position_bounds,
@@ -896,8 +894,8 @@ def _collect_lod_groups(
                 anchor_reason=_anchor_reason(under_partition, children),
                 world_matrix=world,
                 children=[
-                    _ladder_child(str(name), child, child_attrs)
-                    for name, child, child_attrs in children
+                    _ladder_child(child, child_attrs)
+                    for _, child, child_attrs in children
                 ],
                 empty_ladder_refusal=(
                     "" if empty_refusal is None else empty_refusal.detail
