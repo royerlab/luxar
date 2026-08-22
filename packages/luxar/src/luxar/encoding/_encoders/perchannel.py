@@ -364,7 +364,8 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         Linear quantization also budgets 1.5 dtype epsilons for the three
         float16/float32 normalization operations. The decode allowance covers
         the worse of the reader's cast back to the authored dtype and the
-        viewer's staged float32 affine reconstruction.
+        viewer's staged float32 affine reconstruction: one float32 epsilon at
+        the maximum plus one across the encoded span.
 
         Args:
             data: The positive-scalar array exactly as it will be encoded.

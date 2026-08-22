@@ -106,13 +106,12 @@ def test_positive_scalar_slack_bounds_real_upward_displacement(
 
 
 @pytest.mark.parametrize(
-    ("name", "data", "expected_encoding", "levels", "min_upward"),
+    ("name", "data", "expected_encoding", "min_upward"),
     [
         (
             "float16_u8",
             np.linspace(9.75, 713.0, 20_000).astype(np.float16),
             "bounded_scalar_uint8",
-            255,
             2.0,
         ),
         (
@@ -124,7 +123,6 @@ def test_positive_scalar_slack_bounds_real_upward_displacement(
                 dtype=np.float64,
             ),
             "bounded_scalar_uint16",
-            65535,
             0.13,
         ),
     ],
@@ -133,7 +131,6 @@ def test_positive_scalar_slack_bounds_viewer_float32_decode(
     name: str,
     data: np.ndarray,
     expected_encoding: str,
-    levels: int,
     min_upward: float,
 ) -> None:
     encoder = ArrayEncoder()
@@ -155,6 +152,7 @@ def test_positive_scalar_slack_bounds_viewer_float32_decode(
     encoded = group["s"]
     metadata = encoded.attrs["encoding"]
     assert metadata["name"] == expected_encoding, name
+    levels = (1 << metadata["bits"]) - 1
     lo = np.float32(metadata["min"])
     hi = np.float32(metadata["max"])
     scale = np.float32(np.float32(hi - lo) / np.float32(levels))
@@ -162,6 +160,7 @@ def test_positive_scalar_slack_bounds_viewer_float32_decode(
     upward = decoded.astype(np.float64) - data.astype(np.float64)
     assert float(upward.max()) > min_upward, name
     assert float(upward.max()) <= slack, name
+    assert slack <= 2 * float(upward.max()), name
 
 
 def test_positive_scalar_slack_covers_the_authored_dtype_cast() -> None:
