@@ -10,9 +10,10 @@ published ``lod_kind: substitutive`` / ``n_substitutive_levels: 4`` /
 * ``flatten``   → one flat leaf (writes through ``GSplatData.save``)
 * ``decimate``  → one flat leaf (writes through ``write_gsplats_tree``)
 * ``partition`` → ``kind=partition`` of bare leaves (``write_gsplats_tree``)
-* ``lod``       → whatever ``--recipe`` says, from ANY input: an already-LOD
-  store is legal (only a ``kind=partition`` is refused) and every recipe starts
-  from ``data.flattened()``, so no ``lod`` output preserves its input's shape
+* ``lod``       → whatever ``--recipe`` says, from any matrix-shaped input: a
+  laddered or substitutive store is legal (the gate refuses a partition and a
+  lod group with non-leaf children) and every recipe starts from
+  ``data.flattened()``, so no ``lod`` output preserves its input's shape
 
 Both writers are represented on purpose: a fix wired into one would leave the
 other silently exempt. ``lod`` is covered per RECIPE for the same reason — the
@@ -319,7 +320,8 @@ _KIND_CHANGING: List[tuple[str, Sequence[str], frozenset[str]]] = [
 _NOT_KIND_CHANGING: Dict[str, str] = {
     # ── structure-PRESERVING rewrites: the kind stays true of the output ──
     "additive": "re-ladders every leaf in place; leaf / lod levels / partition "
-    "parts all keep their shape",
+    "parts all keep their shape (its root ladder summary is left stale by the "
+    "re-ladder — a stale-VALUE defect within a preserved kind, tracked on #1600)",
     "cull": "a culled pyramid is still that pyramid (and the counts that moved "
     "are re-stamped, not dropped)",
     "filter": "same splat set narrowed, same tree shape",

@@ -898,8 +898,9 @@ rewrites a store must apply all three rules:
   `target >= n_splats` early return hands the input straight back, which
   correctly republishes the record because nothing changed) and `lod`, whose
   every `--recipe` starts from `data.flattened()` — so no `lod` output preserves
-  its input's shape, and an already-LOD store is a legal input (only a
-  `kind=partition` is refused). `lod` is also the one of the four that publishes
+  its input's shape, and a laddered or substitutive store is a legal input (the
+  gate is matrix-shaped-ness, so a partition and a lod group with non-leaf
+  children are both refused). `lod` is also the one of the four that publishes
   a topology record of its own, and it publishes **only** what its own builder
   stamped: `recipe` alone for `flat` / `tiles` / `overview` / `adaptive`, plus the
   additive ladder summary for `stream`, plus the substitutive block as well for

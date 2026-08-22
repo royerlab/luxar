@@ -326,7 +326,7 @@ def stats_after_structure_change(stats: "Mapping[str, Any]") -> "Dict[str, Any]"
     For a rewrite that KNOWS it produced a different kind of thing: ``gsplat
     flatten`` and :func:`~luxar.gsplats.lod.decimate.decimate` emit one flat leaf,
     ``gsplat partition`` emits a ``kind=partition`` of bare leaves, and ``gsplat
-    lod`` emits whatever ``--recipe`` says from an input of any shape (every
+    lod`` emits whatever ``--recipe`` says from any matrix-shaped input (every
     recipe starts by flattening, so none of them preserves it). All four thread
     the input's stats through to the output's ``fitting/`` / ``provenance/`` /
     ``pipeline/`` groups (correct — the fit provenance is still true), which is how

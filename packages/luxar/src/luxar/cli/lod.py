@@ -665,7 +665,8 @@ def lod_recipe(
                 source_appearance = carried_appearance(input_path)
                 # ...and owning the structure is exactly why the input's own
                 # TOPOLOGY record must not ride along. An already-LOD store is a
-                # legal input here (only a kind=partition is refused), and every
+                # legal input here (the gate is matrix-shaped-ness, so a
+                # partition and a lod group with non-leaf children are out), and every
                 # recipe starts from `data.flattened()` — so nothing this command
                 # publishes preserves the input's shape. Scrubbed ONCE, on the
                 # loaded input, which covers BOTH write paths below: the matrix
