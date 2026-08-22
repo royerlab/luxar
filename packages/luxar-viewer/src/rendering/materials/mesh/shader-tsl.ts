@@ -3,7 +3,7 @@
  * `shader-glsl.ts`.
  *
  * Draws a shaded indexed triangle surface:
- *   - view-anchored headlight shade term, no scene light (spec §6.2)
+ *   - view-anchored wrapped diffuse and specular terms, no scene light (spec §6.2)
  *   - stored view-space normals OR a screen-space-derivative flat normal, chosen at
  *     GRAPH BUILD time (the `flatNormal` config flag — the twin of the GLSL
  *     `LUXAR_MESH_FLAT_NORMAL` define)
@@ -63,6 +63,7 @@ import { applyBlendingStateToMaterial, getCompleteBlendingState } from '../../bl
 import type { BlendingMode } from '../../../types/blending';
 import {
   MESH_DEFAULTS,
+  MESH_LIGHT_DIRECTION,
   MESH_NORMAL_EPS_SQ,
   resolveMeshBlendingMode,
   resolveMeshOutput,
@@ -138,10 +139,14 @@ export interface MeshTSLNodes {
   readonly uInvGamma: TSLNode;
   readonly uIntensity: TSLNode;
   readonly uOffset: TSLNode;
-  /** Shade floor at the silhouette (1.0 reproduces the emissive siblings' look). */
+  /** Wrapped-diffuse floor (`1.0` removes the diffuse gradient). */
   readonly uAmbient: TSLNode;
   /** Wrap-term contrast exponent. */
   readonly uShadeExponent: TSLNode;
+  /** Additive specular strength. */
+  readonly uSpecular: TSLNode;
+  /** Specular highlight exponent. */
+  readonly uShininess: TSLNode;
   /** Cutout threshold; read only when the graph was built in `opaque` mode. */
   readonly uAlphaCutoff: TSLNode;
   /**
@@ -178,6 +183,8 @@ export function meshWebGPUFactory(
   const uOffset = nodes.uOffset;
   const uAmbient = nodes.uAmbient;
   const uShadeExponent = nodes.uShadeExponent;
+  const uSpecular = nodes.uSpecular;
+  const uShininess = nodes.uShininess;
   const uAlphaCutoff = nodes.uAlphaCutoff;
   const uIsOrtho = nodes.uIsOrtho;
   const uNearCull = nodes.uNearCull;
@@ -318,9 +325,9 @@ export function meshWebGPUFactory(
       const storedUsable: TSLNode = nn.greaterThanEqual(MESH_NORMAL_EPS_SQ).and(nn.lessThan(1e30));
       const storedNormal: TSLNode = vNormal
         .mul(max(nn, float(MESH_NORMAL_EPS_SQ)).inverseSqrt())
-        // Flip the STORED normal only. Without it a back fragment has
-        // dot(N, V) < 0, so the wrap term lands in [0, 0.5) and the back side
-        // shades with a dimmed inverted gradient collapsing toward uAmbient —
+        // Flip the STORED normal only. Without it, the stored back normal shades
+        // on the wrong side of its gradient, producing an inverted result that can
+        // collapse toward uAmbient —
         // immediately visible because `double_sided` defaults true and the
         // whole-triangle cull exposes a sliced isosurface's interior faces. The
         // derivative fallback must NOT be flipped: it already faces the viewer, so
@@ -332,10 +339,15 @@ export function meshWebGPUFactory(
       N = storedUsable.select(storedNormal, derivativeNormal).toVar();
     }
 
-    // View-anchored headlight: V is the fixed view-space axis (0, 0, 1), so
-    // dot(N, V) reduces to N.z. The wrap term keeps the silhouette readable.
-    const wrap: TSLNode = clamp(N.z.mul(0.5).add(0.5), 0.0, 1.0);
+    // View-anchored lighting: L is offset above-left, while V remains the fixed
+    // view-space axis (0, 0, 1), making the Blinn-Phong half-vector constant.
+    const lightDirection: TSLNode = normalize(
+      vec3(MESH_LIGHT_DIRECTION[0], MESH_LIGHT_DIRECTION[1], MESH_LIGHT_DIRECTION[2])
+    );
+    const halfVector: TSLNode = normalize(lightDirection.add(vec3(0.0, 0.0, 1.0)));
+    const wrap: TSLNode = clamp(dot(N, lightDirection).mul(0.5).add(0.5), 0.0, 1.0);
     const shade: TSLNode = mix(uAmbient, float(1.0), wrap.pow(uShadeExponent)).toVar();
+    const spec: TSLNode = uSpecular.mul(max(dot(N, halfVector), float(0.0)).pow(uShininess));
 
     const adjusted: TSLNode = config.noGOG
       ? vColor
@@ -347,7 +359,7 @@ export function meshWebGPUFactory(
 
     // The shade factor is a LIGHTING term: RGB only, never the coverage — or a
     // silhouette fragment would also turn transparent (and dissolve under cutout).
-    const shadedColor: TSLNode = finalColor.mul(shade).toVar();
+    const shadedColor: TSLNode = finalColor.mul(shade).add(vec3(spec)).toVar();
 
     // Mesh has no per-element intensity/amplitude/falloff scalar (§2.2), so
     // coverage is just per-vertex alpha times node opacity.
@@ -444,6 +456,8 @@ export function buildMeshTSLNodesFromUniforms(
     uShadeExponent: uniform(
       (uniforms.uShadeExponent?.value as number) ?? MESH_DEFAULTS.shadeExponent
     ),
+    uSpecular: uniform((uniforms.uSpecular?.value as number) ?? MESH_DEFAULTS.specular),
+    uShininess: uniform((uniforms.uShininess?.value as number) ?? MESH_DEFAULTS.shininess),
     uAlphaCutoff: uniform((uniforms.uAlphaCutoff?.value as number) ?? MESH_DEFAULTS.alphaCutoff),
     // 0 = perspective, and 0.1 is the same near-cull default the sibling
     // materials construct with (overridden per scene by updateCameraParams).

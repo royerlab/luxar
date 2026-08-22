@@ -105,7 +105,7 @@ function emptyMeshData(): LoadedMeshData {
  * WebGPU backend bakes the vertex layout into its pipeline). So a level that
  * omitted normals would leave the PREVIOUS level's normals bound at the wrong
  * length — stale values silently indexed past their end — and the only safe
- * fill, a zero vector, denormalizes the headlight into black. Failing loudly is
+ * fill, a zero vector, denormalizes the lighting calculation into black. Failing loudly is
  * the honest option.
  */
 function assertUniformPresence(

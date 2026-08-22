@@ -187,6 +187,8 @@ function meshUniforms(
     uOffset: { value: 0.0 },
     uAmbient: { value: MESH_DEFAULTS.ambient },
     uShadeExponent: { value: MESH_DEFAULTS.shadeExponent },
+    uSpecular: { value: MESH_DEFAULTS.specular },
+    uShininess: { value: MESH_DEFAULTS.shininess },
     uAlphaCutoff: { value: MESH_DEFAULTS.alphaCutoff },
     uIsOrtho: { value: fade.uIsOrtho },
     uNearCull: { value: fade.uNearCull },
@@ -355,7 +357,13 @@ export const MESH_SHADERS: Record<string, RegistryEntry> = {
   // `mesh-pick-commutative`.
   'mesh-near-fade': {
     source: MESH_SOURCE,
-    buildUniforms: () => meshUniforms(false, NEAR_FADE_UNIFORMS),
+    // Disable the additive highlight for this ratio measurement: the un-faded
+    // reference otherwise clips above 1.0 while the faded frame does not, so the
+    // 8-bit readback no longer preserves the exact 0.15625 ratio being tested.
+    buildUniforms: () => ({
+      ...meshUniforms(false, NEAR_FADE_UNIFORMS),
+      uSpecular: { value: 0.0 },
+    }),
     buildDefines: () => ({ LUXAR_MESH_ALPHA_CUTOUT: '' }),
     buildTSLMaterial: buildMeshTSL({ blendingMode: 'opaque' }),
     buildMesh: buildMeshObject(),
@@ -368,7 +376,10 @@ export const MESH_SHADERS: Record<string, RegistryEntry> = {
   // the same runtime-uniform reason as `mesh-near-fade`.
   'mesh-near-fade-reference': {
     source: MESH_SOURCE,
-    buildUniforms: () => meshUniforms(false, UNFADED_REFERENCE_UNIFORMS),
+    buildUniforms: () => ({
+      ...meshUniforms(false, UNFADED_REFERENCE_UNIFORMS),
+      uSpecular: { value: 0.0 },
+    }),
     buildDefines: () => ({ LUXAR_MESH_ALPHA_CUTOUT: '' }),
     buildTSLMaterial: buildMeshTSL({ blendingMode: 'opaque' }),
     buildMesh: buildMeshObject(),
