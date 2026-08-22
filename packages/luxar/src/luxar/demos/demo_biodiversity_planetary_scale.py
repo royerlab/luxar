@@ -2701,6 +2701,7 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
                 citation=DEMO_META["citation"],
                 dimensions=dims,
                 viewer_config=ViewerConfig(
+                    cinematic_mode=True,
                     # Neutral, not ACES (#1459): hue here is a CATEGORICAL
                     # encoding of taxonomic group, and the scene runs far over
                     # range (GLOBE_INTENSITY 4.88, OCCURRENCE_INTENSITY 100.0).

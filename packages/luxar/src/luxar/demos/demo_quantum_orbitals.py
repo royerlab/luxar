@@ -628,6 +628,7 @@ def create_luxar_scene(orbitals: GSplatData, output_path: Path) -> Path:
             scene = compiler.create_scene(
                 dimensions=dims,
                 viewer_config=ViewerConfig(
+                    cinematic_mode=True,
                     tone_mapping="ACES",
                     # A 3/4 view, not the auto-framed head-on one: looking
                     # straight down an axis stacks a cloverleaf's four lobes on
@@ -638,6 +639,14 @@ def create_luxar_scene(orbitals: GSplatData, output_path: Path) -> Path:
                     camera=CameraConfig(
                         position=(float(eye[0]), float(eye[1]), float(eye[2])),
                         target=(0.0, 0.0, 0.0),
+                        # Pinned at the viewer default (50 mm, 47°) so that
+                        # `cinematic_mode` leaves the framing alone: its preset
+                        # otherwise expands a 35 mm lens (63°), and against a
+                        # distance composed above that widening shrinks every
+                        # state by ~1.4x — including the size gap that is the
+                        # point here. Pinning either half of the fov pair
+                        # suppresses both, so the rest of the preset still lands.
+                        fov=47.0,
                     ),
                 ),
             )

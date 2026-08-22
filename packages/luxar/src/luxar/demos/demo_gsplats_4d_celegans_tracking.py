@@ -115,6 +115,7 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
     MissingDependencyError,
     launch_viewer,
@@ -1732,6 +1733,7 @@ def create_luxar_scene(
             scene = compiler.create_scene(
                 dimensions=dims,
                 citation=DEMO_META["citation"],
+                viewer_config=ViewerConfig(cinematic_mode=True),
             )
 
             scene.attrs["title"] = "GSplats: C. elegans Embryo — Nuclei Tracking"

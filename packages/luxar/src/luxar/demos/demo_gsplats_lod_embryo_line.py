@@ -275,7 +275,7 @@ def create_luxar_scene(
             scene = compiler.create_scene(
                 citation=DEMO_META["citation"],
                 dimensions=dims,
-                viewer_config=ViewerConfig(camera=camera),
+                viewer_config=ViewerConfig(cinematic_mode=True, camera=camera),
             )
 
             scene.attrs["title"] = (

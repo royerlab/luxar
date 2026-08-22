@@ -86,7 +86,13 @@ SCENES = {
 # camera outside an opaque marble with the subject an invisible speck inside. A
 # fixed close pose looking at the origin frames the subject instead; the sparse
 # environment falls far into the background. (Y-up: SPZ is already Y-up.)
-SUBJECT_CAMERA = CameraConfig(position=(6.0, 7.0, 19.0), target=(0.0, 0.0, 0.0))
+# `fov` is pinned at the viewer default (50 mm, 47°) rather than left unset: the
+# cinematic preset the scene enables otherwise expands a 35 mm lens (63°), which
+# against this FIXED distance would pull the subject ~1.4x smaller and hand the
+# frame back to the environment shell this pose exists to escape.
+SUBJECT_CAMERA = CameraConfig(
+    position=(6.0, 7.0, 19.0), target=(0.0, 0.0, 0.0), fov=47.0
+)
 
 FLAGS = parse_demo_flags()
 Arbol.max_depth = 5

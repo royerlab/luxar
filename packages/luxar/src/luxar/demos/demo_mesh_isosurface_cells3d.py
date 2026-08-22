@@ -278,6 +278,7 @@ def create_scene(output_path) -> None:
             scene = compiler.create_scene(
                 dimensions=dims,
                 viewer_config=ViewerConfig(
+                    cinematic_mode=True,
                     # ACES set explicitly — the house default, and stating it keeps
                     # the compiler's "nothing was chosen" LUT notice quiet.
                     tone_mapping="ACES",
@@ -294,6 +295,11 @@ def create_scene(output_path) -> None:
                         ),
                         target=(0.0, 0.0, 0.0),
                         up=(1.0, 0.0, 0.0),
+                        # Pinned at the viewer default (50 mm, 47°) so that
+                        # `cinematic_mode` cannot re-frame this pose: the preset
+                        # otherwise expands a 35 mm lens (63°), and the distance
+                        # above is a multiple of the slab's own extent.
+                        fov=47.0,
                     ),
                 ),
                 citation=DEMO_META["citation"],

@@ -531,6 +531,7 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
             scene = compiler.create_scene(
                 dimensions=dims,
                 viewer_config=ViewerConfig(
+                    cinematic_mode=True,
                     camera=camera,
                     exposure=0.5,
                     tone_mapping="ACES",

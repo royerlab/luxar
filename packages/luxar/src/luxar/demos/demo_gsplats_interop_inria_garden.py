@@ -105,7 +105,12 @@ MAX_ELEMENTS_PER_TILE = 1_000_000
 # to the floaters — the bbox center is a misleading (6.5, 11.5, −6.3)); it also
 # becomes the orbit pivot, so mouse-drag rotates around the table. `position`
 # is a raised 3/4 view ~17 units out — close enough to fill the frame.
-TABLE_CAMERA = CameraConfig(position=(9.0, 4.0, 12.0), target=(0.0, -1.8, -1.7))
+# `fov` is pinned at the viewer default (50 mm, 47°) rather than left unset:
+# the cinematic preset the scene enables otherwise expands a 35 mm lens (63°),
+# and "~17 units out, close enough to fill the frame" is only true at 47°.
+TABLE_CAMERA = CameraConfig(
+    position=(9.0, 4.0, 12.0), target=(0.0, -1.8, -1.7), fov=47.0
+)
 
 FLAGS = parse_demo_flags()
 Arbol.max_depth = 5

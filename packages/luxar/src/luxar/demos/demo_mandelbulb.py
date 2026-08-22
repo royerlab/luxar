@@ -58,6 +58,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
@@ -261,7 +262,9 @@ def generate_mandelbulb_volumetric(
         )
 
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                dimensions=dims, viewer_config=ViewerConfig(cinematic_mode=True)
+            )
 
             # Volumetric emission–absorption (VOLUMETRIC_BLENDING_SPEC.md
             # phase 3): the dense fractal shell self-occludes instead of

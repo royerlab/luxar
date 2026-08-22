@@ -465,9 +465,15 @@ def build_sequence_scene(
         spatial_max = float(np.abs(coords).max())
         cam_dist = spatial_max * 2.2  # 2.2× half-extent → comfortable framing
         viewer_config = ViewerConfig(
+            cinematic_mode=True,
             camera=CameraConfig(
                 position=(cam_dist, cam_dist * 0.55, cam_dist),
                 target=(0.0, 0.0, 0.0),
+                # Pinned at the viewer default (50 mm, 47°) so that
+                # `cinematic_mode` leaves `cam_dist` meaning what it says: the
+                # preset otherwise expands a 35 mm lens (63°) and the 2.2x
+                # framing above would read ~1.4x looser than it was tuned for.
+                fov=47.0,
             ),
         )
 

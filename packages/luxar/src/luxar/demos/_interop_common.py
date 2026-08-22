@@ -129,7 +129,9 @@ def build_interop_scene(
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
                 dimensions=dims,
-                viewer_config=ViewerConfig(tone_mapping=tone_mapping, camera=camera),
+                viewer_config=ViewerConfig(
+                    cinematic_mode=True, tone_mapping=tone_mapping, camera=camera
+                ),
                 citation=citation,
             )
             scene.attrs["title"] = title

@@ -43,6 +43,7 @@ import zarr
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import cache_computed, launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
@@ -169,7 +170,9 @@ def main() -> None:
 
             with LuxarZarrCompiler(output) as compiler:
                 scene = compiler.create_scene(
-                    dimensions=dims, citation=DEMO_META["citation"]
+                    dimensions=dims,
+                    citation=DEMO_META["citation"],
+                    viewer_config=ViewerConfig(cinematic_mode=True),
                 )
                 scene.add_points(
                     "Cells",
@@ -265,7 +268,9 @@ def main() -> None:
 
             with LuxarZarrCompiler(output) as compiler:
                 scene = compiler.create_scene(
-                    dimensions=dims, citation=DEMO_META["citation"]
+                    dimensions=dims,
+                    citation=DEMO_META["citation"],
+                    viewer_config=ViewerConfig(cinematic_mode=True),
                 )
                 scene.add_points(
                     "Cells",
