@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 import zarr
 
 from luxar.core.dimensions import Dimensions
-from luxar.core.group.partition import serialized_bsp_tree_separates
+from luxar.core.group.partition import (
+    serialized_bsp_tree_separates,
+    serialized_bsp_tree_straddles_centers,
+)
 from luxar.io.compiler import LuxarZarrCompiler
 
 
@@ -22,7 +26,10 @@ def _part_boxes(group: zarr.Group) -> list[tuple[np.ndarray, np.ndarray]]:
     ]
 
 
-def test_native_partition_adders_write_separating_bsp_trees(tmp_path) -> None:
+@pytest.mark.parametrize("rule", ["median", "midpoint", "sah"])
+def test_native_partition_adders_write_separating_bsp_trees(
+    tmp_path, rule: str
+) -> None:
     """Every native leaf adder persists the BSP it used to create its parts."""
     centers = np.array(
         [
@@ -56,26 +63,26 @@ def test_native_partition_adders_write_separating_bsp_trees(tmp_path) -> None:
     output = tmp_path / "native-partitions.luxar.zarr"
     with LuxarZarrCompiler(output) as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-        scene.add_points("points", centers, partition={"max_elements": 2})
+        scene.add_points("points", centers, partition={"max_elements": 2, "rule": rule})
         scene.add_lines(
             "lines",
             line_vertices,
             widths=0.05,
             line_type="segments",
-            partition={"max_elements": 2},
+            partition={"max_elements": 2, "rule": rule},
         )
         scene.add_mesh(
             "mesh",
             mesh_vertices,
             mesh_faces,
-            partition={"max_elements": 1},
+            partition={"max_elements": 1, "rule": rule},
         )
         scene.add_gsplats(
             "gsplats",
             centers=centers,
             amplitudes=np.ones(centers.shape[0], dtype=np.float32),
             cholesky_factors=np.array([1, 0, 1, 0, 0, 1], dtype=np.float32),
-            partition={"max_elements": 2},
+            partition={"max_elements": 2, "rule": rule},
         )
 
     root = zarr.open_group(str(output), mode="r")
@@ -84,6 +91,8 @@ def test_native_partition_adders_write_separating_bsp_trees(tmp_path) -> None:
     assert missing == []
     for name in geometry_names:
         group = root[name]
-        assert serialized_bsp_tree_separates(
-            group.attrs["bsp_tree"], _part_boxes(group)
-        )
+        tree = group.attrs["bsp_tree"]
+        boxes = _part_boxes(group)
+        assert serialized_bsp_tree_straddles_centers(tree, boxes)
+        if name != "lines" or rule != "sah":
+            assert serialized_bsp_tree_separates(tree, boxes)

@@ -182,9 +182,8 @@ _ALLOWED_NODE_ATTRS: FrozenSet[str] = frozenset(
         "display_type",
         "max_elements",
         "position_bounds",
-        # BSP tree stamped on a kind=partition group by the gsplat graft path
-        # (add_partition_group); the viewer reads it for back-to-front part
-        # ordering.
+        # BSP tree stamped on a kind=partition group by the native leaf adders
+        # and gsplat graft path; the viewer reads it for back-to-front ordering.
         "bsp_tree",
         # Geometry-writer internal forwarding flags. NOT an exhaustive list of
         # them: a flag popped BEFORE this gate runs never needs listing here.

@@ -750,7 +750,7 @@ def add_points_substitutive_lod_wrapper_impl(
     extend_to_all: Optional[Union[List[str], str]],
     spec: Dict[str, Any],
     additive_lod: Any = None,
-    fine_partition: Optional[tuple[int, List[np.ndarray]]] = None,
+    fine_partition: Optional[tuple[int, List[np.ndarray], Dict[str, Any]]] = None,
     **attrs: Any,
 ) -> Union["Group", Points]:
     """Write a Points node whose coarse LOD levels are synthesised gsplats.

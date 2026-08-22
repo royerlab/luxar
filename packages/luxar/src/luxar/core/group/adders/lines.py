@@ -333,6 +333,7 @@ def add_lines_impl(
                 name,
             )
             if len(polyline_parts) > 1:
+                assert tree is not None
                 preflight_extend_to_all(scene, extend_to_all, vert_arr, "lines")
                 return add_lines_partition_wrapper_impl(
                     group,
