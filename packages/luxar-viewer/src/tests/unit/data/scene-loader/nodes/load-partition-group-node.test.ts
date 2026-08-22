@@ -9,7 +9,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
-import { readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -22,6 +22,7 @@ import { loadPartitionGroupNode } from '../../../../../data/scene-loader/nodes/l
 import type { NodeBuildCtx } from '../../../../../data/scene-loader/nodes/build-ctx';
 import { makeTestNodeBuildCtx } from '../../../../helpers/make-test-node-build-ctx';
 import type { SceneNode } from '../../../../../data/data-loader-types';
+import { ROOT_ATTR_DOCS, rootAttributes } from '../../../../../types/zarr-documents';
 import { log, Modules } from '../../../../../utils/log';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -100,23 +101,28 @@ function pythonWrongFramePartition(): SceneNode {
     '../../../../../../tests/fixtures/test_partition_wrong_frame.luxar.zarr'
   );
   const attrs = (relativePath: string): SceneNode['attrs'] => {
-    const document = JSON.parse(
-      readFileSync(path.join(fixture, relativePath, 'zarr.json'), 'utf8')
-    ) as { attributes: SceneNode['attrs'] };
-    return document.attributes;
+    const docName = ROOT_ATTR_DOCS.find((candidate) =>
+      existsSync(path.join(fixture, relativePath, candidate))
+    );
+    if (docName === undefined) throw new Error(`No attrs document for ${relativePath}`);
+    const document = JSON.parse(readFileSync(path.join(fixture, relativePath, docName), 'utf8'));
+    return rootAttributes(document, docName) as SceneNode['attrs'];
   };
   const partitionAttrs = attrs('tiles');
-  const children = [0, 1].map((index) => {
-    const relativePath = `tiles/part_${index}`;
-    const childAttrs = attrs(relativePath);
-    return {
-      path: `/${relativePath}`,
-      type: childAttrs.type,
-      attrs: childAttrs,
-      hasSpatialIndex: false,
-      children: [],
-    } as SceneNode;
-  });
+  const children = readdirSync(path.join(fixture, 'tiles'), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith('part_'))
+    .sort((left, right) => left.name.localeCompare(right.name, undefined, { numeric: true }))
+    .map((entry) => {
+      const relativePath = `tiles/${entry.name}`;
+      const childAttrs = attrs(relativePath);
+      return {
+        path: `/${relativePath}`,
+        type: childAttrs.type,
+        attrs: childAttrs,
+        hasSpatialIndex: false,
+        children: [],
+      } as SceneNode;
+    });
   return {
     path: '/tiles',
     type: 'group',

@@ -20,9 +20,11 @@ import zarr
 from arbol import aprint, asection
 
 from luxar import CameraConfig, Dimension, Dimensions, LuxarZarrCompiler, ViewerConfig
+from luxar._zarr_compat import consolidate as zarr_consolidate
 from luxar._zarr_compat import create_array
 from luxar._zarr_compat import open_group as zarr_open_group
 from luxar.encoding import ArrayEncoder, EncodingMode, SemanticType
+from luxar.io._compiler.finalize.hashing import compute_content_hashes
 
 # Output directory
 FIXTURES_DIR = Path(__file__).parent
@@ -3887,10 +3889,8 @@ def generate_partition_layer_test() -> None:
             }
 
         partition.attrs["bsp_tree"] = shift_tree(dict(partition.attrs["bsp_tree"]))
-        from luxar.io._compiler.finalize.hashing import compute_content_hashes
-
         compute_content_hashes(root)
-        zarr.consolidate_metadata(root.store)
+        zarr_consolidate(root)
         aprint(f"  Created {wrong_frame}")
         aprint("  wrong-frame partition: valid Python scene with shifted BSP planes")
 
