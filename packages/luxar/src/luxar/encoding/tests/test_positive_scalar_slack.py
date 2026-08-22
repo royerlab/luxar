@@ -134,6 +134,28 @@ def test_positive_scalar_slack_bounds_viewer_float32_decode() -> None:
     assert float(upward.max()) <= slack
 
 
+def test_positive_scalar_slack_covers_the_authored_dtype_cast() -> None:
+    data = np.linspace(31.111, 40.0, 20_000).astype(np.float16)
+    encoder = ArrayEncoder()
+    slack = encoder.positive_scalar_round_trip_slack(data, EncodingMode.AUTO)
+    assert slack is not None
+
+    group = memory_group()
+    encoder.encode(
+        data,
+        group,
+        "s",
+        SemanticType.POSITIVE_SCALAR,
+        mode=EncodingMode.AUTO,
+        deduplicate=False,
+    )
+    assert group["s"].attrs["encoding"]["name"] == "bounded_scalar_uint8"
+    decoded = ArrayDecoder().decode(group["s"], group)
+    upward = decoded.astype(np.float64) - data.astype(np.float64)
+    assert float(upward.max()) > 0.0
+    assert float(upward.max()) <= slack
+
+
 @pytest.mark.parametrize("mode", list(EncodingMode))
 def test_positive_scalar_slack_reports_exact_encoder_exits(mode: EncodingMode) -> None:
     encoder = ArrayEncoder()
