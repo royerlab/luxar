@@ -569,6 +569,84 @@ class TestPayloadFiles:
         assert attrs["type"] == "overlay_image"
         assert not any(p.name == "Zarr.json" for p in dst.rglob("*"))
 
+    def test_a_dangling_metadata_document_name_is_skipped_under_a_case_fold(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        restore_zarr_format: None,
+    ) -> None:
+        """The same dangling attr as above, on a case-INSENSITIVE filesystem —
+        the platforms this whole branch exists for, and the ones CI never runs
+        on. There, an open-by-name for ``Zarr.json`` is resolved by the OS onto
+        the group's own ``zarr.json``, so a read can never report "no such key"
+        for precisely the names whose absence decides skip-vs-refuse: the branch
+        was dead on macOS/Windows, every store of this shape was refused, and the
+        refusal quoted the metadata document's byte count as the payload's.
+
+        The fold is simulated at the narrowest seam that produces it — the copy's
+        own byte reader, made to resolve a name case-blind exactly as the
+        filesystem would. The fix decides the branch from a directory LISTING
+        instead, which no filesystem folds, so the skip must survive this patch.
+        """
+        # Pinned to format 3, the one whose node document IS named `zarr.json` —
+        # at format 2 the pair is `.zgroup`/`.zattrs` and there is nothing for
+        # this name to fold onto, so the fixture would not pose the question.
+        set_zarr_format(3)
+        src = _store_with_a_payload_attr(
+            tmp_path / "src.luxar.zarr", "Zarr.json", payload=None
+        )
+        exact_read = optimise_mod.read_raw_bytes
+
+        def case_insensitive_read(group: Any, filename: str) -> bytes | None:
+            """What macOS does: fall back to a case-blind match on the key."""
+            found = exact_read(group, filename)
+            if found is not None:
+                return found
+            for key in optimise_mod.list_raw_keys(group):
+                if key.lower() == filename.lower():
+                    return exact_read(group, key)
+            return None
+
+        monkeypatch.setattr(optimise_mod, "read_raw_bytes", case_insensitive_read)
+        # The patch really does fold, or the test proves nothing.
+        logo = open_group(src, mode="r")["overlays/logo"]
+        assert case_insensitive_read(logo, "Zarr.json") is not None
+
+        dst = tmp_path / "out.luxar.zarr"
+        optimise_store(src, dst, verify=True)
+        attrs = dict(open_group(dst, mode="r")["overlays/logo"].attrs)
+        assert attrs["image_file"] == "Zarr.json"
+        assert attrs["type"] == "overlay_image"
+        assert not any(p.name == "Zarr.json" for p in dst.rglob("*"))
+
+    def test_the_refusal_reports_the_payload_file_s_own_byte_count(
+        self, tmp_path: Path
+    ) -> None:
+        """The count in the refusal is the user's evidence that something real is
+        at stake, and it has to come from the payload rather than from whatever
+        an open-by-name resolved to — quoting the node document's length would
+        advise renaming a file of a size that exists nowhere. Case-sensitive
+        filesystems only: elsewhere the fixture's two keys are one key."""
+        probe = tmp_path / "CaseProbe"
+        probe.write_text("x")
+        if (tmp_path / "caseprobe").exists():
+            pytest.skip("a case-insensitive filesystem cannot hold the fixture")
+        src = _store_with_a_payload_attr(
+            tmp_path / "src.luxar.zarr", "Zarr.json", payload=None
+        )
+        payload = b"\x89PNG\r\n\x1a\n" + b"p" * 4242
+        logo_dir = src / "overlays" / "logo"
+        (logo_dir / "Zarr.json").write_bytes(payload)
+        # Named by SET rather than by literal, so the assertion holds at either
+        # on-disk format (v3 has `zarr.json`, v2 the `.zgroup`/`.zattrs` pair).
+        documents = [p for p in logo_dir.iterdir() if p.name in _META_DOCS]
+        assert documents and all(p.stat().st_size != len(payload) for p in documents)
+
+        dst = tmp_path / "out.luxar.zarr"
+        with pytest.raises(ValueError, match=rf"{len(payload)} bytes"):
+            optimise_store(src, dst, verify=True)
+        assert not dst.exists()
+
     def test_a_payload_the_source_does_not_have_is_skipped(
         self, tmp_path: Path
     ) -> None:

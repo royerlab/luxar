@@ -106,6 +106,7 @@ __all__ = [
     "is_consolidated",
     "is_missing_error",
     "is_zarr_path",
+    "list_raw_keys",
     "memory_group",
     "open_group",
     "open_store",
@@ -986,6 +987,50 @@ def read_raw_bytes(group: zarr.Group, key: str) -> bytes | None:
 
     buffer = sync((group.store_path / key).get())
     return None if buffer is None else buffer.to_bytes()
+
+
+def list_raw_keys(group: zarr.Group) -> frozenset[str]:
+    """The key names stored directly under ``group``'s own prefix.
+
+    Answers one question :func:`read_raw_bytes` structurally cannot: *does this
+    store hold a key spelled EXACTLY this?* An open-by-name is resolved by the
+    filesystem, and on the case-insensitive ones Luxar treats as first-class
+    (macOS, Windows) ``Zarr.json`` folds to the node's own ``zarr.json`` — so a
+    probe for a payload that does not exist comes back with the METADATA
+    DOCUMENT's bytes, and "no such key" is unobservable for precisely the names
+    where the distinction decides whether a store is safe to copy
+    (``luxar.io.optimise._copy_payload_files``). A directory LISTING is not
+    folded: the store reports the names it actually stores, and Python compares
+    them case-sensitively on every platform.
+
+    Immediate children only, subdirectories (subgroups, chunk directories) and
+    plain files alike, as bare names relative to ``group`` — never a nested path
+    and never the group's own prefix. Both zarr formats' metadata documents show
+    up here like any other key, which is the point: they are exactly what a
+    case-shifted payload name would collide with.
+
+    Same store-agnostic mechanism, and the same reason for it, as
+    :func:`read_raw_bytes`: ``Store.list_dir`` is an async iterator with no
+    public sync facade, so it is driven through ``zarr.core.sync`` and verified
+    against ``LocalStore``, ``MemoryStore`` and ``ZipStore`` alike. Listing is
+    the one capability the store ABC leaves optional (``supports_listing``),
+    which is why this is a targeted disambiguator and not how payloads are
+    ENUMERATED — the attrs name them, and the compile-time hasher stays on that
+    route (``io/_compiler/finalize/README.md``).
+
+    Args:
+        group: Group whose own prefix is listed — ``group`` may be the root or
+            any subgroup; ``store_path`` already carries its prefix either way.
+
+    Returns:
+        The immediate child key names, compared case-sensitively.
+    """
+    # Function-local for the reason `read_raw_bytes` gives: these private zarr
+    # paths are the one thing here a point release could relocate.
+    from zarr.core.sync import collect_aiterator
+
+    store_path = group.store_path
+    return frozenset(collect_aiterator(store_path.store.list_dir(store_path.path)))
 
 
 #: zarr's own per-node metadata documents, lowercased, for the write backstop.

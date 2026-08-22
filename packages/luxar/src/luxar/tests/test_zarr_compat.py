@@ -587,6 +587,61 @@ def test_read_raw_bytes_reads_a_plain_file_inside_a_subgroup(tmp_path: Path) -> 
     assert zc.read_raw_bytes(root["overlays/logo"], "missing.png") is None
 
 
+def test_list_raw_keys_answers_case_exactly(tmp_path: Path) -> None:
+    """The question :func:`read_raw_bytes` cannot answer: is a key spelled
+    EXACTLY this one there? An open-by-name goes through the filesystem, and on
+    a case-insensitive one ``Zarr.json`` resolves to the node's own
+    ``zarr.json`` — so ``luxar.io.optimise`` cannot tell a dangling payload attr
+    from a real file that would clobber that document. A listing compared in
+    Python is folded by nothing."""
+    root = zc.open_group(tmp_path / "s.zarr", mode="w", zarr_format=3)
+    logo = root.create_group("overlays").create_group("logo")
+    (tmp_path / "s.zarr" / "overlays" / "logo" / "image.png").write_bytes(b"payload")
+
+    keys = zc.list_raw_keys(logo)
+    assert "image.png" in keys
+    assert "missing.png" not in keys
+    # The group's OWN document is a key like any other — which is the whole
+    # point, since it is what a case-shifted payload name would collide with.
+    assert "zarr.json" in keys
+    assert "Zarr.json" not in keys
+    assert "Image.PNG" not in keys
+    # Immediate children only, as bare names: the subgroup shows up, its
+    # contents do not, and nothing is reported as a nested path.
+    assert zc.list_raw_keys(root) >= {"overlays", "zarr.json"}
+    assert not any("/" in key for key in zc.list_raw_keys(root))
+    assert "image.png" not in zc.list_raw_keys(root)
+
+
+def test_list_raw_keys_is_store_agnostic(tmp_path: Path) -> None:
+    """Store-agnostic for the same reason :func:`read_raw_bytes` is: it is the
+    verdict a copy pass acts on, and ``--verify`` re-reads a ``.zarr.zip``
+    output through a ``ZipStore``. A ``MemoryStore`` has no filesystem to fold
+    names, a ``ZipStore`` has no directories at all — both must still list."""
+    memory = zc.memory_group()
+    logo = memory.create_group("logo")
+    zc.write_raw_bytes(logo, "image.png", b"payload")
+    assert "image.png" in zc.list_raw_keys(logo)
+    assert "Image.png" not in zc.list_raw_keys(logo)
+
+    source = tmp_path / "s.zarr"
+    root = zc.open_group(source, mode="w")
+    zc.write_raw_bytes(root.create_group("logo"), "image.png", b"payload")
+    zc.consolidate(root)
+    archive = tmp_path / "s.zarr.zip"
+    with zipfile.ZipFile(archive, "w") as out:
+        for item in sorted(source.rglob("*")):
+            if item.is_file():
+                out.write(item, item.relative_to(source).as_posix())
+
+    zipped = zarr.open_group(store=zarr.storage.ZipStore(archive, mode="r"), mode="r")
+    try:
+        assert "image.png" in zc.list_raw_keys(zipped["logo"])
+        assert "missing.png" not in zc.list_raw_keys(zipped["logo"])
+    finally:
+        zc.close(zipped)
+
+
 def test_write_raw_bytes_round_trips_through_the_store(tmp_path: Path) -> None:
     """The write twin has to resolve against the SUBGROUP's prefix too, and
     materialise real bytes: a payload written one directory up (or not at all)

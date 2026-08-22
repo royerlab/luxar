@@ -106,6 +106,7 @@ from .._zarr_compat import (
     close,
     consolidate,
     create_array,
+    list_raw_keys,
     open_group,
     read_raw_bytes,
     write_raw_bytes,
@@ -786,16 +787,26 @@ def _copy_payload_files(source: zarr.Group, dest: zarr.Group) -> None:
     symlink would not survive the ``.zarr.zip`` packaging either).
 
     A name colliding case-insensitively with a zarr metadata document
-    (:data:`_METADATA_DOCS_LOWERCASED`) is decided by whether the SOURCE has
-    bytes there, not by the name alone. On a case-SENSITIVE filesystem a file
-    called ``Zarr.json`` is an ordinary distinct file: skipping it would produce
-    exactly the state this function exists to prevent — an ``image_file`` attr
-    naming a file the output does not hold — and do it under an exit code of 0.
-    So a name that resolves to real bytes REFUSES the re-chunk, because the copy
-    cannot write them faithfully: on the macOS or Windows machine the output may
-    be read on, that key IS the group's own metadata document. The way out is to
-    rename the payload file and the attr that names it. A DANGLING attr of that
-    shape is skipped with a notice, since there are no bytes to be unfaithful to.
+    (:data:`_METADATA_DOCS_LOWERCASED`) is decided by whether the SOURCE really
+    holds a key spelled EXACTLY that, not by the name alone. On a case-SENSITIVE
+    filesystem a file called ``Zarr.json`` is an ordinary distinct file: skipping
+    it would produce exactly the state this function exists to prevent — an
+    ``image_file`` attr naming a file the output does not hold — and do it under
+    an exit code of 0. So a name that really is there REFUSES the re-chunk,
+    because the copy cannot write it faithfully: on the macOS or Windows machine
+    the output may be read on, that key IS the group's own metadata document. The
+    way out is to rename the payload file and the attr that names it. A DANGLING
+    attr of that shape is skipped with a notice, since there is nothing to be
+    unfaithful to.
+
+    Which of the two it is comes from :func:`list_raw_keys` — a directory listing
+    compared case-sensitively in Python — and not from trying to read the key.
+    An open-by-name is resolved by the OS, so on the very filesystems this branch
+    exists for, a probe for ``Zarr.json`` hands back the group's own
+    ``zarr.json``: the dangling case would be invisible, every such store would
+    be refused, and the refusal would quote the metadata document's byte count as
+    if it were the payload's. The listing is also why the probe happens BEFORE
+    the read — there is no point reading bytes the pass is about to refuse over.
 
     A named file that is simply ABSENT is skipped with a notice rather than
     raising, for the same reason: the source has no bytes to hand over, so
@@ -812,30 +823,35 @@ def _copy_payload_files(source: zarr.Group, dest: zarr.Group) -> None:
             # single path component, and one that IS zarr's own metadata
             # document spelled exactly (``.zattrs``), which the hasher's gate
             # rejects too. Only a CASE-shifted collision reaches the branch
-            # below, which has bytes to be unfaithful to and so refuses.
+            # below, which refuses when the source really holds that key.
             aprint(
                 f"⚠ skipping payload {filename!r}: not a plain file name, or "
                 f"one of zarr's own metadata documents"
             )
             continue
-        payload = _read_payload_or_refuse(source, attr_key, filename)
         if filename.lower() in _METADATA_DOCS_LOWERCASED:
-            if payload is None:
+            if filename not in list_raw_keys(source):
                 aprint(
                     f"⚠ skipping payload {filename!r}: it names a zarr metadata "
                     f"document and the source holds no file there"
                 )
                 continue
+            # Read only for the byte count the refusal quotes. `None` needs a
+            # race with a concurrent delete to reach — the listing just found
+            # the key — so the count degrades rather than the refusal.
+            held = _read_payload_or_refuse(source, attr_key, filename)
+            amount = "the bytes" if held is None else f"{len(held)} bytes"
             raise ValueError(
                 f"optimise cannot copy the payload file {filename!r} named by "
                 f"{attr_key!r} on group {source.path or '/'!r}: on a "
                 f"case-insensitive filesystem that name resolves to the group's "
                 f"own zarr metadata document, so writing it would replace the "
                 f"document the whole store is read through. The re-chunk is "
-                f"refused rather than dropping {len(payload)} bytes the source "
-                f"really holds — rename the payload file and the {attr_key!r} "
+                f"refused rather than dropping {amount} the source really "
+                f"holds — rename the payload file and the {attr_key!r} "
                 f"attr that names it, then run optimise again."
             )
+        payload = _read_payload_or_refuse(source, attr_key, filename)
         if payload is None:
             aprint(f"⚠ payload {filename!r} named by {attr_key!r} is missing")
             continue
