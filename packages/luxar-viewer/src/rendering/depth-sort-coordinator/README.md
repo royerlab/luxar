@@ -348,7 +348,7 @@ Because `renderOrder` is compared **globally** across all transparent meshes, th
 
 ### BSP Tree Traversal (Exact)
 
-The parts of a `to_spatial_partition` partition (the `tiles`/`adaptive` recipes) are the leaf cells of a kd-tree, and the partition stores its split planes as a `bsp_tree` attr (see `docs/specs/GSPLATS_ZARR_FORMAT.md`). `load-partition-group-node.ts` stashes it on the wrapper `THREE.Group`'s `userData.bspTree` and stamps each part object with its `userData.partIndex`.
+The parts of a `to_spatial_partition` partition (the `tiles`/`adaptive` recipes) are the leaf cells of a kd-tree, and the partition stores its split planes as a `bsp_tree` attr (see `docs/specs/GSPLATS_ZARR_FORMAT.md`). `load-partition-group-node.ts` validates the tree structure and, when the parts have `position_bounds`, checks its split geometry; malformed or unsound trees drop to the centroid fallback, while well-formed trees without verifiable bounds retain the stored ordering. Accepted trees are stashed on the wrapper `THREE.Group`'s `userData.bspTree`, and each part object is stamped with its `userData.partIndex`.
 
 **Per-frame flow**:
 
