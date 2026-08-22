@@ -440,7 +440,10 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
                 return None
             quant_bits = 16 if mode == EncodingMode.AUTO else 8
             intervals = (1 << quant_bits) - 2
-            slack = max_val * np.expm1((max_log - min_log) / (2.0 * intervals))
+            half_step = min(
+                float(np.expm1((max_log - min_log) / (2.0 * intervals))), 1.0
+            )
+            slack = max_val * half_step
         else:
             min_val = float(np.min(arr))
             span = max_val - min_val
