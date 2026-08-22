@@ -119,16 +119,51 @@ function assertSamples(
 
 function assertLogScalarSamplesNearPython(
   values: Float32Array,
-  expected: ArrayOperationExpectation | ArrayExpectation
+  expected: ArrayOperationExpectation | ArrayExpectation,
+  maxLog: number
 ): void {
   for (const sample of expected.samples) {
-    const tolerance = Math.max(1e-7, Math.abs(sample.value) * 5e-7);
+    const tolerance = logScalarPythonTolerance(sample.value, maxLog);
     expect(Math.abs(values[sample.index] - sample.value)).toBeLessThanOrEqual(tolerance);
   }
 }
 
-function isLogScalarEncoding(encoding: string): boolean {
-  return encoding === 'log_scalar_uint8' || encoding === 'log_scalar_uint16';
+function logScalarPythonTolerance(value: number, maxLog: number): number {
+  // maxLog amplifies f32 argument rounding; +2 covers multiply/expm1/result rounding.
+  return Math.max(1e-7, Math.abs(value) * (maxLog + 2) * 2 ** -23);
+}
+
+function assertLogScalarStatsNearPython(
+  values: Float32Array,
+  expected: ArrayOperationExpectation | ArrayExpectation,
+  maxLog: number
+): void {
+  if (values.length === 0) {
+    expect(expected.stats).toEqual({ min: null, max: null, mean: null });
+    return;
+  }
+
+  let min = Number.POSITIVE_INFINITY;
+  let max = Number.NEGATIVE_INFINITY;
+  let sum = 0;
+  for (const value of values) {
+    min = Math.min(min, value);
+    max = Math.max(max, value);
+    sum += value;
+  }
+
+  for (const [name, actual] of [
+    ['min', min],
+    ['max', max],
+    ['mean', sum / values.length],
+  ] as const) {
+    const reference = expected.stats[name];
+    expect(reference).not.toBeNull();
+    const tolerance = logScalarPythonTolerance(reference!, maxLog);
+    expect(Math.abs(actual - reference!), `${name} differs from Python`).toBeLessThanOrEqual(
+      tolerance
+    );
+  }
 }
 
 function assertManifestCoverage(manifest: ContractManifest): void {
@@ -184,11 +219,15 @@ describe('Python-TypeScript encoded array round-trip', () => {
   for (const [fixtureName, fixture] of Object.entries(EXPECTATIONS.fixtures)) {
     describe(fixtureName, () => {
       for (const [arrayPath, expected] of Object.entries(fixture.arrays)) {
-        const logScalar = isLogScalarEncoding(expected.encoding);
+        const logScalar = ArrayDecoder.isLogScalarEncodingName(expected.encoding);
         const contract = logScalar ? 'with the viewer f32 contract' : 'like Python';
         it(`decodes ${arrayPath} (${expected.encoding}) ${contract}`, async () => {
           const { array, attrs, rootLoc, store } = await loadArrayWithAttrs(fixtureName, arrayPath);
           const decoder = new ArrayDecoder(new ArrayRefRegistry());
+          const maxLog = attrs.encoding?.max_log;
+          if (logScalar && typeof maxLog !== 'number') {
+            throw new Error(`${fixtureName}/${arrayPath} is missing encoding.max_log`);
+          }
 
           // Do not pass expectedElements here. The decoder must rely on Python's
           // encoding metadata (not caller hints) for full-array round-trips.
@@ -197,7 +236,8 @@ describe('Python-TypeScript encoded array round-trip', () => {
           expect(decoded.length).toBe(expected.flat_length);
           expect(decoded.length).toBe(shapeProduct(expected.decoded_shape));
           if (logScalar) {
-            assertLogScalarSamplesNearPython(decoded, expected);
+            assertLogScalarSamplesNearPython(decoded, expected, maxLog!);
+            assertLogScalarStatsNearPython(decoded, expected, maxLog!);
           } else {
             assertSamples(decoded, expected);
             expect(float32Sha256(decoded)).toBe(expected.float32_sha256);
@@ -211,7 +251,8 @@ describe('Python-TypeScript encoded array round-trip', () => {
             expect(rangeDecoded.length).toBe(operation.flat_length);
             expect(rangeDecoded.length).toBe(shapeProduct(operation.decoded_shape));
             if (logScalar) {
-              assertLogScalarSamplesNearPython(rangeDecoded, operation);
+              assertLogScalarSamplesNearPython(rangeDecoded, operation, maxLog!);
+              assertLogScalarStatsNearPython(rangeDecoded, operation, maxLog!);
               const itemWidth = elementsPerItem(expected.decoded_shape);
               const start = (operation.start ?? 0) * itemWidth;
               const end = (operation.end ?? operation.start ?? 0) * itemWidth;

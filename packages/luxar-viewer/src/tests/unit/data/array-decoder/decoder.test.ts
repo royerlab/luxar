@@ -1848,17 +1848,25 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
       }
 
       const expectedBits = new Uint32Array(expected.buffer);
-      const firstMismatches = [codes, Float32Array.from(codes)].map((input) => {
+      for (const [inputLabel, input] of [
+        ['integer codes', codes],
+        ['Float32Array-widened codes', Float32Array.from(codes)],
+      ] as const) {
         const actual = decoder.dequantizeRange(input, {
           bounds: [0, maxLog],
           dtype,
           isLogSpace: true,
         });
         const actualBits = new Uint32Array(actual.buffer);
-        return expectedBits.findIndex((bits, index) => bits !== actualBits[index]);
-      });
-
-      expect(firstMismatches).toEqual([-1, -1]);
+        const mismatch = expectedBits.findIndex((bits, index) => bits !== actualBits[index]);
+        const context =
+          mismatch === -1
+            ? `${dtype} ${inputLabel} matched the shared kernel`
+            : `${dtype} ${inputLabel} code ${codes[mismatch]} at index ${mismatch}: ` +
+              `expected bits 0x${expectedBits[mismatch].toString(16)}, ` +
+              `actual bits 0x${actualBits[mismatch].toString(16)}`;
+        expect(mismatch, context).toBe(-1);
+      }
     });
 
     it('maps index 0 → ~0 and max_int → ~1000 (expm1 inverse of log1p)', () => {
