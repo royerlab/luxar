@@ -106,6 +106,16 @@ Both flows filter against `DEFAULT_ALLOWED_CONSOLE_ERRORS`
 (`/WebGL context lost/` plus the loader's optional-resource probe
 404/501s — see `src/tests/e2e/fixtures.ts` for the canonical list).
 
+The Playwright-side flow runs first, and for the _error_ verdict it is a
+strict superset of the in-app buffer (same `console.error` source, no
+pre-`patch()` blind spot, no ring-buffer eviction). So when a saturated
+main thread starves the in-app probe's `page.evaluate` — #1760, measured
+as 95 s without one serviced round trip while `page.on('console')` kept
+delivering — the fixture records a `console-probe-unanswered` annotation
+plus a warning instead of failing the test. A spec that calls
+`assertNoConsoleErrors` / `getConsoleMessages` itself still fails on a
+starved probe: it asked for the in-app buffer specifically.
+
 ---
 
 ## Test Organization

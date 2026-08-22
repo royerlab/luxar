@@ -528,6 +528,59 @@ export async function waitForUIState(
 }
 
 /**
+ * Thrown by {@link getConsoleMessages} when the in-page console-buffer probe
+ * is never answered within its deadline — the page's main thread is saturated
+ * and starving the CDP `Runtime.evaluate` round trip.
+ *
+ * A distinct type, not a bare `Error`, because exactly one caller may forgive
+ * it: the shared fixture's teardown in `./fixtures`, which has already
+ * rendered the console-error verdict from a strictly wider source (see
+ * {@link isConsoleProbeUnanswered}). Every other caller asked for the in-page
+ * view explicitly and must still fail — hence a type, so that decision is
+ * made by `instanceof` rather than by matching on the message text, which any
+ * unrelated error could happen to quote.
+ */
+export class ConsoleProbeUnansweredError extends Error {
+  constructor(
+    message: string,
+    public readonly timeout: number
+  ) {
+    super(message);
+    this.name = 'ConsoleProbeUnansweredError';
+  }
+}
+
+/**
+ * True only for the one starvation case {@link ConsoleProbeUnansweredError}
+ * names: the page never answered the console-buffer probe. Everything else —
+ * notably `assertNoConsoleErrors`' real `Console errors detected: …` throw, an
+ * `Execution context was destroyed` rejection, or a non-`Error` value — is
+ * NOT this case and must propagate.
+ *
+ * Matched by `instanceof`, not by name or message: the class is constructed in
+ * this module and only ever inspected in-process by `./fixtures`, so its
+ * prototype is intact, and an unrelated error that merely mentions the probe
+ * in its text must stay fatal.
+ */
+export function isConsoleProbeUnanswered(error: unknown): error is ConsoleProbeUnansweredError {
+  return error instanceof ConsoleProbeUnansweredError;
+}
+
+/**
+ * One-line explanation for a forgiven {@link ConsoleProbeUnansweredError},
+ * used verbatim as both the fixture's `testInfo` annotation description and
+ * its `console.warn` body so the two never drift apart.
+ */
+export function describeConsoleProbeUnanswered(error: ConsoleProbeUnansweredError): string {
+  return (
+    `the page never answered the in-page console-buffer probe within ${error.timeout} ms ` +
+    '(saturated main thread starving the evaluate round trip); not failing the test because the ' +
+    "fixture's own Playwright-side console.error / pageerror gate already ran above and covers " +
+    'the error verdict. See issues #1651 / #1760.'
+  );
+}
+
+/**
  * Get browser console messages (CRITICAL for E2E validation)
  *
  * Retrieves all console messages from the browser's console interceptor.
@@ -542,15 +595,40 @@ export async function waitForUIState(
  * in `timeout` ms with a message that says what went unanswered is
  * strictly more informative.
  *
- * WHAT THE DEFAULT COSTS, honestly: a deadline here cannot distinguish a
- * page that will never answer from one that would have answered late, so
- * ANY value can cut short a stall that would have ended, turning a test
- * that used to pass into one that fails. That is a real cost rather than a
- * hypothetical — the stalls measured for #1651 lasted tens of seconds (a
- * trivial `page.evaluate` unanswered for 5 s twelve times running, ~78 s in
- * all, while the page went on rendering). The bound is worth paying anyway
- * because the alternative failure is opaque, but it is a trade, not a free
- * win.
+ * WHAT THE DEFAULT COSTS, and who pays it (#1760): a deadline here cannot
+ * distinguish a page that will never answer from one that would have answered
+ * late, so ANY value can cut short a stall that would have ended. The stalls
+ * are real and long — measured for #1651 as a trivial `page.evaluate`
+ * unanswered for 5 s twelve times running (~78 s in all) while the page went
+ * on rendering, and reproduced for #1760 with the browser pinned to 2 CPUs as
+ * 20 consecutive 5 s timeouts, 95 s without one serviced round trip, while 19
+ * console messages arrived through Playwright's own `page.on('console')`
+ * stream in the same window. So the two channels starve independently.
+ *
+ * That splits the cost by caller, and the split is the whole point:
+ *
+ * - FIXTURE TEARDOWN (`./fixtures`) RECORDS it and moves on. It has already
+ *   run its own gate over `page.on('console')` + `page.on('pageerror')`, and
+ *   for the ERROR verdict that Playwright-side set is a strict SUPERSET of
+ *   what this probe can return: `log.error()` routes to `console.error`
+ *   (`src/utils/log.ts`) and the interceptor's `patch()` re-emits through the
+ *   original `console.error`, so both see the same app-level errors; the
+ *   interceptor only captures from `patch()` onward, so anything logged before
+ *   the viewer installs it is invisible here but visible to a listener
+ *   attached at test start; its buffer is a RING that wraps and evicts at
+ *   `DEFAULT_MAX_BUFFER_SIZE`, so old errors can be dropped here but not from
+ *   the fixture's unbounded array; and every captured message carries an
+ *   explicit `type`, so the text-content fallback below never fires for
+ *   interceptor-sourced messages. Failing the test on a starved probe was
+ *   therefore failing it on a verdict already rendered more completely — the
+ *   #1760/#1747/#1746 "timeout" reports. Do NOT "restore" the hard failure
+ *   there without first removing that Playwright-side gate.
+ * - A DIRECT CALLER (a spec that calls `assertNoConsoleErrors` /
+ *   `getConsoleMessages` itself, or one importing `@playwright/test` with no
+ *   fixture teardown at all) still FAILS. It asked for the in-page buffer —
+ *   whose warnings/logs buckets have no Playwright-side equivalent gate — so
+ *   it deserves to learn the buffer could not be read rather than proceed on
+ *   empty buckets.
  *
  * WHY 45 s: Playwright gives the After Hooks phase a FRESH timeout slot
  * (`afterHooksSlot = { timeout: calculateMaxTimeout(project.timeout,
@@ -570,7 +648,8 @@ export async function waitForUIState(
  * @param page - Playwright page
  * @param timeout - Deadline for the in-page probe, in ms
  * @returns Object with errors, warnings, and info messages
- * @throws If the page does not answer the probe within `timeout` ms
+ * @throws {ConsoleProbeUnansweredError} If the page does not answer the probe
+ *   within `timeout` ms
  */
 export async function getConsoleMessages(
   page: Page,
@@ -627,14 +706,17 @@ export async function getConsoleMessages(
   const buckets = await raceEvaluate<Awaited<typeof probe> | null>(probe, timeout, null);
 
   if (buckets === null) {
-    // Deliberately NOT empty buckets: the fixture teardown feeds this
-    // into assertNoConsoleErrors, so returning `{errors: [], ...}` here
-    // would silently turn the console-error gate into a vacuous pass for
-    // every spec that imports `test` from `./fixtures`.
-    throw new Error(
+    // Deliberately NOT empty buckets: every direct caller feeds this into a
+    // check, so returning `{errors: [], ...}` here would silently turn it into
+    // a vacuous pass. Typed so the fixture teardown — and only it — can
+    // downgrade the starvation case to an annotation without also swallowing
+    // the real `Console errors detected: …` throw; see
+    // `isConsoleProbeUnanswered`.
+    throw new ConsoleProbeUnansweredError(
       `getConsoleMessages: the page never answered the console-buffer probe within ${timeout} ms — ` +
         'its main thread is saturated and starving the evaluate round trip, so the console-error ' +
-        'check could not run. See issue #1651.'
+        'check could not run. See issue #1651.',
+      timeout
     );
   }
 
