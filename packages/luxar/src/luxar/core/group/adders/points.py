@@ -442,6 +442,7 @@ def _resolve_points_partition(
 ) -> Optional[tuple[int, List[np.ndarray], Dict[str, Any]]]:
     """Resolve and execute a points partition, returning only a real split."""
     from ..partition import (
+        bsp_leaf_parts,
         resolve_partition_spec,
         spatial_bsp_tree,
         warn_if_oversized_single_part,
@@ -462,10 +463,7 @@ def _resolve_points_partition(
         )
 
     tree = spatial_bsp_tree(pos_arr, max_elements, rule=partition_rule)
-    parts = []
-    for leaf in tree.leaves():
-        assert leaf.indices is not None
-        parts.append(leaf.indices)
+    parts = bsp_leaf_parts(tree)
     warn_if_oversized_single_part(
         len(parts), int(parts[0].size) if parts else 0, max_elements, name
     )
@@ -534,7 +532,6 @@ def add_points_partition_wrapper_impl(
         f"sizes={[int(p.size) for p in parts]})"
     )
 
-    written_parts = []
     for i, indices in enumerate(parts):
         wrapper.add_points(
             name=f"part_{i}",
@@ -565,13 +562,10 @@ def add_points_partition_wrapper_impl(
             additive_lod=additive_lod,
             **leaf_attrs,
         )
-        written_parts.append(i)
+    from ..partition import persist_pruned_bsp_tree
 
-    from ..partition import prune_serialized_bsp_tree
-
-    serialized_tree = prune_serialized_bsp_tree(bsp_tree, written_parts)
-    if serialized_tree is not None:
-        wrapper._persist_attr("bsp_tree", serialized_tree)
+    # Unlike lines, every resolved points part is written in order.
+    persist_pruned_bsp_tree(wrapper, bsp_tree, range(len(parts)))
 
     # Persist the wrapper's position_bounds (per-axis min/max of the
     # full input) so picking / scene-bounds-cache treat the layer as

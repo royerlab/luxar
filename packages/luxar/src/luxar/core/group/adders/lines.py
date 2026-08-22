@@ -78,7 +78,7 @@ def _build_line_partition_tree(
     rule: str,
 ) -> Tuple[Optional["BSPNode"], List[List[int]]]:
     """Build the requested atomic-polyline BSP and flatten its leaves."""
-    from ..partition import spatial_bsp_polyline_tree, spatial_bsp_tree
+    from ..partition import bsp_leaf_parts, spatial_bsp_polyline_tree, spatial_bsp_tree
 
     if rule != "sah":
         tree = spatial_bsp_polyline_tree(
@@ -94,11 +94,7 @@ def _build_line_partition_tree(
         centroid_cap = max(1, max_elements // approximate_vertices_per_polyline)
         tree = spatial_bsp_tree(centroids, max_elements=centroid_cap, rule="sah")
 
-    parts = []
-    if tree is not None:
-        for leaf in tree.leaves():
-            assert leaf.indices is not None
-            parts.append(leaf.indices.tolist())
+    parts = [] if tree is None else [part.tolist() for part in bsp_leaf_parts(tree)]
     return tree, parts
 
 

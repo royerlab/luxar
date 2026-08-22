@@ -177,6 +177,7 @@ def add_gsplats_impl(
 
         if partition is not None and n_splats > 0:
             from ..partition import (
+                bsp_leaf_parts,
                 resolve_partition_spec,
                 spatial_bsp_tree,
                 warn_if_oversized_single_part,
@@ -191,10 +192,7 @@ def add_gsplats_impl(
                 )
 
             tree = spatial_bsp_tree(ctr_arr, max_elements, rule=partition_rule)
-            parts = []
-            for leaf in tree.leaves():
-                assert leaf.indices is not None
-                parts.append(leaf.indices)
+            parts = bsp_leaf_parts(tree)
             warn_if_oversized_single_part(
                 len(parts), int(parts[0].size) if parts else 0, max_elements, name
             )
@@ -334,7 +332,6 @@ def add_gsplats_partition_wrapper_impl(
         f"sizes={[int(p.size) for p in parts]})"
     )
 
-    written_parts = []
     for i, indices in enumerate(parts):
         wrapper.add_gsplats(
             name=f"part_{i}",
@@ -359,13 +356,10 @@ def add_gsplats_partition_wrapper_impl(
             partition=False,
             **leaf_attrs,
         )
-        written_parts.append(i)
+    from ..partition import persist_pruned_bsp_tree
 
-    from ..partition import prune_serialized_bsp_tree
-
-    serialized_tree = prune_serialized_bsp_tree(bsp_tree, written_parts)
-    if serialized_tree is not None:
-        wrapper._persist_attr("bsp_tree", serialized_tree)
+    # Unlike lines, every resolved gsplats part is written in order.
+    persist_pruned_bsp_tree(wrapper, bsp_tree, range(len(parts)))
 
     wrapper._persist_attr("position_bounds", position_bounds_from_array(ctr_arr))
 

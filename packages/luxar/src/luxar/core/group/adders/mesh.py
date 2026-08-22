@@ -1564,7 +1564,8 @@ def _add_mesh_partition(
     """
     from ....mesh.split import duplication_factor, face_centroids, split_mesh_by_faces
     from ..partition import (
-        prune_serialized_bsp_tree,
+        bsp_leaf_parts,
+        persist_pruned_bsp_tree,
         resolve_partition_spec,
         spatial_bsp_tree,
         warn_if_oversized_single_part,
@@ -1610,10 +1611,7 @@ def _add_mesh_partition(
     faces2d = faces_arr.reshape(-1, 3)
     centroids = face_centroids(vert_arr, faces2d)
     tree = spatial_bsp_tree(centroids, max_elements, rule=rule)
-    face_parts = []
-    for leaf in tree.leaves():
-        assert leaf.indices is not None
-        face_parts.append(leaf.indices)
+    face_parts = bsp_leaf_parts(tree)
 
     warn_if_oversized_single_part(
         len(face_parts),
@@ -1643,7 +1641,6 @@ def _add_mesh_partition(
         f"vertex duplication x{duplication_factor(parts):.3f})"
     )
 
-    written_parts = []
     for i, part in enumerate(parts):
         # `slice_optional_array` is the same helper the sibling wrappers use, and
         # it is the right one here for the same reason: it gathers ONLY when the
@@ -1682,11 +1679,8 @@ def _add_mesh_partition(
             partition=False,
             **leaf_attrs,
         )
-        written_parts.append(i)
-
-    serialized_tree = prune_serialized_bsp_tree(tree.to_serializable(), written_parts)
-    if serialized_tree is not None:
-        wrapper._persist_attr("bsp_tree", serialized_tree)
+    # Unlike lines, split_mesh_by_faces returns one written part per BSP leaf.
+    persist_pruned_bsp_tree(wrapper, tree.to_serializable(), range(len(parts)))
 
     # Union of the parts' bounds == the whole input's bounds, computed straight
     # from the source rather than round-tripped through the children's attrs.

@@ -23,11 +23,16 @@ bounding box along an axis and recurse until each part has at most
 
 This module hosts:
 
+* :class:`BSPNode`, :func:`spatial_bsp_tree`, and
+  :func:`spatial_bsp_polyline_tree` — the production tree builders used by the
+  native geometry adders, plus :func:`bsp_leaf_parts` for their shared
+  left-first leaf flattening.
+* :func:`persist_pruned_bsp_tree` — the shared writer-side step that drops
+  unwritten regions, renumbers the surviving ``child_index`` labels, and stores
+  the result on a partition wrapper.
 * :func:`median_bsp_partition` / :func:`midpoint_bsp_partition` /
-  :func:`sah_bsp_partition` — the pure-NumPy point/gsplats splitters. Each
-  returns a list of index arrays into the original positions.
-* :func:`median_bsp_polylines` / :func:`midpoint_bsp_polylines` — the
-  polyline-atomic variants for ``add_lines``.
+  :func:`sah_bsp_partition` and the matching polyline wrappers — flat-list
+  conveniences retained as parity oracles for the tree builders.
 * :func:`prune_serialized_bsp_tree` / :func:`map_serialized_bsp_tree` /
   :func:`reconstruct_serialized_bsp_tree` / :func:`serialized_bsp_tree_separates` /
   :func:`serialized_bsp_tree_straddles_centers` /
@@ -184,10 +189,12 @@ class BSPNode:
     convention matches the splitters exactly: the ``left`` subtree holds
     ``coord < split`` and ``right`` holds ``coord >= split``.
 
-    The tree is the split-plane record needed for an exact, camera-position-
-    safe back-to-front (painter's) ordering of the leaf parts in the viewer:
-    at each node the eye is on one side of ``split`` and everything on the far
-    side draws before everything on the near side (Fuchs–Kedem–Naylor).
+    The tree is the split-plane record needed for camera-position-safe
+    back-to-front traversal of the leaf parts in the viewer: at each node the
+    eye is on one side of ``split`` and everything on the far side draws before
+    everything on the near side (Fuchs–Kedem–Naylor). The order is exact when
+    part bounds do not cross their planes, and approximate for atomic geometry
+    split by representative points such as polyline or face centroids.
     """
 
     # Leaf payload (``None`` on internal nodes).
@@ -222,8 +229,8 @@ class BSPNode:
 
         Leaves are numbered in :meth:`leaves` order (``0, 1, 2, …``) so each
         leaf's ``"part"`` index lines up with the flat parts list and the
-        on-disk ``part_<i>`` / ``child_index``. Internal nodes emit
-        ``{"axis", "split", "left", "right"}``.
+        on-disk ``child_index``. Internal nodes emit ``{"axis", "split",
+        "left", "right"}``.
         """
         counter = [0]
 
@@ -932,7 +939,7 @@ def spatial_bsp_tree(
     raise ValueError(f"rule must be 'median', 'midpoint', or 'sah'; got {rule!r}")
 
 
-def _flat_parts(root: BSPNode) -> List[NDArray[np.intp]]:
+def bsp_leaf_parts(root: BSPNode) -> List[NDArray[np.intp]]:
     """Flatten a BSP tree to the leaf index-arrays list (the ``*_bsp_partition``
     return shape), in :meth:`BSPNode.leaves` order."""
     parts: List[NDArray[np.intp]] = []
@@ -1039,7 +1046,7 @@ def midpoint_bsp_partition(
     # builder is the single source of truth; the flat list is its leaves in
     # left-first DFS order (see :func:`spatial_bsp_tree` / :class:`BSPNode`).
     spatial = positions[:, : min(3, positions.shape[1])]
-    return _flat_parts(
+    return bsp_leaf_parts(
         _bsp_tree_midpoint(spatial, max_elements, np.arange(n, dtype=np.intp))
     )
 
@@ -1101,7 +1108,7 @@ def median_bsp_partition(
     # The tree builder is the single source of truth; the flat list is its
     # leaves in left-first DFS order (see :func:`spatial_bsp_tree`).
     spatial = positions[:, : min(3, positions.shape[1])]
-    return _flat_parts(
+    return bsp_leaf_parts(
         _bsp_tree_median(spatial, max_elements, np.arange(n, dtype=np.intp))
     )
 
@@ -1231,11 +1238,7 @@ def spatial_bsp_polyline_tree(
 def _flat_polyline_parts(root: Optional[BSPNode]) -> List[List[int]]:
     if root is None:
         return []
-    parts: List[List[int]] = []
-    for leaf in root.leaves():
-        assert leaf.indices is not None
-        parts.append(leaf.indices.tolist())
-    return parts
+    return [part.tolist() for part in bsp_leaf_parts(root)]
 
 
 def midpoint_bsp_polylines(
@@ -1346,7 +1349,7 @@ def sah_bsp_partition(
     # The tree builder is the single source of truth; the flat list is its
     # leaves in left-first DFS order (see :func:`spatial_bsp_tree`).
     spatial = positions[:, : min(3, positions.shape[1])]
-    return _flat_parts(
+    return bsp_leaf_parts(
         _bsp_tree_sah(spatial, max_elements, np.arange(n, dtype=np.intp), n_candidates)
     )
 
