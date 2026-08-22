@@ -98,7 +98,7 @@ from arbol import aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, DimensionsConfig, ViewerConfig
 from luxar.demos import cache_computed, launch_viewer, parse_demo_flags, parse_int_arg
-from luxar.demos._cinematic_camera import pull_in
+from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -1727,6 +1727,15 @@ def _forest_dimensions() -> Dimensions:
 
 def _viewer_config() -> ViewerConfig:
     camera_target = (4.0, 6.0, 4.5)
+    authored_position = np.asarray((-48.0, -42.0, 14.0))
+    view_direction = authored_position - np.asarray(camera_target)
+    view_direction /= np.linalg.norm(view_direction)
+    camera_distance = (FOREST_SIZE / 2.0) / math.tan(
+        math.radians(CINEMATIC_FOV_DEG / 2.0)
+    )
+    camera_position = tuple(
+        np.asarray(camera_target) + view_direction * camera_distance
+    )
     return ViewerConfig(
         cinematic_mode=True,
         # ACES explicitly — the house default; the luminous accents +
@@ -1735,7 +1744,7 @@ def _viewer_config() -> ViewerConfig:
         # Opening pose: low vantage from the forest edge at canopy height,
         # looking into the depth of the field — not the default top-down.
         camera=CameraConfig(
-            position=pull_in((-48.0, -42.0, 14.0), camera_target, from_fov_deg=50.0),
+            position=camera_position,
             target=camera_target,
             up=(0.0, 0.0, 1.0),
             near=0.5,

@@ -108,6 +108,7 @@ DEMO_META = {
     },
 }
 
+import math
 import sys
 from pathlib import Path
 
@@ -133,7 +134,7 @@ from luxar.demos import (
     parse_demo_flags,
     warn_if_no_cuda_gpu,
 )
-from luxar.demos._cinematic_camera import pull_in
+from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.paths import get_demos_output_dir
@@ -239,10 +240,16 @@ def camera_for_line(n: int, spacing: float, diameter: float) -> CameraConfig:
     # raised ~1 diameter in +Y, and aim at the MIDDLE of the row — so the whole
     # sequence recedes diagonally and stays centred (standing right at the first
     # embryo blows it out and crams the line into a corner).
-    position = (-total_len * 0.12, diameter * 1.0, diameter * 2.2)
+    near_standoff = (
+        total_len
+        * 0.12
+        * math.tan(math.radians(50.0 / 2.0))
+        / math.tan(math.radians(CINEMATIC_FOV_DEG / 2.0))
+    )
+    position = (-near_standoff, diameter * 1.0, diameter * 2.2)
     target = (total_len * 0.45, 0.0, 0.0)
     return CameraConfig(
-        position=pull_in(position, target, from_fov_deg=50.0),
+        position=position,
         target=target,
         up=(0.0, 1.0, 0.0),
         near=max(0.1, radius * 0.02),
