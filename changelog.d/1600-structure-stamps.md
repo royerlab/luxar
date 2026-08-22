@@ -35,11 +35,12 @@ ladder summary for `stream`, plus the substitutive block as well for `levels` â€
 and nothing positive is invented to fill the gap, because an absent `lod_kind` is
 the format's "this artifact does not know" and stamping `lod_kind: additive` on a
 `stream` output would be a new claim rather than a scrub. Safe because nothing in
-the build path reads a topology key to decide anything: the only reads are two
-per-sub-LOD `lod_stats.lod_method` lookups (`lod/annotate.py`, `lod/restamp.py` â€”
-a different dict) and `lod_substitutive_level` inside `_map_substitutive`, which
-no recipe reaches; `flattened()` copies stats without reading them; and
-`coarsen_dims` is exempt, so a `levels` build keeps its barrier provenance.
+the build path reads a root topology key to decide anything: the three
+per-sub-LOD `lod_stats.lod_method` lookups (`lod/annotate.py`, `lod/restamp.py`,
+and `lod/recipes.py`'s `_is_reveal_ladder`) inspect a different dict, and
+`lod_substitutive_level` inside `_map_substitutive` is reached by no recipe;
+`flattened()` copies stats without reading them; and `coarsen_dims` is exempt, so
+a `levels` build keeps its barrier provenance.
 
 `_data/filtering.py` now carries a third hygiene axis beside the region- and
 content-scoped ones, because the three are independent and no predicate covers
