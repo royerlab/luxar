@@ -58,7 +58,7 @@ from luxar.io.lod_screening import (
 #: The ``--screen-aspect`` default, rendered from :data:`DEFAULT_ASPECTS` so the
 #: help text and the measured aspects can never drift apart.
 DEFAULT_SCREEN_ASPECT_SPEC = ",".join(
-    f"{label}={value:.6g}" for label, value in DEFAULT_ASPECTS
+    f"{label}={value!r}" for label, value in DEFAULT_ASPECTS
 )
 
 #: Leaves at or below this element count are reported but never failed — a small

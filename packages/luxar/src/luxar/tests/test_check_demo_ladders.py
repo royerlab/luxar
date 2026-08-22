@@ -263,6 +263,13 @@ def test_screen_aspect_spec_accepts_labels_ratios_and_bare_numbers() -> None:
         checker.parse_aspects("0")
 
 
+def test_default_screen_aspect_spec_preserves_the_library_values() -> None:
+    """The CLI default must measure the exact same ratios as ``screen_stores``."""
+    assert checker.parse_aspects(checker.DEFAULT_SCREEN_ASPECT_SPEC) == list(
+        checker.DEFAULT_ASPECTS
+    )
+
+
 def _make_lod_scene(path: Path) -> Path:
     """A real compiled scene with one whole-object ``kind=lod`` ladder.
 
