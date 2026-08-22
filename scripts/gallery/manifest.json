@@ -856,6 +856,21 @@
       "dataset": "datasets/demos/gsplats_2d_codex_pancreas.luxar.zarr",
       "citation": "Björklund et al. 2023",
       "lodFinest": false
+    },
+    {
+      "id": "gsplats_4d_cell_tracking_challenge",
+      "title": "4D Cell Tracking (zebrafish embryo matrix)",
+      "geometry": "mixed",
+      "category": "microscopy",
+      "script": "demo_gsplats_4d_cell_tracking_challenge.py",
+      "dataset": "datasets/demos/gsplats_4d_cell_tracking_challenge.luxar.zarr",
+      "citation": "CZ Biohub San Francisco; imaging by the Royer Group",
+      "lodFinest": false,
+      "timelapse": {
+        "framePoint": 0.85
+      },
+      "fillTarget": 0.75,
+      "note": "fillTarget:0.75 keeps the 3x2 matrix in frame: the default lit 22.9% of the capture-frame perimeter and 0.85 still lit 15.5%, despite coverage reading 92%. lodFinest:false lets coverage LOD draw the ~30K-splat coarse levels instead of forcing the ~24M-splat finest levels"
     }
   ]
 }
