@@ -172,6 +172,7 @@ def _write_single_splat_set(
             ordering_ctx,
             coverage_sigma=truncation_radius,
             barrier_dims=barrier_dims,
+            dataset_ctx=dataset_ctx,
         )
     )
     metadata = write_gsplat_arrays(
