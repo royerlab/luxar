@@ -8,8 +8,9 @@ already create their own seeded `default_rng` are unaffected.
 
 Also pins zarr's ambient default format to whatever Luxar writes for the whole
 session (see ``_zarr_format_follows_luxar``), and holds a few small shared test
-helpers: ``array_compressor`` reads an array's compressor without the caller
-knowing which zarr format wrote it, and ``find_repo_relative_file`` /
+helpers: ``confine_temp_dirs`` isolates in-process temporary files,
+``array_compressor`` reads an array's compressor without the caller knowing
+which zarr format wrote it, and ``find_repo_relative_file`` /
 ``read_ts_number_const`` let the handful of cross-language constant-lock tests
 read a number straight out of a TypeScript source rather than trust a prose
 comment to stay in sync.

@@ -762,13 +762,10 @@ class TestStoreGuards:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         archive = self._archive(tmp_path)
-        system_temp_root = Path(tempfile.gettempdir())
         confine_temp_dirs(tmp_path, monkeypatch)
         assert Path(tempfile.gettempdir()) == tmp_path
 
-        # Stand in for a concurrent compressed save in the process-global root.
-        with tempfile.TemporaryDirectory(
-            prefix="luxar_gsplat_save_", dir=system_temp_root
-        ):
+        # Stand in for a concurrent compressed save in the confined root.
+        with tempfile.TemporaryDirectory(prefix="luxar_gsplat_save_", dir=tmp_path):
             diagnose_store(archive)
-            assert list(tmp_path.glob("luxar_gsplat_*")) == []
+            assert list(tmp_path.glob("luxar_gsplat_archive_*")) == []

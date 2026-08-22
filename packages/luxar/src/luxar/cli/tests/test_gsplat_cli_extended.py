@@ -36,6 +36,7 @@ from luxar.cli.gsplat_config import (
     parse_seeds,
     parse_shape,
 )
+from luxar.conftest import confine_temp_dirs
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -1966,12 +1967,10 @@ class TestViewCommand:
         Cleanup used to live only in the `KeyboardInterrupt` and generic
         `except` handlers, so a normal return from the blocking viewer — the
         ordinary way this command ends — left a full uncompressed copy of the
-        dataset in ``/tmp``. ``tempfile.tempdir`` is redirected so the probe
-        cannot see (or be confused by) a concurrent process's extraction.
+        dataset in ``/tmp``. The shared confinement helper keeps the probe from
+        seeing (or being confused by) a concurrent process's extraction.
         """
-        import tempfile
-
-        monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+        confine_temp_dirs(tmp_path, monkeypatch)
         archive = self._flat_zip(sample_gsplats, tmp_path / "flat.gsplats.zarr.zip")
 
         result, captured = self._invoke_view(runner, archive)
