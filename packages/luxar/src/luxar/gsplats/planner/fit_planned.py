@@ -23,6 +23,12 @@ from typing import TYPE_CHECKING, Any, Callable, Optional, Tuple
 
 import numpy as np
 
+from luxar.gsplats.merged_quality import (
+    announce_unscored_merge,
+    announce_unscored_partition_merge,
+    stamp_merged_quality,
+)
+
 from .spec import FitPlan, PlanBox
 
 if TYPE_CHECKING:
@@ -45,6 +51,55 @@ ProgressCallback = Callable[[int, int, str], None]
 #: The CLI content path imports this constant so its default and the library's
 #: cannot drift apart.
 CONTENT_CULL_RETENTION: float = 0.999
+
+
+def _require_plan_volume_shape(volume: np.ndarray, plan: FitPlan) -> None:
+    """Reject a volume whose voxel grid differs from the plan's boxes."""
+    plan_shape = tuple(int(size) for size in plan.volume_shape)
+    if volume.shape != plan_shape:
+        raise ValueError(
+            f"volume shape {volume.shape} does not match the plan grid {plan_shape}"
+        )
+
+
+def _score_planned_flat_merge(
+    merged: "GSplatData",
+    volume: Any,
+    *,
+    plan_shape: tuple[int, ...],
+    device: Optional[str],
+    verbose: bool,
+) -> None:
+    """Score a flat planned merge, or explain why no score can be recorded."""
+    if volume is None:
+        announce_unscored_merge("this parallel merge was not given a reference volume")
+        return
+
+    shape = getattr(volume, "shape", None)
+    if shape is None:
+        announce_unscored_merge("the supplied reference volume does not expose a shape")
+        return
+
+    reference_shape = tuple(int(s) for s in shape)
+    if reference_shape != plan_shape:
+        announce_unscored_merge(
+            f"reference shape {reference_shape} does not match the plan grid "
+            f"{plan_shape}"
+        )
+        return
+
+    # Forward guard for content-box denoising: once boxes can denoise, this
+    # raw reference retains acquisition noise while the merge reconstructs the
+    # denoised crops, so the score is intentionally not comparable to a
+    # whole-volume denoise scored against its own smoothed reference.
+    stamp_merged_quality(
+        merged,
+        volume,
+        volume_shape=plan_shape,
+        grid_scale=None,
+        device=device,
+        verbose=verbose,
+    )
 
 
 def _ensure_planned_norm_range(
@@ -333,6 +388,7 @@ def fit_planned(
     V = np.asarray(volume, dtype=np.float32)
     if V.ndim != 3:
         raise ValueError(f"fit_planned expects a 3-D volume, got shape {V.shape}")
+    _require_plan_volume_shape(V, plan)
     pad = int(plan.overlap)
     fit_kwargs.setdefault("cull_retention", CONTENT_CULL_RETENTION)
     fit_kwargs.setdefault("verbose", False)
@@ -367,7 +423,7 @@ def fit_planned(
             # stats reach the merge instead of being rebuilt away (#1637).
             regions.append(region)
             region_boxes.append(i)
-        if verbose:
+        if verbose and progress_callback is None:
             from arbol import aprint
 
             aprint(f"  box {i + 1}/{n}: kept {n_kept:,} splats")
@@ -380,7 +436,7 @@ def fit_planned(
         # One part per box — boxes are core-disjoint, so this is an exact
         # spatial partition (viewer frustum-culls per part). Returns a tree node.
         # ``recipe`` gives each part its own LOD ladder/group as it is assembled.
-        return GSplatData.partition_from_regions(
+        result = GSplatData.partition_from_regions(
             regions,
             recipe=recipe,
             recipe_params=recipe_params,
@@ -389,6 +445,8 @@ def fit_planned(
             bsp_tree=plan.bsp_tree,
             region_labels=region_boxes,
         )
+        announce_unscored_partition_merge(result)
+        return result
 
     # `concatenate` (what the uniform tiled path's `merge_tile_results` uses)
     # carries the boxes' shared truncation_radius through the merge — a manual
@@ -407,6 +465,13 @@ def fit_planned(
             # one key must not mean "summed fit time" here and "elapsed" there.
             "time_seconds": float(elapsed),
         }
+    )
+    _score_planned_flat_merge(
+        merged,
+        V,
+        plan_shape=tuple(int(s) for s in plan.volume_shape),
+        device=device,
+        verbose=verbose,
     )
     return merged
 

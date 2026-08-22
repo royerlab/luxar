@@ -545,7 +545,7 @@ from luxar.gsplats.fit_gsplats import GaussianSplatFitter
 
 # Initialize fitter with specific device and options
 fitter = GaussianSplatFitter(
-    device="cuda",  # or "mps", "cpu"; None auto-selects CUDA → MPS → CPU
+    device="cuda",  # or "mps", "cpu"; None/"auto" selects CUDA → MPS → CPU
     enable_dynamic_ops=True,  # fixed-pool splat relocation during fitting (default)
 )
 
@@ -834,7 +834,7 @@ tensor = render_to_volume_tensor(gsplat_data, shape=(128, 128, 128), device="cud
 **Parameters** (shared by both functions):
 - `gsplat_data`: GSplatData to render
 - `shape`: Output volume shape, e.g. `(128, 128, 128)`
-- `device`: `"cuda"`, `"mps"`, `"cpu"`, or `None` (auto-detect)
+- `device`: `"cuda"`, `"mps"`, `"cpu"`, `"auto"`, or `None` (auto-detect)
 - `truncate`: Truncation radius in standard deviations (default `DEFAULT_TRUNCATION_RADIUS` = 2.75)
 - `intensity_floor`: Amplitude-aware culling threshold (default 1e-5)
 - `chunk_size`: Optional chunk size for memory management on large volumes
@@ -982,7 +982,7 @@ Main fitting function with automatic optimizations.
 - `sigma_min_diag`: Minimum Gaussian size per axis
 - `sigma_max_diag`: Maximum Gaussian size per axis
 - `early_stop_patience`: Iterations without improvement before stopping (default: 300)
-- `device`: PyTorch device (auto-detect if None)
+- `device`: PyTorch device (auto-detect if `None` or `"auto"`)
 
 **Returns:** `GSplatData` with fields:
 - `centers`: np.ndarray, shape (N, d) - Splat center positions
@@ -1018,7 +1018,7 @@ above.
 
 `seeds` is handed to **every** tile as-is, so an integer here is a *per-tile* count, not a whole-volume budget: N tiles fit ~N × `seeds` splats. This differs from the CLI, where `--seeds` **is** a whole-volume budget that `luxar gsplat fit` divides by the non-empty tile count before calling this function (`cli.gsplat_ops.fitting.fit_utils.split_seeds_across_tiles`). If you are fitting at a K\* from `gsplat cal` (see the calibration sections above), divide it yourself — or pass a float compression ratio, which is scale-free and needs no adjustment.
 
-**Merged quality metrics:** the per-tile scores describe crops of an apodized decomposition and do not compose into the merged one, so a flat merge (`partition=False`) renders the merged reconstruction once against the whole volume and stamps `psnr_db` / `ssim` / `mse` / `foreground_*` into its `stats` (#1669). The reference is `volume` as handed in — the subtracted pedestal is not put back — which is the basis the non-tiled path and `gsplat compare` already use (#1173). Scoring materializes the whole volume (the fit itself only ever reads it tile by tile), so it is bounded: half the memory actually free, held under a 24 GiB ceiling, with `LUXAR_TILED_QUALITY_MAX_GB` overriding both (`0` declines outright, an unreadable value falls back with a note). Over budget, or on a failure, it says so even when `verbose=False` — an archive that silently carries no PSNR is the failure this exists to end. A `partition=True` merge is not scored (the tree node has no fit-stats dict, and this path threads none through on save) and says so as well; `gsplat compare` is the recourse, after `gsplat flatten`.
+**Merged quality metrics:** per-region scores describe apodized tile crops or halo-padded content boxes and do not compose into the merged result, so flat uniform and content merges render the reconstruction once against the whole volume and stamp `psnr_db` / `ssim` / `mse` / `foreground_*` into its `stats` (#1669, #1733). The reference is the selected volume as handed in — the subtracted pedestal is not put back — which is the basis the non-tiled path and `gsplat compare` already use (#1173). Scoring materializes the whole volume (the fit itself may only read it region by region), so it is bounded: half the memory actually free, held under a 24 GiB ceiling, with `LUXAR_TILED_QUALITY_MAX_GB` overriding both (`0` declines outright, an unreadable value falls back with a note). Over budget, or on a failure, it says so even when `verbose=False` — an archive that silently carries no PSNR is the failure this exists to end. A `partition=True` merge is not scored (the tree node has no root fit-stats dict, and these paths thread none through on save) and says so as well; `gsplat compare` is the recourse, after `gsplat flatten`.
 
 **Returns:** `GSplatData` with all splats in global coordinates. Hilbert curve resorting happens automatically on `save()`.
 

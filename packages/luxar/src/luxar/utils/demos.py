@@ -167,6 +167,24 @@ _DEMOS_DATA_DIR = Path(__file__).resolve().parent.parent / "demos" / "data"
 _DEFAULT_CACHE_ROOT = Path.home() / ".cache" / "luxar"
 
 
+class BundleMemberNotFound(FileNotFoundError):
+    """A requested frame is not inside an otherwise perfectly good bundle.
+
+    The bundle itself resolved, verified and opened; only the per-frame member
+    names missed. That is a routable absence rather than a fault, because the
+    names are DERIVED from the caller's own parameters — NEXRAD's per-frame
+    cache names carry its ``--dbz-floor`` / ``--splats`` / ``--grid-m``, so any
+    non-default value legitimately asks for members the shipped bundle cannot
+    contain, and recomputing is the correct answer.
+
+    It is the bundle-side counterpart of
+    :class:`~luxar.utils.data_fetch.DatasetUnavailable` (#1618): both mean "the
+    bytes are not obtainable", so a demo may answer either with its own rebuild,
+    while every other ``FileNotFoundError`` around a fetch stays a fault that
+    must propagate.
+    """
+
+
 def _cache_is_stale(cache_file: Path, source_file: Path) -> bool:
     """True if ``cache_file`` should be refreshed from ``source_file``.
 
@@ -1008,7 +1026,7 @@ def _bundle_member_for(
             continue
         if member_path.name == requested_path.name:
             return member, requested_path
-    raise FileNotFoundError(
+    raise BundleMemberNotFound(
         f"{fname} not found in bundle {bundle_name}. Available: {safe_members[:5]}..."
     )
 

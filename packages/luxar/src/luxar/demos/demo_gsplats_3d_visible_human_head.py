@@ -111,6 +111,8 @@ from luxar.demos import (
     detect_device,
     is_lfs_pointer,
     launch_viewer,
+    load_local_fit_gsplats_at,
+    local_fit_path,
     parse_demo_flags,
     voxel_sampled_payload_agreement,
     warn_if_no_cuda_gpu,
@@ -135,8 +137,21 @@ COLORS_FILE = "vh_head_colors.npz"
 
 CACHE_DIR = Path.home() / ".cache" / "luxar" / DEMO_NAME
 PNG_DIR = CACHE_DIR / "head_png"
+# The manifest's own paths, holding a copy of the SHIPPED pair (see the LFS
+# branch of `load_or_build`): those bytes are the hosted artifact, so they match
+# the pinned sha256 and a manifest fetch is happy to find them there.
 CACHE_FIT = CACHE_DIR / FIT_FILE
 CACHE_COLORS = CACHE_DIR / COLORS_FILE
+# A local refit is OUR pair, not a copy of the hosted one, so both halves go to
+# the demo's local-fit namespace (#1618). The hazard here is LATENT, not live:
+# nothing in this demo routes `gsplats_visible_human_head` through
+# `ensure_dataset` / `load_dataset_gsplats` / `load_dataset_bundle`, so no
+# checksum ever ran over these two names and a pre-fix launch 2 did reuse its
+# refit. It becomes live the moment the demo joins the manifest path — a
+# one-line change that would otherwise silently reintroduce the every-launch
+# refit — so the namespace is separated now, while it costs nothing.
+LOCAL_FIT = local_fit_path(DEMO_NAME, FIT_FILE)
+LOCAL_COLORS = local_fit_path(DEMO_NAME, COLORS_FILE)
 
 DATA_DIR = Path(__file__).resolve().parent / "data" / DEMO_NAME
 LFS_FIT = DATA_DIR / FIT_FILE
@@ -425,10 +440,10 @@ def save_and_sample_colors(
     load next run — including the uint8 quantization of the colors.
     Returns ``(stored_fit, colors)``.
     """
-    CACHE_FIT.parent.mkdir(parents=True, exist_ok=True)
+    LOCAL_FIT.parent.mkdir(parents=True, exist_ok=True)
     save_with_lod(
         fit,
-        CACHE_FIT,
+        LOCAL_FIT,
         # `stream`, not `levels`: the head IS a large orbited single object, but
         # the scene is built from explicit `centers=`/`amplitudes=` arrays plus
         # the per-splat colours sidecar, and `add_gsplats` writes a flat leaf —
@@ -443,13 +458,14 @@ def save_and_sample_colors(
         compress="zip",
         zip_deflate=True,
     )
-    stored = GSplatData.load(CACHE_FIT, include_stats=False)
+    stored = GSplatData.load(LOCAL_FIT, include_stats=False)
     with asection("Sampling per-splat colors from the RGB volume"):
         colors = sample_colors(rgb_vol, stored.centers)
-    _save_colors_u8(colors, CACHE_COLORS)
+    _save_colors_u8(colors, LOCAL_COLORS)
+    aprint(f"Cached the refit pair under {LOCAL_FIT.parent}")
     # Read the sidecar back so the recompute path matches the shipped/cached path
     # exactly (both render the quantized colors).
-    return stored, _load_colors_f32(CACHE_COLORS)
+    return stored, _load_colors_f32(LOCAL_COLORS)
 
 
 def fit_head(rgb_vol: np.ndarray, acquisition=None) -> tuple[GSplatData, np.ndarray]:
@@ -482,6 +498,40 @@ def fit_head(rgb_vol: np.ndarray, acquisition=None) -> tuple[GSplatData, np.ndar
         aprint(f"Fitted {len(result.amplitudes):,} splats")
 
     return save_and_sample_colors(result, rgb_vol)
+
+
+def local_refit_pair() -> tuple[GSplatData, np.ndarray] | None:
+    """A pair THIS machine refitted earlier, or None if there is nothing usable.
+
+    Consulted after the fetched cache and the shipped LFS assets, and BEFORE
+    refitting, which is what makes the refit one-time (#1618).
+
+    Guarded, unlike the two doors above it, for the reason the comment at the LFS
+    branch gives: these bytes have no checksum, no remote and no second copy, so
+    a truncated zip here (a Ctrl-C mid-save) would otherwise raise ``BadZipFile``
+    out of :func:`load_or_build` on EVERY launch with a manual delete as the only
+    recovery. ``load_local_fit_gsplats_at`` reports the path and the error and
+    returns None; the refit then overwrites the rubble.
+
+    Read through the ``LOCAL_*`` constants, which is also what the refit WRITES
+    through — a door that re-derived its path from the cache root would be a
+    second source of truth for it (#1618 review, A). The sidecar is checked first
+    because it is a ``stat()`` and the fit is a large zip decode.
+    """
+    if not LOCAL_COLORS.exists():
+        return None
+    local = load_local_fit_gsplats_at([LOCAL_FIT], label=DEMO_NAME)
+    if local is None:
+        return None
+    try:
+        colors = _load_colors_f32(LOCAL_COLORS)
+    except Exception as exc:  # noqa: BLE001 — a refit is the recovery
+        aprint(f"⚠️  Local colors {LOCAL_COLORS} unreadable ({exc!r}).")
+        return None
+    if not _colors_match_fit(local[0], colors, f"{LOCAL_FIT} + {LOCAL_COLORS}"):
+        return None
+    aprint("  Using this machine's own earlier refit")
+    return local[0], colors
 
 
 def load_or_build() -> tuple[GSplatData, np.ndarray]:
@@ -517,6 +567,11 @@ def load_or_build() -> tuple[GSplatData, np.ndarray]:
             colors = _load_colors_f32(CACHE_COLORS)
             if _colors_match_fit(fit, colors, f"{LFS_FIT} + {LFS_COLORS}"):
                 return fit, colors
+        # A pair this machine refitted earlier, in its own namespace — checked
+        # BEFORE refitting, which is what makes the refit below one-time.
+        pair = local_refit_pair()
+        if pair is not None:
+            return pair
         # A rejected pair triggers a FULL refit, not a cheap re-sample of the
         # assembled volume at the stored centers, even though that would be far
         # cheaper (no fit, just the ~1.1 GB assembly). The reason is that a
@@ -529,7 +584,7 @@ def load_or_build() -> tuple[GSplatData, np.ndarray]:
         aprint(
             "Precomputed fit not available (Git LFS assets not pulled, or the "
             "cached/shipped fit and its colors sidecar disagree). Falling back to "
-            "download + fit (one-time; result is cached)."
+            f"download + fit (one-time; cached under {LOCAL_FIT.parent})."
         )
 
     warn_if_no_cuda_gpu()

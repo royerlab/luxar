@@ -87,3 +87,86 @@ class TestNormalizeMapVolume:
         np.testing.assert_array_equal(
             normalize_map_volume(raw, 6), normalize_map_volume(raw, 6)
         )
+
+
+class TestTheLocalDoorOpensOnTheSecondLaunch:
+    """The headline behaviour of #1618, at the level a user experiences it.
+
+    Ten demos consult ``load_local_fit_gsplats*`` and, until this, not one test
+    anywhere let that door actually OPEN: "the second launch does not refit" was
+    only ever exercised as a unit of the helper, never wired to a demo. So the
+    thing the issue is about — an eleven-minute capsid fit running once instead
+    of on every launch — was untested end to end.
+
+    Only true externals are stubbed: the manifest fetch (no hosted copy, no LFS
+    object — the situation that sends the demo down this path at all), the 1.2 GB
+    EMDB download, and the GPU fit. Everything Luxar resolves for itself — where
+    the artifact is written, whether it is found again, how it is read back —
+    runs for real, including the ``save_with_lod`` round trip.
+    """
+
+    @staticmethod
+    def _setup(tmp_path, monkeypatch):
+        """Point the demo at a throwaway local-fit namespace; count downloads/fits."""
+        from luxar.demos import DatasetUnavailable
+
+        monkeypatch.setattr(_demo, "RECOMPUTE", False)
+        # The refit WRITES through this constant, so the read door must too —
+        # a door that re-derived the path from the cache root would reach past
+        # this redirect into the developer's real ~/.cache (#1618 review, A).
+        monkeypatch.setattr(_demo, "LOCAL_FIT", tmp_path / "local" / _demo.GSPLATS_FILE)
+
+        def _nothing_hosted(*args, **kwargs):
+            raise DatasetUnavailable("no cached copy, no in-repo copy, no record")
+
+        monkeypatch.setattr(_demo, "load_dataset_gsplats", _nothing_hosted)
+        monkeypatch.setattr(_demo, "warn_if_no_cuda_gpu", lambda: None)
+        monkeypatch.setattr(_demo, "detect_device", lambda: "cpu")
+
+        downloads: list[int] = []
+        fits: list[int] = []
+        volume = np.zeros((8, 8, 8), dtype=np.float32)
+
+        def _download():
+            downloads.append(1)
+            return volume, None
+
+        def _fit(*args, **kwargs):
+            fits.append(1)
+            return _tiny_gsplat_data(n=64, seed=11)
+
+        monkeypatch.setattr(_demo, "load_map_volume", _download)
+        import luxar.gsplats as _gsplats
+
+        monkeypatch.setattr(_gsplats, "fit_progressive_gaussian_splats", _fit)
+        return downloads, fits
+
+    def test_the_second_launch_reuses_the_first_launch_s_fit(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        downloads, fits = self._setup(tmp_path, monkeypatch)
+
+        first = _demo.load_or_build_gsplats()
+        assert (downloads, fits) == ([1], [1]), "launch 1 should download and fit once"
+        assert _demo.LOCAL_FIT.exists(), (
+            "launch 1 did not leave anything in the local-fit namespace, so "
+            "launch 2 has nothing to find"
+        )
+
+        second = _demo.load_or_build_gsplats()
+        assert fits == [1], "launch 2 refitted — the local door never opened"
+        assert downloads == [1], "launch 2 re-downloaded the 1.2 GB map"
+        assert len(second.amplitudes) == len(first.amplitudes)
+        np.testing.assert_allclose(
+            np.sort(second.centers, axis=0), np.sort(first.centers, axis=0), atol=1e-3
+        )
+
+    def test_recompute_bypasses_the_local_door(self, tmp_path, monkeypatch) -> None:
+        """``--recompute`` must refit even with a perfectly good local fit present."""
+        _, fits = self._setup(tmp_path, monkeypatch)
+        _demo.load_or_build_gsplats()
+        assert _demo.LOCAL_FIT.exists()
+
+        monkeypatch.setattr(_demo, "RECOMPUTE", True)
+        _demo.load_or_build_gsplats()
+        assert fits == [1, 1], "--recompute reused the cached local fit"

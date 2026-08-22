@@ -391,8 +391,8 @@ def _reject_partition_with_substitutive_lod(
 ) -> None:
     """Refuse ``partition=`` together with ``substitutive_lod=``.
 
-    The same refusal ``add_points`` / ``add_lines`` carry, with the same message: a
-    ``kind=partition`` of per-part LOD ladders is a topology nothing writes yet.
+    Lines carries the same refusal. Points instead supports a global overview LOD
+    above partitioned fine detail; Mesh does not implement that topology yet.
     Mesh needs it for one extra reason — the substitutive branch RETURNS before the
     partition branch is reached, so accepting both would silently drop the split.
 
@@ -409,7 +409,8 @@ def _reject_partition_with_substitutive_lod(
     if _requested(partition) and _requested(substitutive_lod):
         raise ValueError(
             "partition= and substitutive_lod= cannot be combined yet "
-            "(partition-of-substitutive is not implemented). Use one or the other."
+            "(Points supports a global overview LOD above partitioned fine detail; "
+            "Mesh does not implement that topology yet). Use one or the other."
         )
 
 

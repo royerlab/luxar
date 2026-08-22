@@ -190,8 +190,10 @@ class Group(Node):
                 3.0; ``None`` disables).
                 Composes with ``additive_lod``, which then describes how
                 each level streams in (every level gets a streaming ladder by
-                default; pass ``additive_lod=False`` to opt out). Mutually
-                exclusive with ``partition``.
+                default; pass ``additive_lod=False`` to opt out). When combined
+                with an explicit ``partition=``, authors an overview topology:
+                global coarse gsplat levels above a spatially partitioned finest
+                Points branch, selected only once it fills the viewport.
                 ``scalars``+``colormap``
                 points are supported by baking scalars→RGB for the coarse gsplat
                 levels (the finest Points child stays scalar-driven; a live
@@ -205,16 +207,18 @@ class Group(Node):
                 When the decomposition yields more than one part, returns a
                 kind=partition ``Group`` wrapper carrying ``display_type=
                 "points"``; the wrapper's children are ``part_<i>`` Points
-                nodes. The wrapper's ``position_bounds`` is the union of
-                the children's so picking treats the layer as one entity.
+                nodes. When ``substitutive_lod=`` is also set, that wrapper is
+                instead the finest child of a kind=lod ``Group``. The partition
+                wrapper's ``position_bounds`` is the union of the children's so
+                picking treats the layer as one entity.
                 ``image_labels`` is not supported alongside ``partition=``
                 (the sparse-dict semantics complicate slicing).
             **attrs: Additional node attributes. Common ones:
 
                 - ``layer`` (bool): Expose this node in the viewer's Layers
-                  panel for per-node control. When ``partition=`` produces a
-                  wrapper, ``layer=True`` lands on the wrapper, not on
-                  each leaf part.
+                  panel for per-node control. When structural options produce
+                  wrappers, ``layer=True`` lands on the outermost wrapper, not
+                  on a nested partition wrapper or each leaf part.
                 - ``visible`` (bool): Initial visibility when scene loads
                   (default ``True``). Used by the Layers panel to start a
                   layer hidden.
@@ -229,8 +233,10 @@ class Group(Node):
                   like additive. Defaults to 1.0.
 
         Returns:
-            The created ``Points`` node, or a kind=partition ``Group``
-            wrapper when ``partition=`` produced more than one part.
+            The created ``Points`` node, a kind=partition ``Group`` when
+            ``partition=`` produces multiple parts, or a kind=lod ``Group``
+            when ``substitutive_lod=`` produces coarse levels (with the
+            partition as its finest child when both controls are combined).
         """
         from .adders.points import add_points_impl
 
@@ -423,7 +429,7 @@ class Group(Node):
         ``kind=partition`` group you built yourself, provided that group declares
         ``display_type='mesh'`` — a partition is homogeneous, so a mismatched
         declaration is refused. ``partition`` and ``substitutive_lod`` cannot be
-        combined, exactly as for Points / Lines.
+        combined for Mesh or Lines; Points uses that pair for its overview shape.
 
         ``additive_lod`` IS supported, as a **reveal ladder and nothing else**: it
         writes ``additive_<i>/`` levels inside the leaf, each holding one concentric

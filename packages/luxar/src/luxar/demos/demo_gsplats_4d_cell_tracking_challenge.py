@@ -70,7 +70,7 @@ REQUIREMENTS
       demo needs it), PLUS an API token, which no install can supply: create one
       at https://www.kaggle.com/settings ("API tokens") and save it as
       ``~/.kaggle/access_token`` or export ``KAGGLE_API_TOKEN``.
-      Neither is needed once the fit cache is warm.
+      Neither is needed once the fit cache and downloaded crop metadata are warm.
     - CUDA GPU strongly recommended: ~24 s per timepoint fit at the default
       budget on an RTX PRO 6000 (~40 min per crop). Apple MPS is roughly 6x
       slower, so a full crop there is measured in hours.
@@ -386,14 +386,24 @@ def load_precomputed_crops(
       ``pending_upload``, so until the bytes are on Zenodo there is nothing to
       resolve; that is an expected state during the migration rather than a
       fault, and it is reported rather than swallowed.
+    * the hosted record does not carry one of the CHOSEN crops. That is the same
+      condition one crop at a time — ``--datasets N`` asks for the first N of a
+      list the record may only partly cover — so it is routed the same way, and
+      announced by name. It is not detectable as a fault: a partial record is
+      exactly what a migration in progress looks like.
 
-    Anything else — a checksum that will not verify, a half-listed dataset —
-    raises, because those are faults a demo must not route around.
+    Anything else — a checksum that will not verify, a missing packaged
+    manifest, a ``PRECOMPUTED_DATASET`` the manifest does not know
+    (:class:`DatasetNotFound`) — raises, because those are faults a demo must
+    not route around. The fallback here is not cheap: it downloads from the
+    authenticated Kaggle endpoint and fits every chosen crop on the GPU, so
+    disguising a broken install as "the data is not published yet" costs a user
+    many minutes and an account they may not have.
 
     ``manifest`` / ``cache_root`` exist for tests, mirroring
     :func:`~luxar.utils.data_fetch.ensure_dataset`.
     """
-    from luxar.demos import DatasetNotFound, LocalComputeDataset, ensure_dataset
+    from luxar.demos import DatasetUnavailable, LocalComputeDataset, ensure_dataset
 
     try:
         paths = ensure_dataset(
@@ -404,10 +414,13 @@ def load_precomputed_crops(
         )
     except LocalComputeDataset:
         return None
-    except (FileNotFoundError, DatasetNotFound) as exc:
+    except DatasetUnavailable as exc:
+        # The one routable condition: nothing anywhere holds these bytes yet.
+        # `DatasetNotFound` is deliberately NOT caught — a dataset key the
+        # manifest does not carry is a typo or a rename, i.e. a fault.
         aprint(
-            f"Precomputed crops unavailable ({exc}); using the local fit cache "
-            "and fitting only missing timepoints."
+            f"Precomputed crops unavailable ({exc}); falling back to the Kaggle "
+            "download and local fit (already-fitted timepoints are reused)."
         )
         return None
 
@@ -417,8 +430,8 @@ def load_precomputed_crops(
         volume_name, tracks_name = precomputed_file_names(dataset)
         if volume_name not in by_name or tracks_name not in by_name:
             aprint(
-                f"Hosted dataset has no entry for {dataset}; using the local fit "
-                "cache and fitting only missing timepoints."
+                f"Hosted dataset has no entry for {dataset}; falling back to the "
+                "Kaggle download and local fit (already-fitted timepoints are reused)."
             )
             return None
         crops.append(

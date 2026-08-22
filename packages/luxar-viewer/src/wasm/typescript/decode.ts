@@ -14,9 +14,13 @@ export function decode_quantized_u8(
   maxVal: number,
   output: Float32Array
 ): void {
-  const scale = (maxVal - minVal) / 255;
+  const lo = Math.fround(minVal);
+  const hi = Math.fround(maxVal);
+  const range = Math.fround(hi - lo);
+  const scale = Math.fround(range / 255);
   for (let i = 0; i < data.length; i++) {
-    output[i] = minVal + data[i] * scale;
+    const scaled = Math.fround(data[i] * scale);
+    output[i] = Math.fround(lo + scaled);
   }
 }
 
@@ -30,9 +34,15 @@ export function decode_quantized_u16(
   maxVal: number,
   output: Float32Array
 ): void {
-  const scale = (maxVal - minVal) / 65535;
+  // These linear kernels mirror the Rust/WASM f32 contract; ArrayDecoder.dequantize
+  // and Python _decode_bounded_scalar remain f64 metadata helpers with different operand order.
+  const lo = Math.fround(minVal);
+  const hi = Math.fround(maxVal);
+  const range = Math.fround(hi - lo);
+  const scale = Math.fround(range / 65535);
   for (let i = 0; i < data.length; i++) {
-    output[i] = minVal + data[i] * scale;
+    const scaled = Math.fround(data[i] * scale);
+    output[i] = Math.fround(lo + scaled);
   }
 }
 
@@ -41,10 +51,12 @@ export function decode_quantized_u16(
  * Decoding: expm1(normalized * maxLog)
  */
 export function decode_log_scalar_u8(data: Uint8Array, maxLog: number, output: Float32Array): void {
-  const invMax = maxLog / 255;
+  const limit = Math.fround(maxLog);
+  const invMax = Math.fround(limit / 255);
   for (let i = 0; i < data.length; i++) {
-    const normalized = data[i] * invMax;
-    output[i] = Math.expm1(normalized);
+    const normalized = Math.fround(data[i] * invMax);
+    // Math.expm1 is f64; rounding its result can remain one ULP from Rust's expm1f.
+    output[i] = Math.fround(Math.expm1(normalized));
   }
 }
 
@@ -56,10 +68,12 @@ export function decode_log_scalar_u16(
   maxLog: number,
   output: Float32Array
 ): void {
-  const invMax = maxLog / 65535;
+  const limit = Math.fround(maxLog);
+  const invMax = Math.fround(limit / 65535);
   for (let i = 0; i < data.length; i++) {
-    const normalized = data[i] * invMax;
-    output[i] = Math.expm1(normalized);
+    const normalized = Math.fround(data[i] * invMax);
+    // Math.expm1 is f64; rounding its result can remain one ULP from Rust's expm1f.
+    output[i] = Math.fround(Math.expm1(normalized));
   }
 }
 

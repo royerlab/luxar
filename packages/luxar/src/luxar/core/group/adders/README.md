@@ -85,14 +85,15 @@ per-vertex `normals` / `colors` / `scalars` / `labels` follow that index.
 `substitutive_lod=` writes a `kind=lod` group whose coarse children are
 progressively DECIMATED copies of the surface (`luxar.mesh.decimate`) and whose
 finest child is the original. It cannot be combined with `partition=` — the same
-refusal `add_points` / `add_lines` carry, which is why a hand-built
-`kind=partition` wrapper is the only route to per-tile mesh ladders; like its
-three siblings the wrapper takes BOTH its per-child `coverage_fraction`
-thresholds and the group-level `selector` naming their units from
-`lod.group.resolve_lod_ladder` (which calls `derive_coverage_fractions`
-underneath when no explicit `coverage_fractions=[...]` list was given), so such a
-ladder is auto-anchored at fills-screen (finest `PARTITION_FINEST_AREA` = `1.0`)
-instead of the whole-object `WHOLE_OBJECT_FINEST_ANCHOR` = `0.5`.
+refusal `add_lines` carries. Points instead composes that pair into a global-coarse
+overview above partitioned fine detail; Mesh still requires a hand-built
+`kind=partition` wrapper for per-tile ladders. Like its three siblings the wrapper
+takes BOTH its per-child `coverage_fraction` thresholds and the group-level
+`selector` naming their units from `lod.group.resolve_lod_ladder` (which calls
+`derive_coverage_fractions` underneath when no explicit
+`coverage_fractions=[...]` list was given), so such a ladder is auto-anchored at
+fills-screen (finest `PARTITION_FINEST_AREA` = `1.0`) instead of the whole-object
+`WHOLE_OBJECT_FINEST_ANCHOR` = `0.5`.
 
 `additive_lod=` writes a REVEAL ladder — `additive_<i>/` levels holding concentric
 shells of FACES, innermost first — through `add_mesh_multi_lod_wrapper_impl` and
@@ -121,10 +122,10 @@ per-case explanation.
 
 Each `*_impl` walks the same ordered decision tree. Above all of it, as the first
 statement inside each of the four `try` blocks — above every consumer of `attrs`,
-and below only the argument-composition refusals `points.py`, `lines.py` and
-`mesh.py` raise ahead of their `try` (which judge `partition` /
-`substitutive_lod` / `additive_lod` against each other and never touch these two
-keys) — sits `strip_absent_attr_kwargs(attrs, ABSENT_WHEN_NONE_RENDER_ATTRS)`: a
+and below only the argument-composition refusals `lines.py` and `mesh.py` raise ahead
+of their `try` (which judge `partition` / `substitutive_lod` / `additive_lod`
+against each other and never touch these two keys) — sits
+`strip_absent_attr_kwargs(attrs, ABSENT_WHEN_NONE_RENDER_ATTRS)`: a
 present-but-`None` `colormap` or `coverage_fraction` is deleted so it means
 *absent* rather than a value (#1574 — a `None` colormap otherwise survives step 3
 and step 5 untouched and is rewritten by `sync_custom_colormap_attr` into a
@@ -200,12 +201,15 @@ signatures and can never reach `**attrs`.
    `kind=lod` group. Before that wrapper is written, validate an explicit
    `extend_to_all` once against the scene; `None` remains child-only because its
    candidate analysis warns once per written child. Fires before
-   (auto-)partition.
+   (auto-)partition. For Points, an explicit `partition=` is resolved here and
+   becomes the finest child of an overview LOD; a one-part result keeps the
+   ordinary whole-object ladder.
 7. **Resolve auto-partition** via `resolve_auto_partition(scene, n, partition)`
    — an opt-in compiler heuristic (default off). A user-explicit `partition=`
    always wins. (Lines does not yet wire the auto-partition heuristic; it
    honors only explicit `partition=`.)
-8. **Partition branch** (when `partition` is set and `D >= 2`): run a BSP
+8. **Partition branch** (when `partition` is set and `D >= 2`, except the Points
+   overview composition already handled in step 6): run a BSP
    (`median` / `midpoint` / `sah`) capped at `max_elements`, and if it yields
    more than one part, validate an explicit `extend_to_all` immediately before
    delegating to the partition wrapper. The preflight sits below partition-spec,
