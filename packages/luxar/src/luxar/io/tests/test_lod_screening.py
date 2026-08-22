@@ -1198,6 +1198,28 @@ def test_an_orphan_ladder_child_is_skipped_exactly_as_restamp_lod_skips_it(
     ]
 
 
+def test_all_unclassifiable_children_report_the_same_reason_as_restamp_lod(
+    tmp_path: Path,
+) -> None:
+    """The empty resolved ladder takes precedence over the orphan-rung detail."""
+    from luxar.io.lod_restamp import restamp_lod_store
+
+    path = _handmade_store(
+        tmp_path / "unclassifiable.luxar.zarr",
+        group_bounds={
+            "c0": {"coverage_fraction": 0.0},
+            "c1": {"coverage_fraction": 1.0},
+        },
+    )
+
+    group = screen_lod_store(path).groups[0]
+    report = restamp_lod_store(path, dry_run=True)
+
+    assert group.verdict == VERDICT_SKIPPED
+    assert [entry.reason for entry in report.unresolved] == ["unclassifiable-children"]
+    assert group.reason == report.unresolved[0].detail
+
+
 def test_an_empty_aspect_sweep_is_refused_rather_than_a_free_win(
     win_scene: Path,
 ) -> None:

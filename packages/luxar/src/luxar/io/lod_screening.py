@@ -100,6 +100,7 @@ from ._compiler.finalize.amplitude_window import _child_nodes, _lod_children
 from .lod_restamp import (
     _count_of,
     _descending_ladder_refusal,
+    _empty_ladder_refusal,
     _is_partition_bound,
     _orphan_ladder_child_refusal,
     _threshold_of,
@@ -739,6 +740,7 @@ class _LodGroupFacts:
     anchor_reason: str
     world_matrix: np.ndarray
     children: List[_LadderChild]
+    empty_ladder_refusal: str = ""
     #: ``lod_restamp._orphan_ladder_child_refusal``'s message when this group
     #: holds a ``coverage_fraction`` child that does not resolve as a ladder
     #: level, else ``""``. Resolved during the walk because the refusal needs
@@ -879,6 +881,7 @@ def _collect_lod_groups(
     if kind == "lod":
         children = _lod_children(group)
         child_under = _is_partition_bound(under_partition, children)
+        empty_refusal = _empty_ladder_refusal(group, children)
         orphan_refusal = _orphan_ladder_child_refusal(group, children)
         out.append(
             _LodGroupFacts(
@@ -896,6 +899,9 @@ def _collect_lod_groups(
                     _ladder_child(str(name), child, child_attrs)
                     for name, child, child_attrs in children
                 ],
+                empty_ladder_refusal=(
+                    "" if empty_refusal is None else empty_refusal.detail
+                ),
                 orphan_refusal=(
                     "" if orphan_refusal is None else orphan_refusal.detail
                 ),
@@ -1258,6 +1264,11 @@ def _preflight(facts: _LodGroupFacts) -> Tuple[List[float], Optional[GroupScreen
         if facts.selector == DERIVED_LOD_SELECTOR
         else VERDICT_SKIPPED
     )
+    if facts.empty_ladder_refusal:
+        return (
+            [],
+            _skip(facts, facts.empty_ladder_refusal, [], verdict=refusal_verdict),
+        )
     if facts.orphan_refusal:
         return (
             [],

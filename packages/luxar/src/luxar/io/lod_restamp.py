@@ -334,6 +334,27 @@ def _is_partition_bound(under_partition: bool, children: Sequence[_ChildNode]) -
     )
 
 
+def _empty_ladder_refusal(
+    group: "zarr.Group", children: Sequence[_ChildNode]
+) -> Optional[SkippedGroup]:
+    """Classify a ``kind=lod`` group with no resolved ladder children."""
+    if children:
+        return None
+    path = group.path or "/"
+    subgroups = sorted(str(name) for name in group.group_keys())
+    if subgroups:
+        return SkippedGroup(
+            path,
+            "unclassifiable-children",
+            f"kind=lod group has {len(subgroups)} child group(s) "
+            f"({', '.join(subgroups)}) but none of them carries a "
+            "scene-node 'type' attr, so the ladder cannot be ordered",
+        )
+    return SkippedGroup(
+        path, "no-children", "kind=lod group has no child groups at all"
+    )
+
+
 def _orphan_ladder_child_refusal(
     group: "zarr.Group", children: Sequence[_ChildNode]
 ) -> Optional[SkippedGroup]:
@@ -464,29 +485,9 @@ def _plan_lod(
         return None
 
     children = _lod_children(group)
-    if not children:
-        # Two very different stores land here and the operator must be able to
-        # tell them apart: an EMPTY lod group (nothing to restamp, probably a
-        # broken write) versus one whose children exist but carry no scene-node
-        # `type` attr, where `_lod_children` cannot tell a ladder level from a
-        # bucket and the fix is to the store's stamps, not to this pass.
-        subgroups = sorted(str(name) for name in group.group_keys())
-        if subgroups:
-            report.unresolved.append(
-                SkippedGroup(
-                    path,
-                    "unclassifiable-children",
-                    f"kind=lod group has {len(subgroups)} child group(s) "
-                    f"({', '.join(subgroups)}) but none of them carries a "
-                    "scene-node 'type' attr, so the ladder cannot be ordered",
-                )
-            )
-        else:
-            report.unresolved.append(
-                SkippedGroup(
-                    path, "no-children", "kind=lod group has no child groups at all"
-                )
-            )
+    empty_refusal = _empty_ladder_refusal(group, children)
+    if empty_refusal is not None:
+        report.unresolved.append(empty_refusal)
         return None
 
     orphan_refusal = _orphan_ladder_child_refusal(group, children)
