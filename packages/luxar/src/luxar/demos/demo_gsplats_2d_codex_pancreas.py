@@ -364,6 +364,11 @@ def load_channel(tiff_dir: Path, ch_config: dict) -> np.ndarray:
 # =============================================================================
 
 
+def channel_cache_path(channel_index: int) -> Path:
+    """Return the current-frame adaptive cache path for one CODEX channel."""
+    return CACHE_DIR / f"codex_ch{channel_index:02d}.v2.gsplats.zarr.zip"
+
+
 def fit_channel_tiled(
     image: np.ndarray,
     channel_name: str,
@@ -469,7 +474,7 @@ def fit_all_channels(tiff_dir: Path) -> tuple[list[Path], list[GSplatData | None
 
         for i, ch_config in enumerate(CHANNELS):
             ch_name = ch_config["name"]
-            cache_file = CACHE_DIR / f"codex_ch{i:02d}.gsplats.zarr.zip"
+            cache_file = channel_cache_path(i)
 
             # Check per-channel cache
             if cache_file.exists() and not RECOMPUTE:
