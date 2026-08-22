@@ -1,15 +1,18 @@
 /**
  * Structural tripwire for ArrayDecoder's float-kernel routing contract.
  *
- * Every scalar dequantization path must reach a function imported from
+ * Every guarded method in decoder.ts must reach a function imported from
  * `wasm/typescript/decode.ts`, directly or through another guarded method. The
- * arithmetic scan covers every TypeScript file beside ArrayDecoder so splitting
- * decoder.ts cannot silently move an inline implementation out of sight.
+ * real-source mutation test keeps that decoder.ts assertion from passing vacuously.
+ * The arithmetic scan also covers sibling TypeScript files, but outside
+ * ArrayDecoder members it only catches Math.exp/Math.expm1 and known quantization
+ * divisors.
  *
  * This deliberately does not resolve arbitrary aliases or destructured Math
- * calls such as `const { exp } = Math; exp(x)`. It targets accidental inline
- * implementations while the positive routing assertion remains the primary
- * guard against differently-written arithmetic.
+ * calls such as `const { exp } = Math; exp(x)`. Divisionless reciprocal arithmetic
+ * is also invisible, and a guarded method may still contain inline arithmetic next
+ * to a kernel call: the routing assertion pins that a route exists, not that it is
+ * exclusive.
  */
 
 import { readFileSync, readdirSync } from 'node:fs';
@@ -52,6 +55,7 @@ function decoderSources(): DecoderSource[] {
 }
 
 function containingFunctionName(node: ts.Node): string {
+  let nestedFunctionName: string | undefined;
   for (let current: ts.Node | undefined = node; current; current = current.parent) {
     if (ts.isMethodDeclaration(current) || ts.isPropertyDeclaration(current)) {
       const className = ts.isClassDeclaration(current.parent)
@@ -60,10 +64,10 @@ function containingFunctionName(node: ts.Node): string {
       return `${className}.${current.name.getText()}`;
     }
     if (ts.isFunctionDeclaration(current)) {
-      return current.name?.getText() ?? '<anonymous function>';
+      nestedFunctionName ??= current.name?.getText() ?? '<anonymous function>';
     }
   }
-  return '<module>';
+  return nestedFunctionName ?? '<module>';
 }
 
 function isMathExponentialCall(node: ts.Node): boolean {
@@ -269,6 +273,7 @@ describe('ArrayDecoder kernel routing', () => {
         makePerChannelDequant = () => Math.exp(1) + Math.expm1(2) + 3 / 255;
         decodeInline() {
           const scale = 1 / maxCode;
+          function nested() { return 6 / 4294967295; }
           return Math.exp(1) + Math.expm1(2) + 3 / 255 + 4 / 65535 + 5 / max_int + scale;
         }
       }
@@ -285,30 +290,36 @@ describe('ArrayDecoder kernel routing', () => {
         fileName: 'synthetic.ts',
         functionName: 'ArrayDecoder.decodeInline',
         line: 6,
+        expression: '6 / 4294967295',
+      },
+      {
+        fileName: 'synthetic.ts',
+        functionName: 'ArrayDecoder.decodeInline',
+        line: 7,
         expression: 'Math.exp(1)',
       },
       {
         fileName: 'synthetic.ts',
         functionName: 'ArrayDecoder.decodeInline',
-        line: 6,
+        line: 7,
         expression: 'Math.expm1(2)',
       },
       {
         fileName: 'synthetic.ts',
         functionName: 'ArrayDecoder.decodeInline',
-        line: 6,
+        line: 7,
         expression: '3 / 255',
       },
       {
         fileName: 'synthetic.ts',
         functionName: 'ArrayDecoder.decodeInline',
-        line: 6,
+        line: 7,
         expression: '4 / 65535',
       },
       {
         fileName: 'synthetic.ts',
         functionName: 'ArrayDecoder.decodeInline',
-        line: 6,
+        line: 7,
         expression: '5 / max_int',
       },
     ]);
