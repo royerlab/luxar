@@ -602,14 +602,17 @@ def build_scene(output_path: Path, polylines: list[dict]) -> int:
                     blending_mode="volumetric",
                     absorption=1.15,
                     opacity=0.32,
-                    # Was 0.6. A direct-colour layer's display-range slider is
-                    # a pure gain on authored RGB — the viewer always starts it
-                    # at the identity [0, 1] and there is no attr to author a
-                    # different one (see `initialDisplayRange` in the viewer's
-                    # layers/layer-state.ts). Widening that window to [0, 2.75]
-                    # by hand is therefore exactly a 2.75x dim, and `intensity`
-                    # is where it belongs in the scene: 0.6 / 2.75 = 0.22.
-                    intensity=0.22,
+                    # Was 0.6. The display-range slider is the `intensity`
+                    # attr in disguise: the viewer recovers its window as
+                    # `[-offset/intensity, (1-offset)/intensity]` and only
+                    # falls back to the data range when intensity is exactly
+                    # 1.0 (`computeDisplayRange` / `layer-state.ts`). So the
+                    # slider opened at 1/0.6 = 1.67, and dragging its top to
+                    # 2.75 is a 1.65x dim whose authored form is simply
+                    # `intensity = 1 / 2.747`. Authoring it here rather than
+                    # leaving it on the slider is what makes it survive a
+                    # rebuild.
+                    intensity=0.364,
                     extend_to_all=[],
                     layer=True,
                 )
