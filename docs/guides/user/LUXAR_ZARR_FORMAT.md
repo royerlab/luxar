@@ -778,6 +778,8 @@ per-array sizing.
   the array's own `[min, max]`) or, for wide dynamic range (> 65536:1),
   `geolog_scalar_uint16` (geometric-log grid, code 0 reserved for exact
   zeros). `float32` under PRECISION; `broadcasted` when uniform.
+- **Deduplication:** `false` — chunk bounds depend on this array's own
+  positive-scalar quantization grid.
 - **Chunks:** `(chunk_rows,)` — byte-based / spatial-index-aligned
 - **Compression:** Blosc with zstd, level 9 (width-aware shuffle policy)
 - **Description:** Point radii in scene units
@@ -1817,8 +1819,9 @@ per-array above (`linear_perchannel_u16`, `rgb_uint8`,
   shape `(0,)` / `(0, D)`) whose `encoding` carries `target` (path of the
   original array), `hash`, `original_shape`, and `original_dtype`. Readers
   must resolve and load the target array. (Structural arrays whose consumers
-  read raw zarr — line `vertices`/`segments` — are never dedup- or
-  LUT-encoded.)
+  read raw zarr — line `vertices`/`segments` — are never dedup- or LUT-encoded;
+  point `radii` and line `widths` are never deduplicated either, because their
+  chunk bounds depend on their own quantization grids.)
 - **`lut_uint8` / `lut_uint16`** — look-up-table encoding for arrays with few
   unique values (or few unique color rows): the array stores indices and the
   `encoding.lut` attr carries the unique values as JSON (`lut_mode` +
