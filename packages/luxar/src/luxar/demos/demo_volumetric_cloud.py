@@ -274,6 +274,13 @@ FRAMING_QUANTILE = 0.995  #: share of the cloud the opening shot must contain
 #: angle you actually see a cumulus from, and the one that puts the flat
 #: base edge-on instead of hiding it underneath.
 VIEW_DIRECTION = (0.62, -0.16, 1.0)
+#: Turntable speed for the opening orbit. The viewer's slider spans 0.1 to 5.0
+#: and defaults to 0.25, which is a revolution every few minutes — too slow to
+#: read as motion. At OrbitControls' convention this is roughly one revolution
+#: every 26 seconds: enough for the cauliflower relief and the shear-leaned top
+#: to come round and be seen from more than the one angle the opening pose
+#: gives, and slow enough not to fight scrubbing the time axis at the same time.
+AUTO_ROTATE_SPEED = 2.3
 
 
 def simple_noise_3d(
@@ -1459,6 +1466,14 @@ def generate_evolving_cloud(
         viewer_config = ViewerConfig(
             cinematic_mode=True,
             camera=compose_opening_camera(opening_points),
+            # Turntable on by default. A cumulus is a 3D body whose whole point
+            # is that it looks different from every side — the sunlit flank,
+            # the shadowed one, the lean of the top — and a still opening frame
+            # shows exactly one of those. Unlike the `animation` block, this is
+            # honoured on load: RenderingControls.applyZarrDefaults forwards
+            # `autoRotate` / `autoRotateSpeed` to the controls manager.
+            auto_rotate=True,
+            auto_rotate_speed=AUTO_ROTATE_SPEED,
             # Open on the mature cloud rather than on the opening wisps. This
             # is the one piece of dimension state the viewer restores on load;
             # the animation block is capture-only today, so playback is a

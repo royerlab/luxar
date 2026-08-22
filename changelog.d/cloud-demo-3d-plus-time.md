@@ -189,3 +189,19 @@ The hash constants are identified precisely while doing so: they are xxHash32's
 PRIME32 values with xxHash's avalanche, not MurmurHash3's `fmix32`, which uses
 neighbouring but different constants. Every inline citation resolves to an
 entry and every entry is cited from the code.
+
+#### The scene opens on a turntable
+
+`auto_rotate` is on, at roughly one revolution every 26 seconds. A cumulus is a
+3D body whose whole point is that it looks different from every side — the
+sunlit flank, the shadowed one, the lean of the top — and a still opening frame
+shows exactly one of those; the artefact that made the previous build's worst
+defect invisible was precisely that it looked fine from the front.
+
+Worth noting the asymmetry with the time axis, because the two look like they
+should behave the same and do not. `auto_rotate` and `auto_rotate_speed` ARE
+applied on load — `RenderingControls.applyZarrDefaults` forwards them to the
+controls manager — while the `animation` block is capture-only and is read back
+by nothing. So a scene can ask to be rotating when it opens but cannot ask to
+be playing. Measured on the running viewer: `getAutoRotate()` is true and the
+camera turns 84 degrees in six seconds.

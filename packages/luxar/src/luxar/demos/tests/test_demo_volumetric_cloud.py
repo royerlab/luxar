@@ -567,6 +567,27 @@ class TestScene:
         assert 0.0 <= alpha.min() and alpha.max() <= 1.0
         assert alpha.max() - alpha.min() > 0.2, "alpha carries no density gradient"
 
+    def test_the_scene_opens_on_a_turntable(self, tmp_path) -> None:
+        """Auto-rotate, unlike the animation block, is honoured on load.
+
+        A cumulus is a 3D body whose whole point is that it looks different
+        from every side, and a still opening frame shows exactly one of those.
+        `RenderingControls.applyZarrDefaults` forwards `autoRotate` and
+        `autoRotateSpeed` to the controls manager, so this is a thing a scene
+        can actually ask for — measured on the running viewer, the camera comes
+        round once every 26 seconds.
+        """
+        path = tmp_path / "cloud.luxar.zarr"
+        cloud.generate_evolving_cloud(
+            path, n_parcels=20_000, n_frames=4, target_points_per_frame=2_000
+        )
+        config = LuxarScene.load(path).viewer_config
+        assert config is not None
+        assert config.auto_rotate is True
+        # The viewer's own slider bounds. Outside them the value is discarded
+        # and the scene silently opens static.
+        assert 0.1 <= float(config.auto_rotate_speed) <= 5.0
+
     def test_the_opening_camera_is_outside_the_cloud_and_frames_it(self) -> None:
         rng = np.random.default_rng(3)
         points = rng.normal(0.0, 3.0, (5000, 3)).astype(np.float32) + np.array(
