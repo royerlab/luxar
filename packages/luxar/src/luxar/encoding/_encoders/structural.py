@@ -611,7 +611,7 @@ class StructuralEncoderMixin(BaseEncoderMixin):
         max_int = (2**bits) - 1
         max_val = float(np.max(data))
         max_log = float(np.log1p(max_val))
-        log_vals = np.log1p(data)
+        log_vals = np.log1p(data.astype(np.float64, copy=False))
         normalized = log_vals / max_log
         encoded_data = np.clip(normalized * max_int, 0, max_int).astype(
             np.uint8 if bits == 8 else np.uint16
@@ -632,7 +632,9 @@ class StructuralEncoderMixin(BaseEncoderMixin):
     ) -> tuple[np.ndarray, dict[str, Any]]:
         """rgb_uint{8,16}: SDR color quantize (truncating)."""
         max_int = 255 if "uint8" in encoder_name else 65535
-        encoded_data = np.clip(data * max_int, 0, max_int).astype(
+        encoded_data = np.clip(
+            data.astype(np.float64, copy=False) * max_int, 0, max_int
+        ).astype(
             np.uint8 if "uint8" in encoder_name else np.uint16
         )
         return encoded_data, {"name": encoder_name, "original_dtype": original_dtype}

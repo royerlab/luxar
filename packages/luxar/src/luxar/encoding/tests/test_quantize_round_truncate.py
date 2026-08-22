@@ -121,3 +121,21 @@ def test_custom_bounded_scalar_truncates() -> None:
         f"CUSTOM bounded_scalar must truncate 27.795 → 27, got {int(stored[0])}"
     )
     assert g["a"].attrs["encoding"]["name"] == "bounded_scalar_uint8"
+
+
+@pytest.mark.parametrize(
+    ("encoder_name", "data"),
+    [
+        ("rgb_uint16", np.array([0.0, 0.5, 1.0], dtype=np.float16)),
+        ("log_scalar_uint16", np.array([0.0, 1.0, 3.0], dtype=np.float16)),
+    ],
+)
+@pytest.mark.filterwarnings("error::RuntimeWarning")
+def test_custom_float16_uint16_quantization_truncates_without_overflow(
+    encoder_name: str, data: np.ndarray
+) -> None:
+    group = memory_group()
+    ArrayEncoder()._encode_custom(group, "a", data, encoder_name, None)
+
+    np.testing.assert_array_equal(group["a"], [0, 32_767, 65_535])
+    assert group["a"].attrs["encoding"]["name"] == encoder_name
