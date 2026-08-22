@@ -44,7 +44,7 @@ if not report.healthy:
 | `split-planes` | a `kind=partition` records no `bsp_tree` | recover the planes from the part boxes, when those are disjoint |
 | `split-planes` | the stored `bsp_tree` does not separate the parts it names (stale after a transform, or written against a different part set) | rebuild from the part boxes, or remove the tree so ordering falls back honestly |
 | `split-planes` | overlapping parts carry planes outside their measured overlap bands and per-axis tolerance floor | recover the band-bounded cuts; report a coordinate-frame scale only when repeated planes support the same factors |
-| `split-planes` | the parts overlap, or are split by polyline/face centroid, so no stored plane separates them exactly | none when the parts overlap; when they are disjoint, `--fix` replaces the approximate planes with exact cuts recovered from the boxes — reported as a note |
+| `split-planes` | the parts overlap, or lines/mesh parts are split by polyline/face centroid, so no stored plane separates them exactly | none when the parts overlap; when they are disjoint, `--fix` replaces the approximate planes with exact cuts recovered from the boxes — reported as a note |
 
 Why it matters: the viewer orders partition parts back-to-front by traversing
 those planes, which is exact for any camera pose including inside the volume.
@@ -63,7 +63,9 @@ a partition carries its producer's approximate planes, the separation test
 fails by construction. Doctor still checks that each plane lies between the two
 sides' part-box centers. The largest measured interpenetration on each axis
 supplies a tolerance floor, so sparse content cannot erase the halo scale. A
-grosser violation is an error. When one constant multiplier per axis moves every
+grosser violation is an error. Disjoint points and splats must still separate
+exactly, even when stale cuts remain between the child centers. When one
+constant multiplier per axis moves every
 plane back into the measured overlap bands, doctor can rescale the tree; it names
 a coordinate-frame scale only when at least two raw ratios on
 each changed axis agree closely, or a single ratio agrees with a factor already

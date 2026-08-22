@@ -126,8 +126,14 @@ def check_partition_split_planes(root: "zarr.Group") -> List[Finding]:
             stored_dict = dict(stored)
             rebuilt = reconstruct_serialized_bsp_tree(boxes)
             labels_name_parts = _labels_name_the_parts(stored_dict, len(boxes))
-            if labels_name_parts and serialized_bsp_tree_straddles_centers(
-                stored_dict, boxes
+            approximate_ok = rebuilt is None or group.attrs.get("display_type") in (
+                "lines",
+                "mesh",
+            )
+            if (
+                labels_name_parts
+                and approximate_ok
+                and serialized_bsp_tree_straddles_centers(stored_dict, boxes)
             ):
                 findings.append(_approximate_finding(group, where, len(boxes), rebuilt))
                 continue

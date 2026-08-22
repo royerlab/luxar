@@ -41,7 +41,9 @@ def _partition_store(tmp: Path, n: int = 400, parts_cap: int = 80) -> Path:
     return path
 
 
-def _partition_scene(tmp: Path, geometry: str = "points") -> tuple[Path, str]:
+def _partition_scene(
+    tmp: Path, geometry: str = "points", *, drop_tree: bool = True
+) -> tuple[Path, str]:
     """A real scene containing one native points or mesh partition."""
     from luxar import Dimensions, LuxarZarrCompiler
 
@@ -92,7 +94,7 @@ def _partition_scene(tmp: Path, geometry: str = "points") -> tuple[Path, str]:
 
     root = zc_open_group(str(path), mode="r+")
     group = root[geometry]
-    if "bsp_tree" in group.attrs:
+    if drop_tree and "bsp_tree" in group.attrs:
         del group.attrs["bsp_tree"]
     zc_consolidate(root)
     return path, geometry
@@ -510,6 +512,34 @@ class TestSplitPlanesCheck:
             diagnose_store(path, fix=True)
             boxes = _part_boxes(path)
             assert _order_violations(_root_attrs(path)["bsp_tree"], boxes) == 0
+
+    def test_small_stale_offset_on_points_remains_an_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path, group_path = _partition_scene(Path(tmp), drop_tree=False)
+            node_path = path / group_path
+            attrs = read_node_attrs(node_path)
+            assert attrs is not None
+
+            def shift(node: dict) -> dict:
+                if "part" in node:
+                    return node
+                return {
+                    "axis": node["axis"],
+                    "split": node["split"] + 2.0,
+                    "left": shift(node["left"]),
+                    "right": shift(node["right"]),
+                }
+
+            root = zc_open_group(str(path), mode="r+")
+            root[group_path].attrs["bsp_tree"] = shift(attrs["bsp_tree"])
+            zc_consolidate(root)
+
+            report = diagnose_store(path)
+            (finding,) = report.findings
+            assert finding.path == group_path
+            assert finding.severity == "error"
+            assert finding.fixable
+            assert not report.healthy
 
     def test_an_approximate_tree_over_overlapping_parts_is_left_alone(self) -> None:
         """A uniform-tiled fit's parts overlap, so NO tree separates them and
