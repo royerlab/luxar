@@ -1815,8 +1815,10 @@ def _print_group(group: GroupScreening) -> None:
             f"stored   {_fmt_ladder(group.stored_thresholds)}  →  "
             f"re-derived {_fmt_ladder(list(group.rederived_thresholds))}"
         )
-        if group.verdict == VERDICT_ALREADY_CURRENT and not _ladders_match(
-            group.stored_thresholds, group.rederived_thresholds
+        if (
+            group.verdict == VERDICT_ALREADY_CURRENT
+            and group.rederived_thresholds
+            and not _ladders_match(group.stored_thresholds, group.rederived_thresholds)
         ):
             # Evidence, NOT a verdict: `restamp-lod` skips a `screen-area` group
             # on the selector alone and never reads its ladder, so this store is

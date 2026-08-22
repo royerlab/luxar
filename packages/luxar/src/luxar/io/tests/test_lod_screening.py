@@ -40,6 +40,7 @@ from luxar.io.lod_screening import (
     mat4_from_column_major,
     perspective_matrix,
     pick_child_with_hysteresis,
+    print_screen_report,
     project_bounds_to_display_dims,
     project_box_area_fraction,
     project_box_diagonal_px,
@@ -1137,6 +1138,37 @@ def test_a_screen_area_group_with_missing_threshold_is_still_already_current(
     report = restamp_lod_store(path, dry_run=True)
     assert [entry.path for entry in report.already_current] == ["lod"]
     assert report.restamped == []
+
+
+def test_already_current_report_distinguishes_ladder_evidence_from_hygiene(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Only a derived mismatch gets a note; an undecidable ladder gets detail."""
+    mismatched = _handmade_store(
+        tmp_path / "mismatched.luxar.zarr",
+        lod_attrs={"selector": "screen-area"},
+        group_bounds={
+            "c0": _plain_child(0, 10, 0.0),
+            "c1": _plain_child(1, 40, 0.02),
+            "c2": _plain_child(2, 160, 0.04),
+        },
+    )
+    hygiene = _handmade_store(
+        tmp_path / "hygiene.luxar.zarr",
+        lod_attrs={"selector": "screen-area"},
+        group_bounds={
+            "c0": _plain_child(0, 10, 0.05),
+            "c1": _plain_child(1, 40, 0.02),
+        },
+    )
+
+    print_screen_report(screen_stores([mismatched, hygiene]))
+    output = capsys.readouterr().out
+
+    assert output.count("stored ladder is NOT the one restamp-lod would derive") == 1
+    assert "detail:" in output
+    assert "DESCENDS" in output
+    assert "skipped:" not in output
 
 
 def test_a_descending_stored_ladder_is_skipped_exactly_as_restamp_lod_skips_it(
