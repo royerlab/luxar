@@ -64,7 +64,7 @@ viewer.
 A demo that authors a camera position has a stronger contract, since its distance
 was composed for one specific FOV, and there are two honest ways to keep it.
 PINNING ``fov`` holds the framing but takes the preset's 35 mm barrel distortion
-at a 50 mm framing — two lenses in one image; sixteen demos are in that state,
+at a 50 mm framing — two lenses in one image; seventeen demos are in that state,
 all with pins that predate the cinematic look. COMPOSING the pose for 63°
 (``demos/_cinematic_camera.py``) keeps the lens whole and preserves the framing
 exactly, at the cost of the stronger perspective a wider lens gives. The five

@@ -15,6 +15,7 @@ import {
   GSPLAT_CHOLESKY_EPSILON as CHOLESKY_EPSILON,
   MAX_SUPPORTED_DIMS,
 } from '../../config/constants';
+import { expf, logf } from './float32-math';
 
 /** Maximum packed Cholesky size for MAX_SUPPORTED_DIMS. */
 const MAX_PACKED_CHOLESKY_SIZE = (MAX_SUPPORTED_DIMS * (MAX_SUPPORTED_DIMS + 1)) / 2;
@@ -266,59 +267,27 @@ function computeDisplayCholesky3D(
   // from the mean — reintroducing the scene-scale dependence in miniature.
   //
   // Rust runs the whole reduction in f32: `log_sum += diag.ln()` then
-  // `(log_sum / counted as f32).exp()`. Rounding each step matches all of that
-  // EXCEPT the transcendentals themselves — see the note on `phantom` below.
+  // `(log_sum / counted as f32).exp()`. Rounding each step matches that
+  // operation order.
   let logSum = 0;
   let counted = 0;
   for (let i = 0; i < n; i++) {
     const diag = output[outputOffset + packedIndex(i, i)];
     if (diag > 0) {
-      logSum = Math.fround(logSum + Math.fround(Math.log(diag)));
+      logSum = Math.fround(logSum + logf(diag));
       counted++;
     }
   }
-  // RESIDUAL, measured and accepted: `Math.fround(Math.log/exp(x))` is not
-  // bit-identical to Rust's `f32::ln`/`f32::exp`, because V8's ieee754 kernels
-  // and the wasm libm's `logf`/`expf` are different approximations of the same
-  // function. That is a CHOICE, not a wall: porting musl's `logf`/`expf`
-  // (what `f32::ln`/`f32::exp` lower to on wasm32) into frounded TS closes it
-  // — a ~35-line `expf` port measured 0/200 000 mismatches against the real
-  // WASM where `Math.fround(Math.exp(x))` measured 19 282 (9.64%). Deferred to
-  // #1830 rather than done here; until then, treat the two transcendentals as
-  // the only approximate steps in this file.
-  //
-  // Measured on the 20 000-splat 2D sweep in
-  // `tests/unit/wasm/wasm-vs-typescript.test.ts` (mulberry32(4242) 2×2
-  // factors, displayDims [0,1]): the phantom diagonal differs from WASM in
-  // 3116/20000 cases, by AT MOST 2 ulp (1 from `ln`, 1 from `exp`); before
-  // this fix it was 5344/20000, also at 2 ulp. The rounding's real win here is
-  // the other five packed slots, which went 1294/100000 at this (unit) scale →
-  // 0/100000. The rescaled variants of the same fixture, discussed just below,
-  // went 1278 / 1216 / 1244 per 100000 → 0 at ×1e-4 / ×1e-7 / ×1e6.
-  //
-  // The 2-ulp figure is a property of that fixture's SCALE, not of the kernel:
-  // `phantom = exp(mean(ln Lᵢᵢ))`, so the relative residual is ≈ |ln σ|·2⁻²⁴.
-  // Same fixture with the factors rescaled: unit 2 ulp, ×1e-4 16 ulp, ×1e-7
-  // 32 ulp, ×1e6 16 ulp. Parity tests over the phantom must be ULP-bounded
-  // with a bound derived from the scale they use, never exact.
-  //
-  // Only the `ln` here is load-bearing. The other three roundings on this path
-  // are provably inert and kept solely to mirror `common.rs` step for step:
-  // `counted` can only be 1 or 2 (the n === 3 case returned above), division by
-  // a power of two is exact, and `phantom` is stored into a Float32Array, which
-  // rounds it anyway. Mutating any of them changes nothing in the sweep above;
-  // mutating the `ln` moves it to 4484/20000.
-  //
-  // Two of those three are inert only in EACH OTHER'S PRESENCE, so do not read
-  // the list above as three independently dead roundings. The accumulator
-  // `fround(logSum + …)` is a no-op because rounding COMMUTES with the exact
-  // power-of-two division that follows — it is redundant GIVEN
-  // `fround(logSum / counted)`, not on its own. Measured over six scene scales
-  // (120000 phantoms): dropping either alone changes 0, dropping BOTH changes
-  // 55473. The `exp` rounding is independently inert (the Float32Array store).
+  // `phantom` fills the synthesized diagonal of a sub-3D marginal. The
+  // transcendentals are `expf`/`logf` (the musl f32 ports in
+  // `float32-math.ts`, #1830), so they are bit-exact against Rust's
+  // `f32::exp`/`f32::ln` on wasm; the surrounding steps are frounded to
+  // mirror `common.rs` (the empty-diagonal floor narrows to f32 too). The two
+  // reduction frounds are no-ops for the reachable `counted` ∈ {1, 2}, but are
+  // retained to keep that operation order explicit.
   const phantom =
     counted > 0
-      ? Math.fround(Math.exp(Math.fround(logSum / counted)))
+      ? expf(Math.fround(logSum / counted))
       : Math.fround(Math.sqrt(CHOLESKY_EPSILON_F32));
 
   let idx = outputOffset + (n * (n + 1)) / 2;
@@ -380,8 +349,8 @@ export function mahalanobis_distance(
  *
  * Same f32 discipline as the exported twin: the accumulators are frounded and
  * the result is rounded to the f32 Rust returns, because the caller squares it
- * and feeds it to `exp` — an f64 residual there moves the attenuation and can
- * flip the `minAmplitude` gate.
+ * and feeds it to `expf` — an f64 residual there would change the float32 input
+ * and could flip the `minAmplitude` gate.
  */
 function mahalanobisDistanceInternal(
   diff: Float32Array,
@@ -474,17 +443,17 @@ export function project_gsplats_nd_to_3d(
 
   // Rust: `(-0.5f32 * truncate * truncate).exp()`, left-associative, every step
   // f32; then `1.0 / (1.0 - shift_c)` — the reciprocal is rounded BEFORE it is
-  // used as a multiplier below, so a single fused JS division would differ.
+  // used as a multiplier below, so a single fused JS division would differ. The
+  // transcendental is `expf` (the musl f32 port in `float32-math.ts`, #1830),
+  // so it is bit-exact against Rust's `f32::exp` on wasm.
   //
   // `Math.fround(-0.5 * x)` is provably exact for any f32 `x` (halving only
   // decrements the exponent) and is kept for 1:1 symmetry with `common.rs`, not
   // because it can change an answer. The other roundings here DO matter, but
   // only at small `truncate`: `invOneMinusC = 1/(1 - shiftC)` is ~1.01 at
   // truncate 3, where an ulp of `shiftC` cannot move `1 - shiftC` at all, and
-  // ~8.5 at truncate 0.5, where it moves the amplitude of every splat. Since
-  // `truncate` is author-controlled (a per-dataset `truncation_radius`), the
-  // parity fixtures deliberately sweep small values too.
-  const shiftC = Math.fround(Math.exp(Math.fround(Math.fround(-0.5 * truncateF32) * truncateF32)));
+  // ~8.5 at truncate 0.5, where it moves the amplitude of every splat.
+  const shiftC = expf(Math.fround(Math.fround(-0.5 * truncateF32) * truncateF32));
   const invOneMinusC = Math.fround(1.0 / Math.fround(1.0 - shiftC));
 
   // Grow the fused scratch when numContinuous > 16 (the uncapped >16-D backend);
@@ -533,49 +502,23 @@ export function project_gsplats_nd_to_3d(
       // `.subarray(0, numContinuous)` view would allocate once PER SPLAT here.
       const mahalDist = mahalanobisDistanceInternal(diff, hiddenCholesky, numContinuous, _fusedY);
       // Rust: `(-0.5 * mahal_dist * mahal_dist).exp()` — left-associative f32.
-      // RESIDUAL: `Math.fround(Math.exp(x))` is NOT bit-identical to Rust's
-      // `f32::exp` (V8's ieee754 `exp` and the wasm libm's `expf` are different
-      // approximations). That is a deliberate scope choice, not an impossibility
-      // — porting musl's `expf` into frounded TS measured 0/200 000 mismatches
-      // against the real WASM, and is tracked as #1830. Until then this one
-      // operation stays approximate.
-      // Measured over the 20 000-splat sweeps in
-      // `tests/unit/wasm/wasm-vs-typescript.test.ts`: with `truncate` large
-      // enough that the shift below underflows to 0 (so `exp` is the ONLY
-      // approximate step), the emitted amplitudes differ in 1802/19943 cases by
-      // AT MOST 2 ulp — that is the whole residual. At truncate = 3 everything
-      // around it is exact and the same sweep went from 11907/19323 amplitudes
-      // differing at up to 1367 ulp to 1734/19323 within 2⁻²³ absolute.
-      // Parity tests crossing this path must be ULP- or absolute-bounded.
-      // (As at the `shiftC` site above, the INNER `fround(-0.5 * x)` is exact
-      // for any f32 `x` and is kept only to mirror `common.rs` step for step;
-      // the outer product and the `exp` are the ones that can change an answer.)
-      const rawExp = Math.fround(Math.exp(Math.fround(Math.fround(-0.5 * mahalDist) * mahalDist)));
+      // The transcendental is `expf` (the musl f32 port, #1830), so it is
+      // bit-exact against Rust's `f32::exp`. (As at the `shiftC` site above,
+      // the INNER `fround(-0.5 * x)` is exact for any f32 `x` and is kept only
+      // to mirror `common.rs`; the outer product is the one that matters.)
+      const rawExp = expf(Math.fround(Math.fround(-0.5 * mahalDist) * mahalDist));
       // Clamp at 0 with a comparison rather than Math.max: Rust's `f32::max`
       // IGNORES NaN and returns 0.0, while `Math.max(0, NaN)` is NaN. A NaN
       // anywhere in a splat's center/covariance would otherwise leave this
       // backend with a NaN attenuation where WASM had 0.0. `NaN > 0` is false,
       // so the two twins agree on every input. (The visibility gate below is
       // the second line of defence, for a NaN that arrives in `amplitudes`.)
-      // `rawExp - shiftC` cancels catastrophically as a splat approaches the
-      // truncation radius (that is the point of the shift — the attenuation
-      // must reach 0 there), so the ≤2 ulp `exp` residual above is amplified
-      // without bound near the cut: measured up to 134 ulp on the attenuated
-      // amplitude at truncate = 3, and 475 ulp at truncate = 0.5. Inherent to
-      // the formula, not to this rounding.
-      //
-      // Consequence worth stating plainly: the VISIBLE SET can still differ
-      // between the two backends for splats sitting exactly on the shell. At
-      // production defaults (`GSPLAT_DEFAULT_TRUNCATION_RADIUS` 2.75,
-      // `MIN_AMPLITUDE` 1e-6), 200 000 splats with amplitudes uniform in
-      // [0.2, 1.2] and their hidden coordinate in [2.7495, 2.7505] emit 94 550
-      // from WASM and 94 540 from this backend — 10 splats apart. The f32
-      // rounding makes that class much
-      // rarer (it used to reach any splat whose amplitude sat within thousands
-      // of ulps of the gate); it does not remove it, and it cannot while `exp`
-      // differs at all. Do not write a test that asserts count equality as a
-      // general property of the kernel — only on a fixture whose nearest
-      // emitted amplitude clears the residual by a stated margin.
+      // `rawExp - shiftC` cancels as a splat approaches the truncation radius
+      // (that is the point of the shift — the attenuation must reach 0 there),
+      // so every f32 operation above must match Rust exactly. The expf port and
+      // the surrounding operation-order roundings make the attenuated amplitude
+      // and the resulting visibility decision bit-exact against WASM, including
+      // splats on the truncation shell.
       const shifted = Math.fround(invOneMinusC * Math.fround(rawExp - shiftC));
       attenuation = shifted > 0.0 ? shifted : 0.0;
     }

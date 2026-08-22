@@ -24,7 +24,7 @@ documented in `VIEWER_GUIDE.md`; a demo cannot correct it, and closing it means
 applying the expanded fov before the fit (#1861).
 
 Demos with an authored camera position keep their composition, in one of two
-ways. Sixteen pin `camera.fov` (38°–50°, computed in five) — framing preserved,
+ways. Seventeen pin `camera.fov` (38°–50°, computed in six) — framing preserved,
 but they then take the preset's 35 mm barrel distortion at a longer lens's
 framing, and those pins all predate the cinematic look (#1862). The five poses derived
 from a data extent or a fitted radius instead compose for 63° through the new

@@ -8,7 +8,7 @@ canopy, staggered per tree so maturity rolls across the field in waves) and a
 frost). Press play on either axis and the viewer animates a growth time-lapse
 or a cycling year. All four Luxar geometry types share the frame:
 
-- **Mesh** — an fBm heightfield terrain, shaded by the viewer's headlight,
+- **Mesh** — an fBm heightfield terrain, shaded by the viewer's offset key,
   with per-season vertex colours (snow in winter). The forest floor has
   actual depth instead of a flat line grid.
 - **Lines** — the trees: indexed line networks (joints and branch points

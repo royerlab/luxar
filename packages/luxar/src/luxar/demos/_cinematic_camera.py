@@ -5,8 +5,8 @@ includes a lens: a 35 mm barrel distortion AND the 35 mm field of view that
 distortion belongs to (63°, against the viewer's 47° default). ``camera.fov`` and
 ``camera.fov_preset`` are expanded as ONE unit, so a scene that pins either gets
 neither from the preset — it keeps a 50 mm framing while still receiving 35 mm
-distortion, which is two different lenses in one image. (Sixteen demos do pin an
-``fov`` of their own — 38° to 50° where it is a literal, computed in five — and
+distortion, which is two different lenses in one image. (Seventeen demos do pin an
+``fov`` of their own — 38° to 50° where it is a literal, computed in six — and
 those pins all predate the cinematic look. They are exactly that mismatch:
 their framing is safe, their lens is mixed. Unifying them is #1862.)
 

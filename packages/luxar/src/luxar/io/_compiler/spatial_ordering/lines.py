@@ -12,7 +12,7 @@ from numpy.typing import NDArray
 from luxar._zarr_compat import create_array
 
 from ....encoding.compression import resolve_compressor
-from ..context import OrderingCtx
+from ..context import DatasetCtx, OrderingCtx
 
 if TYPE_CHECKING:
     from ....encoding.compression import CompressorLike
@@ -27,6 +27,8 @@ def build_lines_ordering(
     n_segments: int,
     ctx: OrderingCtx,
     store: zarr.Group,
+    *,
+    dataset_ctx: Optional[DatasetCtx] = None,
 ) -> Optional[Dict[str, Any]]:
     """Build dual spatial ordering for Lines (vertices + segments).
 
@@ -39,6 +41,11 @@ def build_lines_ordering(
         n_segments: Number of segments
         ctx: Spatial-ordering configuration (enable flag + method).
         store: Root zarr group (read for ``scene_dimensions``).
+        dataset_ctx: Encoder configuration, used ONLY to ask how far the store
+            will move a vertex (see
+            :meth:`~luxar.encoding.encoder.ArrayEncoder.coordinate_round_trip_slack`)
+            so both sets of chunk bounds contain the DECODED vertices, not just
+            the authored ones. ``None`` (a direct caller) ⇒ authored bounds.
 
     Returns:
         Dict with sorted arrays, sort indices, chunk bounds, and ordering metadata.
@@ -97,11 +104,30 @@ def build_lines_ordering(
     ordering_metadata["vertex_ordering"]["chunk_size"] = vertex_chunk_size
     ordering_metadata["segment_ordering"]["chunk_size"] = segment_chunk_size
 
+    # How far can the encoder move a vertex from what it is handed? Both bound
+    # sets are in D-space over this same array — the very one the writer later
+    # hands the encoder — so they share one slack vector (issue #1655).
+    #
+    # `allow_lut=False` MUST match what `write_lines_arrays` passes when it
+    # encodes `vertices` (geometry_writers/lines.py): the lines spatial-index
+    # loader reads that array as raw chunked zarr, so a LUT is blocked there.
+    # A LUT-eligible vertices array is therefore quantized like any other, and
+    # asking with the default would report "exact" and leave both bound sets
+    # unpadded around coordinates the store moved.
+    coord_slack = (
+        dataset_ctx.encoder.coordinate_round_trip_slack(
+            sorted_vertices, dataset_ctx.encoding_mode, allow_lut=False
+        )
+        if dataset_ctx is not None
+        else None
+    )
+
     # Compute vertex chunk bounds
     vertex_chunk_bounds = compute_vertex_chunk_bounds(
         sorted_vertices,
         vertex_chunk_size,
         slice_dims=ordering_metadata["vertex_ordering"]["slice_dims"],
+        coord_slack=coord_slack,
     )
 
     # Compute segment chunk bounds
@@ -122,6 +148,7 @@ def build_lines_ordering(
         slice_dims=ordering_metadata["vertex_ordering"][
             "slice_dims"
         ],  # Use D-space dims
+        coord_slack=coord_slack,
     )
 
     aprint(

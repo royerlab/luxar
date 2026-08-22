@@ -22,6 +22,10 @@ import zarr
 from numpy.typing import NDArray
 
 from ...core.dimensions import Dimensions
+from ...validation.types import (
+    validate_appearance_fraction,
+    validate_positive_finite,
+)
 
 # Writer-authoritative attrs each geometry writer stamps unconditionally.
 # User-supplied values for these keys are rejected in the fail-fast gate:
@@ -128,11 +132,15 @@ MESH_RESERVED_ATTRS: FrozenSet[str] = frozenset(
 # keys advertised in the "Unknown node attribute" hint. A user typo like
 # ``blending="max"`` (for ``blending_mode``) used to be persisted silently and
 # ignored by the viewer (issue #787); these are the legitimate render keys a
-# caller may set on any node. Keep in sync with the per-key validators in
+# caller may set on at least one node type. Type-restricted keys remain here so
+# the typo hint can advertise the full authoring surface, with per-type refusals
+# enforced before writing. Keep in sync with the per-key validators in
 # :func:`validate_render_attrs`.
 KNOWN_RENDER_ATTRS: FrozenSet[str] = frozenset(
     {
         "absorption",
+        "alpha_cutoff",
+        "ambient",
         "blending_mode",
         "colormap",
         "gamma",
@@ -145,9 +153,23 @@ KNOWN_RENDER_ATTRS: FrozenSet[str] = frozenset(
         "layer",
         "offset",
         "opacity",
+        # Mesh-only shading controls. Advertised for the same reason as
+        # lines-only ``join``; :func:`reject_mesh_only_appearance` refuses
+        # them on points, lines, gsplats, and groups before anything is written.
+        "shade_exponent",
+        "shininess",
+        "specular",
         "visible",
     }
 )
+
+_MESH_APPEARANCE_VALIDATORS = {
+    "ambient": (validate_appearance_fraction, "Ambient"),
+    "specular": (validate_appearance_fraction, "Specular"),
+    "alpha_cutoff": (validate_appearance_fraction, "Alpha cutoff"),
+    "shade_exponent": (validate_positive_finite, "Shade exponent"),
+    "shininess": (validate_positive_finite, "Shininess"),
+}
 
 # Non-appearance keys that legitimately reach :func:`validate_render_attrs` and
 # must NOT be flagged as unknown. These are user-settable node attrs that are
@@ -486,8 +508,8 @@ def validate_render_attrs(
     Called as the FIRST step of every geometry writer — before the zarr group
     is created — so an invalid value fails the write without leaving a partial
     node on disk. Covers every pure attr validator (no store access needed):
-    blending_mode / absorption / opacity / gamma / intensity / offset / layer /
-    visible / colormap. The values are validated only (not converted) — the
+    blending_mode / absorption / opacity / gamma / intensity / offset / mesh
+    appearance / layer / visible / colormap. The values are validated only (not converted) — the
     writer stores the caller's attrs unchanged.
 
     When ``reject_unknown`` is set, any attr key that is neither a known render
@@ -566,6 +588,8 @@ def validate_render_attrs(
 
         validate_opacity(attrs["opacity"])
 
+    _validate_mesh_appearance_attrs(attrs)
+
     if "truncation_radius" in attrs:
         from ...validation.types import validate_truncation_radius
 
@@ -600,3 +624,10 @@ def validate_render_attrs(
         from ...validation.types import validate_colormap
 
         validate_colormap(attrs["colormap"])
+
+
+def _validate_mesh_appearance_attrs(attrs: Dict[str, Any]) -> None:
+    """Validate the five mesh-only appearance values in the shared attr gate."""
+    for key, (validator, label) in _MESH_APPEARANCE_VALIDATORS.items():
+        if key in attrs:
+            validator(attrs[key], label)

@@ -730,9 +730,25 @@ function computePointsHiddenTolerance(
  * Lines hidden dimension tolerance.
  *
  * Spatial dimensions get 0 because segment bounding boxes already include
- * the line width extent. Barrier (discrete) dimensions use the shared quarter-cell
- * query rule, or the half-cell membership rule when the caller is the
- * projection/clipping path (`options.discreteRole === 'membership'`).
+ * the line width extent. That premise is now underwritten on the WRITE side, and
+ * it was not always: `chunk_bounds` is float32 while the vertices themselves are
+ * stored as per-axis uint16 fixed point, so a bound built from the authored
+ * vertices could be escaped by the DECODED ones by up to half a quantum
+ * (`extent/131070`, 7.6e-3 at an axis extent of 1000) — a chunk this arm would
+ * then never ask for, dropping geometry silently. Since #1655 the writer pads
+ * both `vertex_chunk_bounds` and `segment_chunk_bounds` outward by the encoder's
+ * own per-axis round-trip slack (`ArrayEncoder.coordinate_round_trip_slack`,
+ * asked with `allow_lut=false` to match how the lines writer stores `vertices`),
+ * on top of the width footprint, and accumulates in float64 before an
+ * outward-rounded float32 store. So a stored lines bound now contains the
+ * decoded, full-width segment footprint, and a `0` reach here is sound rather
+ * than merely conventional. (Stores written before 2026-08 keep their old,
+ * occasionally-too-tight bounds; the quantised RADIUS/WIDTH itself is still an
+ * open gap on the writer side — a decoded width can exceed the authored one the
+ * pad was sized for by up to half its own quantum, ~9.6e-3 on typical data.)
+ * Barrier (discrete) dimensions use the shared quarter-cell query rule, or the
+ * half-cell membership rule for projection/clipping
+ * (`options.discreteRole === 'membership'`).
  *
  * `isBarrier` always comes from `DimensionInfo.discrete` here: `isBarrierDim` honours
  * the writer's published set for gsplats only, and this arm's literal `0` is exactly
@@ -748,7 +764,8 @@ function computeLinesHiddenTolerance(
       ? discreteDimMembershipTolerance(dimInfo)
       : discreteDimTolerance(dimInfo);
   }
-  // Spatial dimension: bounds already include width
+  // Spatial dimension: bounds already include width — and, since #1655, the
+  // writer's uint16 round-trip slack too, so they contain the DECODED vertices.
   return 0;
 }
 

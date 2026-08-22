@@ -557,6 +557,28 @@ def _build_nt_legend() -> str:
     return "".join(rows)
 
 
+def _build_legends_row(
+    categories: list[str],
+    counts: dict[str, int],
+    palette: dict[str, tuple[float, ...]],
+) -> str:
+    """Both legends in one bottom-left block, side by side.
+
+    One overlay rather than two positioned ones: the super-class legend's width
+    depends on its longest label and its count digits, so any x-offset chosen
+    for a second overlay would be a guess that breaks the moment a class is
+    renamed or the neuron counts gain a digit. A flex row makes adjacency the
+    layout's job. ``flex-end`` bottom-aligns them, so the two boxes share a
+    baseline even though the super-class list is much taller.
+    """
+    return (
+        '<div style="display:flex;align-items:flex-end;gap:0.8vh">'
+        f"{_build_super_class_legend(categories, counts, palette)}"
+        f"{_build_nt_legend()}"
+        "</div>"
+    )
+
+
 def build_scene(
     output_path: Path,
     neurons: pd.DataFrame,
@@ -626,8 +648,21 @@ def build_scene(
                     radii=radii,
                     sharpness=np.full(len(pos), 0.55, dtype=np.float32),
                     opacity=0.79,
-                    intensity=0.1,
-                    blending_mode="luminous",
+                    # Was 0.1, i.e. a display window opening at 1/0.1 = 10.
+                    # 139K cell bodies summed into a wash that blew out the
+                    # centre of the brain; the fix is exposure, not fewer
+                    # neurons. The display-range slider IS this attr — the
+                    # viewer recovers its window as `(1-offset)/intensity` and
+                    # only uses the data range when intensity is exactly 1.0
+                    # (`computeDisplayRange` / viewer `layer-state.ts`) — so a
+                    # window top of 270.91 is authored as its reciprocal.
+                    intensity=1.0 / 270.91,
+                    # Additive rather than luminous: with the exposure this far
+                    # down the per-point falloff luminous adds buys nothing
+                    # visible, and additive is order-independent, so the
+                    # super-class layers composite the same however they are
+                    # toggled.
+                    blending_mode="additive",
                     labels=labels,
                     layer=True,
                 )
@@ -680,8 +715,14 @@ def build_scene(
             )
             scene.add_text(
                 "{hover_label}",
-                position=(0.02, 0.5),
-                anchor="center-left",
+                # Top-right, not mid-left. Mid-left put the readout in the
+                # middle of the frame's empty side, where it read as a caption
+                # for the brain rather than as a response to the cursor, and it
+                # sat directly across from the NT legend. The top-right corner
+                # is out of the way of the title (top-left), the legends
+                # (bottom-left) and the footer (bottom-right).
+                position=(0.98, 0.02),
+                anchor="top-right",
                 font_size=0.022,
                 color="white",
                 background="rgba(0,0,0,0.7)",
@@ -693,17 +734,11 @@ def build_scene(
                 hover=True,
             )
 
-            # Legends
+            # Legends — one bottom-left block holding both, side by side.
             scene.add_html(
-                _build_super_class_legend(sc_order, sc_counts, sc_palette),
+                _build_legends_row(sc_order, sc_counts, sc_palette),
                 position=(0.02, 0.97),
                 anchor="bottom-left",
-                opacity=0.92,
-            )
-            scene.add_html(
-                _build_nt_legend(),
-                position=(0.98, 0.5),
-                anchor="center-right",
                 opacity=0.92,
             )
 

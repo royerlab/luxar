@@ -19,7 +19,46 @@ from ..utils import _DEFAULT_CORS_ORIGIN, format_memory_size
 if TYPE_CHECKING:
     import numpy as np
 
-    from luxar.gsplats.doctor import DoctorReport, Finding
+    from luxar.gsplats.doctor import DoctorReport, Finding, StoreKind
+
+
+_IMPORTANT_FITTING_KEYS = (
+    "n_splats",
+    "ndim",
+    "ordering",
+    "format_version",
+    "timestamp",
+    "luxar_gsplats_version",
+    "description",
+    "fitter_name",
+    "n_iters",
+    "final_loss",
+    "psnr_db",
+    "foreground_psnr_db",
+    "foreground_threshold",
+    "foreground_fraction",
+    "ssim",
+    "mse",
+    # Amplitudes are background-relative, so these normalization stamps are
+    # interpretation-critical rather than generic trailing metadata (#1175).
+    "floor",
+    "image_min",
+    "image_max",
+    "intensity_range",
+    "convergence_time",
+    "culled",
+    "culling_method",
+    "n_original",
+    "n_culled",
+    "amplitude_retention",
+)
+
+
+def _print_fitting_value(key: str, value: Any) -> None:
+    if isinstance(value, float):
+        aprint(f"  {key}: {value:.6f}")
+    else:
+        aprint(f"  {key}: {value}")
 
 
 def _ascii_histogram(
@@ -295,48 +334,10 @@ def info_dataset(
             aprint("─" * 70)
 
             # Display important metadata
-            important_keys = [
-                "n_splats",
-                "ndim",
-                "ordering",
-                "format_version",
-                "timestamp",
-                "luxar_gsplats_version",
-                "description",
-                "fitter_name",
-                "n_iters",
-                "final_loss",
-                "psnr_db",
-                "foreground_psnr_db",
-                "foreground_threshold",
-                "foreground_fraction",
-                "ssim",
-                "mse",
-                # Normalization provenance (#1175): the background level the fit
-                # subtracted, and the bounds it normalized against. Listed
-                # rather than left to the generic "Additional Metadata" dump —
-                # amplitudes are background-RELATIVE, so `floor` is needed to
-                # interpret every intensity in the file.
-                "floor",
-                "image_min",
-                "image_max",
-                "intensity_range",
-                "convergence_time",
-                "culled",
-                "culling_method",
-                "n_original",
-                "n_culled",
-                "amplitude_retention",
-            ]
-
             displayed_keys = set()
-            for key in important_keys:
+            for key in _IMPORTANT_FITTING_KEYS:
                 if key in data.stats:
-                    value = data.stats[key]
-                    if isinstance(value, float):
-                        aprint(f"  {key}: {value:.6f}")
-                    else:
-                        aprint(f"  {key}: {value}")
+                    _print_fitting_value(key, data.stats[key])
                     displayed_keys.add(key)
 
             # Display remaining metadata. The source-volume block above already
@@ -927,6 +928,16 @@ def _print_gsplat_tree_summary(path: Path) -> None:
         pb = root.attrs.get("position_bounds")
         if pb:
             aprint(f"Position bounds: min={pb.get('min')} max={pb.get('max')}")
+        if "fitting" in root:
+            aprint("\nFitting (fitting/):")
+            fitting = dict(root["fitting"].attrs)
+            displayed_keys = set()
+            for key in _IMPORTANT_FITTING_KEYS:
+                if key in fitting:
+                    _print_fitting_value(key, fitting[key])
+                    displayed_keys.add(key)
+            for key in sorted(set(fitting) - displayed_keys):
+                _print_fitting_value(key, fitting[key])
         _print_normalization_block(root)
     finally:
         if tmp is not None and tmp.exists():
@@ -1060,20 +1071,51 @@ def _print_report(report: "DoctorReport") -> None:
             _print_finding(finding)
 
 
+def _resolve_doctor_store_kind(path: Path) -> "StoreKind":
+    """Classify a doctor input while keeping CLI errors concise."""
+    from luxar.gsplats.doctor import resolve_store_kind
+
+    try:
+        return resolve_store_kind(path)
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        aprint(f"❌ {exc}")
+        raise typer.Exit(1) from None
+
+
+def _print_doctor_info(
+    path: Path, store_kind: "StoreKind", *, histograms: bool
+) -> None:
+    """Print the optional report appropriate for a doctor input."""
+    if store_kind == "gsplats":
+        info_dataset(path, show_histograms=histograms, bins=40)
+    elif store_kind == "scene":
+        aprint("ℹ️ The gsplat info report does not apply to a Luxar scene.")
+    else:
+        aprint(
+            "ℹ️ Could not classify this store from its metadata; "
+            "skipping the optional info report."
+        )
+
+
 def doctor(
     path: Path = typer.Argument(
-        ..., exists=True, help="Path to a .gsplats.zarr dataset (or .zip/.tar.gz)"
+        ...,
+        exists=True,
+        help="Path to a .gsplats.zarr dataset or .luxar.zarr scene (or .zip/.tar.gz)",
     ),
     fix: bool = typer.Option(
         False,
         "--fix",
         help="Repair what can be repaired, in place. Requires an UNCOMPRESSED "
-        ".gsplats.zarr directory. Without this, doctor only reports.",
+        "zarr directory. Without this, doctor only reports.",
     ),
     info: bool = typer.Option(
         True,
         "--info/--no-info",
-        help="Also print the full `gsplat info` report above the diagnosis.",
+        help="Also print the full `gsplat info` report above the diagnosis for "
+        "standalone .gsplats.zarr inputs.",
     ),
     histograms: bool = typer.Option(
         False,
@@ -1084,7 +1126,7 @@ def doctor(
         None, "--json", help="Write the findings to a JSON file as well."
     ),
 ) -> None:
-    """Examine a .gsplats.zarr, diagnose known problems, and optionally fix them.
+    """Examine Luxar partition metadata and optionally repair it.
 
     A dataset can load perfectly and still be missing something a later Luxar
     learned to record, or be carrying metadata that went stale under an edit —
@@ -1105,6 +1147,7 @@ def doctor(
 
     Examples:
         luxar gsplat doctor data.gsplats.zarr
+        luxar gsplat doctor scene.luxar.zarr --no-info
         luxar gsplat doctor data.gsplats.zarr --fix
         luxar gsplat doctor data.gsplats.zarr --no-info --json report.json
     """
@@ -1114,13 +1157,16 @@ def doctor(
 
     if histograms:
         info = True
+    store_kind = _resolve_doctor_store_kind(path)
     if info:
-        info_dataset(path, show_histograms=histograms, bins=40)
+        _print_doctor_info(path, store_kind, histograms=histograms)
 
     with asection(f"Diagnosing: {path.name}"):
         try:
             report = diagnose_store(path, fix=fix)
-        except ValueError as exc:
+        except typer.Exit:
+            raise
+        except Exception as exc:
             aprint(f"❌ {exc}")
             raise typer.Exit(1) from None
 

@@ -108,7 +108,7 @@ geometry, what it needs, and whether you have already built it:
  ASTRONOMY ───────────────────────────────────────────────────────────── 6 demos
  ✓  3  asteroids_solar_system                  points+lines  300 MB
  ✓ 12  cosmicflows_laniakea                    points+lines  25 MB
- • 15  desi_galaxies                           points        10 MB git-lfs
+ • 15  desi_galaxies                           points        73 MB git-lfs
 
  MEDICAL ─────────────────────────────────────────────────────────────── 4 demos
  ✓ 17  dmri_tractography                       lines         588 MB
@@ -483,7 +483,7 @@ fitting model in detail.
 
 Triangle surfaces — isosurfaces, segmentation boundaries, cortical and organ
 meshes. The other three primitives are soft and emissive; a mesh is the one
-*connected, shaded* type, lit by a view-anchored headlight so shape reads from
+*connected, shaded* type, lit by a view-anchored offset key so shape reads from
 shading rather than from density.
 
 ```python
@@ -808,7 +808,8 @@ with LuxarZarrCompiler("output.luxar.zarr") as compiler:
     scene.add_lines(name, vertices, widths=..., colors=...)
     scene.add_group(name, transform=..., opacity=...)
 
-    # Gaussian splatting (requires luxar[gsplats])
+    # Gaussian splatting (embedding an existing fit works on a plain
+    # `pip install luxar`; producing one — `luxar gsplat fit` — needs luxar[gsplats])
     scene.add_gsplats_from_data(name, gsplat_result)
     scene.add_gsplats_from_file(name, "file.gsplats.zarr")
 ```
@@ -822,6 +823,7 @@ luxar serve PATH [OPTIONS]              # Serve Zarr dataset
 luxar viewer [--data PATH] [OPTIONS]    # Serve viewer only or viewer + data
 luxar info PATH [--stats]               # Dataset information (--stats also reports the chunk layout)
 luxar optimise SRC DST [--profile ...]  # Re-chunk an existing store for streaming (values stay bit-identical)
+luxar restamp-lod STORE [--dry-run]     # Re-derive legacy LOD thresholds in place (attrs only)
 luxar export SOURCE -o DIR              # Export standalone folder (Python 3 + browser)
 luxar export SOURCE -o DIR --native macos|linux-amd64|linux-arm64
                                         # Double-clickable native bundle (.app / portable folder)

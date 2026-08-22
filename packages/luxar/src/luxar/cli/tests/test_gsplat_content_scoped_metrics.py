@@ -97,7 +97,13 @@ def _fixture(path: Path, n: int = 40) -> Path:
         centers=(rng.random((n, 3)) * 100).astype(np.float32),
         amplitudes=np.linspace(1.0, 0.1, n).astype(np.float32),
         cholesky_factors=_chol(n),
-        stats={**_METRICS, **_DESCRIPTIVE, **_REGION, **_OP_RECORD},
+        stats={
+            **_METRICS,
+            **_DESCRIPTIVE,
+            **_REGION,
+            **_OP_RECORD,
+            "n_splats": n,
+        },
     ).save(path, include_fitting_info=True)
     return path
 
@@ -118,7 +124,7 @@ def _partition_fixture(path: Path, n: int = 24) -> Path:
         centers=(rng.random((n, 3)) * 100).astype(np.float32),
         amplitudes=np.linspace(1.0, 0.1, n).astype(np.float32),
         cholesky_factors=_chol(n),
-        stats={**_METRICS, **_DESCRIPTIVE},
+        stats={**_METRICS, **_DESCRIPTIVE, "n_splats": n},
     )
     fitting, config, provenance, pipeline = split_fitting_info(
         dict(data.stats), include_fitting_info=True
@@ -573,6 +579,12 @@ def test_no_provenance_commands_publish_no_scores(tmp_path: Path, name: str) -> 
         pytest.param(
             ("transform", "{in}", "{out}", "--scale", "2,2,2"), False, id="geometry"
         ),
+        pytest.param(("flatten", "{in}", "{out}"), False, id="flatten"),
+        pytest.param(
+            ("additive", "{in}", "{out}", "--n-lods", "2"),
+            False,
+            id="additive",
+        ),
     ],
 )
 def test_the_tree_writer_is_held_to_the_same_rule(
@@ -599,6 +611,27 @@ def test_the_tree_writer_is_held_to_the_same_rule(
     else:
         assert stats.get("psnr_db") == pytest.approx(_METRICS["psnr_db"])
     assert stats.get("fitter_name") == "probe"
+
+
+def test_partition_root_score_survives_flatten_then_decimate_scrubs_it(
+    tmp_path: Path,
+) -> None:
+    """The supported partition→matrix rewrite chain applies both rules."""
+    src = _partition_fixture(tmp_path / "part.gsplats.zarr")
+    flat = tmp_path / "flat.gsplats.zarr"
+    decimated = tmp_path / "decimated.gsplats.zarr"
+
+    _run(("flatten", "{in}", "{out}"), src, flat)
+    flat_stats = _root_stats(flat)
+    assert flat_stats.get("psnr_db") == pytest.approx(_METRICS["psnr_db"])
+
+    _run(("decimate", "{in}", "{out}", "--target", "20"), flat, decimated)
+    decimated_stats = _root_stats(decimated)
+    assert not [key for key in _CONTENT_SCOPED_STATS_KEYS if key in decimated_stats], (
+        f"decimate published a score for the pre-reduction splats: {decimated_stats}"
+    )
+    assert decimated_stats.get("fitter_name") == "probe"
+    assert decimated_stats["n_splats"] == 20
 
 
 def test_the_flat_and_tree_paths_agree_on_a_no_op_intensity(tmp_path: Path) -> None:
