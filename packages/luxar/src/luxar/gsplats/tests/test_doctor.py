@@ -20,6 +20,7 @@ import zarr
 from luxar._zarr_compat import consolidate as zc_consolidate
 from luxar._zarr_compat import open_group as zc_open_group
 from luxar._zarr_compat import read_consolidated_attrs, read_node_attrs
+from luxar.conftest import confine_temp_dirs
 from luxar.gsplats.doctor import diagnose_store
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.io.save_gsplats import write_gsplats_tree
@@ -762,17 +763,12 @@ class TestStoreGuards:
     ) -> None:
         archive = self._archive(tmp_path)
         system_temp_root = Path(tempfile.gettempdir())
-        root = tmp_path / "doctor-temp"
-        root.mkdir()
-        monkeypatch.setattr(tempfile, "tempdir", str(root))
-        assert Path(tempfile.gettempdir()) == root
+        confine_temp_dirs(tmp_path, monkeypatch)
+        assert Path(tempfile.gettempdir()) == tmp_path
 
-        before = set(root.glob("luxar_gsplat_*"))
-        other_worker = Path(
-            tempfile.mkdtemp(prefix="luxar_gsplat_save_", dir=system_temp_root)
-        )
-        try:
+        # Stand in for a concurrent compressed save in the process-global root.
+        with tempfile.TemporaryDirectory(
+            prefix="luxar_gsplat_save_", dir=system_temp_root
+        ):
             diagnose_store(archive)
-            assert set(root.glob("luxar_gsplat_*")) == before
-        finally:
-            other_worker.rmdir()
+            assert list(tmp_path.glob("luxar_gsplat_*")) == []

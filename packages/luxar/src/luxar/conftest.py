@@ -18,6 +18,7 @@ comment to stay in sync.
 from __future__ import annotations
 
 import re
+import tempfile
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -25,6 +26,18 @@ from typing import Any, NamedTuple
 import numpy as np
 import pytest
 import zarr
+
+
+def confine_temp_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point in-process ``tempfile`` creation and probes at this test's directory.
+
+    Without this, cleanup probes glob the machine-global temp directory and can
+    observe another concurrent process creating a matching directory. Both
+    ``tempfile.mkdtemp()`` and ``tempfile.gettempdir()`` honour the cached
+    ``tempfile.tempdir`` value, so setting it confines the producer and probe
+    together. Unlike setting ``TMPDIR``, this does not propagate to subprocesses.
+    """
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
 
 
 @pytest.fixture(scope="session", autouse=True)
