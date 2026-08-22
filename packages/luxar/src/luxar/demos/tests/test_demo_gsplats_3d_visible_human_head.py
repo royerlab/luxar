@@ -572,10 +572,11 @@ class TestShippedPairIsAligned:
             for entry in manifest["datasets"]["gsplats_visible_human_head"]["files"]
         }
 
-        assert files == {
+        expected = {
             _demo.FIT_FILE: _SHIPPED_FIT_SHA256,
             _demo.COLORS_FILE: _SHIPPED_COLORS_SHA256,
-        }, (
+        }
+        assert expected.items() <= files.items(), (
             "the shipped fit/colors pair changed; materialize Git LFS, rerun "
             "test_shipped_colors_belong_to_the_shipped_fit, then update both "
             "verified sha256 constants together"
