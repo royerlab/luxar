@@ -757,12 +757,23 @@ class TestStoreGuards:
             with pytest.raises(ValueError, match="unpack"):
                 diagnose_store(self._archive(Path(tmp)), fix=True)
 
-    def test_diagnosing_an_archive_leaves_no_temp_directory_behind(self) -> None:
-        import tempfile as _tempfile
+    def test_diagnosing_an_archive_leaves_no_temp_directory_behind(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        archive = self._archive(tmp_path)
+        system_temp_root = Path(tempfile.gettempdir())
+        root = tmp_path / "doctor-temp"
+        root.mkdir()
+        monkeypatch.setenv("TMPDIR", str(root))
+        monkeypatch.setattr(tempfile, "tempdir", None)
+        assert Path(tempfile.gettempdir()) == root
 
-        with tempfile.TemporaryDirectory() as tmp:
-            archive = self._archive(Path(tmp))
-            root = Path(_tempfile.gettempdir())
-            before = set(root.glob("luxar_gsplat_*"))
+        before = set(root.glob("luxar_gsplat_*"))
+        other_worker = Path(
+            tempfile.mkdtemp(prefix="luxar_gsplat_save_", dir=system_temp_root)
+        )
+        try:
             diagnose_store(archive)
             assert set(root.glob("luxar_gsplat_*")) == before
+        finally:
+            other_worker.rmdir()
