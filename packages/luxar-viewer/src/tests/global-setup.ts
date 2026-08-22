@@ -69,11 +69,12 @@ const EXPECTED_FIXTURES = parseGeneratedFixtureNames(GENERATOR_PATH);
  * `spawnSync ETIMEDOUT`, which looks like a hung shell rather than a budget
  * that was never survivable.
  *
- * 600 s is ~2.8x the measured time, headroom for a slower or loaded machine
- * (CI runners are not faster than a laptop here). `LUXAR_FIXTURE_GEN_TIMEOUT_MS`
+ * The first run also creates the separate ~1.2 GB `fixtures` Hatch environment.
+ * The 1,200 s default preserves the previous 600 s generation budget plus the
+ * same allowance for that one-time download/install. `LUXAR_FIXTURE_GEN_TIMEOUT_MS`
  * overrides it rather than requiring a source edit on a machine that needs more.
  */
-const GENERATOR_TIMEOUT_MS = Number(process.env.LUXAR_FIXTURE_GEN_TIMEOUT_MS) || 600_000;
+const GENERATOR_TIMEOUT_MS = Number(process.env.LUXAR_FIXTURE_GEN_TIMEOUT_MS) || 1_200_000;
 
 function runPythonGenerator(command: string, label: string): void {
   try {
