@@ -1038,7 +1038,7 @@ class Layout:
         self.y_min = self.channel_bottom
 
     def camera(self, min_aspect: float = 1.35) -> CameraConfig:
-        """A long-lens camera that frames the whole bench with a small margin.
+        """A cinematic-lens camera that frames the bench with a small margin.
 
         ``min_aspect`` is the narrowest viewport the framing must survive; the
         solved distance satisfies both the vertical and horizontal fits there,
