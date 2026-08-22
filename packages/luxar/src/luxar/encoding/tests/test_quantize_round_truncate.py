@@ -43,24 +43,38 @@ def test_float16_uint16_quantization_rounds_vs_truncates_without_overflow() -> N
 
 
 @pytest.mark.parametrize(
-    ("semantic_type", "data", "bounds"),
+    ("semantic_type", "data", "bounds", "expected_encoding", "levels"),
     [
+        (
+            SemanticType.POSITIVE_SCALAR,
+            np.linspace(0.1, 5.0, 4001, dtype=np.float16),
+            None,
+            "bounded_scalar_uint8",
+            np.iinfo(np.uint8).max,
+        ),
         (
             SemanticType.POSITIVE_SCALAR,
             np.geomspace(1e-3, 5.0, 4001, dtype=np.float16),
             None,
+            "bounded_scalar_uint16",
+            np.iinfo(np.uint16).max,
         ),
         (
             SemanticType.BOUNDED_SCALAR,
             np.linspace(0.0, 1.0, 4001, dtype=np.float16),
             (0.0, 1.0),
+            "bounded_scalar_uint16",
+            np.iinfo(np.uint16).max,
         ),
     ],
 )
-def test_float16_uint16_scalar_quantization_preserves_dynamic_range(
+@pytest.mark.filterwarnings("error::RuntimeWarning")
+def test_float16_scalar_quantization_preserves_dynamic_range(
     semantic_type: SemanticType,
     data: np.ndarray,
     bounds: tuple[float, float] | None,
+    expected_encoding: str,
+    levels: int,
 ) -> None:
     group = memory_group()
     ArrayEncoder().encode(
@@ -75,12 +89,17 @@ def test_float16_uint16_scalar_quantization_preserves_dynamic_range(
     )
 
     array = group["a"]
-    assert array.attrs["encoding"]["name"] == "bounded_scalar_uint16"
+    assert array.attrs["encoding"]["name"] == expected_encoding
 
     decoded = np.asarray(ArrayDecoder().decode(array, group)).astype(np.float64)
     authored = data.astype(np.float64)
-    quantum = float(authored.max() - authored.min()) / np.iinfo(np.uint16).max
-    assert float(np.max(np.abs(decoded - authored))) <= quantum
+    half_quantum = float(authored.max() - authored.min()) / (2 * levels)
+    # ArrayDecoder casts back to float16 after the affine reconstruction, so the
+    # fixture-dependent bound is half a code-grid quantum plus half a float16 ULP.
+    reader_half_ulp = np.abs(np.spacing(data).astype(np.float64)) / 2
+    np.testing.assert_array_less(
+        np.abs(decoded - authored), half_quantum + reader_half_ulp
+    )
 
 
 def test_custom_bounded_scalar_truncates() -> None:
