@@ -27,6 +27,8 @@ _COORD_BITS = 16
 #: Number of quantization intervals of the COORDINATE fixed-point grid.
 COORDINATE_LEVELS = float(2**_COORD_BITS - 1)
 
+_SCALAR_LUT_PROBE_VALUES = 1024
+
 
 def gridded_axis_step(
     col: np.ndarray, lo: float, extent: float, levels: float
@@ -338,8 +340,8 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         The exits mirror :meth:`_encode_positive_scalar` plus the exact
         broadcast/LUT paths that precede it in :meth:`ArrayEncoder.encode`.
         Linear quantization uses half a grid quantum; geometric-log encoding
-        uses the corresponding half-step at the array maximum. One float32 ULP
-        covers the final decoder cast (needed by the uint16 linear tier).
+        uses the corresponding half-step at the array maximum. One output-dtype
+        ULP covers the final decoder cast (needed by the uint16 linear tier).
         """
         if mode not in (EncodingMode.AUTO, EncodingMode.MEMORY):
             return None
@@ -353,8 +355,18 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             displacement = max(0.0, first - float(np.min(arr)))
             return displacement or None
 
-        if allow_lut and self.encodes_as_lut(arr, SemanticType.POSITIVE_SCALAR):
-            return None
+        if allow_lut:
+            # A scalar LUT has at most 256 values. A small prefix with more
+            # distinct values proves the full array cannot take that exit and
+            # avoids a second full-array ``np.unique`` on the common continuous
+            # radii/widths path (``encode`` performs its own LUT plan later).
+            prefix = arr.ravel()[:_SCALAR_LUT_PROBE_VALUES]
+            if np.unique(
+                prefix
+            ).size <= LUT_SCALAR_MAX_DISTINCT and self.encodes_as_lut(
+                arr, SemanticType.POSITIVE_SCALAR
+            ):
+                return None
 
         max_val = float(np.max(arr))
         if max_val == 0.0:

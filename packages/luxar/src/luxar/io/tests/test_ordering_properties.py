@@ -25,6 +25,7 @@ from hypothesis.extra import numpy as hnp
 
 from luxar.io._ordering.bounds import (
     _normalise_coord_slack,
+    _normalise_scalar_slack,
     _store_outward_f32,
     _store_outward_f32_array,
 )
@@ -580,6 +581,12 @@ def test_scalar_slack_pads_only_spatial_footprints() -> None:
         assert bounds[0, 0, 1] == pytest.approx(1.375)
         assert bounds[0, 1, 0] == pytest.approx(-_BARRIER_BOUND_EPS)
         assert bounds[0, 1, 1] == pytest.approx(1.0 + _BARRIER_BOUND_EPS)
+
+
+@pytest.mark.parametrize("bad", [-1e-9, np.nan, np.inf])
+def test_normalise_scalar_slack_rejects_tightening_or_poisoning(bad: float) -> None:
+    with pytest.raises(ValueError):
+        _normalise_scalar_slack(bad)
 
 
 def test_coord_slack_adds_to_PER_POINT_array_radii() -> None:

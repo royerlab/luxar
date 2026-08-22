@@ -97,3 +97,17 @@ def test_positive_scalar_slack_honours_the_lut_gate() -> None:
         )
         is not None
     )
+
+
+def test_positive_scalar_slack_skips_full_lut_probe_when_prefix_disproves_it() -> None:
+    calls = []
+
+    class CountingEncoder(ArrayEncoder):
+        def _lut_plan(self, data, semantic_type):
+            calls.append(semantic_type)
+            return super()._lut_plan(data, semantic_type)
+
+    data = np.linspace(0.1, 5.0, 10_000, dtype=np.float32)
+    slack = CountingEncoder().positive_scalar_round_trip_slack(data, EncodingMode.AUTO)
+    assert slack is not None
+    assert calls == []
