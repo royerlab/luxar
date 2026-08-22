@@ -49,6 +49,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
     add_demo_caption,
     cache_computed,
@@ -298,7 +299,9 @@ def generate_spotify_landscape(
 
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
-                citation=DEMO_META["citation"], dimensions=dims
+                citation=DEMO_META["citation"],
+                dimensions=dims,
+                viewer_config=ViewerConfig(cinematic_mode=True),
             )
 
             sharpness = np.full(n_tracks, 0.6, dtype=np.float32)

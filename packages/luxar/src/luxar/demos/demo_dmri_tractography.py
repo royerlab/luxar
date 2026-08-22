@@ -1000,6 +1000,7 @@ def build_scene(bundles: dict, output_path: Path, *, points: int) -> Path:
             scene = c.create_scene(
                 dimensions=dims,
                 viewer_config=ViewerConfig(
+                    cinematic_mode=True,
                     tone_mapping="ACES",
                     camera=brain_camera(extent),
                 ),

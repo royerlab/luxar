@@ -311,7 +311,7 @@ def create_luxar_scene(colored: GSplatData, output_path: Path) -> Path:
                 # other gsplat demos. NOTE: the per-level debug colours
                 # (green -> amber -> red) must stay tellable apart; ACES shifts
                 # hues, so check them if this demo's level cues get muddy.
-                viewer_config=ViewerConfig(tone_mapping="ACES"),
+                viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="ACES"),
             )
 
             scene.attrs["title"] = (

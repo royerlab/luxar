@@ -469,7 +469,7 @@ def create_luxar_scene(gsplats_list, output_path: Path | None = None):
             # the accepted trade for its highlight rolloff).
             scene = compiler.create_scene(
                 dimensions=Dimensions.default_3d(),
-                viewer_config=ViewerConfig(tone_mapping="ACES"),
+                viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="ACES"),
                 citation=DEMO_META["citation"],
             )
 

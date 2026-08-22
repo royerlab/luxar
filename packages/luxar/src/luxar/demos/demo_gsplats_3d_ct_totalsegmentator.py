@@ -837,7 +837,9 @@ def create_luxar_scene(fit: GSplatData, labels: np.ndarray, output_path: Path) -
         ) as compiler:
             scene = compiler.create_scene(
                 dimensions=dims,
-                viewer_config=ViewerConfig(tone_mapping="ACES", camera=camera),
+                viewer_config=ViewerConfig(
+                    cinematic_mode=True, tone_mapping="ACES", camera=camera
+                ),
                 citation=DEMO_META["citation"],
             )
             scene.attrs["title"] = "GSplats: CT Anatomical Atlas (TotalSegmentator)"

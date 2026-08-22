@@ -641,6 +641,7 @@ def write_laniakea_scene(
             ]
         )
         viewer_config = ViewerConfig(
+            cinematic_mode=True,
             camera=CameraConfig(
                 position=(1050.0, -1500.0, 780.0),
                 target=(0.0, 0.0, 0.0),
