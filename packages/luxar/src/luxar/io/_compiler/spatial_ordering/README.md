@@ -80,8 +80,10 @@ Radii are normalised before chunk-bounds computation: broadcast arrays (shape
 `(1,)` / `(1, k)`) and scalars collapse to a single float to avoid materialising
 a full-length array; per-element radii are reordered by `sort_order`.
 When `dataset_ctx` is provided, its encoder supplies the per-axis coordinate
-round-trip slack so bounds contain decoded positions; `None` preserves
-authored-coordinate bounds for direct callers.
+round-trip slack and the positive-scalar footprint slack measured on
+`sorted_radii`. Spatial bounds therefore contain decoded positions and radii;
+barrier dimensions receive neither radius nor scalar-slack expansion. `None`
+preserves authored-coordinate and authored-radius bounds for direct callers.
 
 ```python
 write_points_ordering_to_zarr(group, ordering_data, compressor) -> None
@@ -127,8 +129,11 @@ separately from `TARGET_CHUNK_BYTES`. Segment bounds use the vertex `slice_dims`
 materialised to a full array and per-element widths are reordered by
 `vertex_sort_indices`.
 When `dataset_ctx` is provided, its encoder supplies the per-axis coordinate
-round-trip slack (with LUT encoding disabled to match the vertices writer) so
-bounds contain decoded vertices; `None` preserves authored-coordinate bounds.
+round-trip slack (with LUT encoding disabled to match the vertices writer) and
+the positive-scalar footprint slack for widths. Spatial segment bounds
+therefore contain decoded vertices and widths; barrier dimensions receive no
+width or scalar-slack expansion. `None` preserves authored-coordinate and
+authored-width bounds for direct callers.
 
 ```python
 write_lines_ordering_to_zarr(group, ordering_data, compressor) -> None

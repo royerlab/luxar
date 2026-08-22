@@ -170,8 +170,7 @@ def compute_chunk_bounds_points(
         padded_chunk_radii: Optional[np.ndarray] = None
         if chunk_radii is not None:
             padded_chunk_radii = (
-                np.asarray(chunk_radii).astype(np.float64, copy=False)
-                + footprint_slack
+                np.asarray(chunk_radii).astype(np.float64, copy=False) + footprint_slack
             )
 
         # Compute bounds for each dimension separately. The pad is added in

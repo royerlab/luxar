@@ -37,11 +37,13 @@ def build_points_ordering(
         radii: Optional radii array
         ctx: Spatial-ordering configuration (enable flag + method).
         store: Root zarr group (read for ``scene_dimensions``).
-        dataset_ctx: Encoder configuration, used ONLY to ask how far the store
-            will move a position (see
+        dataset_ctx: Encoder configuration, used to ask how far the store will
+            move a position (see
             :meth:`~luxar.encoding.encoder.ArrayEncoder.coordinate_round_trip_slack`)
-            so the chunk bounds contain the DECODED positions, not just the
-            authored ones. ``None`` (a direct caller) ⇒ authored bounds.
+            and enlarge a radius (see
+            :meth:`~luxar.encoding.encoder.ArrayEncoder.positive_scalar_round_trip_slack`)
+            so spatial chunk bounds contain the DECODED footprint, not just
+            the authored one. ``None`` (a direct caller) ⇒ authored bounds.
 
     Returns:
         Dict with:

@@ -743,9 +743,8 @@ function computePointsHiddenTolerance(
  * outward-rounded float32 store. So a stored lines bound now contains the
  * decoded, full-width segment footprint, and a `0` reach here is sound rather
  * than merely conventional. (Stores written before 2026-08 keep their old,
- * occasionally-too-tight bounds; the quantised RADIUS/WIDTH itself is still an
- * open gap on the writer side — a decoded width can exceed the authored one the
- * pad was sized for by up to half its own quantum, ~9.6e-3 on typical data.)
+ * occasionally-too-tight bounds; current segment bounds also add
+ * `positive_scalar_round_trip_slack` to the authored width footprint.)
  * Barrier (discrete) dimensions use the shared quarter-cell query rule, or the
  * half-cell membership rule for projection/clipping
  * (`options.discreteRole === 'membership'`).

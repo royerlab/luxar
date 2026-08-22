@@ -109,11 +109,8 @@ LUT-encoded, on splats whose σ is large enough to keep the escalation rail
 quiet, can still decode outside its own chunk bound (reproduced: 2 of 12,000
 centers, worst 2.6e-3). That is out of scope here and is tracked separately; the
 format guide and `compute_chunk_bounds_gsplats` now say so instead of implying
-full coverage. The same is true of the SCALAR half of a points/lines footprint:
-`radii` and `widths` are quantised too, and the pad is built from the authored
-value, so a decoded radius/width can still escape by up to half its own quantum
-(measured 9.6e-3 on `radii ~ U(0.1, 5.0)`). Both docstrings now carry that
-caveat rather than claiming a guarantee they do not have.
+full coverage. The scalar half of points/lines footprints is addressed by the
+companion entry on decoded radii and widths.
 
 The gsplats bound builder does change in this release, just not here — see the
 companion entry on outward float32 rounding, which reworks
