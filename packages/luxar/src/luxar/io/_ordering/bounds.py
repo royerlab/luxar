@@ -128,7 +128,7 @@ def _normalise_coord_slack(coord_slack: Optional[np.ndarray], ndim: int) -> np.n
     and hands it to the builders; ``None`` means "no displacement", i.e. zeros.
 
     Validated here rather than in each builder for the same reason as
-    :func:`_normalise_slice_dims`: three builders take this argument and must
+    :func:`_normalise_slice_dims`: four builders take this argument and must
     not diverge on what they accept. A wrong-LENGTH array is an error rather
     than a broadcast, because the entries are positional per-axis quantities —
     silently padding the wrong axis is exactly the failure this parameter
@@ -143,7 +143,7 @@ def _normalise_coord_slack(coord_slack: Optional[np.ndarray], ndim: int) -> np.n
     rounding outward, whereas this is a per-axis value a caller merely stored
     narrowly, and it is added into a float64 accumulator before any store. No
     in-tree caller needs it — the encoder's predicate returns float64 — but the
-    three builders are public through ``luxar.io.ordering``, so this is the
+    four builders are public through ``luxar.io.ordering``, so this is the
     direct-caller door, pinned by
     ``io/tests/test_ordering_properties.py::test_normalise_coord_slack_accepts_none_and_float32``.
 
