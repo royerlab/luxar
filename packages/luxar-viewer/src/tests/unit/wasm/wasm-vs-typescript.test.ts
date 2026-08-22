@@ -647,6 +647,38 @@ describe('WASM vs TypeScript Comparison', () => {
       expect(arraysAlmostEqual(wasmOutput, tsOutput)).toBe(true);
     });
 
+    it.skipIf(!wasmFilesExist)(
+      'decode_geolog_scalar_u8 should exactly match for every code',
+      () => {
+        const data = Uint8Array.from({ length: 256 }, (_, code) => code);
+        const tsOutput = new Float32Array(data.length);
+        const wasmOutput = new Float32Array(data.length);
+        const minLog = Math.log(1e-3);
+        const maxLog = Math.log(1e3);
+
+        tsModule.decode_geolog_scalar_u8(data, minLog, maxLog, tsOutput);
+        wasmModule!.decode_geolog_scalar_u8(data, minLog, maxLog, wasmOutput);
+
+        expect(exactBitsEqual(tsOutput, wasmOutput)).toBe(true);
+      }
+    );
+
+    it.skipIf(!wasmFilesExist)(
+      'decode_geolog_scalar_u16 should exactly match for every code',
+      () => {
+        const data = Uint16Array.from({ length: 65536 }, (_, code) => code);
+        const tsOutput = new Float32Array(data.length);
+        const wasmOutput = new Float32Array(data.length);
+        const minLog = Math.log(0.5);
+        const maxLog = Math.log(12345.6789);
+
+        tsModule.decode_geolog_scalar_u16(data, minLog, maxLog, tsOutput);
+        wasmModule!.decode_geolog_scalar_u16(data, minLog, maxLog, wasmOutput);
+
+        expect(exactBitsEqual(tsOutput, wasmOutput)).toBe(true);
+      }
+    );
+
     /**
      * Per-channel family: WASM, the TS reference, AND the main-thread
      * `makePerChannelDequant` closure must agree BIT-EXACTLY — all three do
