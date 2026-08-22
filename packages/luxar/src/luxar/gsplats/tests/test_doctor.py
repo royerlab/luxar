@@ -20,6 +20,7 @@ import zarr
 from luxar._zarr_compat import consolidate as zc_consolidate
 from luxar._zarr_compat import open_group as zc_open_group
 from luxar._zarr_compat import read_consolidated_attrs, read_node_attrs
+from luxar.conftest import confine_temp_dirs
 from luxar.gsplats.doctor import diagnose_store
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.io.save_gsplats import write_gsplats_tree
@@ -853,12 +854,14 @@ class TestStoreGuards:
             with pytest.raises(ValueError, match="unpack"):
                 diagnose_store(self._archive(Path(tmp)), fix=True)
 
-    def test_diagnosing_an_archive_leaves_no_temp_directory_behind(self) -> None:
-        import tempfile as _tempfile
+    def test_diagnosing_an_archive_leaves_no_temp_directory_behind(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        archive = self._archive(tmp_path)
+        confine_temp_dirs(tmp_path, monkeypatch)
+        assert Path(tempfile.gettempdir()) == tmp_path
 
-        with tempfile.TemporaryDirectory() as tmp:
-            archive = self._archive(Path(tmp))
-            root = Path(_tempfile.gettempdir())
-            before = set(root.glob("luxar_gsplat_*"))
+        # Stand in for a concurrent compressed save in the confined root.
+        with tempfile.TemporaryDirectory(prefix="luxar_gsplat_save_", dir=tmp_path):
             diagnose_store(archive)
-            assert set(root.glob("luxar_gsplat_*")) == before
+            assert list(tmp_path.glob("luxar_gsplat_archive_*")) == []
