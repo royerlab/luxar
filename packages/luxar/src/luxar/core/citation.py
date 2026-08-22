@@ -26,7 +26,8 @@ CITATION_REF_MAX_LENGTH = 40
 
 #: Keys a citation may carry. ``short`` is the only required one: it is the
 #: full display byline used by gallery tiles. ``ref`` may provide a distinct,
-#: compact caption tail when that byline does not fit there.
+#: compact caption-only tail when that byline does not fit there; gallery tiles
+#: deliberately continue to display ``short``.
 CITATION_KEYS = ("short", "ref", "doi", "license", "url")
 
 #: Schemes a citation URL may use. A credit's URL is the one field a UI turns

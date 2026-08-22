@@ -20,7 +20,8 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
-from luxar.demos import add_demo_caption
+
+from ._caption import add_demo_caption
 
 
 def build_gsplats_cache(

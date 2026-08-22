@@ -879,12 +879,12 @@ def _overlay_args(node: ast.Call) -> tuple[list[ast.expr], bool]:
 def _overlay_strings(source: str) -> list[str]:
     """Every statically resolvable overlay string in *source*.
 
-    Two shapes are read (see the section comment above for the full reach): an
+    Three shapes are read (see the section comment above for the full reach): an
     ``add_text`` / ``add_html`` call's first (or ``text=`` / ``html=``) argument,
-    and a ``credit=`` keyword passed to ANY call. The second is not decoration —
-    the six ``demo_gsplats_interop_*`` demos are uncredited today, but it is the
-    only way their footers will be seen if one declares a citation. This is the
-    same demo-file-only blind spot ``tests/_scanned_modules.py`` exists for.
+    an ``add_demo_caption`` caption argument, and a ``credit=`` keyword passed to
+    ANY call. The last is not decoration — it is the only way the six
+    ``demo_gsplats_interop_*`` helpers' footers are seen here. This is the same
+    demo-file-only blind spot ``tests/_scanned_modules.py`` exists for.
 
     AST-only, for the same reason the registry is: importing a demo module runs
     heavy optional imports and import-time side effects.

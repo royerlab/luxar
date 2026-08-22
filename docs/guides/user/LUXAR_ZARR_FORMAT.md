@@ -254,8 +254,9 @@ Only `short` is required: a citation that cannot be displayed is not a
 citation. `ref` is the optional compact form used where the full byline does not
 fit, notably the bundled demos' bottom-right captions; it is refused above 40
 characters rather than truncated. A store carrying `ref` is intentionally a
-newer format-contract payload and fails citation validation in older Luxar
-versions that do not recognise that key.
+newer format-contract payload; feeding those attrs back through an older Luxar
+authoring path fails citation validation because that version does not recognise
+the key.
 
 Every field must be a single line of printable text — every line break and
 control character is refused, including a bare `\r` and a bidi override, since
