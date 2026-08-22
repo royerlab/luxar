@@ -2,7 +2,14 @@ name: CI
 
 on:
   push:
-    branches: [main, dev]
+    # `main` is FAST-FORWARD-ONLY from `dev` (see the promotion daemons), so every
+    # commit main receives has already run this whole workflow on its dev push and
+    # carries the passing statuses on the very same SHA — a main push would only
+    # re-run the identical suite on the identical commit. Branch protection is
+    # still satisfied by those carried statuses (that is how promote-ff already
+    # fast-forwards), and the deploy/publish workflows keep their own main
+    # triggers. So test on dev, not twice. (#cost)
+    branches: [dev]
   pull_request:
     branches: [main, dev]
   schedule:
