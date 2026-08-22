@@ -410,13 +410,14 @@ Hatch manages Python virtual environments for the project:
 # Common commands:
 hatch shell         # Activate environment
 hatch run test      # Run tests in environment
-hatch env prune     # Clean unused environments
+hatch env remove <name>  # Remove one environment
 ```
 
 Viewer fixture generation uses a separate `fixtures` environment so ordinary
 `pnpm test` and `make test-fixtures` do not build the CUDA-heavy development
 environment. Its first use creates roughly 1.2 GB alongside any existing
-`default` environment; `hatch env prune` removes environments no longer needed.
+`default` environment; `hatch env remove fixtures` reclaims that space without
+removing the default environment.
 
 **Which Python does `hatch run` use?** The `default` environment declares no
 `python`, so Hatch builds it with whatever interpreter **Hatch itself** runs
