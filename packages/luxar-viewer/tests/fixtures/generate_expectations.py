@@ -196,6 +196,7 @@ def _operation_expectation(
     }
     if viewer_array is not None:
         item["viewer_float32_sha256"] = _sha256_float32(viewer_array)
+        item["viewer_samples"] = _samples(viewer_array)
     if start is not None or end is not None:
         item["start"] = int(start or 0)
         item["end"] = int(end or 0)
@@ -280,6 +281,7 @@ def _array_expectation(
     }
     if viewer_decoded is not None:
         item["viewer_float32_sha256"] = _sha256_float32(viewer_decoded)
+        item["viewer_samples"] = _samples(viewer_decoded)
     contract_case = _contract_case_metadata(array)
     if contract_case is not None:
         item["contract_case"] = contract_case

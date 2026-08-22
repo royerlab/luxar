@@ -35,6 +35,7 @@ interface ArrayOperationExpectation {
   float32_sha256: string;
   viewer_float32_sha256?: string;
   samples: Array<{ index: number; value: number }>;
+  viewer_samples?: Array<{ index: number; value: number }>;
   stats: { min: number | null; max: number | null; mean: number | null };
 }
 
@@ -51,6 +52,7 @@ interface ArrayExpectation {
   float32_sha256: string;
   viewer_float32_sha256?: string;
   samples: Array<{ index: number; value: number }>;
+  viewer_samples?: Array<{ index: number; value: number }>;
   stats: { min: number | null; max: number | null; mean: number | null };
   operations: ArrayOperationExpectation[];
   contract_case?: { case_id?: string; semantic_type?: string; description?: string };
@@ -109,9 +111,9 @@ function elementsPerItem(shape: number[]): number {
 
 function assertSamples(
   values: Float32Array,
-  expected: ArrayOperationExpectation | ArrayExpectation
+  samples: Array<{ index: number; value: number }>
 ): void {
-  for (const sample of expected.samples) {
+  for (const sample of samples) {
     expect(values[sample.index]).toBeCloseTo(sample.value, 6);
   }
 }
@@ -179,7 +181,7 @@ describe('Python-TypeScript encoded array round-trip', () => {
 
           expect(decoded.length).toBe(expected.flat_length);
           expect(decoded.length).toBe(shapeProduct(expected.decoded_shape));
-          if (!expected.viewer_float32_sha256) assertSamples(decoded, expected);
+          assertSamples(decoded, expected.viewer_samples ?? expected.samples);
           expect(float32Sha256(decoded)).toBe(
             expected.viewer_float32_sha256 ?? expected.float32_sha256
           );
@@ -192,7 +194,7 @@ describe('Python-TypeScript encoded array round-trip', () => {
             const rangeDecoded = await decodeRange(array, attrs, store, operation);
             expect(rangeDecoded.length).toBe(operation.flat_length);
             expect(rangeDecoded.length).toBe(shapeProduct(operation.decoded_shape));
-            if (!operation.viewer_float32_sha256) assertSamples(rangeDecoded, operation);
+            assertSamples(rangeDecoded, operation.viewer_samples ?? operation.samples);
             expect(float32Sha256(rangeDecoded)).toBe(
               operation.viewer_float32_sha256 ?? operation.float32_sha256
             );
