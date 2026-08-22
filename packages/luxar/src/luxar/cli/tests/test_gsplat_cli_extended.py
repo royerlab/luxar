@@ -6653,6 +6653,36 @@ class TestLODCarriesAuthoredAppearance:
             f"named every voter rather than one per distinct value:\n{line}"
         )
 
+    def test_disagreement_keeps_paths_when_long_basenames_collide(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """Shortening must not make distinct dissenting inputs indistinguishable."""
+        basename = "scene_with_a_reasonably_long_name.gsplats.zarr"
+        first_dir = tmp_path / "run_a"
+        second_dir = tmp_path / "run_b"
+        first_dir.mkdir()
+        second_dir.mkdir()
+        first = self._copy_authored(
+            medium_gsplats,
+            first_dir / basename,
+            {**self.AUTHORED, "opacity": 0.75},
+        )
+        second = self._copy_authored(
+            medium_gsplats,
+            second_dir / basename,
+            {**self.AUTHORED, "opacity": 0.4},
+        )
+
+        _, stdout = self._merge(
+            runner, [first, second], tmp_path / "colliding_names.gsplats.zarr"
+        )
+        line = next(
+            ln for ln in stdout.splitlines() if "disagree on authored 'opacity'" in ln
+        )
+
+        assert str(first) in line, f"first input became ambiguous:\n{line}"
+        assert str(second) in line, f"second input became ambiguous:\n{line}"
+
     def test_merge_channel_colors_drops_colormap(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:

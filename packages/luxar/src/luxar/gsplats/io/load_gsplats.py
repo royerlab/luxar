@@ -310,16 +310,25 @@ def _input_label(
     which one to re-tune. Matched by ``==`` so it agrees with :func:`_distinct`,
     which defines the values being listed.
 
-    The basename, not the path, once the path is long: these are ``.gsplats.zarr``
-    stores under a working directory, and a full path per value turns a one-line
-    warning into a paragraph. Short paths (what a user actually typed on the
-    command line) are shown verbatim.
+    The basename, not the path, once the path is long AND that basename is
+    unique among the inputs: these are ``.gsplats.zarr`` stores under a working
+    directory, and a full path per value turns a one-line warning into a
+    paragraph. A colliding basename would erase the distinction this label
+    exists to provide, so those inputs keep their full paths. Short paths (what
+    a user actually typed on the command line) are shown verbatim.
     """
     index = next((i for i, voted in votes if voted == value), None)
     if index is None or index >= len(paths):  # pragma: no cover - defensive
         return "an input"
     text = str(paths[index])
-    return text if len(text) <= 40 else Path(text).name
+    if len(text) <= 40:
+        return text
+    basename = Path(text).name
+    return (
+        basename
+        if sum(Path(str(path)).name == basename for path in paths) == 1
+        else text
+    )
 
 
 def agreed_authored_appearance(
