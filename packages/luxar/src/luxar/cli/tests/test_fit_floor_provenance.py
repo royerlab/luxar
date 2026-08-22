@@ -194,8 +194,16 @@ def test_content_fit_records_the_level_every_box_subtracted(
     def _fake_fit_planned(vol: Any, fitplan: Any, **kwargs: Any) -> Any:
         regions = [_stub_leaf(), _stub_leaf()]
         if kwargs.get("partition", True):
-            return GSplatData.partition_from_regions(regions)
-        return GSplatData.concatenate(regions)
+            result = GSplatData.partition_from_regions(regions)
+            result.meta["fit_stats"] = {
+                "planned_fit": True,
+                "n_splats": result.n_splats,
+                "psnr_db": 33.3,
+            }
+            return result
+        result = GSplatData.concatenate(regions)
+        result.stats.update({"planned_fit": True, "psnr_db": 33.3})
+        return result
 
     # `run_content_fit` re-imports `fit_planned` from its source module on every
     # call, so the stub has to replace it THERE.
@@ -226,6 +234,7 @@ def test_content_fit_records_the_level_every_box_subtracted(
     else:
         _, stats = load_gsplat_node(output, include_stats=True)
     assert stats["floor"] == pytest.approx(100.0)
+    assert stats["psnr_db"] == pytest.approx(33.3)
 
 
 def test_parallel_content_fit_hands_the_loaded_volume_to_the_merge(
