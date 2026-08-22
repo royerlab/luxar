@@ -41,7 +41,9 @@ Mathematical Background:
 
     The noise's time axis is handled by precomputing a handful of static 3D
     fields at fixed material coordinates and quintic-interpolating between them
-    — this is exactly 4D value noise, evaluated for the price of a lerp. Its
+    — this is exactly 4D value noise, evaluated for the price of a lerp, and
+    the same trick as animating a cloud field by evolving a small state and
+    redrawing attenuated particles [Dobashi et al. 2000]. Its
     temporal frequency grows only like 2^(2k/3) per octave rather than 2^k, in
     the spirit of Kolmogorov's eddy-turnover scaling: small eddies do turn over
     faster, but not as fast as a naive 4D noise would flicker them.
@@ -63,6 +65,74 @@ Mathematical Background:
     hole in the middle, and from overhead as a ring. The node is therefore
     ``volumetric`` — emission composited against absorption, back to front.
 
+References:
+    Nothing here is invented. Each idea below is the standard one for its job,
+    and is cited at the function that uses it.
+
+    Procedural noise
+        Perlin, K. (1985). "An Image Synthesizer." SIGGRAPH '85. The lattice
+        noise this file's ``simple_noise_3d`` is a value-noise variant of.
+        Perlin, K. (2002). "Improving Noise." ACM TOG 21(3). Source of the
+        quintic fade ``6t^5 - 15t^4 + 10t^3`` used on all four axes, chosen
+        over the older cubic because its second derivative also vanishes at
+        the lattice, so no crease shows where cells meet.
+        Ebert, D. S., Musgrave, F. K., Peachey, D., Perlin, K. & Worley, S.
+        (2003). "Texturing & Modeling: A Procedural Approach", 3rd ed. fBm,
+        persistence and lacunarity; the canonical procedural-cloud treatment.
+        Collet, Y. "xxHash." The PRIME32 constants and the shift-multiply
+        avalanche in ``hash_coords`` are xxHash32's (the same shape as
+        MurmurHash3's ``fmix32``, with different constants). 0x9E3779B1 is
+        2^32 divided by the golden ratio, the usual multiplicative-hash
+        choice.
+
+    Fluid flow
+        Batchelor, G. K. (1967). "An Introduction to Fluid Dynamics." CUP.
+        The Stokes stream function for axisymmetric incompressible flow that
+        ``velocity`` is built from, and the Lagrangian-vs-Eulerian
+        specification that the material/world split here rests on.
+        Bridson, R., Houriham, J. & Nordenstam, M. (2007). "Curl-Noise for
+        Procedural Fluid Flow." ACM TOG 26(3). Why a procedural flow field
+        should be divergence-free rather than merely plausible.
+        Frisch, U. (1995). "Turbulence: The Legacy of A. N. Kolmogorov." CUP.
+        The eddy-turnover scaling tau(l) ~ l^(2/3) behind this file's choice
+        of temporal frequency per octave.
+
+    Cumulus convection
+        Scorer, R. S. & Ludlam, F. H. (1953). "Bubble theory of penetrative
+        convection." Quart. J. Roy. Meteor. Soc. 79. The thermal-bubble
+        picture of cumulus growth that ``build_bubbles`` implements.
+        Stommel, H. (1947). "Entrainment of air into a cumulus cloud."
+        J. Meteorology 4. Lateral entrainment of dry air, which is what eats
+        the flanks and ends the life cycle here.
+        Rogers, R. R. & Yau, M. K. (1989). "A Short Course in Cloud Physics",
+        3rd ed. The lifting condensation level, and hence the flat base.
+
+    Implicit surfaces
+        Ricci, A. (1973). "A Constructive Geometry for Computer Graphics."
+        The Computer Journal 16(2). The p-norm soft union used to merge the
+        thermals without the crease a hard max would leave.
+        Blinn, J. F. (1982a). "A Generalization of Algebraic Surface
+        Drawing." ACM TOG 1(3). Blobby models — summed radial fields read as
+        a solid.
+
+    Cloud rendering
+        Blinn, J. F. (1982b). "Light Reflection Functions for Simulation of
+        Clouds and Dusty Surfaces." SIGGRAPH '82. Single-scattering albedo
+        against optical depth, the model ``shade`` approximates.
+        Max, N. (1995). "Optical Models for Direct Volume Rendering." IEEE
+        TVCG 1(2). The emission-absorption integral that the viewer's
+        ``volumetric`` blending mode implements, and the reason ``additive``
+        is a different optical regime rather than a dimmer version of it.
+        Harris, M. J. & Lastra, A. (2001). "Real-Time Cloud Rendering."
+        Computer Graphics Forum 20(3). Precompute each particle's
+        illumination by accumulating optical depth toward the light, then
+        composite the particles sorted from the eye — which is, grid-based
+        rather than render-based, exactly the scheme used here.
+        Dobashi, Y., Kaneda, K., Yamashita, H., Okita, T. & Nishita, T.
+        (2000). "A Simple, Efficient Method for Realistic Animation of
+        Clouds." SIGGRAPH '00. Evolving cloud fields drawn as attenuated
+        billboards.
+
 Usage:
     python demo_volumetric_cloud.py [--parcels=N] [--frames=N] [--no-serve]
 
@@ -83,7 +153,7 @@ DEMO_META = {
     "geometry": "points",
     "requirements": {
         "download_mb": 0,
-        "compute": "light",
+        "compute": "medium",
         "gpu": "none",
         "local_data": None,
     },
@@ -122,13 +192,20 @@ TOP_MAX = 16.5  #: how high above the base the mature turret reaches
 SEED_RADIUS = 10.0  #: parcels are seeded in a cylinder of this radius
 SEED_Y = (-2.0, 18.0)  #: ...spanning this height range
 
-# --- Flow (displacements per frame) -----------------------------------------
-UPDRAFT = 0.22  #: peak core updraft at the height of the thermal pulse
+# --- Flow ---------------------------------------------------------------
+# Speeds are per unit PHASE — per whole sequence — not per frame, and the
+# distinction is the difference between `--frames` being a resolution knob and
+# being a physics knob. Integrating a fixed displacement once per frame makes
+# the total distance travelled proportional to the frame count, so asking for
+# twice the temporal resolution would silently give you a cloud that drifts
+# twice as far. Multiplying by dt = 1/(n_frames-1) instead means every frame
+# count samples the SAME evolution, just more finely.
+UPDRAFT = 13.0  #: peak core updraft, scene units per unit phase
 ROLL_A = 4.2  #: core radius of the convection roll
 ROLL_H = 22.0  #: vertical wavelength of the roll (no flux through its ends)
 ROLL_Y0 = 8.0  #: height of maximum updraft
-SHEAR = 0.0060  #: d(u_x)/dy — the wind shear that leans the cloud downwind
-SWIRL = 0.010  #: solid-ish rotation about the vertical, radians per frame
+SHEAR = 0.35  #: d(u_x)/dy — the wind shear that leans the cloud downwind
+SWIRL = 0.59  #: rotation about the vertical, radians per unit phase
 SWIRL_B = 6.0  #: radius over which the swirl decays
 TILT = 0.22  #: static lean of the cloud's own axis, matching the shear
 SUBSTEPS = 2  #: midpoint substeps per frame
@@ -186,7 +263,7 @@ ALPHA_GAIN = 0.62  #: extra opacity carried by the densest
 
 # --- Defaults ---------------------------------------------------------------
 DEFAULT_PARCELS = 600_000
-DEFAULT_FRAMES = 60
+DEFAULT_FRAMES = 120
 TARGET_POINTS_PER_FRAME = 35_000
 DENSITY_POWER = 1.9  #: emission probability ~ (water/gate)^this
 OPENING_PHASE = 0.55  #: the scene opens on the mature cloud, not on frame 0
@@ -202,10 +279,24 @@ VIEW_DIRECTION = (0.62, -0.16, 1.0)
 def simple_noise_3d(
     x: np.ndarray, y: np.ndarray, z: np.ndarray, seed: int = 0
 ) -> np.ndarray:
-    """Simple 3D noise function (Perlin-like) - completely self-contained.
+    """Trilinearly interpolated VALUE noise on the integer lattice.
 
-    This is a simplified noise implementation that creates smooth, organic-looking
-    variations suitable for cloud density. Not cryptographically secure!
+    Value noise, not gradient noise: each lattice corner is assigned a scalar
+    straight from a hash of its coordinates, and the eight corners of the
+    containing cell are trilinearly blended. Perlin's original assigns
+    gradients instead and interpolates a dot product [Perlin 1985], which
+    avoids the faint axis-aligned bias value noise has. That bias is invisible
+    here because the field is only ever seen through a threshold and a cloud
+    envelope, and value noise is a good deal cheaper — one hash per corner
+    rather than a gradient lookup and a dot product.
+
+    The fade is Perlin's quintic ``6t^5 - 15t^4 + 10t^3`` [Perlin 2002] rather
+    than the older cubic ``3t^2 - 2t^3``: both kill the first derivative at the
+    lattice, only the quintic also kills the second, and without that the cell
+    boundaries show as faint creases once the field is differentiated by a
+    threshold.
+
+    Not cryptographically secure, and does not need to be.
 
     Args:
         x, y, z: Coordinate arrays (same shape)
@@ -242,9 +333,10 @@ def simple_noise_3d(
     # comes back close to the same value, and the field acquires a smooth
     # radial bias that no amount of octave stacking removes. What that looks
     # like downstream is a cloud with a systematically empty core. The
-    # finalizer here is the standard 32-bit avalanche (two xor-shift/multiply
-    # rounds), which makes every output bit depend on every input bit.
-    # Still not cryptographically secure, and it does not need to be.
+    # finalizer here is xxHash32's avalanche [Collet, xxHash] — two
+    # xor-shift/multiply rounds over its PRIME32 constants, the same shape as
+    # MurmurHash3's fmix32 — which makes every output bit depend on every
+    # input bit. Still not cryptographically secure, and does not need to be.
     def hash_coords(xi, yi, zi):  # type: ignore[no-untyped-def]
         h = (
             xi.astype(np.uint64) * np.uint64(374761393)
@@ -295,9 +387,12 @@ def fractal_noise_3d(
     persistence: float = 0.5,
     base_frequency: float = 1.0,
 ) -> np.ndarray:
-    """Multi-octave fractal noise - completely self-contained.
+    """Fractional Brownian motion: a sum of octaves at doubling frequency.
 
-    Combines multiple scales of noise for natural, fractal-like detail.
+    The standard procedural-texture construction [Ebert et al. 2003]: each
+    octave doubles the frequency (lacunarity 2) and scales the amplitude by
+    ``persistence``, so the spectrum falls off as a power law and the result
+    is statistically self-similar the way real cloud edges are.
 
     ``base_frequency`` matters more than it looks: the noise lattice is
     integer-spaced, so coordinates that span less than one cell see a smooth
@@ -367,10 +462,13 @@ def build_noise_series(
     one when the spatial sample points are known up front.
 
     The temporal frequency of octave ``k`` grows as ``2^(2k/3)`` rather than the
-    ``2^k`` a naive 4D noise would use: small eddies really do turn over faster
-    than large ones, but at the ``2^k`` rate the finest octaves read as
-    shimmer. Octaves at or beyond ``evolving_octaves`` are frozen entirely and
-    left to the flow to move around.
+    ``2^k`` a naive 4D noise would use. This is Kolmogorov's inertial-range
+    scaling [Frisch 1995]: an eddy of size ``l`` turns over in a time
+    ``tau(l) ~ l^(2/3)``, so halving the length scale speeds the evolution by
+    ``2^(2/3)`` and not by 2. Small eddies really do turn over faster than
+    large ones, but at the naive ``2^k`` rate the finest octaves read as
+    shimmer rather than as turbulence. Octaves at or beyond
+    ``evolving_octaves`` are frozen entirely and left to the flow to move.
 
     Args:
         material: ``(P, 3)`` material coordinates (each parcel's fixed label)
@@ -517,7 +615,8 @@ def velocity(positions: np.ndarray, updraft: float) -> np.ndarray:
     Three superposed pieces, each solenoidal on its own:
 
     1. An axisymmetric convection roll, written through a Stokes stream
-       function ``psi = U r^2 exp(-r^2 / 2a^2) cos(k (y - y0))``. Taking
+       function [Batchelor 1967, §2.2]
+       ``psi = U r^2 exp(-r^2 / 2a^2) cos(k (y - y0))``. Taking
        ``u_r = -(1/r) dpsi/dy`` and ``u_y = (1/r) dpsi/dr`` makes the
        divergence identically zero by construction, and the resulting cell
        rises in the core, diverges at the top, sinks outside and converges at
@@ -528,10 +627,13 @@ def velocity(positions: np.ndarray, updraft: float) -> np.ndarray:
     3. A swirl about the vertical whose strength depends only on the radius,
        so the two cross terms of its divergence cancel exactly.
 
-    Divergence-freeness is not decoration: the parcels are a Monte Carlo sample
-    of a uniform density, and only a solenoidal field keeps that sample uniform
-    as it deforms. A field that compressed would pile parcels up and read as
-    brightness drifting where no water went.
+    Divergence-freeness is not decoration [Bridson et al. 2007]: the parcels
+    are a Monte Carlo sample of a uniform density, and only a solenoidal field
+    keeps that sample uniform as it deforms. A field that compressed would pile
+    parcels up and read as brightness drifting where no water went. Writing the
+    flow through a stream function gets this exactly, by construction, rather
+    than approximately — the divergence is identically zero in the algebra, not
+    small in a measurement.
 
     Args:
         positions: ``(P, 3)`` world positions
@@ -565,12 +667,33 @@ def velocity(positions: np.ndarray, updraft: float) -> np.ndarray:
     return np.stack([u_x, u_y, u_z], axis=1).astype(np.float32)
 
 
-def advect(positions: np.ndarray, updraft: float, substeps: int = SUBSTEPS) -> None:
-    """Push the parcels forward one frame, in place, with midpoint steps."""
-    dt = 1.0 / substeps
+def advect(
+    positions: np.ndarray,
+    updraft: float,
+    dt: float,
+    substeps: int = SUBSTEPS,
+) -> None:
+    """Push the parcels forward by ``dt`` of phase, in place.
+
+    Explicit midpoint (RK2): evaluate the field, step half way on that
+    estimate, and take the full step using the velocity found there. Second
+    order globally, so halving ``dt`` cuts the trajectory error roughly
+    fourfold — which is what lets the frame count be a pure resolution choice
+    rather than a change to the motion (see
+    ``test_the_flow_is_frame_rate_independent``). Plain forward Euler would be
+    first order and would systematically fling parcels outward on the roll's
+    curved streamlines, thinning the core over sixty-odd steps.
+
+    Args:
+        positions: ``(P, 3)`` world positions, modified in place
+        updraft: Strength of the convection roll at this instant
+        dt: Phase advanced by this call, i.e. ``1 / (n_frames - 1)``
+        substeps: Midpoint steps used to cover ``dt``
+    """
+    step = dt / substeps
     for _ in range(substeps):
-        mid = positions + velocity(positions, updraft) * (0.5 * dt)
-        positions += velocity(mid, updraft) * dt
+        mid = positions + velocity(positions, updraft) * (0.5 * step)
+        positions += velocity(mid, updraft) * step
 
 
 # ---------------------------------------------------------------------------
@@ -679,9 +802,12 @@ def build_bubbles(rng: np.random.Generator, count: int = N_BUBBLES) -> Bubbles:
 
     A cumulus is not a shape, it is a PROCESS: a succession of buoyant bubbles
     punching up through the condensation level, each overshooting a little less
-    than the last, mixing away at its edges as it goes. Rendering the union of
-    those bubbles is what produces the cauliflower — the lobes, the crevices
-    between them, and a silhouette that changes as new thermals arrive.
+    than the last, mixing away at its edges as it goes. This is the bubble
+    theory of penetrative convection [Scorer & Ludlam 1953], and rendering the
+    union of those bubbles is what produces the cauliflower — the lobes, the
+    crevices between them, and a silhouette that changes as new thermals
+    arrive. Their flanks are eroded by dry air mixing in [Stommel 1947], which
+    is what the noise threshold stands in for and what ends the life cycle.
 
     The previous version drove the outline from a single surface of revolution,
     which is a lathe, and it looked like one: one smooth mass with no lobes for
@@ -730,12 +856,16 @@ def envelope(
 
     The union of the thermals, cut off underneath at the condensation level.
     A cumulus is a cumulus because of that cut: below the lifting condensation
-    level there is no liquid water at all, which is why a field of them all
-    share one flat bottom at the same altitude.
+    level — the height a surface parcel must rise to before it saturates
+    [Rogers & Yau 1989] — there is no liquid water at all, which is why every
+    cumulus in a field shares one flat bottom at the same altitude.
 
-    The union is a p-norm rather than a hard ``max`` — a hard max creases
-    visibly where two bubbles meet, and the crease reads as a seam in what is
-    supposed to be one body of cloud.
+    The union is Ricci's p-norm blend [Ricci 1973], ``(sum f_i^p)^(1/p)``,
+    which tends to a hard ``max`` as p grows and to a plain sum as p tends to
+    1. A hard max creases visibly where two bubbles meet and the crease reads
+    as a seam in what is supposed to be one body of cloud; a plain sum bulges
+    wherever bubbles merely overlap. The same family of summed radial fields
+    is what blobby models are built from [Blinn 1982a].
 
     Args:
         positions: ``(P, 3)`` world positions
@@ -925,7 +1055,13 @@ def optical_depth(
     aligned with the light, blur it once so the sampling does not band,
     cumulatively sum it from the lit side inward, and read it back per parcel.
     What comes out is the water column between each parcel and the light, which
-    is exactly the argument of Beer-Lambert.
+    is exactly the argument of Beer-Lambert: transmittance ``exp(-tau)``.
+
+    This is Harris & Lastra's cloud-shading scheme [Harris & Lastra 2001] —
+    precompute each particle's illumination by accumulating optical depth
+    toward the light, then composite the particles sorted from the eye — done
+    on a grid rather than by rendering from the light's point of view, which
+    suits a job that already has every parcel in memory as an array.
 
     The direction is a parameter rather than hard-coded to straight down, and
     that is a substantive choice. A light directly overhead illuminates every
@@ -989,7 +1125,11 @@ def shade(
     """Per-parcel colour: sunlight, skylight and a little bounce off the ground.
 
     Three terms, because a cloud lit by one of them looks wrong in a way that
-    is hard to place until you see all three.
+    is hard to place until you see all three. Each is a single-scattering
+    approximation — albedo times the light that survives the journey in
+    [Blinn 1982b] — with no multiple scattering, which is why the constants
+    below are tuned rather than derived: the whiteness of a real cumulus comes
+    largely from light bouncing many times inside it.
 
     ``sun`` is direct beam attenuated along the sun's own ray. On its own it
     renders everything the beam misses as pure black, which no cloud has ever
@@ -1213,6 +1353,11 @@ def generate_evolving_cloud(
     per_frame_counts: List[int] = []
 
     with asection(f"Evolving the cumulus over {n_frames} frames"):
+        # Phase advanced per frame. Everything else in the model is already a
+        # function of phase, so this is the only place the frame count enters
+        # the physics — and it enters it exactly once.
+        dt = 1.0 / max(n_frames - 1, 1)
+
         for frame in range(n_frames):
             phase = frame / max(n_frames - 1, 1)
 
@@ -1274,7 +1419,7 @@ def generate_evolving_cloud(
             updraft = UPDRAFT * (
                 0.35 + 0.65 * float(np.exp(-(((phase - 0.30) / 0.30) ** 2)))
             )
-            advect(positions, updraft)
+            advect(positions, updraft, dt)
 
         aprint(
             f"✓ Points per frame: min {min(per_frame_counts):,}, "
@@ -1338,7 +1483,10 @@ def generate_evolving_cloud(
                 sharpness=all_sharpness,
                 opacity=1.0,
                 # A cumulus is optically THICK — you see its surface, not
-                # through it. `additive` models the opposite regime (an
+                # through it. The viewer's `volumetric` mode implements the
+                # emission-absorption integral [Max 1995]: each parcel adds
+                # its own light AND attenuates everything behind it, composited
+                # back to front. `additive` models the opposite regime (an
                 # optically thin emissive medium: nothing occludes anything),
                 # and combining it with shading derived from occlusion is
                 # incoherent: the darkened interior is not hidden behind the

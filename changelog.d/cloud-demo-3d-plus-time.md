@@ -4,7 +4,7 @@
 cumulus lived through its whole life cycle on a hidden `time` axis, from a low
 fragment at the condensation level, through a cauliflower turret and a mature
 top leaning downwind, to the whole body pulling in as the thermals feeding it
-die. Sixty timepoints, ~1.3M points, about fifteen seconds to generate.
+die. 120 timepoints, ~2.7M points, about twenty-six seconds to generate.
 
 The motion is Lagrangian. 600k air parcels are advected with midpoint steps
 through an analytic velocity field built to be exactly divergence-free — an
@@ -151,3 +151,41 @@ composed for the cinematic 63° lens from the data's own extent, with the
 dimension slider panel open. It does not autoplay: the zarr `animation` block is
 capture-only today, so the viewer restores `current_step` and nothing else, and
 starting the sequence is `K`.
+
+#### `--frames` is a resolution knob, not a physics knob
+
+Temporal resolution is doubled to 120 timepoints, and doing that surfaced a
+defect in how the flow was integrated. Speeds were expressed per FRAME and
+applied once per frame, so the total distance a parcel travelled was
+proportional to the frame count: asking for twice the resolution would have
+silently produced a cloud that drifted twice as far, and the `--frames=90` the
+README already advertised was quietly a different cloud from the default.
+
+Speeds are now per unit PHASE, and each frame advances by
+`dt = 1/(n_frames-1)`. The frame count enters the physics in exactly one place
+and every count samples the same evolution. Verified both ways: a test
+integrates the full sequence at 60 and at 120 frames and requires the
+trajectories to agree to within 6% of the distance travelled (midpoint
+integration is second order, so halving dt cuts the error roughly fourfold),
+and the generated scenes agree on their spatial bounds and on mean points per
+frame (22,295 vs 22,198) while differing only in how many frames there are.
+
+`compute` in the demo's metadata moves from `light` to `medium`, which is
+honest at twenty-six seconds.
+
+#### Every technique is cited where it is used
+
+The file now carries a `References` block and cites it inline at each function:
+Perlin (1985, 2002) for the lattice noise and the quintic fade, Ebert et al.
+for fBm, Batchelor for the Stokes stream function, Bridson et al. for why a
+procedural flow field should be divergence-free, Frisch for Kolmogorov's
+eddy-turnover scaling, Scorer & Ludlam and Stommel for the bubble theory of
+penetrative convection and for entrainment, Rogers & Yau for the lifting
+condensation level, Ricci and Blinn for the p-norm soft union, and Max, Blinn
+and Harris & Lastra for the emission-absorption model and the
+precomputed-illumination cloud shading this file reimplements on a grid.
+
+The hash constants are identified precisely while doing so: they are xxHash32's
+PRIME32 values with xxHash's avalanche, not MurmurHash3's `fmix32`, which uses
+neighbouring but different constants. Every inline citation resolves to an
+entry and every entry is cited from the code.

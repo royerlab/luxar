@@ -236,7 +236,9 @@ Dense sphere (200k points) with perfect distribution and rainbow colors.
 #### demo_volumetric_cloud.py - Evolving Cumulus (3D + time)
 A convective cumulus lived through its whole life cycle on a hidden `time` axis: a low fragment at the condensation level, a cauliflower turret billowing upward, a mature top leaning downwind, then the whole body pulling in as the thermals feeding it die.
 
-**Run**: `luxar demo run cloud [-- --parcels=1000000] [-- --frames=90]`
+**Run**: `luxar demo run cloud [-- --parcels=1000000] [-- --frames=240]`
+
+120 timepoints, ~2.7M points, ~26 s to generate, 25 MB on disk. `--frames` is a pure **resolution** knob: speeds are expressed per unit phase and each frame advances by `dt = 1/(n_frames-1)`, so every frame count samples the same evolution, just more finely. Integrating a fixed displacement once per frame — which is what it did before — made the distance travelled proportional to the frame count, so asking for twice the temporal resolution would have silently given you a cloud that drifted twice as far.
 
 Three things, kept separate. *Where the air goes* is an analytic velocity field built to be exactly divergence-free — an axisymmetric convection roll written through a Stokes stream function, plus a wind shear that leans the cloud downwind, plus a slow swirl — through which 600k parcels are pushed with midpoint steps, so a point is a parcel of air that keeps its identity frame to frame. (Solenoidality is load-bearing: the parcels are a Monte Carlo sample of a uniform density, and only a divergence-free field keeps that sample uniform as it deforms. Measured, the core parcel count holds to 2% over 60 frames.) *What shape the cloud is* is the union of rising thermal bubbles, rooted in a slab of cloud sitting on the condensation level — because a cumulus is not a shape but a process, a succession of buoyant bubbles punching up through the LCL, and rendering their union is what produces the cauliflower. *Where the water is* is 4D fractal noise in **material** coordinates — each parcel's fixed label — which welds the texture to the fluid so it stretches and folds instead of boiling in place.
 

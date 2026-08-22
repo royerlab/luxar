@@ -167,6 +167,43 @@ class TestFlow:
         assert float(np.abs(divergence).max()) < 0.05 * scale / eps
         assert float(np.abs(divergence).mean()) < 1e-3 * scale / eps
 
+    def test_the_flow_is_frame_rate_independent(self, parcels: np.ndarray) -> None:
+        """`--frames` must be a resolution knob, not a physics knob.
+
+        Speeds are per unit PHASE and each frame advances by
+        ``dt = 1/(n_frames-1)``. Integrating a fixed displacement once per
+        frame instead would make total distance travelled proportional to the
+        frame count, so doubling the temporal resolution would silently double
+        how far the cloud drifts — the same sequence at a different sampling
+        rate would be a different cloud.
+
+        Midpoint integration is second order, so the two trajectories should
+        agree far more closely than either agrees with the exact flow.
+        """
+
+        def run(n_frames: int) -> np.ndarray:
+            positions = parcels.copy()
+            dt = 1.0 / (n_frames - 1)
+            for frame in range(n_frames - 1):
+                phase = frame / (n_frames - 1)
+                updraft = cloud.UPDRAFT * (
+                    0.35 + 0.65 * float(np.exp(-(((phase - 0.30) / 0.30) ** 2)))
+                )
+                cloud.advect(positions, updraft, dt)
+            return positions
+
+        coarse = run(60)
+        fine = run(120)
+
+        drift = np.linalg.norm(fine - parcels, axis=1)
+        disagreement = np.linalg.norm(fine - coarse, axis=1)
+        assert float(drift.mean()) > 1.0, "the parcels barely moved; test is vacuous"
+        assert float(disagreement.mean()) < 0.06 * float(drift.mean()), (
+            f"60 and 120 frames disagree by {disagreement.mean():.3f} against a "
+            f"mean drift of {drift.mean():.3f} — the frame count is changing "
+            f"the physics, not just how finely it is sampled"
+        )
+
     def test_advection_preserves_parcel_density_in_the_core(
         self, parcels: np.ndarray
     ) -> None:
@@ -181,7 +218,7 @@ class TestFlow:
             updraft = cloud.UPDRAFT * (
                 0.35 + 0.65 * float(np.exp(-(((phase - 0.30) / 0.30) ** 2)))
             )
-            cloud.advect(positions, updraft)
+            cloud.advect(positions, updraft, 1.0 / 59)
 
         radius = np.hypot(positions[:, 0], positions[:, 2])
         after = int(
