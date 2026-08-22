@@ -507,8 +507,9 @@ ancestor-set modes.
 
 **`slice_dims` is read, not just recorded**: besides describing the compound
 ordering, the barrier (categorical) column indices it lists are the set
-`compute_chunk_bounds_gsplats` gave a tight epsilon pad instead of the
-`truncation_radius · σ` expansion — so the viewer's gsplats loader now CONSUMES it,
+`compute_chunk_bounds_gsplats` gave the fixed epsilon pad plus any encoder
+coordinate round-trip slack instead of the `truncation_radius · σ` expansion —
+so the viewer's gsplats loader now CONSUMES it,
 to classify each hidden dimension's chunk-fetch tolerance instead of inferring
 barrier-ness from the scene's `discrete` flags
 (`data/loaders/spatial-query/tolerance-computer.ts`). The on-disk format is
@@ -793,6 +794,11 @@ centers were handed back in. A dataset fitted with `output_space: real` and a
 onto the source grid will not reproduce these numbers — divide the spacing back
 out first. The metrics describe the fit, not the coordinate frame it was
 delivered in.
+
+On a node tree, a root `fitting/` score is a whole-tree claim: the additive sum
+of the finest surviving parts, after each part's post-fit cull, measured on that
+same fitter voxel grid. It does not describe the coarser content a viewer may
+select initially from a `levels` or `stream` per-part recipe.
 
 A metric that is mathematically undefined is **omitted, not written**: a volume
 with no foreground (a constant tile, a signal-free crop) has no

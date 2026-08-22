@@ -53,6 +53,7 @@ DEMO_META = {
     "outputs": ["cellxgene_census_umap"],
     "citation": {
         "short": "CZ CELLxGENE Discover (CZI Cell Science Program 2024)",
+        "ref": "CZI Cell Science Program 2024",
         "doi": "10.1093/nar/gkae1142",
     },
 }
@@ -68,6 +69,7 @@ from arbol import aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
+    add_demo_caption,
     launch_viewer,
     parse_demo_flags,
     require_local_data,
@@ -258,7 +260,15 @@ def build_scene(
                 # 10.7x total change only 2.36x undoes the cut (#1375).
                 opacity=0.39,
                 intensity=4.52,
-                absorption=6.5,
+                # Was 6.5. That figure was chosen as "deliberately heavy
+                # because the screening is what gives the lobes depth", and it
+                # overshot: at kappa=6.5 a single cell absorbs 0.92 of what is
+                # behind it and its own self-screening S(tau)=0.36 eats most of
+                # its emission, so the cloud reads as a shell with its interior
+                # screened out rather than as depth-ordered structure. 2.12
+                # keeps the near-absorbs-far cue that made volumetric worth
+                # choosing while letting more of each cell's emission survive.
+                absorption=2.12,
                 blending_mode="volumetric",
                 # Expose the single cells node in the viewer's Layers panel.
                 # With the substitutive-LOD wrapper this rides onto the
@@ -293,6 +303,11 @@ def build_scene(
                 anchor="top-left",
                 color="rgba(255,255,255,0.6)",
                 blend_mode="difference",
+            )
+            add_demo_caption(
+                scene,
+                f"{n:,} human cells • scVI UMAP",
+                DEMO_META.get("citation"),
             )
     aprint(f"\nScene saved to: {output_path}")
     return n

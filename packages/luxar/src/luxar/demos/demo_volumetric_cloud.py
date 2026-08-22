@@ -173,6 +173,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+<<<<<<< HEAD
 from luxar.core.viewer_config import (
     CameraConfig,
     DimensionsConfig,
@@ -181,6 +182,13 @@ from luxar.core.viewer_config import (
 )
 from luxar.demos import launch_viewer
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
+||||||| 376a155ac
+from luxar.core.viewer_config import ViewerConfig
+from luxar.demos import launch_viewer
+=======
+from luxar.core.viewer_config import ViewerConfig
+from luxar.demos import add_demo_caption, launch_viewer
+>>>>>>> origin/cinematic-mode-all-demos
 from luxar.utils.paths import get_demos_output_dir
 
 # --- Scene scale ------------------------------------------------------------
@@ -1528,15 +1536,10 @@ def generate_evolving_cloud(
                 color="rgba(255,255,255,0.6)",
                 blend_mode="difference",
             )
-            # Top-right, which is the only corner left: the dimension slider
-            # panel opens by default for this scene and occupies the bottom
-            # edge, and the tool rail runs down the left under the title.
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 f"Cumulus life cycle · {n_frames} frames · press K to play",
-                position=(0.98, 0.035),
-                font_size=0.017,
-                anchor="top-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
 
         aprint(f"✓ Written {len(all_positions):,} points to {output_path}")

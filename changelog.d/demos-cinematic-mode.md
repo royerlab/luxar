@@ -17,17 +17,17 @@ preset only fills fields a scene left unset, so every explicit `tone_mapping`,
 `exposure` and bloom value in the demos still wins — including the interop
 family's `"Neutral"` pin, which is deliberate for baked sRGB and is left alone.
 
-The preset widens the field of view from 47° to 63°, and the viewer applies that
-after its first-load auto-frame without re-framing, so auto-framed scenes open
-0.71x smaller linearly — half the screen area. That ordering is viewer-side and
-documented in `VIEWER_GUIDE.md`; a demo cannot correct it, and closing it means
-applying the expanded fov before the fit (#1861).
+The preset widens the field of view from 47° to 63°. The viewer resolves that FOV
+before automatic framing, so auto-framed scenes keep the fitted subject
+occupancy intended for the lens. A returning visitor's stored FOV remains
+authoritative by design.
 
 Demos with an authored camera position keep their composition, in one of two
-ways. Sixteen pin `camera.fov` (38°–50°, computed in five) — framing preserved,
-but they then take the preset's 35 mm barrel distortion at a longer lens's
-framing, and those pins all predate the cinematic look (#1862). The five poses derived
-from a data extent or a fitted radius instead compose for 63° through the new
+ways. Seventeen pin `camera.fov` (38° to 50° where it is a literal, computed or
+named in seven) — framing preserved, but they then take the preset's 35 mm barrel
+distortion at a longer lens's framing, and those pins all predate the cinematic
+look (#1862). The five poses derived from a data extent or a fitted radius
+instead compose for 63° through the new
 `demos/_cinematic_camera.py`, so the lens stays whole and the framing is
 preserved exactly: `CINEMATIC_FOV_DEG` where the distance comes from the lens
 (quantum orbitals' `asin(R/D)` rule, which therefore just moves closer,
@@ -39,8 +39,16 @@ image — a wider lens at a shorter distance foreshortens more — so those five
 worth a look on the next gallery pass.
 
 A new lint (`test_demos_cinematic_mode.py`) keeps this true for demo 87: every
-`create_scene` must pass a `viewer_config`, and every `ViewerConfig` built in the
-demos package must set a literal `cinematic_mode=True`.
+`create_scene` must pass a non-`None` `viewer_config`, every `ViewerConfig` built
+in the demos package must set a literal `cinematic_mode=True`, every authored
+camera must state the lens it was composed for, and the scientific-fidelity
+overrides must remain explicit.
+
+Four fidelity-sensitive demos deliberately opt parts of the preset back out:
+the CMU-1 pathology and CODEX pancreas ortho demos disable bloom, vignette, lens
+distortion and detector noise, while the biodiversity globe and nD transform
+bench disable lens distortion and detector noise to preserve their colour
+encodings.
 
 Existing generated stores under `datasets/demos/` predate the flag — the look
 appears when a demo is re-run and its scene rewritten.

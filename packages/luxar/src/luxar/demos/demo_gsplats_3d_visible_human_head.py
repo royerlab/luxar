@@ -95,6 +95,7 @@ DEMO_META = {
     "outputs": ["gsplats_3d_visible_human_head"],
     "citation": {
         "short": "NLM Visible Human Project (Spitzer et al. 1996)",
+        "ref": "Spitzer et al. 1996",
         "doi": "10.1136/jamia.1996.96236280",
         "license": "Public domain (NLM)",
     },
@@ -106,8 +107,9 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.core.viewer_config import ViewerConfig
+from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import (
+    add_demo_caption,
     detect_device,
     is_lfs_pointer,
     launch_viewer,
@@ -613,13 +615,56 @@ def create_luxar_scene(fit: GSplatData, colors: np.ndarray, output_path: Path) -
                 Dimension("z", unit="mm", display=True),
             ]
         )
+
+        # Face the viewer, head up. Without an authored camera the viewer
+        # auto-frames on the bounding box with world +Y up, which for this
+        # volume lands the body on its side — the subject is not axis-aligned
+        # to the viewer's defaults in any orientation that reads as "a person".
+        #
+        # The fit's centers are in the source volume's index order, so the
+        # anatomy maps onto the columns rather than onto the x/y/z the scene
+        # declares:
+        #   col 0 = axial slice index. NLM cuts the VHM from the head DOWN, so
+        #           the index grows inferiorly -> SUPERIOR is -x.
+        #   col 1 = image row. Axial cryosection photographs put anterior at the
+        #           top of the frame (row 0) -> ANTERIOR is -y.
+        #   col 2 = image column -> LEFT-RIGHT, the widest axis (shoulders).
+        # Both readings are confirmed by the built cloud: the head protrudes
+        # along -col0, and looking down col0 shows a head with the shoulders
+        # spread along col2.
+        #
+        # So: stand off along -y (in front of the face), look back at the
+        # centroid, and point "up" along -x.
+        half = np.maximum(
+            np.abs(centered.centers.max(axis=0)),
+            np.abs(centered.centers.min(axis=0)),
+        )
+        fov_deg = 45.0
+        # Fit the taller of (height, width) into the frame, with a little air.
+        need = float(max(half[0], half[2])) * 1.15
+        cam_dist = need / np.tan(np.radians(fov_deg) / 2.0)
+        radius = float(np.linalg.norm(half))
+        camera = CameraConfig(
+            position=(0.0, -cam_dist, 0.0),
+            target=(0.0, 0.0, 0.0),
+            up=(-1.0, 0.0, 0.0),
+            fov=fov_deg,
+            near=float(max(1.0, (cam_dist - radius) * 0.5)),
+            far=float((cam_dist + radius) * 2.0),
+        )
+        aprint(
+            f"  🎥 Facing the subject: camera {cam_dist:,.0f} in front "
+            f"(-y), up = -x (superior)"
+        )
         with LuxarZarrCompiler(
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
             scene = compiler.create_scene(
                 citation=DEMO_META["citation"],
                 dimensions=dims,
-                viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="ACES"),
+                viewer_config=ViewerConfig(
+                    cinematic_mode=True, tone_mapping="ACES", camera=camera
+                ),
             )
             scene.attrs["title"] = "GSplats: Visible Human Head (NLM cryosections)"
             scene.add_gsplats(
@@ -641,12 +686,10 @@ def create_luxar_scene(fit: GSplatData, colors: np.ndarray, output_path: Path) -
                 color="rgba(255,255,255,0.7)",
                 blend_mode="difference",
             )
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 "NLM Visible Human Project • color cryosections → Gaussian splats",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.5)",
+                DEMO_META.get("citation"),
             )
         aprint(f"Scene saved: {output_path}")
         return output_path

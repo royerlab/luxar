@@ -61,6 +61,7 @@ DEMO_META = {
     "outputs": ["gsplats_interop_inria_garden"],
     "citation": {
         "short": "Kerbl et al. 2023 (3D Gaussian Splatting); Barron et al. 2022 (Mip-NeRF 360)",
+        "ref": "Kerbl / Barron et al. 2022–2023",
         "doi": "10.1145/3592433",
         "license": "Research / non-commercial (INRIA 3DGS)",
     },

@@ -74,6 +74,7 @@ DEMO_META = {
     "outputs": ["gsplats_interop_sog_matrixcity"],
     "citation": {
         "short": "Li et al. 2023 (MatrixCity)",
+        "ref": "Li et al. 2023",
         "doi": "10.1109/iccv51070.2023.00297",
     },
 }

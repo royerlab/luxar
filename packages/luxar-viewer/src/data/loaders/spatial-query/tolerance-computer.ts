@@ -302,18 +302,22 @@ export function discreteDimMembershipTolerance(dimInfo: DimensionInfo | undefine
  * Step fraction of the GSplats continuous-dim float-safety epsilon — TERM 1 of
  * the two in {@link gsplatsContinuousDimTolerance}.
  *
- * `1e-3 × step`, which at a unit step is exactly the write side's
- * `_BARRIER_BOUND_EPS = 1e-3` (`luxar/io/_ordering/bounds.py`) — this is that
- * epsilon's reader-side mirror, applied to the dims the write side does NOT pad
- * (barrier/discrete dims are padded there; continuous dims are not, because they
- * normally get the far larger `truncation_radius · σ` expansion instead). The
- * mirror is pinned from the Python side by
+ * `1e-3 × step`, which at a unit step is exactly the write side's fixed
+ * `_BARRIER_BOUND_EPS = 1e-3` term (`luxar/io/_ordering/bounds.py`). This mirrors
+ * that float-safety term only, applied to the dims the write side does NOT
+ * barrier-pad (continuous dims normally get the far larger
+ * `truncation_radius · σ` expansion instead). A non-gridded uint16 barrier axis
+ * now also gets the encoder's per-axis round-trip slack (`extent/131070`) in its
+ * STORED bound; that data-dependent containment pad is already consumed by the
+ * chunk intersection and has no reader-tolerance counterpart. A real categorical
+ * axis is normally gridded, stores exactly and gets zero such slack. The fixed
+ * epsilon mirror is pinned from the Python side by
  * `io/tests/test_ordering_gsplats.py::test_barrier_bound_eps_matches_viewer_gsplats_step_fraction`,
  * which parses this declaration out of this file.
  *
  * Why this magnitude:
- * - **500× below `0.5 × step`**, so it can never reach into a neighbouring cell
- *   — a stronger margin than the discrete quarter-cell reach has.
+ * - **500× below `0.5 × step`**, so this fixed epsilon term cannot reach into a
+ *   neighbouring cell — a stronger margin than the discrete quarter-cell reach has.
  * - **Comfortably above float32 round-off** on realistic coordinates: chunk
  *   bounds are stored as float32 (`chunk_bounds` is `dtype=np.float32`), whose
  *   ~1.2e-7 relative spacing costs `magnitude × 1.2e-7` of absolute slack, so
@@ -395,11 +399,12 @@ function regularizedHiddenBand(truncationRadius: number | undefined): number {
  * ## Which dims the premise applies to
  *
  * `compute_chunk_bounds_gsplats` applies the σ expansion to every dim NOT in its
- * `slice_dims` argument, and gives the ones that ARE only a tight
- * `_BARRIER_BOUND_EPS` pad. So "bounds already carry `truncation_radius · σ`" is a
- * statement about the dims OUTSIDE the write side's barrier set, and this arm is only
- * the right rule for exactly those dims — a barrier dim has tight bounds and wants
- * the (far wider) quarter-cell reach instead. Which dims those are is settled by
+ * `slice_dims` argument, and gives the ones that ARE the fixed
+ * `_BARRIER_BOUND_EPS` pad plus any encoder coordinate round-trip slack. So
+ * "bounds already carry `truncation_radius · σ`" is a statement about the dims
+ * OUTSIDE the write side's barrier set, and this arm is only the right rule for
+ * exactly those dims — a barrier dim has tight bounds and wants the (far wider)
+ * quarter-cell reach instead. Which dims those are is settled by
  * `isBarrierDim`, from the set the writer publishes; see its docstring for the
  * resolution rule, the legacy `discrete` fallback and the write-side
  * misclassification it does NOT fix.
@@ -416,8 +421,8 @@ function regularizedHiddenBand(truncationRadius: number | undefined): number {
  *
  * 1. `GSPLATS_CONTINUOUS_EPS_STEP_FRACTION × step` — a continuous dim along which
  *    the splats have **zero variance** (a stacked axis declared continuous rather
- *    than discrete) gets no σ expansion, and the write side pads only *discrete*
- *    dims, so its stored bound is the axis value itself. The dominant
+ *    than discrete) gets no σ expansion, so its stored bound is the axis value
+ *    plus any encoder coordinate round-trip slack. The dominant
  *    perturbation is that the bound is stored as **float32** (`chunk_bounds` is
  *    `dtype=np.float32`) while the query position is a float64 — ≈1.9e-7 of
  *    disagreement at a coordinate of 5.3. The `start + k × step` arithmetic drift
@@ -730,9 +735,25 @@ function computePointsHiddenTolerance(
  * Lines hidden dimension tolerance.
  *
  * Spatial dimensions get 0 because segment bounding boxes already include
- * the line width extent. Barrier (discrete) dimensions use the shared quarter-cell
- * query rule, or the half-cell membership rule when the caller is the
- * projection/clipping path (`options.discreteRole === 'membership'`).
+ * the line width extent. That premise is now underwritten on the WRITE side, and
+ * it was not always: `chunk_bounds` is float32 while the vertices themselves are
+ * stored as per-axis uint16 fixed point, so a bound built from the authored
+ * vertices could be escaped by the DECODED ones by up to half a quantum
+ * (`extent/131070`, 7.6e-3 at an axis extent of 1000) — a chunk this arm would
+ * then never ask for, dropping geometry silently. Since #1655 the writer pads
+ * both `vertex_chunk_bounds` and `segment_chunk_bounds` outward by the encoder's
+ * own per-axis round-trip slack (`ArrayEncoder.coordinate_round_trip_slack`,
+ * asked with `allow_lut=false` to match how the lines writer stores `vertices`),
+ * on top of the width footprint, and accumulates in float64 before an
+ * outward-rounded float32 store. So a stored lines bound now contains the
+ * decoded, full-width segment footprint, and a `0` reach here is sound rather
+ * than merely conventional. (Stores written before 2026-08 keep their old,
+ * occasionally-too-tight bounds; the quantised RADIUS/WIDTH itself is still an
+ * open gap on the writer side — a decoded width can exceed the authored one the
+ * pad was sized for by up to half its own quantum, ~9.6e-3 on typical data.)
+ * Barrier (discrete) dimensions use the shared quarter-cell query rule, or the
+ * half-cell membership rule for projection/clipping
+ * (`options.discreteRole === 'membership'`).
  *
  * `isBarrier` always comes from `DimensionInfo.discrete` here: `isBarrierDim` honours
  * the writer's published set for gsplats only, and this arm's literal `0` is exactly
@@ -748,7 +769,8 @@ function computeLinesHiddenTolerance(
       ? discreteDimMembershipTolerance(dimInfo)
       : discreteDimTolerance(dimInfo);
   }
-  // Spatial dimension: bounds already include width
+  // Spatial dimension: bounds already include width — and, since #1655, the
+  // writer's uint16 round-trip slack too, so they contain the DECODED vertices.
   return 0;
 }
 

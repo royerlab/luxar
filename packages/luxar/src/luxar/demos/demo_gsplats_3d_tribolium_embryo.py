@@ -91,6 +91,7 @@ DEMO_META = {
             "Barry 2021 (GIANI, Zenodo 5270323); "
             "Cell Tracking Challenge (Maška et al. 2023)"
         ),
+        "ref": "Barry / Maška et al. 2023",
         "doi": "10.5281/zenodo.5270323",
     },
 }
@@ -106,6 +107,7 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
     MissingDependencyError,
+    add_demo_caption,
     launch_viewer,
     load_precomputed_gsplats,
     parse_demo_flags,
@@ -456,13 +458,7 @@ Navigation:
                 color="rgba(255,255,255,0.6)",
                 blend_mode="difference",
             )
-            scene.add_text(
-                "Light-sheet microscopy",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
-            )
+            add_demo_caption(scene, "Light-sheet microscopy", DEMO_META.get("citation"))
 
         aprint(f"Scene saved: {output_path}")
         return output_path

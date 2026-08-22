@@ -89,7 +89,7 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
-from luxar.demos import launch_viewer, parse_int_arg
+from luxar.demos import add_demo_caption, launch_viewer, parse_int_arg
 from luxar.utils.paths import get_demos_output_dir
 
 # -----------------------------------------------------------------------------
@@ -282,12 +282,8 @@ def build_scene(output_path: Path, max_order: int) -> int:
                 )
 
             # Footer / nav hint
-            scene.add_text(
-                "← [  •  ] →   step through orders",
-                position=(0.98, 0.97),
-                font_size=0.014,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.55)",
+            add_demo_caption(
+                scene, "← [  •  ] →   step through orders", DEMO_META.get("citation")
             )
 
         aprint(f"  ✓ {len(orders)} orders, {total_pts:,} total vertices")

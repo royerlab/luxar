@@ -311,16 +311,25 @@ describe('createMeshMaterial — the §6.3 opaque default survives the composed 
 });
 
 describe('createMeshMaterial — authored shade knobs (§6.2)', () => {
-  it('reads ambient / shade_exponent / alpha_cutoff from the composed attrs', () => {
-    // These ride in through `add_mesh(**attrs)` (the writer never stamps them), so
-    // they were ALREADY reachable in the composed attrs and were being silently
-    // dropped. An authored value that does nothing is worse than one that is refused.
+  it('reads all mesh appearance attrs from the composed attrs', () => {
+    // These ride in through `add_mesh(**attrs)` (the writer never stamps them).
+    // Authoring support and the material reads landed together, so accepted values
+    // must reach the uniforms rather than becoming dead metadata.
     const m = createMeshMaterial(
-      { ...ATTRS, ambient: 0.75, shade_exponent: 4, alpha_cutoff: 0.125 } as MeshMetadata,
+      {
+        ...ATTRS,
+        ambient: 0.75,
+        shade_exponent: 4,
+        specular: 0.3,
+        shininess: 48,
+        alpha_cutoff: 0.125,
+      } as MeshMetadata,
       false
     );
     expect(m.uniforms.uAmbient.value).toBe(0.75);
     expect(m.uniforms.uShadeExponent.value).toBe(4);
+    expect(m.uniforms.uSpecular.value).toBe(0.3);
+    expect(m.uniforms.uShininess.value).toBe(48);
     expect(m.uniforms.uAlphaCutoff.value).toBe(0.125);
   });
 
@@ -330,13 +339,22 @@ describe('createMeshMaterial — authored shade knobs (§6.2)', () => {
     // ambient = 1e9 multiplies the surface to white and cutoff = 1e9 discards every
     // fragment, i.e. the mesh vanishes with no diagnostic. Both are author-reachable.
     const hot = createMeshMaterial(
-      { ...ATTRS, ambient: 1e9, alpha_cutoff: 1e9, shade_exponent: 0 } as MeshMetadata,
+      {
+        ...ATTRS,
+        ambient: 1e9,
+        specular: 1e9,
+        alpha_cutoff: 1e9,
+        shade_exponent: 0,
+        shininess: 0,
+      } as MeshMetadata,
       false
     );
     expect(hot.uniforms.uAmbient.value).toBe(1);
+    expect(hot.uniforms.uSpecular.value).toBe(1);
     expect(hot.uniforms.uAlphaCutoff.value).toBe(1);
     // exponent 0 would make `pow(0, 0)` — undefined GLSL — at any face-away fragment.
     expect(hot.uniforms.uShadeExponent.value).toBeGreaterThan(0);
+    expect(hot.uniforms.uShininess.value).toBeGreaterThan(0);
 
     const cold = createMeshMaterial(
       { ...ATTRS, ambient: -5, alpha_cutoff: -5 } as MeshMetadata,

@@ -86,10 +86,9 @@ function bspPartOf(mesh: THREE.Object3D): { wrapper: THREE.Object3D; partIndex: 
  *
  * NOTE for mesh partitions (`add_mesh(partition=…)`, spec §9.2): back-to-front is
  * *correct but pointless* for OPAQUE parts — it forfeits the front-to-back early-Z
- * rejection an opaque pass would rather have. Not a bug, and deliberately not
- * special-cased: mesh partitions write no `bsp_tree` today, so they never reach
- * this function, and a translucent mesh partition would genuinely want this order.
- * Recorded so it is not rediscovered as one.
+ * rejection an opaque pass would rather have. Native mesh partitions now retain
+ * their BSP because a translucent mesh genuinely needs this order; opaque meshes
+ * accept the harmless ordering cost rather than carrying a second metadata policy.
  */
 function traverseBspBackToFront(
   node: BspTreeNode,

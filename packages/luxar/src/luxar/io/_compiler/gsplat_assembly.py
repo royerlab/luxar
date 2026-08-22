@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import math
 import warnings
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import zarr
@@ -149,6 +149,13 @@ MAX_CENTER_DISPLACEMENT_SIGMAS = 1.0
 #: * The decision is per WRITE, and a partitioned/laddered store writes each
 #:   part separately (see :func:`write_gsplat_arrays`), so it is taken per part.
 MAX_UNREPRESENTABLE_SPLAT_FRACTION = 0.001
+
+
+class _CentersEncodingPlan(NamedTuple):
+    """Resolved centers mode and the caller mode it was resolved against."""
+
+    requested_mode: EncodingMode
+    resolved_mode: EncodingMode
 
 
 def _axis_center_offender(
@@ -400,6 +407,21 @@ def _resolve_centers_encoding_mode(
     return EncodingMode.PRECISION
 
 
+def _centers_mode_for_write(
+    plan: Optional[_CentersEncodingPlan],
+    centers: NDArray[np.float32],
+    cholesky_factors: NDArray[np.float32],
+    n_dims: int,
+    ctx: DatasetCtx,
+) -> EncodingMode:
+    """Reuse an ordering-time mode only for the same requested write mode."""
+    if plan is not None and plan.requested_mode == ctx.encoding_mode:
+        return plan.resolved_mode
+    return _resolve_centers_encoding_mode(
+        centers, cholesky_factors, n_dims, ctx.encoding_mode, ctx.encoder
+    )
+
+
 def validate_gsplat_inputs(
     centers: NDArray[np.float32],
     amplitudes: Union[NDArray[np.float32], float],
@@ -521,12 +543,15 @@ def apply_gsplat_spatial_ordering(
     ctx: OrderingCtx,
     coverage_sigma: float = DEFAULT_TRUNCATION_RADIUS,
     barrier_dims: Optional[Sequence[int]] = None,
+    *,
+    dataset_ctx: Optional[DatasetCtx] = None,
 ) -> Tuple[
     NDArray[np.float32],
     Union[NDArray[np.float32], float],
     NDArray[np.float32],
     Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]],
     Optional[Dict[str, Any]],
+    Optional[_CentersEncodingPlan],
 ]:
     """Apply spatial ordering to gsplat arrays.
 
@@ -538,11 +563,19 @@ def apply_gsplat_spatial_ordering(
     spatial ordering. Callers that know the exact barrier (LOD ``coarsen_dims``
     complement, or a scene's discrete dims) should pass it explicitly.
 
+    ``dataset_ctx`` lets the ordering path resolve the centers' actual encoding
+    mode once, ask the encoder for its per-axis round-trip slack, and return a
+    plan the array writer may reuse when its requested mode matches. A direct
+    caller that omits it gets bounds against the authored centers and leaves
+    mode resolution to the write step.
+
     Returns:
-        (centers, amplitudes, cholesky_factors, colors, ordering_data)
-        where ordering_data is None if ordering was not applied.
+        (centers, amplitudes, cholesky_factors, colors, ordering_data,
+        centers_encoding_plan), where ordering_data is None if ordering was not
+        applied and centers_encoding_plan is None if no dataset context was supplied.
     """
     ordering_data = None
+    centers_encoding_plan = None
     if ctx.enable_spatial_index and n_splats > 0:
         from ..ordering import (
             compute_chunk_bounds_gsplats,
@@ -577,12 +610,38 @@ def apply_gsplat_spatial_ordering(
         chunk_size = max(1024, TARGET_CHUNK_BYTES // bytes_per_splat)
         chunk_size = min(chunk_size, n_splats)
 
+        centers_mode = (
+            _resolve_centers_encoding_mode(
+                centers,
+                cholesky_factors,
+                n_dims,
+                dataset_ctx.encoding_mode,
+                dataset_ctx.encoder,
+            )
+            if dataset_ctx is not None
+            else None
+        )
+        if dataset_ctx is not None and centers_mode is not None:
+            centers_encoding_plan = _CentersEncodingPlan(
+                dataset_ctx.encoding_mode, centers_mode
+            )
+        coord_slack = (
+            # Centers encode with the default allow_lut=True, so the query must
+            # ask about the same write path.
+            dataset_ctx.encoder.coordinate_round_trip_slack(
+                centers, centers_mode, allow_lut=True
+            )
+            if dataset_ctx is not None and centers_mode is not None
+            else None
+        )
+
         chunk_bounds = compute_chunk_bounds_gsplats(
             centers,
             cholesky_factors,
             chunk_size,
             coverage_sigma=coverage_sigma,
             slice_dims=slice_dims,
+            coord_slack=coord_slack,
         )
 
         ordering_data = {
@@ -597,7 +656,14 @@ def apply_gsplat_spatial_ordering(
             f"with {len(chunk_bounds)} chunks"
         )
 
-    return centers, amplitudes, cholesky_factors, colors, ordering_data
+    return (
+        centers,
+        amplitudes,
+        cholesky_factors,
+        colors,
+        ordering_data,
+        centers_encoding_plan,
+    )
 
 
 def compute_amplitude_mass_stats(
@@ -713,6 +779,7 @@ def write_gsplat_arrays(
     n_dims: int,
     cholesky_is_uniform: bool,
     ordering_data: Optional[Dict[str, Any]],
+    centers_encoding_plan: Optional[_CentersEncodingPlan],
     ctx: DatasetCtx,
 ) -> dict[str, Any]:
     """Write gsplat arrays to a zarr group and return metadata.
@@ -784,13 +851,10 @@ def write_gsplat_arrays(
         dtype=centers.dtype,
         per_array_bytes=True,
     )
-    # Sigma rail: a lossy (uint16 fixed-point) center grid is only legitimate
-    # when half its step is small against the splats' own σ on that axis — or
-    # when the encoder will grid-snap the axis and store it exactly. See
-    # MAX_CENTER_DISPLACEMENT_SIGMAS — this is the single shared choke point
-    # where centers AND cholesky_factors are both in hand.
-    centers_mode = _resolve_centers_encoding_mode(
-        centers, cholesky_factors, n_dims, ctx.encoding_mode, ctx.encoder
+    # Reuse the ordering-time sigma-rail verdict only when it was resolved for
+    # this write mode; otherwise resolve against the actual writer context.
+    centers_mode = _centers_mode_for_write(
+        centers_encoding_plan, centers, cholesky_factors, n_dims, ctx
     )
     # An escalated write must bypass the encoder's content-dedup registry.
     # Dedup is keyed on the centers BYTES alone, but the rail makes the chosen
