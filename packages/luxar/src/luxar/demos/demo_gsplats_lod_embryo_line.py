@@ -108,7 +108,6 @@ DEMO_META = {
     },
 }
 
-import math
 import sys
 from pathlib import Path
 
@@ -134,7 +133,7 @@ from luxar.demos import (
     parse_demo_flags,
     warn_if_no_cuda_gpu,
 )
-from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
+from luxar.demos._cinematic_camera import framing_scale
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.paths import get_demos_output_dir
@@ -147,7 +146,7 @@ COUNT = 100  # number of embryos along the line (override with --count=N)
 SPACING_FACTOR = 1.5  # center-to-center spacing as a multiple of embryo diameter
 JITTER_FRACTION = 0.18  # lateral/along-line jitter as a fraction of spacing
 SEED = 0  # RNG seed so the layout is reproducible
-AUTHORED_CAMERA_FOV_DEG = 50.0
+AUTHORED_CAMERA_FOV_DEG = 50.0  # vertical FOV the 0.12 L standoff was tuned at
 
 # Parse shared demo flags + this demo's extras.
 FLAGS = parse_demo_flags()
@@ -237,16 +236,12 @@ def camera_for_line(n: int, spacing: float, diameter: float) -> CameraConfig:
     """
     radius = diameter / 2.0
     total_len = (n - 1) * spacing
-    # Stand back off the near end (−X), offset sideways ~2 diameters in +Z and
-    # raised ~1 diameter in +Y, and aim at the MIDDLE of the row — so the whole
-    # sequence recedes diagonally and stays centred (standing right at the first
-    # embryo blows it out and crams the line into a corner).
-    near_standoff = (
-        total_len
-        * 0.12
-        * math.tan(math.radians(AUTHORED_CAMERA_FOV_DEG / 2.0))
-        / math.tan(math.radians(CINEMATIC_FOV_DEG / 2.0))
-    )
+    # Scale the authored 0.12 L near-end standoff for the cinematic lens, offset
+    # sideways ~2 diameters in +Z and raised ~1 diameter in +Y, then aim at the
+    # MIDDLE of the row — so the sequence recedes diagonally and stays centred
+    # (standing right at the first embryo blows it out and crams the line into a
+    # corner).
+    near_standoff = total_len * 0.12 * framing_scale(AUTHORED_CAMERA_FOV_DEG)
     position = (-near_standoff, diameter * 1.0, diameter * 2.2)
     target = (total_len * 0.45, 0.0, 0.0)
     return CameraConfig(

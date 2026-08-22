@@ -36,7 +36,8 @@ already thinks in:
 * Derive the distance from the field of view (the better rule — a perspective
   camera subtends a sphere of radius R at ``asin(R / D)``): read
   :data:`CINEMATIC_FOV_DEG` and the distance follows.
-* Keep an empirically tuned distance and pull it in: :func:`pull_in`.
+* Keep an empirically tuned distance and scale it with :func:`framing_scale`;
+  :func:`pull_in` applies that scale to a complete target-relative pose.
 
 Both are the same statement — "this pose was composed for 63°" — and neither
 leaves a bare 0.71 in a demo for a later reader to decode.
@@ -56,6 +57,13 @@ CINEMATIC_FOV_DEG = 63.0
 #: The viewer's own default vertical FOV (its ``50mm Normal`` preset), which is
 #: what a demo pose composed before the demos opted into the cinematic look.
 VIEWER_DEFAULT_FOV_DEG = 47.0
+
+
+def framing_scale(from_fov_deg: float = VIEWER_DEFAULT_FOV_DEG) -> float:
+    """Return the distance scale that preserves planar framing at 63°."""
+    return math.tan(math.radians(from_fov_deg / 2.0)) / math.tan(
+        math.radians(CINEMATIC_FOV_DEG / 2.0)
+    )
 
 
 def pull_in(
@@ -84,9 +92,7 @@ def pull_in(
     Returns:
         The position that frames the same subject at :data:`CINEMATIC_FOV_DEG`.
     """
-    scale = math.tan(math.radians(from_fov_deg / 2.0)) / math.tan(
-        math.radians(CINEMATIC_FOV_DEG / 2.0)
-    )
+    scale = framing_scale(from_fov_deg)
     return (
         target[0] + (position[0] - target[0]) * scale,
         target[1] + (position[1] - target[1]) * scale,

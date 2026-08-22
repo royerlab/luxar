@@ -1727,9 +1727,11 @@ def _forest_dimensions() -> Dimensions:
 
 def _viewer_config() -> ViewerConfig:
     camera_target = (4.0, 6.0, 4.5)
-    authored_position = np.asarray((-48.0, -42.0, 14.0))
-    view_direction = authored_position - np.asarray(camera_target)
+    view_from = np.asarray((-48.0, -42.0, 14.0))
+    view_direction = view_from - np.asarray(camera_target)
     view_direction /= np.linalg.norm(view_direction)
+    # Carry over the authored view direction, but solve the standoff from the
+    # cinematic lens and planted span so the opening eye stays outside the trees.
     camera_distance = (FOREST_SIZE / 2.0) / math.tan(
         math.radians(CINEMATIC_FOV_DEG / 2.0)
     )
@@ -1741,8 +1743,8 @@ def _viewer_config() -> ViewerConfig:
         # ACES explicitly — the house default; the luminous accents +
         # emissive foliage mix is exactly what its filmic rolloff is for.
         tone_mapping="ACES",
-        # Opening pose: low vantage from the forest edge at canopy height,
-        # looking into the depth of the field — not the default top-down.
+        # Opening pose: low vantage outside the forest edge at canopy height,
+        # looking into the field — the pose test locks that clearance.
         camera=CameraConfig(
             position=camera_position,
             target=camera_target,

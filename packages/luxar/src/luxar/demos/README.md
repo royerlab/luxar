@@ -110,11 +110,11 @@ the fit (#1861).
 An authored camera position is a stronger contract, because its distance was
 composed for one FOV. Every authored pose **composes for 63°** through
 `_cinematic_camera.py`: read `CINEMATIC_FOV_DEG` when the distance comes from
-the lens, or call `pull_in()` with the pose's original 38°–50° FOV to carry an
-empirically tuned pose over. It scales about the pose's target rather than the
-world origin, so an off-origin camera keeps looking where it was aimed. That
-keeps the lens whole and the framing exact, and costs the stronger perspective a
-wider lens gives. `test_demos_cinematic_mode.py` rejects both a mixed-lens FOV
+the lens, or use `framing_scale()` / `pull_in()` with the pose's original
+38°–50° FOV. Most poses preserve their authored framing exactly; the
+biodiversity globe preserves its silhouette, while the forest and embryo-line
+poses preserve camera clearance instead. `pull_in()` scales about the target,
+so an off-origin camera keeps its aim. The guard rejects both a mixed-lens FOV
 pin and a bare authored position whose FOV assumption nobody can read.
 
 Four demos pin scientific-fidelity exceptions. The two quantitative ortho demos

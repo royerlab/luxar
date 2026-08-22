@@ -14,7 +14,7 @@ and flipping a rendering look on by default there would restyle every scene
 anyone writes with Luxar. So each demo states it, and this guard is what keeps
 "all of them" true for demo number 87.
 
-Four invariants, and they close different holes:
+Five invariants, and they close different holes:
 
 ``test_every_scene_passes_a_viewer_config``
     No ``create_scene`` call may omit ``viewer_config``. Without this a new demo
@@ -38,6 +38,9 @@ Four invariants, and they close different holes:
 ``test_scientific_fidelity_overrides_are_explicit``
     The four demos whose scale, intensity, or categorical hue would be damaged
     by lens distortion and detector noise keep those author overrides explicit.
+``test_python_fov_constants_match_the_viewer_contract``
+    The Python framing helpers stay locked to the viewer's 35 mm preset and
+    default FOV values, so a TypeScript lens retune cannot silently drift demos.
 
 A literal ``True`` is required, not any truthy expression: a scene whose look
 depends on a flag computed at build time is not something a reader can confirm,
@@ -60,10 +63,10 @@ viewer (#1861).
 
 A demo that authors a camera position has a stronger contract, since its distance
 was composed for one specific FOV. Every authored pose is composed for 63°
-through ``demos/_cinematic_camera.py``: lens-derived poses use
-``CINEMATIC_FOV_DEG`` directly, and empirical poses use ``pull_in`` with the FOV
-they were tuned against. This preserves framing exactly while keeping the
-preset's 35 mm framing and distortion together.
+through ``demos/_cinematic_camera.py``. Most preserve their authored framing;
+the biodiversity globe preserves its silhouette, while the forest and embryo
+line instead preserve subject clearance. All keep the preset's 35 mm framing
+and distortion together.
 """
 
 from __future__ import annotations
@@ -76,9 +79,11 @@ from pathlib import Path
 import pytest
 
 from luxar.conftest import find_repo_relative_file
+from luxar.demos import _cinematic_camera
 from luxar.demos._cinematic_camera import (
     CINEMATIC_FOV_DEG,
     VIEWER_DEFAULT_FOV_DEG,
+    framing_scale,
     pull_in,
 )
 
@@ -203,19 +208,19 @@ def test_every_scene_passes_a_viewer_config(path: Path) -> None:
 def _composes_for_the_cinematic_lens(tree: ast.AST, call: ast.Call) -> bool:
     """Whether an authored pose is demonstrably built for the preset's 63° lens.
 
-    Two spellings, both from ``demos/_cinematic_camera.py`` and both visible to
-    a static reader:
+    Two routes, both from ``demos/_cinematic_camera.py`` and visible to a static
+    reader:
 
     * ``position=pull_in(...)`` — a distance tuned at an authored lens carried
       over to 63°.
-    * the module imports ``CINEMATIC_FOV_DEG`` — it derives the distance from
-      the lens itself, so there is no 47° assumption left to protect.
+    * the module imports ``CINEMATIC_FOV_DEG`` or ``framing_scale`` — it derives
+      a distance from the cinematic lens, so there is no hidden 47° assumption.
 
     The second test is per-MODULE rather than per-call, which is the looser of
-    the two: a module that imports the constant vouches for every pose in it.
+    the two: a module that imports either symbol vouches for every pose in it.
     That is the honest granularity for a demo whose framing comes out of one
-    ``camera_distance_for_radius``-style helper, and the import is a deliberate
-    enough act to read as the statement it is.
+    camera-distance helper, and the import is a deliberate enough act to read
+    as the statement it is.
     """
     imported_symbols = {
         alias.asname or alias.name: alias.name
@@ -228,7 +233,7 @@ def _composes_for_the_cinematic_lens(tree: ast.AST, call: ast.Call) -> bool:
     if isinstance(position, ast.Call) and isinstance(position.func, ast.Name):
         if imported_symbols.get(position.func.id) == "pull_in":
             return True
-    return "CINEMATIC_FOV_DEG" in imported_symbols.values()
+    return bool({"CINEMATIC_FOV_DEG", "framing_scale"} & set(imported_symbols.values()))
 
 
 @pytest.mark.parametrize("path", MODULES, ids=_module_ids(MODULES))
@@ -340,6 +345,11 @@ def test_the_guard_reads_the_flag_it_claims_to(source: str, flagged: bool) -> No
             "CameraConfig(position=(0.0, 0.0, d))",
             False,
         ),
+        (
+            "from luxar.demos._cinematic_camera import framing_scale\n"
+            "CameraConfig(position=(0.0, 0.0, d * framing_scale(50.0)))",
+            False,
+        ),
         # A pull_in-looking call that is NOT the helper stays flagged.
         ("CameraConfig(position=other.pull_in(p))", True),
         (
@@ -379,6 +389,13 @@ def test_pull_in_preserves_framing_from_every_authored_lens(
     assert tuple(moved[i] - target[i] for i in range(3)) == pytest.approx(
         tuple((position[i] - target[i]) * new_distance / old_distance for i in range(3))
     )
+    assert new_distance / old_distance == pytest.approx(framing_scale(from_fov_deg))
+
+
+def test_pull_in_uses_the_shared_framing_scale(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_cinematic_camera, "framing_scale", lambda _from_fov_deg: 0.25)
+
+    assert pull_in((8.0, 12.0, 16.0), (4.0, 4.0, 4.0)) == (5.0, 6.0, 7.0)
 
 
 def test_python_fov_constants_match_the_viewer_contract() -> None:

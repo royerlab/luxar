@@ -24,15 +24,15 @@ documented in `VIEWER_GUIDE.md`; a demo cannot correct it, and closing it means
 applying the expanded fov before the fit (#1861).
 
 All demos with an authored camera position compose for 63° through the new
-`demos/_cinematic_camera.py`, so the lens stays whole and the framing is
-preserved exactly (#1862): `CINEMATIC_FOV_DEG` where the distance comes from
-the lens (quantum orbitals' `asin(R/D)` rule, which therefore just moves closer,
-79.97 → 60.65), and `pull_in()` for planar poses carried over from an authored
-38°–50° FOV.
+`demos/_cinematic_camera.py`, so the lens stays whole (#1862):
+`CINEMATIC_FOV_DEG` where the distance comes from the lens, and
+`framing_scale()` / `pull_in()` for poses carried over from an authored 38°–50°
+FOV. Most preserve their framing exactly; the biodiversity globe preserves its
+silhouette, while the forest and embryo-line poses preserve camera clearance.
 `pull_in` scales about the pose's target, not the world origin, so the Mip-NeRF
-garden camera keeps pointing at the table. Only the framing carries over, not the
-image — a wider lens at a shorter distance foreshortens more — so these poses are
-worth a look on the next gallery pass.
+garden camera keeps pointing at the table. For those pulled-in poses only the
+framing carries over, not the image — a wider lens at a shorter distance
+foreshortens more — so they are worth a look on the next gallery pass.
 
 A new lint (`test_demos_cinematic_mode.py`) keeps this true for demo 87: every
 `create_scene` must pass a non-`None` `viewer_config`, every `ViewerConfig` built
