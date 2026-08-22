@@ -9,6 +9,9 @@
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import * as THREE from 'three';
+import { readFileSync } from 'node:fs';
+import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // Caller-injected recursion handle: the partition loader now takes
 // loadSceneNodes as an explicit ``loadChildren`` parameter (mirrors
@@ -19,6 +22,8 @@ import { loadPartitionGroupNode } from '../../../../../data/scene-loader/nodes/l
 import type { NodeBuildCtx } from '../../../../../data/scene-loader/nodes/build-ctx';
 import { makeTestNodeBuildCtx } from '../../../../helpers/make-test-node-build-ctx';
 import type { SceneNode } from '../../../../../data/data-loader-types';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 beforeEach(() => {
   loadSceneNodesMock.mockReset();
@@ -77,6 +82,38 @@ function attachStubChildren() {
     obj.name = child.path;
     parentThree.add(obj);
   });
+}
+
+function pythonWrongFramePartition(): SceneNode {
+  const fixture = path.resolve(
+    __dirname,
+    '../../../../../../tests/fixtures/test_partition_wrong_frame.luxar.zarr'
+  );
+  const attrs = (relativePath: string): SceneNode['attrs'] => {
+    const document = JSON.parse(
+      readFileSync(path.join(fixture, relativePath, 'zarr.json'), 'utf8')
+    ) as { attributes: SceneNode['attrs'] };
+    return document.attributes;
+  };
+  const partitionAttrs = attrs('tiles');
+  const children = [0, 1].map((index) => {
+    const relativePath = `tiles/part_${index}`;
+    const childAttrs = attrs(relativePath);
+    return {
+      path: `/${relativePath}`,
+      type: childAttrs.type,
+      attrs: childAttrs,
+      hasSpatialIndex: false,
+      children: [],
+    } as SceneNode;
+  });
+  return {
+    path: '/tiles',
+    type: 'group',
+    attrs: partitionAttrs,
+    hasSpatialIndex: false,
+    children,
+  };
 }
 
 describe('loadPartitionGroupNode', () => {
@@ -219,5 +256,19 @@ describe('loadPartitionGroupNode', () => {
     expect(wrapper.userData.bspTree).toBeUndefined();
     // Still tagged by load order (child_index absent → falls back to index).
     expect(wrapper.children[0].userData.partIndex).toBe(0);
+  });
+
+  it('drops a wrong-frame tree written by the Python scene compiler', async () => {
+    attachStubChildren();
+
+    const wrapper = await loadPartitionGroupNode(
+      pythonWrongFramePartition(),
+      new THREE.Group(),
+      makeStubLoc(),
+      makeCtx(),
+      loadSceneNodesMock
+    );
+
+    expect(wrapper.userData.bspTree).toBeUndefined();
   });
 });
