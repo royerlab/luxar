@@ -1,9 +1,10 @@
 /**
  * Float32 transcendental math matching Rust/WASM's `libm` operation order.
  *
- * Ported from `libm` 0.2.15 `expf.rs` and `logf.rs`, which carry the FreeBSD
- * msun `e_expf.c` and `e_logf.c` implementations. Kernels evaluating `exp` or
- * `log` on an f32 must use `expf` or `logf`, never host `Math.exp` / `Math.log`.
+ * Ported from `libm` 0.2.15 `expf.rs`, `logf.rs`, and `expm1f.rs`, which carry
+ * the FreeBSD msun implementations used by the Rust 1.92 wasm32 target. Kernels
+ * evaluating these operations on an f32 must use these ports, never the host's
+ * f64 `Math.exp`, `Math.log`, or `Math.expm1` implementations.
  *
  * ====================================================
  * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
@@ -152,4 +153,107 @@ export function logf(value: number): number {
   result = Math.fround(result - halfDifferenceSquared);
   result = Math.fround(result + difference);
   return Math.fround(result + Math.fround(exponentFloat * LOG_LN2_HI));
+}
+
+const EXPM1_OVERFLOW_THRESHOLD = bitsToFloat(0x42b17180);
+const EXPM1_Q1 = bitsToFloat(0xbd088868);
+const EXPM1_Q2 = bitsToFloat(0x3acf3010);
+
+/** Rust compiler-builtins `expm1f`, evaluated in the same f32 operation order. */
+export function expm1f(value: number): number {
+  let x = Math.fround(value);
+  let magnitudeBits = floatToBits(x);
+  const negative = magnitudeBits >>> 31 !== 0;
+  magnitudeBits &= 0x7fffffff;
+
+  if (magnitudeBits >= 0x4195b844) {
+    if (magnitudeBits > 0x7f800000) return x;
+    if (negative) return -1;
+    if (x > EXPM1_OVERFLOW_THRESHOLD) {
+      return Math.fround(x * TWO_POW_127);
+    }
+  }
+
+  let exponent: number;
+  let high: number;
+  let low: number;
+  let correction = 0;
+  if (magnitudeBits > 0x3eb17218) {
+    if (magnitudeBits < 0x3f851592) {
+      if (!negative) {
+        high = Math.fround(x - LOG_LN2_HI);
+        low = LOG_LN2_LO;
+        exponent = 1;
+      } else {
+        high = Math.fround(x + LOG_LN2_HI);
+        low = -LOG_LN2_LO;
+        exponent = -1;
+      }
+    } else {
+      // The magnitude guard above bounds x, making Math.trunc equivalent to Rust's
+      // saturating float-to-i32 cast and keeping the exponent bit shifts in range.
+      exponent = Math.trunc(
+        Math.fround(Math.fround(EXP_INV_LN2 * x) + Math.fround(negative ? -0.5 : 0.5))
+      );
+      const exponentFloat = Math.fround(exponent);
+      high = Math.fround(x - Math.fround(exponentFloat * LOG_LN2_HI));
+      low = Math.fround(exponentFloat * LOG_LN2_LO);
+    }
+    x = Math.fround(high - low);
+    correction = Math.fround(Math.fround(high - x) - low);
+  } else if (magnitudeBits < 0x33000000) {
+    return x;
+  } else {
+    exponent = 0;
+  }
+
+  const half = Math.fround(0.5 * x);
+  const squaredHalf = Math.fround(x * half);
+  const polynomial = Math.fround(
+    1 + Math.fround(squaredHalf * Math.fround(EXPM1_Q1 + Math.fround(squaredHalf * EXPM1_Q2)))
+  );
+  const denominatorTerm = Math.fround(3 - Math.fround(polynomial * half));
+  let error = Math.fround(
+    squaredHalf *
+      Math.fround(
+        Math.fround(polynomial - denominatorTerm) /
+          Math.fround(6 - Math.fround(x * denominatorTerm))
+      )
+  );
+
+  if (exponent === 0) {
+    return Math.fround(x - Math.fround(Math.fround(x * error) - squaredHalf));
+  }
+
+  error = Math.fround(Math.fround(x * Math.fround(error - correction)) - correction);
+  error = Math.fround(error - squaredHalf);
+  if (exponent === -1) {
+    return Math.fround(Math.fround(0.5 * Math.fround(x - error)) - 0.5);
+  }
+  if (exponent === 1) {
+    if (x < -0.25) {
+      return Math.fround(-2 * Math.fround(error - Math.fround(x + 0.5)));
+    }
+    return Math.fround(1 + Math.fround(2 * Math.fround(x - error)));
+  }
+
+  const twoToExponent = bitsToFloat(((0x7f + exponent) << 23) >>> 0);
+  if (exponent < 0 || exponent > 56) {
+    let result = Math.fround(Math.fround(x - error) + 1);
+    result =
+      exponent === 128
+        ? Math.fround(Math.fround(result * 2) * TWO_POW_127)
+        : Math.fround(result * twoToExponent);
+    return Math.fround(result - 1);
+  }
+
+  const twoToNegativeExponent = bitsToFloat(((0x7f - exponent) << 23) >>> 0);
+  if (exponent < 23) {
+    return Math.fround(
+      Math.fround(Math.fround(x - error) + Math.fround(1 - twoToNegativeExponent)) * twoToExponent
+    );
+  }
+  return Math.fround(
+    Math.fround(Math.fround(x - Math.fround(error + twoToNegativeExponent)) + 1) * twoToExponent
+  );
 }

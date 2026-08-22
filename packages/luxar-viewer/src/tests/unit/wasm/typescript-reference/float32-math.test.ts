@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { expf, logf } from '../../../../wasm/typescript/float32-math';
+import { expf, expm1f, logf } from '../../../../wasm/typescript/float32-math';
 
 const bitBuffer = new ArrayBuffer(4);
 const bitView = new DataView(bitBuffer);
@@ -71,6 +71,33 @@ const LOG_VECTORS: ReadonlyArray<readonly [number, number]> = [
   [0x7f800000, 0x7f800000],
 ];
 
+const EXPM1_VECTORS: ReadonlyArray<readonly [number, number]> = [
+  [0x00000000, 0x00000000],
+  [0x80000000, 0x80000000],
+  [0x00000001, 0x00000001],
+  [0x007fffff, 0x007fffff],
+  [0x00800000, 0x00800000],
+  [0x33000000, 0x33000000],
+  [0x33000001, 0x33000001],
+  [0x3e800000, 0x3e916bc8],
+  [0xbe800000, 0xbe62820c],
+  [0x3eb17218, 0x3ed413cd],
+  [0x3eb17219, 0x3ed413ce],
+  [0x3f851591, 0x3fea09e4],
+  [0x3f851592, 0x3fea09e6],
+  [0xbf333333, 0xbf00dfc9],
+  [0xc0a00000, 0xbf7e466c],
+  [0x4195b843, 0x4cffffd9],
+  [0x4195b844, 0x4cfffff9],
+  [0xc195b844, 0xbf800000],
+  [0x42340000, 0x5ff267bb],
+  [0x42700000, 0x6abcede5],
+  [0x42b17180, 0x7f7fb40f],
+  [0x42b17181, 0x7f800000],
+  [0x7f800000, 0x7f800000],
+  [0xff800000, 0xbf800000],
+];
+
 describe('compiler-builtins float32 math', () => {
   // Expected bits were captured from direct temporary exports in the real
   // rustc 1.92 wasm32 build, rather than from another JavaScript math library.
@@ -86,6 +113,12 @@ describe('compiler-builtins float32 math', () => {
     }
   });
 
+  it('matches Rust expm1f bit-for-bit across normal, subnormal, and special values', () => {
+    for (const [inputBits, expectedBits] of EXPM1_VECTORS) {
+      expect(toBits(expm1f(fromBits(inputBits))), inputBits.toString(16)).toBe(expectedBits);
+    }
+  });
+
   it('covers inputs where rounded JavaScript transcendentals choose another float', () => {
     const expInput = fromBits(0xc07fff04);
     const logInput = fromBits(0x0001a2a2);
@@ -95,6 +128,7 @@ describe('compiler-builtins float32 math', () => {
 
   it('preserves the Rust special-value contract without pinning NaN payloads', () => {
     expect(Number.isNaN(expf(Number.NaN))).toBe(true);
+    expect(Number.isNaN(expm1f(Number.NaN))).toBe(true);
     expect(Number.isNaN(logf(-1))).toBe(true);
     expect(Number.isNaN(logf(Number.NaN))).toBe(true);
   });
