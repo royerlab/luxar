@@ -11,9 +11,10 @@ byte-for-byte behaviour. Round-trip suites use tolerances that would mask a
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from luxar._zarr_compat import memory_group
-from luxar.encoding import ArrayEncoder
+from luxar.encoding import ArrayDecoder, ArrayEncoder, EncodingMode, SemanticType
 
 
 def test_quantize_normalized_clip_rounds_vs_truncates() -> None:
@@ -27,6 +28,47 @@ def test_quantize_normalized_clip_rounds_vs_truncates() -> None:
     )
     assert int(rounded[0]) == 11
     assert int(truncated[0]) == 10
+
+
+@pytest.mark.parametrize(
+    ("semantic_type", "data", "bounds"),
+    [
+        (
+            SemanticType.POSITIVE_SCALAR,
+            np.geomspace(1e-3, 5.0, 4001, dtype=np.float16),
+            None,
+        ),
+        (
+            SemanticType.BOUNDED_SCALAR,
+            np.linspace(0.0, 1.0, 4001, dtype=np.float16),
+            (0.0, 1.0),
+        ),
+    ],
+)
+def test_float16_uint16_scalar_quantization_preserves_dynamic_range(
+    semantic_type: SemanticType,
+    data: np.ndarray,
+    bounds: tuple[float, float] | None,
+) -> None:
+    group = memory_group()
+    ArrayEncoder().encode(
+        data,
+        group,
+        "a",
+        semantic_type,
+        mode=EncodingMode.AUTO,
+        bounds=bounds,
+        allow_lut=False,
+        deduplicate=False,
+    )
+
+    array = group["a"]
+    assert array.attrs["encoding"]["name"] == "bounded_scalar_uint16"
+
+    decoded = np.asarray(ArrayDecoder().decode(array, group)).astype(np.float64)
+    authored = data.astype(np.float64)
+    quantum = float(authored.max() - authored.min()) / np.iinfo(np.uint16).max
+    assert float(np.max(np.abs(decoded - authored))) <= quantum
 
 
 def test_custom_bounded_scalar_truncates() -> None:
