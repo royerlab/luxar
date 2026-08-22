@@ -73,8 +73,8 @@ def test_every_fixture_generator_uses_the_dedicated_environment() -> None:
     assert dedicated_calls == set(FIXTURE_SCRIPTS)
 
 
-def test_typescript_ci_verifies_cpu_torch_without_caching_pip() -> None:
-    """CI must prove the resolver selected CPU torch and avoid caching its wheels."""
+def test_typescript_ci_verifies_lean_cpu_torch_without_caching_pip() -> None:
+    """CI must prove the resolver selected the lean CPU env and skip wheel caching."""
     workflow = (REPO / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     typescript_job = workflow.split("\n  typescript-tests:", 1)[1].split(
         "\n  release-readiness:", 1
@@ -83,5 +83,7 @@ def test_typescript_ci_verifies_cpu_torch_without_caching_pip() -> None:
 
     assert "torch.__version__.endswith('+cpu')" in typescript_job
     assert "torch.version.cuda is None" in typescript_job
+    assert "('napari', 'PyQt6', 'ruff', 'mypy')" in typescript_job
+    assert "importlib.util.find_spec(name) is None" in typescript_job
     assert "cache: pip" not in typescript_job
     assert "cache: pip" not in e2e_job

@@ -456,6 +456,8 @@ jobs:
         if: needs.changes.outputs.dom_py != 'false'
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
 
       - name: Install Hatch
         if: needs.changes.outputs.dom_py != 'false'
@@ -641,13 +643,16 @@ jobs:
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
         run: pipx install hatch
 
-      - name: Verify fixture environment uses CPU-only torch
+      - name: Verify fixture environment is lean and CPU-only
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
         working-directory: .
         run: >-
-          hatch run fixtures:python -c "import torch;
+          hatch run fixtures:python -c "import importlib.util; import torch;
           assert torch.__version__.endswith('+cpu'), torch.__version__;
-          assert torch.version.cuda is None, torch.version.cuda"
+          assert torch.version.cuda is None, torch.version.cuda;
+          unwanted = ('napari', 'PyQt6', 'ruff', 'mypy');
+          assert all(importlib.util.find_spec(name) is None for name in unwanted),
+          [name for name in unwanted if importlib.util.find_spec(name) is not None]"
 
       - name: Generate test fixtures
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
