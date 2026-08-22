@@ -605,10 +605,11 @@ def dispatch_parallel_tiled(
     """Parallel tiled fitting: spawn one subprocess per tile.
 
     Branches BEFORE the in-memory downscale in the command body. Each worker
-    re-invokes ``fit --tile i/M``, loading and downscaling its own region and
-    rescaling back to original coordinates, then the parent reloads and merges
-    the outputs. Once concurrency is confirmed, the parent also decimates one
-    matching reference for whole-merge quality scoring. When ``--jobs``
+    re-invokes ``fit --tile i/M``, loading and downscaling the whole grid before
+    selecting its tile and rescaling the fitted splats to original coordinates;
+    the parent then reloads and merges the outputs. Once concurrency is confirmed,
+    the parent also decimates one matching reference for whole-merge quality
+    scoring. When ``--jobs``
     resolves to 1 (e.g. ``-j auto`` on a CPU/MPS box, or an explicit ``-j
     0/1``), it falls through without materializing that reference so the
     in-process sequential path performs the downscale only once.

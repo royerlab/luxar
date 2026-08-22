@@ -324,5 +324,6 @@ def stamp_merged_quality(
 __all__ = [
     "announce_unscored_merge",
     "announce_unscored_partition_merge",
+    "resolve_merged_reference",
     "stamp_merged_quality",
 ]
