@@ -406,8 +406,9 @@ class TestScenePointCap:
 
         radial = np.linalg.norm(positions.astype(np.float64), axis=1)
         r95 = float(np.percentile(radial, 95))
-        cam_dist = 0.75 * r95 / np.tan(np.radians(50.0) / 2.0)
+        cam_dist = 0.75 * r95 / np.tan(np.radians(_demo.CINEMATIC_FOV_DEG) / 2.0)
         camera = root.attrs["viewer_config"]["camera"]
+        assert "fov" not in camera
         assert float(camera["far"]) == pytest.approx(
             (cam_dist + float(radial.max())) * 1.5
         )
