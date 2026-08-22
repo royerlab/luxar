@@ -374,11 +374,13 @@ def create_luxar_scene(
                 dimensions=dims,
                 # Neutral tone-mapping, not the viewer's default ACES (#1459):
                 # verified against this volume, which needs ~2 stops
-                # (exposure=1.97) because the blending mode projects each
-                # splat's peak instead of integrating along the ray — so the
-                # scene runs over range, where Neutral rolls the peaks off
-                # instead of clipping them flat. Moving it needs a live A/B, not
-                # a blind flip.
+                # (exposure=1.97) to bring the emission-absorption integral up
+                # to a readable level once the layer's own opacity is held down
+                # to 0.06. Neutral rather than ACES because what does reach the
+                # top of the range is the embryo's dense core, and Neutral rolls
+                # those peaks off instead of clipping them flat. Both numbers
+                # were in effect while the layer settings below were dialled in,
+                # so moving either needs a live A/B, not a blind flip.
                 viewer_config=ViewerConfig(tone_mapping="Neutral", exposure=1.97),
             )
 
@@ -425,14 +427,34 @@ Navigation:
                     amplitudes=gsplats_data.amplitudes,
                     cholesky_factors=gsplats_data.cholesky_factors,
                     colors=colors,
-                    opacity=1.0,
-                    # `normal` rather than an accumulating mode: this light-sheet
-                    # volume carries a heavy diffuse background, and integrating
-                    # it along every ray buries the embryo in haze. `normal`
-                    # composites the projected 2D-Gaussian peak (surface
-                    # density) with alpha-over instead, so the background stops
-                    # summing and the surface nuclei stay crisp.
-                    blending_mode="normal",
+                    # `volumetric` — emission-absorption (Max 1995) rather than
+                    # alpha-over: the embryo then reads as dense tissue with
+                    # real front-to-back depth cueing instead of a shell of
+                    # composited surface peaks. The three numbers below are ONE
+                    # setting, dialled in together against this store in the
+                    # Layers panel; moving any of them alone breaks the balance.
+                    blending_mode="volumetric",
+                    # Absorption carries the depth: kappa 3.13 is well above the
+                    # 1.0 identity, so the far side of the embryo attenuates
+                    # visibly through the near side. (kappa=0 would render
+                    # exactly like additive.)
+                    absorption=3.13,
+                    # The counterweight to that kappa. Volumetric INTEGRATES
+                    # emission along every ray, and this light-sheet volume
+                    # carries a heavy diffuse background, so at any ordinary
+                    # opacity the accumulated haze buries the embryo. Holding
+                    # emission down to 0.06 keeps the sum in range and lets
+                    # absorption — not brightness — do the shaping.
+                    opacity=0.06,
+                    # DISPLAY RANGE 0-1.085 as the Layers panel shows it. This
+                    # is a DIRECT-COLOUR node (explicit RGB, no colormap), so
+                    # the window is on the authored colour and `intensity` is a
+                    # plain gain: intensity = 1/(hi-lo) = 1/1.085, with offset
+                    # left at the 0 identity because the window starts at zero.
+                    # A window that runs PAST 1.0 is therefore a slight
+                    # roll-down, trimming the brightest accumulated cores off
+                    # the tone-map's clip point.
+                    intensity=0.921659,
                     layer=True,
                 )
                 aprint(f"Added {n_splats:,} splats")
