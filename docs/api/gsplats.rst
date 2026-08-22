@@ -35,6 +35,10 @@ stitching. Used by ``luxar gsplat fit --tiling uniform/content``.
 
 .. autofunction:: luxar.gsplats.fit_tiled
 
+.. automodule:: luxar.gsplats.merged_quality
+   :members:
+   :no-undoc-members:
+
 .. automodule:: luxar.gsplats.tiling
    :members:
    :no-undoc-members:

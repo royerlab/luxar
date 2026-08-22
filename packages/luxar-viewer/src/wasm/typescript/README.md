@@ -11,16 +11,16 @@ here automatically — not just when WASM is missing.
 
 ## Files
 
-| File                    | Role                                                                                                                                                                                               |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `index.ts`              | Barrel re-exporting every kernel and the `TypeScriptFallback` class implementing the `WasmModule` interface                                                                                        |
-| `lines-clipping.ts`     | Liang-Barsky segment clipping, batched position/scalar/color interpolation, segment lengths, and per-endpoint cap suppression; frounds every float step in the Rust op order for exact WASM parity |
-| `mesh-culling.ts`       | Whole-triangle nD culling: per-vertex slab membership + face compaction preserving original vertex indices. `Math.fround`s the slab bounds                                                         |
-| `gsplats-processing.ts` | Marginal Cholesky factorization, Mahalanobis distance, fused nD→3D projection (`project_gsplats_nd_to_3d`)                                                                                         |
-| `effective-radii.ts`    | `calculate_effective_radii` — `R_eff = sqrt(R² − D²)` for nD points sliced by a hyperplane                                                                                                         |
-| `decode.ts`             | LUT / quantized / log-scalar / geolog-scalar / per-channel (linear, log, signed-log, geolog) decoders + `decode_broadcasted`                                                                       |
-| `projection.ts`         | nD→3D position extraction (`extract_3d_positions`)                                                                                                                                                 |
-| `depth-sort.ts`         | `sort_splats_by_depth` — back-to-front splat ordering; frounds every float step in the Rust op order so WASM↔TS parity is exact-permutation                                                        |
+| File                    | Role                                                                                                                                                                                                                   |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `index.ts`              | Barrel re-exporting every kernel and the `TypeScriptFallback` class implementing the `WasmModule` interface                                                                                                            |
+| `lines-clipping.ts`     | Liang-Barsky segment clipping, batched position/scalar/color interpolation, segment lengths, and per-endpoint cap suppression; frounds every float step in the Rust op order for exact WASM parity                     |
+| `mesh-culling.ts`       | Whole-triangle nD culling: per-vertex slab membership + face compaction preserving original vertex indices. `Math.fround`s the slab bounds                                                                             |
+| `gsplats-processing.ts` | Marginal Cholesky factorization, Mahalanobis distance, fused nD→3D projection (`project_gsplats_nd_to_3d`). Frounds every float step in the Rust op order (#1820); exact vs WASM except `exp`/`log`                    |
+| `effective-radii.ts`    | `calculate_effective_radii` — `R_eff = sqrt(R² − D²)` for nD points sliced by a hyperplane. Frounds every float step in the Rust op order (#1820); bit-exact vs WASM                                                   |
+| `decode.ts`             | LUT / quantized / log-scalar / geolog-scalar / per-channel (linear, log, signed-log, geolog) decoders + `decode_broadcasted`; frounds Rust-f32 inputs and arithmetic, with a ≤1-ULP `expm1f` residual tracked by #1843 |
+| `projection.ts`         | nD→3D position extraction (`extract_3d_positions`)                                                                                                                                                                     |
+| `depth-sort.ts`         | `sort_splats_by_depth` — back-to-front splat ordering; frounds every float step in the Rust op order so WASM↔TS parity is exact-permutation                                                                            |
 
 ## Public surface
 
@@ -35,11 +35,41 @@ kernel is also exported by name from `index.ts` for direct use
 
 ## Parity contract
 
-Every TypeScript kernel here MUST produce the same numerical result
-as its Rust counterpart for the same inputs, within Float32 epsilon
-tolerance. This is locked in by
+Every TypeScript kernel here MUST produce **the same f32** as its Rust
+counterpart for the same inputs — bit-for-bit, not "within a Float32
+epsilon". This is locked in by
 `src/tests/unit/wasm/wasm-vs-typescript.test.ts` (skipped when the
 WASM binary isn't built; CI builds it and runs parity checks).
+
+"Within Float32 epsilon" was the contract until #1820 and it was the
+wrong one. These kernels feed **decisions**, not just displayed digits:
+`calculate_effective_radii` compares a distance against a radius,
+`project_gsplats_nd_to_3d` compares an amplitude against `minAmplitude`.
+A sub-epsilon difference there changes the element COUNT one backend
+emits, so a tolerance-based test passes while the two backends render
+different scenes. New parity cases must assert exact equality wherever
+exactness is reachable, and a MEASURED ulp/absolute bound (with the
+fixture that produced it) only where it is not.
+
+The two places exactness is not currently reachable are
+`Math.exp`/`Math.log`: V8's ieee754 kernels are a different approximation
+from the wasm libm's `expf`/`logf`. That is a scope decision, not a
+limit — a frounded TypeScript port of musl's `expf` measures 0/200 000
+mismatches against the real WASM — and it is tracked as **#1830**.
+
+### Per-file f32 status
+
+This directory is **not** uniformly verified. Current state:
+
+| File                    | f32 discipline                                                                                                           |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `depth-sort.ts`         | Frounded; sort permutation exact vs WASM                                                                                 |
+| `mesh-culling.ts`       | Slab bounds frounded; parity-tested                                                                                      |
+| `effective-radii.ts`    | Frounded end to end (#1820); bit-exact vs WASM over a 20k randomized sweep                                               |
+| `gsplats-processing.ts` | Frounded end to end (#1820); bit-exact except the `exp`/`log` residual (#1830)                                           |
+| `decode.ts`             | Frounds Rust-f32 inputs and decode arithmetic; log-scalar output remains within one ULP of Rust's `expm1f` pending #1843 |
+| `lines-clipping.ts`     | Frounded end to end (#1821); exact parity cases cover slab boundaries and t-parameter accumulation                       |
+| `projection.ts`         | Pure copy, no arithmetic                                                                                                 |
 
 ### Where `Math.fround` is mandatory
 
@@ -50,12 +80,31 @@ that difference is observable and must be closed with `Math.fround` at each step
 in the Rust operation order:
 
 - `depth-sort.ts` frounds every step so the sort permutation is exact.
-- `decode.ts` frounds the per-channel anchors, which arrive as f32 in WASM.
+- `decode.ts` frounds linear bounds, geolog-scalar anchors, and the log-scalar
+  `maxLog` bound, all of which arrive as f32 in WASM; its log-scalar kernels
+  fround their arithmetic too but remain within one ULP of Rust's `expm1f`
+  pending #1843.
 - `mesh-culling.ts` frounds the slab bounds. The f64 difference of two f32 values
   is _exact_ while Rust's f32 subtraction rounds; the gap is under half an ulp,
   but when the rounding goes DOWN the rounded bound is itself a legal f32 vertex
   coordinate, and a vertex sitting exactly there is visible in WASM and culled in
   unfrounded TS (`slice=1.0, tolerance=0.1` is such a case, and is a parity test).
+- `effective-radii.ts` frounds the Pythagorean accumulation, the discrete
+  tolerance subtraction and the `R² − D²` cancellation. Skipping any of them lets
+  a point on the rim of its own radius be visible on one backend and culled on
+  the other, changing `visibleCount`.
+- `gsplats-processing.ts` frounds the Σ_S dot product, the Crout reduction, both
+  forward substitutions, the shifted-Gaussian chain and the final
+  `amplitude × attenuation` product — and narrows four values Rust types as
+  `f32`: `CHOLESKY_RELATIVE_EPSILON`, `CHOLESKY_EPSILON`, the
+  forward-substitution epsilon, and the `min_amplitude`/`truncate` parameters
+  wasm-bindgen narrows at the boundary.
+
+An accumulator that lands in a `Float32Array` is **not** self-rounding: the
+store rounds the final value only, so an f64 running sum silently carries extra
+precision through the whole reduction. `sqrt` and `/` on operands that are
+already f32 need no explicit fround (f64's 53 bits ≥ 2·24 + 2 makes the double
+rounding provably benign) — it is the accumulators and the comparisons that do.
 
 - `lines-clipping.ts` frounds every clipping and interpolation step in Rust's
   operation order. Exact parity tests cover both the `slice=1.0, tolerance=0.1`
