@@ -18,7 +18,8 @@ fail-closed ``assert``. It does not police a deliberately RAISED entry —
 ``evaluate_ratchet`` reads that as debt paid down elsewhere — so the harm the hole
 enabled is a baseline that no longer describes the code, merging unexamined. (#1678's
 own baseline was a legitimate tightening; the hole, not the harm, was what was real.)
-The root ``Makefile`` was the same shape, and so were two files this change adds.
+The classifier now explicitly owns the baseline, the documentation inputs guarded
+by pytest, and the other non-Python inputs those tests consume.
 
 Matches are decided by invoking real ``grep -E`` rather than Python's ``re``. CI's
 verdict comes from POSIX ERE under GNU grep, and the two dialects differ enough
@@ -72,6 +73,16 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "its .md only selects docs-quality, which runs no pytest",
     ),
     (
+        "README.md",
+        "py",
+        "test_readme_demo_docs.py drift-guards the root demo documentation",
+    ),
+    (
+        "packages/luxar/src/luxar/demos/README.md",
+        "py",
+        "test_demo_import_spelling.py validates its shared-helper inventory",
+    ),
+    (
         "pyproject.toml",
         "py",
         "hatch envs, ruff/mypy targets and the import-linter contracts",
@@ -97,6 +108,21 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "the generated TypeScript half `check-contract` judges",
     ),
     (
+        "packages/luxar-viewer/src/tests/global-setup.ts",
+        "py",
+        "test_fixture_environment.py checks its fixture-generator invocation",
+    ),
+    (
+        "packages/luxar-viewer/src/tests/README.md",
+        "py",
+        "test_fixture_environment.py checks its fixture-generator invocation",
+    ),
+    (
+        "packages/luxar-viewer/tests/fixtures/README.md",
+        "py",
+        "test_fixture_environment.py checks its fixture-generator invocation",
+    ),
+    (
         "packages/luxar-viewer/src/wasm/rust/Cargo.lock",
         "rust",
         "the pinned crate graph every cargo check/clippy/test build resolves",
@@ -112,7 +138,7 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
 #: a separate axis — ``docs/index.rst`` matches ``docs_pattern`` by design). Without
 #: these the table above proves nothing: a pattern that matched everything would
 #: satisfy every positive row.
-NON_DOMAIN_PATHS: list[str] = ["README.md", "docs/index.rst"]
+NON_DOMAIN_PATHS: list[str] = ["CHANGELOG.md", "docs/index.rst"]
 
 #: The docs gate's own negative control: real tracked files that must NOT set
 #: ``docs_relevant``. Kept separate from ``NON_DOMAIN_PATHS`` because the two

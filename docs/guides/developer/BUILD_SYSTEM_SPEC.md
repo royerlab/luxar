@@ -812,15 +812,17 @@ its manifest. It owns, for the same reason, the data and documentation files
 the pytest suite itself reads: `scripts/complexity_baseline.json` (the C901
 ratchet's only input that carries no Python extension),
 `scripts/gallery/manifest.json` (cross-validated against the demo registry) and
-`docs/guides/user/CLI_REFERENCE.md` (drift-guarded against the live Typer app).
+`docs/guides/user/CLI_REFERENCE.md` (drift-guarded against the live Typer app),
+plus the root `README.md` and `packages/luxar/src/luxar/demos/README.md` guarded
+against the live demo registry and exported helper inventory.
 A check whose own inputs are unclassified is a check that skips for exactly the
 change it exists to catch. `.github/workflows/ci.yml` selects **all four**
 domains: it defines how every suite is invoked, so an edit that breaks a command
 or a condition is caught by the run that contains it.
 
-A change that touches no domain at all — Markdown, `docs/`, `CHANGELOG.md`, with
-`docs/guides/user/CLI_REFERENCE.md` the one exception noted above — runs no
-language suite. Those jobs still *run* (checkout plus skipped steps),
+A change that touches no domain at all — most Markdown, `docs/`, and
+`CHANGELOG.md`, except for the pytest inputs noted above — runs no language
+suite. Those jobs still *run* (checkout plus skipped steps),
 so their required contexts (`python-tests (3.12)`, `typescript-tests`,
 `release-readiness`, `wheel-viewer`) report an explicit green in seconds
 instead of a grey "skipped", which is what keeps strict branch protection from
