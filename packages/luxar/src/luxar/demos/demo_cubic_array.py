@@ -44,7 +44,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer
+from luxar.demos import add_demo_caption, launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
 
@@ -217,12 +217,8 @@ def generate_cubic_array(
                 color="rgba(255,255,255,0.6)",
                 blend_mode="difference",
             )
-            scene.add_text(
-                "100\u00b3 grid \u2022 Depth gradient",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+            add_demo_caption(
+                scene, "100\u00b3 grid \u2022 Depth gradient", DEMO_META.get("citation")
             )
 
         aprint(f"✓ Written to {output_path}")

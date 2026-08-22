@@ -295,7 +295,7 @@ in [Formats & migration](./FORMAT_AND_MIGRATION.md).
 
 ```bash
 luxar gsplat info              # Dataset statistics (splat count, dimensions, bounds, LOD structure)
-luxar gsplat doctor           # Diagnose known problems (--fix repairs what is recoverable, in place)
+luxar gsplat doctor           # Diagnose standalone gsplats or scene partitions (--fix repairs in place)
 luxar gsplat napari           # Open a dataset in napari for visual inspection
 luxar gsplat view             # Open a .gsplats.zarr directly in the web viewer
 luxar gsplat compare          # Compare reconstruction quality vs a reference volume (PSNR/SSIM/MSE)
@@ -304,20 +304,23 @@ luxar gsplat annotate-quality # Retrofit Q·e quality stamps onto an existing da
 
 `doctor` is for the problems you cannot see: a dataset written by an older Luxar
 loads and renders fine while missing something a later version learned to record,
-or carrying metadata that went stale under an edit. Given a dataset path it prints
-the `info` report (suppress with `--no-info`), then a diagnosis, and exits non-zero
+or carrying metadata that went stale under an edit. Given a standalone gsplat path
+it prints the `info` report (suppress with `--no-info`); for a scene it notes that
+the gsplat report does not apply. It then prints a diagnosis and exits non-zero
 while a problem is still standing — so it can gate a pipeline. Pass `--fix` to
-repair in place (an uncompressed `.gsplats.zarr` directory; unpack a `.zip` first),
-or `--json` to write the findings out for a machine.
+repair an uncompressed `.gsplats.zarr` or `.luxar.zarr` directory in place (unpack
+a `.zip` or `.tar.gz` first), or `--json` to write the findings out for a machine.
 
 It currently diagnoses a `kind=partition` whose split planes (`bsp_tree`) are
 missing, or are present but disagree with where the parts actually sit. Without
 them the viewer orders parts by centroid, which is not a valid painter's order and
 pops at the seams under `normal`/`volumetric` blending; where the parts are
 disjoint the planes are recovered exactly from the part boxes. For overlapping
-uniform-tiled parts, doctor uses the largest measured interpenetration on each
-axis as an overlap-tolerance floor, but still catches
-planes outside those bands. It can recover the band-bounded cuts, and reports a
+uniform-tiled parts and centroid-split lines/mesh partitions, doctor uses the
+largest measured interpenetration on each axis as an overlap-tolerance floor,
+but still catches planes outside those bands. Disjoint points and splats must
+still separate exactly, even when stale cuts remain between the child centers.
+It can recover the band-bounded cuts, and reports a
 coordinate-frame scale only when repeated planes support each changed axis, or
 when a single plane agrees with a factor proven on another axis. What cannot be
 repaired is reported with a remedy rather than guessed at.

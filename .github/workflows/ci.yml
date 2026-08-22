@@ -440,6 +440,21 @@ jobs:
       # stays machine-agnostic for local use.
       PYTEST_ADDOPTS: ${{ needs.pick-runner.outputs.label == 'obsidian' && '-n 4' || '' }}
     steps:
+      - name: Free disk space (hosted-runner fallback)
+        # The full suite exhausts the ~14 GB GitHub-hosted runner and fails with
+        # `[Errno 28] No space left on device`, turning dev red whenever
+        # pick-runner falls back off the self-hosted box (#1816). Reclaim
+        # preinstalled tooling we never use. obsidian has ample disk, so skip it
+        # there.
+        if: runner.environment == 'github-hosted'
+        working-directory: ${{ github.workspace }}
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /opt/hostedtoolcache/CodeQL \
+            /usr/share/dotnet /opt/ghc /usr/local/share/boost 2>/dev/null || true
+          sudo docker image prune --all --force 2>/dev/null || true
+          df -h /
+
       # LFS intentionally disabled — `hatch run test-cov` covers
       # packages/luxar/src/luxar and none of its unit tests open the
       # LFS-backed demo fixtures under packages/luxar/src/luxar/demos/data/.
@@ -562,6 +577,19 @@ jobs:
       # real comparison and the smoke test verifies the artefacts are present.
       LUXAR_REQUIRE_WASM_TESTS: '1'
     steps:
+      - name: Free disk space (hosted-runner fallback)
+        # See python-tests: reclaim preinstalled tooling on the GitHub-hosted
+        # fallback so the WASM build + suite do not hit `[Errno 28] No space left
+        # on device` (#1816). Skipped on the self-hosted box.
+        if: runner.environment == 'github-hosted'
+        working-directory: ${{ github.workspace }}
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /opt/hostedtoolcache/CodeQL \
+            /usr/share/dotnet /opt/ghc /usr/local/share/boost 2>/dev/null || true
+          sudo docker image prune --all --force 2>/dev/null || true
+          df -h /
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10

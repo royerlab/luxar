@@ -141,7 +141,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import cached_download, launch_viewer
+from luxar.demos import add_demo_caption, cached_download, launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -532,12 +532,10 @@ def generate_atp_synthase(
                     color="rgba(255,255,255,0.6)",
                     blend_mode="difference",
                 )
-                scene.add_text(
+                add_demo_caption(
+                    scene,
                     "PDB 5DN6 \u2022 Molecular turbine",
-                    position=(0.98, 0.97),
-                    font_size=0.015,
-                    anchor="bottom-right",
-                    color="rgba(200,200,200,0.45)",
+                    DEMO_META.get("citation"),
                 )
 
             aprint(f"✓ Scene created with {len(positions):,} atoms")

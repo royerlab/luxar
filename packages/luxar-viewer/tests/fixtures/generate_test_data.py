@@ -20,9 +20,11 @@ import zarr
 from arbol import aprint, asection
 
 from luxar import CameraConfig, Dimension, Dimensions, LuxarZarrCompiler, ViewerConfig
+from luxar._zarr_compat import consolidate as zarr_consolidate
 from luxar._zarr_compat import create_array
 from luxar._zarr_compat import open_group as zarr_open_group
 from luxar.encoding import ArrayEncoder, EncodingMode, SemanticType
+from luxar.io._compiler.finalize.hashing import compute_content_hashes
 
 # Output directory
 FIXTURES_DIR = Path(__file__).parent
@@ -104,6 +106,7 @@ FIXTURE_NAMES: list[str] = [
     "test_nd_transforms.luxar.zarr",
     "test_overview.gsplats.zarr",
     "test_partition_layer.luxar.zarr",
+    "test_partition_wrong_frame.luxar.zarr",
     "test_points_blending_modes.luxar.zarr",
     "test_points_normal_overlap.luxar.zarr",
     "test_points_normal_overlap_reversed.luxar.zarr",
@@ -3867,6 +3870,29 @@ def generate_partition_layer_test() -> None:
 
         aprint(f"  Created {output}")
         aprint("  partition layer: 1 layer row → 2 parts, blending_mode on the wrapper")
+
+        wrong_frame = FIXTURES_DIR / "test_partition_wrong_frame.luxar.zarr"
+        if wrong_frame.exists():
+            shutil.rmtree(wrong_frame)
+        shutil.copytree(output, wrong_frame)
+        root = zarr_open_group(wrong_frame, mode="r+")
+        partition = root["tiles"]
+
+        def shift_tree(node: dict) -> dict:
+            if "part" in node:
+                return dict(node)
+            return {
+                "axis": node["axis"],
+                "split": float(node["split"]) + 1000.0,
+                "left": shift_tree(node["left"]),
+                "right": shift_tree(node["right"]),
+            }
+
+        partition.attrs["bsp_tree"] = shift_tree(dict(partition.attrs["bsp_tree"]))
+        compute_content_hashes(root)
+        zarr_consolidate(root)
+        aprint(f"  Created {wrong_frame}")
+        aprint("  wrong-frame partition: valid Python scene with shifted BSP planes")
 
 
 def _icosphere(subdivisions: int = 2, radius: float = 1.0) -> tuple:

@@ -747,7 +747,7 @@ model is deliberately minimal and light-free:
   `displayDims`-change rebuild).
 - **View-space normals (stored-normal variants).** The `normal` attribute binds in the node's local
   display frame, but every other input to the shade term is **view-space** by construction — `vViewPos`,
-  the headlight `V`, and the derivative fallback's `cross(dFdx(vViewPos), dFdy(vViewPos))`. The
+  the fixed view axis `V`, and the derivative fallback's `cross(dFdx(vViewPos), dFdy(vViewPos))`. The
   stored-normal vertex stage must therefore carry the normal into view space before interpolation:
   `vNormal = normalMatrix * normal` in GLSL (the built-in `mat3 normalMatrix`, the inverse-transpose of
   the model-view matrix), and the TSL twin via `transformNormalToView`. The inverse-transpose is
@@ -760,19 +760,24 @@ model is deliberately minimal and light-free:
   needed. The TSL backend's generated `.vertex` codegen snapshots (§6.4) pin this transform for that
   backend; the hand-written GLSL twin has no codegen snapshot and is instead pinned by the §8
   rotated/anisotropically-scaled shading test.
-- **Shade term:** a camera-anchored headlight — `V` is the fixed view-space view axis `vec3(0, 0, 1)`, a
-  directional camera headlight identical in both backends (so `dot(N, V)` reduces to the view-space
-  normal's z-component) — with a wrap term,
-  `shade = mix(uAmbient, 1.0, pow(saturate(dot(N, V) * 0.5 + 0.5), uShadeExponent))`. View-anchored, so
-  it needs no light in the scene graph and no scene-graph API change. `uAmbient` and `uShadeExponent`
-  are material uniforms with sane defaults; a fully-flat `uAmbient = 1.0` reproduces the emissive look
-  of the other types.
+- **Shade term:** a camera-anchored offset key light,
+  `L = normalize(vec3(-0.35, 0.55, 0.75))`, above and slightly left of the view axis. It remains
+  light-free in the scene sense: `L` is a view-space constant that rides with the camera, so there is no
+  light object, scene-graph state, or per-frame light uniform. The diffuse term keeps the existing wrap,
+  `shade = mix(uAmbient, 1.0, pow(saturate(dot(N, L) * 0.5 + 0.5), uShadeExponent))`, preserving the
+  readable ambient floor on away-facing surfaces. A subtle additive Blinn–Phong highlight supplies a
+  second curvature cue: with `V = vec3(0, 0, 1)`, the half-vector is also constant,
+  `H = normalize(L + V)`, and
+  `spec = uSpecular * pow(max(dot(N, H), 0.0), uShininess)`. The final lit RGB is
+  `finalColor * shade + vec3(spec)`. Defaults are `uAmbient = 0.25`, `uShadeExponent = 1.5`,
+  `uSpecular = 0.12`, and `uShininess = 24`; `uAmbient = 1.0` removes the diffuse gradient and
+  `uSpecular = 0.0` disables the highlight.
 - **Two-sided normal (stored-normal variants).** Every non-flat fragment build — `mesh.fragment` and its
   `mesh-additive`/`mesh-max`/`mesh-colormap` siblings (§6.4) — renormalizes the interpolated normal in
-  the fragment stage and then flips it to face the camera BEFORE the headlight term:
+  the fragment stage and then flips it to face the camera BEFORE the lighting term:
   `N = gl_FrontFacing ? N : -N` in GLSL, and the TSL twin via the `frontFacing` node. Without it, a
-  back-facing fragment has `dot(N, V) < 0`, so the wrap term `dot(N, V) * 0.5 + 0.5` lands in `[0, 0.5)`
-  and the back side shades with a dimmed, inverted gradient collapsing toward `uAmbient` (dark at the
+  back-facing fragment keeps an unflipped normal, so the wrap term typically lands on the dimmer side
+  of its range and the back side shades with an inverted gradient collapsing toward `uAmbient` (dark at the
   head-on interior, rising to a mid value at the silhouette) instead of the front-facing gradient —
   visible immediately because `double_sided` defaults **true** (§3.3) and §5's whole-triangle cull
   exposes the interior back faces of a sliced closed isosurface, exactly the target data. The
@@ -800,7 +805,8 @@ model is deliberately minimal and light-free:
   `normal_dims == displayDims` (§3.4), where
   §5.4's parity post-pass keeps winding coherent — specifically its **index post-pass** form, since the
   flip consumes `gl_FrontFacing` and needs it to correlate with the authored orientation — so the flip
-  gives the back face the same headlight gradient as the front.
+  puts the back face on the lit side of its own view-anchored gradient instead of the inverted,
+  `uAmbient`-collapsing side.
 - **Base color:** the colormap LUT applied to `aScalar` under `USE_COLORMAP`, else the vertex `color`
   attribute — which is opaque white when `colors` is absent (§6.1, filled CPU-side exactly as
   `create-points-node.ts:91` does for points). So the minimal `add_mesh(vertices, faces)` call (no
@@ -830,8 +836,8 @@ model is deliberately minimal and light-free:
   float a = vAlpha * uOpacity;   // the single coverage term; NOT intensity * uOpacity
   ```
 
-  The §6.2 **shade** factor is a lighting term that multiplies the RGB base color only; it must **not**
-  enter `a`. Emission then branches on the blending mode's `shaderOutputMode` (`blending-state.ts`),
+  The §6.2 diffuse **shade** factor and additive specular are lighting terms applied to RGB only; neither
+  enters `a`. Emission then branches on the blending mode's `shaderOutputMode` (`blending-state.ts`),
   mirroring the line shader's fragment tail (`materials/line/shader-glsl.ts`):
 
   - `additive` / `luminous` / `normal` → **alpha-weighted** (`SrcAlpha/One` or `SrcAlpha/OneMinusSrcAlpha`
@@ -1506,14 +1512,14 @@ been widened deliberately, each behind its capability flag.
       `shading="smooth"`, and the SAME mesh under `shading="flat"` selects `mesh-flat-normal.fragment`
       and shades from screen-space derivatives (§3.4, §6.2). Verified to differ — a build that ignores
       `shading` renders both identically and the test goes red. And under `shading="smooth"` on a
-      `double_sided` mesh, a **back-viewed** face shades with the SAME headlight gradient as the
-      **front-viewed** face (both lit symmetrically), NOT collapsed to flat `uAmbient` — verified to go
-      **red** without the §6.2 `gl_FrontFacing` normal flip (the back face shades the inverted,
-      `uAmbient`-collapsing gradient instead of the front-facing one). And on the same back-viewed mesh
+      `double_sided` mesh, a **back-viewed** face shades on the lit side of its own view-anchored
+      gradient, NOT collapsed toward flat `uAmbient` — verified to go **red** without the §6.2
+      `gl_FrontFacing` normal flip (the back face shades the unflipped, inverted gradient instead). And
+      on the same back-viewed mesh
       with one vertex's stored normal zeroed, the fragments where §3.5's epsilon guard fires shade from
-      the substituted derivative normal **without** the flip — the same camera-facing gradient as the
-      front view — verified to go **red** against a build that applies `gl_FrontFacing ? N : -N` to the
-      fallback normal (§6.2's per-fragment exemption)
+      the substituted viewer-facing derivative normal **without** the flip — verified to go **red**
+      against a build that applies `gl_FrontFacing ? N : -N` to the fallback normal (§6.2's
+      per-fragment exemption)
 - [x] TS unit (**both backends** — GLSL and TSL): **stored-normal view-space transform** — a
       smooth-shaded mesh whose stored per-vertex normals equal its geometric face normals, with at least
       one face normal that **mixes the differently-scaled axes** — a nonzero component both along z and
@@ -1865,12 +1871,16 @@ shading gains anything RECOMPUTED per part** — area-averaged normals, tangent 
 baked AO — because each of those is computed from a part's own contents and would differ
 across the cut.
 
-**No `bsp_tree` attr is written**, matching the three sibling leaf adders (only the gsplat
-LOD recipes emit one). Opaque parts do not need back-to-front ordering, and the depth-sort
-coordinator falls back to a per-part centroid heuristic if a translucent mesh partition ever
-needs it. Note also that `render-order.ts::traverseBspBackToFront` would order parts
-back-to-front, which for opaque mesh parts is *correct but pointless* — it forfeits
-front-to-back early-Z. That is a known non-issue, recorded so it is not rediscovered as a bug.
+**The wrapper records the recursive split planes as `bsp_tree`.** The tree is built from the
+same face-centroid BSP whose leaves become the mesh parts, then pruned and renumbered against
+the parts actually written. Because faces are assigned by centroid while `position_bounds`
+cover all three vertices, a triangle may cross its assigning plane; the resulting traversal is
+stable and localizes ambiguity to the overlap, but is approximate rather than an exact painter's
+order. It still avoids the coarser whole-part centroid fallback for translucent mesh.
+`render-order.ts::traverseBspBackToFront` also orders opaque mesh parts back-to-front, which is
+correct but forfeits the front-to-back early-Z order an opaque pass would prefer. That is a known
+performance tradeoff, not a correctness defect; keeping one partition metadata contract across
+all four geometry types is more important than special-casing opaque mesh authoring.
 
 **One refusal survives the lift.** A mesh may go under a `kind=partition` group whose
 `display_type` is `'mesh'` — nothing else. A partition is homogeneous by definition, and
@@ -1962,7 +1972,7 @@ Use `geometryDescriptorFor(node.type)`, which gates the lookup with `Object.hasO
 | **1** ✅ *(done — #1220)* | Writable contract (`node_types`/`geometry_types` + `NodeType.MESH`/`NODE_TYPE_MESH`) + `core/mesh.py` + adder + writer + validators + reader + `info` + the LOD/partition rejections (§8) | Landed as #1220, all in one PR: `scene.add_mesh(...)` writes a `.luxar.zarr`; `luxar info --stats` reports it; round-trip tests green; a mesh child of a lod/partition group **raises** (both rejections pinned by tests). The partition half has since been **lifted** (§9.2): a mesh may now go under a `display_type='mesh'` partition group (`test_mesh_under_a_mesh_partition_group_is_allowed`), and only the mismatched-`display_type` refusal survives. **Superseded:** the lod half has since been lifted too (§9) — `_reject_specialized_parent` is deleted, mesh's `lod` capability is `true` for the SUBSTITUTIVE flavour, and the test that pinned the refusal is now `test_mesh_under_a_lod_group_is_accepted`. What survives of this item is the refusal of an ADDITIVE ladder over an *arbitrary* order, which never came from this guard: it is `MESH_ADDITIVE_METHODS` naming `radial` as the sole accepted method |
 | **2** ✅ *(done — #1232)* | Rust + TS cull kernels with parity tests | Kernels green in isolation, no viewer changes |
 | **3** ✅ *(done)* | `mesh` → `loader_types` in `contract.yaml` (the switch-on — fires the three §10.2 compile errors) + `types/mesh.ts` + loader + node load + `mesh-geometry.ts` + one `LoaderByKind` entry + one `GEOMETRY_DESCRIPTORS` row + the `computeHiddenDimTolerance` arm | Mesh loads and renders **unshaded** (flat vertex color); E2E smoke green |
-| **4** ✅ *(done)* | GLSL + TSL material pair + codegen snapshots + shading model | Shaded surface, both backends pixel-equivalent. Landed as the `mesh/` material stack (4 files + `appearance.ts`), 5 codegen variants (10 snapshot files — the sixth, `mesh-pick`, arrives with picking in Phase 5, which is why §6.4 and §8 count six), and the §6.2 headlight with its compile-time stored-normal/derivative variant. Two spec refinements were forced by the implementation and are folded back into §6.2: the derivative normal is **forced** viewer-facing rather than assumed so (`cross(dFdx, dFdy)` has the sign of the fragment-space y axis, and WGSL's `dpdy` is top-down where GLSL's `dFdy` is bottom-up), and the stored normal is transformed WITHOUT three's `transformNormalToView` (whose internal `normalize` turns a legitimately zero-length normal into a whole-triangle NaN, contradicting §3.5's locally-distorted contract). The `normal`/`aScalar` attributes are bound for the node's lifetime from the metadata rather than bound/unbound per epoch — the shader variant alone stops reading them, which keeps the attribute set (and hence the WebGPU vertex layout) fixed |
+| **4** ✅ *(done)* | GLSL + TSL material pair + codegen snapshots + shading model | Shaded surface, both backends pixel-equivalent. Landed as the `mesh/` material stack (4 files + `appearance.ts`), 5 codegen variants (10 snapshot files — the sixth, `mesh-pick`, arrives with picking in Phase 5, which is why §6.4 and §8 count six), and the original §6.2 headlight with its compile-time stored-normal/derivative variant. Two spec refinements were forced by the implementation and are folded back into §6.2: the derivative normal is **forced** viewer-facing rather than assumed so (`cross(dFdx, dFdy)` has the sign of the fragment-space y axis, and WGSL's `dpdy` is top-down where GLSL's `dFdy` is bottom-up), and the stored normal is transformed WITHOUT three's `transformNormalToView` (whose internal `normalize` turns a legitimately zero-length normal into a whole-triangle NaN, contradicting §3.5's locally-distorted contract). The `normal`/`aScalar` attributes are bound for the node's lifetime from the metadata rather than bound/unbound per epoch — the shader variant alone stops reading them, which keeps the attribute set (and hence the WebGPU vertex layout) fixed |
 | **5** ✅ *(done)* | Picking pair, layers panel, monitor, stats, camera framing, debug | Full parity with the other three at the UI level. The pick pair landed as `rendering/picking/mesh/` — six files rather than the siblings' four, the extra two being `pick-mode.ts` (the blending mode's TWO pick-pass consequences derived in one place, so "cutout on, brightness-as-depth" is unrepresentable) and `provoking-vertex.ts` (WebGL's `flat` provoking vertex aligned with WebGPU's). Two §6.5 refinements were forced by the implementation and are folded back above: the pick material tracks the visual material's `side` per epoch (the siblings' quads are view-facing, so theirs can pin `DoubleSide`; a mesh's culled back faces must not rasterize into the pick buffer at true surface depth), and the surface-depth VALUE differs between backends (`gl_FragCoord.z` vs three's `depth` node, which expands to a linear view-space depth) — benign, since both are monotone in distance and the pick depth only orders fragments within one render, and now documented rather than latent. The registration itself went into `NodeFactory.registerExistingSceneNodes`, NOT only the node factory: `initPicking` traverses the finished scene before constructing the `PickingSystem`, so on a first load the factory has no system to register with and that retro pass is the one production runs. It was a three-way `else if` chain and is now a `Record<GeometryTypeName, …>`. Monitor / stats / camera framing needed no work (Phase 3 had already made them four-way); the debug surface did — `getState()` gained `meshNodes` + `totalTriangles`, and `getDrawOrder()` was reporting **0 elements for every mesh** because its element-count fallback was a partial copy of the shared per-type reader with `visibleTriangleCount` missing |
 | **6** ✅ *(done — real-WebGPU A/B run; two claims remain reasoned, see the cell)* | Fixture + E2E spec + demo + docs + CHANGELOG | Shippable. `test_mesh.luxar.zarr` / `test_mesh_nd.luxar.zarr` + `mesh-rendering.spec.ts` landed first, and earned their keep immediately: the FIRST end-to-end render of a written mesh found three defects, including that §6.3's `opaque` default had never fired on the production load path (`normalizeBlendingMode(undefined)` returns `'additive'`, so the `?? 'opaque'` was dead code — see the §6.3 note). No unit test could have caught it: they all hand the resolver an attrs object rather than one that has been through composition. The fixture is a WELDED, CLOSED icosphere on purpose — welded so `gl_VertexID` is a genuine many-to-one pick target (162 vertices, not the 960 a de-indexed mesh would have), closed so an nD slab cull exposes interior back faces, and smooth non-axis-aligned normals so a build ignoring `shading` renders visibly differently. The reference demo is `demo_mesh_isosurface_cells3d` — marching-cubes isosurfaces of the same volume its gsplat twin fits, so the two representations can be compared directly on one dataset. The docs pass covered the two package READMEs that had omitted mesh entirely (`rendering/` gained a Mesh Material section naming the two backend hazards; `data/` gained the whole-node-loader section explaining why mesh does NOT stream and why its tolerance arm is its own), the Layers-panel README, and the stale "picking and the panel controls land in later phases" claim in `CLAUDE.md`. Two `README.md` claims that still say "all three geometry types" were checked and LEFT: one is about volumetric blending physics and the other about the chunk-bounds spatial query, and mesh genuinely participates in neither (§9). On the remaining gap: a **real-WebGPU A/B was run** (system Chrome channel, `?renderer=webgpu` vs the same URL without it, screenshot-then-decode with the WebGL arm as the control — the recipe matters, see the note below), and it establishes the substance of what was open. Native WebGPU reports `apiSurface: 'webgpu'`, commits all three fixture nodes with identical triangle/vertex counts and identical shader variants, and renders **pixel-equivalent** output to WebGL: 105,822 lit pixels on both, mean lit channel differing by 0.14% (sub-quantization dithering — equivalent to the eye, not byte-identical). So the WGSL path is no longer unexercised, and it agrees with GLSL on a real mesh.
 

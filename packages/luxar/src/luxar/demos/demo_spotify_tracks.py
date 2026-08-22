@@ -36,6 +36,7 @@ DEMO_META = {
     "outputs": ["spotify_tracks"],
     "citation": {
         "short": "maharshipandya/spotify-tracks-dataset (Spotify Web API features)",
+        "ref": "maharshipandya / Spotify",
         "url": "https://huggingface.co/datasets/maharshipandya/spotify-tracks-dataset",
     },
 }
@@ -49,6 +50,7 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.demos import (
+    add_demo_caption,
     cache_computed,
     cached_download,
     launch_viewer,
@@ -324,12 +326,10 @@ def generate_spotify_landscape(
             )
 
             # Info + source
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 f"{n_tracks:,} tracks • UMAP on {len(AUDIO_FEATURES)} audio features • Spotify dataset",
-                position=(0.98, 0.97),
-                font_size=0.012,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
 
             # Genre color legend — built from the supercategories ACTUALLY present

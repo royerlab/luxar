@@ -19,10 +19,10 @@ Provide the **shared spatial-ordering infrastructure** that drives all three geo
 | **curves/hilbert.py** | Hilbert curve encoding | `hilbert_encode_nd(coords, bits_per_dim=16)` |
 | **grid.py** | Grid normalization | `normalize_coords_to_grid(coords, min_coords, max_coords, resolution)`, `compute_auto_resolution(coords, max_resolution=2**16)` |
 | **compound.py** | Compound ordering core | `_compound_sort(coords, slice_dims, ordering_dims, method="hilbert")`, `detect_barrier_dims(centers, max_cardinality=1024)` |
-| **bounds.py** | Shared chunk-bounds constants, `slice_dims` sanitising, and the float32 outward store | `_BARRIER_BOUND_EPS`, `_normalise_slice_dims(slice_dims, ndim)`, `_store_outward_f32(lo, hi)`, `_store_outward_f32_array(lo, hi)` |
-| **points.py** | Points-specific glue | `sort_points_compound(positions, dimensions, method="hilbert")`, `compute_chunk_bounds_points(positions, radii, chunk_size, slice_dims=None)` |
-| **lines.py** | Lines-specific glue | `convert_to_indexed(n_vertices, line_type, indices)`, `order_lines_spatial(vertices, segments, dimensions, method="hilbert")`, `sort_segments_compound(segment_coords_2d, dimensions, method="hilbert")`, `compute_vertex_chunk_bounds(vertices, chunk_size, slice_dims=None)`, `compute_segment_chunk_bounds(vertices, segments, widths, chunk_size, slice_dims=None)` |
-| **gsplats.py** | GSplats-specific glue | `sort_splats_spatial(centers, method="hilbert", resolution=None, slice_dims=None)`, `compute_chunk_bounds_gsplats(centers, cholesky_factors, chunk_size, coverage_sigma=2.75, slice_dims=None)` |
+| **bounds.py** | Shared chunk-bounds constants, `slice_dims` / `coord_slack` sanitising, and the float32 outward store | `_BARRIER_BOUND_EPS`, `_normalise_slice_dims(slice_dims, ndim)`, `_normalise_coord_slack(coord_slack, ndim)`, `_store_outward_f32(lo, hi)`, `_store_outward_f32_array(lo, hi)` |
+| **points.py** | Points-specific glue | `sort_points_compound(positions, dimensions, method="hilbert")`, `compute_chunk_bounds_points(positions, radii, chunk_size, slice_dims=None, *, coord_slack=None)` |
+| **lines.py** | Lines-specific glue | `convert_to_indexed(n_vertices, line_type, indices)`, `order_lines_spatial(vertices, segments, dimensions, method="hilbert")`, `sort_segments_compound(segment_coords_2d, dimensions, method="hilbert")`, `compute_vertex_chunk_bounds(vertices, chunk_size, slice_dims=None, *, coord_slack=None)`, `compute_segment_chunk_bounds(vertices, segments, widths, chunk_size, slice_dims=None, *, coord_slack=None)` |
+| **gsplats.py** | GSplats-specific glue | `sort_splats_spatial(centers, method="hilbert", resolution=None, slice_dims=None)`, `compute_chunk_bounds_gsplats(centers, cholesky_factors, chunk_size, coverage_sigma=2.75, slice_dims=None, *, coord_slack=None)` |
 
 ## Call Flow
 
@@ -89,7 +89,9 @@ Both encoders are **permutation-equivariant**: reordering the input rows reorder
 
 `_BARRIER_BOUND_EPS = 1e-3` — absolute padding added to barrier/discrete-dimension chunk bounds. This is ONLY a float-boundary safety margin (the query "reach" lives entirely in the reader's per-dimension tolerance). It used to be 0.5 (half a step); combined with the reader's own half-step tolerance that summed to a full step and made a single-category query (e.g., one timepoint) pull in the entire neighbouring category. Keep this tiny.
 
-**KNOWN LIMIT (small steps)**: The pad is absolute while the reader's reach is step-scaled (`0.25 × step`), so for pathological discrete steps below ~1.3e-3 the pad reaches past the neighbour category's quarter-step boundary and the over-fetch returns. Step metadata is not plumbed into these bound builders; discrete/categorical dims with milli-scale steps are not a supported layout (rescale the axis instead).
+**KNOWN LIMIT (small steps)**: The pad is absolute while the reader's reach is step-scaled (`0.25 × step`), so a chunk at category `c` is pulled into a query for `c + 1` as soon as `c + pad >= (c + step) - 0.25 × step`, i.e. as soon as `pad >= 0.75 × step` — equivalently `step <= pad / 0.75`. At the bare epsilon that is `1e-3 / 0.75 = ~1.3e-3`: below that the over-fetch returns. Step metadata is not plumbed into these bound builders; discrete/categorical dims with milli-scale steps are not a supported layout (rescale the axis instead).
+
+Since the quantisation pad (#1655) the threshold is worse on a **non-gridded** barrier axis of a points, lines or gsplats node, because the compiler adds `coord_slack` on top of this epsilon: the effective pad is `1e-3 + extent/131070`, i.e. 8.63e-3 at an axis extent of 1000, so by the same `pad / 0.75` rule steps below `8.63e-3 / 0.75 = ~1.2e-2` over-fetch there. The ordinary stacked integer time/channel axis is unaffected — it is GRIDDED, its slack is exactly 0, and it keeps the plain 1e-3.
 
 **KNOWN LIMIT (large coordinates)**: The outward float32 store (below) never lets a pad vanish, so the pad a barrier axis EFFECTIVELY gets is `max(_BARRIER_BOUND_EPS, up to one float32 ULP at |x|)` — 1e-3 near the origin, but 2.0 at 2e7 and 8.0 at 1e8. The two ends are asymmetric at an exact power of two, where the ULP below the binade boundary is half the one above: at `|x| = 2**23` the low end moves 0.5 and the high end 1.0. Integers stay exactly float32-representable through `2**24`, so a unit-step categorical axis with large absolute values (a millisecond timestamp, an acquisition index offset into an experiment) is a legitimate layout there and will over-fetch a whole neighbouring category. That is the deliberate trade — over-fetching a neighbour beats dropping the chunk at its own category value — but re-base such an axis near the origin if the extra traffic matters.
 
@@ -109,7 +111,7 @@ The array form vectorises only the outward-store **branching** over an already-r
 - `sort_points_compound(positions, dimensions, method="hilbert")` → `(sort_indices, metadata)`
   - Splits `dimensions` into `slice_dims` (`d.discrete and not d.display`) and `ordering_dims` (`not d.discrete or d.display` — i.e. spatial dims AND any displayed dim, so continuous non-display dims count as ordering dims too)
   - Delegates to `_compound_sort`
-- `compute_chunk_bounds_points(positions, radii, chunk_size, slice_dims=None)` → `(num_chunks, d, 2)` bounds array
+- `compute_chunk_bounds_points(positions, radii, chunk_size, slice_dims=None, *, coord_slack=None)` → `(num_chunks, d, 2)` bounds array
   - Radius expansion is applied to all NON-`slice_dims` axes (displayed dims AND continuous non-display dims). For a broadcast scalar radius the box is `[min - r, max + r]`; for per-point radii the code takes the per-point envelope `(p - r).min()` / `(p + r).max()` (not a single chunk-wide `r_max`)
   - Tight `[min - eps, max + eps]` for discrete (`slice_dims`) axes (no radius expansion on categorical axes)
   - `radii` is `Optional`: a per-point array OR a broadcast scalar OR `None`. `None` does NOT mean "no extent" — a points node that stores no radii array is still drawn with the renderer's default radius, so spatial axes are expanded by `DEFAULT_POINT_RADIUS` (`luxar.typing_utils.constants`, mirrored in `packages/luxar-viewer/src/config/constants.ts`), exactly as if that scalar had been passed. The pad IS the footprint, so `[min - r, max + r]` is exactly the set of query positions for which some point in the chunk can be visible — correct in both directions, not merely wide enough. (It used to be a 1%-of-chunk-range/`0.01` fudge, unrelated to the footprint: tighter than it below ~50 units of chunk range, looser above, and different for the same scene authored in different units.)
@@ -122,9 +124,9 @@ The array form vectorises only the outward-store **branching** over an already-r
   - Takes pre-built `(S, 2·D)` segment coordinates (both endpoints concatenated), NOT midpoints — this captures position, orientation, and length
   - Returns a single sort order over the segments
   - Has its OWN bit budget (distinct from `_compound_sort`'s): the endpoint concatenation doubles the ordering-dim count, so when `64 // n_ordering_dims < 10` it escapes to a 128-bit code (`min(21, 128 // n_ordering_dims)`); Hilbert has no 128-bit kernel, so the 128-bit path silently falls back to Morton
-- `compute_vertex_chunk_bounds(vertices, chunk_size, slice_dims=None)` → `(num_chunks, D, 2)` bounds array
+- `compute_vertex_chunk_bounds(vertices, chunk_size, slice_dims=None, *, coord_slack=None)` → `(num_chunks, D, 2)` bounds array
   - Exact spatial bounds (no size expansion for vertices); tight epsilon-padded bounds for discrete dims
-- `compute_segment_chunk_bounds(vertices, segments, widths, chunk_size, slice_dims=None)` → `(num_chunks, D, 2)` bounds array
+- `compute_segment_chunk_bounds(vertices, segments, widths, chunk_size, slice_dims=None, *, coord_slack=None)` → `(num_chunks, D, 2)` bounds array
   - Per-chunk box extends each spatial axis by the full per-segment max endpoint width (`p ± max_w`, no `/2`)
   - Tight epsilon-padded bounds for discrete dims
 
@@ -133,7 +135,7 @@ The array form vectorises only the outward-store **branching** over an already-r
   - `slice_dims` is explicit (from scene `Dimension.discrete` or a stacked-time axis); this function does NOT auto-detect — the caller (`_compiler/gsplat_assembly.py`) falls back to `detect_barrier_dims` when no explicit dims are supplied
   - Splits center columns into `slice_dims` (barrier) and `ordering_dims` (complement)
   - Delegates to `_compound_sort`
-- `compute_chunk_bounds_gsplats(centers, cholesky_factors, chunk_size, coverage_sigma=2.75, slice_dims=None)` → `(num_chunks, d, 2)` bounds array
+- `compute_chunk_bounds_gsplats(centers, cholesky_factors, chunk_size, coverage_sigma=2.75, slice_dims=None, *, coord_slack=None)` → `(num_chunks, d, 2)` bounds array
   - Per-chunk box extends by the requested Gaussian coverage on spatial axes
   - Tight epsilon-padded bounds for barrier dims
 
@@ -149,7 +151,7 @@ The array form vectorises only the outward-store **branching** over an already-r
 
 5. **Conservative barrier detection**: `detect_barrier_dims` errs toward NOT flagging an axis as a barrier (a false positive drops splats; a false negative only causes over-fetch).
 
-6. **Never tighter than the footprint**: A stored `chunk_bounds` interval contains the chunk's geometric footprint — as AUTHORED — at ANY coordinate magnitude. All four builders (points, gsplats, segments, vertices) accumulate in float64 and narrow to the float32 store with outward rounding — see *Float32 Outward Store* above. (Known slack: coordinates are themselves stored as per-axis uint16 fixed point by default, so a DECODED coordinate can sit up to half a quantum outside its bound on a non-gridded axis. GSplats escalate such an axis to float32; points and lines do not.) Swept over magnitudes `{0, 1e-6, 1, 100, 2**23, 2**24, 2**24+1, 2**25, 1e9, 1e15, 1e20, 1e30, 3e38}` × sign × pad by `io/tests/test_ordering_properties.py::test_chunk_bounds_contain_the_footprint_at_every_magnitude`.
+6. **Never tighter than the footprint**: A stored `chunk_bounds` interval contains the chunk's geometric footprint — the DECODED coordinates, the AUTHORED extents — at ANY coordinate magnitude. All four builders accumulate in float64, narrow outward to float32, and take the encoder's per-axis coordinate round-trip slack, so that slack alone makes the interval contain DECODED coordinates after uint16 fixed-point storage on spatial and barrier axes. Exact grids and float32 stores add zero; a LUT adds zero only when the writer actually permits that array to use one. LUT eligibility alone is NOT exemption: the lines glue passes `allow_lut=False` because the lines writer blocks LUT on `vertices` (the spatial-index loader reads it raw), so a LUT-eligible lines node is quantised and still gets the pad. The points and gsplats glue keep `allow_lut=True`, matching writers that permit `positions` and `centers` to store a LUT. GSplats resolve their sigma rail first and ask for slack using that actual centers mode, so an escalated array is not padded again; a continuous barrier axis that stays uint16 gets the half-quantum pad on top of `_BARRIER_BOUND_EPS`. The sigma rail is a separate FIDELITY guard against moving too many centers outside their own cores; its population tolerance is not part of containment. A DIRECT caller that omits `coord_slack` still gets authored-coordinate bounds. The SCALAR/EXTENT half of the footprint remains separate: decoded `radii` and `widths`, and decoded σ derived from `cholesky_factors`, can exceed the authored pad. Swept over magnitudes `{0, 1e-6, 1, 100, 2**23, 2**24, 2**24+1, 2**25, 1e9, 1e15, 1e20, 1e30, 3e38}` × sign × pad by `io/tests/test_ordering_properties.py::test_chunk_bounds_contain_the_footprint_at_every_magnitude`, with end-to-end decoded containment and exemption tightness in `_compiler/test_spatial_ordering.py`.
 
 7. **Bits budget**: The bit budget is split across ONLY the spatial (ordering) dims, so excluding a barrier axis gives the spatial axes more resolution (e.g., 3D + time: barrier=time, ordering=xyz gets 21 bits/dim vs 16 if all 4 dims were spatial).
 
@@ -160,6 +162,7 @@ The ordering primitives are exercised by multiple test suites:
 - **io/tests/test_ordering_properties.py** — Hypothesis property tests (permutation equivariance, Numba/NumPy parity) plus the cross-builder chunk-bounds sweeps (Key Invariant 6 across magnitudes, padless exactness, `slice_dims` range checking)
 - **io/tests/test_ordering_points.py** / **io/tests/test_ordering_lines.py** / **io/tests/test_ordering_gsplats.py** — Integration tests for each geometry (barrier dims, chunk-straddling invariant)
 - **gsplats/io/tests/test_ordering.py** — GSplat-specific ordering tests (barrier detection, chunk bounds)
+- **io/tests/\_compiler/test_spatial_ordering.py** — End-to-end compiles that read the STORED bounds back and check them against the DECODED coordinates (the `coord_slack` half of Key Invariant 6)
 
 ## See Also
 

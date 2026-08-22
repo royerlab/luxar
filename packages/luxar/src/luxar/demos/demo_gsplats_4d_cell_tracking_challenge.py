@@ -100,6 +100,7 @@ DEMO_META = {
     "outputs": ["gsplats_4d_cell_tracking_challenge"],
     "citation": {
         "short": "CZ Biohub San Francisco; imaging by the Royer Group",
+        "ref": "CZ Biohub / Royer Group",
         "license": "CC0 1.0",
         "url": "https://www.kaggle.com/competitions/biohub-cell-tracking-during-development",
     },
@@ -118,6 +119,7 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler, transforms
 from luxar.demos import (
+    add_demo_caption,
     detect_device,
     hsv_to_rgb,
     launch_viewer,
@@ -1210,12 +1212,10 @@ Navigation:
                 color="rgba(255,255,255,0.6)",
                 blend_mode="difference",
             )
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 "Light-sheet microscopy • zebrafish • tracked lineages",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
             scene.add_text(
                 f"{n} embryo crops • {n_timepoints} timepoints each\n"

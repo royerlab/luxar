@@ -53,7 +53,7 @@ import pandas as pd
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer, parse_path_arg
+from luxar.demos import add_demo_caption, launch_viewer, parse_path_arg
 from luxar.utils._umap_utils import format_label, get_categorical_color
 from luxar.utils.paths import get_demos_output_dir
 
@@ -446,13 +446,11 @@ def build_scene(
 
             n_term_real = sum(1 for t in term_cats if t != "unannotated")
             n_group_real = sum(1 for g in group_cats if g != "Unannotated")
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 f"{n_cells:,} cells • {n_term_real} cell types • "
                 f"{n_group_real} bio-groups • {n_unannotated:,} unannotated",
-                position=(0.98, 0.97),
-                font_size=0.012,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.5)",
+                DEMO_META.get("citation"),
             )
 
     return n_cells

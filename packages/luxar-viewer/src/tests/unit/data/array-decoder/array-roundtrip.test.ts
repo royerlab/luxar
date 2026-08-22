@@ -3,11 +3,11 @@
  *
  * Python generates fixtures and a `roundtrip_expectations.json` file by decoding
  * every relevant fixture array with `luxar.encoding.ArrayDecoder`. These tests
- * load the same zarr arrays in Node.js and require the TypeScript ArrayDecoder to
- * reproduce the same flattened float32 values byte-for-byte, except log-scalar
- * arrays: their viewer contract is the Rust/WASM f32 kernel, while Python keeps
- * its f64 decode helper. Those remain numerically close to Python and must match
- * exactly between full-array and range decoding.
+ * load the same zarr arrays in Node.js. Most TypeScript decodes must reproduce
+ * Python's flattened float32 values byte-for-byte. Log-scalar arrays assert
+ * within a tolerance of Python, while linear and geolog arrays assert against a
+ * Python-generated hash computed in the viewer kernel's f32 operation order.
+ * Every route must still agree exactly with the full-array decode.
  *
  * This is intentionally non-browser and non-WebGL so it can run in the fast
  * Vitest suite while still exercising real Python-written zarr stores.
@@ -224,7 +224,10 @@ describe('Python-TypeScript encoded array round-trip', () => {
     describe(fixtureName, () => {
       for (const [arrayPath, expected] of Object.entries(fixture.arrays)) {
         const logScalar = ArrayDecoder.isLogScalarEncodingName(expected.encoding);
-        const contract = logScalar ? 'with the viewer f32 contract' : 'like Python';
+        const contract =
+          logScalar || expected.viewer_float32_sha256
+            ? 'with the viewer f32 contract'
+            : 'like Python';
         it(`decodes ${arrayPath} (${expected.encoding}) ${contract}`, async () => {
           const { array, attrs, rootLoc, store } = await loadArrayWithAttrs(fixtureName, arrayPath);
           const decoder = new ArrayDecoder(new ArrayRefRegistry());

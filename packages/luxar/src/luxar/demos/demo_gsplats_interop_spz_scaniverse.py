@@ -54,6 +54,7 @@ DEMO_META = {
     "outputs": ["gsplats_interop_spz_hornedlizard", "gsplats_interop_spz_racoonfamily"],
     "citation": {
         "short": "Niantic Labs SPZ sample scans",
+        "ref": "Niantic Labs",
         "license": "MIT",
         "url": "https://github.com/nianticlabs/spz",
     },
@@ -123,7 +124,7 @@ def build_scene(scene_key: str = "hornedlizard") -> Path:
         out,
         title=f"Scaniverse SPZ capture — {scene_key} (Niantic)",
         layer_name=spec["layer"],
-        credit="Niantic spz samples • MIT • SPZ → Luxar",
+        credit="SPZ sample scans • MIT • SPZ → Luxar",
         camera=SUBJECT_CAMERA,
         citation=DEMO_META["citation"],
     )

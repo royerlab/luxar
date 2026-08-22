@@ -23,11 +23,16 @@ bounding box along an axis and recurse until each part has at most
 
 This module hosts:
 
+* :class:`BSPNode`, :func:`spatial_bsp_tree`, and
+  :func:`spatial_bsp_polyline_tree` — the production tree builders used by the
+  native geometry adders, plus :func:`bsp_leaf_parts` for their shared
+  left-first leaf flattening.
+* :func:`persist_pruned_bsp_tree` — the shared writer-side step that drops
+  unwritten regions, renumbers the surviving ``child_index`` labels, and stores
+  the result on a partition wrapper.
 * :func:`median_bsp_partition` / :func:`midpoint_bsp_partition` /
-  :func:`sah_bsp_partition` — the pure-NumPy point/gsplats splitters. Each
-  returns a list of index arrays into the original positions.
-* :func:`median_bsp_polylines` / :func:`midpoint_bsp_polylines` — the
-  polyline-atomic variants for ``add_lines``.
+  :func:`sah_bsp_partition`, plus the median/midpoint polyline wrappers —
+  flat-list conveniences retained as parity oracles for the tree builders.
 * :func:`prune_serialized_bsp_tree` / :func:`map_serialized_bsp_tree` /
   :func:`reconstruct_serialized_bsp_tree` / :func:`serialized_bsp_tree_separates` /
   :func:`serialized_bsp_tree_straddles_centers` /
@@ -184,10 +189,12 @@ class BSPNode:
     convention matches the splitters exactly: the ``left`` subtree holds
     ``coord < split`` and ``right`` holds ``coord >= split``.
 
-    The tree is the split-plane record needed for an exact, camera-position-
-    safe back-to-front (painter's) ordering of the leaf parts in the viewer:
-    at each node the eye is on one side of ``split`` and everything on the far
-    side draws before everything on the near side (Fuchs–Kedem–Naylor).
+    The tree is the split-plane record needed for camera-position-safe
+    back-to-front traversal of the leaf parts in the viewer: at each node the
+    eye is on one side of ``split`` and everything on the far side draws before
+    everything on the near side (Fuchs–Kedem–Naylor). The order is exact when
+    part bounds do not cross their planes, and approximate for atomic geometry
+    split by representative points such as polyline or face centroids.
     """
 
     # Leaf payload (``None`` on internal nodes).
@@ -222,8 +229,8 @@ class BSPNode:
 
         Leaves are numbered in :meth:`leaves` order (``0, 1, 2, …``) so each
         leaf's ``"part"`` index lines up with the flat parts list and the
-        on-disk ``part_<i>`` / ``child_index``. Internal nodes emit
-        ``{"axis", "split", "left", "right"}``.
+        on-disk ``child_index``. Internal nodes emit ``{"axis", "split",
+        "left", "right"}``.
         """
         counter = [0]
 
@@ -365,6 +372,15 @@ def prune_serialized_bsp_tree(
     return walk(tree)
 
 
+def persist_pruned_bsp_tree(
+    node: "Node", tree: Optional[Dict[str, Any]], keep: Iterable[int]
+) -> None:
+    """Persist ``tree`` after dropping regions that produced no child node."""
+    serialized_tree = prune_serialized_bsp_tree(tree, keep)
+    if serialized_tree is not None:
+        node._persist_attr("bsp_tree", serialized_tree)
+
+
 #: Node-visit budget for :func:`reconstruct_serialized_bsp_tree`. The search
 #: backtracks over candidate planes, so a pathological layout could explore an
 #: exponential number of them; boxes that really came from a BSP find their split
@@ -486,14 +502,16 @@ def serialized_bsp_tree_straddles_centers(
     tree: Optional[Dict[str, Any]],
     boxes: "Sequence[tuple[NDArray[np.floating], NDArray[np.floating]]]",
 ) -> bool:
-    """True when every plane is plausible for the overlapping parts below it.
+    """True when every plane is plausible for the part centers below it.
 
     A uniform tiled fit keeps its apodization halo, so neighbouring part boxes
     overlap and no plane can separate their faces exactly. Their box centers
-    should still straddle the producer's split plane. The largest measured
-    interpenetration on each axis is the tolerance floor for that axis, so
-    sparse content cannot erase the known halo scale while a plane in a
-    different coordinate frame still does not pass.
+    should still straddle the producer's split plane. Centroid-split lines and
+    mesh can have the same shape even when the part boxes are disjoint: a valid
+    plane can cross one part's vertex extent while remaining between the child
+    centers. The largest measured interpenetration on each axis is the tolerance
+    floor for that axis, so sparse content cannot erase a known halo scale while
+    a plane in a different coordinate frame still does not pass.
 
     Requires leaf labels ``0..len(boxes)-1`` exactly once, and returns ``False``
     for malformed or non-finite stored metadata.
@@ -923,7 +941,7 @@ def spatial_bsp_tree(
     raise ValueError(f"rule must be 'median', 'midpoint', or 'sah'; got {rule!r}")
 
 
-def _flat_parts(root: BSPNode) -> List[NDArray[np.intp]]:
+def bsp_leaf_parts(root: BSPNode) -> List[NDArray[np.intp]]:
     """Flatten a BSP tree to the leaf index-arrays list (the ``*_bsp_partition``
     return shape), in :meth:`BSPNode.leaves` order."""
     parts: List[NDArray[np.intp]] = []
@@ -1030,7 +1048,7 @@ def midpoint_bsp_partition(
     # builder is the single source of truth; the flat list is its leaves in
     # left-first DFS order (see :func:`spatial_bsp_tree` / :class:`BSPNode`).
     spatial = positions[:, : min(3, positions.shape[1])]
-    return _flat_parts(
+    return bsp_leaf_parts(
         _bsp_tree_midpoint(spatial, max_elements, np.arange(n, dtype=np.intp))
     )
 
@@ -1092,7 +1110,7 @@ def median_bsp_partition(
     # The tree builder is the single source of truth; the flat list is its
     # leaves in left-first DFS order (see :func:`spatial_bsp_tree`).
     spatial = positions[:, : min(3, positions.shape[1])]
-    return _flat_parts(
+    return bsp_leaf_parts(
         _bsp_tree_median(spatial, max_elements, np.arange(n, dtype=np.intp))
     )
 
@@ -1102,12 +1120,87 @@ def median_bsp_partition(
 # ────────────────────────────────────────────────────────────────────────
 
 
-def midpoint_bsp_polylines(
+def _validate_polyline_bsp_inputs(
+    vertices: NDArray, max_elements: int, rule: str
+) -> None:
+    if vertices.ndim != 2:
+        raise ValueError(f"vertices must be 2-D (N, d); got shape {vertices.shape}")
+    if vertices.shape[1] < 2:
+        raise ValueError(
+            "spatial_bsp_polyline_tree needs at least 2 spatial dimensions; "
+            f"got vertices with shape {vertices.shape}"
+        )
+    if max_elements < 1:
+        raise ValueError(f"max_elements must be >= 1, got {max_elements}")
+    if rule not in ("median", "midpoint"):
+        raise ValueError(f"rule must be 'median' or 'midpoint'; got {rule!r}")
+
+
+def _polyline_centroids_and_sizes(
+    vertices: NDArray, polyline_indices: List[NDArray[np.intp]]
+) -> Tuple[NDArray[np.float64], NDArray[np.intp]]:
+    """Return split coordinates and atomic vertex counts for each polyline."""
+    n_polylines = len(polyline_indices)
+    spatial = vertices[:, : min(3, vertices.shape[1])]
+    centroids = np.zeros((n_polylines, spatial.shape[1]), dtype=np.float64)
+    sizes = np.zeros(n_polylines, dtype=np.intp)
+    for polyline_index, members in enumerate(polyline_indices):
+        if members.size == 0:
+            continue
+        centroids[polyline_index] = spatial[members].mean(axis=0)
+        sizes[polyline_index] = members.size
+    return centroids, sizes
+
+
+def _polyline_bsp_node(
+    centroids: NDArray[np.float64],
+    sizes: NDArray[np.intp],
+    polyline_indices: NDArray[np.intp],
+    max_elements: int,
+    rule: str,
+) -> BSPNode:
+    """Recursive half of :func:`spatial_bsp_polyline_tree`."""
+    total_vertices = int(sizes[polyline_indices].sum())
+    if total_vertices <= max_elements or polyline_indices.size <= 1:
+        return BSPNode(indices=polyline_indices)
+    subset = centroids[polyline_indices]
+    minimums = subset.min(axis=0)
+    maximums = subset.max(axis=0)
+    extents = maximums - minimums
+    axis = int(np.argmax(extents))
+    if extents[axis] == 0:
+        return BSPNode(indices=polyline_indices)
+    coordinates = subset[:, axis]
+    split = (
+        float(np.median(coordinates))
+        if rule == "median"
+        else float((minimums[axis] + maximums[axis]) * 0.5)
+    )
+    left_mask = coordinates < split
+    left = polyline_indices[left_mask]
+    right = polyline_indices[~left_mask]
+    if left.size == 0 or right.size == 0:
+        order = np.argsort(coordinates, kind="stable")
+        half = polyline_indices.size // 2
+        left = polyline_indices[order[:half]]
+        right = polyline_indices[order[half:]]
+        split = float(coordinates[order[half]])
+    return BSPNode(
+        axis=axis,
+        split=split,
+        left=_polyline_bsp_node(centroids, sizes, left, max_elements, rule),
+        right=_polyline_bsp_node(centroids, sizes, right, max_elements, rule),
+    )
+
+
+def spatial_bsp_polyline_tree(
     vertices: NDArray,
     polyline_indices: List[NDArray[np.intp]],
     max_elements: int,
-) -> List[List[int]]:
-    """Recursive midpoint BSP over per-polyline centroids.
+    *,
+    rule: str = "median",
+) -> Optional[BSPNode]:
+    """Build a BSP tree over atomic polylines, capped by vertex count.
 
     Polylines are atomic — every vertex of a polyline lands in exactly
     one part. The BSP is run over the per-polyline **centroids** (mean
@@ -1125,75 +1218,42 @@ def midpoint_bsp_polylines(
             that a single polyline larger than ``max_elements`` becomes
             its own (oversized) part rather than being broken up.
 
+        rule: ``"median"`` or ``"midpoint"``.
+
     Returns:
-        List of ``parts``; each ``parts[k]`` is a list of polyline
-        indices (into ``polyline_indices``) assigned to part ``k``.
-        Concatenating all parts produces a permutation of
-        ``range(len(polyline_indices))``.
-
-    Notes:
-        Re-uses the axis-selection + midpoint-bisection idea from
-        :func:`midpoint_bsp_partition`. The two functions are
-        intentionally separate: the points/gsplats version partitions
-        individual elements; this one partitions polylines, with the
-        accounting done in vertex counts.
+        The split-plane tree, or ``None`` for no polylines. Its leaf payloads
+        are arrays of indices into ``polyline_indices``.
     """
-    if vertices.ndim != 2:
-        raise ValueError(f"vertices must be 2-D (N, d); got shape {vertices.shape}")
-    if vertices.shape[1] < 2:
-        raise ValueError(
-            "midpoint_bsp_polylines needs at least 2 spatial dimensions; "
-            f"got vertices with shape {vertices.shape}"
-        )
-    if max_elements < 1:
-        raise ValueError(f"max_elements must be >= 1, got {max_elements}")
+    _validate_polyline_bsp_inputs(vertices, max_elements, rule)
+    if not polyline_indices:
+        return None
+    centroids, sizes = _polyline_centroids_and_sizes(vertices, polyline_indices)
+    return _polyline_bsp_node(
+        centroids,
+        sizes,
+        np.arange(len(polyline_indices), dtype=np.intp),
+        max_elements,
+        rule,
+    )
 
-    n_polylines = len(polyline_indices)
-    if n_polylines == 0:
+
+def _flat_polyline_parts(root: Optional[BSPNode]) -> List[List[int]]:
+    if root is None:
         return []
+    return [part.tolist() for part in bsp_leaf_parts(root)]
 
-    # Per-polyline centroid (first 3 spatial dims) and vertex count.
-    spatial = vertices[:, : min(3, vertices.shape[1])]
-    centroids = np.zeros((n_polylines, spatial.shape[1]), dtype=np.float64)
-    sizes = np.zeros(n_polylines, dtype=np.intp)
-    for p, members in enumerate(polyline_indices):
-        if members.size == 0:
-            continue
-        centroids[p] = spatial[members].mean(axis=0)
-        sizes[p] = members.size
 
-    result: List[List[int]] = []
-
-    def recurse(poly_idx: NDArray[np.intp]) -> None:
-        total_verts = int(sizes[poly_idx].sum())
-        if total_verts <= max_elements or poly_idx.size <= 1:
-            result.append(poly_idx.tolist())
-            return
-        sub = centroids[poly_idx]
-        mins = sub.min(axis=0)
-        maxs = sub.max(axis=0)
-        extents = maxs - mins
-        axis = int(np.argmax(extents))
-        if extents[axis] == 0:
-            # All centroids coincide; cannot make spatial progress.
-            result.append(poly_idx.tolist())
-            return
-        mid = (mins[axis] + maxs[axis]) * 0.5
-        left_mask = sub[:, axis] < mid
-        left = poly_idx[left_mask]
-        right = poly_idx[~left_mask]
-        if left.size == 0 or right.size == 0:
-            # All on one side of the midpoint — sort by axis and bisect
-            # at the median polyline. Stable on ties.
-            order = np.argsort(sub[:, axis], kind="stable")
-            half = poly_idx.size // 2
-            left = poly_idx[order[:half]]
-            right = poly_idx[order[half:]]
-        recurse(left)
-        recurse(right)
-
-    recurse(np.arange(n_polylines, dtype=np.intp))
-    return result
+def midpoint_bsp_polylines(
+    vertices: NDArray,
+    polyline_indices: List[NDArray[np.intp]],
+    max_elements: int,
+) -> List[List[int]]:
+    """Recursive midpoint BSP over per-polyline centroids."""
+    return _flat_polyline_parts(
+        spatial_bsp_polyline_tree(
+            vertices, polyline_indices, max_elements, rule="midpoint"
+        )
+    )
 
 
 def median_bsp_polylines(
@@ -1220,59 +1280,11 @@ def median_bsp_polylines(
         List of parts; each part is a list of polyline indices. Concatenation
         permutes ``range(len(polyline_indices))``.
     """
-    if vertices.ndim != 2:
-        raise ValueError(f"vertices must be 2-D (N, d); got shape {vertices.shape}")
-    if vertices.shape[1] < 2:
-        raise ValueError(
-            "median_bsp_polylines needs at least 2 spatial dimensions; "
-            f"got vertices with shape {vertices.shape}"
+    return _flat_polyline_parts(
+        spatial_bsp_polyline_tree(
+            vertices, polyline_indices, max_elements, rule="median"
         )
-    if max_elements < 1:
-        raise ValueError(f"max_elements must be >= 1, got {max_elements}")
-
-    n_polylines = len(polyline_indices)
-    if n_polylines == 0:
-        return []
-
-    spatial = vertices[:, : min(3, vertices.shape[1])]
-    centroids = np.zeros((n_polylines, spatial.shape[1]), dtype=np.float64)
-    sizes = np.zeros(n_polylines, dtype=np.intp)
-    for p, members in enumerate(polyline_indices):
-        if members.size == 0:
-            continue
-        centroids[p] = spatial[members].mean(axis=0)
-        sizes[p] = members.size
-
-    result: List[List[int]] = []
-
-    def recurse(poly_idx: NDArray[np.intp]) -> None:
-        total_verts = int(sizes[poly_idx].sum())
-        if total_verts <= max_elements or poly_idx.size <= 1:
-            result.append(poly_idx.tolist())
-            return
-        sub = centroids[poly_idx]
-        mins = sub.min(axis=0)
-        maxs = sub.max(axis=0)
-        extents = maxs - mins
-        axis = int(np.argmax(extents))
-        if extents[axis] == 0:
-            result.append(poly_idx.tolist())
-            return
-        coords = sub[:, axis]
-        median = float(np.median(coords))
-        left_mask = coords < median
-        left = poly_idx[left_mask]
-        right = poly_idx[~left_mask]
-        if left.size == 0 or right.size == 0:
-            order = np.argsort(coords, kind="stable")
-            half = poly_idx.size // 2
-            left = poly_idx[order[:half]]
-            right = poly_idx[order[half:]]
-        recurse(left)
-        recurse(right)
-
-    recurse(np.arange(n_polylines, dtype=np.intp))
-    return result
+    )
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -1339,7 +1351,7 @@ def sah_bsp_partition(
     # The tree builder is the single source of truth; the flat list is its
     # leaves in left-first DFS order (see :func:`spatial_bsp_tree`).
     spatial = positions[:, : min(3, positions.shape[1])]
-    return _flat_parts(
+    return bsp_leaf_parts(
         _bsp_tree_sah(spatial, max_elements, np.arange(n, dtype=np.intp), n_candidates)
     )
 
