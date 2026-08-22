@@ -96,7 +96,13 @@ def test_positive_scalar_slack_reports_exact_encoder_exits(mode: EncodingMode) -
     encoder = ArrayEncoder()
     constant = np.full(4001, 2.5, dtype=np.float32)
     if mode == EncodingMode.CUSTOM:
-        with pytest.raises(ValueError, match="Unsupported positive-scalar slack mode"):
+        with pytest.raises(
+            ValueError,
+            match=(
+                "CUSTOM POSITIVE_SCALAR array: an arbitrary custom_encoder "
+                "has no round-trip displacement model"
+            ),
+        ):
             encoder.positive_scalar_round_trip_slack(constant, mode)
         return
     assert encoder.positive_scalar_round_trip_slack(constant, mode) is None

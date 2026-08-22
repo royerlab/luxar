@@ -345,6 +345,12 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         The answer is valid only when the matching write has deduplication
         disabled, so it cannot resolve to an ``array_ref`` with another
         array's encoding parameters.
+        Unlike :meth:`coordinate_round_trip_slack`, this query raises for
+        ``CUSTOM``: a POSITIVE_SCALAR write can reach :meth:`_encode_custom`,
+        whose arbitrary transform has no displacement model. The coordinate
+        sibling returns ``None`` because ``CUSTOM`` does not reach
+        :meth:`_encode_coordinate`, so no coordinate fixed-point displacement
+        applies.
         Linear quantization uses half a grid quantum; geometric-log encoding
         uses the corresponding half-step at the array maximum. One float32 ULP
         covers the reader's final cast (needed by the uint16 linear tier).
@@ -367,7 +373,10 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             EncodingMode.MEMORY,
             EncodingMode.PRECISION,
         ):
-            raise ValueError(f"Unsupported positive-scalar slack mode: {mode!r}")
+            raise ValueError(
+                "Cannot bound a CUSTOM POSITIVE_SCALAR array: an arbitrary "
+                "custom_encoder has no round-trip displacement model"
+            )
 
         if self._is_uniform(arr):
             first = float(arr.flat[0])
