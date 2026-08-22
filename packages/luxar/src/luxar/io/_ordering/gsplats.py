@@ -86,12 +86,13 @@ def compute_chunk_bounds_gsplats(
     point under the default AUTO encoding, so a decoded center can sit up to
     half a quantum (``extent/131070``) outside a bound derived from the
     authored one. Two things cover most of that, neither of them here:
-    ``_compiler/gsplat_assembly.py::_axis_center_offender`` escalates the
-    centers array to float32 when half an axis's grid step exceeds the
-    per-splat marginal σ for more than 0.1% of the splats, and a gridded
-    (stacked time/channel) axis is snapped to store exactly. What the rail
-    leaves is a displacement no larger than the splat's own σ (for all but the
-    ≤0.1% degenerate population it deliberately tolerates).
+    ``_compiler/gsplat_assembly.py::_resolve_centers_encoding_mode`` escalates
+    the centers array to float32 when
+    ``_center_quantization_offender`` finds that half an axis's grid step
+    exceeds the per-splat marginal σ for more than 0.1% of the splats, and a
+    gridded (stacked time/channel) axis is snapped to store exactly. What the
+    rail leaves is a displacement no larger than the splat's own σ (for all
+    but the ≤0.1% degenerate population it deliberately tolerates).
 
     KNOWN GAP — a NON-GRIDDED BARRIER AXIS IS NOT COVERED. Absorbing that
     residual displacement is the job of the ``coverage_sigma·σ`` pad, and that

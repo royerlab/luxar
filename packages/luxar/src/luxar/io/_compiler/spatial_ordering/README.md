@@ -58,6 +58,8 @@ build_points_ordering(
     radii: Optional[Union[NDArray[np.float32], float]],
     ctx: OrderingCtx,
     store: zarr.Group,
+    *,
+    dataset_ctx: Optional[DatasetCtx] = None,
 ) -> Optional[Dict[str, Any]]
 ```
 
@@ -77,6 +79,9 @@ The returned dict carries:
 Radii are normalised before chunk-bounds computation: broadcast arrays (shape
 `(1,)` / `(1, k)`) and scalars collapse to a single float to avoid materialising
 a full-length array; per-element radii are reordered by `sort_order`.
+When `dataset_ctx` is provided, its encoder supplies the per-axis coordinate
+round-trip slack so bounds contain decoded positions; `None` preserves
+authored-coordinate bounds for direct callers.
 
 ```python
 write_points_ordering_to_zarr(group, ordering_data, compressor) -> None
@@ -102,6 +107,8 @@ build_lines_ordering(
     n_segments: int,
     ctx: OrderingCtx,
     store: zarr.Group,
+    *,
+    dataset_ctx: Optional[DatasetCtx] = None,
 ) -> Optional[Dict[str, Any]]
 ```
 
@@ -119,6 +126,9 @@ separately from `TARGET_CHUNK_BYTES`. Segment bounds use the vertex `slice_dims`
 (D-space) and require expanded per-vertex widths, so scalar/broadcast widths are
 materialised to a full array and per-element widths are reordered by
 `vertex_sort_indices`.
+When `dataset_ctx` is provided, its encoder supplies the per-axis coordinate
+round-trip slack (with LUT encoding disabled to match the vertices writer) so
+bounds contain decoded vertices; `None` preserves authored-coordinate bounds.
 
 ```python
 write_lines_ordering_to_zarr(group, ordering_data, compressor) -> None
