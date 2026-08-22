@@ -175,7 +175,7 @@ def add_gsplats_impl(
             if not warn_if_partition_needs_more_dims(ndim, name):
                 partition = None
 
-        if partition is not None:
+        if partition is not None and n_splats > 0:
             from ..partition import (
                 resolve_partition_spec,
                 spatial_bsp_tree,

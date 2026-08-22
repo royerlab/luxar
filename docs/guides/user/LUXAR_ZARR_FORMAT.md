@@ -509,6 +509,12 @@ directly (`?src=<file>.gsplats.zarr`) and frames on `position_bounds`. The
   "kind": "partition",
   "display_type": "points",     // All children resolve to this type.
   "max_elements": 1000000,      // Per-part cap that drove the BSP recursion.
+  "bsp_tree": {                 // Recursive split tree; axis is a center-column
+    "axis": 0,                  //   index mapped through displayDims by the viewer.
+    "split": 0.0,
+    "left": { "part": 0 },
+    "right": { "part": 1 }
+  },
   "position_bounds": {           // Union of children's bboxes — lets
     "min": [-10, -10, -10],     //   picking / framing / scene-bounds-cache
     "max": [10, 10, 10]          //   treat the layer as one logical entity.
@@ -526,6 +532,11 @@ directly (`?src=<file>.gsplats.zarr`) and frames on `position_bounds`. The
   "visible": true
 }
 ```
+
+For points and Gaussian splats, each split plane exactly separates the child
+bounds. Lines and mesh are partitioned atomically by polyline and face centroid,
+respectively, so their vertices may cross a split plane; their stored tree is a
+stable approximate order rather than an exact painter's-order separation.
 
 **Children**:
 - Subgroup naming is **not** enforced; the convenience kwarg writes

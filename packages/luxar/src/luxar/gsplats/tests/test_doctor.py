@@ -486,6 +486,7 @@ class TestSplitPlanesCheck:
             (finding,) = report.findings
             assert finding.severity == "note"
             assert not finding.fixable
+            assert "centroid-split lines or mesh" in finding.detail
             assert report.healthy  # a note does not fail the gate
 
             diagnose_store(path, fix=True)

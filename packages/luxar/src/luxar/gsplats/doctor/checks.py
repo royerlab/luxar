@@ -344,14 +344,15 @@ def _approximate_finding(where: str, n_parts: int) -> Finding:
         summary=f"split planes over {n_parts} parts that overlap — approximate",
         detail=(
             "The parts share space, so no tree separates them and the stored "
-            "planes cannot be checked exactly. This is the documented shape of a "
-            "uniform-tiled fit, whose apodized tiles keep their overlap band: the "
-            "cuts sit at each band's midplane, which confines any misordering to "
-            "the band instead of letting whole parts swap."
+            "planes cannot be checked exactly. This is the documented shape of "
+            "uniform-tiled fits, whose apodized tiles keep their overlap band, and "
+            "centroid-split lines or mesh parts, whose vertices can cross a cut. "
+            "The producer's cuts still confine misordering to the overlap instead "
+            "of letting whole parts swap."
         ),
         remedy=(
-            "Nothing to do. For an exactly-ordered partition, fit with a content "
-            "plan (or non-overlapping tiles) instead."
+            "Nothing to do. Exact ordering requires non-overlapping part bounds; "
+            "for tiled gsplats, use a content plan or non-overlapping tiles."
         ),
     )
 

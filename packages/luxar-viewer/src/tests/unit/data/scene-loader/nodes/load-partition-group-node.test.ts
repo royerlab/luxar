@@ -262,6 +262,8 @@ describe('loadPartitionGroupNode', () => {
   it('keeps a nested bsp_tree produced by a native spatial partition', async () => {
     attachStubChildren();
     const ctx = makeCtx();
+    const infoSpy = vi.spyOn(log, 'info').mockImplementation(() => {});
+    const warningSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
     const bspTree = {
       axis: 0,
       split: 0,
@@ -301,6 +303,11 @@ describe('loadPartitionGroupNode', () => {
 
     expect(wrapper.userData.bspTree).toEqual(bspTree);
     expect(wrapper.children.map((child) => child.userData.partIndex)).toEqual([0, 1, 2, 3]);
+    expect(warningSpy).not.toHaveBeenCalled();
+    expect(infoSpy).not.toHaveBeenCalledWith(
+      Modules.SCENE_LOADER,
+      expect.stringContaining('without verifiable part bounds')
+    );
   });
 
   it('drops a bsp_tree whose split plane is outside the overlap-tolerant center band', async () => {

@@ -448,6 +448,9 @@ def _resolve_points_partition(
         warn_if_partition_needs_more_dims,
     )
 
+    if pos_arr.shape[0] == 0:
+        return None
+
     if not warn_if_partition_needs_more_dims(pos_arr.shape[1], name):
         return None
 
