@@ -831,6 +831,8 @@ export class RenderingControls {
   /** Sync only the live camera FOV and its derived preset into settings. */
   public syncCameraFovState(): void {
     syncCameraFovStateImpl(this.settings, this.sceneManager);
+    this.controllers.fov?.updateDisplay();
+    this.controllers.fovPreset?.updateDisplay();
   }
 
   /** Apply current settings to the rendering pipeline. Delegates to a pure helper. */
