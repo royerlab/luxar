@@ -751,16 +751,19 @@ export class SceneManager extends THREE.EventDispatcher<{
       // also extract once more to detect author-set target/targetNode.
       const viewerConfig = root.userData?.viewerConfig as ZarrViewerConfig | undefined;
       if (options.applyViewerConfigFov && viewerConfig) {
-        const fov = extractRenderingOverrides(viewerConfig).fov;
-        if (
-          typeof fov === 'number' &&
-          Number.isFinite(fov) &&
-          fov >= config.camera.fovMin &&
-          fov <= config.camera.fovMax &&
-          Math.abs(this.currentFov - fov) > 0.5
-        ) {
+        const fovOverride = extractRenderingOverrides(viewerConfig).fov;
+        if (fovOverride !== undefined) {
+          const fov =
+            typeof fovOverride === 'number' &&
+            Number.isFinite(fovOverride) &&
+            fovOverride >= config.camera.fovMin &&
+            fovOverride <= config.camera.fovMax
+              ? fovOverride
+              : config.renderingControls.defaults.fov;
           const delta = (fov - this.currentFov) / config.camera.fovSensitivity;
-          this.updateFOV(delta);
+          if (Math.abs(this.currentFov - fov) > 0.5) {
+            this.updateFOV(delta);
+          }
         }
       }
       const { positionApplied, appliedUp } = this.applyZarrViewerConfig(root);

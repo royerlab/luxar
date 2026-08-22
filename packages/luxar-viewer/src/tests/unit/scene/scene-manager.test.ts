@@ -820,6 +820,39 @@ describe('SceneManager', () => {
       expect(sceneManager.currentFov).toBe(63);
     });
 
+    it('uses an authored FOV instead of the cinematic preset when framing', async () => {
+      const spies = installSpies({
+        viewerConfig: { cinematic_mode: true, camera: { fov: 38 } },
+      });
+      let fovAtFrame = 0;
+      spies.autoFrameCamera.mockImplementation(() => {
+        fovAtFrame = sceneManager.currentFov;
+      });
+
+      await sceneManager.loadSceneData('http://example.com/data.zarr', undefined, {
+        applyViewerConfigFov: true,
+      });
+
+      expect(fovAtFrame).toBe(38);
+    });
+
+    it('frames with the validated default when an authored FOV is out of range', async () => {
+      (sceneManager.camera as THREE.PerspectiveCamera).fov = 80;
+      const spies = installSpies({
+        viewerConfig: { camera: { fov: 999 } },
+      });
+      let fovAtFrame = 0;
+      spies.autoFrameCamera.mockImplementation(() => {
+        fovAtFrame = sceneManager.currentFov;
+      });
+
+      await sceneManager.loadSceneData('http://example.com/data.zarr', undefined, {
+        applyViewerConfigFov: true,
+      });
+
+      expect(fovAtFrame).toBe(47);
+    });
+
     it('does not apply viewer-config FOV before framing when stored settings take precedence', async () => {
       const spies = installSpies({
         viewerConfig: { cinematic_mode: true },
