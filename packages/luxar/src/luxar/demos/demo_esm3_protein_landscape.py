@@ -74,9 +74,9 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import add_demo_caption
 from luxar.demos import (
     MissingDependencyError,
+    add_demo_caption,
     launch_viewer,
     require_module,
     stack_colorings,

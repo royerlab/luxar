@@ -91,10 +91,10 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import CameraConfig, Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import add_demo_caption
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
     DatasetUnavailable,
+    add_demo_caption,
     detect_device,
     is_lfs_pointer,
     launch_viewer,

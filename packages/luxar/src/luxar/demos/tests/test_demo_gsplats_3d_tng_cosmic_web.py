@@ -16,9 +16,7 @@ import pytest
 
 pytest.importorskip("scipy")
 
-_DEMO_PATH = (
-    Path(__file__).resolve().parents[1] / "demo_gsplats_3d_tng_cosmic_web.py"
-)
+_DEMO_PATH = Path(__file__).resolve().parents[1] / "demo_gsplats_3d_tng_cosmic_web.py"
 
 
 def _load_demo_module():
@@ -83,9 +81,7 @@ class TestFinalizeDensity:
         assert np.isclose(out.max(), 1.0, rtol=1e-5)
 
     def test_sigma_zero_is_passthrough_shape(self) -> None:
-        raw = np.abs(np.random.default_rng(2).normal(size=(8, 8, 8))).astype(
-            np.float32
-        )
+        raw = np.abs(np.random.default_rng(2).normal(size=(8, 8, 8))).astype(np.float32)
         out = finalize_density(raw, sigma=0.0)
         assert out.shape == (8, 8, 8)
         assert out.max() <= 1.0

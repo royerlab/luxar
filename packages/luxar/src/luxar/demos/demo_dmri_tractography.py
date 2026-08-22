@@ -206,9 +206,9 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import add_demo_caption
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import (
+    add_demo_caption,
     cached_download,
     launch_viewer,
     parse_demo_flags,

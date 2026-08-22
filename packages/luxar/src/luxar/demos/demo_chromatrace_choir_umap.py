@@ -53,8 +53,7 @@ import pandas as pd
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import add_demo_caption
-from luxar.demos import launch_viewer, parse_path_arg
+from luxar.demos import add_demo_caption, launch_viewer, parse_path_arg
 from luxar.utils._umap_utils import format_label, get_categorical_color
 from luxar.utils.paths import get_demos_output_dir
 

@@ -57,8 +57,8 @@ import pandas as pd
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import add_demo_caption
 from luxar.demos import (
+    add_demo_caption,
     launch_viewer,
     require_local_data,
     substitutive_lod_or_flat,

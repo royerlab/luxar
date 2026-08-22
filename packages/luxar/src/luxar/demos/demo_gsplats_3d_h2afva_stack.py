@@ -104,9 +104,13 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import add_demo_caption
 from luxar.core.viewer_config import ViewerConfig
-from luxar.demos import ensure_dataset, launch_viewer, parse_demo_flags
+from luxar.demos import (
+    add_demo_caption,
+    ensure_dataset,
+    launch_viewer,
+    parse_demo_flags,
+)
 from luxar.gsplats.io.load_gsplats import load_gsplat_node
 from luxar.gsplats.tree import center_bounds
 from luxar.utils.paths import get_demos_output_dir

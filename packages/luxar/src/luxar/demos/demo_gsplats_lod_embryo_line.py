@@ -122,19 +122,19 @@ from luxar import (
     LuxarZarrCompiler,
     ViewerConfig,
 )
-from luxar.demos import add_demo_caption
 from luxar.core import transforms
-
-# Reuse the single-embryo LOD demo's ladder builder + palette (build_lod_ladder,
-# level_colors, COMPRESSION_FACTOR) as a normal sibling import rather than
-# duplicating the LOD logic.
-from luxar.demos import demo_gsplats_lod_tribolium as _LOD
 from luxar.demos import (
+    add_demo_caption,
     launch_viewer,
     load_precomputed_gsplats,
     parse_demo_flags,
     warn_if_no_cuda_gpu,
 )
+
+# Reuse the single-embryo LOD demo's ladder builder + palette (build_lod_ladder,
+# level_colors, COMPRESSION_FACTOR) as a normal sibling import rather than
+# duplicating the LOD logic.
+from luxar.demos import demo_gsplats_lod_tribolium as _LOD
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.paths import get_demos_output_dir

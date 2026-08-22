@@ -85,8 +85,12 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import add_demo_caption
-from luxar.demos import is_lfs_pointer, launch_viewer, parse_demo_flags
+from luxar.demos import (
+    add_demo_caption,
+    is_lfs_pointer,
+    launch_viewer,
+    parse_demo_flags,
+)
 from luxar.utils.paths import get_demos_output_dir
 
 # -----------------------------------------------------------------------------

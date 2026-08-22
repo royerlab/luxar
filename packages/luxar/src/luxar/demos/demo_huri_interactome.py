@@ -120,8 +120,13 @@ import requests
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import add_demo_caption
-from luxar.demos import launch_viewer, parse_int_arg, parse_path_arg, require_module
+from luxar.demos import (
+    add_demo_caption,
+    launch_viewer,
+    parse_int_arg,
+    parse_path_arg,
+    require_module,
+)
 from luxar.demos._graph_common import (
     build_adjacency,
     build_community_legend,

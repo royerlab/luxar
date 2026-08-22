@@ -146,8 +146,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import add_demo_caption
-from luxar.demos import launch_viewer
+from luxar.demos import add_demo_caption, launch_viewer
 
 # Reuse the shared physics constants + event generator from the static particle
 # collision demo (now a normal sibling import; see the retired sys.modules alias).

@@ -184,11 +184,11 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import add_demo_caption
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import (
     BundleMemberNotFound,
     DatasetUnavailable,
+    add_demo_caption,
     cached_download,
     detect_device,
     launch_viewer,

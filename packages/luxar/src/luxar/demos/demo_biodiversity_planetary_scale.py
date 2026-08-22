@@ -340,7 +340,6 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import add_demo_caption
 from luxar.core.group.compositing import position_bounds_from_array
 from luxar.core.group.partition import median_bsp_partition
 from luxar.core.viewer_config import (
@@ -349,6 +348,7 @@ from luxar.core.viewer_config import (
     ViewerConfig,
 )
 from luxar.demos import (
+    add_demo_caption,
     cache_computed,
     cached_download,
     launch_viewer,

@@ -118,8 +118,8 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler, transforms
-from luxar.demos import add_demo_caption
 from luxar.demos import (
+    add_demo_caption,
     detect_device,
     hsv_to_rgb,
     launch_viewer,

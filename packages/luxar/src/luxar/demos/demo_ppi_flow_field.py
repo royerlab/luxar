@@ -71,9 +71,8 @@ import pandas as pd
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import add_demo_caption
 from luxar.core.viewer_config import CameraConfig, UIConfig, ViewerConfig
-from luxar.demos import launch_viewer, require_module
+from luxar.demos import add_demo_caption, launch_viewer, require_module
 from luxar.demos._graph_common import (
     compute_communities as louvain_communities,
 )

@@ -160,9 +160,8 @@ from luxar import (
     LuxarZarrCompiler,
     ViewerConfig,
 )
-from luxar.demos import add_demo_caption
 from luxar._zarr_compat import open_group
-from luxar.demos import launch_viewer, substitutive_lod_or_flat
+from luxar.demos import add_demo_caption, launch_viewer, substitutive_lod_or_flat
 from luxar.demos._gaia_catalog import DEFAULT_CATALOG_FILE, RAW_ZARR_NAME
 from luxar.utils.paths import get_demos_output_dir
 

@@ -19,8 +19,8 @@ from typing import Optional
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import add_demo_caption
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
+from luxar.demos import add_demo_caption
 
 
 def build_gsplats_cache(
@@ -140,6 +140,6 @@ def build_interop_scene(
             if colormap is not None:
                 attrs["colormap"] = colormap
             scene.add_gsplats_from_file(name=layer_name, path=str(cache_file), **attrs)
-            add_demo_caption(scene, credit, DEMO_META.get("citation"))
+            add_demo_caption(scene, credit, citation)
         aprint(f"✓ Scene saved: {output_path}")
         return output_path

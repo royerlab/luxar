@@ -155,9 +155,9 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import add_demo_caption
 from luxar.demos import (
     DatasetUnavailable,
+    add_demo_caption,
     launch_viewer,
     load_dataset_gsplats,
     load_local_fit_gsplats,

@@ -175,8 +175,8 @@ import requests
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import add_demo_caption
 from luxar.demos import (
+    add_demo_caption,
     cache_computed,
     launch_viewer,
     parse_int_arg,

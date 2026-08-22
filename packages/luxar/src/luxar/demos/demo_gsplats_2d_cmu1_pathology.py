@@ -134,11 +134,11 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import add_demo_caption
 from luxar.core.viewer_config import UIConfig, ViewerConfig
 from luxar.demos import (
     DatasetUnavailable,
     MissingDependencyError,
+    add_demo_caption,
     ensure_dataset,
     launch_viewer,
     local_fit_path,

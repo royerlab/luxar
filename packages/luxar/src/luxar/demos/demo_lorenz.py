@@ -45,8 +45,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import add_demo_caption
-from luxar.demos import hsv_to_rgb, launch_viewer, parse_int_arg
+from luxar.demos import add_demo_caption, hsv_to_rgb, launch_viewer, parse_int_arg
 from luxar.utils.paths import get_demos_output_dir
 
 # Lorenz system parameters (classic values)

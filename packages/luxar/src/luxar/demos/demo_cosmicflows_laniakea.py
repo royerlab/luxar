@@ -59,9 +59,8 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import add_demo_caption
 from luxar.core.viewer_config import CameraConfig, UIConfig, ViewerConfig
-from luxar.demos import cached_download, launch_viewer
+from luxar.demos import add_demo_caption, cached_download, launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
 LANIAKEA_RAW_BASE: Final = "https://raw.githubusercontent.com/manlius/laniakea/main"

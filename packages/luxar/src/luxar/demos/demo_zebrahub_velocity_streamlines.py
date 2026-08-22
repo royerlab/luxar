@@ -64,9 +64,8 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import add_demo_caption
 from luxar.core.viewer_config import CameraConfig, UIConfig, ViewerConfig
-from luxar.demos import launch_viewer, require_module
+from luxar.demos import add_demo_caption, launch_viewer, require_module
 from luxar.utils._umap_utils import get_categorical_color
 from luxar.utils.fields import (
     FlowField,

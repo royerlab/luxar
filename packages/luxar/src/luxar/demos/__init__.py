@@ -11,8 +11,6 @@ To run a demo:
 See demos/README.md for more information on creating new demos.
 """
 
-from ._caption import add_demo_caption, format_demo_caption
-
 from ..utils.data_fetch import (
     LOCAL_FIT_DIRNAME,
     DatasetNotFound,
@@ -49,6 +47,7 @@ from ..utils.demos import (
     voxel_sampled_payload_agreement,
     warn_if_no_cuda_gpu,
 )
+from ._caption import add_demo_caption, format_demo_caption
 from ._dependencies import (
     INSTALL_SPECS,
     DependencySpec,
