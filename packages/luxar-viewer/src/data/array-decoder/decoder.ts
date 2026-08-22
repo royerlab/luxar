@@ -13,6 +13,7 @@
 import * as zarr from '../zarr';
 import { readArray, abortOptions } from '../zarr';
 import { log, Modules } from '../../utils/log';
+import { decode_log_scalar_u8, decode_log_scalar_u16 } from '../../wasm/typescript/decode';
 import { ArrayRefRegistry } from './ref-registry';
 import type { ArrayMetadata, EncodingMetadata } from './types';
 import {
@@ -497,13 +498,15 @@ export class ArrayDecoder {
    * Decode log-space encoded scalar array
    *
    * Format: log1p(value)/max_log → uint8/uint16
-   * Decoding: expm1(normalized * max_log)
+   * Decoding delegates to the shared decode_log_scalar_u8/u16 kernel.
    *
    * Used for positive scalars with wide dynamic range (e.g., radii)
    */
-  private decodeLogScalar(data: Float32Array, maxLog: number, dtype: string): Float32Array {
-    // This main-thread path intentionally retains its f64 divide-then-multiply
-    // algebra for now; worker/WASM fallback decoding follows the Rust f32 kernel (#1847).
+  private decodeLogScalar(
+    data: Float32Array | Uint8Array | Uint16Array,
+    maxLog: number,
+    dtype: string
+  ): Float32Array {
     if (!Number.isFinite(maxLog) || maxLog <= 0) {
       throw new Error(
         `[ArrayDecoder] Invalid log_scalar max_log: ${maxLog}. Must be finite and > 0.`
@@ -513,10 +516,13 @@ export class ArrayDecoder {
     // Determine max integer value from dtype
     // NumPy dtype formats: 'uint8', '<u1' (little-endian), '|u1' (native byte order for single-byte)
     let max_int: number;
+    let decode: typeof decode_log_scalar_u8;
     if (dtype === 'uint8' || dtype === '<u1' || dtype === '|u1') {
       max_int = 255;
+      decode = decode_log_scalar_u8;
     } else if (dtype === 'uint16' || dtype === '<u2' || dtype === '>u2' || dtype === '|u2') {
       max_int = 65535;
+      decode = decode_log_scalar_u16;
     } else {
       throw new Error(`Unsupported log_scalar dtype: ${dtype}`);
     }
@@ -527,17 +533,21 @@ export class ArrayDecoder {
     );
 
     const result = new Float32Array(data.length);
+    if (data.length > max_int + 1) {
+      const codes = max_int === 255 ? new Uint8Array(max_int + 1) : new Uint16Array(max_int + 1);
+      for (let i = 0; i < codes.length; i++) codes[i] = i;
+
+      const lut = new Float32Array(codes.length);
+      decode(codes, maxLog, lut);
+      for (let i = 0; i < data.length; i++) result[i] = lut[data[i]];
+    } else {
+      decode(data, maxLog, result);
+    }
     let minValue = Number.POSITIVE_INFINITY;
     let maxValue = Number.NEGATIVE_INFINITY;
 
-    for (let i = 0; i < data.length; i++) {
-      // Normalize to [0, 1]
-      const normalized = data[i] / max_int;
-
-      // Apply inverse log1p transform: expm1(normalized * max_log)
-      // This reverses: log1p(value) / max_log → normalized
-      const value = Math.expm1(normalized * maxLog);
-      result[i] = value;
+    for (let i = 0; i < result.length; i++) {
+      const value = result[i];
       if (value < minValue) minValue = value;
       if (value > maxValue) maxValue = value;
     }
@@ -1258,12 +1268,8 @@ export class ArrayDecoder {
     }
 
     if (isLogSpace) {
-      // Log-space quantization: dequantize then exponentiate
-      return this.decodeLogScalar(
-        quantizedData instanceof Float32Array ? quantizedData : new Float32Array(quantizedData),
-        bounds[1], // max_log
-        dtype
-      );
+      // Log-space quantization: dequantize then exponentiate.
+      return this.decodeLogScalar(quantizedData, bounds[1], dtype);
     } else {
       // Linear quantization: standard dequantization
       return this.dequantize(quantizedData, bounds, dtype);

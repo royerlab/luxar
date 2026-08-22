@@ -117,7 +117,9 @@ def _viewer_kernel_decode(
     Python's scalar decoders use f64; ``_decode_bounded_scalar`` also uses a
     different operand order. Keep this transcription aligned with the
     TypeScript and Rust kernels. The returned ULP budget covers their expected
-    divergence from Python's f64 result at the array peak.
+    divergence from Python's f64 result at the array peak. Log-scalar stays on
+    tolerance checks because mirroring the kernels' exact ``expm1f`` would add
+    a fourth transcription of the hand-ported libm routine.
     """
     enc = array.attrs.get("encoding", None)
     if not isinstance(enc, dict):
@@ -165,6 +167,8 @@ def _viewer_kernel_decode(
         if nonzero.any():
             exponent = lo + (data[nonzero].astype(np.float64) - 1.0) * inv
             result[nonzero] = np.asarray(np.exp(exponent), dtype="<f4")
+        # F32 max_log rounding dominates the peak gap at about |max_log| / 2
+        # ULPs, so 4 + |max_log| provides roughly 2x headroom.
         return result, 4.0 + abs(hi)
 
     return None

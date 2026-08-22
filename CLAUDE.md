@@ -273,6 +273,20 @@ luxar optimise scene.luxar.zarr --dry-run                  # report the plan, wr
 luxar optimise scene.luxar.zarr out.luxar.zarr --profile hosting  # hosting 256 KB / local 64 KB / archive 1 MB
 luxar optimise scene.luxar.zarr out.luxar.zarr --verify    # re-read the output, compare every array
 luxar optimise arbitrary.zarr out.zarr --generic           # a plain (non-Luxar) zarr store
+# Re-derive a store's LOD switch thresholds IN PLACE — attrs only, no chunk data
+# moves. Every `kind=lod` group still on the legacy `coverage` diagonal metric
+# (or carrying no `selector`) gets screen-occupancy-halved thresholds and a
+# `screen-area` stamp; the fills-screen anchor only under a REAL (>1 part)
+# partition. An EXPLICIT opt-in and nothing else may trigger it: an authored
+# `coverage_fractions=[...]` list and a legacy derived one are indistinguishable
+# on disk, so this may override a deliberate choice — hence the printed old→new
+# audit line, `--dry-run`, and `--group`. A group already on `screen-area` is
+# skipped, so a second run changes nothing, `content_hash` included. Exits 1 when
+# a ladder was left alone (unsupported selector → `gsplat migrate-format` first;
+# unresolvable finest element count).
+luxar restamp-lod scene.luxar.zarr                         # every legacy ladder
+luxar restamp-lod scene.luxar.zarr --dry-run               # report the old→new ladders
+luxar restamp-lod scene.luxar.zarr --group tiled/part_0    # one ladder (repeatable)
 luxar export scene.luxar.zarr -o my_export/             # Export scene + viewer as standalone offline folder
 luxar export scene.luxar.zarr -o my_export/ --open      # Export and serve in browser
 luxar export scene.luxar.zarr -o my_export/ --overwrite # Overwrite existing export

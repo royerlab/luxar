@@ -4,7 +4,10 @@
  * Python generates fixtures and a `roundtrip_expectations.json` file by decoding
  * every relevant fixture array with `luxar.encoding.ArrayDecoder`. These tests
  * load the same zarr arrays in Node.js and require the TypeScript ArrayDecoder to
- * reproduce the same flattened float32 values byte-for-byte.
+ * reproduce the same flattened float32 values byte-for-byte, except log-scalar
+ * arrays: their viewer contract is the Rust/WASM f32 kernel, while Python keeps
+ * its f64 decode helper. Those remain numerically close to Python and must match
+ * exactly between full-array and range decoding.
  *
  * This is intentionally non-browser and non-WebGL so it can run in the fast
  * Vitest suite while still exercising real Python-written zarr stores.
@@ -118,6 +121,55 @@ function assertSamples(
   }
 }
 
+function assertLogScalarSamplesNearPython(
+  values: Float32Array,
+  expected: ArrayOperationExpectation | ArrayExpectation,
+  maxLog: number
+): void {
+  for (const sample of expected.samples) {
+    const tolerance = logScalarPythonTolerance(sample.value, maxLog);
+    expect(Math.abs(values[sample.index] - sample.value)).toBeLessThanOrEqual(tolerance);
+  }
+}
+
+function logScalarPythonTolerance(value: number, maxLog: number): number {
+  // maxLog amplifies f32 argument rounding; +2 covers multiply/expm1/result rounding.
+  return Math.max(1e-7, Math.abs(value) * (maxLog + 2) * 2 ** -23);
+}
+
+function assertLogScalarStatsNearPython(
+  values: Float32Array,
+  expected: ArrayOperationExpectation | ArrayExpectation,
+  maxLog: number
+): void {
+  if (values.length === 0) {
+    expect(expected.stats).toEqual({ min: null, max: null, mean: null });
+    return;
+  }
+
+  let min = Number.POSITIVE_INFINITY;
+  let max = Number.NEGATIVE_INFINITY;
+  let sum = 0;
+  for (const value of values) {
+    min = Math.min(min, value);
+    max = Math.max(max, value);
+    sum += value;
+  }
+
+  for (const [name, actual] of [
+    ['min', min],
+    ['max', max],
+    ['mean', sum / values.length],
+  ] as const) {
+    const reference = expected.stats[name];
+    expect(reference).not.toBeNull();
+    const tolerance = logScalarPythonTolerance(reference!, maxLog);
+    expect(Math.abs(actual - reference!), `${name} differs from Python`).toBeLessThanOrEqual(
+      tolerance
+    );
+  }
+}
+
 function assertManifestCoverage(manifest: ContractManifest): void {
   for (const [category, requiredValues] of Object.entries(manifest.required)) {
     const observed = manifest.observed[category] ?? {};
@@ -171,9 +223,15 @@ describe('Python-TypeScript encoded array round-trip', () => {
   for (const [fixtureName, fixture] of Object.entries(EXPECTATIONS.fixtures)) {
     describe(fixtureName, () => {
       for (const [arrayPath, expected] of Object.entries(fixture.arrays)) {
-        it(`decodes ${arrayPath} (${expected.encoding}) like Python`, async () => {
+        const logScalar = ArrayDecoder.isLogScalarEncodingName(expected.encoding);
+        const contract = logScalar ? 'with the viewer f32 contract' : 'like Python';
+        it(`decodes ${arrayPath} (${expected.encoding}) ${contract}`, async () => {
           const { array, attrs, rootLoc, store } = await loadArrayWithAttrs(fixtureName, arrayPath);
           const decoder = new ArrayDecoder(new ArrayRefRegistry());
+          const maxLog = attrs.encoding?.max_log;
+          if (logScalar && typeof maxLog !== 'number') {
+            throw new Error(`${fixtureName}/${arrayPath} is missing encoding.max_log`);
+          }
 
           // Do not pass expectedElements here. The decoder must rely on Python's
           // encoding metadata (not caller hints) for full-array round-trips.
@@ -181,10 +239,15 @@ describe('Python-TypeScript encoded array round-trip', () => {
 
           expect(decoded.length).toBe(expected.flat_length);
           expect(decoded.length).toBe(shapeProduct(expected.decoded_shape));
-          assertSamples(decoded, expected.viewer_samples ?? expected.samples);
-          expect(float32Sha256(decoded)).toBe(
-            expected.viewer_float32_sha256 ?? expected.float32_sha256
-          );
+          if (logScalar) {
+            assertLogScalarSamplesNearPython(decoded, expected, maxLog!);
+            assertLogScalarStatsNearPython(decoded, expected, maxLog!);
+          } else {
+            assertSamples(decoded, expected.viewer_samples ?? expected.samples);
+            expect(float32Sha256(decoded)).toBe(
+              expected.viewer_float32_sha256 ?? expected.float32_sha256
+            );
+          }
 
           const fullOperation = expected.operations.find((operation) => operation.kind === 'full');
           expect(fullOperation?.float32_sha256).toBe(expected.float32_sha256);
@@ -194,10 +257,19 @@ describe('Python-TypeScript encoded array round-trip', () => {
             const rangeDecoded = await decodeRange(array, attrs, store, operation);
             expect(rangeDecoded.length).toBe(operation.flat_length);
             expect(rangeDecoded.length).toBe(shapeProduct(operation.decoded_shape));
-            assertSamples(rangeDecoded, operation.viewer_samples ?? operation.samples);
-            expect(float32Sha256(rangeDecoded)).toBe(
-              operation.viewer_float32_sha256 ?? operation.float32_sha256
-            );
+            if (logScalar) {
+              assertLogScalarSamplesNearPython(rangeDecoded, operation, maxLog!);
+              assertLogScalarStatsNearPython(rangeDecoded, operation, maxLog!);
+              const itemWidth = elementsPerItem(expected.decoded_shape);
+              const start = (operation.start ?? 0) * itemWidth;
+              const end = (operation.end ?? operation.start ?? 0) * itemWidth;
+              expect(float32Sha256(rangeDecoded)).toBe(float32Sha256(decoded.subarray(start, end)));
+            } else {
+              assertSamples(rangeDecoded, operation.viewer_samples ?? operation.samples);
+              expect(float32Sha256(rangeDecoded)).toBe(
+                operation.viewer_float32_sha256 ?? operation.float32_sha256
+              );
+            }
           }
         });
       }

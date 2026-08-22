@@ -30,10 +30,9 @@ from one entry point.
 
 ## Priority-Dispatch Order
 
-Main-thread scalar branches that perform floating-point decoding delegate
-to the shared TypeScript worker-fallback kernels so worker routing cannot
-change decoded bits. `log_scalar` is the remaining scalar holdout, tracked
-by #1847. Per-channel routes use separately tested bit-exact implementations.
+Every main-thread branch that performs floating-point decoding delegates to
+the shared TypeScript worker-fallback kernels so worker routing cannot change
+decoded bits. Per-channel routes use separately tested bit-exact implementations.
 
 `ArrayDecoder.decode()` checks encoding modes in a fixed order — the
 order MUST match the Python spec or behavior diverges:
@@ -50,7 +49,7 @@ order MUST match the Python spec or behavior diverges:
    value). `k` comes from `enc.original_shape[1]`.
 4. **log_scalar** (`log_scalar_uint8`, `log_scalar_uint16`) — checked
    BEFORE generic quantization because the name contains `uint`. Decodes
-   via `expm1(normalized × max_log)`. Used for radii and other
+   via the shared TypeScript `expm1(normalized × max_log)` kernels. Used for
    wide-dynamic-range positive scalars.
 5. **geolog scalar** (`geolog_scalar_uint8`, `geolog_scalar_uint16`) —
    reserved zero plus geometric interpolation across the nonzero range.
