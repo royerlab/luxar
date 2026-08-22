@@ -105,13 +105,14 @@ that expansion *after* first-load auto-framing and never re-frames, so an
 auto-framed cinematic scene opens 0.71x smaller linearly — half the screen area —
 than the same scene without the preset. That is a viewer-side ordering, not
 something a demo can correct; closing it means applying the expanded fov before
-the fit.
+the fit (#1861).
 
 An authored camera position is a stronger contract, because its distance was
 composed for one FOV, and the demos say which one in one of two ways. Seventeen
-**pin** `camera.fov` (38°–50°, computed in six): framing preserved, but they
-then wear the preset's 35 mm barrel distortion at a longer lens's framing — two
-lenses in one image — and those pins all predate the cinematic look. The five
+**pin** `camera.fov` (38° to 50° where it is a literal, computed or named in
+seven): framing preserved, but they then wear the preset's 35 mm barrel
+distortion at a longer lens's framing — two lenses in one image — and those pins
+all predate the cinematic look (#1862). The five
 poses derived from a data extent or a fitted radius instead **compose for 63°**
 through `_cinematic_camera.py`: read `CINEMATIC_FOV_DEG` when the distance comes
 from the lens (a fitted radius through `asin(R/D)`), or call `pull_in()` to carry
@@ -121,10 +122,11 @@ keeps the lens whole and the framing exact, and costs the stronger perspective a
 wider lens gives. `test_demos_cinematic_mode.py` accepts either and rejects a
 bare authored position, whose FOV assumption nobody can read.
 
-The cinematic distortion still applies unless a scene explicitly suppresses it;
-the two quantitative ortho demos do so because their projection-derived scale
-bars must remain exact, and the biodiversity globe does so to preserve its
-categorical hue encoding.
+Four demos pin scientific-fidelity exceptions. The two quantitative ortho demos
+suppress bloom, vignette, lens distortion and detector noise so their
+projection-derived scale bars and measured intensities remain meaningful. The
+biodiversity globe and nD transform bench suppress lens distortion and detector
+noise because their categorical or exact RGB hues carry data.
 
 The three network demos (`caida_as_topology`, `huri_interactome`,
 `ppi_flow_field`) share `_graph_common.py`, but not all of it. All three use the

@@ -40,7 +40,7 @@ Four invariants, and they close different holes:
     radius-derived poses do (and which keeps the preset's lens whole — see
     below). What the guard rejects is neither: a bare authored position.
 ``test_scientific_fidelity_overrides_are_explicit``
-    The three demos whose scale, intensity, or categorical hue would be damaged
+    The four demos whose scale, intensity, or categorical hue would be damaged
     by lens distortion and detector noise keep those author overrides explicit.
 
 A literal ``True`` is required, not any truthy expression: a scene whose look
@@ -53,7 +53,8 @@ config the message names. Individual preset fields may be pinned when they
 would damage the scene's scientific contract: the two quantitative ortho demos
 disable bloom, vignette, lens distortion and detector noise so their scale bars
 and intensities remain meaningful, and the biodiversity globe disables the
-last two so its categorical hues remain exact.
+last two so its categorical hues remain exact. The nD transform bench also
+disables the last two to preserve its exact RGB corner palette.
 
 The preset's 63° FOV is applied after first-load auto-framing, which happens at
 the viewer's 47° default, and nothing re-frames afterwards — so an auto-framed
