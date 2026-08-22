@@ -2614,9 +2614,8 @@ class TestPartitionSpecKeys:
 #: ``max_elements=25`` → 8/12/8/20. ``partition=True`` does NOT: the default
 #: ``max_elements`` is 1,000,000, so it writes a plain leaf, and it is listed
 #: under a name that says so rather than dropped, because the refusal must hold
-#: on the fall-through path too. ``{"parts": N}`` is deliberately absent — no
-#: adder reads that key, so it was never a partition spec at all, only a plain
-#: leaf wearing the label.
+#: on the fall-through path too. ``{"parts": N}`` is deliberately absent because
+#: it is an unknown key, refused by :class:`TestPartitionSpecKeys` above.
 _PARTITION_SPECS = [
     ("default_no_split", True),
     ("max_elements_half", {"max_elements": _HALF}),
@@ -2648,12 +2647,11 @@ class TestPartitionRefusesAnUnwritableColorDtype:
     :data:`_PARTITION_SPECS` is the parametrization, and
     ``test_the_same_colours_as_uint8_still_partition`` runs over the SAME list —
     which is what keeps the class honest. An earlier cut parametrized over
-    ``partition=True`` and ``{"parts": 4}``: measured at these counts, NEITHER
-    splits (both give ``kind=leaf``, 0 children — no adder reads a ``"parts"``
-    key at all, and the ``max_elements`` default is 1,000,000), so two thirds of
-    the class silently re-ran the flat path while its control only ever exercised
-    the one spec that did split. ``default_no_split`` is kept deliberately and
-    named for what it is.
+    ``partition=True`` and ``{"parts": 4}``: before #1873, neither split at these
+    counts, so two thirds of the class silently re-ran the flat path while its
+    control only ever exercised the one spec that did split. The misspelled key
+    is now refused; ``default_no_split`` is kept deliberately and named for what
+    it is.
     """
 
     @pytest.mark.parametrize("geometry", ["points", "lines", "gsplats", "mesh"])
@@ -2724,8 +2722,9 @@ class TestPartitionRefusesAnUnwritableColorDtype:
         pins WHICH specs actually reach the wrapper: without that, a spec that
         quietly falls through to a plain leaf makes its refusal case a re-run of
         the flat path, asserting nothing about the partition gate. That is exactly
-        what ``{"parts": 4}`` was doing. ``default_no_split`` is asserted to be a
-        plain leaf, so the two claims cannot swap places unnoticed.
+        what ``{"parts": 4}`` did before unknown keys were refused (#1873).
+        ``default_no_split`` is asserted to be a plain leaf, so the two claims
+        cannot swap places unnoticed.
         """
         compiler, scene, path = open_scene(
             tmp_path, f"dtype_ok_{geometry}_{spec_id}.luxar.zarr"
