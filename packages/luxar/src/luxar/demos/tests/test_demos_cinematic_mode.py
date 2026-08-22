@@ -216,7 +216,7 @@ def _composes_for_the_cinematic_lens(tree: ast.AST, call: ast.Call) -> bool:
     enough act to read as the statement it is.
     """
     imported_symbols = {
-        alias.asname or alias.name
+        alias.asname or alias.name: alias.name
         for node in ast.walk(tree)
         if isinstance(node, ast.ImportFrom)
         and (node.module or "").endswith("_cinematic_camera")
@@ -224,9 +224,9 @@ def _composes_for_the_cinematic_lens(tree: ast.AST, call: ast.Call) -> bool:
     }
     position = _keyword(call, "position")
     if isinstance(position, ast.Call) and isinstance(position.func, ast.Name):
-        if position.func.id == "pull_in" and "pull_in" in imported_symbols:
+        if imported_symbols.get(position.func.id) == "pull_in":
             return True
-    return "CINEMATIC_FOV_DEG" in imported_symbols
+    return "CINEMATIC_FOV_DEG" in imported_symbols.values()
 
 
 @pytest.mark.parametrize("path", MODULES, ids=_module_ids(MODULES))
@@ -328,6 +328,11 @@ def test_the_guard_reads_the_flag_it_claims_to(source: str, flagged: bool) -> No
         (
             "from luxar.demos._cinematic_camera import pull_in\n"
             "CameraConfig(position=pull_in((6.0, 7.0, 19.0)))",
+            False,
+        ),
+        (
+            "from luxar.demos._cinematic_camera import pull_in as compose\n"
+            "CameraConfig(position=compose((6.0, 7.0, 19.0)))",
             False,
         ),
         (
