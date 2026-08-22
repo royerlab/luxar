@@ -7,6 +7,10 @@ that the TypeScript ArrayDecoder can correctly read Python-encoded data.
 IMPORTANT: Uses NO compression (compressor=None) to avoid blosc/numcodecs
 WASM binding issues in Node.js test environment.
 
+Editing this file makes every existing fixture store stale, and only `pnpm test`
+notices — the Playwright pre-flight checks presence, not staleness — so run
+`pnpm test` or `pnpm test:generate-fixtures` before `pnpm test:e2e`.
+
 Run from project root:
     hatch run fixtures:python packages/luxar-viewer/tests/fixtures/generate_test_data.py
 """
@@ -259,7 +263,31 @@ def generate_lut_u16_test() -> None:
                 Dimension("z", unit="units", display=True),
             ]
         )
-        radii = np.ones(n_points, dtype=np.float32) * 0.5
+        # Radius 0.1, not the 0.5 the small fixtures use (#1746). The reasoning is in
+        # SCREEN pixels, not world-space area: the point shader clamps
+        # `pointSize = clamp(basePointSize, 1.5, maxPointSize)`
+        # (packages/luxar-viewer/src/rendering/materials/point/shader-glsl.ts),
+        # so shrinking a radius stops buying fill rate the moment the sprite
+        # reaches that floor. At the default auto-fit framing of this cloud's
+        # ~±45 bounds (fov 47, fit ratio 0.75, a 720 px-tall viewport) a
+        # 0.5-radius point rasterizes 9.4 px across and a 0.1-radius one
+        # 1.9 px — at/above the floor everywhere, the far side of the cloud
+        # landing right on it — so the sprite is still the size the radius asks
+        # for while shedding (1.9 / 9.4)^2 ≈ 25x of the overdraw that made this
+        # the one fixture heavy enough to starve a shared box under the E2E
+        # suite's parallel workers.
+        #
+        # Not smaller: 0.08 already sits on the 1.5 px floor, and below it the
+        # clamp caps any further fill-rate win while the fragment shader
+        # compensates the enforced sprite area with
+        # `sizeScale = min(vPointSize / 1.5, 1.0)` squared into alpha — 0.4x at
+        # radius 0.05 — so peak alpha drops by more than half for no saving at
+        # all. Do NOT reduce the point count instead: 100k is what puts the
+        # encoder in the lut_uint16 tier (see the docstring). Nothing asserts on
+        # the radius — the E2E test reads colors out of the element texture, the
+        # unit test reads `points/colors` only, and both readiness helpers gate
+        # on `initialized` / `totalPoints`, never pixels.
+        radii = np.ones(n_points, dtype=np.float32) * 0.1
 
         with LuxarZarrCompiler(
             output,
