@@ -96,6 +96,8 @@ def test_content_fit_flat_is_leaf(tmp_path):
     )
     assert res.exit_code == 0, res.output
     assert _kind(out) == "GSplatLeaf"  # --flat collapses to a single leaf
+    assert "Merged quality:" in res.output
+    assert "kept" not in res.output
 
 
 def test_content_missing_density_errors(tmp_path):

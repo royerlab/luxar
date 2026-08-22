@@ -730,10 +730,8 @@ def compare_quality(
         from luxar.cli.gsplat_config import load_volume, parse_shape
         from luxar.gsplats.gsplat_data import GSplatData
         from luxar.gsplats.metrics import compute_quality_metrics
-        from luxar.gsplats.rendering.volume_rendering import (
-            auto_detect_device,
-            render_to_volume_tensor,
-        )
+        from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
+        from luxar.gsplats.utils.device import resolve_torch_device
 
         with asection("Quality Comparison"):
             # Load gsplat dataset
@@ -777,7 +775,7 @@ def compare_quality(
                 raise typer.Exit(1)
 
             # Select device
-            dev = device if device else auto_detect_device()
+            dev = str(resolve_torch_device(device))
 
             # Render gsplats to tensor (stays on GPU)
             with torch.no_grad():

@@ -296,7 +296,7 @@ def mixture_quality(
     # Two devices, deliberately split: the KERNEL sums run float64 (MPS lacks
     # float64 → CPU, the same fallback make_substitutive_lod applies); the
     # spatial grids take the fast device when available (float32 positions).
-    pair_dev = resolve_torch_device(None if device == "auto" else device)
+    pair_dev = resolve_torch_device(device)
     dev = torch.device("cpu") if pair_dev.type == "mps" else pair_dev
 
     a_mu, a_L, a_amps, p_a = _pair_view(approx, max_pair_splats)

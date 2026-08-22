@@ -18,21 +18,6 @@ if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import GSplatData
 
 
-def auto_detect_device() -> str:
-    """Auto-detect the best available device for rendering.
-
-    Priority: CUDA > MPS > CPU
-
-    Returns
-    -------
-    str
-        Device string: "cuda", "mps", or "cpu"
-    """
-    from luxar.gsplats.utils.device import resolve_torch_device
-
-    return str(resolve_torch_device())
-
-
 def render_to_volume_tensor(
     gsplat_data: GSplatData,
     shape: Tuple[int, ...],
@@ -55,7 +40,8 @@ def render_to_volume_tensor(
     shape : Tuple[int, ...]
         Output volume shape (e.g., (128, 128, 128) for 3D).
     device : str, optional
-        Device to use for rendering. If None, auto-detects the best device.
+        Device to use for rendering. ``None`` and ``"auto"`` auto-detect the
+        best device.
     truncate : float, default=DEFAULT_TRUNCATION_RADIUS
         Truncation radius in standard deviations.
     intensity_floor : float, default=1e-5
@@ -68,9 +54,9 @@ def render_to_volume_tensor(
     torch.Tensor
         Rendered volume on the rendering device.
     """
-    # Auto-detect device if not specified
-    if device is None:
-        device = auto_detect_device()
+    from luxar.gsplats.utils.device import resolve_torch_device
+
+    device = str(resolve_torch_device(device))
 
     # Convert to PyTorch tensors
     centers_t = torch.from_numpy(gsplat_data.centers).to(device)
@@ -109,7 +95,7 @@ def render_to_volume_tensor(
     # Use CUDA splatting backend if available — it's tiled, memory-efficient,
     # and much faster than the pure-PyTorch renderer (which creates massive
     # meshgrid intermediates that can OOM on large volumes).
-    if device == "cuda" or (isinstance(device, str) and device.startswith("cuda")):
+    if device.startswith("cuda"):
         try:
             from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
                 CUDA_BACKEND_AVAILABLE,
@@ -166,8 +152,8 @@ def render_to_volume(
     shape : Tuple[int, ...]
         Output volume shape (e.g., (128, 128, 128) for 3D).
     device : str, optional
-        Device to use for rendering. If None, auto-detects the best device.
-        Options: "cuda", "mps", "cpu".
+        Device to use for rendering. ``None`` and ``"auto"`` auto-detect the
+        best device. Options: "auto", "cuda", "mps", "cpu".
     truncate : float, default=DEFAULT_TRUNCATION_RADIUS
         Truncation radius in standard deviations. Gaussians are evaluated within
         this radius from their centers.

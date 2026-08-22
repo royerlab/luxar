@@ -48,7 +48,8 @@ class GaussianSplatFitter:
     Parameters
     ----------
     device : str, optional
-        PyTorch device ('cpu', 'cuda', 'mps'). Auto-detects if None.
+        PyTorch device ('auto', 'cpu', 'cuda', 'mps'). Auto-detects for
+        ``None`` or ``'auto'``.
     enable_dynamic_ops : bool, default=True
         Enable fixed-pool splat relocation during fitting.
     dynamic_config : DynamicOpsConfig, optional
@@ -472,7 +473,8 @@ def fit_gaussian_splats(
     truncate : float, default=2.75
         Truncation radius in standard deviations for rendering efficiency.
     device : str, optional
-        PyTorch device ("cpu", "cuda", "mps"). Auto-detects if None.
+        PyTorch device ("auto", "cpu", "cuda", "mps"). Auto-detects for
+        ``None`` or ``"auto"``.
     seed_method : str, default="auto" (RECOMMENDED)
         Method for generating seeds when seeds=None:
 

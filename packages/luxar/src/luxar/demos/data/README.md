@@ -33,6 +33,19 @@ manifest fetch path. **Their in-repo copies have been removed**: those demos now
 fetch the raw source and rebuild locally. Gaia's opt-in first-run path queries
 the archive with `--build-catalog` and caches the result in `~/.cache/luxar/`.
 
+A `zenodo` dataset's files are fetched to `~/.cache/luxar/<dataset>/<file>`, and
+that path belongs to the fetch: it checks the manifest sha256 there and
+quarantines (renames `.corrupt`) anything that fails. So a demo that has to
+build its own stand-in — a GPU refit, when the record is not published yet and
+the Git LFS object was never pulled — writes it to the sibling namespace
+`~/.cache/luxar/<dataset>/local/<file>` via
+`luxar.utils.data_fetch.local_fit_path`, which the fetch never inspects. Under
+the hosted name it would be quarantined on the next launch and refitted every
+single time (#1618). `luxar demo cache clear` counts anything under `local/` as
+a *computed* artifact, so `--no-computed` spares it — but only what is under
+`local/`: a computed artifact a demo writes directly into its cache dir is
+still classified as a download (see `demos/README.md`).
+
 Licenses split three ways: mostly CC0 / CC-BY / public domain; **CC BY-SA** for
 `gsplats_zebrafish` and `gsplats_opencell_map4` (the derived product must be
 relicensed CC BY-SA 4.0); and **CC BY-NC** for `milky_way_gaia_3m` (non-commercial,

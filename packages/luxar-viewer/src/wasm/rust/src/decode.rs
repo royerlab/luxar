@@ -56,6 +56,8 @@ pub fn decode_quantized_u16(data: &[u16], min_val: f32, max_val: f32, output: &m
         data.len()
     );
 
+    // These linear kernels define the Rust/WASM f32 contract; ArrayDecoder.dequantize
+    // and Python _decode_bounded_scalar remain f64 helpers with different operand order.
     let scale = (max_val - min_val) / 65535.0;
 
     for i in 0..data.len() {
