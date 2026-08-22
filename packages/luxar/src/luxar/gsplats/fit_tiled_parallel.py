@@ -30,10 +30,19 @@ from arbol import aprint, asection
 from luxar.gsplats.batch.task_pool import cancel_pool_on_interrupt
 from luxar.gsplats.fit_tiled_gsplats import merge_tile_results
 from luxar.gsplats.gsplat_data import GSplatData
-from luxar.gsplats.merged_quality import announce_unscored_merge
+from luxar.gsplats.merged_quality import (
+    announce_unscored_merge,
+    resolve_merged_reference,
+)
 
 # Builds the argv for tile ``i`` of ``M`` writing to a given output path.
 WorkerCmdBuilder = Callable[[int, int, Path], "list[str]"]
+
+
+def _announce_unscored_reason(reason: str | None) -> None:
+    """Report why a direct parallel merge could not be scored."""
+    if reason is not None:
+        announce_unscored_merge(reason, partition=None)
 
 
 def _empty_tile(ndim: int) -> GSplatData:
@@ -261,6 +270,8 @@ def fit_tiled_parallel(
     grid_scale: Optional[tuple[float, ...]] = None,
     source_shape: Optional[Sequence[int]] = None,
     source_dtype: Optional[str] = None,
+    volume: "Any | None" = None,
+    device: Optional[str] = None,
 ) -> "Any":  # GSplatData (flat) or a GSplatNode (partition)
     """Fit all tiles via concurrent worker subprocesses, then merge.
 
@@ -301,7 +312,8 @@ def fit_tiled_parallel(
         resolved by :func:`~luxar.gsplats.tiling.resolve_grid_scale`; ``None``
         when the two frames already agree.  Forwarded to
         :func:`merge_tile_results`, where it lifts the partition's split planes
-        into the workers' splat frame (#1587).  Nothing else consumes it.
+        into the workers' splat frame and maps the merged reconstruction back to
+        the reference's voxel grid for quality scoring (#1587).
     source_shape : sequence of int, optional
         Grid of the volume the merged result represents, when that is NOT
         ``volume_shape`` — i.e. when the caller decimated before tiling, since
@@ -310,15 +322,19 @@ def fit_tiled_parallel(
         two are the same grid, or the stamp would claim a measurement was a
         declaration.
     source_dtype : str, optional
-        Element type the volume was STORED in. This function is handed only the
-        tile grid's shape, not the array, so it cannot be observed here — the
-        caller has to pass it, and without it the merged result records a source
-        grid with no byte count and ``info`` prints no compression ratio at all.
+        Element type the volume was STORED in. The reloaded worker stores no
+        longer expose it, so the caller has to pass it.
+    volume : array-like, optional
+        Reference volume on the ``volume_shape`` grid. When supplied, the parent
+        scores the merged reconstruction; a direct caller that omits it gets the
+        existing unconditional notice and can run ``gsplat compare`` later.
+    device : str, optional
+        Device used to render the merged reconstruction for quality scoring.
 
     Returns
     -------
-    GSplatData
-        Merged result. Multi-LOD if ``progressive`` and tiles carry sublods.
+    GSplatData or GSplatNode
+        Merged flat result or partition tree. Tile-local LODs are preserved.
 
     Raises
     ------
@@ -326,6 +342,14 @@ def fit_tiled_parallel(
         If any worker exits non-zero.  The message names the failing tiles and
         includes a tail of their stderr; ``tmp_dir`` is left in place.
     """
+    reference, unscored_reason = resolve_merged_reference(
+        volume,
+        volume_shape,
+        grid_name="tile grid",
+        missing_reason="this direct parallel tiled call was not given the reference volume",
+    )
+    _announce_unscored_reason(unscored_reason)
+
     tmp_dir = Path(tmp_dir)
     # Start from a clean slate: a retained dir from a prior (failed or
     # keep_tiles) run could otherwise leave a stale tile_{i} that this run
@@ -449,21 +473,8 @@ def fit_tiled_parallel(
         grid_scale=grid_scale,
         source_shape=source_shape,
         source_dtype=source_dtype,
-    )
-
-    # No merged quality score here, unlike the in-process `fit_tiled`: this
-    # function is handed only the tile grid's shape (`volume_shape`, and
-    # `source_dtype` above), never the array itself — the CLI's
-    # `dispatch_parallel_tiled` is what holds it — so there is nothing here to
-    # score the reconstruction against without re-reading the source. Say so
-    # rather than shipping an unexplained gap — an archive that silently carries
-    # no PSNR is the failure the sequential path's scoring exists to end. Said
-    # even on a quiet run: nothing about the omission reaches the store, so this
-    # notice is the only place it is ever stated.
-    announce_unscored_merge(
-        "the parallel tiled path receives only the tile grid's shape, not the "
-        "reference volume",
-        partition=None,
+        volume=reference,
+        device=device,
     )
 
     if not keep_tiles:

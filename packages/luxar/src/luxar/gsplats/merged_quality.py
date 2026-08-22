@@ -146,13 +146,39 @@ def announce_unscored_partition_merge(
     """
     is_partition = isinstance(node, GSplatPartition)
     reason = (
-        "the requested partition merge produced a kind=partition tree whose "
-        "root has no fit-stats dict to stamp"
+        "the requested content-partition merge produced a kind=partition tree, "
+        "but that path does not yet compute a whole-tree score"
         if is_partition
-        else "the requested partition merge collapsed to a single matrix-shaped "
-        "part, whose root has no fit-stats dict to stamp"
+        else "the requested content-partition merge collapsed to a single "
+        "matrix-shaped part, but that path does not yet compute a merged score"
     )
     announce_unscored_merge(f"{reason}{suffix}", partition=is_partition)
+
+
+def resolve_merged_reference(
+    volume: "Any | None",
+    expected_shape: tuple[int, ...],
+    *,
+    grid_name: str,
+    missing_reason: str,
+) -> "tuple[Any | None, str | None]":
+    """Validate that a merged-quality reference matches its fitting grid."""
+    if volume is None:
+        return None, missing_reason
+
+    shape = getattr(volume, "shape", None)
+    if shape is None:
+        return None, "the supplied reference volume does not expose a shape"
+
+    reference_shape = tuple(int(size) for size in shape)
+    if reference_shape != expected_shape:
+        return (
+            None,
+            f"reference shape {reference_shape} does not match the {grid_name} "
+            f"{expected_shape}",
+        )
+
+    return volume, None
 
 
 def _to_voxel_frame(merged: GSplatData, scale: Optional[Sequence[float]]) -> GSplatData:
@@ -180,13 +206,14 @@ def _to_voxel_frame(merged: GSplatData, scale: Optional[Sequence[float]]) -> GSp
 
 
 def stamp_merged_quality(
-    merged: GSplatData,
+    merged: "GSplatData | Sequence[GSplatData]",
     volume: Any,
     *,
     volume_shape: tuple[int, ...],
     grid_scale: Optional[Sequence[float]],
     device: Optional[str],
     verbose: bool,
+    stats: "dict[str, Any] | None" = None,
 ) -> None:
     """Score the MERGED reconstruction against the whole volume, in place.
 
@@ -210,12 +237,26 @@ def stamp_merged_quality(
     ``--denoise`` is not a tiling artifact. A lazy source is materialized here — during the fit it
     is only ever read tile-by-tile — which is what the budget below bounds.
     """
-    if merged.n_splats == 0:
+    if stats is not None:
+        is_partition = not isinstance(merged, GSplatData)
+        parts = [merged] if isinstance(merged, GSplatData) else list(merged)
+        target_stats = stats
+    elif isinstance(merged, GSplatData):
+        is_partition = False
+        parts = [merged]
+        target_stats = merged.stats
+    else:
+        announce_unscored_merge(
+            "partition merged-quality scoring was not given a stats target",
+            partition=True,
+        )
+        return
+    if not parts or sum(part.n_splats for part in parts) == 0:
         return
     budget_gb = _quality_budget_gb()
     needed_gb = _QUALITY_PEAK_VOLUMES * 4 * float(np.prod(volume_shape)) / 1024**3
     if needed_gb > budget_gb:
-        recourse = _compare_recourse(partition=False)
+        recourse = _compare_recourse(partition=is_partition)
         aprint(
             f"Merged quality metrics skipped: scoring {volume_shape} peaks at "
             f"~{needed_gb:.1f} GiB (the reconstruction, the reference, and "
@@ -230,17 +271,23 @@ def stamp_merged_quality(
         from luxar.gsplats.metrics import compute_quality_metrics
         from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
 
-        scored = _to_voxel_frame(merged, grid_scale)
         rendered: Any = None
         reference: Any = None
         try:
             with torch.no_grad():
-                rendered = render_to_volume_tensor(
-                    scored,
-                    shape=volume_shape,
-                    device=device,
-                    truncate=scored.truncation_radius,
-                )
+                for part in parts:
+                    scored = _to_voxel_frame(part, grid_scale)
+                    part_render = render_to_volume_tensor(
+                        scored,
+                        shape=volume_shape,
+                        device=device,
+                        truncate=scored.truncation_radius,
+                    )
+                    if rendered is None:
+                        rendered = part_render
+                    else:
+                        rendered.add_(part_render)
+                        del part_render
                 reference = torch.as_tensor(
                     np.asarray(volume, dtype=np.float32), device=rendered.device
                 )
@@ -253,7 +300,7 @@ def stamp_merged_quality(
             del rendered, reference
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-        merged.stats.update(
+        target_stats.update(
             {
                 "mse": quality["mse"],
                 "psnr_db": quality["psnr_db"],
@@ -277,5 +324,6 @@ def stamp_merged_quality(
 __all__ = [
     "announce_unscored_merge",
     "announce_unscored_partition_merge",
+    "resolve_merged_reference",
     "stamp_merged_quality",
 ]
