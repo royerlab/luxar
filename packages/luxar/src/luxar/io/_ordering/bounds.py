@@ -143,7 +143,7 @@ def _normalise_coord_slack(coord_slack: Optional[np.ndarray], ndim: int) -> np.n
     rounding outward, whereas this is a per-axis value a caller merely stored
     narrowly, and it is added into a float64 accumulator before any store. No
     in-tree caller needs it — the encoder's predicate returns float64 — but the
-    three builders are public through ``luxar.io.ordering``, so this is the
+    four builders are public through ``luxar.io.ordering``, so this is the
     direct-caller door, pinned by
     ``io/tests/test_ordering_properties.py::test_normalise_coord_slack_accepts_none_and_float32``.
 
