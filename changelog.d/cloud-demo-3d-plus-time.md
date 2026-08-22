@@ -239,6 +239,11 @@ This is a behaviour change for any existing scene that captured `playing: true`
 claimed to mean, so it is a fix rather than a regression, but it is the kind
 that shows up as "why is this moving now".
 
+Python's `AnimationConfig` now carries the capture block's fifth field,
+`step_size`, through load/save round trips. It also rejects non-finite or
+non-positive `target_fps` and `step_size` values at author/load time instead of
+persisting animation state that the viewer cannot play correctly.
+
 The cloud demo asks for 15 fps on dimension 3 with `loop`. The rate is a
 ceiling, not a promise: the viewer throttles dimension playback to what chunk
 streaming sustains, and at ~25k points a frame this scene measures about 4 fps,

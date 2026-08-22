@@ -749,7 +749,7 @@ Dataclasses for viewer configuration hints stored in the zarr file.
 - `CameraConfig` - Camera position, target, FOV, clipping planes, target_node
 - `UIConfig` - Panel visibility (help, rendering controls, performance, dimensions, scale bar, layers, overlays)
 - `DimensionsConfig` - nD navigation state (current step, selected dimension)
-- `AnimationConfig` - Per-dimension animation (playing, target_fps, loop mode, direction)
+- `AnimationConfig` - Per-dimension animation (playing, target_fps, loop mode, direction, step size)
 
 **Usage Example:**
 ```python
