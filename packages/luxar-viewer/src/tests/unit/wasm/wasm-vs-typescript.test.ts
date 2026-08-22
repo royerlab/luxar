@@ -1999,9 +1999,9 @@ describe('WASM vs TypeScript Comparison', () => {
         // path (hidden marginal Cholesky + forward substitution + exp). The
         // hidden dims are the ones the display does not take, so the marginal
         // is genuinely 3×3 at numDisplay = 1.
-        // Measured emitted amplitudes: 279/3250 differing at ≤41 ulp for
-        // numDisplay = 1 (was 2504/3250, up to 82682 ulp) and 347/3768 at
-        // ≤522 ulp for numDisplay = 2 (was 2457/3768, up to 8899 ulp).
+        // The f32 transcendental ports from #1830 and the surrounding operation
+        // ordering from #1836 make both the phantom diagonals and attenuation
+        // bit-exact against WASM.
         const splatCount = 4000;
         const ndim = 4;
         const packedSize = 10;
@@ -2059,59 +2059,24 @@ describe('WASM vs TypeScript Comparison', () => {
           }
         }
         expect(exactMismatches(tsRest, wRest)).toEqual(NO_MISMATCHES);
-        expect(maxUlp(tsPhantom, wPhantom)).toBeLessThanOrEqual(2);
-        expect(maxAbs(ts.amps.subarray(0, n), w.amps.subarray(0, n))).toBeLessThanOrEqual(
-          3 * invOneMinusC(truncate) * Math.pow(2, -24)
+        expect(exactMismatches(tsPhantom, wPhantom)).toEqual(NO_MISMATCHES);
+        expect(exactMismatches(ts.amps.subarray(0, n), w.amps.subarray(0, n))).toEqual(
+          NO_MISMATCHES
         );
       }
     );
 
-    // ------------------------------------------------------------------
-    // The two paths where exactness is NOT reachable — bounded, with the
-    // bound measured rather than guessed.
-    //
-    // Both bounds rest on ONE unfixed step per path: `Math.fround(Math.exp(x))`
-    // is not the wasm libm's `expf(x)`, and `Math.fround(Math.log(x))` is not
-    // its `logf(x)`. That is a scope decision, not a limit — a frounded port of
-    // musl's `expf` measured 0/200 000 mismatches against the real WASM — and
-    // it is tracked as #1830. Until it lands, do not tighten these to exact.
-    // ------------------------------------------------------------------
     it.skipIf(!wasmFilesExist)(
-      'project_gsplats_nd_to_3d attenuation: exp residual only, bounded absolutely',
+      'project_gsplats_nd_to_3d attenuation matches exactly at truncate = 3',
       () => {
         // The full attenuation path — correlated 5D factors, TWO continuous
         // hidden dims (so the marginal Cholesky and the forward substitution
         // both do real work), 3 display dims and a non-zero slice position (so
         // the `diff[]` subtraction is not exact for free).
         //
-        // Measured on this fixture at truncate = 3:
-        //   before: 16654/115938 display-Cholesky slots wrong (up to 4831 ulp),
-        //           11907/19323 amplitudes wrong, up to 4.77e-7 absolute
-        //   after:  0 Cholesky slots wrong, 1734/19323 amplitudes wrong, up to
-        //           1.19e-7 (= 2·2⁻²⁴) absolute
-        //
-        // The absolute bound is `3 · invOneMinusC · 2⁻²⁴`, NOT a bare multiple
-        // of 2⁻²⁴. `invOneMinusC = 1/(1 − exp(−T²/2))` is the multiplier the
-        // residual is carried through and it grows without bound as T → 0 (1.01
-        // here, 8.51 in the truncate = 0.5 case below), so a fixed bound is a
-        // property of one truncate rather than of the kernel. `truncate` is
-        // author-controlled — a per-dataset `truncation_radius` — so the
-        // fixture's value is asserted alongside the bound.
-        //
-        // The DIFFERING COUNT is asserted too. The absolute bound alone is
-        // satisfied by several partial reverts (dropping the `rawExp` rounding
-        // leaves maxAbs at 1.19e-7); the count moves to 2632 for that one, and
-        // to between 2107 and 6039 for every other rounding this count is the
-        // only thing that catches. (The four `computeMarginalCholesky`
-        // roundings reach lower — 1960 for the inner Crout product, under the
-        // 2000 cap — but each of those also breaks the exact display-Cholesky
-        // assertion below, so the count is not what has to catch them.)
-        //
-        // The visible SET is asserted equal, but that is a property of THIS
-        // FIXTURE, not of the kernel: the smallest emitted amplitude here is
-        // 7.4e-5, some 410× the residual bound, so no splat is anywhere near
-        // the `minAmplitude` gate. Splats sitting ON the truncation shell can
-        // and do still disagree — see the comment in `gsplats-processing.ts`.
+        // This fixture exercises correlated 5D factors, two continuous hidden
+        // dimensions, a non-zero slice, and the shifted-Gaussian normalization.
+        // The f32 operation ordering and expf port make every emitted value exact.
         const splatCount = 20000;
         const ndim = 5;
         const packedSize = 15;
@@ -2158,34 +2123,18 @@ describe('WASM vs TypeScript Comparison', () => {
         );
         const tsAmps = ts.amps.subarray(0, n);
         const wAmps = w.amps.subarray(0, n);
-        expect(maxAbs(tsAmps, wAmps)).toBeLessThanOrEqual(
-          3 * invOneMinusC(truncate) * Math.pow(2, -24)
-        );
-        expect(differingCount(tsAmps, wAmps)).toBeLessThanOrEqual(2000); // measured 1734
-        // The margin that makes the count assertion above legitimate.
-        let smallestEmitted = Infinity;
-        for (let i = 0; i < n; i++) smallestEmitted = Math.min(smallestEmitted, wAmps[i]);
-        expect(smallestEmitted).toBeGreaterThan(
-          100 * 3 * invOneMinusC(truncate) * Math.pow(2, -24)
-        );
+        expect(exactMismatches(tsAmps, wAmps)).toEqual(NO_MISMATCHES);
       }
     );
 
     it.skipIf(!wasmFilesExist)(
-      'project_gsplats_nd_to_3d attenuation: with the shift underflowed away, the residual is ≤2 ulp',
+      'project_gsplats_nd_to_3d attenuation matches exactly with the shift underflowed away',
       () => {
         // Same fixture, truncate = 20. `shiftC = exp(-200)` underflows to
         // exactly 0 in f32, so `invOneMinusC` is exactly 1 and
         // `attenuation === rawExp` — the catastrophic `rawExp − shiftC`
-        // cancellation that dominates the case above is switched off. What is
-        // left is the mahalanobis chain plus one `exp`, so the residual can be
-        // held to a ULP bound instead of an absolute one, and any rounding lost
-        // from the forward substitution or the norm shows up immediately.
-        //
-        // Measured: 1802/19943 amplitudes differ by AT MOST 2 ulp (was
-        // 11477/19943, up to 430 ulp). Dropping any single rounding inside
-        // `mahalanobisDistanceInternal` takes it to between 17 and 44 ulp
-        // (44 / 40 / 32 / 27 / 17 for the five, in source order).
+        // cancellation is switched off. What remains is the mahalanobis chain
+        // plus one expf, which is bit-exact against WASM.
         const splatCount = 20000;
         const ndim = 5;
         const packedSize = 15;
@@ -2227,7 +2176,9 @@ describe('WASM vs TypeScript Comparison', () => {
         expect(exactMismatches(ts.chol.subarray(0, n * 6), w.chol.subarray(0, n * 6))).toEqual(
           NO_MISMATCHES
         );
-        expect(maxUlp(ts.amps.subarray(0, n), w.amps.subarray(0, n))).toBeLessThanOrEqual(2);
+        expect(exactMismatches(ts.amps.subarray(0, n), w.amps.subarray(0, n))).toEqual(
+          NO_MISMATCHES
+        );
       }
     );
 
@@ -2293,35 +2244,11 @@ describe('WASM vs TypeScript Comparison', () => {
       }
     );
 
-    it.skipIf(!wasmFilesExist).each([
-      [1, 2, 4000],
-      [1e-4, 24, 3000],
-      [1e-7, 40, 3000],
-      [1e6, 24, 3000],
-    ] as const)(
-      'computeDisplayCholesky3D 2D phantom at scene scale %f: ln/exp residual only, ≤%i ulp',
-      (scale, ulpBound, differingCap) => {
-        // The phantom z diagonal is `exp(mean(ln(Lii)))`, so it inherits BOTH
-        // transcendental residuals. The other five packed slots are pure
-        // arithmetic and must be exact; before this fix they were wrong in
-        // ~1200-1300 of 100000 at every scale (1294 / 1278 / 1216 / 1244 at
-        // unit / 1e-4 / 1e-7 / 1e6 respectively).
-        //
-        // The phantom bound is SCALE-DEPENDENT, which is why this is a sweep
-        // and not a single 2-ulp assertion: the relative residual is roughly
-        // |ln σ|·2⁻²⁴, so the same fixture measures 2 ulp at unit scale, 16 at
-        // µm (1e-4), 32 at nm (1e-7) and 16 at km (1e6). The nm column is the
-        // scene scale the relative degeneracy epsilon exists for, so it is not
-        // a hypothetical.
-        //
-        // The ULP bound does NOT separate fixed from broken (the pre-fix tree
-        // measures 2/16/29/15 ulp — the same order of magnitude). The DIFFERING
-        // COUNT does: 3116/1939/1973/2045 after, 5344/18170/18443/18265 before.
-        // Reverting just the `Math.fround` on `Math.log` takes the unit-scale
-        // count to 4484, which is what the 4000 cap is sized against. The other
-        // three roundings on this path are provably inert for the reachable
-        // `counted` ∈ {1, 2} — see the kernel comment.
-        //
+    it.skipIf(!wasmFilesExist).each([1, 1e-4, 1e-7, 1e6] as const)(
+      'computeDisplayCholesky3D 2D phantom is exact at scene scale %f',
+      (scale) => {
+        // The phantom z diagonal is `expf(mean(logf(Lii)))`. The scale sweep
+        // keeps the extreme-scene coverage while asserting the exact contract.
         // `slicePosition` stays all zeros: with no continuous hidden dims the
         // kernel never reads it. The `FUSED_SLICE` sweeps are the ones that
         // exercise the `diff[]` subtraction.
@@ -2368,8 +2295,7 @@ describe('WASM vs TypeScript Comparison', () => {
           }
         }
         expect(exactMismatches(tsRest, wRest)).toEqual(NO_MISMATCHES);
-        expect(maxUlp(tsPhantom, wPhantom)).toBeLessThanOrEqual(ulpBound);
-        expect(differingCount(tsPhantom, wPhantom)).toBeLessThanOrEqual(differingCap);
+        expect(exactMismatches(tsPhantom, wPhantom)).toEqual(NO_MISMATCHES);
       }
     );
   });
