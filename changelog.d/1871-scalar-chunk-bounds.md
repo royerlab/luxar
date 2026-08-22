@@ -7,3 +7,6 @@ for a positive-scalar array, and the points/lines ordering writers add it to
 spatial radius/width pads. This keeps decoded geometry inside the bounds the
 viewer uses to decide which chunks to fetch; categorical barrier dimensions
 remain unexpanded.
+
+Point `radii` and line `widths` also no longer use cross-array deduplication, so
+their footprint slack cannot be replaced by another array's quantization grid.

@@ -378,7 +378,7 @@ def test_stored_points_bounds_contain_geolog_DECODED_radii(tmp_path: Path) -> No
             Dimension("z", unit="um", display=True),
         ],
     )
-    assert float((decoded_radii - radii[sort_order]).max()) > 0.0
+    assert float((decoded_radii - radii[sort_order]).max()) > 0.01
     bounds = node["chunk_bounds"][:]
     chunk_size = int(node.attrs["chunk_size"])
     for k in range(bounds.shape[0]):

@@ -100,8 +100,10 @@ colormap-scalars writer:
 
 - **`write_radii(group, radii, spatial_index_data, n_points, ctx) -> float`**
   Points-specific wrapper over `write_positive_scalar` (name `"radii"`,
-  label `"radius"`), passing `per_array_bytes=True`. Kept only for readability
-  in `write_points`; new geometries should call `write_positive_scalar` directly.
+  label `"radius"`), passing `per_array_bytes=True` and `deduplicate=False` so
+  the chunk-bound slack always matches the stored radius encoding. Kept only
+  for readability in `write_points`; new geometries should call
+  `write_positive_scalar` directly.
 
 - **`write_sharpness(group, sharpness, spatial_index_data, n_points, ctx) -> float`**
   Points-specific wrapper over `write_bounded_scalar` (name `"sharpnesses"`,
