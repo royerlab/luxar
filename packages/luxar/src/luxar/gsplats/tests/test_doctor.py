@@ -764,8 +764,7 @@ class TestStoreGuards:
         system_temp_root = Path(tempfile.gettempdir())
         root = tmp_path / "doctor-temp"
         root.mkdir()
-        monkeypatch.setenv("TMPDIR", str(root))
-        monkeypatch.setattr(tempfile, "tempdir", None)
+        monkeypatch.setattr(tempfile, "tempdir", str(root))
         assert Path(tempfile.gettempdir()) == root
 
         before = set(root.glob("luxar_gsplat_*"))
