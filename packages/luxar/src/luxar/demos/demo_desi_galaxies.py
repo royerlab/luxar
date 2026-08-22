@@ -201,6 +201,18 @@ STREAM_LOD = dict(counts="stream:2000", method="random", seed=0)
 # diagnostic, because `main()` short-circuits on an existing output directory.
 SCENE_MIN_SUBLODS = 3
 
+# The orbit pivot, in scene coordinates: the OBSERVER, i.e. the origin. See the
+# comment in `create_scene` for why a bounding-box centre is wrong for this
+# dataset. Kept as a constant because `ensure_origin_framing` has to recognise
+# the same point in a scene it did not build.
+SCENE_CAMERA_TARGET = (0.0, 0.0, 0.0)
+
+# How far a reused scene's camera target may sit from the origin before it is
+# treated as a stale bounding-box pivot. In Mpc, and generous: the wrong pivots
+# this catches are hundreds to thousands of Mpc out (the pre-fix scene targeted
+# z = 1,159 Mpc), while a correctly authored target is exactly (0, 0, 0).
+SCENE_TARGET_TOLERANCE_MPC = 1.0
+
 FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
@@ -489,6 +501,66 @@ def extract_shipped_scene(zip_path: Path, output_path: Path) -> None:
         aprint(f"Scene ready: {output_path}")
 
 
+def ensure_origin_framing(scene_path: Path) -> bool:
+    """Re-pin a reused scene's orbit pivot to the origin, and report whether it had to.
+
+    ``main()`` prefers an existing ``datasets/demos/`` scene over the shipped
+    asset, so a copy built before the pivot was moved to the observer keeps its
+    bounding-box camera forever — the demo opens swinging the local universe
+    around a point ~1.2 Gpc out in the ELG shell, and nothing says why. The
+    ladder checks in :func:`warn_if_scene_is_stale` never saw this: the geometry
+    of such a scene is fine, it is only framed wrong.
+
+    Only the ``target`` is rewritten. Position, fov and the clipping planes are
+    left as the older build computed them — they are consistent with each other
+    and with the cloud, and the complaint a bounding-box pivot causes is the
+    ORBIT CENTRE, not the distance. Rewriting one attribute also keeps this a
+    metadata touch rather than a rebuild; ``--recompute`` remains the way to get
+    the current framing in full.
+
+    Returns True when the scene was already framed on the origin.
+    """
+    import zarr
+
+    try:
+        root = zarr.open(str(scene_path), mode="r+")
+        viewer_config = dict(root.attrs.get("viewer_config") or {})
+        camera = dict(viewer_config.get("camera") or {})
+        target = camera.get("target")
+    except Exception as exc:  # pragma: no cover - diagnostics only
+        aprint(f"  ⚠ Could not inspect {scene_path} for its camera target: {exc}")
+        return True
+
+    # No authored camera at all: the viewer auto-frames on the bounding box,
+    # which is the very thing this scene must not do. Say so rather than
+    # inventing a distance we cannot derive without the catalog.
+    if not camera or target is None:
+        aprint(
+            f"  ⚠ This scene carries no authored camera, so the viewer will "
+            f"auto-frame it on its bounding box instead of the observer at the "
+            f"origin. Rebuild it with:\n"
+            f"      luxar demo run desi_galaxies -- --recompute\n"
+            f"    or delete the scene and re-run to unpack a current shipped "
+            f"asset:\n"
+            f"      rm -rf {scene_path}"
+        )
+        return False
+
+    offset = float(np.linalg.norm(np.asarray(target, dtype=np.float64)))
+    if offset <= SCENE_TARGET_TOLERANCE_MPC:
+        return True
+
+    camera["target"] = list(SCENE_CAMERA_TARGET)
+    viewer_config["camera"] = camera
+    root.attrs["viewer_config"] = viewer_config
+    aprint(
+        f"  🎥 Re-pinned this scene's orbit pivot to the observer at the origin "
+        f"(it was {offset:,.0f} Mpc away, a bounding-box centre from an older "
+        f"build). Run with --recompute for the current framing in full."
+    )
+    return False
+
+
 def warn_if_scene_is_stale(scene_path: Path) -> None:
     """Warn when a reused scene predates the streaming ladder or payload cap.
 
@@ -594,7 +666,7 @@ def create_scene(
         cam_dist = 0.75 * r95 / np.tan(np.radians(fov_deg) / 2.0)
         camera = CameraConfig(
             position=(0.0, 0.0, cam_dist),
-            target=(0.0, 0.0, 0.0),
+            target=SCENE_CAMERA_TARGET,
             up=(0.0, 1.0, 0.0),
             fov=fov_deg,
             near=float(max(1.0, cam_dist * 0.005)),
@@ -709,6 +781,7 @@ def main() -> None:
 
     if SERVE_ONLY:
         if output_path.exists():
+            ensure_origin_framing(output_path)
             warn_if_scene_is_stale(output_path)
             launch_viewer(output_path)
         else:
@@ -724,6 +797,7 @@ def main() -> None:
         # Fast path: unzip the shipped, fully-built scene (instant, no LOD build).
         if SCENE_ZIP_SHIPPED.exists() and not is_lfs_pointer(SCENE_ZIP_SHIPPED):
             extract_shipped_scene(SCENE_ZIP_SHIPPED, output_path)
+            ensure_origin_framing(output_path)
             warn_if_scene_is_stale(output_path)
         else:
             aprint(
@@ -735,6 +809,7 @@ def main() -> None:
             create_scene(positions, redshift, tracer_ids, output_path)
     else:
         aprint(f"Using cached scene: {output_path}")
+        ensure_origin_framing(output_path)
         warn_if_scene_is_stale(output_path)
 
     if NO_SERVE:

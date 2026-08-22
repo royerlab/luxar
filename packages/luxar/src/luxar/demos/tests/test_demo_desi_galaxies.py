@@ -454,6 +454,92 @@ class TestScenePointCap:
                 ]
 
 
+class TestEnsureOriginFraming:
+    """A reused scene must open on the observer, whatever its build framed on.
+
+    `main()` prefers an existing `datasets/demos/` copy over the shipped asset,
+    so a scene built before the pivot moved to the origin would otherwise keep
+    its bounding-box camera forever. The ladder checks cannot see this: such a
+    scene's geometry is perfectly current, only its framing is stale.
+    """
+
+    @staticmethod
+    def _write_scene(path: Path, camera: dict | None) -> None:
+        import zarr
+
+        root = zarr.open(str(path), mode="w")
+        root.attrs["viewer_config"] = {"camera": camera} if camera is not None else {}
+
+    @staticmethod
+    def _read_camera(path: Path) -> dict:
+        import zarr
+
+        root = zarr.open(str(path), mode="r")
+        return dict(dict(root.attrs.get("viewer_config") or {}).get("camera") or {})
+
+    def test_origin_targeted_scene_is_left_alone(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        scene = tmp_path / "desi.luxar.zarr"
+        self._write_scene(scene, {"position": [0.0, 0.0, 4000.0], "target": [0, 0, 0]})
+
+        assert _demo.ensure_origin_framing(scene) is True
+        assert self._read_camera(scene)["target"] == [0, 0, 0]
+        assert capsys.readouterr().out.strip() == ""
+
+    def test_bounding_box_pivot_is_repinned_to_the_origin(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The exact shape of the pre-fix scene: a pivot ~1.2 Gpc down +z."""
+        scene = tmp_path / "desi.luxar.zarr"
+        self._write_scene(
+            scene,
+            {
+                "position": [-34.97, -114.41, 7699.01],
+                "target": [-34.97, -114.41, 1159.37],
+                "fov": 50.0,
+                "near": 32.7,
+                "far": 217921.16,
+            },
+        )
+
+        assert _demo.ensure_origin_framing(scene) is False
+
+        camera = self._read_camera(scene)
+        assert camera["target"] == [0.0, 0.0, 0.0]
+        # Only the pivot moves; the rest of the authored camera is untouched.
+        assert camera["position"] == [-34.97, -114.41, 7699.01]
+        assert camera["fov"] == 50.0
+        assert camera["near"] == 32.7
+        assert camera["far"] == 217921.16
+        assert "Re-pinned" in capsys.readouterr().out
+
+    def test_a_scene_with_no_camera_is_reported_not_invented(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Without the catalog there is no distance to derive, so say so."""
+        scene = tmp_path / "desi.luxar.zarr"
+        self._write_scene(scene, None)
+
+        assert _demo.ensure_origin_framing(scene) is False
+
+        out = capsys.readouterr().out
+        assert "auto-frame" in out and "--recompute" in out
+        assert self._read_camera(scene) == {}
+
+    def test_a_pivot_inside_the_tolerance_is_not_rewritten(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Float noise around the origin is not a bounding-box centre."""
+        scene = tmp_path / "desi.luxar.zarr"
+        target = [1e-7, -2e-7, 3e-7]
+        self._write_scene(scene, {"position": [0.0, 0.0, 4000.0], "target": target})
+
+        assert _demo.ensure_origin_framing(scene) is True
+        assert self._read_camera(scene)["target"] == target
+        assert capsys.readouterr().out.strip() == ""
+
+
 class TestMainSceneReuse:
     def test_serve_only_checks_staleness_before_launch(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -464,6 +550,9 @@ class TestMainSceneReuse:
         monkeypatch.setattr(_demo, "SERVE_ONLY", True)
         monkeypatch.setattr(_demo, "get_demos_output_dir", lambda: tmp_path)
         monkeypatch.setattr(
+            _demo, "ensure_origin_framing", lambda path: calls.append(("frame", path))
+        )
+        monkeypatch.setattr(
             _demo, "warn_if_scene_is_stale", lambda path: calls.append(("warn", path))
         )
         monkeypatch.setattr(
@@ -472,7 +561,7 @@ class TestMainSceneReuse:
 
         _demo.main()
 
-        assert calls == [("warn", scene), ("launch", scene)]
+        assert calls == [("frame", scene), ("warn", scene), ("launch", scene)]
 
 
 @pytest.mark.slow
