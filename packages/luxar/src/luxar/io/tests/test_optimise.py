@@ -1672,6 +1672,36 @@ class TestCacheInvalidation:
         write_raw_bytes(logo, "image.png", _TINY_PNG[:-1] + b"\x83")
         assert _compute_content_hashes_streaming(root) != streamed
 
+    def test_the_streaming_hash_uses_case_exact_payload_presence(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The re-chunk hasher must not reintroduce the case-folding read that
+        the finalize-time hasher rejects for a dangling ``Zarr.json``."""
+        from luxar.io._compiler.finalize import hashing
+
+        root = open_group(tmp_path / "payload.luxar.zarr", mode="w")
+        root.attrs["type"] = "scene"
+        logo = root.create_group("overlays").create_group("logo")
+        logo.attrs["type"] = "overlay_image"
+        logo.attrs["image_file"] = "Zarr.json"
+        expected = hashing.compute_content_hashes(root)
+
+        original_read = hashing.read_raw_bytes
+        folded_reads = 0
+
+        def _case_folding_read(group: Any, key: str) -> bytes | None:
+            nonlocal folded_reads
+            if group.path == logo.path and key == "Zarr.json":
+                folded_reads += 1
+                return original_read(group, "zarr.json")
+            return original_read(group, key)
+
+        monkeypatch.setattr(hashing, "read_raw_bytes", _case_folding_read)
+
+        assert _compute_content_hashes_streaming(root) == expected
+        assert _compute_content_hashes_streaming(root) == expected
+        assert folded_reads == 0
+
     def test_chunk_layout_is_stamped_on_the_root(
         self, scene: Path, tmp_path: Path
     ) -> None:
