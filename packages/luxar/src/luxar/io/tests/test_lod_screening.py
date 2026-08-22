@@ -850,6 +850,39 @@ def test_lod_bounds_size_the_metric_but_may_only_reduce_it(tmp_path: Path) -> No
     assert flat_square.area_metric == pytest.approx(square.area_metric)
 
 
+@pytest.mark.parametrize(
+    "lod_bounds",
+    [
+        {"min": [-0.25, -0.5], "max": [0.25, 0.5]},
+        {"min": ["-0.25", -0.5, -0.5], "max": [0.25, 0.5, 0.5]},
+        {"min": [False, -0.5, -0.5], "max": [0.25, 0.5, 0.5]},
+        {"min": [float("nan"), -0.5, -0.5], "max": [0.25, 0.5, 0.5]},
+        {"min": [0.25, -0.5, -0.5], "max": [-0.25, 0.5, 0.5]},
+        {"min": [-0.75, -0.5, -0.5], "max": [-0.25, 0.5, 0.5]},
+    ],
+    ids=[
+        "wrong-dimensions",
+        "non-numeric",
+        "boolean",
+        "non-finite",
+        "unordered",
+        "not-contained",
+    ],
+)
+def test_invalid_lod_bounds_fall_back_to_position_bounds(
+    tmp_path: Path, lod_bounds: dict
+) -> None:
+    """The offline screen rejects every robust-bound shape the viewer rejects."""
+    plain = screen_lod_store(_lod_bounds_store(tmp_path / "plain.luxar.zarr", None))
+    invalid = screen_lod_store(
+        _lod_bounds_store(tmp_path / "invalid.luxar.zarr", lod_bounds)
+    )
+
+    assert [m.area_metric for m in invalid.groups[0].measurements] == pytest.approx(
+        [m.area_metric for m in plain.groups[0].measurements]
+    )
+
+
 def _default_level_store(path: Path, default_level: int) -> Path:
     """A ±5 cube ladder, thresholds ``[0, 2.2, 4]``, at a chosen ``default_level``."""
     child = {

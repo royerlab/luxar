@@ -764,6 +764,59 @@ def _bounds_of(attrs: Dict[str, Any], key: str) -> Optional[_BoundsPair]:
     return ([float(v) for v in lo], [float(v) for v in hi])
 
 
+def _lod_bounds_of(
+    attrs: Dict[str, Any], position_bounds: Optional[_BoundsPair]
+) -> Optional[_BoundsPair]:
+    """Validated robust bounds, mirroring ``readLodBounds`` in the viewer."""
+    if position_bounds is None:
+        return None
+    raw = attrs.get("lod_bounds")
+    if not isinstance(raw, dict):
+        return None
+    lo = raw.get("min")
+    hi = raw.get("max")
+    if not isinstance(lo, (list, tuple)) or not isinstance(hi, (list, tuple)):
+        return None
+    if len(lo) == 0 or len(lo) != len(hi) or len(lo) != len(position_bounds[0]):
+        return None
+
+    lod_lo: List[float] = []
+    lod_hi: List[float] = []
+    for value_lo, value_hi, position_lo, position_hi in zip(
+        lo, hi, position_bounds[0], position_bounds[1]
+    ):
+        if (
+            not isinstance(value_lo, (int, float))
+            or isinstance(value_lo, bool)
+            or not isinstance(value_hi, (int, float))
+            or isinstance(value_hi, bool)
+        ):
+            return None
+        number_lo = float(value_lo)
+        number_hi = float(value_hi)
+        if not math.isfinite(number_lo) or not math.isfinite(number_hi):
+            return None
+        if number_lo > number_hi:
+            return None
+        if number_lo < position_lo or number_hi > position_hi:
+            return None
+        lod_lo.append(number_lo)
+        lod_hi.append(number_hi)
+    return (lod_lo, lod_hi)
+
+
+def _ladder_child(name: str, child: Any, attrs: Dict[str, Any]) -> _LadderChild:
+    """Reduce one ladder child, validating robust bounds against complete bounds."""
+    position_bounds = _bounds_of(attrs, "position_bounds")
+    return _LadderChild(
+        name=name,
+        threshold=_threshold_of(attrs),
+        element_count=_count_of(child, attrs),
+        bounds=position_bounds,
+        lod_bounds=_lod_bounds_of(attrs, position_bounds),
+    )
+
+
 def _local_matrix(attrs: Dict[str, Any]) -> np.ndarray:
     """A node's own ``transform`` attr as a math 4x4 (identity when absent)."""
     raw = attrs.get("transform")
@@ -840,13 +893,7 @@ def _collect_lod_groups(
                 anchor_reason=_anchor_reason(under_partition, children),
                 world_matrix=world,
                 children=[
-                    _LadderChild(
-                        name=str(name),
-                        threshold=_threshold_of(child_attrs),
-                        element_count=_count_of(child, child_attrs),
-                        bounds=_bounds_of(child_attrs, "position_bounds"),
-                        lod_bounds=_bounds_of(child_attrs, "lod_bounds"),
-                    )
+                    _ladder_child(str(name), child, child_attrs)
                     for name, child, child_attrs in children
                 ],
                 orphan_refusal=(
