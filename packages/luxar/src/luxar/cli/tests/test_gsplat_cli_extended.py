@@ -6483,6 +6483,27 @@ class TestLODCarriesAuthoredAppearance:
         assert got["has_colors"] is False
         assert got.get("colormap") == self.AUTHORED["colormap"]
 
+    def test_colorless_colormap_disagreement_names_the_gray_output(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        self._authored_input(medium_gsplats, {"colormap": "inferno"})
+        other = self._copy_authored(
+            medium_gsplats,
+            tmp_path / "second_colorless.gsplats.zarr",
+            {"colormap": "viridis"},
+        )
+
+        out = tmp_path / "colorless_palette_disagreement.gsplats.zarr"
+        got, stdout = self._merge(runner, [medium_gsplats, other], out)
+
+        assert got["has_colors"] is False
+        assert got["colormap"] == "gray"
+        line = next(
+            ln for ln in stdout.splitlines() if "disagree on authored 'colormap'" in ln
+        )
+        assert "writer then stamps its own 'gray'" in line
+        assert "gets no palette of its own" not in line
+
     def test_merge_drops_colormap_when_a_colored_input_has_no_palette(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:

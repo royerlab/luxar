@@ -233,6 +233,7 @@ def carried_appearance_from_inputs(
     *,
     exclude: "Mapping[str, str] | AbstractSet[str]" = frozenset(),
     input_has_colors: "Sequence[bool] | None" = None,
+    output_has_colors: "bool | None" = None,
 ) -> dict:
     """The appearance N inputs AGREE on, announced as it is picked up.
 
@@ -254,6 +255,8 @@ def carried_appearance_from_inputs(
     ``input_has_colors`` supplies the color state already measured by merge.
     A colored input with no authored palette is not silent: it is asking the
     viewer to use its per-splat RGB, so a sibling's palette cannot be carried.
+    ``output_has_colors`` supplies the merged state so a dropped colormap's
+    warning can distinguish no palette from the writer's colorless ``gray``.
     """
     from luxar.gsplats.io.load_gsplats import agreed_authored_appearance
 
@@ -262,6 +265,7 @@ def carried_appearance_from_inputs(
             input_paths,
             exclude=exclude,
             input_has_colors=input_has_colors,
+            output_has_colors=output_has_colors,
         )
     )
 

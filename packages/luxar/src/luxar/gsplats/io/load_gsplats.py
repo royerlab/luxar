@@ -266,7 +266,7 @@ def _appearance_votes(
     return votes
 
 
-def _dropped_outcome(key: str) -> str:
+def _dropped_outcome(key: str, *, output_has_colors: bool | None = None) -> str:
     """What actually LANDS on the merged root for a key that is not carried.
 
     "Dropped" never means the output has a hole where the attr would be: the
@@ -281,6 +281,12 @@ def _dropped_outcome(key: str) -> str:
         # The one CONDITIONAL stamp: `apply_gsplat_group_attrs` manufactures
         # "gray" only for a colorless leaf with no ancestor palette, so on a
         # colored output nothing is written at all.
+        if output_has_colors is False:
+            stamped = WRITER_STAMPED_APPEARANCE_DEFAULTS[key]
+            return (
+                f"the writer then stamps its own {stamped!r}, which is what an "
+                "untouched input carries"
+            )
         return (
             "the merged root gets no palette of its own (the writer's 'gray' "
             "default is stamped only on a colorless store)"
@@ -294,7 +300,12 @@ def _dropped_outcome(key: str) -> str:
     return "the merged root leaves it unset, so the viewer's own default applies"
 
 
-def _outcome_clause(key: str, *, after: "Union[str, None]") -> str:
+def _outcome_clause(
+    key: str,
+    *,
+    after: "Union[str, None]",
+    output_has_colors: "Union[bool, None]" = None,
+) -> str:
     """The " — what actually lands" clause, punctuated to follow ``after``.
 
     An exclusion reason can itself end in an em-dash clause (the mixed-colors
@@ -303,7 +314,7 @@ def _outcome_clause(key: str, *, after: "Union[str, None]") -> str:
     the reason already spent the dash — same information, three readable
     sentences in a terminal rather than one.
     """
-    outcome = _dropped_outcome(key)
+    outcome = _dropped_outcome(key, output_has_colors=output_has_colors)
     if after and "—" in after:
         return f". {outcome[:1].upper()}{outcome[1:]}."
     return f" — {outcome}."
@@ -348,6 +359,7 @@ def agreed_authored_appearance(
     *,
     exclude: "Union[AbstractSet[str], Mapping[str, str]]" = frozenset(),
     input_has_colors: "Union[Sequence[bool], None]" = None,
+    output_has_colors: "Union[bool, None]" = None,
 ) -> Dict[str, Any]:
     """The authored appearance N inputs UNANIMOUSLY agree on (``gsplat merge``).
 
@@ -413,6 +425,10 @@ def agreed_authored_appearance(
     "no opinion" would hand the merged root a SIBLING's palette — repainting
     the custom-LUT splats with someone else's ramp.
 
+    ``output_has_colors`` lets the warning describe the writer's conditional
+    ``colormap="gray"`` stamp accurately: a colorless merged output gets that
+    stamp after a disagreement, while a colored output gets no root palette.
+
     Returns only the keys carried, so N inputs that authored nothing yield ``{}``
     and the writer's defaults apply unchanged. Feed the result to
     ``write_gsplats_tree(root_attrs=...)`` / ``GSplatData.save(root_attrs=...)``.
@@ -469,7 +485,11 @@ def agreed_authored_appearance(
                 aprint(
                     f"⚠️  Not carrying authored '{key}' onto the merged root"
                     + (f": {because}" if because else "")
-                    + _outcome_clause(key, after=because)
+                    + _outcome_clause(
+                        key,
+                        after=because,
+                        output_has_colors=output_has_colors,
+                    )
                     + " Set it explicitly on the result if you want it."
                 )
             continue
@@ -483,7 +503,8 @@ def agreed_authored_appearance(
             )
             aprint(
                 f"⚠️  Inputs disagree on authored '{key}' ({shown}); not "
-                f"carrying it rather than picking one — {_dropped_outcome(key)}. "
+                "carrying it rather than picking one — "
+                f"{_dropped_outcome(key, output_has_colors=output_has_colors)}. "
                 "Set it explicitly on the result if you want it."
             )
     return carried
