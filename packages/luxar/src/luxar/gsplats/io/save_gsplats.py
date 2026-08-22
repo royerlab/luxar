@@ -421,11 +421,12 @@ def _stamp_content_hash(root: zarr.Group) -> str:
     identity for the same reasons the compiler-side hash folds them in — see
     :func:`luxar.io._compiler.finalize.hashing._storage_identity`, which is where
     that argument lives. Both digests should agree on what a store's identity IS,
-    and this one carries an extra obligation: it is what the two IN-PLACE
-    re-stampers (``gsplat annotate-quality`` and ``gsplat doctor --fix``) write,
-    and they leave the per-save ``timestamp`` untouched. Neither of them can
-    change layout today — every mutation on those paths is attrs-only — so what
-    moves their digest is the changed attrs, as it already did. The fold is here so
+    and this one carries an extra obligation: it is what the three IN-PLACE
+    re-stampers (``gsplat annotate-quality``, ``gsplat doctor --fix``, and
+    ``luxar restamp-lod``) write, and they leave the per-save ``timestamp``
+    untouched. None of them can change layout today — every mutation on those
+    paths is attrs-only — so what moves their digest is the changed attrs, as it
+    already did. The fold is here so
     that a future in-place RE-LAYOUT tool cannot re-stamp a store to its input's
     digest. The two remain separate digests over different serializations (this one
     an f-string over metadata only; the compiler's a sorted-key JSON dict plus the

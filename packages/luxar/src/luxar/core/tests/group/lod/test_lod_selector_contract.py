@@ -31,10 +31,16 @@ does not re-assert.
 WRITES FROM NOW ON, and they were written against already-correct adders — the
 behavioural half passes on the pre-refactor revision too. They neither detect nor
 repair the 209 already-shipped ladders that carry ``selector="coverage"`` over
-derived-looking thresholds (issue #1727); auditing and migrating existing stores
-is separate work. What the suite buys is that the pairing cannot drift back apart
-silently, in any of the four adders, and that a FIFTH producer has to make a
-deliberate choice (see ``test_no_unrouted_producer_builds_a_lod_group``).
+derived-looking thresholds (issue #1727); migrating an existing store is the
+separate, explicitly opt-in ``luxar restamp-lod`` pass
+(:func:`luxar.io.lod_restamp.restamp_lod_store`), which reads a STORE rather than
+building one and so is out of scope for the routing guards below too — it calls
+neither ``add_lod_group`` nor :data:`_RESOLVER`, and pairs the two ladder
+functions with :data:`DERIVED_LOD_SELECTOR` itself because it has no live scene
+``Node`` to hand either helper. What the suite buys is that the pairing cannot
+drift back apart silently, in any of the four adders, and that a FIFTH producer
+has to make a deliberate choice (see
+``test_no_unrouted_producer_builds_a_lod_group``).
 
 **Also out of scope: the detached-tree paths**, which are a different question
 (what a *stored* tree already claims about its own thresholds, with no ``explicit``
