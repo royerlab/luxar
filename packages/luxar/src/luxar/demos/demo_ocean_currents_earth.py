@@ -494,6 +494,8 @@ def globe_camera(lon: float, lat: float, *, distance: float = 2.05) -> CameraCon
         [np.cos(la) * np.cos(lo), np.sin(la), -np.cos(la) * np.sin(lo)],
         dtype=np.float64,
     )
+    # This pose frames the local surface patch around a 0.9R target, so the
+    # target-relative planar pull-in is the intended invariant rather than the silhouette.
     target = tuple((normal * RADIUS * 0.9).tolist())
     return CameraConfig(
         position=pull_in(

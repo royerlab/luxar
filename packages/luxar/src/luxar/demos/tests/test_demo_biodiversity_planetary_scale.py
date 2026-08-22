@@ -118,10 +118,11 @@ def test_globe_camera_looks_at_origin_from_outside():
     cam = globe_camera(-40.0, 25.0, distance=2.6)
     assert cam.target == (0.0, 0.0, 0.0)
     distance = np.linalg.norm(cam.position)
-    old_half_height = RADIUS * 2.6 * math.tan(math.radians(42.0) / 2.0)
-    assert distance * math.tan(math.radians(CINEMATIC_FOV_DEG) / 2.0) == pytest.approx(
-        old_half_height, rel=1e-6
+    old_fill = math.tan(math.asin(1.0 / 2.6)) / math.tan(math.radians(42.0) / 2.0)
+    new_fill = math.tan(math.asin(RADIUS / distance)) / math.tan(
+        math.radians(CINEMATIC_FOV_DEG) / 2.0
     )
+    assert new_fill == pytest.approx(old_fill, rel=1e-6)
     assert cam.fov is None
     # The camera must sit over the requested surface point.
     surface = lonlat_to_xyz(np.array([-40.0]), np.array([25.0]), np.zeros(1))[0]

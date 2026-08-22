@@ -356,7 +356,7 @@ from luxar.demos import (
     require_module,
     substitutive_lod_or_flat,
 )
-from luxar.demos._cinematic_camera import pull_in
+from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
 from luxar.encoding import EncodingMode
 from luxar.utils.paths import get_demos_output_dir
 
@@ -1059,14 +1059,17 @@ def lonlat_to_xyz(lon: np.ndarray, lat: np.ndarray, relief: np.ndarray) -> np.nd
 
 
 def globe_camera(lon: float, lat: float, *, distance: float = 2.6) -> CameraConfig:
-    """Preserve the historical 42° globe framing from ``distance x R``."""
+    """Look straight down at ``(lon, lat)`` with the historical globe framing."""
     la, lo = math.radians(lat), math.radians(lon)
     cl = math.cos(la)
     normal = (cl * math.cos(lo), math.sin(la), -cl * math.sin(lo))
+    old_fill = math.tan(math.asin(1.0 / distance)) / math.tan(math.radians(42.0) / 2.0)
+    angular_radius = math.atan(
+        old_fill * math.tan(math.radians(CINEMATIC_FOV_DEG) / 2.0)
+    )
+    composed_distance = 1.0 / math.sin(angular_radius)
     return CameraConfig(
-        position=pull_in(
-            tuple(n * RADIUS * distance for n in normal), from_fov_deg=42.0
-        ),
+        position=tuple(n * RADIUS * composed_distance for n in normal),
         target=(0.0, 0.0, 0.0),
         up=(0.0, 1.0, 0.0),
         near=RADIUS * 0.02,
