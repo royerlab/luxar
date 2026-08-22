@@ -469,6 +469,7 @@ class TestScannedModuleSet:
     entry-point preflight, substitutive-LOD, Layers-panel, import-spelling,
     tone-mapping-policy, fit-provenance, caption-coverage and cinematic-mode
     guards next door.
+
     A gate that moves out of a ``demo_*.py`` into a shared helper must stay
     covered, so the set is a denylist over ``demos/*.py`` rather than an opt-in
     filename pattern.

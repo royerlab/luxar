@@ -15,7 +15,7 @@ module carries a justified exception; it too covers shared helpers, since
 ``_interop_common.build_interop_scene`` sets a scene's tone mapping by
 default), one in ``test_demo_fit_provenance.py`` (the fit-provenance lint —
 ``_interop_common.py`` saves gsplat stores, so an ``include_fitting_info=False``
-save could hide in a helper), and one in ``test_demo_caption_coverage.py`` (the
+save could hide in a helper), one in ``test_demo_caption_coverage.py`` (the
 standard-caption lint, including shared helpers that can author overlays), and
 four in ``test_demos_cinematic_mode.py`` (each scene passes a non-None viewer
 config, every config enables the preset, authored cameras state their composed
