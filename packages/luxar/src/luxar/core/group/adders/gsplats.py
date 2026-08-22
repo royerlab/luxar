@@ -175,10 +175,8 @@ def add_gsplats_impl(
 
         if partition is not None:
             from ..partition import (
-                median_bsp_partition,
-                midpoint_bsp_partition,
                 resolve_partition_spec,
-                sah_bsp_partition,
+                spatial_bsp_tree,
                 warn_if_oversized_single_part,
             )
 
@@ -190,12 +188,11 @@ def add_gsplats_impl(
                     "Decompose the data manually or omit image_labels."
                 )
 
-            if partition_rule == "sah":
-                parts = sah_bsp_partition(ctr_arr, max_elements)
-            elif partition_rule == "midpoint":
-                parts = midpoint_bsp_partition(ctr_arr, max_elements)
-            else:
-                parts = median_bsp_partition(ctr_arr, max_elements)
+            tree = spatial_bsp_tree(ctr_arr, max_elements, rule=partition_rule)
+            parts = []
+            for leaf in tree.leaves():
+                assert leaf.indices is not None
+                parts.append(leaf.indices)
             warn_if_oversized_single_part(
                 len(parts), int(parts[0].size) if parts else 0, max_elements, name
             )
@@ -214,6 +211,7 @@ def add_gsplats_impl(
                     parent=parent,
                     extend_to_all=extend_to_all,
                     max_elements=max_elements,
+                    bsp_tree=tree.to_serializable(),
                     **attrs,
                 )
             # 1 part → fall through to single-leaf write.
@@ -289,6 +287,7 @@ def add_gsplats_partition_wrapper_impl(
     parent: Optional["Node"],
     extend_to_all: Optional[Union[List[str], str]],
     max_elements: int,
+    bsp_tree: Dict[str, Any],
     **attrs: Any,
 ) -> "Group":
     """Build a kind=partition wrapper Group with one GSplats child per BSP part."""
@@ -333,6 +332,7 @@ def add_gsplats_partition_wrapper_impl(
         f"sizes={[int(p.size) for p in parts]})"
     )
 
+    written_parts = []
     for i, indices in enumerate(parts):
         wrapper.add_gsplats(
             name=f"part_{i}",
@@ -357,6 +357,13 @@ def add_gsplats_partition_wrapper_impl(
             partition=False,
             **leaf_attrs,
         )
+        written_parts.append(i)
+
+    from ..partition import prune_serialized_bsp_tree
+
+    serialized_tree = prune_serialized_bsp_tree(bsp_tree, written_parts)
+    if serialized_tree is not None:
+        wrapper._persist_attr("bsp_tree", serialized_tree)
 
     wrapper._persist_attr("position_bounds", position_bounds_from_array(ctr_arr))
 

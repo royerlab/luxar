@@ -219,6 +219,50 @@ describe('loadPartitionGroupNode', () => {
     expect(wrapper.children.map((c) => c.userData.partIndex)).toEqual([0, 1]);
   });
 
+  it('keeps a nested bsp_tree produced by a native spatial partition', async () => {
+    attachStubChildren();
+    const ctx = makeCtx();
+    const bspTree = {
+      axis: 0,
+      split: 0,
+      left: {
+        axis: 0,
+        split: -4,
+        left: { part: 0 },
+        right: { part: 1 },
+      },
+      right: {
+        axis: 0,
+        split: 4,
+        left: { part: 2 },
+        right: { part: 3 },
+      },
+    };
+    const parts = [
+      [-6.2, -5.8],
+      [-2.2, -1.8],
+      [1.8, 2.2],
+      [5.8, 6.2],
+    ].map(([min, max], childIndex) =>
+      makePartNode(`/partition/part_${childIndex}`, 'points', {
+        child_index: childIndex,
+        position_bounds: { min: [min, -0.1, 0], max: [max, 0.1, 0] },
+      })
+    );
+    const node = makePartitionGroupNode(parts, { bsp_tree: bspTree });
+
+    const wrapper = await loadPartitionGroupNode(
+      node,
+      new THREE.Group(),
+      makeStubLoc(),
+      ctx,
+      loadSceneNodesMock
+    );
+
+    expect(wrapper.userData.bspTree).toEqual(bspTree);
+    expect(wrapper.children.map((child) => child.userData.partIndex)).toEqual([0, 1, 2, 3]);
+  });
+
   it('drops a bsp_tree whose split plane is outside the overlap-tolerant center band', async () => {
     attachStubChildren();
     const ctx = makeCtx();
