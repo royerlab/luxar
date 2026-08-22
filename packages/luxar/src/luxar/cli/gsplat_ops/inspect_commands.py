@@ -22,6 +22,45 @@ if TYPE_CHECKING:
     from luxar.gsplats.doctor import DoctorReport, Finding
 
 
+_IMPORTANT_FITTING_KEYS = (
+    "n_splats",
+    "ndim",
+    "ordering",
+    "format_version",
+    "timestamp",
+    "luxar_gsplats_version",
+    "description",
+    "fitter_name",
+    "n_iters",
+    "final_loss",
+    "psnr_db",
+    "foreground_psnr_db",
+    "foreground_threshold",
+    "foreground_fraction",
+    "ssim",
+    "mse",
+    # Amplitudes are background-relative, so these normalization stamps are
+    # interpretation-critical rather than generic trailing metadata (#1175).
+    "floor",
+    "image_min",
+    "image_max",
+    "intensity_range",
+    "convergence_time",
+    "culled",
+    "culling_method",
+    "n_original",
+    "n_culled",
+    "amplitude_retention",
+)
+
+
+def _print_fitting_value(key: str, value: Any) -> None:
+    if isinstance(value, float):
+        aprint(f"  {key}: {value:.6f}")
+    else:
+        aprint(f"  {key}: {value}")
+
+
 def _ascii_histogram(
     data: "np.ndarray", bins: int = 40, width: int = 60, title: str = "Distribution"
 ) -> str:
@@ -295,48 +334,10 @@ def info_dataset(
             aprint("─" * 70)
 
             # Display important metadata
-            important_keys = [
-                "n_splats",
-                "ndim",
-                "ordering",
-                "format_version",
-                "timestamp",
-                "luxar_gsplats_version",
-                "description",
-                "fitter_name",
-                "n_iters",
-                "final_loss",
-                "psnr_db",
-                "foreground_psnr_db",
-                "foreground_threshold",
-                "foreground_fraction",
-                "ssim",
-                "mse",
-                # Normalization provenance (#1175): the background level the fit
-                # subtracted, and the bounds it normalized against. Listed
-                # rather than left to the generic "Additional Metadata" dump —
-                # amplitudes are background-RELATIVE, so `floor` is needed to
-                # interpret every intensity in the file.
-                "floor",
-                "image_min",
-                "image_max",
-                "intensity_range",
-                "convergence_time",
-                "culled",
-                "culling_method",
-                "n_original",
-                "n_culled",
-                "amplitude_retention",
-            ]
-
             displayed_keys = set()
-            for key in important_keys:
+            for key in _IMPORTANT_FITTING_KEYS:
                 if key in data.stats:
-                    value = data.stats[key]
-                    if isinstance(value, float):
-                        aprint(f"  {key}: {value:.6f}")
-                    else:
-                        aprint(f"  {key}: {value}")
+                    _print_fitting_value(key, data.stats[key])
                     displayed_keys.add(key)
 
             # Display remaining metadata. The source-volume block above already
@@ -931,8 +932,14 @@ def _print_gsplat_tree_summary(path: Path) -> None:
             aprint(f"Position bounds: min={pb.get('min')} max={pb.get('max')}")
         if "fitting" in root:
             aprint("\nFitting (fitting/):")
-            for key, value in sorted(dict(root["fitting"].attrs).items()):
-                aprint(f"  {key}: {value}")
+            fitting = dict(root["fitting"].attrs)
+            displayed_keys = set()
+            for key in _IMPORTANT_FITTING_KEYS:
+                if key in fitting:
+                    _print_fitting_value(key, fitting[key])
+                    displayed_keys.add(key)
+            for key in sorted(set(fitting) - displayed_keys):
+                _print_fitting_value(key, fitting[key])
         _print_normalization_block(root)
     finally:
         if tmp is not None and tmp.exists():

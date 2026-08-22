@@ -114,7 +114,7 @@ def test_partition_quality_reaches_the_archive_and_info(
     _print_gsplat_tree_summary(output)
     info = capsys.readouterr().out
     assert "Fitting (fitting/):" in info
-    assert "psnr_db" in info
+    assert f"psnr_db: {fitting['psnr_db']:.6f}" in info
 
 
 def test_partition_lod_density_uses_the_persisted_total_splat_count() -> None:

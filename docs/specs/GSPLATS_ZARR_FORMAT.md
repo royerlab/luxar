@@ -793,6 +793,11 @@ onto the source grid will not reproduce these numbers — divide the spacing bac
 out first. The metrics describe the fit, not the coordinate frame it was
 delivered in.
 
+On a node tree, a root `fitting/` score is a whole-tree claim: the additive sum
+of the finest surviving parts, after each part's post-fit cull, measured on that
+same fitter voxel grid. It does not describe the coarser content a viewer may
+select initially from a `levels` or `stream` per-part recipe.
+
 A metric that is mathematically undefined is **omitted, not written**: a volume
 with no foreground (a constant tile, a signal-free crop) has no
 `foreground_psnr_db`, and an exact reconstruction has no `psnr_db`. Writing them
