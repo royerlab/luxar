@@ -327,6 +327,27 @@ describe('applyViewerConfigState', () => {
       });
     });
 
+    it('forwards a per-dimension step override', () => {
+      applyViewerConfigState(
+        { animation: [{}, { playing: true, step_size: 2.5 }] },
+        asPorts(ports)
+      );
+      expect(ports.startDimensionAnimation).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({ stepSize: 2.5 })
+      );
+    });
+
+    it('leaves stepSize undefined when the scene does not set one', () => {
+      // Undefined means Auto — the viewer derives a step from the dimension.
+      // Forwarding a 0 or a null here would be an explicit override of it.
+      applyViewerConfigState({ animation: [{ playing: true }] }, asPorts(ports));
+      expect(ports.startDimensionAnimation).toHaveBeenCalledWith(
+        0,
+        expect.objectContaining({ stepSize: undefined })
+      );
+    });
+
     it('leaves a dimension alone unless playing is exactly true', () => {
       const config: ZarrViewerConfig = {
         animation: [{ playing: false }, { target_fps: 30 }, {}],

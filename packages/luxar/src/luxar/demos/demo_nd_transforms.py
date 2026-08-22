@@ -1143,7 +1143,15 @@ def generate_demo(output_path: Path) -> int:
                     # rows are dark), and not a symmetric special case.
                     dimensions=DimensionsConfig(
                         current_step=[0.0, 0.0, 0.0, 7.0, 0.0],
-                        selected_dimension=3,
+                        # NAVIGABLE position, not an absolute dimension index:
+                        # the viewer resolves this against the non-displayed
+                        # dimensions only (`getSelectedDimensionIndex`), which
+                        # is why the number keys start at `1` for the first
+                        # hidden axis. Here those are Frame (3) and Channel
+                        # (4), so Frame — the axis this scene is about — is 0.
+                        # A 3 asked for a fourth navigable axis that does not
+                        # exist, and resolved to "nothing selected".
+                        selected_dimension=0,
                     ),
                 ),
             )

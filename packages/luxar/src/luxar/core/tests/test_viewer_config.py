@@ -170,6 +170,28 @@ class TestAnimationConfig:
         assert anim2.playing is True
         assert anim2.loop == "bounce"
 
+    def test_step_size_round_trips(self) -> None:
+        """The viewer writes this field; Python has to be able to carry it.
+
+        Ctrl+Shift+S captures a per-dimension step override into the scene's
+        `animation` block. Before this field existed the round trip dropped it
+        silently: read a captured scene into Python, write it back, and the
+        override was gone with nothing said.
+        """
+        anim = AnimationConfig(playing=True, step_size=2.5)
+        restored = AnimationConfig.from_dict(anim.to_dict())
+        assert restored.step_size == 2.5
+
+        # Auto (the usual case) must stay absent rather than serialize as null,
+        # so it cannot be mistaken for an explicit override downstream.
+        assert "step_size" not in AnimationConfig(playing=True).to_dict()
+
+    def test_invalid_step_size(self) -> None:
+        # Matches the viewer's own `setStepSize` guard.
+        for bad in (0.0, -1.0):
+            with pytest.raises(ValueError, match="step_size must be > 0"):
+                AnimationConfig(step_size=bad)
+
     def test_invalid_loop(self) -> None:
         with pytest.raises(ValueError, match="loop must be one of"):
             AnimationConfig(loop="invalid")

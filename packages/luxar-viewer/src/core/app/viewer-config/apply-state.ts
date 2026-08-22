@@ -44,7 +44,13 @@ export interface ViewerConfigPorts {
    */
   startDimensionAnimation?: (
     dim: number,
-    options: { targetFPS?: number; loopMode?: string; direction?: string }
+    options: {
+      targetFPS?: number;
+      loopMode?: string;
+      direction?: string;
+      /** Per-tick advance in the dimension's units; omitted means Auto. */
+      stepSize?: number;
+    }
   ) => void;
 }
 
@@ -125,6 +131,7 @@ export function applyViewerConfigState(
         targetFPS: entry.target_fps,
         loopMode: entry.loop,
         direction: entry.direction,
+        stepSize: entry.step_size,
       });
     }
   }

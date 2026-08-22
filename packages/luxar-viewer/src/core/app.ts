@@ -425,11 +425,19 @@ export class LuxarApp {
         // Resolved lazily: the animation manager is built when a scene with an
         // animatable dimension loads, which for the first dataset happens in
         // the same init pass as this call.
-        this.inputHandler.getAnimationManager()?.play(dim, {
+        const manager = this.inputHandler.getAnimationManager();
+        manager?.play(dim, {
           targetFPS: options.targetFPS,
           loopMode: options.loopMode as LoopMode | undefined,
           direction: options.direction as AnimationDirection | undefined,
         });
+        // After play(), not before: play() creates the dimension's state from
+        // the configured defaults, so a step set first would be the one thing
+        // it overwrote. `setStepSize` validates the value itself and rejects a
+        // non-positive one rather than animating nowhere.
+        if (options.stepSize !== undefined) {
+          manager?.setStepSize(dim, options.stepSize);
+        }
       },
     });
   }
