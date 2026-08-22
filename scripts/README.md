@@ -78,7 +78,7 @@ hatch run check-demo-ladders --screen --screen-aspect 4:3=1.3333
 | `--screen-aspect` | aspects to measure at, as `label=value`, `W:H` or a bare number (default 1:1, 16:9, 21:9) |
 | `--screen-viewport-long` | pixels on the viewport's LONG axis; affects the legacy diagonal metric only |
 | `--screen-fit-fov` | vertical FOV the fitted camera DISTANCE uses (default 47, the viewer's own) |
-| `--screen-render-fov` | vertical FOV the first frame's projection uses (pass 63 for the cinematic/35mm preset) |
+| `--screen-render-fov` | fallback vertical FOV where the store does not author `camera.fov` (pass 63 for the cinematic/35mm preset) |
 | `--screen-verdict` | show only these buckets (repeatable): `win`, `fragile`, `no-op`, `off-screen`, `already-current`, `skipped` |
 
 ---

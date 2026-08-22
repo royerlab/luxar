@@ -1275,6 +1275,13 @@ def test_a_fov_preset_scene_is_skipped_but_a_numeric_fov_still_screens(
     assert numeric.skipped_reason == ""
     assert numeric.groups != []
 
+    # A corpus-wide fallback must not replace the store's authored lens. The
+    # bridge's CINEMATIC_FOV_PAIR rule still makes the numeric FOV authoritative.
+    fallback = screen_lod_store(path, render_fov=47.0)
+    assert [m.area_metric for m in fallback.groups[0].measurements] == pytest.approx(
+        [m.area_metric for m in numeric.groups[0].measurements]
+    )
+
 
 def test_a_scene_with_one_displayed_dimension_is_skipped(tmp_path: Path) -> None:
     """``evaluatePerFrame`` bails at ``displayDims.length < 2``, before any group."""

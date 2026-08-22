@@ -1486,9 +1486,9 @@ def screen_lod_store(
         fit_fov: VERTICAL FOV the fitted DISTANCE is computed at. Always the
             viewer default (47) unless you are modelling something unusual — the
             cinematic preset changes the FOV only after the fit.
-        render_fov: VERTICAL FOV the first frame's projection uses. Defaults to
-            the scene's authored ``viewer_config.camera.fov`` when it has one,
-            else ``fit_fov``.
+        render_fov: Fallback VERTICAL FOV for the first frame's projection when
+            the scene does not author ``viewer_config.camera.fov``. Defaults to
+            ``fit_fov``.
 
     Returns:
         A :class:`SceneScreening`. A store-wide refusal (not a scene, no root
@@ -1587,11 +1587,7 @@ def screen_lod_store(
             out=facts,
         )
 
-        effective_render_fov = (
-            render_fov
-            if render_fov is not None
-            else (_authored_render_fov(root_attrs) or fit_fov)
-        )
+        effective_render_fov = _authored_render_fov(root_attrs) or render_fov or fit_fov
         return SceneScreening(
             path=str(store_path),
             groups=[

@@ -288,9 +288,9 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help=(
-            "vertical FOV the first frame's projection uses (default: the "
-            "scene's authored viewer_config.camera.fov, else --screen-fit-fov; "
-            "pass 63 to model the cinematic preset)"
+            "fallback vertical FOV for scenes that do not author "
+            "viewer_config.camera.fov (default: --screen-fit-fov; pass 63 to "
+            "model the cinematic preset)"
         ),
     )
     screen.add_argument(

@@ -485,9 +485,11 @@ else and is skipped by name rather than screened against a framing nobody sees.
 So is a scene whose FOV comes from `viewer_config.cinematic_mode` or
 `camera.fov_preset`: those name an entry in the viewer's own TypeScript preset
 table, and a second unverified copy of it here would be worse than asking for
-`--screen-render-fov 63`. A scene displaying fewer than two dimensions is
-skipped too — `lod-group-registry.ts::evaluatePerFrame` bails there before it
-evaluates any group.
+`--screen-render-fov 63`. That flag supplies a fallback only where the store
+does not author numeric `camera.fov`; an authored FOV always wins. A scene
+displaying fewer than two dimensions is skipped too —
+`lod-group-registry.ts::evaluatePerFrame` bails there before it evaluates any
+group.
 Dynamic near/far clipping is deliberately NOT modelled — the near-plane hazard
 that matters is the homogeneous-`w` straddle inside `project_box_ndc_rect`,
 which never reads `camera.near`.
