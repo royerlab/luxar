@@ -126,7 +126,7 @@ _BUILD_SCENE = """
 import numpy as np
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.gsplats import GSplatData
+from luxar.gsplats import AdditiveSubLOD, GSplatData, SubstitutiveLevel
 
 N = 64
 rng = np.random.default_rng(0)
@@ -142,6 +142,41 @@ data = GSplatData(
     centers=centers, amplitudes=amplitudes, cholesky_factors=cholesky
 )
 data.save(SPLATS_PATH)
+
+translated = data.translate(np.ones(3, dtype=np.float32))
+np.testing.assert_allclose(translated.centers, centers + 1)
+transformed = data.transform(np.eye(3, dtype=np.float32) * 2)
+np.testing.assert_allclose(transformed.centers, centers * 2)
+centered = data.center_at_centroid()
+np.testing.assert_allclose(
+    centered.centers.T @ centered.amplitudes,
+    np.zeros(3, dtype=np.float32),
+    atol=1e-4,
+)
+
+
+def sublod(count):
+    return AdditiveSubLOD(
+        centers=centers[:count],
+        amplitudes=amplitudes[:count],
+        cholesky_factors=cholesky[:count],
+    )
+
+
+GSplatData(additive_sublods=[sublod(32), sublod(N)]).save(LADDER_PATH)
+loaded_ladder = GSplatData.load(LADDER_PATH)
+assert loaded_ladder.n_additive_sublods == 2
+assert loaded_ladder.n_substitutive == 1
+
+GSplatData(
+    substitutive_levels=[
+        SubstitutiveLevel(additive_sublods=[sublod(16)]),
+        SubstitutiveLevel(additive_sublods=[sublod(N)]),
+    ]
+).save(STACK_PATH)
+loaded_stack = GSplatData.load(STACK_PATH)
+assert loaded_stack.n_substitutive == 2
+assert [level.n_additive_lods for level in loaded_stack.substitutive_levels] == [1, 1]
 
 with LuxarZarrCompiler(SCENE_PATH) as compiler:
     scene = compiler.create_scene(
@@ -177,7 +212,7 @@ with LuxarZarrCompiler(SCENE_PATH) as compiler:
         centers=centers,
         amplitudes=amplitudes,
         cholesky_factors=cholesky,
-        partition={"parts": 4},
+        partition={"max_elements": 16},
     )
     scene.add_gsplats_from_data("gs_data", data)
     scene.add_gsplats_from_file("gs_file", SPLATS_PATH)
@@ -242,9 +277,14 @@ def test_core_scene_authoring_without_gsplats_extra(tmp_path: Path) -> None:
     """
     scene_path = tmp_path / "core_only.luxar.zarr"
     splats_path = tmp_path / "core_only.gsplats.zarr"
+    ladder_path = tmp_path / "core_only_ladder.gsplats.zarr"
+    stack_path = tmp_path / "core_only_stack.gsplats.zarr"
     script = (
         _BLOCK_EXTRA.replace(_SENTINEL, "")
-        + f"\nSCENE_PATH = {str(scene_path)!r}\nSPLATS_PATH = {str(splats_path)!r}\n"
+        + f"\nSCENE_PATH = {str(scene_path)!r}\n"
+        + f"SPLATS_PATH = {str(splats_path)!r}\n"
+        + f"LADDER_PATH = {str(ladder_path)!r}\n"
+        + f"STACK_PATH = {str(stack_path)!r}\n"
         + textwrap.dedent(_BUILD_SCENE)
     )
     result = _run(script)
@@ -273,6 +313,12 @@ def test_core_scene_authoring_without_gsplats_extra(tmp_path: Path) -> None:
     # And the gsplat node holds real arrays, not just a group shell.
     gs_written = {child.name for child in (scene_path / "gs").iterdir()}
     assert {"centers", "amplitudes", "cholesky_factors_diag"} <= gs_written, gs_written
+
+    partition_written = {
+        child.name for child in (scene_path / "gs_partition").iterdir()
+    }
+    assert {"part_0", "part_1"} <= partition_written, partition_written
+    assert "centers" not in partition_written, partition_written
 
     assert splats_path.is_dir()
     splat_written = {child.name for child in splats_path.iterdir()}
