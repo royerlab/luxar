@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import json
 import shutil
+import struct
 import tempfile
+import zipfile
 from pathlib import Path
 
 import numpy as np
@@ -58,6 +60,31 @@ def _scene_without_split_planes(tmp: Path) -> Path:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
         scene.add_gsplats_from_file("tiles", str(source))
     return path
+
+
+def _corrupt_zip_payload(path: Path) -> None:
+    """Damage one compressed data member without touching the archive index."""
+    payload = bytearray(path.read_bytes())
+    with zipfile.ZipFile(path) as archive:
+        member = max(
+            (
+                info
+                for info in archive.infolist()
+                if not info.is_dir()
+                and info.compress_type == zipfile.ZIP_DEFLATED
+                and info.compress_size > 8
+                and not info.filename.endswith(
+                    ("zarr.json", ".zattrs", ".zgroup", ".zmetadata")
+                )
+            ),
+            key=lambda info: info.compress_size,
+        )
+    name_length, extra_length = struct.unpack_from(
+        "<HH", payload, member.header_offset + 26
+    )
+    data_offset = member.header_offset + 30 + name_length + extra_length
+    payload[data_offset + 2] ^= 0xFF
+    path.write_bytes(payload)
 
 
 def test_doctor_exits_nonzero_while_a_problem_stands() -> None:
@@ -156,5 +183,53 @@ def test_doctor_reports_corrupt_archives_without_a_traceback(name: str) -> None:
 
         assert result.exit_code == 1
         assert isinstance(result.exception, SystemExit)
+        assert "❌ " in result.stdout
+        assert "Traceback" not in result.stdout
+
+
+def test_doctor_reports_a_truncated_tar_archive_without_aborting() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        store = _partition_without_split_planes(tmp_path)
+        archive = Path(
+            shutil.make_archive(
+                str(tmp_path / "part"),
+                "gztar",
+                root_dir=str(tmp_path),
+                base_dir=store.name,
+            )
+        )
+        payload = archive.read_bytes()
+        archive.write_bytes(payload[: len(payload) // 2])
+
+        result = CliRunner().invoke(app, ["gsplat", "doctor", str(archive)])
+
+        assert result.exit_code == 1
+        assert isinstance(result.exception, SystemExit)
+        assert "❌ " in result.stdout
+        assert "Traceback" not in result.stdout
+
+
+def test_doctor_reports_a_corrupt_zip_payload_without_a_traceback() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        store = _partition_without_split_planes(tmp_path)
+        archive = Path(
+            shutil.make_archive(
+                str(tmp_path / "part"),
+                "zip",
+                root_dir=str(tmp_path),
+                base_dir=store.name,
+            )
+        )
+        _corrupt_zip_payload(archive)
+
+        result = CliRunner().invoke(
+            app, ["gsplat", "doctor", str(archive), "--no-info"]
+        )
+
+        assert result.exit_code == 1
+        assert isinstance(result.exception, SystemExit)
+        assert "Diagnosing:" in result.stdout
         assert "❌ " in result.stdout
         assert "Traceback" not in result.stdout
