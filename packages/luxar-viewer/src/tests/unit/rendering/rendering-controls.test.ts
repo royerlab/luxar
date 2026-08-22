@@ -663,6 +663,27 @@ describe('RenderingControls', () => {
     });
   });
 
+  describe('Zarr-authored FOV presets', () => {
+    it('applies a preset-only lens and preserves its label when the panel opens', () => {
+      const controls = renderingControls as any;
+      controls.setZarrViewerConfig({
+        camera: { fov_preset: '85mm Portrait' },
+      });
+
+      controls.applyZarrDefaults();
+
+      expect(mockSceneManager.setFov).toHaveBeenCalledWith(
+        config.camera.fovPresets['85mm Portrait']
+      );
+      expect(mockCamera.fov).toBe(config.camera.fovPresets['85mm Portrait']);
+      expect(controls.settings.fovPreset).toBe('85mm Portrait');
+
+      controls.show();
+
+      expect(controls.settings.fovPreset).toBe('85mm Portrait');
+    });
+  });
+
   describe('Scale-aware clipping slider ranges', () => {
     // The sliders' authored range is ABSOLUTE (near 0.0001-10) while every
     // value they display is scene-relative. Under dynamic clipping they are

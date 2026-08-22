@@ -13,6 +13,7 @@ import {
   CINEMATIC_SNAPSHOT_KEYS,
   type CinematicSnapshotKeys,
 } from '../cinematic-preset';
+import { cameraConfig } from '../sections/camera/data';
 import { log, Modules } from '../../utils/log';
 
 /**
@@ -135,7 +136,12 @@ export function extractRenderingOverrides(
 
   // camera.fov_preset maps to RenderingSettings.fovPreset
   if (zarrConfig.camera?.fov_preset != null) {
-    overrides.fovPreset = zarrConfig.camera.fov_preset as RenderingSettings['fovPreset'];
+    const fovPreset = zarrConfig.camera.fov_preset as RenderingSettings['fovPreset'];
+    overrides.fovPreset = fovPreset;
+    if (overrides.fov === undefined) {
+      const presetFov = cameraConfig.fovPresets[fovPreset];
+      if (presetFov > 0) overrides.fov = presetFov;
+    }
   }
 
   // camera.near/far map to RenderingSettings.near/far
@@ -157,13 +163,10 @@ export function extractRenderingOverrides(
  * NEITHER is filled from the preset.
  *
  * Why coupled — a framing is a unit, and half a pair is worse than neither
- * half. Filling only the missing half makes the slider and the dropdown
- * describe different lenses: an authored `fov_preset: '85mm Portrait'` beside
- * the preset's 35 mm `fov` would actively drive the camera to 63° while the
- * dropdown reads "85mm Portrait" (and the first panel open would rewrite the
- * author's choice to '35mm' from the live FOV). Skipping both keeps exact
- * parity with a non-cinematic scene in either direction: the author's camera
- * authority wins whole, and the base default supplies the other half.
+ * half. A recognized authored `fov_preset` resolves its own numeric FOV above;
+ * this guard prevents the cinematic preset from replacing either half with
+ * its 35 mm lens. An explicit numeric FOV remains authoritative without an
+ * invented label, and an unknown or `Custom` preset remains unresolved.
  */
 const CINEMATIC_FOV_PAIR: readonly CinematicSnapshotKeys[] = ['fov', 'fovPreset'];
 

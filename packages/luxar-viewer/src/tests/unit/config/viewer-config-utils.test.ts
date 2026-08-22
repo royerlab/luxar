@@ -10,6 +10,7 @@ import {
   renderingSettingsToZarr,
   RENDERING_SETTINGS_MAP,
 } from '../../../config/zarr-bridge/viewer-config-utils';
+import { config } from '../../../config';
 import { buildCinematicValues, CINEMATIC_SNAPSHOT_KEYS } from '../../../config/cinematic-preset';
 import type { ZarrViewerConfig } from '../../../types/zarr';
 
@@ -202,6 +203,33 @@ describe('extractRenderingOverrides', () => {
     expect(overrides.near).toBe(0.1);
     expect(overrides.far).toBe(1000);
   });
+
+  it('resolves camera.fov_preset to its numeric FOV when camera.fov is absent', () => {
+    const overrides = extractRenderingOverrides({
+      camera: { fov_preset: '85mm Portrait' },
+    });
+
+    expect(overrides.fov).toBe(config.camera.fovPresets['85mm Portrait']);
+    expect(overrides.fovPreset).toBe('85mm Portrait');
+  });
+
+  it('keeps an explicit camera.fov authoritative over camera.fov_preset', () => {
+    const overrides = extractRenderingOverrides({
+      camera: { fov: 90, fov_preset: '85mm Portrait' },
+    });
+
+    expect(overrides.fov).toBe(90);
+    expect(overrides.fovPreset).toBe('85mm Portrait');
+  });
+
+  it('does not invent a numeric FOV for the Custom preset', () => {
+    const overrides = extractRenderingOverrides({
+      camera: { fov_preset: 'Custom' },
+    });
+
+    expect('fov' in overrides).toBe(false);
+    expect(overrides.fovPreset).toBe('Custom');
+  });
 });
 
 describe('extractRenderingOverrides — cinematic_mode preset expansion', () => {
@@ -263,7 +291,7 @@ describe('extractRenderingOverrides — cinematic_mode preset expansion', () => 
     });
 
     expect(overrides.fovPreset).toBe('85mm Portrait');
-    expect('fov' in overrides).toBe(false);
+    expect(overrides.fov).toBe(config.camera.fovPresets['85mm Portrait']);
     expect(overrides.toneMapping).toBe(buildCinematicValues().toneMapping);
   });
 
