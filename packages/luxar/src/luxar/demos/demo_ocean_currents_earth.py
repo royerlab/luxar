@@ -616,6 +616,7 @@ def build_scene(hycom_path: Path, marble_path: Path, output_path: Path) -> Path:
                 citation=DEMO_META["citation"],
                 dimensions=dims,
                 viewer_config=ViewerConfig(
+                    cinematic_mode=True,
                     # No tone mapping at all (#1459): the ramp is an encoding of
                     # speed, and every colour here — Blue Marble texture and
                     # blue->white LUT alike — already sits inside [0, 1], so a

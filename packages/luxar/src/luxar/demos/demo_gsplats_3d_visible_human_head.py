@@ -662,7 +662,9 @@ def create_luxar_scene(fit: GSplatData, colors: np.ndarray, output_path: Path) -
             scene = compiler.create_scene(
                 citation=DEMO_META["citation"],
                 dimensions=dims,
-                viewer_config=ViewerConfig(tone_mapping="ACES", camera=camera),
+                viewer_config=ViewerConfig(
+                    cinematic_mode=True, tone_mapping="ACES", camera=camera
+                ),
             )
             scene.attrs["title"] = "GSplats: Visible Human Head (NLM cryosections)"
             scene.add_gsplats(

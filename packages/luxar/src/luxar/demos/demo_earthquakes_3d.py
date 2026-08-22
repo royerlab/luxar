@@ -123,6 +123,7 @@ from arbol import aprint, asection
 from PIL import Image
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import add_demo_caption, cached_download, launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
@@ -1320,7 +1321,9 @@ def generate_earthquake_scene(
 
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
-                citation=DEMO_META["citation"], dimensions=dims
+                citation=DEMO_META["citation"],
+                dimensions=dims,
+                viewer_config=ViewerConfig(cinematic_mode=True),
             )
 
             # Add Earth surface

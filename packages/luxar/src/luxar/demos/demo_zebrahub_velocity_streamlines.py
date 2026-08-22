@@ -875,6 +875,7 @@ def write_scene(
             ]
         )
         viewer_config = ViewerConfig(
+            cinematic_mode=True,
             camera=CameraConfig(
                 position=camera_position,
                 target=tuple(float(v) for v in center),

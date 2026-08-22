@@ -336,6 +336,7 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
             scene = compiler.create_scene(
                 dimensions=dims,
                 viewer_config=ViewerConfig(
+                    cinematic_mode=True,
                     tone_mapping="ACES",
                     camera=CameraConfig(
                         position=(cx, cy, cz + distance),

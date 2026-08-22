@@ -1115,6 +1115,7 @@ def generate_demo(output_path: Path) -> int:
             scene = compiler.create_scene(
                 dimensions=dims,
                 viewer_config=ViewerConfig(
+                    cinematic_mode=True,
                     background_color="#07080c",
                     # Neutral rather than the ACES default (#1459): the bench's
                     # colour IS an exact encoding — a red R must read as red —
@@ -1132,6 +1133,8 @@ def generate_demo(output_path: Path) -> int:
                     # countable.
                     tone_mapping="Neutral",
                     bloom_enabled=False,
+                    chromatic_lens_distortion_enabled=False,
+                    detector_noise_enabled=False,
                     auto_rotate=False,
                     # A long lens is nearly orthographic, so ticks line up
                     # honestly instead of fanning out with perspective.

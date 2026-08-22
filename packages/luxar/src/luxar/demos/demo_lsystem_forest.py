@@ -1732,6 +1732,7 @@ def _forest_dimensions() -> Dimensions:
 
 def _viewer_config() -> ViewerConfig:
     return ViewerConfig(
+        cinematic_mode=True,
         # ACES explicitly — the house default; the luminous accents +
         # emissive foliage mix is exactly what its filmic rolloff is for.
         tone_mapping="ACES",
