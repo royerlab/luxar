@@ -6493,6 +6493,23 @@ class TestLODCarriesAuthoredAppearance:
         )
         assert "colormap" in stdout, "the dropped palette has to be announced"
 
+    def test_merge_counts_gray_as_authored_on_a_colored_input(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """The writer manufactures gray only for colorless stores."""
+        first = self._colored_copy(medium_gsplats, tmp_path / "rgb_a.gsplats.zarr")
+        second = self._colored_copy(medium_gsplats, tmp_path / "rgb_b.gsplats.zarr")
+        self._authored_input(first, {"colormap": "inferno"})
+        self._authored_input(second, {"colormap": "gray"})
+
+        out = tmp_path / "colored_gray_disagreement.gsplats.zarr"
+        got, stdout = self._merge(runner, [first, second], out)
+
+        assert "colormap" not in got, (
+            "treated an authored gray palette on a colored input as a writer default"
+        )
+        assert "disagree on authored 'colormap'" in stdout
+
     def test_merge_refuses_a_palette_when_an_input_has_a_custom_lut(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:

@@ -205,7 +205,9 @@ _ABSENCE_MEANS_VALUE: Dict[str, Any] = {"visible": True}
 
 
 def _appearance_votes(
-    key: str, per_input: "Sequence[Mapping[str, Any]]"
+    key: str,
+    per_input: "Sequence[Mapping[str, Any]]",
+    input_has_colors: "Union[Sequence[bool], None]" = None,
 ) -> "List[tuple[int, Any]]":
     """The values that actually COUNT as an opinion on ``key``, in input order.
 
@@ -222,15 +224,18 @@ def _appearance_votes(
       value and votes as one;
     * an input whose value is exactly what the WRITER manufactures for that key
       (:data:`~luxar.core.group.compositing.WRITER_STAMPED_APPEARANCE_DEFAULTS`).
+      ``colormap="gray"`` is silence only on a colorless input: the writer never
+      stamps it on a colored store, where it is necessarily authored and must
+      vote like any other palette.
 
     That second clause is the load-bearing one and it has a real cost, stated
     plainly: a store nobody ever touched is stamped ``opacity=1.0`` /
     ``absorption=1.0`` / ``gamma=1.0`` / ``intensity=1.0`` / ``offset=0.0`` /
-    ``layer=true`` / ``colormap="gray"``, and NOTHING on disk distinguishes
-    those from an author who deliberately chose the identity. So treating them
-    as silence does lose a deliberate choice: merging a store where the user
-    deliberately set ``opacity=1.0`` with a sibling at ``0.75`` now carries
-    ``0.75``.
+    ``layer=true`` (plus ``colormap="gray"`` on a colorless store), and NOTHING
+    on disk distinguishes those from an author who deliberately chose the
+    identity. So treating them as silence does lose a deliberate choice:
+    merging a store where the user deliberately set ``opacity=1.0`` with a
+    sibling at ``0.75`` now carries ``0.75``.
 
     It is still the right trade, because the alternative is not "keep the
     deliberate 1.0" — it is what this code did before: seven of the eleven keys
@@ -248,7 +253,14 @@ def _appearance_votes(
     votes: List[tuple[int, Any]] = []
     for index, attrs in enumerate(per_input):
         value = attrs.get(key, absent)
-        if value is _NO_VALUE or value == manufactured:
+        writer_manufactured = value == manufactured
+        if (
+            key == "colormap"
+            and input_has_colors is not None
+            and input_has_colors[index]
+        ):
+            writer_manufactured = False
+        if value is _NO_VALUE or writer_manufactured:
             continue
         votes.append((index, value))
     return votes
@@ -442,7 +454,7 @@ def agreed_authored_appearance(
 
     carried: Dict[str, Any] = {}
     for key in sorted({k for attrs in per_input for k in attrs}):
-        votes = _appearance_votes(key, per_input)
+        votes = _appearance_votes(key, per_input, input_has_colors=input_has_colors)
         if not votes:
             # Every input carries only what the writer manufactured, so there is
             # no authored value to preserve OR to lose: not carrying it is a
