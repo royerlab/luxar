@@ -14,6 +14,7 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
+import pytest
 from typer.testing import CliRunner
 
 from luxar._zarr_compat import consolidate as zc_consolidate
@@ -121,3 +122,17 @@ def test_doctor_classifies_a_plainly_named_scene_archive_from_its_attrs() -> Non
         assert "gsplat info report does not apply" in result.stdout
         assert "tiles" in result.stdout
         assert "no split planes" in result.stdout
+
+
+@pytest.mark.parametrize("name", ["broken.zip", "broken.tar.gz"])
+def test_doctor_reports_corrupt_archives_without_a_traceback(name: str) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / name
+        path.write_bytes(b"not an archive")
+
+        result = CliRunner().invoke(app, ["gsplat", "doctor", str(path)])
+
+        assert result.exit_code == 1
+        assert isinstance(result.exception, SystemExit)
+        assert "❌ " in result.stdout
+        assert "Traceback" not in result.stdout

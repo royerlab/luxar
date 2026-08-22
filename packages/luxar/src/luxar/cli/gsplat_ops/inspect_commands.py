@@ -7,6 +7,8 @@ the shared ``app_gsplat`` Typer.
 from __future__ import annotations
 
 import shutil
+import tarfile
+import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -1120,7 +1122,7 @@ def doctor(
         info = True
     try:
         store_kind = resolve_store_kind(path)
-    except ValueError as exc:
+    except (ValueError, OSError, zipfile.BadZipFile, tarfile.TarError) as exc:
         aprint(f"❌ {exc}")
         raise typer.Exit(1) from None
     if info:
@@ -1132,7 +1134,7 @@ def doctor(
     with asection(f"Diagnosing: {path.name}"):
         try:
             report = diagnose_store(path, fix=fix)
-        except ValueError as exc:
+        except (ValueError, OSError, zipfile.BadZipFile, tarfile.TarError) as exc:
             aprint(f"❌ {exc}")
             raise typer.Exit(1) from None
 
