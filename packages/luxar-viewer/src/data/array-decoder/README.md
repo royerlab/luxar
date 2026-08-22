@@ -30,6 +30,10 @@ from one entry point.
 
 ## Priority-Dispatch Order
 
+Every main-thread branch that performs floating-point decoding delegates to
+the shared TypeScript worker-fallback kernels so worker routing cannot change
+decoded bits. Per-channel routes use separately tested bit-exact implementations.
+
 `ArrayDecoder.decode()` checks encoding modes in a fixed order — the
 order MUST match the Python spec or behavior diverges:
 
@@ -46,18 +50,22 @@ order MUST match the Python spec or behavior diverges:
 4. **log_scalar** (`log_scalar_uint8`, `log_scalar_uint16`) — checked
    BEFORE generic quantization because the name contains `uint`. Decodes
    via the shared TypeScript `expm1(normalized × max_log)` kernels. Used for
-   radii and other wide-dynamic-range positive scalars.
-5. **perchannel** (`log_perchannel_*`, `signed_log_perchannel_*`,
+   wide-dynamic-range positive scalars.
+5. **geolog scalar** (`geolog_scalar_uint8`, `geolog_scalar_uint16`) —
+   reserved zero plus geometric interpolation across the nonzero range.
+   Delegates to the shared f32-disciplined kernels.
+6. **perchannel** (`log_perchannel_*`, `signed_log_perchannel_*`,
    `linear_perchannel_*`, `geolog_perchannel_*`) — also checked before
    generic quantization. Per-column dequantization via the `col_lo` /
    `col_hi` scale arrays (column count from the array's own last
    dimension). Mirrors the RangeLoader's dedicated `'perchannel'` path
    and Python's `_decode_*_perchannel`.
-6. **quantized** (`rgb_uint8`, `rgb_uint16`, `bounded_scalar_uint8`,
-   `bounded_scalar_uint16`) — linear dequantization to `[min, max]`.
-   Bounds resolved from `enc.bounds`, then `enc.min`/`enc.max`, then
-   inferred (only `rgb_*` is inferrable → `[0, 1]`).
-7. **direct** — `undefined` / `'none'` / `float16` / `float32` /
+7. **quantized** (`rgb_uint8`, `rgb_uint16`, `bounded_scalar_uint8`,
+   `bounded_scalar_uint16`) — delegates to the shared f32-disciplined
+   kernels. Linear bounds resolve from
+   `enc.bounds`, then `enc.min`/`enc.max`, then inferred (only `rgb_*` is
+   inferrable → `[0, 1]`).
+8. **direct** — `undefined` / `'none'` / `float16` / `float32` /
    `uint8` / `uint16` / `uint32` / `uint64` — raw zarr buffer converted
    to `Float32Array`. Registered under `enc.hash` if present.
 

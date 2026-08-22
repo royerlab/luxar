@@ -23,6 +23,13 @@ here automatically — not just when WASM is missing.
 | `projection.ts`         | nD→3D position extraction (`extract_3d_positions`)                                                                                                                                                                                |
 | `depth-sort.ts`         | `sort_splats_by_depth` — back-to-front splat ordering; frounds every float step in the Rust op order so WASM↔TS parity is exact-permutation                                                                                       |
 
+### Decode kernels
+
+`decode.ts` covers LUT, quantized, log-scalar, geolog-scalar, per-channel
+(linear, log, signed-log, geolog), and broadcasted decoding. Linear and
+geolog main-thread decoding calls these same functions so routing preserves
+bits. Kernels fround Rust-f32 inputs and arithmetic.
+
 ## Public surface
 
 A single `TypeScriptFallback` class that implements the `WasmModule`
