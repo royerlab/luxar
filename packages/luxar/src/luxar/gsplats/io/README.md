@@ -516,6 +516,29 @@ is `luxar gsplat migrate-format`.
   are carried too — a `.gsplats.zarr.zip` / `.tar.gz` is peeked in place via
   `_archive.read_archive_root_attrs` (see above), no extraction. Best-effort:
   a missing/unreadable store yields `{}`.
+  Its N-input sibling `agreed_authored_appearance(paths, exclude=…)` is what a
+  command with several inputs (`gsplat merge`) uses: a key is carried only when
+  every input that *has* an opinion agrees, an input with no opinion casts no
+  vote, and a disagreement drops the key **with a warning** naming the differing
+  values (each with the input it came from) and what lands instead. Same unanimity rule as
+  `save_gsplats.agreed_normalization_stats`, deliberately loud rather than
+  silent because appearance is hand-authored. Two refinements make the rule
+  usable, both on `_appearance_votes`: a value equal to the one the WRITER
+  manufactures (`WRITER_STAMPED_APPEARANCE_DEFAULTS`) is silence, not a vote —
+  otherwise merging a tuned dataset with a freshly fitted one disagrees on seven
+  keys and reverts to the untouched look; and `visible` is the one key where
+  ABSENCE votes (`true`), so a unilateral `visible: false` cannot hide the merged
+  whole. `colormap` is refused outright when any input declares the `"custom"`
+  sentinel (warned once for N inputs), since demoting it to "no opinion" would
+  let a sibling's palette repaint those splats. `exclude` names keys the CALLER
+  invalidates whatever the inputs say — for `gsplat merge` that is `colormap`
+  whenever the merge manufactured per-splat RGB; pass a `{key: reason}` mapping
+  to have the reason quoted in the warning. It is typed as a set/mapping so a
+  bare `str` cannot be passed by accident. `input_has_colors` identifies a
+  colored input with no authored palette as relying on its per-splat RGB, so a
+  sibling palette is refused rather than repainting it. `output_has_colors`
+  lets a drop warning say whether the merged writer leaves `colormap` unset or
+  stamps its colorless `"gray"` default.
 - **`inspect_gsplats.py`**: Metadata inspection without loading arrays
   (`inspect_gsplats_zarr`, `format_gsplats_info`).
 - **`migrate.py`**: Legacy-format migration (`migrate_format`,

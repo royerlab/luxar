@@ -22,6 +22,10 @@ import zarr
 from numpy.typing import NDArray
 
 from ...core.dimensions import Dimensions
+from ...core.group.compositing import (
+    IDENTITY_COMPOSITING_ATTRS,
+    WRITER_STAMPED_APPEARANCE_DEFAULTS,
+)
 from ...validation.types import (
     validate_appearance_fraction,
     validate_positive_finite,
@@ -484,17 +488,15 @@ def apply_default_render_attrs(attrs: Dict[str, Any]) -> None:
     ancestor sets it.
 
     Mirrors the GSplat defaults in :func:`~luxar.io._compiler.gsplat_assembly.\
-    apply_gsplat_group_attrs` (which additionally defaults ``truncation_radius``).
+    apply_gsplat_group_attrs` (which additionally defaults ``truncation_radius``)
+    — literally, not by coincidence: both read their values from
+    :data:`~luxar.core.group.compositing.WRITER_STAMPED_APPEARANCE_DEFAULTS`,
+    which is also what the READER consults to tell a manufactured identity from
+    an authored one (the ``gsplat merge`` agreement rule).
     """
-    for key, default in (
-        ("opacity", 1.0),
-        ("absorption", 1.0),
-        ("gamma", 1.0),
-        ("intensity", 1.0),
-        ("offset", 0.0),
-    ):
+    for key in IDENTITY_COMPOSITING_ATTRS:
         if key not in attrs:
-            attrs[key] = default
+            attrs[key] = WRITER_STAMPED_APPEARANCE_DEFAULTS[key]
 
 
 def validate_render_attrs(

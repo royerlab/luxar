@@ -101,7 +101,7 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
 5. **Write arrays**:
    - `vertices`: `SemanticType.COORDINATE`, 2-D chunks via `calculate_intelligent_chunks`, `deduplicate=False`, `allow_lut=False` (raw reader)
    - `segments`: `SemanticType.INDEX`, 2-D chunks `(segment_chunk_size, 2)` (from the segment ordering's `chunk_size` if ordering present, else the constant `2048`), `deduplicate=False` (raw reader)
-   - `widths`: via `write_positive_scalar` (rejects negative; same default-precision policy as Points radii)
+   - `widths`: via `write_positive_scalar` (rejects negative; same default-precision policy as Points radii; `deduplicate=False` keeps the chunk-bound slack tied to this array's encoding)
    - `colors`, `sharpness`, `scalars`: per-vertex, same as Points
    - `ctx.write_colormap_lut(group, attrs)`: writes the `colormap_lut` dataset when `colormap` needs one (a custom array, or a matplotlib/colorcet name, which is then rewritten to `"custom"`); built-in named colormaps write no LUT
 
