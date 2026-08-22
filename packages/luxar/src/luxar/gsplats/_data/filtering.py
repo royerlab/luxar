@@ -43,7 +43,7 @@ keeps all three, a non-spatial cull keeps the region and topology stamps and
 loses the metrics, an actual crop loses region and metrics but keeps the topology,
 and ``flatten`` loses only the topology.
 
-The LOD Q·e ladder stamps are a third, artifact-local category —
+The LOD Q·e ladder stamps are a fourth, artifact-local category —
 ``lod_stats.energy_fraction_cum`` (the prefix energy e(k) of a rung),
 ``level_stats.reference_energy`` (its weight w) and ``level_stats.quality`` (the
 measured Q of a level against its group's finest). Those are measured on the
