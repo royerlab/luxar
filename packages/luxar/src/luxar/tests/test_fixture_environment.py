@@ -21,12 +21,11 @@ FIXTURE_SCRIPTS = (
     "packages/luxar-viewer/tests/fixtures/generate_test_data.py",
     "packages/luxar-viewer/tests/fixtures/generate_expectations.py",
 )
-PYTHON_GUARD_INPUTS = (
-    "Makefile",
-    "packages/luxar-viewer/src/tests/global-setup.ts",
-    "packages/luxar-viewer/tests/fixtures/README.md",
-)
 GUARD_PATH = "packages/luxar/src/luxar/tests/test_fixture_environment.py"
+GIT_GREP_PATTERN = (
+    r"(hatch|\$\(HATCH\))[[:space:]]+run.*"
+    r"generate_(test_data|expectations)\.py"
+)
 FIXTURE_COMMAND = re.compile(
     r"(?:hatch|\$\(HATCH\))\s+run(?P<args>[^\n]*?)"
     r"(?P<script>generate_(?:test_data|expectations)\.py)\b"
@@ -38,6 +37,36 @@ def pyproject() -> dict[str, Any]:
     """Parsed project configuration."""
     with (REPO / "pyproject.toml").open("rb") as file:
         return tomllib.load(file)
+
+
+@pytest.fixture(scope="module")
+def fixture_command_lines() -> list[tuple[str, int, str]]:
+    """Tracked lines that invoke a viewer fixture generator through Hatch."""
+    result = subprocess.run(
+        [
+            "git",
+            "grep",
+            "-I",
+            "-n",
+            "-E",
+            GIT_GREP_PATTERN,
+            "--",
+            ".",
+            f":(exclude){GUARD_PATH}",
+        ],
+        cwd=REPO,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode not in (0, 1):
+        result.check_returncode()
+
+    matches = []
+    for output_line in result.stdout.splitlines():
+        relative_path, line_number, line = output_line.split(":", 2)
+        matches.append((relative_path, int(line_number), line))
+    return matches
 
 
 def test_fixture_environment_installs_only_cpu_gsplat_dependencies(
@@ -55,33 +84,19 @@ def test_fixture_environment_installs_only_cpu_gsplat_dependencies(
     assert fixtures["env-vars"]["MKL_NUM_THREADS"] == "{env:MKL_NUM_THREADS:1}"
 
 
-def test_every_fixture_generator_uses_the_dedicated_environment() -> None:
+def test_every_fixture_generator_uses_the_dedicated_environment(
+    fixture_command_lines: list[tuple[str, int, str]],
+) -> None:
     """No local, package, or CI entry point may silently rebuild `default`."""
     legacy_calls: list[str] = []
     dedicated_calls: set[str] = set()
 
-    tracked_files = (
-        subprocess.run(
-            ["git", "ls-files", "-z"],
-            cwd=REPO,
-            check=True,
-            capture_output=True,
-        )
-        .stdout.decode()
-        .split("\0")
-    )
-    for relative_path in tracked_files:
-        if not relative_path or relative_path == GUARD_PATH:
-            continue
-        path = REPO / relative_path
-        if not path.is_file():
-            continue
-        text = path.read_text(encoding="utf-8", errors="ignore")
-        for match in FIXTURE_COMMAND.finditer(text):
+    for relative_path, line_number, line in fixture_command_lines:
+        for match in FIXTURE_COMMAND.finditer(line):
             command = match.group(0)
             script = match.group("script")
             if "fixtures:python" not in match.group("args"):
-                legacy_calls.append(f"{relative_path}: {command}")
+                legacy_calls.append(f"{relative_path}:{line_number}: {command}")
             else:
                 dedicated_calls.add(script)
 
@@ -120,7 +135,9 @@ def test_typescript_ci_verifies_lean_cpu_torch_without_caching_pip() -> None:
         assert all("cache" not in step.get("with", {}) for step in setup_steps)
 
 
-def test_fixture_guard_inputs_trigger_python_ci() -> None:
+def test_fixture_guard_inputs_trigger_python_ci(
+    fixture_command_lines: list[tuple[str, int, str]],
+) -> None:
     """Every non-Python input policed by this module must run python-tests."""
     workflow = yaml.safe_load(
         (REPO / ".github/workflows/ci.yml").read_text(encoding="utf-8")
@@ -136,7 +153,13 @@ def test_fixture_guard_inputs_trigger_python_ci() -> None:
     )
     assert dom_py_pattern is not None
 
-    for relative_path in PYTHON_GUARD_INPUTS:
+    guard_inputs = {
+        relative_path
+        for relative_path, _, _ in fixture_command_lines
+        if not relative_path.endswith(".py")
+        and relative_path != ".github/workflows/ci.yml"
+    }
+    for relative_path in sorted(guard_inputs):
         classified = subprocess.run(
             ["grep", "-Eq", dom_py_pattern.group(1)],
             input=f"{relative_path}\n",
