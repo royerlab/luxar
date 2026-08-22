@@ -98,6 +98,45 @@ def _partition_scene(tmp: Path, geometry: str = "points") -> tuple[Path, str]:
     return path, geometry
 
 
+def _disjoint_centroid_split_lines_scene(tmp: Path) -> Path:
+    """A native lines partition whose valid plane crosses one part's bounds."""
+    from luxar import Dimensions, LuxarZarrCompiler
+
+    first = np.column_stack(
+        (
+            np.arange(11, dtype=np.float32),
+            np.zeros(11, dtype=np.float32),
+            np.zeros(11, dtype=np.float32),
+        )
+    )
+    second = np.column_stack(
+        (
+            np.arange(12, 15, dtype=np.float32),
+            np.zeros(3, dtype=np.float32),
+            np.zeros(3, dtype=np.float32),
+        )
+    )
+    positions = np.concatenate((first, second))
+    indices = np.array(
+        [(i, i + 1) for i in range(10)]
+        + [(i, i + 1) for i in range(11, 13)],
+        dtype=np.uint32,
+    )
+
+    path = tmp / "disjoint-lines.luxar.zarr"
+    with LuxarZarrCompiler(path) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_lines(
+            "lines",
+            positions,
+            widths=0.1,
+            indices=indices,
+            line_type="indexed",
+            partition={"max_elements": 12, "rule": "median"},
+        )
+    return path
+
+
 def _uniform_tiled_store(tmp: Path) -> Path:
     """A uniform-tiled partition on disk: overlapping parts, approximate planes.
 
@@ -491,6 +530,33 @@ class TestSplitPlanesCheck:
 
             diagnose_store(path, fix=True)
             assert _root_attrs(path)["bsp_tree"] == before
+
+    def test_disjoint_centroid_split_lines_are_approximate_and_rebuilt(self) -> None:
+        from luxar.core.group.partition import serialized_bsp_tree_separates
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _disjoint_centroid_split_lines_scene(Path(tmp))
+            node_path = path / "lines"
+            before_attrs = read_node_attrs(node_path)
+            assert before_attrs is not None
+            before = before_attrs["bsp_tree"]
+            boxes = _part_boxes(node_path)
+            assert not serialized_bsp_tree_separates(before, boxes)
+
+            report = diagnose_store(path)
+            (finding,) = report.findings
+            assert finding.path == "lines"
+            assert finding.severity == "note"
+            assert finding.fixable
+            assert report.healthy
+
+            fixed = diagnose_store(path, fix=True)
+            after_attrs = read_node_attrs(node_path)
+            assert after_attrs is not None
+            after = after_attrs["bsp_tree"]
+            assert after != before
+            assert serialized_bsp_tree_separates(after, boxes)
+            assert fixed.healthy
 
     def test_sparse_uniform_content_keeps_the_producer_tree(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

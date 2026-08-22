@@ -121,12 +121,17 @@ def check_partition_split_planes(root: "zarr.Group") -> List[Finding]:
         if stored is not None and boxes is not None:
             if serialized_bsp_tree_separates(dict(stored), boxes):
                 continue  # healthy
+            stored_dict = dict(stored)
             rebuilt = reconstruct_serialized_bsp_tree(boxes)
-            if rebuilt is None and _labels_name_the_parts(dict(stored), len(boxes)):
-                stored_dict = dict(stored)
-                if serialized_bsp_tree_straddles_centers(stored_dict, boxes):
-                    findings.append(_approximate_finding(where, len(boxes)))
-                    continue
+            labels_name_parts = _labels_name_the_parts(stored_dict, len(boxes))
+            if labels_name_parts and serialized_bsp_tree_straddles_centers(
+                stored_dict, boxes
+            ):
+                findings.append(
+                    _approximate_finding(group, where, len(boxes), rebuilt)
+                )
+                continue
+            if rebuilt is None and labels_name_parts:
                 recovered = _recover_frame_scale(stored_dict, boxes)
                 if recovered is not None:
                     repaired, factors, frame_scale_supported = recovered
@@ -336,24 +341,39 @@ def _labels_name_the_parts(stored: Dict[str, Any], n_parts: int) -> bool:
         return False
 
 
-def _approximate_finding(where: str, n_parts: int) -> Finding:
+def _approximate_finding(
+    group: "zarr.Group",
+    where: str,
+    n_parts: int,
+    rebuilt: Optional[Dict[str, Any]],
+) -> Finding:
+    def replace() -> None:
+        assert rebuilt is not None
+        group.attrs["bsp_tree"] = rebuilt
+
+    if rebuilt is None:
+        remedy = (
+            "Nothing to do. Exact ordering requires non-overlapping part bounds; "
+            "for tiled gsplats, use a content plan or non-overlapping tiles."
+        )
+    else:
+        remedy = "Replace the stored planes with exact cuts recovered from the part boxes."
+
     return Finding(
         check="split-planes",
         severity="note",
         path=where,
-        summary=f"split planes over {n_parts} parts that overlap — approximate",
+        summary=f"split planes over {n_parts} parts are centroid-valid but approximate",
         detail=(
-            "The parts share space, so no tree separates them and the stored "
-            "planes cannot be checked exactly. This is the documented shape of "
+            "The stored planes do not separate the part bounds, but every cut "
+            "still lies between its child-box centers. This is the documented shape of "
             "uniform-tiled fits, whose apodized tiles keep their overlap band, and "
             "centroid-split lines or mesh parts, whose vertices can cross a cut. "
-            "The producer's cuts still confine misordering to the overlap instead "
-            "of letting whole parts swap."
+            "The producer's cuts still confine ordering ambiguity to geometry that "
+            "crosses a cut instead of letting whole parts swap."
         ),
-        remedy=(
-            "Nothing to do. Exact ordering requires non-overlapping part bounds; "
-            "for tiled gsplats, use a content plan or non-overlapping tiles."
-        ),
+        remedy=remedy,
+        fix=replace if rebuilt is not None else None,
     )
 
 
