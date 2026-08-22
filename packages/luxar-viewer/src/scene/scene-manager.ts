@@ -89,8 +89,11 @@ import type { ControlType } from '../controls/controls-manager';
 
 /** Default scene up (world +Y) — overridden per scene by `viewer_config.up`. */
 const DEFAULT_SCENE_UP = new THREE.Vector3(0, 1, 0);
+const FOV_APPLY_DEADBAND_DEG = 0.5;
 
+/** Caller-resolved scene-load decisions that affect initial camera setup. */
 export interface SceneLoadOptions {
+  /** Apply scene-authored FOV before framing when localStorage does not take precedence. */
   applyViewerConfigFov?: boolean;
 }
 
@@ -270,6 +273,28 @@ export class SceneManager extends THREE.EventDispatcher<{
    */
   get currentFov(): number {
     return isPerspectiveCamera(this.camera) ? this.camera.fov : this.lastPerspectiveFov;
+  }
+
+  /**
+   * Set an absolute perspective FOV using rendering-setting validation semantics.
+   * Invalid values fall back to the configured default rather than clamping.
+   */
+  setFov(degrees: number): boolean {
+    const fov =
+      Number.isFinite(degrees) && degrees >= config.camera.fovMin && degrees <= config.camera.fovMax
+        ? degrees
+        : config.renderingControls.defaults.fov;
+    if (Math.abs(this.currentFov - fov) <= FOV_APPLY_DEADBAND_DEG) return false;
+
+    if (isOrthographicCamera(this.camera)) {
+      this.lastPerspectiveFov = fov;
+      return true;
+    }
+
+    this.camera.fov = fov;
+    this.camera.updateProjectionMatrix();
+    this.updateMaterialsForCurrentCamera();
+    return true;
   }
 
   /**
@@ -687,8 +712,11 @@ export class SceneManager extends THREE.EventDispatcher<{
    * Cache and prefetch flags propagate through `loaderConfig` from
    * LuxarApp (originally derived from `?no-cache`/`?cache-debug`/etc URL
    * parameters in main.ts).
-   * `options.applyViewerConfigFov` lets the app apply the resolved scene FOV
-   * before auto-framing when localStorage does not already own that setting.
+   * `options.applyViewerConfigFov` is the caller's localStorage-precedence
+   * decision, not a feature switch: returning visitors keep their stored FOV
+   * even when an authored pose was composed for a different lens. Under an
+   * orthographic camera it only stashes the next perspective FOV; framing uses
+   * camera zoom, and the later projection swap preserves that frustum.
    */
   async loadSceneData(
     src: string,
@@ -753,17 +781,7 @@ export class SceneManager extends THREE.EventDispatcher<{
       if (options.applyViewerConfigFov && viewerConfig) {
         const fovOverride = extractRenderingOverrides(viewerConfig).fov;
         if (fovOverride !== undefined) {
-          const fov =
-            typeof fovOverride === 'number' &&
-            Number.isFinite(fovOverride) &&
-            fovOverride >= config.camera.fovMin &&
-            fovOverride <= config.camera.fovMax
-              ? fovOverride
-              : config.renderingControls.defaults.fov;
-          const delta = (fov - this.currentFov) / config.camera.fovSensitivity;
-          if (Math.abs(this.currentFov - fov) > 0.5) {
-            this.updateFOV(delta);
-          }
+          this.setFov(fovOverride);
         }
       }
       const { positionApplied, appliedUp } = this.applyZarrViewerConfig(root);

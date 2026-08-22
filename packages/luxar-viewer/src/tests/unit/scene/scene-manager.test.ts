@@ -853,6 +853,26 @@ describe('SceneManager', () => {
       expect(fovAtFrame).toBe(47);
     });
 
+    it('stashes the resolved FOV without changing an orthographic projection', () => {
+      sceneManager.setControlType('ortho');
+      const orthographicCamera = sceneManager.camera as THREE.OrthographicCamera;
+      const updateProjectionMatrix = vi.spyOn(orthographicCamera, 'updateProjectionMatrix');
+
+      expect(sceneManager.setFov(63)).toBe(true);
+      expect(sceneManager.currentFov).toBe(63);
+      expect(updateProjectionMatrix).not.toHaveBeenCalled();
+
+      sceneManager.setControlType('orbit');
+      expect(sceneManager.currentFov).toBe(63);
+    });
+
+    it('falls back to the configured default for an invalid absolute FOV', () => {
+      (sceneManager.camera as THREE.PerspectiveCamera).fov = 80;
+
+      expect(sceneManager.setFov(Number.NaN)).toBe(true);
+      expect(sceneManager.currentFov).toBe(47);
+    });
+
     it('does not apply viewer-config FOV before framing when stored settings take precedence', async () => {
       const spies = installSpies({
         viewerConfig: { cinematic_mode: true },
@@ -870,38 +890,41 @@ describe('SceneManager', () => {
       expect(sceneManager.currentFov).toBe(47);
     });
 
-    it('keeps the auto-framed subject fill constant when cinematic mode widens the lens', async () => {
-      const loadCinematicScene = async () => {
-        const T = await import('three');
-        const group = new T.Group();
-        group.name = 'LuxarScene';
-        group.userData = {
-          positionBounds: { min: [-1, -1, 0], max: [1, 1, 0] },
-          viewerConfig: { cinematic_mode: true },
+    it.each([
+      { name: 'planar bounds', min: [-1, -1, 0], max: [1, 1, 0], nearestDepth: 0 },
+      { name: '3D bounds', min: [-1, -1, -1], max: [1, 1, 1], nearestDepth: 1 },
+    ])(
+      'keeps the fitted subject span constant for $name when cinematic mode widens the lens',
+      async ({ min, max, nearestDepth }) => {
+        const loadCinematicScene = async () => {
+          const T = await import('three');
+          const group = new T.Group();
+          group.name = 'LuxarScene';
+          group.userData = {
+            positionBounds: { min, max },
+            viewerConfig: { cinematic_mode: true },
+          };
+          return group;
         };
-        return group;
-      };
-      (mockLoadScene as any).mockImplementation(loadCinematicScene);
+        (mockLoadScene as any).mockImplementation(loadCinematicScene);
 
-      await sceneManager.loadSceneData('http://example.com/data.zarr', undefined, {
-        applyViewerConfigFov: false,
-      });
-      const defaultDistance = sceneManager.camera.position.length();
-      const defaultHalfFrame = defaultDistance * Math.tan((47 * Math.PI) / 360);
+        await sceneManager.loadSceneData('http://example.com/data.zarr', undefined, {
+          applyViewerConfigFov: false,
+        });
+        const defaultDistance = sceneManager.camera.position.length();
+        const defaultFittedSpan = (defaultDistance - nearestDepth) * Math.tan((47 * Math.PI) / 360);
 
-      await sceneManager.loadSceneData('http://example.com/data.zarr', undefined, {
-        applyViewerConfigFov: true,
-      });
-      const cinematicDistance = sceneManager.camera.position.length();
-      const cinematicHalfFrame = cinematicDistance * Math.tan((63 * Math.PI) / 360);
+        await sceneManager.loadSceneData('http://example.com/data.zarr', undefined, {
+          applyViewerConfigFov: true,
+        });
+        const cinematicDistance = sceneManager.camera.position.length();
+        const cinematicFittedSpan =
+          (cinematicDistance - nearestDepth) * Math.tan((63 * Math.PI) / 360);
 
-      expect(sceneManager.currentFov).toBe(63);
-      expect(cinematicDistance / defaultDistance).toBeCloseTo(
-        Math.tan((47 * Math.PI) / 360) / Math.tan((63 * Math.PI) / 360),
-        10
-      );
-      expect(cinematicHalfFrame).toBeCloseTo(defaultHalfFrame, 10);
-    });
+        expect(sceneManager.currentFov).toBe(63);
+        expect(cinematicFittedSpan).toBeCloseTo(defaultFittedSpan, 10);
+      }
+    );
 
     it('F (centerCameraOnScene) restores the authored camera when a position is pinned', async () => {
       const spies = installSpies({
