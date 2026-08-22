@@ -86,7 +86,7 @@ dataset_writers/
 The two canonical scalar writers plus geometry-named convenience wrappers and the
 colormap-scalars writer:
 
-- **`write_positive_scalar(group, data, name, spatial_index_data, n_elements, ctx, log_label_singular=None, per_array_bytes=False)`** `-> float`
+- **`write_positive_scalar(group, data, name, spatial_index_data, n_elements, ctx, log_label_singular=None, per_array_bytes=False, deduplicate=True)`** `-> float`
   Canonical `POSITIVE_SCALAR` writer used by Points (`radii`), Lines (`widths`),
   and GSplats (`amplitudes`). Accepts an array or a single broadcast value.
   Returns the maximum value so callers can cache it for layer-control metadata

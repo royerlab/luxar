@@ -347,6 +347,88 @@ def test_stored_points_bounds_contain_the_DECODED_radii(tmp_path: Path) -> None:
         assert bool((block + radius <= bounds[k, :, 1]).all())
 
 
+def test_stored_points_bounds_contain_geolog_DECODED_radii(tmp_path: Path) -> None:
+    rng = np.random.default_rng(1871001)
+    n = 20_000
+    positions = (rng.random((n, 3)) * 1000.0).astype(np.float32)
+    radii = np.geomspace(1e-6, 100.0, n, dtype=np.float32)
+
+    out = tmp_path / "geolog_radii.luxar.zarr"
+    with LuxarZarrCompiler(out, enable_spatial_index=True) as compiler:
+        scene = compiler.create_scene(
+            dimensions=Dimensions(
+                [
+                    Dimension("x", unit="um", display=True),
+                    Dimension("y", unit="um", display=True),
+                    Dimension("z", unit="um", display=True),
+                ]
+            )
+        )
+        scene.add_points("pts", positions, radii=radii)
+
+    node = zarr.open_group(out, mode="r")["pts"]
+    assert node["radii"].attrs["encoding"]["name"] == "geolog_scalar_uint16"
+    decoded_positions = _decode(node, "positions")
+    decoded_radii = _decode(node, "radii")
+    sort_order, _ = sort_points_compound(
+        positions,
+        [
+            Dimension("x", unit="um", display=True),
+            Dimension("y", unit="um", display=True),
+            Dimension("z", unit="um", display=True),
+        ],
+    )
+    assert float((decoded_radii - radii[sort_order]).max()) > 0.0
+    bounds = node["chunk_bounds"][:]
+    chunk_size = int(node.attrs["chunk_size"])
+    for k in range(bounds.shape[0]):
+        start = k * chunk_size
+        stop = min(start + chunk_size, n)
+        block = decoded_positions[start:stop]
+        radius = decoded_radii[start:stop, None]
+        assert bool((block - radius >= bounds[k, :, 0]).all())
+        assert bool((block + radius <= bounds[k, :, 1]).all())
+
+
+def test_footprint_writes_do_not_cross_deduplicate_on_sharpness(tmp_path: Path) -> None:
+    rng = np.random.default_rng(17511871)
+    n = 5000
+    positions = (rng.random((n, 3)) * 1000.0).astype(np.float32)
+    footprint = np.linspace(0.4, 0.5, n, dtype=np.float32)
+
+    out = tmp_path / "footprint_dedup.luxar.zarr"
+    with LuxarZarrCompiler(out, enable_spatial_index=True) as compiler:
+        scene = compiler.create_scene(
+            dimensions=Dimensions(
+                [
+                    Dimension("x", unit="um", display=True),
+                    Dimension("y", unit="um", display=True),
+                    Dimension("z", unit="um", display=True),
+                ]
+            )
+        )
+        scene.add_points("point_source", positions, sharpness=footprint)
+        scene.add_points("point_target", positions, radii=footprint)
+        scene.add_lines(
+            "line_source",
+            positions,
+            widths=1.0,
+            sharpness=footprint,
+            line_type="segments",
+        )
+        scene.add_lines(
+            "line_target", positions, widths=footprint, line_type="segments"
+        )
+
+    store = zarr.open_group(out, mode="r")
+    assert store["point_target/radii"].attrs["encoding"]["name"] == (
+        "bounded_scalar_uint8"
+    )
+    assert store["line_target/widths"].attrs["encoding"]["name"] == (
+        "bounded_scalar_uint8"
+    )
+
+
 def test_stored_line_bounds_contain_the_DECODED_widths(tmp_path: Path) -> None:
     """Every decoded segment footprint stays inside its stored chunk bound."""
     rng = np.random.default_rng(18710)
