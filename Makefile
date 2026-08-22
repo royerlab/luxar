@@ -2846,7 +2846,7 @@ stats-fast:  ## Generate project statistics without running tests (file counts o
 show-env:  ## Show all Hatch environments
 	$(HATCH) env show
 
-prune-env:  ## Remove unused Hatch environments
+prune-env:  ## Remove ALL Hatch environments
 	$(HATCH) env prune
 
 shell:  ## Enter Hatch development shell

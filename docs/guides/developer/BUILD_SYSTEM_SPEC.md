@@ -352,7 +352,7 @@ MIN_NODE_MINOR := 22
 | `make stats-fast` | Generate project statistics without running tests (file counts only) |
 | `make shell` | Enter Hatch development shell |
 | `make show-env` | Show Hatch environments |
-| `make prune-env` | Remove unused Hatch environments |
+| `make prune-env` | Remove ALL Hatch environments |
 
 ### Release & Publishing
 
