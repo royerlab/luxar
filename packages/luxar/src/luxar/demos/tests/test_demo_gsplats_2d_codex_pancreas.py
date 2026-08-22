@@ -30,11 +30,33 @@ def test_cache_version_excludes_pre_transpose_flat_artifacts(
 ) -> None:
     """The old filename contains flat `(row, col)` fits and must never be reused."""
     monkeypatch.setattr(_demo, "CACHE_DIR", tmp_path)
-    old_cache = tmp_path / "codex_ch03.gsplats.zarr.zip"
-    old_cache.touch()
+    monkeypatch.setattr(_demo, "RECOMPUTE", False)
+    for channel_index in range(_demo.N_CHANNELS):
+        (tmp_path / f"codex_ch{channel_index:02d}.gsplats.zarr.zip").touch()
 
-    current = _demo.channel_cache_path(3)
+    loaded_channels = []
+    fitted_paths = []
 
-    assert current == tmp_path / "codex_ch03.v2.gsplats.zarr.zip"
-    assert current != old_cache
-    assert not current.exists()
+    def fake_load_channel(tiff_dir, channel_config):
+        loaded_channels.append((tiff_dir, channel_config))
+        return object()
+
+    def fake_fit_channel_tiled(image, channel_name, cache_file):
+        fitted_paths.append(cache_file)
+        return object()
+
+    monkeypatch.setattr(_demo, "load_channel", fake_load_channel)
+    monkeypatch.setattr(_demo, "fit_channel_tiled", fake_fit_channel_tiled)
+
+    tiff_dir = tmp_path / "source"
+    cache_paths, fitted = _demo.fit_all_channels(tiff_dir)
+
+    expected_paths = [
+        tmp_path / f"codex_ch{channel_index:02d}.v2.gsplats.zarr.zip"
+        for channel_index in range(_demo.N_CHANNELS)
+    ]
+    assert cache_paths == expected_paths
+    assert fitted_paths == expected_paths
+    assert len(loaded_channels) == _demo.N_CHANNELS
+    assert all(loaded_from == tiff_dir for loaded_from, _ in loaded_channels)
+    assert all(result is not None for result in fitted)

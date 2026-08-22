@@ -47,4 +47,6 @@ back as a matrix; the in-memory fit is kept only for `--show-roundtrip`, which
 now compares in the fitted frame and skips channels it did not fit this run
 rather than reporting against splats it does not have. The compression summary
 scales its pixel side to the channels actually fitted, so a partially-resumed run
-no longer divides this run's splats by all twelve channels' pixels.
+no longer divides this run's splats by all twelve channels' pixels. Current
+transposed fits use `.v2` cache names, so older unversioned channel caches are
+not reused and may be deleted after the replacement fit completes.
