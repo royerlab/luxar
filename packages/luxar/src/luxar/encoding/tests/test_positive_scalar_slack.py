@@ -38,7 +38,7 @@ from luxar.encoding import ArrayDecoder, ArrayEncoder, EncodingMode, SemanticTyp
         ),
         (
             "linear_u16_float64",
-            np.geomspace(1e-4, 5.0, 4001, dtype=np.float64),
+            np.geomspace(1e-4, 5.0, 20_001, dtype=np.float64),
             EncodingMode.AUTO,
             "linear",
             "bounded_scalar_uint16",
