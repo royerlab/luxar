@@ -460,9 +460,10 @@ wrong:
   or it reports a rewrite that never happens. `already-current` is decided on
   the SELECTOR ALONE (`_plan_lod` returns before reading a threshold — a
   `screen-area` group with an odd ladder is still left alone, and the screen
-  prints the stored-vs-derived diff as evidence without calling it a win), and
-  a descending stored ladder or an orphan `coverage_fraction` child is
-  `skipped` through `lod_restamp`'s own predicates.
+  prints the stored-vs-derived diff as evidence without calling it a win). For
+  a legacy group, a descending stored ladder or an orphan `coverage_fraction`
+  child is `skipped` through `lod_restamp`'s own predicates; an already-current
+  group keeps that same hygiene finding as detail without changing buckets.
 - **The two selectors are in different units.** `today` is scored under the
   STAMPED selector — the legacy `coverage` metric is an UNCLIPPED pixel diagonal
   over `FILL_FACTOR × min(W, H)`, range ~`[0, 4]` — while the re-derived side is
