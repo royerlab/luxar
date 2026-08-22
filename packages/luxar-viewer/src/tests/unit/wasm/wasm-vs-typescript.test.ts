@@ -159,22 +159,6 @@ function runFused(
   return { count, centers, chol, amps, cols, src };
 }
 
-function arraysWithinFloat32Ulps(a: Float32Array, b: Float32Array, maxUlps: number): boolean {
-  if (a.length !== b.length) return false;
-  const aBits = new Uint32Array(a.buffer, a.byteOffset, a.length);
-  const bBits = new Uint32Array(b.buffer, b.byteOffset, b.length);
-  for (let i = 0; i < a.length; i++) {
-    const distance = Math.abs(aBits[i] - bBits[i]);
-    if (distance > maxUlps) {
-      console.log(
-        `ULP mismatch at index ${i}: 0x${aBits[i].toString(16).padStart(8, '0')} vs 0x${bBits[i].toString(16).padStart(8, '0')} (${distance} ULPs)`
-      );
-      return false;
-    }
-  }
-  return true;
-}
-
 beforeAll(async () => {
   // Initialize TypeScript fallback (always available)
   tsModule = new TypeScriptFallback();
@@ -599,7 +583,7 @@ describe('WASM vs TypeScript Comparison', () => {
           )
           .concat({ label: 'u8', maxLog: 1.3732879469562715 })
       )(
-      'decode_log_scalar_$label should stay within one ULP across every code at maxLog=$maxLog',
+      'decode_log_scalar_$label should exactly match across every code at maxLog=$maxLog',
       ({ label, maxLog }) => {
         const data =
           label === 'u8'
@@ -616,7 +600,7 @@ describe('WASM vs TypeScript Comparison', () => {
           wasmModule!.decode_log_scalar_u16(data as Uint16Array, maxLog, wasmOutput);
         }
 
-        expect(arraysWithinFloat32Ulps(tsOutput, wasmOutput, 1)).toBe(true);
+        expect(exactBitsEqual(tsOutput, wasmOutput)).toBe(true);
       }
     );
 

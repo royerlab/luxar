@@ -4,6 +4,8 @@
  * TypeScript reference implementation matching decode.rs
  */
 
+import { expm1f } from './float32-math';
+
 /**
  * Decode quantized uint8 data to float32.
  * Maps uint8 [0, 255] to [minVal, maxVal] linearly.
@@ -57,12 +59,13 @@ export function decode_quantized_u16(
  * Decoding: expm1(normalized * maxLog)
  */
 export function decode_log_scalar_u8(data: Uint8Array, maxLog: number, output: Float32Array): void {
+  // This worker/WASM fallback kernel follows the Rust f32 contract. The main-thread
+  // ArrayDecoder still uses f64 divide-then-multiply algebra; see #1847.
   const limit = Math.fround(maxLog);
   const invMax = Math.fround(limit / 255);
   for (let i = 0; i < data.length; i++) {
     const normalized = Math.fround(data[i] * invMax);
-    // Math.expm1 is f64; rounding its result can remain one ULP from Rust's expm1f.
-    output[i] = Math.fround(Math.expm1(normalized));
+    output[i] = expm1f(normalized);
   }
 }
 
@@ -74,12 +77,13 @@ export function decode_log_scalar_u16(
   maxLog: number,
   output: Float32Array
 ): void {
+  // This worker/WASM fallback kernel follows the Rust f32 contract. The main-thread
+  // ArrayDecoder still uses f64 divide-then-multiply algebra; see #1847.
   const limit = Math.fround(maxLog);
   const invMax = Math.fround(limit / 65535);
   for (let i = 0; i < data.length; i++) {
     const normalized = Math.fround(data[i] * invMax);
-    // Math.expm1 is f64; rounding its result can remain one ULP from Rust's expm1f.
-    output[i] = Math.fround(Math.expm1(normalized));
+    output[i] = expm1f(normalized);
   }
 }
 

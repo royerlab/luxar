@@ -502,6 +502,8 @@ export class ArrayDecoder {
    * Used for positive scalars with wide dynamic range (e.g., radii)
    */
   private decodeLogScalar(data: Float32Array, maxLog: number, dtype: string): Float32Array {
+    // This main-thread path intentionally retains its f64 divide-then-multiply
+    // algebra for now; worker/WASM fallback decoding follows the Rust f32 kernel (#1847).
     if (!Number.isFinite(maxLog) || maxLog <= 0) {
       throw new Error(
         `[ArrayDecoder] Invalid log_scalar max_log: ${maxLog}. Must be finite and > 0.`

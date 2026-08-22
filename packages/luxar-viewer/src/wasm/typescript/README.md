@@ -18,7 +18,8 @@ here automatically — not just when WASM is missing.
 | `mesh-culling.ts`       | Whole-triangle nD culling: per-vertex slab membership + face compaction preserving original vertex indices. `Math.fround`s the slab bounds                                                          |
 | `gsplats-processing.ts` | Marginal Cholesky factorization, Mahalanobis distance, fused nD→3D projection (`project_gsplats_nd_to_3d`). Frounds every float step in the Rust op order (#1820); exact vs WASM except `exp`/`log` |
 | `effective-radii.ts`    | `calculate_effective_radii` — `R_eff = sqrt(R² − D²)` for nD points sliced by a hyperplane. Frounds every float step in the Rust op order (#1820); bit-exact vs WASM                                |
-| `decode.ts`             | Array decoders shared by worker fallback and main-thread linear/geolog routes                                                                                                                       |
+| `decode.ts`             | LUT / quantized / log-scalar / geolog-scalar / per-channel decoders + `decode_broadcasted`; log-scalar is bit-exact with WASM, while the main-thread `ArrayDecoder` remains different pending #1847 |
+| `float32-math.ts`       | Exact TypeScript port of Rust/WASM `expm1f`, used where narrowing the host's f64 `Math.expm1` result can choose the neighboring f32                                                                 |
 | `projection.ts`         | nD→3D position extraction (`extract_3d_positions`)                                                                                                                                                  |
 | `depth-sort.ts`         | `sort_splats_by_depth` — back-to-front splat ordering; frounds every float step in the Rust op order so WASM↔TS parity is exact-permutation                                                         |
 
@@ -28,8 +29,7 @@ here automatically — not just when WASM is missing.
 (linear, log, signed-log, geolog), and broadcasted decoding. Linear and
 geolog main-thread decoding calls these same functions so routing preserves
 bits. The separate main-thread `log_scalar` implementation remains tracked
-by #1848. Kernels fround Rust-f32 inputs and arithmetic; the remaining
-`expm1f` residual is at most one ULP and tracked by #1843.
+by #1847. Kernels fround Rust-f32 inputs and arithmetic.
 
 ## Public surface
 
@@ -70,15 +70,15 @@ mismatches against the real WASM — and it is tracked as **#1830**.
 
 This directory is **not** uniformly verified. Current state:
 
-| File                    | f32 discipline                                                                                                           |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `depth-sort.ts`         | Frounded; sort permutation exact vs WASM                                                                                 |
-| `mesh-culling.ts`       | Slab bounds frounded; parity-tested                                                                                      |
-| `effective-radii.ts`    | Frounded end to end (#1820); bit-exact vs WASM over a 20k randomized sweep                                               |
-| `gsplats-processing.ts` | Frounded end to end (#1820); bit-exact except the `exp`/`log` residual (#1830)                                           |
-| `decode.ts`             | Frounds Rust-f32 inputs and decode arithmetic; log-scalar output remains within one ULP of Rust's `expm1f` pending #1843 |
-| `lines-clipping.ts`     | Frounded end to end (#1821); exact parity cases cover slab boundaries and t-parameter accumulation                       |
-| `projection.ts`         | Pure copy, no arithmetic                                                                                                 |
+| File                    | f32 discipline                                                                                     |
+| ----------------------- | -------------------------------------------------------------------------------------------------- |
+| `depth-sort.ts`         | Frounded; sort permutation exact vs WASM                                                           |
+| `mesh-culling.ts`       | Slab bounds frounded; parity-tested                                                                |
+| `effective-radii.ts`    | Frounded end to end (#1820); bit-exact vs WASM over a 20k randomized sweep                         |
+| `gsplats-processing.ts` | Frounded end to end (#1820); bit-exact except the `exp`/`log` residual (#1830)                     |
+| `decode.ts`             | Frounds Rust-f32 inputs and decode arithmetic; log-scalar output is bit-exact with Rust's `expm1f` |
+| `lines-clipping.ts`     | Frounded end to end (#1821); exact parity cases cover slab boundaries and t-parameter accumulation |
+| `projection.ts`         | Pure copy, no arithmetic                                                                           |
 
 ### Where `Math.fround` is mandatory
 
@@ -90,9 +90,11 @@ in the Rust operation order:
 
 - `depth-sort.ts` frounds every step so the sort permutation is exact.
 - `decode.ts` frounds linear bounds, geolog-scalar anchors, and the log-scalar
-  `maxLog` bound, all of which arrive as f32 in WASM; its log-scalar kernels
-  fround their arithmetic too but remain within one ULP of Rust's `expm1f`
-  pending #1843.
+  `maxLog` bound, all of which arrive as f32 in WASM. Its log-scalar kernels use
+  `float32-math.ts`'s `expm1f`, because narrowing host `Math.expm1` afterward can
+  still choose the neighboring f32. The geolog-scalar, log-per-channel, and
+  signed-log-per-channel decoders deliberately retain f64 `Math.exp`/`Math.expm1`
+  because their Rust transforms also evaluate in f64 before narrowing.
 - `mesh-culling.ts` frounds the slab bounds. The f64 difference of two f32 values
   is _exact_ while Rust's f32 subtraction rounds; the gap is under half an ulp,
   but when the rounding goes DOWN the rounded bound is itself a legal f32 vertex
@@ -127,6 +129,11 @@ as a fallback, and as the uncapped production backend for >16D data
 (WASM supports at most 16 dimensions); users with large datasets
 should build the WASM module (`make build-wasm`) for production
 performance.
+
+The exact `expm1f` port is about 4.4× slower than narrowing `Math.expm1`
+for the transcendental step (2 million u16 codes on Node 22). Log-scalar
+decoding uses it only in the wholesale TypeScript fallback selected when
+the WASM artifact fails to load, so exact parity is worth that bounded cost.
 
 ## Constants
 

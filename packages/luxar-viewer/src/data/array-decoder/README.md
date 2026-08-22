@@ -30,13 +30,13 @@ from one entry point.
 
 ## Priority-Dispatch Order
 
-`ArrayDecoder.decode()` checks encoding modes in a fixed order — the
-order MUST match the Python spec or behavior diverges:
-
 Main-thread scalar branches that perform floating-point decoding delegate
 to the shared TypeScript worker-fallback kernels so worker routing cannot
 change decoded bits. `log_scalar` is the remaining scalar holdout, tracked
-by #1848. Per-channel routes use separately tested bit-exact implementations.
+by #1847. Per-channel routes use separately tested bit-exact implementations.
+
+`ArrayDecoder.decode()` checks encoding modes in a fixed order — the
+order MUST match the Python spec or behavior diverges:
 
 1. **broadcasted** — single value replicated to `n_elements` × `k`. Reads
    one row from zarr, replicates in place, registers under `enc.hash` for

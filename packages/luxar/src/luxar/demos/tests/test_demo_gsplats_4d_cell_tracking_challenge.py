@@ -707,8 +707,8 @@ class TestPrecomputedRoundTrip:
 
         The fallback here is not cheap: an authenticated Kaggle download plus a
         multi-crop GPU fit. A dataset key the manifest does not carry is a typo
-        or a rename — a fault — and used to come back as ``None`` with
-        "fitting locally instead" printed over it.
+        or a rename — a fault — and used to come back as ``None`` while the
+        expensive fallback was announced over it.
         """
         from luxar.utils.data_fetch import DatasetNotFound
 
