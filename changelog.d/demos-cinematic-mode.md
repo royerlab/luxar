@@ -25,10 +25,10 @@ applying the expanded fov before the fit (#1861).
 
 All demos with an authored camera position compose for 63° through the new
 `demos/_cinematic_camera.py`, so the lens stays whole and the framing is
-preserved exactly (#1862): `CINEMATIC_FOV_DEG` where the distance comes from the lens
-(quantum orbitals' `asin(R/D)` rule, which therefore just moves closer,
-79.97 → 60.65), and `pull_in()` where an empirically tuned pose is carried over
-(the empirical authored poses, using their original 38°–50° FOV).
+preserved exactly (#1862): `CINEMATIC_FOV_DEG` where the distance comes from
+the lens (quantum orbitals' `asin(R/D)` rule, which therefore just moves closer,
+79.97 → 60.65), and `pull_in()` for planar poses carried over from an authored
+38°–50° FOV.
 `pull_in` scales about the pose's target, not the world origin, so the Mip-NeRF
 garden camera keeps pointing at the table. Only the framing carries over, not the
 image — a wider lens at a shorter distance foreshortens more — so these poses are
@@ -37,8 +37,8 @@ worth a look on the next gallery pass.
 A new lint (`test_demos_cinematic_mode.py`) keeps this true for demo 87: every
 `create_scene` must pass a non-`None` `viewer_config`, every `ViewerConfig` built
 in the demos package must set a literal `cinematic_mode=True`, every authored
-camera must state the lens it was composed for, and the scientific-fidelity
-overrides must remain explicit.
+camera must leave its FOV unpinned and demonstrate composition for 63°, and the
+scientific-fidelity overrides must remain explicit.
 
 Four fidelity-sensitive demos deliberately opt parts of the preset back out:
 the CMU-1 pathology and CODEX pancreas ortho demos disable bloom, vignette, lens

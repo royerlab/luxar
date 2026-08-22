@@ -1059,11 +1059,18 @@ def lonlat_to_xyz(lon: np.ndarray, lat: np.ndarray, relief: np.ndarray) -> np.nd
 
 
 def globe_camera(lon: float, lat: float, *, distance: float = 2.6) -> CameraConfig:
-    """Look straight down at ``(lon, lat)`` with the historical globe framing."""
+    """Look down at ``(lon, lat)`` while preserving the 42° globe silhouette.
+
+    ``distance`` is the pre-cinematic 42° camera distance in globe radii; the
+    sphere silhouette, rather than a plane through the target, is held fixed.
+    """
     la, lo = math.radians(lat), math.radians(lon)
     cl = math.cos(la)
     normal = (cl * math.cos(lo), math.sin(la), -cl * math.sin(lo))
-    old_fill = math.tan(math.asin(1.0 / distance)) / math.tan(math.radians(42.0) / 2.0)
+    authored_fov_deg = 42.0
+    old_fill = math.tan(math.asin(1.0 / distance)) / math.tan(
+        math.radians(authored_fov_deg / 2.0)
+    )
     angular_radius = math.atan(
         old_fill * math.tan(math.radians(CINEMATIC_FOV_DEG) / 2.0)
     )

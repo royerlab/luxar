@@ -432,7 +432,9 @@ re-framing. An auto-framed cinematic scene therefore opens 0.71x smaller
 linearly — half the screen area — than the same scene without the preset. That
 viewer-side ordering is tracked in #1861. For a specifically composed framing,
 pin `camera.fov` (or `camera.fov_preset`) alongside `cinematic_mode`; the preset
-then leaves the authored FOV alone.
+then leaves the authored FOV alone, but still applies its 35 mm distortion to
+that different framing. The bundled demos instead leave the FOV unpinned and
+compose their authored positions for 63°.
 
 See `luxar.ViewerConfig` docstring for the full field list with types and
 valid ranges.
