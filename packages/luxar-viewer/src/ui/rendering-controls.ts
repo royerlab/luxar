@@ -19,7 +19,10 @@ import { setupAntiAliasingControls } from './rendering-controls/setup/anti-alias
 import { setupPostProcessingControls } from './rendering-controls/setup/post-processing-setup';
 import { CinematicModeController } from './rendering-controls/cinematic-mode';
 import { applyRenderingSettings } from './rendering-controls/apply-settings';
-import { syncCurrentState as syncCurrentStateImpl } from './rendering-controls/sync-current-state';
+import {
+  syncCameraFovState as syncCameraFovStateImpl,
+  syncCurrentState as syncCurrentStateImpl,
+} from './rendering-controls/sync-current-state';
 import { FocusManager } from './rendering-controls/focus-manager';
 import {
   buildBaseDefaults,
@@ -823,6 +826,11 @@ export class RenderingControls {
       updateCinematicModeCheckbox: () => this.updateCinematicModeCheckbox(),
       updateNavigationControls: (controlType) => this.updateNavigationControls(controlType),
     });
+  }
+
+  /** Sync only the live camera FOV and its derived preset into settings. */
+  public syncCameraFovState(): void {
+    syncCameraFovStateImpl(this.settings, this.sceneManager);
   }
 
   /** Apply current settings to the rendering pipeline. Delegates to a pure helper. */

@@ -78,7 +78,7 @@ export async function loadDataset(src: string, ports: LoadDatasetPorts): Promise
     // The scene may have replaced the stored FOV to keep an authored position
     // paired with its lens. Keep panel state and Ctrl+Shift+S export aligned
     // with the live camera before any later settings application can reuse it.
-    ports.renderingControls.syncCurrentState();
+    ports.renderingControls.syncCameraFovState();
   }
 
   // Update fly speed slider range and value based on scene scale

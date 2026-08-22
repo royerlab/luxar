@@ -41,7 +41,7 @@ function makePorts(trace: Trace, overrides: Partial<LoadDatasetPorts> = {}): Loa
     setZarrViewerConfig: vi.fn(() => trace.order.push('setZarrViewerConfig')),
     hasStoredSettings: vi.fn().mockReturnValue(false),
     applyZarrDefaults: vi.fn(() => trace.order.push('applyZarrDefaults')),
-    syncCurrentState: vi.fn(() => trace.order.push('syncCurrentState')),
+    syncCameraFovState: vi.fn(() => trace.order.push('syncCameraFovState')),
     updateSceneScale: vi.fn(() => trace.order.push('updateSceneScale')),
   };
   const sceneManager = {
@@ -200,9 +200,9 @@ describe('loadDataset', () => {
       trace.order.push('loadSceneData');
       camera.fov = 63;
     });
-    (ports.renderingControls.syncCurrentState as ReturnType<typeof vi.fn>).mockImplementation(
+    (ports.renderingControls.syncCameraFovState as ReturnType<typeof vi.fn>).mockImplementation(
       () => {
-        trace.order.push('syncCurrentState');
+        trace.order.push('syncCameraFovState');
         ports.renderingControls.settings.fov = camera.fov;
         ports.renderingControls.settings.fovPreset = '35mm';
       }
@@ -213,7 +213,7 @@ describe('loadDataset', () => {
     const exported = captureViewerState(ports.sceneManager, ports.renderingControls, {
       getDims: () => null,
     } as never);
-    expect(ports.renderingControls.syncCurrentState).toHaveBeenCalledOnce();
+    expect(ports.renderingControls.syncCameraFovState).toHaveBeenCalledOnce();
     expect(exported.camera?.fov).toBe(camera.fov);
     expect(exported.camera?.fov_preset).toBe('35mm');
   });
