@@ -53,6 +53,7 @@ DEMO_META = {
     "outputs": ["cellxgene_census_umap"],
     "citation": {
         "short": "CZ CELLxGENE Discover (CZI Cell Science Program 2024)",
+        "ref": "CZI Cell Science Program 2024",
         "doi": "10.1093/nar/gkae1142",
     },
 }
@@ -67,6 +68,7 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.demos import (
+    add_demo_caption,
     launch_viewer,
     parse_demo_flags,
     require_local_data,
@@ -290,6 +292,11 @@ def build_scene(
                 anchor="top-left",
                 color="rgba(255,255,255,0.6)",
                 blend_mode="difference",
+            )
+            add_demo_caption(
+                scene,
+                f"{n:,} human cells · scVI UMAP",
+                DEMO_META.get("citation"),
             )
     aprint(f"\nScene saved to: {output_path}")
     return n

@@ -74,6 +74,7 @@ DEMO_META = {
     "outputs": ["desi_galaxies"],
     "citation": {
         "short": "DESI Collaboration 2025 (DR1)",
+        "ref": "DESI Collaboration 2025",
         "doi": "10.48550/arXiv.2503.14745",
         "license": "CC BY 4.0",
     },
@@ -91,6 +92,7 @@ from luxar import (
     LuxarZarrCompiler,
     ViewerConfig,
 )
+from luxar.demos import add_demo_caption
 from luxar.demos import (
     is_lfs_pointer,
     launch_viewer,
@@ -675,12 +677,10 @@ def create_scene(
                 color="rgba(255,255,255,0.7)",
                 blend_mode="difference",
             )
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 "1.25M-point sample of ~9.75M galaxies & quasars • redshift → comoving Mpc",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.5)",
+                DEMO_META.get("citation"),
             )
         aprint(f"Scene saved: {output_path}")
         return output_path

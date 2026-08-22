@@ -145,6 +145,7 @@ DEMO_META = {
     # the software that loads it; the header keeps that citation where it belongs.
     "citation": {
         "short": "G. Buckley 2018 (scikit-image kidney)",
+        "ref": "G. Buckley 2018",
         "license": "CC0 1.0",
     },
 }
@@ -155,6 +156,7 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.demos import add_demo_caption
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
     DatasetUnavailable,
@@ -505,12 +507,8 @@ Controls:
                 color="rgba(255,255,255,0.6)",
                 blend_mode="difference",
             )
-            scene.add_text(
-                "Fluorescence \u2022 Layer panel",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+            add_demo_caption(
+                scene, "Fluorescence \u2022 Layer panel", DEMO_META.get("citation")
             )
 
         aprint(f"Scene saved: {output_path}")

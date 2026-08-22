@@ -101,6 +101,7 @@ DEMO_META = {
             "Barry 2021 (GIANI, Zenodo 5270323); "
             "Cell Tracking Challenge (Maška et al. 2023)"
         ),
+        "ref": "Barry / Maška et al. 2023",
         "doi": "10.5281/zenodo.5270323",
     },
 }
@@ -112,6 +113,7 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.demos import add_demo_caption
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
     detect_device,
@@ -361,12 +363,10 @@ Navigation:
                 color="rgba(255,255,255,0.6)",
                 blend_mode="difference",
             )
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 "Light-sheet microscopy • adaptive level of detail",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
 
             # Explanatory panel, placed below the title so the two don't overlap.

@@ -102,6 +102,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.demos import add_demo_caption
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import ensure_dataset, launch_viewer, parse_demo_flags
 from luxar.gsplats.io.load_gsplats import load_gsplat_node
@@ -224,12 +225,8 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                 color="rgba(255,255,255,0.6)",
                 blend_mode="difference",
             )
-            scene.add_text(
-                "SiMView light-sheet • His2Av::mRFP1",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+            add_demo_caption(
+                scene, "SiMView light-sheet • His2Av::mRFP1", DEMO_META.get("citation")
             )
 
     aprint(f"Scene saved: {output_path}")

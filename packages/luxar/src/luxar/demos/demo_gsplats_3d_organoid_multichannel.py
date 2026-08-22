@@ -133,6 +133,7 @@ from luxar import Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
     DatasetUnavailable,
+    add_demo_caption,
     launch_viewer,
     load_dataset_gsplats,
     load_local_fit_gsplats,
@@ -528,6 +529,11 @@ Controls:
                     layer=True,
                     colormap=colormap,
                 )
+            add_demo_caption(
+                scene,
+                f"Light-sheet microscopy · {len(gsplats_list)} channels",
+                DEMO_META.get("citation"),
+            )
 
         aprint(f"Scene saved: {output_path}")
         return output_path

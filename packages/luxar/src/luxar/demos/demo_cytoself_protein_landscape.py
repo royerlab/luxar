@@ -78,6 +78,7 @@ DEMO_META = {
     "outputs": ["cytoself_protein_landscape", "cytoself_landscape"],
     "citation": {
         "short": "OpenCell (Cho et al. 2022); embeddings by cytoself (Kobayashi et al. 2022)",
+        "ref": "Cho / Kobayashi et al. 2022",
         "doi": "10.1126/science.abi6983",
     },
 }
@@ -97,6 +98,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.demos import add_demo_caption
 from luxar.demos import (
     MissingDependencyError,
     cache_computed,
@@ -2083,12 +2085,10 @@ def create_cytoself_scene(
                     hover=True,
                 )
 
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 f"{n_points:,} images \u2022 OpenCell \u2022 3D UMAP \u2022 Kobayashi et al., Nat Methods 2022",
-                position=(0.98, 0.97),
-                font_size=0.012,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
 
         aprint(f"Scene created with {n_points:,} points")

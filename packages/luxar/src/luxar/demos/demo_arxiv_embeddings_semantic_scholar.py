@@ -107,6 +107,7 @@ DEMO_META = {
     "outputs": ["arxiv_papers_semantic_scholar"],
     "citation": {
         "short": "Semantic Scholar Academic Graph (Ammar et al. 2018)",
+        "ref": "Ammar et al. 2018",
         "doi": "10.18653/v1/N18-3011",
     },
 }
@@ -121,6 +122,7 @@ import requests
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.demos import add_demo_caption
 from luxar.demos import (
     cache_computed,
     hsv_to_rgb,
@@ -649,12 +651,10 @@ def generate_paper_landscape(
             )
 
             # Info + source
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 f"{n_papers:,} papers • Semantic Scholar API • SentenceBERT embeddings",
-                position=(0.98, 0.97),
-                font_size=0.012,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
 
         aprint(f"✓ Scene created with {n_papers:,} papers")

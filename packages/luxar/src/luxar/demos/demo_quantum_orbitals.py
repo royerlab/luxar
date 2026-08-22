@@ -107,6 +107,7 @@ from scipy.special import genlaguerre, sph_harm_y
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import (
+    add_demo_caption,
     detect_device,
     launch_viewer,
     parse_demo_flags,
@@ -710,6 +711,11 @@ def create_luxar_scene(orbitals: GSplatData, output_path: Path) -> Path:
                 # bottom-left.
                 position=(0.98, 0.02),
                 anchor="top-right",
+            )
+            add_demo_caption(
+                scene,
+                "Hydrogen |ψ|² · Gaussian splats",
+                DEMO_META.get("citation"),
             )
 
         aprint(f"Scene saved: {output_path}")

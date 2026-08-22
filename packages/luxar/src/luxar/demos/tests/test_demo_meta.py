@@ -854,12 +854,32 @@ def _overlay_strings(source: str) -> list[str]:
     """
     tree = ast.parse(source)
     consts = _module_string_constants(tree)
+    caption_reference = None
+    for statement in tree.body:
+        if not isinstance(statement, ast.Assign):
+            continue
+        if not any(
+            isinstance(target, ast.Name) and target.id == "DEMO_META"
+            for target in statement.targets
+        ):
+            continue
+        meta = ast.literal_eval(statement.value)
+        citation = meta.get("citation")
+        if citation:
+            caption_reference = citation.get("ref", citation["short"])
+        break
 
     found: list[str] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
         args: list[ast.expr] = []
+        is_demo_caption = isinstance(node.func, ast.Name) and node.func.id == (
+            "add_demo_caption"
+        )
+        if is_demo_caption:
+            args += node.args[1:2]
+            args += [kw.value for kw in node.keywords if kw.arg == "caption"]
         if isinstance(node.func, ast.Attribute) and node.func.attr in (
             "add_text",
             "add_html",
@@ -871,6 +891,12 @@ def _overlay_strings(source: str) -> list[str]:
             for branch in _overlay_branches(arg):
                 text = _overlay_literal(branch, consts)
                 if text:
+                    if (
+                        is_demo_caption
+                        and caption_reference
+                        and not text.endswith(caption_reference)
+                    ):
+                        text = f"{text} · {caption_reference}"
                     found.append(text)
     return found
 

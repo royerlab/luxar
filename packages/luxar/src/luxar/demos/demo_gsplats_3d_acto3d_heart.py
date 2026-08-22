@@ -90,6 +90,7 @@ DEMO_META = {
     "outputs": ["gsplats_3d_acto3d_heart"],
     "citation": {
         "short": "Takeshita et al. 2024 (Acto3D)",
+        "ref": "Takeshita et al. 2024",
         "doi": "10.1242/dev.202550",
     },
 }
@@ -107,6 +108,7 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.demos import add_demo_caption
 from luxar.demos import (
     launch_viewer,
     load_precomputed_gsplats,
@@ -623,12 +625,10 @@ Controls:
                 anchor="bottom-left",
             )
 
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 "Light-sheet \u2022 1.06\u00d71.06\u00d72.40 \u03bcm",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
 
         aprint(f"Scene saved: {output_path}")

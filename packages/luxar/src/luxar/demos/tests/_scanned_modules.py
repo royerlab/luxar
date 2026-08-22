@@ -85,7 +85,7 @@ EXCLUDED = frozenset({"__init__.py", "_dependencies.py"})
 #: (or breaking the discovery below) fails loudly instead of quietly shrinking
 #: the guarded set — the failure mode this module was written to prevent.
 REQUIRED_SHARED_HELPERS = frozenset(
-    {"_graph_common.py", "_interop_common.py", "_roundtrip_common.py"}
+    {"_caption.py", "_graph_common.py", "_interop_common.py", "_roundtrip_common.py"}
 )
 
 #: A floor, not a count: the registry holds ~80 demos, so anything near zero

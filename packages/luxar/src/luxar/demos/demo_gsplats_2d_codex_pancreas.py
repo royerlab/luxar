@@ -120,6 +120,7 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.demos import add_demo_caption
 from luxar.core.viewer_config import UIConfig, ViewerConfig
 from luxar.demos import (
     MissingDependencyError,
@@ -588,12 +589,8 @@ Controls:
             )
 
             # Info
-            scene.add_text(
-                "12-channel multiplexed fluorescence",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+            add_demo_caption(
+                scene, "12-channel multiplexed fluorescence", DEMO_META.get("citation")
             )
 
         aprint(f"Scene saved: {output_path}")

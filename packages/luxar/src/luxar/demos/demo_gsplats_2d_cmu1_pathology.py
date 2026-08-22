@@ -115,6 +115,7 @@ DEMO_META = {
     "outputs": ["gsplats_2d_cmu1_pathology"],
     "citation": {
         "short": "OpenSlide test data (Goode et al. 2013)",
+        "ref": "Goode et al. 2013",
         "doi": "10.4103/2153-3539.119005",
         "license": "CC0 1.0",
     },
@@ -133,6 +134,7 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.demos import add_demo_caption
 from luxar.core.viewer_config import UIConfig, ViewerConfig
 from luxar.demos import (
     DatasetUnavailable,
@@ -647,12 +649,10 @@ Controls:
             )
 
             # Info
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 "46K\u00d732K \u2022 H&E stain \u2022 20x",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
 
         aprint(f"Scene saved: {output_path}")

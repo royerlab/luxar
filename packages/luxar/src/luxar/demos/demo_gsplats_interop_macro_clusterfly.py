@@ -62,6 +62,7 @@ DEMO_META = {
     "outputs": ["gsplats_interop_macro_clusterfly"],
     "citation": {
         "short": "Dany Bittel (danybittel.ch)",
+        "ref": "Dany Bittel",
         "license": "CC BY 4.0",
         "url": "https://danybittel.ch/macro",
     },

@@ -62,6 +62,7 @@ DEMO_META = {
     "outputs": ["global_rivers_earth"],
     "citation": {
         "short": "ETOPO 2022 / HydroSHEDS",
+        "ref": "NOAA / HydroSHEDS",
         "doi": "10.25921/fd45-gt74",
     },
 }
@@ -72,6 +73,7 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.demos import add_demo_caption
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import launch_viewer, parse_demo_flags
 from luxar.encoding import EncodingMode
@@ -406,12 +408,10 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
                 color="rgba(255,255,255,0.75)",
                 blend_mode="difference",
             )
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 "ETOPO 2022 topography • HydroRIVERS (HydroSHEDS) river networks",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,220,0.5)",
+                DEMO_META.get("citation"),
             )
         aprint(f"Scene saved: {output_path}")
     return output_path

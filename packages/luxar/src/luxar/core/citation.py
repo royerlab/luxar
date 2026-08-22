@@ -21,10 +21,13 @@ from typing import Any, Mapping, Optional
 #: spec allows to contain almost anything.
 _DOI_SHAPE = re.compile(r"10\.\d{4,9}/\S+")
 
-#: Keys a citation may carry. ``short`` is the only required one: it is what a
-#: gallery tile and the viewer render ("Schlegel et al. 2024"), so a citation
-#: that cannot be displayed is not a citation.
-CITATION_KEYS = ("short", "doi", "license", "url")
+#: Maximum length of the optional compact reference used in demo captions.
+CITATION_REF_MAX_LENGTH = 40
+
+#: Keys a citation may carry. ``short`` is the only required one: it is the
+#: full display byline used by gallery tiles. ``ref`` may provide a distinct,
+#: compact caption tail when that byline does not fit there.
+CITATION_KEYS = ("short", "ref", "doi", "license", "url")
 
 #: Schemes a citation URL may use. A credit's URL is the one field a UI turns
 #: into a link, and a citation travels inside data that is copied, published and
@@ -58,8 +61,8 @@ def validate_citation(value: Any) -> Optional[dict[str, str]]:
 
     Args:
         value: ``None`` (procedural, no credit owed) or a mapping with a
-            non-empty single-line ``short`` and optional ``doi``, ``license``
-            and ``url``.
+            non-empty single-line ``short`` and optional ``ref``, ``doi``,
+            ``license`` and ``url``.
 
     Returns:
         A new dict with the same entries, or ``None``. Copying keeps a caller's
@@ -89,12 +92,18 @@ def validate_citation(value: Any) -> Optional[dict[str, str]]:
         raise ValueError("citation.short must be a non-empty string")
     _reject_unprintable("short", short)
 
-    for key in ("doi", "license", "url"):
+    for key in ("ref", "doi", "license", "url"):
         if key not in value:
             continue
         if not isinstance(value[key], str) or not value[key].strip():
             raise ValueError(f"citation.{key} must be a non-empty string when present")
         _reject_unprintable(key, value[key])
+
+    ref = value.get("ref")
+    if ref is not None and len(ref.strip()) > CITATION_REF_MAX_LENGTH:
+        raise ValueError(
+            f"citation.ref must be at most {CITATION_REF_MAX_LENGTH} characters"
+        )
 
     url = value.get("url")
     # Scheme allowlist, not a full URL parse: the point is to keep an executable

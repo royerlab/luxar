@@ -206,6 +206,7 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.demos import add_demo_caption
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import (
     cached_download,
@@ -1056,12 +1057,10 @@ def build_scene(bundles: dict, output_path: Path, *, points: int) -> Path:
                 color="rgba(255,255,255,0.75)",
                 blend_mode="difference",
             )
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 "HCP-1065 atlas (Yeh 2022, CC BY-SA 4.0) — 87 tracts",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,220,0.5)",
+                DEMO_META.get("citation"),
             )
             # The one user-visible statement of the LOD caveat. Without it the
             # first contact with this scene is "hover does nothing", which is

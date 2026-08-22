@@ -120,6 +120,7 @@ import requests
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.demos import add_demo_caption
 from luxar.demos import launch_viewer, parse_int_arg, parse_path_arg, require_module
 from luxar.demos._graph_common import (
     build_adjacency,
@@ -848,13 +849,7 @@ def build_scene(
             if corum_hits_kept:
                 footer.append(f"{corum_hits_kept:,} CORUM-backed edges")
             footer.append("Luck et al., Nature 2020")
-            scene.add_text(
-                " · ".join(footer),
-                position=(0.98, 0.97),
-                font_size=0.012,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.5)",
-            )
+            add_demo_caption(scene, " · ".join(footer), DEMO_META.get("citation"))
 
         aprint(
             f"  ✓ Scene: {n_nodes:,} nodes, {n_edges_kept:,} edges, "

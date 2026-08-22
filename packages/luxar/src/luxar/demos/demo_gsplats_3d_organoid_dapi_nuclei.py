@@ -153,6 +153,7 @@ import os
 
 from luxar.demos import (
     DatasetUnavailable,
+    add_demo_caption,
     launch_viewer,
     load_dataset_gsplats,
     load_local_fit_gsplats_at,
@@ -469,6 +470,11 @@ Controls:
                 blending_mode="volumetric",
                 colormap="plasma",
                 layer=True,
+            )
+            add_demo_caption(
+                scene,
+                "Light-sheet microscopy · DAPI-labelled nuclei",
+                DEMO_META.get("citation"),
             )
 
         aprint(f"Scene saved: {output_path}")

@@ -56,6 +56,7 @@ DEMO_META = {
     ],
     "citation": {
         "short": "Observatory captures by khyron",
+        "ref": "khyron",
         "license": "CC BY 4.0",
         "url": "https://github.com/khyron/Gaussian-Splatting",
     },

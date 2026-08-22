@@ -54,6 +54,7 @@ DEMO_META = {
     "outputs": ["gsplats_interop_spz_hornedlizard", "gsplats_interop_spz_racoonfamily"],
     "citation": {
         "short": "Niantic Labs SPZ sample scans",
+        "ref": "Niantic Labs",
         "license": "MIT",
         "url": "https://github.com/nianticlabs/spz",
     },

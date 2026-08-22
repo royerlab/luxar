@@ -97,6 +97,7 @@ DEMO_META = {
     "outputs": ["arxiv_papers_kaggle"],
     "citation": {
         "short": "arXiv metadata by Cornell University; embeddings by tomtum",
+        "ref": "Cornell / tomtum",
         "url": "https://www.kaggle.com/datasets/tomtum/openai-arxiv-embeddings",
     },
 }
@@ -109,6 +110,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.demos import add_demo_caption
 from luxar.demos import (
     cache_computed,
     cached_download,
@@ -735,12 +737,10 @@ def generate_paper_landscape(
             )
 
             # Info + source
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 f"{n_papers:,} papers • OpenAI embeddings • Kaggle dataset",
-                position=(0.98, 0.97),
-                font_size=0.012,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
 
         aprint(f"✓ Visualization created with {n_papers:,} papers")

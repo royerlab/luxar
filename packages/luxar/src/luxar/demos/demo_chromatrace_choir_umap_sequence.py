@@ -69,6 +69,7 @@ import pandas as pd
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.demos import add_demo_caption
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import launch_viewer, parse_path_arg
 from luxar.utils._umap_utils import format_label
@@ -589,12 +590,10 @@ def build_sequence_scene(
                 if use_tsp
                 else "CHOIR legend order"
             )
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 f"{n_cells:,} cells • {n_term_real} cell types • {order_note}",
-                position=(0.98, 0.97),
-                font_size=0.012,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.5)",
+                DEMO_META.get("citation"),
             )
 
     return n_cells
