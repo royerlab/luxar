@@ -25,6 +25,13 @@ from luxar.encoding import ArrayDecoder, ArrayEncoder, EncodingMode, SemanticTyp
             "bounded_scalar_uint8",
         ),
         (
+            "linear_u8_float16_reader_cast",
+            np.linspace(29.921875, 69.75, 28_000).astype(np.float16),
+            EncodingMode.AUTO,
+            "linear",
+            "bounded_scalar_uint8",
+        ),
+        (
             "linear_u16",
             np.geomspace(1e-4, 5.0, 4001, dtype=np.float32),
             EncodingMode.AUTO,
@@ -96,6 +103,35 @@ def test_positive_scalar_slack_bounds_real_upward_displacement(
     assert float(upward.max()) > 0.0, name
     assert float(upward.max()) <= slack, name
     assert slack <= 2 * float(upward.max()), name
+
+
+def test_positive_scalar_slack_bounds_viewer_float32_decode() -> None:
+    data = np.linspace(9.75, 713.0, 20_000).astype(np.float16)
+    encoder = ArrayEncoder()
+    slack = encoder.positive_scalar_round_trip_slack(
+        data, EncodingMode.AUTO, allow_lut=False
+    )
+    assert slack is not None
+
+    group = memory_group()
+    encoder.encode(
+        data,
+        group,
+        "s",
+        SemanticType.POSITIVE_SCALAR,
+        mode=EncodingMode.AUTO,
+        allow_lut=False,
+        deduplicate=False,
+    )
+    encoded = group["s"]
+    metadata = encoded.attrs["encoding"]
+    lo = np.float32(metadata["min"])
+    hi = np.float32(metadata["max"])
+    scale = np.float32(np.float32(hi - lo) / np.float32(255))
+    decoded = np.float32(lo + np.float32(np.asarray(encoded[:]) * scale))
+    upward = decoded.astype(np.float64) - data.astype(np.float64)
+    assert float(upward.max()) > 2.0
+    assert float(upward.max()) <= slack
 
 
 @pytest.mark.parametrize("mode", list(EncodingMode))

@@ -353,9 +353,10 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         applies.
         Linear quantization uses half a grid quantum; geometric-log encoding
         uses the corresponding half-step at the array maximum. Linear
-        quantization also budgets dtype-dependent normalization error for
-        float16/float32 input, and a float32 relative-epsilon term (or one
-        subnormal quantum) covers the reader's final cast.
+        quantization also budgets 1.5 dtype epsilons for the three
+        float16/float32 normalization operations. A relative-epsilon term for
+        the wider of float32 and the authored dtype (or one float32 subnormal
+        quantum) covers the reader's final cast.
 
         Args:
             data: The positive-scalar array exactly as it will be encoded.
@@ -441,10 +442,13 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             levels = (1 << bits) - 1
             slack = span / (2.0 * levels)
             if np.issubdtype(arr.dtype, np.floating) and arr.dtype.itemsize <= 4:
-                slack += span * float(np.finfo(arr.dtype).eps)
+                slack += 1.5 * span * float(np.finfo(arr.dtype).eps)
 
+        decode_eps = float(np.finfo(np.float32).eps)
+        if np.issubdtype(arr.dtype, np.floating):
+            decode_eps = max(decode_eps, float(np.finfo(arr.dtype).eps))
         decode_ulp = max(
-            max_val * float(np.finfo(np.float32).eps),
+            max_val * decode_eps,
             float(np.finfo(np.float32).smallest_subnormal),
         )
         return float(slack + decode_ulp)
