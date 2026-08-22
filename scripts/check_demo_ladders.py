@@ -19,6 +19,20 @@ Usage:
 
 Exit code is non-zero if any leaf fails. The command is part of ``hatch run
 check``; on a checkout without built demos it is a read-only no-op.
+
+A SECOND, independent pass lives behind ``--screen`` (``--screen-only`` to skip
+the ladder gate above): the LOD **opening-shot screen** from
+:mod:`luxar.io.lod_screening`. It answers a different question — per ``kind=lod``
+group, would re-deriving the ladder onto the ``screen-area`` selector actually
+make the OPENING framing land on a coarser level? — and it is a REPORT ONLY.
+No verdict it produces can change this script's exit code; only a genuine error
+(bad arguments) does. That is deliberate: this command is part of ``hatch run
+check``, and a screening verdict is an observation about a store, not a defect
+in it.
+
+    hatch run check-demo-ladders --screen-only datasets/examples/*.luxar.zarr
+    hatch run check-demo-ladders --screen-only --screen-verdict win .../*.zarr
+    hatch run check-demo-ladders --screen --screen-aspect 4:3=1.3333
 """
 
 from __future__ import annotations
@@ -31,6 +45,21 @@ from typing import Any
 
 import zarr
 from arbol import aprint, asection
+
+from luxar.io.lod_screening import (
+    DEFAULT_ASPECTS,
+    DEFAULT_FIT_FOV,
+    DEFAULT_VIEWPORT_LONG_PX,
+    VERDICT_ORDER,
+    print_screen_report,
+    screen_stores,
+)
+
+#: The ``--screen-aspect`` default, rendered from :data:`DEFAULT_ASPECTS` so the
+#: help text and the measured aspects can never drift apart.
+DEFAULT_SCREEN_ASPECT_SPEC = ",".join(
+    f"{label}={value!r}" for label, value in DEFAULT_ASPECTS
+)
 
 #: Leaves at or below this element count are reported but never failed — a small
 #: leaf commits fast enough that an all-at-once load is invisible.
@@ -141,8 +170,68 @@ def scene_paths(args_paths: Sequence[str]) -> list[Path]:
     return sorted(get_demos_output_dir(create=False).glob("*.luxar.zarr"))
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    """Run the ladder audit and return a process exit code."""
+def parse_aspects(spec: str) -> list[tuple[str, float]]:
+    """Parse a ``--screen-aspect`` list into ``(label, width/height)`` pairs.
+
+    Two spellings per entry, comma-separated: a bare number (``1.7778``), or a
+    ``label=value`` pair (``21:9=2.3333``) so the report can name the shape it
+    measured. A bare ``W:H`` is also accepted and divided out, since that is how
+    aspect ratios are actually written.
+
+    Args:
+        spec: The raw flag value.
+
+    Returns:
+        The parsed pairs, in the order given.
+
+    Raises:
+        ValueError: An entry is not a number, is zero/negative, or is a ``W:H``
+            ratio with a zero height. The last one arrives as a
+            ``ZeroDivisionError`` and is converted here, so every malformed spec
+            leaves this function the same way and ``main`` can route the lot
+            through ``parser.error``.
+    """
+    pairs: list[tuple[str, float]] = []
+    for raw in spec.split(","):
+        entry = raw.strip()
+        if not entry:
+            continue
+        label, _, value = entry.rpartition("=")
+        text = value if label else entry
+        if ":" in text:
+            width, _, height = text.partition(":")
+            try:
+                number = float(width) / float(height)
+            except ZeroDivisionError:
+                raise ValueError(
+                    f"aspect {entry!r} has a zero height; a W:H ratio needs a "
+                    "non-zero denominator"
+                ) from None
+        else:
+            number = float(text)
+        if number <= 0:
+            raise ValueError(f"aspect must be > 0, got {entry!r}")
+        pairs.append((label or text, number))
+    if not pairs:
+        raise ValueError("--screen-aspect needs at least one aspect")
+    return pairs
+
+
+def run_screen(paths: Sequence[Path], args: argparse.Namespace) -> None:
+    """Run the opening-shot LOD screen and print it. Never affects the exit code."""
+    report = screen_stores(
+        paths,
+        aspects=args.screen_aspects,
+        viewport_long_px=args.screen_viewport_long,
+        fit_fov=args.screen_fit_fov,
+        render_fov=args.screen_render_fov,
+    )
+    with asection("LOD opening-shot screen (report only — never fails the build)"):
+        print_screen_report(report, verdicts=args.screen_verdict or None)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """The CLI surface: the streaming-ladder gate, plus the opt-in screen."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("scenes", nargs="*", help="scene paths (default: built demos)")
     parser.add_argument("--min-elements", type=int, default=DEFAULT_MIN_ELEMENTS)
@@ -154,13 +243,73 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--quiet", action="store_true", help="only print warnings and failures"
     )
-    args = parser.parse_args(argv)
+    screen = parser.add_argument_group(
+        "LOD opening-shot screen (report only, never fails)"
+    )
+    screen.add_argument(
+        "--screen",
+        action="store_true",
+        help="also run the opening-shot LOD screen (luxar.io.lod_screening)",
+    )
+    screen.add_argument(
+        "--screen-only",
+        action="store_true",
+        help="run ONLY the screen — the streaming-ladder gate is skipped",
+    )
+    screen.add_argument(
+        "--screen-aspect",
+        default=DEFAULT_SCREEN_ASPECT_SPEC,
+        help=(
+            "comma-separated aspects to measure at, as 'label=value', 'W:H' or a "
+            f"bare number (default: {DEFAULT_SCREEN_ASPECT_SPEC})"
+        ),
+    )
+    screen.add_argument(
+        "--screen-viewport-long",
+        type=int,
+        default=DEFAULT_VIEWPORT_LONG_PX,
+        help=(
+            "pixels on the viewport's LONG axis; affects the legacy diagonal "
+            f"metric only (default: {DEFAULT_VIEWPORT_LONG_PX})"
+        ),
+    )
+    screen.add_argument(
+        "--screen-fit-fov",
+        type=float,
+        default=DEFAULT_FIT_FOV,
+        help=(
+            "vertical FOV the fitted camera DISTANCE is computed at (default: "
+            f"{DEFAULT_FIT_FOV:g}, the viewer's own — the cinematic preset "
+            "changes the FOV only after the fit)"
+        ),
+    )
+    screen.add_argument(
+        "--screen-render-fov",
+        type=float,
+        default=None,
+        help=(
+            "fallback vertical FOV for scenes that do not author "
+            "viewer_config.camera.fov (default: --screen-fit-fov; pass 63 to "
+            "model the cinematic preset)"
+        ),
+    )
+    screen.add_argument(
+        "--screen-verdict",
+        action="append",
+        metavar="BUCKET",
+        # Constrained rather than free-form: a typo would otherwise filter every
+        # group out and read as "nothing to report", which is the wrong answer.
+        choices=VERDICT_ORDER,
+        help=(
+            "show only these verdict buckets (repeatable); one of "
+            f"{', '.join(VERDICT_ORDER)}. Default: all"
+        ),
+    )
+    return parser
 
-    paths = scene_paths(args.scenes)
-    if not paths:
-        aprint("No scenes found. Build a demo first, or pass a path explicitly.")
-        return 0
 
+def run_gate(paths: Sequence[Path], args: argparse.Namespace) -> int:
+    """The original streaming-ladder audit, unchanged. Returns its exit code."""
     counts = {"ok": 0, "warn": 0, "fail": 0, "skip": 0}
     icons = {"ok": "✅", "warn": "⚠️ ", "fail": "❌", "skip": "· "}
     failures: list[str] = []
@@ -208,6 +357,41 @@ def main(argv: Sequence[str] | None = None) -> int:
                 aprint(name)
         return 1
     return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Run the ladder audit and return a process exit code.
+
+    The screen runs AFTER the gate and its result is discarded on the way to the
+    exit code, so it visibly cannot influence the verdict — and under
+    ``--screen-only`` the gate does not run at all, which is why that mode always
+    exits 0.
+
+    ``--screen-aspect`` is parsed BEFORE anything runs, so a malformed spec
+    exits 2 with a usage message instead of dying on a raw traceback halfway
+    through — under ``--screen`` that traceback landed after the gate had
+    already printed its PASS line.
+    """
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        args.screen_aspects = parse_aspects(args.screen_aspect)
+    except ValueError as error:
+        parser.error(f"--screen-aspect: {error}")
+
+    paths = scene_paths(args.scenes)
+    if not paths:
+        aprint("No scenes found. Build a demo first, or pass a path explicitly.")
+        return 0
+
+    if args.screen_only:
+        run_screen(paths, args)
+        return 0
+
+    exit_code = run_gate(paths, args)
+    if args.screen:
+        run_screen(paths, args)
+    return exit_code
 
 
 if __name__ == "__main__":
