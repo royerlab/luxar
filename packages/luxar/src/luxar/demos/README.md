@@ -233,12 +233,23 @@ Dense sphere (200k points) with perfect distribution and rainbow colors.
 
 ---
 
-#### demo_volumetric_cloud.py - Fractal Cloud Structure
-Realistic cloud using multi-octave fractal noise and varying point sizes.
+#### demo_volumetric_cloud.py - Evolving Cumulus (3D + time)
+A convective cumulus lived through its whole life cycle on a hidden `time` axis: a low ragged fragment at the condensation level, a turret billowing upward, a mature top sheared downwind, then entrainment shredding it back into rags.
 
-**Run**: `luxar demo run cloud [-- --points=1000000]`
+**Run**: `luxar demo run cloud [-- --parcels=1000000] [-- --frames=90]`
 
-**Demonstrates**: Self-contained Perlin-like fractal noise, multi-octave detail at multiple scales, volumetric density filtering, varying point sizes based on local density, soft cloud-like appearance (low sharpness 0.2-0.35 on the normalized [0, 1] knob).
+Two ingredients, kept separate. *Where the air goes* is an analytic velocity field built to be exactly divergence-free — an axisymmetric convection roll written through a Stokes stream function, plus a wind shear that leans the cloud downwind, plus a slow swirl — through which 600k parcels are pushed with midpoint steps, so a point is a parcel of air that keeps its identity frame to frame. (Solenoidality is load-bearing, not decoration: the parcels are a Monte Carlo sample of a uniform density, and only a divergence-free field keeps that sample uniform as it deforms. Measured, the core parcel count holds to 2% over 60 frames.) *Where the water is* is 4D fractal noise sampled in **material** coordinates — the parcel's fixed label — multiplied by a thermodynamic envelope evaluated at its current **world** position. Material coordinates are what weld the texture to the fluid, so it stretches and folds instead of boiling in place; the envelope is what makes it a cumulus rather than a blob, since liquid water only exists above the lifting condensation level, which is why cumulus have famously flat bases.
+
+The noise's time axis is a stack of static 3D fields at the fixed material coordinates, quintic-interpolated between — exactly 4D value noise, for the price of a lerp — with the temporal frequency growing as `2^(2k/3)` rather than `2^k`, in the spirit of Kolmogorov eddy-turnover scaling, because at the naive rate the fine octaves read as shimmer. Points are emissive, so the lighting is baked: condensate is splatted onto a coarse grid and cumulatively summed downward into an optical depth, giving a bright sunlit crown fading to a blue-grey shadowed base.
+
+Four things in here were found by measurement rather than by reading, and each is commented at the site because none of them announces itself:
+
+- The old positional hash (`(xi*C1 + yi*C2 + zi*C3) % M`) left the value correlated with the magnitude of the coordinates, so near the lattice origin every corner returned nearly the same number. Combined with sampling less than one lattice cell — the previous demo's base frequency — the "7-octave fractal noise" was a smooth ramp, and it emitted **790 points out of 800,000 candidates**. A standard 32-bit avalanche finalizer fixes it.
+- Blending two independent time keyframes with weights summing to one halves the variance mid-interval. Spatially that averages out; along *time* every parcel shares one interpolation weight, so the whole cloud breathed in and out of focus. The weights are normalized to preserve variance.
+- The threshold is standardized over the parcels *inside* the envelope, per frame. Measuring once is not enough (the coarsest octave's spatial mean walks with time), and measuring globally is not enough either (the flow keeps replacing the air inside the cloud, so its bulk water follows a random walk).
+- Thresholded noise applied uniformly punches daylight through the core, which is the one thing a cumulus never has. The noise erodes the body from the surface inward instead.
+
+**Demonstrates**: A 3D+time Points scene with `time` as a hidden discrete axis (integer frames, `step=1`, so the viewer's ±0.5 membership gate selects exactly one), Lagrangian advection through an analytic solenoidal field, 4D fractal noise in material coordinates, baked top-lit optical-depth shading for an emissive geometry type, a frozen per-parcel emission threshold so point density tracks condensate without flickering, an opening camera composed for the cinematic 63° lens from the data's own extent, and an authored opening timepoint (`current_step`) — the viewer does not act on the `animation` block on load, so playback is `K`.
 
 ---
 
