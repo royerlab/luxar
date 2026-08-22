@@ -169,9 +169,11 @@ def compute_chunk_bounds_points(
 
         padded_chunk_radii: Optional[np.ndarray] = None
         if chunk_radii is not None:
-            padded_chunk_radii = (
-                np.asarray(chunk_radii).astype(np.float64, copy=False) + footprint_slack
-            )
+            with np.errstate(over="ignore"):
+                padded_chunk_radii = (
+                    np.asarray(chunk_radii).astype(np.float64, copy=False)
+                    + footprint_slack
+                )
 
         # Compute bounds for each dimension separately. The pad is added in
         # float64 and stored with outward rounding — see _store_outward_f32.
@@ -187,7 +189,8 @@ def compute_chunk_bounds_points(
             else:
                 # SPATIAL dimension: Include radius extent
                 if radii_scalar is not None:
-                    radius = radii_scalar + footprint_slack
+                    with np.errstate(over="ignore"):
+                        radius = radii_scalar + footprint_slack
                     mins_d = coords.min() - radius
                     maxs_d = coords.max() + radius
                 else:

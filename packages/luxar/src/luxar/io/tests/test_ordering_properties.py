@@ -612,6 +612,34 @@ def test_normalise_scalar_slack_rejects_tightening_or_poisoning(bad: float) -> N
         _normalise_scalar_slack(bad)
 
 
+def test_extreme_scalar_slack_overflows_to_conservative_spatial_bounds() -> None:
+    coords = np.zeros((4, 2), dtype=np.float32)
+    radii = np.array([1e-300, 1e300, 1e307, 1.7e308], dtype=np.float64)
+    segments = np.arange(4, dtype=np.uint32).reshape(2, 2)
+
+    with np.errstate(over="raise", invalid="raise"):
+        points = compute_chunk_bounds_points(
+            coords,
+            radii,
+            4,
+            slice_dims=[1],
+            scalar_slack=1.7e308,
+        )
+        lines = compute_segment_chunk_bounds(
+            coords,
+            segments,
+            radii,
+            2,
+            slice_dims=[1],
+            scalar_slack=1.7e308,
+        )
+
+    for bounds in (points, lines):
+        assert bounds[0, 0, 0] == -np.inf
+        assert bounds[0, 0, 1] == np.inf
+        assert np.isfinite(bounds[0, 1]).all()
+
+
 def test_coord_slack_adds_to_PER_POINT_array_radii() -> None:
     """The ``chunk_radii`` branch of the points builder, with a real slack.
 

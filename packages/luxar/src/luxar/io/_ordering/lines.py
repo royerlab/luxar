@@ -435,7 +435,8 @@ def compute_segment_chunk_bounds(
         p2 = vertices[chunk_segs[:, 1]]
         w1 = widths[chunk_segs[:, 0]].astype(np.float64, copy=False)
         w2 = widths[chunk_segs[:, 1]].astype(np.float64, copy=False)
-        max_w = np.maximum(w1, w2) + footprint_slack
+        with np.errstate(over="ignore"):
+            max_w = np.maximum(w1, w2) + footprint_slack
 
         # Reduce per DIMENSION, not with a single ``min(axis=0)``: numpy's
         # outer-axis reduce over a 3-or-4-element inner row is several times
