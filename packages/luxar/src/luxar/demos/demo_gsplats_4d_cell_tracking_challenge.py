@@ -70,7 +70,7 @@ REQUIREMENTS
       demo needs it), PLUS an API token, which no install can supply: create one
       at https://www.kaggle.com/settings ("API tokens") and save it as
       ``~/.kaggle/access_token`` or export ``KAGGLE_API_TOKEN``.
-      Neither is needed once the fit cache is warm.
+      Neither is needed once the fit cache and downloaded crop metadata are warm.
     - CUDA GPU strongly recommended: ~24 s per timepoint fit at the default
       budget on an RTX PRO 6000 (~40 min per crop). Apple MPS is roughly 6x
       slower, so a full crop there is measured in hours.
@@ -418,7 +418,10 @@ def load_precomputed_crops(
         # The one routable condition: nothing anywhere holds these bytes yet.
         # `DatasetNotFound` is deliberately NOT caught — a dataset key the
         # manifest does not carry is a typo or a rename, i.e. a fault.
-        aprint(f"Precomputed crops unavailable ({exc}); fitting locally instead.")
+        aprint(
+            f"Precomputed crops unavailable ({exc}); falling back to the Kaggle "
+            "download and local fit (already-fitted timepoints are reused)."
+        )
         return None
 
     by_name = {p.name: p for p in paths}
@@ -427,7 +430,8 @@ def load_precomputed_crops(
         volume_name, tracks_name = precomputed_file_names(dataset)
         if volume_name not in by_name or tracks_name not in by_name:
             aprint(
-                f"Hosted dataset has no entry for {dataset}; fitting locally instead."
+                f"Hosted dataset has no entry for {dataset}; falling back to the "
+                "Kaggle download and local fit (already-fitted timepoints are reused)."
             )
             return None
         crops.append(

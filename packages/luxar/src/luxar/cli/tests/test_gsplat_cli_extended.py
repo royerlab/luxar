@@ -600,6 +600,32 @@ class TestFitCommand:
         assert result.exit_code == 0, f"fit failed: {result.stdout}"
         assert out.exists()
 
+    def test_fit_accepts_auto_device(
+        self, runner: CliRunner, small_volume_npy: Path, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "fitted-auto.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "fit",
+                str(small_volume_npy),
+                str(out),
+                "--iters",
+                "1",
+                "--seeds",
+                "2",
+                "--tiling",
+                "none",
+                "--device",
+                "auto",
+                "--quiet",
+            ],
+        )
+
+        assert result.exit_code == 0, f"fit failed: {result.stdout}"
+        assert out.exists()
+
     def test_fit_output_is_loadable(
         self, runner: CliRunner, small_volume_npy: Path, tmp_path: Path
     ) -> None:
@@ -674,6 +700,31 @@ class TestFitCommand:
             ["gsplat", "fit", str(small_volume_npy)],
         )
         assert result.exit_code != 0
+
+
+class TestCullCommand:
+    def test_cull_accepts_auto_device(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "culled-auto.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "cull",
+                str(sample_gsplats),
+                str(out),
+                "--method",
+                "redundancy",
+                "--shape",
+                "16,16,16",
+                "--device",
+                "auto",
+            ],
+        )
+
+        assert result.exit_code == 0, f"cull failed: {result.stdout}"
+        assert out.exists()
 
 
 class TestConvertCommand:
@@ -2030,6 +2081,30 @@ class TestSliceCommand:
 
 
 class TestCompareCommand:
+    def test_compare_accepts_auto_device(
+        self,
+        runner: CliRunner,
+        sample_gsplats: Path,
+        small_volume_npy: Path,
+    ) -> None:
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "compare",
+                str(sample_gsplats),
+                str(small_volume_npy),
+                "--shape",
+                "16,16,16",
+                "--device",
+                "auto",
+            ],
+        )
+
+        assert result.exit_code == 0, f"compare failed: {result.stdout}"
+        assert "Rendering on " in result.stdout
+        assert "Rendering on auto" not in result.stdout
+
     def test_compare_basic(
         self,
         runner: CliRunner,
