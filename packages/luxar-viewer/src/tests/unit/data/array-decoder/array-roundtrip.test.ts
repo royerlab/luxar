@@ -3,11 +3,11 @@
  *
  * Python generates fixtures and a `roundtrip_expectations.json` file by decoding
  * every relevant fixture array with `luxar.encoding.ArrayDecoder`. These tests
- * load the same zarr arrays in Node.js and require the TypeScript ArrayDecoder to
- * reproduce the same flattened float32 values byte-for-byte, except log-scalar
- * arrays: their viewer contract is the Rust/WASM f32 kernel, while Python keeps
- * its f64 decode helper. Those remain numerically close to Python and must match
- * exactly between full-array and range decoding.
+ * load the same zarr arrays in Node.js. Most TypeScript decodes must reproduce
+ * Python's flattened float32 values byte-for-byte. Log-scalar arrays assert
+ * within a tolerance of Python, while linear and geolog arrays assert against a
+ * Python-generated hash computed in the viewer kernel's f32 operation order.
+ * Every route must still agree exactly with the full-array decode.
  *
  * This is intentionally non-browser and non-WebGL so it can run in the fast
  * Vitest suite while still exercising real Python-written zarr stores.
@@ -36,7 +36,9 @@ interface ArrayOperationExpectation {
   decoded_shape: number[];
   flat_length: number;
   float32_sha256: string;
+  viewer_float32_sha256?: string;
   samples: Array<{ index: number; value: number }>;
+  viewer_samples?: Array<{ index: number; value: number }>;
   stats: { min: number | null; max: number | null; mean: number | null };
 }
 
@@ -51,7 +53,9 @@ interface ArrayExpectation {
   shape_class: string;
   flat_length: number;
   float32_sha256: string;
+  viewer_float32_sha256?: string;
   samples: Array<{ index: number; value: number }>;
+  viewer_samples?: Array<{ index: number; value: number }>;
   stats: { min: number | null; max: number | null; mean: number | null };
   operations: ArrayOperationExpectation[];
   contract_case?: { case_id?: string; semantic_type?: string; description?: string };
@@ -110,9 +114,9 @@ function elementsPerItem(shape: number[]): number {
 
 function assertSamples(
   values: Float32Array,
-  expected: ArrayOperationExpectation | ArrayExpectation
+  samples: Array<{ index: number; value: number }>
 ): void {
-  for (const sample of expected.samples) {
+  for (const sample of samples) {
     expect(values[sample.index]).toBeCloseTo(sample.value, 6);
   }
 }
@@ -209,7 +213,7 @@ async function decodeRange(
 
 describe('Python-TypeScript encoded array round-trip', () => {
   it('uses the expected fixture expectation schema and coverage manifest', () => {
-    expect(EXPECTATIONS.version).toBe(2);
+    expect(EXPECTATIONS.version).toBe(3);
     expect(Object.keys(EXPECTATIONS.fixtures).length).toBeGreaterThan(0);
     expect(EXPECTATIONS.manifest.fixture_count).toBe(Object.keys(EXPECTATIONS.fixtures).length);
     expect(EXPECTATIONS.manifest.array_count).toBeGreaterThan(100);
@@ -220,7 +224,10 @@ describe('Python-TypeScript encoded array round-trip', () => {
     describe(fixtureName, () => {
       for (const [arrayPath, expected] of Object.entries(fixture.arrays)) {
         const logScalar = ArrayDecoder.isLogScalarEncodingName(expected.encoding);
-        const contract = logScalar ? 'with the viewer f32 contract' : 'like Python';
+        const contract =
+          logScalar || expected.viewer_float32_sha256
+            ? 'with the viewer f32 contract'
+            : 'like Python';
         it(`decodes ${arrayPath} (${expected.encoding}) ${contract}`, async () => {
           const { array, attrs, rootLoc, store } = await loadArrayWithAttrs(fixtureName, arrayPath);
           const decoder = new ArrayDecoder(new ArrayRefRegistry());
@@ -239,12 +246,15 @@ describe('Python-TypeScript encoded array round-trip', () => {
             assertLogScalarSamplesNearPython(decoded, expected, maxLog!);
             assertLogScalarStatsNearPython(decoded, expected, maxLog!);
           } else {
-            assertSamples(decoded, expected);
-            expect(float32Sha256(decoded)).toBe(expected.float32_sha256);
+            assertSamples(decoded, expected.viewer_samples ?? expected.samples);
+            expect(float32Sha256(decoded)).toBe(
+              expected.viewer_float32_sha256 ?? expected.float32_sha256
+            );
           }
 
           const fullOperation = expected.operations.find((operation) => operation.kind === 'full');
           expect(fullOperation?.float32_sha256).toBe(expected.float32_sha256);
+          expect(fullOperation?.viewer_float32_sha256).toBe(expected.viewer_float32_sha256);
 
           for (const operation of expected.operations.filter((item) => item.kind === 'range')) {
             const rangeDecoded = await decodeRange(array, attrs, store, operation);
@@ -258,8 +268,10 @@ describe('Python-TypeScript encoded array round-trip', () => {
               const end = (operation.end ?? operation.start ?? 0) * itemWidth;
               expect(float32Sha256(rangeDecoded)).toBe(float32Sha256(decoded.subarray(start, end)));
             } else {
-              assertSamples(rangeDecoded, operation);
-              expect(float32Sha256(rangeDecoded)).toBe(operation.float32_sha256);
+              assertSamples(rangeDecoded, operation.viewer_samples ?? operation.samples);
+              expect(float32Sha256(rangeDecoded)).toBe(
+                operation.viewer_float32_sha256 ?? operation.float32_sha256
+              );
             }
           }
         });
