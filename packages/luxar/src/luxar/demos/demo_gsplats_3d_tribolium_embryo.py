@@ -410,16 +410,12 @@ def fit_tribolium(volume: np.ndarray) -> GSplatData:
         # Scale to [0, 1] HERE rather than in the loader, so that the floor and
         # the normalisation it rides on stay in one place and visibly agree.
         #
-        # The fit must run on a [0, 1] volume, and not merely by convention:
-        # `fit_gaussian_splats` rescales the amplitudes it returns back into the
-        # units of whatever it was HANDED, and several of its defaults are
-        # absolute numbers in that same space — `max_abs_error=0.01` is a
-        # meaningful convergence test on [0, 1] data and unreachable on raw
-        # counts, and `sigma_min_diag` / `amp_max` are likewise pinned there.
-        # Feeding raw counts therefore does not just rescale the result: it fits
-        # in a different numerical regime AND emits amplitudes larger by the
-        # expected ~15900-count volume maximum. That silently breaks the scene's
-        # `scale_intensity` and every display setting downstream of it.
+        # The fitter normalises internally, so the optimisation itself is
+        # scale-free. The result is not: `fit_gaussian_splats` rescales returned
+        # amplitudes into the units it was handed, so raw counts would emit
+        # amplitudes larger by the expected ~15900-count volume maximum. That
+        # silently breaks the scene's `scale_intensity` and every display setting
+        # downstream of it.
         #
         # So the floor is converted into the same normalised space instead of
         # being hardcoded there: dividing the MEASURED count level by this
