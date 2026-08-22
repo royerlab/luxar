@@ -1137,9 +1137,8 @@ def restamp_lod_store(
                         "already current."
                     )
 
-            if dry_run and plans:
-                if not _carries_restampable_digest(root):
-                    report.content_hash_status = HASH_UNSTAMPABLE
+            if dry_run and plans and not _carries_restampable_digest(root):
+                report.content_hash_status = HASH_UNSTAMPABLE
 
             # Only when something CHANGED: a clean no-op store must not have its
             # hash moved, and a dry run must not write at all.
