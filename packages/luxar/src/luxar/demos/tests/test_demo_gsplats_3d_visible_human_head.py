@@ -16,6 +16,7 @@ import pytest
 import zarr
 
 from luxar.demos import voxel_sampled_payload_agreement
+from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
 from luxar.gsplats.gsplat_data import GSplatData
 
 pytest.importorskip("scipy")
@@ -149,8 +150,11 @@ class TestSceneBlending:
             np.abs(centered.centers.max(axis=0)),
             np.abs(centered.centers.min(axis=0)),
         )
-        expected_distance = max(half[0], half[2]) * 1.15 / np.tan(np.radians(22.5))
+        expected_distance = (
+            max(half[0], half[2]) * 1.15 / np.tan(np.radians(CINEMATIC_FOV_DEG / 2.0))
+        )
         assert camera["position"][1] == pytest.approx(-expected_distance)
+        assert "fov" not in camera
 
 
 class TestSampleColors:

@@ -119,6 +119,7 @@ from luxar.demos import (
     voxel_sampled_payload_agreement,
     warn_if_no_cuda_gpu,
 )
+from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
 from luxar.demos._lod_policy import save_with_lod
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
@@ -639,16 +640,14 @@ def create_luxar_scene(fit: GSplatData, colors: np.ndarray, output_path: Path) -
             np.abs(centered.centers.max(axis=0)),
             np.abs(centered.centers.min(axis=0)),
         )
-        fov_deg = 45.0
         # Fit the taller of (height, width) into the frame, with a little air.
         need = float(max(half[0], half[2])) * 1.15
-        cam_dist = need / np.tan(np.radians(fov_deg) / 2.0)
+        cam_dist = need / np.tan(np.radians(CINEMATIC_FOV_DEG) / 2.0)
         radius = float(np.linalg.norm(half))
         camera = CameraConfig(
             position=(0.0, -cam_dist, 0.0),
             target=(0.0, 0.0, 0.0),
             up=(-1.0, 0.0, 0.0),
-            fov=fov_deg,
             near=float(max(1.0, (cam_dist - radius) * 0.5)),
             far=float((cam_dist + radius) * 2.0),
         )

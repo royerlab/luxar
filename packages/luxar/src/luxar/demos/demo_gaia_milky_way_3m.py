@@ -162,6 +162,7 @@ from luxar import (
 )
 from luxar._zarr_compat import open_group
 from luxar.demos import add_demo_caption, launch_viewer, substitutive_lod_or_flat
+from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
 from luxar.demos._gaia_catalog import DEFAULT_CATALOG_FILE, RAW_ZARR_NAME
 from luxar.utils.paths import get_demos_output_dir
 
@@ -500,7 +501,7 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
         lo, hi = np.percentile(positions, [2, 98], axis=0)
         center = (lo + hi) / 2.0
         extent = float(np.max(hi - lo))
-        fov_deg = 47.0
+        fov_deg = CINEMATIC_FOV_DEG
         fit_dist = (extent * 0.5) / np.tan(np.radians(fov_deg) / 2.0)
         cam_dist = fit_dist * 0.65  # pull in ~35% tighter than a plain fit
         camera = CameraConfig(
@@ -511,7 +512,6 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
             ),
             target=(float(center[0]), float(center[1]), float(center[2])),
             up=(0.0, 1.0, 0.0),
-            fov=fov_deg,
             near=float(max(0.5, cam_dist * 0.005)),
             far=float(cam_dist * 20.0 + extent * 10.0),
         )

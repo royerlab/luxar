@@ -14,7 +14,7 @@ and flipping a rendering look on by default there would restyle every scene
 anyone writes with Luxar. So each demo states it, and this guard is what keeps
 "all of them" true for demo number 87.
 
-Four invariants, and they close different holes:
+Five invariants, and they close different holes:
 
 ``test_every_scene_passes_a_viewer_config``
     No ``create_scene`` call may omit ``viewer_config``. Without this a new demo
@@ -30,18 +30,19 @@ Four invariants, and they close different holes:
     more fragile than the rule it enforces. The rule holds because in this
     package a ``ViewerConfig`` is only ever built to be handed to a scene — if
     that stops being true, this guard is where to say so.
-``test_every_authored_camera_states_the_lens_it_was_composed_for``
-    Every ``CameraConfig`` with an opening position says, one way or another,
-    which field of view its distance assumes. An authored position suppresses
-    automatic framing, so the viewer cannot correct a distance that quietly
-    assumes the 47° default. Pinning ``fov`` / ``fov_preset`` says it; so does
-    composing the pose for 63° through
-    ``demos/_cinematic_camera.py``, which is what the five extent- and
-    radius-derived poses do (and which keeps the preset's lens whole — see
-    below). What the guard rejects is neither: a bare authored position.
+``test_every_authored_camera_uses_the_cinematic_lens``
+    Every ``CameraConfig`` with an opening position leaves the preset's FOV
+    unpinned and composes its distance for 63° through
+    ``demos/_cinematic_camera.py``. Automatic framing already uses the resolved
+    preset FOV, but an authored position suppresses that framing, so its distance
+    must still be composed for 63°. This keeps the 35 mm framing and distortion
+    together instead of mixing two lenses in one image.
 ``test_scientific_fidelity_overrides_are_explicit``
     The four demos whose scale, intensity, or categorical hue would be damaged
     by lens distortion and detector noise keep those author overrides explicit.
+``test_python_fov_constants_match_the_viewer_contract``
+    The Python framing helpers stay locked to the viewer's 35 mm preset and
+    default FOV values, so a TypeScript lens retune cannot silently drift demos.
 
 A literal ``True`` is required, not any truthy expression: a scene whose look
 depends on a flag computed at build time is not something a reader can confirm,
@@ -58,28 +59,34 @@ disables the last two to preserve its exact RGB corner palette.
 
 The preset's 63° FOV is resolved before automatic framing, so auto-framed scenes
 keep the fitted subject occupancy intended for that lens. Authored positions
-suppress automatic framing, so their distance must still state which FOV it was
-composed for.
+suppress automatic framing, so their distance must instead be composed for the
+unpinned 63° preset FOV.
 
 A demo that authors a camera position has a stronger contract, since its distance
-was composed for one specific FOV, and there are two honest ways to keep it.
-PINNING ``fov`` holds the framing but takes the preset's 35 mm barrel distortion
-at a 50 mm framing — two lenses in one image; seventeen demos are in that state,
-all with pins that predate the cinematic look. COMPOSING the pose for 63°
-(``demos/_cinematic_camera.py``) keeps the lens whole and preserves the framing
-exactly, at the cost of the stronger perspective a wider lens gives. The five
-poses derived from an extent or a fitted radius take the second route, which is a
-deliberate house choice rather than an oversight; the third invariant below
-accepts either, and rejects a pose that states neither. Unifying the older pins
-on the one-lens policy is tracked in #1862.
+was composed for one specific FOV. Every authored pose is composed for 63°
+through ``demos/_cinematic_camera.py``. Most preserve their authored framing;
+the biodiversity globe preserves its silhouette, while the forest and embryo
+line instead preserve subject clearance. All keep the preset's 35 mm framing
+and distortion together.
 """
 
 from __future__ import annotations
 
 import ast
+import math
+import re
 from pathlib import Path
 
 import pytest
+
+from luxar.conftest import find_repo_relative_file
+from luxar.demos import _cinematic_camera
+from luxar.demos._cinematic_camera import (
+    CINEMATIC_FOV_DEG,
+    VIEWER_DEFAULT_FOV_DEG,
+    framing_scale,
+    pull_in,
+)
 
 from ._scanned_modules import scanned_demo_modules
 
@@ -202,18 +209,19 @@ def test_every_scene_passes_a_viewer_config(path: Path) -> None:
 def _composes_for_the_cinematic_lens(tree: ast.AST, call: ast.Call) -> bool:
     """Whether an authored pose is demonstrably built for the preset's 63° lens.
 
-    Two spellings, both from ``demos/_cinematic_camera.py`` and both visible to
-    a static reader:
+    Two routes, both from ``demos/_cinematic_camera.py`` and visible to a static
+    reader:
 
-    * ``position=pull_in(...)`` — a distance tuned at 47° carried over to 63°.
-    * the module imports ``CINEMATIC_FOV_DEG`` — it derives the distance from
-      the lens itself, so there is no 47° assumption left to protect.
+    * ``position=pull_in(...)`` — a distance tuned at an authored lens carried
+      over to 63°.
+    * the module imports ``CINEMATIC_FOV_DEG`` or ``framing_scale`` — it derives
+      a distance from the cinematic lens, so there is no hidden 47° assumption.
 
     The second test is per-MODULE rather than per-call, which is the looser of
-    the two: a module that imports the constant vouches for every pose in it.
+    the two: a module that imports either symbol vouches for every pose in it.
     That is the honest granularity for a demo whose framing comes out of one
-    ``camera_distance_for_radius``-style helper, and the import is a deliberate
-    enough act to read as the statement it is.
+    camera-distance helper, and the import is a deliberate enough act to read
+    as the statement it is.
     """
     imported_symbols = {
         alias.asname or alias.name: alias.name
@@ -226,27 +234,26 @@ def _composes_for_the_cinematic_lens(tree: ast.AST, call: ast.Call) -> bool:
     if isinstance(position, ast.Call) and isinstance(position.func, ast.Name):
         if imported_symbols.get(position.func.id) == "pull_in":
             return True
-    return "CINEMATIC_FOV_DEG" in imported_symbols.values()
+    return bool({"CINEMATIC_FOV_DEG", "framing_scale"} & set(imported_symbols.values()))
 
 
 @pytest.mark.parametrize("path", MODULES, ids=_module_ids(MODULES))
-def test_every_authored_camera_states_the_lens_it_was_composed_for(path: Path) -> None:
+def test_every_authored_camera_uses_the_cinematic_lens(path: Path) -> None:
     tree = ast.parse(path.read_text(), filename=str(path))
     missing = [
         call.lineno
         for call in _camera_configs(tree)
         if _has_non_none_keyword(call, "position")
-        and not _has_non_none_keyword(call, "fov")
-        and not _has_non_none_keyword(call, "fov_preset")
-        and not _composes_for_the_cinematic_lens(tree, call)
+        and (
+            _has_non_none_keyword(call, "fov")
+            or _has_non_none_keyword(call, "fov_preset")
+            or not _composes_for_the_cinematic_lens(tree, call)
+        )
     ]
     assert not missing, (
-        f"{path.name}: CameraConfig at line(s) {missing} sets an opening position "
-        f"whose field of view is anybody's guess: it pins neither fov nor "
-        f"fov_preset, and nothing says it was composed for the cinematic 63°. "
-        f"an authored position suppresses automatic framing, so its distance "
-        f"must pin the fov it assumes or compose for 63° through "
-        f"demos/_cinematic_camera.py"
+        f"{path.name}: CameraConfig at line(s) {missing} does not take the "
+        f"cinematic 35 mm lens whole: leave fov/fov_preset unset and compose "
+        f"the position for 63° through demos/_cinematic_camera.py"
     )
 
 
@@ -317,8 +324,8 @@ def test_the_guard_reads_the_flag_it_claims_to(source: str, flagged: bool) -> No
 @pytest.mark.parametrize(
     ("source", "flagged"),
     [
-        ("CameraConfig(position=p, fov=47.0)", False),
-        ("CameraConfig(position=p, fov_preset='50mm')", False),
+        ("CameraConfig(position=p, fov=47.0)", True),
+        ("CameraConfig(position=p, fov_preset='50mm')", True),
         ("CameraConfig(position=p)", True),
         ("CameraConfig(position=p, fov=None)", True),
         ("CameraConfig(fov=47.0)", False),
@@ -339,6 +346,11 @@ def test_the_guard_reads_the_flag_it_claims_to(source: str, flagged: bool) -> No
             "CameraConfig(position=(0.0, 0.0, d))",
             False,
         ),
+        (
+            "from luxar.demos._cinematic_camera import framing_scale\n"
+            "CameraConfig(position=(0.0, 0.0, d * framing_scale(50.0)))",
+            False,
+        ),
         # A pull_in-looking call that is NOT the helper stays flagged.
         ("CameraConfig(position=other.pull_in(p))", True),
         (
@@ -350,15 +362,80 @@ def test_the_guard_reads_the_flag_it_claims_to(source: str, flagged: bool) -> No
 def test_the_guard_reads_authored_camera_framing(source: str, flagged: bool) -> None:
     tree = ast.parse(source)
     (call,) = _camera_configs(tree)
-    missing = (
+    missing = bool(
         _has_non_none_keyword(call, "position")
-        and not (
+        and (
             _has_non_none_keyword(call, "fov")
             or _has_non_none_keyword(call, "fov_preset")
+            or not _composes_for_the_cinematic_lens(tree, call)
         )
-        and not _composes_for_the_cinematic_lens(tree, call)
     )
     assert missing is flagged
+
+
+@pytest.mark.parametrize("from_fov_deg", [28.0, 38.0, 42.0, 45.0, 50.0])
+def test_pull_in_preserves_framing_from_every_authored_lens(
+    from_fov_deg: float,
+) -> None:
+    target = (4.0, -3.0, 2.0)
+    position = (14.0, 17.0, 32.0)
+    moved = pull_in(position, target, from_fov_deg=from_fov_deg)
+
+    old_distance = math.dist(position, target)
+    new_distance = math.dist(moved, target)
+    old_half_height = old_distance * math.tan(math.radians(from_fov_deg / 2.0))
+    new_half_height = new_distance * math.tan(math.radians(CINEMATIC_FOV_DEG / 2.0))
+
+    assert new_half_height == pytest.approx(old_half_height)
+    assert tuple(moved[i] - target[i] for i in range(3)) == pytest.approx(
+        tuple((position[i] - target[i]) * new_distance / old_distance for i in range(3))
+    )
+    assert new_distance / old_distance == pytest.approx(framing_scale(from_fov_deg))
+
+
+def test_pull_in_uses_the_shared_framing_scale(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_cinematic_camera, "framing_scale", lambda _from_fov_deg: 0.25)
+
+    assert pull_in((8.0, 12.0, 16.0), (4.0, 4.0, 4.0)) == (5.0, 6.0, 7.0)
+
+
+def test_python_fov_constants_match_the_viewer_contract() -> None:
+    start = Path(__file__).resolve()
+    camera_source = find_repo_relative_file(
+        Path("packages/luxar-viewer/src/config/sections/camera/data.ts"), start
+    )
+    rendering_source = find_repo_relative_file(
+        Path("packages/luxar-viewer/src/config/sections/rendering-controls/data.ts"),
+        start,
+    )
+    assert camera_source is not None, (
+        "cannot locate packages/luxar-viewer/src/config/sections/camera/data.ts. "
+        "If the viewer file moved, update this test — do NOT delete it: it locks "
+        "CINEMATIC_FOV_DEG to the live 35 mm preset."
+    )
+    assert rendering_source is not None, (
+        "cannot locate packages/luxar-viewer/src/config/sections/"
+        "rendering-controls/data.ts. If the viewer file moved, update this test — "
+        "do NOT delete it: it locks VIEWER_DEFAULT_FOV_DEG to the live default."
+    )
+
+    cinematic_match = re.search(
+        r"['\"]35mm['\"]\s*:\s*([0-9]+(?:\.[0-9]+)?)",
+        camera_source.read_text(encoding="utf-8"),
+    )
+    default_match = re.search(
+        r"defaults\s*:\s*\{.*?\bfov\s*:\s*([0-9]+(?:\.[0-9]+)?)",
+        rendering_source.read_text(encoding="utf-8"),
+        re.DOTALL,
+    )
+    assert cinematic_match is not None, (
+        "camera/data.ts no longer exposes a numeric 35 mm FOV"
+    )
+    assert default_match is not None, (
+        "rendering-controls/data.ts no longer exposes a numeric default FOV"
+    )
+    assert float(cinematic_match.group(1)) == CINEMATIC_FOV_DEG
+    assert float(default_match.group(1)) == VIEWER_DEFAULT_FOV_DEG
 
 
 @pytest.mark.parametrize(

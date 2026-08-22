@@ -321,6 +321,7 @@ from luxar.demos import (
     require_module,
     warn_if_no_cuda_gpu,
 )
+from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.paths import get_demos_output_dir
@@ -420,7 +421,7 @@ COLOR_BALANCE_PERCENTILE = 99.99
 
 # Initial framing. <1 starts closer than a just-fits view of the bounding
 # sphere; the specimen tilt is MEASURED per sample, never hard-coded.
-CAMERA_FOV_DEG = 47.0
+CAMERA_FOV_DEG = CINEMATIC_FOV_DEG
 CAMERA_FRAMING = 0.60
 
 CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_flylight_mcfo"
@@ -1465,7 +1466,6 @@ def create_luxar_scene(
                         # The un-negated version rolls the wrong way and still
                         # looks plausible — diagonal, just mirrored.
                         up=(float(-np.sin(tilt)), float(np.cos(tilt)), 0.0),
-                        fov=CAMERA_FOV_DEG,
                     ),
                 ),
                 citation=DEMO_META["citation"],

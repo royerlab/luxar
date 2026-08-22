@@ -98,6 +98,7 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import add_demo_caption, launch_viewer, parse_demo_flags, parse_int_arg
+from luxar.demos._cinematic_camera import pull_in
 from luxar.utils.paths import get_demos_output_dir
 
 # -----------------------------------------------------------------------------
@@ -540,10 +541,12 @@ def _solar_system_viewer_config() -> ViewerConfig:
     # elevated ecliptic view. Dynamic clipping still keeps distant objects
     # available when the user zooms out.
     camera = CameraConfig(
-        position=(50.0, -50.0, 30.0),
+        position=pull_in(
+            (50.0, -50.0, 30.0),
+            from_fov_deg=50.0,  # slight margin around Neptune's ~30 AU orbit
+        ),
         target=(0.0, 0.0, 0.0),
         up=(0.0, 0.0, 1.0),
-        fov=50.0,  # slight margin around Neptune's ~30 AU orbit
     )
     return ViewerConfig(
         cinematic_mode=True,
