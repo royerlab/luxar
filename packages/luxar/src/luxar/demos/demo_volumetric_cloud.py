@@ -1506,7 +1506,7 @@ def generate_evolving_cloud(
             # visible and scrubbable, and so `K` is discoverable for pausing.
             dimensions=DimensionsConfig(
                 current_step=[
-                    float(opening_frame) if axis == time_axis else 0.0
+                    float(camera_frame) if axis == time_axis else 0.0
                     for axis in range(len(names))
                 ],
                 # NAVIGABLE position, not an absolute dimension index: the

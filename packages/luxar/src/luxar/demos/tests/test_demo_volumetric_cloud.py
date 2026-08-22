@@ -691,7 +691,10 @@ class TestScene:
         expected = cloud.compose_opening_camera(camera_points)
 
         config = scene.viewer_config
-        assert config is not None and config.camera is not None
+        assert config is not None
+        assert config.dimensions is not None
+        assert config.dimensions.current_step == [0.0, 0.0, 0.0, float(camera_frame)]
+        assert config.camera is not None
         assert config.camera.position == pytest.approx(expected.position)
         assert config.camera.target == pytest.approx(expected.target)
 
