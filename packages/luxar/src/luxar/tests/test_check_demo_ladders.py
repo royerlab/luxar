@@ -190,3 +190,74 @@ def test_quiet_output_suppresses_healthy_scene_details(
     assert exit_code == 0
     assert scene_path.name not in output
     assert "1 ok, 0 warned, 0 failed" in output
+
+
+def test_default_invocation_does_not_run_the_lod_screen(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``hatch run check-demo-ladders`` must behave exactly as it did before.
+
+    The opening-shot screen is a second, opt-in pass; a default run prints the
+    ladder audit and nothing else, and its exit code is still the audit's.
+    """
+    scene_path = tmp_path / "valid-scene.luxar.zarr"
+    _make_leaf(scene_path, [20, 20, 60])
+
+    exit_code = checker.main(
+        [str(scene_path), "--min-elements", "0", "--max-level-elements", "1000"]
+    )
+    output = _ANSI_ESCAPE.sub("", capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert "1 ok, 0 warned, 0 failed" in output
+    assert "LOD screen" not in output
+    assert "opening-shot" not in output
+
+
+def test_screen_flag_adds_the_pass_without_touching_the_exit_code(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``--screen`` appends the screen; a FAILING gate still exits 1, and only it can.
+
+    The fixture leaf is a single 2M-element commit with no ladder — an outright
+    gate failure — and it is not a scene, so the screen skips it. The exit code
+    must come from the gate alone.
+    """
+    scene_path = tmp_path / "unladdered.luxar.zarr"
+    _make_leaf(scene_path, None, declared_total=2_000_000)
+
+    exit_code = checker.main([str(scene_path), "--screen"])
+    output = _ANSI_ESCAPE.sub("", capsys.readouterr().out)
+
+    assert exit_code == 1
+    assert "0 ok, 0 warned, 1 failed" in output
+    assert "LOD screen:" in output
+
+
+def test_screen_only_skips_the_gate_and_never_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The same failing store exits 0 under ``--screen-only`` — a report cannot fail."""
+    scene_path = tmp_path / "unladdered.luxar.zarr"
+    _make_leaf(scene_path, None, declared_total=2_000_000)
+
+    exit_code = checker.main([str(scene_path), "--screen-only"])
+    output = _ANSI_ESCAPE.sub("", capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert "0 ok, 0 warned" not in output  # the gate did not run at all
+    assert "LOD screen:" in output
+
+
+def test_screen_aspect_spec_accepts_labels_ratios_and_bare_numbers() -> None:
+    """``--screen-aspect`` parsing, including the ``W:H`` spelling people write."""
+    assert checker.parse_aspects("1.5") == [("1.5", 1.5)]
+    assert checker.parse_aspects("4:3") == [("4:3", pytest.approx(4 / 3))]
+    assert checker.parse_aspects("wide=2, 1:1") == [
+        ("wide", 2.0),
+        ("1:1", 1.0),
+    ]
+    with pytest.raises(ValueError):
+        checker.parse_aspects("")
+    with pytest.raises(ValueError, match="> 0"):
+        checker.parse_aspects("0")

@@ -415,6 +415,76 @@ failure at attr write #1 needs no root write at all, and re-consolidating there
 would turn a recoverable failure into a store with no index — which the viewer
 loads as an empty scene.
 
+### Screening a store's ladders against the opening shot (`lod_screening.py`)
+
+`lod_restamp.py` above can re-derive any legacy ladder. `luxar.io.lod_screening`
+answers the question that decides whether doing so **buys anything on a given
+store**: per `kind=lod` group, at the framing the viewer actually opens with,
+does the re-derived `screen-area` ladder pick a COARSER level than the stored
+one? It is read-only and it is a report — no verdict it produces is a failure.
+It backs `scripts/check_demo_ladders.py --screen` / `--screen-only`.
+
+```bash
+hatch run check-demo-ladders --screen-only datasets/examples/*.luxar.zarr
+hatch run check-demo-ladders --screen-only --screen-verdict win  datasets/demos/*.luxar.zarr
+```
+
+```python
+from luxar.io.lod_screening import screen_stores, print_screen_report
+
+report = screen_stores(["scene.luxar.zarr"])
+print_screen_report(report, verdicts=["win", "fragile"])
+```
+
+Each group lands in exactly one bucket:
+
+| verdict | meaning |
+|---|---|
+| `win` | strictly coarser under the re-derived ladder at EVERY tested aspect |
+| `no-op` | never coarser — re-deriving defers nothing on frame one |
+| `fragile` | coarser at some aspects and not others; the answer depends on the window |
+| `off-screen` | the world box misses the frustum, so no metric is ever taken |
+| `already-current` | already `screen-area`, carrying exactly the derived ladder |
+| `skipped` | undecidable; `GroupScreening.reason` says why |
+
+Four things the screen is careful about, each of which a cruder measurement gets
+wrong:
+
+- **The cut is the group's own anchor.** A whole-object ladder's finest rung is
+  `WHOLE_OBJECT_FINEST_ANCHOR` = 0.5, not 1.0, so a group opening anywhere in
+  `[0.5, 1.0)` still shows full detail and re-deriving it changes nothing. The
+  anchor (and the clause of the two-clause rule that decided it) is reported per
+  group, resolved through `lod_restamp`'s own `_is_partition_bound`.
+- **The two selectors are in different units.** `today` is scored under the
+  STAMPED selector — the legacy `coverage` metric is an UNCLIPPED pixel diagonal
+  over `FILL_FACTOR × min(W, H)`, range ~`[0, 4]` — while the re-derived side is
+  always the clipped area fraction, range `[0, 1]`. Feeding one into the other's
+  ladder inverts the answer; there is a test that does exactly that.
+- **No inherited baseline.** What the store does TODAY is measured, never
+  assumed. Against an assumed baseline a genuine win and a no-op look identical.
+- **Aspect ratio is an input.** Every group is measured at 1:1, 16:9 and 21:9.
+  The legacy metric happens to be aspect-invariant under the fitted framing; the
+  area metric is not, so a lone object filling the shot reads 0.56 at 1:1 and
+  0.24 at 21:9 — two different levels. Those groups are `fragile`, not wins.
+
+The camera pose is the viewer's own: the scene root's `position_bounds` projected
+onto the displayed axes and fitted face-on down `-Z` by a transcription of
+`bounds-math.ts::calculateCameraDistance`. The fitted DISTANCE always uses the
+default FOV (47) because the cinematic preset overrides the FOV only after the
+fit, so `fit_fov` and `render_fov` are separate parameters. A scene that authors
+`viewer_config.camera.position` / `target` / `target_node` / `up` opens somewhere
+else and is skipped by name rather than screened against a framing nobody sees.
+Dynamic near/far clipping is deliberately NOT modelled — the near-plane hazard
+that matters is the homogeneous-`w` straddle inside `project_box_ndc_rect`,
+which never reads `camera.near`.
+
+Every metric primitive is exported and unit-tested against hand-derived values
+(`project_box_ndc_rect`, `project_box_area_fraction`, `project_box_diagonal_px`,
+`legacy_coverage_metric`, `pick_child_with_hysteresis`, `frustum_planes`,
+`calculate_camera_distance`, `transform_box`,
+`project_bounds_to_display_dims`), so a divergence from the TypeScript twin each
+one cites shows up as a failing test rather than as a plausible wrong number.
+
 ### Input Volume Loading
 
 `luxar.io.volume` and `luxar.io.ome_zarr` load arbitrary input volumes (the
