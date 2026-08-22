@@ -36,6 +36,16 @@ export interface ViewerConfigPorts {
   setDimensionValue: (dim: number, value: number) => void;
   /** Set the browser tab title (document.title) from the scene's title. */
   setDocumentTitle: (title: string) => void;
+  /**
+   * Start playback on one dimension. Absent when the scene has no animatable
+   * dimension (a purely 3D scene never builds an animation manager), which is
+   * why the caller must tolerate it being undefined rather than assume a
+   * no-op stub exists.
+   */
+  startDimensionAnimation?: (
+    dim: number,
+    options: { targetFPS?: number; loopMode?: string; direction?: string }
+  ) => void;
 }
 
 /**
@@ -88,6 +98,34 @@ export function applyViewerConfigState(
   if (viewerConfig.dimensions?.current_step) {
     for (let i = 0; i < viewerConfig.dimensions.current_step.length; i++) {
       ports.setDimensionValue(i, viewerConfig.dimensions.current_step[i]);
+    }
+  }
+
+  // --- Animation state ---
+  //
+  // The `animation` block round-tripped through the scene file for a long time
+  // without anything reading it back: `viewer-state-capture` wrote it on
+  // Ctrl+Shift+S, the Python `ViewerConfig` exposed it, VIEWER_GUIDE.md
+  // described it as restored, and on load it was silently dropped. A scene
+  // could therefore say "open playing" in every representation except the one
+  // that mattered.
+  //
+  // Applied AFTER `current_step` on purpose: playback starts from wherever the
+  // dimension was left, so a scene that authors both opens at its chosen
+  // timepoint and runs on from there rather than snapping back to the start.
+  //
+  // Only `playing === true` does anything. `false` is the viewer's own default
+  // and re-asserting it would mean a captured-then-paused scene could never
+  // simply inherit whatever the viewer does next.
+  if (viewerConfig.animation && ports.startDimensionAnimation) {
+    for (let dim = 0; dim < viewerConfig.animation.length; dim++) {
+      const entry = viewerConfig.animation[dim];
+      if (!entry || entry.playing !== true) continue;
+      ports.startDimensionAnimation(dim, {
+        targetFPS: entry.target_fps,
+        loopMode: entry.loop,
+        direction: entry.direction,
+      });
     }
   }
 }

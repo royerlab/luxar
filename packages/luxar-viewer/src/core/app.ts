@@ -52,6 +52,7 @@ import {
   disposePickingSession as disposePickingSessionImpl,
 } from './app/picking/init-picking';
 import { applyViewerConfigState as applyViewerConfigStateHelper } from './app/viewer-config/apply-state';
+import type { AnimationDirection, LoopMode } from '../types/animation';
 import {
   getPanelVisibilityStates as getPanelVisibilityStatesHelper,
   restorePanelVisibilityStates as restorePanelVisibilityStatesHelper,
@@ -420,6 +421,16 @@ export class LuxarApp {
       setTheme: (id) => ThemeManager.getInstance().setTheme(id),
       setDimensionValue: (i, v) => sceneDimsManager.setDimensionValue(i, v),
       setDocumentTitle,
+      startDimensionAnimation: (dim, options) => {
+        // Resolved lazily: the animation manager is built when a scene with an
+        // animatable dimension loads, which for the first dataset happens in
+        // the same init pass as this call.
+        this.inputHandler.getAnimationManager()?.play(dim, {
+          targetFPS: options.targetFPS,
+          loopMode: options.loopMode as LoopMode | undefined,
+          direction: options.direction as AnimationDirection | undefined,
+        });
+      },
     });
   }
 

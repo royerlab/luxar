@@ -589,6 +589,38 @@ class TestScene:
         # though the viewer accepts a wider validation range.
         assert 0.1 <= float(config.auto_rotate_speed) <= 5.0
 
+    def test_the_scene_opens_playing_its_time_axis(self, tmp_path) -> None:
+        """The animation block is indexed BY DIMENSION, and only time runs.
+
+        Asking the wrong index to play would animate a displayed spatial axis,
+        which is not a thing anyone wants and is easy to get wrong because the
+        array is positional with no names in it.
+
+        Until recently the viewer dropped this block on load — it was written
+        by the Ctrl+Shift+S capture path, exposed by the Python config, and
+        read back by nothing. `applyViewerConfigState` now applies it, after
+        `current_step`, so the scene opens on the mature cloud and runs on.
+        """
+        path = tmp_path / "cloud.luxar.zarr"
+        cloud.generate_evolving_cloud(
+            path, n_parcels=20_000, n_frames=6, target_points_per_frame=2_000
+        )
+        config = LuxarScene.load(path).viewer_config
+        assert config is not None
+        assert config.animation is not None
+
+        playing = [i for i, a in enumerate(config.animation) if a.playing]
+        assert playing == [3], (
+            f"dimensions {playing} are set to play; only the hidden time axis "
+            f"(index 3) should be"
+        )
+        time_anim = config.animation[3]
+        assert time_anim.loop == "loop", (
+            "a life cycle that halts on its last frame reads as broken rather "
+            "than as finished"
+        )
+        assert float(time_anim.target_fps) > 0
+
     def test_the_opening_camera_is_outside_the_cloud_and_frames_it(self) -> None:
         rng = np.random.default_rng(3)
         points = rng.normal(0.0, 3.0, (5000, 3)).astype(np.float32) + np.array(

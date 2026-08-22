@@ -137,7 +137,7 @@ Usage:
     python demo_volumetric_cloud.py [--parcels=N] [--frames=N] [--no-serve]
 
 Controls:
-    - Press N for the dimension sliders, select ``time``, then K to play
+    - Opens already playing and rotating; K pauses, N toggles the sliders
     - Ctrl+C to stop and cleanup
     - Browser opens automatically
 """
@@ -174,6 +174,7 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import (
+    AnimationConfig,
     CameraConfig,
     DimensionsConfig,
     UIConfig,
@@ -281,6 +282,13 @@ VIEW_DIRECTION = (0.62, -0.16, 1.0)
 #: to come round and be seen from more than the one angle the opening pose
 #: gives, and slow enough not to fight scrubbing the time axis at the same time.
 AUTO_ROTATE_SPEED = 2.3
+#: Timepoints per second ASKED FOR. It is a ceiling, not a promise: the viewer
+#: throttles dimension playback to what chunk streaming can keep up with, and
+#: at ~25k points a frame this scene measures about 4 fps in practice — call it
+#: half a minute for a full life cycle. Asking for more than that costs
+#: nothing and lets a faster machine, or a smaller `--parcels`, run nearer the
+#: rate the motion was designed at.
+PLAYBACK_FPS = 15.0
 
 
 def simple_noise_3d(
@@ -1473,12 +1481,27 @@ def generate_evolving_cloud(
             # `autoRotate` / `autoRotateSpeed` to the controls manager.
             auto_rotate=True,
             auto_rotate_speed=AUTO_ROTATE_SPEED,
+            # Playing on open. `animation` is indexed BY DIMENSION, so the
+            # three displayed axes take empty entries and only `time` — index
+            # 3 — is asked to run. It loops rather than stopping at the end:
+            # the life cycle is a cycle, and a scene that halts on its last
+            # frame looks like it broke rather than like it finished.
+            animation=[
+                AnimationConfig(),
+                AnimationConfig(),
+                AnimationConfig(),
+                AnimationConfig(
+                    playing=True,
+                    target_fps=PLAYBACK_FPS,
+                    loop="loop",
+                    direction="forward",
+                ),
+            ],
             # Open on the mature cloud rather than on the opening wisps. This
-            # is the one piece of dimension state the viewer restores on load;
-            # the animation block is capture-only today, so playback is a
-            # keypress (N, select `time`, K) rather than something the scene
-            # can start by itself, and the slider panel is opened here so that
-            # keypress is discoverable instead of being folklore.
+            # is applied before playback starts, so the sequence opens on
+            # the mature cloud and runs on from there rather than snapping
+            # back to frame 0. The slider panel is opened so the time axis is
+            # visible and scrubbable, and so `K` is discoverable for pausing.
             dimensions=DimensionsConfig(
                 current_step=[0.0, 0.0, 0.0, float(opening_frame)],
                 selected_dimension=3,
@@ -1529,7 +1552,7 @@ def generate_evolving_cloud(
             )
             add_demo_caption(
                 scene,
-                f"Cumulus life cycle • {n_frames} frames • press K to play",
+                f"Cumulus life cycle • {n_frames} frames • K pauses",
                 DEMO_META.get("citation"),
             )
 
@@ -1587,7 +1610,7 @@ def main() -> None:
         aprint("Press Ctrl+C when done to stop and cleanup.")
         aprint("")
         aprint("VIEWING TIPS:")
-        aprint("   - Press N for the dimension sliders, pick `time`, then K to play")
+        aprint("   - Opens already playing and rotating; K pauses, N toggles sliders")
         aprint("   - Home/End jump to the first and last frame; Shift+Up/Down step")
         aprint("   - The scene opens on the mature cloud, mid-life-cycle")
         aprint("   - Watch the flat base: cumulus condense at one altitude")

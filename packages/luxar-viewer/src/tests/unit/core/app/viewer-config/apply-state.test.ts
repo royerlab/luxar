@@ -28,6 +28,7 @@ interface PortStubs {
   setTheme: ReturnType<typeof vi.fn>;
   setDimensionValue: ReturnType<typeof vi.fn>;
   setDocumentTitle: ReturnType<typeof vi.fn>;
+  startDimensionAnimation?: ReturnType<typeof vi.fn>;
 }
 
 function makePorts(
@@ -35,6 +36,7 @@ function makePorts(
     scaleBar: boolean;
     layersPanel: boolean;
     overlayManager: boolean;
+    startDimensionAnimation: boolean;
   }> = {}
 ): PortStubs {
   const showSlash = () => ({ show: vi.fn(), hide: vi.fn() });
@@ -49,6 +51,8 @@ function makePorts(
     setTheme: vi.fn(),
     setDimensionValue: vi.fn(),
     setDocumentTitle: vi.fn(),
+    startDimensionAnimation:
+      overrides.startDimensionAnimation === false ? undefined : vi.fn(),
   };
 }
 
@@ -301,6 +305,65 @@ describe('applyViewerConfigState', () => {
       expect(() => applyViewerConfigState(config, asPorts(ports))).not.toThrow();
       expect(ports.setDocumentTitle).not.toHaveBeenCalled();
       expect(ports.setTheme).toHaveBeenCalledWith('dark');
+    });
+  });
+
+  describe('animation', () => {
+    // This block round-tripped through the scene file for a long time with
+    // nothing reading it back: the capture path wrote it, the Python
+    // ViewerConfig exposed it, the viewer guide described it as restored, and
+    // on load it was dropped. These tests are what stop that recurring.
+    it('starts playback on the dimension that asks for it', () => {
+      const config: ZarrViewerConfig = {
+        animation: [{}, {}, {}, { playing: true, target_fps: 24, loop: 'bounce' }],
+      };
+      applyViewerConfigState(config, asPorts(ports));
+
+      expect(ports.startDimensionAnimation).toHaveBeenCalledTimes(1);
+      expect(ports.startDimensionAnimation).toHaveBeenCalledWith(3, {
+        targetFPS: 24,
+        loopMode: 'bounce',
+        direction: undefined,
+      });
+    });
+
+    it('leaves a dimension alone unless playing is exactly true', () => {
+      const config: ZarrViewerConfig = {
+        animation: [{ playing: false }, { target_fps: 30 }, {}],
+      };
+      applyViewerConfigState(config, asPorts(ports));
+
+      // `false` is the viewer's own default; re-asserting it would stop a
+      // paused scene from simply inheriting whatever the viewer does next.
+      expect(ports.startDimensionAnimation).not.toHaveBeenCalled();
+    });
+
+    it('starts playback AFTER the opening timepoint is set', () => {
+      // Order matters: playback runs on from wherever the dimension was left,
+      // so applying it first would make an authored `current_step` look like
+      // it had been ignored.
+      const calls: string[] = [];
+      ports.setDimensionValue.mockImplementation(() => calls.push('step'));
+      ports.startDimensionAnimation?.mockImplementation(() => calls.push('play'));
+
+      applyViewerConfigState(
+        {
+          dimensions: { current_step: [0, 0, 0, 65] },
+          animation: [{}, {}, {}, { playing: true }],
+        },
+        asPorts(ports)
+      );
+
+      expect(calls).toEqual(['step', 'step', 'step', 'step', 'play']);
+    });
+
+    it('is a no-op when the scene has no animation manager', () => {
+      // A purely 3D scene never builds one, so the port is absent rather
+      // than a stub.
+      const bare = makePorts({ startDimensionAnimation: false });
+      expect(() =>
+        applyViewerConfigState({ animation: [{ playing: true }] }, asPorts(bare))
+      ).not.toThrow();
     });
   });
 

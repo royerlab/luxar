@@ -198,10 +198,40 @@ sunlit flank, the shadowed one, the lean of the top — and a still opening fram
 shows exactly one of those; the artefact that made the previous build's worst
 defect invisible was precisely that it looked fine from the front.
 
-Worth noting the asymmetry with the time axis, because the two look like they
-should behave the same and do not. `auto_rotate` and `auto_rotate_speed` ARE
-applied on load — `RenderingControls.applyZarrDefaults` forwards them to the
-controls manager — while the `animation` block is capture-only and is read back
-by nothing. So a scene can ask to be rotating when it opens but cannot ask to
-be playing. Measured on the running viewer: `getAutoRotate()` is true and the
-camera turns 84 degrees in six seconds.
+`auto_rotate` and `auto_rotate_speed` are applied on load by
+`RenderingControls.applyZarrDefaults`. Measured on the running viewer:
+`getAutoRotate()` is true and the camera turns 84 degrees in six seconds.
+
+#### The viewer now honours a scene's `animation` block
+
+The cloud opens playing its time axis, which needed a viewer change first: the
+`animation` block round-tripped through the scene file with nothing reading it
+back. `viewer-state-capture` wrote it on Ctrl+Shift+S, the Python
+`ViewerConfig` exposed it, `VIEWER_GUIDE.md` described it as restored, and on
+load it was silently dropped. A scene could say "open playing" in every
+representation except the one that decides.
+
+`applyViewerConfigState` now applies it, through a new optional
+`startDimensionAnimation` port that `LuxarApp` wires to the dimension animation
+manager's `play()`. Three details are deliberate and covered by unit tests:
+
+- It runs AFTER `current_step`, so a scene that authors both opens at its
+  chosen timepoint and runs on from there rather than snapping back to frame 0.
+- Only `playing === true` acts. `false` is the viewer's own default, and
+  re-asserting it would stop a paused scene from inheriting whatever the viewer
+  does next.
+- The port is optional, because a purely 3D scene never builds an animation
+  manager; a scene with an animation block and no animatable dimension must be
+  a no-op rather than a crash.
+
+This is a behaviour change for any existing scene that captured `playing: true`
+— such a scene will now start playing on load. That is what the field has always
+claimed to mean, so it is a fix rather than a regression, but it is the kind
+that shows up as "why is this moving now".
+
+The cloud demo asks for 15 fps on dimension 3 with `loop`. The rate is a
+ceiling, not a promise: the viewer throttles dimension playback to what chunk
+streaming sustains, and at ~25k points a frame this scene measures about 4 fps,
+so a full life cycle takes roughly half a minute. Verified end to end on a
+viewer built from this branch — the frame index advances 81 -> 104 over six
+seconds while the camera is simultaneously rotating.
