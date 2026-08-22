@@ -92,10 +92,20 @@ SCIENTIFIC_FIDELITY_OVERRIDES = {
         {"chromatic_lens_distortion_enabled", "detector_noise_enabled"}
     ),
     "demo_gsplats_2d_cmu1_pathology.py": frozenset(
-        {"chromatic_lens_distortion_enabled", "detector_noise_enabled"}
+        {
+            "bloom_enabled",
+            "chromatic_lens_distortion_enabled",
+            "detector_noise_enabled",
+            "vignette_enabled",
+        }
     ),
     "demo_gsplats_2d_codex_pancreas.py": frozenset(
-        {"chromatic_lens_distortion_enabled", "detector_noise_enabled"}
+        {
+            "bloom_enabled",
+            "chromatic_lens_distortion_enabled",
+            "detector_noise_enabled",
+            "vignette_enabled",
+        }
     ),
 }
 
