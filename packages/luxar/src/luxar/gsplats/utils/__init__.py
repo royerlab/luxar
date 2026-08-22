@@ -9,7 +9,7 @@ This package provides utility functions for:
 - Triangle matrix size calculations
 """
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from luxar.gsplats.utils.trils import (
     calculate_gradient_dilution_factor,
@@ -50,7 +50,7 @@ __all__ = [
 _DEVICE_EXPORTS = frozenset({"is_mps_available", "resolve_torch_device"})
 
 
-def __getattr__(name: str) -> Any:
+def __getattr__(name: str) -> object:
     """Resolve the torch-backed exports lazily (PEP 562).
 
     ``luxar.gsplats.utils.device`` imports ``torch``, which ships only in the
@@ -79,12 +79,12 @@ def __dir__() -> list[str]:
 
     ``automodule ... :members:`` collects from ``dir()``, so without this the
     two ``device`` names silently vanish from the API reference — no warning,
-    and the docs ratchet stays green. Unlike ``luxar/__init__.py``, whose lazy
-    ``__getattr__`` hands back non-raising stubs, the names listed here still
-    raise ``ModuleNotFoundError`` when resolved on a core-only install — so
-    ``help()`` / ``inspect.getmembers()`` / ``import *`` raise here rather than
-    degrading. That is deliberate: for a direct ``from luxar.gsplats.utils
-    import resolve_torch_device`` the explicit missing-torch error is far more
-    useful than a vague ``AttributeError``.
+    and the docs ratchet stays green. The names listed here still raise
+    ``ModuleNotFoundError`` when resolved on a core-only install:
+    ``inspect.getmembers()`` and ``import *`` raise, while ``help()`` catches
+    the error and degrades to printing only ``No module named 'torch'``. That is
+    deliberate: for a direct ``from luxar.gsplats.utils import
+    resolve_torch_device`` the explicit missing-torch error is far more useful
+    than a vague ``AttributeError``.
     """
     return sorted(set(globals()) | _DEVICE_EXPORTS)
