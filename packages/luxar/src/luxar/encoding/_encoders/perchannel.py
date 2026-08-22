@@ -433,6 +433,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
 
         bits = self._compute_quantization_bits(arr)
         use_geolog = positive_scalar_encoding == "log" or bits == 0
+        viewer_affine_slack = 0.0
         if use_geolog:
             nonzero = arr[arr > 0].astype(np.float64, copy=False)
             min_log = float(np.log(nonzero.min()))
@@ -451,8 +452,9 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             span = max_val - min_val
             if span == 0.0:
                 return None
+            viewer_affine_slack = span * float(np.finfo(np.float32).eps)
             levels = (1 << bits) - 1
-            slack = span / (2.0 * levels) + span * float(np.finfo(np.float32).eps)
+            slack = span / (2.0 * levels)
             if np.issubdtype(arr.dtype, np.floating) and arr.dtype.itemsize <= 4:
                 slack += 1.5 * span * float(np.finfo(arr.dtype).eps)
 
@@ -463,7 +465,12 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             max_val * decode_eps,
             float(np.finfo(np.float32).smallest_subnormal),
         )
-        return float(min(slack + decode_ulp, float(np.finfo(np.float64).max)))
+        return float(
+            min(
+                slack + decode_ulp + viewer_affine_slack,
+                float(np.finfo(np.float64).max),
+            )
+        )
 
     def _encode_coordinate(
         self,
