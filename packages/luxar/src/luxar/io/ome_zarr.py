@@ -9,6 +9,7 @@ CLI/Typer coupling. Previously lived in ``luxar.cli.gsplat_config``.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from numbers import Real
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
@@ -331,10 +332,9 @@ def discover_ome_zarr_shape(
             coarser pyramid level reports its own spacing, not level 0's, and
             that holds for the auto path too (which can perfectly well land on a
             coarser level, e.g. when level 0's declared path does not resolve).
-            The price is that a block whose ``datasets[*].path`` spells the
-            selected array non-canonically (``"./0"`` for the array at ``"0"``)
-            no longer matches, and reports no spacing rather than level 0's; see
-            :func:`_selected_dataset`.
+            The match is exact, but on the NORMALISED spellings, so a block
+            writing its own levels explicitly relative (``"./0"`` for the array at
+            ``"0"``) still names them; see :func:`_selected_dataset`.
 
     Returns:
         :class:`OMEZarrInfo` with discovered metadata.
@@ -604,7 +604,16 @@ def _normalised_dataset_path(raw: Any) -> str:
     a level's name, and zarr refuses such a path anyway. ``""`` never matches
     (:func:`_dataset_path_matches` requires a non-empty path), so an unspellable
     entry stays unmatched rather than becoming a bogus match for some other level.
+
+    NGFF requires ``path`` to be a string, but some producers serialise numeric
+    level names as numbers. Those real numeric scalars are intentionally coerced;
+    booleans and structured/null values name nothing rather than plausible arrays
+    called ``"True"``, ``"None"``, ``"[]"`` or ``"{}"``. Lookup and matching
+    share this policy so malformed metadata cannot name different levels in the
+    two halves of selection.
     """
+    if isinstance(raw, bool) or not isinstance(raw, (str, Real)):
+        return ""
     path = str(raw).strip("/")
     if path.startswith("./"):
         path = path[2:].strip("/")

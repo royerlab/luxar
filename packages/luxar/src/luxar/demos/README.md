@@ -47,6 +47,20 @@ listed in `luxar.demos.registry.PROTECTED_INPUT_DIRS` — is inventoried by `dem
 cache list` (marked `🔒 hand-placed input`) but is never reported as an orphan and
 never deleted by `demo cache clear`, by key, under `--all` or under `--orphans`.
 
+A `local/` subdirectory inside a cache dir holds artifacts **this machine
+computed for itself** — a demo's own refit, when its hosted data could not be
+reached — written there by `luxar.utils.data_fetch.local_fit_path`. That is a
+separate namespace from the manifest's own `~/.cache/luxar/<dataset>/<file>`,
+which the fetch checksums and quarantines; a local fit stored under the hosted
+name is destroyed and recomputed on every launch (#1618). `demo cache clear`
+counts anything under `local/` as *computed*, so `--no-computed` spares it.
+That classification keys on the `local/` path and nothing else: a demo that
+still writes an expensive computed artifact straight into its cache dir — the
+NEXRAD per-frame fits, the C. elegans preprocessed frames — is classified as a
+download and IS deleted by `--no-computed`. Those names collide with no pinned
+manifest entry, so they are not exposed to the #1618 quarantine and were left
+where they are.
+
 Eleven gsplat demos also accept `--show-roundtrip`, which renders the fitted
 splats back and shows original / reconstruction / absolute-difference panels
 with PSNR and MSE (needs `matplotlib`). The five whose figure is one row per
@@ -77,6 +91,40 @@ scene through an adder that preserves it, whichever of those doors it came
 through. The choice applies from the next refit onwards — the
 hosted archives keep whatever topology they were written with until they are
 refitted and reuploaded, since the manifest pins their checksums.
+
+Every demo scene opens in the cinematic look, and it costs one keyword:
+`ViewerConfig(cinematic_mode=True)`, which the viewer's zarr bridge expands into
+ACES, a subtle wide bloom, detector noise, a vignette and a 35 mm chromatic lens
+for every field the scene did not set itself — so an explicit `tone_mapping`,
+`exposure` or bloom value still wins. `tests/test_demos_cinematic_mode.py` is the
+gate: no `create_scene` without a `viewer_config`, and no `ViewerConfig` without
+a literal `cinematic_mode=True`.
+
+The preset also expands the field of view from 47° to 63°. The viewer resolves
+that FOV before automatic framing, so an auto-framed scene keeps the fitted
+subject occupancy intended for the lens. A returning visitor's stored FOV still
+takes precedence over the scene-authored value by design.
+
+An authored camera position is a stronger contract, because its distance was
+composed for one FOV, and the demos say which one in one of two ways. Seventeen
+**pin** `camera.fov` (38° to 50° where it is a literal, computed or named in
+seven): framing preserved, but they then wear the preset's 35 mm barrel
+distortion at a longer lens's framing — two lenses in one image — and those pins
+all predate the cinematic look (#1862). The five
+poses derived from a data extent or a fitted radius instead **compose for 63°**
+through `_cinematic_camera.py`: read `CINEMATIC_FOV_DEG` when the distance comes
+from the lens (a fitted radius through `asin(R/D)`), or call `pull_in()` to carry
+an empirically tuned pose over — it scales about the pose's target rather than
+the world origin, so an off-origin camera keeps looking where it was aimed. That
+keeps the lens whole and the framing exact, and costs the stronger perspective a
+wider lens gives. `test_demos_cinematic_mode.py` accepts either and rejects a
+bare authored position, whose FOV assumption nobody can read.
+
+Four demos pin scientific-fidelity exceptions. The two quantitative ortho demos
+suppress bloom, vignette, lens distortion and detector noise so their
+projection-derived scale bars and measured intensities remain meaningful. The
+biodiversity globe and nD transform bench suppress lens distortion and detector
+noise because their categorical or exact RGB hues carry data.
 
 The three network demos (`caida_as_topology`, `huri_interactome`,
 `ppi_flow_field`) share `_graph_common.py`, but not all of it. All three use the
@@ -606,14 +654,14 @@ Recreates the Cosmicflows-4 / Laniakea visualization by Simone Conradi and Manli
 
 ---
 
-#### demo_desi_galaxies.py - DESI DR1: The Cosmic Web in 3D (~9.75M galaxies & quasars)
-The large-scale structure of the Universe as a point cloud from the Dark Energy Spectroscopic Instrument's first data release. Each point is a real galaxy or quasar with a measured spectroscopic redshift; the redshift becomes a comoving distance so sky position + depth give true 3D Cartesian coordinates in megaparsecs. You sit at the observer's origin looking out at the two DESI footprint caps fanning into filaments, voids, and the baryon-acoustic shells. Two colorings toggle in the Layers panel: **by tracer** (BGS/LRG/ELG/QSO populations, naturally layered by distance) and **by redshift** (continuous depth colormap).
+#### demo_desi_galaxies.py - DESI DR1: The Cosmic Web in 3D (~9.75M-object catalog)
+The large-scale structure of the Universe from the full ~9.75M-object Dark Energy Spectroscopic Instrument first data release catalog. Each point is a real galaxy or quasar with a measured spectroscopic redshift; the redshift becomes a comoving distance so sky position + depth give true 3D Cartesian coordinates in megaparsecs. You sit at the observer's origin looking out at the two DESI footprint caps fanning into filaments, voids, and the baryon-acoustic shells. Two colorings toggle in the Layers panel: **by tracer** (BGS/LRG/ELG/QSO populations, naturally layered by distance) and **by redshift** (continuous depth colormap).
 
 **Run**: `luxar demo run desi_galaxies [-- --recompute]`
 
 **Requires**: Nothing extra by default — ships a compact precomputed point cloud (quantized XYZ + redshift + tracer id) via Git LFS. With `--recompute` (or if the LFS asset isn't pulled) it auto-downloads the ~1 GB of DR1 LSS clustering catalogs to `~/.cache/luxar/desi_galaxies/` (resumable), reads them with `astropy`, and converts (RA, Dec, z) → comoving Mpc. Adds `astropy` to the `demos` extra. The built scene (with substitutive LOD) is cached in the demos output dir, so only the first launch pays the LOD-build cost. If the DESI data host is unavailable, check `https://data.desi.lbl.gov/`, run `git lfs pull`, and rerun without `--recompute` to use the shipped scene without downloading the source catalogs. Substitutive Points LOD needs `luxar[gsplats]` (torch + scipy); without it the scene builds as a flat, fully viewable point cloud.
 
-**Demonstrates**: Real spectroscopic-survey catalogs → a 3D cosmic-web Points cloud, `(RA, Dec, redshift)` → comoving-Mpc conversion via `astropy.cosmology` (DESI fiducial ΛCDM), substitutive Points LOD at ~9.75M points, dual coloring (categorical tracer vs. continuous redshift colormap) via layer toggles, HDR additive rendering, self-contained download → convert → cache-processed bootstrap. Data: [DESI DR1](https://data.desi.lbl.gov/doc/releases/dr1/) (DESI Collaboration 2025, arXiv:2503.14745; CC BY 4.0).
+**Demonstrates**: Real spectroscopic-survey catalogs → a 3D cosmic-web Points cloud, `(RA, Dec, redshift)` → comoving-Mpc conversion via `astropy.cosmology` (DESI fiducial ΛCDM), bounded additive streaming on every substitutive Points LOD level for the full catalog, dual coloring (categorical tracer vs. continuous redshift colormap) via layer toggles, HDR additive rendering, self-contained download → convert → cache-processed bootstrap. Data: [DESI DR1](https://data.desi.lbl.gov/doc/releases/dr1/) (DESI Collaboration 2025, arXiv:2503.14745; CC BY 4.0).
 
 ---
 
@@ -629,13 +677,13 @@ Every catalogued minor planet placed in real 3D space by propagating its measure
 ---
 
 #### demo_dipc_3d_genome.py - Single-Cell 3D Genome (Dip-C)
-The folded 3D structure of one human cell's genome from Dip-C (Tan et al. 2018, Science): the chromosomes coil through the nucleus as Lines, colored by chromosome, with the maternal and paternal genomes exposed as two toggleable Layers (press **L**) to isolate one copy or overlay both.
+The folded 3D structure of one human cell's genome from Dip-C (Tan et al. 2018, Science): the chromosomes coil through the nucleus as Lines, colored by chromosome. A non-displayed haplotype dimension isolates either maternal or paternal copy, while a faint always-visible context layer keeps the full diploid nucleus in view.
 
 **Run**: `luxar demo run dipc_3d_genome [-- --recompute]`
 
 **Requires**: Nothing extra by default — ships a small precomputed structure via Git LFS. With `--recompute` (or if the LFS asset isn't pulled) it auto-downloads the GEO archive (`GSE117876_RAW.tar`, ~4.7 GB) to `~/.cache/luxar/dipc_genome/`, extracts one cell's `.3dg`, and caches the processed `.npz`.
 
-**Demonstrates**: 3D-genomics visualization (nothing else renders single-cell genome folding interactively), Lines with per-vertex color and hover labels, one Lines node per haplotype exposed as a **Layers-panel** toggle (a hard visibility on/off — the reliable way to isolate Lines, since a non-displayed dimension can't cull already-loaded polylines), self-contained download → extract → cache-processed bootstrap. Data: [Tan et al. 2018](https://doi.org/10.1126/science.aat5641), GEO GSE117876; [dip-c format](https://github.com/tanlongzhi/dip-c).
+**Demonstrates**: 3D-genomics visualization (nothing else renders single-cell genome folding interactively), one indexed Lines node sliced by a non-displayed haplotype dimension, a second context Lines layer broadcast across every haplotype slice, per-vertex color and hover labels, self-contained download → extract → cache-processed bootstrap. Data: [Tan et al. 2018](https://doi.org/10.1126/science.aat5641), GEO GSE117876; [dip-c format](https://github.com/tanlongzhi/dip-c).
 
 ---
 
@@ -655,9 +703,9 @@ Microtubule cytoskeleton at nanometer resolution using real STORM super-resoluti
 
 **Run**: `luxar demo run storm_3d_microtubules`
 
-**Requires**: Internet access (downloads STORM localization data).
+**Requires**: Internet access on first run (downloads the size-verified STORM localization CSV) and an NVIDIA CUDA GPU for an uncached widefield fit.
 
-**Demonstrates**: STORM/PALM super-resolution data (~20 nm resolution), localization uncertainty as Gaussian splat size, 3D astigmatism-based z encoding, photon count-based coloring, microtubule cytoskeleton structure.
+**Demonstrates**: Two Gaussian-splat provenance classes in one categorical view: a compact basis fitted to a photon-weighted, diffraction-blurred widefield volume, and measured STORM localization ellipsoids whose per-axis σ combines CRLB with 17 nm antibody-linkage uncertainty (about 18-19 nm and linkage-dominated in this dataset). The default 5M-row frame-ordered prefix is used for both views, so its widefield image is explicitly a partial acquisition.
 
 ---
 
@@ -769,7 +817,7 @@ Deliberately the same dataset as the gsplat demo above, because the pairing is t
 
 **Requires**: `scikit-image` + `scipy` (both in the `demos` extra). **No GPU and no fitting step** — marching cubes is CPU-only and takes about two seconds, which makes this the cheapest end-to-end demo of any Luxar geometry type.
 
-**Demonstrates**: Mesh as the only **shaded** geometry type — per-vertex marching-cubes gradient normals written with an explicit `normal_dims`, lit by the §6.2 view-anchored headlight, so nuclei inside membranes are genuinely occluded rather than summed. `opaque` blending by default (unlike the other three types' `additive`), the mesh-only **Ambient** / **Shade falloff** Layers-panel sliders, per-channel `layer=True` toggling, physical units via marching_cubes' `spacing` (the dataset's voxels are mildly anisotropic — 0.29 µm in Z vs 0.26 µm in-plane, ~1.1x), and scale: ~537K vertices / 1.07M triangles across the two surfaces.
+**Demonstrates**: Mesh as the only **shaded** geometry type — per-vertex marching-cubes gradient normals written with an explicit `normal_dims`, lit by the §6.2 view-anchored offset key, so nuclei inside membranes are genuinely occluded rather than summed. `opaque` blending by default (unlike the other three types' `additive`), the five mesh-only **Ambient** / **Shade falloff** / **Specular** / **Shininess** / **Alpha cutoff** Layers-panel sliders, per-channel `layer=True` toggling, physical units via marching_cubes' `spacing` (the dataset's voxels are mildly anisotropic — 0.29 µm in Z vs 0.26 µm in-plane, ~1.1x), and scale: ~537K vertices / 1.07M triangles across the two surfaces.
 
 ---
 
@@ -1165,6 +1213,7 @@ with asection("Writing to Zarr"):
 
 ```python
 from luxar.demos import (
+    add_demo_caption,  # standard bottom-right caption + DEMO_META credit
     launch_viewer,  # serve + open viewer (serve_args=[...] to pass e.g. --profile)
     cached_download,  # download once into ~/.cache/luxar/<name>/, skip-if-present
     cache_computed,  # cache an expensive result (UMAP, field) — versioned, param-keyed
@@ -1308,8 +1357,9 @@ checked too — so an exemption cannot outlive the layer it leans on.
 3. **Update docstring** with what it demonstrates
 4. **Implement generation** in the generate_* function (keep everything in that function!)
 5. **Expose the geometry** with `layer=True` (or a `layer=True` container group) — see §8
-6. **Test** by running: `hatch run python demo_yourname.py`
-7. **Ctrl+C** to stop and verify cleanup works
+6. **Add one caption** with `add_demo_caption(scene, ...)` so `DEMO_META` credit appears — see §6
+7. **Test** by running: `hatch run python demo_yourname.py`
+8. **Ctrl+C** to stop and verify cleanup works
 
 ## Tips
 

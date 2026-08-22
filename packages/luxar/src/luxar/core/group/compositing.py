@@ -10,6 +10,10 @@ Exposed:
 * :data:`COMPOSITING_ATTRS` — frozenset of attribute names that ride on
   a wrapper Group (where the user thinks of the wrapper as "their
   layer") rather than getting copied onto each internal child.
+* :data:`WRITER_STAMPED_APPEARANCE_DEFAULTS` + :data:`IDENTITY_COMPOSITING_ATTRS`
+  — the value the writer manufactures for an appearance attr nobody set, shared
+  by every stamp site and by the reader that has to tell a stamp from an
+  authored value (``gsplat merge``'s agreement rule).
 * :func:`slice_optional_array` — slice an array-valued leaf parameter by
   index, leaving scalars / None / mis-sized inputs untouched.
 * :func:`is_broadcast_color` — classify a uniform RGB(A) sequence (which must
@@ -36,10 +40,20 @@ Exposed:
 * :func:`sync_custom_colormap_attr` — mirror the writer's custom-colormap
   resolution (`ndarray / non-builtin name -> 'custom'`) into the adder's
   attrs dict so the returned node object matches what zarr stores.
+* :func:`mirror_written_colormap` — copy the colormap the writer actually
+  stamped (its ``"gray"`` default for a colorless gsplats leaf, or nothing at
+  all when an ancestor authored a palette) onto the adder's attrs, so the
+  returned node's attr write-back cannot contradict the store (#1600).
 * :func:`reject_lines_only_join` — refuse the lines-only ``join`` attr on a
   points / gsplats / mesh leaf, where it would write cleanly and do nothing.
 * :func:`reject_lines_only_join_assignment` — the same refusal for the second
   door into the same attr, the ``node.join = ...`` property setter.
+* :func:`reject_mesh_only_appearance` — refuse mesh-only appearance attrs on
+  points / lines / gsplats leaves and on Groups, where they do not compose. The
+  second door into the same attrs (a post-hoc ``node.attrs[...] = ...``) is guarded
+  by ``core/node/node.py::_WriteThroughAttrs._reject_mesh_only_on_non_mesh``.
+* :data:`MESH_ONLY_APPEARANCE_ATTRS` — the five mesh-only appearance keys
+  refused on every non-mesh node by those two guards.
 * :func:`unnest_add_error` — strip a SAME-geometry inner adder's own ``Could
   not add <geometry> '<child>': …`` prefix from a caught exception's message,
   so a refusal from inside a synthesised same-kind split child (``child_3``,
@@ -51,7 +65,8 @@ Exposed:
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional, Sequence, Union
+from types import MappingProxyType
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
 
 import numpy as np
 
@@ -62,6 +77,12 @@ import numpy as np
 #: never be mistaken for (or stripped as) a geometry adder's — see
 #: :func:`funnel_add_error`.
 _GEOMETRY_WORDS = ("points", "lines", "mesh", "gsplats")
+
+#: The five mesh-only appearance keys refused on every non-mesh node by the
+#: adder/group and write-through guards.
+MESH_ONLY_APPEARANCE_ATTRS = frozenset(
+    {"alpha_cutoff", "ambient", "shade_exponent", "shininess", "specular"}
+)
 
 #: Matches the prefix an adder's own funnel produces, e.g.
 #: ``Could not add points 'child_3': ...``. Anchored to the start of the
@@ -221,9 +242,18 @@ def funnel_add_error(geometry: str, name: str, exc: BaseException) -> str:
 #: thinks of the wrapper as "their layer") rather than getting copied onto
 #: each internal child. Compositing semantics (opacity, gamma, ...) flow
 #: down to the children through Group inheritance at render time, so writing
-#: them once on the parent is correct. ``colormap`` and ``truncation_radius``
-#: are deliberately NOT compositing: the writer auto-defaults them per leaf,
-#: which under nearest-ancestor-wins would shadow a parent's setting.
+#: them once on the parent is correct. ``truncation_radius`` is deliberately
+#: NOT compositing: the writer auto-defaults it per leaf, which under
+#: nearest-ancestor-wins would shadow a parent's setting.
+#:
+#: ``colormap`` is not here either, but for a weaker reason now that it DOES
+#: compose in the viewer (#1600 — see :data:`AUTHORED_APPEARANCE_ATTRS`):
+#: copying it onto each child of a wrapper the user built with
+#: ``add_gsplats(partition=…, colormap=…)`` is still correct (a colormap on
+#: every leaf and a colormap on their wrapper render identically), and the
+#: Layers panel's ``deriveColormapFromDescendants`` reads the panel row's
+#: palette back out of exactly that shape. Moving it would be a behaviour
+#: change with no user-visible gain.
 COMPOSITING_ATTRS = frozenset(
     {
         "transform",
@@ -275,26 +305,89 @@ COMPOSITING_ATTRS = frozenset(
 #: sweep in #1600, and the reason the ``gsplat`` rebuilds leave the attr alone
 #: (the same status quo as before the carry existed).
 #:
+#: ``colormap`` is carried too, even though it is not in
+#: :data:`COMPOSITING_ATTRS` (the wrapper-vs-children ROUTING question is a
+#: different one — see that set's own note). It used to be excluded because a
+#: root stamp was SHADOWED and therefore only LOOKED preserved: the writer
+#: manufactured a ``"gray"`` on every colorless leaf, which sits nearer the
+#: leaf than the root, and nothing composed the attr anyway. Both halves are
+#: fixed (#1600): ``apply_gsplat_group_attrs`` now stamps the gray default only
+#: when no ancestor authored a palette (see ``inherited_gsplat_colormap`` for
+#: the two write paths' mechanics), and the viewer composes ``colormap``
+#: nearest-setter-wins root→leaf like ``blending_mode``/``join``
+#: (``viewer/src/data/attrs-composer.ts``). So a root stamp now genuinely
+#: reaches every leaf.
+#:
 #: ALSO DELIBERATELY EXCLUDED, because a root stamp would be SHADOWED and
 #: therefore only look preserved:
 #:
-#: * ``colormap`` — the writer auto-defaults it to ``"gray"`` on each colorless
-#:   group (``apply_gsplat_group_attrs``), which sits nearer the leaf than the
-#:   root. It is not composed, so the nearer value wins.
-#: * ``amplitude_data_range`` / ``scalar_data_range`` — likewise not composed,
-#:   and each level re-derives its own from its (post-reduction) values, which
-#:   sits nearer the leaf than the root. The gsplat window harmonization
+#: * ``amplitude_data_range`` / ``scalar_data_range`` — not composed, and each
+#:   level re-derives its own from its (post-reduction) values, which sits
+#:   nearer the leaf than the root. The gsplat window harmonization
 #:   (``finalize/amplitude_window.py``) does not change that: it only ever
 #:   rewrites windows on LEAVES, so a root stamp on a group-rooted result
-#:   survives untouched — and is still shadowed by every leaf's own.
+#:   survives untouched — and is still shadowed by every leaf's own. Unlike
+#:   ``colormap``, dropping the per-leaf value is NOT the fix: the window is a
+#:   property of that leaf's own values, so composing it nearest-setter-wins
+#:   across a ``kind=lod`` boundary reintroduces exactly the basis mismatch
+#:   ``leafScalarWindow`` / ``composedWindowIsInReferenceBasis``
+#:   (``viewer/src/ui/layers/layer-apply.ts``) had to gate. Carrying it needs
+#:   that basis gate applied at COMPOSE time — a separate change, still tracked
+#:   in https://github.com/royerlab/luxar/issues/1600.
 #: * ``truncation_radius`` — auto-defaulted per leaf by design (see the note on
 #:   ``COMPOSITING_ATTRS``); each leaf already carries the source value through
 #:   ``GSplatData.truncation_radius``, so the footprint survives anyway.
+AUTHORED_APPEARANCE_ATTRS = (COMPOSITING_ATTRS - {"transform"}) | {"colormap"}
+
+
+#: The value the WRITER manufactures for an appearance attr the author never
+#: set — the single source of truth for every stamp site, so a reader that has
+#: to tell "the author chose this" from "nobody chose anything" cannot drift
+#: from the writer that produced the file.
 #:
-#: Carrying an authored colormap / display window through a rebuild needs the
-#: writer to stop defaulting them when an ancestor authored one — tracked in
-#: https://github.com/royerlab/luxar/issues/1600 with the rest of the sweep.
-AUTHORED_APPEARANCE_ATTRS = COMPOSITING_ATTRS - {"transform"}
+#: Stamped by three places, all of which read their value from here:
+#:
+#: * :func:`~luxar.io._compiler.node_common.apply_default_render_attrs` and
+#:   :func:`~luxar.io._compiler.gsplat_assembly.apply_gsplat_group_attrs` —
+#:   :data:`IDENTITY_COMPOSITING_ATTRS`, unconditionally, on every leaf.
+#: * ``apply_gsplat_group_attrs`` again for ``colormap`` — but only on a
+#:   COLORLESS leaf with no ancestor palette, so this one is conditional and a
+#:   colored store legitimately carries no ``colormap`` at all.
+#: * ``gsplats/io/save_gsplats.py`` for ``layer``, on a standalone
+#:   ``.gsplats.zarr`` root (the file IS the layer when opened directly).
+#:
+#: ``blending_mode`` / ``visible`` / ``nd_transform`` / ``join`` are absent
+#: here on purpose: they have no identity value, so nothing is stamped for
+#: them and their absence on disk is genuine silence.
+#: Read-only (``MappingProxyType``): it is the single source of truth several
+#: modules index into, and a stamp site that mutated it would silently redefine
+#: what "the author never set this" means for the reader.
+WRITER_STAMPED_APPEARANCE_DEFAULTS: Mapping[str, Any] = MappingProxyType(
+    {
+        "opacity": 1.0,
+        "absorption": 1.0,
+        "gamma": 1.0,
+        "intensity": 1.0,
+        "offset": 0.0,
+        "layer": True,
+        "colormap": "gray",
+    }
+)
+
+
+#: The compositing attrs with an identity value, in the order the writers stamp
+#: them. Multiplicative (opacity/absorption/gamma/intensity) or additive
+#: (offset) no-ops under the viewer's hierarchical composition, which is what
+#: makes stamping them on every leaf harmless — and is also why they cannot be
+#: distinguished from a deliberate authored identity (see
+#: :data:`WRITER_STAMPED_APPEARANCE_DEFAULTS`).
+IDENTITY_COMPOSITING_ATTRS = (
+    "opacity",
+    "absorption",
+    "gamma",
+    "intensity",
+    "offset",
+)
 
 
 def lines_only_join_reason(geometry_type: str) -> str:
@@ -356,6 +449,21 @@ def reject_lines_only_join(
         raise ValueError(
             f"Cannot add {geometry_type} '{name}' with join={attrs['join']!r}. "
             + lines_only_join_reason(geometry_type)
+        )
+
+
+def reject_mesh_only_appearance(
+    node_type: str, name: str, attrs: Dict[str, Any]
+) -> None:
+    """Refuse mesh-only appearance attrs on non-mesh nodes."""
+    invalid = sorted(MESH_ONLY_APPEARANCE_ATTRS & attrs.keys())
+    if invalid:
+        raise ValueError(
+            f"Cannot add {node_type} '{name}' with mesh-only attribute(s) {invalid}. "
+            "The viewer applies these attributes only to mesh leaves, and they do "
+            "not compose through Groups. Remove them, set them on each mesh leaf "
+            "(part_<i> / child_<i>), or pass them to add_mesh(...), which stamps "
+            "every generated mesh leaf."
         )
 
 
@@ -434,6 +542,46 @@ def sync_custom_colormap_attr(attrs: Dict[str, Any]) -> None:
     cm = attrs["colormap"]
     if not isinstance(cm, str) or cm not in BUILTIN_COLORMAP_NAMES:
         attrs["colormap"] = "custom"
+
+
+def mirror_written_colormap(attrs: Dict[str, Any], writer: Any, path: str) -> None:
+    """Copy the colormap the WRITER actually stamped onto an adder's attrs.
+
+    The compiler manufactures ``colormap="gray"`` on a colorless gsplats leaf,
+    and the adders mirror that onto the node object they return so the
+    in-memory node matches zarr. The mirror is not cosmetic: the returned
+    node's attrs are written straight back through ``Node.__init__`` →
+    ``write_group``, so a mirror that stamps a gray the writer DECLINED puts it
+    on disk after all.
+
+    Since #1600 the writer declines whenever an ancestor authored a palette
+    (a nearer gray would shadow it under the viewer's nearest-setter-wins
+    composition — see
+    ``io._compiler.gsplat_assembly.inherited_gsplat_colormap``). Re-deriving
+    that rule here would be a second implementation that can disagree: the
+    in-memory parent chain cannot see attrs written through the RAW compiler
+    API (``compiler.write_group("/", colormap=…)``), while the writer's store
+    walk can. So read back the decision instead of reproducing it.
+
+    No-op when the leaf already carries an explicit ``colormap`` (nothing to
+    mirror), and for a writer with no zarr-shaped ``store`` (a stub in a test).
+
+    Args:
+        attrs: The adder's attrs dict, mutated in place.
+        writer: The writer the leaf was just written through.
+        path: The leaf's store-relative node path.
+    """
+    if "colormap" in attrs:
+        return
+    store = getattr(writer, "store", None)
+    if store is None:
+        return
+    try:
+        written = store[path.lstrip("/")].attrs.get("colormap")
+    except (KeyError, TypeError, AttributeError, IndexError):
+        return
+    if written is not None:
+        attrs["colormap"] = written
 
 
 def slice_optional_array(value: Any, indices: np.ndarray, n_elements: int) -> Any:

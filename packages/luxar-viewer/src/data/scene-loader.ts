@@ -42,6 +42,7 @@ import { runGSplatsRefinement } from './gsplats/lod-refinement';
 import { runPointsRefinement } from './points/lod-refinement';
 import { runLinesRefinement } from './lines/lod-refinement';
 import { runMeshRefinement } from './mesh/lod-refinement';
+import { setSceneLineLoad } from '../types/line-primitive';
 import { loadAndStage as pointsLoadAndStage, label as pointsLabel } from './points/handler';
 import { loadAndStage as linesLoadAndStage, label as linesLabel } from './lines/handler';
 import { loadAndStage as gsplatsLoadAndStage, label as gsplatsLabel } from './gsplats/handler';
@@ -1892,6 +1893,7 @@ export class SceneLoader {
     // Signal any in-flight progressive-refinement loop to abort before we
     // start nulling the fields it reads.
     this._disposed = true;
+    setSceneLineLoad(0);
 
     // Release the serialization lock explicitly — defence in depth. Only the
     // lock can genuinely latch: an early update phase bailing before

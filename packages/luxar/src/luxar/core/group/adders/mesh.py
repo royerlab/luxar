@@ -391,8 +391,8 @@ def _reject_partition_with_substitutive_lod(
 ) -> None:
     """Refuse ``partition=`` together with ``substitutive_lod=``.
 
-    The same refusal ``add_points`` / ``add_lines`` carry, with the same message: a
-    ``kind=partition`` of per-part LOD ladders is a topology nothing writes yet.
+    Lines carries the same refusal. Points instead supports a global overview LOD
+    above partitioned fine detail; Mesh does not implement that topology yet.
     Mesh needs it for one extra reason — the substitutive branch RETURNS before the
     partition branch is reached, so accepting both would silently drop the split.
 
@@ -409,7 +409,8 @@ def _reject_partition_with_substitutive_lod(
     if _requested(partition) and _requested(substitutive_lod):
         raise ValueError(
             "partition= and substitutive_lod= cannot be combined yet "
-            "(partition-of-substitutive is not implemented). Use one or the other."
+            "(Points supports a global overview LOD above partitioned fine detail; "
+            "Mesh does not implement that topology yet). Use one or the other."
         )
 
 
@@ -1188,7 +1189,7 @@ def add_mesh_substitutive_lod_wrapper_impl(
     is the same degenerate-path behaviour the Points wrapper has.
     """
     from ....io._compiler.geometry_writers.mesh import validate_mesh_arrays
-    from ....mesh.decimate import decimate, resolve_decimation_method
+    from ....mesh.decimate import decimate_ladder
     from ..lod.group import resolve_coarsen_dims, resolve_lod_ladder
 
     # Fail-fast pre-write gate, part two: the ARRAYS, run BEFORE any decimation
@@ -1281,28 +1282,27 @@ def add_mesh_substitutive_lod_wrapper_impl(
         else None
     )
 
-    method = resolve_decimation_method(
-        spec["method"], n_vertices, spatial_ndim=len(spatial_dims)
+    targets = [
+        n_vertices // (compression_factor**power)
+        for power in range(levels, 0, -1)
+        if n_vertices // (compression_factor**power) >= 4
+    ]
+    candidates = decimate_ladder(
+        vert_arr,
+        faces_arr.reshape(-1, 3).astype(np.uint32),
+        target_vertices=targets,
+        method=spec["method"],
+        normals=normals if normals is not None else None,
+        # Normals live in their own 3D FRAME, not necessarily the coarsening axes.
+        normal_dims=tuple(normal_dims) if normal_dims is not None else None,
+        colors=per_vertex_colors,
+        scalars=per_vertex_scalars,
+        spatial_dims=spatial_dims,
     )
+
     coarse: List[Any] = []
     previous = 0
-    for power in range(levels, 0, -1):
-        target = n_vertices // (compression_factor**power)
-        if target < 4:
-            continue
-        level = decimate(
-            vert_arr,
-            faces_arr.reshape(-1, 3).astype(np.uint32),
-            target_vertices=target,
-            method=method,
-            normals=normals if normals is not None else None,
-            # The normal FRAME, which is not the coarsening axes — a grid may merge
-            # over any number of dims while a normal always lives in exactly three.
-            normal_dims=tuple(normal_dims) if normal_dims is not None else None,
-            colors=per_vertex_colors,
-            scalars=per_vertex_scalars,
-            spatial_dims=spatial_dims,
-        )
+    for level in candidates:
         count = int(level.vertices.shape[0])
         # Strictly between the previous (coarser) level and the original, or it
         # adds nothing: a duplicate would still be handed its own halving of
@@ -1564,10 +1564,10 @@ def _add_mesh_partition(
     """
     from ....mesh.split import duplication_factor, face_centroids, split_mesh_by_faces
     from ..partition import (
-        median_bsp_partition,
-        midpoint_bsp_partition,
+        bsp_leaf_parts,
+        persist_pruned_bsp_tree,
         resolve_partition_spec,
-        sah_bsp_partition,
+        spatial_bsp_tree,
         warn_if_oversized_single_part,
     )
 
@@ -1610,12 +1610,8 @@ def _add_mesh_partition(
 
     faces2d = faces_arr.reshape(-1, 3)
     centroids = face_centroids(vert_arr, faces2d)
-    if rule == "sah":
-        face_parts = sah_bsp_partition(centroids, max_elements)
-    elif rule == "midpoint":
-        face_parts = midpoint_bsp_partition(centroids, max_elements)
-    else:
-        face_parts = median_bsp_partition(centroids, max_elements)
+    tree = spatial_bsp_tree(centroids, max_elements, rule=rule)
+    face_parts = bsp_leaf_parts(tree)
 
     warn_if_oversized_single_part(
         len(face_parts),
@@ -1683,6 +1679,8 @@ def _add_mesh_partition(
             partition=False,
             **leaf_attrs,
         )
+    # Unlike lines, split_mesh_by_faces returns one written part per BSP leaf.
+    persist_pruned_bsp_tree(wrapper, tree.to_serializable(), range(len(parts)))
 
     # Union of the parts' bounds == the whole input's bounds, computed straight
     # from the source rather than round-tripped through the children's attrs.

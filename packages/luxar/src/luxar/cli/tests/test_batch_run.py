@@ -258,6 +258,7 @@ def _plan(
     src: Path,
     out: Path,
     *,
+    tiling: str = "uniform",
     axes_list: "list[str] | None" = None,
     timepoints_slice: "str | None" = None,
     channels_slice: "str | None" = None,
@@ -266,7 +267,7 @@ def _plan(
     denoise_kwargs: "dict[str, object] | None" = None,
     **fit_kwargs: object,
 ):
-    """Plan a uniform batch over a (T, Z, Y, X) store — one tile by default.
+    """Plan a batch over a (T, Z, Y, X) store — one uniform tile by default.
 
     ``axes_list`` defaults to the explicit ``t,z,y,x`` labels; pass ``None``
     explicitly via ``axes_list=[]`` — or rely on the store's own ``axes`` attr —
@@ -287,7 +288,7 @@ def _plan(
     return plan_batch(
         input_path=src,
         output_dir=out,
-        tiling="uniform",
+        tiling=tiling,
         tile_size=tile_size,
         tile_overlap=tile_overlap,
         axes_list=(_TZYX if axes_list is None else (axes_list or None)),
@@ -299,6 +300,124 @@ def _plan(
         content=ContentKnobs(),
         merge=MergeConfig(),
     )
+
+
+@pytest.mark.parametrize(
+    ("fit_kwargs", "denoise_kwargs", "expected_flag"),
+    [
+        ({"progressive": True}, None, "--progressive"),
+        ({}, {"denoise": True}, "--denoise"),
+    ],
+)
+def test_batch_plan_rejects_unsupported_content_fit_before_discovery(
+    tmp_path: Path,
+    fit_kwargs: dict[str, object],
+    denoise_kwargs: "dict[str, object] | None",
+    expected_flag: str,
+) -> None:
+    """Content workers must not receive fit flags they silently ignore."""
+    with pytest.raises(
+        typer.BadParameter,
+        match=rf"--tiling content.*{expected_flag}.*not supported",
+    ):
+        _plan(
+            tmp_path / "missing.zarr",
+            tmp_path / "out",
+            tiling="content",
+            denoise_kwargs=denoise_kwargs,
+            **fit_kwargs,
+        )
+
+
+def test_batch_plan_allows_preprocessed_content_denoising(tmp_path: Path) -> None:
+    """Preprocess mode retargets content workers to the denoised store."""
+    from luxar.cli.gsplat_ops.batch.planning import (
+        ContentKnobs,
+        DenoiseConfig,
+        FitConfig,
+        MergeConfig,
+        plan_batch,
+    )
+
+    src = tmp_path / "movie.zarr"
+    _make_timelapse_zarr(src)
+    out = tmp_path / "out"
+    result = plan_batch(
+        input_path=src,
+        output_dir=out,
+        tiling="content",
+        tile_size=None,
+        tile_overlap=8,
+        axes_list=_TZYX,
+        array_key=None,
+        timepoints_slice=None,
+        channels_slice=None,
+        fit=FitConfig(),
+        denoise=DenoiseConfig(denoise=True, preprocess=True),
+        content=ContentKnobs(
+            k_star_ref=60000,
+            n_features_ref=5000,
+            cell=4,
+            min_leaf=8,
+            max_leaf=16,
+        ),
+        merge=MergeConfig(),
+    )
+
+    assert result.manifest.denoise_mode == "preprocess"
+    assert result.manifest.denoised_zarr_path == str(out.resolve() / "denoised.zarr")
+    assert "denoise" not in result.manifest.fit_args
+
+
+@pytest.mark.parametrize(
+    ("extra_args", "expected_flag"),
+    [
+        (["--denoise"], "--denoise"),
+        (["--progressive"], "--progressive"),
+        (["--downscale", "2"], "--downscale"),
+    ],
+)
+def test_content_worker_warns_on_unsupported_fit_flags(
+    tmp_path: Path,
+    extra_args: list[str],
+    expected_flag: str,
+) -> None:
+    """A direct content worker names every fit option it will ignore."""
+    from luxar.gsplats.planner import FitPlan, PlanBox
+
+    src = tmp_path / "vol.zarr"
+    _make_zarr(src)
+    plan = tmp_path / "plan.json"
+    FitPlan(
+        volume_shape=[48, 48, 48],
+        boxes=[PlanBox(box=[0, 48, 0, 48, 0, 48], n_features=0, budget=0)],
+        overlap=0,
+        feature_method="peaks",
+        min_leaf=48,
+        max_leaf=48,
+    ).to_json(plan)
+    output = tmp_path / "box.gsplats.zarr"
+
+    result = runner.invoke(
+        app_gsplat,
+        [
+            "fit",
+            str(src),
+            str(output),
+            "--tiling",
+            "content",
+            "--plan",
+            str(plan),
+            "--plan-box",
+            "0",
+            *extra_args,
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert expected_flag in result.output
+    assert "not supported" in result.output.lower()
+    assert Path(f"{output}.empty").exists()
 
 
 def test_batch_plan_resolves_one_global_floor_level(tmp_path: Path) -> None:
@@ -335,6 +454,99 @@ def test_batch_plan_resolves_one_global_floor_level(tmp_path: Path) -> None:
     assert len(manifest.jobs) == 4
     assert len(levels) == 1
     assert float(levels.pop()) == pytest.approx(expected, rel=1e-6)
+
+
+def test_batch_plan_resolves_one_global_normalization_range(tmp_path: Path) -> None:
+    """Every timepoint gets one raw-input range resolved across the run."""
+    from luxar.gsplats.batch.fit_command import build_task_fit_argv
+
+    src = tmp_path / "movie.zarr"
+    full = _make_timelapse_zarr(src)
+    manifest = _plan(src, tmp_path / "out", floor="none").manifest
+    expected = (float(full.min()), float(full.max()))
+
+    assert manifest.norm_range == pytest.approx(expected)
+    assert manifest.fit_args["norm_range"] == f"{expected[0]:.17g},{expected[1]:.17g}"
+    ranges = set()
+    for job in manifest.jobs:
+        argv = build_task_fit_argv(manifest, job, tmp_path / "t.gsplats.zarr", argv0=[])
+        ranges.add(argv[argv.index("--norm-range") + 1])
+    assert ranges == {manifest.fit_args["norm_range"]}
+
+
+def test_batch_denoise_does_not_pin_a_raw_sampled_normalization_range(
+    tmp_path: Path,
+) -> None:
+    """Denoising tasks resolve ranges from the data each task fits."""
+    src = tmp_path / "movie.zarr"
+    _make_timelapse_zarr(src)
+
+    manifest = _plan(
+        src,
+        tmp_path / "out",
+        floor="none",
+        denoise_kwargs={"denoise": True, "denoise_h": 0.04},
+    ).manifest
+
+    assert manifest.norm_range is None
+    assert "norm_range" not in manifest.fit_args
+
+
+def test_batch_declines_a_degenerate_shared_normalization_range(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from luxar.cli.gsplat_ops.batch import planning
+
+    sample = np.full(64, 50.0, np.float32)
+    monkeypatch.setattr(
+        planning, "_sample_batch_slices", lambda *args, **kwargs: [(0, 0, sample)]
+    )
+    assert planning.resolve_batch_norm_range(tmp_path / "unused.zarr", 0.0) is None
+
+
+def test_batch_plan_preserves_an_explicit_config_normalization_range(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A deliberate YAML range already is global and must not be re-measured."""
+    from luxar.cli.gsplat_ops.batch import planning
+
+    src = tmp_path / "movie.zarr"
+    _make_timelapse_zarr(src)
+    config = tmp_path / "fit.yaml"
+    config.write_text("norm_range: [2.5, 90.0]\nfloor: none\n")
+
+    def _no_sample(*args, **kwargs):  # pragma: no cover - must not run
+        raise AssertionError("concrete floor + range need no voxel sampling")
+
+    monkeypatch.setattr(planning, "_sample_batch_slices", _no_sample)
+    manifest = _plan(
+        src, tmp_path / "out", floor=None, config=config, preset="standard"
+    ).manifest
+
+    assert manifest.norm_range == pytest.approx((2.5, 90.0))
+    assert manifest.fit_args["norm_range"] == "2.5,90"
+
+
+def test_batch_denoise_preserves_an_explicit_config_normalization_range(
+    tmp_path: Path,
+) -> None:
+    """A configured range remains an explicit override under denoising."""
+    src = tmp_path / "movie.zarr"
+    _make_timelapse_zarr(src)
+    config = tmp_path / "fit.yaml"
+    config.write_text("norm_range: [2.5, 90.0]\nfloor: none\n")
+
+    manifest = _plan(
+        src,
+        tmp_path / "out",
+        floor=None,
+        config=config,
+        preset="standard",
+        denoise_kwargs={"denoise": True, "denoise_h": 0.04},
+    ).manifest
+
+    assert manifest.norm_range == pytest.approx((2.5, 90.0))
+    assert manifest.fit_args["norm_range"] == "2.5,90"
 
 
 @pytest.mark.parametrize(
@@ -731,7 +943,7 @@ def test_run_bad_floor_spec_is_a_clean_cli_error(tmp_path: Path) -> None:
     assert "floor" in res.output.lower()
 
 
-def test_manifest_predating_floor_level_loads_and_keeps_its_spec(
+def test_manifest_predating_shared_normalization_loads_and_keeps_its_specs(
     tmp_path: Path,
 ) -> None:
     """A resumed pre-#1174 manifest behaves exactly as it was planned.
@@ -755,15 +967,29 @@ def test_manifest_predating_floor_level_loads_and_keeps_its_spec(
     save_manifest(manifest, out)
     data = json.loads((out / "manifest.json").read_text())
     data.pop("floor_level")
+    data.pop("norm_range")
+    data["fit_args"].pop("norm_range")
     (out / "manifest.json").write_text(json.dumps(data))
 
     loaded = load_manifest(out)
     assert loaded.floor_level is None
+    assert loaded.norm_range is None
     assert loaded.fit_args["floor"] == "auto"
     argv = build_task_fit_argv(
         loaded, loaded.jobs[0], tmp_path / "t.gsplats.zarr", argv0=[]
     )
     assert argv[argv.index("--floor") + 1] == "auto"
+    assert "--norm-range" not in argv
+
+
+def test_manifest_round_trips_normalization_range_as_a_tuple(tmp_path: Path) -> None:
+    from luxar.gsplats.batch.manifest import BatchManifest, load_manifest, save_manifest
+
+    save_manifest(BatchManifest(norm_range=(2.5, 90.0)), tmp_path)
+
+    loaded = load_manifest(tmp_path)
+    assert loaded.norm_range == (2.5, 90.0)
+    assert isinstance(loaded.norm_range, tuple)
 
 
 def test_effective_floor_spec_reads_the_config_chain(tmp_path: Path) -> None:

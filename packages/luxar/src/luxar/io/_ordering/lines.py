@@ -10,11 +10,14 @@ from __future__ import annotations
 from typing import Literal, Optional
 
 import numpy as np
+from numpy.typing import NDArray
 
 from luxar.core import Dimension
 
 from .bounds import (
     _BARRIER_BOUND_EPS,
+    _normalise_coord_slack,
+    _normalise_scalar_slack,
     _normalise_slice_dims,
     _store_outward_f32_array,
 )
@@ -273,6 +276,8 @@ def compute_vertex_chunk_bounds(
     vertices: np.ndarray,
     chunk_size: int,
     slice_dims: Optional[list[int]] = None,
+    *,
+    coord_slack: Optional[NDArray[np.float64]] = None,
 ) -> np.ndarray:
     """Compute chunk bounding boxes for vertices (no radius/width expansion).
 
@@ -282,10 +287,14 @@ def compute_vertex_chunk_bounds(
     :func:`_store_outward_f32_array`), so a stored bound is never tighter than
     the footprint at any coordinate magnitude.
 
-    KNOWN SLACK: that holds for the AUTHORED vertices. Under the default AUTO
-    encoding the vertices are stored as per-axis uint16 fixed point, so a DECODED
-    vertex can sit up to half a quantum (``extent/131070``) outside its chunk's
-    bound on a non-gridded axis — see the note on
+    QUANTISATION SLACK (``coord_slack``): that holds for the vertices AS HANDED
+    IN. Under the default AUTO encoding the vertices are stored as per-axis
+    uint16 fixed point, so a DECODED vertex can sit up to half a quantum
+    (``extent/131070``) outside a bound derived from the authored one on a
+    non-gridded axis. ``coord_slack`` is that displacement, per axis, added
+    outward on EVERY dimension — including on top of ``_BARRIER_BOUND_EPS`` on a
+    barrier axis. The compiler supplies it from the encoder's own predicate; a
+    direct caller that omits it gets bounds for the authored vertices only. See
     :func:`~luxar.io._ordering.points.compute_chunk_bounds_points`.
 
     Args:
@@ -295,6 +304,9 @@ def compute_vertex_chunk_bounds(
             float-boundary epsilon only — the reader's per-dimension tolerance
             owns the query reach). An index outside ``[0, D)`` raises
             ``ValueError`` (see :func:`_normalise_slice_dims`).
+        coord_slack: Per-axis outward pad, shape ``(D,)``, covering how far the
+            store can move a vertex from the value passed here. Default None ⇒
+            zero on every axis. Validated by :func:`_normalise_coord_slack`.
 
     Returns:
         chunk_bounds: Bounding boxes, shape (num_chunks, D, 2)
@@ -302,6 +314,7 @@ def compute_vertex_chunk_bounds(
     n_vertices, n_dims = vertices.shape
     num_chunks = (n_vertices + chunk_size - 1) // chunk_size
     discrete_dims = _normalise_slice_dims(slice_dims, n_dims)
+    slack = _normalise_coord_slack(coord_slack, n_dims)
 
     chunk_bounds = np.zeros((num_chunks, n_dims, 2), dtype=np.float32)
 
@@ -328,7 +341,9 @@ def compute_vertex_chunk_bounds(
 
         # Spatial dims keep their exact min/max; the outward store only ever
         # moves a bound by the one ULP the cast itself would have swallowed.
-        lo32, hi32 = _store_outward_f32_array(mins, maxs)
+        # The quantisation displacement is added first, in float64: the outward
+        # store cannot recover a pad float32 arithmetic already rounded away.
+        lo32, hi32 = _store_outward_f32_array(mins - slack, maxs + slack)
         chunk_bounds[chunk_idx, :, 0] = lo32
         chunk_bounds[chunk_idx, :, 1] = hi32
 
@@ -341,6 +356,9 @@ def compute_segment_chunk_bounds(
     widths: np.ndarray,
     chunk_size: int,
     slice_dims: Optional[list[int]] = None,
+    *,
+    coord_slack: Optional[NDArray[np.float64]] = None,
+    scalar_slack: Optional[float] = None,
 ) -> np.ndarray:
     """Compute chunk bounding boxes for segments (includes line width).
 
@@ -349,14 +367,29 @@ def compute_segment_chunk_bounds(
 
     The width interval is accumulated in float64 and narrowed to the float32
     store with OUTWARD rounding (see :func:`_store_outward_f32_array`), so a
-    stored bound is never tighter than the footprint at any coordinate
-    magnitude — not only where a small width happens to survive float32
-    arithmetic and a round-to-nearest store.
+    stored bound is never tighter than the footprint of the AUTHORED widths at
+    any coordinate magnitude — not only where a small width happens to survive
+    float32 arithmetic and a round-to-nearest store.
 
-    KNOWN SLACK: that holds for the AUTHORED vertices. Under the default AUTO
-    encoding the vertices are stored as per-axis uint16 fixed point, so a DECODED
-    endpoint can sit up to half a quantum (``extent/131070``) outside its chunk's
-    bound on a non-gridded axis — see the note on
+    SCALAR QUANTISATION SLACK (``scalar_slack``): ``widths`` is itself a
+    POSITIVE_SCALAR and may decode larger than the authored value. This single
+    per-array pad is added to the width on SPATIAL dimensions only; barrier
+    dimensions still receive no footprint expansion. The compiler supplies it
+    from
+    :meth:`~luxar.encoding.encoder.ArrayEncoder.positive_scalar_round_trip_slack`;
+    a direct caller that omits it gets authored-width bounds.
+
+    QUANTISATION SLACK (``coord_slack``): that holds for the vertices AS HANDED
+    IN. Under the default AUTO encoding the vertices are stored as per-axis
+    uint16 fixed point, so a DECODED endpoint can sit up to half a quantum
+    (``extent/131070``) outside a bound derived from the authored one on a
+    non-gridded axis. ``coord_slack`` is that displacement, per axis, added
+    outward on EVERY dimension — on top of the width on a spatial axis and on
+    top of ``_BARRIER_BOUND_EPS`` on a barrier axis. The compiler supplies it
+    from the encoder's own predicate (the SAME vector it gives
+    :func:`compute_vertex_chunk_bounds`: both builders are in D-space over the
+    same vertices array); a direct caller that omits it gets bounds for the
+    authored vertices only. See
     :func:`~luxar.io._ordering.points.compute_chunk_bounds_points`.
 
     IMPORTANT: widths must be a full (V,) array. Broadcast widths should be
@@ -371,6 +404,12 @@ def compute_segment_chunk_bounds(
             float-boundary epsilon only — the reader's per-dimension tolerance
             owns the query reach). An index outside ``[0, D)`` raises
             ``ValueError`` (see :func:`_normalise_slice_dims`).
+        coord_slack: Per-axis outward pad, shape ``(D,)``, covering how far the
+            store can move a vertex from the value passed here. Default None ⇒
+            zero on every axis. Validated by :func:`_normalise_coord_slack`.
+        scalar_slack: Outward pad covering how far the stored width can exceed
+            the authored width. Applied on spatial dimensions only; overflow
+            produces conservative infinite spatial bounds.
 
     Returns:
         chunk_bounds: Bounding boxes, shape (num_chunks, D, 2)
@@ -379,6 +418,8 @@ def compute_segment_chunk_bounds(
     S = segments.shape[0]
     num_chunks = (S + chunk_size - 1) // chunk_size
     discrete_dims = _normalise_slice_dims(slice_dims, D)
+    slack = _normalise_coord_slack(coord_slack, D)
+    footprint_slack = _normalise_scalar_slack(scalar_slack)
 
     chunk_bounds = np.zeros((num_chunks, D, 2), dtype=np.float32)
 
@@ -395,7 +436,9 @@ def compute_segment_chunk_bounds(
         p2 = vertices[chunk_segs[:, 1]]
         w1 = widths[chunk_segs[:, 0]].astype(np.float64, copy=False)
         w2 = widths[chunk_segs[:, 1]].astype(np.float64, copy=False)
-        max_w = np.maximum(w1, w2)  # (n,) conservative bound per segment
+        # Overflow to +inf only widens the bound, so it is conservative.
+        with np.errstate(over="ignore"):
+            max_w = np.maximum(w1, w2) + footprint_slack
 
         # Reduce per DIMENSION, not with a single ``min(axis=0)``: numpy's
         # outer-axis reduce over a 3-or-4-element inner row is several times
@@ -418,7 +461,8 @@ def compute_segment_chunk_bounds(
                 mins[d] = min((c1 - max_w).min(), (c2 - max_w).min())
                 maxs[d] = max((c1 + max_w).max(), (c2 + max_w).max())
 
-        lo32, hi32 = _store_outward_f32_array(mins, maxs)
+        # Quantisation displacement on every dim, in float64, before the store.
+        lo32, hi32 = _store_outward_f32_array(mins - slack, maxs + slack)
         chunk_bounds[chunk_idx, :, 0] = lo32
         chunk_bounds[chunk_idx, :, 1] = hi32
 

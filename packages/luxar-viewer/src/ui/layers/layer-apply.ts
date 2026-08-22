@@ -38,6 +38,7 @@ import {
   composeAttrs,
   collectAncestorNodes,
   collectDataDescendants,
+  getEffectiveAttrs,
   type ComposableAttrs,
   type EffectiveAttrs,
 } from '../../data/attrs-composer';
@@ -630,7 +631,7 @@ export class LayerApplyEngine {
   }
 
   /**
-   * Push the three mesh shading values (§6.2) to the layer's mesh leaves.
+   * Push the mesh shading values (§6.2) to the layer's mesh leaves.
    *
    * Deliberately NOT routed through {@link applyComposed}, which is what every other
    * control here uses, because these values **do not compose along the ancestry**:
@@ -641,7 +642,7 @@ export class LayerApplyEngine {
    * It still has to FAN OUT like `applyComposed` does, though. A mesh layer is no
    * longer always a leaf: `add_mesh(partition=…)` writes a kind=partition wrapper and
    * the panel presents that wrapper as one `mesh` layer, so `layer.path` resolves to a
-   * `THREE.Group` with no material of its own. Writing only there left all three
+   * `THREE.Group` with no material of its own. Writing only there left all mesh appearance
    * sliders visible and completely inert on a partitioned surface. A non-mesh leaf
    * needs no extra gate — it simply has no `updateAmbient`, so the optional chaining
    * below is the type check.
@@ -661,6 +662,8 @@ export class LayerApplyEngine {
       applied = true;
       mat.updateAmbient?.(layer.ambient);
       mat.updateShadeExponent?.(layer.shadeExponent);
+      mat.updateSpecular?.(layer.specular);
+      mat.updateShininess?.(layer.shininess);
       mat.updateAlphaCutoff?.(layer.alphaCutoff);
       if (syncMeshPickAppearance(obj as THREE.Mesh, { alphaCutoff: layer.alphaCutoff })) {
         pickDirty = true;
@@ -700,13 +703,18 @@ export class LayerApplyEngine {
 
     let colormapInEffect = false;
     let anyMaterialReached = false;
-    const tex = layer.colormap ? getColormapTexture(layer.colormap) : null;
     for (const leaf of leaves) {
       const obj = this.getMesh(leaf.path);
       if (!obj) continue;
       const mat = this.getLeafMaterial(obj);
       if (!mat || !mat.updateColormapTexture) continue;
       anyMaterialReached = true;
+      const tex = layer.colormap
+        ? getColormapTexture(
+            layer.colormap,
+            getEffectiveAttrs(sceneGraph, leaf.path).customLutBytes
+          )
+        : null;
       if (layer.colormap && tex) {
         // C1 fail-closed guard: enabling USE_COLORMAP requires real
         // scalar data behind the geometry (the `userData.hasScalars`

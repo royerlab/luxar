@@ -8,7 +8,7 @@ canopy, staggered per tree so maturity rolls across the field in waves) and a
 frost). Press play on either axis and the viewer animates a growth time-lapse
 or a cycling year. All four Luxar geometry types share the frame:
 
-- **Mesh** — an fBm heightfield terrain, shaded by the viewer's headlight,
+- **Mesh** — an fBm heightfield terrain, shaded by the viewer's offset key,
   with per-season vertex colours (snow in winter). The forest floor has
   actual depth instead of a flat line grid.
 - **Lines** — the trees: indexed line networks (joints and branch points
@@ -97,7 +97,13 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, DimensionsConfig, ViewerConfig
-from luxar.demos import cache_computed, launch_viewer, parse_demo_flags, parse_int_arg
+from luxar.demos import (
+    add_demo_caption,
+    cache_computed,
+    launch_viewer,
+    parse_demo_flags,
+    parse_int_arg,
+)
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -1726,6 +1732,7 @@ def _forest_dimensions() -> Dimensions:
 
 def _viewer_config() -> ViewerConfig:
     return ViewerConfig(
+        cinematic_mode=True,
         # ACES explicitly — the house default; the luminous accents +
         # emissive foliage mix is exactly what its filmic rolloff is for.
         tone_mapping="ACES",
@@ -1822,12 +1829,10 @@ def _add_overlays(scene: Any) -> None:
         anchor="center-right",
         opacity=0.9,
     )
-    scene.add_text(
-        "keys 1/2 select season/growth · [ ] step · play animates · hover a trunk",
-        position=(0.98, 0.97),
-        font_size=0.013,
-        anchor="bottom-right",
-        color="rgba(200,200,200,0.45)",
+    add_demo_caption(
+        scene,
+        "keys 1/2 select season/growth • [ ] step • play animates • hover a trunk",
+        DEMO_META.get("citation"),
     )
 
 

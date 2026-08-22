@@ -52,6 +52,10 @@ DEMO_META = {
     },
     "caches": ["huri"],
     "outputs": ["ppi_flow_field_full"],
+    "citation": {
+        "short": "Luck et al. 2020",
+        "doi": "10.1038/s41586-020-2188-x",
+    },
 }
 
 import argparse
@@ -68,7 +72,7 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, UIConfig, ViewerConfig
-from luxar.demos import launch_viewer, require_module
+from luxar.demos import add_demo_caption, launch_viewer, require_module
 from luxar.demos._graph_common import (
     compute_communities as louvain_communities,
 )
@@ -1056,29 +1060,34 @@ def write_scene(
     )
 
     with asection("Writing Luxar PPI flow scene"):
+        # float() the grid bounds: they come out of numpy as float32, which
+        # zarr cannot JSON-serialise, so the scene aborted right after the
+        # compiler opened -- leaving a 4 KB store holding nothing but
+        # zarr.json ("Object of type float32 is not JSON serializable").
         dims = Dimensions(
             [
                 Dimension(
                     "x",
                     unit="flow-UMAP",
-                    range=(flow.grid_min[0], flow.grid_max[0]),
+                    range=(float(flow.grid_min[0]), float(flow.grid_max[0])),
                     display=True,
                 ),
                 Dimension(
                     "y",
                     unit="flow-UMAP",
-                    range=(flow.grid_min[1], flow.grid_max[1]),
+                    range=(float(flow.grid_min[1]), float(flow.grid_max[1])),
                     display=True,
                 ),
                 Dimension(
                     "z",
                     unit="flow-UMAP",
-                    range=(flow.grid_min[2], flow.grid_max[2]),
+                    range=(float(flow.grid_min[2]), float(flow.grid_max[2])),
                     display=True,
                 ),
             ]
         )
         viewer_config = ViewerConfig(
+            cinematic_mode=True,
             camera=CameraConfig(
                 position=camera_position,
                 target=tuple(float(v) for v in center),
@@ -1104,7 +1113,11 @@ def write_scene(
         )
 
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims, viewer_config=viewer_config)
+            scene = compiler.create_scene(
+                dimensions=dims,
+                viewer_config=viewer_config,
+                citation=DEMO_META["citation"],
+            )
 
             scene.add_points(
                 "Proteins (community color, PageRank radius)",
@@ -1200,14 +1213,12 @@ def write_scene(
                 anchor="center-right",
                 opacity=0.92,
             )
-            scene.add_text(
-                f"{len(nodes):,} proteins · {len(edges):,} HuRI interactions · "
-                f"{streamline_data.streamline_count:,} streamlines · "
-                f"{preset.grid_size}³ field · {preset.name} preset",
-                position=(0.98, 0.97),
-                font_size=0.0125,
-                anchor="bottom-right",
-                color="rgba(220,220,220,0.52)",
+            add_demo_caption(
+                scene,
+                f"{len(nodes):,} proteins • {len(edges):,} HuRI interactions • "
+                f"{streamline_data.streamline_count:,} streamlines • "
+                f"{preset.grid_size}³ field • {preset.name} preset",
+                DEMO_META.get("citation"),
             )
 
         aprint(f"  ✓ Scene written to {output_path}")

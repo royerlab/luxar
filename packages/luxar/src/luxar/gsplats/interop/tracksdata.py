@@ -31,26 +31,12 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from luxar.gsplats import GSplatData
+from luxar.gsplats.utils.trils import unpack_tril
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tracksdata.graph import BaseGraph
 
 __all__ = ["splat_mask_and_bbox", "gsplats_to_tracksdata_graph"]
-
-
-def _unpack_tril(v: np.ndarray, d: int) -> np.ndarray:
-    """Unpack row-major packed lower-triangular vectors to ``(N, d, d)`` matrices.
-
-    Equivalent to :func:`luxar.gsplats.utils.trils.unpack_tril`, inlined here so
-    this interop module stays importable with only NumPy + GSplatData (importing
-    the ``gsplats.utils`` package eagerly pulls in torch via its device helpers,
-    which this lightweight bridge should not require).
-    """
-    n = v.shape[0]
-    out = np.zeros((n, d, d), dtype=v.dtype)
-    rows, cols = np.tril_indices(d)
-    out[:, rows, cols] = v
-    return out
 
 
 def splat_mask_and_bbox(
@@ -185,7 +171,7 @@ def gsplats_to_tracksdata_graph(
 
     from luxar.gsplats.utils.alpha import effective_amplitudes
 
-    cholesky = _unpack_tril(np.asarray(gsplats.cholesky_factors, dtype=np.float64), d)
+    cholesky = unpack_tril(np.asarray(gsplats.cholesky_factors, dtype=np.float64), d)
     centers = np.asarray(gsplats.centers, dtype=np.float64)
     # Alpha-effective amplitude (A·α when RGBA colors carry per-splat opacity):
     # every blending mode scales a splat's rendered contribution by α, so the

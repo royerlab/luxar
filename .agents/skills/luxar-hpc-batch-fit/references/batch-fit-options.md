@@ -23,7 +23,11 @@ box plan is scanned from a temporal **max-projection** over up to `--plan-sample
 evenly-spaced timepoints (covers signal at ANY t); `--plan-timepoint N` pins one
 timepoint instead. Tuning: `--saturation-exponent` (0.44), `--saturation-cap`,
 `--feature-threshold`, `--feature-metric` (peaks/edges/intensity), `--cell` (16),
-`--target-features`, `--min-leaf` (256), `--max-leaf` (512).
+`--target-features`, `--min-leaf` (256), `--max-leaf` (512). Content-box workers do
+not implement on-the-fly denoising or progressive fitting, so batch planning rejects
+those combinations instead of emitting tasks that silently ignore them. `batch-fit
+submit --preprocess` is supported: it denoises to a store first, then points every
+content-box worker at that store.
 
 ## Shared fit params
 `--preset` (standard), `--config PATH`, `--seeds`, `--iters`/`-n`, `--progressive`,
@@ -53,6 +57,14 @@ recorded in the manifest (`floor_level`), and handed as a concrete number to eve
 `(t, c)` task and every tile/box. It is deliberately *not* re-estimated per
 timepoint or per tile: that would be a time-varying pedestal, i.e. brightness
 flicker across the merged partition.
+
+Without denoising, the plan likewise records one sampled raw-input normalization
+range (`norm_range`) and forwards it to every task, keeping normalized optimizer
+thresholds consistent across timepoints, channels, and spatial partitions.
+Denoising runs leave that sampled range unset so each task resolves on the data it
+fits: denoise-corrected input for an on-the-fly uniform tile, or the denoised store in
+`preprocess` mode (including content boxes). A deliberately configured range remains
+an intentional override.
 
 That one level is the **minimum** of the levels resolved on a bounded set of at
 most 16 evenly spaced `(t, c)` slices spanning the store's **full** extent: up to 4

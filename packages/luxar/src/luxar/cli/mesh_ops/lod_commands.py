@@ -1078,7 +1078,7 @@ def lod_command(
         help=(
             "Decimation method, one of "
             f"{', '.join(sorted(MESH_SUBSTITUTIVE_METHODS))}. 'auto' resolves to "
-            "'qem' through 300 vertices and 'cluster' above that. Named "
+            "'qem' through 10,000 vertices and 'cluster' above that. Named "
             "`--subst-method` to match `gsplat lod`, where "
             "it selects the substitutive (level-replacing) reduction — though the "
             "algorithms differ: these decimate a surface, those reduce a Gaussian "

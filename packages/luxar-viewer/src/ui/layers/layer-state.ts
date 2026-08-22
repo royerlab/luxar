@@ -6,7 +6,7 @@
  */
 
 import type { SceneNode } from '../../data/data-loader-types';
-import { getEffectiveAttrs } from '../../data/attrs-composer';
+import { collectDataDescendants, getEffectiveAttrs } from '../../data/attrs-composer';
 import type { BlendingMode } from '../../types/blending';
 import type { GeometryTypeName, NodeKind } from '../../types/format-contract';
 import { defaultBlendingMode, isGeometryType } from '../../types/geometry-capabilities';
@@ -153,8 +153,9 @@ function deriveColormapFromDescendants(node: SceneNode): string | undefined {
 }
 
 /**
- * A numeric mesh shading attr (`ambient` / `shade_exponent` / `alpha_cutoff`) read
- * from `node`, else from the first descendant that carries one.
+ * A numeric mesh appearance attr (`ambient` / `shade_exponent` / `alpha_cutoff` /
+ * `specular` / `shininess`) read from `node`, else from the first descendant that
+ * carries one.
  *
  * Same shape and same reason as {@link deriveColormapFromDescendants}: these are
  * NOT compositing attrs on the Python side, so `add_mesh(partition=…, ambient=…)`
@@ -198,8 +199,8 @@ function deriveMeshAttrFromDescendants(node: SceneNode, attr: string): number | 
  *   which windows to gain 16.7 / offset −12 and renders as saturated BLUE.
  *   So direct colour starts at the identity window.
  */
-function initialDisplayRange(node: SceneNode): [number, number] {
-  if (!usesColormap(node)) return [0, 1];
+function initialDisplayRange(node: SceneNode, scalarWindow: boolean): [number, number] {
+  if (!scalarWindow) return [0, 1];
   const scalarRange = (node.attrs.scalar_data_range || node.attrs.amplitude_data_range) as
     [number, number] | undefined;
   return scalarRange ?? deriveScalarRangeFromDescendants(node) ?? [0, 1];
@@ -236,20 +237,24 @@ export interface LayerInfo {
   /** Absorption coefficient κ (≥ 0; only meaningful in volumetric mode) */
   absorption: number;
   /**
-   * Mesh shade floor (0–1) — the §6.2 headlight's `ambient`. Only meaningful on a
+   * Mesh shade floor (0–1) — the §6.2 wrapped-diffuse `ambient`. Only meaningful on a
    * mesh layer, where it is what keeps a silhouette readable rather than black; `1.0`
-   * collapses the shade term and reproduces the other three types' emissive look.
+   * removes the diffuse gradient; specular remains independently controlled.
    */
   ambient: number;
   /**
-   * Mesh headlight falloff exponent (> 0) — the §6.2 `shade_exponent`. `1.0` is the
-   * plain linear wrap. Mesh-only, like the two around it.
+   * Mesh wrapped-diffuse falloff exponent (> 0) — the §6.2 `shade_exponent`. `1.0` is the
+   * plain linear wrap. Mesh-only, like the three around it.
    */
   shadeExponent: number;
+  /** Mesh additive specular strength (0–1). */
+  specular: number;
+  /** Mesh specular highlight exponent (> 0). */
+  shininess: number;
   /**
    * Mesh `opaque`-mode cutout threshold (0–1) — the §6.2 `alpha_cutoff`.
    *
-   * Only meaningful in `opaque`, which is a NARROWER condition than the other two
+   * Only meaningful in `opaque`, which is a NARROWER condition than the other four
    * (they apply in every mesh mode), so the panel gates its slider on the mode as well
    * as the type — the same shape as absorption's volumetric gate.
    */
@@ -430,33 +435,41 @@ export class LayerStateManager {
       if (isLayerType) {
         const name = node.path.split('/').pop() || node.path;
 
-        // The window the layer starts at. Colormapped layers window a scalar
-        // (from this node or, for a composite kind=lod / kind=partition group,
-        // its finest descendant leaf); direct-colour layers window authored RGB
-        // and so start at the identity [0, 1] — see `initialDisplayRange`.
         const ampRange = node.attrs.amplitude_data_range as [number, number] | undefined;
         const scalarRange = node.attrs.scalar_data_range as [number, number] | undefined;
-        const dataRange = initialDisplayRange(node);
 
-        // Colormap support — groups inherit no colormap, but they do apply
-        // a chosen colormap to every data descendant that can accept one.
+        // Colormap support — gsplats inherit palettes directly; points / lines /
+        // mesh inherit one only when they have scalars. A group inherits only
+        // when at least one descendant can consume the palette.
         // Gsplats only support a colormap when they actually have scalar
         // data (`has_scalars`) or an authored `colormap`; a bare gsplats
         // node with no scalars must NOT advertise colormap support, or
         // the UI offers a no-op colormap dropdown.
-        // kind=lod / kind=partition groups are composite containers; the
-        // colormap applies to descendants via composition just like a
-        // plain group.
-        // The wrapper's own attr, else the (uniform) palette its descendants
-        // carry — `scalarWindow` below is descendant-aware, and a `colormap`
-        // that isn't would misreport an actively colormapped partition/lod
-        // layer as "(direct colors)" in the dropdown and hide it from the
-        // legend.
+        const groupCanUseInheritedColormap =
+          node.type === 'group' &&
+          collectDataDescendants(node).some(
+            (descendant) => descendant.type === 'gsplats' || !!descendant.attrs.has_scalars
+          );
+        const canUseInheritedColormap =
+          groupCanUseInheritedColormap || node.type === 'gsplats' || !!node.attrs.has_scalars;
+        const inheritedColormap = canUseInheritedColormap
+          ? getEffectiveAttrs(root, node.path).colormap
+          : undefined;
         const colormap =
-          (node.attrs.colormap as string | undefined) || deriveColormapFromDescendants(node);
-        const supportsColormap = node.type === 'group' || !!node.attrs.has_scalars || !!colormap;
+          (node.attrs.colormap as string | undefined) ||
+          deriveColormapFromDescendants(node) ||
+          inheritedColormap;
+        const scalarWindow = !!colormap || usesColormap(node);
+        const supportsColormap =
+          groupCanUseInheritedColormap || !!node.attrs.has_scalars || !!colormap;
         const colormapScalarRange =
           scalarRange || ampRange || deriveScalarRangeFromDescendants(node);
+
+        // The window the layer starts at. Colormapped layers window a scalar
+        // (from this node or, for a composite kind=lod / kind=partition group,
+        // its finest descendant leaf); direct-colour layers window authored RGB
+        // and so start at the identity [0, 1] — see `initialDisplayRange`.
+        const dataRange = initialDisplayRange(node, scalarWindow);
 
         // Initialize display range from existing intensity/offset if present,
         // otherwise default to full data range
@@ -489,7 +502,7 @@ export class LayerStateManager {
         // colormap currently wins) so `setColormapWindow` can restore these
         // bounds when the colormap is switched off.
         const colorDataRange = deriveColorRangeFromDescendants(node);
-        const colorRange = usesColormap(node) ? undefined : colorDataRange;
+        const colorRange = scalarWindow ? undefined : colorDataRange;
         const dataMin = Math.min(dataRange[0], displayMin, colorRange?.[0] ?? Infinity);
         const dataMax = Math.max(dataRange[1], displayMax, colorRange?.[1] ?? -Infinity);
 
@@ -578,6 +591,8 @@ export class LayerStateManager {
           ambient: deriveMeshAttrFromDescendants(node, 'ambient') ?? MESH_DEFAULTS.ambient,
           shadeExponent:
             deriveMeshAttrFromDescendants(node, 'shade_exponent') ?? MESH_DEFAULTS.shadeExponent,
+          specular: deriveMeshAttrFromDescendants(node, 'specular') ?? MESH_DEFAULTS.specular,
+          shininess: deriveMeshAttrFromDescendants(node, 'shininess') ?? MESH_DEFAULTS.shininess,
           alphaCutoff:
             deriveMeshAttrFromDescendants(node, 'alpha_cutoff') ?? MESH_DEFAULTS.alphaCutoff,
           displayMin,
@@ -625,7 +640,7 @@ export class LayerStateManager {
           supportsColormap,
           scalarDataRange: colormapScalarRange,
           colorDataRange,
-          scalarWindow: usesColormap(node),
+          scalarWindow,
           lodGroupChildCount,
           partCount,
           nestedLodGroupPaths,

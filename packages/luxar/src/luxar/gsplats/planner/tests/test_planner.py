@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import math
 import sys
 import textwrap
@@ -423,6 +424,39 @@ class TestDefaultWorkerCmdBuilder:
         # Nothing to forward -> no flag (the worker resolves its own config).
         b2 = _default_worker_cmd_builder("in.zarr", "plan.json")
         assert "--floor" not in [str(c) for c in b2(0, tmp_path / "box0.gsplats.zarr")]
+
+    def test_forwards_shared_raw_normalization_range(self, tmp_path):
+        from luxar.gsplats.planner.fit_planned_parallel import (
+            _default_worker_cmd_builder,
+        )
+
+        builder = _default_worker_cmd_builder(
+            "in.zarr", "plan.json", norm_range=(10.25, 999.5)
+        )
+        cmd = builder(0, tmp_path / "box0.gsplats.zarr")
+        assert cmd[cmd.index("--norm-range") + 1] == "10.25,999.5"
+
+    def test_declines_a_degenerate_shared_normalization_range(self):
+        from luxar.gsplats.planner.fit_planned import _ensure_planned_norm_range
+
+        fit_kwargs = {"norm_percentile": 1.0}
+        volume = np.full((32, 32, 32), 100.0, np.float32)
+        volume.flat[:100] = 200.0
+
+        _ensure_planned_norm_range(volume, fit_kwargs, False)
+
+        assert fit_kwargs.get("norm_range") is None
+
+    def test_future_denoising_boxes_do_not_inherit_a_raw_shared_range(self):
+        """Keep the #1813 forward guard from sharing a raw range."""
+        from luxar.gsplats.planner.fit_planned import _ensure_planned_norm_range
+
+        fit_kwargs = {"_denoise_h": 0.04, "_denoise_params": {}}
+        volume = np.linspace(10.0, 110.0, 32**3, dtype=np.float32).reshape(32, 32, 32)
+
+        _ensure_planned_norm_range(volume, fit_kwargs, False)
+
+        assert "norm_range" not in fit_kwargs
 
     def test_forwards_the_runs_fit_configuration(self, tmp_path):
         # `truncate:` is settable ONLY through a YAML --config (no preset sets it,
@@ -1140,6 +1174,101 @@ class TestFitPlannedParallel:
         )
         assert d.exists() and any(d.iterdir())
 
+    def test_missing_reference_is_announced_even_when_quiet(self, tmp_path, capsys):
+        merged = fit_planned_parallel(
+            _toy_plan(n_boxes=1),
+            jobs=1,
+            tmp_dir=tmp_path / "boxes",
+            worker_cmd_builder=_fake_box_builder(5),
+            verbose=False,
+        )
+
+        assert "psnr_db" not in merged.stats
+        notice = capsys.readouterr().out
+        assert "No merged quality metrics" in notice
+        assert "reference volume" in notice
+        assert "gsplat compare" in notice
+
+    def test_flat_merge_with_reference_records_quality(self, tmp_path):
+        plan = _toy_plan(n_boxes=1)
+        volume = _corner_blobs(tuple(plan.volume_shape), n=3, corner=12)
+        merged = fit_planned_parallel(
+            plan,
+            jobs=1,
+            tmp_dir=tmp_path / "boxes",
+            worker_cmd_builder=_fake_box_builder(5),
+            volume=volume,
+            device="cpu",
+            verbose=False,
+        )
+
+        quality_keys = {
+            "mse",
+            "psnr_db",
+            "ssim",
+            "foreground_psnr_db",
+            "foreground_threshold",
+            "foreground_fraction",
+        }
+        assert quality_keys <= merged.stats.keys()
+        assert all(np.isfinite(merged.stats[key]) for key in quality_keys)
+
+    def test_mismatched_reference_shape_is_announced(self, tmp_path, capsys):
+        plan = _toy_plan(n_boxes=1)
+        merged = fit_planned_parallel(
+            plan,
+            jobs=1,
+            tmp_dir=tmp_path / "boxes",
+            worker_cmd_builder=_fake_box_builder(5),
+            volume=np.zeros((8, 8, 8), np.float32),
+            verbose=False,
+        )
+
+        assert "psnr_db" not in merged.stats
+        notice = capsys.readouterr().out
+        assert "No merged quality metrics" in notice
+        assert "does not match the plan grid" in notice
+        assert str(tuple(plan.volume_shape)) in notice
+
+    def test_partition_skip_is_announced_even_with_a_reference(self, tmp_path, capsys):
+        plan = _toy_plan(n_boxes=2)
+        fit_planned_parallel(
+            plan,
+            jobs=2,
+            tmp_dir=tmp_path / "boxes",
+            worker_cmd_builder=_fake_box_builder(5),
+            volume=np.zeros(plan.volume_shape, np.float32),
+            partition=True,
+            verbose=False,
+        )
+
+        notice = capsys.readouterr().out
+        assert "No merged quality metrics" in notice
+        assert "kind=partition" in notice
+        assert "gsplat flatten" in notice
+
+    def test_single_region_partition_notice_does_not_require_flatten(
+        self, tmp_path, capsys
+    ):
+        from luxar.gsplats.tree import GSplatPartition
+
+        plan = _toy_plan(n_boxes=1)
+        result = fit_planned_parallel(
+            plan,
+            jobs=1,
+            tmp_dir=tmp_path / "boxes",
+            worker_cmd_builder=_fake_box_builder(5),
+            volume=np.zeros(plan.volume_shape, np.float32),
+            partition=True,
+            verbose=False,
+        )
+
+        assert not isinstance(result, GSplatPartition)
+        notice = capsys.readouterr().out
+        assert "No merged quality metrics" in notice
+        assert "gsplat compare" in notice
+        assert "gsplat flatten" not in notice
+
 
 # ── The fit's truncation radius survives the planned path (#1637) ──
 #
@@ -1207,11 +1336,75 @@ class TestPlannedFitTruncationRadius:
         assert merged.stats["n_boxes_fit"] >= 1
         assert merged.stats["overlap"] == plan.overlap
         assert list(merged.stats["volume_shape"]) == list(V.shape)
+        quality_keys = {
+            "mse",
+            "psnr_db",
+            "ssim",
+            "foreground_psnr_db",
+            "foreground_threshold",
+            "foreground_fraction",
+        }
+        assert quality_keys <= merged.stats.keys()
+        assert merged.stats["psnr_db"] > 10
+        assert 0 < merged.stats["ssim"] <= 1
+        assert np.isfinite(merged.stats["foreground_psnr_db"])
         # Wall clock for the fit loop, so it is bounded by the wall clock of the
         # whole call — the SUM of the boxes' own fit times need not be.
         assert 0 < merged.stats["time_seconds"] <= wall
 
-    def test_partition_parts_keep_the_configured_radius_and_box_stats(self, tmp_path):
+    def test_quality_budget_skip_is_announced_and_stamps_nothing(
+        self, monkeypatch, capsys
+    ):
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.planner import fit_planned as fit_planned_fn
+
+        fit_planned_module = __import__(
+            "luxar.gsplats.planner.fit_planned", fromlist=["_fit_one_box"]
+        )
+        volume = np.ones((16, 16, 16), np.float32)
+        plan = _toy_plan(n_boxes=1)
+
+        def _fake_fit(*args, **kwargs):
+            return GSplatData(
+                centers=np.array([[8.0, 8.0, 8.0]], np.float32),
+                amplitudes=np.ones((1,), np.float32),
+                cholesky_factors=np.array([[1, 0, 1, 0, 0, 1]], np.float32),
+            )
+
+        monkeypatch.setattr(fit_planned_module, "_fit_one_box", _fake_fit)
+        monkeypatch.setenv("LUXAR_TILED_QUALITY_MAX_GB", "0")
+        merged = fit_planned_fn(volume, plan, verbose=False)
+
+        assert "psnr_db" not in merged.stats
+        assert "foreground_psnr_db" not in merged.stats
+        notice = capsys.readouterr().out
+        assert "Merged quality metrics skipped" in notice
+        assert "LUXAR_TILED_QUALITY_MAX_GB" in notice
+
+    def test_rejects_a_volume_from_a_different_plan_grid(self, monkeypatch):
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.planner import fit_planned as fit_planned_fn
+
+        fit_planned_module = importlib.import_module(
+            "luxar.gsplats.planner.fit_planned"
+        )
+        plan = _toy_plan(n_boxes=1)
+
+        def _fake_fit(*args, **kwargs):
+            return GSplatData(
+                centers=np.array([[4.0, 4.0, 4.0]], np.float32),
+                amplitudes=np.ones((1,), np.float32),
+                cholesky_factors=np.array([[1, 0, 1, 0, 0, 1]], np.float32),
+            )
+
+        monkeypatch.setattr(fit_planned_module, "_fit_one_box", _fake_fit)
+
+        with pytest.raises(ValueError, match="does not match the plan grid"):
+            fit_planned_fn(np.zeros((8, 8, 8), np.float32), plan)
+
+    def test_partition_parts_keep_the_configured_radius_and_box_stats(
+        self, tmp_path, capsys
+    ):
         """Sequential ``partition=True``: every part leaf carries ``truncate``."""
         from luxar.gsplats._data.filtering import _REGION_SCOPED_STATS_KEYS
         from luxar.gsplats.io.load_gsplats import load_gsplat_node
@@ -1220,6 +1413,10 @@ class TestPlannedFitTruncationRadius:
 
         V, plan = self._tiny_volume_and_plan()
         node = fit_planned(V, plan, partition=True, truncate=3.5, **_FAST_FIT)
+        notice = capsys.readouterr().out
+        assert "No merged quality metrics" in notice
+        assert "gsplat flatten" in notice
+        assert "gsplat compare" in notice
 
         leaves = _leaf_nodes(node)
         assert leaves
@@ -1306,6 +1503,37 @@ class TestPlannedFitTruncationRadius:
         assert merged.n_splats == 3
         # Summing the boxes would give 3000s; wall clock here is a fraction of one.
         assert merged.stats["time_seconds"] < 60.0
+
+    def test_planned_fit_resolves_one_range_for_every_box(self, monkeypatch):
+        import importlib
+
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.utils.trils import tril_size
+
+        fp = importlib.import_module("luxar.gsplats.planner.fit_planned")
+        seen = []
+
+        def _capture(volume, box, overlap, cap, **fit_kwargs):
+            seen.append(fit_kwargs["norm_range"])
+            return GSplatData(
+                centers=np.array([[1.0, 1.0, 1.0]], np.float32),
+                amplitudes=np.ones((1,), np.float32),
+                cholesky_factors=np.zeros((1, tril_size(3)), np.float32),
+            )
+
+        monkeypatch.setattr(fp, "_fit_one_box", _capture)
+        plan = _toy_plan(n_boxes=3)
+        volume = np.linspace(
+            10.0,
+            110.0,
+            num=int(np.prod(plan.volume_shape)),
+            dtype=np.float32,
+        ).reshape(plan.volume_shape)
+
+        fp.fit_planned(volume, plan)
+
+        assert len(seen) == 3
+        assert all(item == pytest.approx((10.0, 110.0)) for item in seen)
 
     def test_core_mask_rescopes_the_box_stats(self):
         """The kept subset's stats must describe IT, not the padded crop."""

@@ -50,8 +50,8 @@ export interface LuxarMaterial extends THREE.Material {
    */
   updateAbsorption?(v: number): void;
   /**
-   * The three §6.2 mesh shading knobs: the headlight's shade floor, its falloff
-   * exponent, and the `opaque`-mode cutout threshold.
+   * The §6.2 mesh appearance knobs: wrapped diffuse, specular, and the
+   * `opaque`-mode cutout threshold.
    *
    * Optional, and — unlike `updateAbsorption` above — genuinely so rather than for
    * legacy reasons: **only the mesh materials implement them**, because mesh is the
@@ -63,6 +63,8 @@ export interface LuxarMaterial extends THREE.Material {
    */
   updateAmbient?(v: number): void;
   updateShadeExponent?(v: number): void;
+  updateSpecular?(v: number): void;
+  updateShininess?(v: number): void;
   updateAlphaCutoff?(v: number): void;
   updateColormapTexture?(texture: THREE.DataTexture | null): void;
   updateScalarRange?(min: number, max: number): void;

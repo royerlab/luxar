@@ -100,6 +100,7 @@ def calibrate(
     from luxar.gsplats.fit_gsplats import fit_gaussian_splats
     from luxar.gsplats.metrics import compute_psnr, compute_ssim
     from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
+    from luxar.gsplats.utils.device import resolve_torch_device
 
     if V.ndim < 2:
         raise ValueError(f"V must be at least 2D, got shape {V.shape}")
@@ -179,19 +180,7 @@ def calibrate(
     # (original volume + masks) out of the per-K loop — they were re-copied to the
     # GPU and never freed every iteration (M9). The held∩foreground mask and the
     # train (unmasked) mask are also invariant, so build them once.
-    device_pref = fit_kwargs.get("device")
-    render_device = device_pref
-    if render_device in (None, "auto"):
-        render_device = (
-            "cuda"
-            if torch.cuda.is_available()
-            else (
-                "mps"
-                if getattr(torch.backends, "mps", None)
-                and torch.backends.mps.is_available()
-                else "cpu"
-            )
-        )
+    render_device = str(resolve_torch_device(fit_kwargs.get("device")))
     ref_dev = V_orig_t.to(render_device)
     mask_dev = mask_t.to(render_device)
     fg_dev = fg_t.to(render_device)

@@ -23,6 +23,13 @@ from typing import TYPE_CHECKING, Any, Callable, Optional, Tuple
 
 import numpy as np
 
+from luxar.gsplats.merged_quality import (
+    announce_unscored_merge,
+    announce_unscored_partition_merge,
+    resolve_merged_reference,
+    stamp_merged_quality,
+)
+
 from .spec import FitPlan, PlanBox
 
 if TYPE_CHECKING:
@@ -45,6 +52,78 @@ ProgressCallback = Callable[[int, int, str], None]
 #: The CLI content path imports this constant so its default and the library's
 #: cannot drift apart.
 CONTENT_CULL_RETENTION: float = 0.999
+
+
+def _require_plan_volume_shape(volume: np.ndarray, plan: FitPlan) -> None:
+    """Reject a volume whose voxel grid differs from the plan's boxes."""
+    plan_shape = tuple(int(size) for size in plan.volume_shape)
+    if volume.shape != plan_shape:
+        raise ValueError(
+            f"volume shape {volume.shape} does not match the plan grid {plan_shape}"
+        )
+
+
+def _score_planned_flat_merge(
+    merged: "GSplatData",
+    volume: Any,
+    *,
+    plan_shape: tuple[int, ...],
+    device: Optional[str],
+    verbose: bool,
+) -> None:
+    """Score a flat planned merge, or explain why no score can be recorded."""
+    reference, unscored_reason = resolve_merged_reference(
+        volume,
+        plan_shape,
+        grid_name="plan grid",
+        missing_reason="this parallel merge was not given a reference volume",
+    )
+    if unscored_reason is not None:
+        announce_unscored_merge(unscored_reason)
+        return
+
+    # Forward guard for content-box denoising: once boxes can denoise, this
+    # raw reference retains acquisition noise while the merge reconstructs the
+    # denoised crops, so the score is intentionally not comparable to a
+    # whole-volume denoise scored against its own smoothed reference.
+    stamp_merged_quality(
+        merged,
+        reference,
+        volume_shape=plan_shape,
+        grid_scale=None,
+        device=device,
+        verbose=verbose,
+    )
+
+
+def _ensure_planned_norm_range(
+    volume: np.ndarray, fit_kwargs: dict[str, Any], verbose: bool
+) -> None:
+    """Resolve one raw-input range for today's non-denoising content fits."""
+    if fit_kwargs.get("norm_range") is not None:
+        return
+    # Forward guard for #1813: once content boxes can denoise, they must resolve
+    # their range from the denoised crop rather than inherit this raw range.
+    if fit_kwargs.get("_denoise_h") is not None:
+        return
+    from arbol import aprint
+
+    from luxar.gsplats.fitting.preprocessing import (
+        _norm_range_has_usable_span,
+        resolve_volume_norm_range,
+    )
+
+    norm_range = resolve_volume_norm_range(
+        volume, float(fit_kwargs.get("norm_percentile", 0.0)), verbose=verbose
+    )
+    if not _norm_range_has_usable_span(norm_range):
+        aprint(
+            f"Whole-volume normalization range [{norm_range[0]:.6g}, "
+            f"{norm_range[1]:.6g}] has no usable extent — boxes fall back to "
+            "their own scale."
+        )
+        return
+    fit_kwargs["norm_range"] = norm_range
 
 
 def _padded_bounds(
@@ -280,10 +359,12 @@ def fit_planned(
     boundaries. The CLI resolves it once against the whole volume before calling
     here (``luxar.cli.gsplat_ops.fitting.fit_utils.resolve_shared_floor``). What
     is shared is the floor ARGUMENT, not the input: every box is still handed its
-    own crop, and the subtraction is not bit-exact either, because the
-    normalization floor is clamped up to a crop's own minimum
-    (``image_min = max(level, min(crop))``) — so a box lying entirely above the
-    pedestal subtracts its own minimum instead.
+    own crop. The whole-volume ``norm_range`` below gives those crops the same
+    effective lower bound even when its low endpoint exceeds the resolved level.
+
+    ``fit_kwargs["norm_range"]`` should likewise describe the whole source volume
+    in raw input units. When omitted, this function resolves it once from
+    ``volume`` and forwards the same pair to every box.
 
     With ``partition=True`` (the CLI default) the per-box splats are kept as a
     ``kind=partition`` tree — one part per box (boxes are core-disjoint, so this
@@ -301,10 +382,12 @@ def fit_planned(
     V = np.asarray(volume, dtype=np.float32)
     if V.ndim != 3:
         raise ValueError(f"fit_planned expects a 3-D volume, got shape {V.shape}")
+    _require_plan_volume_shape(V, plan)
     pad = int(plan.overlap)
     fit_kwargs.setdefault("cull_retention", CONTENT_CULL_RETENTION)
     fit_kwargs.setdefault("verbose", False)
     fit_kwargs["device"] = device
+    _ensure_planned_norm_range(V, fit_kwargs, verbose)
 
     # Per-box saturation cap (from the calibration): the halo inflation must not
     # push the fit past the K the calibration measured as over-saturated.
@@ -334,7 +417,7 @@ def fit_planned(
             # stats reach the merge instead of being rebuilt away (#1637).
             regions.append(region)
             region_boxes.append(i)
-        if verbose:
+        if verbose and progress_callback is None:
             from arbol import aprint
 
             aprint(f"  box {i + 1}/{n}: kept {n_kept:,} splats")
@@ -347,7 +430,7 @@ def fit_planned(
         # One part per box — boxes are core-disjoint, so this is an exact
         # spatial partition (viewer frustum-culls per part). Returns a tree node.
         # ``recipe`` gives each part its own LOD ladder/group as it is assembled.
-        return GSplatData.partition_from_regions(
+        result = GSplatData.partition_from_regions(
             regions,
             recipe=recipe,
             recipe_params=recipe_params,
@@ -356,6 +439,8 @@ def fit_planned(
             bsp_tree=plan.bsp_tree,
             region_labels=region_boxes,
         )
+        announce_unscored_partition_merge(result)
+        return result
 
     # `concatenate` (what the uniform tiled path's `merge_tile_results` uses)
     # carries the boxes' shared truncation_radius through the merge — a manual
@@ -374,6 +459,13 @@ def fit_planned(
             # one key must not mean "summed fit time" here and "elapsed" there.
             "time_seconds": float(elapsed),
         }
+    )
+    _score_planned_flat_merge(
+        merged,
+        V,
+        plan_shape=tuple(int(s) for s in plan.volume_shape),
+        device=device,
+        verbose=verbose,
     )
     return merged
 

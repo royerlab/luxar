@@ -312,6 +312,30 @@ which end of a ladder renders, so consumers must agree on them):
   its true (tiny) visible area because the gate is on the content's raw
   thinness, not the clipped one.
 
+Both selectors size a child from its optional nD `lod_bounds` attribute when
+present:
+
+```json
+{"lod_bounds": {"min": [-1, -1, -1], "max": [1, 1, 1]}}
+```
+
+The arrays MUST be finite, ordered (`min[i] <= max[i]`), have the same length
+and axis order as `position_bounds`, and be contained within that complete
+bound. A bound that is not contained is rejected and the child falls back to
+`position_bounds`. This is a producer-chosen robust extent — for example
+percentile bounds that exclude a sparse tail — and affects only the selector
+metric. A robust bound MUST NOT make a node select a finer level than its
+complete `position_bounds`; the screen-area selector clamps the robust metric
+to the complete-bound metric to preserve that invariant. Frustum gating,
+eviction, root framing, clipping, and scene ranges
+continue to use the complete `position_bounds`, so excluded outliers remain
+part of the drawable geometry. A missing or malformed `lod_bounds` falls back
+to that child's `position_bounds`; producers SHOULD stamp every child in a
+ladder when they intend one consistent robust extent. Any operation that
+decimates, culls, or filters a child MUST recompute or remove its `lod_bounds`.
+Producer-side authoring policy is tracked in #1655. This optional metadata is
+backward-compatible and does not change the v3.4 format version.
+
 Under the legacy `selector: "coverage"`
 (older stores; never written for derived ladders since v3.4) the thresholds
 are diagonal-metric units in `[0, 4]`: the viewer compares them against the
@@ -383,8 +407,9 @@ bands, which confines misordering to the band rather than letting whole tiles
 swap; treat such a tree as a good approximation, not a guarantee.
 
 A partition may still omit `bsp_tree` — a pre-2026.7 store, a decomposition that
-is not axis-aligned, or a transform that could not carry the planes (see below).
-A viewer then falls back to a per-part centroid-distance heuristic, which is
+is not axis-aligned, or a transform that could not carry the planes (see below) —
+and a viewer may reject a stored tree that fails structural or split validation.
+The viewer then falls back to a per-part centroid-distance heuristic, which is
 *not* a valid painter's order: it flips discretely as the camera moves and shows
 as popping at the seams between parts.
 
@@ -482,8 +507,9 @@ ancestor-set modes.
 
 **`slice_dims` is read, not just recorded**: besides describing the compound
 ordering, the barrier (categorical) column indices it lists are the set
-`compute_chunk_bounds_gsplats` gave a tight epsilon pad instead of the
-`truncation_radius · σ` expansion — so the viewer's gsplats loader now CONSUMES it,
+`compute_chunk_bounds_gsplats` gave the fixed epsilon pad plus any encoder
+coordinate round-trip slack instead of the `truncation_radius · σ` expansion —
+so the viewer's gsplats loader now CONSUMES it,
 to classify each hidden dimension's chunk-fetch tolerance instead of inferring
 barrier-ness from the scene's `discrete` flags
 (`data/loaders/spatial-query/tolerance-computer.ts`). The on-disk format is
@@ -769,6 +795,11 @@ onto the source grid will not reproduce these numbers — divide the spacing bac
 out first. The metrics describe the fit, not the coordinate frame it was
 delivered in.
 
+On a node tree, a root `fitting/` score is a whole-tree claim: the additive sum
+of the finest surviving parts, after each part's post-fit cull, measured on that
+same fitter voxel grid. It does not describe the coarser content a viewer may
+select initially from a `levels` or `stream` per-part recipe.
+
 A metric that is mathematically undefined is **omitted, not written**: a volume
 with no foreground (a constant tile, a signal-free crop) has no
 `foreground_psnr_db`, and an exact reconstruction has no `psnr_db`. Writing them
@@ -799,29 +830,28 @@ store must apply both rules:
   outright. An operation that stamps its own record does so *after* the scrub, so
   a rewrite publishes the reduction it actually performed and no other.
 
-  **Known separate case, out of scope of this rule:** the LOD Q·e ladder stamps —
+  **Artifact-local measured stamps:** the LOD Q·e ladder stamps —
   `lod_stats.energy_fraction_cum` (a rung's prefix energy e(k)),
   `level_stats.reference_energy` (its weight w) and `level_stats.quality` (a
   level's measured Q against its group's finest). These are measured on the
   artifact's **own content** rather than against a source volume, so a coarse
-  level's stamps are statements about that coarse level and the argument above
-  does not reach them; the scene-authoring path builds every coarse child of a
-  `kind=lod` group through the same `at_substitutive` accessor and copies exactly
-  these numbers onto it. Deleting them is also not free downstream: `gsplat
-  annotate-quality` writes a leaf-local `reference_energy` only when none is
-  present, so removing w licenses it to fabricate a group-inconsistent one. A
-  reduction does make them stale, and the likely right answer is to **recompute**
-  them (cheap, O(N), no volume — what `annotate-quality` already does) rather than
-  to drop them; that needs its own design pass. Until then a tool that rewrites a
-  store should either leave them alone or re-run `annotate-quality` deliberately.
+  level's stamps are statements about that coarse level and a plain accessor keeps
+  them exactly as authored; the scene-authoring path builds every coarse child of
+  a `kind=lod` group through `at_substitutive` and copies those numbers onto it. A
+  content-changing rewrite, however, **recomputes** the counts, e(k), and the
+  group-consistent finest-content w from the rewritten artifact. It removes
+  stale Q rather than hiding its expensive Torch kNN measurement inside ordinary
+  filtering; `gsplat annotate-quality --with-quality` restores it explicitly.
   A `--refine l2|volume` level's `level_stats.refine_stats` (`mse_seed` /
-  `mse_refit`) belongs to the same known-separate case even though it *is* measured
-  against the source volume: it records the build step that produced that level
-  rather than the artifact's published quality, and a reduction wants it recomputed
-  for the same reason.
+  `mse_refit`) is source-volume measured and cannot be remeasured by a rewriter;
+  a reduction removes that nested block while keeping the descriptive `refine`
+  method.
 
   A geometry-only transform (scale / rotate / translate / center) **keeps** them:
-  the splat set is identical and only the frame moved. Note this is a weaker
+  the splat set is identical and only the frame moved. Dimensional embedding is
+  a widening rather than a geometry-only transform: it preserves dataset-level
+  source-volume metrics, but recomputes counts, e(k), and w in the promoted
+  dimensionality while removing stale Q and `refine_stats`. Note this is a weaker
   claim than the reproducibility paragraph above — that argument holds for a
   `voxel_size` fit because the spacing is *recorded*, whereas `gsplat transform
   --scale` records no factor and does not update `fitted_shape` / `source_shape`,
@@ -860,6 +890,75 @@ whole-volume bbox that excluded nothing keeps both, and a real crop loses both.
 Descriptive counters are never dropped by either rule — `iterations`,
 `best_iteration`, `converged`, `time_seconds`, `fitter_name` and `filtered` /
 `filter_criteria` describe the run or the edit, both of which happened.
+
+**What survives a rewrite: the authored appearance.** The rules above govern
+what a rewriting tool must *drop*; the mirror-image obligation is what it must
+*keep*. A rewriting command owns the **structure**, not the **look**: the
+builders construct fresh nodes that know nothing about the input, so unless the
+source root's authored compositing attrs are handed back to the writer, its own
+defaults take over — `blending_mode` disappears entirely and
+`opacity` / `absorption` / `gamma` / `intensity` / `offset` snap back to their
+identity, silently resetting whatever was tuned in the Layers panel. The key set
+is `AUTHORED_APPEARANCE_ATTRS` (`core/group/compositing.py`): the compositing
+attrs minus `transform` (a stored matrix is column-major and would be transposed
+a second time on the way back in), plus `colormap`. It is read with
+`gsplats/io/load_gsplats.read_authored_appearance` — directories and `.zip` /
+`.tar.gz` archives alike — and passed as `root_attrs=` to
+`write_gsplats_tree` / `GSplatData.save`, which seeds it at **lowest
+precedence** so the command's own structural attrs still win. The one attr
+refused on the way through is a `colormap` of `"custom"`: it names a sibling
+`colormap_lut` array the attrs-only read cannot carry, so the bare sentinel
+would dangle.
+
+With **several** inputs (`gsplat merge`) there is no single source root, so the
+carried value must be **agreed**: a key rides along only when every input that
+*has* an opinion on it agrees, and an input with no opinion casts no vote (at
+least one input must have one for the key to appear). On any disagreement the
+key is dropped and the command **says so**, naming the key, the differing values
+(each with the input it came from) and what lands on disk instead — the same
+unanimity rule as
+`agreed_normalization_stats`, but loud rather than silent, because appearance is
+hand-authored and a user who tuned two datasets has to be told which choice did
+not survive.
+
+"Having an opinion" is narrower than "carrying the key", and that is the
+load-bearing detail. The writer STAMPS identity values on every save —
+`opacity: 1.0` / `absorption: 1.0` / `gamma: 1.0` / `intensity: 1.0` /
+`offset: 0.0` / `layer: true`, plus `colormap: "gray"` on a colorless store —
+so a value **equal to the writer's manufactured default** counts as silence,
+exactly like an absent key (the values live in one place,
+`WRITER_STAMPED_APPEARANCE_DEFAULTS` in `core/group/compositing.py`, which is
+what both the writers and the vote read). The cost is stated plainly: nothing on
+disk distinguishes a deliberately authored `opacity: 1.0` from an untouched
+store, so a deliberate identity loses to a sibling's `0.75`. The alternative is
+worse — it is what the code did first: a tuned dataset merged with a freshly
+fitted one disagreed on **seven** keys, dropped all seven, and the writer then
+stamped its defaults back, which *is* the untouched input's value. Same result,
+plus seven warnings.
+
+`visible` is the one key where ABSENCE is itself a vote. The viewer treats a
+missing `visible` as visible, so an input without the key is positively saying
+"shown": `visible: false` is carried only when **every** input hides, and one
+hidden input plus one silent one is a disagreement rather than a unanimous hide.
+Without that exception a single hidden input opened the whole merged dataset
+hidden. `blending_mode` / `nd_transform` / `join` keep the plain no-vote rule,
+where absence genuinely means "no opinion".
+
+One key is additionally dropped because the merge itself invalidates it:
+`colormap`, whenever the merged output carries per-splat RGB that the inputs'
+palettes do not describe. Three predicates cover that: `--channel-colors`
+always bakes RGB, `GSplatData.concatenate` white-fills a colorless input to
+match a colored sibling, and a colored input with no authored palette is
+positively asking the viewer to use its per-splat RGB. The white-fill case
+happens on a plain merge and under `--as-dimension` too. The viewer makes an
+ancestor palette override per-splat RGB unconditionally, so a carried palette
+would render those splats through a scalar ramp. `colormap` is also refused
+outright when any input root declares the `"custom"` sentinel: that palette
+cannot be carried, and treating the input as having no opinion would hand the
+merged root a *sibling's* palette. `--as-dimension` does **not** invalidate
+`nd_transform`: the new axis is appended LAST, so every existing dimension keeps
+its name and its index and the new one simply has no entry — the identity
+default.
 
 ### Pipeline Group Attributes (Optional)
 
@@ -906,7 +1005,7 @@ fill differs, and the last column says so.
 | progressive fit | `stats`, stamped by `lift_normalization_stats` — the pedestal is removed once up front, so no individual pass records it | all four |
 | sequential tiled merge (`fit_tiled`), flat leaf or `kind=partition` | `_stamp_merge_normalization` on the merged `stats` / the ROOT node's `meta`, from the level the merge applied plus the bounds its tiles agree on | all four |
 | parallel tiled merge (`fit -j N`) | same stamp, but the merge applied no level itself: the tiles are reloaded WITH stats and the block is recovered from what they unanimously recorded | all four |
-| `--tiling content` | the one level `resolve_shared_floor` gave every box, stamped on the merged leaf's `stats` or the root node's `meta` — unless the boxes themselves recorded a level, which wins (they subtract `max(asked, their own minimum)`, so the two can differ) | `floor`, plus any bound the in-process boxes of a `--flat` fit agreed on |
+| `--tiling content` | the one level `resolve_shared_floor` gave every box, stamped on the merged leaf's `stats` or the root node's `meta` — unless the boxes themselves recorded a level, which wins (content boxes now share one `norm_range`, so their recorded bounds agree across boxes; a recorded floor can still exceed the planned level when the shared low endpoint does) | `floor`, plus any bound the in-process boxes of a `--flat` fit agreed on |
 | `batch-fit merge` (default `kind=partition`, and its K=1 bare leaf) | `manifest.floor_level`, the ONE level the plan pinned for every `(t, c)` task, folded into `pipeline_info` | `floor` only |
 
 Two paths deliberately write nothing rather than guess. `batch-fit merge` is
@@ -918,10 +1017,10 @@ all. An **absent** key means "this artifact does not know"; `floor: null`
 asserts that no pedestal was removed, so the two are never interchangeable.
 
 Where a writer records `image_min`, it records it in the **input volume's own
-units** and, when a floor was applied, equal to `floor`: `_normalize_data`
-assigns `image_min = max(resolved_floor, image_min)` and takes the applied level
-FROM it, so `image_min >= floor` always and they coincide whenever suppression
-ran. A tiled or progressive path subtracts the pedestal OUTSIDE the fitter and
+units** and, when a floor was applied, equal to `floor`: `_normalize_data` sets
+`image_min = max(resolved_floor, image_min)` and records that applied value as
+`floor`, so `image_min == floor` whenever suppression ran. #1616 makes the
+pre-clamp `image_min` shared across content and batch children. A tiled or progressive path subtracts the pedestal OUTSIDE the fitter and
 then fits with `floor="none"`, so it shifts its inner `image_min` / `image_max`
 back by the applied level before recording them — otherwise `image_min` would
 mean a post-subtraction minimum on one path and the applied level on another.

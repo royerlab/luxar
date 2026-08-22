@@ -144,20 +144,25 @@ DEMO_META = {
     # the software that loads it; the header keeps that citation where it belongs.
     "citation": {
         "short": "G. Buckley 2018 (scikit-image kidney)",
+        "ref": "G. Buckley 2018",
         "license": "CC0 1.0",
     },
 }
 
 import sys
-from pathlib import Path
 
 import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
+    DatasetUnavailable,
+    add_demo_caption,
     launch_viewer,
     load_dataset_gsplats,
+    load_local_fit_gsplats,
+    local_fit_path,
     parse_demo_flags,
     require_module,
     warn_if_no_cuda_gpu,
@@ -202,10 +207,11 @@ CHANNELS = [
     },
 ]
 
-# Cache directory
-CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_kidney"
-
-# Precomputed data configuration
+# Precomputed data configuration. A local refit is OUR artifact, not a copy of
+# the hosted one, so it lives in the demo's local-fit namespace
+# (~/.cache/luxar/<name>/local/, see `local_fit_path`). Writing it to
+# ~/.cache/luxar/<name>/<file> — the path the manifest fetch owns — got it
+# quarantined on the next launch for failing the pinned sha256 (#1618).
 _PRECOMPUTED_DEMO_NAME = "gsplats_kidney"
 _PRECOMPUTED_FILE_NAMES = [
     "kidney_ch0.gsplats.zarr.zip",
@@ -300,7 +306,8 @@ def fit_channel(volume, channel_name, cache_file, source_dtype=None):
     Returns:
         GSplatData with fitted 3D splats
     """
-    # Check cache
+    # Check this machine's own earlier fit (a partial set: the caller already
+    # tried the complete one).
     if cache_file.exists() and not RECOMPUTE:
         aprint(f"Loading cached fit for {channel_name}")
         try:
@@ -339,8 +346,8 @@ def fit_channel(volume, channel_name, cache_file, source_dtype=None):
     aprint(f"  Fitted {n_splats:,} splats")
 
     # Cache result in compressed zarr format
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    aprint(f"  Caching to {cache_file.name}")
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    aprint(f"  Caching to {cache_file}")
     result.save(
         cache_file,
         encoding_mode=EncodingMode.MEMORY,
@@ -359,7 +366,9 @@ def fit_all_channels(volumes, source_dtype=None):
 
         for i, (volume, ch_config) in enumerate(zip(volumes, CHANNELS)):
             ch_name = ch_config["name"]
-            cache_file = CACHE_DIR / f"kidney_ch{i}.gsplats.zarr.zip"
+            cache_file = local_fit_path(
+                _PRECOMPUTED_DEMO_NAME, _PRECOMPUTED_FILE_NAMES[i]
+            )
 
             with asection(f"Channel {i}: {ch_name} ({ch_config['stain']})"):
                 gsplats = fit_channel(
@@ -436,6 +445,7 @@ def create_luxar_scene(gsplats_list, output_path=None):
             scene = compiler.create_scene(
                 dimensions=dims,
                 citation=DEMO_META["citation"],
+                viewer_config=ViewerConfig(cinematic_mode=True),
             )
 
             scene.attrs["title"] = (
@@ -530,12 +540,8 @@ Navigation:
                 color="rgba(255,255,255,0.6)",
                 blend_mode="difference",
             )
-            scene.add_text(
-                "Fluorescence \u2022 Toggle channels",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+            add_demo_caption(
+                scene, "Fluorescence \u2022 Toggle channels", DEMO_META.get("citation")
             )
 
         aprint(f"Scene saved: {output_path}")
@@ -570,16 +576,27 @@ def main():
         return
 
     # Try the manifest-driven fetch (checksum-verified cache -> in-repo -> Zenodo)
-    gsplats_list = load_dataset_gsplats(
-        _PRECOMPUTED_DEMO_NAME,
-        _PRECOMPUTED_FILE_NAMES,
-        recompute=RECOMPUTE,
-    )
+    try:
+        gsplats_list = load_dataset_gsplats(
+            _PRECOMPUTED_DEMO_NAME,
+            _PRECOMPUTED_FILE_NAMES,
+            recompute=RECOMPUTE,
+        )
+    except DatasetUnavailable as exc:
+        aprint(f"Manifest fetch unavailable ({exc}).")
+        gsplats_list = None
+    if gsplats_list is None and not RECOMPUTE:
+        # A fit this machine built earlier, in its own namespace — checked
+        # BEFORE refitting, which is what makes the refit below one-time.
+        gsplats_list = load_local_fit_gsplats(
+            _PRECOMPUTED_DEMO_NAME, _PRECOMPUTED_FILE_NAMES
+        )
 
     volumes = None
 
     if gsplats_list is None:
-        # Recompute path: warn about GPU requirements, load data, fit
+        # Recompute path (or no data to be had): warn about GPU requirements,
+        # load data, fit, and cache the fits in the local-fit namespace.
         warn_if_no_cuda_gpu()
 
         # Load data

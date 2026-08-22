@@ -9,6 +9,7 @@ import numpy as np
 from ...typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 from .bounds import (
     _BARRIER_BOUND_EPS,
+    _normalise_coord_slack,
     _normalise_slice_dims,
     _store_outward_f32_array,
 )
@@ -65,6 +66,8 @@ def compute_chunk_bounds_gsplats(
     chunk_size: int,
     coverage_sigma: float = DEFAULT_TRUNCATION_RADIUS,
     slice_dims: Optional[Sequence[int]] = None,
+    *,
+    coord_slack: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """Compute chunk bounding boxes for GSplats (includes ellipsoidal extent).
 
@@ -81,15 +84,25 @@ def compute_chunk_bounds_gsplats(
     never tighter than the footprint at any coordinate magnitude — not only where
     a small σ happens to survive float32 arithmetic and a round-to-nearest store.
 
-    That guarantee is against the AUTHORED centers. Centers are themselves stored
-    as per-axis uint16 fixed point under the default AUTO encoding, so a decoded
-    center could in principle sit half a quantum outside its chunk's bound —
-    except that gsplats have a rail for exactly that:
-    ``_compiler/gsplat_assembly.py::_axis_center_offender`` escalates the centers
-    array to float32 when half an axis's grid step exceeds the per-splat marginal
-    σ for more than 0.1% of the splats, and a gridded (stacked time/channel) axis
-    is snapped to store exactly. Points and Lines have no equivalent rail — see
-    the note on :func:`~luxar.io._ordering.points.compute_chunk_bounds_points`.
+    ``coord_slack`` extends that guarantee to the DECODED centers. Under AUTO,
+    a non-gridded axis is stored as per-axis uint16 fixed point and can move by
+    half a quantum (``extent/131070``). The compiler asks the encoder for that
+    displacement using the centers' resolved mode and adds it on every axis:
+    on top of ``coverage_sigma·σ`` spatially, and on top of
+    ``_BARRIER_BOUND_EPS`` on a barrier axis. Exact paths answer zero/``None``
+    (a gridded time/channel axis, LUT encoding, or float32 escalation), so their
+    bounds remain unchanged. A direct caller that omits ``coord_slack`` gets
+    bounds for the authored centers only.
+
+    KNOWN GAP — THE DECODED CHOLESKY EXTENT IS NOT COVERED.
+    ``cholesky_factors`` is quantised in its own right (the diagonal uses
+    ``log_perchannel_u8`` under AUTO), and these bounds are built from the values
+    as handed in. A decoded diagonal can therefore produce a LARGER σ than the
+    one the ``coverage_sigma·σ`` pad was sized for, letting the rendered footprint
+    escape the stored bound. This is the extent half of the footprint:
+    ``coord_slack`` closes the center-coordinate half and does nothing for this
+    one, which needs the same encoder-reported round-trip treatment as decoded
+    point radii and line widths.
 
     Args:
         centers: Splat centers (already sorted), shape (N, d)
@@ -110,12 +123,15 @@ def compute_chunk_bounds_gsplats(
             Default None → expand all axes (historical behavior). An index
             outside ``[0, d)`` raises ``ValueError`` (see
             :func:`_normalise_slice_dims`).
+        coord_slack: Per-axis outward pad covering the center encoder's
+            round-trip displacement. Default None → zero on every axis.
 
     Returns:
         chunk_bounds: Bounding boxes, shape (num_chunks, d, 2)
     """
     n_splats, ndim = centers.shape
     discrete_dims = _normalise_slice_dims(slice_dims, ndim)
+    slack = _normalise_coord_slack(coord_slack, ndim)
     if n_splats == 0:
         return np.zeros((0, ndim, 2), dtype=np.float32)
     num_chunks = (n_splats + chunk_size - 1) // chunk_size
@@ -170,6 +186,9 @@ def compute_chunk_bounds_gsplats(
         for d in discrete_dims:
             mins[d] = chunk_centers[:, d].min() - _BARRIER_BOUND_EPS
             maxs[d] = chunk_centers[:, d].max() + _BARRIER_BOUND_EPS
+
+        mins -= slack
+        maxs += slack
 
         lo32, hi32 = _store_outward_f32_array(mins, maxs)
         chunk_bounds[chunk_idx, :, 0] = lo32

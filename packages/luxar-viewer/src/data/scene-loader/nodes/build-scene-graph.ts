@@ -62,6 +62,51 @@ function normalizeNodeExtendDims(node: SceneNode): void {
 }
 
 /**
+ * Load a node-authored custom colormap LUT without making scene loading depend
+ * on the optional sibling array being valid.
+ *
+ * The Python writer stores LUTs as uint8 arrays of shape [256, 3] or [256, 4],
+ * but tolerate other typed arrays so a malformed producer degrades to the same
+ * texture path instead of aborting the whole scene. A missing or unreadable LUT
+ * is likewise non-fatal: `getColormapTexture` owns the warning-backed viridis
+ * fallback for `colormap='custom'` without bytes.
+ */
+async function loadCustomColormapLut(
+  node: SceneNode,
+  loc: zarr.Location<zarr.Readable>
+): Promise<void> {
+  if ((node.attrs as ZarrNodeAttrs).colormap !== 'custom') return;
+
+  try {
+    const lutArr = await zarr.open(loc.resolve('colormap_lut'), { kind: 'array' });
+    const lutResult = await zarr.readArray(lutArr);
+    const data = lutResult.data;
+    let bytes: Uint8Array;
+    if (data instanceof Uint8Array) {
+      bytes = data;
+    } else if (data instanceof Int8Array || data instanceof Uint8ClampedArray) {
+      bytes = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+    } else {
+      // Float / int16 etc. — unexpected for a LUT but recover by copying the bytes view.
+      bytes = new Uint8Array((data as ArrayBufferView).buffer);
+    }
+    (node.attrs as ZarrNodeAttrs).customLutBytes = bytes;
+    log.info(
+      Modules.SCENE_LOADER,
+      `${node.path}: loaded custom colormap LUT (${bytes.length} bytes)`
+    );
+  } catch (e: unknown) {
+    // A producer may declare `colormap='custom'` without the sibling array.
+    // Keep loading the scene; the texture helper falls back to viridis and this
+    // warning preserves the diagnosis without turning appearance into I/O failure.
+    log.warning(
+      Modules.SCENE_LOADER,
+      `${node.path}: colormap='custom' but failed to load colormap_lut zarr array — falling back to viridis. ${e instanceof Error ? e.message : ''}`
+    );
+  }
+}
+
+/**
  * Build the scene graph structure rooted at `rootLoc`. The optional
  * `store` argument is the same store the location was opened from —
  * `enumerateStore` is called with it to get the contents listing.
@@ -102,6 +147,7 @@ export async function buildSceneGraph(
   // the node attrs directly. A scene root never carries the attr, so this is a
   // no-op there.
   normalizeNodeExtendDims(root);
+  await loadCustomColormapLut(root, rootLoc);
 
   // Build node map
   const nodeMap = new Map<string, SceneNode>();
@@ -172,42 +218,7 @@ export async function buildSceneGraph(
       children: [],
     };
 
-    // when a node's metadata declares colormap='custom', load its
-    // colormap_lut zarr array (if present) and attach the bytes to the
-    // node's attrs so NodeFactory can pass them into
-    // getColormapTexture('custom', lut). Without this step the viewer
-    // falls back to the viridis built-in (handled by getColormapTexture).
-    if (attrs && (attrs as ZarrNodeAttrs).colormap === 'custom') {
-      try {
-        const lutArr = await zarr.open(loc.resolve('colormap_lut'), { kind: 'array' });
-        const lutResult = await zarr.readArray(lutArr);
-        const data = lutResult.data;
-        // Promote whatever typed-array we got into a tightly-typed Uint8Array.
-        // The Python writer stores LUTs as uint8 of shape [256,3] or [256,4].
-        let bytes: Uint8Array;
-        if (data instanceof Uint8Array) {
-          bytes = data;
-        } else if (data instanceof Int8Array || data instanceof Uint8ClampedArray) {
-          bytes = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-        } else {
-          // Float / int16 etc. — unexpected for a LUT but recover by copying bytes view.
-          bytes = new Uint8Array((data as ArrayBufferView).buffer);
-        }
-        (node.attrs as ZarrNodeAttrs).customLutBytes = bytes;
-        log.info(
-          Modules.SCENE_LOADER,
-          `${entry.path}: loaded custom colormap LUT (${bytes.length} bytes)`
-        );
-      } catch (e: unknown) {
-        // colormap_lut may not exist if a node declared colormap='custom'
-        // by mistake. getColormapTexture will fall back to viridis with a
-        // warning. We don't fail the scene load.
-        log.warning(
-          Modules.SCENE_LOADER,
-          `${entry.path}: colormap='custom' but failed to load colormap_lut zarr array — falling back to viridis. ${e instanceof Error ? e.message : ''}`
-        );
-      }
-    }
+    await loadCustomColormapLut(node, loc);
 
     normalizeNodeExtendDims(node);
 

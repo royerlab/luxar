@@ -59,14 +59,15 @@ the topology underneath it, and two co-planar opaque triangles z-fight.
 
 from __future__ import annotations
 
-from typing import Any, Literal, NamedTuple, cast
+from typing import Any, Literal, NamedTuple, Sequence, cast
 
 import numpy as np
 from arbol import aprint
 from numpy.typing import NDArray
 
-# Worst-case 3-level K=4 open-annulus ladder: 300 vertices takes 1.83 s.
-QEM_AUTO_VERTEX_LIMIT = 300
+# Worst-case 3-level K=4 open-annulus ladder: 9,882 vertices takes 45.9 s.
+# Keep the automatic tier below the one-minute boundary.
+QEM_AUTO_VERTEX_LIMIT = 10_000
 DECIMATION_METHODS = frozenset({"cluster", "qem"})
 
 
@@ -388,6 +389,24 @@ def decimate(
     **kwargs: Any,
 ) -> DecimatedMesh:
     """Dispatch to the selected mesh decimator."""
+    return decimate_ladder(
+        vertices,
+        faces,
+        target_vertices=[target_vertices],
+        method=method,
+        **kwargs,
+    )[0]
+
+
+def decimate_ladder(
+    vertices: NDArray[np.float32],
+    faces: NDArray[np.uint32],
+    *,
+    target_vertices: Sequence[int],
+    method: str = "auto",
+    **kwargs: Any,
+) -> list[DecimatedMesh]:
+    """Dispatch a target sequence, sharing one collapse sequence for QEM."""
     spatial_dims = kwargs.get("spatial_dims")
     spatial_ndim = (
         len(spatial_dims) if spatial_dims is not None else min(3, vertices.shape[1])
@@ -396,12 +415,15 @@ def decimate(
         method, len(vertices), spatial_ndim=spatial_ndim
     )
     if resolved == "cluster":
-        return decimate_cluster(
-            vertices, faces, target_vertices=target_vertices, **kwargs
-        )
-    from .qem import decimate_qem
+        return [
+            decimate_cluster(vertices, faces, target_vertices=target, **kwargs)
+            for target in target_vertices
+        ]
+    from .qem import decimate_qem_ladder
 
-    return decimate_qem(vertices, faces, target_vertices=target_vertices, **kwargs)
+    return decimate_qem_ladder(
+        vertices, faces, target_vertices=target_vertices, **kwargs
+    )
 
 
 def _average_per_cluster(
@@ -573,5 +595,6 @@ __all__ = [
     "QEM_AUTO_VERTEX_LIMIT",
     "decimate",
     "decimate_cluster",
+    "decimate_ladder",
     "resolve_decimation_method",
 ]

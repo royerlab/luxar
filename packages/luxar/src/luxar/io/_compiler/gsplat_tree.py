@@ -38,6 +38,7 @@ import zarr
 
 from ...encoding import ArrayEncoder, EncodingMode
 from ...typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
+from .colormap import write_colormap_lut_if_needed
 from .context import DatasetCtx, OrderingCtx
 from .gsplat_assembly import (
     apply_gsplat_group_attrs,
@@ -125,6 +126,8 @@ def _write_single_splat_set(
     attrs: Optional[Dict[str, Any]] = None,
     scene_tone_mapping: Optional[str] = None,
     barrier_dims: Optional[Sequence[int]] = None,
+    inherited_colormap: Optional[str] = None,
+    warn_on_missing_tone_mapping: bool = True,
 ) -> Dict[str, Any]:
     """Order + write one splat set's arrays into ``group``; return metadata.
 
@@ -136,6 +139,11 @@ def _write_single_splat_set(
     ``None`` for a standalone file) is threaded into
     :func:`apply_gsplat_group_attrs` so a scene leaf written through this path
     gets the same colormap-LUT tone handling as the compiler's own writer.
+
+    ``inherited_colormap`` is the palette an in-flight ``kind=lod`` /
+    ``kind=partition`` ancestor authored — see
+    :func:`~luxar.io._compiler.gsplat_assembly.inherited_gsplat_colormap` for
+    why this path hands it down instead of walking the store.
     """
     # Shape normalization only: write_gsplat_leaf guarantees the whole leaf
     # already passed preflight_validate_leaf, so the O(N) value scans are
@@ -152,7 +160,7 @@ def _write_single_splat_set(
     truncation_radius = float(
         (attrs or {}).get("truncation_radius", sublod.truncation_radius)
     )
-    centers, amplitudes, cholesky, colors, ordering_data = (
+    centers, amplitudes, cholesky, colors, ordering_data, centers_encoding_plan = (
         apply_gsplat_spatial_ordering(
             centers,
             amplitudes,
@@ -164,6 +172,7 @@ def _write_single_splat_set(
             ordering_ctx,
             coverage_sigma=truncation_radius,
             barrier_dims=barrier_dims,
+            dataset_ctx=dataset_ctx,
         )
     )
     metadata = write_gsplat_arrays(
@@ -176,6 +185,7 @@ def _write_single_splat_set(
         n_dims,
         chol_uniform,
         ordering_data,
+        centers_encoding_plan,
         dataset_ctx,
     )
 
@@ -221,6 +231,8 @@ def _write_single_splat_set(
             store,
             scene_tone_mapping=scene_tone_mapping,
             lut_tone_mapping_warned=False,
+            inherited_colormap=inherited_colormap,
+            warn_on_missing_tone_mapping=warn_on_missing_tone_mapping,
         )
     return metadata
 
@@ -297,12 +309,17 @@ def write_gsplat_leaf(
     scene_tone_mapping: Optional[str] = None,
     barrier_dims: Optional[Sequence[int]] = None,
     preflighted: bool = False,
+    inherited_colormap: Optional[str] = None,
+    warn_on_missing_tone_mapping: bool = True,
 ) -> Dict[str, Any]:
     """Write a :class:`GSplatLeaf` (single set or additive ladder) into ``group``.
 
     ``preflighted=True`` promises the caller already ran
     :func:`preflight_validate_leaf` on this exact leaf (the scene compiler does,
     BEFORE creating ``group``) so the leaf is not value-scanned twice.
+
+    ``inherited_colormap`` is an in-flight ancestor's palette; see
+    :func:`~luxar.io._compiler.gsplat_assembly.inherited_gsplat_colormap`.
     """
     # Preflight: validate every sub-LOD before writing any additive_<i> group.
     if not preflighted:
@@ -319,6 +336,8 @@ def write_gsplat_leaf(
             attrs=attrs,
             scene_tone_mapping=scene_tone_mapping,
             barrier_dims=barrier_dims,
+            inherited_colormap=inherited_colormap,
+            warn_on_missing_tone_mapping=warn_on_missing_tone_mapping,
         )
 
     # Additive ladder → additive_<i>/ subgroups + aggregate parent attrs.
@@ -403,6 +422,8 @@ def write_gsplat_leaf(
         store,
         scene_tone_mapping=scene_tone_mapping,
         lut_tone_mapping_warned=False,
+        inherited_colormap=inherited_colormap,
+        warn_on_missing_tone_mapping=warn_on_missing_tone_mapping,
     )
     group.attrs["n_additive_sublods"] = len(sublods)
     return agg_meta
@@ -522,6 +543,42 @@ def _leaf_child_attrs(node: "GSplatNode") -> Dict[str, Any]:
     return _meta_to_node_attrs(node.meta)
 
 
+def _resolve_group_colormap(
+    group: zarr.Group,
+    attrs: Dict[str, Any],
+    scene_tone_mapping: Optional[str],
+    inherited_colormap: Optional[str],
+    warn_on_missing_tone_mapping: bool,
+) -> Optional[str]:
+    """Resolve a WRAPPER's own ``colormap`` and return what its children inherit.
+
+    A ``colormap`` on a ``kind=lod`` / ``kind=partition`` group (the
+    ``root_attrs`` channel is the only way one gets there) is resolved to a
+    sibling ``colormap_lut`` array exactly as a leaf's is inside
+    :func:`~luxar.io._compiler.gsplat_assembly.apply_gsplat_group_attrs`: an
+    ndarray LUT or a matplotlib/colorcet name would otherwise be written
+    verbatim into the group's attrs — unserializable, or unresolvable by the
+    viewer, which only knows the builtins. ``attrs`` is mutated in place (the
+    name becomes ``"custom"``); the LUT array lands on ``group`` immediately,
+    while the attrs themselves are still written after the children by the
+    caller.
+
+    The returned name rides DOWN the recursion so no descendant leaf
+    manufactures a ``"gray"`` that would shadow it (#1600) — this writer emits
+    a wrapper's attrs only AFTER its children, so there is nothing on disk for
+    the store walk to find.
+    """
+    if attrs.get("colormap") is not None:
+        write_colormap_lut_if_needed(
+            group,
+            attrs,
+            scene_tone_mapping,
+            False,
+            warn_on_missing_tone_mapping=warn_on_missing_tone_mapping,
+        )
+    return attrs.get("colormap") or inherited_colormap
+
+
 def write_gsplat_node(
     group: zarr.Group,
     node: "GSplatNode",
@@ -533,6 +590,8 @@ def write_gsplat_node(
     scene_tone_mapping: Optional[str] = None,
     barrier_dims: Optional[Sequence[int]] = None,
     under_partition: bool = False,
+    inherited_colormap: Optional[str] = None,
+    warn_on_missing_tone_mapping: bool = True,
 ) -> Dict[str, Any]:
     """Recursively write any :class:`GSplatNode` into ``group``.
 
@@ -550,6 +609,14 @@ def write_gsplat_node(
     tiling — see the partition branch). It selects which anchor the FALLBACK
     ``coverage_fraction`` derivation uses for a lod group (see the lod branch
     below); callers always leave it at the default.
+
+    ``inherited_colormap`` carries a WRAPPER-authored palette down the
+    recursion (the ``root_attrs`` channel is the only way one gets here). It
+    cannot be discovered from the store the way the scene compiler discovers
+    it, because this writer emits a wrapper's own attrs only AFTER its
+    children — see
+    :func:`~luxar.io._compiler.gsplat_assembly.inherited_gsplat_colormap`.
+    Callers always leave it at the default.
     """
     from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup, GSplatPartition
 
@@ -565,7 +632,20 @@ def write_gsplat_node(
             attrs=merged,
             scene_tone_mapping=scene_tone_mapping,
             barrier_dims=barrier_dims,
+            inherited_colormap=inherited_colormap,
+            warn_on_missing_tone_mapping=warn_on_missing_tone_mapping,
         )
+
+    # Group prologue (kind=lod / kind=partition) — resolve a wrapper-authored
+    # palette and work out what the children inherit.
+    attrs = dict(attrs or {})
+    child_colormap = _resolve_group_colormap(
+        group,
+        attrs,
+        scene_tone_mapping,
+        inherited_colormap,
+        warn_on_missing_tone_mapping,
+    )
 
     if isinstance(node, GSplatLodGroup):
         from luxar.core.group.lod.group import (
@@ -650,6 +730,8 @@ def write_gsplat_node(
                 # A nested ladder inside a partition-bound one is still inside the
                 # same tile, so the binding propagates down.
                 under_partition=partition_bound,
+                inherited_colormap=child_colormap,
+                warn_on_missing_tone_mapping=warn_on_missing_tone_mapping,
             )
             if "position_bounds" in cmeta:
                 child_bounds.append(cmeta["position_bounds"])
@@ -714,6 +796,8 @@ def write_gsplat_node(
                 attrs={"child_index": i},
                 barrier_dims=barrier_dims,
                 under_partition=child_under_partition,
+                inherited_colormap=child_colormap,
+                warn_on_missing_tone_mapping=warn_on_missing_tone_mapping,
             )
             if "position_bounds" in cmeta:
                 child_bounds.append(cmeta["position_bounds"])

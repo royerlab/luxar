@@ -60,6 +60,12 @@ DEMO_META = {
     },
     "caches": ["gsplats_interop_macro"],
     "outputs": ["gsplats_interop_macro_clusterfly"],
+    "citation": {
+        "short": "Dany Bittel (danybittel.ch)",
+        "ref": "Dany Bittel (danybittel.ch)",
+        "license": "CC BY 4.0",
+        "url": "https://danybittel.ch/macro",
+    },
 }
 
 from pathlib import Path
@@ -85,11 +91,10 @@ ARCHIVE_URL = (
 MEMBER = "cluster fly L.ply"
 MEMBER_SIZE = 71_263_622  # bytes
 
-# CC BY 4.0 REQUIRES visible attribution. This is the in-scene text overlay
-# (rendered in the viewer AND baked into exported scenes) — the actual
-# artifact-level credit, distinct from the console-only provenance print. Kept
-# as a module constant so the license test can assert on it directly.
-CREDIT = "Cluster fly • Dany Bittel (danybittel.ch) • CC BY 4.0 • macro 3DGS → Luxar"
+# CC BY 4.0 REQUIRES visible attribution. This is the license-bearing part of
+# the in-scene overlay; the standard caption helper appends DEMO_META's author
+# reference. Kept as a module constant so the license test can assert on it.
+CREDIT = "Cluster fly • CC BY 4.0 • macro 3DGS → Luxar"
 
 CACHE_DIR = Path.home() / ".cache" / "luxar" / DEMO_NAME
 CACHE_PLY = CACHE_DIR / "cluster_fly_L.ply"
@@ -151,6 +156,7 @@ def build_scene() -> Path:
         title="Macro cluster fly (Dany Bittel) → Luxar",
         layer_name="cluster_fly",
         credit=CREDIT,
+        citation=DEMO_META["citation"],
     )
 
 

@@ -53,7 +53,7 @@ DATA SOURCE & CITATIONS:
 ========================
 Source:  Cell Tracking Challenge / Zenodo record 5270323 (GIANI paper)
 Imaging: Zeiss LightSheet Z.1, Tribolium castaneum, 0.381 um isotropic
-Cite:    Yin et al. (2022). GIANI. J. Cell Sci. 135(5), jcs259022.
+Cite:    Barry et al. (2022). GIANI. J. Cell Sci. 135, jcs259511.
          Maska et al. (2023). Cell Tracking Challenge. Nat. Methods 20, 1010-1020.
 
 USAGE:
@@ -96,6 +96,14 @@ DEMO_META = {
     },
     "caches": ["gsplats_tribolium"],
     "outputs": ["gsplats_lod_tribolium"],
+    "citation": {
+        "short": (
+            "Barry 2021 (GIANI, Zenodo 5270323); "
+            "Cell Tracking Challenge (Maška et al. 2023)"
+        ),
+        "ref": "Barry / Maška et al. 2023",
+        "doi": "10.5281/zenodo.5270323",
+    },
 }
 
 import sys
@@ -107,6 +115,7 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
+    add_demo_caption,
     detect_device,
     launch_viewer,
     load_precomputed_gsplats,
@@ -296,12 +305,13 @@ def create_luxar_scene(colored: GSplatData, output_path: Path) -> Path:
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
             scene = compiler.create_scene(
+                citation=DEMO_META["citation"],
                 dimensions=dims,
                 # ACES, set explicitly + matched intensity, consistent with the
                 # other gsplat demos. NOTE: the per-level debug colours
                 # (green -> amber -> red) must stay tellable apart; ACES shifts
                 # hues, so check them if this demo's level cues get muddy.
-                viewer_config=ViewerConfig(tone_mapping="ACES"),
+                viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="ACES"),
             )
 
             scene.attrs["title"] = (
@@ -321,7 +331,7 @@ the screen can show. Debug colors (green→amber→red, finest→coarsest) mark
 which level is currently on screen.
 
 Data: Cell Tracking Challenge / Zenodo 5270323, Zeiss LightSheet Z.1.
-Cite: Yin et al. (2022) J. Cell Sci. 135(5); Maska et al. (2023) Nat. Methods 20.
+Cite: Barry et al. (2022) J. Cell Sci. 135; Maska et al. (2023) Nat. Methods 20.
 
 Navigation:
   - Mouse drag to rotate, scroll to zoom, right-click drag to pan
@@ -353,12 +363,10 @@ Navigation:
                 color="rgba(255,255,255,0.6)",
                 blend_mode="difference",
             )
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 "Light-sheet microscopy • adaptive level of detail",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
 
             # Explanatory panel, placed below the title so the two don't overlap.

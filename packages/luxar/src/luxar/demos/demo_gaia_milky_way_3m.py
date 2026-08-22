@@ -161,7 +161,7 @@ from luxar import (
     ViewerConfig,
 )
 from luxar._zarr_compat import open_group
-from luxar.demos import launch_viewer, substitutive_lod_or_flat
+from luxar.demos import add_demo_caption, launch_viewer, substitutive_lod_or_flat
 from luxar.demos._gaia_catalog import DEFAULT_CATALOG_FILE, RAW_ZARR_NAME
 from luxar.utils.paths import get_demos_output_dir
 
@@ -531,6 +531,7 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
             scene = compiler.create_scene(
                 dimensions=dims,
                 viewer_config=ViewerConfig(
+                    cinematic_mode=True,
                     camera=camera,
                     exposure=0.5,
                     tone_mapping="ACES",
@@ -709,12 +710,10 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
                 color="rgba(255,255,255,0.6)",
                 blend_mode="difference",
             )
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 "3M stars \u2022 Galactocentric coords",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
 
         total_size = sum(

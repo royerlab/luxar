@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import math
 import warnings
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import zarr
@@ -22,6 +22,10 @@ from numpy.typing import NDArray
 from luxar._zarr_compat import create_array
 
 from ...core.dimensions import Dimensions
+from ...core.group.compositing import (
+    IDENTITY_COMPOSITING_ATTRS,
+    WRITER_STAMPED_APPEARANCE_DEFAULTS,
+)
 from ...encoding import (
     COORDINATE_LEVELS,
     ArrayEncoder,
@@ -149,6 +153,13 @@ MAX_CENTER_DISPLACEMENT_SIGMAS = 1.0
 #: * The decision is per WRITE, and a partitioned/laddered store writes each
 #:   part separately (see :func:`write_gsplat_arrays`), so it is taken per part.
 MAX_UNREPRESENTABLE_SPLAT_FRACTION = 0.001
+
+
+class _CentersEncodingPlan(NamedTuple):
+    """Resolved centers mode and the caller mode it was resolved against."""
+
+    requested_mode: EncodingMode
+    resolved_mode: EncodingMode
 
 
 def _axis_center_offender(
@@ -400,6 +411,21 @@ def _resolve_centers_encoding_mode(
     return EncodingMode.PRECISION
 
 
+def _centers_mode_for_write(
+    plan: Optional[_CentersEncodingPlan],
+    centers: NDArray[np.float32],
+    cholesky_factors: NDArray[np.float32],
+    n_dims: int,
+    ctx: DatasetCtx,
+) -> EncodingMode:
+    """Reuse an ordering-time mode only for the same requested write mode."""
+    if plan is not None and plan.requested_mode == ctx.encoding_mode:
+        return plan.resolved_mode
+    return _resolve_centers_encoding_mode(
+        centers, cholesky_factors, n_dims, ctx.encoding_mode, ctx.encoder
+    )
+
+
 def validate_gsplat_inputs(
     centers: NDArray[np.float32],
     amplitudes: Union[NDArray[np.float32], float],
@@ -521,12 +547,15 @@ def apply_gsplat_spatial_ordering(
     ctx: OrderingCtx,
     coverage_sigma: float = DEFAULT_TRUNCATION_RADIUS,
     barrier_dims: Optional[Sequence[int]] = None,
+    *,
+    dataset_ctx: Optional[DatasetCtx] = None,
 ) -> Tuple[
     NDArray[np.float32],
     Union[NDArray[np.float32], float],
     NDArray[np.float32],
     Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]],
     Optional[Dict[str, Any]],
+    Optional[_CentersEncodingPlan],
 ]:
     """Apply spatial ordering to gsplat arrays.
 
@@ -538,11 +567,19 @@ def apply_gsplat_spatial_ordering(
     spatial ordering. Callers that know the exact barrier (LOD ``coarsen_dims``
     complement, or a scene's discrete dims) should pass it explicitly.
 
+    ``dataset_ctx`` lets the ordering path resolve the centers' actual encoding
+    mode once, ask the encoder for its per-axis round-trip slack, and return a
+    plan the array writer may reuse when its requested mode matches. A direct
+    caller that omits it gets bounds against the authored centers and leaves
+    mode resolution to the write step.
+
     Returns:
-        (centers, amplitudes, cholesky_factors, colors, ordering_data)
-        where ordering_data is None if ordering was not applied.
+        (centers, amplitudes, cholesky_factors, colors, ordering_data,
+        centers_encoding_plan), where ordering_data is None if ordering was not
+        applied and centers_encoding_plan is None if no dataset context was supplied.
     """
     ordering_data = None
+    centers_encoding_plan = None
     if ctx.enable_spatial_index and n_splats > 0:
         from ..ordering import (
             compute_chunk_bounds_gsplats,
@@ -577,12 +614,38 @@ def apply_gsplat_spatial_ordering(
         chunk_size = max(1024, TARGET_CHUNK_BYTES // bytes_per_splat)
         chunk_size = min(chunk_size, n_splats)
 
+        centers_mode = (
+            _resolve_centers_encoding_mode(
+                centers,
+                cholesky_factors,
+                n_dims,
+                dataset_ctx.encoding_mode,
+                dataset_ctx.encoder,
+            )
+            if dataset_ctx is not None
+            else None
+        )
+        if dataset_ctx is not None and centers_mode is not None:
+            centers_encoding_plan = _CentersEncodingPlan(
+                dataset_ctx.encoding_mode, centers_mode
+            )
+        coord_slack = (
+            # Centers encode with the default allow_lut=True, so the query must
+            # ask about the same write path.
+            dataset_ctx.encoder.coordinate_round_trip_slack(
+                centers, centers_mode, allow_lut=True
+            )
+            if dataset_ctx is not None and centers_mode is not None
+            else None
+        )
+
         chunk_bounds = compute_chunk_bounds_gsplats(
             centers,
             cholesky_factors,
             chunk_size,
             coverage_sigma=coverage_sigma,
             slice_dims=slice_dims,
+            coord_slack=coord_slack,
         )
 
         ordering_data = {
@@ -597,7 +660,14 @@ def apply_gsplat_spatial_ordering(
             f"with {len(chunk_bounds)} chunks"
         )
 
-    return centers, amplitudes, cholesky_factors, colors, ordering_data
+    return (
+        centers,
+        amplitudes,
+        cholesky_factors,
+        colors,
+        ordering_data,
+        centers_encoding_plan,
+    )
 
 
 def compute_amplitude_mass_stats(
@@ -713,6 +783,7 @@ def write_gsplat_arrays(
     n_dims: int,
     cholesky_is_uniform: bool,
     ordering_data: Optional[Dict[str, Any]],
+    centers_encoding_plan: Optional[_CentersEncodingPlan],
     ctx: DatasetCtx,
 ) -> dict[str, Any]:
     """Write gsplat arrays to a zarr group and return metadata.
@@ -784,13 +855,10 @@ def write_gsplat_arrays(
         dtype=centers.dtype,
         per_array_bytes=True,
     )
-    # Sigma rail: a lossy (uint16 fixed-point) center grid is only legitimate
-    # when half its step is small against the splats' own σ on that axis — or
-    # when the encoder will grid-snap the axis and store it exactly. See
-    # MAX_CENTER_DISPLACEMENT_SIGMAS — this is the single shared choke point
-    # where centers AND cholesky_factors are both in hand.
-    centers_mode = _resolve_centers_encoding_mode(
-        centers, cholesky_factors, n_dims, ctx.encoding_mode, ctx.encoder
+    # Reuse the ordering-time sigma-rail verdict only when it was resolved for
+    # this write mode; otherwise resolve against the actual writer context.
+    centers_mode = _centers_mode_for_write(
+        centers_encoding_plan, centers, cholesky_factors, n_dims, ctx
     )
     # An escalated write must bypass the encoder's content-dedup registry.
     # Dedup is keyed on the centers BYTES alone, but the rail makes the chosen
@@ -1002,6 +1070,92 @@ def write_gsplat_arrays(
     return metadata
 
 
+def inherited_gsplat_colormap(
+    group: zarr.Group,
+    store: zarr.Group,
+    inherited_colormap: Optional[str] = None,
+) -> Optional[str]:
+    """The ``colormap`` an ANCESTOR of ``group`` authored, or ``None``.
+
+    The single rule behind the gray default (see
+    :func:`apply_gsplat_group_attrs`): a leaf only gets the manufactured
+    ``"gray"`` when nothing above it authored a palette. Without this the
+    shadow was structural — ``attrs`` there is the leaf's OWN bag, so a
+    ``colormap`` set on an enclosing Group (or on the scene / gsplats root)
+    was always beaten by a ``"gray"`` sitting nearer the leaf, and the
+    viewer's root→leaf composition (``data/attrs-composer.ts``) could never
+    see it (#1600).
+
+    Two write paths reach it, with two different mechanics — hence the one
+    function taking both:
+
+    * **already on disk** (the scene compiler): a Group node's attrs are
+      written by ``LuxarZarrCompiler.write_group`` at construction time,
+      i.e. BEFORE any child leaf exists, so walking ``group.path`` upward
+      through ``store`` finds them. Consequently the palette must be authored
+      when the ancestor is created; setting ``group.attrs["colormap"]`` after
+      its children were written cannot retroactively suppress their gray.
+    * **still in flight** (the standalone ``.gsplats.zarr`` tree writer): a
+      ``kind=lod`` / ``kind=partition`` wrapper writes its own attrs only
+      AFTER its children, so nothing is on disk to walk. There the value
+      rides DOWN the recursion in ``inherited_colormap`` — the same channel
+      ``coverage_fraction`` / ``child_index`` already use.
+
+    Both are consulted, which is exactly right for a standalone subtree
+    grafted into a scene: the in-flight argument covers the wrapper chain
+    inside the subtree, the disk walk covers the scene groups above it.
+
+    No authored-vs-manufactured distinction is needed. Only LEAF groups ever
+    receive a manufactured ``"gray"`` (``apply_gsplat_group_attrs`` is the one
+    place that stamps it, and it is called only on gsplats leaf groups —
+    ``kind=lod`` / ``kind=partition`` wrappers are groups written straight
+    through by ``gsplat_tree``/``write_group``), and a leaf is never an
+    ancestor of another node. So every ``colormap`` this walk can find was
+    authored by a caller.
+
+    Args:
+        group: The leaf group about to be stamped.
+        store: The store ROOT the walk is relative to (never walks above it).
+        inherited_colormap: A palette handed down by an in-flight ancestor.
+
+    Returns:
+        The nearest inherited palette name, or ``None`` when there is none.
+    """
+    if inherited_colormap is not None:
+        return inherited_colormap
+
+    root_path = (store.path or "").strip("/")
+    node_path = (group.path or "").strip("/")
+    if root_path:
+        if node_path == root_path:
+            node_path = ""
+        elif node_path.startswith(root_path + "/"):
+            node_path = node_path[len(root_path) + 1 :]
+        else:
+            # Not under this root — nothing this store can tell us.
+            return None
+    if not node_path:
+        return None
+
+    segments = node_path.split("/")
+    minimum_depth = int(getattr(store, "attrs", {}).get("type") == "scene")
+    # Nearest ancestor first (the leaf itself is excluded: its own attrs are
+    # the caller's `attrs` bag, checked separately).
+    for depth in range(len(segments) - 1, minimum_depth - 1, -1):
+        prefix = "/".join(segments[:depth])
+        try:
+            ancestor = store[prefix] if prefix else store
+        except KeyError:
+            continue
+        ancestor_attrs = getattr(ancestor, "attrs", None)
+        if ancestor_attrs is None:
+            continue
+        value = ancestor_attrs.get("colormap")
+        if value is not None:
+            return str(value)
+    return None
+
+
 def apply_gsplat_group_attrs(
     group: zarr.Group,
     metadata: dict[str, Any],
@@ -1009,6 +1163,8 @@ def apply_gsplat_group_attrs(
     store: zarr.Group,
     scene_tone_mapping: Optional[str],
     lut_tone_mapping_warned: bool,
+    inherited_colormap: Optional[str] = None,
+    warn_on_missing_tone_mapping: bool = True,
 ) -> bool:
     """Set standard gsplats group attributes and rendering defaults.
 
@@ -1017,16 +1173,30 @@ def apply_gsplat_group_attrs(
     :func:`~luxar.io._compiler.colormap.write_colormap_lut_if_needed`) and the
     updated flag is returned for the caller to store back.
 
+    ``inherited_colormap`` is an in-flight ancestor's palette on the standalone
+    tree path; see :func:`inherited_gsplat_colormap`.
+
     Returns:
         The updated ``lut_tone_mapping_warned`` flag.
     """
-    # Default colormap if no colors and no colormap
-    if not metadata.get("has_colors") and "colormap" not in attrs:
-        attrs["colormap"] = "gray"
+    # Default colormap if no colors and no colormap — and only when no ancestor
+    # authored one, or the manufactured value would SHADOW it (it sits nearer
+    # the leaf, and the viewer composes nearest-setter-wins). See
+    # `inherited_gsplat_colormap`.
+    if (
+        not metadata.get("has_colors")
+        and "colormap" not in attrs
+        and inherited_gsplat_colormap(group, store, inherited_colormap) is None
+    ):
+        attrs["colormap"] = WRITER_STAMPED_APPEARANCE_DEFAULTS["colormap"]
 
     # Write colormap LUT if colormap is a custom array
     lut_tone_mapping_warned = write_colormap_lut_if_needed(
-        group, attrs, scene_tone_mapping, lut_tone_mapping_warned
+        group,
+        attrs,
+        scene_tone_mapping,
+        lut_tone_mapping_warned,
+        warn_on_missing_tone_mapping=warn_on_missing_tone_mapping,
     )
 
     # Process transform if present
@@ -1049,12 +1219,17 @@ def apply_gsplat_group_attrs(
     # ancestor-set mode under the viewer's nearest-setter-wins composition
     # (see node_common.apply_default_render_attrs). Unset leaves inherit;
     # the viewer defaults to "additive".
+    #
+    # The identity values come from WRITER_STAMPED_APPEARANCE_DEFAULTS rather
+    # than from literals here: `gsplat merge` has to tell a stamp made HERE
+    # from a value the author chose, and a second copy of the numbers is a
+    # drift waiting to happen. `truncation_radius` is not an appearance attr
+    # (it is a per-leaf footprint, see COMPOSITING_ATTRS) and keeps its own.
     for key, default in [
-        ("opacity", 1.0),
-        ("absorption", 1.0),
-        ("gamma", 1.0),
-        ("intensity", 1.0),
-        ("offset", 0.0),
+        *(
+            (key, WRITER_STAMPED_APPEARANCE_DEFAULTS[key])
+            for key in IDENTITY_COMPOSITING_ATTRS
+        ),
         ("truncation_radius", DEFAULT_TRUNCATION_RADIUS),
     ]:
         if key not in attrs:

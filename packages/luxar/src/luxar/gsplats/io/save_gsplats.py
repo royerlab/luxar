@@ -42,6 +42,7 @@ from luxar._zarr_compat import consolidate, create_root_group, open_store
 if TYPE_CHECKING:
     from luxar.gsplats.tree import GSplatNode
 
+from luxar.core.group.compositing import WRITER_STAMPED_APPEARANCE_DEFAULTS
 from luxar.encoding import EncodingMode
 from luxar.io._compiler.finalize.amplitude_window import (
     harmonize_gsplat_amplitude_windows,
@@ -421,11 +422,12 @@ def _stamp_content_hash(root: zarr.Group) -> str:
     identity for the same reasons the compiler-side hash folds them in — see
     :func:`luxar.io._compiler.finalize.hashing._storage_identity`, which is where
     that argument lives. Both digests should agree on what a store's identity IS,
-    and this one carries an extra obligation: it is what the two IN-PLACE
-    re-stampers (``gsplat annotate-quality`` and ``gsplat doctor --fix``) write,
-    and they leave the per-save ``timestamp`` untouched. Neither of them can
-    change layout today — every mutation on those paths is attrs-only — so what
-    moves their digest is the changed attrs, as it already did. The fold is here so
+    and this one carries an extra obligation: it is what the three IN-PLACE
+    re-stampers (``gsplat annotate-quality``, ``gsplat doctor --fix``, and
+    ``luxar restamp-lod``) write, and they leave the per-save ``timestamp``
+    untouched. None of them can change layout today — every mutation on those
+    paths is attrs-only — so what moves their digest is the changed attrs, as it
+    already did. The fold is here so
     that a future in-place RE-LAYOUT tool cannot re-stamp a store to its input's
     digest. The two remain separate digests over different serializations (this one
     an f-string over metadata only; the compiler's a sorted-key JSON dict plus the
@@ -607,6 +609,7 @@ def write_gsplats_tree(
             store=root,
             barrier_dims=barrier_dims,
             attrs=dict(root_attrs) if root_attrs else None,
+            warn_on_missing_tone_mapping=False,
         )
 
         # Self-identifying v3.0 header (the node's own type/kind/position_bounds attrs
@@ -619,8 +622,10 @@ def write_gsplats_tree(
         root.attrs["luxar_gsplats_version"] = GSPLATS_VERSION
         # A standalone file opened directly (?src=…gsplats.zarr) is the whole layer,
         # so expose the root in the viewer's Layers panel (the scene-embed graft uses
-        # the scene builders instead and does not carry this root attr).
-        root.attrs.setdefault("layer", True)
+        # the scene builders instead and does not carry this root attr). The value
+        # is single-sourced with the READER that has to recognise it as a stamp
+        # rather than as an authored choice (`agreed_authored_appearance`).
+        root.attrs.setdefault("layer", WRITER_STAMPED_APPEARANCE_DEFAULTS["layer"])
         if description:
             root.attrs["description"] = description
 
@@ -775,6 +780,7 @@ def write_partition_streaming(
                 # standalone partition writer (prevents part_10 < part_2 reorder).
                 attrs={"child_index": n_written},
                 barrier_dims=part_barrier,
+                warn_on_missing_tone_mapping=False,
                 # This writer's ROOT is stamped kind=partition below, so every
                 # part_<i> is under a partition by construction — exactly what the
                 # GSplatPartition branch of write_gsplat_node passes. Without it a
@@ -810,7 +816,7 @@ def write_partition_streaming(
             datetime.timezone.utc
         ).isoformat()
         root.attrs["luxar_gsplats_version"] = GSPLATS_VERSION
-        root.attrs.setdefault("layer", True)
+        root.attrs.setdefault("layer", WRITER_STAMPED_APPEARANCE_DEFAULTS["layer"])
         if description:
             root.attrs["description"] = description
 

@@ -340,15 +340,15 @@ Because `renderOrder` is compared **globally** across all transparent meshes, th
 2. **Order groups by mean view-z** — the mean of each group's members' content centroids (bounding-sphere centers through model-view); more negative = farther. A documented approximation: exact inter-group ordering does not exist for arbitrarily interleaved groups, but wrappers/leaves are normally spatially disjoint datasets, and co-located overlapping layers have no meaningful cross order anyway.
    **Containment overrides depth**: when one group's bounding sphere strictly contains another's (a tiny reference-marker node embedded inside a huge cloud), no single order integer is correct — the container's centroid sorts nearer for ~half of all camera orientations, and an order-dependent mode drawn container-last multiplies the embedded node's pixels by the container's whole transmittance (≈ erases it). A priority topological pass (`orderGroupsWithContainment`) forces every strict container to draw before its contents (embedded content composites on top — under-attenuation is the lesser error vs. blinking out on orbit); containment edges always point from a strictly larger to a strictly smaller sphere, so the relation is acyclic, and remaining freedom stays farthest-first.
 3. **Within a group, BSP ranks or view-z**:
-   - **BSP tree (exact)** — when both sides have a BSP rank (a ranked wrapper ranks ALL its members): order by `partRank` ascending (0 = farthest). This is **exact for any camera pose, including inside the volume** (Fuchs–Kedem–Naylor painter's algorithm) — the guarantee preserved from #565.
+   - **BSP tree** — when both sides have a BSP rank (a ranked wrapper ranks ALL its members): order by `partRank` ascending (0 = farthest). This is exact for point/gsplat BSP cells at any camera pose, including inside the volume (Fuchs–Kedem–Naylor painter's algorithm), and approximate for centroid-split lines/mesh or overlapping uniform tiles.
    - **Centroid (fallback)** — when either side lacks a rank (rank-less legacy wrapper members, or a single-leaf mesh): order by `viewZ` ascending (more negative = farther). Per-object ordering: approximate, and it degenerates when the camera is inside the volume — which is why the BSP path exists.
 4. **Write sequential integers** — 0..M−1 to `mesh.renderOrder`
 
 **Transparent objects OUTSIDE the coordinator's sorted set** (commutative modes) keep `renderOrder` 0 and tie with the globally-farthest sorted mesh (falling back to THREE's per-object z) — depth interleaving with unsorted content stays out of scope.
 
-### BSP Tree Traversal (Exact)
+### BSP Tree Traversal
 
-The parts of a `to_spatial_partition` partition (the `tiles`/`adaptive` recipes) are the leaf cells of a kd-tree, and the partition stores its split planes as a `bsp_tree` attr (see `docs/specs/GSPLATS_ZARR_FORMAT.md`). `load-partition-group-node.ts` stashes it on the wrapper `THREE.Group`'s `userData.bspTree` and stamps each part object with its `userData.partIndex`.
+Native `partition=` adders and gsplat spatial-partition producers (`tiles`/`adaptive`, content/uniform tiling, and batch merge) store their recursive split planes as a `bsp_tree` attr (see `docs/guides/user/LUXAR_ZARR_FORMAT.md` and `docs/specs/GSPLATS_ZARR_FORMAT.md`). `load-partition-group-node.ts` validates the tree structure and, when the parts have `position_bounds`, checks its split geometry; malformed or unsound trees drop to the centroid fallback, while well-formed trees without verifiable bounds retain the stored ordering. Accepted trees are stashed on the wrapper `THREE.Group`'s `userData.bspTree`, and each part object is stamped with its `userData.partIndex` (`bsp_tree` leaves name this index, not the child group's `part_<i>` suffix).
 
 **Per-frame flow**:
 
@@ -359,7 +359,7 @@ The parts of a `to_spatial_partition` partition (the `tiles`/`adaptive` recipes)
 3. Number the resulting order: 0 = farthest
 4. Memoize in `partitionRankCache` (cleared every frame)
 
-**Result**: EXACT back-to-front part order for any camera pose, including inside the volume (the single-wrapper special case of the global cross-node scale).
+**Result**: exact back-to-front part order for point/gsplat BSP cells at any camera pose, including inside the volume; approximate traversal for centroid-split lines/mesh and overlapping uniform tiles, where geometry can cross a cut.
 
 ### Centroid Fallback
 

@@ -31,10 +31,16 @@ does not re-assert.
 WRITES FROM NOW ON, and they were written against already-correct adders — the
 behavioural half passes on the pre-refactor revision too. They neither detect nor
 repair the 209 already-shipped ladders that carry ``selector="coverage"`` over
-derived-looking thresholds (issue #1727); auditing and migrating existing stores
-is separate work. What the suite buys is that the pairing cannot drift back apart
-silently, in any of the four adders, and that a FIFTH producer has to make a
-deliberate choice (see ``test_no_unrouted_producer_builds_a_lod_group``).
+derived-looking thresholds (issue #1727); migrating an existing store is the
+separate, explicitly opt-in ``luxar restamp-lod`` pass
+(:func:`luxar.io.lod_restamp.restamp_lod_store`), which reads a STORE rather than
+building one and so is out of scope for the routing guards below too — it calls
+neither ``add_lod_group`` nor :data:`_RESOLVER`, and pairs the two ladder
+functions with :data:`DERIVED_LOD_SELECTOR` itself because it has no live scene
+``Node`` to hand either helper. What the suite buys is that the pairing cannot
+drift back apart silently, in any of the four adders, and that a FIFTH producer
+has to make a deliberate choice (see
+``test_no_unrouted_producer_builds_a_lod_group``).
 
 **Also out of scope: the detached-tree paths**, which are a different question
 (what a *stored* tree already claims about its own thresholds, with no ``explicit``
@@ -80,6 +86,7 @@ GEOMETRIES = ("points", "lines", "gsplats", "mesh")
 #: hand-built two-part ``kind=partition`` (tile anchor), or with an explicit
 #: legacy list.
 VARIANTS = ("derived", "partition", "explicit")
+POINTS_COMBINED_VARIANT = "combined"
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -415,6 +422,19 @@ def ladders(tmp_path_factory) -> Dict[Tuple[str, str], Tuple[Any, List[float]]]:
                 "a fixture its coarsener can actually reduce — for mesh that "
                 "means enough subdivisions in _octahedron_sphere."
             )
+    combined_store = root / "points_combined.luxar.zarr"
+    with LuxarZarrCompiler(combined_store) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        positions = np.random.default_rng(0).normal(0, 20, (400, 3)).astype(np.float32)
+        scene.add_points(
+            "points",
+            positions,
+            radii=0.5,
+            partition={"max_elements": 100},
+            substitutive_lod=dict(levels=1, device="cpu", seed=0),
+            additive_lod=False,
+        )
+    out[("points", POINTS_COMBINED_VARIANT)] = _read_ladder(combined_store, "points")
     return out
 
 
@@ -443,6 +463,17 @@ def test_a_partition_bound_derived_ladder_still_stamps_screen_area(
     assert selector == DERIVED_LOD_SELECTOR, (
         f"{geometry}: a partition-bound derived ladder is still screen-area, "
         f"got {selector!r} over thresholds {thresholds}"
+    )
+
+
+def test_points_combined_spelling_routes_selector_with_thresholds(ladders) -> None:
+    selector, thresholds = ladders[("points", POINTS_COMBINED_VARIANT)]
+    assert selector == DERIVED_LOD_SELECTOR
+    assert_selector_describes_thresholds(
+        selector,
+        thresholds,
+        partition_bound=True,
+        where="points/combined",
     )
 
 
@@ -533,6 +564,7 @@ def test_the_invariant_helper_rejects_a_mismatched_pair() -> None:
 
 #: The name every routed producer must reach.
 _RESOLVER = "resolve_lod_ladder"
+_DERIVATION_HELPERS = ("coverage_fractions", "partitioned_coverage_fractions")
 
 #: Every module that builds a ``kind=lod`` group from a scene adder, relative to
 #: the ``luxar`` package root. Kept in step with ``_LOD_GROUP_CALLERS`` below,
@@ -679,6 +711,11 @@ def test_every_producer_calls_the_shared_resolver(rel: str) -> None:
     through the module's ``ImportFrom`` nodes). Any of them routes the decision
     through the shared helper, which is the whole assertion.
 
+    The same scan also forbids either derivation helper directly. Without that
+    half, a second arm in an already-listed producer can call
+    ``partitioned_coverage_fractions`` and hand-stamp the selector while another
+    arm keeps this file-level resolver-presence check green.
+
     **What it does NOT prove, stated honestly.** This is a NAME check: a producer
     that defined its own local ``def resolve_lod_ladder(...)`` implementing the
     rule WRONGLY passes this guard and the two structural ones beside it. So the
@@ -688,8 +725,18 @@ def test_every_producer_calls_the_shared_resolver(rel: str) -> None:
     copy leaves all three structural guards green and turns three behavioural
     tests red.
     """
-    assert _calls_resolver(_luxar_root() / rel, filename=rel), (
+    path = _luxar_root() / rel
+    assert _calls_resolver(path, filename=rel), (
         f"{rel} builds a kind=lod group but does not call resolve_lod_ladder"
+    )
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=rel)
+    called = _called_names(tree)
+    direct = sorted(
+        helper for helper in _DERIVATION_HELPERS if called & _aliases_of(tree, helper)
+    )
+    assert not direct, (
+        f"{rel} calls derivation helpers directly ({direct}) instead of routing "
+        "every ladder arm through resolve_lod_ladder"
     )
 
 

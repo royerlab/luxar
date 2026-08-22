@@ -436,7 +436,8 @@ class CompositionMixin(_GSplatDataOps):
             >>> data_4d = data_3d.embed_dimension(5.0, sigma=0.0)
             >>> data_4d = data_3d.embed_dimension(time_values, sigma=0.5)
         """
-        from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
+        from luxar.gsplats.lod.restamp import refresh_reduction_lod_stats
         from luxar.gsplats.utils.trils import embed_cholesky_packed
 
         # A 0-d numpy array is semantically a scalar; unwrap it so the
@@ -462,74 +463,44 @@ class CompositionMixin(_GSplatDataOps):
                     "different splat count). Pass a scalar coordinate to broadcast "
                     "across all levels, or operate per level via at_substitutive()."
                 )
-            return self._map_substitutive(
-                lambda lvl: lvl.embed_dimension(values, sigma)
+            scalar_value = cast(float, values)
+            out = self._map_substitutive(
+                lambda lvl: lvl.embed_dimension(scalar_value, sigma)
+            )
+            return refresh_reduction_lod_stats(out, self)
+
+        is_scalar = np.isscalar(values)
+        values_arr: Optional[np.ndarray] = None
+        if not is_scalar:
+            values_arr = np.asarray(values, dtype=self.centers.dtype)
+            if values_arr.shape != (n,):
+                raise ValueError(
+                    f"values shape {values_arr.shape} doesn't match splat count ({n},)"
+                )
+        dim_mapping = list(range(d))
+        fill_sigma = {d: sigma}
+
+        def _embed_lod(lod: "AdditiveSubLOD", offset: int, nl: int) -> "AdditiveSubLOD":
+            if is_scalar:
+                lod_col = np.full((nl, 1), values, dtype=lod.centers.dtype)
+            else:
+                assert values_arr is not None
+                lod_col = values_arr[offset : offset + nl].reshape(nl, 1)
+            lod_centers = np.concatenate([lod.centers, lod_col], axis=1)
+            lod_cholesky = embed_cholesky_packed(
+                lod.cholesky_factors, d, d + 1, dim_mapping, fill_sigma
+            )
+            return AdditiveSubLOD(
+                centers=lod_centers,
+                amplitudes=lod.amplitudes,
+                cholesky_factors=lod_cholesky,
+                colors=lod.colors,
+                stats=dict(lod.stats),
+                truncation_radius=lod.truncation_radius,
             )
 
-        # Multi-LOD path: embed each LOD independently
-        if self.n_additive_sublods > 1:
-            is_scalar = np.isscalar(values)
-            values_arr: Optional[np.ndarray] = None
-            if not is_scalar:
-                values_arr = np.asarray(values, dtype=self.centers.dtype)
-                if values_arr.shape != (n,):
-                    raise ValueError(
-                        f"values shape {values_arr.shape} doesn't match splat count ({n},)"
-                    )
-            dim_mapping = list(range(d))
-            fill_sigma = {d: sigma}
-
-            def _embed_lod(
-                lod: "AdditiveSubLOD", offset: int, nl: int
-            ) -> "AdditiveSubLOD":
-                if is_scalar:
-                    lod_col = np.full((nl, 1), values, dtype=lod.centers.dtype)
-                else:
-                    assert values_arr is not None
-                    lod_col = values_arr[offset : offset + nl].reshape(nl, 1)
-                lod_centers = np.concatenate([lod.centers, lod_col], axis=1)
-                lod_cholesky = embed_cholesky_packed(
-                    lod.cholesky_factors, d, d + 1, dim_mapping, fill_sigma
-                )
-                return AdditiveSubLOD(
-                    centers=lod_centers,
-                    amplitudes=lod.amplitudes,
-                    cholesky_factors=lod_cholesky,
-                    colors=lod.colors,
-                    stats=dict(lod.stats),
-                    truncation_radius=lod.truncation_radius,
-                )
-
-            return self._map_additive(_embed_lod)
-
-        # Single-LOD fast path (unchanged)
-        if np.isscalar(values):
-            new_col = np.full((n, 1), values, dtype=self.centers.dtype)
-        else:
-            values = np.asarray(values, dtype=self.centers.dtype)
-            if values.shape != (n,):
-                raise ValueError(
-                    f"values shape {values.shape} doesn't match splat count ({n},)"
-                )
-            new_col = values.reshape(n, 1)
-
-        new_centers = np.concatenate([self.centers, new_col], axis=1)
-        new_cholesky = embed_cholesky_packed(
-            self.cholesky_factors,
-            d_src=d,
-            d_dst=d + 1,
-            dim_mapping=list(range(d)),
-            fill_sigma={d: sigma},
-        )
-
-        return GSplatData(
-            centers=new_centers,
-            amplitudes=self.amplitudes,
-            cholesky_factors=new_cholesky,
-            colors=self.colors,
-            stats=dict(self.stats),
-            truncation_radius=self.truncation_radius,
-        )
+        out = self._map_additive(_embed_lod)
+        return refresh_reduction_lod_stats(out, self)
 
     @classmethod
     def merge_with_channel_colors(

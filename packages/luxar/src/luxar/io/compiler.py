@@ -8,11 +8,13 @@ memory constraints.
 from __future__ import annotations
 
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
     Dict,
+    Iterator,
     List,
     Literal,
     Mapping,
@@ -67,7 +69,10 @@ from ._compiler.finalize.lod_backfill import (
     finalize_lod_position_bounds,
     warn_one_part_partition_anchors,
 )
-from ._compiler.finalize.validation import validate_discrete_dimension_ranges
+from ._compiler.finalize.validation import (
+    prune_childless_wrappers,
+    validate_discrete_dimension_ranges,
+)
 from ._compiler.geometry_writers.gsplats import (
     write_gsplat_leaf_subtree as _write_gsplat_leaf_subtree_impl,
 )
@@ -228,6 +233,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         self.compressor = compressor
         self._metadata_cache: Dict[str, Any] = {}
         self._is_finalized = False
+        # Transactions are re-entrant, not thread-local: scene authoring through
+        # one compiler instance is single-threaded, like the writer itself.
+        self._transaction_depth = 0
 
         # Scene-level bounds tracking (union of all node bounds)
         # Each entry is [min_per_dim, max_per_dim] where each is a list of floats
@@ -325,9 +333,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 the zarr file and read by the viewer at load time as
                 scene-specific defaults.
             citation: Optional credit for whoever produced the underlying
-                dataset -- ``{"short", "doi"?, "license"?, "url"?}``. Stored in
-                the root attributes so it travels with the data. ``None`` means
-                there is no external dataset to credit.
+                dataset -- ``{"short", "ref"?, "doi"?, "license"?, "url"?}``.
+                Stored in the root attributes so it travels with the data.
+                ``None`` means there is no external dataset to credit.
 
         Returns:
             Scene object configured with this compiler as writer
@@ -422,6 +430,19 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             path = _validate_node_path(path)
             group = self.store.require_group(path)
 
+        # Resolve a custom colormap (ndarray LUT, or a matplotlib/colorcet
+        # name) into a sibling ``colormap_lut`` array on THIS node, exactly as
+        # the leaf writers do. A GROUP is now a legitimate place to author a
+        # colormap — the viewer composes it root→leaf (#1600) — and an
+        # unresolved ndarray would not even serialize into the group's attrs,
+        # while an unresolved non-builtin NAME would reach the viewer, which
+        # only knows the builtins, and silently fall back to viridis. Leaves
+        # come through here too (``Node.__init__`` writes every node's attrs
+        # via this method), but their colormap has already been resolved to the
+        # ``"custom"`` sentinel by then, which the helper passes through.
+        if attrs.get("colormap") is not None:
+            self._write_colormap_lut_if_needed(group, attrs)
+
         # Update attributes - preserve existing ones
         if attrs:
             # Get existing attributes
@@ -474,7 +495,11 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             del self.store[normalized_path]
 
     def snapshot_rollback_state(self) -> RollbackState:
-        """Capture compiler state that deleted geometry writes may have changed."""
+        """Capture mutable authoring state changed by geometry writes.
+
+        The write-only metadata cache is intentionally excluded: it has no
+        readers and cannot affect later output after its subtree is deleted.
+        """
         self._check_not_finalized("snapshot_rollback_state")
         scene_bounds = (
             None
@@ -486,6 +511,11 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             frozenset(self._authoring_warnings),
             self._lut_tone_mapping_warned,
             self._encoder.snapshot(),
+            (
+                (self._scene._has_labels, self._scene._has_image_labels)
+                if self._scene is not None
+                else None
+            ),
         )
 
     def restore_rollback_state(self, state: RollbackState) -> None:
@@ -496,6 +526,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             authoring_warnings,
             lut_tone_mapping_warned,
             encoder_state,
+            scene_label_state,
         ) = state
         self._scene_bounds = (
             None
@@ -505,6 +536,52 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         self._authoring_warnings = set(authoring_warnings)
         self._lut_tone_mapping_warned = lut_tone_mapping_warned
         self._encoder.restore(encoder_state)
+        if self._scene is not None and scene_label_state is not None:
+            self._scene._has_labels, self._scene._has_image_labels = scene_label_state
+
+    @contextmanager
+    def transaction(self, path: NodePath) -> Iterator[None]:
+        """Roll back writes below ``path`` while preserving the original error."""
+        if self._transaction_depth:
+            self._transaction_depth += 1
+            try:
+                yield
+            finally:
+                self._transaction_depth -= 1
+            return
+
+        rollback_state: Optional[RollbackState]
+        try:
+            rollback_state = self.snapshot_rollback_state()
+        except Exception:
+            rollback_state = None
+
+        try:
+            path_existed = self.node_exists(path)
+        except Exception:
+            path_existed = True
+
+        self._transaction_depth = 1
+        try:
+            yield
+        except BaseException as error:
+            if rollback_state is not None:
+                try:
+                    self.restore_rollback_state(rollback_state)
+                except BaseException as rollback_error:
+                    error.add_note(
+                        f"Writer state rollback also failed: {rollback_error}"
+                    )
+            if not path_existed:
+                try:
+                    self.delete_node(path)
+                except BaseException as rollback_error:
+                    error.add_note(
+                        f"Writer store rollback also failed: {rollback_error}"
+                    )
+            raise
+        finally:
+            self._transaction_depth = 0
 
     @arbol_warnings()
     def write_points(  # type: ignore[override]
@@ -1443,6 +1520,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
     def _validate_discrete_dimension_ranges(self, store: zarr.Group) -> None:
         validate_discrete_dimension_ranges(store, self._scene_bounds)
 
+    def _prune_childless_wrappers(self, store: zarr.Group) -> None:
+        prune_childless_wrappers(store)
+
     def _finalize_lod_position_bounds(self, store: zarr.Group) -> None:
         finalize_lod_position_bounds(store)
 
@@ -1584,6 +1664,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
             # Validate discrete dimension ranges against actual data
             self._validate_discrete_dimension_ranges(store)
+
+            # A caller may deliberately catch a child-add refusal after
+            # creating its wrapper in a separate successful call. Remove that
+            # now-empty wrapper, including empty wrapper chains, rather than
+            # making the otherwise recoverable compile impossible to publish.
+            self._prune_childless_wrappers(store)
 
             # Back-fill missing ``display_type`` on kind=lod groups by
             # recursing through their finest child (see

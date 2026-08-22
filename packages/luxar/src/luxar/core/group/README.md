@@ -35,6 +35,12 @@ warrants it:
 
 To the user both look like a single logical layer of the original geometry type.
 
+Pre-wrapper gates provide the best caller-facing diagnostics, while writer
+transactions hold the structural invariant: every public geometry add removes
+its new subtree and restores scene/compiler authoring state if a descendant
+write fails. Finalize warns and prunes wrappers created in a separate successful
+call that still have no children, so caught child refusals remain publishable.
+
 ## File structure
 
 ```
@@ -42,7 +48,7 @@ group/
 ├── __init__.py          # re-exports Group
 ├── group.py             # Group class: public add_* API (delegates to adders/ + gsplats_pipeline/)
 ├── auto_partition.py     # resolve_auto_partition — compiler-level opt-in auto-partition
-├── compositing.py        # COMPOSITING_ATTRS, AUTHORED_APPEARANCE_ATTRS, slice_optional_array, is_broadcast_color, validate_*_before_split, position_bounds_from_array, strip_absent_attr_kwargs
+├── compositing.py        # COMPOSITING_ATTRS, AUTHORED_APPEARANCE_ATTRS, WRITER_STAMPED_APPEARANCE_DEFAULTS, slice_optional_array, is_broadcast_color, validate_*_before_split, position_bounds_from_array, strip_absent_attr_kwargs
 ├── dim_order.py          # apply_dim_order_positions / apply_dim_order_cholesky
 ├── partition.py          # BSP splitters + PartitionSpec + validate_partition_group
 ├── adders/               # per-leaf add_<type> bodies (Points / Lines / GSplats)
@@ -59,7 +65,7 @@ group is detached from a scene or the scene lacks a writer.
 
 | Method | Returns | Purpose |
 |--------|---------|---------|
-| `add_points(name, positions, ...)` | `Points` or `Group` | Add a point cloud; returns a `kind=partition` wrapper when `partition=` yields >1 part |
+| `add_points(name, positions, ...)` | `Points` or `Group` | Add a point cloud; `partition=` yields a partition, `substitutive_lod=` yields an LOD, and combining them yields an overview LOD whose finest child is partitioned |
 | `add_lines(name, vertices, widths, ...)` | `Lines` or `Group` | Add polylines/segments/loops; partition-aware (polylines stay atomic) |
 | `add_gsplats(name, centers, amplitudes, cholesky_factors, ...)` | `GSplats` or `Group` | Add Gaussian splats from explicit arrays |
 | `add_gsplats_from_data(name, result, ...)` | `GSplats` or `Group` | Add from a `GSplatData`; resolves substitutive (`lod_group=`) and additive (`additive_lod=`) LOD axes |
@@ -112,12 +118,14 @@ Three split rules, selected via `partition=dict(rule=...)`:
 
 Exports:
 
-- `median_bsp_partition` / `midpoint_bsp_partition` / `sah_bsp_partition` —
-  pure-NumPy point/gsplats splitters returning lists of index arrays into the
-  original positions (concatenation permutes `range(N)`).
-- `median_bsp_polylines` / `midpoint_bsp_polylines` — polyline-atomic variants
-  for `add_lines` (every vertex of a polyline lands in one part; accounting is
-  by vertex count, splits run over per-polyline centroids).
+- `BSPNode`, `spatial_bsp_tree`, and `spatial_bsp_polyline_tree` — production
+  tree builders used by the native geometry adders.
+- `bsp_leaf_parts` — shared left-first leaf flattening used by all four adders.
+- `persist_pruned_bsp_tree` — drops unwritten regions, renumbers surviving
+  `child_index` labels, and stamps the serialized tree on the partition wrapper.
+- `median_bsp_partition` / `midpoint_bsp_partition` / `sah_bsp_partition` and
+  the median/midpoint polyline wrappers — flat-list conveniences retained as
+  parity oracles for the production tree builders.
 - `warn_if_oversized_single_part` — surfaces the degenerate
   fully-coincident-input case where the BSP cannot split below `max_elements`.
 - `validate_partition_group` — well-formedness check (≥1 child, present
@@ -152,16 +160,34 @@ LOD wrapper builders:
   `absorption`, `gamma`, `intensity`, `offset`, `blending_mode`, `layer`,
   `visible`, `nd_transform`) that ride on the wrapper `Group` rather than being copied onto
   each child; compositing semantics flow down to children via Group inheritance
-  at render time. `colormap` and `truncation_radius` are deliberately excluded —
-  they are auto-defaulted per leaf and would otherwise shadow a parent under
-  nearest-ancestor-wins.
+  at render time. `truncation_radius` is deliberately excluded — it is
+  auto-defaulted per leaf and would otherwise shadow a parent under
+  nearest-ancestor-wins. `colormap` is not routed here either, but only as a
+  preference: it DOES compose in the viewer since #1600, and copying it onto
+  each child is the shape the layers panel's `deriveColormapFromDescendants`
+  reads back.
 - `AUTHORED_APPEARANCE_ATTRS` — the subset a structure-only rebuild (`gsplat lod`
   and the rest of the rewriting family) carries from the source root to the
   output root, so re-laddering a dataset does not silently reset the look
-  (#1600). `COMPOSITING_ATTRS` minus `transform`, which is excluded because the
-  stored matrix is already column-major and the writer would transpose it a
-  second time. Read with
+  (#1600). `COMPOSITING_ATTRS` minus `transform`, plus `colormap`. `transform`
+  is excluded because the stored matrix is already column-major and the writer
+  would transpose it a second time; `colormap` is included now that the writer
+  no longer manufactures a shadowing per-leaf `"gray"` and the viewer composes
+  the attr root→leaf (the `'custom'` sentinel is the one value not carried — its
+  LUT lives in a sibling array the attrs-only read cannot reach). Read with
   `luxar.gsplats.io.load_gsplats.read_authored_appearance`.
+- `WRITER_STAMPED_APPEARANCE_DEFAULTS` (+ `IDENTITY_COMPOSITING_ATTRS`) — the
+  value the WRITER manufactures for an appearance attr nobody set, single-sourced
+  so the stamp sites (`node_common.apply_default_render_attrs`,
+  `gsplat_assembly.apply_gsplat_group_attrs`, and the `layer` stamp in
+  `gsplats/io/save_gsplats.py`) and the READER that has to recognise a stamp
+  cannot drift. `gsplat merge` uses it to tell "the author chose this" from
+  "nobody chose anything": a value equal to the manufactured default casts no
+  vote in the agreement rule.
+- `mirror_written_colormap(attrs, writer, path)` — copy the colormap the writer
+  actually stamped onto the adder's attrs, so the returned node's attr
+  write-back cannot put a manufactured `"gray"` on disk that the writer
+  declined.
 - `slice_optional_array(value, indices, n_elements)` — slice a per-element leaf
   parameter by index; pass scalars / `None` / mis-sized inputs through unchanged.
 - `validate_labels_before_split(labels, n_elements)` — its companion guard: reject

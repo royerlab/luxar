@@ -36,7 +36,8 @@ On a fresh machine this demo bootstraps itself with no manual steps:
      cube fit to ~675k Gaussian splats (PSNR ~35 dB).
   2. If that asset isn't pulled, it AUTOMATICALLY downloads the 2.4 GB cube to
      ``~/.cache/luxar/gsplats_milkyway_dust/`` (resumable), fits Gaussian splats
-     on the GPU, and caches the fit there — so subsequent runs are instant.
+     on the GPU, and caches the fit under that directory's ``local/`` subdir —
+     so subsequent runs are instant.
 ``--recompute`` forces the download + fit path.
 
 The ``--recompute`` default reproduces the shipped asset (native resolution,
@@ -81,9 +82,13 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
+    DatasetUnavailable,
+    add_demo_caption,
     detect_device,
     launch_viewer,
     load_dataset_gsplats,
+    load_local_fit_gsplats_at,
+    local_fit_path,
     parse_demo_flags,
     parse_int_arg,
     require_module,
@@ -106,7 +111,11 @@ GSPLATS_FILE = "milkyway_dust.gsplats.zarr.zip"
 
 CACHE_DIR = Path.home() / ".cache" / "luxar" / DEMO_NAME
 CACHE_H5 = CACHE_DIR / "mean_std.h5"
-CACHE_FILE = CACHE_DIR / GSPLATS_FILE
+# The local refit is OUR artifact, not a copy of the hosted one, so it lives in
+# the demo's local-fit namespace. Writing it to CACHE_DIR / GSPLATS_FILE — the
+# path the manifest fetch owns — got it quarantined on the next launch for
+# failing the pinned sha256, and the demo refit every time (#1618).
+LOCAL_FIT = local_fit_path(DEMO_NAME, GSPLATS_FILE)
 
 VOXEL_SIZE_PC = 1.0  # native resolution of the reconstruction
 
@@ -256,11 +265,11 @@ def fit_dust(volume: np.ndarray, acquisition=None) -> GSplatData:
         )
         aprint(f"Fitted {len(result.amplitudes):,} splats")
 
-        CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        aprint(f"Caching fit to {CACHE_FILE.name}")
+        LOCAL_FIT.parent.mkdir(parents=True, exist_ok=True)
+        aprint(f"Caching fit to {LOCAL_FIT}")
         save_with_lod(
             result,
-            CACHE_FILE,
+            LOCAL_FIT,
             recipe="levels",
             encoding_mode=EncodingMode.MEMORY,
             include_fitting_info=True,
@@ -273,21 +282,28 @@ def fit_dust(volume: np.ndarray, acquisition=None) -> GSplatData:
 def load_or_build_gsplats() -> GSplatData:
     """Return fitted dust splats, self-contained on a fresh system.
 
-    Fast path: precomputed fit (Git LFS / local cache). If that asset is not
-    available, automatically download the cube and fit — no manual ``git lfs
-    pull`` required.
+    Fast path: the precomputed fit, through the manifest (Git LFS / Zenodo);
+    then this machine's own earlier refit under ``LOCAL_FIT``. If neither is
+    there, automatically download the cube and fit — no manual ``git lfs pull``
+    required, and the refit is kept, so it happens once.
     """
     if not RECOMPUTE:
         try:
             precomputed = load_dataset_gsplats(DEMO_NAME, [GSPLATS_FILE])
             if precomputed is not None:
                 return precomputed[0]
-        except FileNotFoundError:
+        except DatasetUnavailable:
             aprint("")
-            aprint(
-                "Precomputed fit not available (Git LFS asset not pulled). "
-                "Falling back to download + fit (one-time; result is cached)."
-            )
+            aprint("Precomputed fit not available (Git LFS asset not pulled).")
+        # A fit this machine built earlier, in its own namespace — checked
+        # BEFORE refitting, which is what makes the refit below one-time. Read
+        # through LOCAL_FIT, the same constant `fit_dust` writes through: a door
+        # that re-derives the path from the cache root instead is a second
+        # source of truth for it (#1618 review, A).
+        local = load_local_fit_gsplats_at([LOCAL_FIT], label=DEMO_NAME)
+        if local is not None:
+            return local[0]
+        aprint(f"Falling back to download + fit (one-time; cached at {LOCAL_FIT}).")
 
     warn_if_no_cuda_gpu()
     volume, acquisition = load_dust_volume()
@@ -321,7 +337,9 @@ def create_luxar_scene(gsplats_data: GSplatData, output_path: Path) -> Path:
             # is dust, not a scientific colour encoding.
             scene = compiler.create_scene(
                 dimensions=dims,
-                viewer_config=ViewerConfig(tone_mapping="ACES", exposure=-0.17),
+                viewer_config=ViewerConfig(
+                    cinematic_mode=True, tone_mapping="ACES", exposure=-0.17
+                ),
                 citation=DEMO_META["citation"],
             )
             scene.attrs["title"] = (
@@ -367,12 +385,10 @@ def create_luxar_scene(gsplats_data: GSplatData, output_path: Path) -> Path:
                 color="rgba(255,255,255,0.65)",
                 blend_mode="difference",
             )
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 "Leike & Enßlin 2020 • 3D dust density • ~1 pc/voxel",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.5)",
+                DEMO_META.get("citation"),
             )
         aprint(f"Scene saved: {output_path}")
         return output_path

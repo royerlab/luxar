@@ -84,6 +84,7 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
+    add_demo_caption,
     detect_device,
     launch_viewer,
     load_precomputed_gsplats,
@@ -124,9 +125,12 @@ ITERS_PER_PASS = 4_000
 PSNR_PATIENCE = 0.1
 CULL_RETENTION = 0.99  # keep 99% of amplitude; drop only the negligible tail
 
-# Additive display brightness. 2M splats over a 300 Mpc box accumulate strongly
-# along each ray, so the exposure is dialed well down to avoid blow-out.
-SCENE_INTENSITY = 0.15  # vivid look: gold cluster nodes, warm filaments, black voids
+# Display brightness. 2M splats over a 300 Mpc box accumulate strongly along
+# each ray, so the exposure is dialed well down to avoid blow-out. Left as-is
+# when the layer moved to volumetric+turbo: this scales the stored AMPLITUDES,
+# and the writer's `amplitude_data_range` window is derived from them, so
+# changing it would just move the window by the same factor and re-tone nothing.
+SCENE_INTENSITY = 0.15
 
 # Physical extent of the box (TNG300-3-Dark): 205000 ckpc/h at h = 0.6774, z = 0.
 BOX_MPC = 205000.0 / 0.6774 / 1000.0  # ≈ 302.6 Mpc
@@ -341,17 +345,39 @@ def create_luxar_scene(gsplats_data: GSplatData, output_path: Path) -> Path:
         ) as compiler:
             scene = compiler.create_scene(
                 dimensions=dims,
-                viewer_config=ViewerConfig(tone_mapping="ACES"),
+                viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="ACES"),
                 citation=DEMO_META["citation"],
             )
             scene.attrs["title"] = "GSplats: IllustrisTNG Cosmic Web (TNG300-3-Dark)"
             scene.add_gsplats_from_data(
                 name="cosmic_web",
                 result=gsplats_data,
-                colormap="magma",
-                opacity=1.0,
-                blending_mode="additive",
+                # Turbo over magma: the cosmic web is read as a DENSITY field,
+                # and turbo's full hue sweep separates void / sheet / filament /
+                # halo far better than a single-hue luminance ramp, where the
+                # filaments and the halos they feed both saturate to white.
+                colormap="turbo",
+                # Volumetric, not additive. This is a genuine 3D density field
+                # ~300 Mpc deep, so depth ordering carries real information:
+                # additive sums straight through the box and the nearest
+                # clusters stop reading as nearer. Absorption is what buys that
+                # depth cue, and 1.0 (the default) is far too thin at this
+                # scale — the far wall still shows through the densest halos.
+                # 10.0 puts the extinction length well inside the box, so
+                # foreground structure occludes background structure.
+                blending_mode="volumetric",
+                absorption=10.0,
+                # Volumetric compositing accumulates opacity along the ray, so
+                # the fully-opaque splats additive wanted now over-fill; 0.66
+                # keeps the filament interiors translucent enough to see the
+                # structure behind them.
+                opacity=0.66,
                 intensity=1.0,
+                # `gamma` and the display range are deliberately NOT set: the
+                # writer derives `amplitude_data_range` as [min, p99.9] of the
+                # actual fit (currently ~[0.0004, 0.0847]), which is the window
+                # these settings were tuned against. Pinning it would freeze a
+                # data-dependent value that a refit legitimately moves.
                 layer=True,
             )
             scene.add_text(
@@ -362,12 +388,10 @@ def create_luxar_scene(gsplats_data: GSplatData, output_path: Path) -> Path:
                 color="rgba(255,255,255,0.7)",
                 blend_mode="difference",
             )
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 "TNG300-3-Dark z=0 • 244M dark-matter particles → Gaussian splats",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.5)",
+                DEMO_META.get("citation"),
             )
         aprint(f"Scene saved: {output_path}")
         return output_path

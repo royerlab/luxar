@@ -163,6 +163,12 @@ DEMO_META = {
     },
     "caches": ["gsplats_flylight_mcfo_63x"],
     "outputs": ["gsplats_3d_flylight_mcfo_63x_brain"],
+    "citation": {
+        "short": "Janelia FlyLight Project Team, HHMI (Meissner et al. 2023)",
+        "ref": "Meissner et al. 2023",
+        "doi": "10.7554/eLife.80660",
+        "license": "CC BY 4.0",
+    },
 }
 
 import math
@@ -173,7 +179,12 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
-from luxar.demos import ensure_dataset, launch_viewer, parse_demo_flags
+from luxar.demos import (
+    add_demo_caption,
+    ensure_dataset,
+    launch_viewer,
+    parse_demo_flags,
+)
 from luxar.gsplats.io.load_gsplats import load_gsplat_node
 from luxar.gsplats.tree import center_bounds
 from luxar.utils.paths import get_demos_output_dir
@@ -325,6 +336,7 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
             scene = compiler.create_scene(
                 dimensions=dims,
                 viewer_config=ViewerConfig(
+                    cinematic_mode=True,
                     tone_mapping="ACES",
                     camera=CameraConfig(
                         position=(cx, cy, cz + distance),
@@ -333,6 +345,7 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                         fov=CAMERA_FOV,
                     ),
                 ),
+                citation=DEMO_META["citation"],
             )
             scene.attrs["title"] = "GSplats: Drosophila Whole Brain (FlyLight MCFO)"
             scene.attrs["description"] = (
@@ -373,12 +386,10 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                 color="rgba(255,255,255,0.6)",
                 blend_mode="difference",
             )
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 "Janelia FlyLight • 63x confocal • VT019012 • 653,759 splats",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
 
     aprint(f"Scene saved: {output_path}")

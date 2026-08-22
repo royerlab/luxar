@@ -33,9 +33,9 @@ Resolution:  0.381 × 0.381 × 0.381 µm (isotropic)
 
 How to Cite:
 ------------
-Yin, Z. et al. (2022).  GIANI — open-source software for automated analysis
-of 3D microscopy images.  *Journal of Cell Science*, 135(5), jcs259022.
-DOI: 10.1242/jcs.259022
+Barry et al. (2022).  GIANI — open-source software for automated analysis
+of 3D microscopy images.  *Journal of Cell Science*, 135, jcs259511.
+DOI: 10.1242/jcs.259511
 
 Cell Tracking Challenge — Maska, M. et al. (2023).  The Cell Tracking
 Challenge: 10 years of objective benchmarking.  *Nature Methods*, 20, 1010–1020.
@@ -89,6 +89,14 @@ DEMO_META = {
     },
     "caches": ["gsplats_tribolium"],
     "outputs": ["gsplats_3d_tribolium_embryo"],
+    "citation": {
+        "short": (
+            "Barry 2021 (GIANI, Zenodo 5270323); "
+            "Cell Tracking Challenge (Maška et al. 2023)"
+        ),
+        "ref": "Barry / Maška et al. 2023",
+        "doi": "10.5281/zenodo.5270323",
+    },
 }
 
 import sys
@@ -102,6 +110,7 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
     MissingDependencyError,
+    add_demo_caption,
     launch_viewer,
     load_precomputed_gsplats,
     parse_demo_flags,
@@ -475,7 +484,10 @@ def create_luxar_scene(
                 # those peaks off instead of clipping them flat. Both numbers
                 # were in effect while the layer settings below were dialled in,
                 # so moving either needs a live A/B, not a blind flip.
-                viewer_config=ViewerConfig(tone_mapping="Neutral", exposure=1.97),
+                viewer_config=ViewerConfig(
+                    cinematic_mode=True, tone_mapping="Neutral", exposure=1.97
+                ),
+                citation=DEMO_META["citation"],
             )
 
             scene.attrs["title"] = "GSplats: Tribolium castaneum Embryo (Light-Sheet)"
@@ -492,7 +504,7 @@ Data Source:
   - Volume: 965 x 1871 x 991 voxels at 0.381 um isotropic
 
 How to Cite:
-  Yin et al. (2022). GIANI. J. Cell Sci. 135(5), jcs259022.
+  Barry et al. (2022). GIANI. J. Cell Sci. 135, jcs259511.
   Maska et al. (2023). Cell Tracking Challenge. Nat. Methods 20, 1010-1020.
 
 Navigation:
@@ -562,13 +574,7 @@ Navigation:
                 color="rgba(255,255,255,0.6)",
                 blend_mode="difference",
             )
-            scene.add_text(
-                "Light-sheet microscopy",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
-            )
+            add_demo_caption(scene, "Light-sheet microscopy", DEMO_META.get("citation"))
 
         aprint(f"Scene saved: {output_path}")
         return output_path

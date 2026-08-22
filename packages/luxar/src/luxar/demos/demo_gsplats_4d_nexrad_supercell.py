@@ -167,6 +167,7 @@ DEMO_META = {
     # attributed, so the credit is the archive itself.
     "citation": {
         "short": "NOAA NEXRAD Level II (KTLX, 2013-05-31)",
+        "ref": "NOAA NEXRAD 2013",
         "license": "Public domain (17 U.S.C. 105)",
         "url": "https://registry.opendata.aws/noaa-nexrad",
     },
@@ -185,6 +186,9 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import (
+    BundleMemberNotFound,
+    DatasetUnavailable,
+    add_demo_caption,
     cached_download,
     detect_device,
     launch_viewer,
@@ -1398,6 +1402,7 @@ def create_luxar_scene(
             scene = compiler.create_scene(
                 dimensions=dims,
                 viewer_config=ViewerConfig(
+                    cinematic_mode=True,
                     tone_mapping="ACES",
                     camera=CameraConfig(
                         # WORLD UP MUST BE +Z HERE. The displayed dims map
@@ -1544,12 +1549,10 @@ def create_luxar_scene(
                     transition="fade",
                     transition_duration=0.15,
                 )
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 "NEXRAD Level II - KTLX Twin Lakes, OK - NOAA NODD (public domain)",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
 
     aprint(f"Scene written to {output_path}")
@@ -1618,12 +1621,16 @@ def main() -> None:
         gsplats_list = load_dataset_bundle(
             DEMO_NAME, _PRECOMPUTED_BUNDLE_NAME, file_names, recompute=RECOMPUTE
         )
-    except FileNotFoundError as exc:
+    except (DatasetUnavailable, BundleMemberNotFound) as exc:
         # Two distinct causes land here and the message must not conflate
         # them: the LFS asset genuinely absent (pointer not pulled), or a
         # non-default --dbz-floor/--splats/--grid-m changing the per-frame
         # cache names so they miss the shipped bundle. The exception says
-        # which; pass it through.
+        # which; pass it through. Both are routable absences — the bytes are
+        # not obtainable — which is why this is not a bare `FileNotFoundError`
+        # (#1618): a checksum that will not verify, a missing packaged manifest
+        # or a bundle name the manifest does not list are faults, and a refit
+        # from the NEXRAD archive must not disguise them.
         aprint(
             f"Precomputed bundle unavailable ({exc}). "
             "Falling back to recomputing from the NEXRAD archive."

@@ -4,13 +4,16 @@
  * Tracks every `lod_group` scene-graph node currently loaded. For each
  * one, every frame:
  *
- *   1. Fold each child's nD ``positionBounds`` directly into a cached
- *      per-entry **local-space** :type:`BoundingBox`, using the current
- *      ``displayDims`` to map nD axes onto X/Y/Z. (No intermediate
- *      per-child boxes — the union is computed in place.)
- *   2. Transform the local box into world space via
+ *   1. Fold each child's raw nD ``positionBounds`` into a cached per-entry
+ *      **local-space** :type:`BoundingBox`, using the current ``displayDims``
+ *      to map nD axes onto X/Y/Z, then transform it to world space for the
+ *      frustum gate. Eviction uses the same full-geometry box.
+ *   2. When any child publishes optional robust ``lodBounds``, fold them the
+ *      same way (falling back per child to ``positionBounds``) for metric
+ *      sizing only, so excluded outliers remain visible and resident.
+ *   3. Transform the metric box into world space via
  *      :func:`transformBoundingBox` and the lod_group's ``matrixWorld``.
- *   3. Project the 8 corners through the camera and reduce them to the
+ *   4. Project the 8 corners through the camera and reduce them to the
  *      dimensionless **coverage metric**, on whichever scale the entry's
  *      ``selector`` names — the two branches of ``evaluateEntry``:
  *      - ``'screen-area'`` (what every derived ladder stamps): the fraction of
@@ -22,10 +25,10 @@
  *        extent ``calculateCameraDistance`` actually fits; see the
  *        ``FILL_FACTOR`` doc), so 1.0 == the object's projected diagonal has
  *        reached ``FILL_FACTOR`` of the fitted axis.
- *   4. Pick the **finest** child whose ``coverage_fraction`` threshold is
+ *   5. Pick the **finest** child whose ``coverage_fraction`` threshold is
  *      satisfied by that coverage metric, with 10% asymmetric hysteresis on
  *      the downgrade direction to suppress threshold-edge flicker.
- *   5. If the desired child differs from the current active one, swap
+ *   6. If the desired child differs from the current active one, swap
  *      visibility atomically — gated by the **never-downgrade display
  *      gate**: a fresh aspiration whose additive ladder is still streaming
  *      is not shown while the previously-displayed level looks strictly
@@ -314,6 +317,14 @@ export interface LODGroupChild {
    */
   positionBounds: { min: readonly number[]; max: readonly number[] };
   /**
+   * Optional robust nD bounds from the child's ``lod_bounds`` zarr attribute.
+   * The selector uses these only to size the node for either LOD metric;
+   * frustum gating and eviction keep the full ``positionBounds`` so visible
+   * outliers are never treated as absent. Missing bounds fall back to
+   * ``positionBounds`` for legacy stores.
+   */
+  lodBounds?: { min: readonly number[]; max: readonly number[] };
+  /**
    * Lazy-loading readiness. ``undefined`` means "always ready" (eagerly
    * loaded — the default for callers that don't opt into lazy loading,
    * including unit tests that construct children directly). ``false``
@@ -495,6 +506,8 @@ interface LODGroupEntryCache {
    * way the list is viewport-independent and needs no per-frame rebuild.
    */
   thresholds: number[];
+  /** Whether any child needs the optional robust-bounds metric fold. */
+  hasLodBounds: boolean;
   localBoxScratch: BoundingBox;
 }
 
@@ -667,6 +680,7 @@ export class LODGroupRegistry {
     this.entries.set(entry.path, entry);
     this.caches.set(entry.path, {
       thresholds: entry.children.map((c) => c.coverageFraction),
+      hasLodBounds: entry.children.some((c) => c.lodBounds != null),
       localBoxScratch: {
         min: { x: 0, y: 0, z: 0 },
         max: { x: 0, y: 0, z: 0 },
@@ -1056,42 +1070,60 @@ export class LODGroupRegistry {
       if (!forceFinest && !frustum.intersectsBox(WORLD_BOX3_SCRATCH)) {
         desired = this.coarsestReadyIndex(entry);
         entry.offScreen = true;
-      } else if (entry.selector === 'screen-area') {
-        // Screen-area selector: the metric IS the fraction of the viewport
-        // area the group's projected bbox rect covers (viewport-size
-        // independent by construction — see projectBoxAreaFraction). The
-        // thresholds are literal area fractions ([0, …, 1/4, 1/2] whole-object;
-        // a partition tile anchors at 1.0), so no FILL_FACTOR normalisation.
-        // Camera inside the box → +Infinity → finest, same as the diagonal
-        // path; ``?lod-finest`` forces Infinity → always finest.
-        coverageMetric = forceFinest
-          ? Infinity
-          : projectBoxAreaFraction(worldBox, camera, FRUSTUM_MATRIX_SCRATCH);
-        desired = pickChildWithHysteresis(cache.thresholds, entry.activeChildIndex, coverageMetric);
-        entry.offScreen = false;
       } else {
-        // Legacy 'coverage' selector (the default for older stores).
-        // Reuse the per-frame projection×view product (FRUSTUM_MATRIX_SCRATCH,
-        // built in evaluatePerFrame) instead of recomputing it per group.
-        const diagonalPx = projectBoxDiagonalPx(worldBox, camera, viewport, FRUSTUM_MATRIX_SCRATCH);
-        // Normalise the projected pixel diagonal to a dimensionless **coverage
-        // metric** (1.0 == the projected diagonal has reached FILL_FACTOR of the
-        // FITTED AXIS) so the viewport-relative coverage_fraction thresholds
-        // anchor the finest at half the fitted screen axis — any normal
-        // full-frame view — on any monitor OR aspect ratio (see the
-        // ``FILL_FACTOR`` doc for why this denominator, unlike the viewport
-        // diagonal it replaces, stays invariant across aspect ratio).
-        // diagonalPx == +Infinity (camera inside the box) → Infinity →
-        // finest, unchanged. fittedAxisPx is > 0 here (evaluatePerFrame guards
-        // width/height == 0). ``?lod-finest`` forces Infinity → always finest.
-        //
-        // fittedAxisPx mirrors calculateCameraDistance's own fit selection
-        // (bounds-math.ts): that function fits the VERTICAL fov for aspect >= 1
-        // (distance independent of width) and the HORIZONTAL fov for aspect < 1
-        // (distance ∝ 1/aspect) — i.e. ``min(width, height)`` in pixel space is
-        // exactly the extent the opening framing fits, on both sides of aspect 1.
-        const fittedAxisPx = Math.min(viewport.width, viewport.height);
-        coverageMetric = forceFinest ? Infinity : diagonalPx / (FILL_FACTOR * fittedAxisPx);
+        if (forceFinest) {
+          coverageMetric = Infinity;
+        } else {
+          const metricWorldBox = cache.hasLodBounds
+            ? (this.computeWorldBox(entry, displayDims, true) ?? worldBox)
+            : worldBox;
+          if (entry.selector === 'screen-area') {
+            // Screen-area selector: the metric IS the fraction of the viewport
+            // area the group's projected bbox rect covers (viewport-size
+            // independent by construction — see projectBoxAreaFraction). The
+            // thresholds are literal area fractions ([0, …, 1/4, 1/2] whole-object;
+            // a partition tile anchors at 1.0), so no FILL_FACTOR normalisation.
+            // Camera inside the box → +Infinity → finest, same as the diagonal path.
+            coverageMetric = projectBoxAreaFraction(metricWorldBox, camera, FRUSTUM_MATRIX_SCRATCH);
+            if (cache.hasLodBounds) {
+              // The thin-rectangle ramp is not monotone under box containment:
+              // trimming the thin axis can increase the robust metric. Robust
+              // bounds may only keep or reduce the raw-bounds selection.
+              coverageMetric = Math.min(
+                coverageMetric,
+                projectBoxAreaFraction(worldBox, camera, FRUSTUM_MATRIX_SCRATCH)
+              );
+            }
+          } else {
+            // Legacy 'coverage' selector (the default for older stores).
+            // Reuse the per-frame projection×view product (FRUSTUM_MATRIX_SCRATCH,
+            // built in evaluatePerFrame) instead of recomputing it per group.
+            const diagonalPx = projectBoxDiagonalPx(
+              metricWorldBox,
+              camera,
+              viewport,
+              FRUSTUM_MATRIX_SCRATCH
+            );
+            // Normalise the projected pixel diagonal to a dimensionless **coverage
+            // metric** (1.0 == the projected diagonal has reached FILL_FACTOR of the
+            // FITTED AXIS) so the viewport-relative coverage_fraction thresholds
+            // anchor the finest at half the fitted screen axis — any normal
+            // full-frame view — on any monitor OR aspect ratio (see the
+            // ``FILL_FACTOR`` doc for why this denominator, unlike the viewport
+            // diagonal it replaces, stays invariant across aspect ratio).
+            // diagonalPx == +Infinity (camera inside the box) → Infinity →
+            // finest, unchanged. fittedAxisPx is > 0 here (evaluatePerFrame guards
+            // width/height == 0).
+            //
+            // fittedAxisPx mirrors calculateCameraDistance's own fit selection
+            // (bounds-math.ts): that function fits the VERTICAL fov for aspect >= 1
+            // (distance independent of width) and the HORIZONTAL fov for aspect < 1
+            // (distance ∝ 1/aspect) — i.e. ``min(width, height)`` in pixel space is
+            // exactly the extent the opening framing fits, on both sides of aspect 1.
+            const fittedAxisPx = Math.min(viewport.width, viewport.height);
+            coverageMetric = diagonalPx / (FILL_FACTOR * fittedAxisPx);
+          }
+        }
         desired = pickChildWithHysteresis(cache.thresholds, entry.activeChildIndex, coverageMetric);
         entry.offScreen = false;
       }
@@ -1401,22 +1433,30 @@ export class LODGroupRegistry {
   }
 
   /**
-   * Fold an entry's children nD ``positionBounds`` into a single world-space
+   * Fold an entry's children nD bounds into one world-space
    * :type:`BoundingBox` (see {@link computeEntryWorldBox} in
-   * ``lod-selector-math.ts`` for the math). Shared by the auto selector
-   * (diagonal pick + frustum gate) and the eviction ranking so both reason
-   * over identical geometry. This wrapper supplies the per-entry
-   * ``localBoxScratch`` and the registry's ``matrixScratch``;
+   * ``lod-selector-math.ts`` for the math). The default uses raw
+   * ``positionBounds`` for frustum gating and eviction; ``useLodBounds`` uses
+   * robust bounds with a per-child raw fallback for selector metrics. This
+   * wrapper supplies the per-entry ``localBoxScratch`` and the registry's
+   * ``matrixScratch``;
    * ``transformBoundingBox`` allocates the returned box, so it is independent
    * of those scratches and safe to keep past the next call.
    */
   private computeWorldBox(
     entry: LODGroupEntry,
-    displayDims: readonly number[]
+    displayDims: readonly number[],
+    useLodBounds: boolean = false
   ): BoundingBox | null {
     const cache = this.caches.get(entry.path);
     if (!cache) return null;
-    return computeEntryWorldBox(entry, displayDims, cache.localBoxScratch, this.matrixScratch);
+    return computeEntryWorldBox(
+      entry,
+      displayDims,
+      cache.localBoxScratch,
+      this.matrixScratch,
+      useLodBounds
+    );
   }
 
   /**
@@ -1701,8 +1741,8 @@ export class LODGroupRegistry {
    * Bound resident LOD geometry to the GPU-pool byte budget — see
    * {@link enforceResidentByteBudget} (``lod-eviction.ts``) for the full
    * policy. This wrapper supplies the registry's entries, the pool-accounting
-   * deps, and the shared per-entry world-box fold (so eviction and the auto
-   * selector reason over identical geometry).
+   * deps, and the raw per-entry world-box fold, so eviction matches the
+   * selector's frustum gate rather than its optional robust metric bounds.
    */
   private enforceByteBudget(
     camera: THREE.Camera,

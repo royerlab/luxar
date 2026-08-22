@@ -321,6 +321,12 @@ DEMO_META = {
     },
     "caches": ["biodiversity_planetary_scale"],
     "outputs": ["biodiversity_planetary_scale"],
+    "citation": {
+        "short": "GBIF occurrence snapshot; Movebank: humpback whales (Andrews-Goff et al. 2023), turkey vultures (Bildstein et al. 2014), white storks (Berthold et al. 2022), blue whales (Mate B.); NASA Blue Marble",
+        "ref": "GBIF / Movebank / NASA",
+        "license": "CC BY 4.0 / CC0 1.0",
+        "url": "https://www.gbif.org/citation-guidelines",
+    },
 }
 
 import json
@@ -335,13 +341,14 @@ from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.group.compositing import position_bounds_from_array
-from luxar.core.group.partition import median_bsp_partition
+from luxar.core.group.partition import bsp_leaf_parts, spatial_bsp_tree
 from luxar.core.viewer_config import (
     CameraConfig,
     DimensionsConfig,
     ViewerConfig,
 )
 from luxar.demos import (
+    add_demo_caption,
     cache_computed,
     cached_download,
     launch_viewer,
@@ -2562,7 +2569,8 @@ def add_lod_tiles(
     # slice and is sliced away when the user scrubs, which is what makes the
     # scrubbable layers legible.
     pos5 = summary_positions(positions3)
-    parts = median_bsp_partition(pos5, max_elements)
+    tree = spatial_bsp_tree(pos5, max_elements, rule="median")
+    parts = bsp_leaf_parts(tree)
     lod = substitutive_lod_or_flat(
         dict(
             compression_factor=4,
@@ -2593,6 +2601,7 @@ def add_lod_tiles(
         max_elements=max_elements,
         layer=True,
         position_bounds=position_bounds_from_array(pos5),
+        bsp_tree=tree.to_serializable(),
         **(compositing or {}),
     )
     for i, idx in enumerate(parts):
@@ -2693,8 +2702,14 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
             str(output_path), encoding_mode=EncodingMode.PRECISION
         ) as compiler:
             scene = compiler.create_scene(
+                citation=DEMO_META["citation"],
                 dimensions=dims,
                 viewer_config=ViewerConfig(
+                    cinematic_mode=True,
+                    # Radius-dependent channel shifts/noise would corrupt the
+                    # categorical taxon hue encoded by the Neutral pin below.
+                    chromatic_lens_distortion_enabled=False,
+                    detector_noise_enabled=False,
                     # Neutral, not ACES (#1459): hue here is a CATEGORICAL
                     # encoding of taxonomic group, and the scene runs far over
                     # range (GLOBE_INTENSITY 4.88, OCCURRENCE_INTENSITY 100.0).
@@ -2875,14 +2890,12 @@ def _add_overlays(scene: Any, sample: GbifSample, tracks: TrackSet) -> None:
         color="rgba(255,255,255,0.75)",
         blend_mode="difference",
     )
-    scene.add_text(
+    add_demo_caption(
+        scene,
         f"{sample.lat.size:,} GBIF occurrence records • "
         f"{tracks.n_individuals} tracked animals • "
         f"snapshot {sample.snapshot} • CC BY / CC0 records only",
-        position=(0.98, 0.97),
-        font_size=0.015,
-        anchor="bottom-right",
-        color="rgba(200,200,220,0.5)",
+        DEMO_META.get("citation"),
     )
 
 

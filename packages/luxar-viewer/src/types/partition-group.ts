@@ -15,15 +15,16 @@ import type { BlendingMode } from './blending';
 /**
  * A node of the serialized BSP tree (`bsp_tree` partition attr).
  *
- * An INTERNAL node carries the split plane: `axis` (a spatial axis `0`/`1`/`2`)
+ * An INTERNAL node carries the split plane: `axis` (a center-column index)
  * and `split` coordinate (in the parts' local center space), with `left` = the
  * side where `coord < split` and `right` = `coord >= split`. A LEAF node holds
- * `part`, the index of the `part_<i>` child it represents.
+ * `part`, the partition child's `child_index`.
  *
- * Because the parts are BSP cells, the tree gives an EXACT back-to-front
- * ordering for painter's-algorithm (alpha-over) compositing, correct for any
- * camera pose incl. inside the volume: at each node recurse the far side of
- * `split` first. See {@link ../../rendering/depth-sort-coordinator}.
+ * Point/gsplat parts are BSP cells, so their tree gives an exact back-to-front
+ * painter's-algorithm order for any camera pose, including inside the volume.
+ * Lines/mesh split polyline/face centroids, so geometry can cross a cut and the
+ * same traversal is approximate. At each node recurse the far side of `split`
+ * first. See {@link ../../rendering/depth-sort-coordinator}.
  */
 export type BspTreeNode =
   | { part: number; axis?: undefined }
@@ -76,18 +77,19 @@ export interface PartitionGroupMetadata {
 
   /**
    * Split-plane record of the recursive decomposition that produced the parts.
-   * Enables the depth-sort coordinator's exact back-to-front part ordering;
-   * absent → it falls back to a per-part centroid-distance heuristic, which is
-   * NOT a valid painter's order and pops at the seams as the camera moves.
+   * Enables the depth-sort coordinator's BSP traversal; absent → it falls back
+   * to a per-part centroid-distance heuristic, which is NOT a valid painter's
+   * order and pops at the seams as the camera moves.
    *
-   * Written by every producer that has one: `to_spatial_partition` (the
-   * `tiles` / `adaptive` recipes, `gsplat partition`), content- and
-   * uniform-tiled fits, and the batch-fit streaming merge. Absent on a
-   * pre-2026.7 store, or where a transform could not carry the planes through.
+   * Written by every producer that has one: native points/lines/gsplats/mesh
+   * `partition=` adders, `to_spatial_partition` (the `tiles` / `adaptive`
+   * recipes, `gsplat partition`), content- and uniform-tiled fits, and the
+   * batch-fit streaming merge. Absent on a pre-2026.7 store, or where a
+   * transform could not carry the planes through.
    *
-   * EXACT except for uniform tiling, whose apodized parts keep their overlap
-   * band and so genuinely intersect; those cuts are the band midplanes, which
-   * bound the error to the band. See {@link BspTreeNode}.
+   * Exact for point/gsplat BSP cells. Approximate for centroid-split lines/mesh
+   * and uniform tiling, whose apodized parts keep their overlap band; those cuts
+   * still bound ambiguity to geometry crossing a plane. See {@link BspTreeNode}.
    */
   bsp_tree?: BspTreeNode;
 

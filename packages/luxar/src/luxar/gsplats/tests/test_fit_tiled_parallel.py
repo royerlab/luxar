@@ -257,6 +257,10 @@ class TestBuildWorkerCmd:
         # --config/--preset merge, defaulting to 'auto').
         assert "--floor" not in self._cmd()
 
+    def test_forwards_shared_raw_normalization_range(self) -> None:
+        cmd = self._cmd(norm_range=(10.25, 999.5))
+        assert cmd[cmd.index("--norm-range") + 1] == "10.25,999.5"
+
     def test_forwards_config_and_progressive_and_denoise_values(self) -> None:
         # Close the rest of the mutation-survivor class (config / progressive /
         # denoise VALUES, not just flag presence).
@@ -385,13 +389,12 @@ class TestFitTiledParallel:
     def test_says_it_carries_no_quality_metrics(
         self, tmp_path: Path, capsys: pytest.CaptureFixture
     ) -> None:
-        """The sequential path scores its merge; this one cannot, and says so.
+        """A direct caller that omits the optional reference gets clear recourse.
 
-        ``fit_tiled_parallel`` is handed only the tile grid's shape, not the
-        volume, so there is nothing here to score against (the CLI parent still
-        holds the loaded volume) — an unexplained missing PSNR is the very thing
-        the sequential path's scoring exists to end, so the gap is named with its
-        recourse.
+        The CLI parent supplies the matching volume, but the public orchestrator
+        still permits shape-only callers. An unexplained missing PSNR is the very
+        thing merged scoring exists to end, so that direct-use gap is named with
+        its recourse.
         ``verbose=False`` is passed explicitly (the default is True): a quiet
         scripted fit is exactly where the unexplained gap would otherwise
         appear, since nothing about the omission reaches the store.
@@ -416,6 +419,71 @@ class TestFitTiledParallel:
         # (``GSplatData.load`` raises "not matrix-shaped"), so a recourse that
         # omits the flatten step tracebacks on the tiled default.
         assert "gsplat flatten" in out
+
+    def test_scores_the_partition_when_given_the_reference(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture
+    ) -> None:
+        """The CLI parent can hand the worker merge its matching reference."""
+        volume = np.zeros((8, 8, 16), dtype=np.float32)
+        volume[2:6, 2:6, 3:13] = 1.0
+        m = self._specs_count(shape=volume.shape, tile=8, overlap=0)
+        merged = fit_tiled_parallel(
+            num_tiles=m,
+            jobs=2,
+            tmp_dir=tmp_path / "tiles",
+            worker_cmd_builder=_fake_worker_builder(n_per_tile=5),
+            volume_shape=volume.shape,
+            volume=volume,
+            device="cpu",
+            tile_size=8,
+            overlap=0,
+            progressive=False,
+            cull_retention=None,
+            partition=True,
+            verbose=False,
+        )
+
+        assert "psnr_db" in merged.meta["fit_stats"]
+        from luxar.cli.gsplat_ops.fitting.fit_utils import save_fit_output
+
+        output = tmp_path / "parallel.gsplats.zarr"
+        save_fit_output(merged, output, compress=None, verbose=False)
+        import zarr
+
+        root = zarr.open_group(str(output), mode="r")
+        assert root["fitting"].attrs["psnr_db"] == pytest.approx(
+            merged.meta["fit_stats"]["psnr_db"]
+        )
+        assert "No merged quality metrics" not in capsys.readouterr().out
+
+    def test_rejects_a_reference_on_another_grid(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture
+    ) -> None:
+        """A shape mismatch must not produce a plausible score."""
+        shape = (8, 8, 16)
+        m = self._specs_count(shape=shape, tile=8, overlap=0)
+        merged = fit_tiled_parallel(
+            num_tiles=m,
+            jobs=2,
+            tmp_dir=tmp_path / "tiles",
+            worker_cmd_builder=_fake_worker_builder(n_per_tile=5),
+            volume_shape=shape,
+            volume=np.zeros((8, 8, 8), dtype=np.float32),
+            device="cpu",
+            tile_size=8,
+            overlap=0,
+            progressive=False,
+            cull_retention=None,
+            partition=True,
+            verbose=False,
+        )
+
+        assert "psnr_db" not in merged.meta["fit_stats"]
+        out = capsys.readouterr().out
+        assert (
+            "reference shape (8, 8, 8) does not match the tile grid (8, 8, 16)" in out
+        )
+        assert "gsplat compare" in out
 
     def test_keep_tiles(self, tmp_path: Path) -> None:
         m = self._specs_count()

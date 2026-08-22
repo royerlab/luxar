@@ -36,7 +36,12 @@ index, so a rebuilt store may get a fresh `content_hash` and warm viewer caches
 invalidate on their own. Not every array moves: a padless `vertex_chunk_bounds`
 with no barrier dim at near-origin coordinates comes out byte-identical, because
 the outward store is a no-op when the cast did not move the bound (the branch's
-own test pins that). `segment_chunk_bounds` and the gsplats `chunk_bounds` carry
+own test pins that). (Superseded for COMPILED stores by the quantisation pad
+added in the same release: the compiler now also widens every bound by the
+encoder's per-axis uint16 round-trip slack, which is nonzero on any non-gridded
+axis, so a compiled `vertex_chunk_bounds` generally does move. The
+byte-identical claim still holds for a direct call to the builder, which passes
+no `coord_slack`.) `segment_chunk_bounds` and the gsplats `chunk_bounds` carry
 a pad on every spatial axis, so those generally do change (near the origin, on
 exactly-representable data, even a padded array can come out byte-identical). Existing stores are not
 rewritten and keep their old, occasionally-too-tight bounds.

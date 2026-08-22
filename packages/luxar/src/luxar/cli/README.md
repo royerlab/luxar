@@ -50,6 +50,7 @@ print(result.stdout)
 - `serving.py` - HTTP serving internals (`create_server_app`, data/viewer servers; re-exported by `main.py`)
 - `info_command.py` - The `luxar info` command implementation
 - `optimise_command.py` - The `luxar optimise` command (a thin Typer layer over `luxar.io.optimise`)
+- `restamp_lod_command.py` - The `luxar restamp-lod` command (a thin Typer layer over `luxar.io.lod_restamp`)
 - `gsplat_commands.py` - Thin registration hub (~56 lines) that assembles the `gsplat` sub-app: fit, cal, render, denoise, lod, convert, migrate-format, reencode, info, napari, view, compare, annotate-quality, transform, merge, cull, filter, slice, partition, flatten, additive, benchmark; the `batch-fit` group: run/submit/status/validate/cancel/merge/denoise-calibrate/denoise-preprocess
 - `gsplat_ops/` - The gsplat subcommand implementations: 7 root modules (scene/inspect/interchange registration, `benchmark`, `recipe_shared`, `planner`, `encoding`) plus three subpackages — `fitting/` (fit/cal/render/denoise), `batch/` (`batch-fit`), `transforms/` (edit-style commands) — 30 modules across them. Each subpackage's registration surface is its `commands.py`; the `__init__.py` files are docstring-only. See `gsplat_ops/README.md`.
 - `lod.py` - the unified `lod --recipe {flat,stream,levels,tiles,overview,adaptive}` command (thin wrapper over `gsplats/lod/recipes.py`; registered onto the `gsplat` app)
@@ -173,6 +174,48 @@ full-load requests — see the CLI reference before reaching for `--profile
 hosting` on a store the viewer will slice into. The logic lives in
 `luxar.io.optimise`.
 
+### `luxar restamp-lod`
+Re-derive a store's LOD switch thresholds in place. An attributes-only pass: the
+ladder rewrite moves no chunk data and opens no array.
+```bash
+luxar restamp-lod scene.luxar.zarr                      # every legacy ladder
+luxar restamp-lod scene.luxar.zarr --dry-run            # report only
+luxar restamp-lod scene.luxar.zarr --group tiled/part_0 # one ladder (repeatable)
+luxar restamp-lod fit.gsplats.zarr --group /            # the gsplats root ladder
+```
+
+Every `kind=lod` group still on the legacy `coverage` diagonal metric (or
+carrying no `selector`, which means the same) gets its per-child
+`coverage_fraction` thresholds re-derived by screen-occupancy halving — the
+whole-object anchor normally, the fills-screen one when the ladder is
+tile-bound — and its group stamped `screen-area`. Tile-bound is the tree
+writers' full rule: a real multi-part `kind=partition` above the ladder, OR a
+`kind=partition` among the ladder's own children (the `overview` recipe's coarse
+cap, which is pinned at fills-screen on purpose). A group already on
+`screen-area` is skipped, so a second run changes nothing, `content_hash`
+included.
+
+It is never automatic: an authored `coverage_fractions=[...]` list and a legacy
+derived one are indistinguishable on disk, so running the command IS the opt-in
+and the per-group old→new ladder is printed as the audit trail. Sibling of
+`luxar optimise` rather than a flag on it — that pass preserves every attribute
+and refuses same-path work; this one changes only attributes and works in place.
+A `.zarr.zip` is refused (nothing to write back to). When anything changes the
+`content_hash` is restamped and the metadata re-consolidated, then read back and
+verified from both the per-node documents and the consolidated index — and that
+restamp is the one costly step, since a SCENE's digest covers array values and
+therefore reads the whole store once (a standalone `.gsplats.zarr` gets a
+metadata-only stamp). An index is rebuilt, never introduced: a store that
+arrives unconsolidated leaves that way, since `is_consolidated` is how
+`batch-fit` tells a finished tile from an interrupted one. A failed write is
+rolled back rather than left half applied — digests restored as the store had
+them rather than recomputed, and the index re-consolidated only if the run had
+rewritten the root. Exit code 1 when any ladder was left alone for a reason worth acting
+on, and also when ladders were rewritten in a store that carries no
+`content_hash` to restamp — the rewrite landed, but nothing invalidates a warm
+viewer cache until the store is republished under a new URL prefix. The logic
+lives in `luxar.io.lod_restamp`.
+
 ### `luxar profiles`
 List available network simulation profiles for testing.
 ```bash
@@ -238,7 +281,7 @@ luxar gsplat fit --dump-config --preset hifi > config.yaml  # Generate config te
 
 **Presets:** `draft` (fast preview), `standard` (balanced), `hifi` (high quality), `ultra` (max quality)
 
-`--floor` (default `auto`) subtracts a background pedestal (clip at 0) before normalization, so output amplitudes are background-relative. `auto` = histogram-mode estimate (a no-op on clean data); `pNN` subtracts that percentile of non-zero voxels; a plain number is a fixed level; `none` and `0` both disable suppression (legacy hard-min). Both volume-derived forms exclude exact-zero voxels so masked/out-of-FOV padding does not move their population. Negative user levels are rejected, while a negative level produced internally from dark-frame-corrected data is retained. With a supplied `norm_range`, the erase-all guard and high endpoint use that whole-volume range unchanged so every tile keeps the same physical scale. Otherwise the guard compares the resolved level with the data maximum (the bounded sample maximum on lazy whole-volume paths), never the configured normalization percentile's high endpoint. With a nonzero `norm_percentile` from YAML, normalization's percentile-derived low endpoint remains an independent lower bound: if it is above the requested floor, that higher endpoint is what is actually subtracted and recorded; if the floor rises above the percentile-derived high endpoint but remains below the data maximum, the high endpoint expands to that maximum so real signal is retained. Under **any** tiling the spec is resolved against the **whole volume**, never against a tile or box crop — which would make abutting regions fit against different baselines and show brightness steps at their boundaries. `uniform` and `content` resolve it once in the parent and hand every tile/box that concrete level (a box's normalization floor is still clamped up to its own crop minimum where the crop lies entirely above the level); the uniform `-j N` / `--tile k/M` workers each resolve the same spec against the same whole volume, which agrees because the sampler is deterministic. `batch-fit` extends that across time: one global level for the whole timelapse, resolved at plan time as the **minimum** of the levels measured on a bounded set of evenly spaced `(t, c)` slices spanning the whole store — up to 4 timepoints (always including `t=0` and `t=T-1` when `T > 1`) x up to 4 channel-like coordinates — and recorded in the manifest (`floor_level`). A minimum is a lower bound on every **sampled** slice's pedestal, so it cannot clip a sampled timepoint or channel to zero (which the tile worker would report as a legitimately empty tile, silently dropping that slice from the merge). Bounded sampling can only bound what it samples: a dimmer NON-sampled slice (a blank/bleached frame between samples, a channel above the cap) can still be erased that way — use `--floor none` or an explicit numeric `--floor N` when a particular slice must survive. With `--denoise` on a `uniform` tiled fit the level is resolved on the **denoised** basis (each tile is denoised before the level is subtracted, so it has to be — #1178), which means cross-worker agreement now also depends on every worker receiving the same `h` (and the same `--denoise-backend`), not only the same volume and spec. That correction is measured on a bounded denoise probe, so it is exact for a volume the probe covers whole and, above that, is applied for a `pNN` floor only: with the default `--floor auto` on a large volume the level stays on the raw basis and one note says so, since a crop-measured histogram-mode shift is dominated by noise. Pass `--floor pNN` (or fit un-tiled) if you want the level itself resolved on denoised data.
+`--floor` (default `auto`) subtracts a background pedestal (clip at 0) before normalization, so output amplitudes are background-relative. `auto` = histogram-mode estimate (a no-op on clean data); `pNN` subtracts that percentile of non-zero voxels; a plain number is a fixed level; `none` and `0` both disable suppression (legacy hard-min). Both volume-derived forms exclude exact-zero voxels so masked/out-of-FOV padding does not move their population. Negative user levels are rejected, while a negative level produced internally from dark-frame-corrected data is retained. With a supplied `norm_range`, the erase-all guard and high endpoint use that whole-volume range unchanged so every tile keeps the same physical scale. Uniform and content fits resolve that raw-input range once for the whole selected volume and forward it to every tile or box; a degenerate range is declined so each child can fall back to its own usable scale. Otherwise the guard compares the resolved level with the data maximum (the bounded sample maximum on lazy whole-volume paths), never the configured normalization percentile's high endpoint. With a nonzero `norm_percentile` from YAML, normalization's percentile-derived low endpoint remains an independent lower bound: if it is above the requested floor, that higher endpoint is what is actually subtracted and recorded; if the floor rises above the percentile-derived high endpoint but remains below the data maximum, the high endpoint expands to that maximum so real signal is retained. Under **any** tiling the spec is resolved against the **whole volume**, never against a tile or box crop — which would make abutting regions fit against different baselines and show brightness steps at their boundaries. `uniform` and `content` resolve it once in the parent and hand every tile/box that concrete level (each child's normalization floor is still clamped up to the shared range's low endpoint when that endpoint lies above the level); the uniform `-j N` / `--tile k/M` workers each resolve the same spec against the same whole volume, which agrees because the sampler is deterministic. `batch-fit` extends both across time: one global level for the whole timelapse, resolved at plan time as the **minimum** of the levels measured on a bounded set of evenly spaced `(t, c)` slices spanning the whole store — up to 4 timepoints (always including `t=0` and `t=T-1` when `T > 1`) x up to 4 channel-like coordinates — plus, without denoising, one raw-input range reduced over those same samples and recorded in the manifest (`floor_level`, `norm_range`). Denoising batches leave that automatically sampled range unset so each task resolves on the data it fits: denoise-corrected input for an on-the-fly uniform tile, or the denoised store in `preprocess` mode (including content boxes). An explicit configured `norm_range` remains an intentional override. A minimum is a lower bound on every **sampled** slice's pedestal, so it cannot clip a sampled timepoint or channel to zero (which the tile worker would report as a legitimately empty tile, silently dropping that slice from the merge). Bounded sampling can only bound what it samples: a dimmer NON-sampled slice (a blank/bleached frame between samples, a channel above the cap) can still be erased that way — use `--floor none` or an explicit numeric `--floor N` when a particular slice must survive. With `--denoise` on a `uniform` tiled fit the level is resolved on the **denoised** basis (each tile is denoised before the level is subtracted, so it has to be — #1178), which means cross-worker agreement now also depends on every worker receiving the same `h` (and the same `--denoise-backend`), not only the same volume and spec. That correction is measured on a bounded denoise probe, so it is exact for a volume the probe covers whole and, above that, is applied for a `pNN` floor only: with the default `--floor auto` on a large volume the level stays on the raw basis and one note says so, since a crop-measured histogram-mode shift is dominated by noise. Pass `--floor pNN` (or fit un-tiled) if you want the level itself resolved on denoised data.
 
 An integer `--seeds K` is a **whole-volume** budget (what a default `gsplat cal` reports as K\*): a tiled fit — `--tiling uniform`, a large `--tiling auto` volume, a `--tile k/M` worker — divides it across the tiles that survive floor subtraction and Hann windowing rather than giving each tile the full count. Every worker derives the same non-empty count from the volume, tile grid, and resolved floor. The split is still equal per non-empty tile rather than proportional to occupancy, so an uneven grid can misallocate the budget between busy and barely occupied tiles; use `--tiling content` for density-proportional allocation. A K below that count gives one seed per non-empty tile. A float ratio in `(0, 1]` is scale-free and applied per tile unchanged; `--tiling content` ignores `--seeds` entirely (per-box budgets come from the density plan).
 
@@ -263,6 +306,21 @@ luxar gsplat merge a.zarr b.zarr -o merged.zarr
 luxar gsplat merge t0.zarr t1.zarr t2.zarr -o 4d.zarr --as-dimension --values 0,1,2
 luxar gsplat merge ch0.zarr ch1.zarr -o multi.zarr --channel-colors "#ff0080,#00ff00"
 ```
+The inputs' authored appearance (blending mode, opacity, colormap, …) is carried
+onto the merged root wherever the inputs **agree**; an input with no opinion on a
+key casts no vote, and a key they genuinely disagree on is dropped with a warning
+naming the differing values (each with the input it came from) and what lands
+instead, rather than one input's choice being promoted. A plain save STAMPS the identity values (`opacity=1.0`,
+`colormap="gray"`, …), and a value equal to such a stamp counts as no opinion —
+so merging a tuned dataset with a freshly fitted one keeps the tuned look instead
+of dropping seven keys back to those same defaults. The flip side: a deliberately
+authored identity is indistinguishable from an untouched store and loses to a
+sibling's value. `visible` is the exception where ABSENCE votes ("shown"), so
+`visible=false` is carried only when every input hides. `colormap` is dropped
+even under agreement whenever the merge gave the output per-splat RGB an input
+did not have — `--channel-colors`, or the white fill a mixed colored/colorless
+merge applies — whenever a colored input authored no palette and therefore
+relies on its per-splat RGB, and whenever any input declares a custom LUT.
 
 #### `luxar gsplat cull`
 Remove low-contribution splats to reduce dataset size while preserving visual quality.
@@ -418,6 +476,7 @@ luxar gsplat fit vol.zarr out.gsplats.zarr --tiling content --cal cal.json
 luxar gsplat fit vol.zarr out.gsplats.zarr --tiling content --cal cal.json -j 8   # parallel content fit
 luxar gsplat fit vol.zarr plan.json --tiling content --cal cal.json --plan-only   # emit box plan, no fit
 ```
+Direct content fits warn and ignore `--denoise`, `--progressive`, and the explicit `--downscale` flag; `downscale:` from `--config` remains supported by the content fitter. Batch content planning rejects on-the-fly denoising and progressive fitting instead.
 
 #### `luxar gsplat transform`
 Apply spatial and intensity transforms to a Gaussian splat dataset. Multiple transforms can be combined; they are applied in fixed order: scale, rotate, translate, center, scale-intensity, normalize-intensity.
@@ -455,7 +514,7 @@ luxar gsplat benchmark --slurm --partition gpu        # Submit benchmark to Slur
 luxar gsplat benchmark --list                         # Show profiled GPUs
 ```
 
-The `batch-fit` group fits a whole nD dataset at scale (the scaled-up sibling of `gsplat fit`), either **locally across GPUs** (`run`) or on a **Slurm cluster** (`submit`). Both plan the decomposition once (uniform tiles or a shared content box plan over T×C) and then run a memory-safe streaming merge to a single `kind=partition`. `status`/`validate`/`merge`/`cancel` are shared.
+The `batch-fit` group fits a whole nD dataset at scale (the scaled-up sibling of `gsplat fit`), either **locally across GPUs** (`run`) or on a **Slurm cluster** (`submit`). Both plan the decomposition once (uniform tiles or a shared content box plan over T×C) and then run a memory-safe streaming merge to a single `kind=partition`. `status`/`validate`/`merge`/`cancel` are shared. Content planning rejects on-the-fly `--denoise` and `--progressive` because content-box workers do not implement them; `batch-fit submit --preprocess` is the supported denoising route because it denoises to a store before the boxes fit.
 
 #### `luxar gsplat batch-fit run`
 Fit a whole timelapse **locally** across multiple GPUs (no Slurm), then merge. One worker is pinned per GPU via `CUDA_VISIBLE_DEVICES`; per-GPU concurrency is sized from each card's free VRAM. Resumable — re-running skips tiles already on disk.

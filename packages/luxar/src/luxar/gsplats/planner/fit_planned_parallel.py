@@ -31,8 +31,12 @@ from arbol import aprint, asection
 
 from luxar.gsplats.batch.task_pool import cancel_pool_on_interrupt
 from luxar.gsplats.fit_tiled_parallel import luxar_argv0
+from luxar.gsplats.merged_quality import announce_unscored_partition_merge
 
-from .fit_planned import _padded_bounds
+from .fit_planned import (
+    _padded_bounds,
+    _score_planned_flat_merge,
+)
 from .spec import FitPlan
 
 # Builds the argv for plan box ``i`` writing to a given output path.
@@ -51,6 +55,7 @@ def _default_worker_cmd_builder(
     cull_retention: Optional[float] = None,
     device: Optional[str] = None,
     floor: "Optional[str | float]" = None,
+    norm_range: "Optional[tuple[float, float]]" = None,
     channel: Optional[int] = None,
     timepoint: Optional[int] = None,
     array_key: Optional[str] = None,
@@ -104,6 +109,12 @@ def _default_worker_cmd_builder(
         ("--cull-retention", None if cull_retention is None else str(cull_retention)),
         ("--device", device or None),
         ("--floor", None if floor is None else str(floor)),
+        (
+            "--norm-range",
+            None
+            if norm_range is None
+            else f"{float(norm_range[0]):.17g},{float(norm_range[1]):.17g}",
+        ),
         ("--channel", None if channel is None else str(channel)),
         ("--timepoint", None if timepoint is None else str(timepoint)),
         ("--array-key", array_key or None),
@@ -138,6 +149,8 @@ def fit_planned_parallel(
     jobs: int,
     tmp_dir: Path,
     worker_cmd_builder: WorkerCmdBuilder,
+    volume: Any = None,
+    device: Optional[str] = None,
     keep_boxes: bool = False,
     partition: bool = False,
     recipe: Optional[str] = None,
@@ -158,6 +171,15 @@ def fit_planned_parallel(
     worker_cmd_builder : callable
         ``(box_idx, out_path) -> argv`` returning the command to fit one box.
         The injection seam for testing (see :func:`_default_worker_cmd_builder`).
+    volume : array-like, optional
+        The exact array the workers fit: same channel/timepoint selection and
+        same resolution level, on ``plan.volume_shape``'s grid. Required to
+        stamp merged quality metrics on a flat result; another array with the
+        same shape would produce a plausible but invalid score. Direct callers
+        may omit it, in which case the omission is announced.
+    device : str, optional
+        Device used to render the merged reconstruction for scoring. ``None``
+        auto-detects, matching :func:`render_to_volume_tensor`.
     keep_boxes : bool, default False
         Keep the per-box temp outputs after a successful merge.
     verbose : bool, default True
@@ -300,6 +322,7 @@ def fit_planned_parallel(
             bsp_tree=plan.bsp_tree,
             region_labels=region_boxes,
         )
+        announce_unscored_partition_merge(result)
     else:
         # `concatenate` keeps the reloaded boxes' shared truncation_radius; a
         # manual re-`GSplatData(...)` of the three arrays reset it to the default
@@ -325,6 +348,13 @@ def fit_planned_parallel(
                 # times to sum in the first place.
                 "time_seconds": float(elapsed),
             }
+        )
+        _score_planned_flat_merge(
+            result,
+            volume,
+            plan_shape=tuple(int(s) for s in plan.volume_shape),
+            device=device,
+            verbose=verbose,
         )
 
     if not keep_boxes:

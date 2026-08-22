@@ -315,6 +315,7 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import (
+    add_demo_caption,
     launch_viewer,
     parse_demo_flags,
     require_module,
@@ -1436,12 +1437,13 @@ def create_luxar_scene(
                 # as decoration, and the bloom gives the bright neurites the
                 # halo they have in the raw data.
                 #
-                # Each effect is spelled out because ``cinematic_mode`` alone
-                # would render none of them: the viewer applies its cinematic
-                # preset from the C-key toggle, and a scene's flag only sets the
-                # panel's summary state. The values below are that preset's, so
-                # the two agree; the flag stays so the toggle reads as already
-                # on. ACES is stated explicitly for the same reason.
+                # ``cinematic_mode=True`` now carries that look on its own — the
+                # zarr bridge expands the preset into every field a scene leaves
+                # unset (#1591), which it did NOT when this demo was written.
+                # The effects below are spelled out anyway, and they hold the
+                # preset's own values, so they are redundant rather than wrong:
+                # they keep this scene's grain and glow pinned at what it was
+                # tuned against if the shared preset is ever re-graded.
                 viewer_config=ViewerConfig(
                     tone_mapping="ACES",
                     cinematic_mode=True,
@@ -1497,12 +1499,10 @@ def create_luxar_scene(
                 color="rgba(255,255,255,0.6)",
                 blend_mode="difference",
             )
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 "Confocal • 0.44 μm isotropic • FISBe / FlyLight",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
 
         aprint(f"Scene saved: {output_path}")

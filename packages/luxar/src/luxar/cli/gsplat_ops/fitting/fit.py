@@ -11,6 +11,7 @@ from arbol import aprint, asection
 from luxar.utils.lod_methods import GSPLAT_ADDITIVE_CHOICES_HELP
 
 from .fit_utils import (
+    CONTENT_UNSUPPORTED_FIT_FLAGS,
     FitPipelineCtx,
     assemble_fit_config,
     dispatch_parallel_tiled,
@@ -28,6 +29,26 @@ from .fit_utils import (
 from .fit_utils import (
     resolve_tiling as _resolve_tiling_impl,
 )
+
+
+def _parse_norm_range(value: Optional[str]) -> "Optional[tuple[float, float]]":
+    """Parse the internal ``--norm-range LO,HI`` worker handoff."""
+    if value is None:
+        return None
+    try:
+        parts = [float(part.strip()) for part in value.split(",")]
+    except ValueError as exc:
+        raise typer.BadParameter("--norm-range must be LO,HI") from exc
+    if len(parts) != 2:
+        raise typer.BadParameter("--norm-range must be LO,HI")
+    from luxar.gsplats.fitting.validation import _validate_norm_range
+
+    norm_range = (parts[0], parts[1])
+    try:
+        _validate_norm_range(norm_range)
+    except ValueError as exc:
+        raise typer.BadParameter(f"--norm-range: {exc}") from exc
+    return norm_range
 
 
 def _stamp_source_dtype(fit_config: dict, source_info: dict) -> None:
@@ -167,10 +188,13 @@ def run_fit_volume(
         "requested floor. Unset lets a "
         "`floor:` in --config/preset apply, else defaults to auto. Under any "
         "--tiling the spec is resolved against the WHOLE volume — never a tile "
-        "or box crop — so every tile/box works from the same level. (Uniform "
-        "tiles subtract it before apodization, so their boundaries match; a "
-        "--tiling content box whose crop lies entirely above the level still "
-        "normalizes against its own crop minimum.)",
+        "or box crop — so every tile/box works from the same level.",
+    ),
+    norm_range: Optional[str] = typer.Option(
+        None,
+        "--norm-range",
+        hidden=True,
+        help="Internal worker handoff: raw-input normalization range LO,HI.",
     ),
     seed_method: Optional[str] = typer.Option(
         None, "--seed-method", help="Seed generation method"
@@ -197,7 +221,10 @@ def run_fit_volume(
         False,
         "--flat",
         help="Tiled fits emit a kind=partition (one part per tile/box) by "
-        "default for viewer frustum culling; --flat merges to a single leaf.",
+        "default for viewer frustum culling; --flat merges to a single leaf "
+        "instead. Uniform partition and flat uniform/content merges record "
+        "bounded whole-volume quality metrics (override with "
+        "LUXAR_TILED_QUALITY_MAX_GB).",
         rich_help_panel="Tiling",
     ),
     tile_size: int = typer.Option(
@@ -571,6 +598,7 @@ def run_fit_volume(
     if not input_path.exists():
         aprint(f"Error: Input file not found: {input_path}")
         raise typer.Exit(1)
+    parsed_norm_range = _parse_norm_range(norm_range)
 
     try:
         from luxar.gsplats import fit_gaussian_splats
@@ -639,6 +667,7 @@ def run_fit_volume(
                 axes=axes,
                 lr=lr,
                 floor=floor,
+                norm_range=parsed_norm_range,
                 seed_method=seed_method,
                 verbose=verbose,
                 downscale=downscale,
@@ -694,16 +723,17 @@ def run_fit_volume(
 
                 # Flags the content path does not implement — warn loudly rather
                 # than silently ignore (the fit knobs below ARE honored).
+                enabled_unsupported = {
+                    "--denoise": denoise,
+                    "--downscale": downscale is not None,
+                    "--progressive": progressive,
+                }
                 _unsupported = [
-                    name
-                    for name, on in (
-                        ("--denoise", denoise),
-                        ("--downscale", downscale is not None),
-                        ("--progressive", progressive),
-                    )
-                    if on
+                    flag
+                    for flag in CONTENT_UNSUPPORTED_FIT_FLAGS
+                    if enabled_unsupported[flag]
                 ]
-                if _unsupported and plan_box is None:
+                if _unsupported:
                     aprint(
                         f"⚠ {', '.join(_unsupported)} are not supported with "
                         "--tiling content and are ignored."
@@ -740,6 +770,7 @@ def run_fit_volume(
                     loss=loss,
                     lr=lr,
                     floor=floor,
+                    norm_range=parsed_norm_range,
                     cull_retention=cull_retention,
                     device=device,
                     jobs=jobs,

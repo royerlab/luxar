@@ -33,6 +33,7 @@ from ..compositing import (
     position_bounds_from_array,
     preflight_extend_to_all,
     reject_lines_only_join,
+    reject_mesh_only_appearance,
     slice_optional_array,
     strip_absent_attr_kwargs,
     sync_custom_colormap_attr,
@@ -40,7 +41,7 @@ from ..compositing import (
     validate_points_channels_before_split,
 )
 from ..dim_order import apply_dim_order_positions
-from ..partition import reject_mismatched_partition_parent
+from ..partition import is_requested, reject_mismatched_partition_parent
 
 if TYPE_CHECKING:
     from ...node import Node
@@ -77,12 +78,6 @@ def add_points_impl(
     # renders at the current zoom, additive describes HOW each level streams in.
     # Passing substitutive_lod alone ladders every level by default; pass
     # additive_lod=False to opt out. See lod/group.py's "Composed axes" section.
-    if substitutive_lod is not None and partition is not None:
-        raise ValueError(
-            "partition= and substitutive_lod= cannot be combined yet "
-            "(partition-of-substitutive — a kind=partition of per-part gsplat "
-            "LOD ladders — is not implemented). Use one or the other."
-        )
     try:
         # "An explicit None means absent" (#1574), applied ONCE here rather than
         # at each consumer: the colours gate below, the entry attrs gate, the
@@ -104,6 +99,7 @@ def add_points_impl(
         (parent or group)._ensure_no_duplicate_child(name)
         reject_mismatched_partition_parent(parent or group, "points", name)
         reject_lines_only_join("points", name, attrs)
+        reject_mesh_only_appearance("points", name, attrs)
 
         scene = group._find_scene()
 
@@ -206,8 +202,11 @@ def add_points_impl(
         # point lifted to an isotropic Gaussian, then reduced by the gsplat
         # substitutive pipeline) under a kind=lod Group whose finest child is the
         # original Points node. Fires BEFORE (auto-)partition so substitutive
-        # takes precedence over the opt-in auto-partition heuristic; explicit
-        # partition= is rejected up front (mutually exclusive, checked above).
+        # takes precedence over the opt-in auto-partition heuristic. An explicit
+        # partition= composes as an overview: the coarse levels stay
+        # global and the finest child becomes a spatial partition. Auto-partition
+        # remains lower precedence, so enabling the compiler heuristic does not
+        # silently change an ordinary substitutive ladder's topology.
         # ``pos_arr`` is already dim_order-transformed, so children are written
         # with dim_order=None/fill=None to avoid double application.
         if substitutive_lod is not None and n_points > 0:
@@ -215,6 +214,11 @@ def add_points_impl(
 
             substitutive_spec = resolve_substitutive_axis_points(substitutive_lod)
             if substitutive_spec is not None:
+                fine_partition = None
+                if is_requested(partition):
+                    fine_partition = _resolve_points_partition(
+                        pos_arr, partition, name, image_labels
+                    )
                 preflight_extend_to_all(scene, extend_to_all, pos_arr, "points")
                 return add_points_substitutive_lod_wrapper_impl(
                     group,
@@ -231,6 +235,7 @@ def add_points_impl(
                     extend_to_all=extend_to_all,
                     spec=substitutive_spec,
                     additive_lod=additive_lod,
+                    fine_partition=fine_partition,
                     **attrs,
                 )
 
@@ -246,38 +251,11 @@ def add_points_impl(
         # A dataset with <2 spatial dims can't be split; drop the request
         # with a warning rather than in silence.
         if partition is not None:
-            from ..partition import warn_if_partition_needs_more_dims
-
-            if not warn_if_partition_needs_more_dims(pos_arr.shape[1], name):
-                partition = None
-
-        if partition is not None:
-            from ..partition import (
-                median_bsp_partition,
-                midpoint_bsp_partition,
-                resolve_partition_spec,
-                sah_bsp_partition,
-                warn_if_oversized_single_part,
+            partition_plan = _resolve_points_partition(
+                pos_arr, partition, name, image_labels
             )
-
-            max_elements, partition_rule = resolve_partition_spec(partition)
-
-            if image_labels is not None:
-                raise ValueError(
-                    "image_labels is not supported alongside partition=. "
-                    "Decompose the data manually or omit image_labels."
-                )
-
-            if partition_rule == "sah":
-                parts = sah_bsp_partition(pos_arr, max_elements)
-            elif partition_rule == "midpoint":
-                parts = midpoint_bsp_partition(pos_arr, max_elements)
-            else:
-                parts = median_bsp_partition(pos_arr, max_elements)
-            warn_if_oversized_single_part(
-                len(parts), int(parts[0].size) if parts else 0, max_elements, name
-            )
-            if len(parts) > 1:
+            if partition_plan is not None:
+                max_elements, parts, bsp_tree = partition_plan
                 preflight_extend_to_all(scene, extend_to_all, pos_arr, "points")
                 return add_points_partition_wrapper_impl(
                     group,
@@ -293,6 +271,7 @@ def add_points_impl(
                     parent=parent,
                     extend_to_all=extend_to_all,
                     max_elements=max_elements,
+                    bsp_tree=bsp_tree,
                     additive_lod=additive_lod,
                     **attrs,
                 )
@@ -458,6 +437,39 @@ def add_points_impl(
         raise ValueError(funnel_add_error("points", name, e)) from e
 
 
+def _resolve_points_partition(
+    pos_arr: np.ndarray, partition: Any, name: str, image_labels: Any
+) -> Optional[tuple[int, List[np.ndarray], Dict[str, Any]]]:
+    """Resolve and execute a points partition, returning only a real split."""
+    from ..partition import (
+        bsp_leaf_parts,
+        resolve_partition_spec,
+        spatial_bsp_tree,
+        warn_if_oversized_single_part,
+        warn_if_partition_needs_more_dims,
+    )
+
+    if pos_arr.shape[0] == 0:
+        return None
+
+    if not warn_if_partition_needs_more_dims(pos_arr.shape[1], name):
+        return None
+
+    max_elements, partition_rule = resolve_partition_spec(partition)
+    if image_labels is not None:
+        raise ValueError(
+            "image_labels is not supported alongside partition=. "
+            "Decompose the data manually or omit image_labels."
+        )
+
+    tree = spatial_bsp_tree(pos_arr, max_elements, rule=partition_rule)
+    parts = bsp_leaf_parts(tree)
+    warn_if_oversized_single_part(
+        len(parts), int(parts[0].size) if parts else 0, max_elements, name
+    )
+    return (max_elements, parts, tree.to_serializable()) if len(parts) > 1 else None
+
+
 def add_points_partition_wrapper_impl(
     group: "Group",
     *,
@@ -473,7 +485,9 @@ def add_points_partition_wrapper_impl(
     parent: Optional["Node"],
     extend_to_all: Optional[Union[List[str], str]],
     max_elements: int,
+    bsp_tree: Dict[str, Any],
     additive_lod: Any = None,
+    wrapper_coverage_fraction: Optional[float] = None,
     **attrs: Any,
 ) -> "Group":
     """Build a kind=partition wrapper Group with one Points child per BSP part."""
@@ -500,6 +514,8 @@ def add_points_partition_wrapper_impl(
     uniform_color = is_broadcast_color(colors)
 
     wrapper_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
+    if wrapper_coverage_fraction is not None:
+        wrapper_attrs["coverage_fraction"] = wrapper_coverage_fraction
     leaf_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
 
     parent_node = parent or group
@@ -546,6 +562,10 @@ def add_points_partition_wrapper_impl(
             additive_lod=additive_lod,
             **leaf_attrs,
         )
+    from ..partition import persist_pruned_bsp_tree
+
+    # Unlike lines, every resolved points part is written in order.
+    persist_pruned_bsp_tree(wrapper, bsp_tree, range(len(parts)))
 
     # Persist the wrapper's position_bounds (per-axis min/max of the
     # full input) so picking / scene-bounds-cache treat the layer as
@@ -729,6 +749,7 @@ def add_points_substitutive_lod_wrapper_impl(
     extend_to_all: Optional[Union[List[str], str]],
     spec: Dict[str, Any],
     additive_lod: Any = None,
+    fine_partition: Optional[tuple[int, List[np.ndarray], Dict[str, Any]]] = None,
     **attrs: Any,
 ) -> Union["Group", Points]:
     """Write a Points node whose coarse LOD levels are synthesised gsplats.
@@ -737,7 +758,8 @@ def add_points_substitutive_lod_wrapper_impl(
     :func:`luxar.gsplats.lift.lift_points_to_gsplats`), the gsplat substitutive
     pipeline (:func:`luxar.gsplats.make_substitutive_lod`) synthesises
     fewer-but-larger representative levels, and those become the coarse children
-    of a ``kind=lod`` Group whose **finest** child is the original Points node.
+    of a ``kind=lod`` Group whose **finest** child is the original Points node,
+    or ``fine_partition`` for the overview topology.
     Coarse-level amplitudes are per-bin mass-preserving and rescaled to conserve
     render-light (``sum a·σ³``) so brightness is stable across the LOD seam (no
     zoom-out dimming); a ``max_aspect`` anisotropy cap (default 3) keeps merged
@@ -850,17 +872,44 @@ def add_points_substitutive_lod_wrapper_impl(
         max_aspect=spec.get("max_aspect", 3.0),
     )
 
-    # Degenerate input -> flat Points node rather than a one-child LOD group.
+    # Degenerate input -> finest Points shape rather than a one-child LOD group.
     # Covers BOTH no coarse levels AND an all-zero-radius cloud (the lift yields
     # 0 splats, so every coarse level is empty: coarse[-1] is the coarsest, and
     # writing a 0-element coarsest gsplat child would crash downstream). Mirrors
     # the lines.py degenerate guard. ``pos_arr`` is already dim_order-transformed,
     # so dim_order/fill are None and partition is disabled.
     if not coarse or int(coarse[-1].n_splats) == 0:
+        fallback = (
+            "partitioned Points branch"
+            if fine_partition is not None
+            else "flat Points node"
+        )
         aprint(
             f"  ⚠ substitutive_lod '{name}': input too small to synthesise coarse "
-            "levels; writing a flat Points node."
+            f"levels; writing the {fallback}."
         )
+        if fine_partition is not None:
+            max_elements, parts, bsp_tree = fine_partition
+            # Each part sizes its own ladder; sibling-aware whole-cloud sizing
+            # would let the first chunk swallow an entire part.
+            return add_points_partition_wrapper_impl(
+                group,
+                name=name,
+                pos_arr=pos_arr,
+                parts=parts,
+                n_points=n_points,
+                colors=colors,
+                radii=radii,
+                sharpness=sharpness,
+                scalars=scalars,
+                labels=labels,
+                parent=parent,
+                extend_to_all=extend_to_all,
+                max_elements=max_elements,
+                bsp_tree=bsp_tree,
+                additive_lod=composed_additive,
+                **attrs,
+            )
         return add_points_impl(
             group,
             name=name,
@@ -895,19 +944,17 @@ def add_points_substitutive_lod_wrapper_impl(
     # (``lod.group.resolve_lod_ladder``): an explicit ``coverage_fractions=[...]``
     # is used verbatim under the legacy units it was authored in, otherwise the
     # screen-area halving ladder is derived — re-anchored at fills-screen when the
-    # insertion point is partition-bound. ``add_points`` rejects ``partition=``
-    # together with ``substitutive_lod=``, but a caller CAN hand-build a
-    # ``kind=partition`` wrapper and call this once per part (what
-    # ``demo_biodiversity_planetary_scale`` does), which is how that anchor is
-    # reached here.
+    # insertion point is partition-bound or the finest child is the partitioned
+    # branch of an overview topology.
     coverage_vals, lod_selector = resolve_lod_ladder(
         spec.get("coverage_fractions"),
         counts,
         parent_node,
         name=name,
+        partition_bound=fine_partition is not None,
         length_error=lambda n_explicit, n_levels: (
             f"coverage_fractions has {n_explicit} entries but the LOD ladder "
-            f"has {n_levels} levels ({len(coarse_first)} gsplat + 1 points)"
+            f"has {n_levels} levels ({len(coarse_first)} gsplat + 1 finest)"
         ),
     )
 
@@ -923,7 +970,7 @@ def add_points_substitutive_lod_wrapper_impl(
     gsplat_child_attrs = {k: v for k, v in child_attrs.items() if k != "colormap"}
 
     aprint(
-        f"  📐 Substitutive-LOD '{name}': {len(coarse_first)} gsplat levels + points "
+        f"  📐 Substitutive-LOD '{name}': {len(coarse_first)} gsplat levels + finest "
         f"(counts coarsest→finest={counts}, K={spec['compression_factor']})"
     )
     lod_group_node = parent_node.add_lod_group(name, selector=lod_selector, **lod_attrs)
@@ -951,6 +998,31 @@ def add_points_substitutive_lod_wrapper_impl(
             coverage_fraction=coverage_vals[idx],
             **gsplat_child_attrs,
         )
+
+    if fine_partition is not None:
+        max_elements, parts, bsp_tree = fine_partition
+        # Each part sizes its own ladder; sibling-aware whole-cloud sizing
+        # would let the first chunk swallow an entire part.
+        add_points_partition_wrapper_impl(
+            group,
+            name=f"child_{len(coarse_first)}",
+            pos_arr=pos_arr,
+            parts=parts,
+            n_points=n_points,
+            colors=colors,
+            radii=radii,
+            sharpness=sharpness,
+            scalars=scalars,
+            labels=labels,
+            parent=lod_group_node,
+            extend_to_all=extend_to_all,
+            max_elements=max_elements,
+            bsp_tree=bsp_tree,
+            additive_lod=composed_additive,
+            wrapper_coverage_fraction=coverage_vals[-1],
+            **child_attrs,
+        )
+        return lod_group_node
 
     # Finest child: the original Points node (carries all N points + image_labels;
     # partition=False so the auto-partition heuristic cannot split it underneath).

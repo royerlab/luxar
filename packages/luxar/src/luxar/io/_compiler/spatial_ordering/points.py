@@ -12,7 +12,7 @@ from numpy.typing import NDArray
 from luxar._zarr_compat import create_array
 
 from ....encoding.compression import resolve_compressor
-from ..context import OrderingCtx
+from ..context import DatasetCtx, OrderingCtx
 
 if TYPE_CHECKING:
     from ....encoding.compression import CompressorLike
@@ -25,6 +25,8 @@ def build_points_ordering(
     radii: Optional[Union[NDArray[np.float32], float]],
     ctx: OrderingCtx,
     store: zarr.Group,
+    *,
+    dataset_ctx: Optional[DatasetCtx] = None,
 ) -> Optional[Dict[str, Any]]:
     """Apply spatial ordering using Morton/Hilbert curves.
 
@@ -35,6 +37,13 @@ def build_points_ordering(
         radii: Optional radii array
         ctx: Spatial-ordering configuration (enable flag + method).
         store: Root zarr group (read for ``scene_dimensions``).
+        dataset_ctx: Encoder configuration, used to ask how far the store will
+            move a position (see
+            :meth:`~luxar.encoding.encoder.ArrayEncoder.coordinate_round_trip_slack`)
+            and enlarge a radius (see
+            :meth:`~luxar.encoding.encoder.ArrayEncoder.positive_scalar_round_trip_slack`)
+            so spatial chunk bounds contain the DECODED footprint, not just
+            the authored one. ``None`` (a direct caller) ⇒ authored bounds.
 
     Returns:
         Dict with:
@@ -94,11 +103,41 @@ def build_points_ordering(
             sorted_radii = float(radii)
     else:
         sorted_radii = None
+
+    # How far can the encoder move a position from what it is handed? The
+    # bounds must contain the DECODED positions, since that is what the reader
+    # compares a slice query against (issue #1655). `sorted_positions` is the
+    # very array `write_positions` later hands the encoder.
+    #
+    # `allow_lut` is deliberately left at its default here, unlike the lines
+    # glue: `write_positions` (dataset_writers/positions.py) does not pass
+    # `allow_lut=False`, so a LUT-eligible positions array really is stored
+    # verbatim as `lut_uint8` and really is exact. The two must agree.
+    coord_slack = (
+        dataset_ctx.encoder.coordinate_round_trip_slack(
+            sorted_positions, dataset_ctx.encoding_mode
+        )
+        if dataset_ctx is not None
+        else None
+    )
+    scalar_slack = (
+        dataset_ctx.encoder.positive_scalar_round_trip_slack(
+            np.asarray(sorted_radii),
+            dataset_ctx.encoding_mode,
+            # Must match write_positive_scalar's default used by write_radii.
+            positive_scalar_encoding="linear",
+        )
+        if dataset_ctx is not None and isinstance(sorted_radii, np.ndarray)
+        else None
+    )
+
     chunk_bounds = compute_chunk_bounds_points(
         sorted_positions,
         sorted_radii,
         chunk_size,
         slice_dims=ordering_metadata["slice_dims"],
+        coord_slack=coord_slack,
+        scalar_slack=scalar_slack,
     )
 
     aprint(

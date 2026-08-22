@@ -402,6 +402,24 @@ Continuous coordinates, values that lie on no regular grid, and constant axes ar
 exactly as they were. The predicate is exported as `gridded_axis_step` because the sigma
 rail below has to ask the same question.
 
+Chunk-bound writers ask the sibling
+`ArrayEncoder.coordinate_round_trip_slack(data, mode, *, allow_lut=True)`
+predicate how far a COORDINATE write can move each axis. It replays the same
+precision, extent, grid-snap, and LUT exits as the encoder and returns `None`
+when every axis is exact, otherwise the conservative per-axis half-quantum.
+Callers must pass the write's actual `allow_lut` value: LUT eligibility means
+exact storage only when that write is allowed to select the LUT path.
+
+The matching
+`ArrayEncoder.positive_scalar_round_trip_slack(data, mode, *, positive_scalar_encoding="linear", allow_lut=True)`
+predicate reports how far a POSITIVE_SCALAR write can enlarge a value. It
+replays the broadcast, precision, LUT, linear, and geometric-log paths and
+returns `None` for exact storage, otherwise one conservative array-wide pad.
+Chunk-bound writers add that pad to point radii and line widths on spatial
+dimensions only. The query assumes the matching write cannot resolve to an
+`array_ref`, so callers using it must disable content deduplication for that
+array.
+
 Neither the extent rail nor the snap sees anything but the coordinates. A
 geometry-aware **sigma rail** lives at the gsplat write choke point (`io/_compiler/gsplat_assembly.py`), which also
 holds the Cholesky factors and escalates centers to float32 when HALF an axis's grid

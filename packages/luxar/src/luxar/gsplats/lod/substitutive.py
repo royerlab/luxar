@@ -201,9 +201,7 @@ def _resolve_reduction_device(
     fallback; the algorithm already round-trips through CPU for the spatial-hash
     and knn queries, so the MPS speedup was partial anyway.
     """
-    target_device = resolve_torch_device(
-        device if not isinstance(device, str) or device != "auto" else None
-    )
+    target_device = resolve_torch_device(device)
     if target_device.type == "mps":
         warnings.warn(
             f"{caller}: MPS backend lacks float64 support; falling back to CPU. "

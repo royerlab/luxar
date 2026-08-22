@@ -36,7 +36,7 @@
  */
 
 import { GLSL_SANITIZE_FUNCTIONS, GLSL_NEAR_FADE_FUNCTIONS } from '../_shared/glsl-lib';
-import { MESH_NORMAL_EPS_SQ } from './appearance';
+import { MESH_LIGHT_DIRECTION, MESH_NORMAL_EPS_SQ } from './appearance';
 import type { ShaderSource } from '../_shared/shader-source';
 import { requireTslMaterials } from '../../tsl/slot';
 
@@ -144,9 +144,9 @@ export const MESH_VERTEX_SHADER = /* glsl */ `
  *    it slip through and normalize into NaN shading.
  * 3. The **two-sided flip applies to the stored normal only**. `gl_FrontFacing ? N :
  *    -N` exists because `double_sided` defaults true and §5's whole-triangle cull
- *    exposes the interior back faces of a sliced closed isosurface: without the flip
- *    a back fragment has `dot(N, V) < 0`, the wrap term lands in `[0, 0.5)`, and the
- *    back side shades with a dimmed inverted gradient collapsing toward `uAmbient`.
+ *    exposes the interior back faces of a sliced closed isosurface: without the flip,
+ *    the stored back normal shades on the wrong side of its gradient, producing an
+ *    inverted result that can collapse toward `uAmbient`.
  *    The derivative normal needs no flip — `cross(dFdx, dFdy)` is defined by the
  *    rasterized fragment, not by the winding, so it always faces the viewer — and
  *    flipping it would *reintroduce* exactly that inverted shade, worst precisely at
@@ -172,9 +172,11 @@ export const MESH_FRAGMENT_SHADER = /* glsl */ `
     uniform mediump float uInvGamma;   // Pre-computed 1/gamma
     uniform mediump float uIntensity;  // Per-node linear colour multiplier (gain)
     uniform mediump float uOffset;     // Per-node additive brightness shift
-    // Shade term (§6.2): a view-anchored headlight, no scene light.
+    // Shade term (§6.2): view-anchored lighting, no scene light.
     uniform mediump float uAmbient;        // shade floor at the silhouette
     uniform mediump float uShadeExponent;  // wrap-term contrast
+    uniform mediump float uSpecular;       // additive highlight strength
+    uniform mediump float uShininess;      // highlight exponent
     // Cutout threshold, read only under LUXAR_MESH_ALPHA_CUTOUT.
     uniform mediump float uAlphaCutoff;
     // Near-fade inputs, the same pair the three siblings carry: 0 = perspective,
@@ -202,7 +204,7 @@ export const MESH_FRAGMENT_SHADER = /* glsl */ `
       // is TOP-DOWN. Under opposite conventions the identical surface yields +z on one
       // backend and -z on the other, and an unforced flat variant would then shade
       // correctly on one and collapse toward \`uAmbient\` on the other. Since the
-      // headlight's V is the fixed view axis (0, 0, 1), "faces the viewer" is exactly
+      // fixed view axis is (0, 0, 1), "faces the viewer" is exactly
       // \`z >= 0\` and one sign flip settles it for either convention.
       //
       // MEASURED, so the comment does not overstate: on Chrome + Apple Silicon the two
@@ -237,11 +239,14 @@ export const MESH_FRAGMENT_SHADER = /* glsl */ `
       highp vec3 N = storedUsable ? storedNormal : derivativeNormal;
       #endif
 
-      // View-anchored headlight: V is the fixed view-space axis (0, 0, 1) — a
-      // camera headlight — so dot(N, V) reduces to N.z. The wrap term
-      // (N.V * 0.5 + 0.5) keeps the silhouette readable instead of black.
-      mediump float wrap = clamp(N.z * 0.5 + 0.5, 0.0, 1.0);
+      // View-anchored lighting: the offset key follows the camera without adding
+      // scene light state. V stays the fixed view-space axis (0, 0, 1), so the
+      // Blinn-Phong half-vector is constant too.
+      mediump vec3 L = normalize(vec3(${MESH_LIGHT_DIRECTION.join(', ')}));
+      mediump vec3 H = normalize(L + vec3(0.0, 0.0, 1.0));
+      mediump float wrap = clamp(dot(N, L) * 0.5 + 0.5, 0.0, 1.0);
       mediump float shade = mix(uAmbient, 1.0, pow(wrap, uShadeExponent));
+      mediump float spec = uSpecular * pow(max(dot(N, H), 0.0), uShininess);
 
       // Per-node GOG. Identical chain to the sibling shaders (§6.2 notes it is
       // copied rather than shared — _shared/ carries the sanitizers and the
@@ -263,7 +268,7 @@ export const MESH_FRAGMENT_SHADER = /* glsl */ `
       // The shade factor is a LIGHTING term: it multiplies RGB and must never
       // enter the coverage below, or a silhouette fragment would also turn
       // transparent (and, under the cutout, dissolve).
-      mediump vec3 shadedColor = finalColor * shade;
+      mediump vec3 shadedColor = finalColor * shade + vec3(spec);
 
       // Mesh has no per-element intensity/amplitude/falloff scalar (§2.2) — it is
       // a solid surface — so coverage is just the per-vertex alpha times node

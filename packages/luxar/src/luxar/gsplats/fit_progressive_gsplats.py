@@ -78,6 +78,25 @@ from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
 from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
 
+def _pin_pass0_norm_range(
+    pass_i: int,
+    image_max: float,
+    applied_floor: "float | None",
+    pass_kwargs: dict[str, Any],
+) -> None:
+    """Put progressive pass 0 on the floor-subtracted normalization basis."""
+    if pass_i != 0 or applied_floor is None:
+        return
+    from luxar.gsplats.fitting.preprocessing import NORM_RANGE_MIN_SPAN
+
+    shifted_max = float(image_max) - float(applied_floor)
+    pass_kwargs["norm_range"] = (
+        (0.0, shifted_max)
+        if np.isfinite(shifted_max) and shifted_max > NORM_RANGE_MIN_SPAN
+        else None
+    )
+
+
 def _compute_psnr_chunked(
     rendered_gpu: torch.Tensor,
     original_np: np.ndarray,
@@ -300,7 +319,7 @@ def fit_progressive_gaussian_splats(
     on the same GPU and fill the utilization gap.
     """
     from luxar.gsplats.fit_gsplats import fit_gaussian_splats
-    from luxar.gsplats.fitting.preprocessing import _resolve_floor
+    from luxar.gsplats.fitting.preprocessing import _resolve_applied_norm_bounds
     from luxar.gsplats.fitting.validation import _validate_floor
     from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
 
@@ -339,23 +358,15 @@ def fit_progressive_gaussian_splats(
 
     start_time = time.time()
     V_original = V.astype(np.float32)
-    applied_floor = _resolve_floor(V_original, floor_spec)
-    # A floor at/above the brightest voxel would clip everything to 0; refuse it
-    # (mirrors the single-pass guard in _normalize_data). `auto` is capped at the
-    # median, so only an explicit too-high float/percentile can reach here.
-    if applied_floor is not None and applied_floor >= float(V_original.max()):
-        if verbose:
-            aprint(
-                f"Warning: floor {applied_floor:.6g} >= volume max "
-                f"{float(V_original.max()):.6g}; ignoring (would erase all signal)."
-            )
-        applied_floor = None
+    _, image_max, applied_floor = _resolve_applied_norm_bounds(
+        V_original,
+        float(kwargs.get("norm_percentile", 0.0)),
+        verbose,
+        floor_spec,
+        kwargs.get("norm_range"),
+    )
     if applied_floor is not None:
         V_original = np.clip(V_original - applied_floor, 0.0, None).astype(np.float32)
-        if verbose:
-            aprint(
-                f"Floor suppression: subtracted background level {applied_floor:.6g}"
-            )
 
     accumulated_lods: list[AdditiveSubLOD] = []
     prev_psnr = 0.0
@@ -474,6 +485,10 @@ def fit_progressive_gaussian_splats(
         # on the (already background-relative) full volume or its residuals would
         # wrongly eat signal.
         pass_kwargs["floor"] = "none"
+
+        # When the effective baseline was subtracted up front, pin pass 0 to the
+        # same zero-based bounds resolved by the single-pass fitter.
+        _pin_pass0_norm_range(pass_i, image_max, applied_floor, pass_kwargs)
 
         # A supplied whole-volume intensity scale describes the VOLUME, not the
         # residual chain built from it. Pass 0 shares it (that is the point);

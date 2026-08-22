@@ -45,8 +45,9 @@ On a fresh machine this demo bootstraps itself with no manual steps:
      AUTOMATICALLY downloads the 3.2 GB subset to
      ``~/.cache/luxar/gsplats_ct_totalsegmentator/`` (resumable), extracts one
      subject, combines its masks with ``nibabel``, fits on the GPU, caches the
-     fit, then reloads it and samples the per-splat organ label from the stored
-     splat order.
+     fit + labels pair under that directory's ``local/`` subdir (its own
+     namespace, so the manifest fetch never quarantines it), then reloads it and
+     samples the per-splat organ label from the stored splat order.
 
 The labels sidecar is indexed positionally against the fit, and the cache goes
 through ``save_with_lod`` (a streaming ladder whose rungs are each written in
@@ -92,10 +93,14 @@ from arbol import Arbol, aprint, asection
 from luxar import CameraConfig, Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
+    DatasetUnavailable,
+    add_demo_caption,
     detect_device,
     is_lfs_pointer,
     launch_viewer,
     load_dataset_gsplats,
+    load_local_fit_gsplats_at,
+    local_fit_path,
     parse_demo_flags,
     require_module,
     voxel_sampled_payload_agreement,
@@ -125,8 +130,16 @@ LABELS_FILE = "ct_atlas_labels.npz"
 
 CACHE_DIR = Path.home() / ".cache" / "luxar" / DEMO_NAME
 CACHE_ZIP = CACHE_DIR / "totalsegmentator_small.zip"
-CACHE_FIT = CACHE_DIR / FIT_FILE
+# The FETCHED labels sidecar: this dataset lists it as a manifest file, so
+# `load_dataset_gsplats` brings it down to the manifest's own path alongside the
+# fit. Read-only from here — the fetch owns that path.
 CACHE_LABELS = CACHE_DIR / LABELS_FILE
+# A local refit is OUR pair, not a copy of the hosted one, so BOTH halves live in
+# the demo's local-fit namespace. Writing them to the manifest's paths got them
+# quarantined on the next launch for failing the pinned sha256, which made the
+# "one-time" refit run on every single launch (#1618/#1672).
+LOCAL_FIT = local_fit_path(DEMO_NAME, FIT_FILE)
+LOCAL_LABELS = local_fit_path(DEMO_NAME, LABELS_FILE)
 
 DATA_DIR = Path(__file__).parent / "data" / DEMO_NAME
 LFS_FIT = DATA_DIR / FIT_FILE
@@ -675,11 +688,14 @@ def save_and_sample_labels(
     and sampling the RELOADED centers makes the pair aligned by construction
     under any writer ordering, and makes this path return exactly what the cached
     path will load next run. Returns ``(stored_fit, labels)``.
+
+    The pair is written to the local-fit namespace (``LOCAL_FIT`` /
+    ``LOCAL_LABELS``), never to the manifest's own paths — see their definitions.
     """
-    CACHE_FIT.parent.mkdir(parents=True, exist_ok=True)
+    LOCAL_FIT.parent.mkdir(parents=True, exist_ok=True)
     save_with_lod(
         fit,
-        CACHE_FIT,
+        LOCAL_FIT,
         # `stream`, not `levels`, even though the atlas is a large orbited
         # object: this demo does not hand its fit to the scene whole. It masks
         # `centers`/`amplitudes`/`cholesky_factors` per tissue supergroup and
@@ -693,11 +709,45 @@ def save_and_sample_labels(
         compress="zip",
         zip_deflate=True,
     )
-    stored = GSplatData.load(CACHE_FIT)
+    stored = GSplatData.load(LOCAL_FIT)
     with asection("Sampling per-splat organ labels"):
         labels = sample_labels(label_vol, stored.centers)
-    _save_labels_u8(labels, CACHE_LABELS)
+    _save_labels_u8(labels, LOCAL_LABELS)
+    aprint(f"Cached the refit pair under {LOCAL_FIT.parent}")
     return stored, labels
+
+
+def local_refit_pair() -> tuple[GSplatData, np.ndarray] | None:
+    """A pair THIS machine refitted earlier, or None if there is nothing usable.
+
+    Consulted after the manifest fetch and the shipped LFS assets, and BEFORE
+    refitting, which is what makes the refit one-time (#1618). It gets the same
+    alignment guard as every other source: the labels are indexed positionally,
+    and a half-written pair is exactly the case the guard is for.
+
+    Read through the ``LOCAL_FIT`` / ``LOCAL_LABELS`` constants, NOT through the
+    name-based ``load_local_fit_gsplats(DEMO_NAME, [FIT_FILE])``: the refit
+    WRITES through those constants, and a door that re-derives its own path from
+    the cache root instead is a second source of truth — it ignores a redirected
+    constant and reads the real ``~/.cache`` (#1618 review, A).
+
+    The sidecar is checked FIRST because it is a ``stat()`` and the fit is a
+    multi-hundred-megabyte zip decode: without both halves the pair is unusable
+    whichever one is missing, so there is nothing to pay for.
+    """
+    if not LOCAL_LABELS.exists():
+        return None
+    local = load_local_fit_gsplats_at([LOCAL_FIT], label=DEMO_NAME)
+    if local is None:
+        return None
+    try:
+        labels = _load_labels(LOCAL_LABELS)
+    except Exception as exc:  # noqa: BLE001 — a refit is the recovery
+        aprint(f"⚠️  Local labels {LOCAL_LABELS} unreadable ({exc!r}).")
+        return None
+    if not _labels_match_fit(local[0], labels, f"{LOCAL_FIT} + {LOCAL_LABELS}"):
+        return None
+    return local[0], labels
 
 
 def load_or_build() -> tuple[GSplatData, np.ndarray]:
@@ -706,11 +756,11 @@ def load_or_build() -> tuple[GSplatData, np.ndarray]:
         # Deliberately NOT gated on the cache already holding both files: that
         # is what the fetch is for. `load_dataset_gsplats` resolves the whole
         # manifest entry (cache -> in-repo -> Zenodo), and this dataset lists
-        # the labels sidecar alongside the fit, so CACHE_LABELS lands next to
-        # CACHE_FIT as part of the same call.
+        # the labels sidecar alongside the fit, so CACHE_LABELS is written by
+        # that same call.
         try:
             precomputed = load_dataset_gsplats(DEMO_NAME, [FIT_FILE], recompute=False)
-        except FileNotFoundError as exc:
+        except DatasetUnavailable as exc:
             aprint(f"Manifest fetch unavailable ({exc}).")
             precomputed = None
         if precomputed is not None and CACHE_LABELS.exists():
@@ -727,25 +777,15 @@ def load_or_build() -> tuple[GSplatData, np.ndarray]:
             labels = _load_labels(LFS_LABELS)
             if _labels_match_fit(fit, labels, f"{LFS_FIT} + {LFS_LABELS}"):
                 return fit, labels
-        # KNOWN LIMITATION (see #1672): the refit below writes into the
-        # MANIFEST-VERIFIED dataset cache, whose sha256 check
-        # (`luxar.utils.data_fetch._ensure_one`) quarantines any file that does
-        # not match the manifest. So ANY refit is self-erasing — not only one
-        # caused by the alignment guard above. Measured: the next run's fetch
-        # quarantines the freshly written cache file (renaming it `.corrupt`) for
-        # failing the manifest sha256, then raises, because the in-repo LFS files
-        # are pointers and the manifest builds no Zenodo URL for this dataset yet
-        # (unpublished record). That FileNotFoundError lands in the `except`
-        # above, so we fall through to here and refit again. A refit is the
-        # DEFAULT state on any checkout without the Git LFS assets pulled, so such
-        # a machine refits on EVERY invocation. Each refit re-quarantines to the
-        # same fixed `.corrupt` name (`quarantine_file` REPLACES a prior
-        # quarantine), so that leaves one leftover file, not a growing pile. The
-        # fix belongs with the fetch layer, not here.
+        # A pair this machine refitted earlier, in its own namespace — checked
+        # BEFORE refitting, which is what makes the refit below one-time.
+        pair = local_refit_pair()
+        if pair is not None:
+            return pair
         aprint(
             "Precomputed atlas not available (Git LFS assets not pulled, or the "
             "shipped fit and its labels sidecar disagree). Falling back to "
-            "download + fit (one-time; result is cached)."
+            f"download + fit (one-time; cached under {LOCAL_FIT.parent})."
         )
 
     warn_if_no_cuda_gpu()
@@ -797,7 +837,9 @@ def create_luxar_scene(fit: GSplatData, labels: np.ndarray, output_path: Path) -
         ) as compiler:
             scene = compiler.create_scene(
                 dimensions=dims,
-                viewer_config=ViewerConfig(tone_mapping="ACES", camera=camera),
+                viewer_config=ViewerConfig(
+                    cinematic_mode=True, tone_mapping="ACES", camera=camera
+                ),
                 citation=DEMO_META["citation"],
             )
             scene.attrs["title"] = "GSplats: CT Anatomical Atlas (TotalSegmentator)"
@@ -836,12 +878,10 @@ def create_luxar_scene(fit: GSplatData, labels: np.ndarray, output_path: Path) -
                 color="rgba(255,255,255,0.7)",
                 blend_mode="difference",
             )
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 "TotalSegmentator • CT + 117-organ segmentation → Gaussian splats",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.5)",
+                DEMO_META.get("citation"),
             )
         aprint(f"Scene saved: {output_path}")
         return output_path

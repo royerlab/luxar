@@ -51,6 +51,16 @@ def _internal_plan_json(output: Path, token: str) -> Path:
     return output.parent / f".{output.name}.plan.{token}.json"
 
 
+def _require_plan_volume_shape(volume: Any, fitplan: Any) -> None:
+    """Reject a plan whose boxes were built for a different voxel grid."""
+    actual = tuple(int(size) for size in np.shape(volume))
+    expected = tuple(int(size) for size in fitplan.volume_shape)
+    if actual != expected:
+        raise typer.BadParameter(
+            f"volume shape {actual} does not match the plan grid {expected}"
+        )
+
+
 def _save_fit_result(
     result: Any,
     output: Path,
@@ -77,10 +87,9 @@ def _stamp_content_floor(
 
     A content fit used to save NO record of the pedestal it removed: the merged
     result is built from fresh box nodes, and ``GSplatData.concatenate`` only
-    carries a block its inputs AGREE on — which per-box crops never do for their
-    own bounds, since each normalizes against its own crop. ``floor_level`` is
-    the one level `resolve_shared_floor` gave every box, so stamp it explicitly:
-    onto the flat leaf's ``stats``, or onto the root node's ``meta``, which
+    carries a block its inputs AGREE on. ``floor_level`` is the one level
+    `resolve_shared_floor` gave every box, so stamp it explicitly onto the flat
+    leaf's ``stats``, or onto the root node's ``meta``, which
     ``write_gsplats_tree`` promotes into the store's ``pipeline/`` group.
 
     The exception is a NEGATIVE resolved level, which cannot be forwarded as a
@@ -88,14 +97,14 @@ def _stamp_content_floor(
     :func:`resolve_shared_floor`). There is then no single level the artifact
     could honestly claim, so nothing is written.
 
-    A level the BOXES already agree on wins over the planned one, and is left
-    exactly as it stands. The two differ when a box's own minimum is above the
-    requested level, because ``_normalize_data`` only ever RAISES the floor to
-    ``max(requested, image_min)``: asking for 5 on data that starts at 100
-    subtracts 100, and the boxes' unanimous ``floor: 100 / image_min: 100`` is
-    the truth. Overwriting just ``floor`` there produced a store claiming a
-    5-unit pedestal next to an ``image_min`` of 100 — two keys contradicting
-    each other, and the spec's ``image_min == floor`` invariant broken.
+    A level the BOXES already recorded wins over the planned one, and is left
+    exactly as it stands. Since #1616 the boxes share one ``norm_range``, so their
+    recorded bounds agree with each other instead of following each crop's own
+    minimum. The applied level can still exceed the planned one when the shared
+    low endpoint does, so the guard below refuses to overwrite a differing
+    box-recorded ``floor`` — which would ship a store whose ``floor`` and
+    ``image_min`` contradict each other and break the spec's
+    ``image_min == floor`` invariant.
     """
     if isinstance(floor_forward, str) and floor_forward != "none":
         return
@@ -105,11 +114,10 @@ def _stamp_content_floor(
     if "floor" in target and target["floor"] != floor_level:
         return
     target["floor"] = floor_level
-    # Nothing else carries the bounds here (the boxes normalize against their
-    # own crops and so never agree on them), but drop any that would now
-    # contradict rather than leave the invariant broken. Only meaningful when a
-    # floor WAS applied: with none, `image_min` is just the normalization
-    # minimum and owes `floor` nothing.
+    # Since #1616 the boxes share one norm_range, so their bounds agree with each
+    # other. Still, drop any image_min that would contradict `floor` rather than
+    # leave the invariant broken. Only meaningful when a floor WAS applied: with
+    # none, `image_min` is just the normalization minimum and owes `floor` nothing.
     bound = target.get("image_min")
     if (
         floor_level is not None
@@ -147,6 +155,7 @@ def run_content_fit(
     loss: Optional[str] = None,
     lr: Optional[float] = None,
     floor: Optional[str] = None,
+    norm_range: "Optional[tuple[float, float]]" = None,
     cull_retention: Optional[float] = None,
     device: Optional[str] = None,
     jobs: str = "1",
@@ -184,7 +193,10 @@ def run_content_fit(
         fit_planned,
         plan_volume,
     )
-    from luxar.gsplats.planner.fit_planned import _fit_one_box
+    from luxar.gsplats.planner.fit_planned import (
+        _ensure_planned_norm_range,
+        _fit_one_box,
+    )
 
     def _section(title: str) -> Any:
         # Skip the section header/indent when quiet; the body still runs.
@@ -215,6 +227,7 @@ def run_content_fit(
                 "loss_type": loss,
                 "lr": lr,
                 "floor": floor,
+                "norm_range": norm_range,
                 # `0.0` ("keep every splat") is not None, so it still wins here.
                 "cull_retention": cull_retention,
             },
@@ -249,6 +262,7 @@ def run_content_fit(
                 f"--plan-box {plan_box} out of range [0, {len(fitplan.boxes)})"
             )
         vol = _load_vol()
+        _require_plan_volume_shape(vol, fitplan)
         fk = _fit_kwargs()
         fk["device"] = device
         # The parent resolved the level and forwarded it as a number — echoed
@@ -263,6 +277,11 @@ def run_content_fit(
         _, fk["floor"] = resolve_shared_floor(
             vol, fk.get("floor", "auto"), guard_numeric=False, verbose=False
         )
+        # The range has the same "resolve once against the whole (t, c) volume,
+        # never the box crop" contract as the floor above; a hand-run worker (or
+        # a manifest planned before the range existed) inherits none, so resolve
+        # it here too rather than falling back to per-crop normalization.
+        _ensure_planned_norm_range(vol, fk, False)
         cap = int(fitplan.density.get("saturation_cap", 0)) if fitplan.density else 0
         box_result = _fit_one_box(
             vol, fitplan.boxes[plan_box], int(fitplan.overlap), cap, **fk
@@ -296,6 +315,9 @@ def run_content_fit(
         )
 
     vol = _load_vol()
+    loaded_fitplan = FitPlan.from_json(plan) if plan is not None else None
+    if loaded_fitplan is not None:
+        _require_plan_volume_shape(vol, loaded_fitplan)
 
     # ── background floor: ONE level for the whole volume ──
     # Boxes are core-kept and abutting, so a per-box estimate (what forwarding
@@ -322,14 +344,21 @@ def run_content_fit(
     # fine before and refusing would make it unfittable.
     box_fit_kwargs["floor"] = floor_forward
 
+    # One raw-input scale for every content box. A batch worker receives the
+    # plan-time range through --norm-range; a direct content fit resolves it once
+    # here against the whole selected volume. The floor remains a separate raw
+    # zero point and _normalize_data combines the two without clipping the top.
+    _ensure_planned_norm_range(vol, box_fit_kwargs, verbose)
+
     # ── obtain a plan: load --plan, or scan + plan ──
     created_plan = False
     # One unique per-invocation token shared by the internal plan JSON and
     # the parallel staging dir, so concurrent content fits to the SAME output
     # can't clobber each other's plan or in-progress boxes (issue #1040).
     token = _invocation_token()
-    if plan is not None:
-        fitplan = FitPlan.from_json(plan)
+    if loaded_fitplan is not None:
+        fitplan = loaded_fitplan
+        assert plan is not None
         plan_json_path: Path = Path(plan)
     else:
         scan_metric = feature_metric or density.feature_method
@@ -446,6 +475,7 @@ def run_content_fit(
             # The RESOLVED level, not the spec: each worker would otherwise
             # re-estimate on its own box crop (#1174).
             floor=floor_forward,
+            norm_range=box_fit_kwargs.get("norm_range"),
             channel=channel,
             timepoint=timepoint,
             array_key=array_key,
@@ -461,6 +491,8 @@ def run_content_fit(
                 jobs=n_jobs,
                 tmp_dir=tmp_dir,
                 worker_cmd_builder=builder,
+                volume=vol,
+                device=device,
                 keep_boxes=keep_boxes,
                 partition=partition,
                 recipe=recipe,
@@ -469,6 +501,7 @@ def run_content_fit(
             )
     else:
         fk = box_fit_kwargs  # already carries the one resolved floor level
+        fk.pop("verbose", None)
         with _section(f"Fitting {fitplan.n_boxes} boxes"):
 
             def _prog(i: int, n: int, msg: str) -> None:
@@ -483,6 +516,7 @@ def run_content_fit(
                 recipe=recipe,
                 recipe_params=recipe_params,
                 progress_callback=_prog,
+                verbose=verbose,
                 **fk,
             )
 

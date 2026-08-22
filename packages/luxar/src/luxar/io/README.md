@@ -302,6 +302,119 @@ root document bytes. The scene restamp is a slab-wise reimplementation of the
 finalize-time walk — the same digest, without the whole-array materialisation
 that would peak at twice a 629 MB array's size.
 
+### Re-deriving LOD thresholds in an existing store (`lod_restamp.py`)
+
+`luxar.io.lod_restamp` rewrites the LOD switch thresholds of a store that is
+**already on disk**, in place. It backs the `luxar restamp-lod` CLI command. The
+sibling of `optimise.py`, deliberately not a flag on it: that pass preserves
+every attribute and refuses same-path work, this one changes **only** attributes
+and moves no chunk.
+
+```python
+from luxar.io.lod_restamp import restamp_lod_store
+
+report = restamp_lod_store("scene.luxar.zarr", dry_run=True)
+for group in report.restamped:
+    print(group.path, group.anchor, group.old_thresholds, "→", group.new_thresholds)
+```
+
+Every `kind=lod` group still on the legacy `coverage` diagonal metric (or
+carrying no `selector` at all, which means the same) has its per-child
+`coverage_fraction` re-derived by screen-occupancy halving —
+`partitioned_coverage_fractions` when the group is TILE-BOUND,
+`coverage_fractions` otherwise — and its group stamped `screen-area`. Children
+are ordered coarsest→finest by `child_index`, and a group already on
+`screen-area` is skipped, so a second run is a no-op down to the `content_hash`.
+
+Tile-binding is both gsplat tree writers' full rule, `under_partition or
+any(isinstance(c, GSplatPartition) for c in on_disk)`, read off the store — and
+it has two clauses, not one:
+
+- **ancestry** — an enclosing `kind=partition` that is a REAL tiling (>1 part;
+  a one-part partition's single part IS the whole object);
+- **own children** — one of this lod group's own ladder children is a
+  `kind=partition`. That is the `overview` recipe's `[coarse_leaf,
+  fine_partition]` cap, which `partitioned_coverage_fractions` documents as a
+  deliberate product contract. Miss this clause and an `overview` cap comes back
+  at the whole-object anchor, i.e. the viewer loads the entire dataset at the
+  opening framing — the one cost that recipe exists to avoid.
+
+The binding a lod group resolves is threaded down to its own descendants, as the
+writers thread `under_partition=partition_bound`.
+
+- `restamp_lod_store(path, *, dry_run=False, groups=None)` → `RestampReport` —
+  the groups restamped, skipped-as-current, skipped-as-unsupported and
+  skipped-as-unresolved, plus the new `content_hash` (with a
+  `content_hash_status` of `unchanged` / `restamped` / `unstampable`, since a
+  `None` hash alone cannot distinguish "nothing changed" from "this store
+  carries no digest to move") and any re-verification residual. `report.clean`
+  is False when anything was left alone for a reason the caller must act on —
+  and also on `unstampable`, which can only happen after a real rewrite: the
+  ladders landed but no digest moved, so a warm viewer cache goes on serving the
+  old ones (at zarr format 2 the `zattrs-hash` fallback digests the root
+  `.zattrs`, which a child's ladder edit does not touch either) until the store
+  is republished under a new URL prefix. The CLI keys its exit code on it.
+  `report.was_consolidated` says whether the store carried a consolidated index
+  when the run started — and therefore whether it has one now.
+
+**Never automatic.** An authored `coverage_fractions=[...]` list and a legacy
+derived one are indistinguishable on disk — the point
+`_compiler/finalize/lod_backfill.py::warn_one_part_partition_anchors` makes
+normatively, which is why that check only warns. Calling this IS the opt-in, and
+the per-group old→new ladder is printed as the audit trail for a rewrite that may
+be overriding a deliberate choice.
+
+**What is refused, and what is skipped.** A compressed store is refused (an
+archive is read through a temp directory, so in-place is impossible), as is a
+store that is not a Luxar scene or `.gsplats.zarr` tree. A `selector` outside the
+vocabulary (`pixel_size`, the pre-v3.2 gsplats spelling) is REPORTED and left
+alone rather than converted, and so is a ladder whose finest child records no
+element count — the derivation's "finest LOD level is empty" guard reads that
+count, and fabricating one would defeat it on exactly the store that needs it. A
+coarser level's missing count is harmless (only the ladder's length and the
+finest entry are consumed) and is reported as `None` rather than invented. A
+ladder whose stored thresholds DESCEND in the resolved child order is refused
+too: the order and the thresholds disagree about which level is finest, so
+writing an ascending ladder onto that order would silently invert it. So is a
+group with a child that carries a `coverage_fraction` but no scene-node `type`
+attr — the node filter drops it, and re-deriving over the rest would write a
+PARTIAL ladder, leaving that rung stranded on its legacy threshold (possibly
+above the screen-area ceiling of 1.0, where nothing can ever select it).
+
+**Cache invalidation, and what it costs.** When something changed,
+`_restamp_content_hash` runs and the metadata is re-consolidated, in that
+order — an attrs-only edit must still invalidate a warm viewer cache. This is
+the only part of the pass that is not free: a compiled SCENE's digest is over
+array VALUES, so the restamp streams every array in the store once (linear in
+total store size); a standalone `.gsplats.zarr` takes the metadata-only branch.
+A dry run, and a run that changes nothing, hash nothing. Then the store is read
+back and verified through BOTH readers, because they can disagree and the
+disagreement is the failure worth catching: `open_group` reports the per-node
+documents, while `read_consolidated_attrs` reports the root index, which is the
+only thing the viewer fetches. An index is REBUILT, never introduced — a store
+that arrives unconsolidated leaves that way (`is_consolidated` is `batch-fit`'s
+finished-tile sentinel, so writing one would mark an interrupted tile complete),
+and the verifier then expects no index rather than reporting its absence.
+
+**All-or-nothing writes.** Every group is classified in a read-only planning
+walk before anything is written; if a write then fails, each attr already
+rewritten is restored (an absent `coverage_fraction` back to absent) and the
+original error is re-raised with a note saying what was rolled back. Without
+that, a mid-walk failure leaves a TORN ladder — a screen-area threshold under
+`selector="coverage"` — which is the silent, unrecoverable disagreement
+`resolve_lod_ladder` warns about.
+
+The recovery is a pure RESTORE, digests included: every `content_hash` is read
+into the same undo ledger before the hash pass overwrites it, so a store whose
+stored digest is not what a fresh recompute yields — a legacy one, a
+hand-edited one, a scene whose inner groups carry none — comes back carrying
+exactly what it came in with, and the failure path stays metadata-only instead
+of streaming every array again. The index is re-consolidated only when the run
+had rewritten the ROOT document (the write that destroys a format-3 index): a
+failure at attr write #1 needs no root write at all, and re-consolidating there
+would turn a recoverable failure into a store with no index — which the viewer
+loads as an empty scene.
+
 ### Input Volume Loading
 
 `luxar.io.volume` and `luxar.io.ome_zarr` load arbitrary input volumes (the
@@ -346,9 +459,16 @@ sources fed to gsplat fitting/calibration), independent of the compiled
   notice ("declares a `multiscales` block that does not name it"), because the
   store plainly declared something. An owner block that wins the evidence gate
   but is then unusable (wrong axis count, no `axes` list) does not hide the
-  root's; the root's is retried. Dataset paths are matched
-  exactly relative to whichever group won, so a same-named root pyramid level
-  cannot be mistaken for a nested array. The custom (non-NGFF) bare `axes`
+  root's; the root's is retried. Dataset paths are matched exactly relative to
+  whichever group won — exactly after normalising surrounding slashes and one
+  leading `./`, since the reader accepts `"0"`, `"/0"` and `"./0"` as spellings of
+  the same child and NGFF writers do emit the explicitly relative form — so a
+  same-named root pyramid level cannot be mistaken for a nested array. Resolving
+  a declared level to an actual array normalises the same way, so a pyramid
+  spelled `["./0", "./1"]` selects and describes the same arrays as one spelled
+  `["0", "1"]`. Although NGFF requires strings, real numeric scalar paths are
+  coerced for compatibility while other non-string values name nothing; lookup
+  and metadata matching apply that same rule. The custom (non-NGFF) bare `axes`
   attribute goes the other way round, **root first**, because such a list names
   nothing and so no evidence about it is obtainable; an owner's `axes` is
   consulted only when the root has no usable list of its own.
