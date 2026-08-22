@@ -1119,9 +1119,9 @@ def doctor(
     if histograms:
         info = True
     if info:
-        if not path.is_dir():
+        if not path.is_dir() and ".luxar.zarr" not in path.name:
             info_dataset(path, show_histograms=histograms, bins=40)
-        else:
+        elif path.is_dir():
             from luxar._zarr_compat import open_group
 
             root = open_group(path, mode="r")
