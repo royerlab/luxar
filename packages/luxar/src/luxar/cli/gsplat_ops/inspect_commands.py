@@ -1128,7 +1128,7 @@ def doctor(
     if info:
         if store_kind == "gsplats":
             info_dataset(path, show_histograms=histograms, bins=40)
-        else:
+        elif store_kind == "scene":
             aprint("ℹ️ The gsplat info report does not apply to a Luxar scene.")
 
     with asection(f"Diagnosing: {path.name}"):

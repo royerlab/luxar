@@ -124,6 +124,28 @@ def test_doctor_classifies_a_plainly_named_scene_archive_from_its_attrs() -> Non
         assert "no split planes" in result.stdout
 
 
+def test_doctor_diagnoses_archive_when_root_attr_peek_is_inconclusive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from luxar.gsplats.io import _archive
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        path = _partition_without_split_planes(tmp_path)
+        shutil.make_archive(
+            str(tmp_path / "part"), "zip", root_dir=str(tmp_path), base_dir=path.name
+        )
+        monkeypatch.setattr(_archive, "read_archive_root_attrs", lambda _path: {})
+
+        result = CliRunner().invoke(
+            app, ["gsplat", "doctor", str(tmp_path / "part.zip")]
+        )
+
+        assert result.exit_code == 1, result.stdout
+        assert "not a Luxar scene" not in result.stdout
+        assert "no split planes" in result.stdout
+
+
 @pytest.mark.parametrize("name", ["broken.zip", "broken.tar.gz"])
 def test_doctor_reports_corrupt_archives_without_a_traceback(name: str) -> None:
     with tempfile.TemporaryDirectory() as tmp:

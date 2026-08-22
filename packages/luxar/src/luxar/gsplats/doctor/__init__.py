@@ -8,10 +8,9 @@ named, explained, and — where the correct value is recoverable from the store
 itself — fixed in place, without re-fitting.
 
 Read-only by default: :func:`diagnose_store` reports, and only writes when
-``fix=True``. Repairs to standalone gsplat stores and scenes are metadata-level
-and go through one finalize
-(:func:`~luxar.gsplats.io.save_gsplats._stamp_content_hash` then
-``zarr.consolidate_metadata``, in the writer's order) so the consolidated
+``fix=True``. Repairs to standalone gsplat stores and scenes are metadata-level and
+go through one finalize (:func:`~luxar.gsplats.io.save_gsplats._stamp_content_hash`
+then ``zarr.consolidate_metadata``, in the writer's order) so the consolidated
 metadata cannot disagree with the per-node attrs it shadows, and the viewer's
 persistent cache invalidates on the change.
 
@@ -40,7 +39,7 @@ __all__ = [
     "resolve_store_kind",
 ]
 
-StoreKind = Literal["gsplats", "scene"]
+StoreKind = Literal["gsplats", "scene", "unknown"]
 
 
 def _store_kind_from_attrs(attrs: Mapping[str, Any]) -> Optional[StoreKind]:
@@ -63,6 +62,8 @@ def resolve_store_kind(path: "str | Path") -> StoreKind:
 
     kind = _store_kind_from_attrs(attrs)
     if kind is None:
+        if not path.is_dir():
+            return "unknown"
         raise ValueError(
             f"{path} is not a Luxar scene or standalone .gsplats.zarr store "
             f"(type={attrs.get('type')!r}, "
@@ -82,12 +83,11 @@ def diagnose_store(
     Parameters
     ----------
     path
-        A ``.gsplats.zarr`` / ``.luxar.zarr`` directory, or a
-        ``.zip``/``.tar.gz`` archive. An
-        archive is extracted to a temp directory and read from there, so it can
-        be DIAGNOSED but not repaired: with ``fix=True`` it is rejected, for the
-        same reason ``annotate-quality`` rejects one — there is nothing to write
-        back to in place. Unpack first to repair.
+        A ``.gsplats.zarr`` / ``.luxar.zarr`` directory, or a ``.zip``/``.tar.gz``
+        archive. An archive is extracted to a temp directory and read from there,
+        so it can be DIAGNOSED but not repaired: with ``fix=True`` it is rejected,
+        for the same reason ``annotate-quality`` rejects one — there is nothing to
+        write back to in place. Unpack first to repair.
     fix
         Apply the repairs the checks offer. Off by default: a diagnosis should
         never surprise anyone by writing.
