@@ -92,10 +92,14 @@ def _mark_zip_member_encrypted(path: Path, *, metadata: bool) -> None:
     payload = bytearray(path.read_bytes())
     with zipfile.ZipFile(path) as archive:
         if metadata:
-            member = next(
-                info
-                for info in archive.infolist()
-                if not info.is_dir() and info.filename.endswith("zarr.json")
+            member = min(
+                (
+                    info
+                    for info in archive.infolist()
+                    if not info.is_dir()
+                    and Path(info.filename).name in {"zarr.json", ".zattrs"}
+                ),
+                key=lambda info: len(Path(info.filename).parts),
             )
         else:
             member = next(
