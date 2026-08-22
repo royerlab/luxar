@@ -133,7 +133,8 @@ def compute_chunk_bounds_points(
                    the QUANTISATION SLACK note above). Default None ⇒ zero on
                    every axis. Validated by :func:`_normalise_coord_slack`.
         scalar_slack: Outward pad covering how far the stored radius can exceed
-                   the authored radius. Applied on spatial dimensions only.
+                   the authored radius. Applied on spatial dimensions only;
+                   overflow produces conservative infinite spatial bounds.
 
     Returns:
         chunk_bounds: Bounding boxes, shape (num_chunks, d, 2)
@@ -169,6 +170,7 @@ def compute_chunk_bounds_points(
 
         padded_chunk_radii: Optional[np.ndarray] = None
         if chunk_radii is not None:
+            # Overflow to +inf only widens the bound, so it is conservative.
             with np.errstate(over="ignore"):
                 padded_chunk_radii = (
                     np.asarray(chunk_radii).astype(np.float64, copy=False)
@@ -189,8 +191,7 @@ def compute_chunk_bounds_points(
             else:
                 # SPATIAL dimension: Include radius extent
                 if radii_scalar is not None:
-                    with np.errstate(over="ignore"):
-                        radius = radii_scalar + footprint_slack
+                    radius = radii_scalar + footprint_slack
                     mins_d = coords.min() - radius
                     maxs_d = coords.max() + radius
                 else:

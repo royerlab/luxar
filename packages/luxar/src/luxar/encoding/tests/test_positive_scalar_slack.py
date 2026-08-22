@@ -213,6 +213,10 @@ def test_positive_scalar_precision_slack_covers_the_float32_cast(
         (EncodingMode.MEMORY, np.linspace(1e38, 1e39, 20_000, dtype=np.float64)),
         (EncodingMode.PRECISION, np.linspace(1e38, 1e39, 20_000, dtype=np.float64)),
         (EncodingMode.MEMORY, np.geomspace(1e-300, 1.7e308, 4001)),
+        (
+            EncodingMode.MEMORY,
+            np.array([1e-300, np.finfo(np.float64).max], dtype=np.float64),
+        ),
     ],
 )
 def test_positive_scalar_slack_is_finite_above_the_float32_range(

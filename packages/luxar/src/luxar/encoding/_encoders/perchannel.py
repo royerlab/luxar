@@ -359,8 +359,9 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         :meth:`_encode_coordinate`, so no coordinate fixed-point displacement
         applies.
         Linear quantization uses half a grid quantum; geometric-log encoding
-        uses the corresponding half-step at the array maximum. Linear
-        quantization also budgets 1.5 dtype epsilons for the three
+        uses the corresponding half-step at the array maximum, capped at the
+        maximum because its grid is anchored there and cannot decode above it.
+        Linear quantization also budgets 1.5 dtype epsilons for the three
         float16/float32 normalization operations. A relative-epsilon term for
         the wider of float32 and the authored dtype (or one float32 subnormal
         quantum) covers the reader's final cast.
@@ -440,6 +441,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
                 return None
             quant_bits = 16 if mode == EncodingMode.AUTO else 8
             intervals = (1 << quant_bits) - 2
+            # The grid is anchored at max_log, so no code decodes above max_val.
             half_step = min(
                 float(np.expm1((max_log - min_log) / (2.0 * intervals))), 1.0
             )
@@ -461,7 +463,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             max_val * decode_eps,
             float(np.finfo(np.float32).smallest_subnormal),
         )
-        return float(slack + decode_ulp)
+        return float(min(slack + decode_ulp, float(np.finfo(np.float64).max)))
 
     def _encode_coordinate(
         self,

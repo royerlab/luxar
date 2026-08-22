@@ -408,7 +408,8 @@ def compute_segment_chunk_bounds(
             store can move a vertex from the value passed here. Default None ⇒
             zero on every axis. Validated by :func:`_normalise_coord_slack`.
         scalar_slack: Outward pad covering how far the stored width can exceed
-            the authored width. Applied on spatial dimensions only.
+            the authored width. Applied on spatial dimensions only; overflow
+            produces conservative infinite spatial bounds.
 
     Returns:
         chunk_bounds: Bounding boxes, shape (num_chunks, D, 2)
@@ -435,6 +436,7 @@ def compute_segment_chunk_bounds(
         p2 = vertices[chunk_segs[:, 1]]
         w1 = widths[chunk_segs[:, 0]].astype(np.float64, copy=False)
         w2 = widths[chunk_segs[:, 1]].astype(np.float64, copy=False)
+        # Overflow to +inf only widens the bound, so it is conservative.
         with np.errstate(over="ignore"):
             max_w = np.maximum(w1, w2) + footprint_slack
 
