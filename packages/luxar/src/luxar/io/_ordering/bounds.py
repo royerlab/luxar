@@ -183,6 +183,18 @@ def _normalise_coord_slack(coord_slack: Optional[np.ndarray], ndim: int) -> np.n
     return slack
 
 
+def _normalise_scalar_slack(scalar_slack: Optional[float]) -> float:
+    """Validate one non-negative finite footprint pad; ``None`` means zero."""
+    if scalar_slack is None:
+        return 0.0
+    slack = float(scalar_slack)
+    if not np.isfinite(slack):
+        raise ValueError(f"scalar_slack must be finite (got {scalar_slack!r})")
+    if slack < 0.0:
+        raise ValueError(f"scalar_slack must be non-negative (got {scalar_slack!r})")
+    return slack
+
+
 def _store_outward_f32(lo: float, hi: float) -> tuple[np.float32, np.float32]:
     """Narrow a float64 interval to float32 OUTWARD (``lo`` down, ``hi`` up).
 

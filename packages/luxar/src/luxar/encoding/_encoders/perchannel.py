@@ -2,7 +2,7 @@
 scalar, geolog scalar, and the per-channel linear/log/signed-log/geolog family."""
 
 import warnings
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import numpy as np
 import zarr
@@ -319,6 +319,70 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             if self.encodes_as_lut(data, SemanticType.COORDINATE):
                 return None  # a LUT stores the values verbatim
         return slack
+
+    def positive_scalar_round_trip_slack(
+        self,
+        data: np.ndarray,
+        mode: EncodingMode,
+        *,
+        positive_scalar_encoding: Literal["linear", "log"] = "linear",
+        allow_lut: bool = True,
+    ) -> Optional[float]:
+        """How far can encoding ``data`` as POSITIVE_SCALAR enlarge a value?
+
+        Returns ``None`` when the write is exact, otherwise one conservative
+        float64 pad for the whole array. The chunk-bounds writers add it to a
+        point radius or line width on spatial dimensions only, so a decoded
+        footprint cannot escape a bound built from the authored scalar.
+
+        The exits mirror :meth:`_encode_positive_scalar` plus the exact
+        broadcast/LUT paths that precede it in :meth:`ArrayEncoder.encode`.
+        Linear quantization uses half a grid quantum; geometric-log encoding
+        uses the corresponding half-step at the array maximum. One float32 ULP
+        covers the final decoder cast (needed by the uint16 linear tier).
+        """
+        if mode not in (EncodingMode.AUTO, EncodingMode.MEMORY):
+            return None
+
+        arr = np.asarray(data)
+        if arr.size == 0 or not np.all(np.isfinite(arr)) or np.any(arr < 0):
+            return None
+
+        if self._is_uniform(arr):
+            first = float(arr.flat[0])
+            displacement = max(0.0, first - float(np.min(arr)))
+            return displacement or None
+
+        if allow_lut and self.encodes_as_lut(arr, SemanticType.POSITIVE_SCALAR):
+            return None
+
+        max_val = float(np.max(arr))
+        if max_val == 0.0:
+            return None
+
+        bits = self._compute_quantization_bits(arr)
+        use_geolog = positive_scalar_encoding == "log" or bits == 0
+        if use_geolog:
+            nonzero = arr[arr > 0].astype(np.float64, copy=False)
+            min_log = float(np.log(nonzero.min()))
+            max_log = float(np.log(nonzero.max()))
+            if max_log == min_log:
+                return None
+            quant_bits = 16 if mode == EncodingMode.AUTO else 8
+            intervals = (1 << quant_bits) - 2
+            slack = max_val * np.expm1((max_log - min_log) / (2.0 * intervals))
+        else:
+            min_val = float(np.min(arr))
+            span = max_val - min_val
+            if span == 0.0:
+                return None
+            slack = span / (2.0 * ((1 << bits) - 1))
+
+        if np.issubdtype(arr.dtype, np.floating):
+            decode_ulp = abs(float(np.spacing(arr.dtype.type(max_val))))
+        else:
+            decode_ulp = 0.0
+        return float(slack + decode_ulp)
 
     def _encode_coordinate(
         self,

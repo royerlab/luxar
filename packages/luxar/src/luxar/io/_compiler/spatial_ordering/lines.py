@@ -140,6 +140,14 @@ def build_lines_ordering(
     else:
         widths_expanded = widths[vertex_sort_indices]  # Apply same reordering
 
+    scalar_slack = (
+        dataset_ctx.encoder.positive_scalar_round_trip_slack(
+            widths_expanded, dataset_ctx.encoding_mode
+        )
+        if dataset_ctx is not None
+        else None
+    )
+
     segment_chunk_bounds = compute_segment_chunk_bounds(
         sorted_vertices,
         sorted_segments,
@@ -149,6 +157,7 @@ def build_lines_ordering(
             "slice_dims"
         ],  # Use D-space dims
         coord_slack=coord_slack,
+        scalar_slack=scalar_slack,
     )
 
     aprint(

@@ -18,6 +18,7 @@ from luxar.io._compiler.spatial_ordering.points import (
     write_points_ordering_to_zarr,
 )
 from luxar.io._ordering.bounds import _BARRIER_BOUND_EPS, _store_outward_f32
+from luxar.io._ordering.points import sort_points_compound
 from luxar.io.reader import DEFAULT_COMP
 from luxar.typing_utils.constants import DEFAULT_POINT_RADIUS
 
@@ -299,6 +300,104 @@ def test_stored_lines_bounds_contain_the_DECODED_vertices(tmp_path: Path) -> Non
     for endpoint in (0, 1):
         coords = decoded[segments[:, endpoint]]
         assert _violations(coords, segment_bounds, segment_chunk) == (0, 0)
+
+
+def test_stored_points_bounds_contain_the_DECODED_radii(tmp_path: Path) -> None:
+    """Every decoded point footprint stays inside its stored chunk bound."""
+    rng = np.random.default_rng(1871)
+    n = 20_000
+    positions = (rng.random((n, 3)) * 1000.0).astype(np.float32)
+    radii = rng.uniform(0.1, 5.0, n).astype(np.float32)
+
+    out = tmp_path / "quantised_radii.luxar.zarr"
+    with LuxarZarrCompiler(out, enable_spatial_index=True) as compiler:
+        scene = compiler.create_scene(
+            dimensions=Dimensions(
+                [
+                    Dimension("x", unit="um", display=True),
+                    Dimension("y", unit="um", display=True),
+                    Dimension("z", unit="um", display=True),
+                ]
+            )
+        )
+        scene.add_points("pts", positions, radii=radii)
+
+    node = zarr.open_group(out, mode="r")["pts"]
+    assert node["radii"].attrs["encoding"]["name"] == "bounded_scalar_uint8"
+    decoded_positions = _decode(node, "positions")
+    decoded_radii = _decode(node, "radii")
+    sort_order, _ = sort_points_compound(
+        positions,
+        [
+            Dimension("x", unit="um", display=True),
+            Dimension("y", unit="um", display=True),
+            Dimension("z", unit="um", display=True),
+        ],
+    )
+    assert float((decoded_radii - radii[sort_order]).max()) > 0.009
+
+    bounds = node["chunk_bounds"][:]
+    chunk_size = int(node.attrs["chunk_size"])
+    for k in range(bounds.shape[0]):
+        start = k * chunk_size
+        stop = min(start + chunk_size, n)
+        block = decoded_positions[start:stop]
+        radius = decoded_radii[start:stop, None]
+        assert bool((block - radius >= bounds[k, :, 0]).all())
+        assert bool((block + radius <= bounds[k, :, 1]).all())
+
+
+def test_stored_line_bounds_contain_the_DECODED_widths(tmp_path: Path) -> None:
+    """Every decoded segment footprint stays inside its stored chunk bound."""
+    rng = np.random.default_rng(18710)
+    n_segments = 20_000
+    starts = rng.random((n_segments, 3)) * 1000.0
+    ends = starts + rng.standard_normal((n_segments, 3)) * 2.0
+    vertices = np.empty((2 * n_segments, 3), dtype=np.float32)
+    vertices[0::2] = starts
+    vertices[1::2] = ends
+    widths = rng.uniform(0.1, 5.0, 2 * n_segments).astype(np.float32)
+
+    out = tmp_path / "quantised_widths.luxar.zarr"
+    with LuxarZarrCompiler(out, enable_spatial_index=True) as compiler:
+        scene = compiler.create_scene(
+            dimensions=Dimensions(
+                [
+                    Dimension("x", unit="um", display=True),
+                    Dimension("y", unit="um", display=True),
+                    Dimension("z", unit="um", display=True),
+                ]
+            )
+        )
+        scene.add_lines("lns", vertices, widths=widths, line_type="segments")
+
+    node = zarr.open_group(out, mode="r")["lns"]
+    assert node["widths"].attrs["encoding"]["name"] == "bounded_scalar_uint8"
+    decoded_vertices = _decode(node, "vertices")
+    decoded_widths = _decode(node, "widths")
+    segments = np.asarray(_decode(node, "segments")).astype(np.int64)
+    vertex_sort_order, _ = sort_points_compound(
+        vertices,
+        [
+            Dimension("x", unit="um", display=True),
+            Dimension("y", unit="um", display=True),
+            Dimension("z", unit="um", display=True),
+        ],
+    )
+    sorted_authored = widths[vertex_sort_order]
+    assert float((decoded_widths - sorted_authored).max()) > 0.009
+
+    bounds = node["segment_chunk_bounds"][:]
+    chunk_size = int(node.attrs["segment_ordering"]["chunk_size"])
+    for k in range(bounds.shape[0]):
+        block = segments[k * chunk_size : (k + 1) * chunk_size]
+        p1 = decoded_vertices[block[:, 0]]
+        p2 = decoded_vertices[block[:, 1]]
+        width = np.maximum(decoded_widths[block[:, 0]], decoded_widths[block[:, 1]])[
+            :, None
+        ]
+        assert bool((np.minimum(p1 - width, p2 - width) >= bounds[k, :, 0]).all())
+        assert bool((np.maximum(p1 + width, p2 + width) <= bounds[k, :, 1]).all())
 
 
 def test_stored_lines_bounds_contain_LUT_ELIGIBLE_decoded_vertices(

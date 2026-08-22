@@ -118,6 +118,13 @@ def build_points_ordering(
         if dataset_ctx is not None
         else None
     )
+    scalar_slack = (
+        dataset_ctx.encoder.positive_scalar_round_trip_slack(
+            np.asarray(sorted_radii), dataset_ctx.encoding_mode
+        )
+        if dataset_ctx is not None and isinstance(sorted_radii, np.ndarray)
+        else None
+    )
 
     chunk_bounds = compute_chunk_bounds_points(
         sorted_positions,
@@ -125,6 +132,7 @@ def build_points_ordering(
         chunk_size,
         slice_dims=ordering_metadata["slice_dims"],
         coord_slack=coord_slack,
+        scalar_slack=scalar_slack,
     )
 
     aprint(

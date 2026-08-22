@@ -559,6 +559,29 @@ def test_coord_slack_pads_spatial_and_barrier_dims_in_every_builder() -> None:
         assert segs[0, d, 1] == pytest.approx(3.0 + extra + slack[d])
 
 
+def test_scalar_slack_pads_only_spatial_footprints() -> None:
+    coords = np.array([[0.0, 0.0], [1.0, 1.0]], dtype=np.float32)
+    segments = np.array([[0, 1]], dtype=np.uint32)
+    widths = np.full(2, 0.25, dtype=np.float32)
+
+    points = compute_chunk_bounds_points(
+        coords, 0.25, 2, slice_dims=[1], scalar_slack=0.125
+    )
+    segments_bounds = compute_segment_chunk_bounds(
+        coords,
+        segments,
+        widths,
+        1,
+        slice_dims=[1],
+        scalar_slack=0.125,
+    )
+    for bounds in (points, segments_bounds):
+        assert bounds[0, 0, 0] == pytest.approx(-0.375)
+        assert bounds[0, 0, 1] == pytest.approx(1.375)
+        assert bounds[0, 1, 0] == pytest.approx(-_BARRIER_BOUND_EPS)
+        assert bounds[0, 1, 1] == pytest.approx(1.0 + _BARRIER_BOUND_EPS)
+
+
 def test_coord_slack_adds_to_PER_POINT_array_radii() -> None:
     """The ``chunk_radii`` branch of the points builder, with a real slack.
 

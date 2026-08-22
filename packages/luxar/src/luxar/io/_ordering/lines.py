@@ -17,6 +17,7 @@ from luxar.core import Dimension
 from .bounds import (
     _BARRIER_BOUND_EPS,
     _normalise_coord_slack,
+    _normalise_scalar_slack,
     _normalise_slice_dims,
     _store_outward_f32_array,
 )
@@ -357,6 +358,7 @@ def compute_segment_chunk_bounds(
     slice_dims: Optional[list[int]] = None,
     *,
     coord_slack: Optional[NDArray[np.float64]] = None,
+    scalar_slack: Optional[float] = None,
 ) -> np.ndarray:
     """Compute chunk bounding boxes for segments (includes line width).
 
@@ -369,20 +371,13 @@ def compute_segment_chunk_bounds(
     any coordinate magnitude — not only where a small width happens to survive
     float32 arithmetic and a round-to-nearest store.
 
-    KNOWN GAP — THE DECODED WIDTH IS NOT COVERED. ``widths`` is a
-    POSITIVE_SCALAR and is quantised in its own right (``bounded_scalar_uint8``
-    under AUTO for a typical range), and these bounds are built from the
-    values as handed in, so a DECODED width can be up to half a quantum LARGER
-    than the one the pad was sized for and the footprint the renderer draws
-    escapes the stored bound by that much. Measured on 20,000 segments over a
-    1000-unit axis with ``widths ~ U(0.1, 5.0)``: decoded − authored up to
-    9.6e-3, putting 3 of 5 segment chunks marginally outside their own bound
-    (worst 9.4e-3). This is exactly the class of defect ``coord_slack`` closes
-    for the COORDINATE half of the footprint (issue #1655); the scalar half is
-    not closed, and needs the same treatment — a per-array round-trip slack
-    from the encoder, added to the width before the pad. The identical caveat
-    applies to a point's radii; see
-    :func:`~luxar.io._ordering.points.compute_chunk_bounds_points`.
+    SCALAR QUANTISATION SLACK (``scalar_slack``): ``widths`` is itself a
+    POSITIVE_SCALAR and may decode larger than the authored value. This single
+    per-array pad is added to the width on SPATIAL dimensions only; barrier
+    dimensions still receive no footprint expansion. The compiler supplies it
+    from
+    :meth:`~luxar.encoding.encoder.ArrayEncoder.positive_scalar_round_trip_slack`;
+    a direct caller that omits it gets authored-width bounds.
 
     QUANTISATION SLACK (``coord_slack``): that holds for the vertices AS HANDED
     IN. Under the default AUTO encoding the vertices are stored as per-axis
@@ -412,6 +407,8 @@ def compute_segment_chunk_bounds(
         coord_slack: Per-axis outward pad, shape ``(D,)``, covering how far the
             store can move a vertex from the value passed here. Default None ⇒
             zero on every axis. Validated by :func:`_normalise_coord_slack`.
+        scalar_slack: Outward pad covering how far the stored width can exceed
+            the authored width. Applied on spatial dimensions only.
 
     Returns:
         chunk_bounds: Bounding boxes, shape (num_chunks, D, 2)
@@ -421,6 +418,7 @@ def compute_segment_chunk_bounds(
     num_chunks = (S + chunk_size - 1) // chunk_size
     discrete_dims = _normalise_slice_dims(slice_dims, D)
     slack = _normalise_coord_slack(coord_slack, D)
+    footprint_slack = _normalise_scalar_slack(scalar_slack)
 
     chunk_bounds = np.zeros((num_chunks, D, 2), dtype=np.float32)
 
@@ -437,7 +435,7 @@ def compute_segment_chunk_bounds(
         p2 = vertices[chunk_segs[:, 1]]
         w1 = widths[chunk_segs[:, 0]].astype(np.float64, copy=False)
         w2 = widths[chunk_segs[:, 1]].astype(np.float64, copy=False)
-        max_w = np.maximum(w1, w2)  # (n,) conservative bound per segment
+        max_w = np.maximum(w1, w2) + footprint_slack
 
         # Reduce per DIMENSION, not with a single ``min(axis=0)``: numpy's
         # outer-axis reduce over a 3-or-4-element inner row is several times
