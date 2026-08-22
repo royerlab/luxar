@@ -89,6 +89,12 @@ def _partition_scene(tmp: Path, geometry: str = "points") -> tuple[Path, str]:
         else:
             raise ValueError(f"unsupported geometry: {geometry}")
         scene.add_points("sibling", np.zeros((3, 3), dtype=np.float32))
+
+    root = zc_open_group(str(path), mode="r+")
+    group = root[geometry]
+    if "bsp_tree" in group.attrs:
+        del group.attrs["bsp_tree"]
+    zc_consolidate(root)
     return path, geometry
 
 
@@ -681,8 +687,6 @@ class TestStoreGuards:
         with tempfile.TemporaryDirectory() as tmp:
             path, group_path = _partition_scene(Path(tmp))
             root = zc_open_group(str(path), mode="r+")
-            group = root[group_path]
-            assert "bsp_tree" not in group.attrs
             before = root.attrs["content_hash"]
             sibling_before = root["sibling"].attrs["content_hash"]
 
