@@ -7,7 +7,8 @@
  * surface where console errors are the first symptom of regression.
  * This fixture rolls the helper's "should be called in EVERY E2E test"
  * docstring into the harness so it runs whether the spec author
- * remembered or not.
+ * remembered or not. (67 specs today; 59 import `test` from here, the
+ * other 8 import `@playwright/test` directly and get no teardown at all.)
  *
  * Specs that genuinely tolerate certain errors annotate the test:
  *
@@ -26,48 +27,58 @@
  * The annotation type is checked verbatim — typos turn into hard
  * failures rather than silent opt-outs.
  *
- * The fixture reads TWO independent signal sources — Playwright's
- * `console`/`pageerror` page events and the viewer's own in-page
- * interceptor buffer — and they can starve independently, so the
- * teardown treats them differently: see {@link CONSOLE_PROBE_UNANSWERED},
- * the annotation it writes when only the in-page one is unreachable.
+ * ONE gate, and it is the Playwright-side one (#1760): `page.on('console')`
+ * where `msg.type() === 'error'`, plus `page.on('pageerror')`. That is
+ * deliberately the wider of the two sources available. It sees errors fired
+ * BEFORE the viewer's in-page console interceptor installs (a mistyped asset,
+ * a pre-init `ReferenceError`), it sees uncaught exceptions via `pageerror`
+ * and browser-generated errors the app never routed through `console`, it
+ * accumulates into an unbounded array rather than the interceptor's ring
+ * buffer (which evicts at `DEFAULT_MAX_BUFFER_SIZE`), and it survives
+ * navigation, which resets the in-page buffer. Everything the in-page buffer
+ * holds under `errors` reaches it too: every write into that buffer goes
+ * through the interceptor's private `captureMessage`, reachable only from its
+ * five `patch()` closures, each of which re-emits through
+ * `this.originalConsole.<method>` (`src/utils/console-interceptor.ts`).
+ *
+ * So the fixture does NOT read the in-page buffer. It used to, via
+ * `assertNoConsoleErrors` — which consults only `messages.errors`, i.e. a
+ * second, narrower opinion on the verdict just rendered above — at the price
+ * of a `page.evaluate` round trip a saturated main thread can withhold for
+ * minutes (#1651/#1746/#1747/#1760). A spec that wants the in-page buffer
+ * specifically — for its `warnings` / `logs` buckets, which have no
+ * Playwright-side gate, or for a stricter no-allow-list check — still calls
+ * `assertNoConsoleErrors` / `getConsoleMessages` itself, and several do.
  *
  * @module tests/e2e/fixtures
  */
 
 import { test as base } from '@playwright/test';
-import {
-  assertNoConsoleErrors,
-  describeConsoleProbeUnanswered,
-  isConsoleProbeUnanswered,
-} from './helpers';
 
 /** Annotation type that opts a spec out of the auto console-error check. */
 export const ALLOW_CONSOLE_ERRORS = 'allow-console-errors';
 
 /**
- * Annotation type recording that the in-page console-buffer probe went
- * unanswered during teardown, so only the Playwright-side gate below ran.
- *
- * Recorded rather than thrown (#1760): the two signal sources starve
- * independently — a saturated main thread can leave `page.evaluate` unserviced
- * for minutes while `page.on('console')` keeps delivering — and for the ERROR
- * verdict the Playwright-side set is a strict superset of the in-page buffer
- * (see the long note on `getConsoleMessages`). Failing here failed tests on a
- * verdict already rendered more completely a few lines up.
+ * One error the fixture captured from a Playwright page event: `kind` names
+ * which event it came from (`console.error` or `pageerror`), `text` is the
+ * message the allow-list is matched against.
  */
-export const CONSOLE_PROBE_UNANSWERED = 'console-probe-unanswered';
+export interface CapturedConsoleError {
+  kind: string;
+  text: string;
+}
 
 /**
  * Console error patterns the auto-fixture treats as environmental
  * flakiness rather than test failures.
  *
- * The 58 of the 66 E2E specs that import `test` from here use this
+ * The 59 of the 67 E2E specs that import `test` from here use this
  * fixture; the other 8 import `@playwright/test` directly.
  * Specs that also make their own
  * explicit `assertNoConsoleErrors(page)` call keep
- * that explicit contract (it runs strictly with no allow-list and
- * fails first if anything unexpected appears); the auto-fixture
+ * that explicit contract (it runs strictly with no allow-list, against the
+ * viewer's in-page buffer, and is the only reader of that buffer now);
+ * the auto-fixture
  * covers cases where the spec author forgot to add the explicit
  * call. Headless-browser environmental noise (WebGL context loss
  * under GPU pressure, intermittent fetch failures during teardown)
@@ -105,33 +116,54 @@ export const DEFAULT_ALLOWED_CONSOLE_ERRORS: RegExp[] = [
 ];
 
 /**
+ * The gate's whole decision, as a pure function: which captured entries
+ * survive the allow-list.
+ *
+ * Split out of the teardown closure — which only a Playwright runner can
+ * execute — so the decision itself is unit-testable: see
+ * `src/tests/unit/tests/e2e-fixture-console-gate.test.ts`. (Importing this
+ * module from vitest is fine; `base.extend` needs no runner at import time.)
+ *
+ * Each entry is matched on its OWN `text`, never on a joined summary: a
+ * pattern must not be able to forgive an unrelated error just because an
+ * allowed one happened to land next to it. `kind` is carried for the report
+ * only, so a `pageerror` is judged exactly like a `console.error`.
+ *
+ * @param captured - Errors collected from `page.on('console'|'pageerror')`
+ * @param allowed - Patterns to forgive, normally {@link DEFAULT_ALLOWED_CONSOLE_ERRORS}
+ * @returns The entries no pattern matched, in capture order
+ */
+export function unexpectedConsoleErrors(
+  captured: readonly CapturedConsoleError[],
+  allowed: readonly RegExp[]
+): CapturedConsoleError[] {
+  return captured.filter((entry) => !allowed.some((pattern) => pattern.test(entry.text)));
+}
+
+/**
  * Extended `test` fixture: drop-in replacement for `@playwright/test`'s
  * `test`. Specs that import from this module get auto console-error
  * checking after each test.
  *
- * The fixture subscribes to Playwright's own `console` and
- * `pageerror` page events in addition to reading the viewer's debug
- * interceptor. Both signal sources are filtered against
- * the same allow-list, the Playwright-side one first; errors fired
- * before the viewer's debug interceptor installs (loading the wrong
- * asset, pre-init ReferenceErrors) and uncaught exceptions surfaced
- * via `pageerror` are still caught.
+ * The check subscribes to Playwright's own `console` and `pageerror` page
+ * events for the duration of the test and filters what it caught through
+ * {@link unexpectedConsoleErrors}. It does not read the viewer's in-page
+ * interceptor buffer — see the module docblock for why that is the wider
+ * source and not merely the cheaper one.
  *
- * The order matters: the Playwright-side gate is a strict superset of the
- * in-page buffer for the ERROR verdict, so once it has passed, a starved
- * in-page probe ({@link CONSOLE_PROBE_UNANSWERED}) is recorded as an
- * annotation instead of failing the test. Any other error out of
- * `assertNoConsoleErrors` — above all its real `Console errors detected: …`
- * assertion — still propagates.
+ * The listeners come off in a `finally` that runs AFTER the gate, so that both
+ * opt-out paths (the annotation, and a test that already failed) detach them
+ * too, and so an error emitted once the test body has ended is still counted.
+ * That second guarantee is currently vacuous — nothing between `use(page)`
+ * returning and the filter yields to the event loop — but it is what made the
+ * old shape wrong (it detached BEFORE an `await assertNoConsoleErrors`) and
+ * what keeps this one safe if an `await` is ever reintroduced here.
  */
 export const test = base.extend({
   page: async ({ page }, use, testInfo) => {
     // Capture Playwright-native console errors + uncaught exceptions
-    // for the duration of the test. The viewer's own debug interceptor
-    // captures things differently (formatted, filtered) and is
-    // already polled by `assertNoConsoleErrors`; combining the two
-    // gives full coverage.
-    const captured: { kind: string; text: string }[] = [];
+    // for the duration of the test.
+    const captured: CapturedConsoleError[] = [];
     const onConsole = (msg: import('@playwright/test').ConsoleMessage): void => {
       if (msg.type() === 'error') {
         captured.push({ kind: 'console.error', text: msg.text() });
@@ -143,47 +175,32 @@ export const test = base.extend({
     page.on('console', onConsole);
     page.on('pageerror', onPageError);
 
-    await use(page);
-
-    // Listeners must come off after the test or they leak across tests
-    // sharing the same browser context.
-    page.off('console', onConsole);
-    page.off('pageerror', onPageError);
-
-    // Skip the assertion if the spec opted out via annotation.
-    const annotated = testInfo.annotations.some((a) => a.type === ALLOW_CONSOLE_ERRORS);
-    if (annotated) return;
-
-    // Skip if the test already failed — the test's own error is the
-    // signal we care about; piling on a console-error message would
-    // bury it.
-    if (testInfo.status === 'failed' || testInfo.status === 'timedOut') return;
-
-    // Filter Playwright-captured errors against the allow-list and
-    // surface real ones via the standard assertion path. Then run
-    // the existing in-app interceptor check (it has its own
-    // formatting + per-call allow-list logic).
-    const filtered = captured.filter(
-      (e) => !DEFAULT_ALLOWED_CONSOLE_ERRORS.some((re) => re.test(e.text))
-    );
-    if (filtered.length > 0) {
-      const summary = filtered.map((e) => `[${e.kind}] ${e.text}`).join('\n  ');
-      throw new Error(
-        `Unexpected console / page errors during test:\n  ${summary}\n(captured by Playwright page events; DEFAULT_ALLOWED_CONSOLE_ERRORS did not match)`
-      );
-    }
-    // The in-app interceptor check is the SECOND opinion here, and the only
-    // one that needs a `page.evaluate` round trip the starved main thread can
-    // withhold indefinitely. Record that and carry on rather than converting
-    // a passing test into a "timeout" failure attributed to the console check
-    // (#1760/#1747/#1746); anything else it throws is a real verdict.
     try {
-      await assertNoConsoleErrors(page, DEFAULT_ALLOWED_CONSOLE_ERRORS);
-    } catch (error) {
-      if (!isConsoleProbeUnanswered(error)) throw error;
-      const description = describeConsoleProbeUnanswered(error);
-      testInfo.annotations.push({ type: CONSOLE_PROBE_UNANSWERED, description });
-      console.warn(`[⚠️] [E2E fixture] ${description}`);
+      await use(page);
+
+      // Skip the assertion if the spec opted out via annotation.
+      const annotated = testInfo.annotations.some((a) => a.type === ALLOW_CONSOLE_ERRORS);
+      if (annotated) return;
+
+      // Skip if the test already failed — the test's own error is the
+      // signal we care about; piling on a console-error message would
+      // bury it.
+      if (testInfo.status === 'failed' || testInfo.status === 'timedOut') return;
+
+      const unexpected = unexpectedConsoleErrors(captured, DEFAULT_ALLOWED_CONSOLE_ERRORS);
+      if (unexpected.length > 0) {
+        const summary = unexpected.map((e) => `[${e.kind}] ${e.text}`).join('\n  ');
+        throw new Error(
+          `Unexpected console / page errors during test:\n  ${summary}\n(captured by Playwright page events; DEFAULT_ALLOWED_CONSOLE_ERRORS did not match)`
+        );
+      }
+    } finally {
+      // Listeners must come off after the test or they leak across tests
+      // sharing the same browser context. In a `finally` so the two early
+      // returns and the throw above all detach, and AFTER the gate so nothing
+      // emitted past the end of the test can land with the gate blind.
+      page.off('console', onConsole);
+      page.off('pageerror', onPageError);
     }
   },
 });
