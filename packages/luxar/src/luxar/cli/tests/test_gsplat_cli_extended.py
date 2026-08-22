@@ -6399,6 +6399,17 @@ class TestLODCarriesAuthoredAppearance:
             f"still warning about an exclusion that no longer exists:\n{stdout}"
         )
 
+    def test_merge_help_matches_nd_transform_and_colormap_behavior(
+        self, runner: CliRunner
+    ) -> None:
+        result = runner.invoke(app, ["gsplat", "merge", "--help"])
+        assert result.exit_code == 0, result.stdout
+        help_text = " ".join(result.stdout.split())
+        assert "nd_transform remains valid under --as-dimension" in help_text
+        assert "when a colored input authored no palette" in help_text
+        assert "when any input uses a custom LUT" in help_text
+        assert "nd_transform under --as-dimension" not in help_text
+
     @staticmethod
     def _colored_copy(src: Path, dst: Path) -> Path:
         """``src`` re-saved WITH per-splat RGB (the fixture is colorless)."""

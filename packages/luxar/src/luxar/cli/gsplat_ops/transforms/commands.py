@@ -936,10 +936,12 @@ def merge_datasets(
 
     The inputs' authored appearance (blending mode, opacity, colormap, ...) is
     carried onto the merged root wherever the inputs AGREE; a key they disagree
-    on is dropped, and the command names it rather than picking a side. Two keys
-    the merge itself invalidates are dropped even under agreement: nd_transform
-    under --as-dimension (which adds a dimension) and colormap under
-    --channel-colors (which bakes per-splat RGB).
+    on is dropped, and the command names it rather than picking a side.
+    nd_transform remains valid under --as-dimension because the new axis is
+    appended. colormap is dropped when the merge manufactures per-splat RGB
+    (--channel-colors, or white-filling a colorless input in a mixed merge),
+    when a colored input authored no palette, or when any input uses a custom
+    LUT.
 
     Examples:
         luxar gsplat merge a.gsplats.zarr b.gsplats.zarr -o merged.gsplats.zarr
