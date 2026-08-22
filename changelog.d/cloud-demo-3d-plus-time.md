@@ -2,9 +2,9 @@
 
 `demo_volumetric_cloud` is lifted from a static puff to 3D + time: a convective
 cumulus lived through its whole life cycle on a hidden `time` axis, from a low
-ragged fragment at the condensation level, through a billowing turret and a
-mature top sheared downwind, to entrainment shredding it back into rags. Sixty
-timepoints, 1.37M points, about twelve seconds to generate.
+fragment at the condensation level, through a cauliflower turret and a mature
+top leaning downwind, to the whole body pulling in as the thermals feeding it
+die. Sixty timepoints, ~1.3M points, about fifteen seconds to generate.
 
 The motion is Lagrangian. 600k air parcels are advected with midpoint steps
 through an analytic velocity field built to be exactly divergence-free — an
@@ -16,18 +16,18 @@ uniform density, and only a solenoidal field keeps that sample uniform as it
 deforms. Measured over the run, the parcel count in the cloud core holds to 2%.
 
 The condensate is 4D fractal noise sampled in *material* coordinates — each
-parcel's fixed label — times a thermodynamic envelope evaluated at its current
-*world* position. Material coordinates weld the texture to the fluid, so it
-stretches and folds the way a real cloud's structure does instead of boiling in
-place; the envelope is what makes it a cumulus rather than a blob, because
-liquid water only exists above the lifting condensation level, which is why
-cumulus have famously flat bases. The time axis is a small stack of static 3D
+parcel's fixed label — times an envelope evaluated at its current *world*
+position. Material coordinates weld the texture to the fluid, so it stretches
+and folds the way a real cloud's structure does instead of boiling in place;
+the envelope is what makes it a cumulus rather than a blob, because liquid
+water only exists above the lifting condensation level, which is why cumulus
+have famously flat bases. The time axis is a small stack of static 3D
 fields quintic-interpolated between, which is exactly 4D value noise evaluated
 for the price of a lerp, with the temporal frequency growing as `2^(2k/3)`
 rather than `2^k` — small eddies do turn over faster, but at the naive rate the
 fine octaves read as shimmer. Points are emissive, so the light is baked in:
-condensate is splatted onto a coarse grid and cumulatively summed downward into
-an optical depth, giving a sunlit crown fading into a blue-grey shadowed base.
+condensate is splatted onto a coarse grid and cumulatively summed toward the
+light into an optical depth, giving a sunlit crown over a cool shadowed base.
 
 Four defects surfaced along the way, and all four were silent — each produced a
 plausible-looking cloud rather than an error.
@@ -67,7 +67,8 @@ Finally, thresholded noise applied uniformly punches daylight straight through
 the core, which is the one thing a cumulus never has — it is optically thick
 within a few metres of its surface. The noise now erodes the body inward from
 the surface, keeping full authority at the ragged fringe where a real cloud's
-structure lives.
+structure lives. (That the core was solid and still rendered hollow turned out
+to be a second, separate defect — see below.)
 
 Two smaller things fell out of looking at the result in the viewer rather than
 at the arithmetic. The optical depth folded the grid geometry and the parcel
@@ -76,7 +77,74 @@ would silently relight the whole cloud; it now divides both out and `EXTINCTION`
 is a real extinction coefficient per unit of water column. And flooring the
 turret profile at a small positive width — the obvious way to keep a division
 safe — left a thin chimney of cloud running up the axis forever, because above
-the crown the profile is meant to be exactly zero.
+the crown the profile is meant to be exactly zero. (That profile has since been
+replaced entirely; see the last section.)
+
+#### The renderer has to be in the same optical regime as the shading
+
+Everything above was true of a build that, looked at in the actual viewer from
+more than one angle, was plainly wrong: the cloud rendered as a glowing archway
+with a hole through the middle, and from overhead as a C-shaped ring.
+
+The cause was a regime mismatch, and it is worth stating plainly because
+nothing about it shows up in a test. A cumulus is optically THICK — τ ≫ 1
+within metres, so you see its surface and essentially nothing behind it.
+`additive` blending models the exact opposite: an optically thin emissive
+medium, brightness = ∫ρ ds, depth ignored entirely (the enum says so). Shading
+each parcel by the water column above it and then compositing with a mode that
+cannot occlude is incoherent — the darkened interior is not hidden behind the
+lit shell, it is added straight through it. Measured on that build, the core
+carried the HIGHEST point density (346 vs 51 per unit area at the rim) and the
+LOWEST brightness (0.46 vs 0.85). The hole was in the light, not the geometry.
+
+The node is now `volumetric` — emission composited against absorption, back to
+front — with per-point RGBA alpha carrying optical depth, so denser air hides
+more of what is behind it. The baked sunlight becomes ordinary single
+scattering, and the cloud reads as a body.
+
+Three things followed from fixing that, none of which was visible while the
+cloud was a glow.
+
+The sun had to come off the vertical. A light directly overhead illuminates
+every surface by its depth alone, so two lobes at the same altitude are lit
+identically however they face and the relief that makes a cumulus legible
+disappears. `optical_depth` now integrates along an arbitrary direction — the
+parcels are rotated into a light-aligned frame, accumulated, and rotated back —
+and the shading is composed of three terms rather than one: direct sun along
+the beam, blue skylight along the vertical, and a weak ground bounce. Skylight
+being blue is why a real cumulus underside reads cool grey rather than black.
+
+Exposure had to leave headroom. Under emission-absorption the accumulated
+radiance of a thick medium tends to emission/extinction — that is, to the
+parcel colour itself — so a fully lit parcel IS the brightest pixel the cloud
+can produce. Three light terms that each looked reasonable summed to 1.4, every
+lit face clipped to flat white, and all of this shading work became invisible.
+They now sum to ~0.4, because the cinematic preset's bloom threshold is 0.01
+and the whole cloud therefore blooms onto itself rather than just its
+highlights.
+
+And dissipation had to move to the silhouette. Decay used to be expressed by
+raising the noise threshold, which erodes the interior — invisible once the
+interior cannot be seen. The turret now sags and the body pulls in.
+
+#### The shape is the union of thermals, not a surface of revolution
+
+The silhouette came from one lathe profile, and it looked like one: a smooth
+vase with no lobes for the light to catch. Perturbing its radius with noise did
+not help, because cauliflower is not a perturbation of a shape, it IS the
+shape. A cumulus is not a shape at all but a process — a succession of buoyant
+bubbles punching up through the condensation level, each overshooting slightly
+less than the last. The envelope is now the p-norm union of ~42 such thermals,
+each rising from the base to its own ceiling and swelling then shrinking, over
+a slab of cloud sitting on the LCL that keeps the famous flat bottom and roots
+the tower to it.
+
+Two failures on the way there are pinned by tests. Thermals whose late fade was
+too gentle arrived at their ceiling still 60% of full size, clear of the crowd
+below with nothing to merge into, and rendered as spheres floating above the
+cloud like balloons. And a root slab that was wide, hard-rimmed and too shallow
+separated from the tower above it and read as a second, unrelated cloud sitting
+underneath.
 
 The scene opens on the mature cloud rather than on frame 0, framed by a camera
 composed for the cinematic 63° lens from the data's own extent, with the

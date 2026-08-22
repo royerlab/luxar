@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 """Self-Contained Demo: An Evolving Volumetric Cloud (3D + time)
 
-A convective cumulus lived through its whole cycle on a hidden time axis:
-wisps gathering at the condensation level, a turret billowing upward, a mature
-top sheared downwind, and finally entrainment shredding it back into rags.
+A convective cumulus lived through its whole cycle on a hidden time axis: a
+low fragment at the condensation level, a cauliflower turret billowing upward,
+a mature top leaning downwind, then the whole body pulling in and sinking back
+as the thermals feeding it die.
 
 This demo demonstrates:
 - A 3D + time (4D) Points scene: x/y/z displayed, ``time`` a hidden discrete axis
 - Lagrangian parcels advected by an analytic divergence-free velocity field
 - 4D fractal noise (three spatial axes + time) in *material* coordinates
-- A thermodynamic envelope: flat cloud base, rising top, entrained flanks
-- Baked top-lit shading from an optical depth integrated downward through the cloud
+- A cauliflower silhouette built as the union of rising thermal bubbles
+- Emission-absorption (``volumetric``) compositing, so the cloud is a body
+- Baked sun, sky and ground light from optical depths through the cloud
 - Complete workflow: generate -> serve -> view -> cleanup
 
 The demo is completely self-contained - all generation code is in this file,
@@ -45,9 +47,21 @@ Mathematical Background:
     faster, but not as fast as a naive 4D noise would flicker them.
 
     Points are emissive, so lighting has to be baked in. Parcel condensate is
-    splatted onto a coarse grid, cumulatively summed downward to get an optical
-    depth from above, and sampled back per parcel — giving the classic bright
-    sunlit top fading into a blue-grey shadowed base.
+    splatted onto a coarse grid, cumulatively summed toward the light to get an
+    optical depth, and sampled back per parcel — once along the sun's own ray
+    and once straight up for skylight. The sun is deliberately off to one side:
+    a light directly overhead illuminates every surface by its depth alone, so
+    two lobes at the same altitude are lit identically however they face, and
+    the relief that makes a cumulus legible disappears.
+
+    That baked light is only coherent in a renderer that OCCLUDES, and getting
+    this wrong produced the worst artefact this demo has had. A cumulus is
+    optically thick — you see its surface. ``additive`` blending models the
+    opposite regime, an optically thin emissive medium that ignores depth
+    entirely, so the darkened interior was not hidden behind the lit shell but
+    fully visible through it: the cloud rendered as a glowing archway with a
+    hole in the middle, and from overhead as a ring. The node is therefore
+    ``volumetric`` — emission composited against absorption, back to front.
 
 Usage:
     python demo_volumetric_cloud.py [--parcels=N] [--frames=N] [--no-serve]
@@ -63,7 +77,7 @@ DEMO_META = {
     "title": "Evolving Cloud",
     "description": (
         "A convective cumulus over its whole life cycle: air parcels advected "
-        "by a divergence-free flow, condensing above a flat cloud base."
+        "by a divergence-free flow, condensing into cauliflower above a flat base."
     ),
     "category": "synthetic",
     "geometry": "points",
@@ -104,7 +118,7 @@ from luxar.utils.paths import get_demos_output_dir
 # want the cumulus to come out life-sized.
 CLOUD_SIZE = 20.0  #: horizontal scale of the domain
 BASE_Y = 0.0  #: lifting condensation level — the flat cloud base
-TOP_MAX = 13.5  #: how high above the base the mature turret reaches
+TOP_MAX = 16.5  #: how high above the base the mature turret reaches
 SEED_RADIUS = 10.0  #: parcels are seeded in a cylinder of this radius
 SEED_Y = (-2.0, 18.0)  #: ...spanning this height range
 
@@ -125,7 +139,14 @@ NOISE_BASE_FREQ = 3.5  #: lattice cells across the domain at the first octave
 NOISE_PERSISTENCE = 0.55
 NOISE_TIME_SPAN = 3.2  #: noise-time units traversed over the whole sequence
 NOISE_EVOLVING_OCTAVES = 4  #: finer octaves are frozen and merely advected
-TURRET_RADIUS = 8.6  #: half-width of the turret at its widest
+N_BUBBLES = 42  #: thermals whose union makes the cauliflower
+BUBBLE_RADIUS = 3.1  #: peak radius of one thermal
+BUBBLE_SPREAD = 1.9  #: lateral scatter of thermals about the leaning axis
+BUBBLE_TAPER = 0.42  #: how much thinner a thermal is near the crown
+ROOT_RADIUS = 3.0  #: half-width of the slab of cloud sitting on the base
+ROOT_DEPTH = 4.6  #: how far up from the base that slab reaches
+BUBBLE_FLATTEN = 0.82  #: thermals are squashed by their own drag
+UNION_POWER = 3.0  #: p-norm exponent; a hard max creases where bubbles meet
 BILLOW = 0.28  #: how strongly coarse noise bulges the silhouette
 BILLOW_FREQ = 3.5  #: lattice cells across the domain for the silhouette lobes
 BILLOW_SEED = 500_000  #: keeps the silhouette noise independent of the detail
@@ -133,7 +154,7 @@ BASE_SOFT = 0.4  #: how sharply condensate switches on at the base
 BASE_WOBBLE = 0.30  #: coarse variation of the base altitude — flat, not razor-flat
 BASE_LIFT = 0.55  #: how much the threshold drops at the base, keeping it solid
 BASE_LIFT_DEPTH = 2.6  #: height over which that base boost fades out
-SOLIDITY = 0.50  #: how far the core is pushed toward fully saturated
+SOLIDITY = 0.26  #: how far the core is pushed toward fully saturated
 SOLID_REF = 0.78  #: envelope value at which the core counts as solid
 
 # --- Appearance -------------------------------------------------------------
@@ -141,10 +162,27 @@ MIN_RADIUS = 0.10
 MAX_RADIUS = 0.62
 SHADE_GRID = 44  #: cells per axis of the optical-depth grid
 EXTINCTION = 1.0  #: extinction per unit of water column (see optical_depth)
-AMBIENT = 0.10  #: skylight floor, so shadowed parcels are not black
-INTENSITY = 0.034  #: additive gain; see the note where it is used
-SUN_COLOR = np.array([1.00, 0.98, 0.94], dtype=np.float32)
-SHADOW_COLOR = np.array([0.30, 0.36, 0.50], dtype=np.float32)
+#: Sun position, as a direction from the cloud toward the light. Deliberately
+#: off to one side and only moderately high: a sun directly overhead lights
+#: every lobe by depth alone and the cauliflower relief vanishes.
+SUN_DIRECTION = (-0.62, 0.68, 0.39)
+SKY_FALLOFF = 0.55  #: skylight is hemispherical, so it penetrates further
+#: Radiances, in LINEAR light, and their sum is the point of the numbers.
+#: Under emission-absorption the accumulated radiance of an optically thick
+#: medium tends to emission/extinction, i.e. to the parcel colour itself — so a
+#: fully lit parcel IS the brightest pixel the cloud can produce. Summing three
+#: terms that each looked reasonable gave 1.4, every lit face clipped to flat
+#: white, and the shading that took all this work became invisible. They now
+#: sum to ~0.40. The cinematic preset's bloom threshold is 0.01, so the WHOLE
+#: cloud blooms onto itself rather than just its highlights; exposing for ACES
+#: alone left every lit face clipped to flat white with the shading invisible.
+SUN_COLOR = np.array([0.30, 0.288, 0.265], dtype=np.float32)
+SKY_COLOR = np.array([0.085, 0.110, 0.165], dtype=np.float32)
+GROUND_COLOR = np.array([0.014, 0.012, 0.010], dtype=np.float32)
+INTENSITY = 1.0  #: node gain; volumetric emission is driven by per-point alpha
+ABSORPTION = 1.6  #: kappa — how strongly a parcel hides what is behind it
+ALPHA_FLOOR = 0.10  #: opacity of the thinnest emitted parcel
+ALPHA_GAIN = 0.62  #: extra opacity carried by the densest
 
 # --- Defaults ---------------------------------------------------------------
 DEFAULT_PARCELS = 600_000
@@ -584,8 +622,14 @@ def life_cycle(phase: float) -> LifeCycle:
     decay = 1.0 - _smoothstep_scalar(0.70, 1.0, phase)
 
     amplitude = 0.80 + 0.20 * grow * decay
-    top = BASE_Y + TOP_MAX * (0.70 + 0.30 * swell)
-    width = 0.80 + 0.20 * swell
+    # Both the top and the width carry the decay, and that is a consequence of
+    # rendering the cloud as an opaque body rather than a glow. Dissipation used
+    # to be expressed by raising the noise threshold, which erodes the INTERIOR
+    # — invisible once you can only see the surface. What a viewer can actually
+    # see shrink is the silhouette, so the turret has to sag and the body pull
+    # in for the end of the life cycle to read at all.
+    top = BASE_Y + TOP_MAX * (0.70 + 0.30 * swell) * (0.86 + 0.14 * decay)
+    width = (0.80 + 0.20 * swell) * (0.74 + 0.26 * decay)
     # Low threshold = solid cloud; high threshold = shredded filaments. A young
     # turret is compact and crisp rather than wispy, so only a little of the
     # early raggedness comes from here — most of it is simply being small.
@@ -611,75 +655,151 @@ def cloud_base(billow: np.ndarray) -> np.ndarray:
     return BASE_Y + BASE_WOBBLE * billow  # type: ignore[no-any-return]
 
 
-def turret_radius(height: np.ndarray) -> np.ndarray:
-    """Half-width of the turret as a function of normalized height.
+class Bubbles(NamedTuple):
+    """The rising thermal bubbles the cumulus is built out of.
 
-    ``(h + eps)^0.35`` flares outward from the base; ``(1 - h^3)^0.35`` closes
-    it back over at the crown. The product is the classic cumulus profile — a
-    stem narrower than the body, a shoulder near three quarters height, a dome
-    on top — instead of the rounded box a fixed radius plus a top fade gives.
+    Attributes:
+        offset: ``(K, 2)`` lateral offset of each bubble from the leaning axis
+        radius: ``(K,)`` peak radius
+        birth: ``(K,)`` phase at which the bubble starts rising
+        life: ``(K,)`` how long, in phase, it takes to rise and dissolve
+        ceiling: ``(K,)`` fraction of the cloud top this bubble climbs to
+    """
+
+    offset: np.ndarray
+    radius: np.ndarray
+    birth: np.ndarray
+    life: np.ndarray
+    ceiling: np.ndarray
+
+
+def build_bubbles(rng: np.random.Generator, count: int = N_BUBBLES) -> Bubbles:
+    """Lay out the thermals whose union is the cloud.
+
+    A cumulus is not a shape, it is a PROCESS: a succession of buoyant bubbles
+    punching up through the condensation level, each overshooting a little less
+    than the last, mixing away at its edges as it goes. Rendering the union of
+    those bubbles is what produces the cauliflower — the lobes, the crevices
+    between them, and a silhouette that changes as new thermals arrive.
+
+    The previous version drove the outline from a single surface of revolution,
+    which is a lathe, and it looked like one: one smooth mass with no lobes for
+    the light to catch. No amount of noise on the radius fixed that, because
+    noise perturbs a shape whereas cauliflower IS the shape.
+
+    Births are spread from before the sequence starts to near its end, so the
+    opening frame already has mature bubbles rather than opening on an empty
+    sky, and radii shrink slightly with birth order — later thermals punch into
+    air the earlier ones have already dried out.
 
     Args:
-        height: Normalized height in ``[0, 1]``
+        rng: Seeded generator, so a given demo run is reproducible
+        count: How many bubbles
 
     Returns:
-        Radius in scene units
+        The :class:`Bubbles` layout
     """
-    flare = (height + 0.16) ** 0.35
-    crown = np.clip(1.0 - height**3, 0.0, 1.0) ** 0.35
-    # No floor on the result. Flooring it at some small width was the obvious
-    # way to keep the divide safe and it produced a thin chimney of cloud
-    # running up the axis to infinity, because above the crown the profile is
-    # meant to be exactly zero. The epsilon is only there so the division has
-    # something to divide by; at that width nothing but the axis itself is
-    # inside the envelope, and the axis is a measure-zero set.
-    return np.maximum(TURRET_RADIUS * flare * crown, 1e-3)  # type: ignore[no-any-return]
+    birth = np.linspace(-0.85, 0.85, count) + rng.uniform(-0.02, 0.02, count)
+    order = np.linspace(0.0, 1.0, count)
+
+    angle = rng.uniform(0.0, 2.0 * np.pi, count)
+    spread = BUBBLE_SPREAD * np.sqrt(rng.random(count))
+    offset = np.column_stack([spread * np.cos(angle), spread * np.sin(angle)])
+
+    radius = BUBBLE_RADIUS * rng.uniform(0.72, 1.28, count)
+    life = rng.uniform(0.60, 0.95, count)
+    # Most thermals go most of the way up. Ceilings clustered low left the
+    # column squat: the cloud never reached the altitude the life cycle was
+    # raising its top to, so the growth arc had nothing to show.
+    ceiling = np.clip(0.60 + 0.32 * order + rng.uniform(-0.07, 0.07, count), 0.45, 0.92)
+
+    return Bubbles(
+        offset.astype(np.float32),
+        radius.astype(np.float32),
+        birth.astype(np.float32),
+        life.astype(np.float32),
+        ceiling.astype(np.float32),
+    )
 
 
-def envelope(positions: np.ndarray, phase: float, billow: np.ndarray) -> np.ndarray:
+def envelope(
+    positions: np.ndarray, phase: float, billow: np.ndarray, bubbles: Bubbles
+) -> np.ndarray:
     """Where the air is cool enough and moist enough to hold liquid water.
 
-    A cumulus is a cumulus because of its base: below the lifting condensation
+    The union of the thermals, cut off underneath at the condensation level.
+    A cumulus is a cumulus because of that cut: below the lifting condensation
     level there is no liquid water at all, which is why a field of them all
-    share one flat bottom at the same altitude. Above it the turret flares,
-    domes over at the crown, and is eaten from the flanks by dry air mixing in.
-    The whole column leans downwind, matching the shear in the flow.
+    share one flat bottom at the same altitude.
 
-    The ``billow`` term is what stops this from looking like a lathe-turned
-    solid: the coarsest noise octave is fed back into the *radius* and the
-    *base altitude*, so the silhouette bulges into lobes and the base ripples.
-    Because that octave lives in material coordinates like everything else, the
-    lobes ride up with the parcels rather than standing still while the cloud
-    moves through them.
+    The union is a p-norm rather than a hard ``max`` — a hard max creases
+    visibly where two bubbles meet, and the crease reads as a seam in what is
+    supposed to be one body of cloud.
 
     Args:
         positions: ``(P, 3)`` world positions
         phase: Normalized time in ``[0, 1]``
         billow: ``(P,)`` coarse noise, roughly unit variance
+        bubbles: Output of :func:`build_bubbles`
 
     Returns:
         ``(P,)`` envelope in ``[0, 1]``
     """
     x, y, z = positions[:, 0], positions[:, 1], positions[:, 2]
     state = life_cycle(phase)
-
-    # The cloud's own axis leans downwind with height.
-    dx = x - TILT * (y - BASE_Y)
-    r = np.sqrt(dx * dx + z * z)
-
     base = cloud_base(billow)
-    # Not clipped at the top: a parcel above the crown gets height > 1, the
-    # profile goes to zero there, and it falls out of the envelope on its own.
-    height = np.maximum((y - base) / max(state.top - BASE_Y, 1e-6), 0.0)
-    radius = turret_radius(height) * state.width * (1.0 + BILLOW * billow)
-    radius = np.maximum(radius, 1e-3)
+
+    accumulated = np.zeros(len(positions), dtype=np.float32)
+    for k in range(len(bubbles.radius)):
+        age = (phase - bubbles.birth[k]) / bubbles.life[k]
+        if age <= 0.0 or age >= 1.0:
+            continue
+
+        # Rises from the base to its own ceiling, and swells then shrinks. Both
+        # endpoints are zero radius, so a bubble fades in and out rather than
+        # appearing at full size. The climb is LINEAR in age on purpose: an
+        # age^0.7 climb bunches the live thermals into the middle of the
+        # column, and the cloud comes out as a ball with an empty base and an
+        # empty crown.
+        height = BASE_Y + bubbles.ceiling[k] * state.top * age
+        taper = 1.0 - BUBBLE_TAPER * (height - BASE_Y) / max(state.top, 1e-6)
+        # The late fade is sharp on purpose. A gentle one leaves a thermal at
+        # 60% of full size when it reaches its ceiling, sitting clear of the
+        # crowd below with nothing to merge into — which renders as a detached
+        # sphere floating above the cloud like a balloon.
+        swell = np.sin(np.pi * age) ** 0.42
+        swell *= 1.0 - _smoothstep_scalar(0.72, 1.0, age)
+        radius = bubbles.radius[k] * state.width * taper * swell
+        if radius <= 1e-3:
+            continue
+
+        cx = TILT * (height - BASE_Y) + bubbles.offset[k, 0]
+        cz = bubbles.offset[k, 1]
+        # Thermals are flattened by their own drag, not spherical.
+        dx = (x - cx) / radius
+        dy = (y - height) / (radius * BUBBLE_FLATTEN)
+        dz = (z - cz) / radius
+        falloff = np.exp(-(dx * dx + dy * dy + dz * dz) * 1.35)
+        accumulated += falloff**UNION_POWER
+
+    # A slab of cloud sitting ON the condensation level, always present while
+    # the cloud is alive. Thermals alone leave the bottom ragged and holed —
+    # each one is a sphere that has already left the base by the time it is
+    # big — and the flat bottom is the single feature that says "cumulus".
+    # Physically this is the layer being fed continuously from below.
+    dxr = x - TILT * (y - BASE_Y)
+    r_root = np.sqrt(dxr * dxr + z * z) / (ROOT_RADIUS * state.width)
+    # A soft quadratic falloff, not a quartic. A quartic gives the slab a hard
+    # rim, and a hard-rimmed disc wider than the tower above it reads as a
+    # second, separate cloud rather than as the root of this one.
+    root = np.exp(-(r_root**2)) * np.exp(-(((y - base) / ROOT_DEPTH) ** 2))
+    accumulated += np.clip(root, 0.0, None) ** UNION_POWER
+
+    union = np.clip(accumulated, 0.0, None) ** (1.0 / UNION_POWER)
+    union *= 1.0 + BILLOW * billow
 
     e_base = _smoothstep(0.0, BASE_SOFT, y - base)
-    # A cubic super-Gaussian: fuller in the middle than a Gaussian, so the
-    # flanks stay solid and only the outermost shell is ragged.
-    e_side = np.exp(-((r / radius) ** 3))
-
-    return (state.amplitude * e_base * e_side).astype(np.float32)
+    return (state.amplitude * np.clip(union, 0.0, 1.0) * e_base).astype(np.float32)
 
 
 def _standardize(
@@ -725,13 +845,16 @@ def _standardize(
     return np.float32(mean), np.float32(max(np.sqrt(var), 1e-6))
 
 
-def condensate(positions: np.ndarray, field: NoiseField, phase: float) -> np.ndarray:
+def condensate(
+    positions: np.ndarray, field: NoiseField, phase: float, bubbles: Bubbles
+) -> np.ndarray:
     """Liquid water content per parcel: 4D noise clipped by the envelope.
 
     Args:
         positions: ``(P, 3)`` world positions
         field: Output of :func:`build_noise_field`
         phase: Normalized time in ``[0, 1]``
+        bubbles: Output of :func:`build_bubbles`
 
     Returns:
         ``(P,)`` condensate in ``[0, 1]``
@@ -742,7 +865,7 @@ def condensate(positions: np.ndarray, field: NoiseField, phase: float) -> np.nda
     noise = sample_noise_series(field.detail, tau)
     coarse = sample_octave(field.billow, 0, tau)
     billow = coarse / max(float(coarse.std()), 1e-6)
-    env = envelope(positions, phase, billow)
+    env = envelope(positions, phase, billow, bubbles)
 
     mean, std = _standardize(noise, env)
 
@@ -777,32 +900,57 @@ def condensate(positions: np.ndarray, field: NoiseField, phase: float) -> np.nda
 # ---------------------------------------------------------------------------
 
 
+def _sun_frame(direction: Tuple[float, float, float]) -> np.ndarray:
+    """Orthonormal basis whose THIRD axis points at the light."""
+    w = np.array(direction, dtype=np.float64)
+    w /= np.linalg.norm(w)
+    seed = np.array([0.0, 0.0, 1.0]) if abs(w[1]) > 0.9 else np.array([0.0, 1.0, 0.0])
+    u = np.cross(seed, w)
+    u /= np.linalg.norm(u)
+    v = np.cross(w, u)
+    return np.stack([u, v, w], axis=1)
+
+
 def optical_depth(
-    positions: np.ndarray, water: np.ndarray, parcel_density: float
+    positions: np.ndarray,
+    water: np.ndarray,
+    parcel_density: float,
+    direction: Tuple[float, float, float],
 ) -> np.ndarray:
-    """Optical depth accumulated downward from the top of the cloud.
+    """Optical depth accumulated toward ``direction``.
 
     Points are emissive — nothing in the renderer knows the sun exists — so the
-    only way to get a lit cloud is to bake it. Splat the condensate onto a
-    coarse grid, blur it once so the sampling does not band, cumulatively sum
-    it from the top down, and read it back per parcel. What comes out is the
-    water column above each parcel, which is exactly the argument of
-    Beer-Lambert.
+    only way to get a lit cloud is to bake it. Splat the condensate onto a grid
+    aligned with the light, blur it once so the sampling does not band,
+    cumulatively sum it from the lit side inward, and read it back per parcel.
+    What comes out is the water column between each parcel and the light, which
+    is exactly the argument of Beer-Lambert.
+
+    The direction is a parameter rather than hard-coded to straight down, and
+    that is a substantive choice. A light directly overhead illuminates every
+    surface of the cloud by its DEPTH alone, so two lobes at the same altitude
+    are lit identically no matter which way they face, and the relief that
+    makes a cumulus legible disappears. Moving the sun off to one side means a
+    lobe's near face is bright while its far face is not, which is what draws
+    the cauliflower.
 
     Args:
         positions: ``(P, 3)`` world positions
         water: ``(P,)`` condensate
         parcel_density: Seeded parcels per unit volume
+        direction: Unit-ish vector pointing from the cloud toward the light
 
     Returns:
         ``(P,)`` optical depth
     """
-    lo = positions.min(axis=0)
-    hi = positions.max(axis=0)
+    local = positions @ _sun_frame(direction)
+
+    lo = local.min(axis=0)
+    hi = local.max(axis=0)
     span = np.maximum(hi - lo, 1e-3)
     cell = span / SHADE_GRID
 
-    idx = np.clip(((positions - lo) / cell).astype(np.int32), 0, SHADE_GRID - 1)
+    idx = np.clip(((local - lo) / cell).astype(np.int32), 0, SHADE_GRID - 1)
     flat = (idx[:, 0] * SHADE_GRID + idx[:, 1]) * SHADE_GRID + idx[:, 2]
 
     grid = np.zeros(SHADE_GRID**3, dtype=np.float32)
@@ -823,17 +971,54 @@ def optical_depth(
     # constant works right up until somebody passes --parcels or edits
     # SHADE_GRID, at which point the whole cloud silently changes how it is
     # lit: the raw sum scales with both the parcel count and the cell volume.
-    # Dividing them out makes EXTINCTION an actual extinction coefficient,
-    # per unit of water column, and the look stops depending on the sampling.
     cell_volume = float(cell[0] * cell[1] * cell[2])
     density = grid / max(parcel_density * cell_volume, 1e-12)
 
-    # Exclusive cumulative sum downward along y (axis 1): the water column
-    # strictly above each cell, which is what Beer-Lambert wants.
-    above = np.cumsum(density[:, ::-1, :], axis=1)[:, ::-1, :] - density
-    tau = above * (float(cell[1]) * EXTINCTION)
+    # Exclusive cumulative sum from the lit end (the far end of axis 2, which
+    # the frame points at the light) inward.
+    above = np.cumsum(density[:, :, ::-1], axis=2)[:, :, ::-1] - density
+    tau = above * (float(cell[2]) * EXTINCTION)
 
     return tau[idx[:, 0], idx[:, 1], idx[:, 2]]  # type: ignore[no-any-return]
+
+
+def shade(
+    positions: np.ndarray, water: np.ndarray, parcel_density: float
+) -> np.ndarray:
+    """Per-parcel colour: sunlight, skylight and a little bounce off the ground.
+
+    Three terms, because a cloud lit by one of them looks wrong in a way that
+    is hard to place until you see all three.
+
+    ``sun`` is direct beam attenuated along the sun's own ray. On its own it
+    renders everything the beam misses as pure black, which no cloud has ever
+    been. ``sky`` is the hemisphere of blue light from above, attenuated along
+    the vertical, and it is what actually fills a cumulus's shadowed flanks —
+    and it is BLUE, which is why the underside of a real cumulus reads cool
+    grey-blue rather than neutral grey. ``ground`` is a weak warm bounce that
+    keeps the very bottom from going flat.
+
+    Args:
+        positions: ``(P, 3)`` world positions
+        water: ``(P,)`` condensate
+        parcel_density: Seeded parcels per unit volume
+
+    Returns:
+        ``(P, 3)`` linear RGB
+    """
+    tau_sun = optical_depth(positions, water, parcel_density, SUN_DIRECTION)
+    tau_sky = optical_depth(positions, water, parcel_density, (0.0, 1.0, 0.0))
+
+    direct = np.exp(-tau_sun)[:, None]
+    # Skylight arrives from a whole hemisphere, so it is far less directional
+    # than the beam and falls off more gently with depth.
+    ambient = np.exp(-SKY_FALLOFF * tau_sky)[:, None]
+
+    return (
+        SUN_COLOR[None, :] * direct
+        + SKY_COLOR[None, :] * ambient
+        + GROUND_COLOR[None, :]
+    ).astype(np.float32)
 
 
 # ---------------------------------------------------------------------------
@@ -981,6 +1166,7 @@ def generate_evolving_cloud(
 
     with asection("Precomputing the 4D condensation noise"):
         field = build_noise_field(material)
+        bubbles = build_bubbles(rng)
         for octave, (keys, temporal) in enumerate(field.detail):
             frequency = NOISE_BASE_FREQ * 2.0**octave
             state = f"{keys.shape[0]} keyframes" if temporal else "frozen (advected)"
@@ -997,7 +1183,7 @@ def generate_evolving_cloud(
         aprint(f"✓ {total_mb:.0f} MB of keyframes")
 
     with asection("Calibrating the emission gate"):
-        probes = [condensate(positions, field, p) for p in CALIBRATION_PHASES]
+        probes = [condensate(positions, field, p, bubbles) for p in CALIBRATION_PHASES]
         gate = calibrate_gate(probes, target_points_per_frame)
         counts = [int((emission_odds(w, gate) > gate_u).sum()) for w in probes]
         for p, n in zip(CALIBRATION_PHASES, counts):
@@ -1020,7 +1206,7 @@ def generate_evolving_cloud(
         for frame in range(n_frames):
             phase = frame / max(n_frames - 1, 1)
 
-            water = condensate(positions, field, phase)
+            water = condensate(positions, field, phase, bubbles)
             odds = emission_odds(water, gate)
             keep = odds > gate_u
             n_kept = int(keep.sum())
@@ -1040,17 +1226,19 @@ def generate_evolving_cloud(
                 # popping into existence at full size.
                 margin = np.clip((odds[keep] - gate_u[keep]) / 0.22, 0.0, 1.0)
 
-                tau = optical_depth(kept_pos, kept_water, parcel_density)
-                light = AMBIENT + (1.0 - AMBIENT) * np.exp(-tau)
-
-                colors = (
-                    SHADOW_COLOR[None, :]
-                    + (SUN_COLOR - SHADOW_COLOR)[None, :] * light[:, None]
-                ).astype(np.float32)
-                # Newly condensed parcels arrive dim as well as small.
-                colors *= (0.45 + 0.55 * margin)[:, None]
+                rgb = shade(kept_pos, kept_water, parcel_density)
 
                 size = np.clip(kept_water / water_ref, 0.0, 1.0) ** 0.6
+
+                # RGBA. Under volumetric blending the alpha column IS the
+                # parcel's optical depth, so denser air hides more of what is
+                # behind it — which is the whole reason the cloud reads as a
+                # body rather than a glow. Newly condensed parcels fade in
+                # through it instead of switching on at full opacity.
+                alpha = np.clip(ALPHA_FLOOR + ALPHA_GAIN * size, 0.0, 1.0) * margin
+                colors = np.concatenate(
+                    [np.clip(rgb, 0.0, 1.0), alpha[:, None].astype(np.float32)], axis=1
+                )
                 radii = MIN_RADIUS + size * (MAX_RADIUS - MIN_RADIUS)
                 radii *= 0.40 + 0.60 * margin
                 radii *= rng.uniform(0.88, 1.12, n_kept)
@@ -1067,7 +1255,7 @@ def generate_evolving_cloud(
                         [kept_pos, np.full(n_kept, float(frame), dtype=np.float32)]
                     ).astype(np.float32)
                 )
-                frames_col.append(np.clip(colors, 0.0, 1.0))
+                frames_col.append(colors)
                 frames_rad.append(radii)
                 frames_shp.append(sharpness)
 
@@ -1138,8 +1326,22 @@ def generate_evolving_cloud(
                 colors=all_colors,
                 radii=all_radii,
                 sharpness=all_sharpness,
-                opacity=0.95,
-                blending_mode="additive",  # Clouds accumulate light
+                opacity=1.0,
+                # A cumulus is optically THICK — you see its surface, not
+                # through it. `additive` models the opposite regime (an
+                # optically thin emissive medium: nothing occludes anything),
+                # and combining it with shading derived from occlusion is
+                # incoherent: the darkened interior is not hidden behind the
+                # lit shell, it shows straight through it, and the cloud reads
+                # as a glowing archway with a hole in the middle. Measured on
+                # the additive build, the core carried the HIGHEST point
+                # density (346 vs 51 per unit area at the rim) and the LOWEST
+                # brightness (0.46 vs 0.85) — a hole in the light, not in the
+                # geometry. Volumetric composites emission against absorption
+                # back-to-front, which is the regime the baked sunlight was
+                # computed for.
+                blending_mode="volumetric",
+                absorption=ABSORPTION,
                 intensity=INTENSITY,
                 layer=True,
             )
