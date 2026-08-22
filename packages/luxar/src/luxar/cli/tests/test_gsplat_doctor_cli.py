@@ -333,9 +333,13 @@ def test_doctor_reports_an_encrypted_zip_member_without_a_traceback(
         )
         _mark_zip_member_encrypted(archive, metadata=metadata)
 
-        result = CliRunner().invoke(app, ["gsplat", "doctor", str(archive)])
+        result = CliRunner().invoke(
+            app, ["gsplat", "doctor", str(archive), "--no-info"]
+        )
 
         assert result.exit_code == 1
         assert isinstance(result.exception, SystemExit)
+        if not metadata:
+            assert "Diagnosing:" in result.stdout
         assert "encrypted, password required" in result.stdout
         assert "Traceback" not in result.stdout
