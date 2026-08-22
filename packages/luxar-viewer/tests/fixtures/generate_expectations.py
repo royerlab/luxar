@@ -109,12 +109,15 @@ def _stats(array: np.ndarray) -> dict[str, float | None]:
     }
 
 
-def _viewer_kernel_decode(array: zarr.Array, root: zarr.Group) -> np.ndarray | None:
+def _viewer_kernel_decode(
+    array: zarr.Array, root: zarr.Group
+) -> tuple[np.ndarray, float] | None:
     """Decode in the f32 order of ``src/wasm/typescript/decode.ts``.
 
     Python's scalar decoders use f64; ``_decode_bounded_scalar`` also uses a
     different operand order. Keep this transcription aligned with the
-    TypeScript and Rust kernels.
+    TypeScript and Rust kernels. The returned ULP budget covers their expected
+    divergence from Python's f64 result at the array peak.
     """
     enc = array.attrs.get("encoding", None)
     if not isinstance(enc, dict):
@@ -149,7 +152,7 @@ def _viewer_kernel_decode(array: zarr.Array, root: zarr.Group) -> np.ndarray | N
         value_range = float(np.float32(hi - lo))
         scale = float(np.float32(value_range / top))
         scaled = np.asarray(data.astype(np.float64) * scale, dtype="<f4")
-        return np.asarray(lo + scaled.astype(np.float64), dtype="<f4")
+        return np.asarray(lo + scaled.astype(np.float64), dtype="<f4"), 4.0
 
     if name in _GEOLOG_KERNEL_ENCODINGS:
         data = np.asarray(array[:])
@@ -162,7 +165,7 @@ def _viewer_kernel_decode(array: zarr.Array, root: zarr.Group) -> np.ndarray | N
         if nonzero.any():
             exponent = lo + (data[nonzero].astype(np.float64) - 1.0) * inv
             result[nonzero] = np.asarray(np.exp(exponent), dtype="<f4")
-        return result
+        return result, 4.0 + abs(hi)
 
     return None
 
@@ -264,10 +267,12 @@ def _array_expectation(
     decoder = ArrayDecoder()
     decoded = decoder.decode(array, root)
     decoded = np.asarray(decoded)
-    viewer_decoded = _viewer_kernel_decode(array, root)
-    if viewer_decoded is not None and decoded.size:
+    viewer_kernel = _viewer_kernel_decode(array, root)
+    viewer_decoded = viewer_kernel[0] if viewer_kernel is not None else None
+    if viewer_kernel is not None and decoded.size:
+        _, tolerance_ulps = viewer_kernel
         max_abs = np.float32(np.abs(decoded).max())
-        tolerance = 4 * np.spacing(max_abs)
+        tolerance = tolerance_ulps * np.spacing(max_abs)
         max_error = np.abs(decoded.astype(np.float64) - viewer_decoded).max()
         assert max_error <= tolerance, (
             f"Viewer kernel decode diverged from Python for {path}: "
