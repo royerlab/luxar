@@ -778,8 +778,6 @@ per-array sizing.
   the array's own `[min, max]`) or, for wide dynamic range (> 65536:1),
   `geolog_scalar_uint16` (geometric-log grid, code 0 reserved for exact
   zeros). `float32` under PRECISION; `broadcasted` when uniform.
-- **Deduplication:** `false` — chunk bounds depend on this array's own
-  positive-scalar quantization grid.
 - **Chunks:** `(chunk_rows,)` — byte-based / spatial-index-aligned
 - **Compression:** Blosc with zstd, level 9 (width-aware shuffle policy)
 - **Description:** Point radii in scene units
@@ -972,9 +970,13 @@ Two structural differences from the other three types:
   "ordering": "none",                // always "none" in v1 (no spatial index)
   // ... plus the standard render attrs (opacity, gamma, intensity, offset,
   //     absorption, blending_mode, colormap, layer, transform, nd_transform,
-  //     extend_to_all)
+  //     extend_to_all) and mesh-only appearance attrs (ambient, shade_exponent,
+  //     specular, shininess, alpha_cutoff)
 }
 ```
+
+The five mesh-only appearance attrs control the view-anchored shading model;
+they are rejected on points, lines, Gaussian splats, and groups.
 
 #### vertices/ (Required)
 - **Shape:** `(V, D)` — nD vertex positions, exactly like `Lines.vertices`.
@@ -1123,8 +1125,9 @@ Any scene-graph node — `points`, `lines`, `gsplats`, `mesh`, or a container
 `group` — may be exposed as a layer in the viewer's Layers panel by setting
 `layer: true` in its zarr attrs. The panel (toggled with **L**) provides
 per-layer visibility, display-range, gamma, opacity, absorption (volumetric
-mode's κ), blending mode, and colormap controls, plus three mesh-only shading
-controls (ambient, shade falloff, alpha cutoff).
+mode's κ), blending mode, and colormap controls, plus five mesh-only shading
+controls (ambient, shade falloff, specular, shininess, alpha cutoff). The five
+shading attrs are valid only on mesh leaves and do not inherit through groups.
 
 ```javascript
 {
@@ -1365,10 +1368,11 @@ consumers must treat missing and `"none"` identically.
 - **Compression:** Blosc with zstd, level 9 (width-aware shuffle policy)
 - **Description:** Bounding box [min, max] for each dimension of each chunk
 - **Example:** For chunk 5 in a 4D dataset: `chunk_bounds[5, :, :]` = `[[x_min, x_max], [y_min, y_max], [z_min, z_max], [t_min, t_max]]`
-- **Note:** Bounds include point radii extent to ensure hyperspheres are found. A node with no `radii/` array is bounded by `DEFAULT_POINT_RADIUS` (0.5) — the radius it will be drawn at — not by zero. Discrete/barrier axes get no radius extent at all, only a tiny float-boundary epsilon, so a categorical value never bleeds into its neighbour. **A stored interval is never tighter than the chunk's authored footprint, at any coordinate magnitude**: every pad is a small *absolute* quantity that would fall under half a float32 ULP past `|x| ~ 2**23`, so producers accumulate the interval in float64 and narrow it to this float32 array by rounding each end *away* from the interval (a bound moves one ULP outward only when the cast moved it the wrong way, so a padless axis still stores its coordinates exactly). Consumers may rely on each geometry family's containment guarantee; they may not assume the bound is tight.
+- **Note:** Bounds include point radii extent to ensure hyperspheres are found. A node with no `radii/` array is bounded by `DEFAULT_POINT_RADIUS` (0.5) — the radius it will be drawn at — not by zero. Discrete/barrier axes get no radius extent at all, only a tiny float-boundary epsilon, so a categorical value never bleeds into its neighbour. **A stored interval is never tighter than the chunk's footprint of the AUTHORED coordinates, at any coordinate magnitude**: every pad is a small *absolute* quantity that would fall under half a float32 ULP past `|x| ~ 2**23`, so producers accumulate the interval in float64 and narrow it to this float32 array by rounding each end *away* from the interval (a bound moves one ULP outward only when the cast moved it the wrong way, so a padless axis still stores its coordinates exactly). Consumers may rely on containment; they may not assume the bound is tight.
 - **Note (quantised coordinates — points and lines):** for **points and lines** the containment guarantee above holds against the coordinates *as decoded*, not merely as authored, and that takes an extra pad. `chunk_bounds` is always float32, but the coordinate arrays themselves are stored as **per-axis uint16 fixed point** under the default AUTO encoding, so a decoded coordinate can land up to half a quantum (`extent/131070`) away from the authored one on a **non-gridded** axis — 7.6e-3 at an axis extent of 1000, far above the float32 ULP the outward store closes, and enough for a reader to skip the chunk at that edge. Points and lines therefore widen every chunk bound outward by that per-axis half-quantum (on top of the radius/width footprint on a spatial axis, and on top of the float-boundary epsilon on a barrier axis); an axis the encoder stores exactly gets nothing extra, which covers a **gridded** axis (a stacked integer time/channel axis, snapped so its values round-trip bit-exactly), a constant axis and the ≥2¹⁶-extent float32 fallback. An array that is *actually* stored as a LUT (verbatim values, ≤256 distinct) is exempt too — but eligibility is not enough: **lines `vertices/` never store a LUT** (the spatial-index loader reads that array as raw chunked zarr, so the writer blocks LUT there), so a LUT-eligible lines node is quantised like any other and its vertex *and* segment bounds still get the pad. Stores written before this pad existed (2026-08) keep their old, occasionally-too-tight bounds.
-- **Note (quantised coordinates — gsplats, partially covered):** a gsplats node gets **no such pad**. It relies instead on a rail of its own, which escalates the whole `centers/` array to float32 whenever half an axis's uint16 grid step exceeds the per-splat marginal σ for more than 0.1% of the splats — so what survives quantisation is a displacement smaller than the splat's own σ, and the `truncation_radius · σ` extent already in the bound absorbs it. **That argument closes only on a *spatial* axis.** A **barrier** axis (one named in `slice_dims`) deliberately receives no σ expansion, only the tiny float-boundary epsilon, so a barrier axis that is neither gridded nor LUT-encoded *and* whose splats carry a σ large enough to keep the rail quiet is not covered at either end: a decoded center can sit up to half a quantum outside its own chunk bound (measured on a 4-D node with a continuous barrier axis of extent 1000 and σ = 5: 2 of 12,000 centers outside, worst 2.6e-3). The ordinary case is unaffected — a stacked integer time/channel barrier axis is *gridded*, so it round-trips bit-exactly and there is nothing to pad. Consumers must not assume decoded containment on a **non-gridded gsplats barrier axis**; closing that gap is tracked separately.
+- **Note (quantised coordinates — gsplats):** gsplat containment comes from the encoder's per-axis round-trip slack alone: every spatial and barrier bound is widened by the full possible center displacement, so it contains decoded `centers/` without relying on the splat's σ. On a non-gridded uint16 axis that slack is the half-quantum (`extent/131070`), added on top of the geometric footprint or float-boundary epsilon; a gridded time/channel axis, LUT encoding, or float32 store answers zero and leaves the bound unchanged. The separate sigma rail is a **fidelity** guard: when a uint16 grid can move too many centers beyond their own cores it escalates the whole array to float32, but its population tolerance is not part of the containment contract. Stores written before this pad existed (2026-08) keep their old, occasionally-too-tight bounds.
 - **Note (quantised radii and widths):** a point's `radii/` and a line's `widths/` are themselves quantised (`bounded_scalar_uint8` under AUTO for a typical range), so their decoded value can exceed the authored value by roughly half a quantum. Points and segment bounds therefore add the positive-scalar encoder's single-array round-trip slack to the radius/width pad on **spatial dimensions only**. Barrier dimensions still receive no geometric footprint pad. Stores written before this scalar pad existed (2026-08) keep their old, occasionally-too-tight bounds.
+- **Note (quantised Cholesky factors):** a gsplat's packed `cholesky_factors` input is split on disk into `cholesky_factors_diag/` and `cholesky_factors_offdiag/`, while its footprint pad is still built from the **authored** values. The diagonal uses `log_perchannel_u8` under AUTO, so decoded σ can exceed the authored `coverage_sigma · σ` pad (measured decoded − authored σ up to 1.99e-2, putting 11 of 11 gsplat chunks outside their stored bound, worst 5.10e-2 after the 2.75× coverage factor). This remaining extent gap is not closed yet.
 
 #### Per-Element Labels (CSR-style)
 
@@ -1812,10 +1816,9 @@ per-array above (`linear_perchannel_u16`, `rgb_uint8`,
   another array in the same store is stored as an **empty** array (physical
   shape `(0,)` / `(0, D)`) whose `encoding` carries `target` (path of the
   original array), `hash`, `original_shape`, and `original_dtype`. Readers
-  must resolve and load the target array. (Line `vertices`/`segments`, whose
-  consumers read raw zarr, are never dedup- or LUT-encoded; point `radii` and
-  line `widths` are never deduplicated because their chunk bounds depend on
-  their own quantization grids.)
+  must resolve and load the target array. (Structural arrays whose consumers
+  read raw zarr — line `vertices`/`segments` — are never dedup- or
+  LUT-encoded.)
 - **`lut_uint8` / `lut_uint16`** — look-up-table encoding for arrays with few
   unique values (or few unique color rows): the array stores indices and the
   `encoding.lut` attr carries the unique values as JSON (`lut_mode` +
@@ -1974,6 +1977,6 @@ with LuxarZarrCompiler("output.luxar.zarr", enable_spatial_index=True) as compil
 
 - Support for volumes
 - Material system with shading models (mesh ships one deliberately minimal,
-  light-free headlight — lights and richer shading models are still ahead)
+  light-free view-anchored offset key — scene lights and richer shading models are still ahead)
 - Temporal interpolation for smooth animations
 - Multi-resolution spatial indices for LOD

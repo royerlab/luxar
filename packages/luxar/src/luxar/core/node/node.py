@@ -52,7 +52,37 @@ class _WriteThroughAttrs(MutableMapping[str, Any]):
         ):
             setattr(self._node, key, value)
             return
+        self._reject_mesh_only_on_non_mesh(key)
         self._node._persist_attr(key, value)
+
+    def _reject_mesh_only_on_non_mesh(self, key: str) -> None:
+        """Close the second door onto mesh-only appearance attrs (#1782).
+
+        The leaf adders refuse the mesh-only appearance keys on a non-mesh node
+        (:func:`reject_mesh_only_appearance`), but this write-through mapping
+        (#1764) persists straight to the store, so ``node.attrs["specular"] =
+        0.5`` on a points/lines/gsplats/group node would otherwise reach disk and
+        the viewer would silently ignore it. Node construction fills the cache
+        DIRECTLY (see ``__init__``), never through here, so a mesh leaf authored
+        WITH these attrs is unaffected; only a post-hoc set on a non-mesh node is
+        refused. ``type`` is the geometry token every node carries in its cache
+        (``"mesh"`` for a mesh leaf); anything else — including an absent one —
+        is not a mesh.
+        """
+        from ..group.compositing import MESH_ONLY_APPEARANCE_ATTRS
+
+        if (
+            key in MESH_ONLY_APPEARANCE_ATTRS
+            and self._node._attrs_cache.get("type") != "mesh"
+        ):
+            node_type = self._node._attrs_cache.get("type") or "non-mesh"
+            raise ValueError(
+                f"Cannot set mesh-only attribute '{key}' on {node_type} node "
+                f"'{self._node.name}'. The viewer applies these attributes only to "
+                "mesh leaves, and they do not compose through non-mesh nodes. Remove "
+                "them, set them on each mesh leaf (part_<i> / child_<i>), or pass "
+                "them to add_mesh(...), which stamps every generated mesh leaf."
+            )
 
     def __delitem__(self, key: str) -> None:
         if key not in self._node._attrs_cache:
@@ -463,9 +493,12 @@ class Node:
             ValueError: If group creation fails
         """
         from ..group import Group
+        from ..group.compositing import reject_mesh_only_appearance
 
         try:
             aprint(f"Adding child group '{name}' to node '{self.name}'.")
+
+            reject_mesh_only_appearance("group", name, attrs)
 
             # Duplicate child check and writing to storage, attr validation,
             # and caching are all handled by Node.__init__.

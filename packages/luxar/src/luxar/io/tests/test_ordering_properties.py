@@ -263,7 +263,7 @@ def test_chunk_bounds_contain_the_footprint_at_every_magnitude(
 
         # The quantisation slack (#1655) is another small ABSOLUTE pad added to
         # the same float32 store, so it faces the same large-magnitude hazard
-        # and belongs in this sweep. Driven through the three builders that take
+        # and belongs in this sweep. Driven through all four builders that take
         # it, with the FOOTPRINT set to zero so the whole pad IS the slack: a
         # builder that dropped the slack term would leave the bound exactly on
         # the coordinate and fail at every magnitude, not only the large ones.
@@ -274,6 +274,7 @@ def test_chunk_bounds_contain_the_footprint_at_every_magnitude(
         # longer agree, for the reason given in the _MAGNITUDES note.)
         slack_vec = np.full(_NDIM, pad32, dtype=np.float64)
         zero_widths = np.zeros(_N_ELEMENTS, dtype=np.float32)
+        zero_cholesky = np.zeros((_N_ELEMENTS, 6), dtype=np.float32)
         _assert_contains(
             compute_chunk_bounds_points(
                 coords, radii=0.0, chunk_size=_N_ELEMENTS, coord_slack=slack_vec
@@ -287,6 +288,17 @@ def test_chunk_bounds_contain_the_footprint_at_every_magnitude(
             coords,
             pad32,
             f"vertices slack={pad}",
+        )
+        _assert_contains(
+            compute_chunk_bounds_gsplats(
+                coords,
+                zero_cholesky,
+                chunk_size=_N_ELEMENTS,
+                coord_slack=slack_vec,
+            ),
+            coords,
+            pad32,
+            f"gsplats slack={pad}",
         )
         _assert_contains(
             compute_segment_chunk_bounds(
@@ -559,6 +571,17 @@ def test_coord_slack_pads_spatial_and_barrier_dims_in_every_builder() -> None:
         assert segs[0, d, 0] == pytest.approx(0.0 - extra - slack[d])
         assert segs[0, d, 1] == pytest.approx(3.0 + extra + slack[d])
 
+    splats = compute_chunk_bounds_gsplats(
+        coords,
+        np.zeros((4, 6), dtype=np.float32),
+        chunk_size=4,
+        slice_dims=[2],
+        coord_slack=slack,
+    )
+    for d, extra in ((0, 0.0), (1, 0.0), (2, _BARRIER_BOUND_EPS)):
+        assert splats[0, d, 0] == pytest.approx(0.0 - extra - slack[d])
+        assert splats[0, d, 1] == pytest.approx(3.0 + extra + slack[d])
+
 
 def test_scalar_slack_pads_only_spatial_footprints() -> None:
     coords = np.array([[0.0, 0.0], [1.0, 1.0]], dtype=np.float32)
@@ -641,6 +664,7 @@ def test_coord_slack_defaults_leave_every_builder_byte_identical() -> None:
     coords = (rng.random((64, 3)) * 1000.0).astype(np.float32)
     segments = np.arange(64, dtype=np.uint32).reshape(-1, 2)
     widths = rng.random(64).astype(np.float32)
+    cholesky = rng.random((64, 6)).astype(np.float32)
     zeros = np.zeros(3, dtype=np.float64)
 
     np.testing.assert_array_equal(
@@ -650,6 +674,12 @@ def test_coord_slack_defaults_leave_every_builder_byte_identical() -> None:
     np.testing.assert_array_equal(
         compute_vertex_chunk_bounds(coords, 16, slice_dims=[2]),
         compute_vertex_chunk_bounds(coords, 16, slice_dims=[2], coord_slack=zeros),
+    )
+    np.testing.assert_array_equal(
+        compute_chunk_bounds_gsplats(coords, cholesky, 16, slice_dims=[2]),
+        compute_chunk_bounds_gsplats(
+            coords, cholesky, 16, slice_dims=[2], coord_slack=zeros
+        ),
     )
     np.testing.assert_array_equal(
         compute_segment_chunk_bounds(coords, segments, widths, 8, slice_dims=[2]),

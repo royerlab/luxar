@@ -78,7 +78,7 @@ def _blown(h: int = 64, w: int = 64) -> np.ndarray:
 
 
 def _flat_bright(h: int = 64, w: int = 64) -> np.ndarray:
-    """Headlit-mesh case: a colour driven into the tone-curve shoulder.
+    """Flat-subject case: a colour driven into the tone-curve shoulder.
 
     Luma sits ~0.86-0.90 with a spread of only a few hundredths. The blown-tail
     test sees nothing here simply because the LUMA term already excludes these

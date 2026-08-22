@@ -14,11 +14,18 @@ This package provides low-level utilities for working with Gaussian splat parame
 - `validate_cholesky_shape(cholesky_factors, ndim, ...)` - Validate packed Cholesky factor shapes
 - `permute_cholesky_packed(packed, d, perm)` - Reorder dimensions of packed Cholesky factors
 - `embed_cholesky_packed(packed, d_src, d_dst, dim_mapping, ...)` - Embed lower-dim Cholesky into higher-dim space
-- `resolve_torch_device(device, use_cuda=True, use_metal=True)` - Shared PyTorch device auto-selection helper; `"auto"` is equivalent to `None`
+- `resolve_torch_device(device, use_cuda=True, use_metal=True)` - Shared PyTorch device auto-selection helper; `"auto"` is equivalent to `None` **(needs `luxar[gsplats]` — see below)**
+- `is_mps_available()` - Robustly detect a working Apple Metal (MPS) backend **(needs `luxar[gsplats]` — see below)**
 
 ## Installation
 
-Part of `luxar.gsplats` package. No additional installation required.
+Part of the `luxar.gsplats` package, but importable on a plain `pip install luxar`: everything in `trils.py` is pure NumPy, and the core scene-authoring path depends on that (`add_gsplats` reaches `split_tril` through the compiler on every call).
+
+The two `device.py` helpers — `resolve_torch_device` and `is_mps_available` — are the exception: they import `torch`, which ships only in the optional `gsplats` extra. They are therefore resolved lazily by a module `__getattr__` (PEP 562), so importing this package costs nothing on a core-only install and `from luxar.gsplats.utils import resolve_torch_device` raises `ModuleNotFoundError: No module named 'torch'` only when the name is actually touched. Install the extra to use them:
+
+```bash
+pip install 'luxar[gsplats]'
+```
 
 ## Quick Start
 
@@ -26,7 +33,6 @@ Part of `luxar.gsplats` package. No additional installation required.
 from luxar.gsplats.utils import (
     calculate_gradient_dilution_factor,
     pack_tril,
-    resolve_torch_device,
     unpack_tril,
 )
 import numpy as np
@@ -41,8 +47,16 @@ L_restored = unpack_tril(packed, d=2)  # Returns shape (1, 2, 2)
 # Calculate gradient dilution for 3D optimization
 factor = calculate_gradient_dilution_factor(3)  # Returns ~1.8
 
+# Everything above runs on a plain `pip install luxar`. Everything below needs
+# `pip install 'luxar[gsplats]'` — hence the separate import block: these two
+# names resolve lazily, so on a core-only install even importing them raises.
+from luxar.gsplats.utils import is_mps_available, resolve_torch_device
+
 # Resolve a PyTorch device with accelerator opt-out flags
 fit_device = resolve_torch_device(None, use_cuda=False, use_metal=True)
+
+# Or probe the Metal backend directly (robust against older PyTorch builds)
+on_metal = is_mps_available()
 ```
 
 ## Core Functions
@@ -336,16 +350,20 @@ from luxar.gsplats.utils import (
     validate_cholesky_shape,
     permute_cholesky_packed,    # Reorder dimensions of packed Cholesky factors
     embed_cholesky_packed,      # Embed lower-dim Cholesky into higher-dim space
-    is_mps_available,           # Robustly detect a working MPS backend
-    resolve_torch_device,       # CUDA > MPS > CPU device auto-selection
+    is_mps_available,           # Robustly detect a working MPS backend (torch)
+    resolve_torch_device,       # CUDA > MPS > CPU device auto-selection (torch)
 )
 ```
+
+The last two are lazy (PEP 562 `__getattr__` + `__dir__`) and require the
+`gsplats` extra; the rest are eager and pure NumPy.
 
 ---
 
 ## Performance
 
-All functions are implemented in pure NumPy:
+Every function documented above is implemented in pure NumPy (the torch-backed
+`device` helpers are the package's only exception, and do no array work):
 - `tril_size`: O(1) arithmetic
 - `pack_tril`: O(N * d^2) element copy
 - `unpack_tril`: O(N * d^2) element copy with zero-filling

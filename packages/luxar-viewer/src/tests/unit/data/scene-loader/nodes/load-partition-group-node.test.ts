@@ -9,6 +9,9 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // Caller-injected recursion handle: the partition loader now takes
 // loadSceneNodes as an explicit ``loadChildren`` parameter (mirrors
@@ -19,7 +22,10 @@ import { loadPartitionGroupNode } from '../../../../../data/scene-loader/nodes/l
 import type { NodeBuildCtx } from '../../../../../data/scene-loader/nodes/build-ctx';
 import { makeTestNodeBuildCtx } from '../../../../helpers/make-test-node-build-ctx';
 import type { SceneNode } from '../../../../../data/data-loader-types';
+import { ROOT_ATTR_DOCS, rootAttributes } from '../../../../../types/zarr-documents';
 import { log, Modules } from '../../../../../utils/log';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 beforeEach(() => {
   loadSceneNodesMock.mockReset();
@@ -87,6 +93,40 @@ function attachStubChildren() {
     obj.name = child.path;
     parentThree.add(obj);
   });
+}
+
+function pythonPartition(fixtureName: string): SceneNode {
+  const fixture = path.resolve(__dirname, `../../../../../../tests/fixtures/${fixtureName}`);
+  const attrs = (relativePath: string): SceneNode['attrs'] => {
+    const docName = ROOT_ATTR_DOCS.find((candidate) =>
+      existsSync(path.join(fixture, relativePath, candidate))
+    );
+    if (docName === undefined) throw new Error(`No attrs document for ${relativePath}`);
+    const document = JSON.parse(readFileSync(path.join(fixture, relativePath, docName), 'utf8'));
+    return rootAttributes(document, docName) as SceneNode['attrs'];
+  };
+  const partitionAttrs = attrs('tiles');
+  const children = readdirSync(path.join(fixture, 'tiles'), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith('part_'))
+    .sort((left, right) => left.name.localeCompare(right.name, undefined, { numeric: true }))
+    .map((entry) => {
+      const relativePath = `tiles/${entry.name}`;
+      const childAttrs = attrs(relativePath);
+      return {
+        path: `/${relativePath}`,
+        type: childAttrs.type,
+        attrs: childAttrs,
+        hasSpatialIndex: false,
+        children: [],
+      } as SceneNode;
+    });
+  return {
+    path: '/tiles',
+    type: 'group',
+    attrs: partitionAttrs,
+    hasSpatialIndex: false,
+    children,
+  };
 }
 
 describe('loadPartitionGroupNode', () => {
@@ -490,5 +530,36 @@ describe('loadPartitionGroupNode', () => {
     expect(wrapper.userData.bspTree).toBeUndefined();
     // Still tagged by load order (child_index absent → falls back to index).
     expect(wrapper.children[0].userData.partIndex).toBe(0);
+  });
+
+  it('drops a wrong-frame tree written by the Python scene compiler', async () => {
+    attachStubChildren();
+
+    const wrapper = await loadPartitionGroupNode(
+      pythonPartition('test_partition_wrong_frame.luxar.zarr'),
+      new THREE.Group(),
+      makeStubLoc(),
+      makeCtx(),
+      loadSceneNodesMock
+    );
+
+    expect(wrapper.userData.bspTree).toBeUndefined();
+  });
+
+  it('keeps a valid tree written by the Python scene compiler', async () => {
+    attachStubChildren();
+    const node = pythonPartition('test_partition_layer.luxar.zarr');
+    const bspTree = node.attrs.bsp_tree;
+    expect(bspTree).toBeDefined();
+
+    const wrapper = await loadPartitionGroupNode(
+      node,
+      new THREE.Group(),
+      makeStubLoc(),
+      makeCtx(),
+      loadSceneNodesMock
+    );
+
+    expect(wrapper.userData.bspTree).toEqual(bspTree);
   });
 });

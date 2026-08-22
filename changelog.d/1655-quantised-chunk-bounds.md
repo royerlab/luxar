@@ -99,21 +99,7 @@ the pad (plus half a float32 ULP, the decode contract). Dropping the `allow_lut`
 gate, dropping the grid snap, or giving `_encode_coordinate` a lossier tier each
 turn it red.
 
-GSplats get no `coord_slack` here — they close most of the same gap from the
-other side, escalating an offending centers axis to float32 rather than padding
-the bound. Note that this is *most*, not all: the σ argument that justifies
-skipping the pad holds on a SPATIAL axis, where `truncation_radius · σ` absorbs
-the residual displacement, and not on a BARRIER axis, which by design gets only
-`_BARRIER_BOUND_EPS`. A gsplats barrier axis that is neither gridded nor
-LUT-encoded, on splats whose σ is large enough to keep the escalation rail
-quiet, can still decode outside its own chunk bound (reproduced: 2 of 12,000
-centers, worst 2.6e-3). That is out of scope here and is tracked separately; the
-format guide and `compute_chunk_bounds_gsplats` now say so instead of implying
-full coverage. The scalar half of points/lines footprints is addressed by the
-companion entry on decoded radii and widths.
-
-The gsplats bound builder does change in this release, just not here — see the
-companion entry on outward float32 rounding, which reworks
-`compute_chunk_bounds_gsplats` (and both lines builders) so a pad is never lost
-to a round-to-nearest float32 store. Read the two together: "no `coord_slack`
-for gsplats" is not "gsplats unchanged".
+GSplats close the corresponding decoded-center gap in the companion
+`1870-gsplat-barrier-bound-slack` entry by applying the same encoder-reported
+coordinate slack to their chunk bounds. The scalar half of points/lines
+footprints is addressed by the companion entry on decoded radii and widths.

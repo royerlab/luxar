@@ -1447,6 +1447,37 @@ _GSPLATS_FROM_DATA_RESERVED_CASES = [("ordering", "morton"), ("center_bounds", N
 
 
 class TestGSplatsFromDataNodeAttrsGate:
+    @pytest.mark.parametrize(
+        "key,value",
+        [
+            ("ambient", 0.3),
+            ("shade_exponent", 1.5),
+            ("specular", 0.5),
+            ("shininess", 24.0),
+            ("alpha_cutoff", 0.2),
+        ],
+    )
+    def test_lod_group_mesh_attr_no_longer_strands_a_childless_wrapper(
+        self, tmp_path: Any, key: str, value: float
+    ) -> None:
+        compiler, scene, path = open_scene(
+            tmp_path, f"gsplats_fromdata_lg_mesh_{key}.luxar.zarr"
+        )
+
+        exc = refusal(
+            lambda: scene.add_gsplats_from_data(
+                "g",
+                _multi_substitutive_3d_data(),
+                lod_group=True,
+                **{key: value},
+            )
+        )
+
+        assert "mesh-only attribute" in str(exc)
+        assert "child_0" not in str(exc)
+        assert "g" not in compiler.store
+        assert "g" not in finalized_group_keys(compiler, path)
+
     @pytest.mark.parametrize("key,value", _GSPLATS_FROM_DATA_RESERVED_CASES)
     def test_lod_group_reserved_attr_no_longer_strands_a_childless_wrapper(
         self, tmp_path: Any, key: str, value: Any

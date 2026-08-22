@@ -182,12 +182,13 @@ export function createMeshMaterial(
     opacity: attrs.opacity ?? 1.0,
     gamma: attrs.gamma ?? 1.0,
     // The shade knobs ride in through `add_mesh(**attrs)` — the writer never stamps
-    // them, so they are present only when authored. Read here rather than ignored:
-    // they were already reachable in the composed attrs, and an authored value that
-    // silently does nothing is worse than one that is refused. Clamped in the
-    // material, since these are fractions rather than gains.
+    // them, so they are present only when authored. This authoring path and the
+    // material reads landed together; the material clamps fractions and exponents
+    // to their defined domains.
     ambient: attrs.ambient,
     shadeExponent: attrs.shade_exponent,
+    specular: attrs.specular,
+    shininess: attrs.shininess,
     alphaCutoff: attrs.alpha_cutoff,
     // The authored gain starts life as the post-LUT colour GOG (the direct-colour
     // meaning). If the colormap takes over below it is RESET to identity there and
