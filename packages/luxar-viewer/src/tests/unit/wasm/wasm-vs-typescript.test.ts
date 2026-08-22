@@ -199,9 +199,13 @@ describe('decode kernel source parity', () => {
       'typescript'
     );
 
-    expect(rustNames, 'Every Rust decode_* kernel needs a TypeScript production fallback').toEqual(
-      typescriptNames
+    expect(rustNames, 'The Rust export scan must find the established decode kernels').toContain(
+      'decode_quantized_u8'
     );
+    expect(
+      rustNames,
+      'Rust and TypeScript decode_* exports must match; TypeScript is the production fallback'
+    ).toEqual(typescriptNames);
   });
 });
 

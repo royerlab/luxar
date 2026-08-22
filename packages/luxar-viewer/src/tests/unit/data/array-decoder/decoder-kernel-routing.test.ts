@@ -21,11 +21,10 @@ import { describe, expect, it } from 'vitest';
 const THIS_FILE = fileURLToPath(import.meta.url);
 const ARRAY_DECODER_DIR = resolve(dirname(THIS_FILE), '../../../../data/array-decoder');
 const DECODER_KERNEL_MODULE = '../../wasm/typescript/decode';
-const REQUIRED_KERNEL_ROUTES = new Set([
-  'ArrayDecoder.dequantize',
-  'ArrayDecoder.decodeLogScalar',
-  'ArrayDecoder.decodeGeologScalar',
-  'ArrayDecoder.dequantizeRange',
+const NON_KERNEL_DECODER_METHOD_ALLOWLIST = new Set([
+  'ArrayDecoder.decodeBroadcasted',
+  'ArrayDecoder.decodeLUT',
+  'ArrayDecoder.decodeLUTIndices',
 ]);
 const INLINE_FLOAT_ARITHMETIC_ALLOWLIST = new Set(['ArrayDecoder.makePerChannelDequant']);
 const QUANTIZATION_DIVISORS = new Set([255, 65_535]);
@@ -92,6 +91,16 @@ function isKnownQuantizationDivision(node: ts.BinaryExpression): boolean {
   );
 }
 
+function requiresKernelRoute(functionName: string): boolean {
+  const prefix = 'ArrayDecoder.';
+  if (!functionName.startsWith(prefix)) return false;
+  const methodName = functionName.slice(prefix.length);
+  return (
+    (methodName.startsWith('decode') || methodName.startsWith('dequantize')) &&
+    !NON_KERNEL_DECODER_METHOD_ALLOWLIST.has(functionName)
+  );
+}
+
 function findInlineFloatArithmetic({ fileName, source }: DecoderSource): Violation[] {
   const sourceFile = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true);
   const violations: Violation[] = [];
@@ -99,8 +108,7 @@ function findInlineFloatArithmetic({ fileName, source }: DecoderSource): Violati
   function visit(node: ts.Node): void {
     const functionName = containingFunctionName(node);
     const guardedDivision =
-      isDivision(node) &&
-      (REQUIRED_KERNEL_ROUTES.has(functionName) || isKnownQuantizationDivision(node));
+      isDivision(node) && (requiresKernelRoute(functionName) || isKnownQuantizationDivision(node));
 
     if (
       (isMathExponentialCall(node) || guardedDivision) &&
@@ -223,7 +231,9 @@ function missingKernelRoutes(source: string): string[] {
     return routed;
   }
 
-  return [...REQUIRED_KERNEL_ROUTES].filter((functionName) => !reachesKernel(functionName));
+  return [...methods.keys()].filter(
+    (functionName) => requiresKernelRoute(functionName) && !reachesKernel(functionName)
+  );
 }
 
 describe('ArrayDecoder kernel routing', () => {
@@ -257,7 +267,7 @@ describe('ArrayDecoder kernel routing', () => {
     const source = `
       class ArrayDecoder {
         makePerChannelDequant = () => Math.exp(1) + Math.expm1(2) + 3 / 255;
-        decodeLogScalar() {
+        decodeInline() {
           const scale = 1 / maxCode;
           return Math.exp(1) + Math.expm1(2) + 3 / 255 + 4 / 65535 + 5 / max_int + scale;
         }
@@ -267,37 +277,37 @@ describe('ArrayDecoder kernel routing', () => {
     expect(findInlineFloatArithmetic({ fileName: 'synthetic.ts', source })).toEqual([
       {
         fileName: 'synthetic.ts',
-        functionName: 'ArrayDecoder.decodeLogScalar',
+        functionName: 'ArrayDecoder.decodeInline',
         line: 5,
         expression: '1 / maxCode',
       },
       {
         fileName: 'synthetic.ts',
-        functionName: 'ArrayDecoder.decodeLogScalar',
+        functionName: 'ArrayDecoder.decodeInline',
         line: 6,
         expression: 'Math.exp(1)',
       },
       {
         fileName: 'synthetic.ts',
-        functionName: 'ArrayDecoder.decodeLogScalar',
+        functionName: 'ArrayDecoder.decodeInline',
         line: 6,
         expression: 'Math.expm1(2)',
       },
       {
         fileName: 'synthetic.ts',
-        functionName: 'ArrayDecoder.decodeLogScalar',
+        functionName: 'ArrayDecoder.decodeInline',
         line: 6,
         expression: '3 / 255',
       },
       {
         fileName: 'synthetic.ts',
-        functionName: 'ArrayDecoder.decodeLogScalar',
+        functionName: 'ArrayDecoder.decodeInline',
         line: 6,
         expression: '4 / 65535',
       },
       {
         fileName: 'synthetic.ts',
-        functionName: 'ArrayDecoder.decodeLogScalar',
+        functionName: 'ArrayDecoder.decodeInline',
         line: 6,
         expression: '5 / max_int',
       },
