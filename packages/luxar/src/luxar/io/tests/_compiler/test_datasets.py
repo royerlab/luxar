@@ -74,6 +74,27 @@ def test_write_radii_and_sharpness_wrappers() -> None:
     assert "radii" in g and "sharpnesses" in g
 
 
+def test_footprint_scalars_do_not_reuse_a_different_semantic_grid() -> None:
+    group = _group()
+    ctx = _ctx()
+    data = np.linspace(0.4, 0.5, 4001, dtype=np.float32)
+    write_bounded_scalar(group, data, "sharpnesses", (0.0, 1.0), None, len(data), ctx)
+
+    write_radii(group, data, None, len(data), ctx)
+    write_positive_scalar(
+        group,
+        data,
+        "widths",
+        None,
+        len(data),
+        ctx,
+        deduplicate=False,
+    )
+
+    assert group["radii"].attrs["encoding"]["name"] == "bounded_scalar_uint8"
+    assert group["widths"].attrs["encoding"]["name"] == "bounded_scalar_uint8"
+
+
 def test_write_bounded_scalar_clamps_into_bounds() -> None:
     g = _group()
     data = np.array([0.2, 0.8, 0.5], dtype=np.float32)
