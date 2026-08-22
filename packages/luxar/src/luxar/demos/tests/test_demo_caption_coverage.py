@@ -118,6 +118,12 @@ def test_caption_fields_use_the_standard_separator() -> None:
         ]
         assert not offenders, f"{path.name} uses · in caption fields at {offenders}"
 
+    for demo in registry.iter_demos(refresh=True):
+        if demo.citation is None:
+            continue
+        reference = demo.citation.get("ref", demo.citation["short"])
+        assert " · " not in reference, f"{demo.path.name} uses · in citation reference"
+
 
 def test_nd_transform_channel_readouts_use_the_free_top_left_corner() -> None:
     path = next(
