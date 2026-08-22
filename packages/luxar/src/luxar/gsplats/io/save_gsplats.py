@@ -42,6 +42,7 @@ from luxar._zarr_compat import consolidate, create_root_group, open_store
 if TYPE_CHECKING:
     from luxar.gsplats.tree import GSplatNode
 
+from luxar.core.group.compositing import WRITER_STAMPED_APPEARANCE_DEFAULTS
 from luxar.encoding import EncodingMode
 from luxar.io._compiler.finalize.amplitude_window import (
     harmonize_gsplat_amplitude_windows,
@@ -621,8 +622,10 @@ def write_gsplats_tree(
         root.attrs["luxar_gsplats_version"] = GSPLATS_VERSION
         # A standalone file opened directly (?src=…gsplats.zarr) is the whole layer,
         # so expose the root in the viewer's Layers panel (the scene-embed graft uses
-        # the scene builders instead and does not carry this root attr).
-        root.attrs.setdefault("layer", True)
+        # the scene builders instead and does not carry this root attr). The value
+        # is single-sourced with the READER that has to recognise it as a stamp
+        # rather than as an authored choice (`agreed_authored_appearance`).
+        root.attrs.setdefault("layer", WRITER_STAMPED_APPEARANCE_DEFAULTS["layer"])
         if description:
             root.attrs["description"] = description
 
@@ -813,7 +816,7 @@ def write_partition_streaming(
             datetime.timezone.utc
         ).isoformat()
         root.attrs["luxar_gsplats_version"] = GSPLATS_VERSION
-        root.attrs.setdefault("layer", True)
+        root.attrs.setdefault("layer", WRITER_STAMPED_APPEARANCE_DEFAULTS["layer"])
         if description:
             root.attrs["description"] = description
 

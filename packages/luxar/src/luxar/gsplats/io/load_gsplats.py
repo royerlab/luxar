@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import Any, Collection, Dict, List, Mapping, Sequence, Union
+from typing import AbstractSet, Any, Dict, List, Mapping, Sequence, Union
 
 from arbol import aprint
 
@@ -85,6 +85,41 @@ def read_authored_appearance(path: str | Path) -> Dict[str, Any]:
     See :data:`~luxar.core.group.compositing.AUTHORED_APPEARANCE_ATTRS` for the
     key set and https://github.com/royerlab/luxar/issues/1600 for the invariant.
     """
+    carried, has_custom_colormap = _read_authored_appearance(path)
+    if has_custom_colormap:
+        aprint(
+            '⚠️  The source root declares colormap: "custom"; '
+            + _CUSTOM_COLORMAP_LOSS
+            + _CUSTOM_COLORMAP_REMEDY
+        )
+    return carried
+
+
+#: What a ``colormap: "custom"`` costs, shared verbatim by the one-input carry
+#: and the N-input merge so both explain the same loss the same way.
+_CUSTOM_COLORMAP_LOSS = (
+    "a custom colormap LUT lives in a sibling `colormap_lut` ARRAY, which the "
+    "attrs-only appearance carry cannot reach (an archive input is never even "
+    "opened), so the palette is not preserved"
+)
+
+_CUSTOM_COLORMAP_REMEDY = (
+    ". Re-apply it on the result (e.g. `luxar gsplat convert --colormap NAME`)."
+)
+
+
+def _read_authored_appearance(path: str | Path) -> "tuple[Dict[str, Any], bool]":
+    """:func:`read_authored_appearance` without the warning, plus the flag.
+
+    Returns ``(carried, root_declares_custom_colormap)``. The flag is what the
+    ``"custom"`` strip THREW AWAY, and the N-input merge needs it: for a single
+    input the strip is the whole story (the writer's own default takes over),
+    but with siblings in play a stripped input is indistinguishable from one
+    with no palette opinion at all — so it would silently adopt a sibling's
+    palette. :func:`agreed_authored_appearance` uses the flag to refuse
+    ``colormap`` outright instead, and to warn ONCE for N such inputs rather
+    than once per input.
+    """
     from luxar.core.group.compositing import AUTHORED_APPEARANCE_ATTRS
 
     p = Path(path)
@@ -116,21 +151,17 @@ def read_authored_appearance(path: str | Path) -> Dict[str, Any]:
             # A regular file that is not an archive yields {} from the helper.
             attrs = read_archive_root_attrs(p)
     except Exception:
-        return {}
+        return {}, False
     carried = {k: attrs[k] for k in sorted(AUTHORED_APPEARANCE_ATTRS) if k in attrs}
-    if carried.get("colormap") == "custom":
+    has_custom_colormap = carried.get("colormap") == "custom"
+    if has_custom_colormap:
         # The palette itself lives in a sibling `colormap_lut` array, which
         # this attrs-only read (and the archive peek in particular) cannot
         # reach. See the docstring: a dangling sentinel renders worse than the
-        # writer's own default, so drop it and say so.
+        # writer's own default, so drop it — and hand the fact back to the
+        # caller, which is what says so.
         del carried["colormap"]
-        aprint(
-            "⚠️  Source root carries a custom colormap LUT; a structure-only "
-            "rebuild cannot carry the LUT array, so the palette is not "
-            "preserved. Re-apply it on the result (e.g. "
-            "`luxar gsplat convert --colormap NAME`)."
-        )
-    return carried
+    return carried, has_custom_colormap
 
 
 def _distinct(values: "Sequence[Any]") -> "List[Any]":
@@ -138,6 +169,17 @@ def _distinct(values: "Sequence[Any]") -> "List[Any]":
 
     Not a ``set``: an appearance value can be unhashable (``nd_transform`` is a
     dict of dicts), and the agreement rule below is defined by ``==`` anyway.
+
+    ``nan`` is a deliberate NON-exception: ``nan != nan``, so two roots both
+    carrying (say) ``opacity=nan`` read as a disagreement and the key is
+    dropped. Left as is because (a) it fails in the safe direction — the writer
+    then stamps a renderable identity instead of propagating a value that makes
+    the splats vanish — and (b) it is unreachable through the writer anyway:
+    ``validate_render_attrs`` refuses a non-finite value for every numeric
+    appearance attr ("Opacity must be between 0.0 and 1.0, got nan",
+    "Absorption must be finite, got nan", and likewise gamma / intensity /
+    offset), measured. A nan-aware walk would have to recurse into the floats
+    nested inside an ``nd_transform`` dict for no reachable gain.
     """
     seen: List[Any] = []
     for value in values:
@@ -146,10 +188,99 @@ def _distinct(values: "Sequence[Any]") -> "List[Any]":
     return seen
 
 
+#: Sentinel for "this input said nothing about this key" — distinct from every
+#: value an attr can legally hold (``None`` included).
+_NO_VALUE: Any = object()
+
+
+#: Keys whose ABSENCE from a root is a defined VALUE rather than silence, and
+#: what it means. Only ``visible``: the viewer reads a missing ``visible`` as
+#: visible (``node.attrs.visible !== false`` in ``ui/layers/layer-state.ts``),
+#: so an input that does not carry the key is positively saying "shown", not
+#: "no opinion". Without this the no-vote clause would let ONE input's
+#: ``visible=false`` carry onto the merged root and open the whole merged
+#: dataset hidden. Contrast ``blending_mode``, where absence genuinely means
+#: "inherit / no opinion" and the no-vote clause is right.
+_ABSENCE_MEANS_VALUE: Dict[str, Any] = {"visible": True}
+
+
+def _appearance_votes(
+    key: str, per_input: "Sequence[Mapping[str, Any]]"
+) -> "List[Any]":
+    """The values that actually COUNT as an opinion on ``key``, in input order.
+
+    Two kinds of non-opinion are filtered out here, which is what makes the
+    unanimity rule usable in practice:
+
+    * an input that does not carry the key at all (the no-vote clause) — unless
+      the key is in :data:`_ABSENCE_MEANS_VALUE`, where absence is itself a
+      value and votes as one;
+    * an input whose value is exactly what the WRITER manufactures for that key
+      (:data:`~luxar.core.group.compositing.WRITER_STAMPED_APPEARANCE_DEFAULTS`).
+
+    That second clause is the load-bearing one and it has a real cost, stated
+    plainly: a store nobody ever touched is stamped ``opacity=1.0`` /
+    ``absorption=1.0`` / ``gamma=1.0`` / ``intensity=1.0`` / ``offset=0.0`` /
+    ``layer=true`` / ``colormap="gray"``, and NOTHING on disk distinguishes
+    those from an author who deliberately chose the identity. So treating them
+    as silence does lose a deliberate choice: merging a store where the user
+    deliberately set ``opacity=1.0`` with a sibling at ``0.75`` now carries
+    ``0.75``.
+
+    It is still the right trade, because the alternative is not "keep the
+    deliberate 1.0" — it is what this code did before: seven of the eleven keys
+    disagree on the single commonest merge (a tuned dataset + a freshly fitted
+    one), all seven are dropped, and the writer then stamps its defaults back,
+    which IS the untouched input's value. The user got the untouched look
+    either way; the only difference was seven warning lines announcing a loss
+    that had already happened silently. Now the tuned look survives and only a
+    genuine 0.75-vs-0.5 disagreement drops and warns.
+    """
+    from luxar.core.group.compositing import WRITER_STAMPED_APPEARANCE_DEFAULTS
+
+    manufactured = WRITER_STAMPED_APPEARANCE_DEFAULTS.get(key, _NO_VALUE)
+    absent = _ABSENCE_MEANS_VALUE.get(key, _NO_VALUE)
+    votes: List[Any] = []
+    for attrs in per_input:
+        value = attrs.get(key, absent)
+        if value is _NO_VALUE or value == manufactured:
+            continue
+        votes.append(value)
+    return votes
+
+
+def _dropped_outcome(key: str) -> str:
+    """What actually LANDS on the merged root for a key that is not carried.
+
+    "Dropped" never means the output has a hole where the attr would be: the
+    writer runs afterwards. Spelling out the real outcome per key keeps the
+    warning from implying a neutrality that does not exist — for an
+    identity-stamped attr the writer's default is precisely the untouched
+    input's value, so a drop is not a tie-break, it is a side.
+    """
+    from luxar.core.group.compositing import WRITER_STAMPED_APPEARANCE_DEFAULTS
+
+    if key == "colormap":
+        # The one CONDITIONAL stamp: `apply_gsplat_group_attrs` manufactures
+        # "gray" only for a colorless leaf with no ancestor palette, so on a
+        # colored output nothing is written at all.
+        return (
+            "the merged root gets no palette of its own (the writer's 'gray' "
+            "default is stamped only on a colorless store)"
+        )
+    if key in WRITER_STAMPED_APPEARANCE_DEFAULTS:
+        stamped = WRITER_STAMPED_APPEARANCE_DEFAULTS[key]
+        return (
+            f"the writer then stamps its own {stamped!r}, which is what an "
+            "untouched input carries"
+        )
+    return "the merged root leaves it unset, so the viewer's own default applies"
+
+
 def agreed_authored_appearance(
     paths: "Sequence[Union[str, Path]]",
     *,
-    exclude: "Union[Collection[str], Mapping[str, str]]" = (),
+    exclude: "Union[AbstractSet[str], Mapping[str, str]]" = frozenset(),
 ) -> Dict[str, Any]:
     """The authored appearance N inputs UNANIMOUSLY agree on (``gsplat merge``).
 
@@ -159,72 +290,111 @@ def agreed_authored_appearance(
     wrong is the one every input already agrees on. So a key is carried onto the
     merged root only when every input that HAS an opinion on it agrees; on any
     disagreement it is dropped and the merged artifact says nothing rather than
-    promoting one input's choice over its siblings'.
+    promoting one input's choice over its siblings'. At least one input must
+    have an opinion for the key to appear at all.
 
-    An input that does not carry a key **casts no vote**: a dataset that was
-    never touched in the Layers panel authors nothing at all, and letting that
-    silence veto a sibling's authored value would mean a single default-looking
-    input erased the whole carry. At least one input must carry the key for it
-    to appear.
+    What counts as "having an opinion" is :func:`_appearance_votes`, and it is
+    the subtle half of this function. Two kinds of non-opinion are filtered out
+    before the vote: an input that does not carry the key at all, and an input
+    whose value is exactly the one the WRITER manufactures for that key. The
+    second is what makes the rule usable — without it the commonest merge of
+    all (a tuned dataset + a freshly fitted one) disagrees on seven keys and
+    reverts to the untouched look while shouting about it. It also has a real
+    cost: an author who deliberately set ``opacity=1.0`` is indistinguishable
+    on disk from one who never touched it, and loses to a sibling's ``0.75``.
+    That whole trade-off is argued out on :func:`_appearance_votes`; read it
+    before changing the rule.
 
-    Silence is narrower on disk than it sounds, and that is not a bug in the
-    rule: the writer STAMPS the identity values, so a store nobody ever tuned
-    still has ``opacity=1.0`` / ``absorption=1.0`` / ``gamma=1.0`` /
-    ``intensity=1.0`` / ``offset=0.0`` / ``layer=true`` / ``colormap="gray"`` on
-    its root, and nothing on disk distinguishes those from someone deliberately
-    choosing the identity. So they DO vote, and merging a tuned dataset with an
-    untouched one legitimately drops them (with the warning saying so) rather
-    than promoting one input's look over the other's. The keys with no stamped
-    identity — ``blending_mode``, ``visible``, ``nd_transform``, ``join`` — are
-    the ones where genuine silence occurs, and they are exactly the ones the
-    no-vote clause rescues.
+    ``visible`` is the one key where ABSENCE votes, because the format gives
+    absence a meaning there (a missing ``visible`` is visible) — see
+    :data:`_ABSENCE_MEANS_VALUE`. So ``visible=false`` rides along only when
+    EVERY input hides; one hidden input plus one silent one is a disagreement,
+    not a unanimous hide.
 
     That rule is :func:`~luxar.gsplats.io.save_gsplats.agreed_normalization_stats`
     verbatim — deliberately, since it is the same question about the same merge.
     The ONE divergence is that this one is LOUD: it warns per key it had to drop,
-    naming the differing values. Normalization stats are machine-recorded, so a
-    silent drop loses nothing a user chose; appearance is hand-authored in the
-    Layers panel, and someone who tuned two datasets and merged them must be told
-    which of their choices did not survive rather than discovering it by looking
-    at the render (issue #1600 point 4: loud over silent wherever something
-    cannot be preserved).
+    naming the differing values and what lands instead. Normalization stats are
+    machine-recorded, so a silent drop loses nothing a user chose; appearance is
+    hand-authored in the Layers panel, and someone who tuned two datasets and
+    merged them must be told which of their choices did not survive rather than
+    discovering it by looking at the render (issue #1600 point 4: loud over
+    silent wherever something cannot be preserved).
 
     ``exclude`` names keys the CALLING MODE invalidates, independently of whether
-    the inputs agree — ``gsplat merge --as-dimension`` adds a dimension, so an
-    ``nd_transform`` keyed by dimension name no longer describes the output's
-    dimension set; ``--channel-colors`` bakes per-splat RGB, so an input's
-    ``colormap`` no longer describes what is rendered. Those are dropped even
-    under perfect agreement, and warn — but only when an input actually authored
-    the key, since an exclusion nobody would have exercised is not news. Pass a
-    ``{key: reason}`` mapping to have the reason quoted in the warning.
+    the inputs agree — see
+    :func:`~luxar.cli.gsplat_ops.transforms.merge._mode_invalidated_appearance`
+    for the two cases ``gsplat merge`` has (both about ``colormap``, both about
+    the merge having MANUFACTURED per-splat RGB). Those are dropped even under
+    perfect agreement, and warn — but only when an input actually authored the
+    key, an authored value being one that survives the vote filter above, so an
+    exclusion nobody would have exercised stays quiet. Pass a ``{key: reason}``
+    mapping to have the reason quoted in the warning. Typed as a SET (not a
+    ``Collection``) so a bare ``str`` is a type error rather than a silent
+    iteration over its characters, which would exclude nothing.
+
+    ``colormap`` is additionally refused, without the caller asking, when ANY
+    input root declares the ``"custom"`` sentinel: that palette cannot be
+    carried (its LUT is a sibling array), and letting the input fall through as
+    "no opinion" would hand the merged root a SIBLING's palette — repainting
+    the custom-LUT splats with someone else's ramp.
 
     Returns only the keys carried, so N inputs that authored nothing yield ``{}``
     and the writer's defaults apply unchanged. Feed the result to
     ``write_gsplats_tree(root_attrs=...)`` / ``GSplatData.save(root_attrs=...)``.
     """
-    per_input = [read_authored_appearance(p) for p in paths]
-    reasons: Mapping[str, str] = exclude if isinstance(exclude, Mapping) else {}
+    reads = [_read_authored_appearance(p) for p in paths]
+    per_input = [attrs for attrs, _ in reads]
+    reasons: Dict[str, str] = dict(exclude) if isinstance(exclude, Mapping) else {}
     excluded = set(exclude)
+    # Keys whose exclusion has already been explained in full by a warning of
+    # its own, so the per-key line below would only repeat it.
+    explained: set[str] = set()
+
+    n_custom = sum(1 for _, has_custom in reads if has_custom)
+    if n_custom:
+        # ONE line for N inputs: the per-input strip used to warn once per
+        # input, so merging four custom-LUT stores printed the same sentence
+        # four times.
+        aprint(
+            f"⚠️  {n_custom} of {len(reads)} input roots declare colormap: "
+            f'"custom"; {_CUSTOM_COLORMAP_LOSS}. No palette is carried onto the '
+            "merged root at all — adopting a sibling's would repaint those "
+            "splats with someone else's ramp" + _CUSTOM_COLORMAP_REMEDY
+        )
+        excluded.add("colormap")
+        explained.add("colormap")
 
     carried: Dict[str, Any] = {}
     for key in sorted({k for attrs in per_input for k in attrs}):
-        if key in excluded:
-            because = reasons.get(key)
-            aprint(
-                f"⚠️  Not carrying authored '{key}' onto the merged root"
-                + (f": {because}. " if because else ". ")
-                + "Set it explicitly on the result if you want it."
-            )
+        votes = _appearance_votes(key, per_input)
+        if not votes:
+            # Every input carries only what the writer manufactured, so there is
+            # no authored value to preserve OR to lose: not carrying it is a
+            # no-op (the writer stamps the same value back) and saying anything
+            # would be noise about a choice nobody made. This is also why the
+            # canonical `merge ch0 ch1 -o out --channel-colors …` no longer
+            # warns about excluding a palette neither input ever set.
             continue
-        distinct = _distinct([attrs[key] for attrs in per_input if key in attrs])
+        if key in excluded:
+            if key not in explained:
+                because = reasons.get(key)
+                aprint(
+                    f"⚠️  Not carrying authored '{key}' onto the merged root"
+                    + (f": {because}" if because else "")
+                    + f" — {_dropped_outcome(key)}. Set it explicitly on the "
+                    "result if you want it."
+                )
+            continue
+        distinct = _distinct(votes)
         if len(distinct) == 1:
             carried[key] = distinct[0]
         else:
             shown = ", ".join(repr(v) for v in distinct)
             aprint(
-                f"⚠️  Inputs disagree on authored '{key}' ({shown}); dropping it "
-                "from the merged root rather than picking one. Set it explicitly "
-                "on the result if you want it."
+                f"⚠️  Inputs disagree on authored '{key}' ({shown}); not "
+                f"carrying it rather than picking one — {_dropped_outcome(key)}. "
+                "Set it explicitly on the result if you want it."
             )
     return carried
 

@@ -911,21 +911,51 @@ would dangle.
 
 With **several** inputs (`gsplat merge`) there is no single source root, so the
 carried value must be **agreed**: a key rides along only when every input that
-*has* an opinion on it agrees, and an input that does not carry the key at all
-casts no vote (at least one input must carry it for it to appear). On any
-disagreement the key is dropped and the command **says so**, naming the key and
-the differing values — the same unanimity rule as
+*has* an opinion on it agrees, and an input with no opinion casts no vote (at
+least one input must have one for the key to appear). On any disagreement the
+key is dropped and the command **says so**, naming the key, the differing values
+and what lands on disk instead — the same unanimity rule as
 `agreed_normalization_stats`, but loud rather than silent, because appearance is
 hand-authored and a user who tuned two datasets has to be told which choice did
-not survive. Note the writer stamps identity values (`opacity: 1.0`,
-`colormap: "gray"`, …) on every save, so an untouched store is not silent about
-them and legitimately votes; genuine silence is limited to the attrs with no
-stamped identity (`blending_mode`, `visible`, `nd_transform`, `join`). Two keys
-are additionally dropped because the merge **mode** invalidates them rather than
-because the inputs differ: `nd_transform` under `--as-dimension` (which adds a
-dimension the inputs' per-dimension affines do not describe) and `colormap`
-under `--channel-colors` (which bakes per-splat RGB, after which no palette
-describes what is rendered).
+not survive.
+
+"Having an opinion" is narrower than "carrying the key", and that is the
+load-bearing detail. The writer STAMPS identity values on every save —
+`opacity: 1.0` / `absorption: 1.0` / `gamma: 1.0` / `intensity: 1.0` /
+`offset: 0.0` / `layer: true`, plus `colormap: "gray"` on a colorless store —
+so a value **equal to the writer's manufactured default** counts as silence,
+exactly like an absent key (the values live in one place,
+`WRITER_STAMPED_APPEARANCE_DEFAULTS` in `core/group/compositing.py`, which is
+what both the writers and the vote read). The cost is stated plainly: nothing on
+disk distinguishes a deliberately authored `opacity: 1.0` from an untouched
+store, so a deliberate identity loses to a sibling's `0.75`. The alternative is
+worse — it is what the code did first: a tuned dataset merged with a freshly
+fitted one disagreed on **seven** keys, dropped all seven, and the writer then
+stamped its defaults back, which *is* the untouched input's value. Same result,
+plus seven warnings.
+
+`visible` is the one key where ABSENCE is itself a vote. The viewer treats a
+missing `visible` as visible, so an input without the key is positively saying
+"shown": `visible: false` is carried only when **every** input hides, and one
+hidden input plus one silent one is a disagreement rather than a unanimous hide.
+Without that exception a single hidden input opened the whole merged dataset
+hidden. `blending_mode` / `nd_transform` / `join` keep the plain no-vote rule,
+where absence genuinely means "no opinion".
+
+One key is additionally dropped because the merge itself invalidates it:
+`colormap`, whenever the merged output carries per-splat RGB that the inputs'
+palettes do not describe. Two ways to get there, hence two predicates:
+`--channel-colors` always bakes one, and `GSplatData.concatenate` white-fills a
+colorless input to match a colored sibling — which happens on a plain merge and
+under `--as-dimension` too. The viewer makes an ancestor
+palette override per-splat RGB unconditionally, so a carried palette would
+render the colored input through a scalar ramp. `colormap` is also refused
+outright when any input root declares the `"custom"` sentinel: that palette
+cannot be carried, and treating the input as having no opinion would hand the
+merged root a *sibling's* palette. `--as-dimension` does **not** invalidate
+`nd_transform`: the new axis is appended LAST, so every existing dimension keeps
+its name and its index and the new one simply has no entry — the identity
+default.
 
 ### Pipeline Group Attributes (Optional)
 

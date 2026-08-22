@@ -22,6 +22,10 @@ from numpy.typing import NDArray
 from luxar._zarr_compat import create_array
 
 from ...core.dimensions import Dimensions
+from ...core.group.compositing import (
+    IDENTITY_COMPOSITING_ATTRS,
+    WRITER_STAMPED_APPEARANCE_DEFAULTS,
+)
 from ...encoding import (
     COORDINATE_LEVELS,
     ArrayEncoder,
@@ -1120,7 +1124,7 @@ def apply_gsplat_group_attrs(
         and "colormap" not in attrs
         and inherited_gsplat_colormap(group, store, inherited_colormap) is None
     ):
-        attrs["colormap"] = "gray"
+        attrs["colormap"] = WRITER_STAMPED_APPEARANCE_DEFAULTS["colormap"]
 
     # Write colormap LUT if colormap is a custom array
     lut_tone_mapping_warned = write_colormap_lut_if_needed(
@@ -1151,12 +1155,17 @@ def apply_gsplat_group_attrs(
     # ancestor-set mode under the viewer's nearest-setter-wins composition
     # (see node_common.apply_default_render_attrs). Unset leaves inherit;
     # the viewer defaults to "additive".
+    #
+    # The identity values come from WRITER_STAMPED_APPEARANCE_DEFAULTS rather
+    # than from literals here: `gsplat merge` has to tell a stamp made HERE
+    # from a value the author chose, and a second copy of the numbers is a
+    # drift waiting to happen. `truncation_radius` is not an appearance attr
+    # (it is a per-leaf footprint, see COMPOSITING_ATTRS) and keeps its own.
     for key, default in [
-        ("opacity", 1.0),
-        ("absorption", 1.0),
-        ("gamma", 1.0),
-        ("intensity", 1.0),
-        ("offset", 0.0),
+        *(
+            (key, WRITER_STAMPED_APPEARANCE_DEFAULTS[key])
+            for key in IDENTITY_COMPOSITING_ATTRS
+        ),
         ("truncation_radius", DEFAULT_TRUNCATION_RADIUS),
     ]:
         if key not in attrs:

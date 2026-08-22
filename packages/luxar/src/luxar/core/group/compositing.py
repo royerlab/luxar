@@ -10,6 +10,10 @@ Exposed:
 * :data:`COMPOSITING_ATTRS` — frozenset of attribute names that ride on
   a wrapper Group (where the user thinks of the wrapper as "their
   layer") rather than getting copied onto each internal child.
+* :data:`WRITER_STAMPED_APPEARANCE_DEFAULTS` + :data:`IDENTITY_COMPOSITING_ATTRS`
+  — the value the writer manufactures for an appearance attr nobody set, shared
+  by every stamp site and by the reader that has to tell a stamp from an
+  authored value (``gsplat merge``'s agreement rule).
 * :func:`slice_optional_array` — slice an array-valued leaf parameter by
   index, leaving scalars / None / mis-sized inputs untouched.
 * :func:`is_broadcast_color` — classify a uniform RGB(A) sequence (which must
@@ -321,6 +325,51 @@ COMPOSITING_ATTRS = frozenset(
 #:   ``COMPOSITING_ATTRS``); each leaf already carries the source value through
 #:   ``GSplatData.truncation_radius``, so the footprint survives anyway.
 AUTHORED_APPEARANCE_ATTRS = (COMPOSITING_ATTRS - {"transform"}) | {"colormap"}
+
+
+#: The value the WRITER manufactures for an appearance attr the author never
+#: set — the single source of truth for every stamp site, so a reader that has
+#: to tell "the author chose this" from "nobody chose anything" cannot drift
+#: from the writer that produced the file.
+#:
+#: Stamped by three places, all of which read their value from here:
+#:
+#: * :func:`~luxar.io._compiler.node_common.apply_default_render_attrs` and
+#:   :func:`~luxar.io._compiler.gsplat_assembly.apply_gsplat_group_attrs` —
+#:   :data:`IDENTITY_COMPOSITING_ATTRS`, unconditionally, on every leaf.
+#: * ``apply_gsplat_group_attrs`` again for ``colormap`` — but only on a
+#:   COLORLESS leaf with no ancestor palette, so this one is conditional and a
+#:   colored store legitimately carries no ``colormap`` at all.
+#: * ``gsplats/io/save_gsplats.py`` for ``layer``, on a standalone
+#:   ``.gsplats.zarr`` root (the file IS the layer when opened directly).
+#:
+#: ``blending_mode`` / ``visible`` / ``nd_transform`` / ``join`` are absent
+#: here on purpose: they have no identity value, so nothing is stamped for
+#: them and their absence on disk is genuine silence.
+WRITER_STAMPED_APPEARANCE_DEFAULTS: Dict[str, Any] = {
+    "opacity": 1.0,
+    "absorption": 1.0,
+    "gamma": 1.0,
+    "intensity": 1.0,
+    "offset": 0.0,
+    "layer": True,
+    "colormap": "gray",
+}
+
+
+#: The compositing attrs with an identity value, in the order the writers stamp
+#: them. Multiplicative (opacity/absorption/gamma/intensity) or additive
+#: (offset) no-ops under the viewer's hierarchical composition, which is what
+#: makes stamping them on every leaf harmless — and is also why they cannot be
+#: distinguished from a deliberate authored identity (see
+#: :data:`WRITER_STAMPED_APPEARANCE_DEFAULTS`).
+IDENTITY_COMPOSITING_ATTRS = (
+    "opacity",
+    "absorption",
+    "gamma",
+    "intensity",
+    "offset",
+)
 
 
 def lines_only_join_reason(geometry_type: str) -> str:
