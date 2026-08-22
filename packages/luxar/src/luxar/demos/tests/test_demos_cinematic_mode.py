@@ -36,21 +36,18 @@ depends on a flag computed at build time is not something a reader can confirm,
 and the value is written into the zarr store where only ``true`` expands the
 preset.
 
-FIXING A FAILURE is one keyword — add ``cinematic_mode=True`` to the config the
-message names. A demo that genuinely must opt out (none does today) needs an
-allowlist added here, with the reason it is right for that scene; the bar is
-that the preset would damage what the demo is showing, not that the demo was
-written before this rule.
+FIXING A FAILURE is usually one keyword — add ``cinematic_mode=True`` to the
+config the message names. Individual preset fields may be pinned when they
+would damage the scene's scientific contract: the two quantitative ortho demos
+disable lens distortion and detector noise so their scale bars and intensities
+remain meaningful, and the biodiversity globe disables both so its categorical
+hues remain exact.
 
-One interaction worth knowing when authoring, because this guard cannot see it:
-the preset also expands a 35 mm FOV (63°, against the viewer's 47° default), and
-``camera.fov`` / ``camera.fov_preset`` count as ONE unit — pin either and the
-preset leaves both alone — which keeps a 50 mm framing while still receiving the
-35 mm distortion: two lenses in one image. So the house answer is NOT to pin, but to
-compose the pose for 63° — free for an auto-framed scene (the bounding-sphere
-fit divides by ``tan(fov / 2)``), and one helper call for a demo that states its
-own distance: see ``demos/_cinematic_camera.py`` (``CINEMATIC_FOV_DEG`` to
-derive a distance from the lens, ``pull_in`` to carry a tuned one over).
+The preset's 63° FOV is applied after first-load auto-framing, which happens at
+the viewer's 47° default. Auto-framed scenes therefore open 0.71x smaller. A
+demo that authors a camera position has a stronger contract: its distance was
+composed for a specific FOV, so every such ``CameraConfig`` must pin ``fov`` or
+``fov_preset``. The third invariant below enforces that rule.
 """
 
 from __future__ import annotations
@@ -66,6 +63,18 @@ from ._scanned_modules import scanned_demo_modules
 #: means the AST walk stopped finding them (a renamed class, a walk that no
 #: longer descends) rather than that demos were deleted.
 MIN_VIEWER_CONFIGS = 60
+
+SCIENTIFIC_FIDELITY_OVERRIDES = {
+    "demo_biodiversity_planetary_scale.py": frozenset(
+        {"chromatic_lens_distortion_enabled", "detector_noise_enabled"}
+    ),
+    "demo_gsplats_2d_cmu1_pathology.py": frozenset(
+        {"chromatic_lens_distortion_enabled", "detector_noise_enabled"}
+    ),
+    "demo_gsplats_2d_codex_pancreas.py": frozenset(
+        {"chromatic_lens_distortion_enabled", "detector_noise_enabled"}
+    ),
+}
 
 MODULES = scanned_demo_modules()
 
@@ -102,6 +111,17 @@ def _create_scene_calls(tree: ast.AST) -> list[ast.Call]:
     ]
 
 
+def _camera_configs(tree: ast.AST) -> list[ast.Call]:
+    """Every ``CameraConfig(...)`` construction in a parsed module."""
+    return [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "CameraConfig"
+    ]
+
+
 def _enables_cinematic(call: ast.Call) -> bool:
     return any(
         kw.arg == "cinematic_mode"
@@ -111,18 +131,66 @@ def _enables_cinematic(call: ast.Call) -> bool:
     )
 
 
+def _keyword(call: ast.Call, name: str) -> ast.expr | None:
+    return next((kw.value for kw in call.keywords if kw.arg == name), None)
+
+
+def _sets_literal(call: ast.Call, name: str, expected: bool) -> bool:
+    value = _keyword(call, name)
+    return isinstance(value, ast.Constant) and value.value is expected
+
+
 @pytest.mark.parametrize("path", MODULES, ids=_module_ids(MODULES))
 def test_every_scene_passes_a_viewer_config(path: Path) -> None:
     tree = ast.parse(path.read_text(), filename=str(path))
     bare = [
         call.lineno
         for call in _create_scene_calls(tree)
-        if not any(kw.arg == "viewer_config" for kw in call.keywords)
+        if (value := _keyword(call, "viewer_config")) is None
+        or (isinstance(value, ast.Constant) and value.value is None)
     ]
     assert not bare, (
         f"{path.name}: create_scene at line(s) {bare} passes no viewer_config, "
         f"so the scene cannot enable cinematic mode — pass "
         f"viewer_config=ViewerConfig(cinematic_mode=True)"
+    )
+
+
+@pytest.mark.parametrize("path", MODULES, ids=_module_ids(MODULES))
+def test_every_authored_camera_pins_its_fov(path: Path) -> None:
+    tree = ast.parse(path.read_text(), filename=str(path))
+    missing = [
+        call.lineno
+        for call in _camera_configs(tree)
+        if _keyword(call, "position") is not None
+        and _keyword(call, "fov") is None
+        and _keyword(call, "fov_preset") is None
+    ]
+    assert not missing, (
+        f"{path.name}: CameraConfig at line(s) {missing} sets an opening position "
+        f"without pinning fov or fov_preset; cinematic mode widens the lens only "
+        f"after the viewer frames the scene, so authored poses must pin the FOV "
+        f"they were composed for"
+    )
+
+
+@pytest.mark.parametrize("filename", SCIENTIFIC_FIDELITY_OVERRIDES)
+def test_scientific_fidelity_overrides_are_explicit(filename: str) -> None:
+    path = next(path for path in MODULES if path.name == filename)
+    tree = ast.parse(path.read_text(), filename=str(path))
+    configs = _viewer_configs(tree)
+    assert len(configs) == 1, (
+        f"{filename}: expected one ViewerConfig, found {len(configs)}"
+    )
+
+    missing = [
+        field
+        for field in SCIENTIFIC_FIDELITY_OVERRIDES[filename]
+        if not _sets_literal(configs[0], field, False)
+    ]
+    assert not missing, (
+        f"{filename}: scientific fidelity requires explicit False for {missing}; "
+        f"cinematic mode must not distort the scale/hue contract"
     )
 
 
@@ -175,6 +243,7 @@ def test_the_guard_reads_the_flag_it_claims_to(source: str, flagged: bool) -> No
     [
         ("compiler.create_scene(dimensions=d, viewer_config=v)", False),
         ("c.create_scene(dimensions=d, viewer_config=v)", False),
+        ("compiler.create_scene(dimensions=d, viewer_config=None)", True),
         ("compiler.create_scene(dimensions=d)", True),
         # A demo's own helper of the same name is not a scene call; the real
         # `compiler.create_scene` inside its body is what gets checked.
@@ -188,6 +257,7 @@ def test_the_guard_finds_the_scene_calls_it_claims_to(
     bare = [
         call
         for call in _create_scene_calls(tree)
-        if not any(kw.arg == "viewer_config" for kw in call.keywords)
+        if (value := _keyword(call, "viewer_config")) is None
+        or (isinstance(value, ast.Constant) and value.value is None)
     ]
     assert bool(bare) is flagged

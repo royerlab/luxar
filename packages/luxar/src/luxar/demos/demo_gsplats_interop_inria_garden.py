@@ -76,7 +76,6 @@ from luxar.demos import (
     parse_demo_flags,
     print_data_provenance,
 )
-from luxar.demos._cinematic_camera import pull_in
 from luxar.demos._interop_common import build_gsplats_cache, build_interop_scene
 from luxar.utils.paths import get_demos_output_dir
 
@@ -106,14 +105,11 @@ MAX_ELEMENTS_PER_TILE = 1_000_000
 # to the floaters — the bbox center is a misleading (6.5, 11.5, −6.3)); it also
 # becomes the orbit pivot, so mouse-drag rotates around the table. `position`
 # is a raised 3/4 view ~17 units out — close enough to fill the frame.
-# "~17 units out" is the framing at the viewer's 47° default; the scene enables
-# `cinematic_mode`, whose preset expands a 35 mm lens (63°) because no `fov` is
-# pinned here, so the pose is pulled in to frame the table the same way. The
-# pull-in is about the TARGET, which is not the origin — scaling the position
-# about the origin instead would swing the camera off the table.
+# `fov` is pinned at the viewer default (50 mm, 47°) rather than left unset:
+# the cinematic preset the scene enables otherwise expands a 35 mm lens (63°),
+# and "~17 units out, close enough to fill the frame" is only true at 47°.
 TABLE_CAMERA = CameraConfig(
-    position=pull_in((9.0, 4.0, 12.0), (0.0, -1.8, -1.7)),
-    target=(0.0, -1.8, -1.7),
+    position=(9.0, 4.0, 12.0), target=(0.0, -1.8, -1.7), fov=47.0
 )
 
 FLAGS = parse_demo_flags()

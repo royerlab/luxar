@@ -100,18 +100,14 @@ for every field the scene did not set itself — so an explicit `tone_mapping`,
 gate: no `create_scene` without a `viewer_config`, and no `ViewerConfig` without
 a literal `cinematic_mode=True`.
 
-That preset also expands the 35 mm FIELD OF VIEW (63° vertical, against the
-viewer's 47° default), and `camera.fov` / `camera.fov_preset` are expanded as one
-unit — pinning either keeps a 50 mm framing while still receiving 35 mm
-distortion, which is two lenses in one image, so no demo pins them. A scene the
-viewer auto-frames needs nothing, because the bounding-sphere fit divides by
-`tan(fov / 2)` and moves the camera in by itself. A demo that states its own
-distance composes it for 63° through `_cinematic_camera.py`: read
-`CINEMATIC_FOV_DEG` when the distance is derived from the lens (a fitted radius
-through `asin(R/D)`), or call `pull_in()` to carry an empirically tuned pose over
-— it scales about the pose's target rather than the world origin, so an
-off-origin camera keeps looking where it was aimed. Leaving a pose at its 47°
-distance under the wider lens would halve the subject's screen area.
+The preset also expands the field of view from 47° to 63°, but the viewer applies
+that expansion after first-load auto-framing. An auto-framed cinematic scene is
+therefore 0.71x smaller linearly than the same scene without the preset. Authored
+camera positions are different: their distances were composed for a stated FOV,
+so all 21 pin `camera.fov` and preserve that framing. The cinematic distortion
+still applies unless a scene explicitly suppresses it; the two quantitative
+ortho demos do so because their projection-derived scale bars must remain exact,
+and the biodiversity globe does so to preserve its categorical hue encoding.
 
 The three network demos (`caida_as_topology`, `huri_interactome`,
 `ppi_flow_field`) share `_graph_common.py`, but not all of it. All three use the

@@ -551,6 +551,9 @@ def create_luxar_scene(
                 cinematic_mode=True,
                 control_type="ortho",
                 tone_mapping="ACES",
+                # Preserve the projection-only scale bar and measured intensity.
+                chromatic_lens_distortion_enabled=False,
+                detector_noise_enabled=False,
                 ui=UIConfig(show_scale_bar=True),
             )
             scene = compiler.create_scene(
