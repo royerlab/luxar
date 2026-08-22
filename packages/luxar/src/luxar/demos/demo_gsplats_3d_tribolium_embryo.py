@@ -314,10 +314,11 @@ def load_tribolium_volume() -> np.ndarray:
     """Full pipeline: download, extract, load, downsample.
 
     Note: The full volume is ~7 GB as float32 (965 x 1871 x 991).
-    Downsampling reduces this to ~0.9 GB at 2x.  Ensure sufficient RAM.
+    Fitting temporarily holds both raw and normalised copies before the fitter's
+    own working memory. Downsampling reduces each copy to ~0.9 GB at 2x.
 
     Returns:
-        3D float32 volume ready for GSplat fitting.
+        3D float32 volume in raw camera counts, ready for GSplat fitting.
     """
     zip_path = download_tribolium_data()
     volume = extract_and_load_volume(zip_path)
@@ -337,6 +338,13 @@ def load_tribolium_volume() -> np.ndarray:
 # =============================================================================
 # GSplats Fitting
 # =============================================================================
+
+
+def _fit_intensity_scale(volume: np.ndarray) -> tuple[float, float, float]:
+    """Return max, normalised floor, and surviving fit range."""
+    vmax = float(volume.max())
+    floor_normalised = SPECIMEN_BACKGROUND_COUNTS / vmax
+    return vmax, floor_normalised, 1.0 - floor_normalised
 
 
 def fit_tribolium(volume: np.ndarray) -> GSplatData:
@@ -381,9 +389,8 @@ def fit_tribolium(volume: np.ndarray) -> GSplatData:
         # being hardcoded there: dividing the MEASURED count level by this
         # volume's own maximum keeps `SPECIMEN_BACKGROUND_COUNTS` a checkable
         # camera value and still tracks the data if the source ever changes.
-        vmax = float(volume.max())
-        floor_normalised = SPECIMEN_BACKGROUND_COUNTS / vmax
-        volume = (volume / vmax).astype(np.float32)
+        vmax, floor_normalised, _fit_range = _fit_intensity_scale(volume)
+        volume = volume / vmax
         aprint(
             f"Normalised by max {vmax:.0f} counts; floor "
             f"{SPECIMEN_BACKGROUND_COUNTS:.0f} counts -> {floor_normalised:.6f}"
@@ -581,20 +588,9 @@ def show_roundtrip_comparison(
         return
 
     with asection("Round-trip reconstruction comparison"):
-        # `volume` arrives in RAW COUNTS while `render_to_volume` returns the
-        # fitter's normalised [0, 1] space, so the reference has to be put on the
-        # fit's own scale before differencing. Reproduce exactly what the fitter
-        # normalised against — floor subtracted, then divided by the surviving
-        # range — otherwise the comparison reports the floor as reconstruction
-        # error and every PSNR here is meaningless.
-        reference = np.clip(
-            (volume - SPECIMEN_BACKGROUND_COUNTS)
-            / (float(volume.max()) - SPECIMEN_BACKGROUND_COUNTS),
-            0.0,
-            1.0,
-        )
         with asection("Rendering reconstruction"):
             recon = gsplats_data.render_to_volume(shape=volume.shape, device=DEVICE)
+            reference, recon = _prepare_roundtrip_comparison(volume, recon)
             mse = float(np.mean((reference - recon) ** 2))
             psnr = 10 * np.log10(1.0 / mse) if mse > 0 else float("inf")
             aprint(f"  PSNR: {psnr:.2f} dB, MSE: {mse:.6g}")
@@ -631,6 +627,21 @@ def show_roundtrip_comparison(
         )
         plt.tight_layout()
         plt.show()
+
+
+def _prepare_roundtrip_comparison(
+    volume: np.ndarray, recon: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Put raw counts and a fitter render on the same floor-suppressed scale."""
+    vmax, floor_normalised, fit_range = _fit_intensity_scale(volume)
+    reference = volume - SPECIMEN_BACKGROUND_COUNTS
+    reference /= vmax * fit_range
+    np.clip(reference, 0.0, 1.0, out=reference)
+
+    # finalize_results restores the surviving range to amplitudes, so renders
+    # land on (V - floor) / vmax. Divide it back out for the [0, 1] reference.
+    recon /= fit_range
+    return reference, recon
 
 
 # =============================================================================
