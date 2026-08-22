@@ -10,7 +10,12 @@ import xxhash
 import zarr
 from arbol import aprint
 
-from luxar._zarr_compat import NODE_ATTR_DOCS, NODE_GROUP_DOCS, read_raw_bytes
+from luxar._zarr_compat import (
+    NODE_ATTR_DOCS,
+    NODE_GROUP_DOCS,
+    list_raw_keys,
+    read_raw_bytes,
+)
 
 # Attr keys whose value is the filename of a plain (non-zarr) payload file stored
 # *inside* the group's own directory. Such files have no chunk grid and no zarr
@@ -23,6 +28,9 @@ PAYLOAD_FILE_ATTRS: tuple[str, ...] = ("image_file",)
 #: names the attr/group ones; `.zarray` and `.zmetadata` complete the set).
 _ZARR_METADATA_DOCS: frozenset[str] = frozenset(
     (*NODE_ATTR_DOCS, *NODE_GROUP_DOCS, ".zarray", ".zmetadata")
+)
+_ZARR_METADATA_DOCS_LOWERCASED: frozenset[str] = frozenset(
+    name.lower() for name in _ZARR_METADATA_DOCS
 )
 
 
@@ -82,6 +90,19 @@ def _payload_terms(group: zarr.Group, attrs: dict[str, Any]) -> Iterator[bytes]:
         if not _is_safe_payload_name(filename):
             yield b"unsafe:"  # rejected by name, never read
             continue
+        if filename.lower() in _ZARR_METADATA_DOCS_LOWERCASED:
+            try:
+                present_exactly = filename in list_raw_keys(group)
+            except (NotImplementedError, OSError, ValueError):
+                # Never fall back to the read here: on a case-insensitive
+                # filesystem that is exactly the operation that can resolve the
+                # name onto the group's own metadata document and make the hash
+                # depend on its previous stamp.
+                yield b"unreadable:"
+                continue
+            if not present_exactly:
+                yield b"absent:"
+                continue
         try:
             payload = read_raw_bytes(group, filename)
         except (OSError, ValueError):

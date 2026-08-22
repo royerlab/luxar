@@ -70,13 +70,24 @@ The step is driven off `PAYLOAD_FILE_ATTRS` — the attr keys whose value is a
 payload filename — **not** off a directory listing: a listing means enumerating
 a group's raw keys and filtering zarr's own documents back out, and
 `supports_listing` is not guaranteed by the store ABC, while the attrs already
-name the file. The bytes are read through `_zarr_compat.read_raw_bytes`, which
-drives the async `StorePath.get()` (zarr 3.3's public `get_sync()` is opt-in per
-store and `ZipStore` does not implement it) — so the READ is store-agnostic,
-answering the same way for a local, memory, zip or fsspec-backed store. That is
-a property of the read, not of the writer: `write_overlay` writes the image
-through a filesystem `Path`, so a payload file only ever exists in a directory
-store today.
+name the file. There is one targeted exception. A name that differs from a zarr
+metadata document only by case (`Zarr.json`, `.ZATTRS`, ...) is checked against
+the group's case-exact immediate-child listing before it is read. On a
+case-insensitive filesystem an open-by-name would otherwise resolve a dangling
+payload onto the real metadata document; because that document carries the
+previous `content_hash`, each rewrite would stamp a digest whose input changes
+on the next pass. The listing is used only to disambiguate this collision class,
+never to discover payloads. If the store cannot answer that targeted probe, the
+payload folds the deterministic `unreadable:` sentinel rather than risking the
+metadata read.
+
+Payload bytes are read through `_zarr_compat.read_raw_bytes`, which drives the
+async `StorePath.get()` (zarr 3.3's public `get_sync()` is opt-in per store and
+`ZipStore` does not implement it) — so the READ is store-agnostic, answering the
+same way for a local, memory, zip or fsspec-backed store. That is a property of
+the read, not of the writer: `write_overlay` writes the image through a
+filesystem `Path`, so a payload file only ever exists in a directory store
+today.
 
 Three ways a payload can fail to contribute bytes, each folding a distinct
 sentinel so they cannot hash alike:
@@ -89,9 +100,11 @@ sentinel so they cannot hash alike:
   something outside the group's own directory or nothing at all), or it names one
   of zarr's own metadata documents — those carry the `content_hash` this walk
   stamps, so reading one would make the digest non-convergent.
-- **unreadable** — the store raised (`OSError`/`ValueError`, the latter covering
-  the `UnicodeEncodeError` a lone surrogate in the name produces). Readability is
-  the store's verdict, and a name heuristic in its place would be wrong in
+- **unreadable** — the store raised while reading (`OSError`/`ValueError`, the
+  latter covering the `UnicodeEncodeError` a lone surrogate in the name
+  produces), or it could not provide the targeted case-exact listing described
+  above. Readability is the store's verdict, and a name heuristic in its place
+  would be wrong in
   **both** directions: a `LocalStore` refuses an over-long component that a
   `MemoryStore` or `ZipStore` reads back fine, or an embedded NUL that a
   `MemoryStore` reads fine, while a short name still fails once the group's
