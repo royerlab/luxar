@@ -2056,9 +2056,9 @@ describe('WASM vs TypeScript Comparison', () => {
       }
     );
 
-    it.skipIf(!wasmFilesExist)(
-      'project_gsplats_nd_to_3d attenuation matches exactly at truncate = 3',
-      () => {
+    it.skipIf(!wasmFilesExist).each([3.0, 2.75])(
+      'project_gsplats_nd_to_3d attenuation matches exactly at truncate = %f',
+      (truncate) => {
         // The full attenuation path — correlated 5D factors, TWO continuous
         // hidden dims (so the marginal Cholesky and the forward substitution
         // both do real work), 3 display dims and a non-zero slice position (so
@@ -2070,7 +2070,6 @@ describe('WASM vs TypeScript Comparison', () => {
         const splatCount = 20000;
         const ndim = 5;
         const packedSize = 15;
-        const truncate = 3.0;
         const positions = new Float32Array(splatCount * ndim);
         const cholesky = new Float32Array(splatCount * packedSize);
         const amplitudes = new Float32Array(splatCount);
