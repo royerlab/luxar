@@ -2,13 +2,14 @@
  * Shared Playwright fixture that auto-asserts no console errors after
  * every E2E test.
  *
- * The previous setup left it to each spec to remember to call
- * `assertNoConsoleErrors(page)`. 28 of 40 specs forgot — exactly the
+ * The previous setup left it to each spec to remember an explicit
+ * `assertNoConsoleErrors(page)` call, and most never did — exactly the
  * surface where console errors are the first symptom of regression.
- * This fixture rolls the helper's "should be called in EVERY E2E test"
- * docstring into the harness so it runs whether the spec author
- * remembered or not. (67 specs today; 59 import `test` from here, the
- * other 8 import `@playwright/test` directly and get no teardown at all.)
+ * This fixture moves that check into the harness, taken from Playwright's
+ * own `console` / `pageerror` page events, so it runs whether the spec
+ * author remembered or not. (67 specs today; 59 import `test` from here,
+ * the other 8 import `@playwright/test` directly and get no teardown at
+ * all. 42 of those 59 still make no explicit call of their own.)
  *
  * Specs that genuinely tolerate certain errors annotate the test:
  *
@@ -76,8 +77,9 @@ export interface CapturedConsoleError {
  * fixture; the other 8 import `@playwright/test` directly.
  * Specs that also make their own
  * explicit `assertNoConsoleErrors(page)` call keep
- * that explicit contract (it runs strictly with no allow-list, against the
- * viewer's in-page buffer, and is the only reader of that buffer now);
+ * that explicit contract (it reads the viewer's in-page buffer — which several
+ * other helpers and specs still read too — and a bare call passes no
+ * allow-list at all, though two call sites do pass their own);
  * the auto-fixture
  * covers cases where the spec author forgot to add the explicit
  * call. Headless-browser environmental noise (WebGL context loss

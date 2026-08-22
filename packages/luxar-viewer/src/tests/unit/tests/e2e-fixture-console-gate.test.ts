@@ -76,18 +76,24 @@ describe('unexpectedConsoleErrors', () => {
     );
     const real = consoleError('[❌] [Loader] chunk decode failed: unexpected end of stream');
 
+    // The allow-list is spelled out locally rather than taken from
+    // `DEFAULT_ALLOWED_CONSOLE_ERRORS`: that export drops the 404 pattern under
+    // `LUXAR_E2E_STRICT_CONSOLE` (a supported knob — `test:e2e:smoke:strict`
+    // sets it), so anyone with it exported would see this assertion go red for
+    // reasons that have nothing to do with the property below.
+    const allowList = [
+      /WebGL context lost/,
+      /Failed to load resource: the server responded with a status of (4\d\d|50[12])/,
+    ];
+
     // THE mutation this file exists for. A gate that tested each pattern
     // against `captured.map(e => e.text).join('\n')` — the shape the teardown
     // uses for its REPORT — finds the 404 pattern matching that blob and
     // forgives everything, real decode failure included. Both orders are
     // asserted because a `.join()` gate is order-insensitive while the real
     // one is not: with only one ordering, a mutant could still look right.
-    expect(unexpectedConsoleErrors([allowed, real], DEFAULT_ALLOWED_CONSOLE_ERRORS)).toEqual([
-      real,
-    ]);
-    expect(unexpectedConsoleErrors([real, allowed], DEFAULT_ALLOWED_CONSOLE_ERRORS)).toEqual([
-      real,
-    ]);
+    expect(unexpectedConsoleErrors([allowed, real], allowList)).toEqual([real]);
+    expect(unexpectedConsoleErrors([real, allowed], allowList)).toEqual([real]);
   });
 
   it('judges a pageerror exactly like a console.error', () => {
@@ -151,7 +157,10 @@ describe('unexpectedConsoleErrors', () => {
 describe('DEFAULT_ALLOWED_CONSOLE_ERRORS', () => {
   it('stays narrow, and forgives only the two documented classes', () => {
     // A guard on the list itself: it is the one place a broad pattern would
-    // silence the gate for all 59 fixture-importing specs at once.
+    // silence the gate for all 59 fixture-importing specs at once. An upper
+    // bound rather than an equality, so it holds under
+    // `LUXAR_E2E_STRICT_CONSOLE` too, where the 404 pattern drops out and only
+    // the WebGL-context-loss one remains.
     expect(DEFAULT_ALLOWED_CONSOLE_ERRORS.length).toBeLessThanOrEqual(2);
 
     const unrelated = [
@@ -164,6 +173,15 @@ describe('DEFAULT_ALLOWED_CONSOLE_ERRORS', () => {
   });
 });
 
+// The one test that writes `LUXAR_E2E_STRICT_CONSOLE` must not strip an
+// ambient value: vitest reuses a worker process across files, so a plain
+// `delete` here would silently un-set the knob for every later file in it.
+const strictConsoleBeforeTests = process.env.LUXAR_E2E_STRICT_CONSOLE;
+
 afterEach(() => {
-  delete process.env.LUXAR_E2E_STRICT_CONSOLE;
+  if (strictConsoleBeforeTests === undefined) {
+    delete process.env.LUXAR_E2E_STRICT_CONSOLE;
+  } else {
+    process.env.LUXAR_E2E_STRICT_CONSOLE = strictConsoleBeforeTests;
+  }
 });

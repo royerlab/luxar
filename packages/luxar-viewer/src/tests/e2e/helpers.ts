@@ -25,8 +25,8 @@ export async function waitForLuxarReady(page: Page, timeout = 45000): Promise<vo
  *
  * Deadline-bounded (#1651), like {@link getConsoleMessages}. This is the most
  * called probe in the suite — well over a hundred call sites, in most spec
- * files. Together with `getConsoleMessages` it is what the shared fixture and
- * the bulk of the specs depend on, and both are now bounded; the rest of this
+ * files. Together with `getConsoleMessages` it is what the bulk of the specs
+ * depend on, and both are now bounded; the rest of this
  * file's bare `page.evaluate` calls (`renderOnce`, `getWebGLErrors`,
  * `focusCanvas`, `captureCanvasRGBA`, `probeWebGPUBackend`, …) are not. Before
  * the bound, a starved page reported the stall as a bare
@@ -654,7 +654,8 @@ export async function getConsoleMessages(
 /**
  * Assert no console errors (CRITICAL for all E2E tests)
  *
- * This should be called in EVERY E2E test after loading data.
+ * Opt-in per spec: the shared fixture does NOT call it (#1760), so call it
+ * after loading data wherever the in-page buffer's stricter verdict is wanted.
  * Catches errors in:
  * - Data loading
  * - Array decoding
