@@ -342,9 +342,22 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
 
         The exits mirror :meth:`_encode_positive_scalar` plus the exact
         broadcast/LUT paths that precede it in :meth:`ArrayEncoder.encode`.
+        The answer is valid only when the matching write has deduplication
+        disabled, so it cannot resolve to an ``array_ref`` with another
+        array's encoding parameters.
         Linear quantization uses half a grid quantum; geometric-log encoding
         uses the corresponding half-step at the array maximum. One float32 ULP
         covers the reader's final cast (needed by the uint16 linear tier).
+
+        Args:
+            data: The positive-scalar array exactly as it will be encoded.
+            mode: The encoding mode it will be encoded under.
+            positive_scalar_encoding: The matching write's linear/log choice.
+            allow_lut: Whether the matching write permits exact LUT storage.
+
+        Returns:
+            ``None`` when the matching write is exact, otherwise one
+            conservative array-wide outward pad.
         """
         arr = np.asarray(data)
         if arr.size == 0 or not np.all(np.isfinite(arr)) or np.any(arr < 0):

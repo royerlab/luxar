@@ -206,6 +206,7 @@ def write_radii(
         ctx=ctx,
         log_label_singular="radius",
         per_array_bytes=True,
+        # The chunk-bound slack assumes radii cannot reuse another array's encoding.
         deduplicate=False,
     )
 
