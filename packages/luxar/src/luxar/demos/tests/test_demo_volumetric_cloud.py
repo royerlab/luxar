@@ -338,8 +338,9 @@ class TestRenderingRegime:
 
     def test_the_node_absorbs_what_is_behind_it(self) -> None:
         import ast
+        from pathlib import Path
 
-        tree = ast.parse(cloud.__file__ and open(cloud.__file__).read())
+        tree = ast.parse(Path(cloud.__file__).read_text())
         modes = [
             kw.value.value
             for node in ast.walk(tree)
@@ -584,8 +585,8 @@ class TestScene:
         config = LuxarScene.load(path).viewer_config
         assert config is not None
         assert config.auto_rotate is True
-        # The viewer's own slider bounds. Outside them the value is discarded
-        # and the scene silently opens static.
+        # Keep the authored speed inside the GUI slider's normal range even
+        # though the viewer accepts a wider validation range.
         assert 0.1 <= float(config.auto_rotate_speed) <= 5.0
 
     def test_the_opening_camera_is_outside_the_cloud_and_frames_it(self) -> None:

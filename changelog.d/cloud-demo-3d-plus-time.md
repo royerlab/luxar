@@ -4,7 +4,7 @@
 cumulus lived through its whole life cycle on a hidden `time` axis, from a low
 fragment at the condensation level, through a cauliflower turret and a mature
 top leaning downwind, to the whole body pulling in as the thermals feeding it
-die. 120 timepoints, ~2.7M points, about twenty-six seconds to generate.
+die. 120 timepoints, ~2.7M points, about a minute to generate.
 
 The motion is Lagrangian. 600k air parcels are advected with midpoint steps
 through an analytic velocity field built to be exactly divergence-free — an
@@ -171,7 +171,7 @@ and the generated scenes agree on their spatial bounds and on mean points per
 frame (22,295 vs 22,198) while differing only in how many frames there are.
 
 `compute` in the demo's metadata moves from `light` to `medium`, which is
-honest at twenty-six seconds.
+honest for roughly a minute of generation work.
 
 #### Every technique is cited where it is used
 

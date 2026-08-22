@@ -173,22 +173,14 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-<<<<<<< HEAD
 from luxar.core.viewer_config import (
     CameraConfig,
     DimensionsConfig,
     UIConfig,
     ViewerConfig,
 )
-from luxar.demos import launch_viewer
-from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
-||||||| 376a155ac
-from luxar.core.viewer_config import ViewerConfig
-from luxar.demos import launch_viewer
-=======
-from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import add_demo_caption, launch_viewer
->>>>>>> origin/cinematic-mode-all-demos
+from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
 from luxar.utils.paths import get_demos_output_dir
 
 # --- Scene scale ------------------------------------------------------------
@@ -1246,10 +1238,9 @@ def compose_opening_camera(points: np.ndarray) -> CameraConfig:
     Composed for the cinematic preset's 63° lens by construction rather than
     corrected for it afterwards: a perspective camera subtends a sphere of
     radius ``R`` at ``asin(R / D)``, so reading the preset's own FOV and
-    inverting that leaves no 47° assumption anywhere in the pose. Authoring a
-    position also suppresses the viewer's auto-framing, which is the point —
-    the auto-fit runs at 47° and the lens widens afterwards, so an auto-framed
-    cinematic scene opens about 1.4x looser than it was fitted for.
+    inverting that leaves no legacy-FOV assumption anywhere in the pose.
+    Authoring a position also suppresses the viewer's auto-framing, preserving
+    the deliberate opening phase and quantile-based composition below.
 
     The radius comes from a high quantile of the distance to the centre, not
     from the bounding box. The cloud's outermost parcels are a sparse fringe
@@ -1538,7 +1529,7 @@ def generate_evolving_cloud(
             )
             add_demo_caption(
                 scene,
-                f"Cumulus life cycle · {n_frames} frames · press K to play",
+                f"Cumulus life cycle • {n_frames} frames • press K to play",
                 DEMO_META.get("citation"),
             )
 
@@ -1570,7 +1561,7 @@ def main() -> None:
     aprint("  - Convection roll + wind shear + swirl, all analytic")
     aprint("  - 4D fractal noise sampled in material coordinates")
     aprint("  - Flat cloud base at the lifting condensation level")
-    aprint("  - Baked top-lit shading from a downward optical depth")
+    aprint("  - Baked off-axis sunlight, skylight, and ground bounce")
     aprint("  - Growth, mature sheared top, then dissipation into wisps")
     aprint("")
 
