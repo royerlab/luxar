@@ -683,13 +683,13 @@ class TestPayloadFiles:
         (logo_dir / "Zarr.json").write_bytes(payload)
         # Named by SET rather than by literal, so the assertion holds at either
         # on-disk format (v3 has `zarr.json`, v2 the `.zgroup`/`.zattrs` pair).
-        # It still bites at zero bytes: no metadata document is ever empty, so
-        # the quoted count cannot have come from one there either.
+        # The count the refusal quotes is the one read back under the payload's
+        # own name, and no node document here shares that length.
         documents = [p for p in logo_dir.iterdir() if p.name in _META_DOCS]
         assert documents and all(p.stat().st_size != len(payload) for p in documents)
 
         dst = tmp_path / "out.luxar.zarr"
-        with pytest.raises(ValueError, match=rf"{len(payload)} bytes"):
+        with pytest.raises(ValueError, match=rf"dropping the {len(payload)} bytes"):
             optimise_store(src, dst, verify=True)
         assert not dst.exists()
 
