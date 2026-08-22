@@ -160,7 +160,7 @@ export function extractRenderingOverrides(
 /**
  * The two preset keys that describe the camera's framing. They are expanded as
  * ONE unit: if the author set EITHER `camera.fov` or `camera.fov_preset`,
- * NEITHER is filled from the preset.
+ * NEITHER is filled from the cinematic preset.
  *
  * Why coupled — a framing is a unit, and half a pair is worse than neither
  * half. A recognized authored `fov_preset` resolves its own numeric FOV above;
