@@ -27,9 +27,11 @@ where the fit put 0.75. ``docs/guides/user/VIEWER_GUIDE.md`` documents this
 ("wider than the default auto-framing"), and closing it means applying the
 expanded fov before the fit, in the viewer, not here — #1861.
 
-The poses composed through this module are unaffected either way: an authored
-position suppresses auto-framing entirely, so their framing is exactly what the
-arithmetic below says it is.
+When the preset FOV is applied (that is, the scene has no stored rendering
+settings), an authored position suppresses auto-framing entirely, so the poses
+composed through this module frame exactly as the arithmetic below says. Stored
+settings can restore another FOV while the authored position still applies;
+fixing that viewer-side mismatch is also part of #1861.
 
 Two ways to compose for the wider lens, and a demo should use whichever it
 already thinks in:

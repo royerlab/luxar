@@ -51,15 +51,15 @@ preset.
 FIXING A FAILURE is usually one keyword — add ``cinematic_mode=True`` to the
 config the message names. Individual preset fields may be pinned when they
 would damage the scene's scientific contract: the two quantitative ortho demos
-disable lens distortion and detector noise so their scale bars and intensities
-remain meaningful, and the biodiversity globe disables both so its categorical
-hues remain exact.
+disable bloom, vignette, lens distortion and detector noise so their scale bars
+and intensities remain meaningful, and the biodiversity globe disables the
+last two so its categorical hues remain exact.
 
 The preset's 63° FOV is applied after first-load auto-framing, which happens at
 the viewer's 47° default, and nothing re-frames afterwards — so an auto-framed
 scene opens 0.71x smaller linearly (half the screen area). The demos cannot fix
 that from here; closing it means applying the expanded fov before the fit, in the
-viewer.
+viewer (#1861).
 
 A demo that authors a camera position has a stronger contract, since its distance
 was composed for one specific FOV, and there are two honest ways to keep it.
@@ -70,7 +70,8 @@ all with pins that predate the cinematic look. COMPOSING the pose for 63°
 exactly, at the cost of the stronger perspective a wider lens gives. The five
 poses derived from an extent or a fitted radius take the second route, which is a
 deliberate house choice rather than an oversight; the third invariant below
-accepts either, and rejects a pose that states neither.
+accepts either, and rejects a pose that states neither. Unifying the older pins
+on the one-lens policy is tracked in #1862.
 """
 
 from __future__ import annotations
@@ -106,6 +107,9 @@ SCIENTIFIC_FIDELITY_OVERRIDES = {
             "detector_noise_enabled",
             "vignette_enabled",
         }
+    ),
+    "demo_nd_transforms.py": frozenset(
+        {"chromatic_lens_distortion_enabled", "detector_noise_enabled"}
     ),
 }
 
@@ -211,16 +215,18 @@ def _composes_for_the_cinematic_lens(tree: ast.AST, call: ast.Call) -> bool:
     ``camera_distance_for_radius``-style helper, and the import is a deliberate
     enough act to read as the statement it is.
     """
+    imported_symbols = {
+        alias.asname or alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        and (node.module or "").endswith("_cinematic_camera")
+        for alias in node.names
+    }
     position = _keyword(call, "position")
     if isinstance(position, ast.Call) and isinstance(position.func, ast.Name):
-        if position.func.id == "pull_in":
+        if position.func.id == "pull_in" and "pull_in" in imported_symbols:
             return True
-    return any(
-        isinstance(node, ast.ImportFrom)
-        and (node.module or "").endswith("_cinematic_camera")
-        and any(alias.name == "CINEMATIC_FOV_DEG" for alias in node.names)
-        for node in ast.walk(tree)
-    )
+    return "CINEMATIC_FOV_DEG" in imported_symbols
 
 
 @pytest.mark.parametrize("path", MODULES, ids=_module_ids(MODULES))
@@ -319,7 +325,11 @@ def test_the_guard_reads_the_flag_it_claims_to(source: str, flagged: bool) -> No
         ("CameraConfig(fov=47.0)", False),
         # Composed for the cinematic lens instead of pinned — the other way to
         # be unambiguous about the FOV a pose assumes.
-        ("CameraConfig(position=pull_in((6.0, 7.0, 19.0)))", False),
+        (
+            "from luxar.demos._cinematic_camera import pull_in\n"
+            "CameraConfig(position=pull_in((6.0, 7.0, 19.0)))",
+            False,
+        ),
         (
             "from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG\n"
             "CameraConfig(position=(0.0, 0.0, d))",
@@ -327,6 +337,10 @@ def test_the_guard_reads_the_flag_it_claims_to(source: str, flagged: bool) -> No
         ),
         # A pull_in-looking call that is NOT the helper stays flagged.
         ("CameraConfig(position=other.pull_in(p))", True),
+        (
+            "def pull_in(position): return position\nCameraConfig(position=pull_in(p))",
+            True,
+        ),
     ],
 )
 def test_the_guard_reads_authored_camera_framing(source: str, flagged: bool) -> None:
