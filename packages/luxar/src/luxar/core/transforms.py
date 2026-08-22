@@ -530,7 +530,8 @@ def transform_bounding_box(
 
     Returns:
         Tuple ``(new_lo, new_hi)`` of the enclosing box, each a length-3
-        float64 array.
+        float64 array. Corners with degenerate homogeneous ``w`` are omitted;
+        if all corners are degenerate, the input box is returned unchanged.
 
     Example:
         >>> m = translate(3, 0, 0)
@@ -557,11 +558,13 @@ def transform_bounding_box(
     homogeneous = np.column_stack([corners, np.ones(8)])
     transformed = homogeneous @ mat.T
 
-    # Perspective divide (w == 1 for affine transforms). Guard against a
-    # degenerate w so a pathological matrix can't produce NaN/inf bounds.
+    # Perspective divide (w == 1 for affine transforms). Skip degenerate
+    # corners exactly as the viewer does so they cannot produce NaN/inf bounds.
     w = transformed[:, 3]
-    w = np.where(np.abs(w) < 1e-12, 1.0, w)
-    points = transformed[:, :3] / w[:, None]
+    keep = np.abs(w) >= 1e-12
+    if not bool(keep.any()):
+        return lo_arr.copy(), hi_arr.copy()
+    points = transformed[keep, :3] / w[keep, None]
 
     return points.min(axis=0), points.max(axis=0)
 

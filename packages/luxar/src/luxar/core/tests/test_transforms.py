@@ -751,3 +751,33 @@ class TestTransformBoundingBox:
         lo, hi = transform_bounding_box(m, lo_in, hi_in)
         assert lo.tolist() == pytest.approx(pts.min(axis=0).tolist())
         assert hi.tolist() == pytest.approx(pts.max(axis=0).tolist())
+
+    def test_drops_corners_with_degenerate_homogeneous_w(self) -> None:
+        matrix = np.array(
+            [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [1.0, 0.0, 0.0, 0.0],
+            ]
+        )
+
+        lo, hi = transform_bounding_box(matrix, [0, 0, 0], [1, 1, 1])
+
+        assert lo.tolist() == pytest.approx([1, 0, 0])
+        assert hi.tolist() == pytest.approx([1, 1, 1])
+
+    def test_all_degenerate_corners_fall_back_to_input_box(self) -> None:
+        matrix = np.array(
+            [
+                [1.0, 0.0, 0.0, 10.0],
+                [0.0, 1.0, 0.0, 20.0],
+                [0.0, 0.0, 1.0, 30.0],
+                [0.0, 0.0, 0.0, 0.0],
+            ]
+        )
+
+        lo, hi = transform_bounding_box(matrix, [-1, -2, -3], [4, 5, 6])
+
+        assert lo.tolist() == [-1, -2, -3]
+        assert hi.tolist() == [4, 5, 6]
