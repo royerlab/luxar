@@ -650,8 +650,13 @@ class TestPayloadFiles:
         assert attrs["type"] == "overlay_image"
         assert not any(p.name == "Zarr.json" for p in dst.rglob("*"))
 
+    @pytest.mark.parametrize(
+        "payload",
+        [b"\x89PNG\r\n\x1a\n" + b"p" * 4242, b""],
+        ids=["with-bytes", "zero-byte"],
+    )
     def test_the_refusal_reports_the_payload_file_s_own_byte_count(
-        self, tmp_path: Path
+        self, tmp_path: Path, payload: bytes
     ) -> None:
         """The count in the refusal is the user's evidence that something real is
         at stake, so the branch has to still fire for a genuine distinct file and
@@ -660,7 +665,13 @@ class TestPayloadFiles:
         pairing: the listing must find the payload's exact spelling (an inverted
         or empty or lowercasing :func:`list_raw_keys` all fail here) and the
         length must be the one read back under it. Case-sensitive filesystems
-        only: elsewhere the fixture's two keys are one key."""
+        only: elsewhere the fixture's two keys are one key.
+
+        The zero-byte case additionally pins that the copy's skip test is ``is
+        None`` and not truthiness: an empty file reads back as ``b""``, so under
+        ``if not held`` a real, distinct, EMPTY ``Zarr.json`` ships under exit
+        code 0 — and on macOS writing it truncates the node document to nothing,
+        which is the whole failure class this branch exists to prevent."""
         probe = tmp_path / "CaseProbe"
         probe.write_text("x")
         if (tmp_path / "caseprobe").exists():
@@ -668,11 +679,12 @@ class TestPayloadFiles:
         src = _store_with_a_payload_attr(
             tmp_path / "src.luxar.zarr", "Zarr.json", payload=None
         )
-        payload = b"\x89PNG\r\n\x1a\n" + b"p" * 4242
         logo_dir = src / "overlays" / "logo"
         (logo_dir / "Zarr.json").write_bytes(payload)
         # Named by SET rather than by literal, so the assertion holds at either
         # on-disk format (v3 has `zarr.json`, v2 the `.zgroup`/`.zattrs` pair).
+        # It still bites at zero bytes: no metadata document is ever empty, so
+        # the quoted count cannot have come from one there either.
         documents = [p for p in logo_dir.iterdir() if p.name in _META_DOCS]
         assert documents and all(p.stat().st_size != len(payload) for p in documents)
 

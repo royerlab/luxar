@@ -807,10 +807,11 @@ def _copy_payload_files(source: zarr.Group, dest: zarr.Group) -> None:
     be refused, and the refusal would quote the metadata document's byte count as
     if it were the payload's. The listing therefore GATES the read rather than
     replacing it — the bytes are still read, for the count the refusal quotes,
-    but only for a name the store really lists, so the fold cannot happen. A key
-    that lists and yet reads back nothing is not a payload at all (a child group
-    or a plain subdirectory of that name), and takes the skip too: there are no
-    bytes to be unfaithful to and no file to rename.
+    but only for a name the store really lists, so a fold can no longer make a
+    dangling attr look held. A key that lists and yet reads back nothing is not a
+    payload at all (a child group or a plain subdirectory of that name), and
+    takes the skip too: there are no bytes to be unfaithful to and no file to
+    rename.
 
     A named file that is simply ABSENT is skipped with a notice rather than
     raising, for the same reason: the source has no bytes to hand over, so
@@ -834,12 +835,13 @@ def _copy_payload_files(source: zarr.Group, dest: zarr.Group) -> None:
             )
             continue
         if filename.lower() in _METADATA_DOCS_LOWERCASED:
-            # The listing GATES the read: on a case-insensitive filesystem it can
-            # only ever report `zarr.json`, so the read that would fold onto the
-            # node document never happens and the dangling case stays visible.
-            # A key that lists but reads back `None` is not a payload either — a
-            # child group or a plain subdirectory of that name has no bytes to
-            # drop and nothing to rename — so it takes the same skip.
+            # The listing GATES the read, and a listing is not folded: a name
+            # the store does not really hold never reaches the read that would
+            # resolve onto the node document, so the dangling case stays visible
+            # on every platform. A key that lists but reads back `None` is not a
+            # payload either — a child group or a plain subdirectory of that
+            # name has no bytes to drop and nothing to rename — so it takes the
+            # same skip.
             held = (
                 _read_payload_or_refuse(source, attr_key, filename)
                 if filename in list_raw_keys(source)
@@ -1046,8 +1048,9 @@ def _verify_payloads(path: str, src: zarr.Group, dst: zarr.Group) -> int:
     site's, exactly: a name the copy skipped has no bytes in the output by
     design and must not be reported as a loss. A payload the SOURCE does not
     have is skipped for the same reason — the copy skipped it too, and the
-    output is as complete as its input. A metadata-document name only reaches
-    here in the dangling case, since the copy refuses the one that has bytes.
+    output is as complete as its input. A metadata-document name reaches here
+    only in the two cases the copy SKIPS — a dangling attr, and a name held by
+    a directory rather than a file — since the copy refuses the one with bytes.
 
     The count is what the run REPORTS, so it is the number actually compared —
     a name skipped by any of those gates is not one of them.

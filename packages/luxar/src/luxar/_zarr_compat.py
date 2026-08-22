@@ -1013,7 +1013,7 @@ def list_raw_keys(group: zarr.Group) -> frozenset[str]:
     :func:`read_raw_bytes`: ``Store.list_dir`` is an async iterator with no
     public sync facade, so it is driven through ``zarr.core.sync`` and verified
     against ``LocalStore``, ``MemoryStore`` and ``ZipStore`` alike. Listing is
-    the one capability the store ABC leaves optional (``supports_listing``),
+    one of the capabilities the store ABC leaves optional (``supports_listing``),
     which is why this is a targeted disambiguator and not how payloads are
     ENUMERATED — the attrs name them, and the compile-time hasher stays on that
     route (``io/_compiler/finalize/README.md``).
