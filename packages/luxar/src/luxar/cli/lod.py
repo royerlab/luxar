@@ -470,7 +470,7 @@ def lod_recipe(
         luxar gsplat lod fit.gsplats.zarr out.gsplats.zarr --recipe overview \\
             --compression-factor 8
     """
-    from luxar.gsplats.gsplat_data import GSplatData
+    from luxar.gsplats.gsplat_data import GSplatData, stats_after_structure_change
     from luxar.gsplats.io.save_gsplats import split_fitting_info, write_gsplats_tree
     from luxar.gsplats.lod.recipes import (
         RECIPE_NAMES,
@@ -663,6 +663,26 @@ def lod_recipe(
                 # the source root's authored attrs across or they are silently
                 # replaced by the writer's defaults (#1600).
                 source_appearance = carried_appearance(input_path)
+                # ...and owning the structure is exactly why the input's own
+                # TOPOLOGY record must not ride along. An already-LOD store is a
+                # legal input here (the gate is matrix-shaped-ness, so a
+                # partition and a lod group with non-leaf children are out), and every
+                # recipe starts from `data.flattened()` — so nothing this command
+                # publishes preserves the input's shape. Scrubbed ONCE, on the
+                # loaded input, which covers BOTH write paths below: the matrix
+                # builders derive `result.stats` from `dict(src.stats)` and then
+                # stamp their own true record over it, and the composed path
+                # hands this same dict to `split_fitting_info`. Without it a
+                # `--recipe flat` leaf published `lod_kind: substitutive` /
+                # `n_substitutive_levels: 4` / `lod_cutpoints: [...]` one line
+                # above its own `recipe: flat` (#1600). Only the builder's own
+                # stamps survive, so a recipe that stamps nothing says nothing —
+                # absence is the format's "this artifact does not know".
+                # `coarsen_dims` is exempt from the scrub, so a `levels` build
+                # keeps its barrier provenance.
+                data = GSplatData.from_tree(
+                    data.tree, stats=stats_after_structure_change(data.stats)
+                )
 
             # ── --refine volume: load the source volume (shared loader) ──
             target_volume: Any = None
