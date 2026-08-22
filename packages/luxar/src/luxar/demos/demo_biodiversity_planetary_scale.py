@@ -1059,7 +1059,7 @@ def lonlat_to_xyz(lon: np.ndarray, lat: np.ndarray, relief: np.ndarray) -> np.nd
 
 
 def globe_camera(lon: float, lat: float, *, distance: float = 2.6) -> CameraConfig:
-    """A camera looking straight down at ``(lon, lat)`` from ``distance x R``."""
+    """Preserve the historical 42° globe framing from ``distance x R``."""
     la, lo = math.radians(lat), math.radians(lon)
     cl = math.cos(la)
     normal = (cl * math.cos(lo), math.sin(la), -cl * math.sin(lo))
