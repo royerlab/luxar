@@ -167,6 +167,13 @@ def compute_chunk_bounds_points(
         else:
             radii_scalar = float(radii)
 
+        padded_chunk_radii: Optional[np.ndarray] = None
+        if chunk_radii is not None:
+            padded_chunk_radii = (
+                np.asarray(chunk_radii).astype(np.float64, copy=False)
+                + footprint_slack
+            )
+
         # Compute bounds for each dimension separately. The pad is added in
         # float64 and stored with outward rounding — see _store_outward_f32.
         for d in range(ndim):
@@ -185,13 +192,9 @@ def compute_chunk_bounds_points(
                     mins_d = coords.min() - radius
                     maxs_d = coords.max() + radius
                 else:
-                    assert chunk_radii is not None
-                    r = (
-                        np.asarray(chunk_radii).astype(np.float64, copy=False)
-                        + footprint_slack
-                    )
-                    mins_d = (coords - r).min()
-                    maxs_d = (coords + r).max()
+                    assert padded_chunk_radii is not None
+                    mins_d = (coords - padded_chunk_radii).min()
+                    maxs_d = (coords + padded_chunk_radii).max()
 
             # The quantisation displacement applies to EVERY dim — spatial and
             # barrier alike — and is added in float64, before the outward
