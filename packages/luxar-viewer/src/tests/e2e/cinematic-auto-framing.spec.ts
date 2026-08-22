@@ -3,6 +3,7 @@ import { waitForDataLoaded, waitForLuxarReady } from './helpers';
 
 const DATASET =
   'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_gsplats_2d.luxar.zarr';
+// This fixture is format 3; the explicit 63° assertion below catches a future format-2 mismatch.
 const ROOT_METADATA = `${DATASET}/zarr.json`;
 
 test('cinematic FOV preserves auto-framed screen occupancy', async ({ browser }) => {
@@ -16,10 +17,13 @@ test('cinematic FOV preserves auto-framed screen occupancy', async ({ browser })
       }
       const response = await route.fetch();
       const metadata = (await response.json()) as {
-        attributes: { viewer_config?: { cinematic_mode: boolean } };
+        attributes: { viewer_config?: Record<string, unknown> };
       };
       if (cinematic) {
-        metadata.attributes.viewer_config = { cinematic_mode: true };
+        metadata.attributes.viewer_config = {
+          ...metadata.attributes.viewer_config,
+          cinematic_mode: true,
+        };
       }
       await route.fulfill({ response, json: metadata });
     });

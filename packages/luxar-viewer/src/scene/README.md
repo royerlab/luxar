@@ -75,7 +75,7 @@ class SceneManager extends THREE.EventDispatcher {
     webgpuForceWebGL?: boolean;
     perfTimestamp?: boolean;
   }): Promise<void>;
-  loadSceneData(src: string, loaderConfig?: LoaderConfig): Promise<void>;
+  loadSceneData(src: string, loaderConfig?: LoaderConfig, options?: SceneLoadOptions): Promise<void>;
   updateSize(): void;
   dispose(): void;
 
@@ -1040,10 +1040,11 @@ function disposeObject(object: THREE.Object3D) {
 | Method                                           | Description                                                    |
 | ------------------------------------------------ | -------------------------------------------------------------- |
 | `init(options)`                                  | Build renderer, scene, camera, controls, post-processing       |
-| `loadSceneData(src, loaderConfig?)`              | Load zarr scene; clears prior content, auto-frames, auto-clips |
+| `loadSceneData(src, loaderConfig?, options?)`    | Load zarr scene; `applyViewerConfigFov` gates pre-frame scene FOV under caller-resolved localStorage precedence |
 | `centerCameraOnScene()`                          | Frame camera on scene bounding box                             |
 | `toggleCentering()`                              | Switch center mode (origin ↔ bbox)                             |
 | `getCurrentCenter()`                             | Get active center point                                        |
+| `setFov(degrees)`                                | Set an absolute validated perspective FOV                      |
 | `updateFOV(delta)`                               | Adjust field of view                                           |
 | `updateClippingPlanes(near, far)`                | Set camera clipping planes                                     |
 | `autoAdjustClippingPlanes()`                     | Calculate optimal clipping from scene                          |
