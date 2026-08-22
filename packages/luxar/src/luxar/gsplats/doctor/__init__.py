@@ -51,7 +51,20 @@ def _store_kind_from_attrs(attrs: Mapping[str, Any]) -> Optional[StoreKind]:
 
 
 def resolve_store_kind(path: "str | Path") -> StoreKind:
-    """Classify a Luxar store from its root attrs, including archives."""
+    """Classify a Luxar store from its root attrs, including archives.
+
+    Returns
+    -------
+    StoreKind
+        ``"gsplats"`` or ``"scene"`` when the root attrs identify the store.
+        An inconclusive best-effort archive peek returns ``"unknown"`` so the
+        extracted store can remain authoritative during diagnosis.
+
+    Raises
+    ------
+    ValueError
+        If exact directory attrs do not identify a supported Luxar store.
+    """
     path = Path(path)
     if path.is_dir():
         attrs = open_group(path, mode="r").attrs

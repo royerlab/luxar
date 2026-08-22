@@ -170,6 +170,7 @@ def test_doctor_diagnoses_archive_when_root_attr_peek_is_inconclusive(
 
         assert result.exit_code == 1, result.stdout
         assert "not a Luxar scene" not in result.stdout
+        assert "archive index could not classify" in result.stdout
         assert "no split planes" in result.stdout
 
 

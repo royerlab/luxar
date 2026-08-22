@@ -1138,6 +1138,11 @@ def doctor(
             info_dataset(path, show_histograms=histograms, bins=40)
         elif store_kind == "scene":
             aprint("ℹ️ The gsplat info report does not apply to a Luxar scene.")
+        else:
+            aprint(
+                "ℹ️ The archive index could not classify this store; "
+                "skipping the optional info report."
+            )
 
     with asection(f"Diagnosing: {path.name}"):
         try:
