@@ -23,11 +23,15 @@ FIXTURE_SCRIPTS = (
 )
 GUARD_PATH = "packages/luxar/src/luxar/tests/test_fixture_environment.py"
 GIT_GREP_PATTERN = (
-    r"(hatch|\$\(HATCH\))[[:space:]]+run.*"
+    r"(hatch|\$\(HATCH\))[[:space:]]+"
+    r"(((-e|--env)(=|[[:space:]]+)[[:alnum:]_.-]+[[:space:]]+)?run)"
+    r"[^;&|]*"
     r"generate_(test_data|expectations)\.py"
 )
 FIXTURE_COMMAND = re.compile(
-    r"(?:hatch|\$\(HATCH\))\s+run(?P<args>[^\n]*?)"
+    r"(?:hatch|\$\(HATCH\))\s+"
+    r"(?:(?:-e|--env)(?:\s+|=)(?P<selected_env>[\w.-]+)\s+)?"
+    r"run\s+(?P<run_target>[\w.:-]+)[^;&|\n]*?"
     r"(?P<script>generate_(?:test_data|expectations)\.py)\b"
 )
 
@@ -69,6 +73,14 @@ def fixture_command_lines() -> list[tuple[str, int, str]]:
     return matches
 
 
+def _uses_dedicated_fixture_environment(match: re.Match[str]) -> bool:
+    selected_env = match.group("selected_env")
+    run_target = match.group("run_target")
+    return (selected_env == "fixtures" and run_target == "python") or (
+        selected_env is None and run_target == "fixtures:python"
+    )
+
+
 def test_fixture_environment_installs_only_cpu_gsplat_dependencies(
     pyproject: dict[str, Any],
 ) -> None:
@@ -95,13 +107,65 @@ def test_every_fixture_generator_uses_the_dedicated_environment(
         for match in FIXTURE_COMMAND.finditer(line):
             command = match.group(0)
             script = match.group("script")
-            if "fixtures:python" not in match.group("args"):
+            if not _uses_dedicated_fixture_environment(match):
                 legacy_calls.append(f"{relative_path}:{line_number}: {command}")
             else:
                 dedicated_calls.add(script)
 
     assert not legacy_calls, "\n".join(legacy_calls)
     assert dedicated_calls == {Path(script).name for script in FIXTURE_SCRIPTS}
+
+
+@pytest.mark.parametrize(
+    ("line", "expected_dedicated"),
+    [
+        (
+            "hatch run fixtures:python pkg/generate_test_data.py",
+            True,
+        ),
+        (
+            "$(HATCH) run fixtures:python pkg/generate_expectations.py",
+            True,
+        ),
+        (
+            "hatch run fixtures:python scripts/check_fixture_env.py && "
+            "hatch run python pkg/generate_test_data.py",
+            False,
+        ),
+        (
+            "hatch -e fixtures run python pkg/generate_test_data.py",
+            True,
+        ),
+        (
+            "hatch --env fixtures run python pkg/generate_expectations.py",
+            True,
+        ),
+        (
+            "hatch --env=fixtures run python pkg/generate_expectations.py",
+            True,
+        ),
+        (
+            "hatch -e default run python pkg/generate_test_data.py",
+            False,
+        ),
+    ],
+)
+def test_fixture_command_parser_checks_the_selected_environment(
+    line: str,
+    expected_dedicated: bool,
+) -> None:
+    """Each supported Hatch spelling must be found and classified positionally."""
+    grep_result = subprocess.run(
+        ["grep", "-Eq", GIT_GREP_PATTERN],
+        input=f"{line}\n",
+        text=True,
+        check=False,
+    )
+    assert grep_result.returncode == 0
+
+    matches = list(FIXTURE_COMMAND.finditer(line))
+    assert len(matches) == 1
+    assert _uses_dedicated_fixture_environment(matches[0]) is expected_dedicated
 
 
 def test_typescript_ci_verifies_lean_cpu_torch_without_caching_pip() -> None:
