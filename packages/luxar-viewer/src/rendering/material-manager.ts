@@ -399,6 +399,8 @@ export class MaterialManager {
       flatNormal: props.flatNormal,
       ambient: props.ambient,
       shadeExponent: props.shadeExponent,
+      specular: props.specular,
+      shininess: props.shininess,
       alphaCutoff: props.alphaCutoff,
     });
     this.totalCreateMs += performance.now() - createStart;

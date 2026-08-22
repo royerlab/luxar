@@ -28,15 +28,23 @@ All demos with an authored camera position compose for 63° through the new
 preserved exactly (#1862): `CINEMATIC_FOV_DEG` where the distance comes from the lens
 (quantum orbitals' `asin(R/D)` rule, which therefore just moves closer,
 79.97 → 60.65), and `pull_in()` where an empirically tuned pose is carried over
-(the empirical authored poses, using their original 28°–50° FOV).
+(the empirical authored poses, using their original 38°–50° FOV).
 `pull_in` scales about the pose's target, not the world origin, so the Mip-NeRF
 garden camera keeps pointing at the table. Only the framing carries over, not the
 image — a wider lens at a shorter distance foreshortens more — so these poses are
 worth a look on the next gallery pass.
 
 A new lint (`test_demos_cinematic_mode.py`) keeps this true for demo 87: every
-`create_scene` must pass a `viewer_config`, and every `ViewerConfig` built in the
-demos package must set a literal `cinematic_mode=True`.
+`create_scene` must pass a non-`None` `viewer_config`, every `ViewerConfig` built
+in the demos package must set a literal `cinematic_mode=True`, every authored
+camera must state the lens it was composed for, and the scientific-fidelity
+overrides must remain explicit.
+
+Four fidelity-sensitive demos deliberately opt parts of the preset back out:
+the CMU-1 pathology and CODEX pancreas ortho demos disable bloom, vignette, lens
+distortion and detector noise, while the biodiversity globe and nD transform
+bench disable lens distortion and detector noise to preserve their colour
+encodings.
 
 Existing generated stores under `datasets/demos/` predate the flag — the look
 appears when a demo is re-run and its scene rewritten.

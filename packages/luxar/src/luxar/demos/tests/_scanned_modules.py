@@ -1,6 +1,6 @@
 """The set of demo-package modules the demo guards must scan.
 
-Fourteen guards across nine modules read this set: four in
+Fourteen guards across eight modules read this set: four in
 ``test_demos_dependencies.py``, one in
 ``test_no_entrypoint_dependency_preflight.py``, one in
 ``test_substitutive_lod_gated.py``, one in ``test_demo_layers.py`` (the
@@ -37,7 +37,7 @@ module-level ``def``s for such modules; the two changes only work together.
 
 The set is a DENYLIST on purpose: every ``*.py`` directly under ``demos/``
 *except* :data:`EXCLUDED`. An allowlist keyed on a filename pattern would be
-opt-in, so a future ``demos/_plot_helpers.py`` would escape all ten guards and
+opt-in, so a future ``demos/_plot_helpers.py`` would escape all fourteen guards and
 reopen the very blind spot this module exists to close.
 
 The flip side of a denylist: ANY ``*.py`` dropped into ``demos/`` joins the
@@ -59,7 +59,7 @@ demo code, and one of them would produce a *false* positive:
 ``__init__.py``
     A pure re-export barrel; it holds no demo code and no gates.
 
-``registry.py`` is deliberately NOT excluded — it passes all ten guards, so
+``registry.py`` is deliberately NOT excluded — it passes all fourteen guards, so
 there is no reason to carve it out.
 
 Not a test module and not a demo (no ``test_`` / ``demo_`` prefix), so neither

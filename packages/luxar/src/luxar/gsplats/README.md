@@ -8,11 +8,20 @@ This package implements a sophisticated Gaussian splatting system that fits coll
 
 ## Installation
 
-Gaussian splatting requires optional dependencies:
+Fitting Gaussian splats requires optional dependencies:
 
 ```bash
 pip install "luxar[gsplats]"
 ```
+
+> **Core-only carve-out.** The pure-NumPy half of this package works on a plain
+> `pip install luxar`: the `utils.trils` Cholesky helpers, and `GSplatData` —
+> construct, `.save()`, `.load()`, plus the geometric `translate` / `transform` /
+> `center_at_centroid` — so an existing `.gsplats.zarr` can be authored and
+> grafted into a scene (`scene.add_gsplats` / `add_gsplats_from_data` /
+> `add_gsplats_from_file`) without the extra. Fitting, calibration, culling, LOD
+> construction and intensity editing all need it; the `luxar.gsplats` package
+> docstring states exactly where the line falls.
 
 > **⚠️ torch ABI coupling.** The optional CUDA extension
 > (`models/gsplats/cuda/cuda_splatting_backend*.so`) is compiled against a
@@ -1018,7 +1027,7 @@ above.
 
 `seeds` is handed to **every** tile as-is, so an integer here is a *per-tile* count, not a whole-volume budget: N tiles fit ~N × `seeds` splats. This differs from the CLI, where `--seeds` **is** a whole-volume budget that `luxar gsplat fit` divides by the non-empty tile count before calling this function (`cli.gsplat_ops.fitting.fit_utils.split_seeds_across_tiles`). If you are fitting at a K\* from `gsplat cal` (see the calibration sections above), divide it yourself — or pass a float compression ratio, which is scale-free and needs no adjustment.
 
-**Merged quality metrics:** per-region scores describe apodized tile crops or halo-padded content boxes and do not compose into the merged result, so flat uniform and content merges render the reconstruction once against the whole volume and stamp `psnr_db` / `ssim` / `mse` / `foreground_*` into its `stats` (#1669, #1733). The reference is the selected volume as handed in — the subtracted pedestal is not put back — which is the basis the non-tiled path and `gsplat compare` already use (#1173). Scoring materializes the whole volume (the fit itself may only read it region by region), so it is bounded: half the memory actually free, held under a 24 GiB ceiling, with `LUXAR_TILED_QUALITY_MAX_GB` overriding both (`0` declines outright, an unreadable value falls back with a note). Over budget, or on a failure, it says so even when `verbose=False` — an archive that silently carries no PSNR is the failure this exists to end. A `partition=True` merge is not scored (the tree node has no root fit-stats dict, and these paths thread none through on save) and says so as well; `gsplat compare` is the recourse, after `gsplat flatten`.
+**Merged quality metrics:** per-region scores describe apodized tile crops or halo-padded content boxes and do not compose into the merged result, so uniform merges render the reconstruction against the whole volume and attach `psnr_db` / `ssim` / `mse` / `foreground_*` to the merged result (#1669, #1703). The CLI save path publishes that block at the archive root; a library caller that writes a returned partition node directly must pass its `meta["fit_stats"]` through `split_fitting_info` to `write_gsplats_tree`. A partition is rendered as the sum of its surviving tile-parts, exactly as the parts compose, without flattening the splats; content-planned partition scoring remains separate. Flat content merges use the same scorer (#1733). The reference is the selected volume as handed in — the subtracted pedestal is not put back — which is the basis the non-tiled path and `gsplat compare` already use (#1173). Scoring materializes the whole volume (the fit itself may only read it region by region), so it is bounded: half the memory actually free, held under a 24 GiB ceiling, with `LUXAR_TILED_QUALITY_MAX_GB` overriding both (`0` declines outright, an unreadable value falls back with a note). Over budget, or on a failure, it says so even when `verbose=False` — an archive that silently carries no PSNR is the failure this exists to end.
 
 **Returns:** `GSplatData` with all splats in global coordinates. Hilbert curve resorting happens automatically on `save()`.
 

@@ -9,9 +9,9 @@ harness guards against:
   1. A large, desaturated white blob swallows the structure/colour — a TAIL
      failure, caught by ``clipped_frac``.
   2. The whole subject sits high on the curve with no internal dynamic range —
-     a headlit shaded surface (mesh) driven into the ACES shoulder, which
-     desaturates toward white by design. The tail test cannot see this: a
-     histogram only ~0.06 wide sitting at 0.87 has no tail above CLIP_LUMA.
+     a shaded surface driven into the ACES shoulder, which desaturates toward
+     white by design. The tail test cannot see a narrow histogram with no tail
+     above CLIP_LUMA.
 
 RELATION TO THE HARNESS: the thresholds below are HAND-SYNCED copies of the
 ones in ``packages/luxar-viewer/src/tests/screenshots/exposure-policy.ts``, so
@@ -70,8 +70,8 @@ TARGET_MID = 0.5  # the harness's mid-tone target (exposure-policy.ts TARGET_MID
 # TARGET_MID plus margin. The harness's early exit is a SYMMETRIC band in log2
 # (|log2(TARGET_MID / p50)| < MID_EXPOSURE_TOL ⇒ p50 ∈ [0.483, 0.518]), so a
 # flat subject that phase 1 left below target converges from below just as
-# readily as from above. In a band sweep on the simulated headlit subject the
-# converged tiles landed at p50 0.505-0.509, and runs that exhausted
+# readily as from above. In a band sweep on the simulated narrow-histogram
+# subject the converged tiles landed at p50 0.505-0.509, and runs that exhausted
 # MID_EXPOSURE_ITERS (or hit the EXPOSURE_MIN clamp) reached 0.586. 0.65 clears
 # all of those, so the scorer never flags the harness's own successful output.
 FLAT_MID_MIN = 0.65

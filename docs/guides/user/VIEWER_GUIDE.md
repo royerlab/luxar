@@ -426,10 +426,13 @@ Setting `cinematic_mode=True` expands the whole cinematic preset (ACES tone
 mapping, a subtle wide bloom, detector noise, vignette, and the 35 mm
 chromatic lens + FOV) for every field the scene does not set itself — so you
 can enable the look and still override, say, `bloom_strength` on top of it.
-Note that the preset also widens the camera to the 35 mm field of view (63°),
-which is wider than the default auto-framing; if you have composed a specific
-framing, pin `camera.fov` (or `camera.fov_preset`) alongside `cinematic_mode`
-and the preset will leave your framing alone.
+The preset widens the camera from 47° to the 35 mm field of view (63°), but the
+viewer currently applies that expansion *after* first-load auto-framing without
+re-framing. An auto-framed cinematic scene therefore opens 0.71x smaller
+linearly — half the screen area — than the same scene without the preset. That
+viewer-side ordering is tracked in #1861. For a specifically composed framing,
+pin `camera.fov` (or `camera.fov_preset`) alongside `cinematic_mode`; the preset
+then leaves the authored FOV alone.
 
 See `luxar.ViewerConfig` docstring for the full field list with types and
 valid ranges.

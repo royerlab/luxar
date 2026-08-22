@@ -1133,6 +1133,8 @@ def generate_demo(output_path: Path) -> int:
                     # countable.
                     tone_mapping="Neutral",
                     bloom_enabled=False,
+                    chromatic_lens_distortion_enabled=False,
+                    detector_noise_enabled=False,
                     auto_rotate=False,
                     # A long lens is nearly orthographic, so ticks line up
                     # honestly instead of fanning out with perspective.

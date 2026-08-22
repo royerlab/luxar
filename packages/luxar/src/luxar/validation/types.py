@@ -321,6 +321,32 @@ def validate_opacity(opacity: Any) -> float:
     return opacity_float
 
 
+def validate_appearance_fraction(value: Any, name: str) -> float:
+    """Validate a finite mesh appearance fraction in ``[0, 1]``."""
+    try:
+        result = float(value)
+    except (ValueError, TypeError) as e:
+        raise TypeError(
+            f"{name} must be convertible to float, got {type(value).__name__}"
+        ) from e
+    if not math.isfinite(result) or not 0.0 <= result <= 1.0:
+        raise ValueError(f"{name} must be finite and between 0.0 and 1.0, got {result}")
+    return result
+
+
+def validate_positive_finite(value: Any, name: str) -> float:
+    """Validate a strictly-positive finite mesh appearance exponent."""
+    try:
+        result = float(value)
+    except (ValueError, TypeError) as e:
+        raise TypeError(
+            f"{name} must be convertible to float, got {type(value).__name__}"
+        ) from e
+    if not math.isfinite(result) or result <= 0.0:
+        raise ValueError(f"{name} must be finite and greater than 0, got {result}")
+    return result
+
+
 def validate_absorption(absorption: Any) -> float:
     """Validate and convert an absorption coefficient (volumetric kappa).
 

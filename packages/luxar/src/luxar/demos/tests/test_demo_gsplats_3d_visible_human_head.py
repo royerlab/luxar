@@ -138,8 +138,20 @@ class TestSceneBlending:
             .astype(np.float32)
         )
         out = create_luxar_scene(fit, colors, tmp_path / "vh.luxar.zarr")
-        node = zarr.open_group(str(out), mode="r")["visible_human_head"]
+        root = zarr.open_group(str(out), mode="r")
+        node = root["visible_human_head"]
         assert dict(node.attrs).get("blending_mode") == "volumetric"
+        camera = dict(dict(root.attrs)["viewer_config"])["camera"]
+        assert camera["up"] == [-1.0, 0.0, 0.0]
+        assert camera["position"][1] < 0.0
+        centered = fit.center_at_centroid()
+        half = np.maximum(
+            np.abs(centered.centers.max(axis=0)),
+            np.abs(centered.centers.min(axis=0)),
+        )
+        expected_distance = max(half[0], half[2]) * 1.15 / np.tan(np.radians(31.5))
+        assert camera["position"][1] == pytest.approx(-expected_distance)
+        assert "fov" not in camera
 
 
 class TestSampleColors:
