@@ -44,6 +44,7 @@ from ..partition import is_requested, reject_mismatched_partition_parent
 if TYPE_CHECKING:
     from ...node import Node
     from ..group import Group
+    from ..partition import BSPNode
 
 
 def _sah_polyline_centroids(
@@ -66,6 +67,38 @@ def _sah_polyline_centroids(
         ],
         dtype=np.float64,
     )
+
+
+def _build_line_partition_tree(
+    vert_arr: np.ndarray,
+    polyline_indices: List[np.ndarray],
+    n_vertices: int,
+    max_elements: int,
+    rule: str,
+) -> Tuple[Optional["BSPNode"], List[List[int]]]:
+    """Build the requested atomic-polyline BSP and flatten its leaves."""
+    from ..partition import spatial_bsp_polyline_tree, spatial_bsp_tree
+
+    if rule != "sah":
+        tree = spatial_bsp_polyline_tree(
+            vert_arr, polyline_indices, max_elements, rule=rule
+        )
+    elif not polyline_indices:
+        tree = None
+    else:
+        centroids = _sah_polyline_centroids(vert_arr, polyline_indices)
+        approximate_vertices_per_polyline = max(
+            1, n_vertices // max(1, len(polyline_indices))
+        )
+        centroid_cap = max(1, max_elements // approximate_vertices_per_polyline)
+        tree = spatial_bsp_tree(centroids, max_elements=centroid_cap, rule="sah")
+
+    parts = []
+    if tree is not None:
+        for leaf in tree.leaves():
+            assert leaf.indices is not None
+            parts.append(leaf.indices.tolist())
+    return tree, parts
 
 
 def add_lines_impl(
@@ -273,8 +306,6 @@ def add_lines_impl(
             from ..lod.lines import identify_polylines
             from ..partition import (
                 resolve_partition_spec,
-                spatial_bsp_polyline_tree,
-                spatial_bsp_tree,
                 warn_if_oversized_single_part,
             )
 
@@ -293,36 +324,13 @@ def add_lines_impl(
 
             polyline_indices = identify_polylines(n_vertices, line_type, indices)
 
-            if partition_rule == "sah":
-                # SAH operates on per-polyline centroids in this
-                # context too — same atomic-polyline guarantee.
-                if not polyline_indices:
-                    tree = None
-                else:
-                    centroids = _sah_polyline_centroids(vert_arr, polyline_indices)
-                    # Cap is per-vertex; SAH gives us per-centroid
-                    # parts; we re-aggregate to vertex-count parts.
-                    approx_per_poly = max(
-                        1,
-                        n_vertices // max(1, len(polyline_indices)),
-                    )
-                    centroid_cap = max(1, max_elements // approx_per_poly)
-                    tree = spatial_bsp_tree(
-                        centroids, max_elements=centroid_cap, rule="sah"
-                    )
-            else:
-                tree = spatial_bsp_polyline_tree(
-                    vert_arr,
-                    polyline_indices,
-                    max_elements,
-                    rule=partition_rule,
-                )
-
-            polyline_parts = []
-            if tree is not None:
-                for leaf in tree.leaves():
-                    assert leaf.indices is not None
-                    polyline_parts.append(leaf.indices.tolist())
+            tree, polyline_parts = _build_line_partition_tree(
+                vert_arr,
+                polyline_indices,
+                n_vertices,
+                max_elements,
+                partition_rule,
+            )
 
             warn_if_oversized_single_part(
                 len(polyline_parts),
@@ -778,11 +786,9 @@ def add_lines_partition_wrapper_impl(
         )
         written_parts.append(i)
 
-    from ..partition import prune_serialized_bsp_tree
+    from ..partition import persist_pruned_bsp_tree
 
-    serialized_tree = prune_serialized_bsp_tree(bsp_tree, written_parts)
-    if serialized_tree is not None:
-        wrapper._persist_attr("bsp_tree", serialized_tree)
+    persist_pruned_bsp_tree(wrapper, bsp_tree, written_parts)
 
     wrapper._persist_attr("position_bounds", position_bounds_from_array(vert_arr))
 

@@ -7,7 +7,9 @@ import pytest
 import zarr
 
 from luxar.core.dimensions import Dimensions
+from luxar.core.group.adders.lines import add_lines_partition_wrapper_impl
 from luxar.core.group.partition import (
+    serialized_bsp_leaf_labels,
     serialized_bsp_tree_separates,
     serialized_bsp_tree_straddles_centers,
 )
@@ -96,3 +98,54 @@ def test_native_partition_adders_write_separating_bsp_trees(
         assert serialized_bsp_tree_straddles_centers(tree, boxes)
         if name != "lines" or rule != "sah":
             assert serialized_bsp_tree_separates(tree, boxes)
+
+
+def test_line_partition_prunes_and_renumbers_an_empty_region(tmp_path) -> None:
+    """A skipped line region cannot leave the stored tree naming stale children."""
+    vertices = np.array(
+        [[-2.2, 0.0], [-1.8, 0.0], [1.8, 0.0], [2.2, 0.0]],
+        dtype=np.float32,
+    )
+    bsp_tree = {
+        "axis": 0,
+        "split": -4.0,
+        "left": {"part": 0},
+        "right": {
+            "axis": 0,
+            "split": 0.0,
+            "left": {"part": 1},
+            "right": {"part": 2},
+        },
+    }
+
+    output = tmp_path / "pruned-lines.luxar.zarr"
+    with LuxarZarrCompiler(output) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_2d())
+        add_lines_partition_wrapper_impl(
+            scene,
+            name="lines",
+            vert_arr=vertices,
+            polyline_indices=[
+                np.empty(0, dtype=np.intp),
+                np.array([0, 1], dtype=np.intp),
+                np.array([2, 3], dtype=np.intp),
+            ],
+            polyline_parts=[[0], [1], [2]],
+            n_vertices=4,
+            widths=0.05,
+            colors=None,
+            sharpness=None,
+            scalars=None,
+            labels=None,
+            indices=None,
+            line_type="segments",
+            parent=None,
+            extend_to_all=None,
+            max_elements=2,
+            bsp_tree=bsp_tree,
+        )
+
+    group = zarr.open_group(str(output), mode="r")["lines"]
+    stored_tree = group.attrs["bsp_tree"]
+    assert serialized_bsp_leaf_labels(stored_tree) == [0, 1]
+    assert serialized_bsp_tree_separates(stored_tree, _part_boxes(group))
