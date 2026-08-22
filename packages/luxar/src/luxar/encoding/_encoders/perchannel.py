@@ -361,10 +361,9 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         Linear quantization uses half a grid quantum; geometric-log encoding
         uses the corresponding half-step at the array maximum, capped at the
         maximum because its grid is anchored there and cannot decode above it.
-        Linear quantization also budgets 1.5 dtype epsilons for the three
-        float16/float32 normalization operations. A relative-epsilon term for
-        the wider of float32 and the authored dtype (or one float32 subnormal
-        quantum) covers the reader's final cast.
+        A relative-epsilon term for the wider of float32 and the authored dtype,
+        floored at one subnormal quantum of either dtype, covers the reader's
+        cast back to ``original_dtype`` and the viewer's float32 reconstruction.
 
         Args:
             data: The positive-scalar array exactly as it will be encoded.
@@ -453,16 +452,15 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
                 return None
             levels = (1 << bits) - 1
             slack = span / (2.0 * levels)
-            if np.issubdtype(arr.dtype, np.floating) and arr.dtype.itemsize <= 4:
-                slack += 1.5 * span * float(np.finfo(arr.dtype).eps)
 
         decode_eps = float(np.finfo(np.float32).eps)
+        decode_floor = float(np.finfo(np.float32).smallest_subnormal)
         if np.issubdtype(arr.dtype, np.floating):
             decode_eps = max(decode_eps, float(np.finfo(arr.dtype).eps))
-        decode_ulp = max(
-            max_val * decode_eps,
-            float(np.finfo(np.float32).smallest_subnormal),
-        )
+            decode_floor = max(
+                decode_floor, float(np.finfo(arr.dtype).smallest_subnormal)
+            )
+        decode_ulp = max(max_val * decode_eps, decode_floor)
         return float(min(slack + decode_ulp, float(np.finfo(np.float64).max)))
 
     def _encode_coordinate(
@@ -661,7 +659,9 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
                 encoder_name = "float32"
             elif mode == EncodingMode.MEMORY or mode == EncodingMode.AUTO:
                 # Quantize to uint8: [0, 1] → [0, 255]
-                encoded_data = np.clip(data * 255.0, 0, 255).astype(np.uint8)
+                encoded_data = np.clip(
+                    data.astype(np.float64, copy=False) * 255.0, 0, 255
+                ).astype(np.uint8)
                 encoder_name = "rgb_uint8"
             else:
                 raise ValueError(f"Unexpected mode for SDR COLOR: {mode}")
