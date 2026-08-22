@@ -347,8 +347,8 @@ export function mahalanobis_distance(
  *
  * Same f32 discipline as the exported twin: the accumulators are frounded and
  * the result is rounded to the f32 Rust returns, because the caller squares it
- * and feeds it to `exp` — an f64 residual there moves the attenuation and can
- * flip the `minAmplitude` gate.
+ * and feeds it to `expf` — an f64 residual there would change the float32 input
+ * and could flip the `minAmplitude` gate.
  */
 function mahalanobisDistanceInternal(
   diff: Float32Array,
@@ -511,25 +511,12 @@ export function project_gsplats_nd_to_3d(
       // backend with a NaN attenuation where WASM had 0.0. `NaN > 0` is false,
       // so the two twins agree on every input. (The visibility gate below is
       // the second line of defence, for a NaN that arrives in `amplitudes`.)
-      // `rawExp - shiftC` cancels catastrophically as a splat approaches the
-      // truncation radius (that is the point of the shift — the attenuation
-      // must reach 0 there), so the ≤2 ulp `exp` residual above is amplified
-      // without bound near the cut: measured up to 134 ulp on the attenuated
-      // amplitude at truncate = 3, and 475 ulp at truncate = 0.5. Inherent to
-      // the formula, not to this rounding.
-      //
-      // Consequence worth stating plainly: the VISIBLE SET can still differ
-      // between the two backends for splats sitting exactly on the shell. At
-      // production defaults (`GSPLAT_DEFAULT_TRUNCATION_RADIUS` 2.75,
-      // `MIN_AMPLITUDE` 1e-6), 200 000 splats with amplitudes uniform in
-      // [0.2, 1.2] and their hidden coordinate in [2.7495, 2.7505] emit 94 550
-      // from WASM and 94 540 from this backend — 10 splats apart. The f32
-      // rounding makes that class much
-      // rarer (it used to reach any splat whose amplitude sat within thousands
-      // of ulps of the gate); it does not remove it, and it cannot while `exp`
-      // differs at all. Do not write a test that asserts count equality as a
-      // general property of the kernel — only on a fixture whose nearest
-      // emitted amplitude clears the residual by a stated margin.
+      // `rawExp - shiftC` cancels as a splat approaches the truncation radius
+      // (that is the point of the shift — the attenuation must reach 0 there),
+      // so every f32 operation above must match Rust exactly. The expf port and
+      // the surrounding operation-order roundings make the attenuated amplitude
+      // and the resulting visibility decision bit-exact against WASM, including
+      // splats on the truncation shell.
       const shifted = Math.fround(invOneMinusC * Math.fround(rawExp - shiftC));
       attenuation = shifted > 0.0 ? shifted : 0.0;
     }

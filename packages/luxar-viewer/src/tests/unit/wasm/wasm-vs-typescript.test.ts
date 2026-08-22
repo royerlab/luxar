@@ -1267,15 +1267,7 @@ describe('WASM vs TypeScript Comparison', () => {
       expect(maxAbs(longer, shorter)).toBe(Infinity);
     });
 
-    /**
-     * `invOneMinusC` for a given truncation radius, in the kernel's own
-     * operation order. The attenuated amplitude is
-     * `amp · invOneMinusC · (rawExp − shiftC)`, so the absolute error a ≤2 ulp
-     * `exp` residual can produce is PROPORTIONAL TO THIS FACTOR — which is not
-     * a constant: 1.01 at truncate 3, 8.51 at truncate 0.5, and unbounded as
-     * truncate → 0. Amplitude bounds below are stated as `3 · inv · 2⁻²⁴`
-     * rather than as a fixed multiple of 2⁻²⁴ for exactly that reason.
-     */
+    /** `invOneMinusC` for a truncation radius, in the kernel's f32 operation order. */
     function invOneMinusC(truncate: number): number {
       const t = Math.fround(truncate);
       const shiftC = Math.fround(Math.exp(Math.fround(Math.fround(-0.5 * t) * t)));
@@ -1906,10 +1898,8 @@ describe('WASM vs TypeScript Comparison', () => {
         expect(Array.from(w.chol.subarray(0, 5))).toEqual([regularized, 0, regularized, 0, 0]);
         expect(Array.from(ts.chol.subarray(0, 5))).toEqual(Array.from(w.chol.subarray(0, 5)));
         // The phantom z diagonal is the geometric mean of the two floored
-        // diagonals, so it crosses ln/exp and lands 4 ulp off `regularized`
-        // rather than on it — the one value here that cannot be asserted exact.
-        // 4, not 2, precisely because of the scale law the phantom sweep below
-        // measures: the residual is ≈ |ln σ|·2⁻²⁴, and σ = 1e-5 here.
+        // diagonals. Its mathematically equivalent logf/expf evaluation need not
+        // reproduce the input bit pattern, but both backends must agree exactly.
         expect(ulpDistance(w.chol[5], regularized)).toBeLessThanOrEqual(8);
         expect(ts.chol[5]).toBe(w.chol[5]);
       }
