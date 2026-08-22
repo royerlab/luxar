@@ -850,6 +850,7 @@ def write_scene(
         float(center[1] - 1.65 * side),
         float(center[2] + 1.05 * side),
     )
+    camera_target = tuple(float(v) for v in center)
 
     with asection("Writing Luxar scene"):
         dims = Dimensions(
@@ -879,10 +880,10 @@ def write_scene(
             camera=CameraConfig(
                 position=pull_in(
                     camera_position,
-                    tuple(float(v) for v in center),
+                    camera_target,
                     from_fov_deg=42.0,
                 ),
-                target=tuple(float(v) for v in center),
+                target=camera_target,
                 up=(0.0, 0.0, 1.0),
                 near=0.01,
                 far=side * 12.0,

@@ -57,15 +57,6 @@ CINEMATIC_FOV_DEG = 63.0
 #: what a demo pose composed before the demos opted into the cinematic look.
 VIEWER_DEFAULT_FOV_DEG = 47.0
 
-#: Default distance scale that holds a subject's on-screen size fixed while the
-#: vertical FOV widens from :data:`VIEWER_DEFAULT_FOV_DEG` to
-#: :data:`CINEMATIC_FOV_DEG`:
-#: ``tan(23.5°) / tan(31.5°)`` ≈ 0.709. Derived rather than written out so the
-#: two FOVs above stay the single source of truth.
-FRAMING_PULL_IN = math.tan(math.radians(VIEWER_DEFAULT_FOV_DEG / 2.0)) / math.tan(
-    math.radians(CINEMATIC_FOV_DEG / 2.0)
-)
-
 
 def pull_in(
     position: tuple[float, float, float],

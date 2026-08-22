@@ -241,7 +241,7 @@ ABSORPTION = 0.81
 # NARROWER one eats into it and below ~1.29 (= 1.4 x `CAMERA_FILL`) starts
 # cropping the outer optic lobes. 1.4 is the landscape floor this demo is
 # calibrated for. Framing for a square window instead — the never-crop choice —
-# would put the camera at ~912 um: closer than the viewer's own ~1100 um default,
+# would put the camera at ~671 um: closer than the viewer's own ~1100 um default,
 # but the brain would then occupy only ~0.66 of the width at 1.4 and ~0.52 at
 # 16:9, instead of 0.92. That headroom nobody sees is most of what the explicit
 # camera is here to recover.

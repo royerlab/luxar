@@ -1726,6 +1726,7 @@ def _forest_dimensions() -> Dimensions:
 
 
 def _viewer_config() -> ViewerConfig:
+    camera_target = (4.0, 6.0, 4.5)
     return ViewerConfig(
         cinematic_mode=True,
         # ACES explicitly — the house default; the luminous accents +
@@ -1734,8 +1735,8 @@ def _viewer_config() -> ViewerConfig:
         # Opening pose: low vantage from the forest edge at canopy height,
         # looking into the depth of the field — not the default top-down.
         camera=CameraConfig(
-            position=pull_in((-48.0, -42.0, 14.0), (4.0, 6.0, 4.5), from_fov_deg=50.0),
-            target=(4.0, 6.0, 4.5),
+            position=pull_in((-48.0, -42.0, 14.0), camera_target, from_fov_deg=50.0),
+            target=camera_target,
             up=(0.0, 0.0, 1.0),
             near=0.5,
             far=800.0,

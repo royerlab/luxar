@@ -70,11 +70,17 @@ from __future__ import annotations
 
 import ast
 import math
+import re
 from pathlib import Path
 
 import pytest
 
-from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG, pull_in
+from luxar.conftest import find_repo_relative_file
+from luxar.demos._cinematic_camera import (
+    CINEMATIC_FOV_DEG,
+    VIEWER_DEFAULT_FOV_DEG,
+    pull_in,
+)
 
 from ._scanned_modules import scanned_demo_modules
 
@@ -200,7 +206,8 @@ def _composes_for_the_cinematic_lens(tree: ast.AST, call: ast.Call) -> bool:
     Two spellings, both from ``demos/_cinematic_camera.py`` and both visible to
     a static reader:
 
-    * ``position=pull_in(...)`` — a distance tuned at 47° carried over to 63°.
+    * ``position=pull_in(...)`` — a distance tuned at an authored lens carried
+      over to 63°.
     * the module imports ``CINEMATIC_FOV_DEG`` — it derives the distance from
       the lens itself, so there is no 47° assumption left to protect.
 
@@ -372,6 +379,33 @@ def test_pull_in_preserves_framing_from_every_authored_lens(
     assert tuple(moved[i] - target[i] for i in range(3)) == pytest.approx(
         tuple((position[i] - target[i]) * new_distance / old_distance for i in range(3))
     )
+
+
+def test_python_fov_constants_match_the_viewer_contract() -> None:
+    start = Path(__file__).resolve()
+    camera_source = find_repo_relative_file(
+        Path("packages/luxar-viewer/src/config/sections/camera/data.ts"), start
+    )
+    rendering_source = find_repo_relative_file(
+        Path("packages/luxar-viewer/src/config/sections/rendering-controls/data.ts"),
+        start,
+    )
+    assert camera_source is not None
+    assert rendering_source is not None
+
+    cinematic_match = re.search(
+        r"['\"]35mm['\"]\s*:\s*([0-9]+(?:\.[0-9]+)?)",
+        camera_source.read_text(encoding="utf-8"),
+    )
+    default_match = re.search(
+        r"defaults\s*:\s*\{.*?\bfov\s*:\s*([0-9]+(?:\.[0-9]+)?)",
+        rendering_source.read_text(encoding="utf-8"),
+        re.DOTALL,
+    )
+    assert cinematic_match is not None
+    assert default_match is not None
+    assert float(cinematic_match.group(1)) == CINEMATIC_FOV_DEG
+    assert float(default_match.group(1)) == VIEWER_DEFAULT_FOV_DEG
 
 
 @pytest.mark.parametrize(
