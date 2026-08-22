@@ -427,9 +427,10 @@ mapping, a subtle wide bloom, detector noise, vignette, and the 35 mm
 chromatic lens + FOV) for every field the scene does not set itself — so you
 can enable the look and still override, say, `bloom_strength` on top of it.
 Note that the preset also widens the camera to the 35 mm field of view (63°),
-which is wider than the default auto-framing; if you have composed a specific
-framing, pin `camera.fov` (or `camera.fov_preset`) alongside `cinematic_mode`
-and the preset will leave your framing alone.
+which is applied before automatic framing so the fitted subject occupancy
+matches that lens. Pin `camera.fov` (or `camera.fov_preset`) only when composing
+an explicit camera pose for a specific lens. A returning visitor's stored FOV
+still takes precedence over the scene-authored value by design.
 
 See `luxar.ViewerConfig` docstring for the full field list with types and
 valid ranges.

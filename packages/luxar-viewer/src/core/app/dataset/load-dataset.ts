@@ -60,15 +60,18 @@ export async function loadDataset(src: string, ports: LoadDatasetPorts): Promise
   // Set scene ID for rendering controls persistence BEFORE loading scene
   // This ensures saved settings (like HDR intensity) are applied before materials are created
   ports.renderingControls.setSceneId(src);
+  const applyViewerConfigDefaults = !ports.renderingControls.hasStoredSettings();
 
   // Load scene data (animation loop will continue even if this fails)
-  await ports.sceneManager.loadSceneData(src, ports.loaderConfig);
+  await ports.sceneManager.loadSceneData(src, ports.loaderConfig, {
+    applyViewerConfigFov: applyViewerConfigDefaults,
+  });
 
   // Pass zarr viewer_config to rendering controls (available after scene loads).
   // If no localStorage settings exist for this scene, apply zarr defaults.
   const viewerConfig = ports.sceneManager.getSceneViewerConfig();
   ports.renderingControls.setZarrViewerConfig(viewerConfig);
-  if (!ports.renderingControls.hasStoredSettings() && viewerConfig) {
+  if (applyViewerConfigDefaults && viewerConfig) {
     ports.renderingControls.applyZarrDefaults();
   }
 

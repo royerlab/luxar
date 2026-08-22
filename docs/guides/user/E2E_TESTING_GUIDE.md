@@ -80,6 +80,7 @@ The authoritative list is the directory itself — run
 | **cache-hardening.spec.ts** | Cache health/demand/network/prefetch diagnostics + cache-monitor UI fields |
 | **cache-persistence.spec.ts** | Cache persistence across reloads |
 | **cache-system.spec.ts** | Three-level cache system (L0/L1/L2) incl. real browser OPFS behavior |
+| **cinematic-auto-framing.spec.ts** | Cinematic FOV is resolved before first-load auto-framing |
 | **colormap-system.spec.ts** | Colormap application and switching |
 | **context-restore.spec.ts** | Post-processing pipeline survives WebGL context loss/restore |
 | **controls-interaction.spec.ts** | Keyboard, mouse, camera |
