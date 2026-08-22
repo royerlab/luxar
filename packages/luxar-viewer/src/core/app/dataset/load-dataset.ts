@@ -68,7 +68,8 @@ export async function loadDataset(src: string, ports: LoadDatasetPorts): Promise
   });
 
   // Pass zarr viewer_config to rendering controls (available after scene loads).
-  // If no localStorage settings exist for this scene, apply zarr defaults.
+  // If no localStorage settings exist for this scene, apply zarr defaults. An
+  // authored camera position already carried its resolved FOV during loading.
   const viewerConfig = ports.sceneManager.getSceneViewerConfig();
   ports.renderingControls.setZarrViewerConfig(viewerConfig);
   if (applyViewerConfigDefaults && viewerConfig) {

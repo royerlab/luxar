@@ -890,6 +890,23 @@ describe('SceneManager', () => {
       expect(sceneManager.currentFov).toBe(47);
     });
 
+    it('applies the resolved FOV with an authored position despite stored settings', async () => {
+      const spies = installSpies({
+        positionApplied: true,
+        viewerConfig: {
+          cinematic_mode: true,
+          camera: { position: [10, 20, 30] },
+        },
+      });
+
+      await sceneManager.loadSceneData('http://example.com/data.zarr', undefined, {
+        applyViewerConfigFov: false,
+      });
+
+      expect(spies.autoFrameCamera).not.toHaveBeenCalled();
+      expect(sceneManager.currentFov).toBe(63);
+    });
+
     it.each([
       { name: 'planar bounds', min: [-1, -1, 0], max: [1, 1, 0], nearestDepth: 0 },
       { name: '3D bounds', min: [-1, -1, -1], max: [1, 1, 1], nearestDepth: 1 },
