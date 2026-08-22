@@ -885,12 +885,13 @@ class TestGraftedFilePartitionSpec:
     down to each part's own ``add_gsplats``, where it drives that leaf's BSP
     split. So the spec was judged one level down, AFTER ``graft_gsplat_node`` had
     already built the ``kind=partition`` wrapper from the on-disk tree. Measured
-    through the public file door, every malformed shape below was refused from
-    inside ``part_0``, with ``g`` surviving ``finalize()`` as a childless
-    ``kind=partition`` group. Identical to the ``lod_group=`` door's bug in the
-    lod/ sibling, and closed the same way — one call in the slot that already
-    holds this door's ``strip_absent_attr_kwargs`` / ``reject_data_owned_channels``
-    pair.
+    through the public file door, the four pre-existing malformed shapes below
+    were refused from inside ``part_0``, with ``g`` surviving ``finalize()`` as a
+    childless ``kind=partition`` group. The newly covered unknown key instead
+    succeeded: ``g`` kept the stored partition with two flat children because
+    ``parts`` was ignored. Identical to the ``lod_group=`` door's bug in the lod/
+    sibling, and closed the same way — one call in the slot that already holds
+    this door's ``strip_absent_attr_kwargs`` / ``reject_data_owned_channels`` pair.
     """
 
     def _file(self, tmp_path: Any, filename: str = "nested_part.gsplats.zarr") -> str:
@@ -976,7 +977,7 @@ class TestGraftedFilePartitionSpec:
         (``TestTheGSplatsPartitionSpecCheckSkipsASubTwoDimensionScene``); this is
         the graft counterpart, and the only test that reads the ``node_ndim(node)``
         argument at all. Measured with that argument replaced by a constant ``3``:
-        the tests above all stay green and this one answers ``Could not add
+        the seven tests above all stay green and this one answers ``Could not add
         gsplats 'g': partition must be None, True, or dict; got str`` — a refusal
         the flat path does not make.
         """
@@ -2592,6 +2593,13 @@ def _coloured_element_count(geometry: str) -> int:
 
 
 class TestPartitionSpecKeys:
+    """Unknown keys must fail before the old silent flat-leaf fallback.
+
+    Before #1873, ``partition={"parts": 4}`` wrote a flat ``n`` leaf containing
+    every element and no partition wrapper. That is why the regression asserts
+    that ``n`` never reaches the store, rather than checking a child count.
+    """
+
     @pytest.mark.parametrize("geometry", ["points", "lines", "gsplats", "mesh"])
     def test_an_unknown_key_is_refused_before_any_node_is_written(
         self, tmp_path: Any, geometry: str

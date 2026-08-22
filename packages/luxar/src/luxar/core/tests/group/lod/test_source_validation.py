@@ -1637,10 +1637,12 @@ class TestGSplatsFromDataRefusesABadPartitionSpecBeforeTheWrapper:
     that). Pre-fix that exclusion also carried the INVALID ones through unread,
     to be refused one level down inside ``child_0`` — by which point
     ``add_lod_group`` had created the ``kind=lod`` wrapper. Measured on main,
-    every malformed shape below was refused from inside ``child_0``, with ``g`` surviving
-    ``finalize()`` as a childless ``kind=lod`` group. Same pair #1529/#1534 closed
-    elsewhere — a wrapper that strands, and a message blaming an internal child
-    for the caller's own kwarg.
+    the four pre-existing malformed shapes below were refused from inside
+    ``child_0``, with ``g`` surviving ``finalize()`` as a childless ``kind=lod``
+    group. The newly covered unknown key instead succeeded: ``g`` finalized as
+    a populated ``kind=lod`` group with two flat children because ``parts`` was
+    ignored. Same pair #1529/#1534 closed elsewhere — a wrapper that strands,
+    and a message blaming an internal child for the caller's own kwarg.
     """
 
     @pytest.mark.parametrize("case,spec", _BAD_PARTITION_SPECS)
