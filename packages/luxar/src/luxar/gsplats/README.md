@@ -8,11 +8,20 @@ This package implements a sophisticated Gaussian splatting system that fits coll
 
 ## Installation
 
-Gaussian splatting requires optional dependencies:
+Fitting Gaussian splats requires optional dependencies:
 
 ```bash
 pip install "luxar[gsplats]"
 ```
+
+> **Core-only carve-out.** The pure-NumPy half of this package works on a plain
+> `pip install luxar`: the `utils.trils` Cholesky helpers, and `GSplatData` —
+> construct, `.save()`, `.load()`, plus the geometric `translate` / `transform` /
+> `center_at_centroid` — so an existing `.gsplats.zarr` can be authored and
+> grafted into a scene (`scene.add_gsplats` / `add_gsplats_from_data` /
+> `add_gsplats_from_file`) without the extra. Fitting, calibration, culling, LOD
+> construction and intensity editing all need it; the `luxar.gsplats` package
+> docstring states exactly where the line falls.
 
 > **⚠️ torch ABI coupling.** The optional CUDA extension
 > (`models/gsplats/cuda/cuda_splatting_backend*.so`) is compiled against a
