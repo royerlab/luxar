@@ -157,8 +157,10 @@ def resolve_partition_spec(partition: Any) -> Tuple[int, str]:
         unknown_keys = set(partition) - {"max_elements", "rule"}
         if unknown_keys:
             keys = ", ".join(sorted(map(repr, unknown_keys)))
-            noun = "key" if len(unknown_keys) == 1 else "keys"
-            raise ValueError(f"unknown partition {noun}: {keys}")
+            raise ValueError(
+                f"partition: unrecognized keys [{keys}]. "
+                "Valid keys: max_elements, rule."
+            )
         max_elements = int(partition.get("max_elements", DEFAULT_MAX_ELEMENTS))
         if max_elements < 1:
             raise ValueError(f"partition max_elements must be >= 1, got {max_elements}")

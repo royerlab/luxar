@@ -69,7 +69,10 @@ class TestResolvePartitionSpec:
     def test_unknown_keys_are_refused_in_sorted_order(self) -> None:
         with pytest.raises(
             ValueError,
-            match=r"unknown partition keys: 'other', 'parts'",
+            match=(
+                r"partition: unrecognized keys \['other', 'parts'\]\. "
+                r"Valid keys: max_elements, rule\."
+            ),
         ):
             resolve_partition_spec({"parts": 4, "other": True})
 

@@ -2601,7 +2601,13 @@ class TestPartitionSpecKeys:
         )
         colors = np.zeros((_coloured_element_count(geometry), 3), dtype=np.uint8)
 
-        with pytest.raises(ValueError, match=r"unknown partition key: 'parts'"):
+        with pytest.raises(
+            ValueError,
+            match=(
+                r"partition: unrecognized keys \['parts'\]\. "
+                r"Valid keys: max_elements, rule\."
+            ),
+        ):
             _add_coloured(scene, geometry, colors, partition={"parts": 4})
 
         assert "n" not in compiler.store
