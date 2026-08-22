@@ -8,7 +8,7 @@ neither from the preset — it keeps a 50 mm framing while still receiving 35 mm
 distortion, which is two different lenses in one image. (Sixteen demos do pin an
 ``fov`` of their own — 38° to 50° where it is a literal, computed in five — and
 those pins all predate the cinematic look. They are exactly that mismatch:
-their framing is safe, their lens is mixed. Unifying them is a separate pass.)
+their framing is safe, their lens is mixed. Unifying them is #1862.)
 
 So a demo that states its own distance pins neither, and composes its pose for
 63° instead. Such a pose specifies a DISTANCE, not a framing, and at a fixed
@@ -25,7 +25,7 @@ auto-framed cinematic scene sits at the 47° fit distance behind a 63° lens and
 opens ~1.4x looser than it used to — the subject filling 0.53 of the half-frame
 where the fit put 0.75. ``docs/guides/user/VIEWER_GUIDE.md`` documents this
 ("wider than the default auto-framing"), and closing it means applying the
-expanded fov before the fit, in the viewer, not here.
+expanded fov before the fit, in the viewer, not here — #1861.
 
 The poses composed through this module are unaffected either way: an authored
 position suppresses auto-framing entirely, so their framing is exactly what the
