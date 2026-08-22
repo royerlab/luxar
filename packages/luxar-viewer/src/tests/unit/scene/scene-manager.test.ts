@@ -703,15 +703,21 @@ describe('SceneManager', () => {
       expect(listener).toHaveBeenCalledTimes(1);
     });
 
-    it('does not dispatch scene change when only the orthographic FOV stash changes', () => {
-      sceneManager.setControlType('ortho');
-      const listener = vi.fn();
-      sceneManager.addEventListener('change', listener);
+    it.each([
+      ['relative update', () => sceneManager.updateFOV(10)],
+      ['absolute update', () => sceneManager.setFov(63)],
+    ])(
+      'does not dispatch scene change when an orthographic %s only updates the stash',
+      (_name, applyFov) => {
+        sceneManager.setControlType('ortho');
+        const listener = vi.fn();
+        sceneManager.addEventListener('change', listener);
 
-      expect(sceneManager.setFov(63)).toBe(true);
+        expect(applyFov()).toBe(true);
 
-      expect(listener).not.toHaveBeenCalled();
-    });
+        expect(listener).not.toHaveBeenCalled();
+      }
+    );
   });
 
   describe('loadSceneData orchestration', () => {

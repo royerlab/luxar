@@ -588,6 +588,13 @@ describe('initPicking', () => {
       dirtyHandler();
       const pickingSystem = vi.mocked(PickingSystem).mock.results.at(-1)?.value;
       expect(pickingSystem.markDirty).toHaveBeenCalledTimes(1);
+
+      events.dispose();
+      expect(sm.removeEventListener).toHaveBeenCalledWith('change', dirtyHandler);
+      expect(sm.controls.removeEventListener).not.toHaveBeenCalledWith(
+        'change',
+        expect.any(Function)
+      );
     });
   });
 });
