@@ -549,6 +549,8 @@ describe('loadPartitionGroupNode', () => {
   it('keeps a valid tree written by the Python scene compiler', async () => {
     attachStubChildren();
     const node = pythonPartition('test_partition_layer.luxar.zarr');
+    const bspTree = node.attrs.bsp_tree;
+    expect(bspTree).toBeDefined();
 
     const wrapper = await loadPartitionGroupNode(
       node,
@@ -558,6 +560,6 @@ describe('loadPartitionGroupNode', () => {
       loadSceneNodesMock
     );
 
-    expect(wrapper.userData.bspTree).toEqual(node.attrs.bsp_tree);
+    expect(wrapper.userData.bspTree).toEqual(bspTree);
   });
 });
