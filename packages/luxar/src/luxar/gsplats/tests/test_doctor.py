@@ -118,8 +118,7 @@ def _disjoint_centroid_split_lines_scene(tmp: Path) -> Path:
     )
     positions = np.concatenate((first, second))
     indices = np.array(
-        [(i, i + 1) for i in range(10)]
-        + [(i, i + 1) for i in range(11, 13)],
+        [(i, i + 1) for i in range(10)] + [(i, i + 1) for i in range(11, 13)],
         dtype=np.uint32,
     )
 

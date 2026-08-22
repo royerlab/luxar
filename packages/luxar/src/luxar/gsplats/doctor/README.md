@@ -44,7 +44,7 @@ if not report.healthy:
 | `split-planes` | a `kind=partition` records no `bsp_tree` | recover the planes from the part boxes, when those are disjoint |
 | `split-planes` | the stored `bsp_tree` does not separate the parts it names (stale after a transform, or written against a different part set) | rebuild from the part boxes, or remove the tree so ordering falls back honestly |
 | `split-planes` | overlapping parts carry planes outside their measured overlap bands and per-axis tolerance floor | recover the band-bounded cuts; report a coordinate-frame scale only when repeated planes support the same factors |
-| `split-planes` | the parts OVERLAP, so no tree separates them and the stored one cannot be checked exactly | none — reported as a note; this is what a uniform-tiled fit's approximate planes look like, and deleting them would be a downgrade |
+| `split-planes` | the parts overlap, or are split by polyline/face centroid, so no stored plane separates them exactly | none when the parts overlap; when they are disjoint, `--fix` replaces the approximate planes with exact cuts recovered from the boxes — reported as a note |
 
 Why it matters: the viewer orders partition parts back-to-front by traversing
 those planes, which is exact for any camera pose including inside the volume.
@@ -56,14 +56,16 @@ wrong instead of falling back.
 
 Not every partition can be repaired. A uniform-tiled fit keeps each tile's
 apodization halo, so its parts genuinely intersect and no exact ordering exists
-to recover; that is reported, with the remedy (re-fit), and left alone. When
-such a partition already carries its producer's approximate planes, the
-separation test fails by construction. Doctor still checks that each plane lies
-between the two sides' part-box centers. The largest measured interpenetration
-on each axis supplies a tolerance floor, so sparse content cannot erase the
-halo scale. A grosser violation is an error. When one constant multiplier per
-axis moves every plane back into the measured overlap bands, doctor can rescale
-the tree; it names a coordinate-frame scale only when at least two raw ratios on
+to recover; that is reported, with the remedy (re-fit), and left alone.
+Centroid-split lines and mesh can carry approximate planes even when their boxes
+are disjoint; doctor can tighten those planes from the boxes under `--fix`. When
+a partition carries its producer's approximate planes, the separation test
+fails by construction. Doctor still checks that each plane lies between the two
+sides' part-box centers. The largest measured interpenetration on each axis
+supplies a tolerance floor, so sparse content cannot erase the halo scale. A
+grosser violation is an error. When one constant multiplier per axis moves every
+plane back into the measured overlap bands, doctor can rescale the tree; it names
+a coordinate-frame scale only when at least two raw ratios on
 each changed axis agree closely, or a single ratio agrees with a factor already
 proven by repeated planes on another changed axis. Otherwise it describes the
 repair as recovering the measured band cuts. If no safe factors exist, it removes

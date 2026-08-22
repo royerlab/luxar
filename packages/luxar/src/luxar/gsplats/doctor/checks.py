@@ -129,9 +129,7 @@ def check_partition_split_planes(root: "zarr.Group") -> List[Finding]:
             if labels_name_parts and serialized_bsp_tree_straddles_centers(
                 stored_dict, boxes
             ):
-                findings.append(
-                    _approximate_finding(group, where, len(boxes), rebuilt)
-                )
+                findings.append(_approximate_finding(group, where, len(boxes), rebuilt))
                 continue
             if rebuilt is None and labels_name_parts:
                 recovered = _recover_frame_scale(stored_dict, boxes)
@@ -359,7 +357,9 @@ def _approximate_finding(
             "for tiled gsplats, use a content plan or non-overlapping tiles."
         )
     else:
-        remedy = "Replace the stored planes with exact cuts recovered from the part boxes."
+        remedy = (
+            "Replace the stored planes with exact cuts recovered from the part boxes."
+        )
 
     return Finding(
         check="split-planes",
