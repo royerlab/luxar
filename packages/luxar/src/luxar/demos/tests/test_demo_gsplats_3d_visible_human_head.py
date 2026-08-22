@@ -386,9 +386,11 @@ class TestColorAgreementThreshold:
 class TestRejectedPairFallsThroughToRefit:
     """A rejected (fit, colors) pair must trigger a REFIT, not render nonsense.
 
-    The user-visible point of #1670 — and the state this demo is in today, since
-    its shipped sidecar is misordered. Detecting the mismatch is only half of it:
-    ``load_or_build`` has to actually fall through to download-and-refit.
+    The user-visible point of #1670. The shipped sidecar has since been
+    regenerated against the shipped store, so this is no longer the state the
+    demo is in — but detecting a mismatch is only half the contract:
+    ``load_or_build`` has to actually fall through to download-and-refit, which
+    is what keeps a future mis-ordered pair from rendering nonsense.
     """
 
     @staticmethod
@@ -541,40 +543,41 @@ class TestShippedLfsPairIsGuardedToo:
         assert got_fit is not sentinel_fit, "an aligned SHIPPED pair triggered a refit"
         np.testing.assert_array_equal(got_colors, colors)
 
-    def test_the_shipped_pair_is_currently_rejected(self) -> None:
-        """TRIPWIRE — the shipped artifact is misordered, and this pins that.
 
-        ``vh_head_colors.npz`` was sampled in the pre-save splat order and does
-        NOT correspond to the ``vh_head.gsplats.zarr.zip`` beside it (#1670), so
-        the guard refuses the pair and the demo's DEFAULT path is a ~1.1 GB
-        download plus a 4M-splat refit.
+class TestShippedPairIsAligned:
+    """The SHIPPED (fit, colors) pair must pass the demo's own guard.
 
-        WHEN THIS TEST GOES RED the artifact has been regenerated — that is good
-        news, and it is the signal to REVERT every claim that documents today's
-        slow path back to the fast-path wording:
+    Every other test here exercises the guard on synthetic pairs, which is why
+    #1670 survived: the mechanism was covered and the artifact was not. The
+    shipped sidecar had been sampled in the pre-save splat order, disagreed with
+    the shipped store at 0.00097, and the demo silently fell through to a 1.1 GB
+    download and refit on every run for anyone who pulled Git LFS.
 
-          * ``DEMO_META["requirements"]["download_mb"]`` 1100 → 25
-          * ``DEMO_META["requirements"]["compute"]`` "heavy" → "medium"
-          * the "NO WORKING FAST PATH TODAY (#1670)" block in the demo's module
-            docstring
-          * the **Requires** paragraph in ``demos/README.md``
-          * the ``gsplats_visible_human_head/`` row in ``demos/data/README.md``
-          * the ``gsplats_3d_visible_human_head`` entry in
-            ``scripts/gallery/generate_gallery_datasets.py``'s ``UNBUILDABLE_IDS``
-            (and the ``unbuildable`` sentence in ``scripts/gallery/README.md``)
+    A sidecar carries no positions, so a mis-ordered one cannot be repaired in
+    place — it has to be resampled from the volume. That makes this cheap check
+    worth having: it fails the moment the two assets stop belonging together,
+    instead of when someone notices the demo is slow.
+    """
 
-        Nothing else pins those, so without this tripwire they would quietly stay
-        wrong forever. Swap this test for ``assert _colors_match_fit(...)`` then.
-        """
-        from luxar.demos import is_lfs_pointer
+    def test_shipped_colors_belong_to_the_shipped_fit(self) -> None:
+        if _demo.is_lfs_pointer(_demo.LFS_FIT) or not _demo.LFS_FIT.exists():
+            pytest.skip("Visible Human Git LFS assets are not available")
+        if _demo.is_lfs_pointer(_demo.LFS_COLORS) or not _demo.LFS_COLORS.exists():
+            pytest.skip("Visible Human Git LFS colors sidecar is not available")
 
-        for path in (_demo.LFS_FIT, _demo.LFS_COLORS):
-            if not path.exists() or is_lfs_pointer(path):
-                pytest.skip(f"{path.name} not materialized (run `git lfs pull`)")
         fit = GSplatData.load(_demo.LFS_FIT, include_stats=False)
-        colors = _load_colors_f32(_demo.LFS_COLORS)
-        assert not _demo._colors_match_fit(fit, colors, "shipped"), (
-            "the shipped pair now PASSES the guard — see this test's docstring: "
-            "revert download_mb, compute, the docstring, both READMEs and the "
-            "gallery UNBUILDABLE_IDS entry to the fast-path wording"
+        colors = _demo._load_colors_f32(_demo.LFS_COLORS)
+
+        assert len(colors) == len(fit.centers), (
+            f"{len(colors):,} colors for {len(fit.centers):,} splats — the "
+            "sidecar does not belong to this fit"
         )
+        agreement = _demo.voxel_sampled_payload_agreement(fit.centers, colors)
+        assert agreement is not None, "too few same-voxel splats to verify"
+        assert agreement >= _demo.MIN_COLOR_AGREEMENT, (
+            f"shipped pair agrees at {agreement:.5f} < "
+            f"{_demo.MIN_COLOR_AGREEMENT} — the colors are not in the shipped "
+            "store's splat order, so the demo will refit on every run (#1670). "
+            "Resample the sidecar at the shipped store's centers."
+        )
+        assert _demo._colors_match_fit(fit, colors, "shipped pair")

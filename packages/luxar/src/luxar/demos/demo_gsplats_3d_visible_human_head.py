@@ -42,22 +42,26 @@ store's own order (save → reload → sample), never from the in-memory fit. On
 the pair is verified against that invariant (splats sharing a voxel must share a
 color); a mismatched pair is reported and refitted rather than rendered.
 
-NO WORKING FAST PATH TODAY (#1670): the shipped ``vh_head_colors.npz`` was
-sampled in the pre-save splat order and does NOT correspond to the shipped
-``vh_head.gsplats.zarr.zip`` (measured same-voxel agreement 0.00097 over
-1,911,192 splats). The guard therefore REJECTS the shipped pair and every run
-falls through to the download-and-refit path below, until the artifact is
-regenerated. So on a fresh machine this demo bootstraps itself with no manual
-steps, but not instantly:
-  1. It downloads the 377 color slices (~1.1 GB) to
+On a fresh machine this demo bootstraps itself with no manual steps, and
+instantly:
+  1. Fast path: the two Git LFS assets in
+     ``demos/data/gsplats_visible_human_head/`` — the 1,911,192-splat fit and
+     its colors sidecar — are loaded and verified against the invariant above.
+  2. If they aren't pulled, it downloads the 377 color slices (~1.1 GB) to
      ``~/.cache/luxar/gsplats_visible_human_head/``, builds the masked RGB
      volume, fits luminance on the GPU, caches the fit, then reloads it and
      samples the colors from the stored splat order — so subsequent runs load
      that (verified) local pair instantly.
-  2. The shipped Git LFS assets in ``demos/data/gsplats_visible_human_head/``
-     become the fast path again as soon as the sidecar is regenerated against
-     the store it ships with.
 ``--recompute`` forces the download + build + fit path.
+
+The fast path was broken for a while (#1670): the shipped sidecar had been
+sampled in the pre-save splat order, so it did not correspond to the shipped
+store (measured same-voxel agreement 0.00097 over 1,911,192 splats) and the
+guard rejected it on every run. Recovering it needed no refit — the fit itself
+was never wrong, only the color ORDER — so the volume was rebuilt and resampled
+at the shipped store's own centers, which is aligned by construction. The pair
+now agrees at 1.0. Note the sidecar carries no positions, so a mis-ordered one
+can never be repaired in place: it has to be resampled.
 
 USAGE
 -----
@@ -74,19 +78,17 @@ DEMO_META = {
     "category": "medical",
     "geometry": "gsplats",
     "requirements": {
-        # 1100, not 25: the shipped `vh_head_colors.npz` sidecar does not
-        # correspond to the shipped fit (#1670), so the guard rejects the pair
-        # and the DEFAULT path is the full ~1.1 GB cryosection download + refit.
-        # Restore 25 once the artifact is regenerated (and the shipped pair
-        # passes `_colors_match_fit`). Read by `luxar demo run-all`, whose
-        # `--max-download-mb` default of 200 now skips this demo — correctly, it
-        # really does download 1.1 GB unattended.
-        "download_mb": 1100,
-        # "heavy", not "medium", for the same reason and with the same expiry:
-        # the default path today is a progressive fit of up to 4M splats over a
-        # ~10 GB RGB volume, not a cached load. Restore "medium" together with
-        # the 25 above once the artifact is regenerated.
-        "compute": "heavy",
+        # Back to 25 (#1670 resolved): the shipped sidecar was regenerated
+        # against the shipped fit and the pair now passes `_colors_match_fit`
+        # at agreement 1.0, so the DEFAULT path is the two Git-LFS assets —
+        # 20.6 MB fit + 5.0 MB colors — not the 1.1 GB cryosection download.
+        # Read by `luxar demo run-all`, whose `--max-download-mb` default of 200
+        # therefore stops skipping this demo.
+        "download_mb": 25,
+        # "medium" again for the same reason: the default path is a cached load
+        # of a 1.9M-splat store, not a progressive fit over a ~10 GB RGB volume.
+        # Only `--recompute` still pays that.
+        "compute": "medium",
         # Still "optional": the fit genuinely runs on CPU (slowly).
         "gpu": "optional",
         "local_data": "git-lfs",
