@@ -101,13 +101,30 @@ gate: no `create_scene` without a `viewer_config`, and no `ViewerConfig` without
 a literal `cinematic_mode=True`.
 
 The preset also expands the field of view from 47° to 63°, but the viewer applies
-that expansion after first-load auto-framing. An auto-framed cinematic scene is
-therefore 0.71x smaller linearly than the same scene without the preset. Authored
-camera positions are different: their distances were composed for a stated FOV,
-so all 21 pin `camera.fov` and preserve that framing. The cinematic distortion
-still applies unless a scene explicitly suppresses it; the two quantitative
-ortho demos do so because their projection-derived scale bars must remain exact,
-and the biodiversity globe does so to preserve its categorical hue encoding.
+that expansion *after* first-load auto-framing and never re-frames, so an
+auto-framed cinematic scene opens 0.71x smaller linearly — half the screen area —
+than the same scene without the preset. That is a viewer-side ordering, not
+something a demo can correct; closing it means applying the expanded fov before
+the fit.
+
+An authored camera position is a stronger contract, because its distance was
+composed for one FOV, and the demos say which one in one of two ways. Sixteen
+**pin** `camera.fov` (38°–50°, computed in five): framing preserved, but they
+then wear the preset's 35 mm barrel distortion at a longer lens's framing — two
+lenses in one image — and those pins all predate the cinematic look. The five
+poses derived from a data extent or a fitted radius instead **compose for 63°**
+through `_cinematic_camera.py`: read `CINEMATIC_FOV_DEG` when the distance comes
+from the lens (a fitted radius through `asin(R/D)`), or call `pull_in()` to carry
+an empirically tuned pose over — it scales about the pose's target rather than
+the world origin, so an off-origin camera keeps looking where it was aimed. That
+keeps the lens whole and the framing exact, and costs the stronger perspective a
+wider lens gives. `test_demos_cinematic_mode.py` accepts either and rejects a
+bare authored position, whose FOV assumption nobody can read.
+
+The cinematic distortion still applies unless a scene explicitly suppresses it;
+the two quantitative ortho demos do so because their projection-derived scale
+bars must remain exact, and the biodiversity globe does so to preserve its
+categorical hue encoding.
 
 The three network demos (`caida_as_topology`, `huri_interactome`,
 `ppi_flow_field`) share `_graph_common.py`, but not all of it. All three use the

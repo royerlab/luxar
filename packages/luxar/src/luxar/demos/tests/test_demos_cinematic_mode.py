@@ -30,10 +30,15 @@ Four invariants, and they close different holes:
     more fragile than the rule it enforces. The rule holds because in this
     package a ``ViewerConfig`` is only ever built to be handed to a scene — if
     that stops being true, this guard is where to say so.
-``test_every_authored_camera_pins_its_fov``
-    Every ``CameraConfig`` with an opening position pins the FOV that position
-    was composed for. The viewer expands the cinematic FOV after auto-framing,
-    so leaving an authored pose unpinned changes its deliberate composition.
+``test_every_authored_camera_states_the_lens_it_was_composed_for``
+    Every ``CameraConfig`` with an opening position says, one way or another,
+    which field of view its distance assumes — because the viewer expands the
+    cinematic FOV only AFTER it auto-frames, so a pose that quietly assumes the
+    47° default opens ~1.4x looser than it was tuned for. Pinning ``fov`` /
+    ``fov_preset`` says it; so does composing the pose for 63° through
+    ``demos/_cinematic_camera.py``, which is what the five extent- and
+    radius-derived poses do (and which keeps the preset's lens whole — see
+    below). What the guard rejects is neither: a bare authored position.
 ``test_scientific_fidelity_overrides_are_explicit``
     The three demos whose scale, intensity, or categorical hue would be damaged
     by lens distortion and detector noise keep those author overrides explicit.
@@ -51,10 +56,21 @@ remain meaningful, and the biodiversity globe disables both so its categorical
 hues remain exact.
 
 The preset's 63° FOV is applied after first-load auto-framing, which happens at
-the viewer's 47° default. Auto-framed scenes therefore open 0.71x smaller. A
-demo that authors a camera position has a stronger contract: its distance was
-composed for a specific FOV, so every such ``CameraConfig`` must pin ``fov`` or
-``fov_preset``. The third invariant below enforces that rule.
+the viewer's 47° default, and nothing re-frames afterwards — so an auto-framed
+scene opens 0.71x smaller linearly (half the screen area). The demos cannot fix
+that from here; closing it means applying the expanded fov before the fit, in the
+viewer.
+
+A demo that authors a camera position has a stronger contract, since its distance
+was composed for one specific FOV, and there are two honest ways to keep it.
+PINNING ``fov`` holds the framing but takes the preset's 35 mm barrel distortion
+at a 50 mm framing — two lenses in one image; sixteen demos are in that state,
+all with pins that predate the cinematic look. COMPOSING the pose for 63°
+(``demos/_cinematic_camera.py``) keeps the lens whole and preserves the framing
+exactly, at the cost of the stronger perspective a wider lens gives. The five
+poses derived from an extent or a fitted radius take the second route, which is a
+deliberate house choice rather than an oversight; the third invariant below
+accepts either, and rejects a pose that states neither.
 """
 
 from __future__ import annotations
@@ -169,8 +185,36 @@ def test_every_scene_passes_a_viewer_config(path: Path) -> None:
     )
 
 
+def _composes_for_the_cinematic_lens(tree: ast.AST, call: ast.Call) -> bool:
+    """Whether an authored pose is demonstrably built for the preset's 63° lens.
+
+    Two spellings, both from ``demos/_cinematic_camera.py`` and both visible to
+    a static reader:
+
+    * ``position=pull_in(...)`` — a distance tuned at 47° carried over to 63°.
+    * the module imports ``CINEMATIC_FOV_DEG`` — it derives the distance from
+      the lens itself, so there is no 47° assumption left to protect.
+
+    The second test is per-MODULE rather than per-call, which is the looser of
+    the two: a module that imports the constant vouches for every pose in it.
+    That is the honest granularity for a demo whose framing comes out of one
+    ``camera_distance_for_radius``-style helper, and the import is a deliberate
+    enough act to read as the statement it is.
+    """
+    position = _keyword(call, "position")
+    if isinstance(position, ast.Call) and isinstance(position.func, ast.Name):
+        if position.func.id == "pull_in":
+            return True
+    return any(
+        isinstance(node, ast.ImportFrom)
+        and (node.module or "").endswith("_cinematic_camera")
+        and any(alias.name == "CINEMATIC_FOV_DEG" for alias in node.names)
+        for node in ast.walk(tree)
+    )
+
+
 @pytest.mark.parametrize("path", MODULES, ids=_module_ids(MODULES))
-def test_every_authored_camera_pins_its_fov(path: Path) -> None:
+def test_every_authored_camera_states_the_lens_it_was_composed_for(path: Path) -> None:
     tree = ast.parse(path.read_text(), filename=str(path))
     missing = [
         call.lineno
@@ -178,12 +222,16 @@ def test_every_authored_camera_pins_its_fov(path: Path) -> None:
         if _has_non_none_keyword(call, "position")
         and not _has_non_none_keyword(call, "fov")
         and not _has_non_none_keyword(call, "fov_preset")
+        and not _composes_for_the_cinematic_lens(tree, call)
     ]
     assert not missing, (
         f"{path.name}: CameraConfig at line(s) {missing} sets an opening position "
-        f"without pinning fov or fov_preset; cinematic mode widens the lens only "
-        f"after the viewer frames the scene, so authored poses must pin the FOV "
-        f"they were composed for"
+        f"whose field of view is anybody's guess: it pins neither fov nor "
+        f"fov_preset, and nothing says it was composed for the cinematic 63°. "
+        f"Cinematic mode widens the lens only AFTER the viewer frames a scene, "
+        f"so an authored pose that assumes 47° silently opens ~1.4x looser — "
+        f"pin the fov you meant, or compose for 63° through "
+        f"demos/_cinematic_camera.py"
     )
 
 
@@ -259,12 +307,28 @@ def test_the_guard_reads_the_flag_it_claims_to(source: str, flagged: bool) -> No
         ("CameraConfig(position=p)", True),
         ("CameraConfig(position=p, fov=None)", True),
         ("CameraConfig(fov=47.0)", False),
+        # Composed for the cinematic lens instead of pinned — the other way to
+        # be unambiguous about the FOV a pose assumes.
+        ("CameraConfig(position=pull_in((6.0, 7.0, 19.0)))", False),
+        (
+            "from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG\n"
+            "CameraConfig(position=(0.0, 0.0, d))",
+            False,
+        ),
+        # A pull_in-looking call that is NOT the helper stays flagged.
+        ("CameraConfig(position=other.pull_in(p))", True),
     ],
 )
 def test_the_guard_reads_authored_camera_framing(source: str, flagged: bool) -> None:
-    (call,) = _camera_configs(ast.parse(source))
-    missing = _has_non_none_keyword(call, "position") and not (
-        _has_non_none_keyword(call, "fov") or _has_non_none_keyword(call, "fov_preset")
+    tree = ast.parse(source)
+    (call,) = _camera_configs(tree)
+    missing = (
+        _has_non_none_keyword(call, "position")
+        and not (
+            _has_non_none_keyword(call, "fov")
+            or _has_non_none_keyword(call, "fov_preset")
+        )
+        and not _composes_for_the_cinematic_lens(tree, call)
     )
     assert missing is flagged
 
