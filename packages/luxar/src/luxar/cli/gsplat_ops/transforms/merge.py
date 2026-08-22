@@ -155,6 +155,7 @@ def run_merge_datasets(
                         and any(d.colors is None for d in datasets)
                     ),
                 ),
+                input_has_colors=[d.colors is not None for d in datasets],
             )
 
             with asection(f"Saving to {output_path.name}"):

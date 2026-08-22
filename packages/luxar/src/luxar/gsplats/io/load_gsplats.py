@@ -326,6 +326,7 @@ def agreed_authored_appearance(
     paths: "Sequence[Union[str, Path]]",
     *,
     exclude: "Union[AbstractSet[str], Mapping[str, str]]" = frozenset(),
+    input_has_colors: "Union[Sequence[bool], None]" = None,
 ) -> Dict[str, Any]:
     """The authored appearance N inputs UNANIMOUSLY agree on (``gsplat merge``).
 
@@ -355,6 +356,11 @@ def agreed_authored_appearance(
     :data:`_ABSENCE_MEANS_VALUE`. So ``visible=false`` rides along only when
     EVERY input hides; one hidden input plus one silent one is a disagreement,
     not a unanimous hide.
+
+    ``colormap`` has one merge-specific absence rule supplied through
+    ``input_has_colors``: a colored input with no palette relies on per-splat
+    RGB, so carrying a sibling's palette would repaint it. In that case the
+    palette is excluded and the loss is announced.
 
     That rule is :func:`~luxar.gsplats.io.save_gsplats.agreed_normalization_stats`
     verbatim — deliberately, since it is the same question about the same merge.
@@ -392,11 +398,24 @@ def agreed_authored_appearance(
     """
     reads = [_read_authored_appearance(p) for p in paths]
     per_input = [attrs for attrs, _ in reads]
+    if input_has_colors is not None and len(input_has_colors) != len(paths):
+        raise ValueError("input_has_colors must have one entry per input path")
     reasons: Dict[str, str] = dict(exclude) if isinstance(exclude, Mapping) else {}
     excluded = set(exclude)
     # Keys whose exclusion has already been explained in full by a warning of
     # its own, so the per-key line below would only repeat it.
     explained: set[str] = set()
+
+    if input_has_colors is not None and any(
+        has_colors and "colormap" not in attrs
+        for attrs, has_colors in zip(per_input, input_has_colors)
+    ):
+        excluded.add("colormap")
+        reasons.setdefault(
+            "colormap",
+            "a colored input authored no palette and therefore relies on its "
+            "per-splat RGB; a sibling's palette would repaint it",
+        )
 
     n_custom = sum(1 for _, has_custom in reads if has_custom)
     if n_custom:
