@@ -10,13 +10,14 @@ import pytest
 import zarr
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.encoding.decoder import ArrayDecoder
 from luxar.io._compiler.context import OrderingCtx
 from luxar.io._compiler.spatial_ordering.lines import build_lines_ordering
 from luxar.io._compiler.spatial_ordering.points import (
     build_points_ordering,
     write_points_ordering_to_zarr,
 )
-from luxar.io._ordering.bounds import _BARRIER_BOUND_EPS
+from luxar.io._ordering.bounds import _BARRIER_BOUND_EPS, _store_outward_f32
 from luxar.io.reader import DEFAULT_COMP
 from luxar.typing_utils.constants import DEFAULT_POINT_RADIUS
 
@@ -126,11 +127,209 @@ def test_stored_chunk_bounds_carry_the_default_radius_without_radii(
     bounds = np.concatenate([level["chunk_bounds"][:] for level in levels], axis=0)
     assert bounds.shape[1:] == (4, 2)
 
+    # Every bound also carries the encoder's uint16 round-trip slack on top of
+    # the pad below (issue #1655): the spatial axes span 4 units, so that is at
+    # most 4/131070 = 3.1e-5 per axis, and it can only widen a bound. The
+    # barrier axis is a gridded integer time index, so its slack is exactly 0.
+    _quant = 4.0 / 131070.0
+
     # Spatial axes (1, 2, 3): padded by exactly DEFAULT_POINT_RADIUS = 0.5.
     for dim in (1, 2, 3):
-        assert bounds[:, dim, 0].min() == pytest.approx(0.0 - DEFAULT_POINT_RADIUS)
-        assert bounds[:, dim, 1].max() == pytest.approx(4.0 + DEFAULT_POINT_RADIUS)
+        lo = bounds[:, dim, 0].min()
+        hi = bounds[:, dim, 1].max()
+        assert lo <= -DEFAULT_POINT_RADIUS
+        assert hi >= 4.0 + DEFAULT_POINT_RADIUS
+        assert lo == pytest.approx(0.0 - DEFAULT_POINT_RADIUS, abs=_quant)
+        assert hi == pytest.approx(4.0 + DEFAULT_POINT_RADIUS, abs=_quant)
 
-    # Discrete/barrier axis 0: only the float-boundary epsilon, never the radius.
+    # Discrete/barrier axis 0: only the float-boundary epsilon, never the
+    # radius — and no quantisation slack either, because a gridded integer axis
+    # is snapped to round-trip bit-exactly.
     assert bounds[:, 0, 0].min() == pytest.approx(0.0 - _BARRIER_BOUND_EPS)
     assert bounds[:, 0, 1].max() == pytest.approx(3.0 + _BARRIER_BOUND_EPS)
+
+
+def _decode(node: zarr.Group, name: str) -> np.ndarray:
+    """Read an array back through the REAL decode path the viewer uses."""
+    return ArrayDecoder().decode(node[name], node)
+
+
+def _violations(
+    coords: np.ndarray, bounds: np.ndarray, chunk_size: int
+) -> tuple[int, int]:
+    """Rows (and chunks) whose coordinate falls outside its own chunk's bound.
+
+    ``coords`` is in the SAME row order the chunk grid was built from, so rows
+    ``[k·chunk_size, (k+1)·chunk_size)`` belong to chunk ``k``.
+    """
+    bad_rows = 0
+    bad_chunks = 0
+    for k in range(bounds.shape[0]):
+        block = coords[k * chunk_size : (k + 1) * chunk_size]
+        outside = (block < bounds[k, :, 0]) | (block > bounds[k, :, 1])
+        n = int(outside.any(axis=1).sum())
+        bad_rows += n
+        bad_chunks += 1 if n else 0
+    return bad_rows, bad_chunks
+
+
+def _wide_scene_dims(barrier: str) -> Dimensions:
+    """3 displayed spatial dims + one non-displayed barrier dim."""
+    return Dimensions(
+        [
+            Dimension(barrier, unit="s", display=False, discrete=True),
+            Dimension("x", unit="um", display=True),
+            Dimension("y", unit="um", display=True),
+            Dimension("z", unit="um", display=True),
+        ]
+    )
+
+
+def test_stored_points_bounds_contain_the_DECODED_positions(tmp_path: Path) -> None:
+    """End-to-end: every decoded position lies inside its own chunk's bound.
+
+    The bound builders see the AUTHORED positions, but under the default AUTO
+    encoding the positions are stored as per-axis uint16 fixed point, so what
+    the reader compares its slice query against is a position that can have
+    moved half a quantum — ``extent/131070``, i.e. 7.6e-3 on the 1000-wide axes
+    used here. A chunk whose own extremum moved outward is a chunk the reader
+    never fetches for a query at that edge: the points vanish, silently
+    (issue #1655). The compiler now pads the bounds by the encoder's own
+    round-trip slack, so containment holds against the DECODED positions.
+
+    ``radii=0.0`` (the accepted degenerate-points contract) is deliberate: the
+    default ``DEFAULT_POINT_RADIUS`` pad of 0.5 is 65× the slack and would hide
+    the defect entirely. The barrier axis carries only ``_BARRIER_BOUND_EPS``
+    (1e-3), which is 7.6× too small on its own — see the count asserted below.
+
+    Measured on the unpatched code (the compiler passing ``coord_slack=None``):
+    6 of 6 chunks and 18 of 12,000 rows fell outside their own bound.
+    """
+    rng = np.random.default_rng(1655)
+    n = 12_000
+    positions = np.empty((n, 4), dtype=np.float32)
+    # Non-gridded barrier axis with a wide extent: irregular acquisition
+    # timestamps, not a stacked integer index. Nothing snaps it exact.
+    positions[:, 0] = rng.random(n) * 1000.0
+    positions[:, 1:] = rng.random((n, 3)) * 1000.0
+
+    out = tmp_path / "wide_points.luxar.zarr"
+    with LuxarZarrCompiler(out, enable_spatial_index=True) as compiler:
+        scene = compiler.create_scene(dimensions=_wide_scene_dims("timestamp"))
+        scene.add_points("pts", positions, radii=0.0)
+
+    node = zarr.open_group(out, mode="r")["pts"]
+    assert node["positions"].attrs["encoding"]["name"] == "linear_perchannel_u16"
+    decoded = _decode(node, "positions")
+    bounds = node["chunk_bounds"][:]
+    chunk_size = int(node.attrs["chunk_size"])
+    assert bounds.shape[0] > 1, "want several chunks, not one"
+
+    bad_rows, bad_chunks = _violations(decoded, bounds, chunk_size)
+    assert (bad_rows, bad_chunks) == (0, 0)
+
+    # Not vacuous: the pad really is the half-quantum, on every axis. On the
+    # barrier axis it lands ON TOP of _BARRIER_BOUND_EPS (which is 7.6x too
+    # small on its own), not instead of it. The tolerance is one float32 ULP at
+    # 1000 (6.1e-5), which the outward store can add.
+    slack = 1000.0 / 131070.0
+    for d in range(4):
+        expected = slack + (_BARRIER_BOUND_EPS if d == 0 else 0.0)
+        pad = float(bounds[:, d, 1].max()) - float(decoded[:, d].max())
+        assert pad == pytest.approx(expected, abs=1e-4)
+
+
+def test_stored_lines_bounds_contain_the_DECODED_vertices(tmp_path: Path) -> None:
+    """The same claim for both Lines bound sets (vertex AND segment).
+
+    Vertex bounds carry no footprint pad at all, so they are the tightest
+    surface in the codebase and the most exposed to the quantisation gap;
+    segment bounds carry only the endpoint width, here 1e-4 (widths must be
+    > 0), 76× smaller than the slack.
+
+    Measured on the unpatched code: 15 of 15 vertex chunks (57 of 40,000 rows)
+    and 5 of 5 segment chunks (19 of 20,000 segment END points) fell outside
+    their own bound. Segment START points happened to survive here — the sort
+    key leads with them, so a chunk's start-point extremes tend to be the global
+    ones, which quantize exactly; the ends scatter and do not. Both are asserted
+    anyway: which endpoint is exposed is an accident of the ordering.
+    """
+    rng = np.random.default_rng(16550)
+    n_seg = 20_000
+    base = rng.random((n_seg, 4)) * 1000.0
+    # Short, spatially coherent segments — an incoherent polyline would give
+    # every chunk a bound spanning the whole volume and prove nothing.
+    ends = base + rng.standard_normal((n_seg, 4)) * 2.0
+    vertices = np.empty((2 * n_seg, 4), dtype=np.float32)
+    vertices[0::2] = base
+    vertices[1::2] = ends
+
+    out = tmp_path / "wide_lines.luxar.zarr"
+    with LuxarZarrCompiler(out, enable_spatial_index=True) as compiler:
+        scene = compiler.create_scene(dimensions=_wide_scene_dims("timestamp"))
+        scene.add_lines("lns", vertices, widths=1e-4, line_type="segments")
+
+    node = zarr.open_group(out, mode="r")["lns"]
+    assert node["vertices"].attrs["encoding"]["name"] == "linear_perchannel_u16"
+    decoded = _decode(node, "vertices")
+    segments = np.asarray(_decode(node, "segments")).astype(np.int64)
+
+    vertex_chunk = int(node.attrs["vertex_ordering"]["chunk_size"])
+    vertex_bounds = node["vertex_chunk_bounds"][:]
+    assert vertex_bounds.shape[0] > 1
+    assert _violations(decoded, vertex_bounds, vertex_chunk) == (0, 0)
+
+    # Segment bounds are in D-space over BOTH endpoints of each segment, so
+    # check each endpoint against its segment chunk's bound.
+    segment_chunk = int(node.attrs["segment_ordering"]["chunk_size"])
+    segment_bounds = node["segment_chunk_bounds"][:]
+    for endpoint in (0, 1):
+        coords = decoded[segments[:, endpoint]]
+        assert _violations(coords, segment_bounds, segment_chunk) == (0, 0)
+
+
+def test_gridded_barrier_axis_bounds_are_untouched(tmp_path: Path) -> None:
+    """A stacked integer time axis gets slack 0 — its bounds do not move.
+
+    The complement of the two tests above, and the reason the slack is
+    PER-AXIS: an ordinary integer time/channel axis is grid-snapped by the
+    encoder and round-trips bit-exactly, so widening its barrier bound would
+    buy nothing and cost over-fetch into the neighbouring category. Its stored
+    bound must still be exactly ``[t_min - eps, t_max + eps]`` — pinned here
+    chunk by chunk against the outward float32 store, not just in aggregate —
+    while the wide spatial axes beside it do get the pad.
+    """
+    rng = np.random.default_rng(99)
+    n = 12_000
+    positions = np.empty((n, 4), dtype=np.float32)
+    positions[:, 0] = rng.integers(0, 10, n)  # gridded: 10 timepoints
+    positions[:, 1:] = rng.random((n, 3)) * 1000.0
+
+    out = tmp_path / "gridded_time.luxar.zarr"
+    with LuxarZarrCompiler(out, enable_spatial_index=True) as compiler:
+        scene = compiler.create_scene(dimensions=_wide_scene_dims("time"))
+        scene.add_points("pts", positions, radii=0.0)
+
+    node = zarr.open_group(out, mode="r")["pts"]
+    decoded = _decode(node, "positions")
+    bounds = node["chunk_bounds"][:]
+    chunk_size = int(node.attrs["chunk_size"])
+
+    # The gridded axis stores exactly, so its bound is the authored interval
+    # plus the float-boundary epsilon and nothing else.
+    for k in range(bounds.shape[0]):
+        block = decoded[k * chunk_size : (k + 1) * chunk_size, 0]
+        lo32, hi32 = _store_outward_f32(
+            float(block.min()) - _BARRIER_BOUND_EPS,
+            float(block.max()) + _BARRIER_BOUND_EPS,
+        )
+        assert bounds[k, 0, 0] == lo32
+        assert bounds[k, 0, 1] == hi32
+
+    # ...while the continuous spatial axes beside it still got the pad, so the
+    # per-axis-ness of the slack is what is being pinned, not its absence.
+    slack = 1000.0 / 131070.0
+    for d in (1, 2, 3):
+        pad = float(bounds[:, d, 1].max()) - float(decoded[:, d].max())
+        assert pad == pytest.approx(slack, rel=0.05)
+    assert _violations(decoded, bounds, chunk_size) == (0, 0)

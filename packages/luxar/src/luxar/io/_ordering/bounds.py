@@ -106,6 +106,68 @@ def _normalise_slice_dims(slice_dims: Optional[Sequence[int]], ndim: int) -> set
     return out
 
 
+def _normalise_coord_slack(coord_slack: Optional[np.ndarray], ndim: int) -> np.ndarray:
+    """Coerce a ``coord_slack`` argument to a validated ``(ndim,)`` float64 pad.
+
+    ``coord_slack`` is the per-axis distance the STORE can move a coordinate
+    away from the value the bound builder was handed — under the default AUTO
+    encoding the coordinates are written as per-axis uint16 fixed point, so a
+    decoded coordinate can sit up to half a quantum outside a bound computed
+    from the authored one, and the reader then never fetches that chunk
+    (issue #1655). The compiler asks the encoder for it
+    (:meth:`~luxar.encoding.encoder.ArrayEncoder.coordinate_round_trip_slack`)
+    and hands it to the builders; ``None`` means "no displacement", i.e. zeros.
+
+    Validated here rather than in each builder for the same reason as
+    :func:`_normalise_slice_dims`: three builders take this argument and must
+    not diverge on what they accept. A wrong-LENGTH array is an error rather
+    than a broadcast, because the entries are positional per-axis quantities —
+    silently padding the wrong axis is exactly the failure this parameter
+    exists to prevent. A NEGATIVE entry would TIGHTEN the bound and drop
+    geometry; a non-finite one would poison every bound on that axis.
+
+    float32 input is accepted and widened, unlike
+    :func:`_store_outward_f32_array`'s hard rejection: that helper rejects
+    float32 because a pad already lost to float32 ARITHMETIC cannot be
+    recovered, whereas this is a single value the caller merely stored
+    narrowly, and it is added into a float64 accumulator before any store.
+
+    Args:
+        coord_slack: Per-axis outward pad, shape ``(ndim,)``, or ``None``
+        ndim: Number of columns in the coordinate array
+
+    Returns:
+        The pad as a ``(ndim,)`` float64 array; all zeros when ``None``.
+
+    Raises:
+        ValueError: If the length is wrong, or an entry is negative or
+            non-finite.
+    """
+    if coord_slack is None:
+        return np.zeros(ndim, dtype=np.float64)
+    slack = np.asarray(coord_slack, dtype=np.float64)
+    if slack.shape != (ndim,):
+        raise ValueError(
+            f"coord_slack has shape {slack.shape} but the data is "
+            f"{ndim}-dimensional (expected ({ndim},)). These are positional "
+            "per-axis pads, so a length mismatch would pad the wrong axis and "
+            "leave the one that needed it short — the exact under-fetch this "
+            "argument exists to prevent."
+        )
+    if not np.all(np.isfinite(slack)):
+        raise ValueError(
+            f"coord_slack must be finite (got {coord_slack!r}): a non-finite "
+            "pad poisons every chunk bound on that axis."
+        )
+    if np.any(slack < 0.0):
+        raise ValueError(
+            f"coord_slack must be non-negative (got {coord_slack!r}): a "
+            "negative pad TIGHTENS the stored bound, which drops geometry the "
+            "reader can no longer find."
+        )
+    return slack
+
+
 def _store_outward_f32(lo: float, hi: float) -> tuple[np.float32, np.float32]:
     """Narrow a float64 interval to float32 OUTWARD (``lo`` down, ``hi`` up).
 

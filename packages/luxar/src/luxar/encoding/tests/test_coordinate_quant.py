@@ -250,3 +250,153 @@ class TestGenericLinearPerchannel:
         g["a"].attrs["encoding"] = attrs
         with pytest.raises(ValueError, match="per-column scales"):
             ArrayDecoder().decode(g["a"], g)
+
+
+class TestCoordinateRoundTripSlack:
+    """``coordinate_round_trip_slack``: one test per exit, plus the invariant.
+
+    The chunk-bounds writers pad their bounds by this answer, so an answer that
+    is too small silently drops geometry the reader can no longer find
+    (issue #1655). Every exit is pinned EXACTLY — the closed form
+    ``extent / 131070``, not an approximation.
+    """
+
+    def test_precision_mode_is_exact(self):
+        rng = np.random.default_rng(100)
+        pos = (rng.random((500, 3)) * 1000.0).astype(np.float32)
+        assert (
+            ArrayEncoder().coordinate_round_trip_slack(pos, EncodingMode.PRECISION)
+            is None
+        )
+
+    def test_empty_array_is_exact(self):
+        empty = np.zeros((0, 3), dtype=np.float32)
+        assert (
+            ArrayEncoder().coordinate_round_trip_slack(empty, EncodingMode.AUTO) is None
+        )
+
+    def test_non_2d_array_is_exact(self):
+        flat = np.linspace(0.0, 1000.0, 500, dtype=np.float32)
+        assert (
+            ArrayEncoder().coordinate_round_trip_slack(flat, EncodingMode.AUTO) is None
+        )
+
+    def test_extent_at_or_above_the_u16_rail_is_exact(self):
+        """At/above 2**16 the encoder falls back to float32 — nothing moves."""
+        rng = np.random.default_rng(101)
+        pos = (rng.random((500, 3)) * 70000.0).astype(np.float32)
+        assert float(np.ptp(pos, axis=0).max()) >= 65536.0
+        assert (
+            ArrayEncoder().coordinate_round_trip_slack(pos, EncodingMode.AUTO) is None
+        )
+
+    def test_lut_eligible_array_is_exact(self):
+        """A LUT stores the values verbatim, so nothing moves.
+
+        The values are deliberately NOT on a regular grid, so the per-axis grid
+        exit cannot be what answers here — it is the LUT exit or nothing.
+        """
+        from luxar.encoding._encoders.perchannel import (
+            COORDINATE_LEVELS,
+            gridded_axis_step,
+        )
+
+        palette = np.array([0.0, 0.37, 1.9, 5.5, 13.25, 61.0, 199.5, 800.0])
+        rng = np.random.default_rng(102)
+        pos = palette[rng.integers(0, palette.size, (600, 3))].astype(np.float32)
+        enc = ArrayEncoder()
+        assert enc.encodes_as_lut(pos, SemanticType.COORDINATE)
+        arr = pos.astype(np.float64)
+        for c in range(3):
+            lo = float(arr[:, c].min())
+            extent = float(arr[:, c].max()) - lo
+            assert gridded_axis_step(arr[:, c], lo, extent, COORDINATE_LEVELS) is None
+        assert enc.coordinate_round_trip_slack(pos, EncodingMode.AUTO) is None
+
+    def test_constant_axis_is_zero_next_to_a_moving_sibling(self):
+        rng = np.random.default_rng(103)
+        pos = np.empty((5000, 3), dtype=np.float32)
+        pos[:, 0] = 7.5  # constant: every value maps to level 0, decodes to lo
+        pos[:, 1] = (rng.random(5000) * 1000.0).astype(np.float32)
+        pos[:, 2] = 7.5
+        slack = ArrayEncoder().coordinate_round_trip_slack(pos, EncodingMode.AUTO)
+        assert slack is not None
+        assert slack[0] == 0.0 and slack[2] == 0.0
+        extent = float(pos[:, 1].max()) - float(pos[:, 1].min())
+        assert slack[1] == extent / 131070.0
+
+    def test_gridded_axis_is_zero(self):
+        """A stacked integer time axis is grid-snapped, so it round-trips exactly."""
+        rng = np.random.default_rng(104)
+        pos = np.empty((5000, 2), dtype=np.float32)
+        pos[:, 0] = rng.integers(0, 100, 5000)  # gridded
+        pos[:, 1] = (rng.random(5000) * 1000.0).astype(np.float32)
+        slack = ArrayEncoder().coordinate_round_trip_slack(pos, EncodingMode.AUTO)
+        assert slack is not None
+        assert slack[0] == 0.0
+        assert slack[1] > 0.0
+
+    @pytest.mark.parametrize("mode", [EncodingMode.AUTO, EncodingMode.MEMORY])
+    def test_plain_random_axis_is_exactly_half_a_quantum(self, mode):
+        rng = np.random.default_rng(105)
+        pos = np.column_stack(
+            [rng.random(5000) * 1000.0, rng.random(5000) * 4.0 - 2.0]
+        ).astype(np.float32)
+        slack = ArrayEncoder().coordinate_round_trip_slack(pos, mode)
+        assert slack is not None
+        assert slack.dtype == np.float64 and slack.shape == (2,)
+        arr = pos.astype(np.float64)
+        for c in range(2):
+            extent = float(arr[:, c].max()) - float(arr[:, c].min())
+            assert slack[c] == extent / 131070.0
+
+    @pytest.mark.parametrize("seed", [0, 1, 2, 3, 4])
+    def test_slack_bounds_the_measured_round_trip_error(self, seed):
+        """The invariant the whole chunk-bounds fix rests on.
+
+        Encode and decode through the encoder's OWN path and check that no
+        value moved further than the predicate promised, per axis.
+
+        Two decodes are checked, because the COORDINATE decode contract is
+        float32 while the quantization itself is float64:
+
+        * The float64 dequantization is bounded by the slack EXACTLY — that is
+          the closed form, and it is what the chunk-bounds pad is derived from.
+        * The stored float32 decode can exceed it by up to half a float32 ULP
+          at the coordinate's own magnitude (measured ~1.07e-5 past a 7.62e-3
+          slack at |x| ~ 500). That does NOT leak into the stored bound: the
+          bound is accumulated in float64 as ``max_authored + slack``, so it is
+          ``>=`` the float64 decode of every value in the chunk, and float32
+          conversion is monotone — narrowing both ends OUTWARD (which the bound
+          builders do, never inward) preserves the ordering. The end-to-end
+          proof is
+          ``io/tests/_compiler/test_spatial_ordering.py``'s decoded-containment
+          tests, which read the real stored bounds.
+        """
+        rng = np.random.default_rng(seed)
+        pos = np.column_stack(
+            [
+                rng.random(3000) * 1000.0 - 500.0,
+                rng.random(3000) * 13.75 + 2.0,
+                rng.standard_normal(3000) * 0.5,
+            ]
+        ).astype(np.float32)
+        slack = ArrayEncoder().coordinate_round_trip_slack(pos, EncodingMode.AUTO)
+        assert slack is not None
+        decoded, encoding, stored = _roundtrip(pos, EncodingMode.AUTO)
+        assert encoding["name"] == "linear_perchannel_u16"
+
+        # (a) the float64 dequantization, replayed from the stored scales.
+        lo = np.asarray(encoding["col_lo"], dtype=np.float64)
+        hi = np.asarray(encoding["col_hi"], dtype=np.float64)
+        decoded64 = lo + stored.astype(np.float64) / 65535.0 * (hi - lo)
+        moved64 = np.abs(decoded64 - pos.astype(np.float64)).max(axis=0)
+        assert np.all(moved64 <= slack), f"moved64={moved64} slack={slack}"
+        # And the bound is tight enough to be useful: every axis really does
+        # get within a few percent of it.
+        assert np.all(moved64 >= 0.9 * slack)
+
+        # (b) the stored float32 decode: slack + at most half a float32 ULP.
+        half_ulp = np.spacing(np.abs(pos)).astype(np.float64) / 2.0
+        moved32 = np.abs(decoded.astype(np.float64) - pos.astype(np.float64))
+        assert np.all(moved32 <= slack + half_ulp)

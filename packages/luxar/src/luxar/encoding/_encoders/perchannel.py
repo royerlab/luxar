@@ -7,12 +7,14 @@ from typing import Any, Optional
 import numpy as np
 import zarr
 from arbol import aprint
+from numpy.typing import NDArray
 
 from luxar._zarr_compat import create_array
 
 from ...typing_utils.constants import COORDINATE_U16_MAX_EXTENT
 from ..compression import resolve_compressor
 from ..modes import EncodingMode
+from ..semantic_types import SemanticType
 from .base import BaseEncoderMixin
 from .delta_codec import probe_delta_filter
 
@@ -134,6 +136,94 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             aprint(f"  ✓ COORDINATE '{name}': grid-snapped {detail} — exact")
         return lo, hi
 
+    def coordinate_round_trip_slack(
+        self, data: np.ndarray, mode: EncodingMode
+    ) -> Optional[NDArray[np.float64]]:
+        """How far can encoding ``data`` as a COORDINATE move a value, per axis?
+
+        Returns ``None`` when the write is EXACT on every axis, otherwise a
+        ``(d,)`` float64 vector of per-axis slack (0.0 on axes that are exact).
+
+        Why this exists: the chunk-bounds writers
+        (:func:`~luxar.io._ordering.points.compute_chunk_bounds_points`,
+        :func:`~luxar.io._ordering.lines.compute_vertex_chunk_bounds`,
+        :func:`~luxar.io._ordering.lines.compute_segment_chunk_bounds`) compute
+        a bound the READER trusts for containment, but they see the AUTHORED
+        coordinates while the store holds :meth:`_encode_coordinate`'s per-axis
+        uint16 fixed point. A decoded coordinate that lands outside its own
+        chunk's stored bound is a chunk the viewer never fetches — geometry
+        disappears with nothing to notice. So the bound writer has to know how
+        far the store will move a coordinate BEFORE it writes the bound, and
+        only the encoder knows that. This is that question, asked without
+        writing anything.
+
+        It is the CONSERVATIVE half-quantum bound (``extent / 2·levels``), not a
+        measured maximum: measuring would mean quantizing the array a second
+        time, and the bound writer wants a pad, not a statistic. It is
+        deliberately PER-AXIS — the scales are per-axis, so one wide continuous
+        axis must not inflate the bounds of a snapped, exactly-stored time axis
+        beside it.
+
+        Cost: one ``np.unique`` per non-degenerate axis, via
+        :func:`gridded_axis_step`, which is what proves an axis round-trips
+        bit-exactly. The gsplat sigma rail
+        (:func:`~luxar.io._compiler.gsplat_assembly._axis_center_offender`)
+        accepts the same cost for the same guarantee, but orders that check LAST
+        so it never runs on the common path; here every axis of every coordinate
+        array pays it once, which is one pass against the sort and the
+        per-chunk reductions the caller is already doing.
+
+        The exits below replay :meth:`_encode_coordinate`'s own, in its order,
+        and deliberately WITHOUT its warnings: this is a query, and a duplicate
+        warning at query time would be noise.
+
+        Args:
+            data: The coordinate array (N, d) exactly as it will be encoded
+            mode: The encoding mode it will be encoded under
+
+        Returns:
+            ``None`` if every axis round-trips exactly, else the per-axis slack.
+        """
+        if mode not in (EncodingMode.AUTO, EncodingMode.MEMORY):
+            # PRECISION is float32 (exact). Any other mode is rejected by
+            # `_encode_coordinate` itself, so the write raises long before a
+            # bound written from this answer could matter.
+            return None
+
+        arr = np.asarray(data).astype(np.float64)
+        if arr.ndim != 2 or arr.shape[0] == 0:
+            return None
+
+        lo = arr.min(axis=0)
+        hi = arr.max(axis=0)
+        if float((hi - lo).max()) >= COORDINATE_U16_MAX_EXTENT:
+            return None  # the extent rail falls back to float32 (exact)
+
+        if self.encodes_as_lut(data, SemanticType.COORDINATE):
+            return None  # a LUT stores the values verbatim
+
+        slack = np.zeros(arr.shape[1], dtype=np.float64)
+        for axis in range(arr.shape[1]):
+            extent = float(hi[axis] - lo[axis])
+            if extent <= 0.0:
+                # Constant axis: every value maps to level 0 and decodes to `lo`.
+                continue
+            if (
+                gridded_axis_step(
+                    arr[:, axis], float(lo[axis]), extent, COORDINATE_LEVELS
+                )
+                is not None
+            ):
+                # `_snap_gridded_axes` will snap this axis onto the data's own
+                # spacing, and `gridded_axis_step` proved it round-trips exactly
+                # by replaying the encode and the decode.
+                continue
+            slack[axis] = extent / (2.0 * COORDINATE_LEVELS)
+
+        if not slack.any():
+            return None
+        return slack
+
     def _encode_coordinate(
         self,
         zarr_group: zarr.Group,
@@ -188,6 +278,11 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         really are destroyed. Callers encoding COORDINATE data that carries its
         own notion of extent should route through that choke point rather than
         here.
+
+        A caller that instead needs to know HOW FAR this method can move a value
+        — the points/lines chunk-bounds writers, which must pad a bound the
+        reader trusts — asks :meth:`coordinate_round_trip_slack`, directly above.
+        It replays these same exits without writing; keep the two in step.
 
         Args:
             zarr_group: Zarr group to write to

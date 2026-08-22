@@ -353,6 +353,7 @@ def write_lines(
         n_segments,
         ctx.ordering_ctx,
         ctx.store,
+        dataset_ctx=ctx.dataset_ctx,
     )
 
     # Apply reordering if spatial ordering was applied

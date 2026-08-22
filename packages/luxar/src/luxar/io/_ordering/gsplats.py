@@ -88,8 +88,15 @@ def compute_chunk_bounds_gsplats(
     ``_compiler/gsplat_assembly.py::_axis_center_offender`` escalates the centers
     array to float32 when half an axis's grid step exceeds the per-splat marginal
     σ for more than 0.1% of the splats, and a gridded (stacked time/channel) axis
-    is snapped to store exactly. Points and Lines have no equivalent rail — see
-    the note on :func:`~luxar.io._ordering.points.compute_chunk_bounds_points`.
+    is snapped to store exactly. What that rail leaves is a displacement no
+    larger than the splat's own σ (for all but the ≤0.1% degenerate population
+    it deliberately tolerates), which the ``coverage_sigma·σ`` pad above already
+    covers on a spatial axis. Points and Lines have no σ to hide behind, so they
+    close the same gap the other way round — they keep the uint16 encoding and
+    PAD the bound by the encoder's own per-axis round-trip slack (a
+    ``coord_slack`` argument the compiler fills from
+    :meth:`~luxar.encoding.encoder.ArrayEncoder.coordinate_round_trip_slack`).
+    See :func:`~luxar.io._ordering.points.compute_chunk_bounds_points`.
 
     Args:
         centers: Splat centers (already sorted), shape (N, d)

@@ -23,7 +23,11 @@ from hypothesis import given
 from hypothesis import strategies as st
 from hypothesis.extra import numpy as hnp
 
-from luxar.io._ordering.bounds import _store_outward_f32, _store_outward_f32_array
+from luxar.io._ordering.bounds import (
+    _normalise_coord_slack,
+    _store_outward_f32,
+    _store_outward_f32_array,
+)
 from luxar.io.ordering import (
     _BARRIER_BOUND_EPS,
     compute_chunk_bounds_gsplats,
@@ -429,3 +433,111 @@ def test_outward_store_is_silent_past_the_float32_ceiling() -> None:
     # land at or below it (the largest finite float32), the high end at +inf.
     assert float(lo_vec[1]) <= 1e300
     assert float(hi_vec[1]) == np.inf
+
+
+def test_normalise_coord_slack_accepts_none_and_float32() -> None:
+    """``None`` is zeros; a float32 pad is widened rather than refused.
+
+    Deliberately laxer than :func:`_store_outward_f32_array`, which rejects
+    float32 outright: that helper refuses because a pad already lost to float32
+    ARITHMETIC cannot be recovered by rounding outward, whereas this is a single
+    value the caller merely stored narrowly, and it is added into a float64
+    accumulator before any store. The return dtype is float64 either way, so the
+    ``mins - slack`` the builders compute stays in float64 and the array store's
+    own guard still holds.
+    """
+    zeros = _normalise_coord_slack(None, 4)
+    assert zeros.shape == (4,) and zeros.dtype == np.float64
+    assert not zeros.any()
+
+    widened = _normalise_coord_slack(np.array([1e-3, 0.0, 2.0], dtype=np.float32), 3)
+    assert widened.dtype == np.float64
+    assert widened[0] == np.float64(np.float32(1e-3))
+    assert widened[2] == 2.0
+
+
+@pytest.mark.parametrize(
+    "bad, match",
+    [
+        (np.array([1e-3, 1e-3], dtype=np.float64), "shape"),
+        (np.array([1e-3, -1e-9, 0.0], dtype=np.float64), "non-negative"),
+        (np.array([1e-3, np.nan, 0.0], dtype=np.float64), "finite"),
+        (np.array([1e-3, np.inf, 0.0], dtype=np.float64), "finite"),
+    ],
+)
+def test_normalise_coord_slack_rejects_bad_pads(bad: np.ndarray, match: str) -> None:
+    """A wrong-length, negative or non-finite pad is an error, not a coercion.
+
+    Length: the entries are positional per-axis quantities, so a mismatch pads
+    the wrong axis and starves the one that needed it. Negative: it TIGHTENS the
+    bound, dropping the very geometry the pad exists to keep reachable.
+    Non-finite: it poisons every bound on that axis.
+    """
+    with pytest.raises(ValueError, match=match):
+        _normalise_coord_slack(bad, 3)
+
+
+def test_coord_slack_pads_spatial_and_barrier_dims_in_every_builder() -> None:
+    """The pad lands on EVERY dim, on top of whatever that dim already gets.
+
+    Spatial dims keep their footprint pad (radius / width / none) and barrier
+    dims keep ``_BARRIER_BOUND_EPS`` — the slack ADDS to both, because the
+    epsilon is float-boundary safety while the slack is a real displacement of
+    the stored coordinate.
+    """
+    coords = np.array(
+        [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0], [2.0, 2.0, 2.0], [3.0, 3.0, 3.0]],
+        dtype=np.float32,
+    )
+    segments = np.array([[0, 1], [2, 3]], dtype=np.uint32)
+    widths = np.full(4, 0.25, dtype=np.float32)
+    slack = np.array([0.5, 0.25, 0.125], dtype=np.float64)
+
+    pts = compute_chunk_bounds_points(
+        coords, radii=1.0, chunk_size=4, slice_dims=[2], coord_slack=slack
+    )
+    for d, extra in ((0, 1.0), (1, 1.0), (2, _BARRIER_BOUND_EPS)):
+        assert pts[0, d, 0] == pytest.approx(0.0 - extra - slack[d])
+        assert pts[0, d, 1] == pytest.approx(3.0 + extra + slack[d])
+
+    verts = compute_vertex_chunk_bounds(coords, 4, slice_dims=[2], coord_slack=slack)
+    for d, extra in ((0, 0.0), (1, 0.0), (2, _BARRIER_BOUND_EPS)):
+        assert verts[0, d, 0] == pytest.approx(0.0 - extra - slack[d])
+        assert verts[0, d, 1] == pytest.approx(3.0 + extra + slack[d])
+
+    segs = compute_segment_chunk_bounds(
+        coords, segments, widths, chunk_size=2, slice_dims=[2], coord_slack=slack
+    )
+    for d, extra in ((0, 0.25), (1, 0.25), (2, _BARRIER_BOUND_EPS)):
+        assert segs[0, d, 0] == pytest.approx(0.0 - extra - slack[d])
+        assert segs[0, d, 1] == pytest.approx(3.0 + extra + slack[d])
+
+
+def test_coord_slack_defaults_leave_every_builder_byte_identical() -> None:
+    """Omitting the pad reproduces the pre-#1655 output exactly.
+
+    Every direct caller of these builders (the LOD writers, the gsplat merge
+    tools, user code) passes no ``coord_slack``; ``None`` must therefore be
+    bit-for-bit the old behaviour, not "a zero pad that happens to round the
+    same way".
+    """
+    rng = np.random.default_rng(7)
+    coords = (rng.random((64, 3)) * 1000.0).astype(np.float32)
+    segments = np.arange(64, dtype=np.uint32).reshape(-1, 2)
+    widths = rng.random(64).astype(np.float32)
+    zeros = np.zeros(3, dtype=np.float64)
+
+    np.testing.assert_array_equal(
+        compute_chunk_bounds_points(coords, 0.5, 16, slice_dims=[2]),
+        compute_chunk_bounds_points(coords, 0.5, 16, slice_dims=[2], coord_slack=zeros),
+    )
+    np.testing.assert_array_equal(
+        compute_vertex_chunk_bounds(coords, 16, slice_dims=[2]),
+        compute_vertex_chunk_bounds(coords, 16, slice_dims=[2], coord_slack=zeros),
+    )
+    np.testing.assert_array_equal(
+        compute_segment_chunk_bounds(coords, segments, widths, 8, slice_dims=[2]),
+        compute_segment_chunk_bounds(
+            coords, segments, widths, 8, slice_dims=[2], coord_slack=zeros
+        ),
+    )
