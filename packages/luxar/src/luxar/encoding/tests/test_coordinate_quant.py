@@ -327,11 +327,6 @@ class TestCoordinateRoundTripSlack:
         The values are deliberately NOT on a regular grid, so the per-axis grid
         exit cannot be what answers here — it is the LUT exit or nothing.
         """
-        from luxar.encoding._encoders.perchannel import (
-            COORDINATE_LEVELS,
-            gridded_axis_step,
-        )
-
         palette = np.array([0.0, 0.37, 1.9, 5.5, 13.25, 61.0, 199.5, 800.0])
         rng = np.random.default_rng(102)
         pos = palette[rng.integers(0, palette.size, (600, 3))].astype(np.float32)
