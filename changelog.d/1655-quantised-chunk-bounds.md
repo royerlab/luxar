@@ -43,13 +43,24 @@ genuinely stores `lut_uint8`. Measured on a 4D lines compile with a 250-value
 irregular palette (60,000 segments / 120,000 vertices): treating eligibility as
 exactness left 30 of 44 vertex chunks (8,203 rows) and 7 of 15 segment chunks
 (487 endpoints) outside their own bound; declaring `allow_lut=False` takes all
-four counts to zero. The LUT probe is a whole-array `np.unique` and the dominant
-cost of the predicate whenever it runs, so it is asked LAST — after the cheap
-exits and the per-axis grid loop, and only when some axis came out with nonzero
-slack, since otherwise the answer is `None` regardless. On 1M×3 float32 that
-takes an all-gridded array from 194 ms to 64 ms and the lines path from 323 ms to
-82 ms; the common points path (continuous coordinates, LUT genuinely allowed)
-still pays it, because there the probe can still change the answer.
+four counts to zero.
+
+Because the predicate is asked on every compile, its cost is part of the fix.
+The LUT probe is a whole-array `np.unique` and the dominant term whenever it
+runs, so it is now gated twice. It is asked LAST — after the cheap exits and the
+per-axis grid loop, and only when some axis came out with nonzero slack, since
+otherwise the answer is `None` regardless — and it is asked only when no single
+AXIS already holds more distinct values than a scalar-mode LUT can address
+(`LUT_SCALAR_MAX_DISTINCT`, 256; a COORDINATE array is never the ≤4-channel 2-D
+COLOR shape that reaches the uint16 ROW-mode tier). One column above that cap
+proves the whole array cannot LUT-encode, because a column's distinct values are
+a subset of the array's — and the count is free, since the grid loop's own
+`np.unique` supplies it. On 1M×3 float32 continuous coordinates — the common
+points path, which previously paid the probe in full — the predicate drops from
+467 ms to 120 ms, and at 5M×3 from 3.41 s to 0.79 s, i.e. down to what the
+`allow_lut=False` lines path always cost. An all-gridded array is 64 ms. The
+irreducible case is an array with ≤256 distinct values per axis but more than
+256 overall; only a whole-array pass can settle that one.
 
 `compute_chunk_bounds_points`, `compute_vertex_chunk_bounds` and
 `compute_segment_chunk_bounds` take a new keyword-only `coord_slack` vector and
@@ -73,6 +84,36 @@ consequence worth knowing: a rebuilt points or lines store generally gets
 different `chunk_bounds` bytes and therefore a fresh `content_hash`, so warm
 viewer caches invalidate on their own. Existing stores are not rewritten.
 
-GSplats are unaffected and unchanged — they already close the same gap from the
+Keeping the two models in step is now a mechanism rather than a comment. The
+writer carries a SECOND, independent model of what the encoder does — four
+replayed exits — and this change's own history shows that is easy to get wrong
+(the LUT exit was wrong for lines on the first attempt). A parametrised corpus
+in `encoding/tests/test_coordinate_quant.py` therefore asks the predicate AND
+performs a real encode/decode of the same array, for every mode × `allow_lut`,
+and requires per-AXIS agreement in both directions: an axis the predicate calls
+exact must be bit-exact on disk, and an axis it pads must not move further than
+the pad (plus half a float32 ULP, the decode contract). Dropping the `allow_lut`
+gate, dropping the grid snap, or giving `_encode_coordinate` a lossier tier each
+turn it red.
+
+GSplats get no `coord_slack` here — they close most of the same gap from the
 other side, escalating an offending centers axis to float32 rather than padding
-the bound.
+the bound. Note that this is *most*, not all: the σ argument that justifies
+skipping the pad holds on a SPATIAL axis, where `truncation_radius · σ` absorbs
+the residual displacement, and not on a BARRIER axis, which by design gets only
+`_BARRIER_BOUND_EPS`. A gsplats barrier axis that is neither gridded nor
+LUT-encoded, on splats whose σ is large enough to keep the escalation rail
+quiet, can still decode outside its own chunk bound (reproduced: 2 of 12,000
+centers, worst 2.6e-3). That is out of scope here and is tracked separately; the
+format guide and `compute_chunk_bounds_gsplats` now say so instead of implying
+full coverage. The same is true of the SCALAR half of a points/lines footprint:
+`radii` and `widths` are quantised too, and the pad is built from the authored
+value, so a decoded radius/width can still escape by up to half its own quantum
+(measured 9.6e-3 on `radii ~ U(0.1, 5.0)`). Both docstrings now carry that
+caveat rather than claiming a guarantee they do not have.
+
+The gsplats bound builder does change in this release, just not here — see the
+companion entry on outward float32 rounding, which reworks
+`compute_chunk_bounds_gsplats` (and both lines builders) so a pad is never lost
+to a round-to-nearest float32 store. Read the two together: "no `coord_slack`
+for gsplats" is not "gsplats unchanged".

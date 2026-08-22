@@ -365,9 +365,24 @@ def compute_segment_chunk_bounds(
 
     The width interval is accumulated in float64 and narrowed to the float32
     store with OUTWARD rounding (see :func:`_store_outward_f32_array`), so a
-    stored bound is never tighter than the footprint at any coordinate
-    magnitude — not only where a small width happens to survive float32
-    arithmetic and a round-to-nearest store.
+    stored bound is never tighter than the footprint of the AUTHORED widths at
+    any coordinate magnitude — not only where a small width happens to survive
+    float32 arithmetic and a round-to-nearest store.
+
+    KNOWN GAP — THE DECODED WIDTH IS NOT COVERED. ``widths`` is a
+    POSITIVE_SCALAR and is quantised in its own right (``bounded_scalar_uint8``
+    under AUTO for a typical range), and these bounds are built from the
+    values as handed in, so a DECODED width can be up to half a quantum LARGER
+    than the one the pad was sized for and the footprint the renderer draws
+    escapes the stored bound by that much. Measured on 20,000 segments over a
+    1000-unit axis with ``widths ~ U(0.1, 5.0)``: decoded − authored up to
+    9.6e-3, putting 3 of 5 segment chunks marginally outside their own bound
+    (worst 9.4e-3). This is exactly the class of defect ``coord_slack`` closes
+    for the COORDINATE half of the footprint (issue #1655); the scalar half is
+    not closed, and needs the same treatment — a per-array round-trip slack
+    from the encoder, added to the width before the pad. The identical caveat
+    applies to a point's radii; see
+    :func:`~luxar.io._ordering.points.compute_chunk_bounds_points`.
 
     QUANTISATION SLACK (``coord_slack``): that holds for the vertices AS HANDED
     IN. Under the default AUTO encoding the vertices are stored as per-axis

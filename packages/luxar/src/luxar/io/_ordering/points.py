@@ -60,11 +60,23 @@ def compute_chunk_bounds_points(
     bound is right in both directions rather than merely wide enough. The
     interval is computed in float64 and narrowed to the float32 store with
     OUTWARD rounding (see :func:`_store_outward_f32`), so the "never tighter"
-    half holds at every coordinate magnitude — not only where a 0.5 pad happens
-    to survive a round-to-nearest store. (With per-point uint8-encoded radii the
-    encoder's rounding can move a stored radius by up to one quantum AFTER these
-    bounds are computed, so that half of the claim holds only up to that
-    sub-quantum slack.)
+    half holds against the AUTHORED radii at every coordinate magnitude — not
+    only where a 0.5 pad happens to survive a round-to-nearest store.
+
+    KNOWN GAP — THE DECODED RADIUS IS NOT COVERED. ``radii`` is a
+    POSITIVE_SCALAR and is quantised in its own right (``bounded_scalar_uint8``
+    under AUTO for a typical range), and these bounds are built from the values
+    as handed in, so a DECODED radius can be up to half a quantum LARGER than
+    the one the pad was sized for and the footprint the renderer draws escapes
+    the stored bound by that much. Measured on 20,000 points over a 1000-unit
+    axis with ``radii ~ U(0.1, 5.0)``: decoded − authored up to 9.6e-3, putting
+    5 of 5 chunks marginally outside their own bound (worst 9.3e-3). Note this
+    is the SCALAR half of the footprint: ``coord_slack`` below closes the
+    COORDINATE half (issue #1655) and does nothing for this one, which needs
+    the same treatment — a per-array round-trip slack from the encoder, added
+    to the radius before the pad. The identical caveat applies to a line's
+    widths; see
+    :func:`~luxar.io._ordering.lines.compute_segment_chunk_bounds`.
 
     QUANTISATION SLACK (``coord_slack``): these bounds are computed from the
     positions AS HANDED IN, but under the default AUTO encoding the positions

@@ -15,17 +15,20 @@ import numpy as np
 # one timepoint) pull in the entire neighbouring category. Keep this tiny.
 #
 # KNOWN LIMIT (small steps): the pad is absolute while the reader's reach is
-# step-scaled (0.25 x step), so for pathological discrete steps below ~1.3e-3
-# the pad reaches past the neighbour category's quarter-step boundary and the
-# over-fetch returns. Step metadata is not plumbed into these bound
-# builders; discrete/categorical dims with milli-scale steps are not a
-# supported layout (rescale the axis instead).
-#   Since the quantisation pad (#1655) the threshold is worse than 1.3e-3 on a
-#   NON-GRIDDED barrier axis, because the compiler adds `coord_slack` on top of
-#   this epsilon: the effective pad is `1e-3 + extent/131070`, i.e. 8.63e-3 at
-#   an axis extent of 1000 — 8.6x wider, so steps below ~3.5e-2 over-fetch
-#   there. An ordinary stacked integer time/channel axis is unaffected: it is
-#   GRIDDED, its slack is exactly 0, and it keeps the plain 1e-3.
+# step-scaled (0.25 x step), so a chunk at category `c` is pulled into a query
+# for `c + 1` as soon as `c + pad >= (c + step) - 0.25*step`, i.e. as soon as
+#   pad >= 0.75 * step   <=>   step <= pad / 0.75.
+# At the bare epsilon that is 1e-3 / 0.75 = ~1.3e-3: for pathological discrete
+# steps below that the over-fetch returns. Step metadata is not plumbed into
+# these bound builders; discrete/categorical dims with milli-scale steps are
+# not a supported layout (rescale the axis instead).
+#   Since the quantisation pad (#1655) the threshold is worse on a NON-GRIDDED
+#   barrier axis, because the compiler adds `coord_slack` on top of this
+#   epsilon: the effective pad is `1e-3 + extent/131070`, i.e. 8.63e-3 at an
+#   axis extent of 1000 — 8.6x wider, so by the SAME `pad / 0.75` rule steps
+#   below 8.63e-3 / 0.75 = ~1.2e-2 over-fetch there. An ordinary stacked
+#   integer time/channel axis is unaffected: it is GRIDDED, its slack is
+#   exactly 0, and it keeps the plain 1e-3.
 #
 # KNOWN LIMIT (large coordinates): the outward float32 store below never lets a
 # pad vanish, so the pad a barrier axis EFFECTIVELY gets is
@@ -132,11 +135,17 @@ def _normalise_coord_slack(coord_slack: Optional[np.ndarray], ndim: int) -> np.n
     exists to prevent. A NEGATIVE entry would TIGHTEN the bound and drop
     geometry; a non-finite one would poison every bound on that axis.
 
-    float32 input is accepted and widened, unlike
-    :func:`_store_outward_f32_array`'s hard rejection: that helper rejects
-    float32 because a pad already lost to float32 ARITHMETIC cannot be
-    recovered, whereas this is a single value the caller merely stored
-    narrowly, and it is added into a float64 accumulator before any store.
+    The ``dtype=np.float64`` coercion below accepts float32 (and a plain list)
+    rather than rejecting it the way :func:`_store_outward_f32_array` rejects a
+    float32 interval. The asymmetry is deliberate and is documented because it
+    otherwise reads as an inconsistency worth "fixing": that helper refuses
+    because a pad already lost to float32 ARITHMETIC cannot be recovered by
+    rounding outward, whereas this is a per-axis value a caller merely stored
+    narrowly, and it is added into a float64 accumulator before any store. No
+    in-tree caller needs it — the encoder's predicate returns float64 — but the
+    three builders are public through ``luxar.io.ordering``, so this is the
+    direct-caller door, pinned by
+    ``io/tests/test_ordering_properties.py::test_normalise_coord_slack_accepts_none_and_float32``.
 
     Args:
         coord_slack: Per-axis outward pad, shape ``(ndim,)``, or ``None``

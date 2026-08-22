@@ -17,6 +17,7 @@ from ..modes import EncodingMode
 from ..semantic_types import SemanticType
 from .base import BaseEncoderMixin
 from .delta_codec import probe_delta_filter
+from .structural import LUT_SCALAR_MAX_DISTINCT
 
 #: Coordinates are always uint16 -- never uint8 (256 levels is far too coarse for
 #: positions). Named once so the grid snap and the encode call cannot drift apart
@@ -64,8 +65,27 @@ def gridded_axis_step(
     must know whether this encoder will store an axis exactly before deciding to
     escalate it to float32, and the two must never answer differently. Call it
     with exactly the ``lo``/``extent``/``levels`` the encoder will use.
+
+    A caller that needs the distinct values for something ELSE as well —
+    :meth:`PerChannelEncoderMixin.coordinate_round_trip_slack` needs the COUNT
+    to short-circuit its LUT probe — goes through
+    :func:`_gridded_step_from_uniques` with the ``np.unique`` it already ran,
+    rather than paying for a second pass. The split is deliberately a PRIVATE
+    sibling sharing one body: this public entry point keeps its exact
+    signature, so the shared contract cannot acquire a "and pass the right
+    uniques" footgun that an out-of-module caller could get wrong.
     """
-    uniq = np.unique(col)
+    return _gridded_step_from_uniques(np.unique(col), lo, extent, levels)
+
+
+def _gridded_step_from_uniques(
+    uniq: np.ndarray, lo: float, extent: float, levels: float
+) -> Optional[tuple[float, int]]:
+    """:func:`gridded_axis_step`'s body, over an ALREADY-computed ``np.unique``.
+
+    ``uniq`` must be exactly ``np.unique(col)`` — sorted ascending, deduplicated
+    — for the column the ``lo``/``extent`` were derived from.
+    """
     if uniq.size < 2 or uniq.size > levels + 1:
         return None
     offsets = uniq - lo
@@ -183,17 +203,46 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         whole-ARRAY ``np.unique`` and is the DOMINANT term whenever it runs —
         more than the grid loop and the reductions combined — and
         :meth:`encode` recomputes the plan from scratch afterwards, so a caller
-        that asks and then encodes pays it twice. It is therefore asked LAST,
-        after the cheap exits and the per-axis grid loop, and only when some
-        axis came out with nonzero slack: if every axis is already exact the
-        answer is ``None`` regardless of the LUT, so the probe would be pure
-        waste. Measured on 1M×3 float32 (best of 3): an all-gridded array 64 ms
-        instead of 194 ms, and the lines path (``allow_lut=False``) 82 ms
-        instead of 323 ms. On the common points path — continuous coordinates,
-        LUT allowed — the probe genuinely can change the answer, so it still
-        runs and still dominates (229 ms of that 323 ms); this reordering does
-        not make that case cheaper, and memoizing ``_lut_plan`` would be the
-        fix there. The cheap exits first is also what the gsplat sigma rail
+        that asks and then encodes pays it twice. Two things keep it off the
+        hot path:
+
+        * It is asked LAST, after the cheap exits and the per-axis grid loop,
+          and only when some axis came out with nonzero slack: if every axis is
+          already exact the answer is ``None`` regardless of the LUT, so the
+          probe would be pure waste.
+        * It is asked only when no single AXIS already has more distinct values
+          than a scalar-mode LUT can hold
+          (:data:`~luxar.encoding._encoders.structural.LUT_SCALAR_MAX_DISTINCT`,
+          256 — a COORDINATE array is never the ≤4-channel 2-D COLOR shape that
+          reaches the uint16 ROW-mode tier). Distinct values in one column are a
+          subset of the whole array's, so one column above the cap PROVES the
+          array cannot LUT-encode, and the probe can be skipped with the same
+          answer. The count is free: the grid loop's own ``np.unique`` supplies
+          it, via :func:`_gridded_step_from_uniques`.
+
+        Measured on float32 continuous coordinates, best of 3 — the case that
+        used to pay in full, because a continuous array has neither an exact
+        axis nor any chance of a LUT:
+
+        ==========  ==========  =========  ==============
+        array       before      after      of which probe
+        ==========  ==========  =========  ==============
+        1M × 3       467 ms      120 ms     352 ms
+        5M × 3      3408 ms      793 ms    2804 ms
+        ==========  ==========  =========  ==============
+
+        i.e. the predicate now costs what the ``allow_lut=False`` (lines) path
+        always cost (112 ms / 713 ms), and the second, redundant ``np.unique``
+        inside :meth:`encode` no longer has a first one to be redundant WITH.
+        In a whole 1M-point compile the predicate falls from ~350 ms to ~160 ms
+        of a ~2 s total. The
+        remaining pathological case is genuinely irreducible: an array with
+        ≤256 distinct values per axis but more than 256 overall (e.g. three
+        disjoint 200-value palettes) still pays one full probe, because only
+        the whole-array pass can settle it. Memoizing ``_lut_plan`` would help
+        THERE, and nowhere the profiles actually showed.
+
+        Cheap exits first is also what the gsplat sigma rail
         (:func:`~luxar.io._compiler.gsplat_assembly._axis_center_offender`)
         does, and for the same reason.
 
@@ -212,9 +261,12 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             ``None`` if every axis round-trips exactly, else the per-axis slack.
         """
         if mode not in (EncodingMode.AUTO, EncodingMode.MEMORY):
-            # PRECISION is float32 (exact). Any other mode is rejected by
-            # `_encode_coordinate` itself, so the write raises long before a
-            # bound written from this answer could matter.
+            # PRECISION is float32 (exact). The only other mode is CUSTOM,
+            # which never reaches `_encode_coordinate` at all: `encode` either
+            # raises at its `custom_encoder is None` check or routes to
+            # `_encode_custom`. Either way no COORDINATE fixed-point store
+            # happens here, so there is no displacement for this answer to
+            # describe.
             return None
 
         arr = np.asarray(data).astype(np.float64)
@@ -239,14 +291,18 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             return None  # the extent rail falls back to float32 (exact)
 
         slack = np.zeros(arr.shape[1], dtype=np.float64)
+        max_axis_distinct = 1
         for axis in range(arr.shape[1]):
             extent = float(hi[axis] - lo[axis])
             if extent <= 0.0:
-                # Constant axis: every value maps to level 0 and decodes to `lo`.
+                # Constant axis: every value maps to level 0 and decodes to
+                # `lo`. One distinct value, so it cannot raise the maximum.
                 continue
+            uniq = np.unique(arr[:, axis])
+            max_axis_distinct = max(max_axis_distinct, int(uniq.size))
             if (
-                gridded_axis_step(
-                    arr[:, axis], float(lo[axis]), extent, COORDINATE_LEVELS
+                _gridded_step_from_uniques(
+                    uniq, float(lo[axis]), extent, COORDINATE_LEVELS
                 )
                 is not None
             ):
@@ -259,8 +315,9 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         if not slack.any():
             return None
 
-        if allow_lut and self.encodes_as_lut(data, SemanticType.COORDINATE):
-            return None  # a LUT stores the values verbatim
+        if allow_lut and max_axis_distinct <= LUT_SCALAR_MAX_DISTINCT:
+            if self.encodes_as_lut(data, SemanticType.COORDINATE):
+                return None  # a LUT stores the values verbatim
         return slack
 
     def _encode_coordinate(

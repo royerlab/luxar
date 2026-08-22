@@ -81,20 +81,37 @@ def compute_chunk_bounds_gsplats(
     never tighter than the footprint at any coordinate magnitude — not only where
     a small σ happens to survive float32 arithmetic and a round-to-nearest store.
 
-    That guarantee is against the AUTHORED centers. Centers are themselves stored
-    as per-axis uint16 fixed point under the default AUTO encoding, so a decoded
-    center could in principle sit half a quantum outside its chunk's bound —
-    except that gsplats have a rail for exactly that:
-    ``_compiler/gsplat_assembly.py::_axis_center_offender`` escalates the centers
-    array to float32 when half an axis's grid step exceeds the per-splat marginal
-    σ for more than 0.1% of the splats, and a gridded (stacked time/channel) axis
-    is snapped to store exactly. What that rail leaves is a displacement no
-    larger than the splat's own σ (for all but the ≤0.1% degenerate population
-    it deliberately tolerates), which the ``coverage_sigma·σ`` pad above already
-    covers on a spatial axis. Points and Lines have no σ to hide behind, so they
-    close the same gap the other way round — they keep the uint16 encoding and
-    PAD the bound by the encoder's own per-axis round-trip slack (a
-    ``coord_slack`` argument the compiler fills from
+    That guarantee is against the AUTHORED centers, and this builder takes no
+    ``coord_slack``. Centers are themselves stored as per-axis uint16 fixed
+    point under the default AUTO encoding, so a decoded center can sit up to
+    half a quantum (``extent/131070``) outside a bound derived from the
+    authored one. Two things cover most of that, neither of them here:
+    ``_compiler/gsplat_assembly.py::_axis_center_offender`` escalates the
+    centers array to float32 when half an axis's grid step exceeds the
+    per-splat marginal σ for more than 0.1% of the splats, and a gridded
+    (stacked time/channel) axis is snapped to store exactly. What the rail
+    leaves is a displacement no larger than the splat's own σ (for all but the
+    ≤0.1% degenerate population it deliberately tolerates).
+
+    KNOWN GAP — a NON-GRIDDED BARRIER AXIS IS NOT COVERED. Absorbing that
+    residual displacement is the job of the ``coverage_sigma·σ`` pad, and that
+    pad is applied to SPATIAL axes only: an axis in ``slice_dims`` gets
+    ``_BARRIER_BOUND_EPS`` (1e-3) and nothing else, precisely so a splat at
+    time=0 cannot bleed into time=1. So a barrier axis that is neither gridded
+    nor LUT-encoded, whose splats carry a σ large enough to keep the rail
+    quiet, escapes both rails: half-quantum 7.6e-3 at an axis extent of 1000
+    against a 1e-3 epsilon, with no σ term to make up the difference.
+    Reproduced at 12,000 splats on a 4-D node with a continuous barrier axis of
+    extent 1000 and σ = 5: 2 centers decode outside their own chunk bound,
+    worst 2.6e-3. The ordinary stacked integer time/channel axis is safe — it
+    is GRIDDED, so it round-trips bit-exactly and has nothing to pad. Closing
+    this is out of scope for issue #1655 (which fixed points and lines) and is
+    tracked separately; do not read the σ argument above as covering it.
+
+    Points and Lines have no σ to hide behind on ANY axis, so they close the
+    gap the other way round — they keep the uint16 encoding and PAD the bound
+    by the encoder's own per-axis round-trip slack, on every dimension
+    including barrier ones (a ``coord_slack`` argument the compiler fills from
     :meth:`~luxar.encoding.encoder.ArrayEncoder.coordinate_round_trip_slack`).
     See :func:`~luxar.io._ordering.points.compute_chunk_bounds_points`.
 
