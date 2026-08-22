@@ -447,7 +447,7 @@ Each group lands in exactly one bucket:
 | `already-current` | already `screen-area` — all `restamp-lod` looks at before skipping |
 | `skipped` | undecidable; `GroupScreening.reason` says why |
 
-Four things the screen is careful about, each of which a cruder measurement gets
+Five things the screen is careful about, each of which a cruder measurement gets
 wrong:
 
 - **The cut is the group's own anchor.** A whole-object ladder's finest rung is
