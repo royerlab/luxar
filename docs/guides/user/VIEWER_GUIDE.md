@@ -429,8 +429,11 @@ can enable the look and still override, say, `bloom_strength` on top of it.
 Note that the preset also widens the camera to the 35 mm field of view (63°),
 which is applied before automatic framing so the fitted subject occupancy
 matches that lens. Pin `camera.fov` (or `camera.fov_preset`) only when composing
-an explicit camera pose for a specific lens. A returning visitor's stored FOV
-still takes precedence over the scene-authored value by design.
+an explicit camera pose for a specific lens; the preset then leaves the authored
+FOV alone but still applies its 35 mm distortion to that different framing. The
+bundled demos instead leave the FOV unpinned and compose their authored positions
+for 63°. A returning visitor's stored FOV still takes precedence over the
+scene-authored value by design.
 
 See `luxar.ViewerConfig` docstring for the full field list with types and
 valid ranges.

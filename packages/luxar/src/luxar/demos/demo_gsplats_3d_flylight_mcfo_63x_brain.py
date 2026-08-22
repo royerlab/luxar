@@ -185,6 +185,7 @@ from luxar.demos import (
     launch_viewer,
     parse_demo_flags,
 )
+from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
 from luxar.gsplats.io.load_gsplats import load_gsplat_node
 from luxar.gsplats.tree import center_bounds
 from luxar.utils.paths import get_demos_output_dir
@@ -223,7 +224,7 @@ ABSORPTION = 0.81
 
 # Camera framing. The viewer's default fits the larger screen-plane extent into
 # 75% of the shorter viewport axis at the box's near face
-# (`calculateCameraDistance`) — about 1100 um on this 663 x 303 x 167 brain,
+# (`calculateCameraDistance`) — about 805 um on this 663 x 303 x 167 brain,
 # which still leaves it small. Place the camera explicitly for this composition.
 #
 #     visible_height(d) = 2 d tan(fov/2)      visible_width(d) = that * aspect
@@ -246,11 +247,11 @@ ABSORPTION = 0.81
 # NARROWER one eats into it and below ~1.29 (= 1.4 x `CAMERA_FILL`) starts
 # cropping the outer optic lobes. 1.4 is the landscape floor this demo is
 # calibrated for. Framing for a square window instead — the never-crop choice —
-# would put the camera at ~912 um: closer than the viewer's own ~1100 um default,
+# would put the camera at ~671 um: closer than the viewer's own ~805 um default,
 # but the brain would then occupy only ~0.66 of the width at 1.4 and ~0.52 at
 # 16:9, instead of 0.92. That headroom nobody sees is most of what the explicit
 # camera is here to recover.
-CAMERA_FOV = 47.0
+CAMERA_FOV = CINEMATIC_FOV_DEG
 CAMERA_FILL = 0.92
 CAMERA_ASPECT = 1.4
 
@@ -342,7 +343,6 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                         position=(cx, cy, cz + distance),
                         target=(cx, cy, cz),
                         up=(0.0, 1.0, 0.0),
-                        fov=CAMERA_FOV,
                     ),
                 ),
                 citation=DEMO_META["citation"],
