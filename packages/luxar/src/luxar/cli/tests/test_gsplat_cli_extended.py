@@ -6568,6 +6568,8 @@ class TestLODCarriesAuthoredAppearance:
             "adopted a sibling's palette over a custom LUT"
         )
         assert "custom colormap LUT" in stdout
+        assert "not extracted — only the root's metadata is read" in stdout
+        assert "never even opened" not in stdout
         # The rest of the agreed look is unaffected.
         for key, want in self.AUTHORED.items():
             if key == "colormap":

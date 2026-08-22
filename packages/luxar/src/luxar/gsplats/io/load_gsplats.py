@@ -99,8 +99,9 @@ def read_authored_appearance(path: str | Path) -> Dict[str, Any]:
 #: and the N-input merge so both explain the same loss the same way.
 _CUSTOM_COLORMAP_LOSS = (
     "a custom colormap LUT lives in a sibling `colormap_lut` ARRAY, which the "
-    "attrs-only appearance carry cannot reach (an archive input is never even "
-    "opened), so the palette is not preserved"
+    "attrs-only appearance carry cannot reach (an archive input is not "
+    "extracted — only the root's metadata is read), so the palette is not "
+    "preserved"
 )
 
 _CUSTOM_COLORMAP_REMEDY = (
