@@ -52,9 +52,13 @@ may occupy disk until the fixture environment is removed with
 
 `src/tests/global-setup.ts` runs once before the Vitest suite, detects
 missing `test_*.zarr` archives or an out-of-date `roundtrip_expectations.json`
-(checked by mtime against the generators and fixtures), and re-runs the
-relevant generator. The expectations file is regenerated whenever any
-fixture or either generator script has changed.
+(staleness is deliberately NOT an mtime check — a content digest of the
+generators and the encoder sources they write through is recorded next to the
+fixtures and compared on each run), and re-runs the relevant generator. The
+expectations file is regenerated whenever any fixture or either generator
+script has changed. Playwright's pre-flight only checks that the fixtures are
+PRESENT, so after editing a generator run `pnpm test` or
+`pnpm test:generate-fixtures` before `pnpm test:e2e`.
 
 ## Fixture matrix
 
