@@ -16,6 +16,7 @@ import {
   assertNoConsoleErrors,
   getConsoleMessages,
   getWebGLErrors,
+  raceEvaluate,
 } from './helpers';
 
 // HTTP server (configured in playwright.config.ts) serves from project root
@@ -33,16 +34,21 @@ const FIXTURES = {
 };
 
 // Raise this file above the config's 60 s default (`timeout` in
-// playwright.config.ts). Each test calls bounded helpers back to back —
-// `waitForLuxarReady`, `waitForPointsLoaded`, `assertNoConsoleErrors` (via
-// `getConsoleMessages`) and `getLuxarState`, each carrying its own 45 s
-// deadline — so at 60 s the test wall ALWAYS arrived first and the per-probe
-// diagnostics those bounds exist to emit could never fire: a starved page
-// reported a bare `Test timeout of 60000ms exceeded` with no location. 240 s
-// clears the 4 x 45 s worst case plus navigation and the 100k-point texture
-// scan, so the helper that actually starved is what reports. Only the timeout
+// playwright.config.ts). A test here can spend `navigationTimeout` 60 s on
+// `page.goto` before a helper runs, then `waitForLuxarReady` 45 s,
+// `waitForPointsLoaded` up to ~90 s (a 45 s loop budget plus an inner
+// `getLuxarState` probe deliberately left unclamped, so one probe holds a
+// further 45 s), then 45 s each for `assertNoConsoleErrors` and
+// `getLuxarState` — the bounded prefix alone outruns any wall worth setting,
+// so this number is a BACKSTOP, not a guarantee. What makes a failure
+// attributable is the probes being bounded and throwing by name; at 60 s the
+// wall beat even `goto` + `waitForLuxarReady` (105 s), so this arrived as a
+// bare `Test timeout of 60000ms exceeded` with no location, and at 120 s
+// those first two phases can report themselves. 120 s matches the two
+// in-tree precedents, webgl-errors.spec.ts and all-examples-smoke-test.spec.ts.
+// File scope, so both describe blocks (8 tests) carry it. Only the timeout
 // changes: this file keeps the config's `fullyParallel: true`.
-test.describe.configure({ timeout: 240000 });
+test.describe.configure({ timeout: 120000 });
 
 test.describe('Test Fixture Rendering', () => {
   test('should render sharpness range fixture correctly', async ({ page }) => {
@@ -408,7 +414,22 @@ test.describe('Test Fixture Rendering', () => {
     const state = await getLuxarState(page);
     expect(state.totalPoints).toBe(100_000);
 
-    const colorStats = await page.evaluate(() => {
+    // The 100k-texel scan below is the heaviest probe in this file, and
+    // `page.evaluate` carries no deadline of its own — only the test wall
+    // stops it, which is precisely the unattributable failure the wall above
+    // is NOT meant to be. Bound it so a starved page names this probe instead
+    // of pointing at a line number (see `raceEvaluate`).
+    const SCAN_TIMEOUT_MS = 45000;
+    // Sentinel, following the argument in `getLuxarState`: it must be a value
+    // the in-page function can never return, compared by identity, because
+    // `null` is a LEGITIMATE answer here (no points node, no element texture,
+    // or no colors on it) and would otherwise be indistinguishable from a
+    // missed deadline. A Node-side `Symbol` is stronger than the fresh object
+    // that helper allocates: `page.evaluate` resolves with a value
+    // deserialized from the CDP protocol, which cannot carry a symbol at all.
+    const SCAN_TIMED_OUT: unique symbol = Symbol('lutU16ColorScanTimedOut');
+
+    const scanProbe = page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
       let points: any = null;
       debug.scene.traverse((obj: any) => {
@@ -438,6 +459,23 @@ test.describe('Test Fixture Rendering', () => {
       }
       return { totalPoints: actualCount, uniqueColors: uniqueColors.size, maxChannel };
     });
+
+    const colorStats = await raceEvaluate<Awaited<typeof scanProbe> | typeof SCAN_TIMED_OUT>(
+      scanProbe,
+      SCAN_TIMEOUT_MS,
+      SCAN_TIMED_OUT
+    );
+
+    if (colorStats === SCAN_TIMED_OUT) {
+      // Never a silent pass: the assertions below are the whole point of this
+      // test, so an unanswered probe means the u16 LUT round-trip was not
+      // checked — which is not the same as checking it and finding it sound.
+      throw new Error(
+        'lut_uint16 color scan: the page never answered the 100k-texel element-texture probe ' +
+          `within ${SCAN_TIMEOUT_MS} ms — its main thread is saturated and starving the evaluate ` +
+          'round trip, so the LUT round-trip assertions could not run. See issue #1651.'
+      );
+    }
 
     expect(colorStats).not.toBeNull();
     expect(colorStats?.totalPoints).toBe(100_000);
