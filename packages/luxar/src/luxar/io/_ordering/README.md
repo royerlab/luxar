@@ -22,7 +22,7 @@ Provide the **shared spatial-ordering infrastructure** that drives all three geo
 | **bounds.py** | Shared chunk-bounds constants, `slice_dims` / `coord_slack` sanitising, and the float32 outward store | `_BARRIER_BOUND_EPS`, `_normalise_slice_dims(slice_dims, ndim)`, `_normalise_coord_slack(coord_slack, ndim)`, `_store_outward_f32(lo, hi)`, `_store_outward_f32_array(lo, hi)` |
 | **points.py** | Points-specific glue | `sort_points_compound(positions, dimensions, method="hilbert")`, `compute_chunk_bounds_points(positions, radii, chunk_size, slice_dims=None, *, coord_slack=None)` |
 | **lines.py** | Lines-specific glue | `convert_to_indexed(n_vertices, line_type, indices)`, `order_lines_spatial(vertices, segments, dimensions, method="hilbert")`, `sort_segments_compound(segment_coords_2d, dimensions, method="hilbert")`, `compute_vertex_chunk_bounds(vertices, chunk_size, slice_dims=None, *, coord_slack=None)`, `compute_segment_chunk_bounds(vertices, segments, widths, chunk_size, slice_dims=None, *, coord_slack=None)` |
-| **gsplats.py** | GSplats-specific glue | `sort_splats_spatial(centers, method="hilbert", resolution=None, slice_dims=None)`, `compute_chunk_bounds_gsplats(centers, cholesky_factors, chunk_size, coverage_sigma=2.75, slice_dims=None)` |
+| **gsplats.py** | GSplats-specific glue | `sort_splats_spatial(centers, method="hilbert", resolution=None, slice_dims=None)`, `compute_chunk_bounds_gsplats(centers, cholesky_factors, chunk_size, coverage_sigma=2.75, slice_dims=None, *, coord_slack=None)` |
 
 ## Call Flow
 
@@ -135,7 +135,7 @@ The array form vectorises only the outward-store **branching** over an already-r
   - `slice_dims` is explicit (from scene `Dimension.discrete` or a stacked-time axis); this function does NOT auto-detect — the caller (`_compiler/gsplat_assembly.py`) falls back to `detect_barrier_dims` when no explicit dims are supplied
   - Splits center columns into `slice_dims` (barrier) and `ordering_dims` (complement)
   - Delegates to `_compound_sort`
-- `compute_chunk_bounds_gsplats(centers, cholesky_factors, chunk_size, coverage_sigma=2.75, slice_dims=None)` → `(num_chunks, d, 2)` bounds array
+- `compute_chunk_bounds_gsplats(centers, cholesky_factors, chunk_size, coverage_sigma=2.75, slice_dims=None, *, coord_slack=None)` → `(num_chunks, d, 2)` bounds array
   - Per-chunk box extends by the requested Gaussian coverage on spatial axes
   - Tight epsilon-padded bounds for barrier dims
 
