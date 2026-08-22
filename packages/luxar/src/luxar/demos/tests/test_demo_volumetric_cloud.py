@@ -163,9 +163,20 @@ class TestFlow:
             minus = cloud.velocity(p - step, cloud.UPDRAFT)[:, axis]
             divergence += (plus - minus) / (2 * eps)
 
-        scale = float(np.abs(cloud.velocity(p, cloud.UPDRAFT)).mean())
-        assert float(np.abs(divergence).max()) < 0.05 * scale / eps
-        assert float(np.abs(divergence).mean()) < 1e-3 * scale / eps
+        # Divergence has units of 1/time, so it has to be judged against a
+        # characteristic VELOCITY GRADIENT (speed / length), not against a
+        # speed divided by the finite-difference step. The old yardstick was
+        # `scale / eps`, which grows as the step shrinks — so it got looser the
+        # more accurate the derivative became, and a mutant with a uniform
+        # divergence of 0.05 injected into u_x sailed through it.
+        speed = float(np.linalg.norm(cloud.velocity(p, cloud.UPDRAFT), axis=1).mean())
+        gradient = speed / cloud.ROLL_A
+        assert float(np.abs(divergence).mean()) < 1e-3 * gradient, (
+            f"mean |div| {np.abs(divergence).mean():.3e} against a "
+            f"characteristic gradient of {gradient:.3e} — the field has stopped "
+            f"being solenoidal, and a compressive one piles parcels up"
+        )
+        assert float(np.abs(divergence).max()) < 2e-2 * gradient
 
     def test_the_flow_is_frame_rate_independent(self, parcels: np.ndarray) -> None:
         """`--frames` must be a resolution knob, not a physics knob.
@@ -213,12 +224,16 @@ class TestFlow:
             ((radius < 6) & (positions[:, 1] > 0) & (positions[:, 1] < 13)).sum()
         )
 
-        for frame in range(60):
-            phase = frame / 59
+        # The SHIPPED frame count, so the guard tracks the configuration that
+        # actually goes out rather than one that used to.
+        frames = cloud.DEFAULT_FRAMES
+        dt = 1.0 / (frames - 1)
+        for frame in range(frames - 1):
+            phase = frame / (frames - 1)
             updraft = cloud.UPDRAFT * (
                 0.35 + 0.65 * float(np.exp(-(((phase - 0.30) / 0.30) ** 2)))
             )
-            cloud.advect(positions, updraft, 1.0 / 59)
+            cloud.advect(positions, updraft, dt)
 
         radius = np.hypot(positions[:, 0], positions[:, 2])
         after = int(
@@ -246,6 +261,62 @@ class TestEnvelope:
             dtype=np.float32,
         )
         assert float(self._env(positions, 0.5, bubbles).max()) < 1e-2
+
+    def test_no_thermal_detaches_and_floats_above_the_cloud(
+        self, bubbles: cloud.Bubbles
+    ) -> None:
+        """The balloon bug: an isolated sphere hanging over the crown.
+
+        A thermal whose late fade is too gentle arrives at its ceiling still
+        most of full size, clear of the crowd below with nothing to merge into,
+        and renders as a detached ball above the cloud.
+
+        Neither of the obvious cheap tests catches it. Probing far above the
+        nominal top sees nothing, because thermals cap at 0.92 of it. Scanning
+        for an empty HEIGHT BAND sees nothing either, because a balloon sits
+        beside the crown as often as above it and shares its band. What the bug
+        actually is, is a second connected component — so that is what gets
+        measured: flood the envelope from the cloud base outward and require
+        that every occupied cell is reached.
+
+        The flood is six-neighbour dilation on a coarse boolean grid, which
+        needs nothing beyond numpy.
+        """
+        n = 34
+        for phase in (0.3, 0.5, 0.7, 0.9):
+            state = cloud.life_cycle(phase)
+            span_xz, y_hi = 15.0, state.top * 1.2
+            axis_x = np.linspace(-span_xz, span_xz, n)
+            axis_y = np.linspace(cloud.BASE_Y - 0.5, y_hi, n)
+            gx, gy, gz = np.meshgrid(axis_x, axis_y, axis_x, indexing="ij")
+            grid_pts = np.column_stack([gx.ravel(), gy.ravel(), gz.ravel()]).astype(
+                np.float32
+            )
+
+            occupied = (self._env(grid_pts, phase, bubbles) > 0.25).reshape(n, n, n)
+            assert occupied.any(), f"phase {phase}: no cloud at all"
+
+            # Seed from the lowest occupied layer — the slab on the base.
+            lowest = int(np.argmax(occupied.any(axis=(0, 2))))
+            reached = np.zeros_like(occupied)
+            reached[:, lowest, :] = occupied[:, lowest, :]
+
+            for _ in range(4 * n):
+                grown = reached.copy()
+                for axis in (0, 1, 2):
+                    grown |= np.roll(reached, 1, axis=axis)
+                    grown |= np.roll(reached, -1, axis=axis)
+                grown &= occupied
+                if grown.sum() == reached.sum():
+                    break
+                reached = grown
+
+            orphans = int((occupied & ~reached).sum())
+            assert orphans == 0, (
+                f"phase {phase}: {orphans} of {int(occupied.sum())} occupied "
+                f"cells are not connected to the cloud base — a thermal has "
+                f"detached and is floating free"
+            )
 
     def test_nothing_condenses_below_the_base(self, bubbles: cloud.Bubbles) -> None:
         positions = np.array(
@@ -568,6 +639,32 @@ class TestScene:
         assert 0.0 <= alpha.min() and alpha.max() <= 1.0
         assert alpha.max() - alpha.min() > 0.2, "alpha carries no density gradient"
 
+    def test_no_timepoint_is_left_empty_even_on_a_starved_budget(
+        self, tmp_path
+    ) -> None:
+        """A hole in the time axis is worse than a thin frame.
+
+        The gate is calibrated once from a target point count, so a small
+        enough budget can leave a lean frame with nothing clearing it. The
+        dimension still advertises the full range, and the compiler says so
+        ("actual data ends at ...") while the viewer shows a blank scene
+        mid-scrub. Measured before the fix: a budget of one point per frame
+        wrote 2 of 3 timepoints.
+        """
+        path = tmp_path / "cloud.luxar.zarr"
+        cloud.generate_evolving_cloud(
+            path, n_parcels=5_000, n_frames=5, target_points_per_frame=1
+        )
+
+        scene = LuxarScene.load(path)
+        positions = np.asarray(scene.get_points("EvolvingCloud").positions)
+        frames = sorted({int(t) for t in positions[:, 3]})
+        assert frames == [0, 1, 2, 3, 4], f"time axis has holes: {frames}"
+
+        # ...and the declared range must not promise more than was written.
+        assert scene.dimensions is not None
+        assert tuple(scene.dimensions.dimensions[3].range) == (0, 4)
+
     def test_the_scene_opens_on_a_turntable(self, tmp_path) -> None:
         """Auto-rotate, unlike the animation block, is honoured on load.
 
@@ -620,6 +717,28 @@ class TestScene:
             "than as finished"
         )
         assert float(time_anim.target_fps) > 0
+
+    def test_the_camera_never_lands_on_its_own_target(self) -> None:
+        """A degenerate cloud must still produce a usable pose.
+
+        With the framing radius taken straight from the data, a single-point
+        (or all-identical) frame puts the camera exactly on its target, and
+        `lookAt` along a zero-length direction is a NaN rather than a view.
+        One point per frame became reachable once the emission gate learned to
+        relax itself to keep the time axis unholed.
+        """
+        for points in (
+            np.array([[1.0, 2.0, 3.0]], dtype=np.float32),
+            np.full((5, 3), 2.0, dtype=np.float32),
+            np.array([[0.0, 0.0, 0.0], [1e-9, 0.0, 0.0]], dtype=np.float32),
+        ):
+            camera = cloud.compose_opening_camera(points)
+            assert camera.position is not None and camera.target is not None
+            separation = float(
+                np.linalg.norm(np.array(camera.position) - np.array(camera.target))
+            )
+            assert separation > 1e-3, f"camera sits on its target ({separation})"
+            assert np.isfinite(camera.position).all()
 
     def test_the_opening_camera_is_outside_the_cloud_and_frames_it(self) -> None:
         rng = np.random.default_rng(3)

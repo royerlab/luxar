@@ -40,8 +40,17 @@ that regime, so the advertised seven octaves of fractal detail were in fact a
 smooth ramp — and the scene it shipped was **790 points out of 800,000
 candidates**, a barely visible smudge that had been in the tree since the demo
 was written. The hash now ends in the standard 32-bit avalanche, and the base
-frequency puts several lattice cells across the cloud. Measured, the field's
-correlation with distance from the axis fell from −0.35 to 0.01.
+frequency puts several lattice cells across the cloud.
+
+Two measurements, because they are different quantities and it is worth being
+exact about which one moved. Sampled over a volume, the OLD noise correlated
+with coordinate magnitude at +0.64 — that is the hash defect itself, and the
+unit test pins the fixed hash below 0.05. Downstream, what actually hollowed
+the cloud was the correlation between the ENVELOPE and the noise: high-envelope
+parcels sat systematically in low-noise regions, at −0.35, and that is now
+0.01. (The composite multi-octave field still shows a mild correlation with
+radius over the material cube — about −0.12 — but that is one realization of a
+field only ~3.5 lattice cells across, not bias in the hash.)
 
 Blending two independent keyframes with weights that sum to one gives a variance
 of `(1-u)² + u²`, which is half its keyframe value halfway between. Across space

@@ -88,7 +88,7 @@ References:
     Fluid flow
         Batchelor, G. K. (1967). "An Introduction to Fluid Dynamics." CUP.
         The Stokes stream function for axisymmetric incompressible flow that
-        ``velocity`` is built from, and the Lagrangian-vs-Eulerian
+        ``velocity`` is built from (pp. 78-79), and the Lagrangian-vs-Eulerian
         specification that the material/world split here rests on.
         Bridson, R., Houriham, J. & Nordenstam, M. (2007). "Curl-Noise for
         Procedural Fluid Flow." ACM TOG 26(3). Why a procedural flow field
@@ -271,6 +271,7 @@ OPENING_PHASE = 0.55  #: the scene opens on the mature cloud, not on frame 0
 CALIBRATION_PHASES = (0.2, 0.35, 0.5, 0.65, 0.8)  #: probes for the point budget
 FRAMING_MARGIN = 1.30  #: headroom around the cloud in the opening shot
 FRAMING_QUANTILE = 0.995  #: share of the cloud the opening shot must contain
+MIN_FRAMING_RADIUS = 0.05  #: keeps a degenerate cloud from collapsing the pose
 #: Opening view direction, from the front, right and a little below — the
 #: angle you actually see a cumulus from, and the one that puts the flat
 #: base edge-on instead of hiding it underneath.
@@ -394,55 +395,6 @@ def simple_noise_3d(
     return nxyz  # type: ignore[no-any-return]
 
 
-def fractal_noise_3d(
-    x: np.ndarray,
-    y: np.ndarray,
-    z: np.ndarray,
-    octaves: int = 4,
-    persistence: float = 0.5,
-    base_frequency: float = 1.0,
-) -> np.ndarray:
-    """Fractional Brownian motion: a sum of octaves at doubling frequency.
-
-    The standard procedural-texture construction [Ebert et al. 2003]: each
-    octave doubles the frequency (lacunarity 2) and scales the amplitude by
-    ``persistence``, so the spectrum falls off as a power law and the result
-    is statistically self-similar the way real cloud edges are.
-
-    ``base_frequency`` matters more than it looks: the noise lattice is
-    integer-spaced, so coordinates that span less than one cell see a smooth
-    ramp rather than noise, and every additional octave is then wasted. Pass a
-    frequency that puts at least a few lattice cells across the region sampled.
-
-    Args:
-        x, y, z: Coordinate arrays
-        octaves: Number of noise octaves (scales)
-        persistence: How much each octave contributes (< 1.0 for fading detail)
-        base_frequency: Lattice cells per unit of input coordinate
-
-    Returns:
-        Fractal noise values in approximately [-1, 1]
-    """
-    noise = np.zeros_like(x)
-    amplitude = 1.0
-    frequency = base_frequency
-    max_amplitude = 0.0
-
-    for octave in range(octaves):
-        # Add noise at this frequency
-        noise += (
-            simple_noise_3d(x * frequency, y * frequency, z * frequency, seed=octave)
-            * amplitude
-        )
-
-        max_amplitude += amplitude
-        amplitude *= persistence
-        frequency *= 2.0
-
-    # Normalize to approximately [-1, 1]
-    return noise / max_amplitude  # type: ignore[no-any-return]
-
-
 def _smoothstep(edge0: float, edge1: float, x: np.ndarray) -> np.ndarray:
     """Hermite smoothstep, clamped outside ``[edge0, edge1]``."""
     t = np.clip((x - edge0) / (edge1 - edge0), 0.0, 1.0)
@@ -560,6 +512,13 @@ def sample_noise_series(
 ) -> np.ndarray:
     """Evaluate the precomputed 4D noise at noise-time ``tau``.
 
+    This is where the fractional Brownian motion is actually summed
+    [Ebert et al. 2003]: each octave doubles in frequency (lacunarity 2) and
+    is scaled by ``persistence``, so the spectrum falls off as a power law and
+    the field is statistically self-similar the way real cloud edges are. The
+    octaves themselves were evaluated once, at fixed material coordinates, by
+    :func:`build_noise_series` — all that is left here is the weighted sum.
+
     Args:
         series: Output of :func:`build_noise_series`
         tau: Noise-time coordinate
@@ -630,7 +589,7 @@ def velocity(positions: np.ndarray, updraft: float) -> np.ndarray:
     Three superposed pieces, each solenoidal on its own:
 
     1. An axisymmetric convection roll, written through a Stokes stream
-       function [Batchelor 1967, §2.2]
+       function [Batchelor 1967, pp. 78-79]
        ``psi = U r^2 exp(-r^2 / 2a^2) cos(k (y - y0))``. Taking
        ``u_r = -(1/r) dpsi/dy`` and ``u_y = (1/r) dpsi/dr`` makes the
        divergence identically zero by construction, and the resulting cell
@@ -697,7 +656,7 @@ def advect(
     rather than a change to the motion (see
     ``test_the_flow_is_frame_rate_independent``). Plain forward Euler would be
     first order and would systematically fling parcels outward on the roll's
-    curved streamlines, thinning the core over sixty-odd steps.
+    curved streamlines, thinning the core over the course of a run.
 
     Args:
         positions: ``(P, 3)`` world positions, modified in place
@@ -737,9 +696,9 @@ def life_cycle(phase: float) -> LifeCycle:
 
     The arc is: a low ragged fragment at the condensation level, a turret
     growing up and out, a mature sheared cloud, then entrainment eating it back
-    into rags. Size carries the growth; the *threshold* carries the decay,
-    since raising the level the noise has to clear erodes a solid cloud into
-    disconnected filaments rather than merely dimming it.
+    into rags. Size carries both ends of it — the body grows and then pulls
+    back in — while the threshold adds raggedness at the extremes, crisp in the
+    middle of the life and shredded at either end.
 
     Every curve here is deliberately shallow, and the reason is worth stating
     because it is easy to undo. Emission probability goes as the condensate to
@@ -831,8 +790,9 @@ def build_bubbles(rng: np.random.Generator, count: int = N_BUBBLES) -> Bubbles:
 
     Births are spread from before the sequence starts to near its end, so the
     opening frame already has mature bubbles rather than opening on an empty
-    sky, and radii shrink slightly with birth order — later thermals punch into
-    air the earlier ones have already dried out.
+    sky. Radii are drawn independently, but the CEILING rises with birth order:
+    later thermals climb into air that earlier ones have already moistened, and
+    a run of ceilings clustered low leaves the column squat.
 
     Args:
         rng: Seeded generator, so a given demo run is reproducible
@@ -1271,7 +1231,12 @@ def compose_opening_camera(points: np.ndarray) -> CameraConfig:
     # with two short ones — and the opening shot cut the base off the bottom of
     # the frame, which is the one feature the whole envelope exists to produce.
     half_height = float(np.quantile(np.abs(points[:, 1] - centre[1]), FRAMING_QUANTILE))
-    radius = max(radial, half_height)
+    # Floored, because a degenerate point set would otherwise put the camera
+    # exactly ON its own target: `lookAt` along a zero-length direction is not
+    # a view, it is a NaN. One point is enough to reach that, and a frame CAN
+    # come down to one point once the emission gate is relaxed to keep the time
+    # axis unholed.
+    radius = max(radial, half_height, MIN_FRAMING_RADIUS)
     distance = FRAMING_MARGIN * radius / math.sin(math.radians(CINEMATIC_FOV_DEG / 2))
 
     direction = np.array(VIEW_DIRECTION, dtype=np.float64)
@@ -1378,14 +1343,37 @@ def generate_evolving_cloud(
             water = condensate(positions, field, phase, bubbles)
             odds = emission_odds(water, gate)
             keep = odds > gate_u
+
+            if not keep.any() and float(water.max()) > 0.0:
+                # An empty frame is a HOLE in the time axis: the dimension
+                # advertises a range, and part of that range then has nothing
+                # behind it — the compiler says so out loud ("actual data ends
+                # at ...") and the viewer shows a blank scene mid-scrub.
+                #
+                # The life cycle cannot cause this on its own (its amplitude
+                # floor is 0.80), but the GATE can: it is calibrated once, from
+                # a target point count, and a small enough `--parcels` or point
+                # budget leaves a lean frame with nothing clearing it. So relax
+                # the gate for this frame alone until something passes. Halving
+                # only ever admits MORE parcels, and the recomputed odds keep
+                # the fade-in margin positive for whatever it admits.
+                relaxed = gate
+                for _ in range(40):
+                    relaxed *= 0.5
+                    keep = emission_odds(water, relaxed) > gate_u
+                    if keep.any():
+                        odds = emission_odds(water, relaxed)
+                        break
+
             n_kept = int(keep.sum())
             per_frame_counts.append(n_kept)
 
             if n_kept == 0:
-                # Cannot happen with the life cycle above, whose amplitude
-                # never drops below 0.80, but an empty frame would make a hole
-                # in the time axis rather than raise, so say so if it ever does.
-                aprint(f"⚠️  frame {frame}: no condensate above the gate")
+                # Only reachable when the frame holds no condensate at all,
+                # anywhere — which the envelope's amplitude floor makes very
+                # hard. Report rather than raise: one blank timepoint is worth
+                # less than losing the other hundred and nineteen.
+                aprint(f"⚠️  frame {frame}: no condensate anywhere")
             else:
                 kept_pos = positions[keep]
                 kept_water = water[keep]
@@ -1468,8 +1456,16 @@ def generate_evolving_cloud(
             ]
         )
 
+        # Derived, not hardcoded. `current_step` and `animation` are both
+        # POSITIONAL — indexed by dimension — so a literal `3` and a
+        # four-entry list silently retarget a displayed spatial axis the day
+        # anyone inserts a dimension above `time`. Reading the index back out
+        # of the dimension list makes that impossible instead of unlikely.
+        names = [d.name for d in dims.dimensions]
+        time_axis = names.index("time")
+
         opening_frame = int(round(OPENING_PHASE * (n_frames - 1)))
-        opening_points = all_positions[all_positions[:, 3] == opening_frame, :3]
+        opening_points = all_positions[all_positions[:, time_axis] == opening_frame, :3]
         viewer_config = ViewerConfig(
             cinematic_mode=True,
             camera=compose_opening_camera(opening_points),
@@ -1482,20 +1478,20 @@ def generate_evolving_cloud(
             auto_rotate=True,
             auto_rotate_speed=AUTO_ROTATE_SPEED,
             # Playing on open. `animation` is indexed BY DIMENSION, so the
-            # three displayed axes take empty entries and only `time` — index
-            # 3 — is asked to run. It loops rather than stopping at the end:
+            # displayed axes take empty entries and only `time` is asked to
+            # run. It loops rather than stopping at the end:
             # the life cycle is a cycle, and a scene that halts on its last
             # frame looks like it broke rather than like it finished.
             animation=[
-                AnimationConfig(),
-                AnimationConfig(),
-                AnimationConfig(),
                 AnimationConfig(
                     playing=True,
                     target_fps=PLAYBACK_FPS,
                     loop="loop",
                     direction="forward",
-                ),
+                )
+                if axis == time_axis
+                else AnimationConfig()
+                for axis in range(len(names))
             ],
             # Open on the mature cloud rather than on the opening wisps. This
             # is applied before playback starts, so the sequence opens on
@@ -1503,8 +1499,21 @@ def generate_evolving_cloud(
             # back to frame 0. The slider panel is opened so the time axis is
             # visible and scrubbable, and so `K` is discoverable for pausing.
             dimensions=DimensionsConfig(
-                current_step=[0.0, 0.0, 0.0, float(opening_frame)],
-                selected_dimension=3,
+                current_step=[
+                    float(opening_frame) if axis == time_axis else 0.0
+                    for axis in range(len(names))
+                ],
+                # NAVIGABLE position, not an absolute dimension index: the
+                # viewer resolves this against the non-displayed dimensions
+                # only (`getSelectedDimensionIndex`), which is why the number
+                # keys start at `1` for the first hidden axis. This scene hides
+                # exactly one, so 0 IS `time`. Writing 3 here would name a
+                # fourth navigable axis that does not exist.
+                #
+                # The viewer does not read the field back today, which is the
+                # same trap the `animation` block was in — so it is set
+                # correctly rather than plausibly.
+                selected_dimension=0,
             ),
             ui=UIConfig(show_dimensions=True),
         )
