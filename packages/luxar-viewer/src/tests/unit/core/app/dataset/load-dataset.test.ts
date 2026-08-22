@@ -13,6 +13,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { loadDataset, type LoadDatasetPorts } from '../../../../../core/app/dataset/load-dataset';
 import { captureViewerState } from '../../../../../config/zarr-bridge/viewer-state-capture';
 import { config } from '../../../../../config';
+import { syncCameraFovState } from '../../../../../ui/rendering-controls/sync-current-state';
 
 vi.mock('../../../../../data/scene-loader-manager', () => ({
   getSceneLoader: vi.fn(),
@@ -196,6 +197,10 @@ describe('loadDataset', () => {
       camera,
       controls: { getFocusTarget: () => focusTarget },
     });
+    Object.defineProperty(ports.sceneManager, 'currentFov', {
+      configurable: true,
+      get: () => camera.fov,
+    });
     (ports.sceneManager.loadSceneData as ReturnType<typeof vi.fn>).mockImplementation(async () => {
       trace.order.push('loadSceneData');
       camera.fov = 63;
@@ -203,8 +208,7 @@ describe('loadDataset', () => {
     (ports.renderingControls.syncCameraFovState as ReturnType<typeof vi.fn>).mockImplementation(
       () => {
         trace.order.push('syncCameraFovState');
-        ports.renderingControls.settings.fov = camera.fov;
-        ports.renderingControls.settings.fovPreset = '35mm';
+        syncCameraFovState(ports.renderingControls.settings, ports.sceneManager);
       }
     );
 
