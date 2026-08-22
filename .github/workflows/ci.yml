@@ -112,7 +112,7 @@ jobs:
             # half (`check-contract`), the viewer package.json version (version
             # consistency), and the demos/data tree + its manifest
             # (`check-data-manifest`). None of those carries a Python extension.
-            printf '%s\n' "$changed" | grep -qE '(\.py$|^pyproject\.toml$|\.(pyx|pxd|cu|cuh)$|^format-contract/|^packages/luxar/src/luxar/demos/data|^packages/luxar-viewer/(package\.json$|src/types/format-contract\.ts$))' && dom_py=true || true
+            printf '%s\n' "$changed" | grep -qE '(\.py$|^pyproject\.toml$|\.(pyx|pxd|cu|cuh)$|^format-contract/|^packages/luxar/src/luxar/demos/data|^packages/luxar-viewer/(package\.json$|src/types/format-contract\.ts$)|^scripts/complexity_baseline\.json$)' && dom_py=true || true
             # TS domain = the WHOLE viewer package (its py fixture-generators feed TS tests -> hierarchy) + root TS config
             printf '%s\n' "$changed" | grep -qE '(^packages/luxar-viewer/|^tsconfig[^/]*\.json$|(^|/)vitest[^/]*\.(ts|js|mjs)$)' && dom_ts=true || true
             printf '%s\n' "$changed" | grep -qE '(\.rs$|^wasm/|(^|/)Cargo\.(toml|lock)$)' && dom_rust=true || true
