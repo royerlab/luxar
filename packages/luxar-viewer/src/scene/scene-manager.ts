@@ -780,7 +780,6 @@ export class SceneManager extends THREE.EventDispatcher<{
       // The helper returns whether an explicit camera position was applied;
       // also extract once more to detect author-set target/targetNode.
       const viewerConfig = root.userData?.viewerConfig as ZarrViewerConfig | undefined;
-      const camOverrides = viewerConfig ? extractCameraOverrides(viewerConfig) : {};
       const { positionApplied, appliedUp } = this.applyZarrViewerConfig(root);
       if ((options.applyViewerConfigFov || positionApplied) && viewerConfig) {
         const fovOverride = extractRenderingOverrides(viewerConfig).fov;
@@ -796,6 +795,7 @@ export class SceneManager extends THREE.EventDispatcher<{
       // The scene up governs every camera fit/reset (Home/F, center-on-
       // origin, this auto-frame): world +Y unless the author set one.
       this.sceneUp.copy(appliedUp ?? DEFAULT_SCENE_UP);
+      const camOverrides = viewerConfig ? extractCameraOverrides(viewerConfig) : {};
       const hasAuthorTarget = !!(camOverrides.target || camOverrides.targetNode);
 
       // Auto-frame camera to fit scene contents, unless the zarr author specified
