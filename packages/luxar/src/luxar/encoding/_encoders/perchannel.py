@@ -362,9 +362,9 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         uses the corresponding half-step at the array maximum, capped at the
         maximum because its grid is anchored there and cannot decode above it.
         Linear quantization also budgets 1.5 dtype epsilons for the three
-        float16/float32 normalization operations. A relative-epsilon term for
-        the wider of float32 and the authored dtype (or one float32 subnormal
-        quantum) covers the reader's final cast.
+        float16/float32 normalization operations. The decode allowance covers
+        the worse of the reader's cast back to the authored dtype and the
+        viewer's staged float32 affine reconstruction.
 
         Args:
             data: The positive-scalar array exactly as it will be encoded.
@@ -433,6 +433,8 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
 
         bits = self._compute_quantization_bits(arr)
         use_geolog = positive_scalar_encoding == "log" or bits == 0
+        float32_eps = float(np.finfo(np.float32).eps)
+        viewer_decode_ulp = max_val * float32_eps
         if use_geolog:
             nonzero = arr[arr > 0].astype(np.float64, copy=False)
             min_log = float(np.log(nonzero.min()))
@@ -453,14 +455,16 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
                 return None
             levels = (1 << bits) - 1
             slack = span / (2.0 * levels)
+            viewer_decode_ulp += span * float32_eps
             if np.issubdtype(arr.dtype, np.floating) and arr.dtype.itemsize <= 4:
                 slack += 1.5 * span * float(np.finfo(arr.dtype).eps)
 
-        decode_eps = float(np.finfo(np.float32).eps)
+        decode_eps = float32_eps
         if np.issubdtype(arr.dtype, np.floating):
             decode_eps = max(decode_eps, float(np.finfo(arr.dtype).eps))
         decode_ulp = max(
             max_val * decode_eps,
+            viewer_decode_ulp,
             float(np.finfo(np.float32).smallest_subnormal),
         )
         return float(min(slack + decode_ulp, float(np.finfo(np.float64).max)))
