@@ -2,7 +2,7 @@
 scalar, geolog scalar, and the per-channel linear/log/signed-log/geolog family."""
 
 import warnings
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import numpy as np
 import zarr
@@ -26,6 +26,8 @@ _COORD_BITS = 16
 
 #: Number of quantization intervals of the COORDINATE fixed-point grid.
 COORDINATE_LEVELS = float(2**_COORD_BITS - 1)
+
+_SCALAR_LUT_PROBE_VALUES = 1024
 
 
 def gridded_axis_step(
@@ -329,6 +331,139 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         ):
             return None  # a LUT stores the values verbatim
         return slack
+
+    def positive_scalar_round_trip_slack(
+        self,
+        data: np.ndarray,
+        mode: EncodingMode,
+        *,
+        positive_scalar_encoding: Literal["linear", "log"] = "linear",
+        allow_lut: bool = True,
+    ) -> Optional[float]:
+        """How far can encoding ``data`` as POSITIVE_SCALAR enlarge a value?
+
+        Returns ``None`` when the write is exact, otherwise one conservative
+        float64 pad for the whole array. The chunk-bounds writers add it to a
+        point radius or line width on spatial dimensions only, so a decoded
+        footprint cannot escape a bound built from the authored scalar.
+
+        The exits mirror :meth:`_encode_positive_scalar` plus the exact
+        broadcast/LUT paths that precede it in :meth:`ArrayEncoder.encode`.
+        The answer is valid only when the matching write has deduplication
+        disabled, so it cannot resolve to an ``array_ref`` with another
+        array's encoding parameters.
+        Unlike :meth:`coordinate_round_trip_slack`, this query raises for
+        ``CUSTOM``: a POSITIVE_SCALAR write can reach :meth:`_encode_custom`,
+        whose arbitrary transform has no displacement model. The coordinate
+        sibling returns ``None`` because ``CUSTOM`` does not reach
+        :meth:`_encode_coordinate`, so no coordinate fixed-point displacement
+        applies.
+        Linear quantization uses half a grid quantum; geometric-log encoding
+        uses the corresponding half-step at the array maximum, capped at the
+        maximum because its grid is anchored there and cannot decode above it.
+        Linear quantization also budgets 1.5 dtype epsilons for the three
+        float16/float32 normalization operations. A relative-epsilon term for
+        the wider of float32 and the authored dtype (or one float32 subnormal
+        quantum) covers the reader's final cast.
+
+        Args:
+            data: The positive-scalar array exactly as it will be encoded.
+            mode: The encoding mode it will be encoded under.
+            positive_scalar_encoding: The matching write's linear/log choice.
+            allow_lut: Whether the matching write permits exact LUT storage.
+
+        Returns:
+            ``None`` when the matching write is exact, otherwise one
+            conservative array-wide outward pad.
+        """
+        arr = np.asarray(data)
+        if arr.size == 0 or not np.all(np.isfinite(arr)) or np.any(arr < 0):
+            return None
+        if mode not in (
+            EncodingMode.AUTO,
+            EncodingMode.MEMORY,
+            EncodingMode.PRECISION,
+        ):
+            raise ValueError(
+                "Cannot bound a CUSTOM POSITIVE_SCALAR array: an arbitrary "
+                "custom_encoder has no round-trip displacement model"
+            )
+
+        if self._is_uniform(arr):
+            first = float(arr.flat[0])
+            displacement = max(0.0, first - float(np.min(arr)))
+            return displacement or None
+
+        if mode == EncodingMode.PRECISION:
+            if arr.dtype == np.dtype(np.float32):
+                return None
+            max_val = float(np.max(arr))
+            return max(
+                max_val * float(np.finfo(np.float32).eps),
+                float(np.finfo(np.float32).smallest_subnormal),
+            )
+
+        # A scalar LUT has at most 256 values. A small prefix with more
+        # distinct values proves the full array cannot take that exit and
+        # avoids a second full-array ``np.unique`` on the common continuous
+        # radii/widths path (``encode`` performs its own LUT plan later).
+        prefix = arr.ravel()[:_SCALAR_LUT_PROBE_VALUES]
+        if (
+            allow_lut
+            and np.unique(prefix).size <= LUT_SCALAR_MAX_DISTINCT
+            and self.encodes_as_lut(arr, SemanticType.POSITIVE_SCALAR)
+        ):
+            return None
+
+        return self._positive_scalar_quantization_slack(
+            arr, mode, positive_scalar_encoding
+        )
+
+    def _positive_scalar_quantization_slack(
+        self,
+        arr: np.ndarray,
+        mode: EncodingMode,
+        positive_scalar_encoding: Literal["linear", "log"],
+    ) -> Optional[float]:
+        """Return the quantization plus float32 decode pad for one array."""
+
+        max_val = float(np.max(arr))
+        if max_val == 0.0:
+            return None
+
+        bits = self._compute_quantization_bits(arr)
+        use_geolog = positive_scalar_encoding == "log" or bits == 0
+        if use_geolog:
+            nonzero = arr[arr > 0].astype(np.float64, copy=False)
+            min_log = float(np.log(nonzero.min()))
+            max_log = float(np.log(nonzero.max()))
+            if max_log == min_log:
+                return None
+            quant_bits = 16 if mode == EncodingMode.AUTO else 8
+            intervals = (1 << quant_bits) - 2
+            # The grid is anchored at max_log, so no code decodes above max_val.
+            half_step = min(
+                float(np.expm1((max_log - min_log) / (2.0 * intervals))), 1.0
+            )
+            slack = max_val * half_step
+        else:
+            min_val = float(np.min(arr))
+            span = max_val - min_val
+            if span == 0.0:
+                return None
+            levels = (1 << bits) - 1
+            slack = span / (2.0 * levels)
+            if np.issubdtype(arr.dtype, np.floating) and arr.dtype.itemsize <= 4:
+                slack += 1.5 * span * float(np.finfo(arr.dtype).eps)
+
+        decode_eps = float(np.finfo(np.float32).eps)
+        if np.issubdtype(arr.dtype, np.floating):
+            decode_eps = max(decode_eps, float(np.finfo(arr.dtype).eps))
+        decode_ulp = max(
+            max_val * decode_eps,
+            float(np.finfo(np.float32).smallest_subnormal),
+        )
+        return float(min(slack + decode_ulp, float(np.finfo(np.float64).max)))
 
     def _encode_coordinate(
         self,

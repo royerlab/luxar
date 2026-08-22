@@ -573,6 +573,9 @@ part.add_points("part_0", subset0)
 part.add_points("part_1", subset1)
 ```
 
+`max_elements` and `rule` are the only accepted keys in a `partition` dict;
+unknown keys raise an error before any node is written.
+
 #### Multi-additive LOD (progressive loading) — Points / Lines / GSplats
 
 All three leaf types (Points, Lines, GSplats) support a uniform
@@ -799,6 +802,8 @@ per-array sizing.
   the array's own `[min, max]`) or, for wide dynamic range (> 65536:1),
   `geolog_scalar_uint16` (geometric-log grid, code 0 reserved for exact
   zeros). `float32` under PRECISION; `broadcasted` when uniform.
+- **Deduplication:** `false` — chunk bounds depend on this array's own
+  positive-scalar quantization grid.
 - **Chunks:** `(chunk_rows,)` — byte-based / spatial-index-aligned
 - **Compression:** Blosc with zstd, level 9 (width-aware shuffle policy)
 - **Description:** Point radii in scene units
@@ -1392,7 +1397,8 @@ consumers must treat missing and `"none"` identically.
 - **Note:** Bounds include point radii extent to ensure hyperspheres are found. A node with no `radii/` array is bounded by `DEFAULT_POINT_RADIUS` (0.5) — the radius it will be drawn at — not by zero. Discrete/barrier axes get no radius extent at all, only a tiny float-boundary epsilon, so a categorical value never bleeds into its neighbour. **A stored interval is never tighter than the chunk's footprint of the AUTHORED coordinates, at any coordinate magnitude**: every pad is a small *absolute* quantity that would fall under half a float32 ULP past `|x| ~ 2**23`, so producers accumulate the interval in float64 and narrow it to this float32 array by rounding each end *away* from the interval (a bound moves one ULP outward only when the cast moved it the wrong way, so a padless axis still stores its coordinates exactly). Consumers may rely on containment; they may not assume the bound is tight.
 - **Note (quantised coordinates — points and lines):** for **points and lines** the containment guarantee above holds against the coordinates *as decoded*, not merely as authored, and that takes an extra pad. `chunk_bounds` is always float32, but the coordinate arrays themselves are stored as **per-axis uint16 fixed point** under the default AUTO encoding, so a decoded coordinate can land up to half a quantum (`extent/131070`) away from the authored one on a **non-gridded** axis — 7.6e-3 at an axis extent of 1000, far above the float32 ULP the outward store closes, and enough for a reader to skip the chunk at that edge. Points and lines therefore widen every chunk bound outward by that per-axis half-quantum (on top of the radius/width footprint on a spatial axis, and on top of the float-boundary epsilon on a barrier axis); an axis the encoder stores exactly gets nothing extra, which covers a **gridded** axis (a stacked integer time/channel axis, snapped so its values round-trip bit-exactly), a constant axis and the ≥2¹⁶-extent float32 fallback. An array that is *actually* stored as a LUT (verbatim values, ≤256 distinct) is exempt too — but eligibility is not enough: **lines `vertices/` never store a LUT** (the spatial-index loader reads that array as raw chunked zarr, so the writer blocks LUT there), so a LUT-eligible lines node is quantised like any other and its vertex *and* segment bounds still get the pad. Stores written before this pad existed (2026-08) keep their old, occasionally-too-tight bounds.
 - **Note (quantised coordinates — gsplats):** gsplat containment comes from the encoder's per-axis round-trip slack alone: every spatial and barrier bound is widened by the full possible center displacement, so it contains decoded `centers/` without relying on the splat's σ. On a non-gridded uint16 axis that slack is the half-quantum (`extent/131070`), added on top of the geometric footprint or float-boundary epsilon; a gridded time/channel axis, LUT encoding, or float32 store answers zero and leaves the bound unchanged. The separate sigma rail is a **fidelity** guard: when a uint16 grid can move too many centers beyond their own cores it escalates the whole array to float32, but its population tolerance is not part of the containment contract. Stores written before this pad existed (2026-08) keep their old, occasionally-too-tight bounds.
-- **Note (quantised radii, widths, and Cholesky factors):** the containment claims above are about *coordinates*. A point's `radii/`, a line's `widths/`, and a gsplat's packed `cholesky_factors` input (split on disk into `cholesky_factors_diag/` and `cholesky_factors_offdiag/`) are themselves quantised, while the footprint pad in `chunk_bounds` is built from the **authored** values. A decoded radius/width can therefore be up to half a quantum larger than the one the bound was sized for (`bounded_scalar_uint8` under AUTO for a typical range; measured on radii ~ U(0.1, 5.0): decoded − authored up to 9.6e-3, putting 5 of 5 point chunks and 3 of 5 segment chunks marginally outside their stored bound). Likewise, the gsplat diagonal uses `log_perchannel_u8` under AUTO, so decoded σ can exceed the authored `coverage_sigma · σ` pad (measured decoded − authored σ up to 1.99e-2, putting 11 of 11 gsplat chunks outside their stored bound, worst 5.10e-2 after the 2.75× coverage factor). This is the same class of gap the coordinate pad closes, on the other half of the footprint, and it is not closed yet.
+- **Note (quantised radii and widths):** a point's `radii/` and a line's `widths/` are themselves quantised (`bounded_scalar_uint8` under AUTO for a typical range), so their decoded value can exceed the authored value by roughly half a quantum. Points and segment bounds therefore add the positive-scalar encoder's single-array round-trip slack to the radius/width pad on **spatial dimensions only**. Barrier dimensions still receive no geometric footprint pad. Stores written before this scalar pad existed (2026-08) keep their old, occasionally-too-tight bounds.
+- **Note (quantised Cholesky factors):** a gsplat's packed `cholesky_factors` input is split on disk into `cholesky_factors_diag/` and `cholesky_factors_offdiag/`, while its footprint pad is still built from the **authored** values. The diagonal uses `log_perchannel_u8` under AUTO, so decoded σ can exceed the authored `coverage_sigma · σ` pad (measured decoded − authored σ up to 1.99e-2, putting 11 of 11 gsplat chunks outside their stored bound, worst 5.10e-2 after the 2.75× coverage factor). This remaining extent gap is not closed yet.
 
 #### Per-Element Labels (CSR-style)
 
@@ -1837,8 +1843,9 @@ per-array above (`linear_perchannel_u16`, `rgb_uint8`,
   shape `(0,)` / `(0, D)`) whose `encoding` carries `target` (path of the
   original array), `hash`, `original_shape`, and `original_dtype`. Readers
   must resolve and load the target array. (Structural arrays whose consumers
-  read raw zarr — line `vertices`/`segments` — are never dedup- or
-  LUT-encoded.)
+  read raw zarr — line `vertices`/`segments` — are never dedup- or LUT-encoded;
+  point `radii` and line `widths` are never deduplicated either, because their
+  chunk bounds depend on their own quantization grids.)
 - **`lut_uint8` / `lut_uint16`** — look-up-table encoding for arrays with few
   unique values (or few unique color rows): the array stores indices and the
   `encoding.lut` attr carries the unique values as JSON (`lut_mode` +

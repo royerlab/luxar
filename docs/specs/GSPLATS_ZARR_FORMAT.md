@@ -891,6 +891,75 @@ Descriptive counters are never dropped by either rule — `iterations`,
 `best_iteration`, `converged`, `time_seconds`, `fitter_name` and `filtered` /
 `filter_criteria` describe the run or the edit, both of which happened.
 
+**What survives a rewrite: the authored appearance.** The rules above govern
+what a rewriting tool must *drop*; the mirror-image obligation is what it must
+*keep*. A rewriting command owns the **structure**, not the **look**: the
+builders construct fresh nodes that know nothing about the input, so unless the
+source root's authored compositing attrs are handed back to the writer, its own
+defaults take over — `blending_mode` disappears entirely and
+`opacity` / `absorption` / `gamma` / `intensity` / `offset` snap back to their
+identity, silently resetting whatever was tuned in the Layers panel. The key set
+is `AUTHORED_APPEARANCE_ATTRS` (`core/group/compositing.py`): the compositing
+attrs minus `transform` (a stored matrix is column-major and would be transposed
+a second time on the way back in), plus `colormap`. It is read with
+`gsplats/io/load_gsplats.read_authored_appearance` — directories and `.zip` /
+`.tar.gz` archives alike — and passed as `root_attrs=` to
+`write_gsplats_tree` / `GSplatData.save`, which seeds it at **lowest
+precedence** so the command's own structural attrs still win. The one attr
+refused on the way through is a `colormap` of `"custom"`: it names a sibling
+`colormap_lut` array the attrs-only read cannot carry, so the bare sentinel
+would dangle.
+
+With **several** inputs (`gsplat merge`) there is no single source root, so the
+carried value must be **agreed**: a key rides along only when every input that
+*has* an opinion on it agrees, and an input with no opinion casts no vote (at
+least one input must have one for the key to appear). On any disagreement the
+key is dropped and the command **says so**, naming the key, the differing values
+(each with the input it came from) and what lands on disk instead — the same
+unanimity rule as
+`agreed_normalization_stats`, but loud rather than silent, because appearance is
+hand-authored and a user who tuned two datasets has to be told which choice did
+not survive.
+
+"Having an opinion" is narrower than "carrying the key", and that is the
+load-bearing detail. The writer STAMPS identity values on every save —
+`opacity: 1.0` / `absorption: 1.0` / `gamma: 1.0` / `intensity: 1.0` /
+`offset: 0.0` / `layer: true`, plus `colormap: "gray"` on a colorless store —
+so a value **equal to the writer's manufactured default** counts as silence,
+exactly like an absent key (the values live in one place,
+`WRITER_STAMPED_APPEARANCE_DEFAULTS` in `core/group/compositing.py`, which is
+what both the writers and the vote read). The cost is stated plainly: nothing on
+disk distinguishes a deliberately authored `opacity: 1.0` from an untouched
+store, so a deliberate identity loses to a sibling's `0.75`. The alternative is
+worse — it is what the code did first: a tuned dataset merged with a freshly
+fitted one disagreed on **seven** keys, dropped all seven, and the writer then
+stamped its defaults back, which *is* the untouched input's value. Same result,
+plus seven warnings.
+
+`visible` is the one key where ABSENCE is itself a vote. The viewer treats a
+missing `visible` as visible, so an input without the key is positively saying
+"shown": `visible: false` is carried only when **every** input hides, and one
+hidden input plus one silent one is a disagreement rather than a unanimous hide.
+Without that exception a single hidden input opened the whole merged dataset
+hidden. `blending_mode` / `nd_transform` / `join` keep the plain no-vote rule,
+where absence genuinely means "no opinion".
+
+One key is additionally dropped because the merge itself invalidates it:
+`colormap`, whenever the merged output carries per-splat RGB that the inputs'
+palettes do not describe. Three predicates cover that: `--channel-colors`
+always bakes RGB, `GSplatData.concatenate` white-fills a colorless input to
+match a colored sibling, and a colored input with no authored palette is
+positively asking the viewer to use its per-splat RGB. The white-fill case
+happens on a plain merge and under `--as-dimension` too. The viewer makes an
+ancestor palette override per-splat RGB unconditionally, so a carried palette
+would render those splats through a scalar ramp. `colormap` is also refused
+outright when any input root declares the `"custom"` sentinel: that palette
+cannot be carried, and treating the input as having no opinion would hand the
+merged root a *sibling's* palette. `--as-dimension` does **not** invalidate
+`nd_transform`: the new axis is appended LAST, so every existing dimension keeps
+its name and its index and the new one simply has no entry — the identity
+default.
+
 ### Pipeline Group Attributes (Optional)
 
 The `pipeline/` group records the reduction/topology provenance of a dataset —
