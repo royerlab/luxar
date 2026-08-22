@@ -24,7 +24,10 @@ from luxar.demos.demo_cellxgene_census_umap import build_scene
 #: The appearance baked in `scene.add_points("cells", ...)` after #1375.
 EXPECTED_OPACITY = 0.39
 EXPECTED_INTENSITY = 4.52
-EXPECTED_ABSORPTION = 6.5
+# Retuned from 6.5: at that kappa a cell absorbed 0.92 of what was behind
+# it and its own self-screening S(tau)=0.36 ate most of its emission, so
+# the cloud read as a screened shell rather than depth-ordered structure.
+EXPECTED_ABSORPTION = 2.12
 
 
 def _write_synthetic_cache(path: Path, n: int = 200) -> Path:

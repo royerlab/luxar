@@ -71,7 +71,6 @@ _CHOOSES_OUTSIDE_THE_POLICY = {
 #: defect the policy exists to remove, not a configuration. Every one of them is
 #: cache-only or local-compute, which is why they are not urgent.
 _NOT_YET_ROUTED = {
-    "demo_gsplats_2d_codex_pancreas.py",
     "demo_gsplats_3d_acto3d_heart.py",
     "demo_gsplats_3d_cells3d_multichannel.py",
     "demo_gsplats_3d_flylight_mcfo_neurons.py",
