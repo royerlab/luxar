@@ -49,6 +49,7 @@ export function decode_quantized_u16(
 /**
  * Decode log-space quantized uint8 data to float32.
  * Decoding: expm1(normalized * maxLog)
+ * Callers provide integral codes in [0, 255]; ArrayLike also accepts widened Float32Array codes.
  */
 export function decode_log_scalar_u8(
   data: ArrayLike<number>,
@@ -66,6 +67,7 @@ export function decode_log_scalar_u8(
 
 /**
  * Decode log-space quantized uint16 data to float32.
+ * Callers provide integral codes in [0, 65535]; ArrayLike also accepts widened Float32Array codes.
  */
 export function decode_log_scalar_u16(
   data: ArrayLike<number>,

@@ -559,8 +559,8 @@ export class ArrayDecoder {
    *
    * Level 0 decodes to exactly 0; levels [1, 2^bits - 1] decode to
    * exp(minLog + (u - 1)/(2^bits - 2) * (maxLog - minLog)) — uniform
-   * relative precision across the array's own nonzero range. Mirrors
-   * Python `_decode_geolog_scalar` and the worker/WASM kernels exactly.
+   * relative precision across the array's own nonzero range. Mirrors Python
+   * `_decode_geolog_scalar`; worker/WASM parity is tracked by #1849.
    */
   private decodeGeologScalar(
     data: Float32Array,

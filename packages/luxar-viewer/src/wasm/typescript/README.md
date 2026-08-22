@@ -73,9 +73,10 @@ This directory is **not** uniformly verified. Current state:
 
 The viewer's full-array and range-based `ArrayDecoder` log-scalar paths delegate to
 `decode_log_scalar_u8` / `decode_log_scalar_u16` here. The Rust/WASM f32 kernel is the
-viewer decode contract, so worker, main-thread, and worker-fallback ranges cannot choose
-different arithmetic for the same encoded array. The Python decoder remains a separate
-f64 metadata helper.
+viewer decode contract, so the main-thread and TypeScript worker-fallback routes now use
+the same f32 operation order. The worker WASM kernel still uses Rust `expm1f`, leaving the
+one-ULP residual tracked by #1843. The Python decoder remains a separate f64 metadata
+helper.
 
 ### Where `Math.fround` is mandatory
 
