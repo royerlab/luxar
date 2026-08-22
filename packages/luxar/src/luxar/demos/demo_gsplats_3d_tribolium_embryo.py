@@ -64,7 +64,8 @@ Options:
 By default, precomputed GSplats are loaded from package data (Git LFS).
 Use --recompute to re-fit from scratch (requires network + GPU).
 If the local Tribolium cache predates the 675-count floor, run once with
---recompute (or clear it with ``luxar demo cache clear gsplats_tribolium``).
+--recompute (or clear it with
+``luxar demo cache clear gsplats_3d_tribolium_embryo``).
 
 Output:
     - Scene saved to:  datasets/demos/gsplats_3d_tribolium_embryo.luxar.zarr

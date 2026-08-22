@@ -24,5 +24,6 @@ in-place alongside the sweep that chose it, including the arm that over-floors a
 destroys the dim band, so it cannot be raised casually.
 
 Existing local Tribolium caches are not self-describing. Run any of these demos once
-with `--recompute` (or clear `gsplats_tribolium` with `luxar demo cache clear`) to
-replace a fit created before this floor was added.
+with `--recompute` (or run
+`luxar demo cache clear gsplats_3d_tribolium_embryo`) to replace a fit created before
+this floor was added.
