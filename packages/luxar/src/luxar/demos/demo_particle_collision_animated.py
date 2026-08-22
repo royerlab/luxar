@@ -146,6 +146,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import launch_viewer
 
 # Reuse the shared physics constants + event generator from the static particle
@@ -712,7 +713,9 @@ def generate_animated_detector_scene(
                 ),
             ]
         )
-        scene = compiler.create_scene(dimensions=dims)
+        scene = compiler.create_scene(
+            dimensions=dims, viewer_config=ViewerConfig(cinematic_mode=True)
+        )
 
         rng = np.random.default_rng(42)
 

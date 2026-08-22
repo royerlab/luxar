@@ -53,6 +53,7 @@ import pandas as pd
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import launch_viewer, parse_path_arg
 from luxar.utils._umap_utils import format_label, get_categorical_color
 from luxar.utils.paths import get_demos_output_dir
@@ -372,7 +373,9 @@ def build_scene(
         )
 
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                dimensions=dims, viewer_config=ViewerConfig(cinematic_mode=True)
+            )
 
             scene.add_points(
                 "Cells",

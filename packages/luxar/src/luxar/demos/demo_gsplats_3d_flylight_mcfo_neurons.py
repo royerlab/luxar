@@ -1436,12 +1436,13 @@ def create_luxar_scene(
                 # as decoration, and the bloom gives the bright neurites the
                 # halo they have in the raw data.
                 #
-                # Each effect is spelled out because ``cinematic_mode`` alone
-                # would render none of them: the viewer applies its cinematic
-                # preset from the C-key toggle, and a scene's flag only sets the
-                # panel's summary state. The values below are that preset's, so
-                # the two agree; the flag stays so the toggle reads as already
-                # on. ACES is stated explicitly for the same reason.
+                # ``cinematic_mode=True`` now carries that look on its own — the
+                # zarr bridge expands the preset into every field a scene leaves
+                # unset (#1591), which it did NOT when this demo was written.
+                # The effects below are spelled out anyway, and they hold the
+                # preset's own values, so they are redundant rather than wrong:
+                # they keep this scene's grain and glow pinned at what it was
+                # tuned against if the shared preset is ever re-graded.
                 viewer_config=ViewerConfig(
                     tone_mapping="ACES",
                     cinematic_mode=True,

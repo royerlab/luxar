@@ -73,6 +73,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
     MissingDependencyError,
     launch_viewer,
@@ -830,6 +831,7 @@ def generate_esm3_landscape(
                     **DEMO_META["citation"],
                     "short": f"UniProt/Swiss-Prot; embeddings by {model_citation}",
                 },
+                viewer_config=ViewerConfig(cinematic_mode=True),
             )
 
             # Substitutive Points LOD: ~572k proteins is a large cloud, so coarse

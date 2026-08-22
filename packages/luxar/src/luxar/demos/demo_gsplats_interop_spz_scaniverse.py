@@ -70,6 +70,7 @@ from luxar.demos import (
     parse_demo_flags,
     print_data_provenance,
 )
+from luxar.demos._cinematic_camera import pull_in
 from luxar.demos._interop_common import build_gsplats_cache, build_interop_scene
 from luxar.utils.paths import get_demos_output_dir
 
@@ -86,7 +87,14 @@ SCENES = {
 # camera outside an opaque marble with the subject an invisible speck inside. A
 # fixed close pose looking at the origin frames the subject instead; the sparse
 # environment falls far into the background. (Y-up: SPZ is already Y-up.)
-SUBJECT_CAMERA = CameraConfig(position=(6.0, 7.0, 19.0), target=(0.0, 0.0, 0.0))
+# The close pose is the framing at the viewer's 47° default. The scene enables
+# `cinematic_mode` and pins no `fov`, so the preset expands its 35 mm lens (63°)
+# — which at a FIXED distance would hand the frame back to the environment shell
+# this pose exists to escape. `pull_in` keeps the subject the same size on
+# screen, so the shell stays where it was put: far into the background.
+SUBJECT_CAMERA = CameraConfig(
+    position=pull_in((6.0, 7.0, 19.0)), target=(0.0, 0.0, 0.0)
+)
 
 FLAGS = parse_demo_flags()
 Arbol.max_depth = 5

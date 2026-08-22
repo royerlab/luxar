@@ -66,6 +66,7 @@ from arbol import aprint, asection
 from scipy.ndimage import laplace
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
@@ -272,7 +273,9 @@ def generate_turing_patterns(
         )
 
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                dimensions=dims, viewer_config=ViewerConfig(cinematic_mode=True)
+            )
 
             # Small flat points for 2D appearance
             radii = np.full(len(positions), 0.6, dtype=np.float32)

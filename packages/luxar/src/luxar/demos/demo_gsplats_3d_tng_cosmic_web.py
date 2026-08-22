@@ -341,7 +341,7 @@ def create_luxar_scene(gsplats_data: GSplatData, output_path: Path) -> Path:
         ) as compiler:
             scene = compiler.create_scene(
                 dimensions=dims,
-                viewer_config=ViewerConfig(tone_mapping="ACES"),
+                viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="ACES"),
                 citation=DEMO_META["citation"],
             )
             scene.attrs["title"] = "GSplats: IllustrisTNG Cosmic Web (TNG300-3-Dark)"

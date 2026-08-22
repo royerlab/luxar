@@ -97,6 +97,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
     MissingDependencyError,
     cache_computed,
@@ -1940,7 +1941,9 @@ def create_cytoself_scene(
 
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
-                dimensions=dims, citation=DEMO_META["citation"]
+                dimensions=dims,
+                citation=DEMO_META["citation"],
+                viewer_config=ViewerConfig(cinematic_mode=True),
             )
 
             total_points = len(positions_combined)

@@ -112,6 +112,7 @@ from luxar.demos import (
     parse_demo_flags,
     parse_int_arg,
 )
+from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.paths import get_demos_output_dir
@@ -170,13 +171,23 @@ CAMERA_DIRECTION = np.array([0.575, 0.436, 0.693], dtype=np.float64)
 #: rather than guessed as a multiple of the scene extent: a perspective camera
 #: subtends a sphere of radius R at ``asin(R/D)``, not ``R/D``, and R is the
 #: bounding-SPHERE radius (27.3 a₀), not the per-axis extent (26.0 a₀). Sizing
-#: off the per-axis extent with the small-angle form put 3pz at 28.5° against a
-#: 23.5° half-FOV — screen-filling and clipped at every edge.
+#: off the per-axis extent with the small-angle form put 3pz at 28.5° against
+#: what was then a 23.5° half-FOV — screen-filling and clipped at every edge.
+#: (Both figures were measured at the viewer's 47° default; see
+#: :data:`COMPOSED_FOV_DEGREES`, which is now the cinematic preset's 63°.)
 CAMERA_FOV_FILL = 0.85
 
-#: The viewer's default vertical field of view, in degrees. Only sets the
-#: opening pose; changing the FOV preset in the viewer just re-frames.
-VIEWER_FOV_DEGREES = 47.0
+#: The vertical field of view this pose is composed for, in degrees. NOT the
+#: viewer's 47° default: the scene enables ``cinematic_mode``, whose preset
+#: expands a 35 mm lens (63°) for any scene that pins neither ``camera.fov`` nor
+#: ``camera.fov_preset`` — and this one deliberately pins neither, so that the
+#: preset's lens distortion and its field of view describe the same 35 mm lens.
+#: The distance is DERIVED from this number, so the wider lens moves the camera
+#: IN rather than shrinking the orbitals: at a fixed distance, 47° → 63° would
+#: have halved the subject's screen area and flattened the size gap between
+#: states that this demo exists to show. Only sets the opening pose; changing
+#: the FOV preset in the viewer just re-frames.
+COMPOSED_FOV_DEGREES = CINEMATIC_FOV_DEG
 
 FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
@@ -262,7 +273,7 @@ def camera_distance_for_radius(radius: float) -> float:
     Returns:
         Camera distance from the target, in the same units.
     """
-    return radius / math.sin(math.radians(CAMERA_FOV_FILL * VIEWER_FOV_DEGREES / 2.0))
+    return radius / math.sin(math.radians(CAMERA_FOV_FILL * COMPOSED_FOV_DEGREES / 2.0))
 
 
 def cache_path(grid_size: int, seeds: int, iters: int) -> Path:
@@ -598,7 +609,7 @@ def create_luxar_scene(orbitals: GSplatData, output_path: Path) -> Path:
         aprint(
             f"Camera: bounding radius {radius:.2f} a₀ → distance {distance:.1f} "
             f"(subtends {math.degrees(math.asin(radius / distance)):.1f}° of the "
-            f"{VIEWER_FOV_DEGREES / 2:.1f}° half-FOV)"
+            f"{COMPOSED_FOV_DEGREES / 2:.1f}° half-FOV)"
         )
         dims = Dimensions(
             [
@@ -628,6 +639,7 @@ def create_luxar_scene(orbitals: GSplatData, output_path: Path) -> Path:
             scene = compiler.create_scene(
                 dimensions=dims,
                 viewer_config=ViewerConfig(
+                    cinematic_mode=True,
                     tone_mapping="ACES",
                     # A 3/4 view, not the auto-framed head-on one: looking
                     # straight down an axis stacks a cloverleaf's four lobes on
@@ -638,6 +650,10 @@ def create_luxar_scene(orbitals: GSplatData, output_path: Path) -> Path:
                     camera=CameraConfig(
                         position=(float(eye[0]), float(eye[1]), float(eye[2])),
                         target=(0.0, 0.0, 0.0),
+                        # No `fov` here on purpose: leaving the pair unset lets
+                        # `cinematic_mode` expand its 35 mm lens whole (63° plus
+                        # the matching barrel distortion), and the distance above
+                        # was composed for that 63° — see COMPOSED_FOV_DEGREES.
                     ),
                 ),
             )

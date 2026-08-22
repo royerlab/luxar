@@ -67,6 +67,7 @@ import zarr
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
     cache_computed,
     launch_viewer,
@@ -263,7 +264,9 @@ def create_zebrahub_scene(
         # Create scene
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
-                dimensions=dims, citation=DEMO_META["citation"]
+                dimensions=dims,
+                citation=DEMO_META["citation"],
+                viewer_config=ViewerConfig(cinematic_mode=True),
             )
 
             # Add points with small radii for dense point cloud

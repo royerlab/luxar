@@ -1115,6 +1115,7 @@ def generate_demo(output_path: Path) -> int:
             scene = compiler.create_scene(
                 dimensions=dims,
                 viewer_config=ViewerConfig(
+                    cinematic_mode=True,
                     background_color="#07080c",
                     # Neutral rather than the ACES default (#1459): the bench's
                     # colour IS an exact encoding — a red R must read as red —

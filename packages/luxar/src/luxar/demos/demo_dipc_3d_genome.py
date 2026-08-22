@@ -85,6 +85,7 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import is_lfs_pointer, launch_viewer, parse_demo_flags
 from luxar.utils.paths import get_demos_output_dir
 
@@ -489,7 +490,9 @@ def build_scene(output_path: Path, polylines: list[dict]) -> int:
         total = 0
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
-                dimensions=dims, citation=DEMO_META["citation"]
+                dimensions=dims,
+                citation=DEMO_META["citation"],
+                viewer_config=ViewerConfig(cinematic_mode=True),
             )
             scene.attrs["title"] = "Dip-C: Single-Cell 3D Genome"
 

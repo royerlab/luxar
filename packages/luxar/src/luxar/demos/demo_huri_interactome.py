@@ -120,6 +120,7 @@ import requests
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import launch_viewer, parse_int_arg, parse_path_arg, require_module
 from luxar.demos._graph_common import (
     build_adjacency,
@@ -754,7 +755,9 @@ def build_scene(
 
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
-                dimensions=dims, citation=DEMO_META["citation"]
+                dimensions=dims,
+                citation=DEMO_META["citation"],
+                viewer_config=ViewerConfig(cinematic_mode=True),
             )
 
             scene.add_points(

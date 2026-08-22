@@ -88,6 +88,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import launch_viewer, parse_int_arg
 from luxar.utils.paths import get_demos_output_dir
 
@@ -221,7 +222,9 @@ def build_scene(output_path: Path, max_order: int) -> int:
         )
 
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                dimensions=dims, viewer_config=ViewerConfig(cinematic_mode=True)
+            )
 
             for slot, order in enumerate(orders):
                 coords = hilbert_curve_3d(order)

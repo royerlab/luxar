@@ -545,6 +545,7 @@ def _solar_system_viewer_config() -> ViewerConfig:
         fov=50.0,  # slight margin around Neptune's ~30 AU orbit
     )
     return ViewerConfig(
+        cinematic_mode=True,
         camera=camera,
         tone_mapping="ACES",
         dynamic_clipping_enabled=True,
