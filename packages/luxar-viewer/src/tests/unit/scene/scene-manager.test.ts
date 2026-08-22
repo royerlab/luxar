@@ -683,6 +683,37 @@ describe('SceneManager', () => {
     });
   });
 
+  describe('FOV projection invalidation', () => {
+    beforeEach(async () => {
+      await sceneManager.init({ canvas: mockCanvas as any });
+    });
+
+    it.each([
+      [
+        'relative changes used by the FOV slider and modifier-wheel',
+        () => sceneManager.updateFOV(10),
+      ],
+      ['absolute changes used by rendering-settings applies', () => sceneManager.setFov(63)],
+    ])('dispatches scene change after %s', (_name, applyFov) => {
+      const listener = vi.fn();
+      sceneManager.addEventListener('change', listener);
+
+      expect(applyFov()).toBe(true);
+
+      expect(listener).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not dispatch scene change when only the orthographic FOV stash changes', () => {
+      sceneManager.setControlType('ortho');
+      const listener = vi.fn();
+      sceneManager.addEventListener('change', listener);
+
+      expect(sceneManager.setFov(63)).toBe(true);
+
+      expect(listener).not.toHaveBeenCalled();
+    });
+  });
+
   describe('loadSceneData orchestration', () => {
     // Pin the 7-step call chain and the positionApplied conditional. These
     // tests complement the basic smoke tests in `scene loading` — they spy

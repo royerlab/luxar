@@ -295,6 +295,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     this.camera.fov = fov;
     this.camera.updateProjectionMatrix();
     this.updateMaterialsForCurrentCamera();
+    this.dispatchEvent({ type: 'change' });
     return true;
   }
 
@@ -1123,7 +1124,9 @@ export class SceneManager extends THREE.EventDispatcher<{
       );
       return true;
     }
-    return adjustFOV(this.makeCameraMaterialsCtx(), deltaY);
+    const applied = adjustFOV(this.makeCameraMaterialsCtx(), deltaY);
+    if (applied) this.dispatchEvent({ type: 'change' });
+    return applied;
   }
 
   /** Update camera clipping planes with validation. */
