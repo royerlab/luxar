@@ -352,8 +352,10 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         :meth:`_encode_coordinate`, so no coordinate fixed-point displacement
         applies.
         Linear quantization uses half a grid quantum; geometric-log encoding
-        uses the corresponding half-step at the array maximum. One float32 ULP
-        covers the reader's final cast (needed by the uint16 linear tier).
+        uses the corresponding half-step at the array maximum. Linear
+        quantization also budgets dtype-dependent normalization error for
+        float16/float32 input, and one float32 ULP covers the reader's final
+        cast.
 
         Args:
             data: The positive-scalar array exactly as it will be encoded.
@@ -434,8 +436,8 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
                 return None
             levels = (1 << bits) - 1
             slack = span / (2.0 * levels)
-            if arr.dtype == np.dtype(np.float32):
-                slack += span * np.finfo(np.float32).eps
+            if np.issubdtype(arr.dtype, np.floating) and arr.dtype.itemsize <= 4:
+                slack += span * float(np.finfo(arr.dtype).eps)
 
         decode_ulp = abs(float(np.spacing(np.float32(max_val))))
         return float(slack + decode_ulp)

@@ -18,6 +18,13 @@ from luxar.encoding import ArrayDecoder, ArrayEncoder, EncodingMode, SemanticTyp
             "bounded_scalar_uint8",
         ),
         (
+            "linear_u8_float16_normalization",
+            np.linspace(0.1, 5.0, 20_000, dtype=np.float16),
+            EncodingMode.AUTO,
+            "linear",
+            "bounded_scalar_uint8",
+        ),
+        (
             "linear_u16",
             np.geomspace(1e-4, 5.0, 4001, dtype=np.float32),
             EncodingMode.AUTO,
