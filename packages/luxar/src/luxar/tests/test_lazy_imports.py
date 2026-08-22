@@ -221,7 +221,7 @@ def test_extra_blocker_actually_blocks(root: str) -> None:
 def test_core_scene_authoring_without_gsplats_extra(tmp_path: Path) -> None:
     """Points/Lines/GSplats/Mesh + a standalone .gsplats.zarr, extra-free.
 
-    ``scene.add_gsplats(...)`` is core authoring API, yet before #1826 it died on
+    ``scene.add_gsplats(...)`` is core authoring API, yet before #1853 it died on
     a plain ``pip install luxar``. The unconditional trigger is the compiler:
     ``write_gsplat_arrays`` (``io/_compiler/gsplat_assembly.py``) runs ``from
     ...gsplats.utils.trils import split_tril`` on every call, and importing that
