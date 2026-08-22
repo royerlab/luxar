@@ -70,6 +70,7 @@ def _planned_merge_stats(
     overlap: int,
     volume_shape: tuple[int, ...],
     elapsed: float,
+    delivered_splats: int,
     parallel_jobs: Optional[int] = None,
 ) -> dict[str, Any]:
     """Build the common root stats for flat and partition planned merges."""
@@ -84,6 +85,7 @@ def _planned_merge_stats(
         "overlap": overlap,
         "volume_shape": list(volume_shape),
         "time_seconds": float(elapsed),
+        "n_splats": int(delivered_splats),
     }
     if parallel_jobs is not None:
         stats["parallel_jobs"] = int(parallel_jobs)
@@ -473,7 +475,7 @@ def fit_planned(
             bsp_tree=plan.bsp_tree,
             region_labels=region_boxes,
         )
-        from luxar.gsplats.tree import GSplatPartition
+        from luxar.gsplats.tree import GSplatPartition, total_splats
 
         fit_stats = _planned_merge_stats(
             regions,
@@ -482,6 +484,7 @@ def fit_planned(
             overlap=pad,
             volume_shape=tuple(int(s) for s in V.shape),
             elapsed=elapsed,
+            delivered_splats=int(total_splats(result)),
         )
         is_partition = isinstance(result, GSplatPartition)
         _score_planned_merge(
@@ -509,6 +512,7 @@ def fit_planned(
             overlap=pad,
             volume_shape=tuple(int(s) for s in V.shape),
             elapsed=elapsed,
+            delivered_splats=merged.n_splats,
         )
     )
     _score_planned_merge(

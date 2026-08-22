@@ -324,7 +324,7 @@ def fit_planned_parallel(
             bsp_tree=plan.bsp_tree,
             region_labels=region_boxes,
         )
-        from luxar.gsplats.tree import GSplatPartition
+        from luxar.gsplats.tree import GSplatPartition, total_splats
 
         fit_stats = _planned_merge_stats(
             regions,
@@ -333,6 +333,7 @@ def fit_planned_parallel(
             overlap=int(plan.overlap),
             volume_shape=tuple(int(s) for s in plan.volume_shape),
             elapsed=elapsed,
+            delivered_splats=int(total_splats(result)),
             parallel_jobs=jobs,
         )
         is_partition = isinstance(result, GSplatPartition)
@@ -360,6 +361,7 @@ def fit_planned_parallel(
                 overlap=int(plan.overlap),
                 volume_shape=tuple(int(s) for s in plan.volume_shape),
                 elapsed=elapsed,
+                delivered_splats=result.n_splats,
                 parallel_jobs=jobs,
             )
         )

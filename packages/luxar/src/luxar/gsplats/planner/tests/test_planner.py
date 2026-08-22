@@ -1278,6 +1278,7 @@ class TestFitPlannedParallel:
 
         root = zarr.open_group(str(output), mode="r")
         assert root["fitting"].attrs["psnr_db"] == pytest.approx(stats["psnr_db"])
+        assert root["fitting"].attrs["n_splats"] == node.n_splats
         assert root["pipeline"].attrs["planned_fit"] is True
 
     def test_single_region_partition_request_records_quality_without_flatten_notice(
@@ -1491,6 +1492,7 @@ class TestPlannedFitTruncationRadius:
         notice = capsys.readouterr().out
         assert np.isfinite(node.meta["fit_stats"]["psnr_db"])
         assert node.meta["fit_stats"]["planned_fit"] is True
+        assert node.meta["fit_stats"]["n_splats"] == node.n_splats
         assert "No merged quality metrics" not in notice
 
         leaves = _leaf_nodes(node)
