@@ -358,18 +358,17 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             displacement = max(0.0, first - float(np.min(arr)))
             return displacement or None
 
-        if allow_lut:
-            # A scalar LUT has at most 256 values. A small prefix with more
-            # distinct values proves the full array cannot take that exit and
-            # avoids a second full-array ``np.unique`` on the common continuous
-            # radii/widths path (``encode`` performs its own LUT plan later).
-            prefix = arr.ravel()[:_SCALAR_LUT_PROBE_VALUES]
-            if np.unique(
-                prefix
-            ).size <= LUT_SCALAR_MAX_DISTINCT and self.encodes_as_lut(
-                arr, SemanticType.POSITIVE_SCALAR
-            ):
-                return None
+        # A scalar LUT has at most 256 values. A small prefix with more
+        # distinct values proves the full array cannot take that exit and
+        # avoids a second full-array ``np.unique`` on the common continuous
+        # radii/widths path (``encode`` performs its own LUT plan later).
+        prefix = arr.ravel()[:_SCALAR_LUT_PROBE_VALUES]
+        if (
+            allow_lut
+            and np.unique(prefix).size <= LUT_SCALAR_MAX_DISTINCT
+            and self.encodes_as_lut(arr, SemanticType.POSITIVE_SCALAR)
+        ):
+            return None
 
         max_val = float(np.max(arr))
         if max_val == 0.0:
