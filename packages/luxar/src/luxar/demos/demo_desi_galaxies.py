@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""DESI DR1 — The Cosmic Web in 3D (1.25M-point sample of ~9.75M objects)
+"""DESI DR1 — The Cosmic Web in 3D (the whole ~9.75M-object catalog)
 
 Renders the large-scale structure of the Universe as a point cloud built from
 the Dark Energy Spectroscopic Instrument's first data release (DESI DR1). Each
@@ -39,13 +39,13 @@ DESI Collaboration (2025), "Data Release 1 of the Dark Energy Spectroscopic
 SELF-CONTAINED / CACHING
 ------------------------
 On a fresh machine this demo bootstraps itself with no manual steps:
-  1. Fast path: a fully-built scene (both LOD colorings, ~10 MB) shipped via
+  1. Fast path: a fully-built scene (both LOD colorings, ~66 MB) shipped via
      Git LFS (``demos/data/desi_galaxies/``); it is unzipped once into the demos
      output dir and loads instantly — no per-launch LOD build.
   2. If that asset isn't pulled, ``--recompute`` (or a missing asset)
      AUTOMATICALLY downloads the ~1 GB of DR1 LSS catalogs to
      ``~/.cache/luxar/desi_galaxies/`` (resumable), reads them with ``astropy``,
-     converts (RA, Dec, z) → comoving Mpc, samples 1.25M rows, and builds the
+     converts (RA, Dec, z) → comoving Mpc, keeps every row, and builds the
      substitutive LOD (GPU-accelerated but slow on CPU-only machines — which is
      exactly why the built scene ships precomputed). If the DESI host is
      unavailable, ``git lfs pull`` restores the no-download fast path.
@@ -61,11 +61,11 @@ Controls:
 DEMO_META = {
     "key": "desi_galaxies",
     "title": "DESI DR1 — The Cosmic Web in 3D (~9.75M-object catalog)",
-    "description": "A 1.25M-point sample of ~9.75M real DESI DR1 galaxies and quasars placed in 3D by redshift.",
+    "description": "All ~9.75M real DESI DR1 galaxies and quasars placed in 3D by redshift.",
     "category": "astronomy",
     "geometry": "points",
     "requirements": {
-        "download_mb": 10,
+        "download_mb": 66,
         "compute": "heavy",
         "gpu": "none",
         "local_data": "git-lfs",
@@ -174,27 +174,74 @@ Z_MAX = 4.0
 # Display / LOD parameters.
 POINT_RADIUS = 1.2  # Mpc (visualization scale)
 SCENE_INTENSITY = 0.05
-# The old finest child contained all 9.75M source rows and downloaded in full
-# after the opening frame. A 1.25M sample matches the density of that ladder's
-# previous one-coarser child while putting a hard bound on the selected finest.
-SCENE_MAX_POINTS = 1_250_000
+# No row cap: the scene carries the WHOLE DR1 catalog, ~9.75M objects.
+#
+# This was briefly capped at 1.25M (#1812) because the finest child downloaded
+# all 9.75M rows in ONE commit and blocked the main thread. That diagnosis named
+# the wrong culprit. The payload was unstreamable because the ladder under it was
+# geometric: `stream:<c>` doubles until it reaches n, so its LAST increment is
+# always n/2 whatever the base is — 4.88M points at full density, and still
+# 625K at the 1.25M cap. Capping the catalog shrank that final commit without
+# fixing its shape, and cost 87% of the survey to do it.
+#
+# `streaming_breakpoints` fixes the shape instead (see below), so the cap buys
+# nothing and is gone. `None` means "every row".
+SCENE_MAX_POINTS: int | None = None
 # The shipped archive is the canonical sample. This seed makes recomputation
 # repeatable within a NumPy release, not bit-stable across future NumPy releases.
 SCENE_SAMPLE_SEED = 0
 LOD = dict(compression_factor=8, levels=2, device="auto")
 
-# Streaming ladder for every LOD level. The composed default sizes the first
-# chunk from a generic bandwidth budget; at 1.25M points this scene is large
-# enough to be worth tuning explicitly, so the base is set small enough to land
-# in a single zarr chunk — one range request to first paint.
-#
-# That base applies as-written only to the COARSEST level, which is the eager
-# default level and therefore the one whose first chunk is the actual
-# time-to-first-pixel. Finer levels have a coarser sibling on screen already, so
-# the sibling-aware rule raises their base to n/(2K) — the capped finest lands
-# around 78K / 78K / 156K / 312K / 625K. That is deliberate: an upgrade has to
-# beat what is already displayed to be worth swapping.
-STREAM_LOD = dict(counts="stream:2000", method="random", seed=0)
+# First additive rung, in points. Small enough to land in a single zarr chunk,
+# so time-to-first-pixel on the eager coarsest level is one range request.
+SCENE_FIRST_CHUNK = 2_000
+
+# Hard ceiling on ONE additive increment, in points. This is the number that
+# makes the full catalog streamable: no single commit may block the main thread,
+# whatever the level is worth in total. Set below the 1,000,000 that
+# `scripts/check_demo_ladders.py` fails a leaf at, with margin.
+SCENE_MAX_COMMIT = 900_000
+
+
+def streaming_breakpoints(
+    n: int,
+    first_chunk: int = SCENE_FIRST_CHUNK,
+    max_commit: int = SCENE_MAX_COMMIT,
+) -> list[int]:
+    """Cumulative additive cuts that double early, then step by a fixed cap.
+
+    A pure ``stream:<c>`` ladder doubles all the way to ``n``, so its final
+    increment is ``n/2`` — unstreamable once ``n`` is large, and the real reason
+    the full catalog was thought to need a row cap. This keeps the geometric
+    ramp, which is what makes first paint cheap, but stops doubling at
+    ``max_commit`` and finishes in equal steps of that size. Largest commit is
+    therefore ``max_commit`` at ANY ``n``, while the ramp to it costs about
+    ``2·max_commit`` points in total.
+
+    One list serves every substitutive level: ``_validate_counts`` clamps a
+    cumulative list to the level's own ``n`` and stops there, so the 152K level
+    simply takes the geometric head and the 9.75M level takes the whole thing.
+    That also keeps the small levels laddered, which a sibling-aware
+    ``stream:`` base would not have done at this scale.
+
+    Reaching the coarser sibling's size — the point where swapping in this level
+    is worth it — costs only the geometric head plus a step or two, ~14% of the
+    finest level's payload, so the upgrade does not "wait until fully loaded".
+    """
+    if n <= first_chunk:
+        return [n]
+    cuts: list[int] = []
+    cum = first_chunk
+    while cum < n and cum < max_commit:
+        cuts.append(cum)
+        cum *= 2
+    cum = cuts[-1] if cuts else 0
+    while cum + max_commit < n:
+        cum += max_commit
+        cuts.append(cum)
+    cuts.append(n)
+    return cuts
+
 
 # The shipped scene must carry a real ladder on its finest level. Anyone whose
 # `datasets/demos/` copy predates that gets a stale all-or-nothing scene and no
@@ -614,11 +661,26 @@ def warn_if_scene_is_stale(scene_path: Path) -> None:
                 f"      rm -rf {scene_path}"
             )
 
-        if n_points > SCENE_MAX_POINTS:
+        # The size that matters is the biggest SINGLE commit, not the level
+        # total: a geometric ladder's last increment is n/2, so an old scene can
+        # carry five rungs and still hand the main thread millions of points at
+        # once. Checking the total instead is what let the 1.25M cap look like a
+        # fix (#1812) while the shape stayed broken.
+        try:
+            increments = [
+                int(finest[f"additive_{i}"].attrs.get("n_points", 0) or 0)
+                for i in range(n_sublods)
+            ]
+        except KeyError:
+            increments = []
+        biggest = max(increments, default=0)
+        if biggest > SCENE_MAX_COMMIT:
             aprint(
-                f"  ⚠ This scene's '{layer_name}' finest level contains "
-                f"{n_points:,} points, above the current {SCENE_MAX_POINTS:,}-point "
-                "download cap. Rebuild it with:\n"
+                f"  ⚠ This scene's '{layer_name}' finest level commits "
+                f"{biggest:,} points in one rung, above the current "
+                f"{SCENE_MAX_COMMIT:,}-point ceiling — it was built with the old "
+                f"geometric ladder ({n_points:,} points over {n_sublods} rungs) "
+                "and will stall the main thread on that rung. Rebuild it with:\n"
                 "      luxar demo run desi_galaxies -- --recompute\n"
                 "    or delete the scene and re-run to unpack a current shipped "
                 "asset:\n"
@@ -679,17 +741,37 @@ def create_scene(
             f"{cam_dist:,.0f} Mpc (r95={r95:,.0f}, r_max={r_max:,.0f})"
         )
 
-        scene_positions, scene_redshift, scene_tracer_ids = sample_scene_catalog(
-            positions,
-            redshift,
-            tracer_ids,
-            max_points=SCENE_MAX_POINTS,
-        )
-        if len(scene_positions) < len(positions):
-            aprint(
-                f"  📉 Sampling {len(scene_positions):,} of {len(positions):,} "
-                "catalog rows to bound the finest LOD payload"
+        if SCENE_MAX_POINTS is None:
+            scene_positions, scene_redshift, scene_tracer_ids = (
+                positions,
+                redshift,
+                tracer_ids,
             )
+            aprint(f"  🌌 Whole catalog: {len(positions):,} objects, no row cap")
+        else:
+            scene_positions, scene_redshift, scene_tracer_ids = sample_scene_catalog(
+                positions,
+                redshift,
+                tracer_ids,
+                max_points=SCENE_MAX_POINTS,
+            )
+            if len(scene_positions) < len(positions):
+                aprint(
+                    f"  📉 Sampling {len(scene_positions):,} of {len(positions):,} "
+                    "catalog rows to bound the finest LOD payload"
+                )
+
+        # One ladder spec for both layers and every level, sized from the finest
+        # payload; `_validate_counts` clamps it per level.
+        stream_lod = dict(
+            counts=streaming_breakpoints(len(scene_positions)),
+            method="random",
+            seed=0,
+        )
+        aprint(
+            f"  🪜 Additive ladder: {len(stream_lod['counts'])} rungs, "
+            f"largest commit <= {SCENE_MAX_COMMIT:,}"
+        )
         # Additive flux is linear in element count, and every coarse level
         # preserves the sample's mass, so compensate every rung at the wrapper.
         scene_intensity = SCENE_INTENSITY * len(positions) / len(scene_positions)
@@ -718,7 +800,7 @@ def create_scene(
                 intensity=scene_intensity,
                 layer=True,
                 substitutive_lod=lod,
-                additive_lod=STREAM_LOD,
+                additive_lod=stream_lod,
             )
 
             # Layer 2: colored by redshift (continuous depth), turbo baked into
@@ -736,7 +818,7 @@ def create_scene(
                 layer=True,
                 visible=False,
                 substitutive_lod=lod,
-                additive_lod=STREAM_LOD,
+                additive_lod=stream_lod,
             )
 
             scene.add_text(
@@ -748,7 +830,7 @@ def create_scene(
                 blend_mode="difference",
             )
             scene.add_text(
-                "1.25M-point sample of ~9.75M galaxies & quasars • redshift → comoving Mpc",
+                "~9.75M galaxies & quasars • redshift → comoving Mpc",
                 position=(0.98, 0.97),
                 font_size=0.015,
                 anchor="bottom-right",

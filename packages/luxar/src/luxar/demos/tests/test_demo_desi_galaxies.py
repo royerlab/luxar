@@ -357,23 +357,101 @@ class TestWarnIfSceneIsStale:
         assert "'By tracer type' finest level has no streaming" in out
         assert "'By redshift' finest level has no streaming" in out
 
-    def test_warns_when_cached_finest_exceeds_payload_cap(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    @staticmethod
+    def _write_laddered(scene: Path, increments: list[int]) -> None:
+        """A scene whose finest level commits `increments` per additive rung."""
         import zarr
 
-        scene = tmp_path / "desi.luxar.zarr"
         root = zarr.open(str(scene), mode="w")
         for layer_name in ("By tracer type", "By redshift"):
             finest = root.create_group(layer_name).create_group("child_3")
-            finest.attrs["n_additive_sublods"] = 5
-            finest.attrs["n_points"] = 9_751_955
+            finest.attrs["n_additive_sublods"] = len(increments)
+            finest.attrs["n_points"] = sum(increments)
+            for i, inc in enumerate(increments):
+                finest.create_group(f"additive_{i}").attrs["n_points"] = inc
+
+    def test_warns_when_one_rung_commits_too_much(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The old geometric ladder: five rungs, last one n/2.
+
+        This is the shape the 1.25M row cap was papering over — the level total
+        is not the problem, the final increment is.
+        """
+        scene = tmp_path / "desi.luxar.zarr"
+        self._write_laddered(scene, [609_498, 609_498, 1_218_996, 2_437_992, 4_875_971])
 
         _demo.warn_if_scene_is_stale(scene)
 
         out = capsys.readouterr().out
-        assert out.count("above the current 1,250,000-point download cap") == 2
+        assert out.count("commits 4,875,971 points in one rung") == 2
         assert "rm -rf" in out
+
+    def test_silent_when_every_rung_is_within_the_ceiling(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A bounded-tail ladder over the SAME 9.75M total must not warn.
+
+        Pins that the check reads the increment and not the level total, which
+        is the whole point of dropping the row cap.
+        """
+        scene = tmp_path / "desi.luxar.zarr"
+        geometric = [2_000, 2_000, 4_000, 8_000, 16_000, 32_000, 64_000, 128_000]
+        tail = [_demo.SCENE_MAX_COMMIT] * 10
+        increments = geometric + tail + [9_751_955 - sum(geometric) - sum(tail)]
+        assert sum(increments) == 9_751_955
+        self._write_laddered(scene, increments)
+
+        _demo.warn_if_scene_is_stale(scene)
+
+        assert "in one rung" not in capsys.readouterr().out
+
+
+class TestStreamingBreakpoints:
+    """The ladder shape is what makes the full catalog streamable.
+
+    A pure geometric ladder doubles to `n`, so its last increment is always
+    `n/2` — the property that made 9.75M look like it needed a row cap.
+    """
+
+    @staticmethod
+    def _increments(cuts: list[int]) -> list[int]:
+        return [cuts[0]] + [b - a for a, b in zip(cuts, cuts[1:])]
+
+    def test_no_rung_exceeds_the_ceiling_at_full_catalog_size(self) -> None:
+        inc = self._increments(_demo.streaming_breakpoints(9_751_955))
+        assert max(inc) <= _demo.SCENE_MAX_COMMIT
+        assert sum(inc) == 9_751_955
+
+    def test_first_paint_stays_one_chunk(self) -> None:
+        for n in (19_519, 156_249, 1_250_000, 9_751_955):
+            cuts = _demo.streaming_breakpoints(n)
+            assert cuts[0] == _demo.SCENE_FIRST_CHUNK, n
+
+    def test_the_ceiling_binds_at_every_scale(self) -> None:
+        for n in (300_000, 1_250_000, 9_751_955, 40_000_000):
+            inc = self._increments(_demo.streaming_breakpoints(n))
+            assert max(inc) <= _demo.SCENE_MAX_COMMIT, (n, max(inc))
+            assert sum(inc) == n
+            assert _demo.streaming_breakpoints(n) == sorted(
+                set(_demo.streaming_breakpoints(n))
+            ), "cuts must be strictly increasing"
+
+    def test_a_level_smaller_than_the_first_chunk_is_one_rung(self) -> None:
+        assert _demo.streaming_breakpoints(500) == [500]
+
+    def test_reaches_its_coarser_sibling_early_in_the_payload(self) -> None:
+        """The upgrade must not "wait until fully loaded".
+
+        With compression_factor=8 and levels=2 the finest level's coarser
+        sibling holds n/8, so the rung that first exceeds that is the point the
+        swap becomes worthwhile. It should land in the first fifth of the data.
+        """
+        n = 9_751_955
+        cuts = _demo.streaming_breakpoints(n)
+        sibling = n // 8
+        crossing = next(c for c in cuts if c > sibling)
+        assert crossing / n < 0.2, f"parity at {crossing / n:.1%} of the payload"
 
 
 class TestScenePointCap:
@@ -442,16 +520,29 @@ class TestScenePointCap:
                     for child_name in child_names
                 ]
                 assert layer_attrs["selector"] == "screen-area"
-                assert layer_attrs["intensity"] == pytest.approx(0.3900782)
-                assert [
-                    attrs.get("n_splats", attrs.get("n_points"))
-                    for attrs in child_attrs
-                ] == [19_519, 156_249, _demo.SCENE_MAX_POINTS]
-                assert [attrs["n_additive_sublods"] for attrs in child_attrs] == [
-                    5,
-                    5,
-                    5,
+
+                # The finest child is the WHOLE catalog: no row cap any more.
+                finest = child_attrs[-1]
+                n_finest = finest.get("n_splats", finest.get("n_points"))
+                assert n_finest > 9_000_000, (
+                    f"shipped finest level holds {n_finest:,} points; the row cap "
+                    "was removed, so it should carry the full ~9.75M catalog"
+                )
+
+                # And no single additive rung may exceed the commit ceiling —
+                # the invariant that makes the full catalog streamable at all.
+                n_sublods = finest["n_additive_sublods"]
+                increments = [
+                    read_attrs(f"{layer_name}/{child_names[-1]}/additive_{i}").get(
+                        "n_points", 0
+                    )
+                    for i in range(n_sublods)
                 ]
+                assert sum(increments) == n_finest
+                assert max(increments) <= _demo.SCENE_MAX_COMMIT, (
+                    f"largest rung {max(increments):,} exceeds the "
+                    f"{_demo.SCENE_MAX_COMMIT:,} ceiling"
+                )
 
 
 class TestEnsureOriginFraming:
