@@ -43,7 +43,8 @@ import zarr
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import cache_computed, launch_viewer
+from luxar.core.viewer_config import ViewerConfig
+from luxar.demos import add_demo_caption, cache_computed, launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
 
@@ -169,7 +170,9 @@ def main() -> None:
 
             with LuxarZarrCompiler(output) as compiler:
                 scene = compiler.create_scene(
-                    dimensions=dims, citation=DEMO_META["citation"]
+                    dimensions=dims,
+                    citation=DEMO_META["citation"],
+                    viewer_config=ViewerConfig(cinematic_mode=True),
                 )
                 scene.add_points(
                     "Cells",
@@ -208,12 +211,10 @@ def main() -> None:
                     )
 
                 # Info + citation
-                scene.add_text(
+                add_demo_caption(
+                    scene,
                     "95K cells • 32 cell types • Kim et al. 2024",
-                    position=(0.98, 0.97),
-                    font_size=0.012,
-                    anchor="bottom-right",
-                    color="rgba(200,200,200,0.45)",
+                    DEMO_META.get("citation"),
                 )
 
             aprint(f"{len(positions):,} total points ({len(coords):,} per view)")
@@ -265,7 +266,9 @@ def main() -> None:
 
             with LuxarZarrCompiler(output) as compiler:
                 scene = compiler.create_scene(
-                    dimensions=dims, citation=DEMO_META["citation"]
+                    dimensions=dims,
+                    citation=DEMO_META["citation"],
+                    viewer_config=ViewerConfig(cinematic_mode=True),
                 )
                 scene.add_points(
                     "Cells",
@@ -304,12 +307,10 @@ def main() -> None:
                     )
 
                 # Info + citation
-                scene.add_text(
+                add_demo_caption(
+                    scene,
                     "95K cells • 32 cell types • Kim et al. 2024",
-                    position=(0.98, 0.97),
-                    font_size=0.012,
-                    anchor="bottom-right",
-                    color="rgba(200,200,200,0.45)",
+                    DEMO_META.get("citation"),
                 )
 
             aprint(f"{len(positions):,} total points ({len(coords):,} per view)")

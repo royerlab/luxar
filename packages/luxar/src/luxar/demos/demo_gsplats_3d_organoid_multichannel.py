@@ -133,6 +133,7 @@ from luxar import Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
     DatasetUnavailable,
+    add_demo_caption,
     launch_viewer,
     load_dataset_gsplats,
     load_local_fit_gsplats,
@@ -468,7 +469,7 @@ def create_luxar_scene(gsplats_list, output_path: Path | None = None):
             # the accepted trade for its highlight rolloff).
             scene = compiler.create_scene(
                 dimensions=Dimensions.default_3d(),
-                viewer_config=ViewerConfig(tone_mapping="ACES"),
+                viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="ACES"),
                 citation=DEMO_META["citation"],
             )
 
@@ -528,6 +529,11 @@ Controls:
                     layer=True,
                     colormap=colormap,
                 )
+            add_demo_caption(
+                scene,
+                f"Light-sheet microscopy • {len(gsplats_list)} channels",
+                DEMO_META.get("citation"),
+            )
 
         aprint(f"Scene saved: {output_path}")
         return output_path

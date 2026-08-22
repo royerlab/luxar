@@ -12,7 +12,11 @@ import pytest
 import zarr
 
 from luxar import Dimensions, LuxarZarrCompiler
-from luxar.core.citation import CITATION_KEYS, validate_citation
+from luxar.core.citation import (
+    CITATION_KEYS,
+    CITATION_REF_MAX_LENGTH,
+    validate_citation,
+)
 
 FULL = {
     "short": "Bui et al. 2013",
@@ -28,6 +32,17 @@ def test_none_means_nothing_to_credit() -> None:
 
 def test_minimal_citation_is_just_a_short_form() -> None:
     assert validate_citation({"short": "Yeh 2022"}) == {"short": "Yeh 2022"}
+
+
+def test_citation_accepts_a_compact_caption_reference() -> None:
+    citation = {"short": "A deliberately detailed dataset byline", "ref": "Yeh 2022"}
+    assert validate_citation(citation) == citation
+
+
+def test_caption_reference_has_a_hard_authoring_bound() -> None:
+    too_long = "x" * (CITATION_REF_MAX_LENGTH + 1)
+    with pytest.raises(ValueError, match=f"at most {CITATION_REF_MAX_LENGTH}"):
+        validate_citation({"short": "A dataset", "ref": too_long})
 
 
 def test_returns_a_copy_not_the_callers_dict() -> None:
@@ -71,6 +86,7 @@ def test_key_order_is_canonical_regardless_of_input_order() -> None:
         ({"short": "A", "doi": " 10.1016/x "}, "must be a bare DOI"),
         ({"short": "A", "author": "B"}, "unknown keys ['author']"),
         ({"short": "A", "license": ""}, "license must be a non-empty string"),
+        ({"short": "A", "ref": ""}, "ref must be a non-empty string"),
         ({"short": "A", "url": None}, "url must be a non-empty string"),
         # The single-line/no-spoofing rule is not specific to `short`: every
         # field here is rendered, and a DOI suffix is otherwise free to hold

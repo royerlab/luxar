@@ -55,7 +55,7 @@ DATA_DIR = REPO / "packages/luxar/src/luxar/demos/data"
 #   gsplats_visible_human_head/vh_head_colors.npz     (sampled RGB per splat)
 # Re-encoding those fits REORDERS their splats (`flatten` + `lod --recipe stream`,
 # or `additive`), which silently invalidates the sidecar sitting next to them —
-# exactly the bug of #1670, whose Visible Human sidecar is misordered to this day.
+# exactly the bug of #1670, which originally misordered the Visible Human sidecar.
 # This script has no way to resample a sidecar (the source volume is not in hand),
 # so it refuses these datasets rather than recreating the bug.
 SIDECAR_PAIRED_DIRS = frozenset(

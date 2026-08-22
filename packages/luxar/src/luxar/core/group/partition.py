@@ -87,8 +87,7 @@ if TYPE_CHECKING:
 
 #: Sentinel-typed alias for the value vocabulary of the ``partition=`` kwarg.
 #: ``None`` = no partition, ``True`` = use :data:`DEFAULT_MAX_ELEMENTS`,
-#: ``dict[str, Any]`` = user-supplied (``max_elements=`` and ``rule=`` are
-#: honored; reserved for future partition-algorithm parameters).
+#: ``dict[str, Any]`` = user-supplied ``max_elements=`` and/or ``rule=``.
 PartitionSpec = Union[None, bool, dict]
 
 
@@ -151,7 +150,8 @@ def resolve_partition_spec(partition: Any) -> Tuple[int, str]:
     less).
 
     Raises:
-        ValueError: on an out-of-range ``max_elements`` or an unknown ``rule``.
+        ValueError: on an unknown key, an out-of-range ``max_elements``, or an
+            unknown ``rule``.
         TypeError: on anything that is not ``True`` or a dict. The leaf adders'
             own ``except (ValueError, TypeError)`` funnel converts it to a
             ``ValueError``, so the caller sees one exception type either way.
@@ -159,6 +159,13 @@ def resolve_partition_spec(partition: Any) -> Tuple[int, str]:
     if partition is True:
         return DEFAULT_MAX_ELEMENTS, "median"
     if isinstance(partition, dict):
+        unknown_keys = set(partition) - {"max_elements", "rule"}
+        if unknown_keys:
+            keys = ", ".join(sorted(map(repr, unknown_keys)))
+            raise ValueError(
+                f"partition: unrecognized keys [{keys}]. "
+                "Valid keys: max_elements, rule."
+            )
         max_elements = int(partition.get("max_elements", DEFAULT_MAX_ELEMENTS))
         if max_elements < 1:
             raise ValueError(f"partition max_elements must be >= 1, got {max_elements}")

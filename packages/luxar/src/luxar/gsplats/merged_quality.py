@@ -10,7 +10,6 @@ import numpy as np
 from arbol import aprint
 
 from luxar.gsplats.gsplat_data import GSplatData
-from luxar.gsplats.tree import GSplatNode, GSplatPartition
 
 #: Upper bound, in GiB, on the memory a merged-quality score may hold resident.
 #: Above it the score is SKIPPED — and says so out loud, because an archive that
@@ -126,33 +125,6 @@ def announce_unscored_merge(reason: str, *, partition: "bool | None" = False) ->
     aprint(
         f"No merged quality metrics: {reason}. {_compare_recourse(partition=partition)}"
     )
-
-
-def announce_unscored_partition_merge(
-    node: "GSplatData | GSplatNode", *, suffix: str = ""
-) -> None:
-    """Explain why a requested partition merge was not scored.
-
-    Derives both the reason and compare recourse from the node the merge
-    actually returned. A single surviving part is deliberately returned without
-    a partition wrapper and may be either a leaf or an LOD group.
-
-    Parameters
-    ----------
-    node : GSplatData or GSplatNode
-        The node returned by the requested partition merge.
-    suffix : str, default ""
-        Caller-specific detail appended to the shared reason.
-    """
-    is_partition = isinstance(node, GSplatPartition)
-    reason = (
-        "the requested content-partition merge produced a kind=partition tree, "
-        "but that path does not yet compute a whole-tree score"
-        if is_partition
-        else "the requested content-partition merge collapsed to a single "
-        "matrix-shaped part, but that path does not yet compute a merged score"
-    )
-    announce_unscored_merge(f"{reason}{suffix}", partition=is_partition)
 
 
 def resolve_merged_reference(
@@ -323,7 +295,6 @@ def stamp_merged_quality(
 
 __all__ = [
     "announce_unscored_merge",
-    "announce_unscored_partition_merge",
     "resolve_merged_reference",
     "stamp_merged_quality",
 ]

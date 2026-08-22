@@ -82,6 +82,7 @@ DEMO_META = {
     "outputs": ["asteroids_solar_system"],
     "citation": {
         "short": "NASA/JPL-Caltech Small-Body Database",
+        "ref": "NASA/JPL-Caltech",
         "url": "https://ssd.jpl.nasa.gov/",
     },
 }
@@ -96,7 +97,8 @@ from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
-from luxar.demos import launch_viewer, parse_demo_flags, parse_int_arg
+from luxar.demos import add_demo_caption, launch_viewer, parse_demo_flags, parse_int_arg
+from luxar.demos._cinematic_camera import pull_in
 from luxar.utils.paths import get_demos_output_dir
 
 # -----------------------------------------------------------------------------
@@ -539,12 +541,15 @@ def _solar_system_viewer_config() -> ViewerConfig:
     # elevated ecliptic view. Dynamic clipping still keeps distant objects
     # available when the user zooms out.
     camera = CameraConfig(
-        position=(50.0, -50.0, 30.0),
+        position=pull_in(
+            (50.0, -50.0, 30.0),
+            from_fov_deg=50.0,  # slight margin around Neptune's ~30 AU orbit
+        ),
         target=(0.0, 0.0, 0.0),
         up=(0.0, 0.0, 1.0),
-        fov=50.0,  # slight margin around Neptune's ~30 AU orbit
     )
     return ViewerConfig(
+        cinematic_mode=True,
         camera=camera,
         tone_mapping="ACES",
         dynamic_clipping_enabled=True,
@@ -747,12 +752,10 @@ def build_static_scene(output_path: Path, cat: dict) -> int:
                 color="rgba(255,255,255,0.65)",
                 blend_mode="difference",
             )
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 f"{len(pos):,} asteroids • color = semi-major axis (AU)",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.5)",
+                DEMO_META.get("citation"),
             )
         return len(pos)
 
@@ -827,6 +830,11 @@ def build_animated_scene(output_path: Path, cat: dict) -> int:
                 anchor="top-left",
                 color="rgba(255,255,255,0.65)",
                 blend_mode="difference",
+            )
+            add_demo_caption(
+                scene,
+                f"{n_ast:,} asteroids • {ANIMATE_FRAMES} timepoints",
+                DEMO_META.get("citation"),
             )
         return n_ast * ANIMATE_FRAMES
 

@@ -8,18 +8,21 @@
  * "page" exceeded the test timeout`. `raceEvaluate` is the bound (its own
  * promise/timer contract is covered in `e2e-helpers-race-evaluate.test.ts`,
  * so this file does not repeat it), and the two consumers covered here are
- * `getConsoleMessages` — which the shared fixture runs in teardown for every
- * spec that imports `test` from `./fixtures`, reached through
- * `assertNoConsoleErrors` — and `getLuxarState`, the suite's most-called probe.
+ * `getConsoleMessages` — reached from the specs that call it directly and
+ * through `assertNoConsoleErrors` / `assertConsoleContains` /
+ * `assertConsoleDoesNotContain` / `assertNoShaderErrors`, four of those spec
+ * call sites sitting in the spec's own `test.afterEach` (the shared fixture's
+ * teardown no longer calls it — see #1760) — and `getLuxarState`, the suite's
+ * most-called probe.
  *
  * Four assertions here would go red against the unbounded code, because a
  * wedged page never settles at all: "throws, naming the timeout, when the
  * page never answers", "does NOT resolve with empty buckets when the page
- * never answers" (the one that matters most — empty buckets would make the
- * fixture's console-error gate a vacuous pass for every spec that uses it),
- * "propagates the deadline failure out through assertNoConsoleErrors" (the
- * premise of the whole design — that is the call the fixture teardown makes),
- * and the default-deadline test.
+ * never answers" (the one that matters most — empty buckets would make every
+ * caller's console-error check a vacuous pass), "propagates the deadline
+ * failure out through assertNoConsoleErrors" (the premise of the whole design —
+ * that is the call the four `afterEach` gates make), and the default-deadline
+ * test.
  * The rest guard adjacent contracts rather than the bound itself: the
  * pass-through path, and the in-page function's promise never to return
  * `null` (which is what makes `null` usable as the deadline sentinel).
@@ -90,9 +93,9 @@ describe('getConsoleMessages deadline', () => {
   });
 
   it('does NOT resolve with empty buckets when the page never answers', async () => {
-    // The vacuous-pass hazard: the shared fixture feeds this straight into
-    // assertNoConsoleErrors, so resolving with `{errors: [], ...}` on a
-    // wedged page would silence the console-error gate for every spec.
+    // The vacuous-pass hazard: every caller feeds this straight into a check
+    // (assertNoConsoleErrors and the three other assertions), so resolving
+    // with `{errors: [], ...}` on a wedged page would silence all of them.
     let resolvedWith: unknown = 'never-resolved';
     await getConsoleMessages(wedgedPage(), 25).then(
       (value) => {
@@ -106,9 +109,9 @@ describe('getConsoleMessages deadline', () => {
   });
 
   it('propagates the deadline failure out through assertNoConsoleErrors', async () => {
-    // The premise of the whole 45 s design is that the FIXTURE's gate fails
-    // with this message. `assertNoConsoleErrors` is the consumer the fixture
-    // teardown calls, so the throw has to survive the trip through it — an
+    // The premise of the whole 45 s design is that an `afterEach` gate fails
+    // with this message. `assertNoConsoleErrors` is the consumer those four
+    // specs call, so the throw has to survive the trip through it — an
     // `await ... .catch(() => ({errors: []}))` anywhere in that chain would
     // turn the gate into the vacuous pass this rejection exists to prevent.
     vi.useFakeTimers();
@@ -121,7 +124,8 @@ describe('getConsoleMessages deadline', () => {
   });
 
   it('defaults to a 45 s deadline — inside Playwright’s fresh After-Hooks slot', async () => {
-    // The teardown call site gets a FRESH timeout slot equal to the per-test
+    // An After-Hooks call site (the four specs' own `test.afterEach`) gets a
+    // FRESH timeout slot equal to the per-test
     // timeout (60 s here), so the default has to stay under that to be
     // attributed to this probe rather than to `Tearing down "page"`.
     vi.useFakeTimers();
