@@ -126,11 +126,22 @@ _BUILD_SCENE = """
 import numpy as np
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.gsplats import GSplatData
 
 N = 64
 rng = np.random.default_rng(0)
 cholesky = np.zeros((N, 6), dtype=np.float32)
 cholesky[:, 0] = cholesky[:, 2] = cholesky[:, 5] = 0.5
+centers = rng.uniform(0, 10, (N, 3)).astype(np.float32)
+amplitudes = rng.uniform(0.5, 1.5, N).astype(np.float32)
+
+assert GSplatData.__module__ == "luxar.gsplats.gsplat_data", (
+    f"GSplatData resolved to a stub in {GSplatData.__module__}"
+)
+data = GSplatData(
+    centers=centers, amplitudes=amplitudes, cholesky_factors=cholesky
+)
+data.save(SPLATS_PATH)
 
 with LuxarZarrCompiler(SCENE_PATH) as compiler:
     scene = compiler.create_scene(
@@ -154,6 +165,22 @@ with LuxarZarrCompiler(SCENE_PATH) as compiler:
         amplitudes=rng.uniform(0.5, 1.5, N).astype(np.float32),
         cholesky_factors=cholesky,
     )
+    scene.add_gsplats(
+        "gs_dim_order",
+        centers=centers,
+        amplitudes=amplitudes,
+        cholesky_factors=cholesky,
+        dim_order=["x", "y", "z"],
+    )
+    scene.add_gsplats(
+        "gs_partition",
+        centers=centers,
+        amplitudes=amplitudes,
+        cholesky_factors=cholesky,
+        partition={"parts": 4},
+    )
+    scene.add_gsplats_from_data("gs_data", data)
+    scene.add_gsplats_from_file("gs_file", SPLATS_PATH)
     scene.add_mesh(
         "msh",
         vertices=np.array(
@@ -161,22 +188,6 @@ with LuxarZarrCompiler(SCENE_PATH) as compiler:
         ),
         faces=np.array([[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]], dtype=np.uint32),
     )
-
-# A standalone .gsplats.zarr: authoring the container needs no fitting, so
-# `from luxar.gsplats import GSplatData` must resolve to the REAL class, not to
-# one of the install-hint stubs that `luxar/gsplats/__init__.py` defines inside
-# its own body when the extra is absent.
-from luxar.gsplats import GSplatData
-
-assert GSplatData.__module__ == "luxar.gsplats.gsplat_data", (
-    f"GSplatData resolved to a stub in {GSplatData.__module__}"
-)
-
-centers = rng.uniform(0, 10, (N, 3)).astype(np.float32)
-amplitudes = rng.uniform(0.5, 1.5, N).astype(np.float32)
-GSplatData(
-    centers=centers, amplitudes=amplitudes, cholesky_factors=cholesky
-).save(SPLATS_PATH)
 
 # LOADING is part of the advertised core-only scope, and a save-only check would
 # not notice a heavy import added inside `luxar.gsplats.io.load_gsplats`.
@@ -247,7 +258,16 @@ def test_core_scene_authoring_without_gsplats_extra(tmp_path: Path) -> None:
     # The scene was really compiled, not merely imported.
     assert scene_path.is_dir()
     written = {child.name for child in scene_path.iterdir()}
-    assert {"pts", "lns", "gs", "msh"} <= written, written
+    assert {
+        "pts",
+        "lns",
+        "gs",
+        "gs_dim_order",
+        "gs_partition",
+        "gs_data",
+        "gs_file",
+        "msh",
+    } <= written, written
     assert {"zarr.json", ".zgroup"} & written, written
 
     # And the gsplat node holds real arrays, not just a group shell.
