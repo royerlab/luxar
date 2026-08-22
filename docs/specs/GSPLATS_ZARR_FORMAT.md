@@ -407,8 +407,9 @@ bands, which confines misordering to the band rather than letting whole tiles
 swap; treat such a tree as a good approximation, not a guarantee.
 
 A partition may still omit `bsp_tree` — a pre-2026.7 store, a decomposition that
-is not axis-aligned, or a transform that could not carry the planes (see below).
-A viewer then falls back to a per-part centroid-distance heuristic, which is
+is not axis-aligned, or a transform that could not carry the planes (see below) —
+and a viewer may reject a stored tree that fails structural or split validation.
+The viewer then falls back to a per-part centroid-distance heuristic, which is
 *not* a valid painter's order: it flips discretely as the camera moves and shows
 as popping at the seams between parts.
 
