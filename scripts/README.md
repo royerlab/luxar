@@ -67,7 +67,7 @@ store it can read (only a malformed flag still fails, as argparse).
 
 ```bash
 hatch run check-demo-ladders --screen-only datasets/examples/*.luxar.zarr
-hatch run check-demo-ladders --screen-only --screen-verdict win datasets/demos/*.luxar.zarr
+hatch run check-demo-ladders --screen-only --screen-verdict win --screen-render-fov 63 datasets/demos/*.luxar.zarr
 hatch run check-demo-ladders --screen --screen-aspect 4:3=1.3333
 ```
 

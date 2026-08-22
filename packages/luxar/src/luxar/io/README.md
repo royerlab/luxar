@@ -426,7 +426,7 @@ It backs `scripts/check_demo_ladders.py --screen` / `--screen-only`.
 
 ```bash
 hatch run check-demo-ladders --screen-only datasets/examples/*.luxar.zarr
-hatch run check-demo-ladders --screen-only --screen-verdict win  datasets/demos/*.luxar.zarr
+hatch run check-demo-ladders --screen-only --screen-verdict win --screen-render-fov 63  datasets/demos/*.luxar.zarr
 ```
 
 ```python
