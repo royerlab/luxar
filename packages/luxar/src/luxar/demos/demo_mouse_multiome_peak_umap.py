@@ -40,6 +40,7 @@ DEMO_META = {
     },
     "citation": {
         "short": "Argelaguet et al. 2022; peak-UMAP analysis Kim et al. 2024",
+        "ref": "Argelaguet / Kim et al. 2022–2024",
         "doi": "10.1101/2022.06.15.496239",
         "license": "CC BY 4.0",
     },
@@ -56,7 +57,9 @@ import pandas as pd
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
+    add_demo_caption,
     launch_viewer,
     require_local_data,
     substitutive_lod_or_flat,
@@ -224,7 +227,9 @@ def create_mouse_scene(
         # Create scene
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
-                dimensions=dims, citation=DEMO_META["citation"]
+                dimensions=dims,
+                citation=DEMO_META["citation"],
+                viewer_config=ViewerConfig(cinematic_mode=True),
             )
 
             total_points = len(positions_combined)
@@ -300,17 +305,12 @@ def create_mouse_scene(
                             transition_duration=0.2,
                         )
 
-            scene.add_text(
-                # No credit here on purpose: this footer used to name "Lange et al.,
-                # Cell 2024", which is the ZEBRAFISH Zebrahub atlas -- copy-pasted
-                # from the zebrafish sibling demo onto mouse data, and supported by
-                # nothing in this file. Removed rather than replaced, because the
-                # real source is not recorded anywhere here (see #1744).
+            # #1810 recorded the mouse citation in DEMO_META, so the stale
+            # zebrafish credit removed in #1744 no longer leaves this uncited.
+            add_demo_caption(
+                scene,
                 f"{n_points:,} peaks • Mouse E7.5–E8.75 • 3D UMAP",
-                position=(0.98, 0.97),
-                font_size=0.012,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
 
         aprint(f"Scene created with {n_points:,} points")

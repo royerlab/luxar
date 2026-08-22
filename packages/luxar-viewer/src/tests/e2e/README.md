@@ -158,7 +158,7 @@ be unit-tested against a fake page; see
 
 `fixtures.ts` exports a `test` that re-extends `@playwright/test`'s
 `test` so **a spec that imports it auto-asserts no console errors after
-each test**. 58 of the 66 specs do; the other 8 (the perf benches, the TSL
+each test**. 59 of the 67 specs do; the other 8 (the perf benches, the TSL
 parity/codegen harnesses, `lift-parity` and `renderer-url-param`) import
 `test` from `@playwright/test` directly and get no fixture teardown. New
 specs must use:
@@ -167,18 +167,34 @@ specs must use:
 import { test, expect } from './fixtures';
 ```
 
-The fixture merges two signal sources before failing:
+There is **one** gate, and it is the Playwright-side one: `page.on('console')`
+where `msg.type() === 'error'`, plus `page.on('pageerror')`. That is the wider
+of the two sources available — it catches errors fired **before** the viewer's
+in-app debug interceptor installs (a mistyped asset, a pre-init
+`ReferenceError`), uncaught exceptions and browser-generated errors the app
+never routed through `console`, it accumulates into an unbounded array rather
+than the interceptor's ring buffer (which evicts at `DEFAULT_MAX_BUFFER_SIZE`),
+and it survives navigation, which resets that buffer. Nothing in the
+interceptor's `errors` bucket is missing from it: every write into the buffer
+goes through the private `captureMessage`, reachable only from the five
+`patch()` closures, each of which re-emits through the original `console`
+method.
 
-- Playwright's own `page.on('console')` and `page.on('pageerror')`
-  events — catches errors fired **before** the viewer's debug
-  interceptor installs (e.g. pre-init `ReferenceError`s) and uncaught
-  exceptions surfaced via `pageerror`.
-- The viewer's in-app debug interceptor, polled via
-  [`assertNoConsoleErrors(page)`](#helpers-helperts) — formatted,
-  application-aware.
+The fixture therefore does **not** read the in-app buffer. It used to, via
+`assertNoConsoleErrors` — a second, narrower opinion on the verdict just
+rendered, bought with a `page.evaluate` round trip a saturated main thread can
+withhold for minutes (#1651/#1746/#1747/#1760). A spec that wants that buffer
+specifically — its `warnings` / `logs` buckets have no Playwright-side gate, and
+a bare `assertNoConsoleErrors(page)` runs with no allow-list at all — still
+calls the helper itself, and `hover-tooltip`, `hover-overlay`,
+`mouse-interactions` and `recording-panel` deliberately do so from their own
+`test.afterEach`.
 
-Both flows are filtered against `DEFAULT_ALLOWED_CONSOLE_ERRORS`,
-which is intentionally narrow:
+The captured entries are filtered against `DEFAULT_ALLOWED_CONSOLE_ERRORS` by
+the exported pure function `unexpectedConsoleErrors(captured, allowed)` — split
+out of the teardown closure so the decision is unit-testable without a browser
+(`src/tests/unit/tests/e2e-fixture-console-gate.test.ts`). The allow-list is
+intentionally narrow:
 
 | Pattern                                                                                               | Why allowed                                                                                                                                                                                                                                              |
 | ----------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -203,7 +219,11 @@ test('handles a bad URL gracefully', async ({ page }) => {
 The annotation type is checked verbatim against `ALLOW_CONSOLE_ERRORS`
 — typos turn into hard failures rather than silent opt-outs. The
 fixture also skips the assertion when the test already failed or
-timed out, so the original error stays prominent.
+timed out, so the original error stays prominent. Both opt-out paths, and the
+gate's own throw, run inside a `try` whose `finally` detaches the two page
+listeners: they must come off or they leak across tests sharing a browser
+context, and they must come off _after_ the verdict so an error emitted once
+the body has ended is still counted.
 
 ## Helpers (`helpers.ts`)
 
@@ -247,9 +267,9 @@ exports group into the categories below.
 | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `captureConsoleMessages(page)`                                         | Attach a synchronous capture object that accumulates `errors` / `warnings` / `logs`.                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `raceEvaluate(evaluation, timeout, onTimeout)`                         | Bound one already-started `page.evaluate` — it carries no timeout of its own, so otherwise only the whole test budget stops it (#1640, #1651). Pass a sentinel the in-page function can never return.                                                                                                                                                                                                                                                                                                                                      |
-| `getConsoleMessages(page, timeout?)`                                   | Read the viewer's debug interceptor (formatted, captured in-app). Deadline-bounded (45 s): throws when the page never answers, rather than fabricating empty buckets.                                                                                                                                                                                                                                                                                                                                                                      |
+| `getConsoleMessages(page, timeout?)`                                   | Read the viewer's debug interceptor (formatted, captured in-app). Deadline-bounded (45 s): throws when the page never answers, rather than fabricating empty buckets. Called by specs directly and by the four assertions below — **not** by the shared fixture (#1760), so its cost is paid only where the in-app buffer was asked for.                                                                                                                                                                                                   |
 | `assertConsoleContains(page, pattern)` / `assertConsoleDoesNotContain` | Positive / negative assertion on the captured stream.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `assertNoConsoleErrors(page, allow)`                                   | Strict no-error gate against an allow-list — called automatically by the [shared fixture](#shared-fixture-fixturests), and explicitly by specs that want a tighter gate mid-test.                                                                                                                                                                                                                                                                                                                                                          |
+| `assertNoConsoleErrors(page, allow)`                                   | Strict no-error gate on the in-app buffer against an allow-list. NOT called by the [shared fixture](#shared-fixture-fixturests) (#1760) — specs opt in, four of them from their own `test.afterEach` with no allow-list at all.                                                                                                                                                                                                                                                                                                            |
 | `assertNoShaderErrors(page)`                                           | Read the debug renderer for shader-compile / link failures specifically.                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `getWebGLErrors(page)`                                                 | Drain accumulated WebGL errors from the renderer.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `waitForWebGLError(page, predicate)`                                   | Block until accumulated WebGL errors satisfy a predicate. Each read is bounded by the remaining budget, after the first one none is dispatched into a remainder shorter than one poll interval (a discarded read has already drained the GL queue), and a read that spent the whole remainder is not followed by one more poll past that deadline. It does not throw on give-up (it returns data) but warns once, saying whether any read answered and how many errors the union held; a rejecting read or a closed page still propagates. |

@@ -138,7 +138,9 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
+    add_demo_caption,
     cached_download,
     launch_viewer,
     require_module,
@@ -650,7 +652,9 @@ def create_storm_scene(
 
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
-                dimensions=dims, citation=DEMO_META["citation"]
+                dimensions=dims,
+                citation=DEMO_META["citation"],
+                viewer_config=ViewerConfig(cinematic_mode=True),
             )
 
             # Add metadata (keep simple for JSON compatibility)
@@ -736,12 +740,10 @@ def create_storm_scene(
             )
 
             # Sample info (always visible)
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 "COS7 \u03b1-tubulin \u2022 Zenodo 3547521",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
 
         aprint("✓ Scene saved")

@@ -10,6 +10,10 @@ Exposed:
 * :data:`COMPOSITING_ATTRS` — frozenset of attribute names that ride on
   a wrapper Group (where the user thinks of the wrapper as "their
   layer") rather than getting copied onto each internal child.
+* :data:`WRITER_STAMPED_APPEARANCE_DEFAULTS` + :data:`IDENTITY_COMPOSITING_ATTRS`
+  — the value the writer manufactures for an appearance attr nobody set, shared
+  by every stamp site and by the reader that has to tell a stamp from an
+  authored value (``gsplat merge``'s agreement rule).
 * :func:`slice_optional_array` — slice an array-valued leaf parameter by
   index, leaving scalars / None / mis-sized inputs untouched.
 * :func:`is_broadcast_color` — classify a uniform RGB(A) sequence (which must
@@ -44,6 +48,12 @@ Exposed:
   points / gsplats / mesh leaf, where it would write cleanly and do nothing.
 * :func:`reject_lines_only_join_assignment` — the same refusal for the second
   door into the same attr, the ``node.join = ...`` property setter.
+* :func:`reject_mesh_only_appearance` — refuse mesh-only appearance attrs on
+  points / lines / gsplats leaves and on Groups, where they do not compose. The
+  second door into the same attrs (a post-hoc ``node.attrs[...] = ...``) is guarded
+  by ``core/node/node.py::_WriteThroughAttrs._reject_mesh_only_on_non_mesh``.
+* :data:`MESH_ONLY_APPEARANCE_ATTRS` — the five mesh-only appearance keys
+  refused on every non-mesh node by those two guards.
 * :func:`unnest_add_error` — strip a SAME-geometry inner adder's own ``Could
   not add <geometry> '<child>': …`` prefix from a caught exception's message,
   so a refusal from inside a synthesised same-kind split child (``child_3``,
@@ -55,7 +65,8 @@ Exposed:
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional, Sequence, Union
+from types import MappingProxyType
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
 
 import numpy as np
 
@@ -66,6 +77,12 @@ import numpy as np
 #: never be mistaken for (or stripped as) a geometry adder's — see
 #: :func:`funnel_add_error`.
 _GEOMETRY_WORDS = ("points", "lines", "mesh", "gsplats")
+
+#: The five mesh-only appearance keys refused on every non-mesh node by the
+#: adder/group and write-through guards.
+MESH_ONLY_APPEARANCE_ATTRS = frozenset(
+    {"alpha_cutoff", "ambient", "shade_exponent", "shininess", "specular"}
+)
 
 #: Matches the prefix an adder's own funnel produces, e.g.
 #: ``Could not add points 'child_3': ...``. Anchored to the start of the
@@ -323,6 +340,56 @@ COMPOSITING_ATTRS = frozenset(
 AUTHORED_APPEARANCE_ATTRS = (COMPOSITING_ATTRS - {"transform"}) | {"colormap"}
 
 
+#: The value the WRITER manufactures for an appearance attr the author never
+#: set — the single source of truth for every stamp site, so a reader that has
+#: to tell "the author chose this" from "nobody chose anything" cannot drift
+#: from the writer that produced the file.
+#:
+#: Stamped by three places, all of which read their value from here:
+#:
+#: * :func:`~luxar.io._compiler.node_common.apply_default_render_attrs` and
+#:   :func:`~luxar.io._compiler.gsplat_assembly.apply_gsplat_group_attrs` —
+#:   :data:`IDENTITY_COMPOSITING_ATTRS`, unconditionally, on every leaf.
+#: * ``apply_gsplat_group_attrs`` again for ``colormap`` — but only on a
+#:   COLORLESS leaf with no ancestor palette, so this one is conditional and a
+#:   colored store legitimately carries no ``colormap`` at all.
+#: * ``gsplats/io/save_gsplats.py`` for ``layer``, on a standalone
+#:   ``.gsplats.zarr`` root (the file IS the layer when opened directly).
+#:
+#: ``blending_mode`` / ``visible`` / ``nd_transform`` / ``join`` are absent
+#: here on purpose: they have no identity value, so nothing is stamped for
+#: them and their absence on disk is genuine silence.
+#: Read-only (``MappingProxyType``): it is the single source of truth several
+#: modules index into, and a stamp site that mutated it would silently redefine
+#: what "the author never set this" means for the reader.
+WRITER_STAMPED_APPEARANCE_DEFAULTS: Mapping[str, Any] = MappingProxyType(
+    {
+        "opacity": 1.0,
+        "absorption": 1.0,
+        "gamma": 1.0,
+        "intensity": 1.0,
+        "offset": 0.0,
+        "layer": True,
+        "colormap": "gray",
+    }
+)
+
+
+#: The compositing attrs with an identity value, in the order the writers stamp
+#: them. Multiplicative (opacity/absorption/gamma/intensity) or additive
+#: (offset) no-ops under the viewer's hierarchical composition, which is what
+#: makes stamping them on every leaf harmless — and is also why they cannot be
+#: distinguished from a deliberate authored identity (see
+#: :data:`WRITER_STAMPED_APPEARANCE_DEFAULTS`).
+IDENTITY_COMPOSITING_ATTRS = (
+    "opacity",
+    "absorption",
+    "gamma",
+    "intensity",
+    "offset",
+)
+
+
 def lines_only_join_reason(geometry_type: str) -> str:
     """The one explanation of why ``join`` is refused on a non-lines leaf.
 
@@ -382,6 +449,21 @@ def reject_lines_only_join(
         raise ValueError(
             f"Cannot add {geometry_type} '{name}' with join={attrs['join']!r}. "
             + lines_only_join_reason(geometry_type)
+        )
+
+
+def reject_mesh_only_appearance(
+    node_type: str, name: str, attrs: Dict[str, Any]
+) -> None:
+    """Refuse mesh-only appearance attrs on non-mesh nodes."""
+    invalid = sorted(MESH_ONLY_APPEARANCE_ATTRS & attrs.keys())
+    if invalid:
+        raise ValueError(
+            f"Cannot add {node_type} '{name}' with mesh-only attribute(s) {invalid}. "
+            "The viewer applies these attributes only to mesh leaves, and they do "
+            "not compose through Groups. Remove them, set them on each mesh leaf "
+            "(part_<i> / child_<i>), or pass them to add_mesh(...), which stamps "
+            "every generated mesh leaf."
         )
 
 

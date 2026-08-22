@@ -101,7 +101,7 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
 5. **Write arrays**:
    - `vertices`: `SemanticType.COORDINATE`, 2-D chunks via `calculate_intelligent_chunks`, `deduplicate=False`, `allow_lut=False` (raw reader)
    - `segments`: `SemanticType.INDEX`, 2-D chunks `(segment_chunk_size, 2)` (from the segment ordering's `chunk_size` if ordering present, else the constant `2048`), `deduplicate=False` (raw reader)
-   - `widths`: via `write_positive_scalar` (rejects negative; same default-precision policy as Points radii)
+   - `widths`: via `write_positive_scalar` (rejects negative; same default-precision policy as Points radii; `deduplicate=False` keeps the chunk-bound slack tied to this array's encoding)
    - `colors`, `sharpness`, `scalars`: per-vertex, same as Points
    - `ctx.write_colormap_lut(group, attrs)`: writes the `colormap_lut` dataset when `colormap` needs one (a custom array, or a matplotlib/colorcet name, which is then rewritten to `"custom"`); built-in named colormaps write no LUT
 
@@ -137,10 +137,10 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
 
 3. **Spatial ordering**:
    - `barrier_dims = scene_barrier_dims(ctx.store, n_dims)` — from scene `Dimensions` metadata (discrete non-display dims), or `None` if no scene dims
-   - `apply_gsplat_spatial_ordering(centers, amplitudes, cholesky_factors, colors, n_splats, n_dims, cholesky_is_uniform, ctx.ordering_ctx, truncation_radius, barrier_dims=scene_barrier_dims(ctx.store, n_dims))` → 5-tuple `(centers, amplitudes, cholesky_factors, colors, ordering_data)` (the `truncation_radius` from `attrs` is passed as the `coverage_sigma` arg; `ordering_data` is `None` if ordering was not applied)
+   - `apply_gsplat_spatial_ordering(centers, amplitudes, cholesky_factors, colors, n_splats, n_dims, cholesky_is_uniform, ctx.ordering_ctx, truncation_radius, barrier_dims=scene_barrier_dims(ctx.store, n_dims), dataset_ctx=ctx.dataset_ctx)` → 6-tuple `(centers, amplitudes, cholesky_factors, colors, ordering_data, centers_encoding_plan)` (the `truncation_radius` from `attrs` is passed as the `coverage_sigma` arg; `ordering_data` is `None` if ordering was not applied)
 
 4. **Write arrays**:
-   - `write_gsplat_arrays(group, centers, amplitudes, cholesky_factors, colors, n_splats, n_dims, cholesky_is_uniform, ordering_data, ctx.dataset_ctx)` → `metadata`
+   - `write_gsplat_arrays(group, centers, amplitudes, cholesky_factors, colors, n_splats, n_dims, cholesky_is_uniform, ordering_data, centers_encoding_plan, ctx.dataset_ctx)` → `metadata`
 
 5. **Apply rendering defaults** + stamp attrs (stamped BEFORE labels are written):
    - `ctx.apply_gsplat_group_attrs(group, metadata, attrs)` — a bound orchestrator method returning `None`; it delegates to `apply_gsplat_group_attrs(...)` and stores the warn-once colormap-LUT flag on the orchestrator instance (it is NOT threaded through the ctx)

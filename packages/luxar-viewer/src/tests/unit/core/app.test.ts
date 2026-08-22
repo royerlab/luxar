@@ -467,7 +467,8 @@ describe('LuxarApp', () => {
       );
       expect(mockSceneManager.loadSceneData).toHaveBeenCalledWith(
         'http://example.com/data.zarr',
-        undefined
+        undefined,
+        { applyViewerConfigFov: true }
       );
       expect(DatasetBrowser).not.toHaveBeenCalled();
     });
@@ -1067,7 +1068,8 @@ describe('LuxarApp', () => {
       expect(mockSceneManager.loadSceneData).toHaveBeenCalledTimes(1);
       expect(mockSceneManager.loadSceneData).toHaveBeenCalledWith(
         'http://example.com/a.zarr',
-        undefined
+        undefined,
+        { applyViewerConfigFov: true }
       );
       // The rejected selection must not leave the configured src or the
       // host-page URL pointing at the dataset that never loaded.

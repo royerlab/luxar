@@ -95,6 +95,7 @@ DEMO_META = {
     "outputs": ["gsplats_3d_visible_human_head"],
     "citation": {
         "short": "NLM Visible Human Project (Spitzer et al. 1996)",
+        "ref": "Spitzer et al. 1996",
         "doi": "10.1136/jamia.1996.96236280",
         "license": "Public domain (NLM)",
     },
@@ -108,6 +109,7 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import (
+    add_demo_caption,
     detect_device,
     is_lfs_pointer,
     launch_viewer,
@@ -117,6 +119,7 @@ from luxar.demos import (
     voxel_sampled_payload_agreement,
     warn_if_no_cuda_gpu,
 )
+from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
 from luxar.demos._lod_policy import save_with_lod
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
@@ -637,16 +640,14 @@ def create_luxar_scene(fit: GSplatData, colors: np.ndarray, output_path: Path) -
             np.abs(centered.centers.max(axis=0)),
             np.abs(centered.centers.min(axis=0)),
         )
-        fov_deg = 45.0
         # Fit the taller of (height, width) into the frame, with a little air.
         need = float(max(half[0], half[2])) * 1.15
-        cam_dist = need / np.tan(np.radians(fov_deg) / 2.0)
+        cam_dist = need / np.tan(np.radians(CINEMATIC_FOV_DEG) / 2.0)
         radius = float(np.linalg.norm(half))
         camera = CameraConfig(
             position=(0.0, -cam_dist, 0.0),
             target=(0.0, 0.0, 0.0),
             up=(-1.0, 0.0, 0.0),
-            fov=fov_deg,
             near=float(max(1.0, (cam_dist - radius) * 0.5)),
             far=float((cam_dist + radius) * 2.0),
         )
@@ -660,7 +661,9 @@ def create_luxar_scene(fit: GSplatData, colors: np.ndarray, output_path: Path) -
             scene = compiler.create_scene(
                 citation=DEMO_META["citation"],
                 dimensions=dims,
-                viewer_config=ViewerConfig(tone_mapping="ACES", camera=camera),
+                viewer_config=ViewerConfig(
+                    cinematic_mode=True, tone_mapping="ACES", camera=camera
+                ),
             )
             scene.attrs["title"] = "GSplats: Visible Human Head (NLM cryosections)"
             scene.add_gsplats(
@@ -682,12 +685,10 @@ def create_luxar_scene(fit: GSplatData, colors: np.ndarray, output_path: Path) -
                 color="rgba(255,255,255,0.7)",
                 blend_mode="difference",
             )
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 "NLM Visible Human Project • color cryosections → Gaussian splats",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.5)",
+                DEMO_META.get("citation"),
             )
         aprint(f"Scene saved: {output_path}")
         return output_path

@@ -18,6 +18,8 @@ from luxar.io._compiler.spatial_ordering.points import (
     write_points_ordering_to_zarr,
 )
 from luxar.io._ordering.bounds import _BARRIER_BOUND_EPS, _store_outward_f32
+from luxar.io._ordering.points import sort_points_compound
+from luxar.io.ordering import sort_splats_spatial
 from luxar.io.reader import DEFAULT_COMP
 from luxar.typing_utils.constants import DEFAULT_POINT_RADIUS
 
@@ -301,6 +303,186 @@ def test_stored_lines_bounds_contain_the_DECODED_vertices(tmp_path: Path) -> Non
         assert _violations(coords, segment_bounds, segment_chunk) == (0, 0)
 
 
+def test_stored_points_bounds_contain_the_DECODED_radii(tmp_path: Path) -> None:
+    """Every decoded point footprint stays inside its stored chunk bound."""
+    rng = np.random.default_rng(1871)
+    n = 20_000
+    positions = (rng.random((n, 3)) * 1000.0).astype(np.float32)
+    radii = rng.uniform(0.1, 5.0, n).astype(np.float32)
+
+    out = tmp_path / "quantised_radii.luxar.zarr"
+    with LuxarZarrCompiler(out, enable_spatial_index=True) as compiler:
+        scene = compiler.create_scene(
+            dimensions=Dimensions(
+                [
+                    Dimension("x", unit="um", display=True),
+                    Dimension("y", unit="um", display=True),
+                    Dimension("z", unit="um", display=True),
+                ]
+            )
+        )
+        scene.add_points("pts", positions, radii=radii)
+
+    node = zarr.open_group(out, mode="r")["pts"]
+    assert node["radii"].attrs["encoding"]["name"] == "bounded_scalar_uint8"
+    decoded_positions = _decode(node, "positions")
+    decoded_radii = _decode(node, "radii")
+    sort_order, _ = sort_points_compound(
+        positions,
+        [
+            Dimension("x", unit="um", display=True),
+            Dimension("y", unit="um", display=True),
+            Dimension("z", unit="um", display=True),
+        ],
+    )
+    assert float((decoded_radii - radii[sort_order]).max()) > 0.009
+
+    bounds = node["chunk_bounds"][:]
+    chunk_size = int(node.attrs["chunk_size"])
+    for k in range(bounds.shape[0]):
+        start = k * chunk_size
+        stop = min(start + chunk_size, n)
+        block = decoded_positions[start:stop]
+        radius = decoded_radii[start:stop, None]
+        assert bool((block - radius >= bounds[k, :, 0]).all())
+        assert bool((block + radius <= bounds[k, :, 1]).all())
+
+
+def test_stored_points_bounds_contain_geolog_DECODED_radii(tmp_path: Path) -> None:
+    rng = np.random.default_rng(1871001)
+    n = 20_000
+    positions = (rng.random((n, 3)) * 1000.0).astype(np.float32)
+    radii = np.geomspace(1e-6, 100.0, n, dtype=np.float32)
+
+    out = tmp_path / "geolog_radii.luxar.zarr"
+    with LuxarZarrCompiler(out, enable_spatial_index=True) as compiler:
+        scene = compiler.create_scene(
+            dimensions=Dimensions(
+                [
+                    Dimension("x", unit="um", display=True),
+                    Dimension("y", unit="um", display=True),
+                    Dimension("z", unit="um", display=True),
+                ]
+            )
+        )
+        scene.add_points("pts", positions, radii=radii)
+
+    node = zarr.open_group(out, mode="r")["pts"]
+    assert node["radii"].attrs["encoding"]["name"] == "geolog_scalar_uint16"
+    decoded_positions = _decode(node, "positions")
+    decoded_radii = _decode(node, "radii")
+    sort_order, _ = sort_points_compound(
+        positions,
+        [
+            Dimension("x", unit="um", display=True),
+            Dimension("y", unit="um", display=True),
+            Dimension("z", unit="um", display=True),
+        ],
+    )
+    assert float((decoded_radii - radii[sort_order]).max()) > 0.01
+    bounds = node["chunk_bounds"][:]
+    chunk_size = int(node.attrs["chunk_size"])
+    for k in range(bounds.shape[0]):
+        start = k * chunk_size
+        stop = min(start + chunk_size, n)
+        block = decoded_positions[start:stop]
+        radius = decoded_radii[start:stop, None]
+        assert bool((block - radius >= bounds[k, :, 0]).all())
+        assert bool((block + radius <= bounds[k, :, 1]).all())
+
+
+def test_footprint_writes_do_not_cross_deduplicate_on_sharpness(tmp_path: Path) -> None:
+    rng = np.random.default_rng(17511871)
+    n = 5000
+    positions = (rng.random((n, 3)) * 1000.0).astype(np.float32)
+    footprint = np.linspace(0.4, 0.5, n, dtype=np.float32)
+
+    out = tmp_path / "footprint_dedup.luxar.zarr"
+    with LuxarZarrCompiler(out, enable_spatial_index=True) as compiler:
+        scene = compiler.create_scene(
+            dimensions=Dimensions(
+                [
+                    Dimension("x", unit="um", display=True),
+                    Dimension("y", unit="um", display=True),
+                    Dimension("z", unit="um", display=True),
+                ]
+            )
+        )
+        scene.add_points("point_source", positions, sharpness=footprint)
+        scene.add_points("point_target", positions, radii=footprint)
+        scene.add_lines(
+            "line_source",
+            positions,
+            widths=1.0,
+            sharpness=footprint,
+            line_type="segments",
+        )
+        scene.add_lines(
+            "line_target", positions, widths=footprint, line_type="segments"
+        )
+
+    store = zarr.open_group(out, mode="r")
+    assert store["point_target/radii"].attrs["encoding"]["name"] == (
+        "bounded_scalar_uint8"
+    )
+    assert store["line_target/widths"].attrs["encoding"]["name"] == (
+        "bounded_scalar_uint8"
+    )
+
+
+def test_stored_line_bounds_contain_the_DECODED_widths(tmp_path: Path) -> None:
+    """Every decoded segment footprint stays inside its stored chunk bound."""
+    rng = np.random.default_rng(18710)
+    n_segments = 20_000
+    starts = rng.random((n_segments, 3)) * 1000.0
+    ends = starts + rng.standard_normal((n_segments, 3)) * 2.0
+    vertices = np.empty((2 * n_segments, 3), dtype=np.float32)
+    vertices[0::2] = starts
+    vertices[1::2] = ends
+    widths = rng.uniform(0.1, 5.0, 2 * n_segments).astype(np.float32)
+
+    out = tmp_path / "quantised_widths.luxar.zarr"
+    with LuxarZarrCompiler(out, enable_spatial_index=True) as compiler:
+        scene = compiler.create_scene(
+            dimensions=Dimensions(
+                [
+                    Dimension("x", unit="um", display=True),
+                    Dimension("y", unit="um", display=True),
+                    Dimension("z", unit="um", display=True),
+                ]
+            )
+        )
+        scene.add_lines("lns", vertices, widths=widths, line_type="segments")
+
+    node = zarr.open_group(out, mode="r")["lns"]
+    assert node["widths"].attrs["encoding"]["name"] == "bounded_scalar_uint8"
+    decoded_vertices = _decode(node, "vertices")
+    decoded_widths = _decode(node, "widths")
+    segments = np.asarray(_decode(node, "segments")).astype(np.int64)
+    vertex_sort_order, _ = sort_points_compound(
+        vertices,
+        [
+            Dimension("x", unit="um", display=True),
+            Dimension("y", unit="um", display=True),
+            Dimension("z", unit="um", display=True),
+        ],
+    )
+    sorted_authored = widths[vertex_sort_order]
+    assert float((decoded_widths - sorted_authored).max()) > 0.009
+
+    bounds = node["segment_chunk_bounds"][:]
+    chunk_size = int(node.attrs["segment_ordering"]["chunk_size"])
+    for k in range(bounds.shape[0]):
+        block = segments[k * chunk_size : (k + 1) * chunk_size]
+        p1 = decoded_vertices[block[:, 0]]
+        p2 = decoded_vertices[block[:, 1]]
+        width = np.maximum(decoded_widths[block[:, 0]], decoded_widths[block[:, 1]])[
+            :, None
+        ]
+        assert bool((np.minimum(p1 - width, p2 - width) >= bounds[k, :, 0]).all())
+        assert bool((np.maximum(p1 + width, p2 + width) <= bounds[k, :, 1]).all())
+
+
 def test_stored_lines_bounds_contain_LUT_ELIGIBLE_decoded_vertices(
     tmp_path: Path,
 ) -> None:
@@ -521,3 +703,165 @@ def test_gridded_barrier_axis_bounds_are_untouched(tmp_path: Path) -> None:
         pad = float(bounds[:, d, 1].max()) - float(decoded[:, d].max())
         assert pad == pytest.approx(slack, rel=0.05)
     assert _violations(decoded, bounds, chunk_size) == (0, 0)
+
+
+def test_stored_gsplat_bounds_contain_decoded_continuous_barrier_centers(
+    tmp_path: Path,
+) -> None:
+    """A non-gridded barrier bound contains the quantized center it indexes.
+
+    AUTO stores centers as per-axis uint16 fixed point. On the continuous
+    1000-wide time axis below, its half-quantum is about 7.6e-3: wider than
+    ``_BARRIER_BOUND_EPS`` but far below the sigma rail's 5.0 threshold. Before
+    the bound used the encoder's round-trip slack, this deterministic corpus
+    put 11 decoded centers outside 9 of 12 chunk bounds, with a worst excursion
+    of 6.26e-3.
+    """
+    rng = np.random.default_rng(0)
+    n_splats = 12_000
+    centers = np.empty((n_splats, 4), dtype=np.float32)
+    centers[:, 0] = rng.uniform(0.0, 1000.0, n_splats).astype(np.float32)
+    centers[:, 1:] = rng.uniform(-10.0, 10.0, (n_splats, 3)).astype(np.float32)
+    centers[0, 0] = 0.0
+    centers[1, 0] = 1000.0
+
+    cholesky = np.zeros((n_splats, 10), dtype=np.float32)
+    cholesky[:, [0, 2, 5, 9]] = 5.0
+
+    out = tmp_path / "continuous_barrier_gsplats.luxar.zarr"
+    with LuxarZarrCompiler(out, enable_spatial_index=True) as compiler:
+        compiler.create_scene(dimensions=_wide_scene_dims("time"))
+        compiler.write_gsplats(
+            "gsplats",
+            centers=centers,
+            amplitudes=1.0,
+            cholesky_factors=cholesky,
+        )
+
+    node = zarr.open_group(out, mode="r")["gsplats"]
+    assert node.attrs["slice_dims"] == [0]
+    assert node["centers"].attrs["encoding"]["name"] == "linear_perchannel_u16"
+
+    decoded = _decode(node, "centers")
+    bounds = node["chunk_bounds"][:]
+    chunk_size = int(node.attrs["chunk_size"])
+    assert len(bounds) > 1
+    assert _violations(decoded, bounds, chunk_size) == (0, 0)
+
+    sort_indices, _ = sort_splats_spatial(centers, method="hilbert", slice_dims=[0])
+    authored = centers[sort_indices, 0]
+    slack = 1000.0 / 131070.0
+    barrier_pad = _BARRIER_BOUND_EPS + slack
+    assert barrier_pad == pytest.approx(0.00862951094834821)
+    for k in range(bounds.shape[0]):
+        block = authored[k * chunk_size : (k + 1) * chunk_size]
+        lo32, hi32 = _store_outward_f32(
+            float(block.min()) - barrier_pad,
+            float(block.max()) + barrier_pad,
+        )
+        assert bounds[k, 0, 0] == lo32
+        assert bounds[k, 0, 1] == hi32
+
+    # The large sigma footprint already covers spatial-axis displacement; this
+    # regression is specifically the barrier axis that gets no sigma expansion.
+    spatial = decoded[:, 1:]
+    spatial_bounds = bounds[:, 1:, :]
+    assert _violations(spatial, spatial_bounds, chunk_size) == (0, 0)
+
+
+def test_gridded_gsplat_barrier_bounds_keep_only_the_epsilon(tmp_path: Path) -> None:
+    """Grid-snapped gsplat centers get no coordinate-slack over-padding."""
+    rng = np.random.default_rng(1870)
+    n_splats = 12_000
+    centers = np.empty((n_splats, 4), dtype=np.float32)
+    centers[:, 0] = rng.integers(0, 10, n_splats)
+    centers[:, 1:] = rng.uniform(-10.0, 10.0, (n_splats, 3)).astype(np.float32)
+    cholesky = np.zeros((n_splats, 10), dtype=np.float32)
+    cholesky[:, 0] = 1e-7
+    cholesky[:, [2, 5, 9]] = 5.0
+
+    out = tmp_path / "gridded_barrier_gsplats.luxar.zarr"
+    with LuxarZarrCompiler(out, enable_spatial_index=True) as compiler:
+        compiler.create_scene(dimensions=_wide_scene_dims("time"))
+        compiler.write_gsplats("gsplats", centers, 1.0, cholesky)
+
+    node = zarr.open_group(out, mode="r")["gsplats"]
+    assert node["centers"].attrs["encoding"]["name"] == "linear_perchannel_u16"
+    decoded = _decode(node, "centers")
+    bounds = node["chunk_bounds"][:]
+    chunk_size = int(node.attrs["chunk_size"])
+    for k in range(bounds.shape[0]):
+        block = decoded[k * chunk_size : (k + 1) * chunk_size, 0]
+        lo32, hi32 = _store_outward_f32(
+            float(block.min()) - _BARRIER_BOUND_EPS,
+            float(block.max()) + _BARRIER_BOUND_EPS,
+        )
+        assert bounds[k, 0, 0] == lo32
+        assert bounds[k, 0, 1] == hi32
+
+
+def test_lut_gsplat_barrier_bounds_keep_only_the_epsilon(tmp_path: Path) -> None:
+    """LUT-stored centers are exact and receive no coordinate-slack pad."""
+    rng = np.random.default_rng(1872)
+    n_splats = 12_000
+    palette = np.array(
+        [0.0, 3.7, 19.0, 55.0, 132.5, 610.0, 799.5, 1000.0],
+        dtype=np.float32,
+    )
+    centers = rng.choice(palette, size=(n_splats, 4)).astype(np.float32)
+    cholesky = np.zeros((n_splats, 10), dtype=np.float32)
+    cholesky[:, [0, 2, 5, 9]] = 5.0
+
+    out = tmp_path / "lut_barrier_gsplats.luxar.zarr"
+    with LuxarZarrCompiler(out, enable_spatial_index=True) as compiler:
+        compiler.create_scene(dimensions=_wide_scene_dims("time"))
+        compiler.write_gsplats("gsplats", centers, 1.0, cholesky)
+
+    node = zarr.open_group(out, mode="r")["gsplats"]
+    assert node["centers"].attrs["encoding"]["name"] == "lut_uint8"
+    decoded = _decode(node, "centers")
+    bounds = node["chunk_bounds"][:]
+    chunk_size = int(node.attrs["chunk_size"])
+    assert _violations(decoded, bounds, chunk_size) == (0, 0)
+    for k in range(bounds.shape[0]):
+        block = decoded[k * chunk_size : (k + 1) * chunk_size, 0]
+        lo32, hi32 = _store_outward_f32(
+            float(block.min()) - _BARRIER_BOUND_EPS,
+            float(block.max()) + _BARRIER_BOUND_EPS,
+        )
+        assert bounds[k, 0, 0] == lo32
+        assert bounds[k, 0, 1] == hi32
+
+
+def test_escalated_gsplat_barrier_bounds_keep_only_the_epsilon(tmp_path: Path) -> None:
+    """Float32-escalated centers are exact and receive no second slack pad."""
+    rng = np.random.default_rng(1871)
+    n_splats = 12_000
+    centers = np.empty((n_splats, 4), dtype=np.float32)
+    centers[:, 0] = rng.uniform(0.0, 1000.0, n_splats).astype(np.float32)
+    centers[:, 1:] = rng.uniform(-10.0, 10.0, (n_splats, 3)).astype(np.float32)
+    centers[0, 0] = 0.0
+    centers[1, 0] = 1000.0
+    cholesky = np.zeros((n_splats, 10), dtype=np.float32)
+    cholesky[:, 0] = 1e-7
+    cholesky[:, [2, 5, 9]] = 5.0
+
+    out = tmp_path / "escalated_barrier_gsplats.luxar.zarr"
+    with pytest.warns(UserWarning, match="stored as float32"):
+        with LuxarZarrCompiler(out, enable_spatial_index=True) as compiler:
+            compiler.create_scene(dimensions=_wide_scene_dims("time"))
+            compiler.write_gsplats("gsplats", centers, 1.0, cholesky)
+
+    node = zarr.open_group(out, mode="r")["gsplats"]
+    assert node["centers"].attrs["encoding"]["name"] == "float32"
+    decoded = _decode(node, "centers")
+    bounds = node["chunk_bounds"][:]
+    chunk_size = int(node.attrs["chunk_size"])
+    for k in range(bounds.shape[0]):
+        block = decoded[k * chunk_size : (k + 1) * chunk_size, 0]
+        lo32, hi32 = _store_outward_f32(
+            float(block.min()) - _BARRIER_BOUND_EPS,
+            float(block.max()) + _BARRIER_BOUND_EPS,
+        )
+        assert bounds[k, 0, 0] == lo32
+        assert bounds[k, 0, 1] == hi32

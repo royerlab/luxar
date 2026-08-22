@@ -92,6 +92,35 @@ through. The choice applies from the next refit onwards — the
 hosted archives keep whatever topology they were written with until they are
 refitted and reuploaded, since the manifest pins their checksums.
 
+Every demo scene opens in the cinematic look, and it costs one keyword:
+`ViewerConfig(cinematic_mode=True)`, which the viewer's zarr bridge expands into
+ACES, a subtle wide bloom, detector noise, a vignette and a 35 mm chromatic lens
+for every field the scene did not set itself — so an explicit `tone_mapping`,
+`exposure` or bloom value still wins. `tests/test_demos_cinematic_mode.py` is the
+gate: no `create_scene` without a `viewer_config`, and no `ViewerConfig` without
+a literal `cinematic_mode=True`.
+
+The preset also expands the field of view from 47° to 63°. The viewer resolves
+that FOV before automatic framing, so an auto-framed scene keeps the fitted
+subject occupancy intended for the lens. A returning visitor's stored FOV still
+takes precedence over the scene-authored value by design.
+
+An authored camera position is a stronger contract, because its distance was
+composed for one FOV. Every authored pose **composes for 63°** through
+`_cinematic_camera.py`: read `CINEMATIC_FOV_DEG` when the distance comes from
+the lens, or use `framing_scale()` / `pull_in()` with the pose's original
+38°–50° FOV. Most poses preserve their authored framing exactly; the
+biodiversity globe preserves its silhouette, while the forest and embryo-line
+poses preserve camera clearance instead. `pull_in()` scales about the target,
+so an off-origin camera keeps its aim. The guard rejects both a mixed-lens FOV
+pin and a bare authored position whose FOV assumption nobody can read.
+
+Four demos pin scientific-fidelity exceptions. The two quantitative ortho demos
+suppress bloom, vignette, lens distortion and detector noise so their
+projection-derived scale bars and measured intensities remain meaningful. The
+biodiversity globe and nD transform bench suppress lens distortion and detector
+noise because their categorical or exact RGB hues carry data.
+
 The three network demos (`caida_as_topology`, `huri_interactome`,
 `ppi_flow_field`) share `_graph_common.py`, but not all of it. All three use the
 cache-aware download and Louvain community detection; the sparse adjacency and
@@ -783,7 +812,7 @@ Deliberately the same dataset as the gsplat demo above, because the pairing is t
 
 **Requires**: `scikit-image` + `scipy` (both in the `demos` extra). **No GPU and no fitting step** — marching cubes is CPU-only and takes about two seconds, which makes this the cheapest end-to-end demo of any Luxar geometry type.
 
-**Demonstrates**: Mesh as the only **shaded** geometry type — per-vertex marching-cubes gradient normals written with an explicit `normal_dims`, lit by the §6.2 view-anchored headlight, so nuclei inside membranes are genuinely occluded rather than summed. `opaque` blending by default (unlike the other three types' `additive`), the mesh-only **Ambient** / **Shade falloff** Layers-panel sliders, per-channel `layer=True` toggling, physical units via marching_cubes' `spacing` (the dataset's voxels are mildly anisotropic — 0.29 µm in Z vs 0.26 µm in-plane, ~1.1x), and scale: ~537K vertices / 1.07M triangles across the two surfaces.
+**Demonstrates**: Mesh as the only **shaded** geometry type — per-vertex marching-cubes gradient normals written with an explicit `normal_dims`, lit by the §6.2 view-anchored offset key, so nuclei inside membranes are genuinely occluded rather than summed. `opaque` blending by default (unlike the other three types' `additive`), the five mesh-only **Ambient** / **Shade falloff** / **Specular** / **Shininess** / **Alpha cutoff** Layers-panel sliders, per-channel `layer=True` toggling, physical units via marching_cubes' `spacing` (the dataset's voxels are mildly anisotropic — 0.29 µm in Z vs 0.26 µm in-plane, ~1.1x), and scale: ~537K vertices / 1.07M triangles across the two surfaces.
 
 ---
 
@@ -1179,6 +1208,7 @@ with asection("Writing to Zarr"):
 
 ```python
 from luxar.demos import (
+    add_demo_caption,  # standard bottom-right caption + DEMO_META credit
     launch_viewer,  # serve + open viewer (serve_args=[...] to pass e.g. --profile)
     cached_download,  # download once into ~/.cache/luxar/<name>/, skip-if-present
     cache_computed,  # cache an expensive result (UMAP, field) — versioned, param-keyed
@@ -1322,8 +1352,9 @@ checked too — so an exemption cannot outlive the layer it leans on.
 3. **Update docstring** with what it demonstrates
 4. **Implement generation** in the generate_* function (keep everything in that function!)
 5. **Expose the geometry** with `layer=True` (or a `layer=True` container group) — see §8
-6. **Test** by running: `hatch run python demo_yourname.py`
-7. **Ctrl+C** to stop and verify cleanup works
+6. **Add one caption** with `add_demo_caption(scene, ...)` so `DEMO_META` credit appears — see §6
+7. **Test** by running: `hatch run python demo_yourname.py`
+8. **Ctrl+C** to stop and verify cleanup works
 
 ## Tips
 

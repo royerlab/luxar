@@ -2,7 +2,7 @@
 
 Guidance for Claude Code when working with this repository.
 
-**Luxar** is a high-performance system for compiling and visualizing arbitrary-sized nD scientific scenes. It renders four first-class geometry types — **Points**, **Lines**, **Gaussian Splats**, and **Mesh** (triangle surfaces). Mesh is the newest and the only *shaded* one — the other three are purely emissive — via a light-free view-anchored headlight, and it is now feature-complete at the UI level: picking (at VERTEX granularity, keyed on `gl_VertexID` rather than an element-texture texel), the Layers-panel appearance controls, monitor/stats/debug counts. The docs pass is done and real WebGPU is verified pixel-equivalent to WebGL (see `docs/specs/MESH_NODE_SPEC.md` §11 and the CHANGELOG A/B notes). The contract still names the writable and drawable sets separately — `geometry_types` and `loader_types` — because a type becomes authorable before it becomes drawable; they simply agree on all four today.
+**Luxar** is a high-performance system for compiling and visualizing arbitrary-sized nD scientific scenes. It renders four first-class geometry types — **Points**, **Lines**, **Gaussian Splats**, and **Mesh** (triangle surfaces). Mesh is the newest and the only *shaded* one — the other three are purely emissive — via a light-free view-anchored offset key, and it is now feature-complete at the UI level: picking (at VERTEX granularity, keyed on `gl_VertexID` rather than an element-texture texel), the Layers-panel appearance controls, monitor/stats/debug counts. The docs pass is done and real WebGPU is verified pixel-equivalent to WebGL (see `docs/specs/MESH_NODE_SPEC.md` §11 and the CHANGELOG A/B notes). The contract still names the writable and drawable sets separately — `geometry_types` and `loader_types` — because a type becomes authorable before it becomes drawable; they simply agree on all four today.
 
 ## Quick Reference
 
@@ -986,7 +986,8 @@ npx playwright test visual-regression.spec.ts theme-visual-regression.spec.ts
 # Geometry & rendering (blending-modes needs generate-fixtures!)
 pnpm test:generate-fixtures
 npx playwright test geometry-types.spec.ts blending-modes.spec.ts colormap-system.spec.ts \
-  post-processing-pipeline.spec.ts rendering-controls.spec.ts ortho-mode.spec.ts
+  post-processing-pipeline.spec.ts cinematic-auto-framing.spec.ts rendering-controls.spec.ts \
+  ortho-mode.spec.ts
 # Line joint artifacts (#780/#785/#790) — scores each joint topology as its
 # own band of one frame with TWO metrics (local-median outliers + axial flux
 # ripple; the first is structurally blind to the bead-notch class the second

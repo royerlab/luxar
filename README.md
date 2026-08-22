@@ -483,7 +483,7 @@ fitting model in detail.
 
 Triangle surfaces — isosurfaces, segmentation boundaries, cortical and organ
 meshes. The other three primitives are soft and emissive; a mesh is the one
-*connected, shaded* type, lit by a view-anchored headlight so shape reads from
+*connected, shaded* type, lit by a view-anchored offset key so shape reads from
 shading rather than from density.
 
 ```python
@@ -808,7 +808,8 @@ with LuxarZarrCompiler("output.luxar.zarr") as compiler:
     scene.add_lines(name, vertices, widths=..., colors=...)
     scene.add_group(name, transform=..., opacity=...)
 
-    # Gaussian splatting (requires luxar[gsplats])
+    # Gaussian splatting (embedding an existing fit works on a plain
+    # `pip install luxar`; producing one — `luxar gsplat fit` — needs luxar[gsplats])
     scene.add_gsplats_from_data(name, gsplat_result)
     scene.add_gsplats_from_file(name, "file.gsplats.zarr")
 ```

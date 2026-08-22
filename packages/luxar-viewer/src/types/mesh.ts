@@ -145,19 +145,24 @@ export interface MeshMetadata {
 
   /** Blending mode */
   /**
-   * Headlight shade floor in `[0, 1]` — what a face-away fragment keeps (§6.2).
-   * `1.0` collapses the shade term and reproduces the emissive look of the other three
-   * geometry types.
+   * Offset-key shade floor in `[0, 1]` — what a face-away fragment keeps (§6.2).
+   * `1.0` removes the diffuse gradient; set `specular = 0.0` as well for a fully
+   * emissive look.
    *
    * Optional and viewer-defaulted: the writer never stamps it, so it is present only
-   * when an author passed it through `add_mesh(**attrs)`. Declared here because it
-   * WAS already reachable that way and silently dropped — an authored value that does
-   * nothing is worse than one that is refused.
+   * when an author passed it through `add_mesh(**attrs)`. Authoring support and the
+   * material read landed together so accepted values affect the rendered mesh.
    */
   ambient?: number;
 
-  /** Headlight wrap exponent (§6.2). Clamped positive — `pow(0, 0)` is undefined GLSL. */
+  /** Wrapped-diffuse exponent (§6.2). Clamped positive — `pow(0, 0)` is undefined GLSL. */
   shade_exponent?: number;
+
+  /** Additive specular strength in `[0, 1]` (§6.2). */
+  specular?: number;
+
+  /** Specular highlight exponent (> 0) (§6.2). */
+  shininess?: number;
 
   /** `opaque`-mode alpha cutout threshold in `[0, 1]` (§6.2). */
   alpha_cutoff?: number;

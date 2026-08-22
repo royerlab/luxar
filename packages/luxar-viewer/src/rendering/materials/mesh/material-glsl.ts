@@ -28,6 +28,7 @@ import {
   MESH_DEFAULTS,
   clampAppearanceFraction,
   clampShadeExponent,
+  clampShininess,
   resolveMeshBlendingMode,
   resolveMeshOutput,
   syncMeshEmissionDefines,
@@ -60,7 +61,7 @@ import { computeScalarRangeUniforms, scalarRangeUniformEntries } from '../_share
  *   mode, which a zero-thickness surface cannot express (§6.3);
  * - no `radiusScale` / `truncationRadius` — those normalize a per-element extent,
  *   and a triangle's extent is its own vertices;
- * - `flatNormal`, `ambient`, `shadeExponent` and `alphaCutoff` are new, because
+ * - `flatNormal`, the four lighting controls and `alphaCutoff` are new, because
  *   mesh is the first shaded type and the first with a cutout.
  */
 export interface MeshMaterialConfig {
@@ -84,10 +85,14 @@ export interface MeshMaterialConfig {
    * for why, and `createMeshNode` for who decides it.
    */
   flatNormal?: boolean;
-  /** Headlight shade floor; default {@link MESH_DEFAULTS}.ambient. */
+  /** Wrapped-diffuse shade floor; default {@link MESH_DEFAULTS}.ambient. */
   ambient?: number;
-  /** Headlight wrap exponent; default {@link MESH_DEFAULTS}.shadeExponent. */
+  /** Wrapped-diffuse exponent; default {@link MESH_DEFAULTS}.shadeExponent. */
   shadeExponent?: number;
+  /** Additive specular strength; default {@link MESH_DEFAULTS}.specular. */
+  specular?: number;
+  /** Specular exponent; default {@link MESH_DEFAULTS}.shininess. */
+  shininess?: number;
   /** `opaque`-mode cutout threshold; default {@link MESH_DEFAULTS}.alphaCutoff. */
   alphaCutoff?: number;
   depthTest?: boolean;
@@ -149,6 +154,10 @@ export class MeshMaterial
           value: clampAppearanceFraction(materialConfig.ambient, MESH_DEFAULTS.ambient),
         },
         uShadeExponent: { value: clampShadeExponent(materialConfig.shadeExponent) },
+        uSpecular: {
+          value: clampAppearanceFraction(materialConfig.specular, MESH_DEFAULTS.specular),
+        },
+        uShininess: { value: clampShininess(materialConfig.shininess) },
         uAlphaCutoff: {
           value: clampAppearanceFraction(materialConfig.alphaCutoff, MESH_DEFAULTS.alphaCutoff),
         },
@@ -288,16 +297,24 @@ export class MeshMaterial
     if (this._refreshNoGOGDefine()) this.needsUpdate = true;
   }
 
-  /** Headlight shade floor (1.0 = flat/emissive). Plain uniform write. */
+  /** Wrapped-diffuse shade floor (`1.0` = flat diffuse). Plain uniform write. */
   updateAmbient(ambient: number): void {
     this.uniforms.uAmbient.value = clampAppearanceFraction(ambient, MESH_DEFAULTS.ambient);
   }
 
-  /** Headlight wrap exponent. Plain uniform write. */
+  /** Wrapped-diffuse exponent. Plain uniform write. */
   updateShadeExponent(exponent: number): void {
     // Clamped like `updateGamma` — `pow(0, y)` is undefined for y <= 0, and a
     // face-away fragment has a wrap base of exactly 0 (see `clampShadeExponent`).
     this.uniforms.uShadeExponent.value = clampShadeExponent(exponent);
+  }
+
+  updateSpecular(specular: number): void {
+    this.uniforms.uSpecular.value = clampAppearanceFraction(specular, MESH_DEFAULTS.specular);
+  }
+
+  updateShininess(shininess: number): void {
+    this.uniforms.uShininess.value = clampShininess(shininess);
   }
 
   /**
@@ -381,6 +398,8 @@ export class MeshMaterial
       offset: this.uniforms.uOffset.value,
       ambient: this.uniforms.uAmbient.value,
       shadeExponent: this.uniforms.uShadeExponent.value,
+      specular: this.uniforms.uSpecular.value,
+      shininess: this.uniforms.uShininess.value,
       alphaCutoff: this.uniforms.uAlphaCutoff.value,
       blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'opaque',
       flatNormal: this.userData.flatNormal === true,
