@@ -302,18 +302,22 @@ export function discreteDimMembershipTolerance(dimInfo: DimensionInfo | undefine
  * Step fraction of the GSplats continuous-dim float-safety epsilon — TERM 1 of
  * the two in {@link gsplatsContinuousDimTolerance}.
  *
- * `1e-3 × step`, which at a unit step is exactly the write side's
- * `_BARRIER_BOUND_EPS = 1e-3` (`luxar/io/_ordering/bounds.py`) — this is that
- * epsilon's reader-side mirror, applied to the dims the write side does NOT pad
- * (barrier/discrete dims are padded there; continuous dims are not, because they
- * normally get the far larger `truncation_radius · σ` expansion instead). The
- * mirror is pinned from the Python side by
+ * `1e-3 × step`, which at a unit step is exactly the write side's fixed
+ * `_BARRIER_BOUND_EPS = 1e-3` term (`luxar/io/_ordering/bounds.py`). This mirrors
+ * that float-safety term only, applied to the dims the write side does NOT
+ * barrier-pad (continuous dims normally get the far larger
+ * `truncation_radius · σ` expansion instead). A non-gridded uint16 barrier axis
+ * now also gets the encoder's per-axis round-trip slack (`extent/131070`) in its
+ * STORED bound; that data-dependent containment pad is already consumed by the
+ * chunk intersection and has no reader-tolerance counterpart. A real categorical
+ * axis is normally gridded, stores exactly and gets zero such slack. The fixed
+ * epsilon mirror is pinned from the Python side by
  * `io/tests/test_ordering_gsplats.py::test_barrier_bound_eps_matches_viewer_gsplats_step_fraction`,
  * which parses this declaration out of this file.
  *
  * Why this magnitude:
- * - **500× below `0.5 × step`**, so it can never reach into a neighbouring cell
- *   — a stronger margin than the discrete quarter-cell reach has.
+ * - **500× below `0.5 × step`**, so this fixed epsilon term cannot reach into a
+ *   neighbouring cell — a stronger margin than the discrete quarter-cell reach has.
  * - **Comfortably above float32 round-off** on realistic coordinates: chunk
  *   bounds are stored as float32 (`chunk_bounds` is `dtype=np.float32`), whose
  *   ~1.2e-7 relative spacing costs `magnitude × 1.2e-7` of absolute slack, so

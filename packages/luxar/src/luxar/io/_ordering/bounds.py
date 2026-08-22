@@ -128,7 +128,7 @@ def _normalise_coord_slack(coord_slack: Optional[np.ndarray], ndim: int) -> np.n
     and hands it to the builders; ``None`` means "no displacement", i.e. zeros.
 
     Validated here rather than in each builder for the same reason as
-    :func:`_normalise_slice_dims`: three builders take this argument and must
+    :func:`_normalise_slice_dims`: four builders take this argument and must
     not diverge on what they accept. A wrong-LENGTH array is an error rather
     than a broadcast, because the entries are positional per-axis quantities —
     silently padding the wrong axis is exactly the failure this parameter
