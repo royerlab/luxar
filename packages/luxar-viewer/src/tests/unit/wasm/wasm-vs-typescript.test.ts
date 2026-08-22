@@ -2059,14 +2059,16 @@ describe('WASM vs TypeScript Comparison', () => {
     it.skipIf(!wasmFilesExist).each([3.0, 2.75])(
       'project_gsplats_nd_to_3d attenuation matches exactly at truncate = %f',
       (truncate) => {
-        // The full attenuation path — correlated 5D factors, TWO continuous
-        // hidden dims (so the marginal Cholesky and the forward substitution
-        // both do real work), 3 display dims and a non-zero slice position (so
-        // the `diff[]` subtraction is not exact for free).
+        // The full attenuation path uses correlated 5D factors, two continuous
+        // hidden dims (so the marginal Cholesky and forward substitution both do
+        // real work), three display dims, a non-zero slice, and shifted-Gaussian
+        // normalization. The f32 operation ordering and expf port make every
+        // emitted value exact.
         //
-        // This fixture exercises correlated 5D factors, two continuous hidden
-        // dimensions, a non-zero slice, and the shifted-Gaussian normalization.
-        // The f32 operation ordering and expf port make every emitted value exact.
+        // The 2.75 case is GSPLAT_DEFAULT_TRUNCATION_RADIUS and is load-bearing:
+        // it is the only parameter here where shiftC distinguishes expf
+        // (0x3cbabadc) from fround(Math.exp(...)) (0x3cbabadd), changing 1,299 of
+        // 19,067 emitted amplitudes if the production call site regresses.
         const splatCount = 20000;
         const ndim = 5;
         const packedSize = 15;
