@@ -452,9 +452,9 @@ Navigation:
                     # plain gain: intensity = 1/(hi-lo) = 1/1.085, with offset
                     # left at the 0 identity because the window starts at zero.
                     # A window that runs PAST 1.0 is therefore a slight
-                    # roll-down, trimming the brightest accumulated cores off
-                    # the tone-map's clip point.
-                    intensity=0.921659,
+                    # roll-down, moving the brightest accumulated cores a
+                    # little farther into Neutral's shoulder, as dialled in.
+                    intensity=1.0 / 1.085,
                     layer=True,
                 )
                 aprint(f"Added {n_splats:,} splats")

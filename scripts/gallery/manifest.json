@@ -455,7 +455,7 @@
       "category": "microscopy",
       "script": "demo_gsplats_3d_tribolium_embryo.py",
       "dataset": "datasets/demos/gsplats_3d_tribolium_embryo.luxar.zarr",
-      "note": "the -2 exposure override fixed the old volumetric white-out; the scene now composites normal (peak projection) and bakes exposure=1.97, so auto-exposure recalibrates. Faint bg rectangle may remain"
+      "note": "the old volumetric white-out was fixed by coupling strong absorption (kappa 3.13) with low opacity (0.06); the scene bakes exposure=1.97 and a 0-1.085 display window, so auto-exposure recalibrates. Faint bg rectangle may remain"
     },
     {
       "id": "gsplats_4d_zebrafish_timelapse",
