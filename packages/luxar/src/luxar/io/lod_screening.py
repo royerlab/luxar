@@ -739,6 +739,8 @@ class _LodGroupFacts:
     anchor_reason: str
     world_matrix: np.ndarray
     children: List[_LadderChild]
+    #: ``lod_restamp._empty_ladder_refusal``'s message when no ladder child
+    #: resolves, else ``""``.
     empty_ladder_refusal: str = ""
     #: ``lod_restamp._orphan_ladder_child_refusal``'s message when this group
     #: holds a ``coverage_fraction`` child that does not resolve as a ladder
@@ -880,7 +882,9 @@ def _collect_lod_groups(
         children = _lod_children(group)
         child_under = _is_partition_bound(under_partition, children)
         empty_refusal = _empty_ladder_refusal(group, children)
-        orphan_refusal = _orphan_ladder_child_refusal(group, children)
+        orphan_refusal = (
+            _orphan_ladder_child_refusal(group, children) if children else None
+        )
         out.append(
             _LodGroupFacts(
                 path=group.path or "/",
