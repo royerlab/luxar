@@ -499,7 +499,7 @@ export class ArrayDecoder {
    * Decode log-space encoded scalar array
    *
    * Format: log1p(value)/max_log → uint8/uint16
-   * Decoding: expm1(normalized * max_log)
+   * Decoding delegates to the shared decode_log_scalar_u8/u16 kernel.
    *
    * Used for positive scalars with wide dynamic range (e.g., radii)
    */

@@ -227,8 +227,7 @@ class ArrayDecoder:
             raise ValueError(f"bounded_scalar requires bits > 0, got {bits}")
         original_dtype = np.dtype(enc.get("original_dtype", "float32"))
 
-        # The viewer's f32 kernel is the display contract; small differences from
-        # this float64 metadata/reference helper are expected.
+        # Use float64 intermediate for precision, then cast to original dtype
         normalized = data.astype(np.float64) / (2**bits - 1)
         result = normalized * (max_val - min_val) + min_val
         return np.asarray(result, dtype=original_dtype)
@@ -258,7 +257,8 @@ class ArrayDecoder:
             raise ValueError(f"log_scalar requires bits > 0, got {bits}")
         original_dtype = np.dtype(enc.get("original_dtype", "float32"))
 
-        # Use float64 intermediate for precision, then cast to original dtype
+        # The viewer's shared decode_log_scalar_* f32 kernel is the display contract;
+        # small differences from this float64 metadata/reference helper are expected.
         normalized = data.astype(np.float64) / (2**bits - 1)
         result = np.expm1(normalized * max_log)
         return np.asarray(result, dtype=original_dtype)
