@@ -914,7 +914,8 @@ carried value must be **agreed**: a key rides along only when every input that
 *has* an opinion on it agrees, and an input with no opinion casts no vote (at
 least one input must have one for the key to appear). On any disagreement the
 key is dropped and the command **says so**, naming the key, the differing values
-and what lands on disk instead — the same unanimity rule as
+(each with the input it came from) and what lands on disk instead — the same
+unanimity rule as
 `agreed_normalization_stats`, but loud rather than silent, because appearance is
 hand-authored and a user who tuned two datasets has to be told which choice did
 not survive.

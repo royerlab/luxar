@@ -6131,6 +6131,34 @@ class TestLODCarriesAuthoredAppearance:
 
         assert set(self.IDENTITY_STAMPED) == set(WRITER_STAMPED_APPEARANCE_DEFAULTS)
 
+    def test_every_identity_stamped_attr_has_a_default_to_stamp(self) -> None:
+        """``IDENTITY_COMPOSITING_ATTRS`` ⊆ ``WRITER_STAMPED_APPEARANCE_DEFAULTS``.
+
+        The tuple names the attrs the writers loop over; the dict supplies the
+        value each one is stamped with (``apply_default_render_attrs`` and
+        ``apply_gsplat_group_attrs`` both index the dict BY the tuple). So a key
+        added to the tuple alone ``KeyError``s on every node write — a total
+        failure to compile any scene, from a one-line edit that reads as
+        harmless. The assertion above pins the merge table to the dict, which
+        leaves the tuple's side of the same pairing unguarded.
+
+        Containment, not equality: ``colormap`` is legitimately in the dict and
+        not in the tuple, because its stamp is CONDITIONAL (a colorless leaf
+        only) and so cannot ride the unconditional loop.
+        """
+        from luxar.core.group.compositing import (
+            IDENTITY_COMPOSITING_ATTRS,
+            WRITER_STAMPED_APPEARANCE_DEFAULTS,
+        )
+
+        missing = set(IDENTITY_COMPOSITING_ATTRS) - set(
+            WRITER_STAMPED_APPEARANCE_DEFAULTS
+        )
+        assert not missing, (
+            "IDENTITY_COMPOSITING_ATTRS names attrs with no stamped value; the "
+            f"writers KeyError on every node write: {sorted(missing)}"
+        )
+
     def _merge(
         self,
         runner: CliRunner,
@@ -6177,6 +6205,15 @@ class TestLODCarriesAuthoredAppearance:
         # told which of their choices did not survive.
         assert "blending_mode" in stdout and "opacity" in stdout
         assert "disagree" in stdout.lower()
+        # ...and loud about what DID survive: the one-line announcement is the
+        # only positive confirmation the user gets that a carry happened at
+        # all, so pin the whole key list, not just its presence. (Deleting the
+        # `aprint` otherwise leaves every test in this class green — the output
+        # store is identical either way.)
+        assert (
+            "Carrying authored appearance: "
+            + ", ".join(sorted(set(self.AUTHORED) - {"blending_mode", "opacity"}))
+        ) in stdout, f"the carried keys are not announced:\n{stdout}"
         # ...and every key they DO agree on is still carried, which is the
         # assertion that fails outright if the carry is removed.
         for key, want in self.AUTHORED.items():
@@ -6405,6 +6442,14 @@ class TestLODCarriesAuthoredAppearance:
             f"carried a palette onto a colored output: {got.get('colormap')!r}"
         )
         assert "colormap" in stdout, "the loss has to be announced"
+        # ...as ONE readable line. This reason already ends in an em-dash
+        # clause, and chaining the "what lands instead" clause onto it with a
+        # second dash made a 430-character run-on sentence; it starts a new
+        # sentence now.
+        line = next(
+            ln for ln in stdout.splitlines() if "Not carrying authored 'colormap'" in ln
+        )
+        assert line.count("—") == 1, f"two em-dash clauses in one sentence:\n{line}"
         for key, want in self.AUTHORED.items():
             if key == "colormap":
                 continue
@@ -6542,6 +6587,51 @@ class TestLODCarriesAuthoredAppearance:
             f"the blending_mode warning does not say what lands:\n{stdout}"
         )
 
+    def test_disagreement_names_the_dissenting_input(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """...and WHICH input said what.
+
+        Values alone stop being actionable past two inputs: with three stores
+        where only the third dissents, a values-only message is byte-identical
+        to the two-input one, so the user cannot tell which store to re-tune or
+        drop. One name per DISTINCT value (the first that voted it), not one
+        per input — the majority's other members add nothing.
+        """
+        self._authored_input(medium_gsplats, self.AUTHORED)
+        agrees = self._copy_authored(
+            medium_gsplats, tmp_path / "agrees.gsplats.zarr", self.AUTHORED
+        )
+        dissents = self._copy_authored(
+            medium_gsplats,
+            tmp_path / "dissents.gsplats.zarr",
+            {**self.AUTHORED, "opacity": 0.4},
+        )
+        out = tmp_path / "named.gsplats.zarr"
+        got, stdout = self._merge(runner, [medium_gsplats, agrees, dissents], out)
+
+        assert got["opacity"] == 1.0, "fixture: the disagreement should drop it"
+        # Scoped to the warning LINE: every input's name also appears in the
+        # command's own "Loading …" sections.
+        line = next(
+            (
+                ln
+                for ln in stdout.splitlines()
+                if "disagree on authored 'opacity'" in ln
+            ),
+            "",
+        )
+        assert line, f"no opacity disagreement warning at all:\n{stdout}"
+        assert "0.4 from dissents.gsplats.zarr" in line, (
+            f"the warning does not name the dissenting input:\n{line}"
+        )
+        assert "0.75 from medium.gsplats.zarr" in line, (
+            f"...nor the input the majority value came from:\n{line}"
+        )
+        assert "agrees.gsplats.zarr" not in line, (
+            f"named every voter rather than one per distinct value:\n{line}"
+        )
+
     def test_merge_channel_colors_drops_colormap(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:
@@ -6571,6 +6661,86 @@ class TestLODCarriesAuthoredAppearance:
                 continue
             assert got.get(key) == want, f"{key} = {got.get(key)!r}, want {want!r}"
 
+    def test_merge_channel_colors_drops_colormap_from_colored_inputs(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """...and the flag-keyed branch is what does it, with nothing manufactured.
+
+        The test above drives two COLORLESS inputs, so the merge manufactures
+        RGB and the white-fill branch of ``_mode_invalidated_appearance``
+        already excludes ``colormap`` on its own — replacing the
+        ``--channel-colors`` branch with a no-op leaves it green. This is the
+        case only that branch covers: both inputs already have per-splat RGB,
+        nothing is manufactured, and yet the baked channel color makes an
+        agreed palette untrue of the output (the viewer's ancestor palette
+        would override the RGB the flag just wrote).
+
+        The two branches emit DIFFERENT reasons, which is the only thing in the
+        output that distinguishes them — hence the assertion on the reason text
+        rather than on the absent key.
+        """
+        first = self._colored_copy(medium_gsplats, tmp_path / "rgb_a.gsplats.zarr")
+        second = self._colored_copy(medium_gsplats, tmp_path / "rgb_b.gsplats.zarr")
+        for store in (first, second):
+            self._authored_input(store, self.AUTHORED)
+            assert self._root_attrs(store)["has_colors"] is True, (
+                "fixture: BOTH inputs must already be colored, or the "
+                "white-fill branch fires instead"
+            )
+
+        out = tmp_path / "chancolors_rgb.gsplats.zarr"
+        got, stdout = self._merge(
+            runner,
+            [first, second],
+            out,
+            "--channel-colors",
+            "#ff0080,#00ff00",
+        )
+        assert got.get("has_colors") is True
+        assert "colormap" not in got, (
+            f"carried a palette over baked channel RGB: {got.get('colormap')!r}"
+        )
+        assert "bakes a per-channel RGB" in stdout, (
+            f"the --channel-colors exclusion did not fire:\n{stdout}"
+        )
+        assert "white fill" not in stdout, (
+            f"the manufactured-colors branch fired instead:\n{stdout}"
+        )
+        for key, want in self.AUTHORED.items():
+            if key == "colormap":
+                continue
+            assert got.get(key) == want, f"{key} = {got.get(key)!r}, want {want!r}"
+
+    def test_merge_channel_colors_is_quiet_on_untouched_inputs(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """The canonical `merge ch0 ch1 -o out --channel-colors …` warns nothing.
+
+        ``colormap`` IS excluded by the mode here, but neither input ever
+        authored one — a bare save stamps the manufactured ``"gray"`` — so
+        there is nothing to lose and announcing the exclusion would be noise
+        about a choice nobody made. This is the multi-channel merge people
+        actually run, and it is what the "no votes → skip the key entirely"
+        short-circuit exists for: without it every stamped-default key warns on
+        every plain merge as well.
+        """
+        other = self._copy_authored(medium_gsplats, tmp_path / "ch1.gsplats.zarr")
+        assert self._root_attrs(medium_gsplats).get("colormap") == "gray", (
+            "fixture assumption broken: a bare save is supposed to stamp the "
+            "manufactured palette, which is what must read as silence"
+        )
+        out = tmp_path / "quiet_channels.gsplats.zarr"
+        got, stdout = self._merge(
+            runner,
+            [medium_gsplats, other],
+            out,
+            "--channel-colors",
+            "#ff0080,#00ff00",
+        )
+        assert got.get("has_colors") is True, "fixture: the mode should bake RGB"
+        assert "colormap" not in got
+        assert "⚠️" not in stdout, f"warned about a choice nobody made:\n{stdout}"
+
     def test_merge_invents_nothing(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:
@@ -6580,11 +6750,21 @@ class TestLODCarriesAuthoredAppearance:
         untouched inputs agree on exactly the writer's own identity values, so
         the merged root must equal them, and the keys with no identity must stay
         absent rather than being invented by the agreement pass.
+
+        It must also be SILENT. Every key on those roots is a writer stamp, so
+        none of them casts a vote; drop the "no votes → skip the key" clause and
+        each one falls through to the disagreement branch with an EMPTY value
+        list, printing ``Inputs disagree on authored 'opacity' ()`` on the most
+        ordinary merge there is. The store is byte-identical either way, so the
+        assertions above cannot see it — only the stdout one can.
         """
         other = self._copy_authored(medium_gsplats, tmp_path / "second.gsplats.zarr")
         before = self._root_attrs(medium_gsplats)
         out = tmp_path / "bare_merge.gsplats.zarr"
-        got, _ = self._merge(runner, [medium_gsplats, other], out)
+        got, stdout = self._merge(runner, [medium_gsplats, other], out)
+        assert "⚠️" not in stdout, (
+            f"warned about untouched inputs that authored nothing:\n{stdout}"
+        )
         for key in self.AUTHORED:
             assert (key in got) == (key in before), (
                 f"{key}: presence changed (input={key in before}, output={key in got})"

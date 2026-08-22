@@ -22,6 +22,10 @@ import zarr
 from numpy.typing import NDArray
 
 from ...core.dimensions import Dimensions
+from ...core.group.compositing import (
+    IDENTITY_COMPOSITING_ATTRS,
+    WRITER_STAMPED_APPEARANCE_DEFAULTS,
+)
 
 # Writer-authoritative attrs each geometry writer stamps unconditionally.
 # User-supplied values for these keys are rejected in the fail-fast gate:
@@ -469,11 +473,6 @@ def apply_default_render_attrs(attrs: Dict[str, Any]) -> None:
     which is also what the READER consults to tell a manufactured identity from
     an authored one (the ``gsplat merge`` agreement rule).
     """
-    from ...core.group.compositing import (
-        IDENTITY_COMPOSITING_ATTRS,
-        WRITER_STAMPED_APPEARANCE_DEFAULTS,
-    )
-
     for key in IDENTITY_COMPOSITING_ATTRS:
         if key not in attrs:
             attrs[key] = WRITER_STAMPED_APPEARANCE_DEFAULTS[key]

@@ -520,7 +520,7 @@ is `luxar gsplat migrate-format`.
   command with several inputs (`gsplat merge`) uses: a key is carried only when
   every input that *has* an opinion agrees, an input with no opinion casts no
   vote, and a disagreement drops the key **with a warning** naming the differing
-  values and what lands instead. Same unanimity rule as
+  values (each with the input it came from) and what lands instead. Same unanimity rule as
   `save_gsplats.agreed_normalization_stats`, deliberately loud rather than
   silent because appearance is hand-authored. Two refinements make the rule
   usable, both on `_appearance_votes`: a value equal to the one the WRITER

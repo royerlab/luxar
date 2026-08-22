@@ -309,8 +309,8 @@ luxar gsplat merge ch0.zarr ch1.zarr -o multi.zarr --channel-colors "#ff0080,#00
 The inputs' authored appearance (blending mode, opacity, colormap, …) is carried
 onto the merged root wherever the inputs **agree**; an input with no opinion on a
 key casts no vote, and a key they genuinely disagree on is dropped with a warning
-naming the differing values and what lands instead, rather than one input's
-choice being promoted. A plain save STAMPS the identity values (`opacity=1.0`,
+naming the differing values (each with the input it came from) and what lands
+instead, rather than one input's choice being promoted. A plain save STAMPS the identity values (`opacity=1.0`,
 `colormap="gray"`, …), and a value equal to such a stamp counts as no opinion —
 so merging a tuned dataset with a freshly fitted one keeps the tuned look instead
 of dropping seven keys back to those same defaults. The flip side: a deliberately

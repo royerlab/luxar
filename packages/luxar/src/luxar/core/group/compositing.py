@@ -59,7 +59,8 @@ Exposed:
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional, Sequence, Union
+from types import MappingProxyType
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
 
 import numpy as np
 
@@ -346,15 +347,20 @@ AUTHORED_APPEARANCE_ATTRS = (COMPOSITING_ATTRS - {"transform"}) | {"colormap"}
 #: ``blending_mode`` / ``visible`` / ``nd_transform`` / ``join`` are absent
 #: here on purpose: they have no identity value, so nothing is stamped for
 #: them and their absence on disk is genuine silence.
-WRITER_STAMPED_APPEARANCE_DEFAULTS: Dict[str, Any] = {
-    "opacity": 1.0,
-    "absorption": 1.0,
-    "gamma": 1.0,
-    "intensity": 1.0,
-    "offset": 0.0,
-    "layer": True,
-    "colormap": "gray",
-}
+#: Read-only (``MappingProxyType``): it is the single source of truth several
+#: modules index into, and a stamp site that mutated it would silently redefine
+#: what "the author never set this" means for the reader.
+WRITER_STAMPED_APPEARANCE_DEFAULTS: Mapping[str, Any] = MappingProxyType(
+    {
+        "opacity": 1.0,
+        "absorption": 1.0,
+        "gamma": 1.0,
+        "intensity": 1.0,
+        "offset": 0.0,
+        "layer": True,
+        "colormap": "gray",
+    }
+)
 
 
 #: The compositing attrs with an identity value, in the order the writers stamp

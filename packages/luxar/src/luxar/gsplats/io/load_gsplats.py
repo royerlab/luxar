@@ -206,8 +206,13 @@ _ABSENCE_MEANS_VALUE: Dict[str, Any] = {"visible": True}
 
 def _appearance_votes(
     key: str, per_input: "Sequence[Mapping[str, Any]]"
-) -> "List[Any]":
+) -> "List[tuple[int, Any]]":
     """The values that actually COUNT as an opinion on ``key``, in input order.
+
+    Returned as ``(input index, value)`` pairs rather than bare values so a
+    disagreement can name WHICH input dissented — with three inputs where only
+    the third differs, a values-only message is byte-identical to the two-input
+    one and leaves the user with no idea which store to re-tune.
 
     Two kinds of non-opinion are filtered out here, which is what makes the
     unanimity rule usable in practice:
@@ -240,12 +245,12 @@ def _appearance_votes(
 
     manufactured = WRITER_STAMPED_APPEARANCE_DEFAULTS.get(key, _NO_VALUE)
     absent = _ABSENCE_MEANS_VALUE.get(key, _NO_VALUE)
-    votes: List[Any] = []
-    for attrs in per_input:
+    votes: List[tuple[int, Any]] = []
+    for index, attrs in enumerate(per_input):
         value = attrs.get(key, absent)
         if value is _NO_VALUE or value == manufactured:
             continue
-        votes.append(value)
+        votes.append((index, value))
     return votes
 
 
@@ -275,6 +280,46 @@ def _dropped_outcome(key: str) -> str:
             "untouched input carries"
         )
     return "the merged root leaves it unset, so the viewer's own default applies"
+
+
+def _outcome_clause(key: str, *, after: "Union[str, None]") -> str:
+    """The " — what actually lands" clause, punctuated to follow ``after``.
+
+    An exclusion reason can itself end in an em-dash clause (the mixed-colors
+    one does), and chaining a second one onto it produced a 430-character
+    run-on sentence with two dashes in it. Start a new sentence instead when
+    the reason already spent the dash — same information, three readable
+    sentences in a terminal rather than one.
+    """
+    outcome = _dropped_outcome(key)
+    if after and "—" in after:
+        return f". {outcome[:1].upper()}{outcome[1:]}."
+    return f" — {outcome}."
+
+
+def _input_label(
+    paths: "Sequence[Union[str, Path]]",
+    votes: "Sequence[tuple[int, Any]]",
+    value: Any,
+) -> str:
+    """Name the FIRST input that voted ``value``, briefly.
+
+    A disagreement that lists only the differing values is unactionable once
+    there are more than two inputs: with three stores where the third dissents,
+    the message is byte-identical to the two-input one and the user cannot tell
+    which one to re-tune. Matched by ``==`` so it agrees with :func:`_distinct`,
+    which defines the values being listed.
+
+    The basename, not the path, once the path is long: these are ``.gsplats.zarr``
+    stores under a working directory, and a full path per value turns a one-line
+    warning into a paragraph. Short paths (what a user actually typed on the
+    command line) are shown verbatim.
+    """
+    index = next((i for i, voted in votes if voted == value), None)
+    if index is None or index >= len(paths):  # pragma: no cover - defensive
+        return "an input"
+    text = str(paths[index])
+    return text if len(text) <= 40 else Path(text).name
 
 
 def agreed_authored_appearance(
@@ -314,7 +359,9 @@ def agreed_authored_appearance(
     That rule is :func:`~luxar.gsplats.io.save_gsplats.agreed_normalization_stats`
     verbatim — deliberately, since it is the same question about the same merge.
     The ONE divergence is that this one is LOUD: it warns per key it had to drop,
-    naming the differing values and what lands instead. Normalization stats are
+    naming the differing values (each with the input that voted it, so a
+    dissenter among N is identifiable) and what lands instead. Normalization
+    stats are
     machine-recorded, so a silent drop loses nothing a user chose; appearance is
     hand-authored in the Layers panel, and someone who tuned two datasets and
     merged them must be told which of their choices did not survive rather than
@@ -382,15 +429,18 @@ def agreed_authored_appearance(
                 aprint(
                     f"⚠️  Not carrying authored '{key}' onto the merged root"
                     + (f": {because}" if because else "")
-                    + f" — {_dropped_outcome(key)}. Set it explicitly on the "
-                    "result if you want it."
+                    + _outcome_clause(key, after=because)
+                    + " Set it explicitly on the result if you want it."
                 )
             continue
-        distinct = _distinct(votes)
+        distinct = _distinct([value for _, value in votes])
         if len(distinct) == 1:
             carried[key] = distinct[0]
         else:
-            shown = ", ".join(repr(v) for v in distinct)
+            shown = ", ".join(
+                f"{value!r} from {_input_label(paths, votes, value)}"
+                for value in distinct
+            )
             aprint(
                 f"⚠️  Inputs disagree on authored '{key}' ({shown}); not "
                 f"carrying it rather than picking one — {_dropped_outcome(key)}. "

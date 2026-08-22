@@ -13,7 +13,8 @@ The rule is now unanimity, matching `agreed_normalization_stats`: a key is
 carried onto the merged root only when every input that *has* an opinion on it
 agrees, and an input with no opinion casts no vote — a dataset nobody ever tuned
 must not veto a sibling's authored value. On a disagreement the key is dropped
-and the command says so, naming the key, the differing values and what lands on
+and the command says so, naming the key, the differing values (each with the
+input it came from, so a dissenter among N is identifiable) and what lands on
 disk instead. That last part is a deliberate divergence from the normalization
 rule, which drops silently: normalization stats are machine-recorded, while
 appearance is hand-authored, and someone who tuned two datasets and merged them
