@@ -656,6 +656,46 @@ def _tiled_source_grid_stats(
     return out
 
 
+def _merged_fit_stats(
+    results: Sequence[GSplatData],
+    *,
+    delivered_splats: int,
+    volume_shape: tuple[int, ...],
+    tile_size: int | Sequence[int],
+    overlap: int | Sequence[int],
+    num_tiles: int,
+    progressive: bool,
+    elapsed: float,
+    source_shape: Optional[Sequence[int]],
+    source_dtype: Optional[str],
+    source_itemsize: Optional[int],
+    source_stored_bytes: Optional[int],
+) -> dict[str, Any]:
+    """Build the common root stats for flat and partition tile merges."""
+    stats = {
+        "tiled_fitting": True,
+        "progressive": progressive,
+        "num_tiles": num_tiles,
+        "tile_size": tile_size,
+        "overlap": overlap,
+        "volume_shape": volume_shape,
+        "time_seconds": elapsed,
+        "splats_per_tile": [result.n_splats for result in results],
+        "n_splats": delivered_splats,
+    }
+    stats.update(
+        _tiled_source_grid_stats(
+            volume_shape,
+            source_shape,
+            source_dtype,
+            source_itemsize,
+            source_stored_bytes,
+        )
+    )
+    stamp_voxels_per_splat(stats, delivered_splats)
+    return stats
+
+
 def fit_tiled(
     volume: Any,
     tile_size: int | Sequence[int] = 256,
@@ -1055,27 +1095,22 @@ def merge_tile_results(
         # node's meta and `save_fit_output` splits it into the store's root
         # fitting/config/provenance/pipeline groups.
         _stamp_merge_normalization(node.meta, regions, applied_floor)
-        fit_stats = {
-            "tiled_fitting": True,
-            "progressive": progressive,
-            "num_tiles": num_tiles,
-            "tile_size": tile_size,
-            "overlap": overlap,
-            "volume_shape": volume_shape,
-            "time_seconds": elapsed,
-            "splats_per_tile": [r.n_splats for r in results],
-            "n_splats": node.n_splats,
-        }
-        fit_stats.update(
-            _tiled_source_grid_stats(
-                volume_shape,
-                source_shape,
-                source_dtype,
-                source_itemsize,
-                source_stored_bytes,
-            )
+        from luxar.gsplats.tree import total_splats
+
+        fit_stats = _merged_fit_stats(
+            results,
+            delivered_splats=int(total_splats(node)),
+            volume_shape=volume_shape,
+            tile_size=tile_size,
+            overlap=overlap,
+            num_tiles=num_tiles,
+            progressive=progressive,
+            elapsed=elapsed,
+            source_shape=source_shape,
+            source_dtype=source_dtype,
+            source_itemsize=source_itemsize,
+            source_stored_bytes=source_stored_bytes,
         )
-        stamp_voxels_per_splat(fit_stats, node.n_splats)
         _score_merged_if_reference(
             regions,
             volume,
@@ -1101,30 +1136,6 @@ def merge_tile_results(
     else:
         merged = GSplatData.concatenate(results)
 
-    # Build merged stats
-    merged.stats.update(
-        {
-            "tiled_fitting": True,
-            "progressive": progressive,
-            "num_tiles": num_tiles,
-            "tile_size": tile_size,
-            "overlap": overlap,
-            "volume_shape": volume_shape,
-            "time_seconds": elapsed,
-            "splats_per_tile": [r.n_splats for r in results],
-        }
-    )
-    _stamp_merge_normalization(merged.stats, results, applied_floor)
-    merged.stats.update(
-        _tiled_source_grid_stats(
-            volume_shape,
-            source_shape,
-            source_dtype,
-            source_itemsize,
-            source_stored_bytes,
-        )
-    )
-
     if verbose:
         lod_info = f", {merged.n_additive_sublods} LODs" if has_lods else ""
         aprint(
@@ -1142,9 +1153,23 @@ def merge_tile_results(
                 f"(retained {cull_retention * 100:.0f}% of amplitude)"
             )
 
-    # Density counts the splats actually DELIVERED, so it is set after the cull
-    # above rather than beside the other source-grid stamps.
-    stamp_voxels_per_splat(merged.stats, merged.n_splats)
+    merged.stats.update(
+        _merged_fit_stats(
+            results,
+            delivered_splats=merged.n_splats,
+            volume_shape=volume_shape,
+            tile_size=tile_size,
+            overlap=overlap,
+            num_tiles=num_tiles,
+            progressive=progressive,
+            elapsed=elapsed,
+            source_shape=source_shape,
+            source_dtype=source_dtype,
+            source_itemsize=source_itemsize,
+            source_stored_bytes=source_stored_bytes,
+        )
+    )
+    _stamp_merge_normalization(merged.stats, results, applied_floor)
 
     _score_merged_if_reference(
         merged,

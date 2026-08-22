@@ -146,13 +146,39 @@ def announce_unscored_partition_merge(
     """
     is_partition = isinstance(node, GSplatPartition)
     reason = (
-        "the requested partition merge produced a kind=partition tree whose "
-        "root has no fit-stats dict to stamp"
+        "the requested content-partition merge produced a kind=partition tree, "
+        "but that path does not yet compute a whole-tree score"
         if is_partition
-        else "the requested partition merge collapsed to a single matrix-shaped "
-        "part, whose root has no fit-stats dict to stamp"
+        else "the requested content-partition merge collapsed to a single "
+        "matrix-shaped part, but that path does not yet compute a merged score"
     )
     announce_unscored_merge(f"{reason}{suffix}", partition=is_partition)
+
+
+def resolve_merged_reference(
+    volume: "Any | None",
+    expected_shape: tuple[int, ...],
+    *,
+    grid_name: str,
+    missing_reason: str,
+) -> "tuple[Any | None, str | None]":
+    """Validate that a merged-quality reference matches its fitting grid."""
+    if volume is None:
+        return None, missing_reason
+
+    shape = getattr(volume, "shape", None)
+    if shape is None:
+        return None, "the supplied reference volume does not expose a shape"
+
+    reference_shape = tuple(int(size) for size in shape)
+    if reference_shape != expected_shape:
+        return (
+            None,
+            f"reference shape {reference_shape} does not match the {grid_name} "
+            f"{expected_shape}",
+        )
+
+    return volume, None
 
 
 def _to_voxel_frame(merged: GSplatData, scale: Optional[Sequence[float]]) -> GSplatData:
@@ -211,19 +237,22 @@ def stamp_merged_quality(
     ``--denoise`` is not a tiling artifact. A lazy source is materialized here — during the fit it
     is only ever read tile-by-tile — which is what the budget below bounds.
     """
-    target_stats: dict[str, Any] | None
-    if isinstance(merged, GSplatData):
+    if stats is not None:
+        is_partition = not isinstance(merged, GSplatData)
+        parts = [merged] if isinstance(merged, GSplatData) else list(merged)
+        target_stats = stats
+    elif isinstance(merged, GSplatData):
         is_partition = False
         parts = [merged]
         target_stats = merged.stats
     else:
-        is_partition = True
-        parts = list(merged)
-        target_stats = stats
+        announce_unscored_merge(
+            "partition merged-quality scoring was not given a stats target",
+            partition=True,
+        )
+        return
     if not parts or sum(part.n_splats for part in parts) == 0:
         return
-    if target_stats is None:
-        raise ValueError("partition merged-quality scoring requires a stats target")
     budget_gb = _quality_budget_gb()
     needed_gb = _QUALITY_PEAK_VOLUMES * 4 * float(np.prod(volume_shape)) / 1024**3
     if needed_gb > budget_gb:

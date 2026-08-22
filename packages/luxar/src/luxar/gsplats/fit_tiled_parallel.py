@@ -30,35 +30,13 @@ from arbol import aprint, asection
 from luxar.gsplats.batch.task_pool import cancel_pool_on_interrupt
 from luxar.gsplats.fit_tiled_gsplats import merge_tile_results
 from luxar.gsplats.gsplat_data import GSplatData
-from luxar.gsplats.merged_quality import announce_unscored_merge
+from luxar.gsplats.merged_quality import (
+    announce_unscored_merge,
+    resolve_merged_reference,
+)
 
 # Builds the argv for tile ``i`` of ``M`` writing to a given output path.
 WorkerCmdBuilder = Callable[[int, int, Path], "list[str]"]
-
-
-def _resolve_reference_volume(
-    volume: "Any | None",
-    volume_shape: tuple[int, ...],
-) -> "tuple[Any | None, str | None]":
-    """Validate that a parallel merge reference matches the worker grid."""
-    if volume is None:
-        return (
-            None,
-            "this direct parallel tiled call was not given the reference volume",
-        )
-
-    shape = getattr(volume, "shape", None)
-    if shape is None:
-        return None, "the supplied reference volume does not expose a shape"
-
-    reference_shape = tuple(int(size) for size in shape)
-    if reference_shape != volume_shape:
-        return (
-            None,
-            f"reference shape {reference_shape} does not match the tile grid {volume_shape}",
-        )
-
-    return volume, None
 
 
 def _announce_unscored_reason(reason: str | None) -> None:
@@ -364,7 +342,13 @@ def fit_tiled_parallel(
         If any worker exits non-zero.  The message names the failing tiles and
         includes a tail of their stderr; ``tmp_dir`` is left in place.
     """
-    reference, unscored_reason = _resolve_reference_volume(volume, volume_shape)
+    reference, unscored_reason = resolve_merged_reference(
+        volume,
+        volume_shape,
+        grid_name="tile grid",
+        missing_reason="this direct parallel tiled call was not given the reference volume",
+    )
+    _announce_unscored_reason(unscored_reason)
 
     tmp_dir = Path(tmp_dir)
     # Start from a clean slate: a retained dir from a prior (failed or
@@ -492,8 +476,6 @@ def fit_tiled_parallel(
         volume=reference,
         device=device,
     )
-
-    _announce_unscored_reason(unscored_reason)
 
     if not keep_tiles:
         shutil.rmtree(tmp_dir, ignore_errors=True)

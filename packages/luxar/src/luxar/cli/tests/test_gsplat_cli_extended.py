@@ -7582,9 +7582,15 @@ class TestParallelTiledDownscaleFactorsThreading:
         captured = self._run(
             runner, tmp_path, monkeypatch, ["--downscale", "1,2"], "aniso"
         )
+        from luxar.gsplats.fitting.downscale import downscale_volume
+
+        source = np.load(tmp_path / "vol.npy")
+        expected = downscale_volume(source, (1, 2))
         # The grid IS in downscaled voxels, per axis (48 -> 48, 48 -> 24)...
         assert captured["volume_shape"] == (48, 24)
-        assert captured["volume"].shape == (48, 24)
+        assert np.allclose(captured["volume"], expected)
+        assert captured["volume"].flags.c_contiguous
+        assert captured["volume"].flags.owndata
         # ...so the factors that lift it back must travel with it, in that
         # same axis order.
         assert captured["grid_scale"] == (1.0, 2.0)

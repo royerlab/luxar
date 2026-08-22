@@ -117,6 +117,48 @@ def test_partition_quality_reaches_the_archive_and_info(
     assert "psnr_db" in info
 
 
+def test_partition_lod_density_uses_the_persisted_total_splat_count() -> None:
+    """Root ``n_splats`` and ``voxels_per_splat`` describe the same artifact."""
+    from luxar.gsplats.fit_tiled_gsplats import merge_tile_results
+    from luxar.gsplats.gsplat_data import GSplatData
+    from luxar.gsplats.lod.recipes import RecipeParams
+    from luxar.gsplats.tree import total_splats
+
+    def _region(offset: float) -> GSplatData:
+        centers = np.stack(
+            [np.linspace(offset, offset + 3, 12, dtype=np.float32)] * 3, axis=1
+        )
+        return GSplatData(
+            centers=centers,
+            amplitudes=np.linspace(1.0, 0.2, 12, dtype=np.float32),
+            cholesky_factors=np.tile(
+                np.array([[1.0, 0.0, 1.0, 0.0, 0.0, 1.0]], np.float32),
+                (12, 1),
+            ),
+        )
+
+    node = merge_tile_results(
+        [_region(0.0), _region(8.0)],
+        volume_shape=(8, 8, 8),
+        tile_size=4,
+        overlap=0,
+        num_tiles=2,
+        progressive=False,
+        cull_retention=None,
+        elapsed=0.0,
+        verbose=False,
+        partition=True,
+        recipe="levels",
+        recipe_params=RecipeParams(levels=1, additive_ladders=False),
+    )
+
+    stats = node.meta["fit_stats"]
+    persisted_count = total_splats(node)
+    assert persisted_count > node.n_splats
+    assert stats["n_splats"] == persisted_count
+    assert stats["voxels_per_splat"] == pytest.approx(8**3 / persisted_count)
+
+
 def test_the_merged_score_survives_the_physical_coordinate_round_trip(
     volume: np.ndarray,
 ) -> None:
@@ -126,15 +168,41 @@ def test_the_merged_score_survives_the_physical_coordinate_round_trip(
     physical centers on a voxel grid, or undoing the Cholesky scaling on the
     wrong axis, would collapse the PSNR rather than merely nudge it.
     """
-    plain = _fit(volume).stats
-    real = _fit(volume, voxel_size=VOXEL_SIZE, output_space="real").stats
-    assert real["psnr_db"] == pytest.approx(plain["psnr_db"], abs=0.5), (
-        f"physical-coordinate scoring diverged: {real['psnr_db']:.2f} dB vs "
-        f"{plain['psnr_db']:.2f} dB — the voxel-frame inverse is wrong"
+    for partition in (False, True):
+        plain_result = _fit(volume, partition=partition)
+        real_result = _fit(
+            volume,
+            partition=partition,
+            voxel_size=VOXEL_SIZE,
+            output_space="real",
+        )
+        plain = plain_result.meta["fit_stats"] if partition else plain_result.stats
+        real = real_result.meta["fit_stats"] if partition else real_result.stats
+        assert real["psnr_db"] == pytest.approx(plain["psnr_db"], abs=0.5), (
+            f"physical-coordinate scoring diverged: {real['psnr_db']:.2f} dB vs "
+            f"{plain['psnr_db']:.2f} dB — the voxel-frame inverse is wrong"
+        )
+        assert real["foreground_fraction"] == pytest.approx(
+            plain["foreground_fraction"], abs=1e-6
+        )
+
+
+def test_partition_scoring_without_a_stats_target_keeps_the_finished_fit(
+    volume: np.ndarray, capsys: pytest.CaptureFixture
+) -> None:
+    """A caller mistake after fitting must decline scoring, not raise."""
+    from luxar.gsplats.merged_quality import stamp_merged_quality
+
+    part = _fit(volume, partition=False)
+    stamp_merged_quality(
+        [part],
+        volume,
+        volume_shape=volume.shape,
+        grid_scale=None,
+        device="cpu",
+        verbose=False,
     )
-    assert real["foreground_fraction"] == pytest.approx(
-        plain["foreground_fraction"], abs=1e-6
-    )
+    assert "not given a stats target" in capsys.readouterr().out
 
 
 def test_the_returned_splats_stay_in_physical_coordinates(

@@ -621,6 +621,8 @@ def dispatch_parallel_tiled(
     if not (tiled and ctx.tile is None and ctx.jobs != "1"):
         return False
 
+    import numpy as np
+
     from luxar.gsplats.fit_tiled_parallel import (
         build_worker_cmd,
         fit_tiled_parallel,
@@ -664,7 +666,9 @@ def dispatch_parallel_tiled(
     # path below — no subprocess overhead for a single worker.
     if n_jobs > 1:
         reference_volume = (
-            downscale_volume(volume, ds_factors) if ds_factors is not None else volume
+            np.ascontiguousarray(downscale_volume(volume, ds_factors))
+            if ds_factors is not None
+            else volume
         )
         aprint(
             f"Parallel tiled fitting: {n_tiles} tiles, grid={grid_shape}, "
