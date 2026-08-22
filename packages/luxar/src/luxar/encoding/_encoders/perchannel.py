@@ -410,7 +410,10 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             span = max_val - min_val
             if span == 0.0:
                 return None
-            slack = span / (2.0 * ((1 << bits) - 1))
+            levels = (1 << bits) - 1
+            slack = span / (2.0 * levels)
+            if arr.dtype == np.dtype(np.float32):
+                slack += span * np.finfo(np.float32).eps
 
         decode_ulp = abs(float(np.spacing(np.float32(max_val))))
         return float(slack + decode_ulp)
