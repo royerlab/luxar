@@ -265,6 +265,14 @@ def _array_expectation(
     decoded = decoder.decode(array, root)
     decoded = np.asarray(decoded)
     viewer_decoded = _viewer_kernel_decode(array, root)
+    if viewer_decoded is not None and decoded.size:
+        max_abs = np.float32(np.abs(decoded).max())
+        tolerance = 4 * np.spacing(max_abs)
+        max_error = np.abs(decoded.astype(np.float64) - viewer_decoded).max()
+        assert max_error <= tolerance, (
+            f"Viewer kernel decode diverged from Python for {path}: "
+            f"max error {max_error} exceeds {tolerance}"
+        )
     flat = _float32_view(decoded)
     decoded_shape = [int(v) for v in decoded.shape]
 
