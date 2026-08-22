@@ -1,12 +1,12 @@
 /**
  * Structural tripwire for ArrayDecoder's float-kernel routing contract.
  *
- * Every guarded method in decoder.ts must reach a function imported from
- * `wasm/typescript/decode.ts`, directly or through another guarded method. The
- * real-source mutation test keeps that decoder.ts assertion from passing vacuously.
- * The arithmetic scan also covers sibling TypeScript files, but outside
- * ArrayDecoder members it only catches Math.exp/Math.expm1 and known quantization
- * divisors.
+ * Every guarded method or function-valued property in decoder.ts must reach a
+ * function imported from `wasm/typescript/decode.ts`, directly or through another
+ * callable member. The real-source mutation test keeps that decoder.ts assertion
+ * from passing vacuously. The arithmetic scan also covers sibling TypeScript files,
+ * but outside guarded `decode*`/`dequantize*` members it only catches
+ * Math.exp/Math.expm1 and known quantization divisors.
  *
  * This deliberately does not resolve arbitrary aliases or destructured Math
  * calls such as `const { exp } = Math; exp(x)`. Divisionless reciprocal arithmetic
@@ -152,11 +152,21 @@ function importedKernelNames(sourceFile: ts.SourceFile): Set<string> {
   return names;
 }
 
-function arrayDecoderMethods(sourceFile: ts.SourceFile): Map<string, ts.MethodDeclaration> {
-  const methods = new Map<string, ts.MethodDeclaration>();
+type ArrayDecoderCallable = ts.MethodDeclaration | ts.PropertyDeclaration;
+
+function isFunctionValuedProperty(node: ts.Node): node is ts.PropertyDeclaration {
+  return (
+    ts.isPropertyDeclaration(node) &&
+    node.initializer !== undefined &&
+    (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer))
+  );
+}
+
+function arrayDecoderMethods(sourceFile: ts.SourceFile): Map<string, ArrayDecoderCallable> {
+  const methods = new Map<string, ArrayDecoderCallable>();
   function visit(node: ts.Node): void {
     if (
-      ts.isMethodDeclaration(node) &&
+      (ts.isMethodDeclaration(node) || isFunctionValuedProperty(node)) &&
       ts.isClassDeclaration(node.parent) &&
       node.parent.name?.text === 'ArrayDecoder'
     ) {
@@ -179,7 +189,7 @@ function missingKernelRoutes(source: string): string[] {
   const importedKernels = importedKernelNames(sourceFile);
   const methods = arrayDecoderMethods(sourceFile);
 
-  function directlyCallsKernel(method: ts.MethodDeclaration): boolean {
+  function directlyCallsKernel(method: ArrayDecoderCallable): boolean {
     const callableNames = new Set(importedKernels);
     let routed = false;
 
@@ -355,5 +365,25 @@ describe('ArrayDecoder kernel routing', () => {
     );
 
     expect(missingKernelRoutes(mutated)).toContain('ArrayDecoder.decodeGeologScalar');
+  });
+
+  it('tracks kernel routing through function-valued class properties', () => {
+    const source = `
+      import { decode_geolog_scalar_u16 } from '../../wasm/typescript/decode';
+
+      class ArrayDecoder {
+        private decodeQuantizedU32 = () => new Float32Array([1 * 2.3283064370807974e-10]);
+        private decodeGeologArrow = function () {
+          const output = new Float32Array(1);
+          decode_geolog_scalar_u16(new Uint16Array(1), 0, 1, output);
+          return output;
+        };
+        private decodeGeologViaArrow() {
+          return this.decodeGeologArrow();
+        }
+      }
+    `;
+
+    expect(missingKernelRoutes(source)).toEqual(['ArrayDecoder.decodeQuantizedU32']);
   });
 });
