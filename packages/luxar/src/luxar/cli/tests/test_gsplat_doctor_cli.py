@@ -9,6 +9,7 @@ the exit code (so it can gate a pipeline), and the JSON report.
 from __future__ import annotations
 
 import json
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -104,3 +105,19 @@ def test_doctor_accepts_and_repairs_a_scene_store() -> None:
             app, ["gsplat", "doctor", str(path), "--no-info", "--fix"]
         )
         assert fixed.exit_code == 0, fixed.stdout
+
+
+def test_doctor_classifies_a_plainly_named_scene_archive_from_its_attrs() -> None:
+    runner = CliRunner()
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        path = _scene_without_split_planes(tmp_path)
+        shutil.make_archive(
+            str(tmp_path / "scene"), "zip", root_dir=str(tmp_path), base_dir=path.name
+        )
+
+        result = runner.invoke(app, ["gsplat", "doctor", str(tmp_path / "scene.zip")])
+        assert result.exit_code == 1, result.stdout
+        assert "gsplat info report does not apply" in result.stdout
+        assert "tiles" in result.stdout
+        assert "no split planes" in result.stdout

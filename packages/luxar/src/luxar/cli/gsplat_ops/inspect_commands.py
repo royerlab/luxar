@@ -1114,19 +1114,20 @@ def doctor(
     """
     import json as _json
 
-    from luxar.gsplats.doctor import diagnose_store
+    from luxar.gsplats.doctor import diagnose_store, resolve_store_kind
 
     if histograms:
         info = True
+    try:
+        store_kind = resolve_store_kind(path)
+    except ValueError as exc:
+        aprint(f"❌ {exc}")
+        raise typer.Exit(1) from None
     if info:
-        if not path.is_dir() and ".luxar.zarr" not in path.name:
+        if store_kind == "gsplats":
             info_dataset(path, show_histograms=histograms, bins=40)
-        elif path.is_dir():
-            from luxar._zarr_compat import open_group
-
-            root = open_group(path, mode="r")
-            if root.attrs.get("format_type") == "gsplats_zarr":
-                info_dataset(path, show_histograms=histograms, bins=40)
+        else:
+            aprint("ℹ️ The gsplat info report does not apply to a Luxar scene.")
 
     with asection(f"Diagnosing: {path.name}"):
         try:

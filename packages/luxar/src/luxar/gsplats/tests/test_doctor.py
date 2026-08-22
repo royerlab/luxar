@@ -41,8 +41,8 @@ def _partition_store(tmp: Path, n: int = 400, parts_cap: int = 80) -> Path:
     return path
 
 
-def _partition_scene(tmp: Path) -> tuple[Path, str]:
-    """A real scene containing one native points partition."""
+def _partition_scene(tmp: Path, geometry: str = "points") -> tuple[Path, str]:
+    """A real scene containing one native points or mesh partition."""
     from luxar import Dimensions, LuxarZarrCompiler
 
     rng = np.random.default_rng(12)
@@ -50,14 +50,46 @@ def _partition_scene(tmp: Path) -> tuple[Path, str]:
     path = tmp / "scene.luxar.zarr"
     with LuxarZarrCompiler(path) as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-        scene.add_points(
-            "points",
-            positions,
-            radii=1.0,
-            partition={"max_elements": 40},
-            additive_lod=False,
-        )
-    return path, "points"
+        if geometry == "points":
+            scene.add_points(
+                "points",
+                positions,
+                radii=1.0,
+                partition={"max_elements": 40},
+                additive_lod=False,
+            )
+        elif geometry == "mesh":
+            offsets = np.arange(40, dtype=np.float32)[:, None] * 10.0
+            vertices = np.stack(
+                (
+                    np.concatenate(
+                        (offsets, np.zeros((40, 2), dtype=np.float32)), axis=1
+                    ),
+                    np.concatenate(
+                        (offsets + 1.0, np.zeros((40, 2), dtype=np.float32)), axis=1
+                    ),
+                    np.concatenate(
+                        (
+                            offsets,
+                            np.ones((40, 1), dtype=np.float32),
+                            np.zeros((40, 1), dtype=np.float32),
+                        ),
+                        axis=1,
+                    ),
+                ),
+                axis=1,
+            )
+            faces = np.arange(120, dtype=np.uint32).reshape(40, 3)
+            scene.add_mesh(
+                "mesh",
+                vertices.reshape(120, 3),
+                faces,
+                partition={"max_elements": 12},
+            )
+        else:
+            raise ValueError(f"unsupported geometry: {geometry}")
+        scene.add_points("sibling", np.zeros((3, 3), dtype=np.float32))
+    return path, geometry
 
 
 def _uniform_tiled_store(tmp: Path) -> Path:
@@ -652,6 +684,7 @@ class TestStoreGuards:
             group = root[group_path]
             assert "bsp_tree" not in group.attrs
             before = root.attrs["content_hash"]
+            sibling_before = root["sibling"].attrs["content_hash"]
 
             report = diagnose_store(path)
             assert [finding.path for finding in report.findings] == [group_path]
@@ -662,12 +695,24 @@ class TestStoreGuards:
             assert fixed.healthy
             reopened = zc_open_group(str(path), mode="r")
             assert reopened.attrs["content_hash"] != before
+            assert reopened["sibling"].attrs["content_hash"] == sibling_before
             node_attrs = read_node_attrs(path / group_path)
             assert node_attrs is not None
             assert (
                 node_attrs["bsp_tree"]
                 == read_consolidated_attrs(path)[group_path]["bsp_tree"]
             )
+            assert diagnose_store(path).findings == []
+
+    def test_a_native_mesh_partition_is_diagnosed_and_repaired(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path, group_path = _partition_scene(Path(tmp), geometry="mesh")
+            report = diagnose_store(path)
+            assert [finding.path for finding in report.findings] == [group_path]
+            assert "no split planes" in report.findings[0].summary
+
+            fixed = diagnose_store(path, fix=True)
+            assert fixed.healthy
             assert diagnose_store(path).findings == []
 
     def test_a_non_gsplats_store_is_refused(self) -> None:

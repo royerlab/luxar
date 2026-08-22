@@ -8,7 +8,8 @@ named, explained, and — where the correct value is recoverable from the store
 itself — fixed in place, without re-fitting.
 
 Read-only by default: :func:`diagnose_store` reports, and only writes when
-``fix=True``. Repairs are metadata-level and go through one finalize
+``fix=True``. Repairs to standalone gsplat stores and scenes are metadata-level
+and go through one finalize
 (:func:`~luxar.gsplats.io.save_gsplats._stamp_content_hash` then
 ``zarr.consolidate_metadata``, in the writer's order) so the consolidated
 metadata cannot disagree with the per-node attrs it shadows, and the viewer's
@@ -21,7 +22,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Literal, Mapping, Optional
 
 import zarr
 
@@ -36,7 +37,38 @@ __all__ = [
     "DoctorReport",
     "Finding",
     "diagnose_store",
+    "resolve_store_kind",
 ]
+
+StoreKind = Literal["gsplats", "scene"]
+
+
+def _store_kind_from_attrs(attrs: Mapping[str, Any]) -> Optional[StoreKind]:
+    if attrs.get("format_type") == "gsplats_zarr":
+        return "gsplats"
+    if attrs.get("type") == "scene" and "scene_dimensions" in attrs:
+        return "scene"
+    return None
+
+
+def resolve_store_kind(path: "str | Path") -> StoreKind:
+    """Classify a Luxar store from its root attrs, including archives."""
+    path = Path(path)
+    if path.is_dir():
+        attrs = open_group(path, mode="r").attrs
+    else:
+        from luxar.gsplats.io._archive import read_archive_root_attrs
+
+        attrs = read_archive_root_attrs(path)
+
+    kind = _store_kind_from_attrs(attrs)
+    if kind is None:
+        raise ValueError(
+            f"{path} is not a Luxar scene or standalone .gsplats.zarr store "
+            f"(type={attrs.get('type')!r}, "
+            f"format_type={attrs.get('format_type')!r})."
+        )
+    return kind
 
 
 def diagnose_store(
@@ -110,12 +142,11 @@ def _diagnose_opened(
     in the report); ``store_path`` is the directory actually read.
     """
     root = open_group(store_path, mode="r+" if fix else "r")
-    fmt = root.attrs.get("format_type")
-    is_scene = root.attrs.get("type") == "scene" and "scene_dimensions" in root.attrs
-    if fmt != "gsplats_zarr" and not is_scene:
+    if _store_kind_from_attrs(root.attrs) is None:
         raise ValueError(
             f"{reported_path} is not a Luxar scene or standalone .gsplats.zarr "
-            f"store (type={root.attrs.get('type')!r}, format_type={fmt!r})."
+            f"store (type={root.attrs.get('type')!r}, "
+            f"format_type={root.attrs.get('format_type')!r})."
         )
 
     selected = ALL_CHECKS if checks is None else checks
@@ -140,14 +171,9 @@ def _diagnose_opened(
         # lands inside .zmetadata too. Consolidated metadata SHADOWS the per-node
         # .zattrs a fix just wrote, so skipping this would leave every repair
         # invisible to readers while looking applied on disk.
-        if is_scene:
-            from luxar.io._compiler.finalize.hashing import compute_content_hashes
+        from luxar.gsplats.io.save_gsplats import _stamp_content_hash
 
-            compute_content_hashes(root)
-        else:
-            from luxar.gsplats.io.save_gsplats import _stamp_content_hash
-
-            _stamp_content_hash(root)
+        _stamp_content_hash(root)
         consolidate(root)
         # Then re-diagnose. A repair is not always a cure: removing a misleading
         # tree from parts that cannot be ordered exactly leaves the lesser
