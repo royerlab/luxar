@@ -31,7 +31,7 @@ import pytest
 import zarr
 from typer.testing import CliRunner
 
-from luxar._zarr_compat import read_node_attrs
+from luxar._zarr_compat import open_group, read_node_attrs
 from luxar.cli import app
 from luxar.gsplats._data.filtering import (
     _STRUCTURE_SCOPE_EXEMPT_KEYS,
@@ -174,7 +174,9 @@ def _ordering_barriers(path: Path) -> List[List[int]]:
         for name in group.group_keys():
             walk(group[name])
 
-    walk(zarr.open_group(str(path), mode="r"))
+    # Through the facade, so this reads a v2 and a v3 store alike (and ignores
+    # the consolidated index, which the writer may have left one level up).
+    walk(open_group(path, mode="r"))
     return found
 
 
@@ -283,10 +285,16 @@ def _stamped_topology_keys(tmp_path: Path) -> "set[str]":
 
     Measured, not copied from the registry: a hand-written mirror of the constant
     would make the completeness check below tautological. Two sources, both real
-    — ``gsplat lod``'s own output for every recipe family, and
-    ``_recipe_pipeline_info``, the literal stamp site of the ``batch-fit merge``
-    per-part recipe (the only producer of ``per_part`` / ``n_lods`` /
-    ``breakpoints`` / ``levels`` / ``additive_ladders``).
+    — ``gsplat lod``'s own output, and ``_recipe_pipeline_info``, the literal
+    stamp site of the ``batch-fit merge`` per-part recipe (the only producer of
+    ``per_part`` / ``n_lods`` / ``breakpoints`` / ``levels`` /
+    ``additive_ladders``).
+
+    :data:`_MEASURED_RECIPES` is one recipe per distinct ROOT-stamp shape, not one
+    per recipe name. ``overview`` and ``adaptive`` are omitted because both were
+    measured to stamp exactly what ``tiles`` does — ``recipe`` alone at the root,
+    everything else living in a part's or a level's own group — so running them
+    would add nothing to the union this returns.
     """
     src = tmp_path / "bare.gsplats.zarr"
     _data(200, stats=dict(_DESCRIPTIVE)).save(src, include_fitting_info=True)
@@ -311,13 +319,23 @@ def _stamped_topology_keys(tmp_path: Path) -> "set[str]":
 def test_every_topology_stamp_the_builders_produce_is_classified(
     tmp_path: Path,
 ) -> None:
-    """A builder cannot start stamping a topology key without a classification.
+    """A LOD builder cannot start stamping a topology key without a classification.
 
     Closes the registry against the producers in BOTH directions: a new stamp
     that is neither structure-scoped nor explicitly exempt fails the first
     assertion (it would ride through a ``flatten`` as a lie), and a registry key
     no producer writes any more fails the second (dead weight, and a sign the
     stamp was renamed rather than removed).
+
+    "The producers" here means the LOD builders only — what ``gsplat lod``'s
+    recipes and ``_recipe_pipeline_info`` write. One root-``pipeline/`` stamper is
+    NOT covered: ``merge_tile_results`` (``gsplats/fit_tiled_gsplats.py``) puts
+    ``tiled_fitting`` / ``num_tiles`` / ``tile_size`` / ``overlap`` /
+    ``volume_shape`` / ``splats_per_tile`` / ``progressive`` in the same group, and
+    its per-tile counts ride through a ``flatten`` onto a partless store. Which
+    axis those belong on is an open question (``splats_per_tile`` is arguably
+    content-scoped — invalidated by a ``decimate`` rather than by a kind change),
+    so they are deliberately unregistered and recorded on #1600 instead.
     """
     stamped = _stamped_topology_keys(tmp_path)
     assert "lod_kind" in stamped and "recipe" in stamped, (

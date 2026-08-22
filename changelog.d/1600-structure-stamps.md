@@ -28,6 +28,17 @@ completeness test closes the registry against those producers in both directions
 measuring what they actually stamp rather than restating the constant, so a new
 stamp that is neither classified nor exempt goes red.
 
+`flatten` and `partition` apply the rule in the command, because the domain
+methods they build on (`flattened()`, `concatenate`, `to_spatial_partition`) have
+other callers for which the record is still true — a recipe flattens a level it is
+about to re-wrap in a `kind=lod` group. `decimate` is the opposite case and scrubs
+inside `luxar.gsplats.lod.decimate` itself: its contract is one flat leaf whatever
+it was handed, so no caller can want the topology kept, and `CLAUDE.md` advertises
+that function as public API — a CLI-only scrub left
+`decimate(GSplatData.load(pyramid), target=50).save(out)` publishing all nineteen
+keys. The no-op path (`target >= n_splats`, which returns the input verbatim) is
+deliberately untouched: nothing changed, so nothing is invalidated.
+
 It is a deny-list of key names rather than "drop the `pipeline/` group", because
 that group is shared and two of its tenants must survive. The normalization block
 (`floor`, `image_min`, `image_max`, `intensity_range`) describes the *input
@@ -41,6 +52,15 @@ half-integer time grid so auto-detection cannot supply the barrier by accident.
 
 Structure-*preserving* rewrites are deliberately untouched: `cull`, `filter`,
 `slice`, `transform`, `reencode` and `additive` all leave a substitutive pyramid a
-substitutive pyramid, so the block stays true of their output and the counts that
-moved are re-stamped rather than dropped. `merge` publishes no inherited
-provenance at all, and `batch-fit merge` stamps its own record fresh.
+substitutive pyramid, so the *kind* stays true of their output and the scrub
+correctly does not apply to any of them. `cull` and `filter` also re-stamp the
+counts that moved: on a four-rung `[2, 4, 5, 7]` root ladder both rewrote the
+cutpoints, and a reduction that emptied rungs took `lod_n_lods` down with them
+(4 → 1 for `cull -r 0.20`, 4 → 2 for `filter --amplitude-min 0.95`).
+`additive` does not: re-laddering the same pyramid with `--n-lods 6`
+writes `lod_n_lods: 6` into every level's `level_stats` while the root `pipeline/`
+group still publishes the input's `lod_n_lods: 4` / `lod_cutpoints: [2, 4, 5, 7]`
+/ `lod_method: greedy`. That is a stale-*value* defect within a preserved kind,
+which this change does not address — a different rule from the one added here,
+tracked separately on #1600. `merge` publishes no inherited provenance at all,
+and `batch-fit merge` stamps its own record fresh.
