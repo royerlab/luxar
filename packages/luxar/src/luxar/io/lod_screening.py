@@ -775,6 +775,17 @@ def _local_matrix(attrs: Dict[str, Any]) -> np.ndarray:
         return np.eye(4, dtype=np.float64)
 
 
+def _selector_of(attrs: Dict[str, Any]) -> str:
+    """The group's stored selector, absent meaning the legacy one.
+
+    Only an ABSENT attr defaults — ``lod_restamp._plan_lod`` gates on
+    ``selector is not None``, so a present-but-falsy value (``""``, ``0``) is an
+    unsupported selector there and must reach ``_preflight``'s refusal here too.
+    """
+    raw = attrs.get("selector")
+    return "coverage" if raw is None else str(raw)
+
+
 def _anchor_reason(under_partition: bool, children: Sequence[Any]) -> str:
     """Which clause of the writers' two-clause tile-binding rule fired, in words."""
     own_partition = any(
@@ -819,7 +830,11 @@ def _collect_lod_groups(
         out.append(
             _LodGroupFacts(
                 path=group.path or "/",
-                selector=str(attrs.get("selector") or "coverage"),
+                # A falsy-but-present selector ("" or 0) must NOT be coerced to
+                # the legacy one: ``_plan_lod`` gates on ``is not None`` and
+                # refuses it as unsupported, so ``or`` here would predict a
+                # rewrite ``restamp-lod`` never makes.
+                selector=_selector_of(attrs),
                 default_level=int(attrs.get("default_level") or 0),
                 partition_bound=child_under,
                 anchor_reason=_anchor_reason(under_partition, children),

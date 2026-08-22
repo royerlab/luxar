@@ -62,7 +62,8 @@ A second, independent pass lives behind `--screen` (`--screen-only` to skip the
 gate above): the LOD **opening-shot screen** from `luxar.io.lod_screening`. Per
 `kind=lod` group, would re-deriving the ladder onto the `screen-area` selector
 make the OPENING framing land on a coarser level? It is a REPORT ONLY — no
-verdict it produces can change the exit code, and `--screen-only` always exits 0.
+verdict it produces can change the exit code, so `--screen-only` exits 0 for any
+store it can read (only a malformed flag still fails, as argparse).
 
 ```bash
 hatch run check-demo-ladders --screen-only datasets/examples/*.luxar.zarr

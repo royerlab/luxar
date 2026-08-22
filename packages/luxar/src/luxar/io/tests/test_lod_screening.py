@@ -1179,6 +1179,25 @@ def test_an_unknown_selector_and_an_out_of_range_default_level_are_skipped(
     assert "default_level=9" in out_of_range.reason
 
 
+def test_a_present_but_falsy_selector_is_unsupported_not_legacy(
+    tmp_path: Path,
+) -> None:
+    """``_plan_lod`` gates on ``selector is not None``, so an empty-string
+    selector is unsupported there and ``restamp-lod`` writes nothing. Defaulting
+    it to ``"coverage"`` here would score it against the legacy metric and could
+    report a win for a rewrite that never happens."""
+    bounds = {"c0": _plain_child(0, 10, 0.0), "c1": _plain_child(1, 40, 1.0)}
+    falsy = screen_lod_store(
+        _handmade_store(
+            tmp_path / "empty-selector.luxar.zarr",
+            lod_attrs={"selector": ""},
+            group_bounds=bounds,
+        )
+    ).groups[0]
+    assert falsy.verdict == VERDICT_SKIPPED
+    assert "migrate-format" in falsy.reason
+
+
 def test_an_off_screen_group_holds_its_default_level_not_index_zero(
     tmp_path: Path,
 ) -> None:
