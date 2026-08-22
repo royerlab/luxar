@@ -25,7 +25,7 @@ thing (20). That also keeps the small levels laddered,
 which a sibling-aware `stream:` base at this scale would not have — its base
 scales with `n`, so at 9.75M the first chunk alone would have been 609K.
 Reaching the coarser sibling's size, the point where swapping this level in is
-worth it, costs about 14% of the finest payload, so the upgrade does not "wait
+worth it, costs about 20% of the finest payload, so the upgrade does not "wait
 until fully loaded".
 
 `warn_if_scene_is_stale` now measures the largest RUNG rather than the level

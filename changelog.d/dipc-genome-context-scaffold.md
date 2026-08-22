@@ -24,10 +24,8 @@ occlude far ones is what separates them; summing straight through the nucleus
 washed the territories into one another. Opacity drops to 0.32 to suit
 compositing that accumulates alpha along the ray.
 
-Intensity drops from 0.6 to 0.22, which is the authored form of a display-range
-change. A direct-colour layer's display-range slider is a pure gain on authored
-RGB: the viewer always starts it at the identity `[0, 1]` and there is no attr
-to author a different starting window (`initialDisplayRange`, viewer
-`ui/layers/layer-state.ts`). Widening that window to `[0, 2.75]` by hand is
-exactly a 2.75x dim, so it belongs in `intensity` — 0.6 / 2.75 = 0.22 — where it
-survives a rebuild instead of having to be re-dragged.
+Intensity drops from 0.6 to 0.364, the authored form of the requested
+display-range change. At 0.6 the viewer opens the top of the range at
+`1 / 0.6 = 1.67`; dragging that top to 2.75 applies a further 1.65x dim. The
+equivalent authored gain is therefore `1 / 2.747 = 0.364`, where it survives a
+rebuild instead of having to be re-dragged.

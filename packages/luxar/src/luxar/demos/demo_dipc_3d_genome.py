@@ -533,14 +533,6 @@ def build_scene(output_path: Path, polylines: list[dict]) -> int:
                 all_verts = np.concatenate(vparts)
                 all_colors = np.concatenate(cparts)
                 all_edges = np.concatenate(eparts)
-                # One Lines node sliced by the non-displayed `haplotype` dim.
-                # Indexed authoring: unique per-bead vertices + an explicit
-                # edge list, so interior joints share their vertex index and
-                # the viewer draws continuous chromosome tubes (see
-                # `_haplotype_geometry`).
-                # extend_to_all=[] is explicit: the genome copies live at their
-                # own haplotype coordinate and must be culled off-slice, NOT
-                # broadcast to every slice.
                 # --- Context: the WHOLE diploid genome, always on screen ---
                 #
                 # Scrubbing `haplotype` culls the off-slice copy outright, so

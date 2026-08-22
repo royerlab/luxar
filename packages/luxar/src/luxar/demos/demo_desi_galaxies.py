@@ -218,7 +218,7 @@ def streaming_breakpoints(
     ramp, which is what makes first paint cheap, but stops before its next
     increment would exceed ``max_commit`` and finishes in equal steps of that
     size. Largest commit is therefore ``max_commit`` at ANY ``n``; with the
-    defaults the geometric head totals 512,000 points.
+    defaults the geometric head totals 1,024,000 points.
 
     One list serves every substitutive level: ``_validate_counts`` clamps a
     cumulative list to the level's own ``n`` and stops there, so the 152K level
@@ -227,7 +227,7 @@ def streaming_breakpoints(
     ``stream:`` base would not have done at this scale.
 
     Reaching the coarser sibling's size — the point where swapping in this level
-    is worth it — costs only the geometric head plus a step or two, ~14% of the
+    is worth it — costs only the geometric head plus a step, ~20% of the
     finest level's payload, so the upgrade does not "wait until fully loaded".
     """
     if n <= first_chunk:

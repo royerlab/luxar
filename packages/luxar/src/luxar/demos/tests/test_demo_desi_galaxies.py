@@ -478,16 +478,17 @@ class TestStreamingBreakpoints:
 
         With compression_factor=8 and levels=2 the finest level's coarser
         sibling holds n/8, so the rung that first exceeds that is the point the
-        swap becomes worthwhile. It should land in the first fifth of the data.
+        swap becomes worthwhile. With the shipped row count and ladder settings,
+        that crossing is 1,924,000 / 9,751,955 = 19.73% of the payload.
         """
         n = 9_751_955
         cuts = _demo.streaming_breakpoints(n)
         sibling = n // 8
         crossing = next(c for c in cuts if c > sibling)
-        assert crossing / n < 0.2, f"parity at {crossing / n:.1%} of the payload"
+        assert crossing / n == pytest.approx(0.1973, abs=0.0001)
 
 
-class TestScenePointCap:
+class TestSceneRowBudget:
     def test_caps_both_layers_but_frames_the_full_catalog(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
@@ -523,7 +524,7 @@ class TestScenePointCap:
             (cam_dist + float(radial.max())) * 1.5
         )
 
-    def test_shipped_scene_caps_both_finest_children(self) -> None:
+    def test_shipped_scene_carries_the_full_catalog(self) -> None:
         import json
         import zipfile
 
