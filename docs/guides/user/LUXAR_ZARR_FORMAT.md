@@ -241,9 +241,9 @@ opens it.
 ```javascript
 {
   "citation": {
-    "short": "Bui et al. 2013",              // REQUIRED: single line, what a UI renders
-    "ref": "Bui et al. 2013",                // optional compact caption reference, max 40 chars
-    "doi": "10.1016/j.cell.2013.10.055",     // optional, bare DOI (no https://doi.org/ prefix)
+    "short": "OpenCell (Cho et al. 2022); embeddings by cytoself (Kobayashi et al. 2022)", // REQUIRED: single line, what a UI renders
+    "ref": "Cho / Kobayashi et al. 2022",    // optional compact caption reference, max 40 chars
+    "doi": "10.1126/science.abi6983",        // optional, bare DOI (no https://doi.org/ prefix)
     "license": "CC BY 4.0",                  // optional
     "url": "https://example.org/dataset"     // optional
   }

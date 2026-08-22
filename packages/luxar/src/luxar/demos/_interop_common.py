@@ -115,10 +115,11 @@ def build_interop_scene(
     matrix and partition caches embed through ``add_gsplats_from_file``, which
     grafts whatever node shape the recipe produced.
 
-    ``citation`` is the dataset credit written to the scene's root attr, so a
-    downloaded store carries its attribution rather than relying on the demo
-    source. These captures are all third-party and several are CC BY, which
-    requires attribution to travel with the data.
+    ``citation`` is the dataset credit written to the scene's root attr and the
+    compact reference appended to the in-scene caption, so a downloaded store
+    carries its attribution rather than relying on the demo source. These
+    captures are all third-party and several are CC BY, which requires
+    attribution to travel with the data.
 
     ``camera`` sets an initial viewer pose (overriding bounding-sphere
     auto-fit). Immersive 360° environment captures (e.g. Scaniverse room/yard

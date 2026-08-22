@@ -71,10 +71,10 @@ class Scene(Group):
             viewer_config: Optional viewer configuration hints. Stored in
                 the zarr file and used by the viewer as scene-specific defaults.
             citation: Optional credit for whoever produced the underlying
-                dataset -- ``{"short", "doi"?, "license"?, "url"?}``. Written to
-                the store's root attributes so the attribution travels with the
-                data rather than only with the page that happens to show it.
-                ``None`` means no external dataset to credit.
+                dataset -- ``{"short", "ref"?, "doi"?, "license"?, "url"?}``.
+                Written to the store's root attributes so the attribution travels
+                with the data rather than only with the page that happens to show
+                it. ``None`` means no external dataset to credit.
 
         Raises:
             ValueError: If writer is None, dimensions is None, the citation is

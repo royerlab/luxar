@@ -120,7 +120,9 @@ def test_caption_fields_use_the_standard_separator() -> None:
 
 
 def test_nd_transform_channel_readouts_use_the_free_top_left_corner() -> None:
-    path = next(path for path in _demo_modules() if path.name == "demo_nd_transforms.py")
+    path = next(
+        path for path in _demo_modules() if path.name == "demo_nd_transforms.py"
+    )
     tree = ast.parse(path.read_text(), filename=str(path))
     readouts = []
     for call in _attribute_calls(tree, "add_html"):

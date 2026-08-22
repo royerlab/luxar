@@ -207,7 +207,7 @@ class TestDemoConfig:
         # provenance print would also satisfy. The raw credit carries the
         # license while the standard caption helper appends the cited author.
         assert "CC BY 4.0" in m.CREDIT
-        assert "Dany Bittel" in m.DEMO_META["citation"]["ref"]
+        assert m.DEMO_META["citation"]["ref"] == "Dany Bittel (danybittel.ch)"
         # Both pieces must be wired into the scene builder.
         import inspect
 

@@ -860,9 +860,7 @@ def _overlay_args(node: ast.Call) -> tuple[list[ast.expr], bool]:
     keyword_names = {kw.arg for kw in node.keywords}
     is_demo_caption = (
         isinstance(node.func, ast.Name) and node.func.id == "add_demo_caption"
-    ) or (
-        "credit" in keyword_names and "citation" in keyword_names
-    )
+    ) or ("credit" in keyword_names and "citation" in keyword_names)
     if isinstance(node.func, ast.Name) and node.func.id == "add_demo_caption":
         args += node.args[1:2]
         args += [kw.value for kw in node.keywords if kw.arg == "caption"]
@@ -884,7 +882,9 @@ def _overlay_strings(source: str) -> list[str]:
     an ``add_demo_caption`` caption argument, and a ``credit=`` keyword passed to
     ANY call. The last is not decoration — it is the only way the six
     ``demo_gsplats_interop_*`` helpers' footers are seen here. This is the same
-    demo-file-only blind spot ``tests/_scanned_modules.py`` exists for.
+    demo-file-only blind spot ``tests/_scanned_modules.py`` exists for. A
+    module's compact citation reference is appended to caption text when needed,
+    matching ``format_demo_caption``.
 
     AST-only, for the same reason the registry is: importing a demo module runs
     heavy optional imports and import-time side effects.
