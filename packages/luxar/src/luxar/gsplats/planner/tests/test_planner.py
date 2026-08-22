@@ -1862,11 +1862,9 @@ class TestPlannedFitTruncationRadius:
         ).stats["time_seconds"]
         assert box_time == pytest.approx(_FAKE_BOX_TIME_SECONDS)
         # ... and whatever a box recorded, `time_seconds` on the merge means one
-        # thing: wall clock, as the uniform tiled merge stamps it. (Nothing has to
-        # be overwritten HERE — a reloaded box brings back its leaf `lod_stats`
-        # but not its top-level stats, so `concatenate` has no box times to sum;
-        # `test_flat_merge_stamps_wall_clock_time` covers the sequential branch
-        # where it does and the overwrite is load-bearing.)
+        # thing: wall clock, as the uniform tiled merge stamps it. This fake
+        # persists fitting info, so the reload and `concatenate` do bring back
+        # and sum the box times; the overwrite is load-bearing here too.
         assert merged.stats["time_seconds"] == pytest.approx(
             merged.stats["elapsed_seconds"]
         )
@@ -1877,9 +1875,8 @@ class TestPlannedFitTruncationRadius:
 
         The radius and the per-box fit stats reach a part by a different route
         than the sequential path's in-memory hand-off — through the box store: the
-        leaf writer stamps a box's stats as its `lod_stats`, and the reload
-        restores them onto the sub-LOD even though the top-level `stats` (which
-        would need `include_stats=True`) comes back empty.
+        leaf writer stamps a box's stats as its `lod_stats`, and the reload asks
+        for top-level `stats` while also restoring them onto the sub-LOD.
         """
         node = fit_planned_parallel(
             _toy_plan(n_boxes=2),

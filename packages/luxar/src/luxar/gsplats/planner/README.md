@@ -58,8 +58,10 @@ fit_planned(volume, plan)        -> GSplatData|GSplatNode   # fit each box, merg
   surviving core-disjoint parts, exactly matching their additive composition, and
   stores the block in the root node's `meta["fit_stats"]`. With a per-part LOD
   recipe, `n_splats` counts every stored level while the quality score describes
-  the finest content regions. The score uses the same memory guard as uniform
-  tiling (`LUXAR_TILED_QUALITY_MAX_GB`); every decline is announced.
+  the finest content regions. For content partitions, `splats_per_tile` lists
+  surviving parts in part order; it is not positionally aligned with every box in
+  the plan. The score uses the same memory guard as uniform tiling
+  (`LUXAR_TILED_QUALITY_MAX_GB`); every decline is announced.
 - **`fit_planned_parallel`** (`fit_planned_parallel.py`) — the `-j N` path: fit
   each box in its own subprocess (`fit --plan-box`), then merge identically. A box
   that fits 0 splats writes a sibling `<output>.empty` marker (skipped at merge).
