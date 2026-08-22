@@ -8,7 +8,7 @@ IMPORTANT: Uses NO compression (compressor=None) to avoid blosc/numcodecs
 WASM binding issues in Node.js test environment.
 
 Run from project root:
-    hatch run python packages/luxar-viewer/tests/fixtures/generate_test_data.py
+    hatch run fixtures:python packages/luxar-viewer/tests/fixtures/generate_test_data.py
 """
 
 import shutil

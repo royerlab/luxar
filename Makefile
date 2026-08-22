@@ -697,7 +697,7 @@ test-all:  ## Run all tests (Python+CUDA, Rust/WASM, TypeScript, Go)
 	fi
 	@echo ""
 	@echo "🔬 Generating TypeScript test fixtures..."
-	$(HATCH) run python packages/luxar-viewer/tests/fixtures/generate_test_data.py
+	$(HATCH) run fixtures:python packages/luxar-viewer/tests/fixtures/generate_test_data.py
 	@echo "📘 Running TypeScript tests..."
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
@@ -2667,7 +2667,7 @@ test-nlm-cuda:  ## Run NLM CUDA extension tests
 
 test-fixtures:  ## Generate test fixtures for TypeScript tests
 	@echo "🔬 Generating test fixtures..."
-	$(HATCH) run python packages/luxar-viewer/tests/fixtures/generate_test_data.py
+	$(HATCH) run fixtures:python packages/luxar-viewer/tests/fixtures/generate_test_data.py
 
 test-viewer-fixtures: test-fixtures  ## Generate fixtures + run TypeScript tests
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
@@ -2846,7 +2846,7 @@ stats-fast:  ## Generate project statistics without running tests (file counts o
 show-env:  ## Show all Hatch environments
 	$(HATCH) env show
 
-prune-env:  ## Remove unused Hatch environments
+prune-env:  ## Remove ALL Hatch environments
 	$(HATCH) env prune
 
 shell:  ## Enter Hatch development shell
