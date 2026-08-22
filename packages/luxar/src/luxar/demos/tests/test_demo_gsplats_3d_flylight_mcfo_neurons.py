@@ -1508,4 +1508,4 @@ def test_authored_camera_up_is_perpendicular_to_the_specimen_axis(
     assert cam["position"][0] == cam["position"][1] == 0.0
     assert cam["position"][2] > 0.0
     assert cam["target"] == [0.0, 0.0, 0.0]
-    assert cam["fov"] == _demo.CAMERA_FOV_DEG
+    assert "fov" not in cam

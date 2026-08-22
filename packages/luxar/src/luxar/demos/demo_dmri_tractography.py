@@ -215,6 +215,7 @@ from luxar.demos import (
     require_module,
     substitutive_lod_or_flat,
 )
+from luxar.demos._cinematic_camera import pull_in
 from luxar.encoding import EncodingMode
 from luxar.utils.paths import get_demos_output_dir
 
@@ -817,10 +818,11 @@ def brain_camera(radius: float) -> CameraConfig:
     pulled forward, which is how these atlases are shown in the literature.
     """
     return CameraConfig(
-        position=(-2.6 * radius, 0.55 * radius, 0.85 * radius),
+        position=pull_in(
+            (-2.6 * radius, 0.55 * radius, 0.85 * radius), from_fov_deg=38.0
+        ),
         target=(0.0, 0.0, 0.0),
         up=(0.0, 1.0, 0.0),
-        fov=38.0,
     )
 
 

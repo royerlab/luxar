@@ -356,6 +356,7 @@ from luxar.demos import (
     require_module,
     substitutive_lod_or_flat,
 )
+from luxar.demos._cinematic_camera import pull_in
 from luxar.encoding import EncodingMode
 from luxar.utils.paths import get_demos_output_dir
 
@@ -1063,10 +1064,11 @@ def globe_camera(lon: float, lat: float, *, distance: float = 2.6) -> CameraConf
     cl = math.cos(la)
     normal = (cl * math.cos(lo), math.sin(la), -cl * math.sin(lo))
     return CameraConfig(
-        position=tuple(n * RADIUS * distance for n in normal),
+        position=pull_in(
+            tuple(n * RADIUS * distance for n in normal), from_fov_deg=42.0
+        ),
         target=(0.0, 0.0, 0.0),
         up=(0.0, 1.0, 0.0),
-        fov=42.0,
         near=RADIUS * 0.02,
         far=RADIUS * 40.0,
     )

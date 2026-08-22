@@ -134,6 +134,7 @@ from luxar import (
     transforms,
 )
 from luxar.demos import launch_viewer, parse_demo_flags
+from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -1036,7 +1037,7 @@ class Layout:
         self.y_max = self.readout_y + (_GLYPH_H - 1) / 2 * CELL_RULER * 1.6
         self.y_min = self.channel_bottom
 
-    def camera(self, fov_deg: float = 28.0, min_aspect: float = 1.35) -> CameraConfig:
+    def camera(self, min_aspect: float = 1.35) -> CameraConfig:
         """A long-lens camera that frames the whole bench with a small margin.
 
         ``min_aspect`` is the narrowest viewport the framing must survive; the
@@ -1057,7 +1058,7 @@ class Layout:
         band = 1.0 - top_strip - bottom_strip
 
         cx = (self.x_min + self.x_max) / 2.0
-        half_tan = np.tan(np.radians(fov_deg) / 2.0)
+        half_tan = np.tan(np.radians(CINEMATIC_FOV_DEG) / 2.0)
         # Fit the content height into the free band, not the whole frame.
         d_vertical = height / band / 2.0 / half_tan
         d_horizontal = width / 2.0 / (half_tan * min_aspect)
@@ -1072,7 +1073,6 @@ class Layout:
         return CameraConfig(
             position=(cx, cy, distance),
             target=(cx, cy, 0.0),
-            fov=fov_deg,
         )
 
 

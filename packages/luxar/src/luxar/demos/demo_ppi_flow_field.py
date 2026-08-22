@@ -73,6 +73,7 @@ from arbol import aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, UIConfig, ViewerConfig
 from luxar.demos import launch_viewer, require_module
+from luxar.demos._cinematic_camera import pull_in
 from luxar.demos._graph_common import (
     compute_communities as louvain_communities,
 )
@@ -1089,10 +1090,13 @@ def write_scene(
         viewer_config = ViewerConfig(
             cinematic_mode=True,
             camera=CameraConfig(
-                position=camera_position,
+                position=pull_in(
+                    camera_position,
+                    tuple(float(v) for v in center),
+                    from_fov_deg=42.0,
+                ),
                 target=tuple(float(v) for v in center),
                 up=(0.0, 0.0, 1.0),
-                fov=42.0,
                 near=0.01,
                 far=side * 12.0,
             ),

@@ -102,6 +102,7 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import cached_download, launch_viewer, parse_demo_flags, require_module
+from luxar.demos._cinematic_camera import pull_in
 from luxar.encoding import EncodingMode
 from luxar.utils.paths import get_demos_output_dir
 
@@ -493,11 +494,15 @@ def globe_camera(lon: float, lat: float, *, distance: float = 2.05) -> CameraCon
         [np.cos(la) * np.cos(lo), np.sin(la), -np.cos(la) * np.sin(lo)],
         dtype=np.float64,
     )
+    target = tuple((normal * RADIUS * 0.9).tolist())
     return CameraConfig(
-        position=tuple((normal * RADIUS * distance).tolist()),
-        target=tuple((normal * RADIUS * 0.9).tolist()),
+        position=pull_in(
+            tuple((normal * RADIUS * distance).tolist()),
+            target,
+            from_fov_deg=42.0,
+        ),
+        target=target,
         up=(0.0, 1.0, 0.0),
-        fov=42.0,
     )
 
 

@@ -108,18 +108,14 @@ something a demo can correct; closing it means applying the expanded fov before
 the fit.
 
 An authored camera position is a stronger contract, because its distance was
-composed for one FOV, and the demos say which one in one of two ways. Sixteen
-**pin** `camera.fov` (38°–50°, computed in five): framing preserved, but they
-then wear the preset's 35 mm barrel distortion at a longer lens's framing — two
-lenses in one image — and those pins all predate the cinematic look. The five
-poses derived from a data extent or a fitted radius instead **compose for 63°**
-through `_cinematic_camera.py`: read `CINEMATIC_FOV_DEG` when the distance comes
-from the lens (a fitted radius through `asin(R/D)`), or call `pull_in()` to carry
-an empirically tuned pose over — it scales about the pose's target rather than
-the world origin, so an off-origin camera keeps looking where it was aimed. That
+composed for one FOV. Every authored pose **composes for 63°** through
+`_cinematic_camera.py`: read `CINEMATIC_FOV_DEG` when the distance comes from
+the lens, or call `pull_in()` with the pose's original 28°–50° FOV to carry an
+empirically tuned pose over. It scales about the pose's target rather than the
+world origin, so an off-origin camera keeps looking where it was aimed. That
 keeps the lens whole and the framing exact, and costs the stronger perspective a
-wider lens gives. `test_demos_cinematic_mode.py` accepts either and rejects a
-bare authored position, whose FOV assumption nobody can read.
+wider lens gives. `test_demos_cinematic_mode.py` rejects both a mixed-lens FOV
+pin and a bare authored position whose FOV assumption nobody can read.
 
 The cinematic distortion still applies unless a scene explicitly suppresses it;
 the two quantitative ortho demos do so because their projection-derived scale

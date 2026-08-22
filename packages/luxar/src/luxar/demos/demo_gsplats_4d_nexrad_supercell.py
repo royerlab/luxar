@@ -197,6 +197,7 @@ from luxar.demos import (
     require_module,
     warn_if_no_cuda_gpu,
 )
+from luxar.demos._cinematic_camera import pull_in
 from luxar.demos._lod_policy import save_with_lod
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
@@ -1421,9 +1422,12 @@ def create_luxar_scene(
                         # view, and at full-domain distance the low opacity reads as
                         # faint. This keeps the storm substantial with most of the
                         # reference cube still in frame.
-                        position=(84.0, -199.0, 132.0),
+                        position=pull_in(
+                            (84.0, -199.0, 132.0),
+                            (-66.0, 26.0, 6.0),
+                            from_fov_deg=45.0,
+                        ),
                         target=(-66.0, 26.0, 6.0),
-                        fov=45.0,
                     ),
                 ),
                 citation=DEMO_META["citation"],
