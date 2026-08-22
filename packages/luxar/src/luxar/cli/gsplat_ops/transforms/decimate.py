@@ -28,7 +28,10 @@ def run_decimate_dataset(
 ) -> None:
     """Reduce a dataset to a target splat count and write a flat result."""
     try:
-        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.gsplat_data import (
+            GSplatData,
+            stats_after_structure_change,
+        )
         from luxar.gsplats.io.save_gsplats import split_fitting_info, write_gsplats_tree
         from luxar.gsplats.lod.decimate import decimate
 
@@ -88,9 +91,12 @@ def run_decimate_dataset(
                 # Thread the (already scrubbed) provenance through the tree writer
                 # the same way `transform` does, so the output's `fitting/` /
                 # `provenance/` / `pipeline/` groups round-trip instead of being
-                # silently dropped.
+                # silently dropped. `decimate` returns ONE FLAT LEAF whatever it
+                # was handed, so the input's LOD topology record goes too (#1600)
+                # — the measured-score scrub inside `decimate` does not cover it.
                 fitting, config, provenance, pipeline = split_fitting_info(
-                    dict(reduced.stats), include_fitting_info=True
+                    stats_after_structure_change(reduced.stats),
+                    include_fitting_info=True,
                 )
                 write_gsplats_tree(
                     output_path,
