@@ -148,7 +148,7 @@ COUNT = 100  # number of embryos along the line (override with --count=N)
 SPACING_FACTOR = 1.5  # center-to-center spacing as a multiple of embryo diameter
 JITTER_FRACTION = 0.18  # lateral/along-line jitter as a fraction of spacing
 SEED = 0  # RNG seed so the layout is reproducible
-AUTHORED_CAMERA_FOV_DEG = 50.0  # vertical FOV the 0.12 L standoff was tuned at
+AUTHORED_CAMERA_FOV_DEG = 50.0  # vertical FOV the 0.12 L centre offset was tuned at
 
 # Parse shared demo flags + this demo's extras.
 FLAGS = parse_demo_flags()
@@ -229,22 +229,22 @@ def embryo_transforms(
 
 
 def camera_for_line(n: int, spacing: float, diameter: float) -> CameraConfig:
-    """Stand just off the NEAR end of the line and look ALONG its axis.
+    """Stand back along -X from the row centre and look along its axis.
 
-    The camera sits a hair before the first embryo, shifted sideways by about
-    one embryo diameter (and slightly raised), aiming down the +X axis at the
-    far end — so the whole row of embryos recedes into the distance rather than
-    the front one occluding the rest.
+    The camera remains inside the row's X span, shifted sideways by about one
+    embryo diameter (and slightly raised), aiming down the +X axis so the whole
+    row recedes into the distance rather than the front embryos occluding the
+    rest.
     """
     radius = diameter / 2.0
     total_len = (n - 1) * spacing
-    # Scale the authored 0.12 L near-end standoff for the cinematic lens, offset
-    # sideways ~2 diameters in +Z and raised ~1 diameter in +Y, then aim at the
-    # MIDDLE of the row — so the sequence recedes diagonally and stays centred
-    # (standing right at the first embryo blows it out and crams the line into a
+    # Scale the authored 0.12 L offset back from the row centre for the cinematic
+    # lens, offset sideways ~2 diameters in +Z and raised ~1 diameter in +Y, then
+    # aim at the MIDDLE of the row — so the sequence recedes diagonally and stays
+    # centred (standing right at an embryo blows it out and crams the line into a
     # corner).
-    near_standoff = total_len * 0.12 * framing_scale(AUTHORED_CAMERA_FOV_DEG)
-    position = (-near_standoff, diameter * 1.0, diameter * 2.2)
+    centre_offset = total_len * 0.12 * framing_scale(AUTHORED_CAMERA_FOV_DEG)
+    position = (-centre_offset, diameter * 1.0, diameter * 2.2)
     target = (total_len * 0.45, 0.0, 0.0)
     return CameraConfig(
         position=position,

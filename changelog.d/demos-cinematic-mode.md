@@ -37,7 +37,8 @@ A new lint (`test_demos_cinematic_mode.py`) keeps this true for demo 87: every
 `create_scene` must pass a non-`None` `viewer_config`, every `ViewerConfig` built
 in the demos package must set a literal `cinematic_mode=True`, every authored
 camera must leave its FOV unpinned and demonstrate composition for 63°, and the
-scientific-fidelity overrides must remain explicit.
+scientific-fidelity overrides must remain explicit. It also locks the Python
+framing constants to the viewer's live 35 mm preset and default FOV values.
 
 Four fidelity-sensitive demos deliberately opt parts of the preset back out:
 the CMU-1 pathology and CODEX pancreas ortho demos disable bloom, vignette, lens

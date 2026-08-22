@@ -59,8 +59,8 @@ disables the last two to preserve its exact RGB corner palette.
 
 The preset's 63° FOV is resolved before automatic framing, so auto-framed scenes
 keep the fitted subject occupancy intended for that lens. Authored positions
-suppress automatic framing, so their distance must still state which FOV it was
-composed for.
+suppress automatic framing, so their distance must instead be composed for the
+unpinned 63° preset FOV.
 
 A demo that authors a camera position has a stronger contract, since its distance
 was composed for one specific FOV. Every authored pose is composed for 63°
@@ -408,8 +408,16 @@ def test_python_fov_constants_match_the_viewer_contract() -> None:
         Path("packages/luxar-viewer/src/config/sections/rendering-controls/data.ts"),
         start,
     )
-    assert camera_source is not None
-    assert rendering_source is not None
+    assert camera_source is not None, (
+        "cannot locate packages/luxar-viewer/src/config/sections/camera/data.ts. "
+        "If the viewer file moved, update this test — do NOT delete it: it locks "
+        "CINEMATIC_FOV_DEG to the live 35 mm preset."
+    )
+    assert rendering_source is not None, (
+        "cannot locate packages/luxar-viewer/src/config/sections/"
+        "rendering-controls/data.ts. If the viewer file moved, update this test — "
+        "do NOT delete it: it locks VIEWER_DEFAULT_FOV_DEG to the live default."
+    )
 
     cinematic_match = re.search(
         r"['\"]35mm['\"]\s*:\s*([0-9]+(?:\.[0-9]+)?)",
@@ -420,8 +428,12 @@ def test_python_fov_constants_match_the_viewer_contract() -> None:
         rendering_source.read_text(encoding="utf-8"),
         re.DOTALL,
     )
-    assert cinematic_match is not None
-    assert default_match is not None
+    assert cinematic_match is not None, (
+        "camera/data.ts no longer exposes a numeric 35 mm FOV"
+    )
+    assert default_match is not None, (
+        "rendering-controls/data.ts no longer exposes a numeric default FOV"
+    )
     assert float(cinematic_match.group(1)) == CINEMATIC_FOV_DEG
     assert float(default_match.group(1)) == VIEWER_DEFAULT_FOV_DEG
 

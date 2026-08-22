@@ -39,7 +39,7 @@ module-level ``def``s for such modules; the two changes only work together.
 
 The set is a DENYLIST on purpose: every ``*.py`` directly under ``demos/``
 *except* :data:`EXCLUDED`. An allowlist keyed on a filename pattern would be
-opt-in, so a future ``demos/_plot_helpers.py`` would escape all fifteen guards
+opt-in, so a future ``demos/_plot_helpers.py`` would escape all sixteen guards
 and reopen the very blind spot this module exists to close.
 
 The flip side of a denylist: ANY ``*.py`` dropped into ``demos/`` joins the
@@ -61,7 +61,7 @@ demo code, and one of them would produce a *false* positive:
 ``__init__.py``
     A pure re-export barrel; it holds no demo code and no gates.
 
-``registry.py`` is deliberately NOT excluded — it passes all fifteen guards, so
+``registry.py`` is deliberately NOT excluded — it passes all sixteen guards, so
 there is no reason to carve it out.
 
 Not a test module and not a demo (no ``test_`` / ``demo_`` prefix), so neither

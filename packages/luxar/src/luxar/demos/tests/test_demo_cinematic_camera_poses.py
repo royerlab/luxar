@@ -27,18 +27,20 @@ def test_forest_camera_stays_outside_the_tree_square() -> None:
     )
 
 
-def test_embryo_camera_preserves_the_near_end_standoff() -> None:
+def test_embryo_camera_preserves_the_authored_centre_offset_framing() -> None:
     diameter = 1.0
     spacing = diameter * embryo_line.SPACING_FACTOR
     total_len = (embryo_line.COUNT - 1) * spacing
     camera = embryo_line.camera_for_line(embryo_line.COUNT, spacing, diameter)
 
-    old_standoff = total_len * 0.12
-    new_standoff = -camera.position[0]
+    authored_centre_offset = total_len * 0.12
+    cinematic_centre_offset = -camera.position[0]
 
-    assert new_standoff > 0.0
-    assert new_standoff * math.tan(
+    assert cinematic_centre_offset > 0.0
+    assert -total_len / 2.0 < camera.position[0] < total_len / 2.0
+    assert cinematic_centre_offset * math.tan(
         math.radians(CINEMATIC_FOV_DEG / 2.0)
     ) == pytest.approx(
-        old_standoff * math.tan(math.radians(embryo_line.AUTHORED_CAMERA_FOV_DEG / 2.0))
+        authored_centre_offset
+        * math.tan(math.radians(embryo_line.AUTHORED_CAMERA_FOV_DEG / 2.0))
     )
