@@ -112,11 +112,11 @@ def test_the_scrub_does_not_mutate_the_dict_the_caller_owns() -> None:
     result = stats_after_structure_change(source)
     assert source == before, "the caller's dict was edited"
     assert result is not source
-    # The copy is SHALLOW on purpose — nothing downstream edits a nested container
-    # — so a surviving list is the caller's own object, not a duplicate. Pinned
-    # because it is the assumption a future in-place edit of a nested value would
-    # break silently (the topology keys are all flat, so nothing else relies on it).
-    assert result["coarsen_dims"] is source["coarsen_dims"]
+    # No assertion on the copy's DEPTH: pinning `result["coarsen_dims"] is
+    # source["coarsen_dims"]` would gate a safe change (hardening `dict(stats)`
+    # to a deep copy) while staying green for the real defect it looks like it
+    # guards (an in-place edit of a nested value, which mutates BOTH sides). The
+    # pair above is the whole contract.
 
 
 def test_an_empty_or_topology_free_dict_is_returned_unchanged() -> None:

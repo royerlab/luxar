@@ -1,7 +1,7 @@
 """No ``gsplat`` command may advertise a topology it does not have.
 
 The third hygiene axis of #1600 (the first two live in
-``test_gsplat_content_scoped_metrics.py`` and its domain twin). Three commands
+``test_gsplat_content_scoped_metrics.py`` and its domain twin). Four commands
 change the artifact's STRUCTURE KIND while threading the input's ``stats``
 through to the output's ``pipeline/`` group, so a flattened four-level pyramid
 published ``lod_kind: substitutive`` / ``n_substitutive_levels: 4`` /
@@ -10,15 +10,29 @@ published ``lod_kind: substitutive`` / ``n_substitutive_levels: 4`` /
 * ``flatten``   → one flat leaf (writes through ``GSplatData.save``)
 * ``decimate``  → one flat leaf (writes through ``write_gsplats_tree``)
 * ``partition`` → ``kind=partition`` of bare leaves (``write_gsplats_tree``)
+* ``lod``       → whatever ``--recipe`` says, from ANY input: an already-LOD
+  store is legal (only a ``kind=partition`` is refused) and every recipe starts
+  from ``data.flattened()``, so no ``lod`` output preserves its input's shape
 
 Both writers are represented on purpose: a fix wired into one would leave the
-other silently exempt.
+other silently exempt. ``lod`` is covered per RECIPE for the same reason — the
+recipe is where this hid, because ``stream`` re-stamps the ladder half of the
+record (making it look handled) while inheriting the substitutive half, and
+``flat`` published a full substitutive record one line above its own
+``recipe: flat``. Unlike the other three, ``lod`` DOES publish a topology
+record: its own. So each row states the exact key set its builder stamps, and
+absence is the claim — no positive "this is not a pyramid" stamp is invented.
 
 Two things must SURVIVE the scrub, which is why it is a deny-list of topology
 keys rather than "drop the ``pipeline/`` group": the normalization block (the
 input volume's intensity scale) and ``coarsen_dims``, which the writer READS BACK
 to derive the chunk-ordering barrier — so a naive scrub does not merely delete a
 stamp, it changes the output's layout.
+
+:func:`test_every_gsplat_command_is_classified` closes the table against the
+commands that actually exist. ``lod`` slipped the first pass of this axis
+precisely because nothing did that — the sibling appearance-carry guard in
+``test_gsplat_cli_extended.py`` had already learned the lesson from ``merge``.
 """
 
 from __future__ import annotations
@@ -108,6 +122,15 @@ def test_the_fixture_covers_the_registry() -> None:
     assert set(_EXEMPT) == set(_STRUCTURE_SCOPE_EXEMPT_KEYS) | set(
         NORMALIZATION_STATS_KEYS
     )
+    # The per-row "what this command stamps itself" sets are spelled literally
+    # (they were measured), so anchor them to the registry too: a key that fell
+    # out of it would otherwise sit in a row unchecked, since the row test only
+    # ever iterates keys that are IN the registry.
+    published = {k for _, _, keys in _KIND_CHANGING for k in keys}
+    assert not published - set(_STRUCTURE_SCOPED_STATS_KEYS), (
+        "a _KIND_CHANGING row names key(s) the registry does not: "
+        f"{sorted(published - set(_STRUCTURE_SCOPED_STATS_KEYS))}"
+    )
 
 
 def _chol4(n: int) -> np.ndarray:
@@ -180,20 +203,224 @@ def _ordering_barriers(path: Path) -> List[List[int]]:
     return found
 
 
-#: ``(id, argv)`` for the three commands that publish a different structure KIND
-#: than they were given. Both writers are covered — see the module docstring.
-_KIND_CHANGING: List[tuple[str, Sequence[str]]] = [
-    ("flatten", ("flatten", "{in}", "{out}")),
-    ("decimate", ("decimate", "{in}", "{out}", "--target", "50")),
-    ("partition", ("partition", "{in}", "{out}", "--parts", "4")),
+#: The substitutive producer's own block and the additive producer's ladder
+#: summary, as MEASURED at the root of a ``gsplat lod`` output. Split out because
+#: the two halves are stamped independently — which is what let ``stream`` look
+#: handled (it re-stamps the ladder) while carrying a false substitutive block.
+_SUBSTITUTIVE_BLOCK = frozenset(
+    {
+        "lod_kind",
+        "compression_factor",
+        "method",
+        "n_substitutive_levels",
+        "coverage_inflation",
+        "conserve_mass",
+        "refine",
+        "refine_iters",
+    }
+)
+_LADDER_SUMMARY = frozenset(
+    {
+        "lod_method",
+        "lod_n_lods",
+        "lod_breakpoints_kind",
+        "lod_cutpoints",
+        "lod_substitutive_level",
+    }
+)
+
+#: ``(id, argv, published)`` for every command that publishes a different
+#: structure KIND than it was given. Both writers are covered — see the module
+#: docstring. ``published`` is the EXACT set of topology keys that command's own
+#: builder stamps at the root, so the row pins both halves of the claim: nothing
+#: inherited, and nothing invented either. The three non-``lod`` commands build
+#: no topology at all, hence the empty sets.
+#:
+#: The five ``_recipe_pipeline_info`` keys (``per_part`` / ``n_lods`` /
+#: ``breakpoints`` / ``levels`` / ``additive_ladders``) appear in NO row: only a
+#: ``batch-fit merge`` stamps them, and it is a producer rather than a rewriter.
+#: The fixture plants them anyway, so every row below proves they are dropped.
+_KIND_CHANGING: List[tuple[str, Sequence[str], frozenset[str]]] = [
+    ("flatten", ("flatten", "{in}", "{out}"), frozenset()),
+    ("decimate", ("decimate", "{in}", "{out}", "--target", "50"), frozenset()),
+    ("partition", ("partition", "{in}", "{out}", "--parts", "4"), frozenset()),
+    # `lod`, one row per recipe: the recipe axis is where the defect hid.
+    ("lod:flat", ("lod", "{in}", "{out}", "--recipe", "flat"), frozenset({"recipe"})),
+    (
+        "lod:stream",
+        ("lod", "{in}", "{out}", "--recipe", "stream", "--n-lods", "3"),
+        _LADDER_SUMMARY | {"recipe"},
+    ),
+    (
+        "lod:levels",
+        (
+            "lod",
+            "{in}",
+            "{out}",
+            "--recipe",
+            "levels",
+            "-K",
+            "4",
+            "-L",
+            "3",
+            "--coarsen-dims",
+            "0,1,2",
+        ),
+        _SUBSTITUTIVE_BLOCK | _LADDER_SUMMARY | {"recipe"},
+    ),
+    (
+        "lod:tiles",
+        ("lod", "{in}", "{out}", "--recipe", "tiles", "--max-elements", "80"),
+        frozenset({"recipe"}),
+    ),
+    (
+        "lod:overview",
+        (
+            "lod",
+            "{in}",
+            "{out}",
+            "--recipe",
+            "overview",
+            "--max-elements",
+            "80",
+            "-K",
+            "4",
+            "--coarsen-dims",
+            "0,1,2",
+        ),
+        frozenset({"recipe"}),
+    ),
+    (
+        "lod:adaptive",
+        (
+            "lod",
+            "{in}",
+            "{out}",
+            "--recipe",
+            "adaptive",
+            "--max-elements",
+            "80",
+            "-K",
+            "4",
+            "-L",
+            "2",
+            "--coarsen-dims",
+            "0,1,2",
+        ),
+        frozenset({"recipe"}),
+    ),
 ]
+
+#: ``gsplat`` commands that do NOT change the structure kind, each with the
+#: reason. Union'd with :data:`_KIND_CHANGING` by
+#: :func:`test_every_gsplat_command_is_classified`, so a NEW command has to say
+#: which it is instead of inheriting a silent pass — which is exactly how ``lod``
+#: slipped this axis's first pass.
+_NOT_KIND_CHANGING: Dict[str, str] = {
+    # ── structure-PRESERVING rewrites: the kind stays true of the output ──
+    "additive": "re-ladders every leaf in place; leaf / lod levels / partition "
+    "parts all keep their shape",
+    "cull": "a culled pyramid is still that pyramid (and the counts that moved "
+    "are re-stamped, not dropped)",
+    "filter": "same splat set narrowed, same tree shape",
+    "slice": "a coordinate-range filter; structure untouched",
+    "transform": "geometry only",
+    "reencode": "preserves the tree verbatim",
+    "migrate-format": "translates a legacy LAYOUT to the current one; the "
+    "structure kind it describes is the same one",
+    "annotate-quality": "rewrites the input in place, stamping quality attrs; "
+    "no structural rewrite at all",
+    # ── producers: the record they publish is their own, freshly stamped ──
+    "fit": "produces the fit; there is no inherited topology to invalidate",
+    "merge": "publishes no inherited provenance at all",
+    "batch-fit run": "produces the fit (local multi-GPU)",
+    "batch-fit submit": "produces the fit (Slurm array)",
+    "batch-fit merge": "assembles a kind=partition from its OWN tiles and "
+    "stamps the per-part record fresh (`_recipe_pipeline_info`)",
+    # ── not an in->out .gsplats.zarr rewrite ──
+    "cal": "writes a calibration JSON",
+    "benchmark": "GPU profile, no dataset output",
+    "compare": "measures, writes no store",
+    "render": "writes a volume",
+    "denoise": "operates on a volume, not on splats",
+    "convert": "writes a .luxar.zarr scene, not a .gsplats.zarr",
+    "export": "writes a classical PLY, which carries no Luxar stats",
+    "import": "reads a foreign file that carries no Luxar stats",
+    "info": "read-only",
+    "view": "read-only (serves a viewer)",
+    "napari": "read-only",
+    "doctor": "read-only diagnostics",
+    "batch-fit status": "read-only",
+    "batch-fit validate": "read-only (or deletes corrupt tiles with --fix)",
+    "batch-fit cancel": "cancels Slurm jobs",
+    "batch-fit denoise-calibrate": "operates on a volume, writes JSON",
+    "batch-fit denoise-preprocess": "operates on a volume",
+    "batch-fit resolve-floor": "resolves a floor level, writes JSON/manifest",
+}
+
+
+def test_every_gsplat_command_is_classified() -> None:
+    """A new command cannot skip this axis by not being in the table.
+
+    ``_KIND_CHANGING`` was a hand-written three-row table with nothing closing it
+    against the commands that exist, and ``lod`` — a fourth publisher of the same
+    defect, across six recipes — slipped the whole first pass. The sibling
+    appearance-carry guard (``test_gsplat_cli_extended.py``) had already learned
+    this from ``merge``; its command enumerator is imported rather than copied so
+    the three guards cannot drift on what "a gsplat command" is.
+
+    A command that genuinely changes the structure kind belongs in
+    ``_KIND_CHANGING`` — i.e. it has to be FIXED, not merely listed. There is no
+    "known-broken" bucket on purpose: after #1600 no gsplat rewriter is in that
+    state, and offering the bucket is how one gets there again.
+    """
+    from luxar.cli.tests.test_gsplat_content_scoped_metrics import (
+        _registered_gsplat_commands,
+    )
+
+    registered = _registered_gsplat_commands()
+    assert "lod" in registered and "batch-fit merge" in registered, (
+        f"the enumeration missed something obvious: {sorted(registered)}"
+    )
+
+    # Read the command off the argv, not the row id: `lod` appears under six
+    # recipe-suffixed ids. Resolved against the REGISTERED names because a
+    # command can be two tokens (`batch-fit merge`).
+    def command_of(argv: Sequence[str]) -> str:
+        two = " ".join(argv[:2])
+        return two if two in registered else argv[0]
+
+    classified = {command_of(argv) for _, argv, _ in _KIND_CHANGING} | set(
+        _NOT_KIND_CHANGING
+    )
+    assert not registered - classified, (
+        "unclassified gsplat command(s) — either it changes the structure kind "
+        "(fix it to scrub, and add a _KIND_CHANGING row stating the topology "
+        "keys it stamps itself) or it does not (add a _NOT_KIND_CHANGING reason): "
+        f"{sorted(registered - classified)}"
+    )
+    assert not classified - registered, (
+        f"the tables name commands that no longer exist: "
+        f"{sorted(classified - registered)}"
+    )
+    assert all(_NOT_KIND_CHANGING.values()), "every exemption needs a reason"
+
+
+#: The rows whose ``coarsen_dims`` provenance is untouched by the command, so the
+#: written ordering barrier is a clean read of the exempted key. ``lod`` is left
+#: out: its substitutive builder RE-STAMPS ``coarsen_dims`` from ``--coarsen-dims``
+#: (to ``None`` when the flag is absent), which is a claim about what that builder
+#: stamps rather than about this scrub.
+_BARRIER_ROWS = [row for row in _KIND_CHANGING if not row[0].startswith("lod:")]
 
 
 @pytest.mark.parametrize(
-    "argv", [argv for _, argv in _KIND_CHANGING], ids=[i for i, _ in _KIND_CHANGING]
+    ("argv", "published"),
+    [(argv, published) for _, argv, published in _KIND_CHANGING],
+    ids=[i for i, _, _ in _KIND_CHANGING],
 )
 def test_a_kind_change_drops_the_topology_record(
-    tmp_path: Path, argv: Sequence[str]
+    tmp_path: Path, argv: Sequence[str], published: "frozenset[str]"
 ) -> None:
     src = _fixture(tmp_path / "pyr.gsplats.zarr")
     assert set(_pipeline_attrs(src)) >= set(_TOPOLOGY), (
@@ -203,13 +430,30 @@ def test_a_kind_change_drops_the_topology_record(
     _run(argv, src, out)
 
     pipeline = _pipeline_attrs(out)
-    survivors = [k for k in _STRUCTURE_SCOPED_STATS_KEYS if k in pipeline]
-    assert not survivors, f"stale topology stamps on disk: {survivors}"
+    survivors = {k for k in _STRUCTURE_SCOPED_STATS_KEYS if k in pipeline}
+    assert survivors == set(published), (
+        f"published topology keys {sorted(survivors)} != this command's own "
+        f"record {sorted(published)}; inherited: "
+        f"{sorted(survivors - set(published))}, missing: "
+        f"{sorted(set(published) - survivors)}"
+    )
     # ...and not smuggled back in through the loader's merged view either.
     stats = _root_stats(out)
-    assert not [k for k in _STRUCTURE_SCOPED_STATS_KEYS if k in stats], (
-        f"the loaded stats still carry the topology record: {stats}"
+    assert {k for k in _STRUCTURE_SCOPED_STATS_KEYS if k in stats} == set(published), (
+        f"the loaded stats disagree with the on-disk record: {stats}"
     )
+    # What IS published must be the command's own value, not the fixture's. Only
+    # `recipe` is checked positively (it names this run); `lod_kind` is skipped
+    # because its only value is the mechanism name, so a re-stamp and a carry are
+    # indistinguishable BY VALUE there — the key-set assertion above is what
+    # covers it (a `flat` leaf publishing `lod_kind` at all is the defect).
+    for key in sorted(published - {"recipe", "lod_kind"}):
+        assert pipeline[key] != _TOPOLOGY[key], (
+            f"{key!r} still carries the input's value {_TOPOLOGY[key]!r} — "
+            "re-stamped from the inherited record rather than freshly built"
+        )
+    if "recipe" in published:
+        assert pipeline["recipe"] == argv[argv.index("--recipe") + 1]
 
     # The survivors, by key and by value.
     for key, value in _EXEMPT.items():
@@ -228,7 +472,9 @@ def test_a_kind_change_drops_the_topology_record(
 
 
 @pytest.mark.parametrize(
-    "argv", [argv for _, argv in _KIND_CHANGING], ids=[i for i, _ in _KIND_CHANGING]
+    "argv",
+    [argv for _, argv, _ in _BARRIER_ROWS],
+    ids=[i for i, _, _ in _BARRIER_ROWS],
 )
 def test_the_ordering_barrier_survives_the_scrub(
     tmp_path: Path, argv: Sequence[str]

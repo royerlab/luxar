@@ -889,9 +889,24 @@ rewrites a store must apply all three rules:
   ladder summary (`lod_method`, `lod_n_lods`, `lod_breakpoints_kind`,
   `lod_cutpoints`, `lod_substitutive_level`) and the `batch-fit merge` per-part
   knobs (`per_part`, `n_lods`, `breakpoints`, `levels`, `additive_ladders`).
-  Dropped only by a rewrite that changes the **structure kind** — `flatten` and
-  `decimate` (both emit one flat leaf) and `partition` (a `kind=partition` of
-  bare leaves). Content-changing but structure-preserving ops keep the block and
+  Dropped only by a rewrite that changes the **structure kind**. The test for a
+  new command is one question — *can this command's output have a different
+  structure kind than its input?* — and if the answer is yes it must scrub, even
+  when a particular run happens to preserve the kind. Four commands qualify
+  today: `flatten` (one flat leaf), `partition` (a `kind=partition` of bare
+  leaves), `decimate` (one flat leaf whenever it actually reduces; its
+  `target >= n_splats` early return hands the input straight back, which
+  correctly republishes the record because nothing changed) and `lod`, whose
+  every `--recipe` starts from `data.flattened()` — so no `lod` output preserves
+  its input's shape, and an already-LOD store is a legal input (only a
+  `kind=partition` is refused). `lod` is also the one of the four that publishes
+  a topology record of its own, and it publishes **only** what its own builder
+  stamped: `recipe` alone for `flat` / `tiles` / `overview` / `adaptive`, plus the
+  additive ladder summary for `stream`, plus the substitutive block as well for
+  `levels`. Nothing positive is invented to fill the gap — an absent `lod_kind`
+  is the format's "this artifact does not know", and the alternative (stamping
+  `lod_kind: additive` on a `stream` output) would be a new claim rather than a
+  scrub. Content-changing but structure-**preserving** ops keep the block and
   *re-stamp* the counts that moved instead: a `cull` of a substitutive pyramid is
   still that pyramid, with refreshed `lod_n_lods` / `lod_cutpoints`.
 

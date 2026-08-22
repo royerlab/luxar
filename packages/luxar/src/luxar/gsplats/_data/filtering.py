@@ -34,10 +34,11 @@ predicate covers more than one:
 Reusing the region predicate for the metrics is what #1600 was: a ``cull -r 0.5``
 that halved the splat count published the pre-cull PSNR as its own, and ``gsplat
 info`` reads ``psnr_db`` as THE dataset's reconstruction quality. The third axis
-is the same issue's other half: ``flatten`` / ``decimate`` / ``partition``
-published ``lod_kind: substitutive``, ``n_substitutive_levels: 4`` and
-``lod_cutpoints: [2, 4, 5, 7]`` for a store that is one flat leaf (or four bare
-parts). No category subsumes another — a whole-volume bbox that removed nothing
+is the same issue's other half: ``flatten`` / ``partition`` / ``lod`` /
+``decimate`` published ``lod_kind: substitutive``, ``n_substitutive_levels: 4``
+and ``lod_cutpoints: [2, 4, 5, 7]`` for a store that is one flat leaf (or four
+bare parts) — ``lod --recipe flat`` printing that block one line above its own
+``recipe: flat``. No category subsumes another — a whole-volume bbox that removed nothing
 keeps all three, a non-spatial cull keeps the region and topology stamps and
 loses the metrics, an actual crop loses region and metrics but keeps the topology,
 and ``flatten`` loses only the topology.
@@ -324,12 +325,16 @@ def stats_after_structure_change(stats: "Mapping[str, Any]") -> "Dict[str, Any]"
 
     For a rewrite that KNOWS it produced a different kind of thing: ``gsplat
     flatten`` and :func:`~luxar.gsplats.lod.decimate.decimate` emit one flat leaf,
-    ``gsplat partition`` emits a ``kind=partition`` of bare leaves. All three
-    thread the input's stats through to the output's ``fitting/`` /
-    ``provenance/`` / ``pipeline/`` groups (correct — the fit provenance is still
-    true), which is how a flattened pyramid came to advertise ``lod_kind:
-    substitutive`` with four levels and a four-rung ladder it does not have
-    (#1600).
+    ``gsplat partition`` emits a ``kind=partition`` of bare leaves, and ``gsplat
+    lod`` emits whatever ``--recipe`` says from an input of any shape (every
+    recipe starts by flattening, so none of them preserves it). All four thread
+    the input's stats through to the output's ``fitting/`` / ``provenance/`` /
+    ``pipeline/`` groups (correct — the fit provenance is still true), which is how
+    a flattened pyramid came to advertise ``lod_kind: substitutive`` with four
+    levels and a four-rung ladder it does not have (#1600). ``lod`` applies this to
+    the LOADED INPUT rather than to a result, because its two write paths both
+    descend from that one dict and each builder then stamps its own true record
+    over the cleaned copy.
 
     Returns a copy rather than mutating: the call sites hand over the dict they
     loaded off disk, or the dataset's own ``stats``, and the rest of this
