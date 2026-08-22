@@ -874,6 +874,7 @@ _BAD_PARTITION_SPECS = [
     ("an_int", 3),
     ("max_elements_zero", {"max_elements": 0}),
     ("unknown_rule", {"rule": "bogus"}),
+    ("unknown_key", {"parts": 4}),
 ]
 
 
@@ -2589,6 +2590,23 @@ def _add_coloured(scene: Any, geometry: str, colors: Any, **extra: Any) -> Any:
 
 def _coloured_element_count(geometry: str) -> int:
     return _MESH_N if geometry == "mesh" else _N
+
+
+class TestPartitionSpecKeys:
+    @pytest.mark.parametrize("geometry", ["points", "lines", "gsplats", "mesh"])
+    def test_an_unknown_key_is_refused_before_any_node_is_written(
+        self, tmp_path: Any, geometry: str
+    ) -> None:
+        compiler, scene, path = open_scene(
+            tmp_path, f"unknown_partition_key_{geometry}.luxar.zarr"
+        )
+        colors = np.zeros((_coloured_element_count(geometry), 3), dtype=np.uint8)
+
+        with pytest.raises(ValueError, match=r"unknown partition key: 'parts'"):
+            _add_coloured(scene, geometry, colors, partition={"parts": 4})
+
+        assert "n" not in compiler.store
+        assert finalized_group_keys(compiler, path) == set()
 
 
 #: ``(id, partition spec)`` for the dtype cases. Two of these REALLY split at

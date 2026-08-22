@@ -1625,6 +1625,7 @@ _BAD_PARTITION_SPECS = [
     ("an_int", 3),
     ("max_elements_zero", {"max_elements": 0}),
     ("unknown_rule", {"rule": "bogus"}),
+    ("unknown_key", {"parts": 4}),
 ]
 
 
