@@ -16,6 +16,7 @@ import pytest
 from luxar.conftest import find_repo_relative_file, read_ts_number_const
 from luxar.core.group.lod.group import MAX_COVERAGE_FRACTION
 from luxar.demos import demo_biodiversity_planetary_scale as demo_module
+from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
 from luxar.demos.demo_biodiversity_planetary_scale import (
     ALL_LIFE_SLOT,
     ALLOWED_LICENSES,
@@ -116,10 +117,15 @@ def test_lonlat_to_xyz_longitude_is_periodic():
 def test_globe_camera_looks_at_origin_from_outside():
     cam = globe_camera(-40.0, 25.0, distance=2.6)
     assert cam.target == (0.0, 0.0, 0.0)
-    assert np.linalg.norm(cam.position) == pytest.approx(RADIUS * 2.6, rel=1e-6)
+    distance = np.linalg.norm(cam.position)
+    old_half_height = RADIUS * 2.6 * math.tan(math.radians(42.0) / 2.0)
+    assert distance * math.tan(math.radians(CINEMATIC_FOV_DEG) / 2.0) == pytest.approx(
+        old_half_height, rel=1e-6
+    )
+    assert cam.fov is None
     # The camera must sit over the requested surface point.
     surface = lonlat_to_xyz(np.array([-40.0]), np.array([25.0]), np.zeros(1))[0]
-    cos = float(np.dot(cam.position / np.linalg.norm(cam.position), surface / RADIUS))
+    cos = float(np.dot(cam.position / distance, surface / RADIUS))
     assert cos == pytest.approx(1.0, abs=1e-5)
 
 
