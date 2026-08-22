@@ -995,8 +995,8 @@ def write_scene(
             )
             add_demo_caption(
                 scene,
-                f"{len(data.positions):,} cells · {streamlines.streamline_count:,} streamlines · "
-                f"{preset.grid_size}³ field · {preset.name} preset",
+                f"{len(data.positions):,} cells • {streamlines.streamline_count:,} streamlines • "
+                f"{preset.grid_size}³ field • {preset.name} preset",
                 DEMO_META.get("citation"),
             )
 

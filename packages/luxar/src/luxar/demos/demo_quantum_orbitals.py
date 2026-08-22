@@ -714,7 +714,7 @@ def create_luxar_scene(orbitals: GSplatData, output_path: Path) -> Path:
             )
             add_demo_caption(
                 scene,
-                "Hydrogen |ψ|² · Gaussian splats",
+                "Hydrogen |ψ|² • Gaussian splats",
                 DEMO_META.get("citation"),
             )
 

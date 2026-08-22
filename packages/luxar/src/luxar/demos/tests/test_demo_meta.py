@@ -857,10 +857,13 @@ def _caption_reference(tree: ast.Module) -> str | None:
 def _overlay_args(node: ast.Call) -> tuple[list[ast.expr], bool]:
     """Return overlay-bearing arguments and whether this is a demo caption."""
     args: list[ast.expr] = []
-    is_demo_caption = isinstance(node.func, ast.Name) and node.func.id == (
-        "add_demo_caption"
+    keyword_names = {kw.arg for kw in node.keywords}
+    is_demo_caption = (
+        isinstance(node.func, ast.Name) and node.func.id == "add_demo_caption"
+    ) or (
+        "credit" in keyword_names and "citation" in keyword_names
     )
-    if is_demo_caption:
+    if isinstance(node.func, ast.Name) and node.func.id == "add_demo_caption":
         args += node.args[1:2]
         args += [kw.value for kw in node.keywords if kw.arg == "caption"]
     if isinstance(node.func, ast.Attribute) and node.func.attr in (
@@ -904,7 +907,7 @@ def _overlay_strings(source: str) -> list[str]:
                         and caption_reference
                         and not text.endswith(caption_reference)
                     ):
-                        text = f"{text} · {caption_reference}"
+                        text = f"{text} • {caption_reference}"
                     found.append(text)
     return found
 
@@ -1329,6 +1332,21 @@ def test_corpus_yields_the_credits_the_sweep_judges() -> None:
         "Either the footer changed (update _KNOWN_CORPUS_CREDITS) or extraction "
         "broke (the sweep would go green while checking nothing)."
     )
+
+
+def test_corpus_captions_do_not_repeat_their_compact_reference() -> None:
+    duplicates = []
+    for path in DEMO_PATHS:
+        citation = extract_demo_meta(path).get("citation")
+        if not citation:
+            continue
+        reference = citation.get("ref", citation["short"])
+        duplicates += [
+            (path.name, text)
+            for text in _overlay_strings(path.read_text())
+            if text.count(reference) > 1
+        ]
+    assert not duplicates, f"captions repeat their compact reference: {duplicates}"
 
 
 @pytest.mark.parametrize(

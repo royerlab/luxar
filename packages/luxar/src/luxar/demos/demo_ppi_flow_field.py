@@ -1214,9 +1214,9 @@ def write_scene(
             )
             add_demo_caption(
                 scene,
-                f"{len(nodes):,} proteins · {len(edges):,} HuRI interactions · "
-                f"{streamline_data.streamline_count:,} streamlines · "
-                f"{preset.grid_size}³ field · {preset.name} preset",
+                f"{len(nodes):,} proteins • {len(edges):,} HuRI interactions • "
+                f"{streamline_data.streamline_count:,} streamlines • "
+                f"{preset.grid_size}³ field • {preset.name} preset",
                 DEMO_META.get("citation"),
             )
 

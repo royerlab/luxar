@@ -325,7 +325,7 @@ def create_scene(output_path) -> None:
                 aprint(f"added '{channel['name']}' ({channel['label']})")
             add_demo_caption(
                 scene,
-                "scikit-image cells3d · isosurfaces",
+                "scikit-image cells3d • isosurfaces",
                 DEMO_META.get("citation"),
             )
 

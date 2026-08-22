@@ -1471,8 +1471,8 @@ def build_scene(
 
             add_demo_caption(
                 scene,
-                f"{n_nodes:,} ASes · {n_edges_kept:,} relationships · "
-                f"{n_tier1} tier-1 · {n_comms} communities · CAIDA serial-2",
+                f"{n_nodes:,} ASes • {n_edges_kept:,} relationships • "
+                f"{n_tier1} tier-1 • {n_comms} communities • CAIDA serial-2",
                 DEMO_META.get("citation"),
             )
 

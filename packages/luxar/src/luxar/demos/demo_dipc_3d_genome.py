@@ -558,7 +558,7 @@ def build_scene(output_path: Path, polylines: list[dict]) -> int:
             )
             add_demo_caption(
                 scene,
-                "Tan et al. 2018 • chromosomes as 3D polylines",
+                "chromosomes as 3D polylines",
                 DEMO_META.get("citation"),
             )
             scene.add_text(

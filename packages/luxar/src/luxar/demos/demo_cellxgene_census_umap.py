@@ -295,7 +295,7 @@ def build_scene(
             )
             add_demo_caption(
                 scene,
-                f"{n:,} human cells · scVI UMAP",
+                f"{n:,} human cells • scVI UMAP",
                 DEMO_META.get("citation"),
             )
     aprint(f"\nScene saved to: {output_path}")

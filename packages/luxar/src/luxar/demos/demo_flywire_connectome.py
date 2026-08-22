@@ -717,7 +717,7 @@ def build_scene(
             # Footer
             add_demo_caption(
                 scene,
-                f"{len(neurons):,} neurons · {len(edges):,} connections · "
+                f"{len(neurons):,} neurons • {len(edges):,} connections • "
                 f"FlyWire release 783",
                 DEMO_META.get("citation"),
             )

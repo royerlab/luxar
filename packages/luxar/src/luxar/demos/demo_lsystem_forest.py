@@ -1830,7 +1830,7 @@ def _add_overlays(scene: Any) -> None:
     )
     add_demo_caption(
         scene,
-        "keys 1/2 select season/growth · [ ] step · play animates · hover a trunk",
+        "keys 1/2 select season/growth • [ ] step • play animates • hover a trunk",
         DEMO_META.get("citation"),
     )
 

@@ -302,6 +302,8 @@ def create_mouse_scene(
                             transition_duration=0.2,
                         )
 
+            # #1810 recorded the mouse citation in DEMO_META, so the stale
+            # zebrafish credit removed in #1744 no longer leaves this uncited.
             add_demo_caption(
                 scene,
                 f"{n_points:,} peaks • Mouse E7.5–E8.75 • 3D UMAP",

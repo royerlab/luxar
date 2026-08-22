@@ -1059,7 +1059,7 @@ def build_scene(bundles: dict, output_path: Path, *, points: int) -> Path:
             )
             add_demo_caption(
                 scene,
-                "HCP-1065 atlas (Yeh 2022, CC BY-SA 4.0) — 87 tracts",
+                "HCP-1065 atlas (CC BY-SA 4.0) — 87 tracts",
                 DEMO_META.get("citation"),
             )
             # The one user-visible statement of the LOD caveat. Without it the

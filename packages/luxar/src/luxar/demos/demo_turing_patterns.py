@@ -332,7 +332,7 @@ def generate_turing_patterns(
             )
             add_demo_caption(
                 scene,
-                "Gray-Scott reaction-diffusion · 6 patterns",
+                "Gray-Scott reaction-diffusion • 6 patterns",
                 DEMO_META.get("citation"),
             )
 

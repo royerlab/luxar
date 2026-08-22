@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import ast
+from pathlib import Path
 
 from luxar.demos import format_demo_caption, registry
+
+from ._scanned_modules import scanned_demo_modules
 
 # These demos delegate their only scene build and caption to
 # ``_interop_common.build_interop_scene``. Keep the list explicit so a new
@@ -39,8 +42,12 @@ def _attribute_calls(tree: ast.AST, name: str) -> list[ast.Call]:
     ]
 
 
+def _demo_modules() -> list[Path]:
+    return [path for path in scanned_demo_modules() if path.name.startswith("demo_")]
+
+
 def test_every_authored_scene_has_exactly_one_standard_caption() -> None:
-    for path in sorted(registry._DEMOS_DIR.glob("demo_*.py")):
+    for path in _demo_modules():
         tree = ast.parse(path.read_text(), filename=str(path))
         creates = _attribute_calls(tree, "create_scene")
         captions = _name_calls(tree, "add_demo_caption")
@@ -56,7 +63,9 @@ def test_every_authored_scene_has_exactly_one_standard_caption() -> None:
 
 
 def test_demo_modules_do_not_hand_author_bottom_right_overlays() -> None:
-    for path in sorted(registry._DEMOS_DIR.glob("demo_*.py")):
+    for path in scanned_demo_modules():
+        if path.name == "_caption.py":
+            continue
         tree = ast.parse(path.read_text(), filename=str(path))
         offenders = []
         for node in ast.walk(tree):
@@ -86,4 +95,42 @@ def test_every_cited_demo_has_a_footer_sized_reference() -> None:
             continue
         caption = format_demo_caption("caption", demo.citation)
         reference = demo.citation.get("ref", demo.citation["short"])
-        assert caption == f"caption · {reference}", demo.key
+        assert caption == f"caption • {reference}", demo.key
+
+
+def test_caption_fields_use_the_standard_separator() -> None:
+    """Only caption expressions are normalized; labels and math may use ``·``."""
+    for path in _demo_modules():
+        tree = ast.parse(path.read_text(), filename=str(path))
+        caption_exprs = []
+        for call in _name_calls(tree, "add_demo_caption"):
+            caption_exprs += call.args[1:2]
+            caption_exprs += [kw.value for kw in call.keywords if kw.arg == "caption"]
+        for call in _name_calls(tree, "build_interop_scene"):
+            caption_exprs += [kw.value for kw in call.keywords if kw.arg == "credit"]
+        offenders = [
+            node.lineno
+            for expr in caption_exprs
+            for node in ast.walk(expr)
+            if isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and " · " in node.value
+        ]
+        assert not offenders, f"{path.name} uses · in caption fields at {offenders}"
+
+
+def test_nd_transform_channel_readouts_use_the_free_top_left_corner() -> None:
+    path = next(path for path in _demo_modules() if path.name == "demo_nd_transforms.py")
+    tree = ast.parse(path.read_text(), filename=str(path))
+    readouts = []
+    for call in _attribute_calls(tree, "add_html"):
+        names = [kw.value for kw in call.keywords if kw.arg == "name"]
+        if not names or "expected_channel_" not in ast.unparse(names[0]):
+            continue
+        kwargs = {
+            kw.arg: ast.literal_eval(kw.value)
+            for kw in call.keywords
+            if kw.arg in {"position", "anchor"}
+        }
+        readouts.append((kwargs["position"], kwargs["anchor"]))
+    assert readouts == [((0.015, 0.025), "top-left")]

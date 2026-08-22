@@ -853,8 +853,7 @@ def build_scene(
             ]
             if corum_hits_kept:
                 footer.append(f"{corum_hits_kept:,} CORUM-backed edges")
-            footer.append("Luck et al., Nature 2020")
-            add_demo_caption(scene, " · ".join(footer), DEMO_META.get("citation"))
+            add_demo_caption(scene, " • ".join(footer), DEMO_META.get("citation"))
 
         aprint(
             f"  ✓ Scene: {n_nodes:,} nodes, {n_edges_kept:,} edges, "

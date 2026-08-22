@@ -473,7 +473,7 @@ Controls:
             )
             add_demo_caption(
                 scene,
-                "Light-sheet microscopy · DAPI-labelled nuclei",
+                "Light-sheet microscopy • DAPI-labelled nuclei",
                 DEMO_META.get("citation"),
             )
 

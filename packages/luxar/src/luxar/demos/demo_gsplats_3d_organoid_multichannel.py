@@ -531,7 +531,7 @@ Controls:
                 )
             add_demo_caption(
                 scene,
-                f"Light-sheet microscopy · {len(gsplats_list)} channels",
+                f"Light-sheet microscopy • {len(gsplats_list)} channels",
                 DEMO_META.get("citation"),
             )
 

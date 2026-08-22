@@ -829,7 +829,7 @@ def build_animated_scene(output_path: Path, cat: dict) -> int:
             )
             add_demo_caption(
                 scene,
-                f"{n_ast:,} asteroids · {ANIMATE_FRAMES} timepoints",
+                f"{n_ast:,} asteroids • {ANIMATE_FRAMES} timepoints",
                 DEMO_META.get("citation"),
             )
         return n_ast * ANIMATE_FRAMES

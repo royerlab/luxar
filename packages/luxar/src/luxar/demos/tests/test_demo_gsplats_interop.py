@@ -204,13 +204,15 @@ class TestDemoConfig:
         # CC BY 4.0 attribution must be surfaced in the in-scene credit
         # OVERLAY specifically (the artifact-level credit baked into the
         # scene) — not merely somewhere in the source, which the console-only
-        # provenance print would also satisfy. Assert on the CREDIT constant
-        # that is actually passed to build_interop_scene.
-        assert "CC BY 4.0" in m.CREDIT and "danybittel" in m.CREDIT
-        # And that CREDIT is the value wired into the scene builder.
+        # provenance print would also satisfy. The raw credit carries the
+        # license while the standard caption helper appends the cited author.
+        assert "CC BY 4.0" in m.CREDIT
+        assert "Dany Bittel" in m.DEMO_META["citation"]["ref"]
+        # Both pieces must be wired into the scene builder.
         import inspect
 
         assert "credit=CREDIT" in inspect.getsource(m.build_scene)
+        assert 'citation=DEMO_META["citation"]' in inspect.getsource(m.build_scene)
 
     def test_sog_matrixcity_bundle_and_files(self) -> None:
         m = _load("demo_gsplats_interop_sog_matrixcity")

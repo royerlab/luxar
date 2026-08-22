@@ -245,7 +245,7 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
             )
             add_demo_caption(
                 scene,
-                "Light-sheet / iSIM · membranes + nuclei",
+                "Light-sheet / iSIM • membranes + nuclei",
                 DEMO_META.get("citation"),
             )
 

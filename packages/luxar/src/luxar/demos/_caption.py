@@ -15,7 +15,7 @@ class _TextScene(Protocol):
 
 
 def format_demo_caption(caption: str, citation: Optional[Mapping[str, str]]) -> str:
-    """Append the citation's compact reference without duplicating a present tail."""
+    """Append the compact reference using ``•`` as the caption field separator."""
     validated = validate_citation(citation)
     if validated is None:
         return caption
@@ -27,7 +27,7 @@ def format_demo_caption(caption: str, citation: Optional[Mapping[str, str]]) -> 
         )
     if caption.endswith(reference):
         return caption
-    return f"{caption} · {reference}"
+    return f"{caption} • {reference}"
 
 
 def add_demo_caption(
