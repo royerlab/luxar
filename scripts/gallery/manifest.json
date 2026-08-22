@@ -364,15 +364,6 @@
       "dataset": "datasets/demos/spiral_galaxy_5d.luxar.zarr"
     },
     {
-      "id": "arxiv_papers_semantic_scholar",
-      "title": "arXiv Papers (Semantic Scholar)",
-      "geometry": "points",
-      "category": "embeddings",
-      "script": "demo_arxiv_embeddings_semantic_scholar.py",
-      "dataset": "datasets/demos/arxiv_papers_semantic_scholar.luxar.zarr",
-      "citation": "Semantic Scholar Academic Graph (Ammar et al. 2018)"
-    },
-    {
       "id": "atp_synthase",
       "title": "Atp Synthase",
       "geometry": "points",
