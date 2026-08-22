@@ -569,8 +569,7 @@ describe('initPicking', () => {
       // a regression that double-registered a cleanup (or added a 5th
       // listener without considering teardown) gets flagged. The four
       // are: controls.removeEventListener('start' | 'end') and
-      // sceneManager.removeEventListener('change' | 'camera-changed') — see
-      // core/app/picking/init-picking.ts lines 144, 161, 162, 169.
+      // sceneManager.removeEventListener('change' | 'camera-changed').
       expect(addSpy.mock.calls.length).toBe(4);
       // Each registered cleanup is a function (not a value / object).
       for (const call of addSpy.mock.calls) {
