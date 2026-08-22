@@ -456,8 +456,6 @@ jobs:
         if: needs.changes.outputs.dom_py != 'false'
         with:
           python-version: ${{ matrix.python-version }}
-          cache: pip
-          cache-dependency-path: pyproject.toml
 
       - name: Install Hatch
         if: needs.changes.outputs.dom_py != 'false'
@@ -638,17 +636,23 @@ jobs:
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
         with:
           python-version: '3.12'
-          cache: pip
-          cache-dependency-path: pyproject.toml
 
       - name: Install Hatch
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
         run: pipx install hatch
 
+      - name: Verify fixture environment uses CPU-only torch
+        if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
+        working-directory: .
+        run: >-
+          hatch run fixtures:python -c "import torch;
+          assert torch.__version__.endswith('+cpu'), torch.__version__;
+          assert torch.version.cuda is None, torch.version.cuda"
+
       - name: Generate test fixtures
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
         working-directory: .
-        run: hatch run python packages/luxar-viewer/tests/fixtures/generate_test_data.py
+        run: hatch run fixtures:python packages/luxar-viewer/tests/fixtures/generate_test_data.py
 
       - name: Check (overrides + typecheck + lint + layers + knip + coverage)
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
@@ -891,8 +895,6 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
-          cache: pip
-          cache-dependency-path: pyproject.toml
 
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         with:

@@ -41,8 +41,8 @@ pnpm test:with-fixtures           # generate then run unit tests
 pnpm test                         # global-setup regenerates missing/stale ones automatically
 
 # Equivalent direct invocations (from repo root):
-hatch run python packages/luxar-viewer/tests/fixtures/generate_test_data.py
-hatch run python packages/luxar-viewer/tests/fixtures/generate_expectations.py
+hatch run fixtures:python packages/luxar-viewer/tests/fixtures/generate_test_data.py
+hatch run fixtures:python packages/luxar-viewer/tests/fixtures/generate_expectations.py
 ```
 
 `src/tests/global-setup.ts` runs once before the Vitest suite, detects

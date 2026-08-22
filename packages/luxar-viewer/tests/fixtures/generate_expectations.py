@@ -6,7 +6,7 @@ then consumed by Vitest in Node.js. This gives us a fast, non-browser contract
 check for Python encode -> zarr -> TypeScript decode consistency.
 
 Run from the repository root:
-    hatch run python packages/luxar-viewer/tests/fixtures/generate_expectations.py
+    hatch run fixtures:python packages/luxar-viewer/tests/fixtures/generate_expectations.py
 """
 
 from __future__ import annotations

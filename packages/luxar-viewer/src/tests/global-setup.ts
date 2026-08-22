@@ -367,7 +367,7 @@ export async function setup(): Promise<void> {
     // per-fixture regeneration to reach for. That is affordable now only
     // because the content-digest check above stops this firing spuriously.
     runPythonGenerator(
-      'hatch run python packages/luxar-viewer/tests/fixtures/generate_test_data.py',
+      'hatch run fixtures:python packages/luxar-viewer/tests/fixtures/generate_test_data.py',
       'fixtures'
     );
   }
@@ -394,7 +394,7 @@ export async function setup(): Promise<void> {
   if (isExpectationsStale(regeneratedFixtures)) {
     console.log('[test-setup] Round-trip expectations missing/stale — generating...');
     runPythonGenerator(
-      'hatch run python packages/luxar-viewer/tests/fixtures/generate_expectations.py',
+      'hatch run fixtures:python packages/luxar-viewer/tests/fixtures/generate_expectations.py',
       'round-trip expectations'
     );
     writeFileSync(EXPECTATIONS_STAMP_PATH, `${expectationsFingerprint()}\n`);
