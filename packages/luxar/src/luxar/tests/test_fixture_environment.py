@@ -21,6 +21,11 @@ FIXTURE_SCRIPTS = (
     "packages/luxar-viewer/tests/fixtures/generate_test_data.py",
     "packages/luxar-viewer/tests/fixtures/generate_expectations.py",
 )
+PYTHON_GUARD_INPUTS = (
+    "Makefile",
+    "packages/luxar-viewer/src/tests/global-setup.ts",
+    "packages/luxar-viewer/tests/fixtures/README.md",
+)
 GUARD_PATH = "packages/luxar/src/luxar/tests/test_fixture_environment.py"
 FIXTURE_COMMAND = re.compile(
     r"(?:hatch|\$\(HATCH\))\s+run(?P<args>[^\n]*?)"
@@ -113,3 +118,29 @@ def test_typescript_ci_verifies_lean_cpu_torch_without_caching_pip() -> None:
         ]
         assert setup_steps, f"{job_name} has no setup-python step"
         assert all("cache" not in step.get("with", {}) for step in setup_steps)
+
+
+def test_fixture_guard_inputs_trigger_python_ci() -> None:
+    """Every non-Python input policed by this module must run python-tests."""
+    workflow = yaml.safe_load(
+        (REPO / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    )
+    classify_steps = [
+        step
+        for step in workflow["jobs"]["changes"]["steps"]
+        if step.get("id") == "filter"
+    ]
+    assert len(classify_steps) == 1
+    dom_py_pattern = re.search(
+        r"grep -qE '([^']+)' && dom_py=true", classify_steps[0]["run"]
+    )
+    assert dom_py_pattern is not None
+
+    for relative_path in PYTHON_GUARD_INPUTS:
+        classified = subprocess.run(
+            ["grep", "-Eq", dom_py_pattern.group(1)],
+            input=f"{relative_path}\n",
+            text=True,
+            check=False,
+        )
+        assert classified.returncode == 0, f"dom_py does not classify {relative_path}"

@@ -110,8 +110,9 @@ jobs:
             # python-tests also hosts the CROSS-LANGUAGE gates, so dom_py owns their
             # non-Python inputs: format-contract/contract.yaml and the generated TS
             # half (`check-contract`), the viewer package.json version (version
-            # consistency), and the demos/data tree + its manifest
-            # (`check-data-manifest`). None of those carries a Python extension.
+            # consistency), the demos/data tree + its manifest
+            # (`check-data-manifest`), and the non-Python entry points guarded by
+            # test_fixture_environment.py. None carries a Python extension.
             printf '%s\n' "$changed" | grep -qE '(\.py$|^Makefile$|^pyproject\.toml$|\.(pyx|pxd|cu|cuh)$|^format-contract/|^packages/luxar/src/luxar/demos/data|^packages/luxar-viewer/(package\.json$|src/tests/global-setup\.ts$|src/types/format-contract\.ts$|tests/fixtures/README\.md$))' && dom_py=true || true
             # TS domain = the WHOLE viewer package (its py fixture-generators feed TS tests -> hierarchy) + root TS config
             printf '%s\n' "$changed" | grep -qE '(^packages/luxar-viewer/|^tsconfig[^/]*\.json$|(^|/)vitest[^/]*\.(ts|js|mjs)$)' && dom_ts=true || true
