@@ -32,6 +32,18 @@ const FIXTURES = {
   lutU16: `${FIXTURES_BASE}/test_lut_u16.luxar.zarr`,
 };
 
+// Raise this file above the config's 60 s default (`timeout` in
+// playwright.config.ts). Each test calls bounded helpers back to back —
+// `waitForLuxarReady`, `waitForPointsLoaded`, `assertNoConsoleErrors` (via
+// `getConsoleMessages`) and `getLuxarState`, each carrying its own 45 s
+// deadline — so at 60 s the test wall ALWAYS arrived first and the per-probe
+// diagnostics those bounds exist to emit could never fire: a starved page
+// reported a bare `Test timeout of 60000ms exceeded` with no location. 240 s
+// clears the 4 x 45 s worst case plus navigation and the 100k-point texture
+// scan, so the helper that actually starved is what reports. Only the timeout
+// changes: this file keeps the config's `fullyParallel: true`.
+test.describe.configure({ timeout: 240000 });
+
 test.describe('Test Fixture Rendering', () => {
   test('should render sharpness range fixture correctly', async ({ page }) => {
     await page.goto(`/?src=${FIXTURES.sharpness}&debug`);

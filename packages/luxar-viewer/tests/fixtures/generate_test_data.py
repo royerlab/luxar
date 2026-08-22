@@ -259,7 +259,18 @@ def generate_lut_u16_test() -> None:
                 Dimension("z", unit="units", display=True),
             ]
         )
-        radii = np.ones(n_points, dtype=np.float32) * 0.5
+        # Radius 0.05, not the 0.5 the small fixtures use: the sibling
+        # `generate_lut_test` draws 1000 points at 0.5 over the SAME sigma=10
+        # cloud, so scaling by sqrt(1000 / 100_000) = 0.1 keeps this fixture's
+        # total covered screen area in that ballpark instead of 100x it, which
+        # is what made this the one fixture heavy enough to starve a shared box
+        # under the E2E suite's parallel workers. Do NOT reduce the point count
+        # to get the same effect — 100k is what puts the encoder in the
+        # lut_uint16 tier (see the docstring) — and do not put the radius back
+        # up: nothing asserts on it. The E2E test reads colors out of the
+        # element texture, the unit test reads `points/colors` only, and both
+        # readiness helpers gate on `initialized` / `totalPoints`, never pixels.
+        radii = np.ones(n_points, dtype=np.float32) * 0.05
 
         with LuxarZarrCompiler(
             output,
