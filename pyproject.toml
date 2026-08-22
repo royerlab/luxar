@@ -451,9 +451,9 @@ check = [
 ]
 
 # Viewer fixtures need the real gsplat LOD recipe pipeline, but none of the
-# dev/test/demo tooling in `default`. Resolve torch from the CPU wheel index so
-# fixture generation cannot pull the bundled NVIDIA CUDA runtime onto CI or a
-# developer machine.
+# dev/test/demo tooling in `default`. The extra index applies to every package
+# in this env; resolve torch from it so fixture generation cannot pull the
+# bundled NVIDIA CUDA runtime onto CI or a developer machine.
 [tool.hatch.envs.fixtures]
 # Named Hatch environments inherit `default` unless they explicitly select a
 # template. Self-templating keeps this environment independent while still

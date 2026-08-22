@@ -8,24 +8,23 @@ multi-gigabyte CUDA/tooling install that this dedicated environment avoids.
 from __future__ import annotations
 
 import re
+import subprocess
 import tomllib
 from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 REPO = Path(__file__).resolve().parents[5]
 FIXTURE_SCRIPTS = (
     "packages/luxar-viewer/tests/fixtures/generate_test_data.py",
     "packages/luxar-viewer/tests/fixtures/generate_expectations.py",
 )
-COMMAND_FILES = (
-    ".github/workflows/ci.yml",
-    "Makefile",
-    "packages/luxar-viewer/package.json",
-    "packages/luxar-viewer/src/tests/global-setup.ts",
-    "packages/luxar-viewer/tests/fixtures/README.md",
-    *FIXTURE_SCRIPTS,
+GUARD_PATH = "packages/luxar/src/luxar/tests/test_fixture_environment.py"
+FIXTURE_COMMAND = re.compile(
+    r"(?:hatch|\$\(HATCH\))\s+run(?P<args>[^\n]*?)"
+    r"(?P<script>generate_(?:test_data|expectations)\.py)\b"
 )
 
 
@@ -56,38 +55,61 @@ def test_every_fixture_generator_uses_the_dedicated_environment() -> None:
     legacy_calls: list[str] = []
     dedicated_calls: set[str] = set()
 
-    for relative_path in COMMAND_FILES:
-        text = (REPO / relative_path).read_text(encoding="utf-8")
-        for script in FIXTURE_SCRIPTS:
-            command_pattern = (
-                rf"(?:hatch|\$\(HATCH\)) run ([^\n\"'&;]*?){re.escape(script)}"
-            )
-            for match in re.finditer(command_pattern, text):
-                command = match.group(0)
-                if "fixtures:python" not in command:
-                    legacy_calls.append(f"{relative_path}: {command}")
-                else:
-                    dedicated_calls.add(script)
+    tracked_files = (
+        subprocess.run(
+            ["git", "ls-files", "-z"],
+            cwd=REPO,
+            check=True,
+            capture_output=True,
+        )
+        .stdout.decode()
+        .split("\0")
+    )
+    for relative_path in tracked_files:
+        if not relative_path or relative_path == GUARD_PATH:
+            continue
+        path = REPO / relative_path
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for match in FIXTURE_COMMAND.finditer(text):
+            command = match.group(0)
+            script = match.group("script")
+            if "fixtures:python" not in match.group("args"):
+                legacy_calls.append(f"{relative_path}: {command}")
+            else:
+                dedicated_calls.add(script)
 
     assert not legacy_calls, "\n".join(legacy_calls)
-    assert dedicated_calls == set(FIXTURE_SCRIPTS)
+    assert dedicated_calls == {Path(script).name for script in FIXTURE_SCRIPTS}
 
 
 def test_typescript_ci_verifies_lean_cpu_torch_without_caching_pip() -> None:
     """CI must prove the resolver selected the lean CPU env and skip wheel caching."""
-    workflow = (REPO / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-    python_job = workflow.split("\n  python-tests:", 1)[1].split(
-        "\n  typescript-tests:", 1
-    )[0]
-    typescript_job = workflow.split("\n  typescript-tests:", 1)[1].split(
-        "\n  release-readiness:", 1
-    )[0]
-    e2e_job = workflow.split("\n  e2e-tests:", 1)[1]
+    workflow = yaml.safe_load(
+        (REPO / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    )
+    jobs = workflow["jobs"]
+    guarded_jobs = ("python-tests", "typescript-tests", "e2e-tests")
+    assert set(guarded_jobs) <= jobs.keys()
 
-    assert "torch.__version__.endswith('+cpu')" in typescript_job
-    assert "torch.version.cuda is None" in typescript_job
-    assert "('napari', 'PyQt6', 'ruff', 'mypy')" in typescript_job
-    assert "importlib.util.find_spec(name) is None" in typescript_job
-    assert "cache: pip" not in python_job
-    assert "cache: pip" not in typescript_job
-    assert "cache: pip" not in e2e_job
+    verify_steps = [
+        step
+        for step in jobs["typescript-tests"]["steps"]
+        if step.get("name") == "Verify fixture environment is lean and CPU-only"
+    ]
+    assert len(verify_steps) == 1
+    assert verify_steps[0]["run"] == (
+        "hatch run fixtures:python scripts/check_fixture_env.py"
+    )
+
+    # Four setup-python entries consumed 98% of the 13 GB cache budget and
+    # evicted the pnpm/cargo caches that provide a larger wall-clock benefit.
+    for job_name in guarded_jobs:
+        setup_steps = [
+            step
+            for step in jobs[job_name]["steps"]
+            if str(step.get("uses", "")).startswith("actions/setup-python@")
+        ]
+        assert setup_steps, f"{job_name} has no setup-python step"
+        assert all("cache" not in step.get("with", {}) for step in setup_steps)

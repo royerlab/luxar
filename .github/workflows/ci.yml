@@ -112,7 +112,7 @@ jobs:
             # half (`check-contract`), the viewer package.json version (version
             # consistency), and the demos/data tree + its manifest
             # (`check-data-manifest`). None of those carries a Python extension.
-            printf '%s\n' "$changed" | grep -qE '(\.py$|^pyproject\.toml$|\.(pyx|pxd|cu|cuh)$|^format-contract/|^packages/luxar/src/luxar/demos/data|^packages/luxar-viewer/(package\.json$|src/types/format-contract\.ts$))' && dom_py=true || true
+            printf '%s\n' "$changed" | grep -qE '(\.py$|^Makefile$|^pyproject\.toml$|\.(pyx|pxd|cu|cuh)$|^format-contract/|^packages/luxar/src/luxar/demos/data|^packages/luxar-viewer/(package\.json$|src/tests/global-setup\.ts$|src/types/format-contract\.ts$|tests/fixtures/README\.md$))' && dom_py=true || true
             # TS domain = the WHOLE viewer package (its py fixture-generators feed TS tests -> hierarchy) + root TS config
             printf '%s\n' "$changed" | grep -qE '(^packages/luxar-viewer/|^tsconfig[^/]*\.json$|(^|/)vitest[^/]*\.(ts|js|mjs)$)' && dom_ts=true || true
             printf '%s\n' "$changed" | grep -qE '(\.rs$|^wasm/|(^|/)Cargo\.(toml|lock)$)' && dom_rust=true || true
@@ -644,13 +644,7 @@ jobs:
       - name: Verify fixture environment is lean and CPU-only
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
         working-directory: .
-        run: >-
-          hatch run fixtures:python -c "import importlib.util; import torch;
-          assert torch.__version__.endswith('+cpu'), torch.__version__;
-          assert torch.version.cuda is None, torch.version.cuda;
-          unwanted = ('napari', 'PyQt6', 'ruff', 'mypy');
-          assert all(importlib.util.find_spec(name) is None for name in unwanted),
-          [name for name in unwanted if importlib.util.find_spec(name) is not None]"
+        run: hatch run fixtures:python scripts/check_fixture_env.py
 
       - name: Generate test fixtures
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
