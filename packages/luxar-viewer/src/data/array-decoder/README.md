@@ -45,8 +45,8 @@ order MUST match the Python spec or behavior diverges:
    value). `k` comes from `enc.original_shape[1]`.
 4. **log_scalar** (`log_scalar_uint8`, `log_scalar_uint16`) — checked
    BEFORE generic quantization because the name contains `uint`. Decodes
-   via `expm1(normalized × max_log)`. Used for radii and other
-   wide-dynamic-range positive scalars.
+   via the shared TypeScript `expm1(normalized × max_log)` kernels. Used for
+   radii and other wide-dynamic-range positive scalars.
 5. **perchannel** (`log_perchannel_*`, `signed_log_perchannel_*`,
    `linear_perchannel_*`, `geolog_perchannel_*`) — also checked before
    generic quantization. Per-column dequantization via the `col_lo` /
