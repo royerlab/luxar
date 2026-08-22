@@ -16,7 +16,8 @@ The fit now subtracts the measured specimen level. Background reconstruction dro
 ~4700x, nuclei-to-background contrast goes from 4x to over 12000x, and the dim nuclei
 that were previously indistinguishable from haze (1.7x above it) now stand 784x clear of
 it. About 84% of the scene's emitted mass turns out to have been background; nuclei
-brightness is essentially unchanged, so the baked appearance settings still apply.
+brightness is essentially unchanged, but the volumetric absorption/opacity pairing was
+dialled on the pre-floor fit and still needs a live A/B against the replacement.
 
 The floor is measured in camera counts, where it can be checked against a histogram, and
 converted to the fit's normalised space at the point of use. The value is documented
@@ -24,6 +25,5 @@ in-place alongside the sweep that chose it, including the arm that over-floors a
 destroys the dim band, so it cannot be raised casually.
 
 Existing local Tribolium caches are not self-describing. Run any of these demos once
-with `--recompute` (or run
-`luxar demo cache clear gsplats_3d_tribolium_embryo`) to replace a fit created before
-this floor was added.
+with `--recompute` to replace a fit created before this floor was added; the downloaded
+archive and extracted TIFF are reused when already present.

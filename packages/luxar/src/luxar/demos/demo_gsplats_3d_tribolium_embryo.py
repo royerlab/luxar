@@ -55,17 +55,16 @@ USAGE:
     python demo_gsplats_3d_tribolium_embryo.py [--recompute] [--no-serve] [--serve-only] [--downsample=N]
 
 Options:
-    --recompute:      Force re-fitting from scratch (download + GPU fitting)
+    --recompute:      Force GPU re-fitting (reuses cached download/extraction)
     --no-serve:       Generate scene without launching viewer
     --serve-only:     Just serve a previously generated scene
     --show-roundtrip: Show matplotlib comparison of original vs reconstructed volume
     --downsample=N:   Downsample factor for fitting (default: 1)
 
 By default, precomputed GSplats are loaded from package data (Git LFS).
-Use --recompute to re-fit from scratch (requires network + GPU).
+Use --recompute to re-fit from scratch (requires a GPU and, if uncached, network).
 If the local Tribolium cache predates the 675-count floor, run once with
---recompute (or clear it with
-``luxar demo cache clear gsplats_3d_tribolium_embryo``).
+--recompute, which reuses the downloaded archive and extracted TIFF.
 
 Output:
     - Scene saved to:  datasets/demos/gsplats_3d_tribolium_embryo.luxar.zarr
@@ -536,21 +535,20 @@ Navigation:
                     # `volumetric` — emission-absorption (Max 1995) rather than
                     # alpha-over: the embryo then reads as dense tissue with
                     # real front-to-back depth cueing instead of a shell of
-                    # composited surface peaks. The three numbers below are ONE
-                    # setting, dialled in together against this store in the
-                    # Layers panel; moving any of them alone breaks the balance.
+                    # composited surface peaks. The three numbers below were
+                    # dialled together against the pre-floor fit. The current
+                    # 675-count-floor fit removes most of that store's haze and
+                    # has not yet been re-A/B'd, so treat them as an inherited
+                    # baseline rather than a newly verified coupling.
                     blending_mode="volumetric",
                     # Absorption carries the depth: kappa 3.13 is well above the
                     # 1.0 identity, so the far side of the embryo attenuates
                     # visibly through the near side. (kappa=0 would render
                     # exactly like additive.)
                     absorption=3.13,
-                    # The counterweight to that kappa. Volumetric INTEGRATES
-                    # emission along every ray, and this light-sheet volume
-                    # carries a heavy diffuse background, so at any ordinary
-                    # opacity the accumulated haze buries the embryo. Holding
-                    # emission down to 0.06 keeps the sum in range and lets
-                    # absorption — not brightness — do the shaping.
+                    # The counterweight to that kappa on the pre-floor fit.
+                    # Holding emission down to 0.06 kept its accumulated haze
+                    # in range; the floor-refitted store needs a fresh live A/B.
                     opacity=0.06,
                     # DISPLAY RANGE 0-1.085 as the Layers panel shows it. This
                     # is a DIRECT-COLOUR node (explicit RGB, no colormap), so
@@ -641,7 +639,7 @@ def show_roundtrip_comparison(
 def _prepare_roundtrip_comparison(
     volume: np.ndarray, recon: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Put raw counts and a fitter render on the same floor-suppressed scale."""
+    """Put raw counts and a fitter render on one scale, rescaling recon in place."""
     vmax, floor_normalised, fit_range = _fit_intensity_scale(volume)
     reference = volume - SPECIMEN_BACKGROUND_COUNTS
     reference /= vmax * fit_range
