@@ -22,3 +22,7 @@ The floor is measured in camera counts, where it can be checked against a histog
 converted to the fit's normalised space at the point of use. The value is documented
 in-place alongside the sweep that chose it, including the arm that over-floors and
 destroys the dim band, so it cannot be raised casually.
+
+Existing local Tribolium caches are not self-describing. Run any of these demos once
+with `--recompute` (or clear `gsplats_tribolium` with `luxar demo cache clear`) to
+replace a fit created before this floor was added.
