@@ -66,10 +66,9 @@ Use --recompute to re-fit from scratch (requires a GPU and, if uncached, network
 If the local Tribolium cache predates the 675-count floor, run once with
 --recompute, which reuses the downloaded archive and extracted TIFF (or
 clear it with ``luxar demo cache clear gsplats_3d_tribolium_embryo``).
-Nothing detects the stale fit automatically: the cache is only compared
-against the packaged LFS source, which does not exist for this
-non-redistributable dataset, and a loaded store does not report the floor it
-was fitted with.
+A stale fit is detected and warned about on load: the cache cannot be compared
+against the packaged LFS source (which does not exist for this
+non-redistributable dataset), so the recorded floor is checked instead.
 
 Output:
     - Scene saved to:  datasets/demos/gsplats_3d_tribolium_embryo.luxar.zarr
@@ -681,6 +680,57 @@ def _prepare_roundtrip_comparison(
 # =============================================================================
 
 
+def _warn_if_cached_fit_predates_floor() -> None:
+    """Say so when the loaded cache was fitted before the specimen floor existed.
+
+    Without this the fix applies only to whoever happens to have a cold cache: a
+    fit made earlier still carries the embryo's haze, and nothing else notices.
+    ``load_precomputed_gsplats`` compares the cache against the packaged LFS
+    source, which does not exist for this non-redistributable dataset, so there
+    is no staleness signal to piggyback on.
+
+    A fit records the floor it used under ``stats["floor"]`` (normalised units),
+    which is read here through ``include_stats=True`` rather than by naming a
+    metadata document — the store may be zarr format 2 or 3 and the document
+    names differ. Note the sibling readers do NOT expose it:
+    ``load_precomputed_gsplats`` hardcodes ``include_stats=False``, and
+    ``inspect_gsplats_zarr`` reads only the ``fitting/`` group while the floor
+    lands in ``pipeline/``. Hence the extra load; the file is ~2 MB.
+
+    Two signals, both one-sided so a good cache is never flagged:
+
+    * no ``floor`` recorded at all — either a pre-floor fit, or a reduction pass
+      that rewrote ``pipeline/`` (which is what happened to the old shipped fit);
+    * a floor far below the specimen level, i.e. the ~205-count detector offset
+      ``auto`` used to resolve to. Comparing normalised values is safe in this
+      direction because ``--downsample`` lowers the volume maximum and therefore
+      RAISES the normalised floor — it cannot push a good fit under the bar.
+    """
+    cache_file = CACHE_DIR / "tribolium.gsplats.zarr.zip"
+    if not cache_file.exists():
+        return
+    try:
+        stats = GSplatData.load(cache_file, include_stats=True).stats or {}
+    except Exception as exc:  # noqa: BLE001 - a diagnostic must never break the demo
+        aprint(f"(could not read the cached fit's floor: {exc})")
+        return
+
+    floor = stats.get("floor")
+    # Half the expected level: comfortably clear of 675 counts, comfortably above
+    # the ~205-count offset it must catch.
+    suspicious = 0.5 * (SPECIMEN_BACKGROUND_COUNTS / 15902.0)
+    if floor is None or float(floor) < suspicious:
+        recorded = "none recorded" if floor is None else f"{float(floor):.6f}"
+        aprint(
+            f"WARNING: this cached fit predates the specimen background floor "
+            f"(floor: {recorded}; expected about "
+            f"{SPECIMEN_BACKGROUND_COUNTS / 15902.0:.6f}). It still contains the "
+            f"embryo's ~{SPECIMEN_BACKGROUND_COUNTS:.0f}-count autofluorescence "
+            f"haze, which obscures the nuclei. Re-run with --recompute, or clear "
+            f"it with `luxar demo cache clear gsplats_3d_tribolium_embryo`."
+        )
+
+
 def main():
     """Main demo execution."""
     aprint("=" * 70)
@@ -711,6 +761,7 @@ def main():
 
     if precomputed is not None:
         gsplats_data = precomputed[0]
+        _warn_if_cached_fit_predates_floor()
     else:
         # --recompute path: download raw data, fit from scratch
         warn_if_no_cuda_gpu()

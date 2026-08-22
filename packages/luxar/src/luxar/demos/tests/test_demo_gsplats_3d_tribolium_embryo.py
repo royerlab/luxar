@@ -133,3 +133,58 @@ def test_empty_volume_is_rejected_before_fitting() -> None:
     """
     with pytest.raises(ValueError, match="non-positive maximum"):
         _DEMO_MODULE.fit_tribolium(np.zeros((4, 4, 4), dtype=np.float32))
+
+
+@pytest.mark.parametrize(
+    ("floor", "should_warn", "why"),
+    [
+        (None, True, "a pre-floor fit, or a reduction pass that rewrote pipeline/"),
+        (204.8 / 15902.0, True, "the ~205-count detector offset `auto` resolves to"),
+        (675.0 / 15902.0, False, "the specimen floor this demo now asks for"),
+        (675.0 / 1828.0, False, "--downsample lowers vmax, so the ratio RISES"),
+    ],
+)
+def test_stale_cache_warning_fires_only_on_a_pre_floor_fit(
+    monkeypatch, tmp_path, capsys, floor, should_warn, why
+) -> None:
+    """The staleness check must catch an old fit and never flag a good one.
+
+    Otherwise the background fix silently applies only to whoever happens to have
+    a cold cache. The `--downsample` row is the one-sidedness guard: downsampling
+    lowers the volume maximum, which RAISES the normalised floor, so it must not
+    be mistaken for a stale fit.
+    """
+    (tmp_path / "tribolium.gsplats.zarr.zip").write_bytes(b"placeholder")
+    monkeypatch.setattr(_DEMO_MODULE, "CACHE_DIR", tmp_path)
+
+    class FakeData:
+        stats = {} if floor is None else {"floor": floor}
+
+    monkeypatch.setattr(
+        _DEMO_MODULE.GSplatData, "load", classmethod(lambda cls, *a, **k: FakeData())
+    )
+    _DEMO_MODULE._warn_if_cached_fit_predates_floor()
+    warned = "predates the specimen background floor" in capsys.readouterr().out
+    assert warned is should_warn, f"floor={floor!r} ({why})"
+
+
+def test_stale_cache_check_is_silent_without_a_cache(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """No cache is the fresh-clone case, not a stale one."""
+    monkeypatch.setattr(_DEMO_MODULE, "CACHE_DIR", tmp_path)
+    _DEMO_MODULE._warn_if_cached_fit_predates_floor()
+    assert capsys.readouterr().out == ""
+
+
+def test_stale_cache_check_never_breaks_the_demo(monkeypatch, tmp_path, capsys) -> None:
+    """A diagnostic that cannot read the store must not take the demo down."""
+    (tmp_path / "tribolium.gsplats.zarr.zip").write_bytes(b"not a zarr archive")
+    monkeypatch.setattr(_DEMO_MODULE, "CACHE_DIR", tmp_path)
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("unreadable store")
+
+    monkeypatch.setattr(_DEMO_MODULE.GSplatData, "load", classmethod(boom))
+    _DEMO_MODULE._warn_if_cached_fit_predates_floor()  # must not raise
+    assert "could not read the cached fit's floor" in capsys.readouterr().out
