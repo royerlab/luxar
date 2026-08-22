@@ -8,6 +8,7 @@ blending — no network, no PNG IO, no GPU fit. The demo is loaded by file path
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -22,6 +23,11 @@ pytest.importorskip("scipy")
 
 _DEMO_PATH = (
     Path(__file__).resolve().parents[1] / "demo_gsplats_3d_visible_human_head.py"
+)
+_DATA_MANIFEST_PATH = _DEMO_PATH.parent / "data_manifest.json"
+_SHIPPED_FIT_SHA256 = "c6ebbab8c2d1bdff0d5fd35f7032c6a375724b5fe5e6d33e8ca4e6af6ab139f6"
+_SHIPPED_COLORS_SHA256 = (
+    "63bce184e56d6d3b5f8f6817100c66310984c45da65fd94cdbc0a42ac05abb44"
 )
 
 
@@ -479,7 +485,7 @@ class TestShippedLfsPairIsGuardedToo:
     door is covered above; without these two the LFS call could be replaced by
     ``if True:`` with the whole suite still green, because every other test points
     ``LFS_*`` at absent paths so that branch never runs. That is not academic
-    here: today the shipped pair is the one that must be REFUSED (#1670).
+    here: the shipped pair was the one that exposed the missing guard (#1670).
     """
 
     @staticmethod
@@ -554,16 +560,38 @@ class TestShippedPairIsAligned:
     download and refit on every run for anyone who pulled Git LFS.
 
     A sidecar carries no positions, so a mis-ordered one cannot be repaired in
-    place — it has to be resampled from the volume. That makes this cheap check
-    worth having: it fails the moment the two assets stop belonging together,
-    instead of when someone notices the demo is slow.
+    place — it has to be resampled from the volume. The manifest-pin test runs
+    without materialized LFS assets in CI; bump its constants only after this
+    deep pair check passes on a checkout where ``git lfs pull`` has run.
     """
 
+    def test_manifest_keeps_the_verified_pair_pinned(self) -> None:
+        manifest = json.loads(_DATA_MANIFEST_PATH.read_text())
+        files = {
+            entry["name"]: entry["sha256"]
+            for entry in manifest["datasets"]["gsplats_visible_human_head"]["files"]
+        }
+
+        assert files == {
+            _demo.FIT_FILE: _SHIPPED_FIT_SHA256,
+            _demo.COLORS_FILE: _SHIPPED_COLORS_SHA256,
+        }, (
+            "the shipped fit/colors pair changed; materialize Git LFS, rerun "
+            "test_shipped_colors_belong_to_the_shipped_fit, then update both "
+            "verified sha256 constants together"
+        )
+
+    @pytest.mark.slow
     def test_shipped_colors_belong_to_the_shipped_fit(self) -> None:
         if _demo.is_lfs_pointer(_demo.LFS_FIT) or not _demo.LFS_FIT.exists():
-            pytest.skip("Visible Human Git LFS assets are not available")
+            pytest.skip(
+                "Visible Human Git LFS assets are not materialized (run 'git lfs pull')"
+            )
         if _demo.is_lfs_pointer(_demo.LFS_COLORS) or not _demo.LFS_COLORS.exists():
-            pytest.skip("Visible Human Git LFS colors sidecar is not available")
+            pytest.skip(
+                "Visible Human Git LFS colors sidecar is not materialized "
+                "(run 'git lfs pull')"
+            )
 
         fit = GSplatData.load(_demo.LFS_FIT, include_stats=False)
         colors = _demo._load_colors_f32(_demo.LFS_COLORS)
@@ -580,4 +608,3 @@ class TestShippedPairIsAligned:
             "store's splat order, so the demo will refit on every run (#1670). "
             "Resample the sidecar at the shipped store's centers."
         )
-        assert _demo._colors_match_fit(fit, colors, "shipped pair")
