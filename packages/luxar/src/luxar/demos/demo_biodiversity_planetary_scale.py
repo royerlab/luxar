@@ -340,7 +340,7 @@ from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.group.compositing import position_bounds_from_array
-from luxar.core.group.partition import median_bsp_partition
+from luxar.core.group.partition import bsp_leaf_parts, spatial_bsp_tree
 from luxar.core.viewer_config import (
     CameraConfig,
     DimensionsConfig,
@@ -2567,7 +2567,8 @@ def add_lod_tiles(
     # slice and is sliced away when the user scrubs, which is what makes the
     # scrubbable layers legible.
     pos5 = summary_positions(positions3)
-    parts = median_bsp_partition(pos5, max_elements)
+    tree = spatial_bsp_tree(pos5, max_elements, rule="median")
+    parts = bsp_leaf_parts(tree)
     lod = substitutive_lod_or_flat(
         dict(
             compression_factor=4,
@@ -2598,6 +2599,7 @@ def add_lod_tiles(
         max_elements=max_elements,
         layer=True,
         position_bounds=position_bounds_from_array(pos5),
+        bsp_tree=tree.to_serializable(),
         **(compositing or {}),
     )
     for i, idx in enumerate(parts):
