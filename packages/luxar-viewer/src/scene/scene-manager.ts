@@ -89,7 +89,7 @@ import type { ControlType } from '../controls/controls-manager';
 
 /** Default scene up (world +Y) — overridden per scene by `viewer_config.up`. */
 const DEFAULT_SCENE_UP = new THREE.Vector3(0, 1, 0);
-// Avoid projection and material refreshes when the requested FOV is already visually identical.
+/** Skip projection/material refreshes within the 0.5° deadband preserved from prior call sites. */
 const FOV_APPLY_DEADBAND_DEG = 0.5;
 
 /** Caller-resolved scene-load decisions that affect initial camera setup. */
