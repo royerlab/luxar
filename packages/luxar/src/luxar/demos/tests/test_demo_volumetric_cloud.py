@@ -665,8 +665,17 @@ class TestScene:
         assert scene.dimensions is not None
         assert tuple(scene.dimensions.dimensions[3].range) == (0, 4)
 
+    def test_an_empty_emission_reports_a_clear_error(self, tmp_path) -> None:
+        with pytest.raises(ValueError, match="No condensate was emitted"):
+            cloud.generate_evolving_cloud(
+                tmp_path / "cloud.luxar.zarr",
+                n_parcels=1,
+                n_frames=1,
+                target_points_per_frame=1,
+            )
+
     def test_the_scene_opens_on_a_turntable(self, tmp_path) -> None:
-        """Auto-rotate, unlike the animation block, is honoured on load.
+        """Auto-rotate is honoured on load.
 
         A cumulus is a 3D body whose whole point is that it looks different
         from every side, and a still opening frame shows exactly one of those.

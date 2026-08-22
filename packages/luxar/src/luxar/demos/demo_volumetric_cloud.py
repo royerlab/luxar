@@ -1429,6 +1429,9 @@ def generate_evolving_cloud(
             f"mean {int(np.mean(per_frame_counts)):,}"
         )
 
+    if not frames_pos:
+        raise ValueError("No condensate was emitted; increase --parcels")
+
     all_positions = np.concatenate(frames_pos, axis=0)
     all_colors = np.concatenate(frames_col, axis=0)
     all_radii = np.concatenate(frames_rad, axis=0)
@@ -1472,8 +1475,7 @@ def generate_evolving_cloud(
             # Turntable on by default. A cumulus is a 3D body whose whole point
             # is that it looks different from every side — the sunlit flank,
             # the shadowed one, the lean of the top — and a still opening frame
-            # shows exactly one of those. Unlike the `animation` block, this is
-            # honoured on load: RenderingControls.applyZarrDefaults forwards
+            # shows exactly one of those. RenderingControls.applyZarrDefaults forwards
             # `autoRotate` / `autoRotateSpeed` to the controls manager.
             auto_rotate=True,
             auto_rotate_speed=AUTO_ROTATE_SPEED,
@@ -1578,9 +1580,9 @@ def main() -> None:
     n_frames = DEFAULT_FRAMES
     for arg in sys.argv[1:]:
         if arg.startswith("--parcels="):
-            n_parcels = int(arg.split("=")[1])
+            n_parcels = max(1, int(arg.split("=")[1]))
         elif arg.startswith("--frames="):
-            n_frames = int(arg.split("=")[1])
+            n_frames = max(1, int(arg.split("=")[1]))
 
     aprint("=" * 70)
     aprint("EVOLVING CLOUD DEMO (3D + time)")

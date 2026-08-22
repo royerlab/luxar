@@ -188,9 +188,14 @@ class TestAnimationConfig:
 
     def test_invalid_step_size(self) -> None:
         # Matches the viewer's own `setStepSize` guard.
-        for bad in (0.0, -1.0):
+        for bad in (0.0, -1.0, float("inf"), float("nan")):
             with pytest.raises(ValueError, match="step_size must be > 0"):
                 AnimationConfig(step_size=bad)
+
+    def test_invalid_target_fps(self) -> None:
+        for bad in (0.0, -1.0, float("inf"), float("nan")):
+            with pytest.raises(ValueError, match="target_fps must be finite and > 0"):
+                AnimationConfig(target_fps=bad)
 
     def test_invalid_loop(self) -> None:
         with pytest.raises(ValueError, match="loop must be one of"):

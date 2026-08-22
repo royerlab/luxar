@@ -52,7 +52,6 @@ import {
   disposePickingSession as disposePickingSessionImpl,
 } from './app/picking/init-picking';
 import { applyViewerConfigState as applyViewerConfigStateHelper } from './app/viewer-config/apply-state';
-import type { AnimationDirection, LoopMode } from '../types/animation';
 import {
   getPanelVisibilityStates as getPanelVisibilityStatesHelper,
   restorePanelVisibilityStates as restorePanelVisibilityStatesHelper,
@@ -428,12 +427,11 @@ export class LuxarApp {
         const manager = this.inputHandler.getAnimationManager();
         manager?.play(dim, {
           targetFPS: options.targetFPS,
-          loopMode: options.loopMode as LoopMode | undefined,
-          direction: options.direction as AnimationDirection | undefined,
+          loopMode: options.loopMode,
+          direction: options.direction,
         });
-        // After play(), not before: play() creates the dimension's state from
-        // the configured defaults, so a step set first would be the one thing
-        // it overwrote. `setStepSize` validates the value itself and rejects a
+        // Keep the playback options together, then apply the independent step
+        // override. `setStepSize` validates the value itself and rejects a
         // non-positive one rather than animating nowhere.
         if (options.stepSize !== undefined) {
           manager?.setStepSize(dim, options.stepSize);

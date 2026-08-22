@@ -17,6 +17,9 @@
  */
 
 import type { ZarrViewerConfig } from '../../../types/zarr';
+import type { AnimationDirection, LoopMode } from '../../../types/animation';
+import { config } from '../../../config';
+import { clamp } from '../../../utils/clamp';
 
 /**
  * The surface this dispatcher needs from the parent LuxarApp. Each
@@ -36,18 +39,13 @@ export interface ViewerConfigPorts {
   setDimensionValue: (dim: number, value: number) => void;
   /** Set the browser tab title (document.title) from the scene's title. */
   setDocumentTitle: (title: string) => void;
-  /**
-   * Start playback on one dimension. Absent when the scene has no animatable
-   * dimension (a purely 3D scene never builds an animation manager), which is
-   * why the caller must tolerate it being undefined rather than assume a
-   * no-op stub exists.
-   */
+  /** Start playback on one dimension. Optional for lightweight test ports. */
   startDimensionAnimation?: (
     dim: number,
     options: {
       targetFPS?: number;
-      loopMode?: string;
-      direction?: string;
+      loopMode?: LoopMode;
+      direction?: AnimationDirection;
       /** Per-tick advance in the dimension's units; omitted means Auto. */
       stepSize?: number;
     }
@@ -127,10 +125,26 @@ export function applyViewerConfigState(
     for (let dim = 0; dim < viewerConfig.animation.length; dim++) {
       const entry = viewerConfig.animation[dim];
       if (!entry || entry.playing !== true) continue;
+      const targetFPS =
+        typeof entry.target_fps === 'number' && Number.isFinite(entry.target_fps)
+          ? clamp(
+              entry.target_fps,
+              config.dimensionAnimation.presets.customMin,
+              config.dimensionAnimation.presets.customMax
+            )
+          : undefined;
+      const loopMode: LoopMode | undefined =
+        entry.loop === 'once' || entry.loop === 'loop' || entry.loop === 'bounce'
+          ? entry.loop
+          : undefined;
+      const direction: AnimationDirection | undefined =
+        entry.direction === 'forward' || entry.direction === 'backward'
+          ? entry.direction
+          : undefined;
       ports.startDimensionAnimation(dim, {
-        targetFPS: entry.target_fps,
-        loopMode: entry.loop,
-        direction: entry.direction,
+        targetFPS,
+        loopMode,
+        direction,
         stepSize: entry.step_size,
       });
     }

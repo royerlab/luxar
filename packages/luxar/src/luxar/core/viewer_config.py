@@ -13,6 +13,7 @@ planned but not currently available.
 from __future__ import annotations
 
 import json
+import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -252,9 +253,14 @@ class AnimationConfig:
             raise ValueError(
                 f"direction must be one of {VALID_DIRECTIONS}, got '{self.direction}'"
             )
-        # Matches the viewer's own guard in `setStepSize`, which rejects a
-        # non-finite or non-positive step rather than animating nowhere.
-        if self.step_size is not None and not self.step_size > 0:
+        if self.target_fps is not None and (
+            not math.isfinite(self.target_fps) or self.target_fps <= 0
+        ):
+            raise ValueError(f"target_fps must be finite and > 0, got {self.target_fps}")
+        # Matches the viewer's own guard in `setStepSize`.
+        if self.step_size is not None and (
+            not math.isfinite(self.step_size) or self.step_size <= 0
+        ):
             raise ValueError(f"step_size must be > 0, got {self.step_size}")
 
     def to_dict(self) -> Dict[str, Any]:

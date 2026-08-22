@@ -420,7 +420,7 @@ at — which is what keeps a reloaded or shared post-switch link named.
 | Fly controls | `fly_movement_speed`, `fly_rotation_speed`, `fly_inertial_mode`, `fly_damping` |
 | UI visibility | `ui.show_help`, `ui.show_rendering_controls`, `ui.show_dimensions`, `ui.show_performance_monitor`, `ui.show_scale_bar`, `ui.show_layers` |
 | Dimensions | `dimensions.current_step`, `dimensions.selected_dimension` |
-| Animation | `animation` (per-dimension: `playing`, `target_fps`, `loop`, `direction`) — a scene with `playing: true` on a dimension starts that dimension animating on load, from wherever `dimensions.current_step` put it |
+| Animation | `animation` (per-dimension: `playing`, `target_fps`, `loop`, `direction`, `step_size`) — a scene with `playing: true` on a dimension starts that dimension animating on load, from wherever `dimensions.current_step` put it |
 
 Setting `cinematic_mode=True` expands the whole cinematic preset (ACES tone
 mapping, a subtle wide bloom, detector noise, vignette, and the 35 mm

@@ -114,6 +114,7 @@ Lifecycle:
   animation manager + scene-dims listener.
 - `clearDimensionUI()` — call before loading a new scene.
 - `showDimensionSliders()` — applied by `viewer_config`.
+- `getAnimationManager()` — used to restore per-dimension playback state.
 - `dispose()` — clean up listeners and disposable refs.
 
 ## Adding new keyboard shortcuts

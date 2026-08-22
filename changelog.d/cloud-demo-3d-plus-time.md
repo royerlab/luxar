@@ -4,7 +4,8 @@
 cumulus lived through its whole life cycle on a hidden `time` axis, from a low
 fragment at the condensation level, through a cauliflower turret and a mature
 top leaning downwind, to the whole body pulling in as the thermals feeding it
-die. 120 timepoints, ~2.7M points, about a minute to generate.
+die. 120 timepoints, 2,675,510 points, about 140 s of CPU time to generate,
+22.4 MB on disk, and about 1.1 GB peak RSS.
 
 The motion is Lagrangian. 600k air parcels are advected with midpoint steps
 through an analytic velocity field built to be exactly divergence-free — an
@@ -157,9 +158,9 @@ underneath.
 
 The scene opens on the mature cloud rather than on frame 0, framed by a camera
 composed for the cinematic 63° lens from the data's own extent, with the
-dimension slider panel open. It does not autoplay: the zarr `animation` block is
-capture-only today, so the viewer restores `current_step` and nothing else, and
-starting the sequence is `K`.
+dimension slider panel open. The viewer restores the authored opening frame
+before starting playback, so the sequence begins from the composed mature-cloud
+view rather than snapping back to its first timepoint.
 
 #### `--frames` is a resolution knob, not a physics knob
 
@@ -180,7 +181,7 @@ and the generated scenes agree on their spatial bounds and on mean points per
 frame (22,295 vs 22,198) while differing only in how many frames there are.
 
 `compute` in the demo's metadata moves from `light` to `medium`, which is
-honest for roughly a minute of generation work.
+honest for roughly 140 seconds of CPU work at the defaults.
 
 #### Every technique is cited where it is used
 
@@ -229,9 +230,9 @@ manager's `play()`. Three details are deliberate and covered by unit tests:
 - Only `playing === true` acts. `false` is the viewer's own default, and
   re-asserting it would stop a paused scene from inheriting whatever the viewer
   does next.
-- The port is optional, because a purely 3D scene never builds an animation
-  manager; a scene with an animation block and no animatable dimension must be
-  a no-op rather than a crash.
+- The port is optional so lightweight callers and unit tests can omit animation
+  support. `LuxarApp` always supplies it; the lambda itself no-ops when a scene
+  has no animation manager.
 
 This is a behaviour change for any existing scene that captured `playing: true`
 — such a scene will now start playing on load. That is what the field has always

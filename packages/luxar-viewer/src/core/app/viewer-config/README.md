@@ -8,8 +8,8 @@ The rendering-pipeline knobs inside `viewer_config` (bloom, EOG, tone
 mapping, detector noise, control type, etc.) are routed through
 `RenderingControls` via `setZarrViewerConfig` — see
 `src/config/zarr-bridge/`. This folder handles **the rest**: UI panel
-show/hide flags, the active theme, dimension-navigation step, and a
-small pure helper for snapshotting panel visibility.
+show/hide flags, the active theme, dimension-navigation state, animation
+playback, and a small pure helper for snapshotting panel visibility.
 
 ## Contents
 
@@ -32,6 +32,7 @@ zarr scene -> SceneManager.loadSceneData()
                           - ui.show_*          -> panel show()/hide()
                           - theme              -> setTheme(themeId)
                           - dimensions.current_step[i] -> setDimensionValue(i, v)
+                          - animation[i]       -> startDimensionAnimation(i, options)
 ```
 
 The dispatcher is invoked once per `loadDataset()` call (i.e. on initial
@@ -61,6 +62,10 @@ Key contract details:
   exists (dimension metadata / `overlay_groups` / layer arrays).
 - `dimensions.current_step` writes one value per dimension index via
   `setDimensionValue(i, v)` — no theme/UI side effects.
+- `animation[i]` starts only entries with `playing: true`, after applying
+  `current_step`. Persisted FPS values are clamped to the GUI range, unknown
+  loop/direction strings fall back to viewer defaults, and `step_size` remains
+  absent when Auto was captured.
 
 ## panel-visibility.ts
 

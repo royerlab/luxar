@@ -51,8 +51,7 @@ function makePorts(
     setTheme: vi.fn(),
     setDimensionValue: vi.fn(),
     setDocumentTitle: vi.fn(),
-    startDimensionAnimation:
-      overrides.startDimensionAnimation === false ? undefined : vi.fn(),
+    startDimensionAnimation: overrides.startDimensionAnimation === false ? undefined : vi.fn(),
   };
 }
 
@@ -338,6 +337,37 @@ describe('applyViewerConfigState', () => {
       );
     });
 
+    it('sanitizes persisted animation options before starting playback', () => {
+      const config = {
+        animation: [
+          { playing: true, target_fps: 0, loop: 'banana', direction: 'sideways' },
+          { playing: true, target_fps: 500, loop: 'once', direction: 'backward' },
+          { playing: true, target_fps: Number.NaN },
+        ],
+      } as unknown as ZarrViewerConfig;
+
+      applyViewerConfigState(config, asPorts(ports));
+
+      expect(ports.startDimensionAnimation).toHaveBeenNthCalledWith(1, 0, {
+        targetFPS: 0.1,
+        loopMode: undefined,
+        direction: undefined,
+        stepSize: undefined,
+      });
+      expect(ports.startDimensionAnimation).toHaveBeenNthCalledWith(2, 1, {
+        targetFPS: 120,
+        loopMode: 'once',
+        direction: 'backward',
+        stepSize: undefined,
+      });
+      expect(ports.startDimensionAnimation).toHaveBeenNthCalledWith(3, 2, {
+        targetFPS: undefined,
+        loopMode: undefined,
+        direction: undefined,
+        stepSize: undefined,
+      });
+    });
+
     it('leaves stepSize undefined when the scene does not set one', () => {
       // Undefined means Auto — the viewer derives a step from the dimension.
       // Forwarding a 0 or a null here would be an explicit override of it.
@@ -379,8 +409,7 @@ describe('applyViewerConfigState', () => {
     });
 
     it('is a no-op when the scene has no animation manager', () => {
-      // A purely 3D scene never builds one, so the port is absent rather
-      // than a stub.
+      // The helper's lightweight test ports may omit animation support.
       const bare = makePorts({ startDimensionAnimation: false });
       expect(() =>
         applyViewerConfigState({ animation: [{ playing: true }] }, asPorts(bare))
