@@ -14,7 +14,7 @@ and flipping a rendering look on by default there would restyle every scene
 anyone writes with Luxar. So each demo states it, and this guard is what keeps
 "all of them" true for demo number 87.
 
-Two invariants, and they close different holes:
+Four invariants, and they close different holes:
 
 ``test_every_scene_passes_a_viewer_config``
     No ``create_scene`` call may omit ``viewer_config``. Without this a new demo
@@ -30,6 +30,13 @@ Two invariants, and they close different holes:
     more fragile than the rule it enforces. The rule holds because in this
     package a ``ViewerConfig`` is only ever built to be handed to a scene — if
     that stops being true, this guard is where to say so.
+``test_every_authored_camera_pins_its_fov``
+    Every ``CameraConfig`` with an opening position pins the FOV that position
+    was composed for. The viewer expands the cinematic FOV after auto-framing,
+    so leaving an authored pose unpinned changes its deliberate composition.
+``test_scientific_fidelity_overrides_are_explicit``
+    The three demos whose scale, intensity, or categorical hue would be damaged
+    by lens distortion and detector noise keep those author overrides explicit.
 
 A literal ``True`` is required, not any truthy expression: a scene whose look
 depends on a flag computed at build time is not something a reader can confirm,
@@ -221,7 +228,7 @@ def test_the_scan_actually_finds_the_configs() -> None:
     assert total >= MIN_VIEWER_CONFIGS, (
         f"found only {total} ViewerConfig constructions across {len(MODULES)} "
         f"demo modules (expected at least {MIN_VIEWER_CONFIGS}) — the scan "
-        f"broke, so both invariants above were passing vacuously"
+        f"broke, so the ViewerConfig invariant above was passing vacuously"
     )
 
 
