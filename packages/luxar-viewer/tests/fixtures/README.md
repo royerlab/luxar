@@ -45,6 +45,10 @@ hatch run fixtures:python packages/luxar-viewer/tests/fixtures/generate_test_dat
 hatch run fixtures:python packages/luxar-viewer/tests/fixtures/generate_expectations.py
 ```
 
+The first of these commands creates a dedicated Hatch environment of roughly
+1.2 GB. It is separate from the larger default development environment, so both
+may occupy disk until unused environments are removed with `hatch env prune`.
+
 `src/tests/global-setup.ts` runs once before the Vitest suite, detects
 missing `test_*.zarr` archives or an out-of-date `roundtrip_expectations.json`
 (checked by mtime against the generators and fixtures), and re-runs the

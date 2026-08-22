@@ -413,6 +413,11 @@ hatch run test      # Run tests in environment
 hatch env prune     # Clean unused environments
 ```
 
+Viewer fixture generation uses a separate `fixtures` environment so ordinary
+`pnpm test` and `make test-fixtures` do not build the CUDA-heavy development
+environment. Its first use creates roughly 1.2 GB alongside any existing
+`default` environment; `hatch env prune` removes environments no longer needed.
+
 **Which Python does `hatch run` use?** The `default` environment declares no
 `python`, so Hatch builds it with whatever interpreter **Hatch itself** runs
 under — not necessarily one the project claims to support. Check before trusting
