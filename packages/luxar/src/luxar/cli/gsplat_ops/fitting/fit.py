@@ -222,8 +222,9 @@ def run_fit_volume(
         "--flat",
         help="Tiled fits emit a kind=partition (one part per tile/box) by "
         "default for viewer frustum culling; --flat merges to a single leaf "
-        "and records bounded whole-volume quality metrics for uniform/content "
-        "fits (override with LUXAR_TILED_QUALITY_MAX_GB).",
+        "instead. Uniform partition and flat uniform/content merges record "
+        "bounded whole-volume quality metrics (override with "
+        "LUXAR_TILED_QUALITY_MAX_GB).",
         rich_help_panel="Tiling",
     ),
     tile_size: int = typer.Option(
