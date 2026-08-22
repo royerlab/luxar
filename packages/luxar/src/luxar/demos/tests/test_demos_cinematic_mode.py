@@ -135,6 +135,13 @@ def _keyword(call: ast.Call, name: str) -> ast.expr | None:
     return next((kw.value for kw in call.keywords if kw.arg == name), None)
 
 
+def _has_non_none_keyword(call: ast.Call, name: str) -> bool:
+    value = _keyword(call, name)
+    return value is not None and not (
+        isinstance(value, ast.Constant) and value.value is None
+    )
+
+
 def _sets_literal(call: ast.Call, name: str, expected: bool) -> bool:
     value = _keyword(call, name)
     return isinstance(value, ast.Constant) and value.value is expected
@@ -146,8 +153,7 @@ def test_every_scene_passes_a_viewer_config(path: Path) -> None:
     bare = [
         call.lineno
         for call in _create_scene_calls(tree)
-        if (value := _keyword(call, "viewer_config")) is None
-        or (isinstance(value, ast.Constant) and value.value is None)
+        if not _has_non_none_keyword(call, "viewer_config")
     ]
     assert not bare, (
         f"{path.name}: create_scene at line(s) {bare} passes no viewer_config, "
@@ -162,9 +168,9 @@ def test_every_authored_camera_pins_its_fov(path: Path) -> None:
     missing = [
         call.lineno
         for call in _camera_configs(tree)
-        if _keyword(call, "position") is not None
-        and _keyword(call, "fov") is None
-        and _keyword(call, "fov_preset") is None
+        if _has_non_none_keyword(call, "position")
+        and not _has_non_none_keyword(call, "fov")
+        and not _has_non_none_keyword(call, "fov_preset")
     ]
     assert not missing, (
         f"{path.name}: CameraConfig at line(s) {missing} sets an opening position "
@@ -241,6 +247,24 @@ def test_the_guard_reads_the_flag_it_claims_to(source: str, flagged: bool) -> No
 @pytest.mark.parametrize(
     ("source", "flagged"),
     [
+        ("CameraConfig(position=p, fov=47.0)", False),
+        ("CameraConfig(position=p, fov_preset='50mm')", False),
+        ("CameraConfig(position=p)", True),
+        ("CameraConfig(position=p, fov=None)", True),
+        ("CameraConfig(fov=47.0)", False),
+    ],
+)
+def test_the_guard_reads_authored_camera_framing(source: str, flagged: bool) -> None:
+    (call,) = _camera_configs(ast.parse(source))
+    missing = _has_non_none_keyword(call, "position") and not (
+        _has_non_none_keyword(call, "fov") or _has_non_none_keyword(call, "fov_preset")
+    )
+    assert missing is flagged
+
+
+@pytest.mark.parametrize(
+    ("source", "flagged"),
+    [
         ("compiler.create_scene(dimensions=d, viewer_config=v)", False),
         ("c.create_scene(dimensions=d, viewer_config=v)", False),
         ("compiler.create_scene(dimensions=d, viewer_config=None)", True),
@@ -257,7 +281,6 @@ def test_the_guard_finds_the_scene_calls_it_claims_to(
     bare = [
         call
         for call in _create_scene_calls(tree)
-        if (value := _keyword(call, "viewer_config")) is None
-        or (isinstance(value, ast.Constant) and value.value is None)
+        if not _has_non_none_keyword(call, "viewer_config")
     ]
     assert bool(bare) is flagged
