@@ -16,8 +16,15 @@ cal = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(cal)
 
 
-def test_cli_calibration_passes_an_explicit_floor(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+@pytest.mark.parametrize(
+    ("floor", "expected"),
+    [(675.0, "675.0"), (None, None)],
+)
+def test_cli_calibration_passes_only_an_explicit_floor(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    floor: float | None,
+    expected: str | None,
 ) -> None:
     captured: dict[str, object] = {}
 
@@ -32,13 +39,16 @@ def test_cli_calibration_passes_an_explicit_floor(
         tmp_path / "cal.json",
         k_min=2_000,
         k_max=1_000_000,
-        floor=675.0,
+        floor=floor,
     )
 
     command = captured["command"]
     assert isinstance(command, list)
-    floor_index = command.index("--floor")
-    assert command[floor_index + 1] == "675.0"
+    if expected is None:
+        assert "--floor" not in command
+    else:
+        floor_index = command.index("--floor")
+        assert command[floor_index + 1] == expected
     assert captured["kwargs"] == {"check": True, "cwd": str(cal.REPO_ROOT)}
 
 

@@ -491,14 +491,14 @@ def _calibrate_demo(demo: Dict[str, Any], skip_existing: bool) -> Dict[str, Any]
         aprint(f"  Comment: {demo.get('comment', '')}")
         aprint(f"  Preset:  {PRESET}")
         aprint(f"  K grid:  exp[{demo['k_min']}..{demo['k_max']}], n={N_GRID}")
-        floor = demo.get("floor")
-        if callable(floor):
-            floor = floor()
-        aprint(f"  Floor:   {floor if floor is not None else 'auto'}")
 
         aprint("  Loading volumes...")
         t_load = time.perf_counter()
         try:
+            floor = demo.get("floor")
+            if callable(floor):
+                floor = floor()
+            aprint(f"  Floor:   {floor if floor is not None else 'auto'}")
             samples = demo["loader"]()
         except Exception as e:
             aprint(f"  ✗ {name}: loader failed: {e!r}")
