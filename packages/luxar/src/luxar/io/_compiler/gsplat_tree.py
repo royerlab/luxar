@@ -160,7 +160,7 @@ def _write_single_splat_set(
     truncation_radius = float(
         (attrs or {}).get("truncation_radius", sublod.truncation_radius)
     )
-    centers, amplitudes, cholesky, colors, ordering_data = (
+    centers, amplitudes, cholesky, colors, ordering_data, centers_encoding_plan = (
         apply_gsplat_spatial_ordering(
             centers,
             amplitudes,
@@ -185,6 +185,7 @@ def _write_single_splat_set(
         n_dims,
         chol_uniform,
         ordering_data,
+        centers_encoding_plan,
         dataset_ctx,
     )
 

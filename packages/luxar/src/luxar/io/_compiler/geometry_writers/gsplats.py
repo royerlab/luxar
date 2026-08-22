@@ -151,6 +151,7 @@ def write_gsplats(
         cholesky_factors,
         colors,
         ordering_data,
+        centers_encoding_plan,
     ) = apply_gsplat_spatial_ordering(
         centers,
         amplitudes,
@@ -176,6 +177,7 @@ def write_gsplats(
         n_dims,
         cholesky_is_uniform,
         ordering_data,
+        centers_encoding_plan,
         ctx.dataset_ctx,
     )
 

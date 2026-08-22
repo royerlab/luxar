@@ -113,6 +113,27 @@ def _gridded_step_from_uniques(
     return step, int(uniq.size)
 
 
+def _coordinate_u16_slack(
+    arr: np.ndarray, lo: np.ndarray, hi: np.ndarray
+) -> tuple[NDArray[np.float64], int]:
+    """Per-axis uint16 half-quantum slack and largest axis cardinality."""
+    slack = np.zeros(arr.shape[1], dtype=np.float64)
+    max_axis_distinct = 1
+    for axis in range(arr.shape[1]):
+        extent = float(hi[axis] - lo[axis])
+        if extent <= 0.0:
+            continue
+        uniq = np.unique(arr[:, axis])
+        max_axis_distinct = max(max_axis_distinct, int(uniq.size))
+        if (
+            _gridded_step_from_uniques(uniq, float(lo[axis]), extent, COORDINATE_LEVELS)
+            is not None
+        ):
+            continue
+        slack[axis] = extent / (2.0 * COORDINATE_LEVELS)
+    return slack, max_axis_distinct
+
+
 class PerChannelEncoderMixin(BaseEncoderMixin):
     """Per-channel / scalar dtype encoding strategies for :class:`ArrayEncoder`."""
 
@@ -171,7 +192,8 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         Why this exists: the chunk-bounds writers
         (:func:`~luxar.io._ordering.points.compute_chunk_bounds_points`,
         :func:`~luxar.io._ordering.lines.compute_vertex_chunk_bounds`,
-        :func:`~luxar.io._ordering.lines.compute_segment_chunk_bounds`) compute
+        :func:`~luxar.io._ordering.lines.compute_segment_chunk_bounds`,
+        :func:`~luxar.io._ordering.gsplats.compute_chunk_bounds_gsplats`) compute
         a bound the READER trusts for containment, but they see the AUTHORED
         coordinates while the store holds :meth:`_encode_coordinate`'s per-axis
         uint16 fixed point. A decoded coordinate that lands outside its own
@@ -290,27 +312,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         if float((hi - lo).max()) >= COORDINATE_U16_MAX_EXTENT:
             return None  # the extent rail falls back to float32 (exact)
 
-        slack = np.zeros(arr.shape[1], dtype=np.float64)
-        max_axis_distinct = 1
-        for axis in range(arr.shape[1]):
-            extent = float(hi[axis] - lo[axis])
-            if extent <= 0.0:
-                # Constant axis: every value maps to level 0 and decodes to
-                # `lo`. One distinct value, so it cannot raise the maximum.
-                continue
-            uniq = np.unique(arr[:, axis])
-            max_axis_distinct = max(max_axis_distinct, int(uniq.size))
-            if (
-                _gridded_step_from_uniques(
-                    uniq, float(lo[axis]), extent, COORDINATE_LEVELS
-                )
-                is not None
-            ):
-                # `_snap_gridded_axes` will snap this axis onto the data's own
-                # spacing, and `gridded_axis_step` proved it round-trips exactly
-                # by replaying the encode and the decode.
-                continue
-            slack[axis] = extent / (2.0 * COORDINATE_LEVELS)
+        slack, max_axis_distinct = _coordinate_u16_slack(arr, lo, hi)
 
         if not slack.any():
             return None
@@ -376,9 +378,9 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         here.
 
         A caller that instead needs to know HOW FAR this method can move a value
-        — the points/lines chunk-bounds writers, which must pad a bound the
-        reader trusts — asks :meth:`coordinate_round_trip_slack`, directly above.
-        It replays these same exits without writing (and takes the same
+        — the points/lines/gsplats chunk-bounds writers, which must pad a bound
+        the reader trusts — asks :meth:`coordinate_round_trip_slack`, directly
+        above. It replays these same exits without writing (and takes the same
         ``allow_lut`` the write will use); keep the two in step.
 
         Args:
