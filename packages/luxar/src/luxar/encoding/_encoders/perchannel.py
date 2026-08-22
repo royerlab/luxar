@@ -317,9 +317,12 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         if not slack.any():
             return None
 
-        if allow_lut and max_axis_distinct <= LUT_SCALAR_MAX_DISTINCT:
-            if self.encodes_as_lut(data, SemanticType.COORDINATE):
-                return None  # a LUT stores the values verbatim
+        if (
+            allow_lut
+            and max_axis_distinct <= LUT_SCALAR_MAX_DISTINCT
+            and self.encodes_as_lut(data, SemanticType.COORDINATE)
+        ):
+            return None  # a LUT stores the values verbatim
         return slack
 
     def positive_scalar_round_trip_slack(
