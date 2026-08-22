@@ -30,6 +30,18 @@ def test_quantize_normalized_clip_rounds_vs_truncates() -> None:
     assert int(truncated[0]) == 10
 
 
+def test_float16_uint16_quantization_rounds_vs_truncates_without_overflow() -> None:
+    data = np.array([0.0, 0.5, 1.0], dtype=np.float16)
+    rounded = ArrayEncoder._quantize_normalized_clip(
+        data, 0.0, 1.0, 65_535, np.dtype(np.uint16), round_values=True
+    )
+    truncated = ArrayEncoder._quantize_normalized_clip(
+        data, 0.0, 1.0, 65_535, np.dtype(np.uint16), round_values=False
+    )
+    np.testing.assert_array_equal(rounded, [0, 32_768, 65_535])
+    np.testing.assert_array_equal(truncated, [0, 32_767, 65_535])
+
+
 @pytest.mark.parametrize(
     ("semantic_type", "data", "bounds"),
     [
