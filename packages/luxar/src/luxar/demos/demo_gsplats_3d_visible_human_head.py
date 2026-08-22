@@ -42,8 +42,7 @@ store's own order (save → reload → sample), never from the in-memory fit. On
 the pair is verified against that invariant (splats sharing a voxel must share a
 color); a mismatched pair is reported and refitted rather than rendered.
 
-On a fresh machine this demo bootstraps itself with no manual steps, and
-instantly:
+On a fresh machine this demo bootstraps itself with no manual steps:
   1. Fast path: the two Git LFS assets in
      ``demos/data/gsplats_visible_human_head/`` — the 1,911,192-splat fit and
      its colors sidecar — are loaded and verified against the invariant above.
@@ -60,8 +59,14 @@ store (measured same-voxel agreement 0.00097 over 1,911,192 splats) and the
 guard rejected it on every run. Recovering it needed no refit — the fit itself
 was never wrong, only the color ORDER — so the volume was rebuilt and resampled
 at the shipped store's own centers, which is aligned by construction. The pair
-now agrees at 1.0. Note the sidecar carries no positions, so a mis-ordered one
-can never be repaired in place: it has to be resampled.
+now agrees at 1.0. The rebuilt volume's 636 x 451 x 896 shape matches the stored
+centers' extent, and the regenerated colors preserve the previous sidecar's
+distribution (total-variation distance 0.0065), which confirms the source frame
+rather than only the ordering. To regenerate it again: rebuild the RGB volume
+with ``assemble_volume``, load the shipped fit, call ``sample_colors`` at that
+store's centers, then write the result with ``_save_colors_u8``. Note the
+sidecar carries no positions, so a mis-ordered one can never be repaired in
+place: it has to be resampled.
 
 USAGE
 -----

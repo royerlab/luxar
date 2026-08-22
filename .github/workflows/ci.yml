@@ -455,12 +455,9 @@ jobs:
           sudo docker image prune --all --force 2>/dev/null || true
           df -h /
 
-      # LFS intentionally disabled — `hatch run test-cov` covers
-      # packages/luxar/src/luxar and none of its unit tests open the
-      # LFS-backed demo fixtures under packages/luxar/src/luxar/demos/data/.
-      # (The two demo tests that exist — test_demo_ppi_flow_field.py and
-      # test_demo_zebrahub_velocity_streamlines.py — exercise pure
-      # helpers, not the LFS payloads.) Keeping `lfs: true` here made
+      # LFS intentionally disabled. Materialized-payload tests are marked slow
+      # and excluded from `test-cov`; CI guards paired demo artifacts through
+      # their manifest pins instead. Keeping `lfs: true` here made
       # every PR's checkout fail catastrophically when the repo's GitHub
       # LFS budget was exhausted; the LFS pointer files in the work tree
       # are sufficient for the test suite.
