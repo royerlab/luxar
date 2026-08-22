@@ -6,7 +6,7 @@ distortion belongs to (63°, against the viewer's 47° default). ``camera.fov`` 
 ``camera.fov_preset`` are expanded as ONE unit, so a scene that pins either gets
 neither from the preset — it keeps a 50 mm framing while still receiving 35 mm
 distortion, which is two different lenses in one image. (Seventeen demos do pin an
-``fov`` of their own — 38° to 50° where it is a literal, computed in six — and
+``fov`` of their own — 38° to 50° where it is a literal, computed in seven — and
 those pins all predate the cinematic look. They are exactly that mismatch:
 their framing is safe, their lens is mixed. Unifying them is #1862.)
 
