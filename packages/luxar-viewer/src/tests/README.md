@@ -65,9 +65,13 @@ there when the docblock is.
 ### E2E console-error fixture (opt-in)
 
 `src/tests/e2e/fixtures.ts` exports a re-extended `test` that
-auto-runs `assertNoConsoleErrors(page)` after each test. Every E2E
-spec uses this fixture — there are no direct `@playwright/test`
-imports. New specs should follow:
+auto-fails a test on any unexpected console error after each test.
+59 of the 67 E2E specs use it; the other 8 import `test` from
+`@playwright/test` directly (`gsplat-perf-bench`, `lift-parity`,
+`line-perf-bench`, `line-renderer-compare-perf`,
+`points-rendering-perf`, `renderer-url-param`, `tsl-codegen-snapshot`,
+`tsl-shader-parity` — the perf benches and the TSL harnesses) and so
+get **no** post-test console gate at all. New specs should follow:
 
 ```ts
 import { test, expect } from './fixtures';
@@ -89,22 +93,36 @@ test('handles network timeout gracefully', async ({ page }) => {
 });
 ```
 
-All E2E specs import from `./fixtures` and get the post-test
-guard automatically. New specs default to `./fixtures`; only switch
-to direct `@playwright/test` if the spec has a specific reason to
-manage its own per-test console-error allow-list (none currently do).
+New specs default to `./fixtures`; only switch to direct
+`@playwright/test` if the spec has a specific reason to opt out of the
+post-test guard entirely — that is what the eight above did, and none
+of them did it to manage a per-test allow-list.
 
-The fixture combines two signal sources before the assertion fires:
+The gate reads **one** signal source: Playwright's `page.on('console')`
+(`msg.type() === 'error'`) plus `page.on('pageerror')`. That is the wider
+of the two available — it catches errors fired before the viewer's
+in-app debug interceptor installs, uncaught exceptions and
+browser-generated errors that never went through `console`, it
+accumulates without the interceptor's ring-buffer eviction, and it
+survives navigation, which resets that buffer. Nothing in the
+interceptor's `errors` bucket escapes it either, since every capture
+there re-emits through the original `console` method.
 
-- Luxar's debug-console interceptor (in-app, formatted, polled via
-  `assertNoConsoleErrors`)
-- Playwright's `page.on('console')` + `page.on('pageerror')`
-  (catches errors before the debug interceptor installs and
-  uncaught exceptions surfaced via the page-level error event)
-
-Both flows filter against `DEFAULT_ALLOWED_CONSOLE_ERRORS`
+Captured entries filter against `DEFAULT_ALLOWED_CONSOLE_ERRORS`
 (`/WebGL context lost/` plus the loader's optional-resource probe
-404/501s — see `src/tests/e2e/fixtures.ts` for the canonical list).
+404/501s — see `src/tests/e2e/fixtures.ts` for the canonical list),
+through the exported pure `unexpectedConsoleErrors(captured, allowed)`.
+
+The fixture no longer polls the in-app buffer via
+`assertNoConsoleErrors` (#1760): that was a second, narrower opinion on
+the verdict it had just rendered, bought with a `page.evaluate` round
+trip a saturated main thread can withhold for minutes (measured at 95 s
+without one serviced round trip while `page.on('console')` kept
+delivering). A spec that wants the in-app buffer specifically — for its
+`warnings` / `logs` buckets, or for a no-allow-list check — calls
+`assertNoConsoleErrors` / `getConsoleMessages` itself, as
+`hover-tooltip`, `hover-overlay`, `mouse-interactions` and
+`recording-panel` do from their own `test.afterEach`.
 
 ---
 
