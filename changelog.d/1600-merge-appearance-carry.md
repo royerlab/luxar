@@ -42,11 +42,13 @@ one hidden input opened the whole merged dataset hidden.
 `colormap` is dropped even under perfect agreement whenever the merged output
 carries per-splat RGB that an input did not: `--channel-colors` bakes one, and
 `GSplatData.concatenate` white-fills a colorless input to match a colored
-sibling, so a plain merge and `--as-dimension` manufacture colors too. The
-viewer makes an ancestor palette override per-splat RGB unconditionally, so a
-carried palette would render the colored input through a scalar ramp; the
-exclusion is therefore computed from the merged result rather than from the
-flag. It is also refused when any input declares the `"custom"` sentinel —
+sibling, so a plain merge and `--as-dimension` manufacture colors too. A colored
+input with no authored palette is also positively asking for its per-splat RGB.
+The viewer makes an ancestor palette override per-splat RGB unconditionally,
+so a carried palette would render those splats through a scalar ramp; the
+exclusion is therefore computed from the merged result and each input's color
+state rather than from the flag. It is also refused when any input declares the
+`"custom"` sentinel —
 demoting such an input to "no opinion" let the merged root adopt a *sibling's*
 palette and repaint the custom-LUT splats with it — and that warning is now
 emitted once for N inputs instead of once per input.

@@ -319,7 +319,8 @@ sibling's value. `visible` is the exception where ABSENCE votes ("shown"), so
 `visible=false` is carried only when every input hides. `colormap` is dropped
 even under agreement whenever the merge gave the output per-splat RGB an input
 did not have — `--channel-colors`, or the white fill a mixed colored/colorless
-merge applies — and whenever any input declares a custom LUT.
+merge applies — whenever a colored input authored no palette and therefore
+relies on its per-splat RGB, and whenever any input declares a custom LUT.
 
 #### `luxar gsplat cull`
 Remove low-contribution splats to reduce dataset size while preserving visual quality.

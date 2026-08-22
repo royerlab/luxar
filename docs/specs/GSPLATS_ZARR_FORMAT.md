@@ -945,12 +945,13 @@ where absence genuinely means "no opinion".
 
 One key is additionally dropped because the merge itself invalidates it:
 `colormap`, whenever the merged output carries per-splat RGB that the inputs'
-palettes do not describe. Two ways to get there, hence two predicates:
-`--channel-colors` always bakes one, and `GSplatData.concatenate` white-fills a
-colorless input to match a colored sibling — which happens on a plain merge and
-under `--as-dimension` too. The viewer makes an ancestor
-palette override per-splat RGB unconditionally, so a carried palette would
-render the colored input through a scalar ramp. `colormap` is also refused
+palettes do not describe. Three predicates cover that: `--channel-colors`
+always bakes RGB, `GSplatData.concatenate` white-fills a colorless input to
+match a colored sibling, and a colored input with no authored palette is
+positively asking the viewer to use its per-splat RGB. The white-fill case
+happens on a plain merge and under `--as-dimension` too. The viewer makes an
+ancestor palette override per-splat RGB unconditionally, so a carried palette
+would render those splats through a scalar ramp. `colormap` is also refused
 outright when any input root declares the `"custom"` sentinel: that palette
 cannot be carried, and treating the input as having no opinion would hand the
 merged root a *sibling's* palette. `--as-dimension` does **not** invalidate

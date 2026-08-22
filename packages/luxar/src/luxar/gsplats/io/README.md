@@ -534,7 +534,11 @@ is `luxar gsplat migrate-format`.
   invalidates whatever the inputs say — for `gsplat merge` that is `colormap`
   whenever the merge manufactured per-splat RGB; pass a `{key: reason}` mapping
   to have the reason quoted in the warning. It is typed as a set/mapping so a
-  bare `str` cannot be passed by accident.
+  bare `str` cannot be passed by accident. `input_has_colors` identifies a
+  colored input with no authored palette as relying on its per-splat RGB, so a
+  sibling palette is refused rather than repainting it. `output_has_colors`
+  lets a drop warning say whether the merged writer leaves `colormap` unset or
+  stamps its colorless `"gray"` default.
 - **`inspect_gsplats.py`**: Metadata inspection without loading arrays
   (`inspect_gsplats_zarr`, `format_gsplats_info`).
 - **`migrate.py`**: Legacy-format migration (`migrate_format`,
