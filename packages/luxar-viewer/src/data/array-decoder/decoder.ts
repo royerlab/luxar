@@ -517,13 +517,13 @@ export class ArrayDecoder {
     // Determine max integer value from dtype
     // NumPy dtype formats: 'uint8', '<u1' (little-endian), '|u1' (native byte order for single-byte)
     let max_int: number;
-    let decode: (output: Float32Array) => void;
+    let decode: typeof decode_log_scalar_u8;
     if (dtype === 'uint8' || dtype === '<u1' || dtype === '|u1') {
       max_int = 255;
-      decode = (output) => decode_log_scalar_u8(data, maxLog, output);
+      decode = decode_log_scalar_u8;
     } else if (dtype === 'uint16' || dtype === '<u2' || dtype === '>u2' || dtype === '|u2') {
       max_int = 65535;
-      decode = (output) => decode_log_scalar_u16(data, maxLog, output);
+      decode = decode_log_scalar_u16;
     } else {
       throw new Error(`Unsupported log_scalar dtype: ${dtype}`);
     }
@@ -534,7 +534,16 @@ export class ArrayDecoder {
     );
 
     const result = new Float32Array(data.length);
-    decode(result);
+    if (data.length > max_int + 1) {
+      const codes = max_int === 255 ? new Uint8Array(max_int + 1) : new Uint16Array(max_int + 1);
+      for (let i = 0; i < codes.length; i++) codes[i] = i;
+
+      const lut = new Float32Array(codes.length);
+      decode(codes, maxLog, lut);
+      for (let i = 0; i < data.length; i++) result[i] = lut[data[i]];
+    } else {
+      decode(data, maxLog, result);
+    }
     let minValue = Number.POSITIVE_INFINITY;
     let maxValue = Number.NEGATIVE_INFINITY;
 

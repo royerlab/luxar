@@ -133,12 +133,11 @@ for the transcendental step (2 million u16 codes on Node 22). Log-scalar
 decoding reaches it on two routes: the wholesale TypeScript fallback
 selected when the WASM artifact fails to load, and — since the main-thread
 `ArrayDecoder` was unified onto this kernel — every main-thread log-scalar
-decode, whether or not WASM loaded. That second one is a real (if one-time,
-per-load) main-thread cost: measured end to end, decoding 5M u16 codes went
-from ~147 ms on the old f64 algebra to ~539 ms here. It is accepted because
-a value that differs by route is worse than a slower load; the whole-array
-main-thread path has no worker offload, so a very large log-scalar array is
-the case to watch.
+decode, whether or not WASM loaded. For inputs larger than the code space,
+`ArrayDecoder` decodes the at-most-65,536-entry code space once and fills from
+that lookup table. On Node 22, 5M widened u16 codes measured ~50 ms through the
+lookup-table path versus ~395 ms through the kernel directly, while remaining
+bit-exact with the shared kernel.
 
 ## Constants
 

@@ -1848,9 +1848,18 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
       }
 
       const expectedBits = new Uint32Array(expected.buffer);
+      const repeatedCodes =
+        codes instanceof Uint8Array
+          ? new Uint8Array(codes.length * 2)
+          : new Uint16Array(codes.length * 2);
+      repeatedCodes.set(codes);
+      repeatedCodes.set(codes, codes.length);
+
       for (const [inputLabel, input] of [
         ['integer codes', codes],
         ['Float32Array-widened codes', Float32Array.from(codes)],
+        ['repeated integer codes', repeatedCodes],
+        ['repeated Float32Array-widened codes', Float32Array.from(repeatedCodes)],
       ] as const) {
         const actual = decoder.dequantizeRange(input, {
           bounds: [0, maxLog],
@@ -1858,12 +1867,14 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
           isLogSpace: true,
         });
         const actualBits = new Uint32Array(actual.buffer);
-        const mismatch = expectedBits.findIndex((bits, index) => bits !== actualBits[index]);
+        const mismatch = actualBits.findIndex(
+          (bits, index) => bits !== expectedBits[index % expectedBits.length]
+        );
         const context =
           mismatch === -1
             ? `${dtype} ${inputLabel} matched the shared kernel`
-            : `${dtype} ${inputLabel} code ${codes[mismatch]} at index ${mismatch}: ` +
-              `expected bits 0x${expectedBits[mismatch].toString(16)}, ` +
+            : `${dtype} ${inputLabel} code ${input[mismatch]} at index ${mismatch}: ` +
+              `expected bits 0x${expectedBits[mismatch % expectedBits.length].toString(16)}, ` +
               `actual bits 0x${actualBits[mismatch].toString(16)}`;
         expect(mismatch, context).toBe(-1);
       }
