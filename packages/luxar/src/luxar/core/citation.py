@@ -56,6 +56,22 @@ def _reject_unprintable(field: str, text: str) -> None:
         )
 
 
+def _validate_optional_fields(value: Mapping[str, Any]) -> None:
+    """Validate the optional citation strings and compact reference bound."""
+    for key in ("ref", "doi", "license", "url"):
+        if key not in value:
+            continue
+        if not isinstance(value[key], str) or not value[key].strip():
+            raise ValueError(f"citation.{key} must be a non-empty string when present")
+        _reject_unprintable(key, value[key])
+
+    ref = value.get("ref")
+    if ref is not None and len(ref.strip()) > CITATION_REF_MAX_LENGTH:
+        raise ValueError(
+            f"citation.ref must be at most {CITATION_REF_MAX_LENGTH} characters"
+        )
+
+
 def validate_citation(value: Any) -> Optional[dict[str, str]]:
     """Validate a citation payload and return a plain, copied dict.
 
@@ -91,19 +107,7 @@ def validate_citation(value: Any) -> Optional[dict[str, str]]:
     if not isinstance(short, str) or not short.strip():
         raise ValueError("citation.short must be a non-empty string")
     _reject_unprintable("short", short)
-
-    for key in ("ref", "doi", "license", "url"):
-        if key not in value:
-            continue
-        if not isinstance(value[key], str) or not value[key].strip():
-            raise ValueError(f"citation.{key} must be a non-empty string when present")
-        _reject_unprintable(key, value[key])
-
-    ref = value.get("ref")
-    if ref is not None and len(ref.strip()) > CITATION_REF_MAX_LENGTH:
-        raise ValueError(
-            f"citation.ref must be at most {CITATION_REF_MAX_LENGTH} characters"
-        )
+    _validate_optional_fields(value)
 
     url = value.get("url")
     # Scheme allowlist, not a full URL parse: the point is to keep an executable

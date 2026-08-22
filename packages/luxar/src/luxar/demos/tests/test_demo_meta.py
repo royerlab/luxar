@@ -839,6 +839,40 @@ def _overlay_branches(node: ast.expr) -> list[ast.expr]:
     return [node.body, node.orelse] if isinstance(node, ast.IfExp) else [node]
 
 
+def _caption_reference(tree: ast.Module) -> str | None:
+    """Return the compact reference declared by a module's ``DEMO_META``."""
+    for statement in tree.body:
+        if not isinstance(statement, ast.Assign):
+            continue
+        if not any(
+            isinstance(target, ast.Name) and target.id == "DEMO_META"
+            for target in statement.targets
+        ):
+            continue
+        citation = ast.literal_eval(statement.value).get("citation")
+        return citation.get("ref", citation["short"]) if citation else None
+    return None
+
+
+def _overlay_args(node: ast.Call) -> tuple[list[ast.expr], bool]:
+    """Return overlay-bearing arguments and whether this is a demo caption."""
+    args: list[ast.expr] = []
+    is_demo_caption = isinstance(node.func, ast.Name) and node.func.id == (
+        "add_demo_caption"
+    )
+    if is_demo_caption:
+        args += node.args[1:2]
+        args += [kw.value for kw in node.keywords if kw.arg == "caption"]
+    if isinstance(node.func, ast.Attribute) and node.func.attr in (
+        "add_text",
+        "add_html",
+    ):
+        args += node.args[:1]
+        args += [kw.value for kw in node.keywords if kw.arg in ("text", "html")]
+    args += [kw.value for kw in node.keywords if kw.arg == "credit"]
+    return args, is_demo_caption
+
+
 def _overlay_strings(source: str) -> list[str]:
     """Every statically resolvable overlay string in *source*.
 
@@ -854,39 +888,13 @@ def _overlay_strings(source: str) -> list[str]:
     """
     tree = ast.parse(source)
     consts = _module_string_constants(tree)
-    caption_reference = None
-    for statement in tree.body:
-        if not isinstance(statement, ast.Assign):
-            continue
-        if not any(
-            isinstance(target, ast.Name) and target.id == "DEMO_META"
-            for target in statement.targets
-        ):
-            continue
-        meta = ast.literal_eval(statement.value)
-        citation = meta.get("citation")
-        if citation:
-            caption_reference = citation.get("ref", citation["short"])
-        break
+    caption_reference = _caption_reference(tree)
 
     found: list[str] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
-        args: list[ast.expr] = []
-        is_demo_caption = isinstance(node.func, ast.Name) and node.func.id == (
-            "add_demo_caption"
-        )
-        if is_demo_caption:
-            args += node.args[1:2]
-            args += [kw.value for kw in node.keywords if kw.arg == "caption"]
-        if isinstance(node.func, ast.Attribute) and node.func.attr in (
-            "add_text",
-            "add_html",
-        ):
-            args += node.args[:1]
-            args += [kw.value for kw in node.keywords if kw.arg in ("text", "html")]
-        args += [kw.value for kw in node.keywords if kw.arg == "credit"]
+        args, is_demo_caption = _overlay_args(node)
         for arg in args:
             for branch in _overlay_branches(arg):
                 text = _overlay_literal(branch, consts)
