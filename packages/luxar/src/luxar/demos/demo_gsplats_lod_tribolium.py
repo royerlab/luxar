@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """GSplats Demo: Adaptive Level of Detail on a real Tribolium embryo (Light-Sheet)
 
-Takes the ~256K-splat fit of the *Tribolium castaneum* embryo (the same
+Takes the ~300K-splat fit of the *Tribolium castaneum* embryo (the same
 precomputed dataset as ``demo_gsplats_3d_tribolium_embryo.py``) and builds an
 **adaptive Level of Detail (LOD)** pyramid on top of it, then ships it to the
 viewer with per-level debug colors so the detail switching is visible.
@@ -17,7 +17,7 @@ WHAT THIS DEMONSTRATES — ADAPTIVE LEVEL OF DETAIL AT SCALE
 ================================================================================
 
 The tiny ``examples/gsplats_lod_example.py`` shows this on a 12-blob synthetic
-volume.  This demo does the same thing on a *real* quarter-million-splat
+volume.  This demo does the same thing on a *real* ~300K-splat
 microscopy dataset, which is where adaptive detail actually earns its keep:
 
 - **Substitutive levels**: each coarser level *replaces* the finer one with a
@@ -37,12 +37,12 @@ microscopy dataset, which is where adaptive detail actually earns its keep:
   highest quality.
 
 Pipeline:
-1. **Load** precomputed ~256K-splat Tribolium fit (Git LFS / local cache)
+1. **Load** precomputed ~300K-splat Tribolium fit (Git LFS / local cache)
 2. **Center + scale** intensity (so every synthesized level is consistent)
 3. **Build** a substitutive ladder with ``make_substitutive_lod``.
    The number of ÷4 levels needed scales as log_4(N): the precomputed
-   cached fit is ~256K splats, so auto-leveling builds 7 levels
-   (≈256K / 64K / 16K / 4K / 1K / 250 / 62 splats, finest→coarsest)
+   cached fit is ~300K splats, so auto-leveling builds 7 levels
+   (≈296K / 74K / 19K / 4.6K / 1.2K / 289 / 72 splats, finest→coarsest)
    down to a handful of blobs. The level count is auto-derived from the
    actual base splat count (override with --levels=N).
 4. **Colorize** each level (green → amber → red) for visible level-switching
@@ -82,7 +82,7 @@ Output:
 DEMO_META = {
     "key": "gsplats_lod_tribolium",
     "title": "Adaptive Level of Detail on a real Tribolium embryo (Light-Sheet)",
-    "description": "A ~256K-splat Tribolium embryo with an adaptive substitutive LOD ladder for zoom detail.",
+    "description": "A ~300K-splat Tribolium embryo with an adaptive substitutive LOD ladder for zoom detail.",
     "category": "microscopy",
     "geometry": "gsplats",
     "requirements": {
@@ -138,8 +138,8 @@ from luxar.utils.paths import get_demos_output_dir
 # Substitutive LOD parameters.
 #
 # Each coarser level keeps ~N/K splats, so the number of useful levels scales
-# as log_K(N): the precomputed cached fit is ~256K splats, which auto-derives
-# to 7 levels (≈256K / 64K / 16K / 4K / 1K / 250 / 62, finest→coarsest) down to
+# as log_K(N): the precomputed cached fit is ~300K splats, which auto-derives
+# to 7 levels (≈296K / 74K / 19K / 4.6K / 1.2K / 289 / 72, finest→coarsest) down to
 # a handful of blobs. LEVELS=None auto-derives the count from the actual base
 # splat count so the coarsest level lands near MIN_COARSEST splats; override
 # with --levels=N.
@@ -321,7 +321,7 @@ def create_luxar_scene(colored: GSplatData, output_path: Path) -> Path:
 Adaptive Level of Detail — Tribolium castaneum Embryo (Light-Sheet)
 ===================================================================
 
-A ~256K-splat fit of a beetle embryo, stored at several resolutions.
+A ~300K-splat fit of a beetle embryo, stored at several resolutions.
 
 Level of Detail (LOD) means the viewer shows the simplest version of the
 embryo that still looks right at the current zoom: a detailed version up
@@ -429,7 +429,7 @@ def main() -> None:
     aprint("=" * 70)
     aprint("GSplats Demo: Adaptive Level of Detail — Tribolium castaneum Embryo")
     aprint("=" * 70)
-    aprint("~256K real microscopy splats -> adaptive level-of-detail pyramid")
+    aprint("~300K real microscopy splats -> adaptive level-of-detail pyramid")
     aprint("")
 
     output_path = get_demos_output_dir() / "gsplats_lod_tribolium.luxar.zarr"

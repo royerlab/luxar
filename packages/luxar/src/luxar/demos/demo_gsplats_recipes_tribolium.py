@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """GSplats Demo: LOD **recipe gallery** on a real Tribolium embryo (Light-Sheet)
 
-Takes the ~256K-splat fit of the *Tribolium castaneum* embryo (the same
+Takes the ~300K-splat fit of the *Tribolium castaneum* embryo (the same
 precomputed dataset as ``demo_gsplats_3d_tribolium_embryo.py``) and runs the
 unified ``luxar gsplat lod --recipe`` pipeline to build the SIX scale-ordered
 representation topologies side by side, so you can compare them directly:
@@ -55,7 +55,7 @@ recipe identity) — so what renders is byte-for-byte the topology the CLI build
 only recoloured.
 
 Pipeline:
-1. **Load** the precomputed ~256K-splat Tribolium fit (Git LFS / local cache)
+1. **Load** the precomputed ~300K-splat Tribolium fit (Git LFS / local cache)
 2. **Center** it so all six columns sit at the origin before placement
 3. **Build** each recipe with ``build_recipe`` (the engine behind the CLI) and
    write each to a ``.gsplats.zarr`` — exactly what ``lod --recipe`` does
@@ -151,7 +151,7 @@ from luxar.utils.paths import get_demos_output_dir
 # Configuration
 # =============================================================================
 
-# Per-part BSP cap for tiles / overview / adaptive. The base fit is ~256K splats;
+# Per-part BSP cap for tiles / overview / adaptive. The base fit is ~300K splats;
 # 50K → ~5 spatial parts, enough to see the cells and the frustum-culling story.
 MAX_ELEMENTS = 50_000
 # Coarse-cap compression for overview / levels (one substitutive level ≈ N/FACTOR splats).
@@ -509,7 +509,7 @@ def create_luxar_scene(
 GSplats LOD recipe gallery — Tribolium castaneum embryo (Light-Sheet)
 =====================================================================
 
-The same ~256K-splat fit, laid out left→right as the six `luxar gsplat lod
+The same ~300K-splat fit, laid out left→right as the six `luxar gsplat lod
 --recipe` topologies: flat → stream → levels → tiles → overview → adaptive.
 
 Colour is applied AFTER the fact: hue = which spatial part, shade = which LOD
@@ -612,7 +612,7 @@ def main() -> None:
     aprint("=" * 70)
     aprint("GSplats Demo: lod --recipe gallery — Tribolium castaneum Embryo")
     aprint("=" * 70)
-    aprint("One ~256K-splat fit → flat | stream | levels | tiles | overview | adaptive")
+    aprint("One ~300K-splat fit → flat | stream | levels | tiles | overview | adaptive")
     aprint("")
 
     output_path = get_demos_output_dir() / "gsplats_recipes_tribolium.luxar.zarr"

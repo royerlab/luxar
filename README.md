@@ -297,7 +297,7 @@ stream:
 
 Both are the cached fits bundled with this repository under
 `packages/luxar/src/luxar/demos/data/`, fitted at full source resolution — the
-single-file Tribolium fit works out to about 10 bytes per splat on disk. They then
+single-file Tribolium fit works out to about 7 bytes per splat on disk. They then
 render in any WebGL2 desktop browser: no 3D textures, no ray-marching, and no CUDA
 on the viewing machine.
 

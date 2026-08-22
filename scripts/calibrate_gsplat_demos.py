@@ -175,6 +175,11 @@ def _load_tribolium() -> list[tuple[str, np.ndarray]]:
     return [("tribolium", V)]
 
 
+def _tribolium_floor_counts() -> float:
+    mod = _import_demo("demo_gsplats_3d_tribolium_embryo")
+    return float(mod.SPECIMEN_BACKGROUND_COUNTS)
+
+
 def _load_celegans() -> list[tuple[str, np.ndarray]]:
     """3 distributed timepoints from the 400-tp confocal dataset."""
     mod = _import_demo("demo_gsplats_4d_celegans_tracking")
@@ -308,6 +313,7 @@ DEMOS: List[Dict[str, Any]] = [
         "loader": _load_tribolium,
         "k_min": 2_000,
         "k_max": 1_000_000,
+        "floor": _tribolium_floor_counts,
         "comment": "Light-sheet Tribolium embryo (large)",
     },
     {
@@ -356,6 +362,7 @@ def _run_cli_cal(
     n_grid: int = N_GRID,
     preset: str = PRESET,
     progression: str = PROGRESSION,
+    floor: float | None = None,
 ) -> None:
     """Invoke ``luxar gsplat cal <npy> <json> --preset n2s ...`` as a subprocess.
 
@@ -382,6 +389,8 @@ def _run_cli_cal(
         progression,
         "--quiet",
     ]
+    if floor is not None:
+        cmd.extend(["--floor", str(floor)])
     aprint(f"  $ {' '.join(cmd)}")
     subprocess.run(
         cmd,
@@ -418,6 +427,7 @@ def _calibrate_one_sample(
     out_dir: Path,
     k_min: int,
     k_max: int,
+    floor: float | None = None,
 ) -> Dict[str, Any]:
     """Save V to a temp .npy, then subprocess ``luxar gsplat cal`` on it."""
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -431,7 +441,7 @@ def _calibrate_one_sample(
 
     t0 = time.perf_counter()
     try:
-        _run_cli_cal(npy_path, json_path, k_min=k_min, k_max=k_max)
+        _run_cli_cal(npy_path, json_path, k_min=k_min, k_max=k_max, floor=floor)
     finally:
         # We don't keep the giant scratch volumes around once cal is done.
         try:
@@ -481,6 +491,10 @@ def _calibrate_demo(demo: Dict[str, Any], skip_existing: bool) -> Dict[str, Any]
         aprint(f"  Comment: {demo.get('comment', '')}")
         aprint(f"  Preset:  {PRESET}")
         aprint(f"  K grid:  exp[{demo['k_min']}..{demo['k_max']}], n={N_GRID}")
+        floor = demo.get("floor")
+        if callable(floor):
+            floor = floor()
+        aprint(f"  Floor:   {floor if floor is not None else 'auto'}")
 
         aprint("  Loading volumes...")
         t_load = time.perf_counter()
@@ -505,6 +519,7 @@ def _calibrate_demo(demo: Dict[str, Any], skip_existing: bool) -> Dict[str, Any]
                     out_dir,
                     k_min=demo["k_min"],
                     k_max=demo["k_max"],
+                    floor=floor,
                 )
                 results.append(res)
             except Exception as e:
