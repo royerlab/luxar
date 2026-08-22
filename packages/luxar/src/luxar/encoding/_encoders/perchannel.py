@@ -343,20 +343,28 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         The exits mirror :meth:`_encode_positive_scalar` plus the exact
         broadcast/LUT paths that precede it in :meth:`ArrayEncoder.encode`.
         Linear quantization uses half a grid quantum; geometric-log encoding
-        uses the corresponding half-step at the array maximum. One output-dtype
-        ULP covers the final decoder cast (needed by the uint16 linear tier).
+        uses the corresponding half-step at the array maximum. One float32 ULP
+        covers the reader's final cast (needed by the uint16 linear tier).
         """
-        if mode not in (EncodingMode.AUTO, EncodingMode.MEMORY):
-            return None
-
         arr = np.asarray(data)
         if arr.size == 0 or not np.all(np.isfinite(arr)) or np.any(arr < 0):
             return None
+        if mode not in (
+            EncodingMode.AUTO,
+            EncodingMode.MEMORY,
+            EncodingMode.PRECISION,
+        ):
+            raise ValueError(f"Unsupported positive-scalar slack mode: {mode!r}")
 
         if self._is_uniform(arr):
             first = float(arr.flat[0])
             displacement = max(0.0, first - float(np.min(arr)))
             return displacement or None
+
+        if mode == EncodingMode.PRECISION:
+            if arr.dtype == np.dtype(np.float32):
+                return None
+            return abs(float(np.spacing(np.float32(np.max(arr)))))
 
         # A scalar LUT has at most 256 values. A small prefix with more
         # distinct values proves the full array cannot take that exit and
@@ -369,6 +377,18 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             and self.encodes_as_lut(arr, SemanticType.POSITIVE_SCALAR)
         ):
             return None
+
+        return self._positive_scalar_quantization_slack(
+            arr, mode, positive_scalar_encoding
+        )
+
+    def _positive_scalar_quantization_slack(
+        self,
+        arr: np.ndarray,
+        mode: EncodingMode,
+        positive_scalar_encoding: Literal["linear", "log"],
+    ) -> Optional[float]:
+        """Return the quantization plus float32 decode pad for one array."""
 
         max_val = float(np.max(arr))
         if max_val == 0.0:
@@ -392,10 +412,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
                 return None
             slack = span / (2.0 * ((1 << bits) - 1))
 
-        if np.issubdtype(arr.dtype, np.floating):
-            decode_ulp = abs(float(np.spacing(arr.dtype.type(max_val))))
-        else:
-            decode_ulp = 0.0
+        decode_ulp = abs(float(np.spacing(np.float32(max_val))))
         return float(slack + decode_ulp)
 
     def _encode_coordinate(
