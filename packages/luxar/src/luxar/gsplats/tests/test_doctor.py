@@ -42,15 +42,22 @@ def _partition_store(tmp: Path, n: int = 400, parts_cap: int = 80) -> Path:
 
 
 def _partition_scene(tmp: Path) -> tuple[Path, str]:
-    """A real scene containing one grafted partition node."""
+    """A real scene containing one native points partition."""
     from luxar import Dimensions, LuxarZarrCompiler
 
-    source = _partition_store(tmp)
+    rng = np.random.default_rng(12)
+    positions = (rng.random((120, 3)) * 100).astype(np.float32)
     path = tmp / "scene.luxar.zarr"
     with LuxarZarrCompiler(path) as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-        scene.add_gsplats_from_file("tiles", str(source))
-    return path, "tiles"
+        scene.add_points(
+            "points",
+            positions,
+            radii=1.0,
+            partition={"max_elements": 40},
+            additive_lod=False,
+        )
+    return path, "points"
 
 
 def _uniform_tiled_store(tmp: Path) -> Path:
