@@ -108,7 +108,7 @@ geometry, what it needs, and whether you have already built it:
  ASTRONOMY ───────────────────────────────────────────────────────────── 6 demos
  ✓  3  asteroids_solar_system                  points+lines  300 MB
  ✓ 12  cosmicflows_laniakea                    points+lines  25 MB
- • 15  desi_galaxies                           points        10 MB git-lfs
+ • 15  desi_galaxies                           points        73 MB git-lfs
 
  MEDICAL ─────────────────────────────────────────────────────────────── 4 demos
  ✓ 17  dmri_tractography                       lines         588 MB

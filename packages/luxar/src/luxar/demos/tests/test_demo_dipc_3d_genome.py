@@ -124,3 +124,19 @@ class TestBuildPolylines:
         n = build_scene(out, polys)
         assert n > 0
         assert out.exists() and any(out.iterdir())
+
+        import zarr
+
+        root = zarr.open_group(str(out), mode="r")
+        context = dict(root["all DNA (context)"].attrs)
+        assert context["blending_mode"] == "luminous"
+        assert context["intensity"] == pytest.approx(0.12)
+        assert context["opacity"] == pytest.approx(0.10)
+        assert context["extend_to_all"] == ["haplotype"]
+
+        genome = dict(root["genome"].attrs)
+        assert genome["blending_mode"] == "volumetric"
+        assert genome["absorption"] == pytest.approx(1.15)
+        assert genome["intensity"] == pytest.approx(0.364)
+        assert genome["opacity"] == pytest.approx(0.32)
+        assert "extend_to_all" not in genome
