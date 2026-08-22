@@ -1,6 +1,6 @@
 """The set of demo-package modules the demo guards must scan.
 
-Fifteen guards across nine modules read this set: four in
+Sixteen guards across nine modules read this set: four in
 ``test_demos_dependencies.py``, one in
 ``test_no_entrypoint_dependency_preflight.py``, one in
 ``test_substitutive_lod_gated.py``, one in ``test_demo_layers.py`` (the
@@ -17,9 +17,10 @@ default), one in ``test_demo_fit_provenance.py`` (the fit-provenance lint —
 ``_interop_common.py`` saves gsplat stores, so an ``include_fitting_info=False``
 save could hide in a helper), one in ``test_demo_caption_coverage.py`` (the
 standard-caption lint, including shared helpers that can author overlays), and
-four in ``test_demos_cinematic_mode.py`` (each scene passes a non-None viewer
-config, every config enables the preset, authored cameras state their composed
-FOV, and scientific-fidelity overrides stay explicit). The dependency guards
+five in ``test_demos_cinematic_mode.py`` (each scene passes a non-None viewer
+config, every config enables the preset, authored cameras leave the FOV unpinned
+and compose for 63°, scientific-fidelity overrides stay explicit, and the Python
+FOV constants match the viewer contract). The dependency guards
 all used to enumerate ``demo_*.py`` only, which left the package's SHARED helper
 modules unscanned. That became a real blind spot when ``_roundtrip_common.py``
 moved a ``require_module("matplotlib.pyplot")`` gate out of five ``demo_*.py``

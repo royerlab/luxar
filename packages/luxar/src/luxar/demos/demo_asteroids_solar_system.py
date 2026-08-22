@@ -541,7 +541,10 @@ def _solar_system_viewer_config() -> ViewerConfig:
     # elevated ecliptic view. Dynamic clipping still keeps distant objects
     # available when the user zooms out.
     camera = CameraConfig(
-        position=pull_in((50.0, -50.0, 30.0), from_fov_deg=50.0),
+        position=pull_in(
+            (50.0, -50.0, 30.0),
+            from_fov_deg=50.0,  # slight margin around Neptune's ~30 AU orbit
+        ),
         target=(0.0, 0.0, 0.0),
         up=(0.0, 0.0, 1.0),
     )
