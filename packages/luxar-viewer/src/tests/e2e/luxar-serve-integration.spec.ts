@@ -194,9 +194,7 @@ test.describe('Luxar Serve Integration', () => {
     let attrs: Record<string, unknown> | undefined;
     let served: string | undefined;
     for (const doc of candidates) {
-      const response = await page.request.get(
-        `http://127.0.0.1:${servePort}/${doc}`
-      );
+      const response = await page.request.get(`http://127.0.0.1:${servePort}/${doc}`);
       if (!response.ok()) continue;
       const parsed = JSON.parse(await response.text());
       // Format 3 nests the user attributes; format 2 IS them.
