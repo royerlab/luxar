@@ -159,12 +159,44 @@ describe('decode: quantized functions', () => {
     }
   );
 
-  it('matches Rust expm1f at known host-math mismatches', () => {
-    const output = new Float32Array(2);
-    decode_log_scalar_u16(new Uint16Array([29]), 9, output.subarray(0, 1));
-    decode_log_scalar_u16(new Uint16Array([2]), Math.log(10), output.subarray(1));
-
-    expectFloat32Bits(output, [0x3b82c31f, 0x38935f74]);
+  it.each([
+    {
+      label: 'u8 code 7, maxLog=9',
+      decode: decode_log_scalar_u8 as never,
+      data: new Uint8Array([7]),
+      maxLog: 9,
+      expectedBits: [0x3e8f7d82],
+    },
+    {
+      label: 'u8 code 15, maxLog=9',
+      decode: decode_log_scalar_u8 as never,
+      data: new Uint8Array([15]),
+      maxLog: 9,
+      expectedBits: [0x3f32abc2],
+    },
+    {
+      label: 'u16 code 183, maxLog=9',
+      decode: decode_log_scalar_u16 as never,
+      data: new Uint16Array([183]),
+      maxLog: 9,
+      expectedBits: [0x3cd07caa],
+    },
+    {
+      label: 'u16 code 398, maxLog=ln(10)',
+      decode: decode_log_scalar_u16 as never,
+      data: new Uint16Array([398]),
+      maxLog: Math.log(10),
+      expectedBits: [0x3c66b85a],
+    },
+  ])('log-space quantization: $label matches Rust expm1f', ({
+    decode,
+    data,
+    maxLog,
+    expectedBits,
+  }) => {
+    const output = new Float32Array(1);
+    decode(data, maxLog, output);
+    expectFloat32Bits(output, expectedBits);
   });
 });
 
