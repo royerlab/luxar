@@ -153,8 +153,9 @@ function deriveColormapFromDescendants(node: SceneNode): string | undefined {
 }
 
 /**
- * A numeric mesh appearance attr read
- * from `node`, else from the first descendant that carries one.
+ * A numeric mesh appearance attr (`ambient` / `shade_exponent` / `alpha_cutoff` /
+ * `specular` / `shininess`) read from `node`, else from the first descendant that
+ * carries one.
  *
  * Same shape and same reason as {@link deriveColormapFromDescendants}: these are
  * NOT compositing attrs on the Python side, so `add_mesh(partition=…, ambient=…)`

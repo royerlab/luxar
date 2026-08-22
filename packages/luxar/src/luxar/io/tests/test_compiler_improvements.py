@@ -2080,7 +2080,7 @@ class TestUnknownRenderAttrRejected:
     def test_mesh_appearance_allowed_via_write_through_on_a_mesh_leaf(self) -> None:
         """The write-through guard must not block a genuine mesh leaf — its
         construction fills the attr cache directly (never through the setter), and
-        a post-hoc set is exactly how the Layers panel edits these."""
+        a post-hoc set is how an author tweaks a mesh after ``add_mesh`` returns."""
         verts = np.random.RandomState(1).rand(12, 3).astype(np.float32)
         faces = np.array([[0, 1, 2], [3, 4, 5], [6, 7, 8]], dtype=np.uint32)
         with tempfile.TemporaryDirectory() as tmpdir:

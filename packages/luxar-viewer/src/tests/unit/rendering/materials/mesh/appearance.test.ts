@@ -83,8 +83,8 @@ describe('resolveMeshOutput', () => {
 
 describe('MESH_DEFAULTS', () => {
   it('shades with wrapped diffuse and a subtle specular by default', () => {
-    // `ambient === 1` would collapse the shade term to the emissive look of the
-    // other three types, which is the documented escape hatch — not the default.
+    // `ambient === 1` removes the diffuse gradient (set `specular = 0` too for a
+    // fully emissive look — the escape hatch is two knobs now), not the default.
     expect(MESH_DEFAULTS.ambient).toBeGreaterThan(0);
     expect(MESH_DEFAULTS.ambient).toBeLessThan(1);
     expect(MESH_DEFAULTS.shadeExponent).toBeGreaterThan(0);

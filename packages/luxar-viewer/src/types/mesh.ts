@@ -146,8 +146,8 @@ export interface MeshMetadata {
   /** Blending mode */
   /**
    * Offset-key shade floor in `[0, 1]` — what a face-away fragment keeps (§6.2).
-   * `1.0` collapses the shade term and reproduces the emissive look of the other three
-   * geometry types.
+   * `1.0` removes the diffuse gradient; set `specular = 0.0` as well for a fully
+   * emissive look.
    *
    * Optional and viewer-defaulted: the writer never stamps it, so it is present only
    * when an author passed it through `add_mesh(**attrs)`. Authoring support and the

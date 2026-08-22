@@ -45,7 +45,9 @@ Exposed:
 * :func:`reject_lines_only_join_assignment` — the same refusal for the second
   door into the same attr, the ``node.join = ...`` property setter.
 * :func:`reject_mesh_only_appearance` — refuse mesh-only appearance attrs on
-  points / lines / gsplats leaves and on Groups, where they do not compose.
+  points / lines / gsplats leaves and on Groups, where they do not compose. The
+  second door into the same attrs (a post-hoc ``node.attrs[...] = ...``) is guarded
+  by ``core/node/node.py::_WriteThroughAttrs._reject_mesh_only_on_non_mesh``.
 * :func:`unnest_add_error` — strip a SAME-geometry inner adder's own ``Could
   not add <geometry> '<child>': …`` prefix from a caught exception's message,
   so a refusal from inside a synthesised same-kind split child (``child_3``,
