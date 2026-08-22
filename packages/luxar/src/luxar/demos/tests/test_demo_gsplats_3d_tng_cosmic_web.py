@@ -16,9 +16,7 @@ import pytest
 
 pytest.importorskip("scipy")
 
-_DEMO_PATH = (
-    Path(__file__).resolve().parents[1] / "demo_gsplats_3d_tng_cosmic_web.py"
-)
+_DEMO_PATH = Path(__file__).resolve().parents[1] / "demo_gsplats_3d_tng_cosmic_web.py"
 
 
 def _load_demo_module():
@@ -83,9 +81,7 @@ class TestFinalizeDensity:
         assert np.isclose(out.max(), 1.0, rtol=1e-5)
 
     def test_sigma_zero_is_passthrough_shape(self) -> None:
-        raw = np.abs(np.random.default_rng(2).normal(size=(8, 8, 8))).astype(
-            np.float32
-        )
+        raw = np.abs(np.random.default_rng(2).normal(size=(8, 8, 8))).astype(np.float32)
         out = finalize_density(raw, sigma=0.0)
         assert out.shape == (8, 8, 8)
         assert out.max() <= 1.0
@@ -104,3 +100,59 @@ class TestFinalizeDensity:
         assert out.shape == (6, 6, 6)
         assert float(out.max()) == 0.0
         assert not np.isnan(out).any()
+
+
+class TestLayerDisplaySettings:
+    """Pin the tuned look of the `cosmic_web` layer.
+
+    These four values were chosen together against the fit's own
+    `amplitude_data_range` window, and three of them only make sense as a set:
+    volumetric compositing is what makes `absorption` mean anything, and the
+    reduced `opacity` is a consequence of accumulating alpha along the ray. A
+    later edit that reverts one of them in isolation is a regression, so they
+    are read straight off the call rather than left to a screenshot.
+
+    Parsed from the source: building the real scene needs the TNG HDF5 cube.
+    """
+
+    @staticmethod
+    def _add_gsplats_kwargs() -> dict:
+        import ast
+
+        tree = ast.parse(_DEMO_PATH.read_text())
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "add_gsplats_from_data"
+            ):
+                return {
+                    kw.arg: kw.value.value
+                    for kw in node.keywords
+                    if kw.arg is not None and isinstance(kw.value, ast.Constant)
+                }
+        raise AssertionError("no add_gsplats_from_data call found in the demo")
+
+    def test_layer_is_volumetric_turbo_with_the_tuned_levels(self) -> None:
+        kwargs = self._add_gsplats_kwargs()
+        assert kwargs["colormap"] == "turbo"
+        assert kwargs["blending_mode"] == "volumetric"
+        assert kwargs["absorption"] == pytest.approx(10.0)
+        assert kwargs["opacity"] == pytest.approx(0.66)
+
+    def test_absorption_is_only_meaningful_under_volumetric(self) -> None:
+        """kappa is read by the volumetric mode; additive ignores it."""
+        kwargs = self._add_gsplats_kwargs()
+        if "absorption" in kwargs:
+            assert kwargs.get("blending_mode") == "volumetric"
+
+    def test_display_window_is_left_to_the_writer(self) -> None:
+        """`amplitude_data_range` is [min, p99.9] of the actual fit.
+
+        Pinning it in the demo would freeze a data-dependent value that a refit
+        legitimately moves, and the panel reading "0 - 0.084" is that derived
+        window, not a hand-set one.
+        """
+        kwargs = self._add_gsplats_kwargs()
+        assert "amplitude_data_range" not in kwargs
+        assert "gamma" not in kwargs
