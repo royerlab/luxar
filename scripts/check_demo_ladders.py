@@ -185,7 +185,11 @@ def parse_aspects(spec: str) -> list[tuple[str, float]]:
         The parsed pairs, in the order given.
 
     Raises:
-        ValueError: An entry is not a number, or is zero/negative.
+        ValueError: An entry is not a number, is zero/negative, or is a ``W:H``
+            ratio with a zero height. The last one arrives as a
+            ``ZeroDivisionError`` and is converted here, so every malformed spec
+            leaves this function the same way and ``main`` can route the lot
+            through ``parser.error``.
     """
     pairs: list[tuple[str, float]] = []
     for raw in spec.split(","):
@@ -196,7 +200,13 @@ def parse_aspects(spec: str) -> list[tuple[str, float]]:
         text = value if label else entry
         if ":" in text:
             width, _, height = text.partition(":")
-            number = float(width) / float(height)
+            try:
+                number = float(width) / float(height)
+            except ZeroDivisionError:
+                raise ValueError(
+                    f"aspect {entry!r} has a zero height; a W:H ratio needs a "
+                    "non-zero denominator"
+                ) from None
         else:
             number = float(text)
         if number <= 0:
@@ -211,7 +221,7 @@ def run_screen(paths: Sequence[Path], args: argparse.Namespace) -> None:
     """Run the opening-shot LOD screen and print it. Never affects the exit code."""
     report = screen_stores(
         paths,
-        aspects=parse_aspects(args.screen_aspect),
+        aspects=args.screen_aspects,
         viewport_long_px=args.screen_viewport_long,
         fit_fov=args.screen_fit_fov,
         render_fov=args.screen_render_fov,
@@ -356,8 +366,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     exit code, so it visibly cannot influence the verdict — and under
     ``--screen-only`` the gate does not run at all, which is why that mode always
     exits 0.
+
+    ``--screen-aspect`` is parsed BEFORE anything runs, so a malformed spec
+    exits 2 with a usage message instead of dying on a raw traceback halfway
+    through — under ``--screen`` that traceback landed after the gate had
+    already printed its PASS line.
     """
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        args.screen_aspects = parse_aspects(args.screen_aspect)
+    except ValueError as error:
+        parser.error(f"--screen-aspect: {error}")
 
     paths = scene_paths(args.scenes)
     if not paths:

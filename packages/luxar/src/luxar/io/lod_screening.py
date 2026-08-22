@@ -71,7 +71,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, cast
 
 import numpy as np
 import zarr
@@ -97,7 +97,13 @@ from ..typing_utils.constants import DERIVED_LOD_SELECTOR, LOD_SELECTORS
 # would be one more place for the convention to drift, and the whole point of the
 # screen is to predict what `restamp-lod` WOULD do.
 from ._compiler.finalize.amplitude_window import _child_nodes, _lod_children
-from .lod_restamp import _count_of, _is_partition_bound, _threshold_of
+from .lod_restamp import (
+    _count_of,
+    _descending_ladder_refusal,
+    _is_partition_bound,
+    _orphan_ladder_child_refusal,
+    _threshold_of,
+)
 
 __all__ = [
     "DEFAULT_ASPECTS",
@@ -122,7 +128,10 @@ __all__ = [
     "SceneScreening",
     "ScreenReport",
     "calculate_camera_distance",
+    "frustum_intersects_box",
+    "frustum_planes",
     "legacy_coverage_metric",
+    "mat4_from_column_major",
     "perspective_matrix",
     "pick_child_with_hysteresis",
     "print_screen_report",
@@ -201,8 +210,9 @@ VERDICT_FRAGILE = "fragile"
 #: never takes a metric — it holds the coarsest ready level regardless of ladder.
 VERDICT_OFF_SCREEN = "off-screen"
 
-#: Already on ``selector="screen-area"`` carrying exactly the ladder
-#: ``restamp-lod`` would derive. Nothing to compare.
+#: Already on ``selector="screen-area"``, which is all ``restamp-lod`` looks at
+#: before skipping the group — so there is nothing a rewrite would change here,
+#: whatever the stored thresholds happen to be.
 VERDICT_ALREADY_CURRENT = "already-current"
 
 #: The group could not be decided; :attr:`GroupScreening.reason` says why.
@@ -615,10 +625,18 @@ def pick_child_with_hysteresis(
     ``lod-selector-math.ts::pickChildWithHysteresis``. The natural pick is the
     finest child whose threshold is ``<= metric``, found by scanning upward and
     BREAKING at the first threshold above it — so a non-monotone ladder stops at
-    the first violation rather than skipping past it, which is the behaviour a
-    reordered store actually gets. Upgrades are immediate; a downgrade must clear
-    a margin of ``hysteresis_ratio`` of the gap to the adjacent coarser
-    threshold.
+    the first violation rather than skipping past it. Upgrades are immediate; a
+    downgrade must clear a margin of ``hysteresis_ratio`` of the gap to the
+    adjacent coarser threshold.
+
+    The ``break`` is transcribed because the TS function has it, NOT because a
+    store on disk can reach it: ``load-lod-group-node.ts`` STABLE-SORTS the
+    registry children ascending by ``coverageFraction`` (with a warning) whenever
+    the ladder is not strictly ascending, so the picker never sees a descending
+    one. A store carrying such a ladder is refused upstream of here anyway —
+    :func:`_preflight` skips it exactly as ``restamp-lod`` does, since a rewrite
+    would invert it — so the ``break`` matters only if this function is called
+    directly with a hand-built ladder.
 
     Args:
         thresholds: Per-child ``coverage_fraction`` values, coarsest→finest.
@@ -721,6 +739,11 @@ class _LodGroupFacts:
     anchor_reason: str
     world_matrix: np.ndarray
     children: List[_LadderChild]
+    #: ``lod_restamp._orphan_ladder_child_refusal``'s message when this group
+    #: holds a ``coverage_fraction`` child that does not resolve as a ladder
+    #: level, else ``""``. Resolved during the walk because the refusal needs
+    #: the zarr group, which nothing downstream of here keeps.
+    orphan_refusal: str = ""
 
 
 def _bounds_of(attrs: Dict[str, Any], key: str) -> Optional[_BoundsPair]:
@@ -792,6 +815,7 @@ def _collect_lod_groups(
     if kind == "lod":
         children = _lod_children(group)
         child_under = _is_partition_bound(under_partition, children)
+        orphan_refusal = _orphan_ladder_child_refusal(group, children)
         out.append(
             _LodGroupFacts(
                 path=group.path or "/",
@@ -810,6 +834,9 @@ def _collect_lod_groups(
                     )
                     for name, child, child_attrs in children
                 ],
+                orphan_refusal=(
+                    "" if orphan_refusal is None else orphan_refusal.detail
+                ),
             )
         )
     elif kind == "partition":
@@ -833,10 +860,10 @@ def _display_dims(root_attrs: Dict[str, Any]) -> List[int]:
     ``SceneDimsManager`` takes the first three dimensions flagged
     ``display: true``; a store carrying no ``scene_dimensions`` at all falls back
     to ``[0, 1, 2]``, matching ``computeBoundsFromMetadata``'s own default. A
-    store that HAS the attr but flags nothing gets an empty list — also matching
-    the viewer, which then projects every axis to 0 — and
-    :func:`screen_lod_store` skips such a scene rather than screening a
-    degenerate box.
+    store that HAS the attr but flags fewer gets a shorter list — also matching
+    the viewer, which then projects the unmapped axes to 0 — and
+    :func:`screen_lod_store` skips a scene with fewer than two displayed dims,
+    which is where ``lod-group-registry.ts::evaluatePerFrame`` itself bails.
     """
     raw = root_attrs.get("scene_dimensions")
     if not isinstance(raw, dict):
@@ -893,6 +920,37 @@ def _authored_render_fov(root_attrs: Dict[str, Any]) -> Optional[float]:
     if isinstance(fov, (int, float)) and not isinstance(fov, bool):
         return float(fov)
     return None
+
+
+def _unmodelled_fov_source(root_attrs: Dict[str, Any]) -> str:
+    """An authored FOV this module cannot resolve, named — or ``""``.
+
+    ``viewer_config.camera.fov_preset`` and ``viewer_config.cinematic_mode:
+    true`` both put the first frame on a FOV that lives in the viewer's OWN
+    preset table (``config/sections/camera/data.ts``; cinematic expands to the
+    35 mm entry, 63°, in ``config/cinematic-preset.ts``). Copying that table into
+    Python would be a second, unverified copy of it, and GUESSING wrong is not
+    harmless: at the fit FOV 47 a scene the viewer renders at 63 reads roughly
+    twice the area, which is a whole halving of the derived ladder and can flip a
+    win into a no-op. So such a scene is skipped and the operator is told to pass
+    the FOV explicitly.
+
+    A numeric ``camera.fov`` shadows both — the bridge's ``CINEMATIC_FOV_PAIR``
+    rule is that an author-set framing wins whole — and
+    :func:`_authored_render_fov` honours it, so it is not a blocker.
+    """
+    config = root_attrs.get("viewer_config")
+    if not isinstance(config, dict):
+        return ""
+    camera = config.get("camera")
+    camera = camera if isinstance(camera, dict) else {}
+    if _authored_render_fov(root_attrs) is not None:
+        return ""
+    if camera.get("fov_preset") is not None:
+        return f"viewer_config.camera.fov_preset={camera['fov_preset']!r}"
+    if config.get("cinematic_mode") is True:
+        return "viewer_config.cinematic_mode=true"
+    return ""
 
 
 # --------------------------------------------------------------------------- #
@@ -959,8 +1017,16 @@ class SceneScreening:
 
     @property
     def tally(self) -> Dict[str, int]:
-        """Verdict counts for this scene, in :data:`VERDICT_ORDER`."""
+        """Verdict counts for this scene, in :data:`VERDICT_ORDER`.
+
+        A store-wide skip counts as one :data:`VERDICT_SKIPPED` — it prints a
+        ``❔`` line like any other skip, and counting it nowhere made two
+        unreadable stores read as ``0 skipped`` in the footer. Such a scene has
+        no groups, so the two branches never both fire.
+        """
         counts = dict.fromkeys(VERDICT_ORDER, 0)
+        if self.skipped_reason:
+            counts[VERDICT_SKIPPED] += 1
         for group in self.groups:
             counts[group.verdict] += 1
         return counts
@@ -1021,11 +1087,15 @@ def _skip(facts: _LodGroupFacts, reason: str, rederived: List[float]) -> GroupSc
 def _rederived_ladder(facts: _LodGroupFacts) -> Tuple[List[float], str]:
     """What ``restamp-lod`` would derive for this group, or the reason it cannot.
 
-    The same two guards ``lod_restamp._plan_lod`` applies, for the same reasons:
+    The two COUNT guards ``lod_restamp._plan_lod`` applies, for the same reasons:
     the finest child's element count must resolve and must be positive, because
     :func:`~luxar.core.group.lod.group.coverage_fractions` refuses a ladder whose
     finest level is empty. A coarser level with no recorded count is passed as
     ``0`` — the derivations consume only the LENGTH and the finest entry.
+
+    ``_plan_lod``'s other two refusals — an orphan ladder child, a descending
+    stored ladder — are applied by :func:`_preflight` through that module's own
+    predicates, since neither is a function of the element counts.
     """
     counts = [child.element_count for child in facts.children]
     if not counts:
@@ -1081,10 +1151,16 @@ def _ladders_match(stored: Sequence[Optional[float]], derived: Sequence[float]) 
 def _preflight(facts: _LodGroupFacts) -> Tuple[List[float], Optional[GroupScreening]]:
     """Resolve the re-derived ladder, or the skip record saying why there is none.
 
-    Four states make a group undecidable, and each is reported rather than
-    guessed at: a selector outside the vocabulary (``restamp-lod`` refuses it
-    too), a ladder whose finest count will not resolve, a child with no stored
-    ``coverage_fraction`` (so TODAY's pick has no answer), and a
+    Six states make a group undecidable, and each is reported rather than
+    guessed at. Four of them are ``restamp-lod``'s OWN refusals, applied through
+    its own predicates so the two can never drift: a selector outside the
+    vocabulary, an orphan ladder child
+    (:func:`~luxar.io.lod_restamp._orphan_ladder_child_refusal`), a DESCENDING
+    stored ladder (:func:`~luxar.io.lod_restamp._descending_ladder_refusal`), and
+    a ladder whose finest element count will not resolve. A group ``restamp-lod``
+    refuses is a group it writes NOTHING for, so calling it a win would be a
+    false positive. The remaining two are the screen's own: a child with no
+    stored ``coverage_fraction`` (so TODAY's pick has no answer), and a
     ``default_level`` pointing outside its own ladder.
 
     Args:
@@ -1106,6 +1182,13 @@ def _preflight(facts: _LodGroupFacts) -> Tuple[List[float], Optional[GroupScreen
                 [],
             ),
         )
+
+    if facts.orphan_refusal:
+        return ([], _skip(facts, facts.orphan_refusal, []))
+
+    descending = _descending_ladder_refusal(facts.path, stored)
+    if descending is not None:
+        return ([], _skip(facts, descending.detail, []))
 
     rederived, why_not = _rederived_ladder(facts)
     if why_not:
@@ -1156,7 +1239,6 @@ def _measure(
     viewport_long_px: int,
     fit_fov: float,
     render_fov: float,
-    fit_ratio: float,
 ) -> AspectMeasurement:
     """Score one group at ONE aspect: fit the camera, take both metrics, pick.
 
@@ -1168,14 +1250,15 @@ def _measure(
         viewport_long_px: Pixels on the long viewport axis.
         fit_fov: FOV the fitted DISTANCE uses.
         render_fov: FOV the first frame's projection uses.
-        fit_ratio: Share of the fitted axis the scene box fills.
 
     Returns:
         The measurement, with ``off_screen`` set when the frustum gate fired.
     """
     width, height = _viewport_for(aspect, viewport_long_px)
     target = root_box.center
-    distance = calculate_camera_distance(root_box, fit_fov, aspect, fit_ratio, target)
+    distance = calculate_camera_distance(
+        root_box, fit_fov, aspect, DEFAULT_FIT_RATIO, target
+    )
     near, far = _near_far_for(distance, root_box.diagonal)
     proj_view = perspective_matrix(render_fov, aspect, near, far) @ view_matrix(
         (target[0], target[1], target[2] + distance)
@@ -1185,12 +1268,15 @@ def _measure(
         frustum_planes(proj_view), geometry.raw_world
     )
     if off_screen:
-        # The viewer never takes a metric here: it holds `coarsestReadyIndex`,
-        # which is index 0 in practice (a lazily-loaded finer level is never
-        # "ready" before it is asked for). Both ladders therefore agree, and the
-        # metrics are reported as 0 rather than as a number nobody uses.
+        # The viewer never takes a metric here: it holds `coarsestReadyIndex`
+        # (`lod-group-registry.ts`), the first child that is READY — and on frame
+        # one the only ready child is the eagerly-committed `default_level`
+        # (`load-lod-group-node.ts` defers every other level behind an
+        # `ensureLoaded` thunk). So it is `default_level`, not index 0. Both
+        # ladders therefore agree, and the metrics are reported as 0 rather than
+        # as a number nobody uses.
         today_metric = area_metric = 0.0
-        today_index = rederived_index = 0
+        today_index = rederived_index = geometry.default_level
     else:
         area_metric = project_box_area_fraction(geometry.metric_world, proj_view)
         if geometry.has_lod_bounds:
@@ -1229,22 +1315,32 @@ def _measure(
 def _verdict_of(
     facts: _LodGroupFacts,
     measurements: Sequence[AspectMeasurement],
-    stored: Sequence[Optional[float]],
-    rederived: Sequence[float],
 ) -> str:
     """Bucket a group from its aspect sweep, most-specific test first.
 
     ``off-screen`` and ``already-current`` come first because in both the
-    coarser/not-coarser comparison is vacuous — no metric was taken, or the two
-    ladders are the same object. Only then is the sweep read: coarser everywhere
-    is a ``win``, nowhere a ``no-op``, and anything in between is ``fragile``
-    rather than rounded into either.
+    coarser/not-coarser comparison is vacuous — no metric was taken, or
+    ``restamp-lod`` would write nothing. Only then is the sweep read: coarser
+    everywhere is a ``win``, nowhere a ``no-op``, and anything in between is
+    ``fragile`` rather than rounded into either.
+
+    ``already-current`` is decided on the SELECTOR ALONE, exactly as
+    ``lod_restamp._plan_lod`` decides it — that function returns before it has
+    read a single threshold, so a ``screen-area`` group whose ladder is not the
+    one ``restamp-lod`` would derive is still left untouched by a real run. The
+    stored-vs-derived diff stays in the report as printed evidence (see
+    :func:`_print_group`), where it names a store worth looking at without
+    claiming a rewrite that will not happen.
+
+    A ``win`` additionally requires that the sweep is non-empty: ``all([])`` is
+    True, so an empty ``aspects`` list would otherwise make every group a win
+    with no evidence at all.
     """
     if measurements and all(m.off_screen for m in measurements):
         return VERDICT_OFF_SCREEN
-    if facts.selector == DERIVED_LOD_SELECTOR and _ladders_match(stored, rederived):
+    if facts.selector == DERIVED_LOD_SELECTOR:
         return VERDICT_ALREADY_CURRENT
-    if all(m.coarser for m in measurements):
+    if measurements and all(m.coarser for m in measurements):
         return VERDICT_WIN
     if not any(m.coarser for m in measurements):
         return VERDICT_NO_OP
@@ -1260,7 +1356,6 @@ def _screen_group(
     viewport_long_px: int,
     fit_fov: float,
     render_fov: float,
-    fit_ratio: float,
 ) -> GroupScreening:
     """Measure one group at every requested aspect and bucket the result."""
     stored = [child.threshold for child in facts.children]
@@ -1279,11 +1374,15 @@ def _screen_group(
             rederived,
         )
     has_lod_bounds = any(child.lod_bounds is not None for child in facts.children)
-    metric_local = (
-        _group_local_box(facts, display_dims, use_lod_bounds=True)
-        if has_lod_bounds
-        else raw_local
-    ) or raw_local
+    metric_local = raw_local
+    if has_lod_bounds:
+        # The `use_lod_bounds` pass reads `child.lod_bounds or child.bounds`, so
+        # it accepts a SUPERSET of the children the raw pass accepted: `raw_local`
+        # being non-None makes this non-None too. The `or raw_local` fallback that
+        # used to sit here could never fire.
+        metric_local = cast(
+            Box3, _group_local_box(facts, display_dims, use_lod_bounds=True)
+        )
 
     geometry = _Geometry(
         raw_world=transform_box(raw_local, facts.world_matrix),
@@ -1291,7 +1390,11 @@ def _screen_group(
         has_lod_bounds=has_lod_bounds,
         selector=facts.selector,
         default_level=facts.default_level,
-        stored_thresholds=[float(v) for v in stored if v is not None],
+        # `_preflight` has already refused any ladder carrying a missing
+        # threshold, so every entry is a real number; the `is not None` FILTER
+        # that used to live here could only ever desynchronise this ladder from
+        # `counts`, which is indexed by the same child position.
+        stored_thresholds=[float(cast(float, v)) for v in stored],
         rederived=rederived,
         counts=counts,
     )
@@ -1304,14 +1407,13 @@ def _screen_group(
             viewport_long_px=viewport_long_px,
             fit_fov=fit_fov,
             render_fov=render_fov,
-            fit_ratio=fit_ratio,
         )
         for label, aspect in aspects
     ]
 
     return GroupScreening(
         path=facts.path,
-        verdict=_verdict_of(facts, measurements, stored, rederived),
+        verdict=_verdict_of(facts, measurements),
         selector=facts.selector,
         partition_bound=facts.partition_bound,
         anchor_reason=facts.anchor_reason,
@@ -1323,6 +1425,28 @@ def _screen_group(
     )
 
 
+def _require_aspects(aspects: Sequence[Tuple[str, float]]) -> None:
+    """Refuse an empty aspect sweep — a verdict with no evidence behind it.
+
+    Every verdict but ``skipped`` is a statement about a measurement, and
+    ``all([])`` is True: an empty sweep would make :data:`VERDICT_WIN`'s
+    "coarser at every tested aspect" vacuously true for every group in the
+    store. :func:`_verdict_of` guards the clause as well, but a caller that
+    passed nothing to measure at wants an error, not a report of no-ops.
+
+    Args:
+        aspects: The ``(label, width/height)`` pairs to measure at.
+
+    Raises:
+        ValueError: ``aspects`` is empty.
+    """
+    if not aspects:
+        raise ValueError(
+            "the LOD screen needs at least one aspect ratio to measure at; got "
+            "an empty sequence (a verdict over no measurements is evidence-free)"
+        )
+
+
 def screen_lod_store(
     path: "str | Path",
     *,
@@ -1330,7 +1454,6 @@ def screen_lod_store(
     viewport_long_px: int = DEFAULT_VIEWPORT_LONG_PX,
     fit_fov: float = DEFAULT_FIT_FOV,
     render_fov: Optional[float] = None,
-    fit_ratio: float = DEFAULT_FIT_RATIO,
 ) -> SceneScreening:
     """Screen every ``kind=lod`` group in ONE built scene. Read-only.
 
@@ -1351,7 +1474,6 @@ def screen_lod_store(
         render_fov: VERTICAL FOV the first frame's projection uses. Defaults to
             the scene's authored ``viewer_config.camera.fov`` when it has one,
             else ``fit_fov``.
-        fit_ratio: Share of the fitted axis the scene bbox fills.
 
     Returns:
         A :class:`SceneScreening`. A store-wide refusal (not a scene, no root
@@ -1361,8 +1483,9 @@ def screen_lod_store(
 
     Raises:
         FileNotFoundError: ``path`` does not exist.
-        ValueError: ``path`` is not a directory.
+        ValueError: ``path`` is not a directory, or ``aspects`` is empty.
     """
+    _require_aspects(aspects)
     store_path = Path(path)
     if not store_path.exists():
         raise FileNotFoundError(f"no such store: {store_path}")
@@ -1396,6 +1519,19 @@ def screen_lod_store(
                 ),
             )
 
+        if render_fov is None:
+            unmodelled_fov = _unmodelled_fov_source(root_attrs)
+            if unmodelled_fov:
+                return SceneScreening(
+                    path=str(store_path),
+                    skipped_reason=(
+                        f"the scene authors {unmodelled_fov}, whose FOV lives in "
+                        "the viewer's own preset table — screening it at the fit "
+                        f"FOV {fit_fov:g} would misreport every occupancy. Pass "
+                        "--screen-render-fov (63 for the cinematic/35mm preset)"
+                    ),
+                )
+
         bounds = _bounds_of(root_attrs, "position_bounds")
         if bounds is None:
             return SceneScreening(
@@ -1404,12 +1540,17 @@ def screen_lod_store(
             )
 
         display_dims = _display_dims(root_attrs)
-        if not display_dims:
+        if len(display_dims) < 2:
+            # `lod-group-registry.ts::evaluatePerFrame` bails at
+            # `displayDims.length < 2` BEFORE any group is evaluated, so the
+            # selector never runs on such a scene and a verdict for it would
+            # describe something the viewer does not do.
             return SceneScreening(
                 path=str(store_path),
                 skipped_reason=(
-                    "scene_dimensions flags no dimension display=true, so the "
-                    "viewer projects every axis to 0 (a degenerate framing)"
+                    f"scene_dimensions flags {len(display_dims)} dimension(s) "
+                    "display=true; the viewer's LOD selector bails below 2, so "
+                    "it never evaluates a ladder in this scene"
                 ),
             )
 
@@ -1447,7 +1588,6 @@ def screen_lod_store(
                     viewport_long_px=viewport_long_px,
                     fit_fov=fit_fov,
                     render_fov=effective_render_fov,
-                    fit_ratio=fit_ratio,
                 )
                 for entry in facts
             ],
@@ -1463,7 +1603,6 @@ def screen_stores(
     viewport_long_px: int = DEFAULT_VIEWPORT_LONG_PX,
     fit_fov: float = DEFAULT_FIT_FOV,
     render_fov: Optional[float] = None,
-    fit_ratio: float = DEFAULT_FIT_RATIO,
 ) -> ScreenReport:
     """:func:`screen_lod_store` over several stores, collected into one report.
 
@@ -1476,11 +1615,16 @@ def screen_stores(
         viewport_long_px: See :func:`screen_lod_store`.
         fit_fov: See :func:`screen_lod_store`.
         render_fov: See :func:`screen_lod_store`.
-        fit_ratio: See :func:`screen_lod_store`.
 
     Returns:
         The combined :class:`ScreenReport`.
+
+    Raises:
+        ValueError: ``aspects`` is empty. Checked up front, OUTSIDE the
+            per-store guard below, so a caller error is raised rather than
+            recorded once per store as if the stores were at fault.
     """
+    _require_aspects(aspects)
     scenes: List[SceneScreening] = []
     for path in paths:
         try:
@@ -1491,7 +1635,6 @@ def screen_stores(
                     viewport_long_px=viewport_long_px,
                     fit_fov=fit_fov,
                     render_fov=render_fov,
-                    fit_ratio=fit_ratio,
                 )
             )
         except Exception as error:  # noqa: BLE001 - one bad store must not stop the rest
@@ -1505,8 +1648,8 @@ def screen_stores(
 # Rendering the report.
 # --------------------------------------------------------------------------- #
 
-#: One glyph per verdict, per ``docs/guides/developer/CONSOLE_OUTPUT_STYLE.md``.
-#: Nothing here is ``❌``: no verdict is an error — this pass only reports.
+#: One glyph per verdict. Nothing here is ``❌``: no verdict is an error — this
+#: pass only reports.
 _VERDICT_ICON: Dict[str, str] = {
     VERDICT_WIN: "🏆",
     VERDICT_FRAGILE: "⚠️ ",
@@ -1566,7 +1709,7 @@ def print_screen_report(
 
 def _print_group(group: GroupScreening) -> None:
     """Print one group's verdict, ladders and per-aspect measurements."""
-    icon = _VERDICT_ICON[group.verdict]
+    icon = _VERDICT_ICON.get(group.verdict, "· ")
     with asection(f"{icon} {group.path}: {group.verdict}"):
         aprint(
             f"selector={group.selector!r}, anchor {group.anchor} "
@@ -1577,6 +1720,18 @@ def _print_group(group: GroupScreening) -> None:
             f"stored   {_fmt_ladder(group.stored_thresholds)}  →  "
             f"re-derived {_fmt_ladder(list(group.rederived_thresholds))}"
         )
+        if group.verdict == VERDICT_ALREADY_CURRENT and not _ladders_match(
+            group.stored_thresholds, group.rederived_thresholds
+        ):
+            # Evidence, NOT a verdict: `restamp-lod` skips a `screen-area` group
+            # on the selector alone and never reads its ladder, so this store is
+            # worth a look but a rewrite would not touch it.
+            aprint(
+                "note: the stored ladder is NOT the one restamp-lod would "
+                "derive, but the group is already on "
+                f"selector={DERIVED_LOD_SELECTOR!r}, so restamp-lod skips it "
+                "and writes nothing"
+            )
         if group.reason:
             aprint(f"skipped: {group.reason}")
         for m in group.measurements:

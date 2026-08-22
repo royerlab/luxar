@@ -348,19 +348,30 @@ def test_column_major_transform_puts_translation_at_indices_12_13_14() -> None:
 
 
 def test_transform_box_rotates_the_corner_set_not_the_min_max_pair() -> None:
-    """A 90-degree Z rotation maps ``(x, y) → (−y, x)``, swapping the extents."""
+    """A 45-degree Z rotation: the ANTI-diagonal corners set both X bounds.
+
+    45 degrees, not 90: a right-angle rotation of an axis-aligned box maps the
+    ``(min, max)`` pair onto the new AABB's own corners, so mapping just those
+    two gives the right answer by accident and both the corner-enumeration bug
+    and the map-only-the-pair bug survive. At 45 degrees ``(x, y) →
+    ((x − y)/√2, (x + y)/√2)`` and the X bounds come from ``(0, 1)`` and
+    ``(2, 0)`` — neither of which is a corner of the input pair.
+    """
+    half = math.sqrt(0.5)
     rotation = np.array(
         [
-            [0.0, -1.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0, 0.0],
+            [half, -half, 0.0, 0.0],
+            [half, half, 0.0, 0.0],
             [0.0, 0.0, 1.0, 0.0],
             [0.0, 0.0, 0.0, 1.0],
         ]
     )
     box = Box3((0.0, 0.0, 0.0), (2.0, 1.0, 1.0))
     out = transform_box(box, rotation)
-    assert out.min == pytest.approx((-1.0, 0.0, 0.0))
-    assert out.max == pytest.approx((0.0, 2.0, 1.0))
+    # min X from (0, 1) → −1/√2; max X from (2, 0) → 2/√2. The diagonal pair
+    # alone would give [0, 1/√2] on X and miss both.
+    assert out.min == pytest.approx((-half, 0.0, 0.0))
+    assert out.max == pytest.approx((2.0 * half, 3.0 * half, 1.0))
 
 
 def test_project_bounds_to_display_dims_maps_and_defaults() -> None:
@@ -912,19 +923,20 @@ def test_tally_covers_every_bucket_and_sums_the_scenes(
     assert sum(tally.values()) == 3
 
 
-def test_aspect_ratio_can_flip_the_verdict(win_scene: Path) -> None:
+def test_aspect_ratio_can_flip_the_verdict(fragile_scene: Path) -> None:
     """A single aspect cannot answer the question — which is why three are used.
 
-    Screened at a very NARROW aspect the same group fills far more of the
-    viewport area than at 21:9, so the re-derived ladder stops deferring. The
-    numbers below simply have to DIFFER across the sweep; that they can is the
-    reason ``fragile`` exists as a bucket.
+    The SAME store screened at one aspect each: at 1:1 the group still fills
+    enough of the shot that the re-derived ladder keeps the finest level (a
+    ``no-op``), at 21:9 it does not (a ``win``). Asserting only that the two
+    numbers differ would pass with the comparison inverted, so the DIRECTION is
+    pinned too — a wider window can only ever show less area.
     """
-    narrow = screen_lod_store(win_scene, aspects=[("1:2", 0.5)]).groups[0]
-    ultrawide = screen_lod_store(win_scene, aspects=[("21:9", 21 / 9)]).groups[0]
-    assert narrow.measurements[0].area_metric != pytest.approx(
-        ultrawide.measurements[0].area_metric
-    )
+    narrow = screen_lod_store(fragile_scene, aspects=[("1:1", 1.0)]).groups[0]
+    ultrawide = screen_lod_store(fragile_scene, aspects=[("21:9", 21 / 9)]).groups[0]
+    assert narrow.measurements[0].area_metric > ultrawide.measurements[0].area_metric
+    assert narrow.verdict == VERDICT_NO_OP
+    assert ultrawide.verdict == VERDICT_WIN
 
 
 def test_the_legacy_metric_reads_the_viewport_shape_and_the_area_one_cannot() -> None:
@@ -1007,3 +1019,437 @@ def test_the_screen_writes_nothing(win_scene: Path) -> None:
     before = fingerprint()
     screen_lod_store(win_scene)
     assert fingerprint() == before
+
+
+# --------------------------------------------------------------------------- #
+# Parity with `restamp-lod`: the screen must never predict a rewrite that the
+# real command refuses to make. Each test asserts the SCREEN's bucket and the
+# matching `restamp_lod_store(dry_run=True)` classification side by side.
+# --------------------------------------------------------------------------- #
+
+
+def _plain_child(index: int, n_points: int, threshold: float | None) -> dict:
+    """One ±1 cube ladder child at ``child_index``, optionally stamped."""
+    child = {
+        "type": "points",
+        "n_points": n_points,
+        "child_index": index,
+        "position_bounds": {"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
+    }
+    if threshold is not None:
+        child["coverage_fraction"] = threshold
+    return child
+
+
+def test_a_screen_area_group_is_already_current_whatever_its_ladder_says(
+    tmp_path: Path,
+) -> None:
+    """``restamp-lod`` skips on the SELECTOR ALONE, so the screen must too.
+
+    The ladder here (``[0, 0.02, 0.04]``) is nothing like the one
+    ``coverage_fractions`` would derive, and read as area fractions its rungs are
+    so low that the finest level is picked at any framing — which under a
+    ladder-aware ``already-current`` test made this store screen as a ``win``
+    (L2 → L0). ``lod_restamp._plan_lod`` returns before it has read a single
+    threshold, so a real run writes NOTHING here, and a report that says
+    otherwise is a false positive.
+    """
+    from luxar.io.lod_restamp import restamp_lod_store
+
+    path = _handmade_store(
+        tmp_path / "stamped.luxar.zarr",
+        lod_attrs={"selector": "screen-area"},
+        group_bounds={
+            "c0": _plain_child(0, 10, 0.0),
+            "c1": _plain_child(1, 40, 0.02),
+            "c2": _plain_child(2, 160, 0.04),
+        },
+    )
+
+    group = screen_lod_store(path).groups[0]
+    assert group.verdict == VERDICT_ALREADY_CURRENT
+    # The evidence is still there: the ladder is NOT the derived one…
+    assert group.stored_thresholds == [0.0, 0.02, 0.04]
+    assert group.rederived_thresholds == pytest.approx(
+        coverage_fractions([10, 40, 160])
+    )
+    assert group.stored_thresholds != pytest.approx(group.rederived_thresholds)
+
+    # …and this is exactly what the command it predicts would do: nothing.
+    report = restamp_lod_store(path, dry_run=True)
+    assert [entry.path for entry in report.already_current] == ["lod"]
+    assert report.restamped == []
+
+
+def test_a_descending_stored_ladder_is_skipped_exactly_as_restamp_lod_skips_it(
+    tmp_path: Path,
+) -> None:
+    """``restamp-lod`` refuses to invert a ladder; the screen refuses to score it."""
+    from luxar.io.lod_restamp import restamp_lod_store
+
+    path = _handmade_store(
+        tmp_path / "descending.luxar.zarr",
+        group_bounds={
+            "c0": _plain_child(0, 10, 0.05),
+            "c1": _plain_child(1, 40, 0.02),
+        },
+    )
+
+    group = screen_lod_store(path).groups[0]
+    assert group.verdict == VERDICT_SKIPPED
+    assert "DESCENDS" in group.reason
+    assert group.measurements == []
+    assert group.rederived_thresholds == []
+
+    report = restamp_lod_store(path, dry_run=True)
+    assert report.restamped == []
+    assert [entry.reason for entry in report.unresolved] == ["descending-ladder"]
+
+
+def test_an_orphan_ladder_child_is_skipped_exactly_as_restamp_lod_skips_it(
+    tmp_path: Path,
+) -> None:
+    """A ``coverage_fraction`` child with no scene-node ``type`` blocks both passes.
+
+    ``restamp-lod`` refuses because re-deriving over the survivors alone strands
+    that rung on its legacy threshold, leaving a partial, non-monotonic ladder.
+    The screen cannot see the rung either, so any verdict it produced would be
+    about a ladder the store does not have.
+    """
+    from luxar.io.lod_restamp import restamp_lod_store
+
+    path = _handmade_store(
+        tmp_path / "orphan.luxar.zarr",
+        group_bounds={
+            "c0": _plain_child(0, 10, 0.0),
+            "c1": _plain_child(1, 40, 1.0),
+            # No `type`, so the node filter drops it — but it IS a ladder rung.
+            "sidecar": {"coverage_fraction": 0.5},
+        },
+    )
+
+    group = screen_lod_store(path).groups[0]
+    assert group.verdict == VERDICT_SKIPPED
+    assert "sidecar" in group.reason
+    assert group.measurements == []
+
+    report = restamp_lod_store(path, dry_run=True)
+    assert report.restamped == []
+    assert [entry.reason for entry in report.unresolved] == [
+        "unclassifiable-ladder-child"
+    ]
+
+
+def test_an_empty_aspect_sweep_is_refused_rather_than_a_free_win(
+    win_scene: Path,
+) -> None:
+    """``all([])`` is True, so no aspects would make every group a vacuous win."""
+    with pytest.raises(ValueError, match="at least one aspect"):
+        screen_lod_store(win_scene, aspects=[])
+    # Raised, NOT recorded per store: `screen_stores` checks before its own
+    # one-broken-store guard, which would otherwise blame the stores.
+    with pytest.raises(ValueError, match="at least one aspect"):
+        screen_stores([win_scene], aspects=[])
+
+
+def test_an_unknown_selector_and_an_out_of_range_default_level_are_skipped(
+    tmp_path: Path,
+) -> None:
+    """The two ``_preflight`` refusals nothing else covers, each with its reason."""
+    bounds = {"c0": _plain_child(0, 10, 0.0), "c1": _plain_child(1, 40, 1.0)}
+    unknown = screen_lod_store(
+        _handmade_store(
+            tmp_path / "pixel.luxar.zarr",
+            lod_attrs={"selector": "pixel_size"},
+            group_bounds=bounds,
+        )
+    ).groups[0]
+    assert unknown.verdict == VERDICT_SKIPPED
+    assert "pixel_size" in unknown.reason
+    assert "migrate-format" in unknown.reason
+
+    out_of_range = screen_lod_store(
+        _handmade_store(
+            tmp_path / "level9.luxar.zarr",
+            lod_attrs={"default_level": 9},
+            group_bounds=bounds,
+        )
+    ).groups[0]
+    assert out_of_range.verdict == VERDICT_SKIPPED
+    assert "default_level=9" in out_of_range.reason
+
+
+def test_an_off_screen_group_holds_its_default_level_not_index_zero(
+    tmp_path: Path,
+) -> None:
+    """``coarsestReadyIndex`` is the first READY child, and on frame one that is
+    the eagerly-committed ``default_level`` — every finer level sits behind a
+    deferred loader. Index 0 is only the answer when ``default_level`` is 0."""
+    away = {"min": [1e5, -1.0, -1.0], "max": [1e5 + 1, 1.0, 1.0]}
+    group_bounds = {
+        name: {
+            **_plain_child(index, 10 * 4**index, float(index)),
+            "position_bounds": away,
+        }
+        for index, name in enumerate(("c0", "c1", "c2"))
+    }
+    path = _handmade_store(
+        tmp_path / "away-default2.luxar.zarr",
+        lod_attrs={"default_level": 2},
+        group_bounds=group_bounds,
+    )
+    group = screen_lod_store(path).groups[0]
+    assert group.verdict == VERDICT_OFF_SCREEN
+    assert all(m.off_screen for m in group.measurements)
+    assert all(
+        m.today_index == 2 and m.rederived_index == 2 for m in group.measurements
+    )
+    assert all(m.today_elements == 160 for m in group.measurements)
+
+
+def test_a_cinematic_scene_is_skipped_unless_the_render_fov_is_supplied(
+    tmp_path: Path,
+) -> None:
+    """The preset FOV lives in the viewer's TS table, so it is asked for, not guessed.
+
+    Screening a 63-degree opening frame at the fit FOV 47 reads roughly twice the
+    area — a whole halving of the derived ladder, enough to flip win↔no-op.
+    """
+    path = _handmade_store(
+        tmp_path / "cinematic.luxar.zarr",
+        group_bounds={"c0": _plain_child(0, 10, 0.0), "c1": _plain_child(1, 40, 1.0)},
+    )
+    root = open_group(path, mode="r+")
+    root.attrs["viewer_config"] = {"cinematic_mode": True}
+    consolidate(root)
+
+    scene = screen_lod_store(path)
+    assert scene.groups == []
+    assert "cinematic_mode" in scene.skipped_reason
+    assert "--screen-render-fov" in scene.skipped_reason
+    # An explicit render FOV is the answer the message asks for, so it screens.
+    assert screen_lod_store(path, render_fov=63.0).groups != []
+
+
+def test_a_fov_preset_scene_is_skipped_but_a_numeric_fov_still_screens(
+    tmp_path: Path,
+) -> None:
+    """``camera.fov_preset`` names a table entry; ``camera.fov`` is a number we honour."""
+    path = _handmade_store(
+        tmp_path / "preset.luxar.zarr",
+        group_bounds={"c0": _plain_child(0, 10, 0.0), "c1": _plain_child(1, 40, 1.0)},
+    )
+    root = open_group(path, mode="r+")
+    root.attrs["viewer_config"] = {"camera": {"fov_preset": "35mm"}}
+    consolidate(root)
+    assert "fov_preset" in screen_lod_store(path).skipped_reason
+
+    # An author-set numeric fov wins whole (the bridge's CINEMATIC_FOV_PAIR
+    # rule), so it is read as the render FOV rather than blocking the screen.
+    root = open_group(path, mode="r+")
+    root.attrs["viewer_config"] = {
+        "cinematic_mode": True,
+        "camera": {"fov_preset": "35mm", "fov": 63.0},
+    }
+    consolidate(root)
+    numeric = screen_lod_store(path)
+    assert numeric.skipped_reason == ""
+    assert numeric.groups != []
+
+
+def test_a_scene_with_one_displayed_dimension_is_skipped(tmp_path: Path) -> None:
+    """``evaluatePerFrame`` bails at ``displayDims.length < 2``, before any group."""
+    path = _handmade_store(
+        tmp_path / "one-dim.luxar.zarr",
+        group_bounds={"c0": _plain_child(0, 10, 0.0), "c1": _plain_child(1, 40, 1.0)},
+    )
+    root = open_group(path, mode="r+")
+    root.attrs["scene_dimensions"] = {
+        "dimensions": [
+            {"name": "x", "display": True},
+            {"name": "y", "display": False},
+            {"name": "z", "display": False},
+        ]
+    }
+    consolidate(root)
+    scene = screen_lod_store(path)
+    assert scene.groups == []
+    assert "bails below 2" in scene.skipped_reason
+
+
+def test_a_store_wide_skip_is_counted_in_the_tally(tmp_path: Path) -> None:
+    """A ``❔`` line the footer counted nowhere read as ``0 skipped``."""
+    report = screen_stores([tmp_path / "gone-a.luxar.zarr", tmp_path / "gone-b.zarr"])
+    assert all("cannot read" in scene.skipped_reason for scene in report.scenes)
+    assert report.tally[VERDICT_SKIPPED] == 2
+    assert sum(report.tally.values()) == 2
+
+
+def test_every_mirrored_constant_holds_its_typescript_value() -> None:
+    """Each constant, pinned by LITERAL value against the TS twin it cites.
+
+    The module header calls these "pinned by the colocated tests", and four of
+    them were not: every ramp test scales WITH
+    :data:`DEGENERATE_RECT_HALF_EXTENT` (its thicknesses are written as
+    multiples of it), and the fit FOV, the viewport long axis and the ``w``
+    epsilon appeared nowhere. A divergence in any of them silently makes the
+    whole screen wrong, so the numbers are written out here rather than derived.
+    """
+    from luxar.io import lod_screening
+
+    # scene/lod-selector-math.ts
+    assert lod_screening.DEGENERATE_RECT_HALF_EXTENT == 1e-3
+    assert lod_screening.W_EPSILON == 1e-6
+    assert lod_screening.HYSTERESIS_RATIO == 0.1
+    # scene/lod-group-registry.ts
+    assert lod_screening.FILL_FACTOR == 0.5
+    # config/sections/scene/data.ts :: config.scene.defaultFitRatio
+    assert lod_screening.DEFAULT_FIT_RATIO == 0.75
+    # config/sections/rendering-controls :: renderingControls.defaults.fov
+    assert lod_screening.DEFAULT_FIT_FOV == 47.0
+    # This module's own choice, but a report knob the docs quote.
+    assert lod_screening.DEFAULT_VIEWPORT_LONG_PX == 1920
+    assert lod_screening.DEFAULT_ASPECTS == (
+        ("1:1", 1.0),
+        ("16:9", 16.0 / 9.0),
+        ("21:9", 21.0 / 9.0),
+    )
+
+
+def _union_store(path: Path, coarse_half: float, fine_half: float) -> Path:
+    """A two-level ladder whose children carry independently sized bounds."""
+
+    def child(index: int, n_points: int, half: float) -> dict:
+        return {
+            "type": "points",
+            "n_points": n_points,
+            "child_index": index,
+            "coverage_fraction": float(index),
+            "position_bounds": {
+                "min": [-half, -half, -half],
+                "max": [half, half, half],
+            },
+        }
+
+    return _handmade_store(
+        path,
+        root_max=3.0,
+        group_bounds={"c0": child(0, 10, coarse_half), "c1": child(1, 40, fine_half)},
+    )
+
+
+def test_the_group_box_is_the_union_over_children_not_the_last_one(
+    tmp_path: Path,
+) -> None:
+    """A COARSER child's bounds can exceed the finest child's, and must still count.
+
+    ``computeEntryWorldBox`` unions every usable child box. Folding the children
+    with "last one wins" instead would silently read only the finest level's
+    extent — which is the SMALLER one on a decimated-outlier ladder — so the
+    group would be measured as if part of it were not on screen. All three
+    stores are framed identically (the scene root is ±3 in each).
+    """
+    small = screen_lod_store(_union_store(tmp_path / "small.luxar.zarr", 1.0, 1.0))
+    mixed = screen_lod_store(_union_store(tmp_path / "mixed.luxar.zarr", 3.0, 1.0))
+    both = screen_lod_store(_union_store(tmp_path / "both.luxar.zarr", 3.0, 3.0))
+
+    area = lambda scene: scene.groups[0].measurements[0].area_metric  # noqa: E731
+    # "Last child wins" would make the mixed store read exactly like the small
+    # one; the union makes it read exactly like the all-large one.
+    assert area(mixed) == pytest.approx(area(both))
+    assert area(mixed) > area(small)
+
+
+def _nested_store(path: Path, *, parts: int) -> Path:
+    """A ``kind=partition`` of ``parts`` ``kind=lod`` groups, written by hand."""
+    root = open_group(path, mode="w")
+    root.attrs.update(
+        {
+            "type": "scene",
+            "position_bounds": {"min": [-5.0, -5.0, -5.0], "max": [5.0, 5.0, 5.0]},
+        }
+    )
+    partition = root.create_group("tiled")
+    partition.attrs.update({"kind": "partition", "type": "group"})
+    for part in range(parts):
+        lod = partition.create_group(f"part_{part}")
+        lod.attrs.update({"kind": "lod", "type": "group", "default_level": 0})
+        for index, count in enumerate((10, 40)):
+            node = lod.create_group(f"c{index}")
+            node.attrs.update(_plain_child(index, count, float(index)))
+            create_array(
+                node, "positions", data=np.zeros((1, 3), np.float32), compressor=None
+            )
+    consolidate(root)
+    return path
+
+
+def test_a_one_part_partition_does_not_tile_bind_its_ladder(tmp_path: Path) -> None:
+    """The writers' ancestry clause needs a REAL tiling (>1 part), not a wrapper.
+
+    A one-part partition's single part IS the whole object, so its ladder anchors
+    at whole-object 0.5 like any other. Binding it would derive the ladder at the
+    fills-screen anchor and report an anchor ``restamp-lod`` never uses — the
+    exact state ``warn_one_part_partition_anchors`` exists to flag.
+    """
+    lone = screen_lod_store(_nested_store(tmp_path / "one.luxar.zarr", parts=1))
+    assert [group.path for group in lone.groups] == ["tiled/part_0"]
+    assert lone.groups[0].partition_bound is False
+    assert "no partition ancestor" in lone.groups[0].anchor_reason
+    assert lone.groups[0].rederived_thresholds[-1] == WHOLE_OBJECT_FINEST_ANCHOR
+
+    real = screen_lod_store(_nested_store(tmp_path / "two.luxar.zarr", parts=2))
+    assert all(group.partition_bound for group in real.groups)
+    assert real.groups[0].rederived_thresholds[-1] == PARTITION_FINEST_AREA
+
+
+def test_an_overview_cap_binds_on_its_own_partition_child(tmp_path: Path) -> None:
+    """The writers' SECOND clause: a ``kind=partition`` among the ladder's children.
+
+    That is the ``overview`` recipe's ``[coarse_leaf, fine_partition]`` cap, and
+    missing it is the worst failure available here: derived at the whole-object
+    anchor instead, the cap selects the fine partition at half-screen occupancy
+    and loads the WHOLE dataset on frame one — the cost the recipe exists to
+    avoid, on the largest stores there are.
+    """
+    path = tmp_path / "overview.luxar.zarr"
+    root = open_group(path, mode="w")
+    root.attrs.update(
+        {
+            "type": "scene",
+            "position_bounds": {"min": [-5.0, -5.0, -5.0], "max": [5.0, 5.0, 5.0]},
+        }
+    )
+    lod = root.create_group("overview")
+    lod.attrs.update({"kind": "lod", "type": "group", "default_level": 0})
+
+    coarse = lod.create_group("c0")
+    coarse.attrs.update(_plain_child(0, 10, 0.0))
+    create_array(
+        coarse, "positions", data=np.zeros((1, 3), np.float32), compressor=None
+    )
+
+    fine = lod.create_group("c1")
+    fine.attrs.update(
+        {
+            "type": "group",
+            "kind": "partition",
+            "child_index": 1,
+            "coverage_fraction": 1.0,
+            "position_bounds": {"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
+        }
+    )
+    for part, count in enumerate((30, 50)):
+        node = fine.create_group(f"part_{part}")
+        node.attrs.update(_plain_child(part, count, None))
+        create_array(
+            node, "positions", data=np.zeros((1, 3), np.float32), compressor=None
+        )
+    consolidate(root)
+
+    group = screen_lod_store(path).groups[0]
+    assert group.partition_bound is True
+    assert "kind=partition ladder child" in group.anchor_reason
+    assert group.rederived_thresholds[-1] == PARTITION_FINEST_AREA
+    # The cap's fine branch is sized by the SUM over its parts, not one of them.
+    assert group.element_counts == [10, 80]

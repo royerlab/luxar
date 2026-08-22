@@ -58,6 +58,28 @@ The command is included in `hatch run check`. A checkout without generated demo
 scenes reports that none were found and succeeds; unit tests still exercise the
 gate logic in CI.
 
+A second, independent pass lives behind `--screen` (`--screen-only` to skip the
+gate above): the LOD **opening-shot screen** from `luxar.io.lod_screening`. Per
+`kind=lod` group, would re-deriving the ladder onto the `screen-area` selector
+make the OPENING framing land on a coarser level? It is a REPORT ONLY — no
+verdict it produces can change the exit code, and `--screen-only` always exits 0.
+
+```bash
+hatch run check-demo-ladders --screen-only datasets/examples/*.luxar.zarr
+hatch run check-demo-ladders --screen-only --screen-verdict win datasets/demos/*.luxar.zarr
+hatch run check-demo-ladders --screen --screen-aspect 4:3=1.3333
+```
+
+| flag | meaning |
+|---|---|
+| `--screen` | append the screen to the streaming-ladder gate |
+| `--screen-only` | run ONLY the screen; the gate is skipped |
+| `--screen-aspect` | aspects to measure at, as `label=value`, `W:H` or a bare number (default 1:1, 16:9, 21:9) |
+| `--screen-viewport-long` | pixels on the viewport's LONG axis; affects the legacy diagonal metric only |
+| `--screen-fit-fov` | vertical FOV the fitted camera DISTANCE uses (default 47, the viewer's own) |
+| `--screen-render-fov` | vertical FOV the first frame's projection uses (pass 63 for the cinematic/35mm preset) |
+| `--screen-verdict` | show only these buckets (repeatable): `win`, `fragile`, `no-op`, `off-screen`, `already-current`, `skipped` |
+
 ---
 
 ## Documentation Quality Checker

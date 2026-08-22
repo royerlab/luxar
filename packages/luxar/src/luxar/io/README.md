@@ -444,7 +444,7 @@ Each group lands in exactly one bucket:
 | `no-op` | never coarser — re-deriving defers nothing on frame one |
 | `fragile` | coarser at some aspects and not others; the answer depends on the window |
 | `off-screen` | the world box misses the frustum, so no metric is ever taken |
-| `already-current` | already `screen-area`, carrying exactly the derived ladder |
+| `already-current` | already `screen-area` — all `restamp-lod` looks at before skipping |
 | `skipped` | undecidable; `GroupScreening.reason` says why |
 
 Four things the screen is careful about, each of which a cruder measurement gets
@@ -455,6 +455,14 @@ wrong:
   `[0.5, 1.0)` still shows full detail and re-deriving it changes nothing. The
   anchor (and the clause of the two-clause rule that decided it) is reported per
   group, resolved through `lod_restamp`'s own `_is_partition_bound`.
+- **Every refusal is `restamp-lod`'s refusal.** The screen predicts what that
+  command would do, so it must decline exactly the groups the command declines
+  or it reports a rewrite that never happens. `already-current` is decided on
+  the SELECTOR ALONE (`_plan_lod` returns before reading a threshold — a
+  `screen-area` group with an odd ladder is still left alone, and the screen
+  prints the stored-vs-derived diff as evidence without calling it a win), and
+  a descending stored ladder or an orphan `coverage_fraction` child is
+  `skipped` through `lod_restamp`'s own predicates.
 - **The two selectors are in different units.** `today` is scored under the
   STAMPED selector — the legacy `coverage` metric is an UNCLIPPED pixel diagonal
   over `FILL_FACTOR × min(W, H)`, range ~`[0, 4]` — while the re-derived side is
@@ -474,6 +482,12 @@ default FOV (47) because the cinematic preset overrides the FOV only after the
 fit, so `fit_fov` and `render_fov` are separate parameters. A scene that authors
 `viewer_config.camera.position` / `target` / `target_node` / `up` opens somewhere
 else and is skipped by name rather than screened against a framing nobody sees.
+So is a scene whose FOV comes from `viewer_config.cinematic_mode` or
+`camera.fov_preset`: those name an entry in the viewer's own TypeScript preset
+table, and a second unverified copy of it here would be worse than asking for
+`--screen-render-fov 63`. A scene displaying fewer than two dimensions is
+skipped too — `lod-group-registry.ts::evaluatePerFrame` bails there before it
+evaluates any group.
 Dynamic near/far clipping is deliberately NOT modelled — the near-plane hazard
 that matters is the homogeneous-`w` straddle inside `project_box_ndc_rect`,
 which never reads `camera.near`.
