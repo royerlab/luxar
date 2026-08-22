@@ -308,11 +308,21 @@ class ArrayEncoder(
         ``COORDINATE``, which is never broadcast) and priority 2 (a
         content-identical array already written, stored as an ``array_ref``,
         skipped under ``deduplicate=False``). Both of those are exact too, so
-        for the sole in-repo caller — the gsplat sigma rail, which asks only in
-        order NOT to escalate an already-exact array, passes ``COORDINATE``, and
-        writes escalated centers with ``deduplicate=False`` — neither can change
-        the answer's usefulness. A caller wanting "will this be a LUT on disk"
-        must account for them itself.
+        for the gsplat sigma rail — which asks only in order NOT to escalate an
+        already-exact array, passes ``COORDINATE``, and writes escalated centers
+        with ``deduplicate=False`` — neither can change the answer's usefulness.
+        A caller wanting "will this be a LUT on disk" must account for them
+        itself.
+
+        The second in-repo caller,
+        :meth:`~luxar.encoding._encoders.perchannel.PerChannelEncoderMixin.coordinate_round_trip_slack`,
+        does exactly that for the one gate that DOES change its answer: it takes
+        an ``allow_lut`` mirroring :meth:`encode`'s and does not ask this at all
+        when the write forbids a LUT. It has to — the lines writer encodes
+        ``vertices`` with ``allow_lut=False``, so a LUT-eligible lines vertices
+        array is quantized on disk, and treating "eligible" as "exact" there
+        would write chunk bounds the decoded vertices fall outside of
+        (issue #1655).
 
         Costs one ``np.unique`` pass over ``data``, and the plan is NOT memoized:
         ``encode`` recomputes it from scratch, so asking and then encoding is two
