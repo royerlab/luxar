@@ -13,7 +13,10 @@ import { loadScene } from '../data';
 import type { LoaderConfig } from '../data/data-loader-types';
 import { notifier } from '../utils/cross-layer/notifier';
 import { config } from '../config';
-import { extractCameraOverrides } from '../config/zarr-bridge/viewer-config-utils';
+import {
+  extractCameraOverrides,
+  extractRenderingOverrides,
+} from '../config/zarr-bridge/viewer-config-utils';
 import type { ZarrViewerConfig } from '../types/zarr';
 import type { PostProcessingManager } from '../rendering/post-processing/post-processing-manager';
 import { materialManager } from '../rendering';
@@ -86,6 +89,10 @@ import type { ControlType } from '../controls/controls-manager';
 
 /** Default scene up (world +Y) — overridden per scene by `viewer_config.up`. */
 const DEFAULT_SCENE_UP = new THREE.Vector3(0, 1, 0);
+
+export interface SceneLoadOptions {
+  applyViewerConfigFov?: boolean;
+}
 
 /**
  * SceneManager orchestrates all Three.js components for 3D rendering
@@ -680,8 +687,14 @@ export class SceneManager extends THREE.EventDispatcher<{
    * Cache and prefetch flags propagate through `loaderConfig` from
    * LuxarApp (originally derived from `?no-cache`/`?cache-debug`/etc URL
    * parameters in main.ts).
+   * `options.applyViewerConfigFov` lets the app apply the resolved scene FOV
+   * before auto-framing when localStorage does not already own that setting.
    */
-  async loadSceneData(src: string, loaderConfig?: LoaderConfig): Promise<void> {
+  async loadSceneData(
+    src: string,
+    loaderConfig?: LoaderConfig,
+    options: SceneLoadOptions = {}
+  ): Promise<void> {
     notifier.showLoading();
 
     try {
@@ -716,9 +729,8 @@ export class SceneManager extends THREE.EventDispatcher<{
       // later UI call re-runs it identically.
       sceneDimsManager.initFromScene(this.scene);
 
-      // NOTE: Material parameters were already updated BEFORE loadScene() above
-      // Materials created during loading already have correct FOV/resolution
-      // No need to update again - this would be redundant work
+      // Material parameters were initialized before loadScene(). A scene FOV
+      // applied below refreshes them again before the first rendered frame.
 
       // Establish scale-aware orbit distance limits from scene bounds BEFORE
       // applying the author's camera. The orbit controls start with a small
@@ -738,6 +750,19 @@ export class SceneManager extends THREE.EventDispatcher<{
       // The helper returns whether an explicit camera position was applied;
       // also extract once more to detect author-set target/targetNode.
       const viewerConfig = root.userData?.viewerConfig as ZarrViewerConfig | undefined;
+      if (options.applyViewerConfigFov && viewerConfig) {
+        const fov = extractRenderingOverrides(viewerConfig).fov;
+        if (
+          typeof fov === 'number' &&
+          Number.isFinite(fov) &&
+          fov >= config.camera.fovMin &&
+          fov <= config.camera.fovMax &&
+          Math.abs(this.currentFov - fov) > 0.5
+        ) {
+          const delta = (fov - this.currentFov) / config.camera.fovSensitivity;
+          this.updateFOV(delta);
+        }
+      }
       const { positionApplied, appliedUp } = this.applyZarrViewerConfig(root);
       // The scene up governs every camera fit/reset (Home/F, center-on-
       // origin, this auto-frame): world +Y unless the author set one.
