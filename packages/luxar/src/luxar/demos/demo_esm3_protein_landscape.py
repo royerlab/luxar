@@ -59,6 +59,7 @@ DEMO_META = {
     # changes.
     "citation": {
         "short": "UniProt/Swiss-Prot; embeddings by EvolutionaryScale ESM C, 2024",
+        "ref": "UniProt / EvolutionaryScale 2024",
         "license": "CC BY 4.0",
     },
 }
@@ -75,6 +76,7 @@ from arbol import aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.demos import (
     MissingDependencyError,
+    add_demo_caption,
     launch_viewer,
     require_module,
     stack_colorings,
@@ -862,12 +864,10 @@ def generate_esm3_landscape(
                 blend_mode="difference",
             )
 
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 f"{n:,} proteins • {model_label} embeddings • 3D UMAP • {model_citation}",
-                position=(0.98, 0.97),
-                font_size=0.012,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
 
             # Per-view color legends (each visible only on its coloring slot).

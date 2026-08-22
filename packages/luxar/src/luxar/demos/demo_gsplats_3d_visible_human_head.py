@@ -95,6 +95,7 @@ DEMO_META = {
     "outputs": ["gsplats_3d_visible_human_head"],
     "citation": {
         "short": "NLM Visible Human Project (Spitzer et al. 1996)",
+        "ref": "Spitzer et al. 1996",
         "doi": "10.1136/jamia.1996.96236280",
         "license": "Public domain (NLM)",
     },
@@ -108,6 +109,7 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import (
+    add_demo_caption,
     detect_device,
     is_lfs_pointer,
     launch_viewer,
@@ -682,12 +684,10 @@ def create_luxar_scene(fit: GSplatData, colors: np.ndarray, output_path: Path) -
                 color="rgba(255,255,255,0.7)",
                 blend_mode="difference",
             )
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 "NLM Visible Human Project • color cryosections → Gaussian splats",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.5)",
+                DEMO_META.get("citation"),
             )
         aprint(f"Scene saved: {output_path}")
         return output_path

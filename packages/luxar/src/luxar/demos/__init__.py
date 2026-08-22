@@ -47,6 +47,7 @@ from ..utils.demos import (
     voxel_sampled_payload_agreement,
     warn_if_no_cuda_gpu,
 )
+from ._caption import add_demo_caption, format_demo_caption
 from ._dependencies import (
     INSTALL_SPECS,
     DependencySpec,
@@ -69,6 +70,7 @@ __all__ = [
     "DependencyStatus",
     "LocalComputeDataset",
     "MissingDependencyError",
+    "add_demo_caption",
     "cache_computed",
     "cached_download",
     "create_lorenz_attractor",
@@ -78,6 +80,7 @@ __all__ = [
     "detect_device",
     "ensure_dataset",
     "extras_for",
+    "format_demo_caption",
     "hsv_to_rgb",
     "is_installed",
     "is_lfs_pointer",

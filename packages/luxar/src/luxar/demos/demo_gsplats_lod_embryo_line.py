@@ -104,6 +104,7 @@ DEMO_META = {
             "Barry 2021 (GIANI, Zenodo 5270323); "
             "Cell Tracking Challenge (Maška et al. 2023)"
         ),
+        "ref": "Barry / Maška et al. 2023",
         "doi": "10.5281/zenodo.5270323",
     },
 }
@@ -122,17 +123,18 @@ from luxar import (
     ViewerConfig,
 )
 from luxar.core import transforms
-
-# Reuse the single-embryo LOD demo's ladder builder + palette (build_lod_ladder,
-# level_colors, COMPRESSION_FACTOR) as a normal sibling import rather than
-# duplicating the LOD logic.
-from luxar.demos import demo_gsplats_lod_tribolium as _LOD
 from luxar.demos import (
+    add_demo_caption,
     launch_viewer,
     load_precomputed_gsplats,
     parse_demo_flags,
     warn_if_no_cuda_gpu,
 )
+
+# Reuse the single-embryo LOD demo's ladder builder + palette (build_lod_ladder,
+# level_colors, COMPRESSION_FACTOR) as a normal sibling import rather than
+# duplicating the LOD logic.
+from luxar.demos import demo_gsplats_lod_tribolium as _LOD
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.paths import get_demos_output_dir
@@ -346,12 +348,10 @@ Navigation:
                 color="rgba(255,255,255,0.6)",
                 blend_mode="difference",
             )
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 "Light-sheet microscopy • adaptive level of detail",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
 
             # Explanatory panel, placed below the title so the two don't overlap.

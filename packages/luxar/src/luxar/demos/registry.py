@@ -116,10 +116,10 @@ class DemoInfo:
     requirements: dict[str, Any]
     caches: tuple[str, ...]
     outputs: tuple[str, ...]
-    #: Dataset credit: ``{"short", "doi"?, "license"?, "url"?}``, or ``None`` for a
-    #: procedurally generated demo that owes no credit. ``None`` is also what an
-    #: as-yet-unpopulated demo reports, so consumers must not treat it as proof
-    #: that a demo is synthetic until the key is required.
+    #: Dataset credit: ``{"short", "ref"?, "doi"?, "license"?, "url"?}``, or
+    #: ``None`` for a procedurally generated demo that owes no credit. ``None``
+    #: is also what an as-yet-unpopulated demo reports, so consumers must not
+    #: treat it as proof that a demo is synthetic until the key is required.
     citation: Optional[dict[str, Any]] = None
 
     @property
