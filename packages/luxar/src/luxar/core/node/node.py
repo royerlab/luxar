@@ -79,8 +79,9 @@ class _WriteThroughAttrs(MutableMapping[str, Any]):
             raise ValueError(
                 f"Cannot set mesh-only attribute '{key}' on {node_type} node "
                 f"'{self._node.name}'. The viewer applies these attributes only to "
-                "mesh leaves, and they do not compose through non-mesh nodes — set "
-                "them on a mesh node instead."
+                "mesh leaves, and they do not compose through non-mesh nodes. Remove "
+                "them, set them on each mesh leaf (part_<i> / child_<i>), or pass "
+                "them to add_mesh(...), which stamps every generated mesh leaf."
             )
 
     def __delitem__(self, key: str) -> None:

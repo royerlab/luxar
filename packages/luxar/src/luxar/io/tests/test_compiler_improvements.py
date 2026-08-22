@@ -2010,7 +2010,7 @@ class TestUnknownRenderAttrRejected:
         """Mesh appearance attrs must not persist as dead non-mesh metadata."""
         with tempfile.TemporaryDirectory() as tmpdir:
             zarr_path, compiler, scene = self._scene(tmpdir)
-            with pytest.raises(ValueError, match="mesh-only attribute"):
+            with pytest.raises(ValueError, match="mesh-only attribute") as exc_info:
                 attrs = {attr: value}
                 if node_type == "points":
                     scene.add_points("node", self.POS, **attrs)
@@ -2026,6 +2026,9 @@ class TestUnknownRenderAttrRejected:
                     )
                 else:
                     scene.add_group("node", **attrs)
+            error = str(exc_info.value)
+            assert "set them on each mesh leaf (part_<i> / child_<i>)" in error
+            assert "pass them to add_mesh(...)" in error
             compiler.finalize()
             root = zarr.open_group(str(zarr_path), mode="r")
             assert "node" not in root
@@ -2070,8 +2073,11 @@ class TestUnknownRenderAttrRejected:
                 )
             else:
                 node = scene.add_group("node")
-            with pytest.raises(ValueError, match="mesh-only attribute"):
+            with pytest.raises(ValueError, match="mesh-only attribute") as exc_info:
                 node.attrs[attr] = value
+            error = str(exc_info.value)
+            assert "set them on each mesh leaf (part_<i> / child_<i>)" in error
+            assert "pass them to add_mesh(...)" in error
             assert attr not in node._attrs_cache
             compiler.finalize()
             root = zarr.open_group(str(zarr_path), mode="r")

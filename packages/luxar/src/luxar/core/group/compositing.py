@@ -402,7 +402,9 @@ def reject_mesh_only_appearance(
         raise ValueError(
             f"Cannot add {node_type} '{name}' with mesh-only attribute(s) {invalid}. "
             "The viewer applies these attributes only to mesh leaves, and they do "
-            "not compose through Groups. Remove them or set them on a mesh node."
+            "not compose through Groups. Remove them, set them on each mesh leaf "
+            "(part_<i> / child_<i>), or pass them to add_mesh(...), which stamps "
+            "every generated mesh leaf."
         )
 
 
