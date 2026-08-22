@@ -1,6 +1,7 @@
 # `luxar.gsplats.doctor`
 
-Diagnoses — and on request repairs — an existing `.gsplats.zarr` store.
+Diagnoses — and on request repairs — partition metadata in an existing
+`.gsplats.zarr` dataset or `.luxar.zarr` scene.
 
 The problems this exists for are the ones you cannot see. A dataset written by
 an older Luxar loads fine and renders fine; it is just missing something a later
@@ -13,6 +14,7 @@ condition gets named, costed, and fixed in place — no re-fitting.
 ```bash
 luxar gsplat doctor data.gsplats.zarr              # report (also prints `info`)
 luxar gsplat doctor data.gsplats.zarr --fix        # repair in place
+luxar gsplat doctor scene.luxar.zarr --no-info     # every partition in a scene
 luxar gsplat doctor data.gsplats.zarr --no-info --json report.json
 ```
 
@@ -23,11 +25,13 @@ repaired — there is nothing to write back to in place, so `--fix` needs an
 uncompressed directory store, the same rule `gsplat annotate-quality` follows.
 Diagnosing archives matters in practice: most bundled demo datasets ship as
 `.zip`, and refusing them would put the common case out of reach of a sweep.
+For a scene, findings name the store-relative partition path and `--fix`
+re-stamps the root `content_hash` before consolidating metadata.
 
 ```python
 from luxar.gsplats.doctor import diagnose_store
 
-report = diagnose_store("data.gsplats.zarr")
+report = diagnose_store("scene.luxar.zarr")
 if not report.healthy:
     for finding in report.unresolved:
         print(finding.severity, finding.path, finding.summary)
