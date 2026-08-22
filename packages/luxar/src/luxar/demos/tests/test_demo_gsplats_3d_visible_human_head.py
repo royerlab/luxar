@@ -563,6 +563,19 @@ class TestShippedPairIsAligned:
     place — it has to be resampled from the volume. The manifest-pin test runs
     without materialized LFS assets in CI; bump its constants only after this
     deep pair check passes on a checkout where ``git lfs pull`` has run.
+
+    Know the deep check's resolution before trusting it. The metric only sees
+    splats that SHARE a voxel — 136,703 of 1,911,192 here, 7.15% — so it catches
+    wholesale reordering and nothing finer. Measured against the real sidecar: a
+    full permutation scores 0.00001, a roll by one 0.03546, a length change is
+    caught outright, but swapping two arbitrary rows still passes. That is the
+    right trade for the failure this guards (a sampling pass writing the whole
+    array in the wrong order, i.e. #1670), and the wrong tool for per-splat
+    corruption.
+
+    It also cannot detect a resample taken in a DRIFTED coordinate frame — see
+    the rejection branch in ``load_or_build``, and the three out-of-band frame
+    checks recorded in the demo's module docstring.
     """
 
     def test_manifest_keeps_the_verified_pair_pinned(self) -> None:

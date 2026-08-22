@@ -58,15 +58,38 @@ sampled in the pre-save splat order, so it did not correspond to the shipped
 store (measured same-voxel agreement 0.00097 over 1,911,192 splats) and the
 guard rejected it on every run. Recovering it needed no refit — the fit itself
 was never wrong, only the color ORDER — so the volume was rebuilt and resampled
-at the shipped store's own centers, which is aligned by construction. The pair
-now agrees at 1.0. The rebuilt volume's 636 x 451 x 896 shape matches the stored
-centers' extent, and the regenerated colors preserve the previous sidecar's
-distribution (total-variation distance 0.0065), which confirms the source frame
-rather than only the ordering. To regenerate it again: rebuild the RGB volume
-with ``assemble_volume``, load the shipped fit, call ``sample_colors`` at that
-store's centers, then write the result with ``_save_colors_u8``. Note the
-sidecar carries no positions, so a mis-ordered one can never be repaired in
-place: it has to be resampled.
+at the shipped store's own centers. The sidecar carries no positions, so a
+mis-ordered one can never be repaired in place: resampling is the only route.
+
+That resample is exactly the operation ``load_or_build`` refuses to perform
+automatically, for the reason given at its rejection branch: agreement 1.0 does
+NOT prove the resample used the right coordinate frame, because splats sharing a
+voxel share an index in any frame whatsoever. It was therefore verified out of
+band, on three pieces of evidence this guard cannot produce:
+
+  * the rebuilt volume's shape, ``(636, 451, 896)``, matches the stored centers
+    spanning ``[0, 0, 0]``–``[635, 450, 895]`` exactly, so neither the crop box
+    nor the resample factor drifted;
+  * 99.96% of the stored centers land on non-zero (tissue) voxels, against a
+    32.93% tissue fraction for the volume as a whole — and every deliberately
+    misaligned frame scores lower (a 10-voxel shift 98.9%, 25 voxels 90.7%, a
+    y/x axis swap 22.0%, below the base rate);
+  * the regenerated colors preserve the previous sidecar's colour distribution
+    (total-variation distance 0.0065), which pins the SOURCE — the same volume,
+    masked the same way — independently of the ordering.
+
+The three are complementary, and none suffices alone: the distribution check
+would survive a small translation, the tissue-hit rate would survive a subtle
+resample change, and the shape check alone says nothing about content.
+
+Anyone regenerating this sidecar should reproduce all three rather than trusting
+the agreement number alone. ``--recompute`` is the supported route and writes a
+fresh fit AND a matching sidecar via :func:`save_and_sample_colors`. The cheaper
+repair, when the fit is fine and only the sidecar is lost, is not wired into the
+demo (see the refusal in :func:`load_or_build`) but is three calls:
+``assemble_volume(PNG_DIR)``, then :func:`sample_colors` at
+``GSplatData.load(LFS_FIT).centers``, then :func:`_save_colors_u8` — which
+preserves the shipped fit and the 20 MB of Git LFS history that goes with it.
 
 USAGE
 -----
