@@ -403,6 +403,7 @@ def test_the_content_stamp_never_contradicts_the_boxes(tmp_path: Path) -> None:
     different asked level, which would ship a store whose ``floor`` and
     ``image_min`` contradict each other."""
     from luxar.cli.gsplat_ops.planner import _stamp_content_floor
+    from luxar.gsplats.planner.fit_planned import _stamp_planned_normalization
 
     leaf = _stub_leaf()
     leaf.stats.update({"floor": 100.0, "image_min": 100.0, "intensity_range": 150.0})
@@ -410,6 +411,25 @@ def test_the_content_stamp_never_contradicts_the_boxes(tmp_path: Path) -> None:
 
     assert leaf.stats["floor"] == pytest.approx(100.0)
     assert leaf.stats["image_min"] == pytest.approx(100.0)
+
+    regions = [_stub_leaf(), _stub_leaf()]
+    for region in regions:
+        region.stats.update(
+            {
+                "floor": 100.0,
+                "image_min": 100.0,
+                "image_max": 250.0,
+                "intensity_range": 150.0,
+            }
+        )
+    node = GSplatData.partition_from_regions(regions)
+    _stamp_planned_normalization(node.meta, regions)
+    node.meta["fit_stats"] = {"planned_fit": True, "psnr_db": 33.3}
+    _stamp_content_floor(node, 5.0, 5.0)
+
+    assert node.meta["floor"] == pytest.approx(100.0)
+    assert node.meta["image_min"] == pytest.approx(100.0)
+    assert "floor" not in node.meta["fit_stats"]
 
 
 def test_info_lists_the_normalization_block_not_just_the_generic_dump(

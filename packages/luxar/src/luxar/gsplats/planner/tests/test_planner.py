@@ -370,7 +370,9 @@ def _fake_box_builder(n_per_box: int = 5, truncation_radius: float | None = None
             chol = np.tile(np.array([1, 0, 1, 0, 0, 1], np.float32), (k, 1))
             GSplatData(centers=centers, amplitudes=amps,
                        cholesky_factors=chol{radius},
-                       stats={{"time_seconds": {_FAKE_BOX_TIME_SECONDS!r}}},
+                       stats={{"time_seconds": {_FAKE_BOX_TIME_SECONDS!r},
+                              "floor": 2.0, "image_min": 2.0,
+                              "image_max": 12.0, "intensity_range": 10.0}},
                        ).save(r"{out_path}")
             """
         )
@@ -1267,6 +1269,15 @@ class TestFitPlannedParallel:
         assert quality_keys <= stats.keys()
         assert stats["psnr_db"] == pytest.approx(flat.stats["psnr_db"])
         assert stats["mse"] == pytest.approx(flat.stats["mse"])
+        assert "floor" not in stats
+        assert "concatenated_from" not in stats
+        assert stats["splats_per_tile"] == [5, 5]
+        assert node.meta["floor"] == pytest.approx(2.0)
+        assert node.meta["image_min"] == pytest.approx(2.0)
+        assert node.meta["image_max"] == pytest.approx(12.0)
+        assert node.meta["intensity_range"] == pytest.approx(10.0)
+        assert flat.stats["floor"] == pytest.approx(node.meta["floor"])
+        assert flat.stats["image_min"] == pytest.approx(node.meta["image_min"])
         assert "No merged quality metrics" not in capsys.readouterr().out
 
         from luxar.cli.gsplat_ops.fitting.fit_utils import save_fit_output
@@ -1488,11 +1499,18 @@ class TestPlannedFitTruncationRadius:
         from luxar.gsplats.planner import fit_planned
 
         V, plan = self._tiny_volume_and_plan()
+        flat = fit_planned(V, plan, partition=False, truncate=3.5, **_FAST_FIT)
         node = fit_planned(V, plan, partition=True, truncate=3.5, **_FAST_FIT)
         notice = capsys.readouterr().out
         assert np.isfinite(node.meta["fit_stats"]["psnr_db"])
+        assert node.meta["fit_stats"]["psnr_db"] == pytest.approx(flat.stats["psnr_db"])
+        assert node.meta["fit_stats"]["mse"] == pytest.approx(flat.stats["mse"])
         assert node.meta["fit_stats"]["planned_fit"] is True
         assert node.meta["fit_stats"]["n_splats"] == node.n_splats
+        assert "concatenated_from" not in node.meta["fit_stats"]
+        assert node.meta["fit_stats"]["splats_per_tile"]
+        assert "image_max" not in node.meta["fit_stats"]
+        assert node.meta["image_max"] == pytest.approx(flat.stats["image_max"])
         assert "No merged quality metrics" not in notice
 
         leaves = _leaf_nodes(node)

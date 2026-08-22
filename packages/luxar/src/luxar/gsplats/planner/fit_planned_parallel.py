@@ -36,6 +36,7 @@ from .fit_planned import (
     _padded_bounds,
     _planned_merge_stats,
     _score_planned_merge,
+    _stamp_planned_normalization,
 )
 from .spec import FitPlan
 
@@ -282,7 +283,7 @@ def fit_planned_parallel(
         p = box_paths[i]
         if p.exists():
             try:
-                gd = GSplatData.load(p)
+                gd = GSplatData.load(p, include_stats=True)
             except Exception as exc:  # present but unreadable/partial store
                 corrupt.append((i, repr(exc)))
                 continue
@@ -326,6 +327,7 @@ def fit_planned_parallel(
         )
         from luxar.gsplats.tree import GSplatPartition, total_splats
 
+        _stamp_planned_normalization(result.meta, regions)
         fit_stats = _planned_merge_stats(
             regions,
             n_boxes=len(plan.boxes),
@@ -335,6 +337,7 @@ def fit_planned_parallel(
             elapsed=elapsed,
             delivered_splats=int(total_splats(result)),
             parallel_jobs=jobs,
+            partition=True,
         )
         is_partition = isinstance(result, GSplatPartition)
         _score_planned_merge(

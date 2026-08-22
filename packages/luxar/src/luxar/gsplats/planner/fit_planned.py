@@ -72,13 +72,18 @@ def _planned_merge_stats(
     elapsed: float,
     delivered_splats: int,
     parallel_jobs: Optional[int] = None,
+    partition: bool = False,
 ) -> dict[str, Any]:
-    """Build the common root stats for flat and partition planned merges."""
-    from luxar.gsplats.io.save_gsplats import agreed_normalization_stats
+    """Build common fit stats for flat and partition planned merges.
+
+    ``time_seconds`` is the merge's wall clock. On a flat result it overwrites
+    ``concatenate``'s sum of box fit times; on a partition root this block is
+    its sole writer. Parallel box reloads include top-level stats so their
+    normalization provenance survives, which makes the overwrite necessary
+    there too rather than allowing concurrent fit times to be summed.
+    """
 
     stats: dict[str, Any] = {
-        "concatenated_from": len(regions),
-        "splats_per_source": [region.n_splats for region in regions],
         "planned_fit": True,
         "n_boxes": n_boxes,
         "n_boxes_fit": n_boxes_fit,
@@ -87,11 +92,21 @@ def _planned_merge_stats(
         "time_seconds": float(elapsed),
         "n_splats": int(delivered_splats),
     }
+    if partition:
+        stats["splats_per_tile"] = [region.n_splats for region in regions]
     if parallel_jobs is not None:
         stats["parallel_jobs"] = int(parallel_jobs)
         stats["elapsed_seconds"] = float(elapsed)
-    stats.update(agreed_normalization_stats([region.stats for region in regions]))
     return stats
+
+
+def _stamp_planned_normalization(
+    target: dict[str, Any], regions: "Sequence[GSplatData]"
+) -> None:
+    """Carry unanimous box normalization provenance onto a merge root."""
+    from luxar.gsplats.io.save_gsplats import agreed_normalization_stats
+
+    target.update(agreed_normalization_stats([region.stats for region in regions]))
 
 
 def _score_planned_merge(
@@ -477,6 +492,7 @@ def fit_planned(
         )
         from luxar.gsplats.tree import GSplatPartition, total_splats
 
+        _stamp_planned_normalization(result.meta, regions)
         fit_stats = _planned_merge_stats(
             regions,
             n_boxes=n,
@@ -485,6 +501,7 @@ def fit_planned(
             volume_shape=tuple(int(s) for s in V.shape),
             elapsed=elapsed,
             delivered_splats=int(total_splats(result)),
+            partition=True,
         )
         is_partition = isinstance(result, GSplatPartition)
         _score_planned_merge(
