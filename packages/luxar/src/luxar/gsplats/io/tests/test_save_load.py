@@ -84,7 +84,7 @@ def _targz_store_flat(store: Path, archive: Path) -> Path:
 
 def _luxar_temp_dirs() -> set:
     """The extractor's temp directories currently present, as a set of paths."""
-    return set(Path(tempfile.gettempdir()).glob("luxar_gsplat_*"))
+    return set(Path(tempfile.gettempdir()).glob("luxar_gsplat_archive_*"))
 
 
 def _uncompressed_model_bytes(n_splats: int, ndim: int = 3) -> int:
@@ -1344,7 +1344,7 @@ class TestFlatZipClassifier:
             # LAYOUT: a flat tree is moved INSIDE a fresh extractor temp dir
             # rather than being one. Handing back the extraction dir as-is would
             # make every caller's `rmtree(temp_dir)` remove the system temp root.
-            assert resolved.parent.name.startswith("luxar_gsplat_")
+            assert resolved.parent.name.startswith("luxar_gsplat_archive_")
             assert resolved.parent != Path(tempfile.gettempdir())
             assert resolved.name != resolved.parent.name
         finally:
@@ -1549,7 +1549,7 @@ class TestFlatArchiveStoreRoot:
         resolved, temp_dir = resolve_store_path(archive)
         try:
             assert temp_dir == resolved.parent
-            assert resolved.parent.name.startswith("luxar_gsplat_")
+            assert resolved.parent.name.startswith("luxar_gsplat_archive_")
             assert resolved.parent != Path(tempfile.gettempdir())
             assert resolved.name != resolved.parent.name
             assert resolved.name == "flat.gsplats.zarr"
@@ -1635,6 +1635,8 @@ class TestFlatArchiveStoreRoot:
         assert read_archive_root_attrs(archive) == {}
         resolved, temp_dir = resolve_store_path(archive)
         try:
+            assert temp_dir is not None
+            assert temp_dir.name.startswith("luxar_gsplat_archive_")
             assert resolved.name == "x.gsplats.zarr"
         finally:
             if temp_dir is not None:
