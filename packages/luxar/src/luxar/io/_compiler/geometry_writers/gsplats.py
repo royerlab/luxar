@@ -162,6 +162,7 @@ def write_gsplats(
         ctx.ordering_ctx,
         truncation_radius,
         barrier_dims=scene_barrier_dims(ctx.store, n_dims),
+        dataset_ctx=ctx.dataset_ctx,
     )
 
     # Write arrays

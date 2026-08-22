@@ -521,6 +521,8 @@ def apply_gsplat_spatial_ordering(
     ctx: OrderingCtx,
     coverage_sigma: float = DEFAULT_TRUNCATION_RADIUS,
     barrier_dims: Optional[Sequence[int]] = None,
+    *,
+    dataset_ctx: Optional[DatasetCtx] = None,
 ) -> Tuple[
     NDArray[np.float32],
     Union[NDArray[np.float32], float],
@@ -537,6 +539,11 @@ def apply_gsplat_spatial_ordering(
     (:func:`~luxar.io.ordering.detect_barrier_dims`); pass ``[]`` to force pure
     spatial ordering. Callers that know the exact barrier (LOD ``coarsen_dims``
     complement, or a scene's discrete dims) should pass it explicitly.
+
+    ``dataset_ctx`` lets the ordering path resolve the centers' actual encoding
+    mode once, ask the encoder for its per-axis round-trip slack, and reuse that
+    mode when the arrays are written. A direct caller that omits it gets bounds
+    against the authored centers and leaves mode resolution to the write step.
 
     Returns:
         (centers, amplitudes, cholesky_factors, colors, ordering_data)
@@ -577,18 +584,37 @@ def apply_gsplat_spatial_ordering(
         chunk_size = max(1024, TARGET_CHUNK_BYTES // bytes_per_splat)
         chunk_size = min(chunk_size, n_splats)
 
+        centers_mode = (
+            _resolve_centers_encoding_mode(
+                centers,
+                cholesky_factors,
+                n_dims,
+                dataset_ctx.encoding_mode,
+                dataset_ctx.encoder,
+            )
+            if dataset_ctx is not None
+            else None
+        )
+        coord_slack = (
+            dataset_ctx.encoder.coordinate_round_trip_slack(centers, centers_mode)
+            if dataset_ctx is not None and centers_mode is not None
+            else None
+        )
+
         chunk_bounds = compute_chunk_bounds_gsplats(
             centers,
             cholesky_factors,
             chunk_size,
             coverage_sigma=coverage_sigma,
             slice_dims=slice_dims,
+            coord_slack=coord_slack,
         )
 
         ordering_data = {
             "sort_order": sort_indices,
             "chunk_bounds": chunk_bounds,
             "chunk_size": chunk_size,
+            "_centers_encoding_mode": centers_mode,
             **ordering_metadata,
         }
 
@@ -789,9 +815,15 @@ def write_gsplat_arrays(
     # when the encoder will grid-snap the axis and store it exactly. See
     # MAX_CENTER_DISPLACEMENT_SIGMAS — this is the single shared choke point
     # where centers AND cholesky_factors are both in hand.
-    centers_mode = _resolve_centers_encoding_mode(
-        centers, cholesky_factors, n_dims, ctx.encoding_mode, ctx.encoder
+    centers_mode = (
+        ordering_data.get("_centers_encoding_mode")
+        if ordering_data is not None
+        else None
     )
+    if centers_mode is None:
+        centers_mode = _resolve_centers_encoding_mode(
+            centers, cholesky_factors, n_dims, ctx.encoding_mode, ctx.encoder
+        )
     # An escalated write must bypass the encoder's content-dedup registry.
     # Dedup is keyed on the centers BYTES alone, but the rail makes the chosen
     # mode depend on a SIBLING array (cholesky_factors) the registry knows
