@@ -97,7 +97,13 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, DimensionsConfig, ViewerConfig
-from luxar.demos import cache_computed, launch_viewer, parse_demo_flags, parse_int_arg
+from luxar.demos import (
+    add_demo_caption,
+    cache_computed,
+    launch_viewer,
+    parse_demo_flags,
+    parse_int_arg,
+)
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -1823,12 +1829,10 @@ def _add_overlays(scene: Any) -> None:
         anchor="center-right",
         opacity=0.9,
     )
-    scene.add_text(
-        "keys 1/2 select season/growth · [ ] step · play animates · hover a trunk",
-        position=(0.98, 0.97),
-        font_size=0.013,
-        anchor="bottom-right",
-        color="rgba(200,200,200,0.45)",
+    add_demo_caption(
+        scene,
+        "keys 1/2 select season/growth • [ ] step • play animates • hover a trunk",
+        DEMO_META.get("citation"),
     )
 
 

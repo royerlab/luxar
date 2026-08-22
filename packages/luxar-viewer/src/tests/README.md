@@ -471,6 +471,7 @@ Full browser tests using Playwright that exercise the complete pipeline.
 - `all-examples-smoke-test.spec.ts` - **Validates all example datasets**
 - `python-typescript-integration.spec.ts` - **Full Python → TypeScript pipeline**
 - `visual-regression.spec.ts` - Snapshot testing for visual correctness
+- `cinematic-auto-framing.spec.ts` - Cinematic FOV participates in first-load auto-framing
 - `spatial-index-accuracy.spec.ts` - Spatial index correctness
 - `nd-navigation.spec.ts` - nD slicing in browser
 - `performance-tracking-perf-bench.spec.ts` - Performance tracking (opt-in perf suite: `pnpm test:perf:e2e`)

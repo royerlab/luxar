@@ -135,7 +135,7 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
-from luxar.demos import launch_viewer
+from luxar.demos import add_demo_caption, launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -1279,12 +1279,8 @@ def generate_detector_scene(
         )
 
         # Physics note (bottom-right)
-        scene.add_text(
-            "Track curvature \u221d 1/momentum",
-            position=(0.98, 0.97),
-            font_size=0.015,
-            anchor="bottom-right",
-            color="rgba(200,200,200,0.5)",
+        add_demo_caption(
+            scene, "Track curvature \u221d 1/momentum", DEMO_META.get("citation")
         )
 
     return total_segments, total_points

@@ -14,24 +14,12 @@ So a demo that states its own distance pins neither, and composes its pose for
 63° instead. Such a pose specifies a DISTANCE, not a framing, and at a fixed
 distance 47° → 63° scales the subject to 0.71x linear — HALF its screen area.
 
-An AUTO-FRAMED scene cannot be fixed from here, and is worth understanding
-before reading the helpers below as a general answer. ``calculateCameraDistance``
-does divide by ``tan(fov / 2)``, but the viewer widens the lens AFTER it frames:
-``SceneManager.loadSceneData`` auto-frames while the camera still holds the 47°
-default (``applyZarrViewerConfig`` sets position/target/up, never fov), and the
-preset's fov only arrives later, when ``load-dataset.ts`` calls
-``RenderingControls.applyZarrDefaults``. Nothing re-frames after that. So an
-auto-framed cinematic scene sits at the 47° fit distance behind a 63° lens and
-opens ~1.4x looser than it used to — the subject filling 0.53 of the half-frame
-where the fit put 0.75. ``docs/guides/user/VIEWER_GUIDE.md`` documents this
-("wider than the default auto-framing"), and closing it means applying the
-expanded fov before the fit, in the viewer, not here — #1861.
-
-When the preset FOV is applied (that is, the scene has no stored rendering
-settings), an authored position suppresses auto-framing entirely, so the poses
-composed through this module frame exactly as the arithmetic below says. Stored
-settings can restore another FOV while the authored position still applies;
-fixing that viewer-side mismatch is also part of #1861.
+AUTO-FRAMED scenes need no demo-side correction: the viewer resolves the
+scene's FOV before automatic framing, so the fitted subject occupancy already
+matches the 63° lens. These helpers are for authored positions, which suppress
+automatic framing entirely; a distance tuned for 47° must still be recomposed
+for 63°. A returning visitor's stored FOV takes precedence over the
+scene-authored value by design.
 
 Two ways to compose for the wider lens, and a demo should use whichever it
 already thinks in:

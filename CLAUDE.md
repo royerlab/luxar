@@ -986,7 +986,8 @@ npx playwright test visual-regression.spec.ts theme-visual-regression.spec.ts
 # Geometry & rendering (blending-modes needs generate-fixtures!)
 pnpm test:generate-fixtures
 npx playwright test geometry-types.spec.ts blending-modes.spec.ts colormap-system.spec.ts \
-  post-processing-pipeline.spec.ts rendering-controls.spec.ts ortho-mode.spec.ts
+  post-processing-pipeline.spec.ts cinematic-auto-framing.spec.ts rendering-controls.spec.ts \
+  ortho-mode.spec.ts
 # Line joint artifacts (#780/#785/#790) — scores each joint topology as its
 # own band of one frame with TWO metrics (local-median outliers + axial flux
 # ripple; the first is structurally blind to the bead-notch class the second

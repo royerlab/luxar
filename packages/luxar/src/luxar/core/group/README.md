@@ -118,12 +118,14 @@ Three split rules, selected via `partition=dict(rule=...)`:
 
 Exports:
 
-- `median_bsp_partition` / `midpoint_bsp_partition` / `sah_bsp_partition` —
-  pure-NumPy point/gsplats splitters returning lists of index arrays into the
-  original positions (concatenation permutes `range(N)`).
-- `median_bsp_polylines` / `midpoint_bsp_polylines` — polyline-atomic variants
-  for `add_lines` (every vertex of a polyline lands in one part; accounting is
-  by vertex count, splits run over per-polyline centroids).
+- `BSPNode`, `spatial_bsp_tree`, and `spatial_bsp_polyline_tree` — production
+  tree builders used by the native geometry adders.
+- `bsp_leaf_parts` — shared left-first leaf flattening used by all four adders.
+- `persist_pruned_bsp_tree` — drops unwritten regions, renumbers surviving
+  `child_index` labels, and stamps the serialized tree on the partition wrapper.
+- `median_bsp_partition` / `midpoint_bsp_partition` / `sah_bsp_partition` and
+  the median/midpoint polyline wrappers — flat-list conveniences retained as
+  parity oracles for the production tree builders.
 - `warn_if_oversized_single_part` — surfaces the degenerate
   fully-coincident-input case where the BSP cannot split below `max_elements`.
 - `validate_partition_group` — well-formedness check (≥1 child, present

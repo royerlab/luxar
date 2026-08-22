@@ -1871,12 +1871,16 @@ shading gains anything RECOMPUTED per part** — area-averaged normals, tangent 
 baked AO — because each of those is computed from a part's own contents and would differ
 across the cut.
 
-**No `bsp_tree` attr is written**, matching the three sibling leaf adders (only the gsplat
-LOD recipes emit one). Opaque parts do not need back-to-front ordering, and the depth-sort
-coordinator falls back to a per-part centroid heuristic if a translucent mesh partition ever
-needs it. Note also that `render-order.ts::traverseBspBackToFront` would order parts
-back-to-front, which for opaque mesh parts is *correct but pointless* — it forfeits
-front-to-back early-Z. That is a known non-issue, recorded so it is not rediscovered as a bug.
+**The wrapper records the recursive split planes as `bsp_tree`.** The tree is built from the
+same face-centroid BSP whose leaves become the mesh parts, then pruned and renumbered against
+the parts actually written. Because faces are assigned by centroid while `position_bounds`
+cover all three vertices, a triangle may cross its assigning plane; the resulting traversal is
+stable and localizes ambiguity to the overlap, but is approximate rather than an exact painter's
+order. It still avoids the coarser whole-part centroid fallback for translucent mesh.
+`render-order.ts::traverseBspBackToFront` also orders opaque mesh parts back-to-front, which is
+correct but forfeits the front-to-back early-Z order an opaque pass would prefer. That is a known
+performance tradeoff, not a correctness defect; keeping one partition metadata contract across
+all four geometry types is more important than special-casing opaque mesh authoring.
 
 **One refusal survives the lift.** A mesh may go under a `kind=partition` group whose
 `display_type` is `'mesh'` — nothing else. A partition is homogeneous by definition, and

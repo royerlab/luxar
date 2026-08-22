@@ -55,7 +55,7 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
-from luxar.demos import launch_viewer
+from luxar.demos import add_demo_caption, launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
 
@@ -356,12 +356,10 @@ def generate_sharpness_showcase(
             )
 
             # Info
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 "Sharpness range 0\u20131 (super-Gaussian \u03b2 = 2^(6s-2))",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
 
         total_points = gradient_points + 120 + mixed_points + wave_points

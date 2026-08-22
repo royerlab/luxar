@@ -13,7 +13,10 @@ import { loadScene } from '../data';
 import type { LoaderConfig } from '../data/data-loader-types';
 import { notifier } from '../utils/cross-layer/notifier';
 import { config } from '../config';
-import { extractCameraOverrides } from '../config/zarr-bridge/viewer-config-utils';
+import {
+  extractCameraOverrides,
+  extractRenderingOverrides,
+} from '../config/zarr-bridge/viewer-config-utils';
 import type { ZarrViewerConfig } from '../types/zarr';
 import type { PostProcessingManager } from '../rendering/post-processing/post-processing-manager';
 import { materialManager } from '../rendering';
@@ -86,6 +89,14 @@ import type { ControlType } from '../controls/controls-manager';
 
 /** Default scene up (world +Y) — overridden per scene by `viewer_config.up`. */
 const DEFAULT_SCENE_UP = new THREE.Vector3(0, 1, 0);
+/** Skip projection/material refreshes within the 0.5° deadband preserved from prior call sites. */
+const FOV_APPLY_DEADBAND_DEG = 0.5;
+
+/** Caller-resolved scene-load decisions that affect initial camera setup. */
+export interface SceneLoadOptions {
+  /** Apply scene-authored FOV before framing when localStorage does not take precedence. */
+  applyViewerConfigFov?: boolean;
+}
 
 /**
  * SceneManager orchestrates all Three.js components for 3D rendering
@@ -263,6 +274,28 @@ export class SceneManager extends THREE.EventDispatcher<{
    */
   get currentFov(): number {
     return isPerspectiveCamera(this.camera) ? this.camera.fov : this.lastPerspectiveFov;
+  }
+
+  /**
+   * Set an absolute perspective FOV using rendering-setting validation semantics.
+   * Invalid values fall back to the configured default rather than clamping.
+   */
+  setFov(degrees: number): boolean {
+    const fov =
+      Number.isFinite(degrees) && degrees >= config.camera.fovMin && degrees <= config.camera.fovMax
+        ? degrees
+        : config.renderingControls.defaults.fov;
+    if (Math.abs(this.currentFov - fov) <= FOV_APPLY_DEADBAND_DEG) return false;
+
+    if (isOrthographicCamera(this.camera)) {
+      this.lastPerspectiveFov = fov;
+      return true;
+    }
+
+    this.camera.fov = fov;
+    this.camera.updateProjectionMatrix();
+    this.updateMaterialsForCurrentCamera();
+    return true;
   }
 
   /**
@@ -680,8 +713,17 @@ export class SceneManager extends THREE.EventDispatcher<{
    * Cache and prefetch flags propagate through `loaderConfig` from
    * LuxarApp (originally derived from `?no-cache`/`?cache-debug`/etc URL
    * parameters in main.ts).
+   * `options.applyViewerConfigFov` is the caller's localStorage-precedence
+   * decision, not a feature switch: returning visitors keep their stored FOV
+   * even when an authored pose was composed for a different lens. Under an
+   * orthographic camera it only stashes the next perspective FOV; framing uses
+   * camera zoom, and the later projection swap preserves that frustum.
    */
-  async loadSceneData(src: string, loaderConfig?: LoaderConfig): Promise<void> {
+  async loadSceneData(
+    src: string,
+    loaderConfig?: LoaderConfig,
+    options: SceneLoadOptions = {}
+  ): Promise<void> {
     notifier.showLoading();
 
     try {
@@ -716,9 +758,8 @@ export class SceneManager extends THREE.EventDispatcher<{
       // later UI call re-runs it identically.
       sceneDimsManager.initFromScene(this.scene);
 
-      // NOTE: Material parameters were already updated BEFORE loadScene() above
-      // Materials created during loading already have correct FOV/resolution
-      // No need to update again - this would be redundant work
+      // Material parameters were initialized before loadScene(). A scene FOV
+      // applied below refreshes them again before the first rendered frame.
 
       // Establish scale-aware orbit distance limits from scene bounds BEFORE
       // applying the author's camera. The orbit controls start with a small
@@ -738,6 +779,12 @@ export class SceneManager extends THREE.EventDispatcher<{
       // The helper returns whether an explicit camera position was applied;
       // also extract once more to detect author-set target/targetNode.
       const viewerConfig = root.userData?.viewerConfig as ZarrViewerConfig | undefined;
+      if (options.applyViewerConfigFov && viewerConfig) {
+        const fovOverride = extractRenderingOverrides(viewerConfig).fov;
+        if (fovOverride !== undefined) {
+          this.setFov(fovOverride);
+        }
+      }
       const { positionApplied, appliedUp } = this.applyZarrViewerConfig(root);
       // The scene up governs every camera fit/reset (Home/F, center-on-
       // origin, this auto-frame): world +Y unless the author set one.

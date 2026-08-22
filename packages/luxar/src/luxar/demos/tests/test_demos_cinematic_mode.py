@@ -32,10 +32,10 @@ Four invariants, and they close different holes:
     that stops being true, this guard is where to say so.
 ``test_every_authored_camera_states_the_lens_it_was_composed_for``
     Every ``CameraConfig`` with an opening position says, one way or another,
-    which field of view its distance assumes — because the viewer expands the
-    cinematic FOV only AFTER it auto-frames, so a pose that quietly assumes the
-    47° default opens ~1.4x looser than it was tuned for. Pinning ``fov`` /
-    ``fov_preset`` says it; so does composing the pose for 63° through
+    which field of view its distance assumes. An authored position suppresses
+    automatic framing, so the viewer cannot correct a distance that quietly
+    assumes the 47° default. Pinning ``fov`` / ``fov_preset`` says it; so does
+    composing the pose for 63° through
     ``demos/_cinematic_camera.py``, which is what the five extent- and
     radius-derived poses do (and which keeps the preset's lens whole — see
     below). What the guard rejects is neither: a bare authored position.
@@ -56,11 +56,10 @@ and intensities remain meaningful, and the biodiversity globe disables the
 last two so its categorical hues remain exact. The nD transform bench also
 disables the last two to preserve its exact RGB corner palette.
 
-The preset's 63° FOV is applied after first-load auto-framing, which happens at
-the viewer's 47° default, and nothing re-frames afterwards — so an auto-framed
-scene opens 0.71x smaller linearly (half the screen area). The demos cannot fix
-that from here; closing it means applying the expanded fov before the fit, in the
-viewer (#1861).
+The preset's 63° FOV is resolved before automatic framing, so auto-framed scenes
+keep the fitted subject occupancy intended for that lens. Authored positions
+suppress automatic framing, so their distance must still state which FOV it was
+composed for.
 
 A demo that authors a camera position has a stronger contract, since its distance
 was composed for one specific FOV, and there are two honest ways to keep it.
@@ -245,9 +244,8 @@ def test_every_authored_camera_states_the_lens_it_was_composed_for(path: Path) -
         f"{path.name}: CameraConfig at line(s) {missing} sets an opening position "
         f"whose field of view is anybody's guess: it pins neither fov nor "
         f"fov_preset, and nothing says it was composed for the cinematic 63°. "
-        f"Cinematic mode widens the lens only AFTER the viewer frames a scene, "
-        f"so an authored pose that assumes 47° silently opens ~1.4x looser — "
-        f"pin the fov you meant, or compose for 63° through "
+        f"an authored position suppresses automatic framing, so its distance "
+        f"must pin the fov it assumes or compose for 63° through "
         f"demos/_cinematic_camera.py"
     )
 

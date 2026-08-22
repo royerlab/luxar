@@ -94,8 +94,9 @@ export function resetSliceDimsWarningForTests(): void {
  * Read the writer's published BARRIER set off the node attrs, for
  * `ToleranceOptions.barrierDims`.
  *
- * `slice_dims` is exactly the set `compute_chunk_bounds_gsplats` gave a tight
- * `_BARRIER_BOUND_EPS` pad instead of the `truncation_radius · σ` expansion
+ * `slice_dims` is exactly the set where `compute_chunk_bounds_gsplats` withheld
+ * the `truncation_radius · σ` expansion and used the tight `_BARRIER_BOUND_EPS`
+ * plus any encoder coordinate round-trip slack instead
  * (`luxar/io/_compiler/gsplat_assembly.py` stamps it whenever `ordering != 'none'`),
  * in center-column indices — the same index space as `attrs.ndim`,
  * `viewState.slicePosition` and the `chunk_bounds` columns. Handing it to the

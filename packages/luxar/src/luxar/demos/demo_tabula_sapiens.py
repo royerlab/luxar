@@ -53,6 +53,7 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
     MissingDependencyError,
+    add_demo_caption,
     cache_computed,
     cached_download,
     launch_viewer,
@@ -719,12 +720,10 @@ def generate_tabula_sapiens(
 
             n_types = len(set(cell_types))
             n_tissues = len(set(tissues))
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 f"{n_cells:,} cells • {n_types} cell types • {n_tissues} tissues • The Tabula Sapiens Consortium 2022",
-                position=(0.98, 0.97),
-                font_size=0.012,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
 
             # Organ/tissue color legend — top tissues actually present, so the

@@ -102,6 +102,7 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
     DatasetUnavailable,
+    add_demo_caption,
     cached_download,
     launch_viewer,
     load_dataset_gsplats,
@@ -438,12 +439,8 @@ Controls:
                 color="rgba(255,255,255,0.6)",
                 blend_mode="difference",
             )
-            scene.add_text(
-                "Fluorescence microscopy",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+            add_demo_caption(
+                scene, "Fluorescence microscopy", DEMO_META.get("citation")
             )
 
         aprint(f"Scene saved: {output_path}")
