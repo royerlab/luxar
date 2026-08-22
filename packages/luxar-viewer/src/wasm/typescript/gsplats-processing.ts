@@ -267,8 +267,8 @@ function computeDisplayCholesky3D(
   // from the mean — reintroducing the scene-scale dependence in miniature.
   //
   // Rust runs the whole reduction in f32: `log_sum += diag.ln()` then
-  // `(log_sum / counted as f32).exp()`. Rounding each step matches all of that
-  // EXCEPT the transcendentals themselves — see the note on `phantom` below.
+  // `(log_sum / counted as f32).exp()`. Rounding each step matches that
+  // operation order.
   let logSum = 0;
   let counted = 0;
   for (let i = 0; i < n; i++) {
@@ -282,7 +282,9 @@ function computeDisplayCholesky3D(
   // transcendentals are `expf`/`logf` (the musl f32 ports in
   // `float32-math.ts`, #1830), so they are bit-exact against Rust's
   // `f32::exp`/`f32::ln` on wasm; the surrounding steps are frounded to
-  // mirror `common.rs` (the empty-diagonal floor narrows to f32 too).
+  // mirror `common.rs` (the empty-diagonal floor narrows to f32 too). The two
+  // reduction frounds are no-ops for the reachable `counted` ∈ {1, 2}, but are
+  // retained to keep that operation order explicit.
   const phantom =
     counted > 0
       ? expf(Math.fround(logSum / counted))

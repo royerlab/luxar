@@ -1183,12 +1183,12 @@ describe('WASM vs TypeScript Comparison', () => {
   // relax them) if a V8 or libm upgrade moves the baseline.
   //
   // MUTATION COVERAGE. The cases below were validated by deleting each of the
-  // 42 `Math.fround` calls in `effective-radii.ts` / `gsplats-processing.ts` one
-  // at a time and re-running `src/tests/unit/wasm/`: 35 of 42 turn a case red.
-  // The 7 survivors are provably inert and are documented as such at their
+  // 38 executable `Math.fround` calls in `effective-radii.ts` /
+  // `gsplats-processing.ts` one at a time and re-running `src/tests/unit/wasm/`:
+  // 32 of 38 turn a case red. The 6 survivors are provably inert and documented at their
   // definitions — `fround(-0.5 · x)` twice (halving an f32 is exact),
   // `fround(CHOLESKY_EPSILON)` and `fround(sqrt(CHOLESKY_EPSILON_F32))` (both
-  // consumed only through a benign double-rounded sqrt), and the three phantom
+  // consumed only through a benign double-rounded sqrt), and the two phantom
   // roundings that are no-ops for the reachable `counted` ∈ {1, 2}. If you add
   // a rounding to either kernel, add the case that kills it.
   describe('f32 operation-order parity (#1820)', () => {
@@ -1267,7 +1267,7 @@ describe('WASM vs TypeScript Comparison', () => {
       expect(maxAbs(longer, shorter)).toBe(Infinity);
     });
 
-    /** `invOneMinusC` for a truncation radius, in the kernel's f32 operation order. */
+    /** Independent recomputation of `invOneMinusC` for a truncation radius. */
     function invOneMinusC(truncate: number): number {
       const t = Math.fround(truncate);
       const shiftC = Math.fround(Math.exp(Math.fround(Math.fround(-0.5 * t) * t)));
