@@ -36,6 +36,14 @@ _EXCLUDED_PATH_PARTS = {
     "image_label_bytes",
 }
 
+_LINEAR_KERNEL_ENCODINGS = {
+    "rgb_uint8",
+    "rgb_uint16",
+    "bounded_scalar_uint8",
+    "bounded_scalar_uint16",
+}
+_GEOLOG_KERNEL_ENCODINGS = {"geolog_scalar_uint8", "geolog_scalar_uint16"}
+
 
 def _iter_arrays(group: zarr.Group, prefix: str = "") -> list[str]:
     """Return all array paths in a zarr group, sorted for determinism."""
@@ -101,6 +109,59 @@ def _stats(array: np.ndarray) -> dict[str, float | None]:
     }
 
 
+def _viewer_kernel_decode(array: zarr.Array, root: zarr.Group) -> np.ndarray | None:
+    """Decode scalar quantization in the viewer kernel's f32 operation order."""
+    enc = array.attrs.get("encoding", None)
+    if not isinstance(enc, dict):
+        return None
+    name = enc.get("name")
+    if not isinstance(name, str):
+        return None
+
+    if name == "array_ref":
+        target = enc.get("target")
+        if not isinstance(target, str):
+            return None
+        target_array = root[target]
+        if not isinstance(target_array, zarr.Array):
+            return None
+        return _viewer_kernel_decode(target_array, root)
+
+    if name in _LINEAR_KERNEL_ENCODINGS:
+        data = np.asarray(array[:])
+        top = int(np.iinfo(data.dtype).max)
+        if "bounds" in enc:
+            min_val, max_val = enc["bounds"]
+        elif "min" in enc and "max" in enc:
+            min_val, max_val = enc["min"], enc["max"]
+        elif name in {"rgb_uint8", "rgb_uint16"}:
+            min_val, max_val = 0.0, 1.0
+        else:
+            raise ValueError(f"Missing bounds for viewer kernel expectation: {name}")
+
+        lo = float(np.float32(min_val))
+        hi = float(np.float32(max_val))
+        value_range = float(np.float32(hi - lo))
+        scale = float(np.float32(value_range / top))
+        scaled = np.asarray(data.astype(np.float64) * scale, dtype="<f4")
+        return np.asarray(lo + scaled.astype(np.float64), dtype="<f4")
+
+    if name in _GEOLOG_KERNEL_ENCODINGS:
+        data = np.asarray(array[:])
+        top = int(np.iinfo(data.dtype).max)
+        lo = float(np.float32(enc["min_log"]))
+        hi = float(np.float32(enc["max_log"]))
+        inv = max(hi - lo, 0.0) / max(top - 1, 1)
+        result = np.zeros(data.shape, dtype="<f4")
+        nonzero = data > 0
+        if nonzero.any():
+            exponent = lo + (data[nonzero].astype(np.float64) - 1.0) * inv
+            result[nonzero] = np.asarray(np.exp(exponent), dtype="<f4")
+        return result
+
+    return None
+
+
 def _shape_class(decoded_shape: list[int]) -> str:
     """Classify decoded shapes for coverage-manifest assertions."""
     if not decoded_shape:
@@ -120,6 +181,7 @@ def _operation_expectation(
     kind: str,
     array: np.ndarray,
     *,
+    viewer_array: np.ndarray | None = None,
     start: int | None = None,
     end: int | None = None,
 ) -> dict[str, Any]:
@@ -132,15 +194,19 @@ def _operation_expectation(
         "samples": _samples(array),
         "stats": _stats(array),
     }
+    if viewer_array is not None:
+        item["viewer_float32_sha256"] = _sha256_float32(viewer_array)
     if start is not None or end is not None:
         item["start"] = int(start or 0)
         item["end"] = int(end or 0)
     return item
 
 
-def _range_operations(decoded: np.ndarray) -> list[dict[str, Any]]:
+def _range_operations(
+    decoded: np.ndarray, viewer_decoded: np.ndarray | None
+) -> list[dict[str, Any]]:
     """Representative first-axis range expectations for TS range decoding."""
-    operations = [_operation_expectation("full", decoded)]
+    operations = [_operation_expectation("full", decoded, viewer_array=viewer_decoded)]
     if decoded.ndim == 0:
         return operations
 
@@ -166,7 +232,15 @@ def _range_operations(decoded: np.ndarray) -> list[dict[str, Any]]:
             continue
         seen.add((start, end))
         operations.append(
-            _operation_expectation("range", decoded[start:end], start=start, end=end)
+            _operation_expectation(
+                "range",
+                decoded[start:end],
+                viewer_array=(
+                    viewer_decoded[start:end] if viewer_decoded is not None else None
+                ),
+                start=start,
+                end=end,
+            )
         )
     return operations
 
@@ -184,6 +258,7 @@ def _array_expectation(
     decoder = ArrayDecoder()
     decoded = decoder.decode(array, root)
     decoded = np.asarray(decoded)
+    viewer_decoded = _viewer_kernel_decode(array, root)
     flat = _float32_view(decoded)
     decoded_shape = [int(v) for v in decoded.shape]
 
@@ -201,8 +276,10 @@ def _array_expectation(
         "float32_sha256": _sha256_float32(decoded),
         "samples": _samples(decoded),
         "stats": _stats(decoded),
-        "operations": _range_operations(decoded),
+        "operations": _range_operations(decoded, viewer_decoded),
     }
+    if viewer_decoded is not None:
+        item["viewer_float32_sha256"] = _sha256_float32(viewer_decoded)
     contract_case = _contract_case_metadata(array)
     if contract_case is not None:
         item["contract_case"] = contract_case
@@ -301,7 +378,7 @@ def generate_expectations() -> dict[str, Any]:
             fixtures[fixture_path.name] = {"arrays": arrays}
 
     return {
-        "version": 2,
+        "version": 3,
         "description": "Python ArrayDecoder expectations for TypeScript round-trip tests.",
         "manifest": _manifest(fixtures),
         "fixtures": fixtures,

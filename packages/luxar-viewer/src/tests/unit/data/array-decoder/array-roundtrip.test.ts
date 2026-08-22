@@ -33,6 +33,7 @@ interface ArrayOperationExpectation {
   decoded_shape: number[];
   flat_length: number;
   float32_sha256: string;
+  viewer_float32_sha256?: string;
   samples: Array<{ index: number; value: number }>;
   stats: { min: number | null; max: number | null; mean: number | null };
 }
@@ -48,6 +49,7 @@ interface ArrayExpectation {
   shape_class: string;
   flat_length: number;
   float32_sha256: string;
+  viewer_float32_sha256?: string;
   samples: Array<{ index: number; value: number }>;
   stats: { min: number | null; max: number | null; mean: number | null };
   operations: ArrayOperationExpectation[];
@@ -157,7 +159,7 @@ async function decodeRange(
 
 describe('Python-TypeScript encoded array round-trip', () => {
   it('uses the expected fixture expectation schema and coverage manifest', () => {
-    expect(EXPECTATIONS.version).toBe(2);
+    expect(EXPECTATIONS.version).toBe(3);
     expect(Object.keys(EXPECTATIONS.fixtures).length).toBeGreaterThan(0);
     expect(EXPECTATIONS.manifest.fixture_count).toBe(Object.keys(EXPECTATIONS.fixtures).length);
     expect(EXPECTATIONS.manifest.array_count).toBeGreaterThan(100);
@@ -177,18 +179,23 @@ describe('Python-TypeScript encoded array round-trip', () => {
 
           expect(decoded.length).toBe(expected.flat_length);
           expect(decoded.length).toBe(shapeProduct(expected.decoded_shape));
-          assertSamples(decoded, expected);
-          expect(float32Sha256(decoded)).toBe(expected.float32_sha256);
+          if (!expected.viewer_float32_sha256) assertSamples(decoded, expected);
+          expect(float32Sha256(decoded)).toBe(
+            expected.viewer_float32_sha256 ?? expected.float32_sha256
+          );
 
           const fullOperation = expected.operations.find((operation) => operation.kind === 'full');
           expect(fullOperation?.float32_sha256).toBe(expected.float32_sha256);
+          expect(fullOperation?.viewer_float32_sha256).toBe(expected.viewer_float32_sha256);
 
           for (const operation of expected.operations.filter((item) => item.kind === 'range')) {
             const rangeDecoded = await decodeRange(array, attrs, store, operation);
             expect(rangeDecoded.length).toBe(operation.flat_length);
             expect(rangeDecoded.length).toBe(shapeProduct(operation.decoded_shape));
-            assertSamples(rangeDecoded, operation);
-            expect(float32Sha256(rangeDecoded)).toBe(operation.float32_sha256);
+            if (!operation.viewer_float32_sha256) assertSamples(rangeDecoded, operation);
+            expect(float32Sha256(rangeDecoded)).toBe(
+              operation.viewer_float32_sha256 ?? operation.float32_sha256
+            );
           }
         });
       }

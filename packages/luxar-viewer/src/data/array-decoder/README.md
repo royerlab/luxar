@@ -54,9 +54,11 @@ order MUST match the Python spec or behavior diverges:
    dimension). Mirrors the RangeLoader's dedicated `'perchannel'` path
    and Python's `_decode_*_perchannel`.
 6. **quantized** (`rgb_uint8`, `rgb_uint16`, `bounded_scalar_uint8`,
-   `bounded_scalar_uint16`) — linear dequantization to `[min, max]`.
-   Bounds resolved from `enc.bounds`, then `enc.min`/`enc.max`, then
-   inferred (only `rgb_*` is inferrable → `[0, 1]`).
+   `bounded_scalar_uint16`) and **geolog scalar** — delegate to the same
+   f32-disciplined TypeScript kernels used by worker fallback decoding, so
+   worker routing cannot change decoded bits. Linear bounds resolve from
+   `enc.bounds`, then `enc.min`/`enc.max`, then inferred (only `rgb_*` is
+   inferrable → `[0, 1]`).
 7. **direct** — `undefined` / `'none'` / `float16` / `float32` /
    `uint8` / `uint16` / `uint32` / `uint64` — raw zarr buffer converted
    to `Float32Array`. Registered under `enc.hash` if present.
