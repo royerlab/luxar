@@ -516,6 +516,15 @@ is `luxar gsplat migrate-format`.
   are carried too — a `.gsplats.zarr.zip` / `.tar.gz` is peeked in place via
   `_archive.read_archive_root_attrs` (see above), no extraction. Best-effort:
   a missing/unreadable store yields `{}`.
+  Its N-input sibling `agreed_authored_appearance(paths, exclude=…)` is what a
+  command with several inputs (`gsplat merge`) uses: a key is carried only when
+  every input that *has* an opinion agrees, an input that does not carry the key
+  casts no vote, and a disagreement drops the key **with a warning** naming the
+  differing values. Same unanimity rule as `save_gsplats.agreed_normalization_stats`,
+  deliberately loud rather than silent because appearance is hand-authored.
+  `exclude` names keys the calling MODE invalidates whatever the inputs say
+  (`--as-dimension` → `nd_transform`, `--channel-colors` → `colormap`); pass a
+  `{key: reason}` mapping to have the reason quoted in the warning.
 - **`inspect_gsplats.py`**: Metadata inspection without loading arrays
   (`inspect_gsplats_zarr`, `format_gsplats_info`).
 - **`migrate.py`**: Legacy-format migration (`migrate_format`,

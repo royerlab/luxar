@@ -306,6 +306,15 @@ luxar gsplat merge a.zarr b.zarr -o merged.zarr
 luxar gsplat merge t0.zarr t1.zarr t2.zarr -o 4d.zarr --as-dimension --values 0,1,2
 luxar gsplat merge ch0.zarr ch1.zarr -o multi.zarr --channel-colors "#ff0080,#00ff00"
 ```
+The inputs' authored appearance (blending mode, opacity, colormap, …) is carried
+onto the merged root wherever the inputs **agree**; an input that does not carry a
+key casts no vote, and a key they genuinely disagree on is dropped with a warning
+naming the differing values rather than one input's choice being promoted. Note a
+plain save stamps the identity values (`opacity=1.0`, `colormap="gray"`, …), so an
+untouched store is not silent about those and does vote. Two keys are dropped even
+under agreement because the mode itself invalidates them: `nd_transform` under
+`--as-dimension` (which adds a dimension) and `colormap` under `--channel-colors`
+(which bakes per-splat RGB).
 
 #### `luxar gsplat cull`
 Remove low-contribution splats to reduce dataset size while preserving visual quality.

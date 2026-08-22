@@ -934,6 +934,13 @@ def merge_datasets(
 
     3. Channel colors (--channel-colors): Per-dataset color assignment.
 
+    The inputs' authored appearance (blending mode, opacity, colormap, ...) is
+    carried onto the merged root wherever the inputs AGREE; a key they disagree
+    on is dropped, and the command names it rather than picking a side. Two keys
+    the merge itself invalidates are dropped even under agreement: nd_transform
+    under --as-dimension (which adds a dimension) and colormap under
+    --channel-colors (which bakes per-splat RGB).
+
     Examples:
         luxar gsplat merge a.gsplats.zarr b.gsplats.zarr -o merged.gsplats.zarr
 

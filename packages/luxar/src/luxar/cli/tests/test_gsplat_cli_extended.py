@@ -5912,31 +5912,161 @@ class TestLODCarriesAuthoredAppearance:
         zc_consolidate(group)
 
     #: Rewriting commands that must pass appearance through, as
-    #: ``label -> extra argv after (input, output)``.
+    #: ``label -> full argv template``. ``{in}`` / ``{out}`` are substituted with
+    #: the input and output stores; ``{in2}`` asks for a SECOND authored input
+    #: (see :meth:`_resolve`), which is what a multi-input command needs.
     #:
     #: Keyed by COMMAND rather than by recipe because #1600 is a property of every
     #: in->out command, not of `lod` alone: `additive` was found dropping the same
     #: eight attrs by the same missing propagation. Auditing another command
     #: (`flatten`, `decimate`, `reencode`, ...) should be one row here.
     #:
+    #: A TEMPLATE rather than "extra argv after (input, output)": that older shape
+    #: hardwired ``[cmd0, cmd1, IN, OUT, *rest]`` and so could not express
+    #: ``gsplat merge IN1 IN2 -o OUT`` at all — which is precisely why `merge` sat
+    #: unaudited through four passes of #1600 while writing no ``root_attrs``
+    #: whatsoever. The sibling table in ``test_gsplat_content_scoped_metrics.py``
+    #: already used templates; this one now matches it.
+    #:
     #: Both write paths are represented on purpose. `lod --recipe stream|levels`
     #: goes through ``GSplatData.save``; `--recipe adaptive` and `additive` go
     #: through ``write_gsplats_tree``. A fix applied to only one would pass a
     #: single-row test.
     REWRITERS: dict[str, list[str]] = {
-        "lod:stream": ["gsplat", "lod", "--recipe", "stream"],
-        "lod:levels": ["gsplat", "lod", "--recipe", "levels"],
-        "lod:adaptive": ["gsplat", "lod", "--recipe", "adaptive"],
-        "additive": ["gsplat", "additive", "--n-lods", "4"],
-        "flatten": ["gsplat", "flatten"],
-        "partition": ["gsplat", "partition", "--parts", "2"],
-        "decimate": ["gsplat", "decimate", "-f", "0.5"],
-        "reencode": ["gsplat", "reencode", "-e", "memory"],
-        "cull": ["gsplat", "cull", "-m", "cumulative", "-r", "0.9"],
-        "filter": ["gsplat", "filter", "--amplitude-min", "0.05"],
-        "slice": ["gsplat", "slice", "0:80, :, :"],
-        "transform": ["gsplat", "transform", "--scale", "2,1,1"],
+        "lod:stream": ["gsplat", "lod", "{in}", "{out}", "--recipe", "stream"],
+        "lod:levels": ["gsplat", "lod", "{in}", "{out}", "--recipe", "levels"],
+        "lod:adaptive": ["gsplat", "lod", "{in}", "{out}", "--recipe", "adaptive"],
+        "additive": ["gsplat", "additive", "{in}", "{out}", "--n-lods", "4"],
+        "flatten": ["gsplat", "flatten", "{in}", "{out}"],
+        "partition": ["gsplat", "partition", "{in}", "{out}", "--parts", "2"],
+        "decimate": ["gsplat", "decimate", "{in}", "{out}", "-f", "0.5"],
+        "reencode": ["gsplat", "reencode", "{in}", "{out}", "-e", "memory"],
+        "cull": ["gsplat", "cull", "{in}", "{out}", "-m", "cumulative", "-r", "0.9"],
+        "filter": ["gsplat", "filter", "{in}", "{out}", "--amplitude-min", "0.05"],
+        "slice": ["gsplat", "slice", "{in}", "{out}", "0:80, :, :"],
+        "transform": ["gsplat", "transform", "{in}", "{out}", "--scale", "2,1,1"],
+        # N inputs: carried only where they AGREE (see the merge tests below).
+        "merge": ["gsplat", "merge", "{in}", "{in2}", "-o", "{out}"],
     }
+
+    #: ``gsplat`` commands that are NOT an in->out ``.gsplats.zarr`` rewriter, each
+    #: with the reason. Union'd with :data:`REWRITERS` by
+    #: :meth:`test_every_gsplat_command_is_classified`, so a NEW command has to
+    #: opt in to the appearance carry or explicitly excuse itself. Without that
+    #: guard a command simply never appears here and inherits a silent pass —
+    #: which is exactly how `merge` shipped with no carry at all.
+    NOT_A_REWRITER: dict[str, str] = {
+        "fit": "produces a fit from a volume; there is no source root to carry",
+        "cal": "writes a calibration JSON",
+        "benchmark": "GPU profile, no dataset output",
+        "compare": "measures, writes no store",
+        "render": "writes a volume",
+        "info": "read-only",
+        "view": "read-only (serves a viewer)",
+        "napari": "read-only",
+        "doctor": "read-only diagnostics",
+        "convert": "writes a .luxar.zarr scene whose appearance it AUTHORS from "
+        "its own flags (--colormap/--tone-mapping/--gamma/...)",
+        "export": "writes a classical PLY, which has no appearance attrs",
+        "import": "reads a foreign file that carries no Luxar appearance",
+        "denoise": "operates on a volume, not on splats",
+        "annotate-quality": "rewrites the input IN PLACE, stamping attrs through "
+        "an r+ open; the root's own attrs are never re-written, so there is "
+        "nothing to carry across",
+        # ── batch-fit group ──
+        "batch-fit run": "produces the fit (local multi-GPU)",
+        "batch-fit submit": "produces the fit (Slurm array)",
+        "batch-fit merge": "assembles the fit's OWN tiles — written by that same "
+        "run, so nothing has been authored on them to carry. It is still the "
+        "one other N-input assembler, and `agreed_authored_appearance` is "
+        "shaped for it should tiles ever become authorable (#1600 follow-up)",
+        "batch-fit status": "read-only",
+        "batch-fit validate": "read-only (or deletes corrupt tiles with --fix)",
+        "batch-fit cancel": "cancels Slurm jobs",
+        "batch-fit denoise-calibrate": "operates on a volume, writes JSON",
+        "batch-fit denoise-preprocess": "operates on a volume",
+        "batch-fit resolve-floor": "resolves a floor level, writes JSON/manifest",
+    }
+
+    #: Genuine in->out rewriters that DO carry the appearance but cannot be
+    #: driven from this table's fixture, with the reason and where they are
+    #: covered instead. A third category rather than a convenient exemption:
+    #: calling one of these "not a rewriter" would be false, and the point of
+    #: the guard is that the classification stays honest.
+    REWRITERS_NOT_TABLE_DRIVEN: dict[str, str] = {
+        "migrate-format": "needs a LEGACY input; it refuses a current-format "
+        "store, which is all this fixture can build. Carries via "
+        "`root_attrs=source_appearance` in `gsplats/io/migrate.py`",
+    }
+
+    def test_every_gsplat_command_is_classified(self) -> None:
+        """A new command cannot skip the carry by not being in the table.
+
+        ``merge`` slipped four passes of the #1600 audit for exactly this
+        reason: the table listed the commands someone thought of, and nothing
+        compared it against the commands that actually exist.
+        """
+        # The sibling metrics table's enumerator, imported rather than copied so
+        # the two guards cannot drift apart on what "a gsplat command" is.
+        from luxar.cli.tests.test_gsplat_content_scoped_metrics import (
+            _registered_gsplat_commands,
+        )
+
+        registered = _registered_gsplat_commands()
+        assert "merge" in registered and "batch-fit merge" in registered, (
+            f"the enumeration missed something obvious: {sorted(registered)}"
+        )
+        # Read the command off the argv template, not the label: `lod` appears
+        # under three recipe-suffixed labels.
+        classified = (
+            {argv[1] for argv in self.REWRITERS.values()}
+            | set(self.NOT_A_REWRITER)
+            | set(self.REWRITERS_NOT_TABLE_DRIVEN)
+        )
+        assert not registered - classified, (
+            "unclassified gsplat command(s) — add a REWRITERS row (and make it "
+            "carry the appearance), or a NOT_A_REWRITER / "
+            "REWRITERS_NOT_TABLE_DRIVEN reason: "
+            f"{sorted(registered - classified)}"
+        )
+        assert not classified - registered, (
+            f"the tables name commands that no longer exist: "
+            f"{sorted(classified - registered)}"
+        )
+        assert all(self.NOT_A_REWRITER.values()), "every exemption needs a reason"
+        assert all(self.REWRITERS_NOT_TABLE_DRIVEN.values()), "...and so does this one"
+        assert not set(self.NOT_A_REWRITER) & set(self.REWRITERS_NOT_TABLE_DRIVEN), (
+            "a command cannot be both exempt and a rewriter"
+        )
+
+    @classmethod
+    def _resolve(
+        cls, argv: list[str], src: Path, out: Path, tmp_path: Path
+    ) -> list[str]:
+        """Substitute ``{in}`` / ``{in2}`` / ``{out}`` into an argv template.
+
+        ``{in2}`` materializes a SECOND input carrying the same authored
+        appearance — a copy of ``src``, stamped through the same facade edit —
+        so a multi-input row exercises the agreement path with two real stores
+        rather than the same path passed twice.
+        """
+        second = src
+        if any("{in2}" in arg for arg in argv):
+            second = cls._copy_authored(src, tmp_path / "second.gsplats.zarr")
+        subs = {"in": str(src), "in2": str(second), "out": str(out)}
+        return [arg.format(**subs) for arg in argv]
+
+    @staticmethod
+    def _copy_authored(
+        src: Path, dst: Path, authored: dict[str, Any] | None = None
+    ) -> Path:
+        """A byte copy of ``src``, optionally re-stamped with ``authored``."""
+        import shutil
+
+        shutil.copytree(src, dst)
+        if authored is not None:
+            TestLODCarriesAuthoredAppearance._authored_input(dst, authored)
+        return dst
 
     @pytest.mark.parametrize("label", sorted(REWRITERS))
     def test_authored_appearance_survives_the_rebuild(
@@ -5947,17 +6077,256 @@ class TestLODCarriesAuthoredAppearance:
         label: str,
     ) -> None:
         """Every carried attr comes back off the output ROOT, per command."""
-        argv = self.REWRITERS[label]
         self._authored_input(medium_gsplats, self.AUTHORED)
         out = tmp_path / f"carried_{label.replace(':', '_')}.gsplats.zarr"
-        result = runner.invoke(
-            app, [argv[0], argv[1], str(medium_gsplats), str(out), *argv[2:]]
-        )
+        argv = self._resolve(self.REWRITERS[label], medium_gsplats, out, tmp_path)
+        result = runner.invoke(app, argv)
         assert result.exit_code == 0, f"{label} failed:\n{result.stdout}"
         got = self._root_attrs(out)
         for key, want in self.AUTHORED.items():
             assert key in got, f"{label}: dropped {key!r} (had {want!r})"
             assert got[key] == want, f"{label}: {key} = {got[key]!r}, want {want!r}"
+
+    # ── `gsplat merge`: N inputs, so the appearance has to be AGREED ──────────
+    #
+    # The table row above covers the unanimous case. These cover what only a
+    # multi-input command can get wrong: a disagreement, an input that authored
+    # nothing, and the two keys a merge MODE invalidates by itself.
+
+    #: Keys the writer stamps an identity for on EVERY save, so a store nobody
+    #: ever tuned still carries them and they cannot be silent. The no-vote
+    #: clause is therefore only observable on the complement.
+    IDENTITY_STAMPED = (
+        "opacity",
+        "absorption",
+        "gamma",
+        "intensity",
+        "offset",
+        "layer",
+        "colormap",
+    )
+
+    def _merge(
+        self,
+        runner: CliRunner,
+        inputs: list[Path],
+        out: Path,
+        *extra: str,
+    ) -> tuple[dict[str, Any], str]:
+        """Run `gsplat merge`, returning ``(output root attrs, plain stdout)``."""
+        result = runner.invoke(
+            app,
+            ["gsplat", "merge", *[str(p) for p in inputs], "-o", str(out), *extra],
+        )
+        assert result.exit_code == 0, f"merge failed:\n{result.stdout}"
+        return self._root_attrs(out), _plain(result.stdout)
+
+    def test_merge_drops_a_disagreed_key_and_says_so(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """A key the inputs disagree on is dropped — the rest still travel.
+
+        Two datasets tuned differently have no single ``blending_mode``, and
+        promoting the first input's would silently relabel the second's splats.
+        ``blending_mode`` is the key that shows this cleanly: it has no stamped
+        identity, so "dropped" is literally absent from the output root.
+        ``opacity`` is checked as well, where "dropped" means the writer's own
+        1.0 rather than either input's authored value.
+        """
+        self._authored_input(medium_gsplats, self.AUTHORED)
+        other = self._copy_authored(
+            medium_gsplats,
+            tmp_path / "disagrees.gsplats.zarr",
+            {**self.AUTHORED, "blending_mode": "additive", "opacity": 0.4},
+        )
+        out = tmp_path / "disagree.gsplats.zarr"
+        got, stdout = self._merge(runner, [medium_gsplats, other], out)
+
+        assert "blending_mode" not in got, (
+            f"picked a side on a disagreement: {got['blending_mode']!r}"
+        )
+        assert got["opacity"] == 1.0, (
+            f"picked a side on a disagreement: opacity={got['opacity']!r}"
+        )
+        # Loud, not silent: appearance is hand-authored, so the user has to be
+        # told which of their choices did not survive.
+        assert "blending_mode" in stdout and "opacity" in stdout
+        assert "disagree" in stdout.lower()
+        # ...and every key they DO agree on is still carried, which is the
+        # assertion that fails outright if the carry is removed.
+        for key, want in self.AUTHORED.items():
+            if key in ("blending_mode", "opacity"):
+                continue
+            assert got.get(key) == want, f"{key} = {got.get(key)!r}, want {want!r}"
+
+    @pytest.mark.parametrize("flavour", ["fresh-save", "stripped"])
+    def test_merge_carries_a_key_only_one_input_authored(
+        self,
+        runner: CliRunner,
+        medium_gsplats: Path,
+        tmp_path: Path,
+        flavour: str,
+    ) -> None:
+        """An input that authored nothing casts NO vote (it must not veto).
+
+        This is the clause a naive ``all(v == first)`` over all N inputs gets
+        wrong: it would compare an authored ``"volumetric"`` against a missing
+        value and drop the key, so merging a tuned dataset with an untouched
+        fit would erase the tuning entirely.
+
+        Two flavours of "silent", because on-disk silence is narrower than it
+        sounds. ``fresh-save`` is the realistic one — a plain
+        ``GSplatData.save`` STAMPS :data:`IDENTITY_STAMPED`, so an untouched
+        store genuinely opines on those and only the no-identity keys are
+        silent. ``stripped`` removes them, exercising the clause on every key at
+        once. Either way the expectation is read off the second input's actual
+        root, so the two share one assertion.
+        """
+        self._authored_input(medium_gsplats, self.AUTHORED)
+        silent = self._copy_authored(medium_gsplats, tmp_path / "silent.gsplats.zarr")
+        self._strip_authored(silent)
+        if flavour == "fresh-save":
+            # Put back exactly what a bare save writes, and nothing else.
+            self._authored_input(silent, self._writer_identity_stamps(tmp_path))
+
+        before = self._root_attrs(silent)
+        no_opinion = [k for k in self.AUTHORED if k not in before]
+        expected_silent = (
+            set(self.AUTHORED)
+            if flavour == "stripped"
+            else set(self.AUTHORED) - set(self.IDENTITY_STAMPED)
+        )
+        assert set(no_opinion) == expected_silent, (
+            f"fixture assumption broken ({flavour}): silent on {sorted(no_opinion)}, "
+            f"expected {sorted(expected_silent)}"
+        )
+        assert no_opinion, "a test with nothing silent proves nothing"
+
+        out = tmp_path / f"novote_{flavour}.gsplats.zarr"
+        got, _ = self._merge(runner, [medium_gsplats, silent], out)
+        for key in no_opinion:
+            assert got.get(key) == self.AUTHORED[key], (
+                f"a silent input vetoed {key!r}: got {got.get(key)!r}, "
+                f"want {self.AUTHORED[key]!r}"
+            )
+
+    @classmethod
+    def _writer_identity_stamps(cls, tmp_path: Path) -> dict[str, Any]:
+        """The appearance attrs a bare ``GSplatData.save`` writes, measured.
+
+        Measured off a throwaway store rather than hardcoded: the point of the
+        ``fresh-save`` flavour is to reproduce what the writer actually does,
+        and a stale literal would quietly turn it into the ``stripped`` one.
+        """
+        from luxar.core.group.compositing import AUTHORED_APPEARANCE_ATTRS
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        probe = tmp_path / "probe.gsplats.zarr"
+        if not probe.exists():
+            GSplatData(
+                centers=np.zeros((4, 3), dtype=np.float32),
+                amplitudes=np.ones(4, dtype=np.float32),
+                cholesky_factors=np.tile(
+                    np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32), (4, 1)
+                ),
+            ).save(probe)
+        attrs = cls._root_attrs(probe)
+        return {k: v for k, v in attrs.items() if k in AUTHORED_APPEARANCE_ATTRS}
+
+    @staticmethod
+    def _strip_authored(store: Path) -> None:
+        """Remove every authored appearance key from a store root.
+
+        Through the facade, and re-consolidated, for the reasons spelled out on
+        :meth:`_authored_input` — a deletion that misses the consolidated index
+        is a no-op the reader never sees.
+        """
+        from luxar.core.group.compositing import AUTHORED_APPEARANCE_ATTRS
+
+        group = zc_open_group(store, mode="r+")
+        attrs = dict(group.attrs)
+        group.attrs.put(
+            {k: v for k, v in attrs.items() if k not in AUTHORED_APPEARANCE_ATTRS}
+        )
+        zc_consolidate(group)
+
+    def test_merge_as_dimension_drops_nd_transform(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """``--as-dimension`` invalidates ``nd_transform`` even under agreement.
+
+        The mode ADDS a dimension, so the output's dimension set is not the
+        inputs'; ``nd_transform`` is keyed by dimension name, so carrying it
+        would apply the inputs' per-dimension affines to a different set of
+        dimensions. Dropped because the command invalidated it, not because the
+        inputs differed — hence the warning fires here with two identical
+        inputs.
+        """
+        self._authored_input(medium_gsplats, self.AUTHORED)
+        other = self._copy_authored(medium_gsplats, tmp_path / "second.gsplats.zarr")
+        out = tmp_path / "asdim.gsplats.zarr"
+        got, stdout = self._merge(
+            runner, [medium_gsplats, other], out, "--as-dimension"
+        )
+        assert "nd_transform" not in got
+        assert "nd_transform" in stdout
+        for key, want in self.AUTHORED.items():
+            if key == "nd_transform":
+                continue
+            assert got.get(key) == want, f"{key} = {got.get(key)!r}, want {want!r}"
+
+    def test_merge_channel_colors_drops_colormap(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """``--channel-colors`` invalidates ``colormap`` even under agreement.
+
+        The mode BAKES per-splat RGB, so a palette that mapped scalar amplitudes
+        no longer describes what is rendered. It also has to be dropped here
+        rather than left to the writer: ``apply_gsplat_group_attrs`` gates its
+        manufactured ``colormap="gray"`` on ``not has_colors``, so on an RGB
+        store a carried palette would be the ONLY colormap present.
+        """
+        self._authored_input(medium_gsplats, self.AUTHORED)
+        other = self._copy_authored(medium_gsplats, tmp_path / "second.gsplats.zarr")
+        out = tmp_path / "chancolors.gsplats.zarr"
+        got, stdout = self._merge(
+            runner,
+            [medium_gsplats, other],
+            out,
+            "--channel-colors",
+            "#ff0080,#00ff00",
+        )
+        assert got.get("has_colors") is True, "fixture: the mode should bake RGB"
+        assert "colormap" not in got, f"carried a stale palette: {got.get('colormap')}"
+        assert "colormap" in stdout
+        for key, want in self.AUTHORED.items():
+            if key == "colormap":
+                continue
+            assert got.get(key) == want, f"{key} = {got.get(key)!r}, want {want!r}"
+
+    def test_merge_invents_nothing(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """The N-input carry ECHOES too — it never manufactures a look.
+
+        The multi-input twin of :meth:`test_carry_invents_nothing`: two
+        untouched inputs agree on exactly the writer's own identity values, so
+        the merged root must equal them, and the keys with no identity must stay
+        absent rather than being invented by the agreement pass.
+        """
+        other = self._copy_authored(medium_gsplats, tmp_path / "second.gsplats.zarr")
+        before = self._root_attrs(medium_gsplats)
+        out = tmp_path / "bare_merge.gsplats.zarr"
+        got, _ = self._merge(runner, [medium_gsplats, other], out)
+        for key in self.AUTHORED:
+            assert (key in got) == (key in before), (
+                f"{key}: presence changed (input={key in before}, output={key in got})"
+            )
+            if key in before:
+                assert got[key] == before[key], (
+                    f"{key}: {got[key]!r} != input {before[key]!r}"
+                )
+        assert "blending_mode" not in got
 
     @staticmethod
     def _authored_archive(src: Path, out: Path, authored: dict[str, Any]) -> None:

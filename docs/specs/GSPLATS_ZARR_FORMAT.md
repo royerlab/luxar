@@ -890,6 +890,43 @@ Descriptive counters are never dropped by either rule — `iterations`,
 `best_iteration`, `converged`, `time_seconds`, `fitter_name` and `filtered` /
 `filter_criteria` describe the run or the edit, both of which happened.
 
+**What survives a rewrite: the authored appearance.** The rules above govern
+what a rewriting tool must *drop*; the mirror-image obligation is what it must
+*keep*. A rewriting command owns the **structure**, not the **look**: the
+builders construct fresh nodes that know nothing about the input, so unless the
+source root's authored compositing attrs are handed back to the writer, its own
+defaults take over — `blending_mode` disappears entirely and
+`opacity` / `absorption` / `gamma` / `intensity` / `offset` snap back to their
+identity, silently resetting whatever was tuned in the Layers panel. The key set
+is `AUTHORED_APPEARANCE_ATTRS` (`core/group/compositing.py`): the compositing
+attrs minus `transform` (a stored matrix is column-major and would be transposed
+a second time on the way back in), plus `colormap`. It is read with
+`gsplats/io/load_gsplats.read_authored_appearance` — directories and `.zip` /
+`.tar.gz` archives alike — and passed as `root_attrs=` to
+`write_gsplats_tree` / `GSplatData.save`, which seeds it at **lowest
+precedence** so the command's own structural attrs still win. The one attr
+refused on the way through is a `colormap` of `"custom"`: it names a sibling
+`colormap_lut` array the attrs-only read cannot carry, so the bare sentinel
+would dangle.
+
+With **several** inputs (`gsplat merge`) there is no single source root, so the
+carried value must be **agreed**: a key rides along only when every input that
+*has* an opinion on it agrees, and an input that does not carry the key at all
+casts no vote (at least one input must carry it for it to appear). On any
+disagreement the key is dropped and the command **says so**, naming the key and
+the differing values — the same unanimity rule as
+`agreed_normalization_stats`, but loud rather than silent, because appearance is
+hand-authored and a user who tuned two datasets has to be told which choice did
+not survive. Note the writer stamps identity values (`opacity: 1.0`,
+`colormap: "gray"`, …) on every save, so an untouched store is not silent about
+them and legitimately votes; genuine silence is limited to the attrs with no
+stamped identity (`blending_mode`, `visible`, `nd_transform`, `join`). Two keys
+are additionally dropped because the merge **mode** invalidates them rather than
+because the inputs differ: `nd_transform` under `--as-dimension` (which adds a
+dimension the inputs' per-dimension affines do not describe) and `colormap`
+under `--channel-colors` (which bakes per-splat RGB, after which no palette
+describes what is rendered).
+
 ### Pipeline Group Attributes (Optional)
 
 The `pipeline/` group records the reduction/topology provenance of a dataset —

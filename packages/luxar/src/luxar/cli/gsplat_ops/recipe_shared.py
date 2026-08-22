@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from typing import Any, Collection, Mapping, Optional, Sequence
 
 import typer
 from arbol import aprint
@@ -225,7 +225,32 @@ def carried_appearance(input_path: Path) -> dict:
     """
     from luxar.gsplats.io.load_gsplats import read_authored_appearance
 
-    carried = read_authored_appearance(input_path)
+    return _announce_carried(read_authored_appearance(input_path))
+
+
+def carried_appearance_from_inputs(
+    input_paths: "Sequence[Path]",
+    *,
+    exclude: "Mapping[str, str] | Collection[str]" = (),
+) -> dict:
+    """The appearance N inputs AGREE on, announced as it is picked up.
+
+    The multi-input form of :func:`carried_appearance`, for ``gsplat merge``:
+    same lowest-precedence ``root_attrs`` channel, but the value has to be
+    agreed rather than simply read — see
+    :func:`~luxar.gsplats.io.load_gsplats.agreed_authored_appearance` for the
+    unanimity rule, the "an input that authored nothing casts no vote" clause,
+    and ``exclude`` (keys the merge MODE itself invalidates). The helper does
+    the warning; this adds the same one-line "carrying" announcement its
+    single-input sibling prints, so the two commands read alike.
+    """
+    from luxar.gsplats.io.load_gsplats import agreed_authored_appearance
+
+    return _announce_carried(agreed_authored_appearance(input_paths, exclude=exclude))
+
+
+def _announce_carried(carried: dict) -> dict:
+    """Print the one-line carry announcement (quiet when nothing is carried)."""
     if carried:
         aprint("Carrying authored appearance: " + ", ".join(sorted(carried)))
     return carried

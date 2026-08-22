@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Collection, Dict, List, Mapping, Sequence, Union
 
 from arbol import aprint
 
@@ -130,6 +130,102 @@ def read_authored_appearance(path: str | Path) -> Dict[str, Any]:
             "preserved. Re-apply it on the result (e.g. "
             "`luxar gsplat convert --colormap NAME`)."
         )
+    return carried
+
+
+def _distinct(values: "Sequence[Any]") -> "List[Any]":
+    """``values`` deduplicated BY EQUALITY, in first-seen order.
+
+    Not a ``set``: an appearance value can be unhashable (``nd_transform`` is a
+    dict of dicts), and the agreement rule below is defined by ``==`` anyway.
+    """
+    seen: List[Any] = []
+    for value in values:
+        if not any(value == other for other in seen):
+            seen.append(value)
+    return seen
+
+
+def agreed_authored_appearance(
+    paths: "Sequence[Union[str, Path]]",
+    *,
+    exclude: "Union[Collection[str], Mapping[str, str]]" = (),
+) -> Dict[str, Any]:
+    """The authored appearance N inputs UNANIMOUSLY agree on (``gsplat merge``).
+
+    The N-input counterpart of :func:`read_authored_appearance`. A command with
+    one input can simply carry that input's look; a command with several has to
+    decide what "the" appearance even is, and the only answer that cannot be
+    wrong is the one every input already agrees on. So a key is carried onto the
+    merged root only when every input that HAS an opinion on it agrees; on any
+    disagreement it is dropped and the merged artifact says nothing rather than
+    promoting one input's choice over its siblings'.
+
+    An input that does not carry a key **casts no vote**: a dataset that was
+    never touched in the Layers panel authors nothing at all, and letting that
+    silence veto a sibling's authored value would mean a single default-looking
+    input erased the whole carry. At least one input must carry the key for it
+    to appear.
+
+    Silence is narrower on disk than it sounds, and that is not a bug in the
+    rule: the writer STAMPS the identity values, so a store nobody ever tuned
+    still has ``opacity=1.0`` / ``absorption=1.0`` / ``gamma=1.0`` /
+    ``intensity=1.0`` / ``offset=0.0`` / ``layer=true`` / ``colormap="gray"`` on
+    its root, and nothing on disk distinguishes those from someone deliberately
+    choosing the identity. So they DO vote, and merging a tuned dataset with an
+    untouched one legitimately drops them (with the warning saying so) rather
+    than promoting one input's look over the other's. The keys with no stamped
+    identity — ``blending_mode``, ``visible``, ``nd_transform``, ``join`` — are
+    the ones where genuine silence occurs, and they are exactly the ones the
+    no-vote clause rescues.
+
+    That rule is :func:`~luxar.gsplats.io.save_gsplats.agreed_normalization_stats`
+    verbatim — deliberately, since it is the same question about the same merge.
+    The ONE divergence is that this one is LOUD: it warns per key it had to drop,
+    naming the differing values. Normalization stats are machine-recorded, so a
+    silent drop loses nothing a user chose; appearance is hand-authored in the
+    Layers panel, and someone who tuned two datasets and merged them must be told
+    which of their choices did not survive rather than discovering it by looking
+    at the render (issue #1600 point 4: loud over silent wherever something
+    cannot be preserved).
+
+    ``exclude`` names keys the CALLING MODE invalidates, independently of whether
+    the inputs agree — ``gsplat merge --as-dimension`` adds a dimension, so an
+    ``nd_transform`` keyed by dimension name no longer describes the output's
+    dimension set; ``--channel-colors`` bakes per-splat RGB, so an input's
+    ``colormap`` no longer describes what is rendered. Those are dropped even
+    under perfect agreement, and warn — but only when an input actually authored
+    the key, since an exclusion nobody would have exercised is not news. Pass a
+    ``{key: reason}`` mapping to have the reason quoted in the warning.
+
+    Returns only the keys carried, so N inputs that authored nothing yield ``{}``
+    and the writer's defaults apply unchanged. Feed the result to
+    ``write_gsplats_tree(root_attrs=...)`` / ``GSplatData.save(root_attrs=...)``.
+    """
+    per_input = [read_authored_appearance(p) for p in paths]
+    reasons: Mapping[str, str] = exclude if isinstance(exclude, Mapping) else {}
+    excluded = set(exclude)
+
+    carried: Dict[str, Any] = {}
+    for key in sorted({k for attrs in per_input for k in attrs}):
+        if key in excluded:
+            because = reasons.get(key)
+            aprint(
+                f"⚠️  Not carrying authored '{key}' onto the merged root"
+                + (f": {because}. " if because else ". ")
+                + "Set it explicitly on the result if you want it."
+            )
+            continue
+        distinct = _distinct([attrs[key] for attrs in per_input if key in attrs])
+        if len(distinct) == 1:
+            carried[key] = distinct[0]
+        else:
+            shown = ", ".join(repr(v) for v in distinct)
+            aprint(
+                f"⚠️  Inputs disagree on authored '{key}' ({shown}); dropping it "
+                "from the merged root rather than picking one. Set it explicitly "
+                "on the result if you want it."
+            )
     return carried
 
 

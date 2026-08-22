@@ -9,6 +9,37 @@ import typer
 from arbol import aprint, asection
 
 from ..encoding import _resolve_encoding_mode
+from ..recipe_shared import carried_appearance_from_inputs
+
+
+def _mode_invalidated_appearance(
+    as_dimension: bool, channel_colors: Optional[str]
+) -> dict[str, str]:
+    """Appearance keys THIS MERGE MODE invalidates, mapped to the reason.
+
+    Distinct from a disagreement: these are dropped even when every input
+    agrees perfectly, because the merge itself makes the value untrue of the
+    output. Handed to
+    :func:`~luxar.gsplats.io.load_gsplats.agreed_authored_appearance` as
+    ``exclude=``, which warns the reason back to the user for each key an input
+    actually authored.
+    """
+    exclude: dict[str, str] = {}
+    if as_dimension:
+        exclude["nd_transform"] = (
+            "--as-dimension adds a dimension, so an nd_transform keyed by "
+            "dimension name no longer describes the output's dimension set"
+        )
+    if channel_colors:
+        # Also not something the writer would fix up: `apply_gsplat_group_attrs`
+        # gates its manufactured colormap="gray" on `not has_colors`, so on the
+        # RGB store this mode produces a carried palette would be the ONLY
+        # colormap present.
+        exclude["colormap"] = (
+            "--channel-colors bakes per-splat RGB, so an input's colormap no "
+            "longer describes what is rendered"
+        )
+    return exclude
 
 
 def run_merge_datasets(
@@ -81,12 +112,22 @@ def run_merge_datasets(
                 with asection("Concatenating"):
                     merged = GSplatData.concatenate(datasets)
 
+            # The merge owns the STRUCTURE, not the look: without this the
+            # writer's own defaults take over and every authored value on every
+            # input is lost (#1600). Unlike a one-input rewrite, "the"
+            # appearance has to be AGREED — see `agreed_authored_appearance`.
+            root_attrs = carried_appearance_from_inputs(
+                inputs,
+                exclude=_mode_invalidated_appearance(as_dimension, channel_colors),
+            )
+
             with asection(f"Saving to {output_path.name}"):
                 # Color SDR/HDR is auto-detected by the writer.
                 merged.save(
                     output_path,
                     encoding_mode=_resolve_encoding_mode(encoding),
                     compress=compress,
+                    root_attrs=root_attrs,
                 )
                 aprint(f"Saved {merged.n_splats:,} splats ({merged.ndim}D)")
 
