@@ -120,7 +120,10 @@ def build_points_ordering(
     )
     scalar_slack = (
         dataset_ctx.encoder.positive_scalar_round_trip_slack(
-            np.asarray(sorted_radii), dataset_ctx.encoding_mode
+            np.asarray(sorted_radii),
+            dataset_ctx.encoding_mode,
+            # Must match write_positive_scalar's default used by write_radii.
+            positive_scalar_encoding="linear",
         )
         if dataset_ctx is not None and isinstance(sorted_radii, np.ndarray)
         else None

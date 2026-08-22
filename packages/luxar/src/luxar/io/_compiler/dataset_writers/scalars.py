@@ -29,6 +29,7 @@ def write_positive_scalar(
     ctx: DatasetCtx,
     log_label_singular: Optional[str] = None,
     per_array_bytes: bool = False,
+    deduplicate: bool = True,
 ) -> float:
     """Canonical writer for the ``POSITIVE_SCALAR`` semantic type.
 
@@ -59,6 +60,7 @@ def write_positive_scalar(
         per_array_bytes: Opt-in per-array dtype byte-budget chunking. Every
             geometry writer passes ``True``; the ``False`` default keeps the
             historical exactly-one-atom chunk.
+        deduplicate: Whether an earlier content-identical array may be reused.
 
     Returns:
         Maximum value across ``data``.
@@ -94,6 +96,7 @@ def write_positive_scalar(
         n_elements=n_elems,
         chunks=chunks,
         compressor=ctx.compressor,
+        deduplicate=deduplicate,
     )
 
     enc = group[name].attrs.get("encoding", {})
@@ -203,6 +206,7 @@ def write_radii(
         ctx=ctx,
         log_label_singular="radius",
         per_array_bytes=True,
+        deduplicate=False,
     )
 
 

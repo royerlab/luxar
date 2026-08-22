@@ -450,6 +450,7 @@ def write_lines(
         ctx.dataset_ctx,
         "width",
         per_array_bytes=True,
+        deduplicate=False,
     )
 
     # Initialize metadata

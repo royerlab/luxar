@@ -142,7 +142,10 @@ def build_lines_ordering(
 
     scalar_slack = (
         dataset_ctx.encoder.positive_scalar_round_trip_slack(
-            widths_expanded, dataset_ctx.encoding_mode
+            widths_expanded,
+            dataset_ctx.encoding_mode,
+            # Must match write_positive_scalar's default used below.
+            positive_scalar_encoding="linear",
         )
         if dataset_ctx is not None
         else None
