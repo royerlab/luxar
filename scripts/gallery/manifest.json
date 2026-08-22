@@ -455,7 +455,7 @@
       "category": "microscopy",
       "script": "demo_gsplats_3d_tribolium_embryo.py",
       "dataset": "datasets/demos/gsplats_3d_tribolium_embryo.luxar.zarr",
-      "note": "the old volumetric white-out was fixed by coupling strong absorption (kappa 3.13) with low opacity (0.06); the scene bakes exposure=1.97 and a 0-1.085 display window, so auto-exposure recalibrates. Faint bg rectangle may remain"
+      "note": "the old volumetric white-out was fixed by coupling strong absorption (kappa 3.13) with low opacity (0.06); the scene bakes exposure=1.97 and a 0-1.085 display window, so auto-exposure recalibrates. The faint bg rectangle is gone as of the floor fix: the fit now subtracts the specimen's ~675-count haze, not just the ~205-count detector offset, removing ~84% of the scene's emitted mass while leaving nuclei brightness ~unchanged"
     },
     {
       "id": "gsplats_4d_zebrafish_timelapse",
