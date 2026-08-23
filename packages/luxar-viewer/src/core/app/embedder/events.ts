@@ -73,7 +73,8 @@ export interface SelectionPayload {
    * label CSR are keyed by) wherever the node can resolve one — through a
    * published slot → on-disk map, or trivially where the identity already
    * holds and no map is published. Today: a Points, GSplats or Lines node
-   * declaring `has_labels` / `has_image_labels` — flat, or, for Points, an
+   * declaring `has_labels` / `has_image_labels` / `has_keys` — flat, or, for
+ * Points, an
    * additive-LOD ladder (see below) — and Mesh, whose
    * `gl_VertexID` already is the on-disk ordinal. For a LINES node that
    * on-disk index is the picked segment's START vertex, not a segment index:

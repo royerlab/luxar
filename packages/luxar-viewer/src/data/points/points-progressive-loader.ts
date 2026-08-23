@@ -216,7 +216,8 @@ function concatenatePointsData(
     // the moment a second level lands is worse than one consistently at the raw
     // slot, which is what every doc surface promises.
     // `createProgressivePointsLoader` also clears `has_labels` /
-    // `has_image_labels` on each sub-LOD's attrs whenever the composition cannot
+    // `has_image_labels` / `has_keys` on each sub-LOD's attrs whenever the
+    // composition cannot
     // run, so the map is normally never built at all in that case; this keeps the
     // invariant true whatever attrs a sub-LOD carries.
     const only = parts[0];

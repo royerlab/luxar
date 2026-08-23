@@ -66,7 +66,8 @@ function concatenateLinesData(parts: LoadedLinesData[]): LoadedLinesData {
     // to the raw slot the moment a second level lands is worse than one
     // consistently at the raw slot, which is what every doc surface promises.
     // `createProgressiveLinesLoader` now also clears `has_labels` /
-    // `has_image_labels` on each sub-LOD's attrs, so the ranges are normally
+    // `has_image_labels` / `has_keys` on each sub-LOD's attrs, so the ranges
+    // are normally
     // never published at all; this keeps the invariant true whatever attrs a
     // sub-LOD carries. (A ladder's labels are ONE per-vertex union CSR on the
     // parent since #1422; composing a map across the levels of that union is

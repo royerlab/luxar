@@ -67,7 +67,8 @@ app/
   it with live runtime components, cache helpers, scene-walking state, and
   the synthetic-scene injector once `init()` finishes.
 - **`picking/`** — Stands up `rendering/picking/PickingSystem` for the current
-  scene when any node has `has_labels` / `has_image_labels`, tears down any
+  scene when any node has `has_labels` / `has_image_labels` / `has_keys`
+  (or a link/copy template), tears down any
   prior session, and wires DOM + Three.js EventDispatcher listeners. The pure
   pick-result → hover-payload branch logic is split into a separate handler
   so it can be unit-tested with stub ports.

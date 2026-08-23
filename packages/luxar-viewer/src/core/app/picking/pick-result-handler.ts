@@ -162,7 +162,8 @@ export interface PickResultHandlerPorts {
  *   (ii) `result.elementId` is only sometimes the on-disk CSR index. It
  *   arrives already resolved wherever the node can resolve one — Points,
  *   GSplats and Lines all do, for a node declaring `has_labels` /
- *   `has_image_labels`, through a published slot → on-disk map or
+ *   `has_image_labels` / `has_keys`, through a published slot → on-disk map
+ *   or
  *   trivially where the identity already holds and no map is published,
  *   and Mesh needs none because its `gl_VertexID` already IS the on-disk
  *   vertex ordinal (see
