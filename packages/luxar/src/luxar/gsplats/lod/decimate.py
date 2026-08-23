@@ -98,27 +98,58 @@ def resolve_target_count(target: Union[int, float], n_in: int) -> int:
 
 def resolved_merge_coarsen_dims(
     coarsen_dims: Optional[Sequence[int]], ndim: int
-) -> Optional[list[int]]:
-    """The dims a ``merge`` ACTUALLY coarsens over, in the producer's spelling.
+) -> list[int]:
+    """The dims a ``merge`` ACTUALLY coarsens over, spelled EXPLICITLY.
 
-    Mirrors :func:`~luxar.gsplats.lod.substitutive._normalise_coarsen_dims`,
-    which ``merge_to_count`` has already run (and validated) by the time this is
-    called: ``None`` means "coarsen every dim, no barrier", and a request naming
-    every dim collapses to the same thing.
+    Always a literal list, never ``None`` — including for the coarsen-everything
+    case (the ``coarsen_dims=None`` default, and a request naming every dim,
+    which :func:`~luxar.gsplats.lod.substitutive._normalise_coarsen_dims`
+    collapses to the same thing). The two spellings are NOT interchangeable on
+    disk: :func:`~luxar.gsplats.io.save_gsplats._barrier_from_coarsen_dims`
+    cannot tell a written ``null`` from an absent key, so both read as "no
+    provenance" and fall through to ``detect_barrier_dims`` auto-detection —
+    which on an integer-gridded stacked axis re-imposes exactly the barrier this
+    merge blended over. ``[0, …, d-1]`` instead yields the explicit empty
+    complement, i.e. the no-barrier layout the reduction actually earned.
 
-    Spelled as :func:`~luxar.gsplats.lod.substitutive.make_substitutive_lod`
-    spells it — the sibling producer of the same operator — so a store that went
-    through ``lod`` and one that went through ``decimate`` publish the same value
-    for the same choice. That matters concretely: ``make_substitutive_lod``
-    stamps a literal ``None`` for coarsen-everything, which the writer reads as
-    "no barrier provenance → auto-detect", and stamping ``[0, …, d-1]`` here
-    instead would assert an explicit EMPTY barrier and move every chunk of an
-    otherwise unchanged pipeline.
+    KNOWN DIVERGENCE from :func:`~luxar.gsplats.lod.substitutive
+    .make_substitutive_lod`, the sibling producer of the same operator: it
+    stamps a literal ``None`` for its own coarsen-everything case and therefore
+    carries the same latent auto-detect fallback. Changing it would move the
+    chunk layout of every ``lod --recipe levels`` build, so it is deliberately
+    left alone here and recorded on #1600 instead. The consequence is that the
+    same choice can be published two ways depending on which command made it —
+    ``decimate`` publishes the honest one.
     """
     if coarsen_dims is None:
-        return None
-    dims = sorted({int(d) for d in coarsen_dims})
-    return None if len(dims) == ndim else dims
+        return list(range(int(ndim)))
+    return sorted({int(d) for d in coarsen_dims})
+
+
+def _validate_coarsen_dims(
+    coarsen_dims: Optional[Sequence[int]], data: GSplatData
+) -> None:
+    """Range-check a ``coarsen_dims`` request for EITHER family.
+
+    Reuses the merge's own validator rather than restating its rules, so the two
+    families reject exactly the same requests. Only ``merge`` reaches that
+    validator on its own (inside ``merge_to_count``), which left an out-of-range
+    index a hard error on one family and silently accepted on the other — and
+    with ``method="auto"`` which family you get depends on the kept fraction.
+
+    Validation ONLY: the merge path re-runs the same call for real, and the
+    continuous-barrier ``RuntimeWarning`` belongs to the reduction that actually
+    groups by those dims, so it is suppressed here rather than emitted twice.
+    """
+    if coarsen_dims is None:
+        return
+    import warnings
+
+    from luxar.gsplats.lod.substitutive import _normalise_coarsen_dims
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        _normalise_coarsen_dims(coarsen_dims, data)
 
 
 def resolve_method(method: AutoOrMethod, n_target: int, n_in: int) -> MethodName:
@@ -162,8 +193,12 @@ def decimate(
         coarsen_dims: Center-column indices merging may combine over; the rest
             are hard barriers (merge only). Default: all dims. A ``merge``
             stamps the RESOLVED set on the result (the writer turns it into the
-            chunk-ordering barrier); a ``prefix`` ignores the argument and keeps
-            the input's stamp, having coarsened nothing.
+            chunk-ordering barrier); a ``prefix`` ignores the argument (saying
+            so on the console) and keeps the input's stamp, having coarsened
+            nothing. The request is range-validated for BOTH families, before
+            the family is chosen — under ``method="auto"`` which one runs
+            depends on the kept fraction, and an argument may not be a hard
+            error on one path and silently accepted on the other.
         lloyd_iterations: Lloyd refinement passes (merge only).
         verbose: Narrate the reduction.
 
@@ -179,16 +214,40 @@ def decimate(
         on the console).
 
     Raises:
-        ValueError: on an out-of-range target or an unknown method.
+        ValueError: on an out-of-range target, an unknown method, or a
+            ``coarsen_dims`` index outside ``[0, data.ndim)``.
     """
     n_in = int(data.n_splats)
     n_target = resolve_target_count(target, n_in)
     chosen = resolve_method(method, n_target, n_in)
+    _validate_coarsen_dims(coarsen_dims, data)
 
     if n_target >= n_in:
         if verbose:
             aprint(f"Target {n_target:,} >= input {n_in:,} — returning input unchanged")
         return data
+
+    if coarsen_dims is not None and chosen == "prefix":
+        # The family decides whether this knob means anything, and with
+        # `method="auto"` the family flips at the measured crossover — so a
+        # request honoured at -f 0.4 is silently dropped at -f 0.5, taking the
+        # output's chunk layout with it. Say so rather than letting the caller
+        # infer it from the stamp (#1600 review).
+        why = (
+            f" (method='auto' resolved to prefix: the request keeps "
+            f"{100.0 * n_target / n_in:.1f}% of the input, at or above the "
+            f"{100.0 * PREFIX_ABOVE_FRACTION:.0f}% crossover — pass "
+            f"method='merge' to force a merge)"
+            if method == "auto"
+            else ""
+        )
+        aprint(
+            f"⚠ coarsen_dims={sorted({int(d) for d in coarsen_dims})} is IGNORED "
+            f"by the 'prefix' family{why}: a prefix keeps whole input splats at "
+            "their own coordinates and merges no axis, so it coarsens nothing "
+            "and the input's own coarsen_dims stamp (and the chunk-ordering "
+            "barrier derived from it) stays true of the survivors"
+        )
 
     with (
         asection(
@@ -262,6 +321,12 @@ def decimate(
             # auto-detect instead of recording the barrier the user asked for
             # (#1600). Stamped unconditionally: the merge decides these dims
             # whether or not the input had an opinion.
+            #
+            # Always the EXPLICIT dim list, coarsen-everything included — a
+            # written `null` is indistinguishable from an absent key to the
+            # writer and lands back on auto-detect. That diverges from
+            # `make_substitutive_lod`, which still spells that case `None`; see
+            # `resolved_merge_coarsen_dims` for why it is not changed here.
             out.stats["coarsen_dims"] = resolved_merge_coarsen_dims(
                 coarsen_dims, data.ndim
             )

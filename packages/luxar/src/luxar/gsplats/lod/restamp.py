@@ -34,6 +34,22 @@ _ROOT_LADDER_SUMMARY_KEYS = (
     "lod_substitutive_level",
 )
 
+#: The SAME ladder summary, one spelling over: the un-prefixed knobs
+#: :func:`~luxar.gsplats.batch.merge_orchestrator._recipe_pipeline_info` stamps
+#: for a ``batch-fit merge --recipe stream``. ``gsplat additive`` over a
+#: batch-fit partition is an advertised use case, so these rode through
+#: describing the ladder the re-ladder had just replaced, exactly as the
+#: ``lod_*`` five did (#1600) — and ``_STRUCTURE_SCOPED_STATS_KEYS`` already
+#: classifies both groups as one family.
+#:
+#: Only meaningful when ``lod_kind == "additive"``: the ``levels`` branch of the
+#: same producer stamps a bare ``method`` too, but it is the SUBSTITUTIVE merge
+#: method, which a re-ladder does not touch. See :func:`_recipe_ladder_keys`.
+#:
+#: ``per_part`` is deliberately absent: ``additive`` ladders every leaf
+#: independently, so a per-part ladder is still exactly what the store has.
+_RECIPE_LADDER_SUMMARY_KEYS = ("n_lods", "method", "breakpoints")
+
 
 def _root_summary_leaf(
     node: "GSplatNode", stats: "Mapping[str, Any]"
@@ -66,6 +82,22 @@ def _root_summary_leaf(
     return None
 
 
+def _recipe_ladder_keys(stats: "Mapping[str, Any]") -> "list[str]":
+    """The present :data:`_RECIPE_LADDER_SUMMARY_KEYS`, or ``[]``.
+
+    Gated on ``lod_kind``, which is what disambiguates the shared ``method``
+    key: ``_recipe_pipeline_info`` writes ``lod_kind="additive"`` exactly for its
+    ``stream`` branch (where ``method`` is the ADDITIVE ordering, replaced by a
+    re-ladder) and ``"substitutive"`` for ``levels`` (where it is the merge
+    method, which a re-ladder leaves true). ``n_lods`` / ``breakpoints`` are
+    stamped by the ``stream`` branch alone, so the gate only ever costs a
+    hypothetical mislabelled store its refresh — never a false one.
+    """
+    if stats.get("lod_kind") != "additive":
+        return []
+    return [key for key in _RECIPE_LADDER_SUMMARY_KEYS if key in stats]
+
+
 def refresh_root_ladder_summary(
     stats: "Mapping[str, Any]", node: "GSplatNode"
 ) -> "Dict[str, Any]":
@@ -89,15 +121,23 @@ def refresh_root_ladder_summary(
     block is DROPPED rather than refreshed from an arbitrary part: an absent
     summary is what the ``tiles`` / ``overview`` / ``adaptive`` builders publish
     for exactly that reason, and a wrong number is worse than no number.
+
+    Both spellings of the summary are covered — the five ``lod_*`` keys
+    ``make_additive_lod`` stamps, and :data:`_RECIPE_LADDER_SUMMARY_KEYS`, the
+    un-prefixed trio ``batch-fit merge --recipe stream`` stamps for the same
+    ladder. Otherwise a re-laddered batch-fit partition dropped ``lod_n_lods``
+    (because parts hold different rung counts) while leaving ``n_lods: 6``
+    asserting exactly that number two keys away.
     """
     refreshed = dict(stats)
     present = [key for key in _ROOT_LADDER_SUMMARY_KEYS if key in refreshed]
-    if not present:
+    recipe_present = _recipe_ladder_keys(refreshed)
+    if not present and not recipe_present:
         return refreshed
 
     leaf = _root_summary_leaf(node, refreshed)
     if leaf is None:
-        for key in present:
+        for key in (*present, *recipe_present):
             del refreshed[key]
         return refreshed
 
@@ -109,11 +149,40 @@ def refresh_root_ladder_summary(
     ]
     refreshed = _refresh_ladder_summary(refreshed, cutpoints)
     leaf_stats = leaf.meta.get("stats")
-    if isinstance(leaf_stats, dict):
-        for key in ("lod_method", "lod_breakpoints_kind"):
-            if key in refreshed and key in leaf_stats:
-                refreshed[key] = leaf_stats[key]
+    leaf_stats = leaf_stats if isinstance(leaf_stats, dict) else {}
+    for key in ("lod_method", "lod_breakpoints_kind"):
+        if key in refreshed and key in leaf_stats:
+            refreshed[key] = leaf_stats[key]
+    if recipe_present:
+        _refresh_recipe_ladder(refreshed, leaf_stats, len(cutpoints))
     return refreshed
+
+
+def _refresh_recipe_ladder(
+    refreshed: "Dict[str, Any]", leaf_stats: "Mapping[str, Any]", n_rungs: int
+) -> None:
+    """Refresh the un-prefixed ladder trio in place (present keys only).
+
+    ``n_lods`` and ``method`` are recoverable from the tree that was written —
+    the rung count, and the resolved ordering the rebuilt leaf published (so an
+    ``auto`` request records what it became, as the ``lod_*`` half already does).
+
+    ``breakpoints`` is DROPPED rather than refreshed: it holds the build SPEC
+    (``"stream:14000"``, ``"counts:5,15,40"``, ``"equal-count"``) in a different
+    vocabulary from the leaf's resolved ``lod_breakpoints_kind``
+    (``"stream"`` / ``"explicit-counts"`` / ``"equal-count"``), and the spec that
+    produced a ladder cannot be read back off it. An absent key is the format's
+    "this artifact does not know"; writing the kind into a spec field would be a
+    new wrong claim rather than a scrubbed one.
+    """
+    if "n_lods" in refreshed:
+        refreshed["n_lods"] = int(n_rungs)
+    if "method" in refreshed:
+        if "lod_method" in leaf_stats:
+            refreshed["method"] = leaf_stats["lod_method"]
+        else:
+            del refreshed["method"]
+    refreshed.pop("breakpoints", None)
 
 
 def _has_ladder_stamps(level: "SubstitutiveLevel") -> bool:

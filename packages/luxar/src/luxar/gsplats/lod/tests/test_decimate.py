@@ -201,3 +201,69 @@ def test_decimate_rejects_a_bad_target() -> None:
     data = _cloud(100)
     with pytest.raises(ValueError):
         decimate(data, target=0)
+
+
+# --------------------------------------------------------------------------
+# coarsen_dims: a merge-only knob, validated and reported for BOTH families
+# --------------------------------------------------------------------------
+def _cloud4d(n: int = 400, seed: int = 0) -> GSplatData:
+    """A 4D cloud whose last axis is three integer timepoints."""
+    rng = np.random.default_rng(seed)
+    centers = np.empty((n, 4), dtype=np.float32)
+    centers[:, :3] = rng.uniform(0, 50, size=(n, 3))
+    centers[:, 3] = rng.integers(0, 3, size=n).astype(np.float32)
+    chol = np.zeros((n, 10), dtype=np.float32)
+    chol[:, [d * (d + 1) // 2 + d for d in range(4)]] = 1.0
+    return GSplatData(
+        centers=centers,
+        amplitudes=rng.uniform(0.1, 1.0, size=n).astype(np.float32),
+        cholesky_factors=chol,
+    )
+
+
+@pytest.mark.parametrize("method", ["merge", "prefix"])
+def test_an_out_of_range_coarsen_dim_is_rejected_by_both_families(method) -> None:
+    """The knob is merge-only; its VALIDATION must not be.
+
+    Only ``merge`` reached ``_normalise_coarsen_dims`` (inside
+    ``merge_to_count``), so ``coarsen_dims=[9, 17]`` was a hard ValueError on
+    one family and silently accepted on the other — and under the default
+    ``method="auto"`` which family runs depends on the kept fraction, so the
+    same call could raise or not depending on the target (#1600 review).
+    """
+    data = _cloud4d()
+    with pytest.raises(ValueError, match=r"out of range for ndim=4"):
+        decimate(data, target=50, method=method, coarsen_dims=[9, 17])
+
+
+def test_an_in_range_coarsen_dims_request_is_accepted_by_both_families() -> None:
+    """The validator must not start rejecting the requests that are fine."""
+    data = _cloud4d()
+    for method in ("merge", "prefix"):
+        assert decimate(data, target=50, method=method, coarsen_dims=[0, 1, 2])
+
+
+def test_a_prefix_says_it_is_ignoring_coarsen_dims(capsys) -> None:
+    """The family decides whether the knob means anything — silently, before.
+
+    With the default ``method="auto"`` the family (and therefore whether
+    ``--coarsen-dims`` is honoured at all, and therefore the output's chunk
+    layout) flips at the 50%-kept crossover with nothing said.
+    """
+    data = _cloud4d(400)
+    decimate(data, target=0.4, coarsen_dims=[0, 1, 2])  # -> merge, honoured
+    assert "IGNORED" not in capsys.readouterr().out
+
+    decimate(data, target=0.5, coarsen_dims=[0, 1, 2])  # -> prefix, ignored
+    message = capsys.readouterr().out
+    assert "coarsen_dims=[0, 1, 2] is IGNORED" in message
+    assert "'prefix' family" in message
+    # ...and it says WHY this run became a prefix, since nothing was asked for.
+    assert "method='auto' resolved to prefix" in message
+
+    # An EXPLICIT prefix still says the knob was dropped, without the crossover
+    # explanation (nothing resolved — the caller named the family).
+    decimate(data, target=0.4, method="prefix", coarsen_dims=[0, 1, 2])
+    explicit = capsys.readouterr().out
+    assert "coarsen_dims=[0, 1, 2] is IGNORED" in explicit
+    assert "resolved to prefix" not in explicit

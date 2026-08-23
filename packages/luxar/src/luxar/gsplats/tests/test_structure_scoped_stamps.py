@@ -173,12 +173,14 @@ def test_the_python_decimate_api_drops_the_topology_record(method: str) -> None:
     # The exempt key and the descriptive fit provenance come through (dropping
     # those would trade one silent loss for another) — except that a `merge`
     # RE-STAMPS `coarsen_dims` with what it coarsened over, which on this 3D
-    # fixture is every dim: the inherited [0, 1, 2] says the same thing, and the
-    # producers spell that `None`. Pinned properly just below.
+    # fixture is every dim. Spelled EXPLICITLY, never `None`: the writer cannot
+    # tell a written null from an absent key. Both families land on the same
+    # value here only because the inherited stamp happens to say the same
+    # thing — the two are told apart in
+    # `test_decimate_stamps_the_coarsen_dims_the_reduction_used`, whose fixture
+    # is stamped differently on purpose.
     coarsen = out.stats["coarsen_dims"]
-    assert (list(coarsen) if coarsen is not None else None) == (
-        None if method == "merge" else _KEEP["coarsen_dims"]
-    )
+    assert (list(coarsen) if coarsen is not None else None) == [0, 1, 2]
     assert out.stats["fitter_name"] == _KEEP["fitter_name"]
     assert out.stats["iterations"] == _KEEP["iterations"]
     # ...and the caller's own dataset was not scrubbed underneath it.
@@ -224,11 +226,14 @@ def _stacked_dataset(n: int = 200) -> GSplatData:
     [
         # A proper subset: stamped as asked, so the writer's barrier is [3].
         ("merge", [0, 1, 2], [0, 1, 2]),
-        # Every dim, spelled out — `_normalise_coarsen_dims` collapses it to the
-        # no-barrier path, and the producers spell that `None`.
-        ("merge", [0, 1, 2, 3], None),
-        # ...which is also the default.
-        ("merge", None, None),
+        # Every dim, spelled out: the reduction blends over all four, so the
+        # stamp names all four. NOT `None` — a written null is indistinguishable
+        # from an absent key to `_barrier_from_coarsen_dims`, which then
+        # auto-detects and can re-impose a barrier on the axis just blended.
+        ("merge", [0, 1, 2, 3], [0, 1, 2, 3]),
+        # ...and the default means exactly the same reduction, so it must
+        # publish exactly the same stamp.
+        ("merge", None, [0, 1, 2, 3]),
         # A prefix merges nothing: the knob is merge-only and the input's stamp
         # is still true of the survivors, so neither is overwritten by the other.
         ("prefix", [0, 1, 2], [1, 2, 3]),
@@ -329,12 +334,147 @@ def test_the_root_ladder_summary_refreshes_only_keys_that_were_there() -> None:
 
     Same contract as ``_refresh_ladder_summary``, whose count/cutpoint half this
     reuses: the refresh corrects a claim, it does not start making one.
+
+    The METHOD half needs a leaf that actually publishes one, or the readback
+    branch has nothing to invent and the direction goes unmeasured: dropping the
+    ``key in refreshed`` guard left every test green while a partial summary
+    ACQUIRED ``lod_method`` / ``lod_breakpoints_kind`` it had never had.
     """
-    leaf = _laddered_tree([[10, 10, 10]])
-    assert refresh_root_ladder_summary({"recipe": "stream"}, leaf) == {
+    bare = _laddered_tree([[10, 10, 10]])
+    assert refresh_root_ladder_summary({"recipe": "stream"}, bare) == {
         "recipe": "stream"
     }
-    assert refresh_root_ladder_summary({"lod_n_lods": 9}, leaf) == {"lod_n_lods": 3}
+    assert refresh_root_ladder_summary({"lod_n_lods": 9}, bare) == {"lod_n_lods": 3}
+
+    stamped = _laddered_tree(
+        [[10, 10, 10]], lod_method="mass", lod_breakpoints_kind="explicit-counts"
+    )
+    assert refresh_root_ladder_summary(
+        {"lod_n_lods": 2, "recipe": "stream"}, stamped
+    ) == {
+        "lod_n_lods": 3,
+        "recipe": "stream",
+    }
+
+
+@pytest.mark.parametrize(
+    ("level", "expected_rungs"),
+    [
+        # Below the range: the summary falls back to the FINEST level (matrix
+        # index 0 = the group's last child). Unclamped this indexes one past the
+        # end of the children list and raises IndexError.
+        (-1, 3),
+        # Past the end: the COARSEST level. Unclamped, `len - 1 - 3` is -1, which
+        # silently wraps round to the finest child — a plausible wrong answer.
+        (3, 1),
+    ],
+    ids=["below-range", "past-the-end"],
+)
+def test_an_out_of_range_summary_level_is_clamped(
+    level: int, expected_rungs: int
+) -> None:
+    """``lod_substitutive_level`` is read off a store that may no longer fit it.
+
+    The index is an inherited stamp, not a computed one — a store whose level
+    count shrank (or a hand-edited one) can name a level that is not there. Both
+    directions are failures without the clamp, and neither is loud: negative
+    raises ``IndexError`` from inside a metadata refresh, and over-range wraps
+    into a DIFFERENT child and summarises the wrong ladder.
+    """
+    tree = _laddered_tree([[10, 10, 10], [8, 8], [5]])
+    fresh = refresh_root_ladder_summary(
+        {"lod_n_lods": 99, "lod_substitutive_level": level}, tree
+    )
+    assert fresh["lod_n_lods"] == expected_rungs
+    # The index itself is not the refresh's business — a re-ladder moves no level.
+    assert fresh["lod_substitutive_level"] == level
+
+
+# ── the SAME ladder, one spelling over: `batch-fit merge`'s pipeline knobs ──
+
+
+def _batch_merge_stream_pipeline() -> Dict[str, Any]:
+    """The root ``pipeline/`` block a ``batch-fit merge --recipe stream`` writes.
+
+    Taken from the producer itself rather than hand-copied, so a key added to
+    ``_recipe_pipeline_info`` shows up here instead of quietly going unhandled.
+    """
+    from luxar.gsplats.batch.merge_orchestrator import _recipe_pipeline_info
+    from luxar.gsplats.lod.recipes import RecipeParams
+
+    info = _recipe_pipeline_info(
+        "stream",
+        RecipeParams(n_lods=6, additive_method="mass", breakpoints="equal-count"),
+    )
+    assert info == {
+        "recipe": "stream",
+        "lod_kind": "additive",
+        "per_part": True,
+        "n_lods": 6,
+        "method": "mass",
+        "breakpoints": "equal-count",
+    }, f"the producer's key set moved: {info}"
+    return dict(info)
+
+
+def test_the_batch_merge_ladder_knobs_are_refreshed_too() -> None:
+    """``n_lods`` / ``method`` / ``breakpoints`` describe the same ladder.
+
+    ``gsplat additive`` over a ``batch-fit merge`` output is an advertised use
+    case, and that store's summary is spelled WITHOUT the ``lod_`` prefix — so
+    the five prefixed keys were refreshed while ``n_lods: 6`` rode through
+    unchanged next to them (#1600 review).
+    """
+    tree = _laddered_tree([[10, 10, 10]], lod_method="self_energy")
+    fresh = refresh_root_ladder_summary(_batch_merge_stream_pipeline(), tree)
+
+    assert fresh["n_lods"] == 3, "the rung count still describes the old ladder"
+    assert fresh["method"] == "self_energy", "read back off the leaf that was written"
+    # The build SPEC ("stream:14000" / "counts:5,15,40" / "equal-count") is in a
+    # different vocabulary from the leaf's resolved `lod_breakpoints_kind` and
+    # cannot be read back off a ladder, so it is dropped rather than invented.
+    assert "breakpoints" not in fresh
+    # Untouched: a per-leaf re-ladder leaves a per-part ladder per-part, and the
+    # mechanism is still additive.
+    assert fresh["per_part"] is True
+    assert fresh["lod_kind"] == "additive"
+    assert fresh["recipe"] == "stream"
+
+
+def test_the_levels_branch_keeps_its_substitutive_method() -> None:
+    """``method`` is shared between the two branches and means different things.
+
+    ``_recipe_pipeline_info("levels", …)`` stamps the SUBSTITUTIVE merge method
+    under the same key, and a re-ladder does not touch it. Refreshing on the key
+    name alone would overwrite it with an additive ordering.
+    """
+    from luxar.gsplats.batch.merge_orchestrator import _recipe_pipeline_info
+    from luxar.gsplats.lod.recipes import RecipeParams
+
+    info = dict(
+        _recipe_pipeline_info("levels", RecipeParams(substitutive_method="greedy"))
+        or {}
+    )
+    assert info["method"] == "greedy" and info["lod_kind"] == "substitutive"
+    fresh = refresh_root_ladder_summary(
+        info, _laddered_tree([[10, 10, 10]], lod_method="self_energy")
+    )
+    assert fresh["method"] == "greedy"
+    assert fresh["additive_ladders"] is True  # still true: every leaf is laddered
+
+
+def test_a_partition_drops_the_batch_merge_ladder_knobs_as_well() -> None:
+    """The shape that cannot be summarised drops BOTH spellings, or neither.
+
+    Dropping ``lod_n_lods`` because "parts hold different rung counts" while
+    leaving ``n_lods: 6`` two keys away — asserting exactly that number, under
+    ``per_part: True`` — is the same lie the drop exists to prevent.
+    """
+    parts = GSplatPartition(
+        children=[_laddered_tree([[10, 10]]), _laddered_tree([[7, 7, 7]])]
+    )
+    fresh = refresh_root_ladder_summary(_batch_merge_stream_pipeline(), parts)
+    assert fresh == {"recipe": "stream", "lod_kind": "additive", "per_part": True}
 
 
 def test_a_partition_root_publishes_no_single_ladder() -> None:

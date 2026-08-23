@@ -53,6 +53,12 @@ from typer.testing import CliRunner
 
 from luxar._zarr_compat import open_group, read_node_attrs
 from luxar.cli import app
+from luxar.cli.tests.test_gsplat_content_scoped_metrics import (
+    _NO_PROVENANCE as _CONTENT_NO_PROVENANCE,
+)
+from luxar.cli.tests.test_gsplat_content_scoped_metrics import (
+    _REWRITE_CASES as _CONTENT_REWRITE_CASES,
+)
 from luxar.gsplats._data.filtering import (
     _STRUCTURE_SCOPE_EXEMPT_KEYS,
     _STRUCTURE_SCOPED_STATS_KEYS,
@@ -367,6 +373,16 @@ _NOT_KIND_CHANGING: Dict[str, str] = {
 }
 
 
+def _command_of(argv: Sequence[str], registered: "set[str]") -> str:
+    """The command an argv row invokes, resolved against the REGISTERED names.
+
+    Read off the argv rather than the row id: ``lod`` appears under six
+    recipe-suffixed ids, and a command can be two tokens (``batch-fit merge``).
+    """
+    two = " ".join(argv[:2])
+    return two if two in registered else argv[0]
+
+
 def test_every_gsplat_command_is_classified() -> None:
     """A new command cannot skip this axis by not being in the table.
 
@@ -391,14 +407,7 @@ def test_every_gsplat_command_is_classified() -> None:
         f"the enumeration missed something obvious: {sorted(registered)}"
     )
 
-    # Read the command off the argv, not the row id: `lod` appears under six
-    # recipe-suffixed ids. Resolved against the REGISTERED names because a
-    # command can be two tokens (`batch-fit merge`).
-    def command_of(argv: Sequence[str]) -> str:
-        two = " ".join(argv[:2])
-        return two if two in registered else argv[0]
-
-    classified = {command_of(argv) for _, argv, _ in _KIND_CHANGING} | set(
+    classified = {_command_of(argv, registered) for _, argv, _ in _KIND_CHANGING} | set(
         _NOT_KIND_CHANGING
     )
     assert not registered - classified, (
@@ -621,35 +630,265 @@ def test_additive_refreshes_the_root_ladder_summary(
     assert after["lod_substitutive_level"] == before["lod_substitutive_level"]
 
 
-#: ``(id, argv tail, stamp, barrier)`` for ``decimate``'s ``coarsen_dims``. The
-#: fixture is stamped ``[1, 2, 3]`` (barrier ``[0]``) so a re-stamp is visible
-#: BOTH in the key and in the layout: every expected barrier below differs from
-#: the inherited one, and the timepoints sit on a half-integer grid so
-#: ``detect_barrier_dims`` cannot supply ``[3]`` on its own.
-_DECIMATE_COARSEN: List[tuple[str, Sequence[str], Any, List[int]]] = [
+def test_additive_refreshes_the_batch_merge_spelling_of_the_same_summary(
+    tmp_path: Path,
+) -> None:
+    """The OTHER root ladder summary in the same ``pipeline/`` group (#1600).
+
+    ``batch-fit merge --recipe stream`` stamps its per-part ladder knobs WITHOUT
+    the ``lod_`` prefix (``_recipe_pipeline_info``), and ``gsplat additive`` over
+    a batch-fit partition is an advertised use case — so a store re-laddered
+    from six rungs to two dropped ``lod_n_lods`` (a partition has no single
+    summary) while ``n_lods: 6`` rode through three keys away, asserting exactly
+    the number the drop exists to avoid asserting.
+
+    The fixture's ``pipeline/`` block comes from the producer itself, so a knob
+    added there cannot quietly go unhandled.
+    """
+    from luxar.gsplats.batch.merge_orchestrator import _recipe_pipeline_info
+    from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+    from luxar.gsplats.lod.additive import make_additive_lod
+    from luxar.gsplats.lod.recipes import RecipeParams
+    from luxar.gsplats.tree import GSplatLeaf, iter_leaves, map_leaves
+
+    pipeline = _recipe_pipeline_info(
+        "stream", RecipeParams(n_lods=6, additive_method="mass")
+    )
+    assert pipeline and pipeline["n_lods"] == 6
+
+    parts = _data(200, stats={}).to_spatial_partition(max_elements=80)
+    laddered = map_leaves(
+        parts,
+        lambda leaf: make_additive_lod(GSplatData.from_tree(leaf), n_lods=6).tree,
+    )
+    src = tmp_path / "batch.gsplats.zarr"
+    write_gsplats_tree(src, laddered, pipeline_info=dict(pipeline))
+    assert _pipeline_attrs(src)["n_lods"] == 6
+    assert all(len(lf.additive_sublods) == 6 for lf in iter_leaves(laddered))
+
+    out = tmp_path / "out.gsplats.zarr"
+    _run(("additive", "{in}", "{out}", "--n-lods", "2"), src, out)
+
+    node, _ = load_gsplat_node(out, include_stats=True)
+    leaves = [lf for lf in iter_leaves(node) if isinstance(lf, GSplatLeaf)]
+    assert leaves and all(len(lf.additive_sublods) == 2 for lf in leaves), (
+        "the re-ladder did not happen; the assertion below would prove nothing"
+    )
+    after = _pipeline_attrs(out)
+    assert not {"n_lods", "method", "breakpoints"} & set(after), (
+        "the parts hold different ladders, so no root rung count/ordering is "
+        f"true of more than one of them: {after}"
+    )
+    # Still true of the output, and therefore untouched: every leaf was
+    # laddered independently, by the additive mechanism, under the same recipe.
+    assert after["per_part"] is True
+    assert after["lod_kind"] == "additive"
+    assert after["recipe"] == "stream"
+
+
+# ── the generic post-condition: a published ladder must be the one on disk ──
+
+
+#: The root keys that state a RUNG COUNT for one ladder, in both spellings —
+#: ``make_additive_lod``'s and ``_recipe_pipeline_info``'s.
+_LADDER_COUNT_KEYS = ("lod_n_lods", "lod_cutpoints", "n_lods")
+
+
+def _assert_published_ladder_matches_disk(path: Path) -> None:
+    """If a store publishes a ladder rung count, it must be the ladder it has.
+
+    The generic form of the two hand-written ``additive`` claims above, applied
+    to EVERY rewriting command instead of the ones somebody remembered to list.
+    That closure is the point: the kind-change rule is held against the
+    registered command set twice over, while "a re-ladder must refresh the root
+    summary" lived in two hand-written rows — the same shape as the ``merge`` /
+    ``lod`` misses this module exists to prevent.
+
+    Deliberately independent of :func:`~luxar.gsplats.lod.restamp
+    ._root_summary_leaf`: the level is resolved here from the tree's own
+    coarsest-first invariant, so the production helper cannot certify itself.
+    """
+    from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup
+
+    pipeline = _pipeline_attrs(path)
+    published = {k: pipeline[k] for k in _LADDER_COUNT_KEYS if k in pipeline}
+    if not published:
+        return  # absent is always honest — nothing is claimed
+
+    node, _ = load_gsplat_node(path, include_stats=True)
+    if isinstance(node, GSplatLeaf):
+        levels: List[Any] = [node]
+    elif isinstance(node, GSplatLodGroup) and all(
+        isinstance(child, GSplatLeaf) for child in node.children
+    ):
+        # A tree lod group stores children coarsest-first; the summary index is
+        # a MATRIX index (finest-first), hence the mirror.
+        levels = list(reversed(node.children))
+    else:
+        raise AssertionError(
+            f"{path.name} publishes a root ladder summary {sorted(published)} on "
+            "a shape that HAS no single ladder (a partition, or a lod group "
+            "whose summary child is a subtree) — the number is true of at most "
+            "one part, so the block must be dropped instead"
+        )
+
+    index = int(pipeline.get("lod_substitutive_level") or 0)
+    assert 0 <= index < len(levels), (
+        f"{path.name} summarises level {index} of {len(levels)} — the store "
+        "does not have the level its own summary names"
+    )
+    counts = [int(sub.n_splats) for sub in levels[index].additive_sublods]
+    cutpoints = [int(value) for value in np.cumsum(counts)]
+    if "lod_n_lods" in published:
+        assert published["lod_n_lods"] == len(counts), (
+            f"{path.name} advertises {published['lod_n_lods']} rungs; the "
+            f"ladder on disk has {len(counts)}"
+        )
+    if "n_lods" in published:
+        assert published["n_lods"] == len(counts), (
+            f"{path.name} advertises {published['n_lods']} rungs (the "
+            f"batch-merge spelling); the ladder on disk has {len(counts)}"
+        )
+    if "lod_cutpoints" in published:
+        assert list(published["lod_cutpoints"]) == cutpoints, (
+            f"{path.name} advertises cutpoints {list(published['lod_cutpoints'])}; "
+            f"the ladder on disk cuts at {cutpoints}"
+        )
+
+
+#: Every rewriting command, with the argv that drives it — imported rather than
+#: restated so this post-condition inherits the sibling guard's closure against
+#: the registry (``test_the_ladder_post_condition_covers_every_rewriter``).
+_LADDER_ROWS: List[tuple[str, Sequence[str]]] = [
+    *((row_id, argv) for row_id, argv, _ in _CONTENT_REWRITE_CASES),
+    *_CONTENT_NO_PROVENANCE.items(),
+]
+
+
+def _data3(n: int, *, stats: Dict[str, Any]) -> GSplatData:
+    """3D splats — what the imported argv rows are written against."""
+    rng = np.random.default_rng(0)
+    chol = np.zeros((n, 6), dtype=np.float32)
+    chol[:, [0, 2, 5]] = 2.0
+    return GSplatData(
+        centers=(rng.random((n, 3)) * 100.0).astype(np.float32),
+        amplitudes=np.linspace(1.0, 0.1, n).astype(np.float32),
+        cholesky_factors=chol,
+        stats={**stats, "n_splats": n},
+    )
+
+
+@pytest.mark.parametrize(
+    "argv", [argv for _, argv in _LADDER_ROWS], ids=[i for i, _ in _LADDER_ROWS]
+)
+def test_a_published_ladder_summary_describes_the_ladder_on_disk(
+    tmp_path: Path, argv: Sequence[str]
+) -> None:
+    """No rewriter may publish a rung count its output does not have.
+
+    One post-condition over every rewriting command, so the re-ladder rule does
+    not depend on a hand-written row naming ``additive``. Refreshing, dropping
+    and never having claimed anything all satisfy it — what it forbids is the
+    one thing #1600 is about: a number that describes the ladder the command
+    replaced.
+    """
+    flat = tmp_path / "flat.gsplats.zarr"
+    _data3(200, stats=dict(_DESCRIPTIVE)).save(flat, include_fitting_info=True)
+    src = tmp_path / "laddered.gsplats.zarr"
+    _run(("lod", "{in}", "{out}", "--recipe", "stream", "--n-lods", "3"), flat, src)
+    assert {"lod_n_lods", "lod_cutpoints"} <= set(_pipeline_attrs(src)), (
+        "the fixture publishes no ladder summary — nothing could go stale"
+    )
+    _assert_published_ladder_matches_disk(src)  # the fixture itself is honest
+
+    out = tmp_path / "out.gsplats.zarr"
+    _run(argv, src, out)
+    # A row with no `{out}` rewrites the input in place.
+    _assert_published_ladder_matches_disk(out if out.exists() else src)
+
+
+def test_the_ladder_post_condition_covers_every_rewriter() -> None:
+    """...and it is closed against the commands that exist, not a list.
+
+    The sibling module already classifies every registered ``gsplat`` command as
+    a rewriter (with the argv that drives it) or not, and its own guard test
+    keeps that classification complete. Reusing it here means a NEW rewriting
+    command is carried into this post-condition by the classification it already
+    has to make, rather than by remembering this file.
+    """
+    from luxar.cli.tests.test_gsplat_content_scoped_metrics import (
+        _NON_REWRITE,
+        _registered_gsplat_commands,
+    )
+
+    registered = _registered_gsplat_commands()
+    covered = {_command_of(argv, registered) for _, argv in _LADDER_ROWS}
+    assert "additive" in covered, f"the enumeration missed the obvious: {covered}"
+    assert not registered - (covered | set(_NON_REWRITE)), (
+        "rewriting gsplat command(s) that no ladder post-condition runs over: "
+        f"{sorted(registered - (covered | set(_NON_REWRITE)))}"
+    )
+
+
+#: ``(id, argv tail, time_step, stamp, barrier)`` for ``decimate``'s
+#: ``coarsen_dims``. The fixture is stamped ``[1, 2, 3]`` (barrier ``[0]``) so a
+#: re-stamp is visible BOTH in the key and in the layout.
+#:
+#: ``time_step`` picks the stacked axis's grid, and it is load-bearing per row:
+#: the expected barrier must be one ``detect_barrier_dims`` CANNOT produce on
+#: its own for that grid, or the row passes on the fallback rather than on the
+#: stamp. A half-integer grid is invisible to auto-detect (it finds nothing), an
+#: integer one is exactly what it flags — so the coarsen-EVERYTHING rows, whose
+#: expected barrier is the empty one, must sit on the integer grid where the
+#: fallback would loudly disagree. :func:`test_decimate_stamps_the_coarsen_dims_it_used`
+#: measures that control per row rather than trusting this comment.
+_DECIMATE_COARSEN: List[tuple[str, Sequence[str], float, Any, List[int]]] = [
     # The request the merge was given, and the barrier IT implies.
     (
         "merge-honours-the-request",
         ("-m", "merge", "--coarsen-dims", "0,1,2"),
+        0.5,
         [0, 1, 2],
         [3],
     ),
     # No flag: the merge blends over every axis, so no axis is a barrier — and
-    # the inherited one must not be re-imposed on splats it just blended.
-    ("merge-coarsens-everything", ("-m", "merge"), None, []),
+    # the inherited one must not be re-imposed on splats it just blended. The
+    # stamp is the EXPLICIT all-dims list: a written `null` is indistinguishable
+    # from an absent key to `_barrier_from_coarsen_dims`, which falls through to
+    # auto-detect and (on this integer grid) hands back the barrier [3] the
+    # merge just blended over.
+    ("merge-coarsens-everything", ("-m", "merge"), 1.0, [0, 1, 2, 3], []),
+    # The same reduction spelled out explicitly must publish the same stamp.
+    (
+        "merge-all-dims-spelled-out",
+        ("-m", "merge", "--coarsen-dims", "0,1,2,3"),
+        1.0,
+        [0, 1, 2, 3],
+        [],
+    ),
     # A prefix merges nothing, so the input's stamp is still true of the
     # survivors and stays — the ignored request must NOT be published.
-    ("prefix-inherits", ("-m", "prefix", "--coarsen-dims", "0,1,2"), [1, 2, 3], [0]),
+    (
+        "prefix-inherits",
+        ("-m", "prefix", "--coarsen-dims", "0,1,2"),
+        0.5,
+        [1, 2, 3],
+        [0],
+    ),
 ]
 
 
 @pytest.mark.parametrize(
-    ("tail", "stamp", "barrier"),
-    [(tail, stamp, barrier) for _, tail, stamp, barrier in _DECIMATE_COARSEN],
+    ("tail", "time_step", "stamp", "barrier"),
+    [(tail, step, stamp, bar) for _, tail, step, stamp, bar in _DECIMATE_COARSEN],
     ids=[row[0] for row in _DECIMATE_COARSEN],
 )
 def test_decimate_stamps_the_coarsen_dims_it_used(
-    tmp_path: Path, tail: Sequence[str], stamp: Any, barrier: List[int]
+    tmp_path: Path,
+    tail: Sequence[str],
+    time_step: float,
+    stamp: Any,
+    barrier: List[int],
 ) -> None:
     """``coarsen_dims`` is exempt from the scrub, not exempt from being TRUE.
 
@@ -665,7 +904,7 @@ def test_decimate_stamps_the_coarsen_dims_it_used(
     _data(
         200,
         stats={**_TOPOLOGY, **_EXEMPT, **_DESCRIPTIVE, "coarsen_dims": [1, 2, 3]},
-        time_step=0.5,
+        time_step=time_step,
     ).save(src, include_fitting_info=True)
     out = tmp_path / "out.gsplats.zarr"
     _run(("decimate", "{in}", "{out}", "--target", "50", *tail), src, out)
@@ -677,6 +916,33 @@ def test_decimate_stamps_the_coarsen_dims_it_used(
     assert all(b == barrier for b in barriers), (
         f"the written ordering barrier {barriers} does not follow the stamp"
     )
+
+    # The control that makes the row mean something: with NO `coarsen_dims`
+    # provenance the same store gets a DIFFERENT barrier, so the assertion above
+    # cannot be satisfied by the auto-detect fallback. This is what the
+    # coarsen-everything rows need most — spelling their stamp `None` would
+    # write a null the writer reads as "no provenance", landing right here.
+    auto = _auto_detected_barriers(tmp_path, time_step)
+    assert auto and all(b != barrier for b in auto), (
+        f"auto-detection produces {auto} on this grid, which the expected "
+        f"barrier {barrier} cannot be distinguished from — the row would pass "
+        "on the fallback rather than on the stamp"
+    )
+
+
+def _auto_detected_barriers(tmp_path: Path, time_step: float) -> List[List[int]]:
+    """What ``detect_barrier_dims`` alone makes of this grid.
+
+    A store saved with NO ``coarsen_dims`` stamp, so ``_barrier_from_coarsen_dims``
+    returns ``None`` and the writer falls back to per-leaf auto-detection — the
+    exact path a null-or-absent stamp lands on.
+    """
+    bare = tmp_path / f"autodetect_{time_step}.gsplats.zarr"
+    if not bare.exists():
+        _data(200, stats=dict(_TOPOLOGY), time_step=time_step).save(
+            bare, include_fitting_info=True
+        )
+    return _ordering_barriers(bare)
 
 
 #: Recipes run to MEASURE what the builders stamp. ``levels`` exercises the
