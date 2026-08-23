@@ -525,6 +525,52 @@ class TestSceneRowBudget:
             (cam_dist + float(radial.max())) * 1.5
         )
 
+    def test_partitions_both_layers_and_deduplicates_positions(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        rng = np.random.default_rng(8)
+        positions = rng.normal(size=(100, 3)).astype(np.float32)
+        redshift = np.linspace(0.01, 3.0, len(positions), dtype=np.float32)
+        tracer_ids = (np.arange(len(positions)) % 4).astype(np.uint8)
+        monkeypatch.setattr(_demo, "SCENE_MAX_POINTS_PER_NODE", 40, raising=False)
+        monkeypatch.setattr(_demo, "substitutive_lod_or_flat", lambda spec: None)
+
+        out = tmp_path / "desi_partitioned.luxar.zarr"
+        _demo.create_scene(positions, redshift, tracer_ids, out)
+
+        import zarr
+
+        root = zarr.open(str(out), mode="r")
+
+        def position_arrays(group):
+            arrays = []
+            if "positions" in group:
+                arrays.append(group["positions"])
+            for child_name in group.group_keys():
+                arrays.extend(position_arrays(group[child_name]))
+            return arrays
+
+        expected_intensity = _demo.SCENE_INTENSITY
+        tracer_layer = root["By tracer type"]
+        redshift_layer = root["By redshift"]
+        assert tracer_layer.attrs["kind"] == "partition"
+        assert redshift_layer.attrs["kind"] == "partition"
+        assert tracer_layer.attrs["intensity"] == pytest.approx(expected_intensity)
+        assert redshift_layer.attrs["intensity"] == pytest.approx(expected_intensity)
+
+        tracer_positions = position_arrays(tracer_layer)
+        redshift_positions = position_arrays(redshift_layer)
+        assert len(tracer_positions) == len(redshift_positions) > 1
+        assert sum(array.shape[0] for array in tracer_positions) == len(positions)
+        assert all(array.shape[0] <= 40 for array in tracer_positions)
+        assert all(
+            array.attrs["encoding"]["name"] != "array_ref" for array in tracer_positions
+        )
+        assert all(
+            array.attrs["encoding"]["name"] == "array_ref"
+            for array in redshift_positions
+        )
+
     def test_shipped_scene_carries_the_full_catalog(self) -> None:
         import json
         import zipfile

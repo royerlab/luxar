@@ -81,6 +81,7 @@ DEMO_META = {
 }
 
 from pathlib import Path
+from typing import Final
 
 import numpy as np
 from arbol import Arbol, aprint, asection
@@ -178,6 +179,10 @@ Z_MAX = 4.0
 # Display / LOD parameters.
 POINT_RADIUS = 1.2  # Mpc (visualization scale)
 SCENE_INTENSITY = 0.05
+# Stay below the 5,591,040-point element-texture cap on a conservative
+# 4096-class GPU. The margin matches the globe demos and keeps every finest-LOD
+# partition leaf drawable without viewer-side tail clamping.
+SCENE_MAX_POINTS_PER_NODE: Final = 4_000_000
 # No row cap: the scene carries the WHOLE DR1 catalog, ~9.75M objects.
 #
 # This was briefly capped at 1.25M (#1812) because the finest child downloaded
@@ -820,6 +825,7 @@ def create_scene(
                 blending_mode="additive",
                 intensity=scene_intensity,
                 layer=True,
+                partition=dict(max_elements=SCENE_MAX_POINTS_PER_NODE),
                 substitutive_lod=lod,
                 additive_lod=stream_lod,
             )
@@ -838,6 +844,7 @@ def create_scene(
                 intensity=scene_intensity,
                 layer=True,
                 visible=False,
+                partition=dict(max_elements=SCENE_MAX_POINTS_PER_NODE),
                 substitutive_lod=lod,
                 additive_lod=stream_lod,
             )
