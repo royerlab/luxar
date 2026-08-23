@@ -341,12 +341,21 @@ def build_scene(
         colors = np.vstack([colors_term, colors_group])
 
         # Hover labels — two lines: cell type on line 1, bio-group on line 2
+        # Click a cell to look its term up in the EBI Ontology Lookup Service,
+        # right-click to copy it (#1917). The label brackets the bio group
+        # after the term, so the query needs the term alone; `format_label` is
+        # for reading, not searching.
+        per_cell_keys = [
+            str(term_cats[attributes["bio_term"][i]]) for i in range(n_cells)
+        ]
         per_cell_labels = [
             f"{format_label(term_cats[attributes['bio_term'][i]])}\n"
             f"[{group_cats[attributes['bio_group'][i]]}]"
             for i in range(n_cells)
         ]
         labels = per_cell_labels * 2
+        # Tiled like the labels: two colour views of the same cells.
+        keys = per_cell_keys * 2
 
         group_counts = {
             name: int((attributes["bio_group"] == i).sum())
@@ -386,6 +395,9 @@ def build_scene(
                 opacity=0.85,
                 intensity=0.2,
                 labels=labels,
+                keys=keys,
+                link="https://www.ebi.ac.uk/ols4/search?q={hover_key}",
+                copy="{hover_key}",
                 layer=True,
             )
 

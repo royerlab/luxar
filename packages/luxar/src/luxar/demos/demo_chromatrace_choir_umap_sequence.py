@@ -433,6 +433,11 @@ def build_sequence_scene(
         )
 
         # Hover labels: 1 per cell, shared for both Highlight and Backdrop.
+        # Click a cell to look its term up in the EBI Ontology Lookup Service,
+        # right-click to copy it (#1917). The label brackets the bio group
+        # after the term, so the query needs the term alone; `format_label`
+        # is for reading, not for searching.
+        per_cell_keys = [str(term_name_of_cell[i]) for i in range(n_cells)]
         per_cell_hover = [
             f"{format_label(term_name_of_cell[i])}\n"
             f"[{group_cats[attributes['bio_group'][i]]}]"
@@ -502,6 +507,9 @@ def build_sequence_scene(
                 opacity=0.95,
                 intensity=0.3,
                 labels=per_cell_hover,
+                keys=per_cell_keys,
+                link="https://www.ebi.ac.uk/ols4/search?q={hover_key}",
+                copy="{hover_key}",
                 layer=True,
             )
 

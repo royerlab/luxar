@@ -153,6 +153,19 @@ def main() -> None:
             ]
             labels = per_cell_labels * len(attrs)
 
+            # Click a cell to look its type up in the EBI Ontology Lookup
+            # Service, right-click to copy the term (#1917). The label appends
+            # the timepoint, so the query needs the bare cell type from `keys=`.
+            # A cell whose code falls outside the map gets an empty key and its
+            # link suppresses, rather than searching for an integer.
+            per_cell_keys = [
+                str(ct_map[attrs["celltype"][i]])
+                if attrs["celltype"][i] < len(ct_map)
+                else ""
+                for i in range(len(coords))
+            ]
+            celltype_keys = per_cell_keys * len(attrs)
+
             dims = Dimensions(
                 [
                     Dimension(
@@ -183,6 +196,9 @@ def main() -> None:
                     opacity=0.8,
                     intensity=0.25,
                     labels=labels,
+                    keys=celltype_keys,
+                    link="https://www.ebi.ac.uk/ols4/search?q={hover_key}",
+                    copy="{hover_key}",
                     layer=True,
                 )
 
@@ -249,6 +265,19 @@ def main() -> None:
             ]
             labels = per_cell_labels * len(attrs)
 
+            # Click a cell to look its type up in the EBI Ontology Lookup
+            # Service, right-click to copy the term (#1917). The label appends
+            # the timepoint, so the query needs the bare cell type from `keys=`.
+            # A cell whose code falls outside the map gets an empty key and its
+            # link suppresses, rather than searching for an integer.
+            per_cell_keys = [
+                str(ct_map[attrs["celltype"][i]])
+                if attrs["celltype"][i] < len(ct_map)
+                else ""
+                for i in range(len(coords))
+            ]
+            celltype_keys = per_cell_keys * len(attrs)
+
             dims = Dimensions(
                 [
                     Dimension(
@@ -279,6 +308,9 @@ def main() -> None:
                     opacity=0.8,
                     intensity=0.25,
                     labels=labels,
+                    keys=celltype_keys,
+                    link="https://www.ebi.ac.uk/ols4/search?q={hover_key}",
+                    copy="{hover_key}",
                     layer=True,
                 )
 

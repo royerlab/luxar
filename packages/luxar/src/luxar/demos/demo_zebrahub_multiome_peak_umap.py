@@ -288,6 +288,27 @@ def create_zebrahub_scene(
                     per_cell_labels.append("\n".join(parts))
             labels = per_cell_labels * len(available_attrs) if per_cell_labels else None
 
+            # Click a cell to look its type up in the EBI Ontology Lookup
+            # Service, right-click to copy the term (#1917). The label joins
+            # every attribute view with newlines — chromosome and peak type
+            # among them — so the query needs the bare cell type from `keys=`,
+            # tiled per view exactly like the labels.
+            #
+            # A SEARCH, not a term page: these annotations are each paper's own
+            # clustering, so a value may be an ontology term or free text.
+            # Search resolves either.
+            celltype_keys = None
+            if "celltype" in available_attrs:
+                cats = category_maps.get("celltype", [])
+                per_cell_keys = []
+                for i in range(n_points):
+                    code = int(attributes["celltype"][i])
+                    # Out of range means codes and map disagree; an empty key
+                    # suppresses that cell's link rather than searching for an
+                    # integer.
+                    per_cell_keys.append(str(cats[code]) if code < len(cats) else "")
+                celltype_keys = per_cell_keys * len(available_attrs)
+
             scene.add_points(
                 "Cells",
                 positions_combined,
@@ -297,6 +318,15 @@ def create_zebrahub_scene(
                 opacity=0.8,
                 intensity=0.067,
                 labels=labels,
+                **(
+                    {
+                        "keys": celltype_keys,
+                        "link": "https://www.ebi.ac.uk/ols4/search?q={hover_key}",
+                        "copy": "{hover_key}",
+                    }
+                    if celltype_keys is not None
+                    else {}
+                ),
                 layer=True,
                 # Substitutive Points LOD (coarsen x/y/z, group by the attribute
                 # barrier) — same wiring as the census demo.
