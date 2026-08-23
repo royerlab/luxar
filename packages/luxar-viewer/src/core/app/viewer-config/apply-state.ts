@@ -17,6 +17,9 @@
  */
 
 import type { ZarrViewerConfig } from '../../../types/zarr';
+import type { AnimationDirection, LoopMode } from '../../../types/animation';
+import { config } from '../../../config';
+import { clamp } from '../../../utils/clamp';
 
 /**
  * The surface this dispatcher needs from the parent LuxarApp. Each
@@ -36,6 +39,17 @@ export interface ViewerConfigPorts {
   setDimensionValue: (dim: number, value: number) => void;
   /** Set the browser tab title (document.title) from the scene's title. */
   setDocumentTitle: (title: string) => void;
+  /** Start playback on one dimension. Optional for lightweight test ports. */
+  startDimensionAnimation?: (
+    dim: number,
+    options: {
+      targetFPS?: number;
+      loopMode?: LoopMode;
+      direction?: AnimationDirection;
+      /** Per-tick advance in the dimension's units; omitted means Auto. */
+      stepSize?: number;
+    }
+  ) => void;
 }
 
 /**
@@ -88,6 +102,51 @@ export function applyViewerConfigState(
   if (viewerConfig.dimensions?.current_step) {
     for (let i = 0; i < viewerConfig.dimensions.current_step.length; i++) {
       ports.setDimensionValue(i, viewerConfig.dimensions.current_step[i]);
+    }
+  }
+
+  // --- Animation state ---
+  //
+  // The `animation` block round-tripped through the scene file for a long time
+  // without anything reading it back: `viewer-state-capture` wrote it on
+  // Ctrl+Shift+S, the Python `ViewerConfig` exposed it, VIEWER_GUIDE.md
+  // described it as restored, and on load it was silently dropped. A scene
+  // could therefore say "open playing" in every representation except the one
+  // that mattered.
+  //
+  // Applied AFTER `current_step` on purpose: playback starts from wherever the
+  // dimension was left, so a scene that authors both opens at its chosen
+  // timepoint and runs on from there rather than snapping back to the start.
+  //
+  // Only `playing === true` does anything. `false` is the viewer's own default
+  // and re-asserting it would mean a captured-then-paused scene could never
+  // simply inherit whatever the viewer does next.
+  if (viewerConfig.animation && ports.startDimensionAnimation) {
+    for (let dim = 0; dim < viewerConfig.animation.length; dim++) {
+      const entry = viewerConfig.animation[dim];
+      if (!entry || entry.playing !== true) continue;
+      const targetFPS =
+        typeof entry.target_fps === 'number' && Number.isFinite(entry.target_fps)
+          ? clamp(
+              entry.target_fps,
+              config.dimensionAnimation.presets.customMin,
+              config.dimensionAnimation.presets.customMax
+            )
+          : undefined;
+      const loopMode: LoopMode | undefined =
+        entry.loop === 'once' || entry.loop === 'loop' || entry.loop === 'bounce'
+          ? entry.loop
+          : undefined;
+      const direction: AnimationDirection | undefined =
+        entry.direction === 'forward' || entry.direction === 'backward'
+          ? entry.direction
+          : undefined;
+      ports.startDimensionAnimation(dim, {
+        targetFPS,
+        loopMode,
+        direction,
+        stepSize: entry.step_size,
+      });
     }
   }
 }
