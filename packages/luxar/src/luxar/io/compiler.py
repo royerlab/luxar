@@ -938,7 +938,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         group.attrs["n_points"] = n_points_total
         group.attrs["n_additive_sublods"] = n_levels
         group.attrs["position_bounds"] = global_bounds
-        warn_if_over_element_cap("points", n_points_total, path)
+        warn_if_over_element_cap("points", n_points_total, group.name)
         if extend_to_all:
             group.attrs["extend_to_all"] = extend_to_all
 
@@ -1081,7 +1081,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         group.attrs["n_segments"] = n_segments_total
         group.attrs["n_additive_sublods"] = n_levels
         group.attrs["position_bounds"] = global_bounds
-        warn_if_over_element_cap("lines", n_segments_total, path)
+        warn_if_over_element_cap("lines", n_segments_total, group.name)
         if extend_to_all:
             group.attrs["extend_to_all"] = extend_to_all
 

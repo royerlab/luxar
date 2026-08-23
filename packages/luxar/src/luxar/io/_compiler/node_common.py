@@ -516,7 +516,7 @@ def apply_default_render_attrs(attrs: Dict[str, Any]) -> None:
 
 
 def warn_if_over_element_cap(geometry_type: str, count: int, node_path: str) -> bool:
-    """Warn when a leaf holds more elements than one node can render (#1957).
+    """Warn when a node holds more elements than one node can render (#1957).
 
     The viewer packs per-element render data into an element texture and
     CLAMPS a node that overflows it — ``clampElementCapacity`` drops the tail
@@ -539,7 +539,7 @@ def warn_if_over_element_cap(geometry_type: str, count: int, node_path: str) -> 
     Args:
         geometry_type: A key of ``ELEMENT_TEXELS_PER_ELEMENT`` ("points",
             "lines", "gsplats"). Any other type is a no-op.
-        count: Elements in this leaf — segments for lines, points for points,
+        count: Elements in this node — segments for lines, points for points,
             splats for gsplats.
         node_path: The node's path, for the message.
 
@@ -552,13 +552,21 @@ def warn_if_over_element_cap(geometry_type: str, count: int, node_path: str) -> 
     if count <= cap:
         return False
     noun = {"points": "points", "lines": "segments", "gsplats": "splats"}[geometry_type]
+    remedy = (
+        "Run `luxar gsplat lod --recipe tiles`, or use "
+        "partition=dict(max_elements=...) from the scene API"
+        if geometry_type == "gsplats"
+        else "Split it with partition=dict(max_elements=...)"
+    )
     aprint(
         f"⚠️  '{node_path}' holds {count:,} {noun}, above the {cap:,} a single "
-        f"{geometry_type} node can render on a 4096-class GPU. Such a GPU will "
-        f"silently drop the tail — and because elements are stored in Hilbert "
+        f"{geometry_type} node can render on a 4096-class GPU. If the whole "
+        f"node is committed at once, such a GPU can silently drop the tail — "
+        f"and because elements are stored in Hilbert "
         f"order, that tail is one contiguous region, so it looks like a "
-        f"clean-edged hole in the data (#1957). Split it with "
-        f"partition=dict(max_elements=...) to render everywhere."
+        f"clean-edged hole in the data (#1957). An nD node sliced on a "
+        f"non-displayed dimension commits only its current slice. {remedy} "
+        f"to render everywhere."
     )
     return True
 

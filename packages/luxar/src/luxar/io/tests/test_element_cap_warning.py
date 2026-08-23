@@ -10,14 +10,19 @@ diagnosis where it is cheap to act on.
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import numpy as np
 import pytest
 
 from luxar import Dimensions, LuxarZarrCompiler
+from luxar.conftest import find_repo_relative_file
 from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
 from luxar.io._compiler.node_common import warn_if_over_element_cap
 from luxar.typing_utils.constants import (
     ELEMENT_TEXELS_PER_ELEMENT,
+    ELEMENT_TEXTURE_MAX_WIDTH,
     MAX_POINTS_PER_POINTS_NODE,
     MAX_SEGMENTS_PER_LINES_NODE,
     MAX_SPLATS_PER_GSPLATS_NODE,
@@ -38,6 +43,32 @@ def test_caps_match_the_viewer_element_texture_layout() -> None:
     assert MAX_SEGMENTS_PER_LINES_NODE == 682 * 4096 == 2_793_472
     assert MAX_POINTS_PER_POINTS_NODE == 1365 * 4096 == 5_591_040
     assert MAX_SPLATS_PER_GSPLATS_NODE == 1024 * 4096 == 4_194_304
+
+
+def test_cap_inputs_match_the_viewer_source() -> None:
+    viewer_source = find_repo_relative_file(
+        Path("packages/luxar-viewer/src/rendering/element-texture-layout.ts"),
+        Path(__file__).resolve(),
+    )
+    assert viewer_source is not None, (
+        "cannot locate element-texture-layout.ts; if the viewer file moved, "
+        "update this contract test"
+    )
+    source = viewer_source.read_text(encoding="utf-8")
+    width_match = re.search(r"ELEMENT_TEXTURE_MAX_WIDTH\s*=\s*(\d+)", source)
+    assert width_match is not None
+    assert int(width_match.group(1)) == ELEMENT_TEXTURE_MAX_WIDTH
+
+    layout_names = {"points": "POINT", "lines": "LINE", "gsplats": "SPLAT"}
+    for geometry_type, layout_name in layout_names.items():
+        match = re.search(
+            rf"{layout_name}_TEXTURE_LAYOUT[^=]*=\s*\{{.*?"
+            rf"texelsPerElement:\s*(\d+)",
+            source,
+            re.DOTALL,
+        )
+        assert match is not None, f"cannot find {layout_name}_TEXTURE_LAYOUT"
+        assert int(match.group(1)) == ELEMENT_TEXELS_PER_ELEMENT[geometry_type]
 
 
 def test_unknown_geometry_type_has_no_cap() -> None:
@@ -95,6 +126,17 @@ def test_the_warning_names_the_count_the_cap_and_the_remedy(
     assert "11,440,000" in out
     assert "2,793,472" in out
     assert "partition=dict(max_elements=...)" in out
+    assert "whole node is committed at once" in out
+    assert "current slice" in out
+
+
+def test_gsplat_warning_names_both_supported_remedies(
+    capsys: pytest.CaptureFixture,
+) -> None:
+    warn_if_over_element_cap("gsplats", MAX_SPLATS_PER_GSPLATS_NODE + 1, "/gs")
+    out = capsys.readouterr().out
+    assert "luxar gsplat lod --recipe tiles" in out
+    assert "partition=dict(max_elements=...)" in out
 
 
 @pytest.mark.parametrize("geometry_type", ["points", "lines"])
@@ -126,7 +168,7 @@ def test_an_additive_ladder_warns_on_its_total(
 
     out = capsys.readouterr().out
     expected = "6,002 points" if geometry_type == "points" else "6,000 segments"
-    assert "'ladder'" in out
+    assert "'/ladder'" in out
     assert expected in out
 
 

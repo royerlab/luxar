@@ -513,6 +513,9 @@ def globe_camera(lon: float, lat: float, *, distance: float = 2.586) -> CameraCo
     about the planet's axis. Aiming at ``normal * RADIUS * 0.9`` (just below the
     surface) instead put the pivot on the near face, so the first drag swung the
     globe about a surface point and threw it off-centre.
+
+    ``distance=2.586`` reproduces the shipped ~1.62 R opening eye after the
+    42-degree cinematic ``framing_scale`` of approximately 0.6264.
     """
     la, lo = np.radians(lat), np.radians(lon)
     normal = np.array(
