@@ -15,6 +15,19 @@ def _viewer_linear_decode(codes: np.ndarray, metadata: dict) -> np.ndarray:
     return np.float32(lo + np.float32(np.asarray(codes, dtype=np.float32) * scale))
 
 
+def _viewer_geolog_decode(codes: np.ndarray, metadata: dict) -> np.ndarray:
+    levels = (1 << metadata["bits"]) - 1
+    lo = float(np.float32(metadata["min_log"]))
+    hi = float(np.float32(metadata["max_log"]))
+    scale = (hi - lo) / (levels - 1)
+    codes = np.asarray(codes)
+    decoded = np.zeros(codes.shape, dtype=np.float32)
+    nonzero = codes > 0
+    exponent = lo + (codes[nonzero].astype(np.float64) - 1.0) * scale
+    decoded[nonzero] = np.asarray(np.exp(exponent), dtype=np.float32)
+    return decoded
+
+
 @pytest.mark.parametrize(
     ("name", "data", "mode", "encoding_type", "expected_encoding"),
     [
@@ -254,6 +267,43 @@ def test_linear_viewer_affine_bound_over_code_space(
         exact = lo + codes.astype(np.float64) * ((hi - lo) / levels)
         allowance = hi * eps32 + 1.5 * (hi - lo) * eps32
         assert float(np.max(decoded - exact)) <= allowance
+
+
+@pytest.mark.parametrize(
+    ("lo", "hi", "minimum_upward"),
+    [(1e5, 1.05e5, 0.08), (1000.0, 1000.5, 0.0001)],
+)
+def test_positive_scalar_slack_bounds_geolog_viewer_anchor_rounding(
+    lo: float, hi: float, minimum_upward: float
+) -> None:
+    data = np.geomspace(lo, hi, 2000, dtype=np.float64)
+    encoder = ArrayEncoder()
+    slack = encoder.positive_scalar_round_trip_slack(
+        data,
+        EncodingMode.AUTO,
+        positive_scalar_encoding="log",
+        allow_lut=False,
+    )
+    assert slack is not None
+
+    group = memory_group()
+    encoder.encode(
+        data,
+        group,
+        "s",
+        SemanticType.POSITIVE_SCALAR,
+        mode=EncodingMode.AUTO,
+        positive_scalar_encoding="log",
+        allow_lut=False,
+        deduplicate=False,
+    )
+    encoded = group["s"]
+    metadata = encoded.attrs["encoding"]
+    assert metadata["name"] == "geolog_scalar_uint16"
+    decoded = _viewer_geolog_decode(np.asarray(encoded[:]), metadata)
+    upward = decoded.astype(np.float64) - data
+    assert float(upward.max()) > minimum_upward
+    assert float(upward.max()) <= slack
 
 
 def test_positive_scalar_slack_covers_the_authored_dtype_cast() -> None:

@@ -432,7 +432,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
 
         bits = self._compute_quantization_bits(arr)
         use_geolog = positive_scalar_encoding == "log" or bits == 0
-        viewer_affine_slack = 0.0
+        viewer_rounding_slack = 0.0
         if use_geolog:
             nonzero = arr[arr > 0].astype(np.float64, copy=False)
             min_log = float(np.log(nonzero.min()))
@@ -446,6 +446,14 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
                 float(np.expm1((max_log - min_log) / (2.0 * intervals))), 1.0
             )
             slack = max_val * half_step
+            # The viewer rounds both log anchors to f32 before its f64 affine
+            # reconstruction, perturbing the decoded exponent proportionally
+            # to the larger anchor magnitude.
+            viewer_rounding_slack = (
+                max_val
+                * float(np.finfo(np.float32).eps)
+                * max(abs(min_log), abs(max_log))
+            )
         else:
             min_val = float(np.min(arr))
             span = max_val - min_val
@@ -454,7 +462,9 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             # With u = eps32 / 2, the viewer's six staged f32 roundings are
             # bounded by u * (min + max + 4 * span). The decode ULP below pays
             # 2u * max, leaving 3u * span = 1.5 * eps32 * span here.
-            viewer_affine_slack = 1.5 * span * float(np.finfo(np.float32).eps)
+            viewer_rounding_slack = 1.5 * span * float(
+                np.finfo(np.float32).eps
+            )
             levels = (1 << bits) - 1
             slack = span / (2.0 * levels)
 
@@ -468,7 +478,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         decode_ulp = max(max_val * decode_eps, decode_floor)
         return float(
             min(
-                slack + decode_ulp + viewer_affine_slack,
+                slack + decode_ulp + viewer_rounding_slack,
                 float(np.finfo(np.float64).max),
             )
         )
