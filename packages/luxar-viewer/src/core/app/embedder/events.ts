@@ -70,15 +70,17 @@ export interface SelectionPayload {
    * `hitNodeName`.
    *
    * This is the ON-DISK element index (the one the leaf's arrays and its
-   * per-element string CSRs are keyed by) wherever the node can resolve one —
+   * per-element string/image CSRs are keyed by) wherever the node can resolve
+   * one —
    * through a published slot → on-disk map, or trivially where the identity
    * already holds and no map is published. Today: a Points, GSplats or Lines node
    * declaring `has_labels` / `has_image_labels` / `has_keys` — flat, or, for
    * Points, an additive-LOD ladder (see below) — and Mesh, whose
    * `gl_VertexID` already is the on-disk ordinal. For a LINES node that
    * on-disk index is the picked segment's START vertex, not a segment index:
-   * line string channels are per-vertex, and a segment carries a single pick id,
-   * so its start endpoint is the one reported. A multi-additive-LOD (laddered)
+   * line string/image channels are per-vertex, and a segment carries a single
+   * pick id, so its start endpoint is the one reported. A multi-additive-LOD
+   * (laddered)
    * node carries one labels/keys CSR per present channel on the ladder parent,
    * spanning the levels, and declares `has_labels` / `has_keys` there (#1422).
    * On POINTS that resolves like a flat node: the per-level maps are composed

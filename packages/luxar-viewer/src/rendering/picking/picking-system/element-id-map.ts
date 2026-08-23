@@ -3,9 +3,9 @@
  *
  * A pick shader can only report where an element sits in the buffer that was
  * uploaded to the GPU — its **storage slot**. That is not the same number as
- * the element's **on-disk index**, which is what the per-element string CSRs
- * are keyed by, whenever the visible buffer's index space diverges from the
- * on-disk one. For Points that happens two ways:
+ * the element's **on-disk index**, which is what the per-element string/image
+ * CSRs are keyed by, whenever the visible buffer's index space diverges from
+ * the on-disk one. For Points that happens two ways:
  * spatial range loading (only the visible on-disk ranges are concatenated) and
  * effective-radius compaction (zero-radius points are dropped in place). A
  * consumer that reads a string at the raw slot then gets a wrong-but-plausible
@@ -22,9 +22,10 @@
  *
  * Who populates the map today:
  *  - **Points** — `data/points/projection.ts::projectPointsTo3D`, for a node
- *    declaring `has_labels` / `has_image_labels` / `has_keys` and only on the non-identity
- *    path (a single range starting at 0 with no compaction emits nothing, so
- *    picking stays allocation-free in the common Points case). The commit
+ *    declaring `has_labels` / `has_image_labels` / `has_keys` and only on the
+ *    non-identity path (a single range starting at 0 with no compaction emits
+ *    nothing, so picking stays allocation-free in the common Points case). The
+ *    commit
  *    (`commit-points-geometry.ts`) forwards `LoadedPointsData.elementIds` to
  *    the mesh stamp.
  *  - **Points additive ladders** — composed as well, into the ladder's union
@@ -42,9 +43,10 @@
  *    contributing `offset + slot`. Each id is BOUNDED by its own level's row
  *    count as well as shifted: an index past it would name a real row belonging
  *    to a sibling level, which is a confidently wrong string rather than a
- *    missing one. Nothing is emitted when the parent declares no labels/keys
- *    CSR, when the whole resident ladder is complete and unculled (slot
- *    IS the union index), or when the inputs are inconsistent. That last case
+ *    missing one. Nothing is emitted when the parent declares no union
+ *    string/image CSR, when the whole resident ladder is complete and unculled
+ *    (slot IS the union index), or when the inputs are inconsistent. That last
+ *    case
  *    is NOT a suppression: with no map this helper returns the slot, so on a
  *    sliced ladder the tooltip still shows whatever CSR row the slot hits. What
  *    refusing buys is that the wrong id is never one this code COMPOSED out of
@@ -56,8 +58,9 @@
  *    (`data/scene-loader/process/data-processor-gsplats.ts::toProcessed`) and
  *    stamped by `commit-gsplats-geometry.ts`. The two halves are the loader's
  *    visible `ranges` (published only for a node declaring `has_labels` /
- *    `has_image_labels` / `has_keys`) and the surviving source indices the fused kernel now
- *    records (`project_gsplats_nd_to_3d`'s `out_source_indices`, since
+ *    `has_image_labels` / `has_keys`) and the surviving source indices the
+ *    fused kernel now records (`project_gsplats_nd_to_3d`'s
+ *    `out_source_indices`, since
  *    hidden-dim visibility compaction happens inside it). The standard-3D fast
  *    path emits every splat in order, so it records nothing and the
  *    range-offset path alone applies — issue #1423. Note the Points
@@ -76,7 +79,7 @@
  *    Points pays. All of it is gated on `has_labels` / `has_image_labels` / `has_keys`.
  *  - **Lines** — the longest chain, because on top of range loading it has a
  *    GRANULARITY mismatch: the pick shader reports a visible SEGMENT slot while
- *    line labels are per-VERTEX. Four spaces, composed in
+ *    line string/image channels are per-VERTEX. Four spaces, composed in
  *    `data/scene-loader/process/data-processor-lines.ts` and stamped by
  *    `commit-lines-geometry.ts` (issue #1424): **E** visible segment slot → **D**
  *    loaded segment row (the projection's `sourceSegmentIndices`, derived from
@@ -86,22 +89,23 @@
  *    `buildElementIdMap`).
  *    A segment has TWO endpoints and the pick id is a `flat` vertex-stage
  *    varying, so exactly one can be reported: by convention it is the **START**
- *    vertex. Gated on `has_labels` / `has_image_labels` / `has_keys` like the others, and it
- *    fails closed to the raw slot on any inconsistency.
+ *    vertex. Gated on `has_labels` / `has_image_labels` / `has_keys` like the
+ *    others, and it fails closed to the raw slot on any inconsistency.
  *  - **Lines additive ladders** — still out. The per-node indirection above
  *    exists now, but nothing composes the LEVELS: `lines-progressive-loader.ts`
  *    has no counterpart to the Points ladder offsetting above, and a level's
  *    `vertexRangeBounds` are in that level's own vertex space.
  *  - **GSplat additive ladders** — nothing to compose: the authoring path has
- *    no `labels` channel for a gsplat ladder, so no level of one carries
- *    labels at all.
+ *    no labels/keys channels for a gsplat ladder, so no level of one carries
+ *    either at all.
  *  - **Partitioned points, gsplats and lines** — composed, no longer a gap.
  *    `core/group/adders/points.py`, `core/group/adders/gsplats.py` and
  *    `core/group/adders/lines.py` slice the
- *    CSR onto each `part_<i>` leaf, so a partitioned labelled node publishes a
- *    map in the PART's local on-disk space — which is exactly the space that
- *    leaf's sliced CSR is keyed by. Since #1415/#1420,
- *    `core/app/picking/pick-result-handler.ts` looks labels up on the hit LEAF
+ *    CSR onto each `part_<i>` leaf, so a partitioned node with per-element
+ *    channels publishes a map in the PART's local on-disk space — exactly the
+ *    space that leaf's sliced CSR is keyed by. Since #1415/#1420,
+ *    `core/app/picking/pick-result-handler.ts` looks string/image content up on
+ *    the hit LEAF
  *    (`lookupPath = result.mainNode.name`; the outermost `kind=partition`
  *    wrapper is now the reported path only). The two halves cannot drift apart,
  *    because they name the same object: `picking-system.ts::readbackAndVote`
@@ -111,8 +115,9 @@
  *    `partition=`-forwards-`additive_lod=` composition
  *    (`core/group/adders/points.py`) is readable too since #1422: the part's
  *    ladder parent — which IS the part's scene node — carries one union CSR
- *    spanning its `additive_<i>` levels and declares `has_labels` or `has_keys`. For POINTS
- *    it is MAPPED as well, by exactly the ladder composition above — that
+ *    spanning its `additive_<i>` levels and declares `has_labels` or
+ *    `has_keys`. For POINTS it is MAPPED as well, by exactly the ladder
+ *    composition above — that
  *    composition reads the parent flags off the part group, so a partitioned
  *    ladder needs no separate path. A LINES part stays readable-but-unmapped,
  *    like any lines ladder, and resolves at the raw committed slot.
@@ -129,9 +134,10 @@
  * the object stays drawn and pickable: the stamp is cleared purely to defeat
  * the commit no-op gate, and the `requestReprocess?.()` that re-stamps it is
  * async, so a pick in that window would resolve through the raw slot — a
- * silently WRONG label rather than "no answer", and for LINES strictly worse
- * than for the other two, because the raw slot is a SEGMENT number handed to a
- * per-VERTEX label array (a GRANULARITY error, not merely an offset error). It
+ * silently WRONG per-element value rather than "no answer", and for LINES
+ * strictly worse than for the other two, because the raw slot is a SEGMENT
+ * number handed to a per-VERTEX CSR (a GRANULARITY error, not merely an offset
+ * error). It
  * therefore calls `invalidateCommittedDataStamp`, which leaves this map in
  * place (the buffers it describes are untouched); only `clearCommittedData`,
  * used where the geometry is genuinely released (LOD demotion, dataset
@@ -144,8 +150,8 @@ import type * as THREE from 'three';
 import { getElementIdMap } from '../../../types/committed-data';
 
 /**
- * Translate a picked storage slot into the on-disk element index the label
- * CSR is keyed by.
+ * Translate a picked storage slot into the on-disk element index the
+ * per-element string/image CSRs are keyed by.
  *
  * Identity is the safe default: with no published map, a stamp of the wrong
  * type, or a slot outside the map, the slot is returned unchanged. This never
