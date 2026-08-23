@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 
 from luxar import Dimensions, LuxarZarrCompiler
+from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
 from luxar.io._compiler.node_common import warn_if_over_element_cap
 from luxar.typing_utils.constants import (
     ELEMENT_TEXELS_PER_ELEMENT,
@@ -145,3 +146,31 @@ def test_a_gsplat_leaf_warns_on_its_total(
     out = capsys.readouterr().out
     assert "'/gs'" in out
     assert "5,000 splats" in out
+
+
+def test_an_additive_gsplat_ladder_warns_on_its_total(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    monkeypatch.setitem(ELEMENT_TEXELS_PER_ELEMENT, "gsplats", 4096)
+    centers = np.zeros((3_000, 3), dtype=np.float32)
+    amplitudes = np.ones(3_000, dtype=np.float32)
+    cholesky = np.tile(
+        np.array([1.0, 0.0, 1.0, 0.0, 0.0, 1.0], dtype=np.float32),
+        (3_000, 1),
+    )
+    result = GSplatData.from_additive_sublods(
+        [
+            AdditiveSubLOD(centers, amplitudes, cholesky),
+            AdditiveSubLOD(centers, amplitudes, cholesky),
+        ]
+    )
+
+    with LuxarZarrCompiler(tmp_path / "gsplat-ladder.luxar.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_gsplats_from_data("gs", result)
+
+    out = capsys.readouterr().out
+    assert "'/gs'" in out
+    assert "6,000 splats" in out
