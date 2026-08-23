@@ -300,7 +300,7 @@ CLASS_MAP = {
 # Tissue-group base colors (RGB in [0, 1]) — no canonical LUT exists upstream.
 # Muscle is ~26% of splats (paraspinal/gluteus/iliopsoas) and bone ~38%, so both
 # are kept as receding, low-saturation "context" tones (dim flesh, warm ivory)
-# while the organs/vessels stay vivid, preserving contrast under the volumetric
+# while the organs/vessels stay vivid, preserving contrast under the additive
 # blend instead of drowning in a bright pink+ivory mush.
 GROUP_COLORS = {
     "bone": (0.90, 0.90, 0.88),  # near-neutral white (no yellow cast)
@@ -862,8 +862,11 @@ def create_luxar_scene(fit: GSplatData, labels: np.ndarray, output_path: Path) -
                     colors=colors[mask].astype(np.float32),
                     labels=[name_lut[int(lid)] for lid in lids],
                     opacity=float(opacity),
-                    absorption=1.0,
-                    blending_mode="volumetric",
+                    # Overlapping gsplat layers must composite additively:
+                    # splats are depth-sorted WITHIN a layer but not across
+                    # layers, so volumetric/normal would order these tissue
+                    # groups arbitrarily. Additive is order-independent.
+                    blending_mode="additive",
                     layer=True,
                 )
                 aprint(

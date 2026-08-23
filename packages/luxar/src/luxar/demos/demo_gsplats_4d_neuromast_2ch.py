@@ -222,14 +222,12 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
                         name=ch["name"],
                         path=str(path),
                         opacity=ch.get("opacity", 1.0),
-                        # kappa at the slider's smallest non-zero step: the two
-                        # channels are superimposed over the same neuromast, so
-                        # meaningful absorption makes whichever layer draws
-                        # first occlude the other. Near-zero kappa keeps
-                        # volumetric's bounded accumulation without the
-                        # occlusion.
-                        absorption=0.05,
-                        blending_mode="volumetric",
+                        # The two channels are superimposed over the same
+                        # neuromast. Splats are depth-sorted WITHIN a layer but
+                        # not across layers, so any depth-sorted mode orders
+                        # the two arbitrarily — which near-zero kappa hid
+                        # rather than fixed. Additive is order-independent.
+                        blending_mode="additive",
                         layer=True,
                         colormap=ch["colormap"],
                     )

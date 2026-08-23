@@ -589,18 +589,18 @@ Controls:
                     centered = centered.scale_intensity(0.1)
                     n_splats = len(centered.amplitudes)
 
-                    # Volumetric compositing at whole-node granularity lets a
-                    # channel attenuate channels drawn behind it, so the nuclear
-                    # stain no longer washes out the vasculature and cardiac
-                    # tissue as an unbounded additive sum did. Partial opacity
-                    # keeps all three channels readable through one another.
+                    # Overlapping gsplat layers must composite additively:
+                    # splats are depth-sorted WITHIN a layer but not across
+                    # layers, so volumetric/normal would order these channels
+                    # arbitrarily. Additive is order-independent.
+                    # All three channels image the same heart, so they overlap
+                    # everywhere. Partial opacity keeps their sum from clipping.
                     scene.add_gsplats_from_data(
                         name=f"gsplats_{ch_name.lower().replace(' ', '_').replace('(', '').replace(')', '')}",
                         result=centered,
                         dim_order=["z", "y", "x"],
                         opacity=0.48,
-                        absorption=1.0,
-                        blending_mode="volumetric",
+                        blending_mode="additive",
                         layer=True,
                         colormap=colormap,
                     )

@@ -73,11 +73,13 @@ def _gsplat_layers(scene_path: Path) -> list:
 
 
 class TestSceneBlending:
-    def test_scene_bakes_volumetric_blending_on_every_layer(self, tmp_path) -> None:
-        # Every per-tissue toggle layer must composite volumetrically
-        # (emission-absorption) so organs read through one another instead of
-        # summing to additive glow; pin it so a silent revert is caught (the
-        # helper smoke tests never build the scene). Seed one label per
+    def test_scene_bakes_additive_blending_on_every_layer(self, tmp_path) -> None:
+        # The per-tissue toggle layers all overlap the same body, and the
+        # viewer depth-sorts splats WITHIN a gsplat node but not across
+        # sibling nodes -- so a depth-sorted mode (volumetric/normal) would
+        # composite these layers in an arbitrary order. Additive is
+        # order-independent; pin it so a revert to the old volumetric look is
+        # caught (the helper smoke tests never build the scene). Seed one label per
         # supergroup so the scene really carries every layer — a layer that is
         # never built could not be checked.
         all_ids = np.array(sorted(CLASS_MAP), dtype=np.int32)
@@ -94,7 +96,7 @@ class TestSceneBlending:
         layers = _gsplat_layers(out)
         assert len(layers) == len(SUPERGROUPS)
         for attrs in layers:
-            assert attrs.get("blending_mode") == "volumetric"
+            assert attrs.get("blending_mode") == "additive"
 
 
 class TestTissueGroup:
