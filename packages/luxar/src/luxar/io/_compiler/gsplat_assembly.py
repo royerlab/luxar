@@ -43,6 +43,7 @@ from .colormap import write_colormap_lut_if_needed
 from .context import DatasetCtx, OrderingCtx
 from .dataset_writers.colors import write_colors
 from .dataset_writers.scalars import write_positive_scalar
+from .node_common import warn_if_over_element_cap
 
 #: Worst-case round-trip center displacement, measured in the splat's OWN
 #: marginal σ on that axis, above which the splat counts as *unrepresentable*
@@ -1239,6 +1240,7 @@ def apply_gsplat_group_attrs(
     group.attrs.update(attrs)
     group.attrs["type"] = "gsplats"
     group.attrs["n_splats"] = metadata["n_splats"]
+    warn_if_over_element_cap("gsplats", metadata["n_splats"], group.name)
     group.attrs["ndim"] = metadata["ndim"]
     group.attrs["has_colors"] = metadata["has_colors"]
     group.attrs["amplitude_range"] = metadata["amplitude_range"]
