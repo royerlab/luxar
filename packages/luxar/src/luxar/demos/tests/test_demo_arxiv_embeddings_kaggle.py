@@ -29,6 +29,7 @@ import pytest
 from luxar._zarr_compat import read_node_attrs
 from luxar.demos import demo_arxiv_embeddings_kaggle as demo
 from luxar.demos.demo_arxiv_embeddings_kaggle import generate_paper_landscape
+from luxar.encoding.decoder import ArrayDecoder
 
 
 def _points_node(scene) -> "object":
@@ -52,6 +53,12 @@ def _decoded_colors(scene) -> np.ndarray:
     assert encoding["name"] == "lut_uint8", encoding["name"]
     lut = np.asarray(encoding["lut"], dtype=np.float32)
     return lut[np.asarray(array[:])]
+
+
+def _decoded_radii(scene) -> np.ndarray:
+    """Per-point radii decoded through the viewer's real array decoder."""
+    node = _points_node(scene)
+    return ArrayDecoder().decode(node["radii"], node)
 
 
 def _fake_bundle(n: int = 40) -> dict:
@@ -545,7 +552,7 @@ class TestRadiiTrackCloudDensity:
 class TestUndatedPapersAreNotPaintedAsDated:
     def test_undated_points_take_the_neutral_colour(self, monkeypatch, tmp_path):
         bundle = _fake_bundle(n=12)
-        bundle["years"] = [0, 0] + [2010 + i for i in range(10)]
+        bundle["years"] = [0, 0] + [2010] * 5 + [2020] * 5
         bundle["median_nn"] = 0.01
         monkeypatch.setattr(demo, "cache_computed", lambda *a, **k: bundle)
         monkeypatch.setattr(demo, "substitutive_lod_or_flat", lambda spec: None)
@@ -567,6 +574,11 @@ class TestUndatedPapersAreNotPaintedAsDated:
         assert not np.allclose(
             demo.UNKNOWN_YEAR_COLOR, demo.CATEGORY_COLORS["other"], atol=1e-3
         )
+
+        radii = _decoded_radii(out)
+        unique, counts = np.unique(radii, return_counts=True)
+        assert len(unique) == 3
+        assert counts.tolist() == [10, 4, 10]
 
 
 class TestUmapDeviceSelection:

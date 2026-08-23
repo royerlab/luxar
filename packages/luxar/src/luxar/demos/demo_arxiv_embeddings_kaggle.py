@@ -1110,6 +1110,7 @@ def generate_paper_landscape(
             f"(median NN spacing {median_nn:.5f})"
         )
         radii_pp = (radius_base + radius_gain * yr_t).astype(np.float32)
+        radii_pp[~dated] = radius_base + 0.5 * radius_gain
 
         def _title(i: int) -> str:
             if titles is not None:
