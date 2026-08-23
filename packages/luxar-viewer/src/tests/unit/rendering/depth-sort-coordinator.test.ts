@@ -1013,7 +1013,7 @@ describe('depth-sort coordinator', () => {
     expect(parts.map((part) => part.renderOrder)).toEqual([0, 1]);
   });
 
-  it('ranks visible tracked partition parts whose commit stamp is temporarily absent', async () => {
+  it('keeps the BSP rank of a visible tracked part whose commit stamp is absent', async () => {
     const bspTree = {
       axis: 0,
       split: 0,
@@ -1033,7 +1033,10 @@ describe('depth-sort coordinator', () => {
       coord.noteDepthSortCommit(part, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     }
     await flush();
-    delete parts[1].userData.committedData;
+    // Remove the FAR part's stamp. Merely assigning unranked parts after all
+    // ranked parts would preserve uniqueness but incorrectly produce [1, 0];
+    // the stored BSP tree still has enough information for the exact order.
+    delete parts[0].userData.committedData;
 
     coord.evaluateDepthSortPerFrame();
 
