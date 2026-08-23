@@ -106,6 +106,15 @@ class Points(DataNode):
         return bool(self._metadata.get("has_image_labels", False))
 
     @property
+    def has_keys(self) -> bool:
+        """Check if points have per-element machine-readable keys.
+
+        The string a ``link`` / ``copy`` template substitutes as
+        ``{hover_key}``, independent of ``has_labels``.
+        """
+        return bool(self._metadata.get("has_keys", False))
+
+    @property
     def max_radius(self) -> float:
         """Get maximum point radius."""
         return float(self._metadata.get("max_radius", 0.0))

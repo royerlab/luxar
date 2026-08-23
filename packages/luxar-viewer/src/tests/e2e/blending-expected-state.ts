@@ -73,7 +73,7 @@ export const EXPECTED_BLEND_STATE: Record<string, ExpectedBlendState> = {
     transparent: true,
   },
   opaque: {
-    blending: 1, // NormalBlending
+    blending: 5, // CustomBlending (keeps alpha-over active with transparent=false)
     blendEquation: 100, // AddEquation
     blendSrc: 204, // SrcAlphaFactor
     blendDst: 205, // OneMinusSrcAlphaFactor

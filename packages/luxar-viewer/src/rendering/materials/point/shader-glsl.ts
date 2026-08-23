@@ -322,8 +322,14 @@ export const POINT_FRAGMENT_SHADER = /* glsl */ `
       // Per-point alpha is a plain linear contribution scale in every
       // non-volumetric mode (identity 1.0 for RGB data — no gate needed).
       alpha *= vAlpha;
-      // Early discard for zero-contribution fragments after offset
+      // Opaque fragments write depth, so their depth mask must follow
+      // the actual alpha-weighted light contribution. Other modes keep
+      // the colour-only early discard because they do not depth-write.
+      #ifdef LUXAR_OPAQUE_RGB_CONTRIBUTION
+      if (max(adjusted.r, max(adjusted.g, adjusted.b)) * alpha < 1e-4) discard;
+      #else
       if (max(adjusted.r, max(adjusted.g, adjusted.b)) < 1e-4) discard;
+      #endif
       #endif
 
       // LUXAR_GAMMA_ONE (gamma == 1.0) skips the per-fragment pow() —

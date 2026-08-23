@@ -427,13 +427,13 @@ def _reject_labels_on_a_grafted_wrapper(
       runs. A one-child wrapper whose whole nest still resolves to a single flat
       leaf is exempt for the reason above: that one leaf holds every splat —
       but the correspondence being EXACT is not the same as it being the right
-      LENGTH (#1505). A wrong-length ``labels`` / ``image_labels`` on this
+      LENGTH (#1505). A wrong-length ``labels`` / ``keys`` / ``image_labels`` on this
       branch used to sail through here and refuse one level down, from inside
       ``part_0``'s own leaf write, with the wrapper this function was supposed
       to guard already on disk — the exact strand this gate exists to close,
       just on its exempt side rather than its refused one. So the exempt
       branch below now runs the same length/content validators the flat writer
-      runs (``labels`` then ``image_labels``, its own order), and re-raises
+      runs (``labels`` then ``keys`` then ``image_labels``, its own order), and re-raises
       with the same hand-applied prefix — giving a verdict byte-identical to
       what the flattened control (the remedy this gate already recommends)
       would raise on the same arrays, for a SINGLE-FAULT call.
@@ -499,7 +499,8 @@ def _reject_labels_on_a_grafted_wrapper(
     # call passing both is answered deterministically — same tie-break as the
     # ``lod_group=`` half of the gate.
     kwarg = next(
-        (k for k in ("labels", "image_labels") if attrs.get(k) is not None), None
+        (k for k in ("labels", "image_labels", "keys") if attrs.get(k) is not None),
+        None,
     )
     if kwarg is None:
         return
@@ -525,7 +526,7 @@ def _reject_labels_on_a_grafted_wrapper(
 def _validate_labelled_leaf_length(
     name: str, n_splats: int, attrs: Dict[str, Any]
 ) -> None:
-    """Length/content-validate whichever label channel(s) are present.
+    """Length/content-validate whichever string channel(s) are present.
 
     Reached only from the one-flat-leaf exempt branch above: that leaf's
     correspondence is exact, but a wrong-length list still has to be caught
@@ -542,13 +543,15 @@ def _validate_labelled_leaf_length(
     has exactly one — the caller already refused more than one above — so the
     sum degenerates to that sub-LOD's own count, unambiguously).
 
-    Runs ``labels`` then ``image_labels`` — the flat writer's own order
-    (``write_gsplats`` steps 0d then 0e) — and reuses its validators rather
-    than re-implementing either rule:
+    Runs ``labels`` then ``keys`` then ``image_labels`` — the flat writer's own
+    order (``write_gsplats`` steps 0d then 0e) — and reuses its validators rather
+    than re-implementing any rule:
 
     * ``labels`` → :func:`~luxar.core.group.compositing.validate_labels_before_split`,
       which no-ops on ``None`` and otherwise delegates to
       ``validate_labels_for_writing`` (the same function step 0d calls).
+    * ``keys`` → ``validate_labels_for_writing`` directly with the key channel's
+      own context and noun (the same function step 0d calls).
     * ``image_labels`` → guarded on ``is not None`` here (that validator has no
       built-in no-op) and then
       :func:`~luxar.io._compiler.labels.image_labels.validate_image_labels_for_writing`
@@ -556,7 +559,7 @@ def _validate_labelled_leaf_length(
       kind of hoist, covering the dense length check, the sparse-dict key
       type/bounds, the one-shot-iterable refusal, and every entry's type.
 
-    Both raise a plain ``ValueError`` (``ValidationError`` is a subclass) or,
+    These validators raise a plain ``ValueError`` (``ValidationError`` is a subclass) or,
     for a malformed ``image_labels`` (a bad dict key type, a one-shot
     iterable, a wrongly-typed entry), a ``TypeError`` — caught here and
     re-raised as ``ValueError`` with the prefix this module applies by hand,
@@ -574,10 +577,14 @@ def _validate_labelled_leaf_length(
     divergence is the same sanctioned trade
     ``compositing.validate_points_channels_before_split`` already documents.
     """
+    from ....validation.base import validate_labels_for_writing
     from ..compositing import validate_labels_before_split
 
     try:
         validate_labels_before_split(attrs.get("labels"), n_splats)
+        keys = attrs.get("keys")
+        if keys is not None:
+            validate_labels_for_writing(keys, n_splats, context="keys", noun="Keys")
         image_labels = attrs.get("image_labels")
         if image_labels is not None:
             from luxar.io._compiler.labels.image_labels import (

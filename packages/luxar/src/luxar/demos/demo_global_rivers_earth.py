@@ -32,8 +32,10 @@ regenerate + cache it. This demo ships ONLY code:
     parses + builds the globe scene (to the standard demos-output dir), and
     caches the source + parsed polylines under
     ``~/.cache/luxar/global_rivers_earth/``.
-  * Subsequent runs load the built scene instantly; ``--recompute`` forces a
-    rebuild (source/polylines stay cached, so it never re-fetches the ~1 GB).
+  * Subsequent runs load the built scene instantly. A source change rebuilds
+    the scene automatically; ``--keep-stale`` reuses the existing build, while
+    ``--recompute`` forces a rebuild (source/polylines stay cached, so it never
+    re-fetches the ~1 GB).
 
 Requires: ``pyshp`` (shapefile reader) and ``tifffile`` (GeoTIFF reader).
 
@@ -46,7 +48,8 @@ ETOPO 2022 Global Relief Model — NOAA NCEI (2022), doi:10.25921/fd45-gt74.
 
 USAGE
 -----
-    python demo_global_rivers_earth.py [--recompute] [--no-serve] [--serve-only]
+    python demo_global_rivers_earth.py [--recompute] [--keep-stale]
+                                       [--no-serve] [--serve-only]
 """
 
 DEMO_META = {
@@ -77,7 +80,14 @@ from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
-from luxar.demos import add_demo_caption, launch_viewer, parse_demo_flags
+from luxar.demos import (
+    BUILDER_FINGERPRINT_ATTR,
+    add_demo_caption,
+    demo_source_fingerprint,
+    launch_viewer,
+    parse_demo_flags,
+    scene_is_current,
+)
 from luxar.encoding import EncodingMode
 from luxar.utils.paths import get_demos_output_dir
 
@@ -95,6 +105,9 @@ ETOPO_URL = (
 )
 
 N_GLOBE = 8_000_000  # Fibonacci-sphere terrain points
+# A 4096-class GPU can commit at most 5,591,040 Points from one node. Keep the
+# 8M-point globe in parts below that floor, each with its own stream ladder.
+MAX_GLOBE_POINTS_PER_NODE = 4_000_000
 MIN_ORDER = 3  # keep HydroRIVERS reaches with Strahler order >= this
 DECIMATE_DEG = 0.06  # drop river vertices closer than this (~2-3x line width)
 RADIUS = 100.0  # globe radius (scene units)
@@ -116,6 +129,11 @@ FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
 RECOMPUTE = FLAGS["recompute"]
+KEEP_STALE = FLAGS["keep_stale"]
+
+#: Identifies the builder that wrote a scene, so a scene left on disk by an
+#: OLDER version of this file is rebuilt instead of served forever (#1957).
+FINGERPRINT = demo_source_fingerprint(__file__)
 
 Arbol.max_depth = 5
 
@@ -399,6 +417,7 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
                 citation=DEMO_META["citation"],
             )
             scene.attrs["title"] = "Rivers of Earth — global topography + HydroRIVERS"
+            scene.attrs[BUILDER_FINGERPRINT_ATTR] = FINGERPRINT
             scene.add_points(
                 "terrain",
                 positions=gpos,
@@ -416,14 +435,12 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
                 # not one: its stratified-grid sampler emitted 8 / 56 / 272 /
                 # 1174 / 7,998,490 points, so 99.98% of the globe still landed in
                 # a single final commit. A `stream:` ladder is geometric by
-                # construction, so every level is a bounded fraction of the whole.
+                # construction, so every level is a bounded fraction of its part.
                 additive_lod=dict(counts="stream:20000", method="random", seed=0),
-                # The terrain still appears late, and all at once, well after the
-                # rivers. That is NOT a scheduling bug, so do not go looking for
-                # one: the ladder above streams exactly as designed. Measured
-                # over a cold load, all ten levels arrive in geometric order —
-                # 15 / 15 / 23 / 41 / 75 / 143 / 279 / 553 / 1101 / 1237 chunk
-                # requests.
+                partition=dict(max_elements=MAX_GLOBE_POINTS_PER_NODE),
+                # The terrain still appears late, well after the rivers. That is
+                # NOT a scheduling bug, so do not go looking for one: each
+                # partition's ladder above streams in geometric order.
                 #
                 # The last two levels contain 68% of the points and 62 of the
                 # terrain's 92 MB, so most of the terrain payload is still
@@ -443,9 +460,10 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
                 #    fills the opening frame selects the 41 MB level, not the
                 #    cheap ones. And its coarse levels are calibrated by
                 #    conserved render-light (integrated emission), which needs an
-                #    integrating blend: under `opaque` (NormalBlending +
-                #    depthWrite) the Gaussian tails never accumulate, so only the
-                #    dense cores paint and the globe renders as dark specks —
+                #    integrating blend: under `opaque` (depth-writing alpha-over;
+                #    gsplats emit alpha 1.0, so it is an overwrite for them) the
+                #    Gaussian tails never accumulate, so only the dense cores
+                #    paint and the globe renders as dark specks —
                 #    identical mid-load and fully settled.
                 #  * Fewer, bigger points (2M at radius 0.18) would genuinely fix
                 #    the wait — ~23 MB, solid at ~12 MB — but trades away zoom
@@ -498,7 +516,9 @@ def load_or_build_scene(output_path: Path) -> Path:
     the expensive source downloads + parsed polylines are cached under
     ``CACHE_DIR`` so a rebuild / ``--recompute`` never re-fetches the ~1 GB.
     """
-    if output_path.exists() and not RECOMPUTE:
+    if scene_is_current(
+        output_path, FINGERPRINT, recompute=RECOMPUTE, keep_stale=KEEP_STALE
+    ):
         aprint(f"Using existing scene: {output_path}")
         return output_path
 

@@ -152,9 +152,9 @@ def main():
                 "dimensions are driven by the bottom slider UI."
             ),
             observe=[
-                "Press <code>4</code> for W, then <code>[</code> / "
+                "Press <code>1</code> for W, then <code>[</code> / "
                 "<code>]</code>: the spiral rotates and Z oscillates.",
-                "Press <code>5</code> for Channel: colour cycles red, green, "
+                "Press <code>2</code> for Channel: colour cycles red, green, "
                 "blue with smaller points per channel.",
                 "Dragging the bottom sliders gives the same navigation.",
             ],
@@ -186,8 +186,8 @@ def main():
 
         aprint(f"\nTo view: luxar serve {output_path}")
         aprint("Navigation controls:")
-        aprint("- Press '4' to select Time dimension, then use [ ] to navigate")
-        aprint("- Press '5' to select Channel dimension, then use [ ] to navigate")
+        aprint("- Press '1' to select W dimension, then use [ ] to navigate")
+        aprint("- Press '2' to select Channel dimension, then use [ ] to navigate")
         aprint("- Use sliders in the UI for smooth navigation")
         aprint("=" * 60)
 

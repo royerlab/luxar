@@ -13,6 +13,10 @@ import { escapeHtml } from '../utils/escape-html';
 import { extractBaseUrl, extractPath } from './dataset-browser/url-utils';
 import { BROWSER_ICONS } from './dataset-browser/icons';
 import { trapFocus } from './help-overlay/focus-trap';
+import { installTypeToFilter } from './help-overlay/type-to-filter';
+// Aliased: the constructor parameter is also called `config`
+// ({@link DatasetBrowserConfig}), and a bare import would be shadowed by it.
+import { config as viewerConfig } from '../config';
 import { log, Modules } from '../utils/log';
 import { showToast } from './toast';
 
@@ -80,6 +84,11 @@ export interface DatasetBrowserConfig {
  * arrow-key navigable, and the breadcrumb row hosts an inline "enter path
  * manually" editor so a path/URL can always be typed — not only when the
  * server falls back to the `manual` detection strategy.
+ *
+ * Initial focus goes to the panel container rather than the search field, so
+ * the `O` shortcut still toggles the browser shut (a focused text field trips
+ * `InputHandler`'s typing guard — issue #1922); the first printable keystroke
+ * is forwarded into the search field so typing still filters immediately.
  */
 export class DatasetBrowser {
   private container: HTMLElement;
@@ -120,11 +129,11 @@ export class DatasetBrowser {
   /** Path of the most recent `navigate()` attempt — target for the error-state Retry button. */
   private lastAttemptedPath = '';
 
-  /** One-shot: focus the filter field after the first successful listing render. */
-  private initialFocusDone = false;
-
   /** Teardown for the modal focus trap (Tab must not escape behind the scrim). */
   private untrapFocus?: () => void;
+
+  /** Teardown for the container-focus + type-to-filter forwarder. */
+  private untypeToFilter?: () => void;
 
   constructor(config: DatasetBrowserConfig) {
     this.container = config.container;
@@ -181,10 +190,63 @@ export class DatasetBrowser {
     this.panel = this.createPanel();
     // Modal focus containment: the panel is aria-modal with a scrim, so Tab
     // must cycle inside it rather than escaping to the rail behind.
-    this.untrapFocus = trapFocus(this.panel);
+    // `autoFocusFirst: false` — initial focus belongs to the panel container
+    // (see installTypeToFilterOnPanel), not to the close button.
+    this.untrapFocus = trapFocus(this.panel, { autoFocusFirst: false });
+    this.untypeToFilter = this.installTypeToFilterOnPanel();
 
     // Start navigation at the determined path
     this.navigate(initialPath);
+  }
+
+  /**
+   * Park focus on the panel container and forward the first printable
+   * keystroke into the search field.
+   *
+   * The browser used to autofocus the search field on the first successful
+   * listing, which trips `InputHandler`'s typing guard and made `O` one-way —
+   * it opened the browser but the second `O` was swallowed as typing
+   * (issue #1922). Focus now stays on the (non-typing) panel container, so
+   * `O` toggles, while typing still filters from the very first key. `O`
+   * itself is passed through to the global binding, so it cannot be the
+   * FIRST character of a filter query (it types normally once the field has
+   * focus).
+   *
+   * The resolver only ever names the SEARCH field, and only while the search
+   * bar is actually shown: it returns `null` while that bar is hidden
+   * (loading, error, empty directory, manual-entry fallback), and the
+   * keystroke is then contained by the modal. The manual-entry `#manual-path`
+   * field is deliberately NOT a resolver target — it is a URL entry field,
+   * not a filter, so stray keystrokes should not be routed into it. The user
+   * clicks or Tabs into that field, which is a deliberate act, and from there
+   * the ordinary typing guard applies exactly as it does for every other text
+   * field in the app.
+   *
+   * `passthroughKeys` lists every shortcut this panel advertises while it is
+   * open: `O` (its own toggle) and `H` (the `H Help` chip in the welcome
+   * banner). Containment would otherwise make that chip a lie.
+   *
+   * `resolveFirstItem` restores the "`ArrowDown` enters the listing"
+   * affordance the search field's own handler provides: with focus parked on
+   * the container, that handler never sees the key.
+   */
+  private installTypeToFilterOnPanel(): () => void {
+    return installTypeToFilter(
+      this.panel,
+      () => {
+        const bar = this.panel.querySelector<HTMLElement>('#luxar-dataset-browser-search-bar');
+        if (!bar || bar.style.display === 'none') return null;
+        return this.panel.querySelector<HTMLInputElement>('#luxar-dataset-browser-search');
+      },
+      {
+        passthroughKeys: [
+          viewerConfig.input.keyboard.shortcuts.toggleDatasetBrowser,
+          viewerConfig.input.keyboard.shortcuts.toggleHelp,
+        ],
+        resolveFirstItem: () =>
+          this.panel.querySelector<HTMLElement>('.luxar-dataset-browser__file-item'),
+      }
+    );
   }
 
   /**
@@ -353,6 +415,7 @@ export class DatasetBrowser {
         <div class="luxar-dataset-browser__skeleton-row"></div>
       </div>
     `;
+    this.parkFocusIfUnclaimed();
     statusBar.textContent = 'Fetching directory contents...';
     this.setSearchVisible(false);
 
@@ -485,6 +548,15 @@ export class DatasetBrowser {
     editBtn.setAttribute('aria-label', 'Enter dataset path manually');
     editBtn.onclick = () => this.openPathEditor();
     breadcrumb.appendChild(editBtn);
+
+    this.parkFocusIfUnclaimed();
+  }
+
+  /** Keep modal keyboard handling active after a focused child is replaced. */
+  private parkFocusIfUnclaimed(): void {
+    if (!document.activeElement || document.activeElement === document.body) {
+      this.panel.focus();
+    }
   }
 
   /**
@@ -782,29 +854,11 @@ export class DatasetBrowser {
 
     content.appendChild(list);
 
-    // First successful listing: hand focus to the filter field so typing
-    // narrows immediately (ArrowDown moves into the list). One-shot so
-    // later re-renders never steal focus mid-interaction — and only when
-    // focus is still unclaimed (body or the panel shell): the listing
-    // arrives asynchronously, and a user who already focused the close
-    // button or a breadcrumb must not have focus yanked away.
-    if (!this.initialFocusDone && total > 0) {
-      this.initialFocusDone = true;
-      const active = document.activeElement;
-      // "Unclaimed" includes the close button: the modal focus trap parks
-      // initial focus there on open, and handing it to the filter when the
-      // first listing arrives is the intended flow. A user who deliberately
-      // focused something else (a breadcrumb, a row) keeps their focus.
-      const closeBtn = this.panel.querySelector('.luxar-dataset-browser__close-btn');
-      const focusUnclaimed =
-        !active || active === document.body || active === this.panel || active === closeBtn;
-      if (focusUnclaimed) {
-        const searchInput = this.panel.querySelector(
-          '#luxar-dataset-browser-search'
-        ) as HTMLInputElement | null;
-        searchInput?.focus();
-      }
-    }
+    // No autofocus here, deliberately. The listing arrives asynchronously and
+    // grabbing focus for the search field would (a) yank focus from whatever
+    // the user reached in the meantime and (b) trip InputHandler's typing
+    // guard, making `O` one-way (issue #1922). Typing narrows the list from
+    // the first key anyway — see installTypeToFilterOnPanel.
   }
 
   /**
@@ -852,7 +906,14 @@ export class DatasetBrowser {
       }
     };
 
-    input.focus();
+    // Deliberately NOT focused: a focused text field trips `InputHandler`'s
+    // typing guard, which would make `O` one-way again — the exact bug
+    // issue #1922 fixes, and this fallback is reachable in production (any
+    // host that serves an `index.html` instead of a listing). Focus stays on
+    // the panel container; the user clicks or Tabs into this field to type a
+    // path, and from then on it behaves like every other text field in the
+    // app. It is NOT wired into type-to-filter either: this is a URL, not a
+    // filter query, so stray keystrokes should not be routed into it.
   }
 
   /**
@@ -861,16 +922,27 @@ export class DatasetBrowser {
   show(): void {
     this.scrim.style.display = '';
     this.panel.style.display = 'flex';
-    // Re-arm the modal focus trap hide() released (no-op when already armed).
-    this.untrapFocus ??= trapFocus(this.panel);
+    // Re-arm what hide() released (no-op when already armed).
+    this.untrapFocus ??= trapFocus(this.panel, { autoFocusFirst: false });
+    this.untypeToFilter ??= this.installTypeToFilterOnPanel();
+    // Re-park focus unconditionally: `??=` skips the re-install (and with it
+    // the forwarder's own container focus) whenever the panel was never
+    // hidden, so a re-shown panel would otherwise start wherever focus
+    // happened to be. It must start fresh on the container — that is what
+    // keeps `O` a toggle and type-to-filter armed.
+    this.panel.focus({ preventScroll: true });
   }
 
   /**
    * Hide the browser panel.
    */
   hide(): void {
-    // Release the trap FIRST: a hidden modal must not keep Tab hostage, and
-    // the trap's cleanup hands focus back to the pre-open element.
+    // Release BEFORE hiding: a hidden modal must not keep Tab hostage or keep
+    // forwarding keystrokes, and the trap's cleanup hands focus back to the
+    // pre-open element. Forwarder first, so it is gone before the trap moves
+    // focus out.
+    this.untypeToFilter?.();
+    this.untypeToFilter = undefined;
     this.untrapFocus?.();
     this.untrapFocus = undefined;
     this.scrim.style.display = 'none';
@@ -891,6 +963,8 @@ export class DatasetBrowser {
     // close discards its result rather than firing `onDatasetSelect`
     // for a path the user backed out of.
     this.navigationGeneration++;
+    this.untypeToFilter?.();
+    this.untypeToFilter = undefined;
     this.untrapFocus?.();
     this.untrapFocus = undefined;
     if (this.onClose) {

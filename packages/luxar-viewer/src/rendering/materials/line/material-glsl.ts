@@ -150,19 +150,8 @@ export class LineMaterial
     const primitive = resolveLinePrimitive(materialConfig.primitive);
     const isCapsulePrimitive = primitive === 'capsule';
 
-    // Determine THREE.js blending mode
-    // 'additive' and 'luminous' both use AdditiveBlending - only depthTest differs
-    const initialMode = blendingMode;
-    let blending: THREE.Blending;
-    if (isOpaque || initialMode === 'normal') {
-      blending = THREE.NormalBlending;
-    } else if (initialMode === 'additive' || initialMode === 'luminous') {
-      blending = THREE.AdditiveBlending; // Classic additive: SrcAlpha, One
-    } else if (initialMode === 'max' || initialMode === 'volumetric') {
-      blending = THREE.CustomBlending;
-    } else {
-      blending = THREE.NormalBlending;
-    }
+    // Seed from the shared state so construction agrees with applyBlendingMode.
+    const blending = getCompleteBlendingState(blendingMode).blending;
 
     super({
       uniforms: {
@@ -480,7 +469,7 @@ export class LineMaterial
       primitive: this.userData.linePrimitive as LinePrimitive | undefined,
     });
 
-    // Copy blend equation settings for custom blending (max mode)
+    // Copy blend equation settings for custom blending (max/opaque modes)
     if (this.blending === THREE.CustomBlending) {
       cloned.blendEquation = this.blendEquation;
       cloned.blendSrc = this.blendSrc;
@@ -540,6 +529,8 @@ export class LineMaterial
     const previousMode = this.userData.blendingMode as BlendingMode | undefined;
     const wantsContrib = state.shaderOutputMode === 'rgb-contribution';
     const hasContrib = 'LUXAR_MAX_RGB_CONTRIBUTION' in this.defines;
+    const wantsOpaqueContrib = mode === 'opaque';
+    const hasOpaqueContrib = 'LUXAR_OPAQUE_RGB_CONTRIBUTION' in this.defines;
     // Volumetric = its own output branch (emission–absorption): every
     // non-volumetric transition must clear the define (a
     // volumetric→normal switch must not strand it). Mirrors the
@@ -553,6 +544,13 @@ export class LineMaterial
       definesChanged = true;
     } else if (!wantsContrib && hasContrib) {
       delete this.defines.LUXAR_MAX_RGB_CONTRIBUTION;
+      definesChanged = true;
+    }
+    if (wantsOpaqueContrib && !hasOpaqueContrib) {
+      this.defines.LUXAR_OPAQUE_RGB_CONTRIBUTION = '';
+      definesChanged = true;
+    } else if (!wantsOpaqueContrib && hasOpaqueContrib) {
+      delete this.defines.LUXAR_OPAQUE_RGB_CONTRIBUTION;
       definesChanged = true;
     }
     if (wantsVolumetric && !hasVolumetric) {

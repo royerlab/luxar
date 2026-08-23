@@ -81,11 +81,23 @@ def _fake_bundle(n: int = 40) -> dict:
     categories = [["cs.LG", "physics", "math.AT"][i % 3] for i in range(n)]
     years = [2010 + (i % 10) for i in range(n)]
     titles = [f"Paper number {i}" for i in range(n)]
+    # A mix of every id shape the real corpus holds, so the DOI keys built from
+    # this bundle exercise both branches of `paper_doi` rather than one.
+    ids = [
+        [
+            "2101.12345",  # arXiv, new style
+            "hep-th/9901001",  # arXiv, old style — contains a slash
+            "10.1101/2020.03.03.20030890",  # medRxiv, already a DOI
+            "10.1101/001891",  # legacy bioRxiv accession
+        ][i % 4]
+        for i in range(n)
+    ]
     return {
         "positions": positions,
         "categories": categories,
         "years": years,
         "titles": titles,
+        "ids": ids,
         # Measured by the compute step; drives the radius ramp.
         "median_nn": 0.02,
     }
@@ -776,3 +788,255 @@ class TestMainReportsBadFlagsCleanly:
         assert "~39 GB" in out
         assert "hours on CPU" in out
         assert "--sample=N" in out
+
+
+class TestPaperDoi:
+    """`paper_doi` maps any row of `papers.csv` to a resolvable DOI (#1917).
+
+    The corpus mixes two identifier namespaces, and a Points node carries a
+    single `link` template — so one function has to normalise both onto the one
+    resolver that serves all three preprint servers.
+    """
+
+    @pytest.mark.parametrize(
+        ("paper_id", "expected"),
+        [
+            # arXiv rows carry a bare id and get arXiv's retroactively minted DOI.
+            ("2101.12345", "10.48550/arXiv.2101.12345"),
+            # Old-style ids contain a slash. It survives verbatim here; the
+            # VIEWER percent-encodes it at click time, and doi.org resolves the
+            # encoded form (checked against the live resolver).
+            ("hep-th/9901001", "10.48550/arXiv.hep-th/9901001"),
+            ("math.AT/0309136", "10.48550/arXiv.math.AT/0309136"),
+            # bioRxiv / medRxiv rows are already DOIs and must pass through
+            # untouched — prefixing one would produce a DOI that resolves to
+            # nothing.
+            ("10.1101/2020.03.03.20030890", "10.1101/2020.03.03.20030890"),
+            ("10.1101/001891", "10.1101/001891"),
+            ("10.64898/2025.12.05.25341689", "10.64898/2025.12.05.25341689"),
+        ],
+    )
+    def test_maps_every_id_shape(self, paper_id: str, expected: str) -> None:
+        assert demo.paper_doi(paper_id) == expected
+
+    def test_never_double_prefixes(self) -> None:
+        """Idempotent on anything already a DOI — the failure that would make
+        every bioRxiv link dead while every arXiv link kept working, so half the
+        corpus would look fine."""
+        for pid in ("10.1101/001891", "10.48550/arXiv.2101.12345"):
+            assert demo.paper_doi(demo.paper_doi(pid)) == pid
+
+    def test_dispatches_on_the_id_not_the_journal_column(self) -> None:
+        """`journal` is defaulted to "arxiv" when blank and bucketed to "other"
+        when unrecognised, so it cannot be trusted to say what an id IS."""
+        assert demo.paper_doi("10.1101/001891").startswith("10.1101/")
+
+
+class TestColdBundleKeepsTheIds:
+    """The COMPUTE side stores the ids the warm path reads back.
+
+    Every other test here fakes `cache_computed`, so `_compute_bundle` never
+    runs and nothing notices if it stops storing `ids` — a cold run would then
+    build a bundle that produces no links, permanently, with the warm-cache
+    tests still green. (Measured: deleting the `"ids"` line survived the whole
+    file.) Every dependency of that closure is a module-level function, so the
+    cold path can be exercised with stubs and no dataset.
+    """
+
+    def _run_compute(self, monkeypatch, n_rows: int = 6) -> dict:
+        ids = [
+            "2101.12345",
+            "hep-th/9901001",
+            "10.1101/2020.03.03.20030890",
+            "10.1101/001891",
+            "1234.5678",
+            "10.64898/2025.12.05.25341689",
+        ][:n_rows]
+        journals = ["arxiv", "arxiv", "medrxiv", "biorxiv", "arxiv", "medrxiv"][:n_rows]
+
+        monkeypatch.setattr(demo, "ensure_embeddings_zip", lambda: "unused.zip")
+        monkeypatch.setattr(demo, "ensure_metadata_lookup", lambda: {})
+        monkeypatch.setattr(demo, "read_paper_index", lambda _zip: (ids, journals))
+        monkeypatch.setattr(
+            demo,
+            "build_pca_matrix",
+            lambda *a, **k: np.zeros((n_rows, 4), dtype=np.float32),
+        )
+        monkeypatch.setattr(
+            demo,
+            "reduce_embeddings_umap",
+            lambda emb, **k: np.zeros((len(emb), 3), dtype=np.float32),
+        )
+        monkeypatch.setattr(
+            demo, "median_nearest_neighbor_distance", lambda *a, **k: 0.02
+        )
+
+        # Capture the closure `cache_computed` would have called, then run it —
+        # this IS the cold path, minus the 40 GB.
+        captured = {}
+
+        def capture(name, key, compute_fn, **kwargs):  # noqa: ANN001
+            captured["bundle"] = compute_fn()
+            return captured["bundle"]
+
+        monkeypatch.setattr(demo, "cache_computed", capture)
+        return captured
+
+    def test_bundle_stores_the_selected_ids(self, monkeypatch, tmp_path) -> None:
+        captured = self._run_compute(monkeypatch)
+        out = tmp_path / "arxiv_papers_kaggle.luxar.zarr"
+        generate_paper_landscape(out, sample_size=None)
+
+        bundle = captured["bundle"]
+        assert "ids" in bundle, "the compute step dropped the ids again"
+        # One id per position, in the same order — the pairing the DOI depends on.
+        assert len(bundle["ids"]) == len(bundle["positions"])
+        assert bundle["ids"][0] == "2101.12345"
+        assert bundle["ids"][2] == "10.1101/2020.03.03.20030890"
+
+    def test_a_cold_run_produces_links(self, monkeypatch, tmp_path) -> None:
+        """The end the user actually sees: a first run links, without needing a
+        second one to warm anything."""
+        import zarr
+
+        self._run_compute(monkeypatch)
+        out = tmp_path / "arxiv_papers_kaggle.luxar.zarr"
+        generate_paper_landscape(out, sample_size=None)
+
+        root = zarr.open_group(str(out), mode="r")["arxiv_papers_kaggle"]
+        nodes = [dict(root.attrs)] + [
+            dict(root[name].attrs)
+            for name in sorted(root.keys())
+            if hasattr(root[name], "attrs")
+        ]
+        assert any(a.get("link") == "https://doi.org/{hover_key}" for a in nodes)
+        assert any(a.get("has_keys") for a in nodes)
+
+
+class TestDoiLinks:
+    """The built scene carries the click-through, or cleanly carries none."""
+
+    @staticmethod
+    def _keyed_leaf(scene):
+        """The node actually holding the keys CSR.
+
+        With the LOD deps present the demo writes a ``kind=lod`` group whose
+        COARSE children are merged gsplats and whose finest child is the
+        original point cloud; keys live on the finest child alone, exactly as
+        labels do. Without those deps it writes a flat leaf and the keys sit on
+        the node itself. Search rather than hard-code, so this test says
+        "wherever the keys are" instead of pinning one of the two layouts.
+        """
+        import zarr
+
+        root = zarr.open_group(str(scene), mode="r")["arxiv_papers_kaggle"]
+        if dict(root.attrs).get("has_keys"):
+            return root
+        for name in sorted(root.keys()):
+            child = root[name]
+            if hasattr(child, "attrs") and dict(child.attrs).get("has_keys"):
+                return child
+        raise AssertionError("no node in the scene carries a keys CSR")
+
+    def _decode_keys(self, node) -> list[str]:
+        offsets = np.asarray(node["key_offsets"][:])
+        data = bytes(np.asarray(node["key_bytes"][:]).tobytes())
+        return [
+            data[offsets[i] : offsets[i + 1]].decode("utf-8")
+            for i in range(len(offsets) - 1)
+        ]
+
+    def test_scene_carries_the_doi_template_and_keys(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        _install_warm_cache(monkeypatch)
+        out = tmp_path / "arxiv_papers_kaggle.luxar.zarr"
+        generate_paper_landscape(out, sample_size=40)
+
+        leaf = self._keyed_leaf(out)
+        attrs = dict(leaf.attrs)
+        assert attrs["link"] == "https://doi.org/{hover_key}"
+        assert attrs["copy"] == "{hover_key}"
+        assert attrs["has_keys"] is True
+
+        keys = self._decode_keys(leaf)
+        # Stacked twice (Category and Year views), so one key per stacked point.
+        assert len(keys) == 80
+        # Both branches of paper_doi are present and correct on disk.
+        assert "10.48550/arXiv.2101.12345" in keys
+        assert "10.48550/arXiv.hep-th/9901001" in keys
+        assert "10.1101/001891" in keys
+        # Nothing was double-prefixed on the way through.
+        assert not any(k.startswith("10.48550/arXiv.10.") for k in keys)
+
+    def test_coarse_lod_levels_carry_the_template_but_no_keys(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        """Which is why the empty-substitution rule matters here.
+
+        `link` is a non-compositing attr, so it is copied onto every LOD child,
+        but keys only reach the finest one. A pick on a coarse merged level
+        therefore resolves no key, and the viewer suppresses a link whose
+        template has an empty substitution rather than opening
+        ``https://doi.org/``. Pinned because the alternative — stripping the
+        template from coarse levels — would silently disable clicking on the
+        levels a user sees first.
+        """
+        import zarr
+
+        _install_warm_cache(monkeypatch)
+        out = tmp_path / "arxiv_papers_kaggle.luxar.zarr"
+        generate_paper_landscape(out, sample_size=40)
+
+        root = zarr.open_group(str(out), mode="r")["arxiv_papers_kaggle"]
+        if dict(root.attrs).get("kind") != "lod":
+            pytest.skip("LOD deps unavailable; the demo wrote a flat leaf")
+
+        coarse = [
+            dict(root[name].attrs)
+            for name in sorted(root.keys())
+            if hasattr(root[name], "attrs")
+            and not dict(root[name].attrs).get("has_keys")
+        ]
+        assert coarse, "expected at least one coarse level"
+        for attrs in coarse:
+            assert attrs["link"] == "https://doi.org/{hover_key}"
+            assert not attrs.get("has_keys")
+
+    def test_a_bundle_without_ids_builds_with_no_links(
+        self, monkeypatch, capsys, tmp_path
+    ) -> None:
+        """A cache written before ids were stored must lose the links, not the
+        scene.
+
+        Rebuilding that bundle costs a 40 GB PCA stream plus a UMAP over 3.29M
+        points, so it is honoured rather than invalidated — which only works if
+        the missing field degrades instead of raising.
+        """
+        import zarr
+
+        legacy = _fake_bundle()
+        del legacy["ids"]
+        monkeypatch.setattr(demo, "cache_computed", lambda *a, **k: legacy)
+
+        out = tmp_path / "arxiv_papers_kaggle.luxar.zarr"
+        assert generate_paper_landscape(out, sample_size=40) == 40
+
+        # No node anywhere may claim a link it cannot fill. Checked across the
+        # whole subtree rather than on the root, because with the LOD deps
+        # present the root is a `kind=lod` wrapper and the real nodes are its
+        # children.
+        root = zarr.open_group(str(out), mode="r")["arxiv_papers_kaggle"]
+        nodes = [("root", dict(root.attrs))] + [
+            (name, dict(root[name].attrs))
+            for name in sorted(root.keys())
+            if hasattr(root[name], "attrs")
+        ]
+        for name, attrs in nodes:
+            assert "link" not in attrs, name
+            assert "copy" not in attrs, name
+            assert not attrs.get("has_keys"), name
+
+        # The scene is otherwise intact: labels still work, points still exist.
+        assert any(attrs.get("has_labels") for _, attrs in nodes)
+        assert "skipping DOI links" in capsys.readouterr().out

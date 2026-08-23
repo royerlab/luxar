@@ -103,7 +103,9 @@ from luxar.demos import (
     require_module,
     warn_if_no_cuda_gpu,
 )
+from luxar.demos._lod_policy import save_with_lod
 from luxar.encoding import EncodingMode
+from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -254,15 +256,17 @@ def fit_channel(volume, channel_name, cache_file, source_dtype=None):
     # the current default; centers→u16, Cholesky→certified u8).
     cache_file.parent.mkdir(parents=True, exist_ok=True)
     aprint(f"  Caching to {cache_file}")
-    result.save(
+    save_with_lod(
+        result,
         cache_file,
+        recipe="stream",
         encoding_mode=EncodingMode.AUTO,
         include_fitting_info=True,
         compress="zip",
         zip_deflate=True,
     )
 
-    return result
+    return GSplatData.load(cache_file, include_stats=False)
 
 
 def fit_all_channels(volumes, source_dtype=None):

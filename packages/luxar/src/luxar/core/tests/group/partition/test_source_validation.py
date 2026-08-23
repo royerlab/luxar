@@ -69,6 +69,7 @@ _POINTS_CASES = [
     ("radii", np.full(_HALF, 0.5, dtype=np.float32)),
     ("sharpness", np.full(_HALF, 0.5, dtype=np.float32)),
     ("scalars", np.linspace(0, 1, _HALF).astype(np.float32)),
+    ("keys", [f"k{i}" for i in range(_HALF)]),
 ]
 
 _LINES_CASES = [
@@ -76,12 +77,14 @@ _LINES_CASES = [
     ("colors", np.zeros((_HALF, 3), dtype=np.float32)),
     ("sharpness", np.full(_HALF, 0.5, dtype=np.float32)),
     ("scalars", np.linspace(0, 1, _HALF).astype(np.float32)),
+    ("keys", [f"k{i}" for i in range(_HALF)]),
 ]
 
 _GSPLAT_CASES = [
     ("amplitudes", np.full(_HALF, 1.0, dtype=np.float32)),
     ("cholesky_factors", cholesky_rows(_HALF)),
     ("colors", np.zeros((_HALF, 3), dtype=np.float32)),
+    ("keys", [f"k{i}" for i in range(_HALF)]),
 ]
 
 
@@ -228,6 +231,30 @@ class TestGSplatsPartitionSourceValidation:
             )
 
         assert "g" not in compiler.store
+
+
+class TestMeshPartitionSourceValidation:
+    def test_wrong_length_keys_are_refused_exactly_as_the_flat_path(
+        self, tmp_path: Any
+    ) -> None:
+        compiler, scene, _ = open_scene(tmp_path, "mesh_keys.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, "mesh_flat_keys.luxar.zarr")
+        vertices, faces = grid_mesh(6)
+        keys = [f"k{i}" for i in range(6)]
+
+        flat = refusal(lambda: flat_scene.add_mesh("m", vertices, faces, keys=keys))
+        split = refusal(
+            lambda: scene.add_mesh(
+                "m",
+                vertices,
+                faces,
+                keys=keys,
+                partition={"max_elements": 10},
+            )
+        )
+
+        assert_same_refusal(flat, split)
+        assert "m" not in compiler.store
 
 
 # 24 vertices as 12 edges: an (8, 3) array has the same 24 elements but a layout
@@ -2112,6 +2139,7 @@ class TestASingleFlatLeafGraftStillLabels:
 _WRONG_LENGTH_WORDING = {
     "labels": "labels: Labels length (8)",
     "image_labels": "Image labels length (8)",
+    "keys": "keys: Keys length (8)",
 }
 
 

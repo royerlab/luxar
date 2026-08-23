@@ -52,7 +52,7 @@ _NO_CACHED_ARTIFACT = {
 #: letting :func:`save_with_lod` make the choice. That is still a deliberate,
 #: reviewable decision — the helper simply is not the one carrying it out. A demo
 #: that keeps whatever topology its fitter happened to produce has made no choice
-#: at all and belongs in ``_NOT_YET_ROUTED`` below, not here.
+#: at all and must route its cache write through :func:`save_with_lod` instead.
 #:
 #: This excuses a member from the *choosing* gate only. The topology it names is
 #: still put through the two round-trip gates (see :func:`_chosen_recipes`), since
@@ -73,24 +73,12 @@ _CHOOSES_OUTSIDE_THE_POLICY = {
     ),
 }
 
-#: Fitting demos not yet routed through the policy. SHRINKS to empty.
+#: No fitting demo may be parked here instead of choosing a topology.
 #:
-#: These keep whatever topology their fitter happens to produce — which is the
-#: defect the policy exists to remove, not a configuration. Every one of them is
-#: cache-only or local-compute, which is why they are not urgent.
-_NOT_YET_ROUTED = {
-    "demo_gsplats_3d_acto3d_heart.py",
-    "demo_gsplats_3d_cells3d_multichannel.py",
-    "demo_gsplats_3d_flylight_mcfo_neurons.py",
-    "demo_gsplats_3d_kidney_multichannel_layers.py",
-    "demo_gsplats_3d_kidney_multichannel_toggles.py",
-    "demo_gsplats_3d_opencell_map4.py",
-    "demo_gsplats_3d_organoid_dapi_nuclei.py",
-    "demo_gsplats_3d_organoid_multichannel.py",
-    "demo_gsplats_3d_tng_cosmic_web.py",
-    "demo_gsplats_3d_tribolium_embryo.py",
-    "demo_gsplats_4d_celegans_tracking.py",
-}
+#: This empty set is a tripwire: new fitting demos must route through the policy
+#: or qualify for one of the explicit exemptions above. The downloadable archives
+#: still need regeneration after policy changes; that publication pass is #1879.
+_NOT_YET_ROUTED: set[str] = set()
 
 
 def _demo_sources() -> dict[str, str]:
@@ -242,14 +230,13 @@ def test_every_fitting_demo_chooses_a_topology_or_is_listed() -> None:
     )
 
 
-def test_the_pending_list_shrinks_and_does_not_go_stale() -> None:
-    """A demo that has been routed must leave the list."""
+def test_the_pending_list_stays_empty() -> None:
+    """The former backlog stays empty now that every fitting demo has a policy."""
+    assert not _NOT_YET_ROUTED, (
+        "route the demo through save_with_lod or take an explicit exemption — "
+        "_NOT_YET_ROUTED is closed"
+    )
     fitting = _fitting_demos()
-    for name in sorted(_NOT_YET_ROUTED):
-        assert name in fitting, f"{name} no longer fits — drop it from the list"
-        assert not _policy_recipes(fitting[name]), (
-            f"{name} now chooses a topology — remove it from _NOT_YET_ROUTED"
-        )
     for name in sorted(_NO_CACHED_ARTIFACT):
         assert name in fitting, f"{name} no longer fits — drop the exemption"
 

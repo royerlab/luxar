@@ -172,9 +172,15 @@ describe('H.1 — getCompleteBlendingState canonical state per mode', () => {
     expect(state.shaderOutputMode).toBe('rgb-contribution');
   });
 
-  it('opaque: NormalBlending + depthTest + depthWrite', () => {
+  it('opaque: explicit alpha-over while staying depth-writing and non-transparent', () => {
     const state = getCompleteBlendingState('opaque');
-    expect(state.blending).toBe(THREE.NormalBlending);
+    // THREE.WebGLRenderer replaces NormalBlending + transparent=false
+    // with NoBlending. CustomBlending is required for these factors to
+    // reach the framebuffer while the material stays in the opaque list.
+    expect(state.blending).toBe(THREE.CustomBlending);
+    expect(state.blendEquation).toBe(THREE.AddEquation);
+    expect(state.blendSrc).toBe(THREE.SrcAlphaFactor);
+    expect(state.blendDst).toBe(THREE.OneMinusSrcAlphaFactor);
     expect(state.depthTest).toBe(true);
     expect(state.depthWrite).toBe(true);
     expect(state.transparent).toBe(false);

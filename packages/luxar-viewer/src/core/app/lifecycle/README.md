@@ -60,7 +60,7 @@ contract:
 3.  pickingEvents                        ← BEFORE overlayManager (HIGH-12 mousemove race)
 4.  overlayManager (clears recordingPanel back-ref first)
 5.  recordingPanel, layersPanel
-6.  pickingSystem → labelLoader, imageLabelLoader
+6.  pickingSystem → labelLoader, keyLoader, imageLabelLoader
 7.  datasetBrowser (close + unbind from inputHandler)
 8.  inputHandler                         ← child panels gone before host
 9.  renderingControls

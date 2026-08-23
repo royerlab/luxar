@@ -13,14 +13,20 @@ import type { OverlayManager } from '../../../ui/overlay-manager';
 import type { EventGroup } from '../../../utils/cross-layer/event-group';
 
 /**
- * Result of {@link initPicking}. All three fields are `undefined` when
- * the scene has no labels / no zarr store / no LuxarScene root, in which
+ * Result of {@link initPicking}. All four fields are `undefined` when
+ * the scene has no picking consumers / no scene loader / no LuxarScene root, in which
  * case picking is intentionally inactive for this session.
  */
 export interface InitPickingResult {
   pickingSystem: PickingSystem | undefined;
   labelLoader: LabelLoader | undefined;
   imageLabelLoader: ImageLabelLoader | undefined;
+  /**
+   * Reads the per-element `keys` CSR (issue #1917). A `LabelLoader` on the
+   * `'keys'` channel — same class, different array names — so it caches,
+   * coalesces and disposes exactly like the label one.
+   */
+  keyLoader: LabelLoader | undefined;
 }
 
 export interface InitPickingPorts {
@@ -67,7 +73,7 @@ export interface InitPickingPorts {
 /**
  * Tear down a picking session: event listeners (DOM + Three
  * EventDispatcher, all funneled through the session's EventGroup), the
- * PickingSystem, and the label loaders. Idempotent — every step
+ * PickingSystem, and the string/image loaders. Idempotent — every step
  * tolerates an already-disposed / absent collaborator.
  *
  * Called from two places:
@@ -89,6 +95,7 @@ export function disposePickingSession(ports: {
   ports.previous.pickingSystem?.dispose();
   ports.previous.labelLoader?.dispose();
   ports.previous.imageLabelLoader?.dispose();
+  ports.previous.keyLoader?.dispose();
 }
 
 /**
@@ -96,12 +103,10 @@ export function disposePickingSession(ports: {
  *
  * 1. Tear down any previous picking session (event listeners, system,
  *    loaders) so a dataset switch never leaks state.
- * 2. Walk the freshly-loaded LuxarScene root looking for
- *    `userData.attrs.has_labels` / `has_image_labels`. Bail out early
- *    when nothing requests labels — keeps the bench-only synthetic
- *    scenes free of picking overhead.
- * 3. Stand up new {@link LabelLoader} / {@link ImageLabelLoader} backed
- *    by the scene loader's zarr store + root location.
+ * 2. Walk the freshly-loaded LuxarScene root looking for text/image channels
+ *    and interaction templates. Bail out early when nothing can consume a pick.
+ * 3. Stand up label/key {@link LabelLoader} instances and an
+ *    {@link ImageLabelLoader} backed by the scene loader's zarr store.
  * 4. Construct {@link PickingSystem} with the pick-result handler that
  *    forwards to {@link OverlayManager.updateHoverContent}.
  * 5. Wire DOM + Three.js EventDispatcher listeners (mousemove,
@@ -109,7 +114,7 @@ export function disposePickingSession(ports: {
  *    sceneManager 'camera-changed') through the supplied
  *    {@link EventGroup} so a future `dispose()` removes them in one call.
  *
- * Returns the new system + loaders; the orchestrator stores all three
+ * Returns the new system + loaders; the orchestrator stores all four
  * on its own fields. The handler closures capture the locally-created
  * pickingSystem so they always see the current instance (not a stale
  * reference from a previous session).
@@ -126,15 +131,21 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
   // initPicking call) removes them in one shot.
   disposePickingSession(ports);
 
-  // Check if any node has labels or image labels
+  // Check if any node has hover channels or interaction templates.
   const root = ports.sceneManager.scene?.children?.find((c) => c.name === 'LuxarScene') as
     THREE.Group | undefined;
   if (!root) {
-    return { pickingSystem: undefined, labelLoader: undefined, imageLabelLoader: undefined };
+    return {
+      pickingSystem: undefined,
+      labelLoader: undefined,
+      imageLabelLoader: undefined,
+      keyLoader: undefined,
+    };
   }
 
   let hasAnyLabels = false;
   let hasAnyImageLabels = false;
+  let hasAnyKeys = false;
   let hasAnyInteraction = false;
   const linkDiagnostics = new Map<string, { nodeName: string; rejection: string | null }>();
   root.traverse((obj) => {
@@ -144,6 +155,9 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
     }
     if (attrs?.has_image_labels) {
       hasAnyImageLabels = true;
+    }
+    if (attrs?.has_keys) {
+      hasAnyKeys = true;
     }
     // A layer can carry a click action WITHOUT labels — a link built purely
     // from `{hover_index}` is perfectly usable — and such a scene auto-injects
@@ -178,14 +192,24 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
   // entirely (keeps the bench-only synthetic scenes free of picking cost).
   const wantsSelection =
     (ports.hasSelectionConsumer?.() ?? false) || (ports.hasElementActionConsumer?.() ?? false);
-  if (!hasAnyLabels && !hasAnyImageLabels && !hasAnyInteraction && !wantsSelection) {
-    return { pickingSystem: undefined, labelLoader: undefined, imageLabelLoader: undefined };
+  if (!hasAnyLabels && !hasAnyImageLabels && !hasAnyKeys && !hasAnyInteraction && !wantsSelection) {
+    return {
+      pickingSystem: undefined,
+      labelLoader: undefined,
+      imageLabelLoader: undefined,
+      keyLoader: undefined,
+    };
   }
 
   // Get the scene loader for store/rootLoc access
   const sceneLoader = getSceneLoader('default');
   if (!sceneLoader) {
-    return { pickingSystem: undefined, labelLoader: undefined, imageLabelLoader: undefined };
+    return {
+      pickingSystem: undefined,
+      labelLoader: undefined,
+      imageLabelLoader: undefined,
+      keyLoader: undefined,
+    };
   }
 
   // Create label loaders from the scene loader's zarr store. The loaders
@@ -194,13 +218,22 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
   const store = sceneLoader.zarrStore;
   let labelLoader: LabelLoader | undefined;
   let imageLabelLoader: ImageLabelLoader | undefined;
+  let keyLoader: LabelLoader | undefined;
   if (store) {
     const rootLoc = zarr.root(store);
     labelLoader = hasAnyLabels ? new LabelLoader(store, rootLoc) : undefined;
     imageLabelLoader = hasAnyImageLabels ? new ImageLabelLoader(store, rootLoc) : undefined;
+    // Same class, `'keys'` channel — only built when some node declares one,
+    // so a scene without keys pays nothing.
+    keyLoader = hasAnyKeys ? new LabelLoader(store, rootLoc, 'keys') : undefined;
   } else if (!wantsSelection) {
     log.warning(Modules.APP, 'Cannot init picking: zarr store not available');
-    return { pickingSystem: undefined, labelLoader: undefined, imageLabelLoader: undefined };
+    return {
+      pickingSystem: undefined,
+      labelLoader: undefined,
+      imageLabelLoader: undefined,
+      keyLoader: undefined,
+    };
   }
 
   // Create picking system with result callback. The handler closure
@@ -222,6 +255,7 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
     buildPickResultHandler({
       labelLoader,
       imageLabelLoader,
+      keyLoader,
       overlayManager: ports.getOverlayManager(),
       onSelection: ports.onSelection,
       onPicked: (pick) => {
@@ -323,6 +357,6 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
     onElementContextMenu: ports.onElementContextMenu,
   });
 
-  log.info(Modules.APP, 'GPU picking system initialized (labels detected)');
-  return { pickingSystem, labelLoader, imageLabelLoader };
+  log.info(Modules.APP, 'GPU picking system initialized');
+  return { pickingSystem, labelLoader, imageLabelLoader, keyLoader };
 }

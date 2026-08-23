@@ -415,10 +415,10 @@ class TestFitTiledParallel:
         out = capsys.readouterr().out
         assert "No merged quality metrics" in out
         assert "gsplat compare" in out
-        # `compare` cannot load a `kind=partition` store directly
-        # (``GSplatData.load`` raises "not matrix-shaped"), so a recourse that
-        # omits the flatten step tracebacks on the tiled default.
-        assert "gsplat flatten" in out
+        # `compare` reads the written archive whatever its shape, `kind=partition`
+        # (the tiled default) included (#1978), so the recourse must not send the
+        # caller through a pointless full-disk `gsplat flatten` copy first.
+        assert "gsplat flatten" not in out
 
     def test_scores_the_partition_when_given_the_reference(
         self, tmp_path: Path, capsys: pytest.CaptureFixture

@@ -177,7 +177,7 @@ export function buildElementUrl(template: string, values: HoverTemplateValues): 
 export function explainLinkRejection(template: string): string | null {
   // Substitute placeholders with a harmless non-empty token so the shape can
   // be judged without an element. `x` cannot itself introduce structure.
-  const probe = template.replace(/\{(hover_label|hover_node|hover_index)\}/g, 'x');
+  const probe = template.replace(/\{(hover_key|hover_label|hover_node|hover_index)\}/g, 'x');
 
   if (probe.length > MAX_LINK_CHARS) {
     return `link is ${probe.length} characters, over the ${MAX_LINK_CHARS} limit`;

@@ -117,6 +117,15 @@ class Lines(DataNode):
         return bool(self._metadata.get("has_image_labels", False))
 
     @property
+    def has_keys(self) -> bool:
+        """Check if lines have per-element machine-readable keys.
+
+        The string a ``link`` / ``copy`` template substitutes as
+        ``{hover_key}``, independent of ``has_labels``.
+        """
+        return bool(self._metadata.get("has_keys", False))
+
+    @property
     def max_width(self) -> float:
         """Get maximum line width."""
         return float(self._metadata.get("max_width", 0.0))

@@ -14,12 +14,13 @@ from typer.testing import CliRunner
 
 from luxar.cli.main import app
 from luxar.gsplats.gsplat_data import GSplatData
+from luxar.gsplats.io.save_gsplats import write_gsplats_tree
 
 PEDESTAL = 600.0
 
 
-@pytest.fixture
-def fitted_store_and_reference(tmp_path):
+@pytest.fixture(params=["flat", "partition"])
+def fitted_store_and_reference(tmp_path, request):
     """A store advertising a known basis, plus the raw volume it was fitted from."""
     volume = np.full((10, 10, 10), PEDESTAL, dtype=np.float32)
     volume[3:7, 3:7, 3:7] += 1200.0
@@ -35,7 +36,15 @@ def fitted_store_and_reference(tmp_path):
         stats={"image_min": PEDESTAL, "floor": PEDESTAL},
     )
     store = tmp_path / "fit.gsplats.zarr"
-    data.save(store, include_fitting_info=True)
+    if request.param == "partition":
+        write_gsplats_tree(
+            store,
+            data.to_spatial_partition(max_elements=4),
+            ordering="none",
+            pipeline_info=data.stats,
+        )
+    else:
+        data.save(store, include_fitting_info=True)
     return store, ref
 
 

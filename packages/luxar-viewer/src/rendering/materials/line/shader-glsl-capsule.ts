@@ -644,7 +644,11 @@ export const CAPSULE_LINE_FRAGMENT_SHADER = /* glsl */ `
       // Per-endpoint alpha is a plain linear contribution scale in every
       // non-volumetric mode.
       intensity *= vAlpha;
+      #ifdef LUXAR_OPAQUE_RGB_CONTRIBUTION
+      if (max(adjusted.r, max(adjusted.g, adjusted.b)) * intensity * uOpacity < 1e-4) discard;
+      #else
       if (max(adjusted.r, max(adjusted.g, adjusted.b)) < 1e-4) discard;
+      #endif
       #endif
 
       #if defined(USE_COLORMAP) || defined(LUXAR_GAMMA_ONE)

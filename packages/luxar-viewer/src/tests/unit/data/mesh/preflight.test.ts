@@ -710,6 +710,7 @@ describe('preflightMesh — presence flags must match the store', () => {
   it.each([
     ['has_labels', { has_labels: true }, 'labelOffsets'],
     ['has_image_labels', { has_image_labels: true }, 'imageLabelOffsets'],
+    ['has_keys', { has_keys: true }, 'keyOffsets'],
   ])('rejects %s with only half of its CSR pair', async (flag, override, presentSlot) => {
     // v1 never fetches the label arrays, but a half-present pair is a store that
     // fails confusingly the moment picking lands — so it is refused now, while the

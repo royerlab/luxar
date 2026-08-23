@@ -22,7 +22,7 @@
  *
  * Who populates the map today:
  *  - **Points** — `data/points/projection.ts::projectPointsTo3D`, for a node
- *    declaring `has_labels` / `has_image_labels` and only on the non-identity
+ *    declaring `has_labels` / `has_image_labels` / `has_keys` and only on the non-identity
  *    path (a single range starting at 0 with no compaction emits nothing, so
  *    picking stays allocation-free in the common Points case). The commit
  *    (`commit-points-geometry.ts`) forwards `LoadedPointsData.elementIds` to
@@ -56,7 +56,7 @@
  *    (`data/scene-loader/process/data-processor-gsplats.ts::toProcessed`) and
  *    stamped by `commit-gsplats-geometry.ts`. The two halves are the loader's
  *    visible `ranges` (published only for a node declaring `has_labels` /
- *    `has_image_labels`) and the surviving source indices the fused kernel now
+ *    `has_image_labels` / `has_keys`) and the surviving source indices the fused kernel now
  *    records (`project_gsplats_nd_to_3d`'s `out_source_indices`, since
  *    hidden-dim visibility compaction happens inside it). The standard-3D fast
  *    path emits every splat in order, so it records nothing and the
@@ -73,7 +73,7 @@
  *    `emitSourceIndices` documents as 4 B/splat, and round-trips it through
  *    wasm-bindgen, which copies it into linear memory and back out — so a
  *    transient allocation plus ~8 B/splat of memcpy on top, none of which
- *    Points pays. All of it is gated on `has_labels` / `has_image_labels`.
+ *    Points pays. All of it is gated on `has_labels` / `has_image_labels` / `has_keys`.
  *  - **Lines** — the longest chain, because on top of range loading it has a
  *    GRANULARITY mismatch: the pick shader reports a visible SEGMENT slot while
  *    line labels are per-VERTEX. Four spaces, composed in
@@ -86,7 +86,7 @@
  *    `buildElementIdMap`).
  *    A segment has TWO endpoints and the pick id is a `flat` vertex-stage
  *    varying, so exactly one can be reported: by convention it is the **START**
- *    vertex. Gated on `has_labels` / `has_image_labels` like the others, and it
+ *    vertex. Gated on `has_labels` / `has_image_labels` / `has_keys` like the others, and it
  *    fails closed to the raw slot on any inconsistency.
  *  - **Lines additive ladders** — still out. The per-node indirection above
  *    exists now, but nothing composes the LEVELS: `lines-progressive-loader.ts`
@@ -111,7 +111,7 @@
  *    `partition=`-forwards-`additive_lod=` composition
  *    (`core/group/adders/points.py`) is readable too since #1422: the part's
  *    ladder parent — which IS the part's scene node — carries one union CSR
- *    spanning its `additive_<i>` levels and declares `has_labels`. For POINTS
+ *    spanning its `additive_<i>` levels and declares `has_labels` or `has_keys`. For POINTS
  *    it is MAPPED as well, by exactly the ladder composition above — that
  *    composition reads the parent flags off the part group, so a partitioned
  *    ladder needs no separate path. A LINES part stays readable-but-unmapped,
