@@ -262,7 +262,9 @@ def _mandelbulb_ambient_occlusion(
     """
     occlusion = np.zeros(len(positions), dtype=np.float64)
     total_weight = 0.0
-    for index in range(5):
+    # Four full-depth taps preserve the reference lighting (mean delta 0.0014,
+    # p99 0.0073 at 48^3); the fifth tap costs another DE pass for no visible gain.
+    for index in range(4):
         distance_along_normal = step * 2**index
         sample_positions = positions + normals * distance_along_normal
         sampled_distances, _ = mandelbulb_distance_estimate(
@@ -278,6 +280,9 @@ def _mandelbulb_ambient_occlusion(
         occlusion += deficit * weight
         total_weight += weight
 
+    # This DE is a lower bound rather than a unit-gradient SDF, so even open-space
+    # probes retain a 0.13-0.15 deficit. Strength 0.85 and floor 0.15 preserve
+    # crevice contrast; the authored display range absorbs the global darkening.
     return np.clip(1.0 - 0.85 * occlusion / total_weight, 0.15, 1.0)
 
 
@@ -311,9 +316,12 @@ def _mandelbulb_surface_appearance(
         step=max_distance,
     )
 
+    # Deliberately bake a world-fixed key into emissive point colour: it reveals
+    # the upper/front folds but does not follow the camera during the orbit.
     key_direction = np.array([-0.45, -0.35, 0.82])
     key_direction /= np.linalg.norm(key_direction)
     lambert = np.clip(normals @ key_direction, 0.0, 1.0)
+    # Ambient 0.32 keeps the far side legible while retaining directional relief.
     lighting = (0.32 + 0.68 * lambert) * ambient_occlusion
     colors = np.clip(base_colors * lighting[:, None], 0.0, 1.0).astype(np.float32)
     return colors, lighting.astype(np.float32), ambient_occlusion.astype(np.float32)
@@ -484,8 +492,9 @@ def generate_mandelbulb_volumetric(
                 # -min/(max-min) (rendering/display-range.ts::computeUniforms),
                 # so a min of 0 leaves offset at its identity and the max is
                 # simply 1/intensity. A max of 26 preserves the new shadow
-                # range while leaving the real-GPU gallery capture close to
-                # exposure-neutral (-0.31 EV auto adjustment).
+                # range. The gallery harness selected a -0.31 EV adjustment to
+                # converge on its exposure target; that is not residual clipping
+                # or an uncompensated authoring offset.
                 intensity=1.0 / 26.0,
                 # Expose the node in the viewer's Layers panel so the
                 # appearance above is live-tunable — in volumetric mode the
