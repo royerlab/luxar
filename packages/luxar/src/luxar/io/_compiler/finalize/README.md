@@ -104,15 +104,15 @@ sentinel so they cannot hash alike:
   latter covering the `UnicodeEncodeError` a lone surrogate in the name
   produces), the targeted case-exact listing raised (`NotImplementedError`/
   `OSError`/`ValueError`), or the store advertises no listing support for that
-  probe. Consequently, the same keys and bytes can
-  hash differently on a listing store and a non-listing store for this narrow
-  metadata-name collision class. Readability is the store's verdict, and a name
-  heuristic in its place would be wrong in **both** directions: a `LocalStore`
-  refuses an over-long component that a `MemoryStore` or `ZipStore` reads back
-  fine, or an embedded NUL that a `MemoryStore` reads fine, while a short name
-  still fails once the group's directory pushes the whole path past `PATH_MAX`.
-  Why these failures degrade to a term instead of aborting the compile, and
-  what that costs: see the listing and read `except` blocks in `hashing.py`.
+  probe. Consequently, the same keys and bytes can hash differently on a
+  listing store and a non-listing store for this narrow metadata-name collision
+  class. Readability is the store's verdict, and a name heuristic in its place
+  would be wrong in **both** directions: a `LocalStore` refuses an over-long
+  component that a `MemoryStore` or `ZipStore` reads back fine, or an embedded
+  NUL that a `MemoryStore` reads fine, while a short name still fails once the
+  group's directory pushes the whole path past `PATH_MAX`. Why these failures
+  degrade to a term instead of aborting the compile, and what that costs: see
+  the listing and read `except` blocks in `hashing.py`.
 
 Only the metadata-document collision class gets the case-exact listing gate,
 because those are the names whose resolved bytes can carry the hash being
