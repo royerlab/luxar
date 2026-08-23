@@ -69,6 +69,7 @@ _POINTS_CASES = [
     ("radii", np.full(_HALF, 0.5, dtype=np.float32)),
     ("sharpness", np.full(_HALF, 0.5, dtype=np.float32)),
     ("scalars", np.linspace(0, 1, _HALF).astype(np.float32)),
+    ("keys", [f"k{i}" for i in range(_HALF)]),
 ]
 
 _LINES_CASES = [
@@ -76,6 +77,7 @@ _LINES_CASES = [
     ("colors", np.zeros((_HALF, 3), dtype=np.float32)),
     ("sharpness", np.full(_HALF, 0.5, dtype=np.float32)),
     ("scalars", np.linspace(0, 1, _HALF).astype(np.float32)),
+    ("keys", [f"k{i}" for i in range(_HALF)]),
 ]
 
 _GSPLAT_CASES = [
