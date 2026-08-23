@@ -117,7 +117,6 @@ function makeSceneManager(): {
   const flyHandleKeyDown = vi.fn();
   const flyHandleKeyUp = vi.fn();
   const canvas = document.createElement('canvas');
-  document.body.appendChild(canvas);
   const sceneManager = {
     renderer: { domElement: canvas },
     controls: {
@@ -289,23 +288,31 @@ describe('registerAllKeyBindings — NAVIGATION command dispatch', () => {
     const { bindings, canvas } = setup();
     const listener = vi.fn();
     const button = document.createElement('button');
+    document.body.appendChild(canvas);
     document.body.appendChild(button);
     window.addEventListener('luxar-open-element-menu', listener);
     try {
+      document.body.focus();
+      findBinding(bindings, InputContext.NAVIGATION, 'ContextMenu').handler(
+        new KeyboardEvent('keydown')
+      );
+      expect(listener).toHaveBeenCalledTimes(1);
+
       canvas.tabIndex = 0;
       canvas.focus();
       findBinding(bindings, InputContext.NAVIGATION, 'F10', { shift: true }).handler(
         new KeyboardEvent('keydown', { shiftKey: true })
       );
-      expect(listener).toHaveBeenCalledTimes(1);
+      expect(listener).toHaveBeenCalledTimes(2);
 
       button.focus();
       findBinding(bindings, InputContext.NAVIGATION, 'ContextMenu').handler(
         new KeyboardEvent('keydown')
       );
-      expect(listener).toHaveBeenCalledTimes(1);
+      expect(listener).toHaveBeenCalledTimes(2);
     } finally {
       window.removeEventListener('luxar-open-element-menu', listener);
+      canvas.remove();
       button.remove();
     }
   });
