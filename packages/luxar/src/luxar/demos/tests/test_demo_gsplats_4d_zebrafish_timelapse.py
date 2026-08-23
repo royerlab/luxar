@@ -508,3 +508,97 @@ class TestTheStackedArchiveSurvivesItsRoundTrip:
             "the cage is the instrument, not the specimen: it must survive "
             "every scrub rather than appear at one timepoint"
         )
+
+
+class TestTheFitCacheKeyMovesWithEveryKnob:
+    """A cached fit may only be reused by a run that would have produced it.
+
+    An earlier version of this demo keyed its per-timepoint cache on the frame
+    index alone. That is silent and expensive in exactly the wrong way: every
+    sweep in the module docstring — the seed budget, the floor, the denoising
+    strength — would have been served the first arm's fits and reported it as
+    the answer for all of them.
+
+    So this enumerates the knobs rather than spot-checking one, because the
+    failure is introduced by ADDING a knob and forgetting the key, and a
+    spot-check on the knobs that already exist cannot see that.
+    """
+
+    #: Every module constant the fit result depends on. A new one belongs here
+    #: at the same time it starts being passed to ``fit_gaussian_splats``.
+    KNOBS = {
+        "SEEDS": 12_345,
+        "N_ITERS": 999,
+        "EARLY_STOP_PATIENCE": 7,
+        "CULL_RETENTION": 0.5,
+        "FLOOR": "p90",
+        "DENOISE_H": 0.123,
+    }
+
+    #: Constants that reach the fit but deliberately stay OUT of the key, each
+    #: for a reason that has to be written down. ``device`` is a *how*, not a
+    #: *what*: the same config on CPU and on CUDA is meant to describe the same
+    #: fit, and if it does not, the answer is to fix the fitter rather than to
+    #: refit an entire timelapse per machine.
+    EXEMPT = {"DEVICE"}
+
+    def test_the_frame_index_is_in_the_key(self) -> None:
+        assert _demo._fit_cache_path(3) != _demo._fit_cache_path(4)
+
+    @pytest.mark.parametrize("knob", sorted(KNOBS))
+    def test_changing_a_knob_changes_the_path(self, knob: str, monkeypatch) -> None:
+        before = _demo._fit_cache_path(0)
+        monkeypatch.setattr(_demo, knob, self.KNOBS[knob])
+        after = _demo._fit_cache_path(0)
+        assert before != after, (
+            f"{knob} does not appear in the fit cache key, so a run that "
+            f"changes it silently reuses fits made with the old value"
+        )
+
+    def test_every_fitting_knob_is_covered_by_this_test(self) -> None:
+        """The list above must not drift behind the call it mirrors.
+
+        Reads the actual ``fit_gaussian_splats`` call in ``fit_timepoint`` and
+        requires that each module constant it passes is one this test varies.
+        Without this the parametrization silently stops covering new knobs.
+        """
+        import ast
+        import inspect
+
+        tree = ast.parse(inspect.getsource(_demo.fit_timepoint).lstrip())
+        passed = {
+            node.id
+            for call in ast.walk(tree)
+            if isinstance(call, ast.Call)
+            and getattr(call.func, "id", None) == "fit_gaussian_splats"
+            for kw in call.keywords
+            for node in ast.walk(kw.value)
+            if isinstance(node, ast.Name) and node.id.isupper()
+        }
+        assert passed, "could not find the fit call; this test has gone stale"
+        assert passed <= set(self.KNOBS) | self.EXEMPT, (
+            f"{sorted(passed - set(self.KNOBS) - self.EXEMPT)} reach the fit "
+            "but are not in KNOBS, so nothing checks they are in the cache "
+            "key. Add them there, or to EXEMPT with a reason."
+        )
+        assert not (set(self.KNOBS) & self.EXEMPT), "a knob cannot also be exempt"
+
+
+class TestDenoisingIsASwitch:
+    """``DENOISE_H`` turns the filter off by value, not by editing the call."""
+
+    def test_a_zero_strength_returns_the_frame_untouched(self, monkeypatch) -> None:
+        monkeypatch.setattr(_demo, "DENOISE_H", 0.0)
+        volume = np.linspace(0, 1, 24, dtype=np.float32).reshape(2, 3, 4)
+        out = _demo.denoise(volume)
+        assert out is volume, "a disabled filter must not copy or convert"
+
+    def test_the_off_state_is_still_distinguishable_in_the_cache_key(
+        self, monkeypatch
+    ) -> None:
+        # Otherwise a denoised and an undenoised run share a cache, which is
+        # the comparison the DENOISING table depends on being able to make.
+        monkeypatch.setattr(_demo, "DENOISE_H", 0.0)
+        off = _demo._fit_cache_path(0)
+        monkeypatch.setattr(_demo, "DENOISE_H", 0.05)
+        assert off != _demo._fit_cache_path(0)
