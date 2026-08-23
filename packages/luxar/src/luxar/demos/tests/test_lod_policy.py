@@ -628,3 +628,90 @@ def test_a_multi_part_adaptive_tree_grafts_with_its_colormap(tmp_path: Path) -> 
 def test_source_tree_is_the_one_being_tested() -> None:
     """Guard against the AST scan reading an installed copy instead of the repo."""
     assert (Path(registry._DEMOS_DIR) / "_lod_policy.py").exists()
+
+
+def _returns_the_prelod_fit(src: str, name: str) -> list[str]:
+    """Names returned straight after ``save_with_lod`` in the same block.
+
+    The third way to throw a topology away, after the loud one (a tree read
+    flat) and the silent one (a scene rebuilt from loose arrays): write the
+    ladder to the cache and then hand the SCENE the pre-LOD variable that was
+    passed IN. ``save_with_lod`` returns nothing, so the name still refers to the
+    flat fit. The warm path loads the archive back and gets the levels, so only
+    a ``--recompute`` run is flat — and that is the run gallery stills come
+    from, which is why nothing noticed.
+    """
+    out = []
+    for node in ast.walk(ast.parse(src, filename=name)):
+        body = getattr(node, "body", None)
+        if not isinstance(body, list):
+            continue
+        for stmt, nxt in zip(body, body[1:]):
+            call = stmt.value if isinstance(stmt, ast.Expr) else None
+            if not (
+                isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Name)
+                and call.func.id == "save_with_lod"
+                and call.args
+                and isinstance(call.args[0], ast.Name)
+            ):
+                continue
+            if (
+                isinstance(nxt, ast.Return)
+                and isinstance(nxt.value, ast.Name)
+                and nxt.value.id == call.args[0].id
+            ):
+                out.append(call.args[0].id)
+    return out
+
+
+def test_a_costly_recipe_is_not_handed_to_the_scene_as_the_pre_lod_fit() -> None:
+    """A demo must not return the variable it just passed to ``save_with_lod``.
+
+    Measured on milkyway before the fix: the archive carried four substitutive
+    levels while a ``--recompute`` scene was a flat leaf, because the cache
+    branch ended ``return result`` — the same flat fit it had handed in. The
+    warm branch loaded LOCAL_FIT back and got the levels, so cold and warm runs
+    rendered DIFFERENT scenes from the same code.
+
+    Returning the stored artifact instead fixes both at once, and picks up the
+    lossy cache encoding as a bonus, so the two paths agree on bytes as well as
+    topology (the rationale spelled out in demo_gsplats_4d_nexrad_supercell).
+    """
+    for name, src in sorted(_fitting_demos().items()):
+        if not set(_chosen_recipes(name, src)) & SCENE_TOPOLOGY_RECIPES:
+            continue
+        adders = _scene_adders(src)
+        if adders - TOPOLOGY_PRESERVING_ADDERS:
+            continue  # already flattens; the sibling gate above owns that case
+        if adders == {"add_gsplats_from_file"}:
+            # Grafts the PATH, so the topology comes off disk and whatever the
+            # fit step returned never carries scene geometry. cmu1 returns its
+            # in-memory `result` for exactly this reason and is not a bug.
+            continue
+        offenders = _returns_the_prelod_fit(src, name)
+        assert not offenders, (
+            f"{name} returns {offenders} straight after save_with_lod, which is "
+            "the FLAT pre-LOD fit — the scene loses the levels the archive "
+            "carries, and a cold run renders differently from a warm one. "
+            "Return what was stored instead."
+        )
+
+
+def test_the_pre_lod_return_detector_catches_the_shape_it_is_meant_to() -> None:
+    """A detector that never fires would let the bug back in silently."""
+    bad = (
+        "def f():\n"
+        "    result = fit()\n"
+        "    save_with_lod(result, path, recipe='levels')\n"
+        "    return result\n"
+    )
+    good = (
+        "def f():\n"
+        "    result = fit()\n"
+        "    save_with_lod(result, path, recipe='levels')\n"
+        "    stored = load_local_fit_gsplats_at([path], label='d')\n"
+        "    return result if stored is None else stored[0]\n"
+    )
+    assert _returns_the_prelod_fit(bad, "bad.py") == ["result"]
+    assert _returns_the_prelod_fit(good, "good.py") == []

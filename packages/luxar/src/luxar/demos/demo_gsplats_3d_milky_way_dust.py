@@ -276,7 +276,16 @@ def fit_dust(volume: np.ndarray, acquisition=None) -> GSplatData:
             compress="zip",
             zip_deflate=True,
         )
-        return result
+        # Return what was STORED, not the in-memory fit. `result` is the FLAT
+        # pre-LOD fit, so returning it gave a `--recompute` run a flat scene
+        # while the warm branch below — which loads LOCAL_FIT back — got the
+        # four-level `kind=lod` group this demo's display gain is calibrated
+        # against. Cold and warm runs rendered differently, and the gallery
+        # stills come from the cold one. Re-reading also picks up the lossy
+        # MEMORY encoding, so the two paths now agree on bytes as well as
+        # topology (same reasoning as demo_gsplats_4d_nexrad_supercell).
+        stored = load_local_fit_gsplats_at([LOCAL_FIT], label=DEMO_NAME)
+        return result if stored is None else stored[0]
 
 
 def load_or_build_gsplats() -> GSplatData:
