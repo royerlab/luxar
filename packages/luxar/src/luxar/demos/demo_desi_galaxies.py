@@ -623,6 +623,25 @@ def ensure_origin_framing(scene_path: Path) -> bool:
     return False
 
 
+def _warn_if_node_exceeds_capacity(
+    scene_path: Path, layer_name: str, max_node_points: int
+) -> None:
+    if max_node_points <= SCENE_MAX_POINTS_PER_NODE:
+        return
+
+    aprint(
+        f"  ⚠ This scene's '{layer_name}' finest level's largest single "
+        f"node contains {max_node_points:,} points, above the current "
+        f"{SCENE_MAX_POINTS_PER_NODE:,}-point demo ceiling. It lacks the "
+        "current per-node safety margin, and larger nodes can silently "
+        "lose their tail on a 4096-class GPU. Rebuild it with:\n"
+        "      luxar demo run desi_galaxies -- --recompute\n"
+        "    or delete the scene and re-run to unpack a current shipped "
+        "asset:\n"
+        f"      rm -rf {scene_path}"
+    )
+
+
 def warn_if_scene_is_stale(scene_path: Path) -> None:
     """Warn when a reused scene is incomplete or has an unsafe streaming ladder.
 
@@ -713,18 +732,7 @@ def warn_if_scene_is_stale(scene_path: Path) -> None:
                 f"      rm -rf {scene_path}"
             )
 
-        if max_node_points > SCENE_MAX_POINTS_PER_NODE:
-            aprint(
-                f"  ⚠ This scene's '{layer_name}' finest level's largest single "
-                f"node contains {max_node_points:,} points, above the current "
-                f"{SCENE_MAX_POINTS_PER_NODE:,}-point demo ceiling. It lacks the "
-                "current per-node safety margin, and larger nodes can silently "
-                "lose their tail on a 4096-class GPU. Rebuild it with:\n"
-                "      luxar demo run desi_galaxies -- --recompute\n"
-                "    or delete the scene and re-run to unpack a current shipped "
-                "asset:\n"
-                f"      rm -rf {scene_path}"
-            )
+        _warn_if_node_exceeds_capacity(scene_path, layer_name, max_node_points)
 
         # The size that matters is the biggest SINGLE commit, not the level
         # total: a geometric ladder's last increment is n/2, so an old scene can
