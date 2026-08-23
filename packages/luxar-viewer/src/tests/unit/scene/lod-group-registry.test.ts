@@ -3838,11 +3838,16 @@ describe('LODGroupRegistry — stale-hold over a far coarser fallback', () => {
   }
 
   /** The sweep recommitting a child for `version`, keeping its count. */
-  function recommit(child: ReturnType<typeof makeCountedChild>, version: number, count: number) {
+  function recommit(
+    child: ReturnType<typeof makeCountedChild>,
+    version: number,
+    count: number,
+    complete = true
+  ) {
     Object.assign(child.object.userData!, {
       loadedViewVersion: version,
       visibleSplatCount: count,
-      committedLadderComplete: true,
+      committedLadderComplete: complete,
     });
   }
 
@@ -3880,6 +3885,25 @@ describe('LODGroupRegistry — stale-hold over a far coarser fallback', () => {
     state.version = 2;
     recommit(coarse, 2, 100);
 
+    reg.evaluatePerFrame();
+
+    expect(reg.get('/g')!.displayedChildIndex).toBe(0);
+    expect(coarse.object.visible).toBe(true);
+    expect(fine.object.visible).toBe(false);
+  });
+
+  it('hands a partial aspiration back to the never-downgrade gate after a hold', () => {
+    const { reg, coarse, fine, state } = makeScrubRig(400, 1000);
+
+    state.version = 2;
+    reg.evaluatePerFrame(); // hold the stale fine level
+    recommit(coarse, 2, 400);
+    reg.evaluatePerFrame(); // keep holding over the fresh coarse fallback
+
+    // The fine aspiration ends the stale hold with a chunk-1 prefix smaller
+    // than the complete coarse fallback. The ordinary never-downgrade gate
+    // must still hold coarse until the fine ladder catches up.
+    recommit(fine, 2, 100, false);
     reg.evaluatePerFrame();
 
     expect(reg.get('/g')!.displayedChildIndex).toBe(0);

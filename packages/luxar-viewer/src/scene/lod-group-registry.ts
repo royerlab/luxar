@@ -1239,6 +1239,9 @@ export class LODGroupRegistry {
     // the stale subtree with no coarse fallback. Leaf aspirations are unchanged.
     const aspirationFresh =
       version == null || (!!aspiration && this.childFreshAndCount(aspiration, version).fresh);
+    // Preserve this across the fresh-aspiration branch below, which re-arms
+    // the hold state before the never-downgrade gate evaluates the handoff.
+    const staleHoldWasActive = entry.staleHoldSinceMs != null;
     let displayIdx: number;
     if (aspirationReady && aspirationFresh) {
       // Aspiration is committed and fresh (or freshness untracked) → show it.
@@ -1320,7 +1323,14 @@ export class LODGroupRegistry {
       // Read the gate's memory (last ON-SCREEN displayed level), NOT
       // ``displayedChildIndex`` — the latter is clobbered to the coarse level
       // during an off-screen excursion, which would defeat the hold on return.
-      const prevIdx = entry.heldDisplayChildIndex;
+      let prevIdx = entry.heldDisplayChildIndex;
+      // A stale hold keeps the aspiration itself in the display memory. When
+      // its first fresh prefix lands, compare that prefix against the fresh
+      // fallback the hold displaced; otherwise prevIdx === displayIdx skips
+      // the never-downgrade gate and can reveal less geometry than fallback.
+      if (prevIdx === displayIdx && staleHoldWasActive && version != null) {
+        prevIdx = this.coarsestFreshOrReadyIndex(entry, version);
+      }
       if (prevIdx != null && prevIdx !== displayIdx) {
         const prev = entry.children[prevIdx];
         // Children are coarsest→finest, so displayIdx (== activeChildIndex) being
