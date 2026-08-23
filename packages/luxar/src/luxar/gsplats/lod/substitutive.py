@@ -909,10 +909,10 @@ def make_substitutive_lod(
         # that knows what background was already removed. Without it the inner
         # re-fit re-estimates one from the raw volume and the refined level can
         # end up on a different basis from its siblings (#1177).
-        refit_image_min = (
-            float(image_min)
+        refit_image_min = fit_image_min(
+            {"image_min": image_min}
             if image_min is not None
-            else fit_image_min(getattr(data, "stats", None))
+            else getattr(data, "stats", None)
         )
         if refit_image_min is None and verbose:
             aprint(f"refine=volume: {MISSING_BASIS_HINT}")
