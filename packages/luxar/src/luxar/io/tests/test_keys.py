@@ -606,3 +606,70 @@ class TestKeysOnlyLadder:
         assert keyed, "the finest child lost its keys when no labels were present"
         for name in keyed:
             assert sorted(_decode(path, f"pts/{name}")) == sorted(keys)
+
+
+class TestHasKeysNodeProperty:
+    """Every node class answers ``has_<channel>`` for each channel it can carry.
+
+    Colors, radii, sharpness, scalars, labels, image labels — all had an
+    accessor; keys did not, so an author who had just written keys could not ask
+    a node whether they landed. The property reads the same writer-stamped
+    metadata as its siblings.
+    """
+
+    N = 5
+    POSITIONS = np.arange(15, dtype=np.float32).reshape(5, 3)
+    VERTS = np.array(
+        [[0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0], [2, 0, 0], [2, 1, 0]],
+        dtype=np.float32,
+    )
+    FACES = np.array([[0, 1, 2], [1, 3, 2], [1, 4, 3], [4, 5, 3]], dtype=np.uint32)
+    CHOLESKY = np.tile(np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (5, 1))
+
+    @classmethod
+    def _cases(cls):
+        return [
+            ("add_points", {"positions": cls.POSITIONS}, 5),
+            (
+                "add_lines",
+                {"vertices": cls.POSITIONS, "widths": np.ones(5, dtype=np.float32)},
+                5,
+            ),
+            ("add_mesh", {"vertices": cls.VERTS, "faces": cls.FACES}, 6),
+            (
+                "add_gsplats",
+                {
+                    "centers": cls.POSITIONS,
+                    "amplitudes": np.ones(5, dtype=np.float32),
+                    "cholesky_factors": cls.CHOLESKY,
+                },
+                5,
+            ),
+        ]
+
+    @pytest.mark.parametrize("with_keys", [True, False])
+    def test_has_keys_matches_what_was_written(
+        self, tmp_path: Path, with_keys: bool
+    ) -> None:
+        for adder, kwargs, n in self._cases():
+            extra = {"keys": [f"k{i}" for i in range(n)]} if with_keys else {}
+            path = str(tmp_path / f"{adder}-{with_keys}.luxar.zarr")
+            with LuxarZarrCompiler(path) as compiler:
+                scene = compiler.create_scene(dimensions=_make_3d_dims())
+                node = getattr(scene, adder)("n", **kwargs, **extra)
+            assert node.has_keys is with_keys, adder
+            # Absent must be False, never a raise and never None.
+            assert isinstance(node.has_keys, bool), adder
+
+    def test_has_keys_is_independent_of_has_labels(self, tmp_path: Path) -> None:
+        path = str(tmp_path / "s.luxar.zarr")
+        with LuxarZarrCompiler(path) as compiler:
+            scene = compiler.create_scene(dimensions=_make_3d_dims())
+            keyed = scene.add_points(
+                "keyed", positions=self.POSITIONS, keys=["a", "b", "c", "d", "e"]
+            )
+            labelled = scene.add_points(
+                "labelled", positions=self.POSITIONS, labels=["a", "b", "c", "d", "e"]
+            )
+        assert (keyed.has_keys, keyed.has_labels) == (True, False)
+        assert (labelled.has_keys, labelled.has_labels) == (False, True)
