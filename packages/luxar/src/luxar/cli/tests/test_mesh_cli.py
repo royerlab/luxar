@@ -705,6 +705,59 @@ class TestMeshLod:
         # The picked mesh survived — only its sibling should be reported.
         assert "'surf' (mesh)" not in stdout
 
+    def test_keyed_mesh_names_the_dropped_keys_channel(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """`keys` (#1917) is dropped by this round trip for exactly the same
+        reason as `labels` — `MeshData` has no field for it — and a keyed mesh
+        losing every link target in silence is the worse failure, because
+        nothing downstream looks wrong: the surface renders, it just no longer
+        goes anywhere when clicked.
+        """
+        from luxar import Dimensions, LuxarZarrCompiler
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+
+        source = tmp_path / "src.luxar.zarr"
+        vertices, faces = _grid_mesh()
+        with LuxarZarrCompiler(source) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_mesh("surf", vertices, faces, keys=["k"] * vertices.shape[0])
+
+        out = tmp_path / "out.luxar.zarr"
+        assert len(_run(run_lod, source, out)) >= 2
+
+        stdout = capsys.readouterr().out
+        assert "'surf' has per-vertex keys" in stdout
+        assert "has no field for them" in stdout
+
+    def test_keys_alone_do_not_claim_a_dropped_hover_overlay(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Keys must not be folded into the LABEL channel list.
+
+        That list also decides whether the source had an auto-injected hover
+        overlay, and finalize injects one from labels alone — never from keys.
+        A keys-only mesh therefore has no overlay, and treating it as labelled
+        would suppress a genuine dropped-group report on some future scene.
+        """
+        from luxar import Dimensions, LuxarZarrCompiler
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+
+        source = tmp_path / "src.luxar.zarr"
+        vertices, faces = _grid_mesh()
+        with LuxarZarrCompiler(source) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_mesh("surf", vertices, faces, keys=["k"] * vertices.shape[0])
+
+        out = tmp_path / "out.luxar.zarr"
+        _run(run_lod, source, out)
+
+        stdout = capsys.readouterr().out
+        assert "'surf' has per-vertex keys" in stdout
+        # No labels were written, so no `__hover_text` overlay exists to lose.
+        assert "__hover_text" not in stdout
+        assert "per-vertex labels" not in stdout
+
     def test_labelled_mesh_names_the_dropped_label_channel(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:

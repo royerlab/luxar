@@ -399,6 +399,17 @@ def _report_drops(source: Any, node_path: str, leaf_name: str, data: Any) -> Non
         )
         if present
     ]
+    # `keys` (#1917) is dropped for exactly the same reason — `MeshData` has no
+    # field for it, so the reader never surfaces it — and must be reported, or a
+    # keyed mesh loses every link target here in silence.
+    #
+    # Kept OUT of `dropped_label_channels` rather than appended to it, because
+    # that list feeds `mesh_is_labelled` below and keys are not a hover-overlay
+    # trigger: finalize auto-injects an overlay from labels alone, so a
+    # keys-only mesh has no overlay to lose and must not take that branch.
+    dropped_channels = dropped_label_channels + (
+        ["keys"] if data.metadata.get("has_keys") else []
+    )
     # Threaded into the overlay lookup because the hover-overlay skip is
     # justified ONLY by this: finalize auto-injects a hover overlay purely
     # because the picked node has labels, so unlabelled it never exists and
@@ -409,10 +420,10 @@ def _report_drops(source: Any, node_path: str, leaf_name: str, data: Any) -> Non
             f"⚠️  Not carried into the new scene: {overlay_path!r} (overlay) "
             f"— only {leaf_name}'s ladder is written."
         )
-    if dropped_label_channels:
+    if dropped_channels:
         aprint(
             f"⚠️  {node_path!r} has per-vertex "
-            f"{' and '.join(dropped_label_channels)}; `add_mesh` has no field "
+            f"{' and '.join(dropped_channels)}; `add_mesh` has no field "
             "for them, so they will NOT be carried into the new scene."
         )
 
@@ -884,13 +895,14 @@ def run_lod(
         # most sharply the transform, which put the coarsened surface somewhere
         # else in the scene with nothing saying so.
         #
-        # What still does NOT come across is the per-vertex LABEL channels
-        # (`labels` / `image_labels`): `MeshData` has no field for them, so the
-        # reader never surfaces them and this round trip cannot carry what it
-        # cannot read. A labelled source therefore comes back unlabelled rather
-        # than half-labelled, which is at least uniform across every level. The
-        # warning printed below (from `data.metadata["has_labels"]` /
-        # `["has_image_labels"]`) is the only place this is reported now.
+        # What still does NOT come across is the per-vertex STRING channels
+        # (`labels` / `image_labels` / `keys`): `MeshData` has no field for them,
+        # so the reader never surfaces them and this round trip cannot carry what
+        # it cannot read. A labelled source therefore comes back unlabelled
+        # rather than half-labelled, which is at least uniform across every
+        # level. The warning printed below (from `data.metadata["has_labels"]` /
+        # `["has_image_labels"]` / `["has_keys"]`) is the only place this is
+        # reported now.
         #
         # An allow-list rather than "everything outside MESH_RESERVED_ATTRS":
         # that set is the keys the writer refuses FROM A CALLER, and the store
