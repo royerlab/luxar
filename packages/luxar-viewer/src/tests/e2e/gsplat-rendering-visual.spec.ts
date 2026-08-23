@@ -19,6 +19,7 @@ import {
   waitForRenderStable,
   assertNoShaderErrors,
   getElementPixelStats,
+  placeCameraAt,
 } from './helpers';
 
 const FIXTURES_BASE = 'http://localhost:9000/packages/luxar-viewer/tests/fixtures';
@@ -57,19 +58,19 @@ test.describe('GSplats visual correctness', () => {
     await waitForLuxarReady(page);
     await waitForRenderStable(page);
 
+    // `placeCameraAt` rather than a raw `camera.position.set` + `controls.update()`:
+    // the controls' own target/orientation/distance are authoritative, so an
+    // externally written position is overwritten by the next `update()` unless
+    // `reinitialize()` re-derives from it first (#1930). Without it these four
+    // "rotations" all rendered the same settled opening pose.
     const angles = [0, Math.PI / 6, Math.PI / 3, Math.PI / 2];
+    const r = 5;
     for (const a of angles) {
-      await page.evaluate((angle) => {
-        const debug = (window as any).__luxarDebug;
-        if (debug?.camera) {
-          const r = 5;
-          debug.camera.position.set(r * Math.sin(angle), 0, r * Math.cos(angle));
-          debug.camera.lookAt(0, 0, 0);
-          debug.camera.updateMatrixWorld(true);
-          if (debug.controls?.update) debug.controls.update();
-        }
-        if (typeof debug?.renderOnce === 'function') debug.renderOnce();
-      }, a);
+      await placeCameraAt(
+        page,
+        { x: r * Math.sin(a), y: 0, z: r * Math.cos(a) },
+        { target: { x: 0, y: 0, z: 0 } }
+      );
       await waitForRenderStable(page);
       await assertNoShaderErrors(page);
     }

@@ -301,6 +301,23 @@ exports group into the categories below.
 | `captureCanvasRGBA(page, selector?)`           | Decode one element screenshot into a full-frame RGBA buffer — whole-image / multi-region analysis on a single identical frame.                                                                                                                        |
 | `getElementPixelStats(page, ...)`              | Pixel-statistics rollup used by visual-regression-adjacent specs.                                                                                                                                                                                     |
 
+### Camera placement
+
+Writing `camera.position` from a spec does **not** move the camera: the active
+controls own target / orientation / distance, and `runUpdateStep` step 8
+re-applies them to the camera every frame. A placement only sticks if the
+controls `reinitialize()` from it first, and only stays put if the wanted
+distance is inside the scene-derived `[minDistance, maxDistance]` clamp that
+step 6 re-imposes on every frame. Both traps made three specs silently inert
+(#1930) — use these instead of hand-rolling the sequence.
+
+| Helper                                                                  | Use when                                                                                                                                                                                                                                                                |
+| ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `placeCameraAt(page, position, { target? })`                            | Move the camera and make it stick (pivot defaults to the active controls' target). Returns the POST-clamp position and distance, so a spec can assert the camera really moved rather than assuming it did.                                                              |
+| `withOrbitDistanceLimits(page, limits, body)`                           | Run `body` with the orbit distance clamp widened, restoring the previous limits afterwards (try/finally). The window must span the placement AND the sampling — restoring early lets the next frame pull the camera back.                                               |
+| `UNCLAMPED_ORBIT_DISTANCE_LIMITS`                                       | "Wherever I put it, leave it" limits for the above.                                                                                                                                                                                                                     |
+| `InPageCameraApi`, `Vec3Like`, `CameraPlacement`, `OrbitDistanceLimits` | Types. `InPageCameraApi` types `window.__luxarE2ECamera`, the in-page object the helpers install — a spec that places the camera many times inside ONE `page.evaluate` (the lod-group sweep) drives that object directly, so there is only one definition of the idiom. |
+
 ### Pattern for a new helper
 
 Helpers follow a few conventions worth matching:

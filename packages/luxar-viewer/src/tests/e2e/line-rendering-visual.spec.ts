@@ -17,6 +17,9 @@ import {
   waitForRenderStable,
   assertNoShaderErrors,
   samplePixelsAt,
+  placeCameraAt,
+  withOrbitDistanceLimits,
+  UNCLAMPED_ORBIT_DISTANCE_LIMITS,
 } from './helpers';
 
 const FIXTURES_BASE = 'http://localhost:9000/packages/luxar-viewer/tests/fixtures';
@@ -57,31 +60,39 @@ test.describe('Lines visual correctness', () => {
     await waitForLuxarReady(page);
     await waitForRenderStable(page);
 
-    // Move the camera very close to the scene origin (where the lines
-    // fixture is centered). After re-render, the canvas should NOT be
-    // a uniform solid colour — that would mean a near-camera line painted
-    // every pixel.
-    await page.evaluate(() => {
-      const debug = (window as any).__luxarDebug;
-      if (debug?.camera) {
-        debug.camera.position.set(0.001, 0.001, 0.001);
-        debug.camera.updateMatrixWorld(true);
-        if (debug.controls?.update) debug.controls.update();
-      }
-      if (typeof debug?.renderOnce === 'function') debug.renderOnce();
-    });
-    await waitForRenderStable(page);
-    await assertNoShaderErrors(page);
+    // Move the camera onto the world origin, ~0.002 units from the zigzag's
+    // first vertex (the fixture runs x = 0…9, so the origin is its near tip,
+    // not its centre), aimed along the polyline. After re-render, the canvas
+    // should NOT be a uniform solid colour — that would mean a near-camera
+    // line painted every pixel.
+    //
+    // Two things are required for the camera to actually GET there (#1930):
+    // `placeCameraAt` re-derives the orbit state so the next `update()` does not
+    // snap the camera back (the old `position.set` + `controls.update()` was
+    // inert), and the orbit distance clamp — `minDistance` is derived from the
+    // scene diagonal — has to be widened, or step 6 of the per-frame update
+    // pushes the camera straight back out to the framing distance. The widened
+    // window must cover the pixel sampling too, since the clamp is re-applied
+    // on EVERY frame.
+    const samples = await withOrbitDistanceLimits(
+      page,
+      UNCLAMPED_ORBIT_DISTANCE_LIMITS,
+      async () => {
+        await placeCameraAt(page, { x: 0.001, y: 0.001, z: 0.001 });
+        await waitForRenderStable(page);
+        await assertNoShaderErrors(page);
 
-    // Sample 4 corners of the canvas. If a single near-line painted the
-    // whole frame, all four corners would have ~identical colour and
-    // each would be heavily saturated. Verify variance / not-all-saturated.
-    const samples = await samplePixelsAt(page, 'canvas', [
-      [0.05, 0.05],
-      [0.95, 0.05],
-      [0.05, 0.95],
-      [0.95, 0.95],
-    ]);
+        // Sample 4 corners of the canvas. If a single near-line painted the
+        // whole frame, all four corners would have ~identical colour and
+        // each would be heavily saturated. Verify variance / not-all-saturated.
+        return await samplePixelsAt(page, 'canvas', [
+          [0.05, 0.05],
+          [0.95, 0.05],
+          [0.05, 0.95],
+          [0.95, 0.95],
+        ]);
+      }
+    );
     const allSaturated = samples.every((p) => p.r > 240 && p.g > 240 && p.b > 240);
     expect(allSaturated).toBe(false);
   });

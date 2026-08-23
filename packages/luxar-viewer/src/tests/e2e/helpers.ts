@@ -2083,6 +2083,251 @@ export async function samplePixelAt(
   return pixel;
 }
 
+// ---------------------------------------------------------------------------
+// Camera placement (orbit-controls aware)
+// ---------------------------------------------------------------------------
+
+/** A world-space point as it crosses the Playwright ⇄ page boundary. */
+export interface Vec3Like {
+  x: number;
+  y: number;
+  z: number;
+}
+
+/** Where the camera actually ended up after {@link placeCameraAt}. */
+export interface CameraPlacement extends Vec3Like {
+  /** The pivot the camera was aimed at (the controls' target after the call). */
+  target: Vec3Like;
+  /**
+   * `|position − target|` measured AFTER the controls re-derived and re-applied
+   * their own state — i.e. the distance that survived
+   * `minDistance`/`maxDistance` clamping, not the one that was requested. Assert
+   * on this when a test needs proof that the camera really moved.
+   */
+  distance: number;
+}
+
+/** The active orbit controls' distance clamp, `[min, max]`. */
+export interface OrbitDistanceLimits {
+  min: number;
+  max: number;
+}
+
+/**
+ * Effectively-no-clamp orbit distance limits for {@link withOrbitDistanceLimits}.
+ *
+ * `ControlsManager` derives `minDistance`/`maxDistance` from the scene diagonal
+ * (`setSceneScale`) and then from the auto-frame fit (`setDistanceLimits`), so a
+ * test that wants the camera much closer than the framing distance — or a couple
+ * of decades further out — is silently clamped back by `runUpdateStep` step 6 on
+ * the very next frame. `min` is a small POSITIVE number rather than 0 because
+ * `initializeFromCamera` treats a non-positive floor as "use 0.001".
+ */
+export const UNCLAMPED_ORBIT_DISTANCE_LIMITS: OrbitDistanceLimits = {
+  min: 1e-9,
+  max: Infinity,
+};
+
+/**
+ * The in-page camera API `installCameraPlacement` attaches to
+ * `window.__luxarE2ECamera`. Declared here (types are erased) so the installer's
+ * body, the Node-side callers below, and a spec that drives many placements
+ * from inside ONE `page.evaluate` all describe the same shape.
+ */
+export interface InPageCameraApi {
+  pivot(): Vec3Like;
+  place(position: Vec3Like, target?: Vec3Like | null): CameraPlacement | null;
+  setDistanceLimits(min: number, max: number): OrbitDistanceLimits | null;
+}
+
+/**
+ * Install `window.__luxarE2ECamera` — the ONE definition of "put the camera
+ * somewhere and make it stick" (idempotent, cheap, wiped by navigation, so every
+ * public helper below calls it first).
+ *
+ * Why a page-side object rather than a Node-side helper alone: a sweep that
+ * places the camera dozens of times inside a single `page.evaluate` must use the
+ * same routine as a spec that places it once, or the idiom gets copy-pasted and
+ * one copy drifts. `installCameraPlacement` + `(window as …).__luxarE2ECamera`
+ * gives both call shapes one implementation.
+ *
+ * Two traps this encapsulates — both of which silently made E2E camera moves
+ * INERT (issue #1930):
+ *
+ * 1. **`__luxarDebug.controls` is the `ControlsManager`, not the active
+ *    `LuxarOrbitControls`.** It has no `target` field, so the common
+ *    `debug.controls.target ?? {x:0,y:0,z:0}` reads `undefined` and quietly
+ *    falls back to the world origin instead of the real pivot. The pivot comes
+ *    from `getControls().target` (falling back to `getFocusTarget()`, then the
+ *    origin).
+ * 2. **`update()` overwrites `camera.position`.** `runUpdateStep` step 8 calls
+ *    `applyToCamera(camera, target, orientation, distance)` unconditionally, so
+ *    the controls' own state — not the camera transform — is authoritative. An
+ *    externally written position is discarded on the very next frame unless
+ *    `reinitialize()` re-derives orientation + distance from it first (see
+ *    `ControlsManager.reinitialize`'s doc). This is the same sequence
+ *    `putCameraOffAxis` in `ortho-mode.spec.ts` uses.
+ */
+async function installCameraPlacement(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    interface Vec3 {
+      x: number;
+      y: number;
+      z: number;
+    }
+    interface OrbitLike {
+      target?: Vec3 & { set: (x: number, y: number, z: number) => void };
+      minDistance?: number;
+      maxDistance?: number;
+      reinitialize?: () => void;
+      update?: () => void;
+    }
+    const w = window as unknown as {
+      __luxarE2ECamera?: unknown;
+      __luxarDebug?: {
+        camera?: {
+          position: Vec3 & { set: (x: number, y: number, z: number) => void };
+          lookAt: (x: number, y: number, z: number) => void;
+          updateMatrixWorld: (force?: boolean) => void;
+        };
+        controls?: {
+          getControls?: () => OrbitLike | null;
+          getFocusTarget?: () => Vec3;
+        };
+        renderOnce?: () => void;
+      };
+    };
+    if (w.__luxarE2ECamera) return;
+
+    // The ACTIVE controls, and only when they are orbit-like: `getControls()`
+    // can also hand back `LuxarFlyControls`, which has neither `target` nor
+    // `reinitialize`.
+    const orbit = (): OrbitLike | null => {
+      const c = w.__luxarDebug?.controls?.getControls?.() ?? null;
+      return c && c.target && typeof c.reinitialize === 'function' ? c : null;
+    };
+
+    const pivot = (): Vec3 => {
+      const t = orbit()?.target;
+      if (t) return { x: t.x, y: t.y, z: t.z };
+      const f = w.__luxarDebug?.controls?.getFocusTarget?.();
+      if (f) return { x: f.x, y: f.y, z: f.z };
+      return { x: 0, y: 0, z: 0 };
+    };
+
+    const api = {
+      pivot,
+      setDistanceLimits(min: number, max: number) {
+        const o = orbit();
+        if (!o || typeof o.minDistance !== 'number' || typeof o.maxDistance !== 'number') {
+          return null;
+        }
+        const previous = { min: o.minDistance, max: o.maxDistance };
+        o.minDistance = min;
+        o.maxDistance = max;
+        return previous;
+      },
+      place(position: Vec3, target?: Vec3 | null) {
+        const cam = w.__luxarDebug?.camera;
+        if (!cam) return null;
+        const t = target ?? pivot();
+        cam.position.set(position.x, position.y, position.z);
+        cam.lookAt(t.x, t.y, t.z);
+        cam.updateMatrixWorld(true);
+        const o = orbit();
+        if (o) {
+          o.target!.set(t.x, t.y, t.z);
+          o.reinitialize!(); // re-derive distance + orientation from the write
+          o.update?.(); // now a no-op reapplication instead of a snap-back
+        }
+        w.__luxarDebug?.renderOnce?.();
+        const p = cam.position;
+        const dx = p.x - t.x;
+        const dy = p.y - t.y;
+        const dz = p.z - t.z;
+        return {
+          x: p.x,
+          y: p.y,
+          z: p.z,
+          target: t,
+          distance: Math.sqrt(dx * dx + dy * dy + dz * dz),
+        };
+      },
+    };
+    w.__luxarE2ECamera = api;
+  });
+}
+
+/**
+ * Move the camera to `position` and make the move STICK, then wait for a frame.
+ *
+ * Aims at `options.target` when given, else at the current pivot
+ * (`getControls().target`, NOT the always-`undefined`
+ * `__luxarDebug.controls.target`). Returns where the camera actually ended up
+ * (`null` if the debug interface has no camera) —
+ * `distance` is post-clamp, so a test can assert the camera really moved rather
+ * than assuming it did. Wrap in {@link withOrbitDistanceLimits} when the wanted
+ * distance is outside the scene-derived `[minDistance, maxDistance]` window.
+ */
+export async function placeCameraAt(
+  page: Page,
+  position: Vec3Like,
+  options: { target?: Vec3Like } = {}
+): Promise<CameraPlacement | null> {
+  await installCameraPlacement(page);
+  const placement = await page.evaluate(
+    ({ p, t }) =>
+      (window as unknown as { __luxarE2ECamera: InPageCameraApi }).__luxarE2ECamera.place(p, t),
+    { p: position, t: options.target ?? null }
+  );
+  await waitForNextRender(page);
+  return placement;
+}
+
+/**
+ * Run `body` with the active orbit controls' distance clamp temporarily widened,
+ * restoring the previous limits afterwards (including on throw).
+ *
+ * The clamp is re-applied on EVERY frame (`runUpdateStep` step 6), so the widened
+ * window must cover the whole span in which the test looks at the result — the
+ * placement, any `waitForRenderStable`, and the pixel/state sampling. Restoring
+ * too early lets the next frame fling the camera back to the framing distance.
+ *
+ * Pass {@link UNCLAMPED_ORBIT_DISTANCE_LIMITS} for "wherever I put it, leave it".
+ */
+export async function withOrbitDistanceLimits<T>(
+  page: Page,
+  limits: OrbitDistanceLimits,
+  body: () => Promise<T>
+): Promise<T> {
+  await installCameraPlacement(page);
+  const previous = await page.evaluate(
+    (l) =>
+      (
+        window as unknown as { __luxarE2ECamera: InPageCameraApi }
+      ).__luxarE2ECamera.setDistanceLimits(l.min, l.max),
+    limits
+  );
+  try {
+    return await body();
+  } finally {
+    if (previous) {
+      // A restore failure is inconsequential (the test is over either way), but
+      // letting it throw out of `finally` would REPLACE the real failure — e.g.
+      // when `body` failed because the page crashed and the page is now gone.
+      await page
+        .evaluate(
+          (l) =>
+            (
+              window as unknown as { __luxarE2ECamera: InPageCameraApi }
+            ).__luxarE2ECamera.setDistanceLimits(l.min, l.max),
+          previous
+        )
+        .catch(() => {});
+    }
+  }
+}
+
 /** Result of {@link probeWebGPUBackend}. */
 export interface WebGPUBackendProbe {
   /** True only when a REAL native WebGPU backend is driving the page. */
