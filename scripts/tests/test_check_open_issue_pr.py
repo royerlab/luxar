@@ -76,8 +76,24 @@ def test_api_rows_keep_only_same_repository_closing_references() -> None:
             },
         ],
     }
-    pull_request = guard.pull_request_from_row(row, "royerlab/luxar")
+    pull_request = guard.pull_request_from_row(row, "RoyerLab/Luxar")
     assert pull_request.closing_issue_numbers == {2003}
+
+
+def test_pull_request_paths_flattens_every_api_page(monkeypatch) -> None:
+    monkeypatch.setattr(
+        guard,
+        "_run_gh",
+        lambda args: [
+            [{"filename": "first.py"}, {"filename": "shared.ts"}],
+            [{"filename": "last.md"}],
+        ],
+    )
+    assert guard.pull_request_paths("royerlab/luxar", 2005) == {
+        "first.py",
+        "shared.ts",
+        "last.md",
+    }
 
 
 def test_main_reports_claim_and_identifies_survivor_candidates(

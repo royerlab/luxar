@@ -89,7 +89,7 @@ def pull_request_from_row(row: dict[str, Any], repo: str) -> PullRequest:
         closing_issue_numbers=frozenset(
             reference["number"]
             for reference in row.get("closingIssuesReferences", [])
-            if _reference_repo(reference) == repo
+            if (_reference_repo(reference) or "").lower() == repo.lower()
         ),
     )
 
@@ -115,8 +115,15 @@ def list_open_pull_requests(repo: str) -> list[PullRequest]:
 
 def pull_request_paths(repo: str, number: int) -> frozenset[str]:
     """Changed paths for an open or closed pull request."""
-    row = _run_gh(["pr", "view", str(number), "--repo", repo, "--json", "files"])
-    return frozenset(file["path"] for file in row["files"])
+    pages = _run_gh(
+        [
+            "api",
+            "--paginate",
+            "--slurp",
+            f"repos/{repo}/pulls/{number}/files?per_page=100",
+        ]
+    )
+    return frozenset(file["filename"] for page in pages for file in page)
 
 
 def compare_paths(
