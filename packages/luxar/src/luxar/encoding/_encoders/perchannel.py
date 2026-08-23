@@ -35,8 +35,9 @@ def _float32_cast_slack(
 ) -> Optional[float]:
     """Return an upward pad for the viewer's float32 cast.
 
-    ``check_values`` measures exact stored broadcast/LUT values; otherwise the
-    precision-mode float32 store gets a conservative dtype-level bound.
+    ``check_values`` measures exact stored broadcast/LUT values, falling back
+    to the conservative dtype-level bound above the float32 range; otherwise
+    that bound covers the precision-mode float32 store.
     """
     if np.can_cast(arr.dtype, np.float32, casting="safe"):
         return None
