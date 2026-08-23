@@ -16,9 +16,9 @@ existing `**attrs` pass-through and need no adder signature:
 
 ```python
 scene.add_gsplats(
-    "organs", centers=..., labels=organ_names,
-    link="https://en.wikipedia.org/wiki/Special:Search?search={hover_label}",
-    copy="{hover_label}",           # optional; defaults to the bare label
+    "proteins", centers=..., labels=protein_names, keys=accessions,
+    link="https://www.uniprot.org/uniprotkb/{hover_key}/entry",
+    copy="{hover_key}",             # optional; defaults to the key, then label
     link_target="_blank",           # optional; the default
 )
 ```

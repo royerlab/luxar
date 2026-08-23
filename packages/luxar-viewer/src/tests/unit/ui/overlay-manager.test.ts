@@ -733,6 +733,23 @@ describe('OverlayManager.updateHoverContent', () => {
     expect(secondImg).not.toBe(firstImg);
   });
 
+  it('substitutes hover_key when it is the only hover content', async () => {
+    await manager.loadOverlays(
+      [makeTextOverlay({ name: 'hover-key', hover: true, text: 'id={hover_key}' })],
+      'http://example.com'
+    );
+    const el = document.querySelector('[data-overlay-name="hover-key"]') as HTMLDivElement;
+
+    manager.updateHoverContent({
+      key: 'P04637',
+      nodeName: '/proteins',
+      elementIndex: 7,
+    });
+
+    expect(el.textContent).toBe('id=P04637');
+    expect(el.style.opacity).toBe('1');
+  });
+
   it('shows a hover overlay configured with both visible_range and transition:"fade"', async () => {
     // Regression: createOverlayElement previously added the
     // luxar-overlay--hidden class for ANY overlay with visible_range +

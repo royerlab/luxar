@@ -159,7 +159,8 @@ KNOWN_RENDER_ATTRS: FrozenSet[str] = frozenset(
         # Per-element interaction templates (issue #1917). ``link`` builds a
         # URL opened on left-click, ``copy`` a plain string offered by the
         # right-click menu, both substituting the hover vocabulary
-        # (``{hover_label}`` / ``{hover_node}`` / ``{hover_index}``).
+        # (``{hover_label}`` / ``{hover_key}`` / ``{hover_node}`` /
+        # ``{hover_index}``).
         # ``link_target`` picks the browsing context. Advertised here rather
         # than hidden in ``_ALLOWED_NODE_ATTRS`` for the same reason as
         # lines-only ``join``: they are real knobs a user authors, so a typo

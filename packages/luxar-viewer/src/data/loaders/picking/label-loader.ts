@@ -1,9 +1,9 @@
 /**
  * Label Loader — Lazy CSR-style label fetching from zarr.
  *
- * Labels are stored per node as two zarr arrays:
- *   - label_offsets (uint64, N+1): byte offset of each label in label_bytes
- *   - label_bytes (uint8): concatenated UTF-8 encoded label strings
+ * Text channels are stored per node as two zarr arrays:
+ *   - labels: label_offsets + label_bytes
+ *   - keys: key_offsets + key_bytes
  *
  * Label i = label_bytes[offsets[i] : offsets[i+1]], decoded as UTF-8.
  * Empty labels (offsets[i] === offsets[i+1]) return null.
@@ -172,7 +172,7 @@ export class LabelLoader {
         offsetsArr = await zarr.open(offsetsLoc, { kind: 'array' });
       } catch (error) {
         if (!zarr.isNotFoundError(error)) throw error;
-        log.info(Modules.SCENE_LOADER, `Node carries no labels: ${nodePath}`);
+        log.info(Modules.SCENE_LOADER, `Node carries no ${this.channel}: ${nodePath}`);
         return [];
       }
       const bytesArr = await zarr.open(bytesLoc, { kind: 'array' });
@@ -219,12 +219,12 @@ export class LabelLoader {
         prevEnd = end;
       }
 
-      log.info(Modules.SCENE_LOADER, `Loaded ${nElements} labels for ${nodePath}`);
+      log.info(Modules.SCENE_LOADER, `Loaded ${nElements} ${this.channel} for ${nodePath}`);
       return labels;
     } catch (error) {
       log.warning(
         Modules.SCENE_LOADER,
-        `Failed to load labels for ${nodePath}: ${error instanceof Error ? error.message : error}`
+        `Failed to load ${this.channel} for ${nodePath}: ${error instanceof Error ? error.message : error}`
       );
       return [];
     }

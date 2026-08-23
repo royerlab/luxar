@@ -967,6 +967,9 @@ export class LuxarApp {
       clearLabelLoader: () => {
         this.labelLoader = undefined;
       },
+      clearKeyLoader: () => {
+        this.keyLoader = undefined;
+      },
       clearImageLabelLoader: () => {
         this.imageLabelLoader = undefined;
       },

@@ -67,6 +67,7 @@ export interface DisposePipelinePorts {
   clearControlRail: () => void;
   clearPickingSystem: () => void;
   clearLabelLoader: () => void;
+  clearKeyLoader: () => void;
   clearImageLabelLoader: () => void;
   clearDatasetBrowser: () => void;
 }
@@ -149,8 +150,8 @@ export function runDisposePipeline(ports: DisposePipelinePorts): void {
   });
   safeDispose('keyLoader', () => {
     ports.keyLoader?.dispose();
+    ports.clearKeyLoader();
   });
-
   safeDispose('imageLabelLoader', () => {
     ports.imageLabelLoader?.dispose();
     ports.clearImageLabelLoader();

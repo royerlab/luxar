@@ -167,6 +167,7 @@ function makePorts(s: Stubs): DisposePipelinePorts {
     clearControlRail: s.clears.controlRail as unknown as () => void,
     clearPickingSystem: s.clears.pickingSystem as unknown as () => void,
     clearLabelLoader: s.clears.labelLoader as unknown as () => void,
+    clearKeyLoader: s.clears.keyLoader as unknown as () => void,
     clearImageLabelLoader: s.clears.imageLabelLoader as unknown as () => void,
     clearDatasetBrowser: s.clears.datasetBrowser as unknown as () => void,
   };
@@ -225,6 +226,7 @@ describe('runDisposePipeline', () => {
       expect(s.clears.layersPanel).toHaveBeenCalledOnce();
       expect(s.clears.pickingSystem).toHaveBeenCalledOnce();
       expect(s.clears.labelLoader).toHaveBeenCalledOnce();
+      expect(s.clears.keyLoader).toHaveBeenCalledOnce();
       expect(s.clears.imageLabelLoader).toHaveBeenCalledOnce();
       expect(s.clears.datasetBrowser).toHaveBeenCalledOnce();
     });
@@ -402,6 +404,7 @@ describe('runDisposePipeline', () => {
         clearControlRail: vi.fn(),
         clearPickingSystem: vi.fn(),
         clearLabelLoader: vi.fn(),
+        clearKeyLoader: vi.fn(),
         clearImageLabelLoader: vi.fn(),
         clearDatasetBrowser: vi.fn(),
       };

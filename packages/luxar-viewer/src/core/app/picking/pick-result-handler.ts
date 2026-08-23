@@ -70,6 +70,7 @@ export interface PickResultHandlerPorts {
     updateHoverContent: (
       r: {
         label?: string | null;
+        key?: string | null;
         imageUrl?: string | null;
         nodeName: string;
         elementIndex: number;
@@ -254,10 +255,10 @@ export function buildPickResultHandler(
         screenX: result.screenX,
         screenY: result.screenY,
       });
-      const hasContent = label || imageUrl;
+      const hasContent = label || key || imageUrl;
       ports.overlayManager?.updateHoverContent(
         hasContent
-          ? { label, imageUrl, nodeName: reportPath, elementIndex: result.elementId }
+          ? { label, key, imageUrl, nodeName: reportPath, elementIndex: result.elementId }
           : null
       );
     } catch (err) {

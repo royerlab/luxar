@@ -825,20 +825,20 @@ class Group(Node):
         collapse to the finest level instead (see
         ``add_gsplats_from_data`` for the convention).
 
-        ``labels`` / ``image_labels`` are accepted only when the file is a single
+        ``labels`` / ``image_labels`` / ``keys`` are accepted only when the file is a single
         leaf with NO additive ladder. Any multi-LEAF result — an auto-lowered
         pyramid, or a grafted multi-part ``kind=lod`` / ``kind=partition``
         subtree — refuses them, because each leaf holds its own set of splats
         (see ``add_gsplats_from_data``). A single LADDERED leaf (``gsplat lod
         --recipe stream``, or the one-part output of ``--recipe tiles`` on a
         small dataset — a plain ``gsplat fit`` writes a FLAT leaf, which labels
-        fine) is refused too, because the additive writer has no labels channel —
-        ``gsplat flatten`` collapses the ladder if you need the labels.
+        fine) is refused too, because the additive writer has no per-element string
+        channel — ``gsplat flatten`` collapses the ladder if you need one.
 
         The two ``**attrs`` rules of :meth:`add_gsplats_from_data` apply here
         identically, and identically on BOTH of this method's branches (a
         matrix-shaped file and a grafted nested one): an explicit ``None`` for
-        ``labels`` / ``image_labels`` / ``partition`` / ``colors`` /
+        ``labels`` / ``image_labels`` / ``keys`` / ``partition`` / ``colors`` /
         ``truncation_radius`` / ``colormap`` / ``coverage_fraction`` means
         "absent", while ``centers`` / ``amplitudes`` / ``cholesky_factors`` and a
         non-``None`` ``colors`` raise ``ValueError`` (they come from the file

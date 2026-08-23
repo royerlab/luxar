@@ -20,9 +20,8 @@ neutral default, not the identity transform, and not already overridden by the
 picked mesh's own attrs or by a nearer group — so neither a bare namespace
 group nor an existing ladder's own bookkeeping wrapper, nor this command's own
 re-stamped defaults, trigger a false alarm); nor are the picked mesh's own
-per-vertex ``labels`` / ``image_labels`` / ``keys`` (``MeshData`` has no field
-for them,
-so the reader never surfaces them). All of this is reported
+per-vertex ``labels`` / ``image_labels`` / ``keys`` (``MeshData`` has no field for
+them, so the reader never surfaces them). All of this is reported
 with an explicit warning naming what is dropped, after every validator that can
 still abort the run and before anything is written.
 """
@@ -1197,8 +1196,7 @@ def lod_command(
     set (transform/opacity/blending_mode/…; a bare namespace group or an existing
     ladder's own wrapper sets none and is not reported), and the picked mesh's
     own per-vertex `labels`/`image_labels`/`keys` are not carried across. Each is
-    named
-    in a warning before anything is written.
+    named in a warning before anything is written.
 
     \b
     Examples:
