@@ -58,6 +58,13 @@ function findOutermostPartitionWrapperName(mainNode: THREE.Object3D): string | n
  */
 export interface PickResultHandlerPorts {
   labelLoader?: { getLabel: (path: string, idx: number) => Promise<string | null> };
+  /**
+   * Reads the per-element `keys` CSR (issue #1917). Same shape as
+   * `labelLoader` — it IS a `LabelLoader`, constructed on the `'keys'`
+   * channel — so the key is fetched on exactly the same terms as the
+   * label: lazily, once per node, coalesced.
+   */
+  keyLoader?: { getLabel: (path: string, idx: number) => Promise<string | null> };
   imageLabelLoader?: { getImageUrl: (path: string, idx: number) => Promise<string | null> };
   overlayManager?: {
     updateHoverContent: (
@@ -97,6 +104,7 @@ export interface PickResultHandlerPorts {
       hitNodeName: string;
       elementIndex: number;
       label: string | null;
+      key: string | null;
       screenX: number;
       screenY: number;
     } | null
@@ -211,9 +219,12 @@ export function buildPickResultHandler(
       // …but LOOK UP on the leaf. The wrapper holds no label CSR and does not
       // share the leaf's element index space (#1415).
       const lookupPath = result.mainNode.name;
-      const [label, imageUrl] = await Promise.all([
+      const [label, imageUrl, key] = await Promise.all([
         ports.labelLoader?.getLabel(lookupPath, result.elementId) ?? Promise.resolve(null),
         ports.imageLabelLoader?.getImageUrl(lookupPath, result.elementId) ?? Promise.resolve(null),
+        // Same lookup path and element id as the label: keys are written per
+        // leaf and reordered by the same permutation (#1917).
+        ports.keyLoader?.getLabel(lookupPath, result.elementId) ?? Promise.resolve(null),
       ]);
       // A newer pick result (or a fade-to-null) arrived while we were
       // fetching — drop this stale one rather than clobber fresher state.
@@ -239,6 +250,7 @@ export function buildPickResultHandler(
         hitNodeName: lookupPath,
         elementIndex: result.elementId,
         label: label ?? null,
+        key: key ?? null,
         screenX: result.screenX,
         screenY: result.screenY,
       });

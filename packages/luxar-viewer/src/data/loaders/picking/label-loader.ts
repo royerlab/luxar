@@ -63,9 +63,20 @@ export class LabelLoader {
   /** UTF-8 text decoder (reused). */
   private decoder = new TextDecoder('utf-8');
 
+  /**
+   * @param channel Which per-element string channel to read (issue #1917).
+   *   `'labels'` (default) reads `label_offsets` / `label_bytes` — the
+   *   human-readable string a tooltip shows. `'keys'` reads
+   *   `key_offsets` / `key_bytes` — the machine-readable string a `link` /
+   *   `copy` template substitutes. Identical CSR encoding, identical laziness
+   *   and coalescing, identical spatial ordering; only the array names differ,
+   *   so one loader serves both rather than a near-copy serving each.
+   *   Mirrors `STRING_CHANNELS` in `luxar/io/_compiler/labels/text_labels.py`.
+   */
   constructor(
     _store: zarr.Readable,
-    private rootLoc: zarr.Location<zarr.Readable>
+    private rootLoc: zarr.Location<zarr.Readable>,
+    private channel: 'labels' | 'keys' = 'labels'
   ) {}
 
   /**
@@ -87,7 +98,7 @@ export class LabelLoader {
    * Check if a node has labels based on its cached .zattrs metadata.
    */
   hasLabels(nodeAttrs: Record<string, unknown>): boolean {
-    return nodeAttrs?.has_labels === true;
+    return nodeAttrs?.[this.channel === 'keys' ? 'has_keys' : 'has_labels'] === true;
   }
 
   /** Clean up caches. */
@@ -134,8 +145,9 @@ export class LabelLoader {
       const cleanPath = nodePath.startsWith('/') ? nodePath.slice(1) : nodePath;
 
       // Open the two CSR arrays
-      const offsetsLoc = this.rootLoc.resolve(`${cleanPath}/label_offsets`);
-      const bytesLoc = this.rootLoc.resolve(`${cleanPath}/label_bytes`);
+      const prefix = this.channel === 'keys' ? 'key' : 'label';
+      const offsetsLoc = this.rootLoc.resolve(`${cleanPath}/${prefix}_offsets`);
+      const bytesLoc = this.rootLoc.resolve(`${cleanPath}/${prefix}_bytes`);
 
       // Only THIS open may be absent innocently. A node with no labels at all
       // is the ordinary case, not a failure: the picker calls getLabel for

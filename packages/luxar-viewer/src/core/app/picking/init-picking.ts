@@ -21,6 +21,12 @@ export interface InitPickingResult {
   pickingSystem: PickingSystem | undefined;
   labelLoader: LabelLoader | undefined;
   imageLabelLoader: ImageLabelLoader | undefined;
+  /**
+   * Reads the per-element `keys` CSR (issue #1917). A `LabelLoader` on the
+   * `'keys'` channel — same class, different array names — so it caches,
+   * coalesces and disposes exactly like the label one.
+   */
+  keyLoader: LabelLoader | undefined;
 }
 
 export interface InitPickingPorts {
@@ -89,6 +95,7 @@ export function disposePickingSession(ports: {
   ports.previous.pickingSystem?.dispose();
   ports.previous.labelLoader?.dispose();
   ports.previous.imageLabelLoader?.dispose();
+  ports.previous.keyLoader?.dispose();
 }
 
 /**
@@ -130,11 +137,17 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
   const root = ports.sceneManager.scene?.children?.find((c) => c.name === 'LuxarScene') as
     THREE.Group | undefined;
   if (!root) {
-    return { pickingSystem: undefined, labelLoader: undefined, imageLabelLoader: undefined };
+    return {
+      pickingSystem: undefined,
+      labelLoader: undefined,
+      imageLabelLoader: undefined,
+      keyLoader: undefined,
+    };
   }
 
   let hasAnyLabels = false;
   let hasAnyImageLabels = false;
+  let hasAnyKeys = false;
   let hasAnyInteraction = false;
   const linkDiagnostics = new Map<string, { nodeName: string; rejection: string | null }>();
   root.traverse((obj) => {
@@ -144,6 +157,9 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
     }
     if (attrs?.has_image_labels) {
       hasAnyImageLabels = true;
+    }
+    if (attrs?.has_keys) {
+      hasAnyKeys = true;
     }
     // A layer can carry a click action WITHOUT labels — a link built purely
     // from `{hover_index}` is perfectly usable — and such a scene auto-injects
@@ -179,13 +195,23 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
   const wantsSelection =
     (ports.hasSelectionConsumer?.() ?? false) || (ports.hasElementActionConsumer?.() ?? false);
   if (!hasAnyLabels && !hasAnyImageLabels && !hasAnyInteraction && !wantsSelection) {
-    return { pickingSystem: undefined, labelLoader: undefined, imageLabelLoader: undefined };
+    return {
+      pickingSystem: undefined,
+      labelLoader: undefined,
+      imageLabelLoader: undefined,
+      keyLoader: undefined,
+    };
   }
 
   // Get the scene loader for store/rootLoc access
   const sceneLoader = getSceneLoader('default');
   if (!sceneLoader) {
-    return { pickingSystem: undefined, labelLoader: undefined, imageLabelLoader: undefined };
+    return {
+      pickingSystem: undefined,
+      labelLoader: undefined,
+      imageLabelLoader: undefined,
+      keyLoader: undefined,
+    };
   }
 
   // Create label loaders from the scene loader's zarr store. The loaders
@@ -194,13 +220,22 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
   const store = sceneLoader.zarrStore;
   let labelLoader: LabelLoader | undefined;
   let imageLabelLoader: ImageLabelLoader | undefined;
+  let keyLoader: LabelLoader | undefined;
   if (store) {
     const rootLoc = zarr.root(store);
     labelLoader = hasAnyLabels ? new LabelLoader(store, rootLoc) : undefined;
     imageLabelLoader = hasAnyImageLabels ? new ImageLabelLoader(store, rootLoc) : undefined;
+    // Same class, `'keys'` channel — only built when some node declares one,
+    // so a scene without keys pays nothing.
+    keyLoader = hasAnyKeys ? new LabelLoader(store, rootLoc, 'keys') : undefined;
   } else if (!wantsSelection) {
     log.warning(Modules.APP, 'Cannot init picking: zarr store not available');
-    return { pickingSystem: undefined, labelLoader: undefined, imageLabelLoader: undefined };
+    return {
+      pickingSystem: undefined,
+      labelLoader: undefined,
+      imageLabelLoader: undefined,
+      keyLoader: undefined,
+    };
   }
 
   // Create picking system with result callback. The handler closure
@@ -222,6 +257,7 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
     buildPickResultHandler({
       labelLoader,
       imageLabelLoader,
+      keyLoader,
       overlayManager: ports.getOverlayManager(),
       onSelection: ports.onSelection,
       onPicked: (pick) => {
@@ -324,5 +360,5 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
   });
 
   log.info(Modules.APP, 'GPU picking system initialized (labels detected)');
-  return { pickingSystem, labelLoader, imageLabelLoader };
+  return { pickingSystem, labelLoader, imageLabelLoader, keyLoader };
 }

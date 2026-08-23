@@ -13,9 +13,40 @@
 import { describe, it, expect } from 'vitest';
 import { substituteHoverTemplate } from '../../../utils/hover-template';
 
-const VALUES = { label: 'P04637', nodeName: '/proteins', elementIndex: 42 };
+const VALUES = { label: 'P04637', key: 'P04637', nodeName: '/proteins', elementIndex: 42 };
 
 describe('substituteHoverTemplate — vocabulary', () => {
+  it('substitutes {hover_key} independently of {hover_label}', () => {
+    // The whole reason `keys` exists: the label is composite prose a reader
+    // sees, the key is the bare id a URL needs. A template must be able to
+    // take one without the other.
+    const { text } = substituteHoverTemplate(
+      '{hover_key} | {hover_label}',
+      { ...VALUES, label: 'P04637 · DNA-binding cluster', key: 'P04637' },
+      'text'
+    );
+    expect(text).toBe('P04637 | P04637 · DNA-binding cluster');
+  });
+
+  it('flags a missing key, so a {hover_key} link is suppressed not truncated', () => {
+    const { text, hadEmptySubstitution } = substituteHoverTemplate(
+      'https://uniprot.org/{hover_key}',
+      { ...VALUES, key: null },
+      'url'
+    );
+    expect(text).toBe('https://uniprot.org/');
+    expect(hadEmptySubstitution).toBe(true);
+  });
+
+  it('percent-encodes a key in url mode', () => {
+    const { text } = substituteHoverTemplate(
+      'https://e.org/{hover_key}',
+      { ...VALUES, key: 'a/b?c' },
+      'url'
+    );
+    expect(new URL(text).pathname).toBe('/a%2Fb%3Fc');
+  });
+
   it('substitutes all three placeholders', () => {
     const { text } = substituteHoverTemplate(
       '{hover_label} in {hover_node} at #{hover_index}',

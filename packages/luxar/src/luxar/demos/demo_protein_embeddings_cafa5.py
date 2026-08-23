@@ -1146,6 +1146,31 @@ def generate_protein_landscape(
                 viewer_config=ViewerConfig(cinematic_mode=True),
             )
 
+            # Click a protein to open its UniProt entry, right-click to copy
+            # the accession (#1917). The visible label is composite prose
+            # ("P04637 · DNA-binding cluster") so the URL cannot be built from
+            # it — `keys=` carries the bare accession alongside, which is
+            # exactly what that channel is for.
+            #
+            # Gated on the accessions being REAL: with no matching ids file the
+            # loader substitutes synthetic `Protein_<i>` strings, and linking
+            # those would ship a demo whose every click 404s. Same detection
+            # the cluster-naming path uses.
+            real_accessions = not all(
+                pid.startswith(SYNTHETIC_ID_PREFIX) for pid in protein_ids
+            )
+            link_attrs = (
+                {
+                    "keys": list(protein_ids),
+                    "link": "https://www.uniprot.org/uniprotkb/{hover_key}/entry",
+                    "copy": "{hover_key}",
+                }
+                if real_accessions
+                else {}
+            )
+            if not real_accessions:
+                aprint("  ⓘ Synthetic accessions — skipping UniProt links")
+
             scene.add_points(
                 "proteins",
                 positions=np.asarray(positions, dtype=np.float32),
@@ -1156,6 +1181,7 @@ def generate_protein_landscape(
                 intensity=0.124,
                 labels=labels,
                 layer=True,
+                **link_attrs,
             )
 
             # --- Overlays ---

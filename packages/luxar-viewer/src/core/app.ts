@@ -89,6 +89,8 @@ export class LuxarApp {
   private pickingSystem?: PickingSystem;
   private labelLoader?: LabelLoader;
   private imageLabelLoader?: ImageLabelLoader;
+  /** Reads the per-element `keys` CSR — a LabelLoader on the 'keys' channel (#1917). */
+  private keyLoader?: LabelLoader;
   /**
    * Per-init EventGroup for picking-system listeners (canvas mousemove,
    * window resize, controls/scene-manager subscriptions). Re-disposed and
@@ -510,6 +512,7 @@ export class LuxarApp {
         pickingSystem: this.pickingSystem,
         labelLoader: this.labelLoader,
         imageLabelLoader: this.imageLabelLoader,
+        keyLoader: this.keyLoader,
       },
       getOverlayManager: () => this.overlayManager,
       onSelection: (sel) => this.embedderEvents.emit('selection', sel),
@@ -524,6 +527,7 @@ export class LuxarApp {
     this.pickingSystem = result.pickingSystem;
     this.labelLoader = result.labelLoader;
     this.imageLabelLoader = result.imageLabelLoader;
+    this.keyLoader = result.keyLoader;
   }
 
   /**
@@ -541,11 +545,13 @@ export class LuxarApp {
         pickingSystem: this.pickingSystem,
         labelLoader: this.labelLoader,
         imageLabelLoader: this.imageLabelLoader,
+        keyLoader: this.keyLoader,
       },
     });
     this.pickingSystem = undefined;
     this.labelLoader = undefined;
     this.imageLabelLoader = undefined;
+    this.keyLoader = undefined;
   }
 
   /**
@@ -923,6 +929,7 @@ export class LuxarApp {
       pickingSystem: this.pickingSystem,
       labelLoader: this.labelLoader,
       imageLabelLoader: this.imageLabelLoader,
+      keyLoader: this.keyLoader,
       datasetBrowser: this.datasetBrowser,
       clearScaleBar: () => {
         this.scaleBar = undefined;

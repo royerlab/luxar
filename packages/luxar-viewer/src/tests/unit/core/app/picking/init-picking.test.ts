@@ -107,6 +107,7 @@ function makePreviousEmpty(): InitPickingResult {
     pickingSystem: undefined,
     labelLoader: undefined,
     imageLabelLoader: undefined,
+    keyLoader: undefined,
   };
 }
 
@@ -134,6 +135,7 @@ describe('initPicking', () => {
           pickingSystem: prevPicking as never,
           labelLoader: prevLabel as never,
           imageLabelLoader: prevImage as never,
+          keyLoader: undefined,
         },
         getOverlayManager: () => undefined,
       });
@@ -171,6 +173,7 @@ describe('initPicking', () => {
           pickingSystem: prevPicking as never,
           labelLoader: prevLabel as never,
           imageLabelLoader: prevImage as never,
+          keyLoader: undefined,
         },
       });
 
@@ -202,6 +205,7 @@ describe('initPicking', () => {
         pickingSystem: undefined,
         labelLoader: undefined,
         imageLabelLoader: undefined,
+        keyLoader: undefined,
       });
       expect(PickingSystem).not.toHaveBeenCalled();
     });
