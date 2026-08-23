@@ -604,6 +604,33 @@ class TestUmapDeviceSelection:
         assert called == []
 
 
+class TestBundleCacheVersion:
+    """The bundle stores `years`, so changing how they are derived invalidates it.
+
+    A v2 bundle carries `update_date` years and a v1 bundle is a date-ordered
+    prefix; either would be served silently to anyone with a warm cache.
+    """
+
+    def test_the_bundle_version_is_bumped_past_the_update_date_bundles(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        seen = {}
+
+        def spy(name, key, compute_fn, **kwargs):
+            seen.update(name=name, key=key, version=kwargs.get("version"))
+            return _fake_bundle()
+
+        monkeypatch.setattr(demo, "cache_computed", spy)
+        monkeypatch.setattr(demo, "substitutive_lod_or_flat", lambda spec: None)
+        demo.generate_paper_landscape(tmp_path / "v.luxar.zarr", sample_size=40)
+
+        assert seen["name"] == "arxiv_kaggle"
+        assert seen["version"] >= 3, (
+            "v1 (prefix) and v2 (update_date years) bundles must be unreachable"
+        )
+        assert seen["key"] == "umap3d_n40_pca128_seed0"
+
+
 class TestParseArgs:
     """Values are validated at parse time, not behind the 30 GB streaming pass."""
 
@@ -649,3 +676,23 @@ class TestParseArgs:
             "auto",
             0,
         )
+
+
+class TestMainReportsBadFlagsCleanly:
+    """A typo is a user error, not a crash — same shape as a build failure."""
+
+    @pytest.mark.parametrize("arg", ["--device=tpu", "--sample=0", "--pca-dim=-1"])
+    def test_bad_flag_exits_two_with_a_message_not_a_traceback(
+        self, arg, monkeypatch, capsys
+    ) -> None:
+        monkeypatch.setattr(sys, "argv", ["demo", arg])
+        # Nothing may be built: the failure must happen before any work.
+        monkeypatch.setattr(
+            demo,
+            "generate_paper_landscape",
+            lambda *a, **k: pytest.fail("the demo started work on an invalid flag"),
+        )
+        with pytest.raises(SystemExit) as exc:
+            demo.main()
+        assert exc.value.code == 2
+        assert "Error:" in capsys.readouterr().out

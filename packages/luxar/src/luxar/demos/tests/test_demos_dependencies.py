@@ -661,6 +661,15 @@ UNLISTED_IMPORTS_OK = {
     # A hard dependency of `requests`, which is a CORE dependency, so it is
     # always importable. Nothing to advertise.
     "urllib3": "transitive of requests (a core dependency) — always present",
+    # Pure accelerator, deliberately NOT routed through `require_module`: cuML
+    # only makes the arXiv demo's UMAP faster (56 s vs hours on the full
+    # corpus) and its absence is a silent fall-back to `umap-learn`. Tabling it
+    # would be worse than leaving it out — RAPIDS ships CUDA-only wheels with
+    # no macOS build, so `deps` would report a permanently unmet row and
+    # `deps --install` would offer an install that cannot succeed on most
+    # machines.
+    "cuml": "optional GPU accelerator — silent fall-back to umap-learn; "
+    "RAPIDS has no portable wheel to advertise",
 }
 
 

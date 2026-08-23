@@ -111,6 +111,7 @@ import re
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from arbol import aprint, asection
@@ -1021,13 +1022,16 @@ def generate_paper_landscape(
 
     # UMAP + matched metadata cached under ~/.cache/luxar/arxiv_kaggle, keyed on
     # everything that changes the result, so a second identical run is instant.
-    # version=2: v1 bundles were a date-ordered PREFIX of the corpus with no
-    # `median_nn`, and must not be reused.
+    # version=3: v1 bundles were a date-ordered PREFIX of the corpus with no
+    # `median_nn`; v2 bundles carry `update_date` years, which
+    # `resolve_paper_metadata` no longer produces. Neither may be reused — the
+    # stored `years` are part of this computation's output, so changing how they
+    # are derived invalidates the cache exactly as changing the UMAP would.
     cache_key = (
         f"umap3d_n{'all' if sample_size is None else sample_size}"
         f"_pca{pca_dim}_seed{seed}"
     )
-    bundle = cache_computed("arxiv_kaggle", cache_key, _compute_bundle, version=2)
+    bundle = cache_computed("arxiv_kaggle", cache_key, _compute_bundle, version=3)
     positions = bundle["positions"]
     categories = list(bundle["categories"])
     years = list(bundle["years"])
@@ -1228,11 +1232,68 @@ def generate_paper_landscape(
 # =============================================================================
 
 
+def _positive(flag: str, raw: str) -> int:
+    """An integer of at least 1, or a message naming the flag."""
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ValueError(f"{flag} needs an integer, got {raw!r}") from None
+    if value < 1:
+        raise ValueError(f"{flag} must be at least 1, got {value}")
+    return value
+
+
+def _parse_sample(raw: str) -> int | None:
+    """``all`` / ``full`` mean the whole corpus; anything else is a count."""
+    return None if raw in ("all", "full") else _positive("--sample", raw)
+
+
+def _parse_pca_dim(raw: str) -> int:
+    """At least 1, and at most the width of a stored vector.
+
+    The upper bound is not cosmetic: PCA cannot produce more components than the
+    data has features, so a larger value fails inside the fit — after a full
+    streaming pass has already been paid for.
+    """
+    value = _positive("--pca-dim", raw)
+    if value > EMBEDDING_DIM:
+        raise ValueError(
+            f"--pca-dim must be between 1 and {EMBEDDING_DIM}, got {value}"
+        )
+    return value
+
+
+def _parse_device(raw: str) -> str:
+    device = raw.lower()
+    if device not in ("auto", "cpu", "gpu"):
+        raise ValueError(f"--device must be auto, cpu or gpu, got {device!r}")
+    return device
+
+
+def _parse_seed(raw: str) -> int:
+    try:
+        seed = int(raw)
+    except ValueError:
+        raise ValueError(f"--seed needs an integer, got {raw!r}") from None
+    # `np.random.default_rng` rejects a negative seed, and is not reached until
+    # the sampling step.
+    if seed < 0:
+        raise ValueError(f"--seed must be non-negative, got {seed}")
+    return seed
+
+
+#: ``--flag`` -> (result key, value parser). Table-driven so adding a flag
+#: cannot forget to validate it, and so `parse_args` stays branch-free.
+_FLAGS: dict[str, tuple[str, Any]] = {
+    "--sample=": ("sample_size", _parse_sample),
+    "--pca-dim=": ("pca_dim", _parse_pca_dim),
+    "--device=": ("device", _parse_device),
+    "--seed=": ("seed", _parse_seed),
+}
+
+
 def parse_args(argv: list[str]) -> tuple[int | None, int, str, int]:
     """Parse the demo's ``--flag=value`` arguments.
-
-    Args:
-        argv: Arguments without the program name.
 
     Every value is validated HERE rather than where it is first used. The two
     consumers sit behind a multi-minute streaming pass over a 30 GB ZIP (hours
@@ -1240,6 +1301,9 @@ def parse_args(argv: list[str]) -> tuple[int | None, int, str, int]:
     of it, and a non-positive ``--sample`` / ``--pca-dim`` either crashed there
     with a bare numpy or sklearn message or — for ``--sample=0`` — produced an
     empty scene with no error at all.
+
+    Unrecognised arguments are ignored: ``luxar demo run`` forwards its own
+    (``--no-serve``).
 
     Args:
         argv: Arguments without the program name.
@@ -1251,56 +1315,30 @@ def parse_args(argv: list[str]) -> tuple[int | None, int, str, int]:
     Raises:
         ValueError: A flag carries an unusable value.
     """
-    sample_size = DEFAULT_SAMPLE_SIZE
-    pca_dim = DEFAULT_PCA_DIM
-    device = "auto"
-    seed = 0
-
-    def _positive(flag: str, raw: str) -> int:
-        try:
-            value = int(raw)
-        except ValueError:
-            raise ValueError(f"{flag} needs an integer, got {raw!r}") from None
-        if value < 1:
-            raise ValueError(f"{flag} must be at least 1, got {value}")
-        return value
-
+    opts: dict[str, Any] = {
+        "sample_size": DEFAULT_SAMPLE_SIZE,
+        "pca_dim": DEFAULT_PCA_DIM,
+        "device": "auto",
+        "seed": 0,
+    }
     for arg in argv:
-        if arg.startswith("--sample="):
-            raw = arg.split("=", 1)[1]
-            sample_size = None if raw in ("all", "full") else _positive("--sample", raw)
-        elif arg.startswith("--pca-dim="):
-            pca_dim = _positive("--pca-dim", arg.split("=", 1)[1])
-        elif arg.startswith("--device="):
-            device = arg.split("=", 1)[1].lower()
-            if device not in ("auto", "cpu", "gpu"):
-                raise ValueError(f"--device must be auto, cpu or gpu, got {device!r}")
-        elif arg.startswith("--seed="):
-            raw = arg.split("=", 1)[1]
-            try:
-                seed = int(raw)
-            except ValueError:
-                raise ValueError(f"--seed needs an integer, got {raw!r}") from None
-            # `np.random.default_rng` rejects a negative seed, and it is not
-            # reached until the sampling step.
-            if seed < 0:
-                raise ValueError(f"--seed must be non-negative, got {seed}")
+        for prefix, (name, parse) in _FLAGS.items():
+            if arg.startswith(prefix):
+                opts[name] = parse(arg[len(prefix) :])
+                break
 
-    if device not in ("auto", "cpu", "gpu"):
-        raise ValueError(f"device must be one of auto/cpu/gpu, got {device!r}")
-    if sample_size is not None and sample_size < 1:
-        raise ValueError(f"sample must be positive or 'all', got {sample_size}")
-    if not 1 <= pca_dim <= EMBEDDING_DIM:
-        raise ValueError(
-            f"pca-dim must be between 1 and {EMBEDDING_DIM}, got {pca_dim}"
-        )
-
-    return sample_size, pca_dim, device, seed
+    return opts["sample_size"], opts["pca_dim"], opts["device"], opts["seed"]
 
 
 def main() -> None:
     """Main demo entry point."""
-    sample_size, pca_dim, device, seed = parse_args(sys.argv[1:])
+    try:
+        sample_size, pca_dim, device, seed = parse_args(sys.argv[1:])
+    except ValueError as e:
+        # Match how a build failure is reported below: a typo is a user error,
+        # not a crash, and does not deserve a traceback.
+        aprint(f"Error: {e}")
+        sys.exit(2)
 
     aprint("=" * 70)
     aprint("PREPRINT EMBEDDINGS - PRE-COMPUTED FROM KAGGLE")
