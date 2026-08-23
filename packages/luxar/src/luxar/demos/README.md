@@ -1012,13 +1012,13 @@ Fetches the aerial "small city" MatrixCity scene — **13,589,514 Gaussians** �
 ---
 
 #### demo_gsplats_4d_zebrafish_timelapse.py - 4D Zebrafish Embryo Time-Lapse
-4D (3D + time) confocal recording of a living zebrafish embryo during gastrulation, with per-timepoint Gaussian splatting and a time dimension slider.
+Five hours of zebrafish gastrulation (Zenodo 1211599, confocal, 151 timepoints two minutes apart) as **one** 4D Gaussian-splat node: each timepoint is fitted separately, then the fits are stacked with `combine_as_new_dimension` so time is the fourth centre column rather than a per-timepoint sibling node. That single node carries a substitutive LOD ladder in which time is a **hard coarsening barrier**, so a coarse level never blends one frame's cells into the next. The labelled endodermal cells fill under 2% of the imaged voxels, so a second toggleable layer draws the acquisition volume as a **wireframe cage ruled every 100 µm** — without it the specimen floats in an unmarked void and its migration across the yolk cannot be read. The Time slider is in **minutes**, taken from the LSM's own frame interval.
 
 **Run**: `luxar demo run gsplats_4d_zebrafish_timelapse`
 
-**Requires**: Internet access (downloads ~2.1 GB LSM from Zenodo), GPU recommended.
+**Requires**: Nothing but the bundled fit to view. `--recompute` downloads the ~2.1 GB LSM from Zenodo and refits all 151 timepoints (GPU strongly recommended).
 
-**Demonstrates**: 4D Gaussian splatting (3D + time), per-timepoint independent fitting, `dim_order` + `fill` for time coordinate assignment, zebrafish gastrulation imaging, Zeiss LSM format.
+**Demonstrates**: stacking per-timepoint 3D fits into one 4D node; barrier-aware substitutive LOD over a time axis; `extend_to_all` for a static reference layer that survives every scrub; a discrete viewer dimension carrying real physical units; and reading acquisition geometry out of a Zeiss LSM instead of assuming it.
 
 ---
 

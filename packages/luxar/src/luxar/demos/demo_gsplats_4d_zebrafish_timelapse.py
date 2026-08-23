@@ -35,9 +35,10 @@ DATA SOURCE & CITATIONS:
 ACQUISITION (read from the LSM's own metadata, not assumed):
     151 timepoints x 44 x 512 x 512 uint8, voxel 7.1847 x 1.6774 x 1.6774 um
     (ZYX) — anisotropic by 4.28x along Z — one frame every 120.01 s, so the
-    recording spans 5 h 00 m. The fit is handed ``voxel_size``, so the shipped
-    centres are in microns and the embryo has its true proportions; the imaged
-    block is 316 x 859 x 859 um.
+    recording spans 5 h 00 m. Each fit runs on the voxel grid and is then scaled
+    by that voxel size (an exact diagonal affine, carried into the Cholesky
+    factors), so the shipped centres are in microns and the embryo has its true
+    proportions; the imaged block is 316 x 859 x 859 um.
 
 SPLAT BUDGET (measured on this data, 2026-08-22, RTX PRO 6000):
     The previous version asked for 2,000 seeds and shipped **533 splats** for a
@@ -147,6 +148,17 @@ SCENE_NAME = "gsplats_4d_zebrafish_timelapse.luxar.zarr"
 ZENODO_URL = "https://zenodo.org/api/records/1211599/files/cxcr4aMO2_290112.lsm/content"
 LSM_BYTES = 2_080_484_264
 
+#: The acquisition geometry, as the LSM records it. Held here rather than only
+#: read from the file because the SCENE needs it and the scene is normally built
+#: from the shipped archive, with no LSM in reach: the cage must be the imaged
+#: BLOCK, and a box fitted to the splats instead would shrink around a specimen
+#: that fills under 2% of it — a ruler cut to the size of the thing it measures.
+#: :func:`open_lsm` checks the file against these on the refit path, so they
+#: cannot drift silently.
+ACQUISITION_SHAPE_ZYX = (44, 512, 512)
+VOXEL_SIZE_ZYX_UM = (7.184696827249337, 1.6774389429296399, 1.6774389429296399)
+FRAME_INTERVAL_S = 120.00882789993899
+
 CACHE_DIR = DEMO_CACHE_ROOT / DEMO_NAME
 LSM_PATH = CACHE_DIR / "cxcr4aMO2_290112.lsm"
 #: Per-timepoint fits, keyed on the fit schedule so retuning cannot hit a stale
@@ -217,16 +229,16 @@ DEVICE: Optional[str] = None
 # =============================================================================
 # Acquisition
 # =============================================================================
-def open_lsm() -> tuple[Any, tuple[float, float, float], float]:
-    """Download the LSM if needed and open it lazily.
+def open_lsm() -> Any:
+    """Download the LSM if needed, check its geometry, and open it lazily.
 
-    Returns ``(array, voxel_size_zyx_um, frame_interval_s)`` where ``array`` is
-    a lazy ``(T, Z, Y, X)`` zarr view — the movie is 1.7 GB of voxels and only
-    one timepoint is ever needed at a time, so it is never read whole.
+    Returns a lazy ``(T, Z, Y, X)`` zarr view: the movie is 1.7 GB of voxels and
+    only one timepoint is ever needed at a time, so it is never read whole.
 
-    The spatial and temporal calibration come from the LSM's own metadata. Both
-    are required: without them the embryo renders with a 4.28x axial squash and
-    the Time axis has no unit to be in.
+    The LSM's own voxel size and frame interval are compared against the module
+    constants above rather than merely read, because the scene uses the
+    constants — a record re-uploaded with a different calibration would
+    otherwise mislabel every axis of a rebuilt archive without a word.
     """
     tifffile = require_module("tifffile")
     zarr = require_module("zarr")
@@ -246,12 +258,6 @@ def open_lsm() -> tuple[Any, tuple[float, float, float], float]:
                 for k in ("VoxelSizeZ", "VoxelSizeY", "VoxelSizeX")
             )
             interval = float(meta.get("TimeIntervall", 0.0))
-        if not all(v > 0 for v in voxel) or interval <= 0:
-            raise RuntimeError(
-                f"{LSM_PATH.name}: LSM metadata is missing the voxel size "
-                f"({voxel}) or the frame interval ({interval} s). Both are "
-                "needed for physical coordinates; the file may be truncated."
-            )
 
         # series 0 is the image data; series 1 is the embedded RGB thumbnail.
         array = zarr.open(
@@ -263,22 +269,64 @@ def open_lsm() -> tuple[Any, tuple[float, float, float], float]:
             f"Frame interval: {interval:.2f} s "
             f"({array.shape[0] * interval / 3600:.2f} h total)"
         )
-        return array, voxel, interval  # type: ignore[return-value]
+
+        drift = [
+            f"{what}: file says {got}, this demo assumes {want}"
+            for what, got, want, ok in (
+                (
+                    "grid",
+                    tuple(array.shape[1:]),
+                    ACQUISITION_SHAPE_ZYX,
+                    tuple(array.shape[1:]) == ACQUISITION_SHAPE_ZYX,
+                ),
+                (
+                    "voxel size (um)",
+                    voxel,
+                    VOXEL_SIZE_ZYX_UM,
+                    np.allclose(voxel, VOXEL_SIZE_ZYX_UM, rtol=1e-4),
+                ),
+                (
+                    "frame interval (s)",
+                    interval,
+                    FRAME_INTERVAL_S,
+                    abs(interval - FRAME_INTERVAL_S) < 1e-3,
+                ),
+            )
+            if not ok
+        ]
+        if drift:
+            raise RuntimeError(
+                "The downloaded LSM does not match the acquisition this demo is "
+                "written against:\n  "
+                + "\n  ".join(drift)
+                + "\nUpdate ACQUISITION_SHAPE_ZYX / VOXEL_SIZE_ZYX_UM / "
+                "FRAME_INTERVAL_S, and the numbers quoted in the docstring."
+            )
+        return array
 
 
 def select_timepoints(n_total: int, limit: Optional[int]) -> list[int]:
-    """Frame indices to fit — every frame, or ``limit`` spread over the whole run.
+    """Frame indices to fit — every frame, or a uniform subsample of ``limit``.
 
-    ``np.linspace`` rather than a stride: a stride of ``n_total // limit`` stops
-    short of the end (64 frames of 151 at stride 2 ends at frame 126), so the
-    last 50 minutes of gastrulation — the part where the endoderm has actually
-    spread — never made it into the previous version of this demo.
+    The shipped archive takes every frame, which is the change that matters:
+    the previous version asked for 64 of 151 and computed ``stride =
+    n_total // n_use`` = 2, so it stopped at frame 126 and the last 50 minutes
+    of gastrulation — the part where the endoderm has actually spread — never
+    made it into the demo at all.
+
+    A subsample is UNIFORM by construction, not merely evenly spread. Time
+    becomes a discrete viewer dimension whose navigation snaps to multiples of
+    one ``step``, so unevenly spaced frames would land between stops and those
+    stops would silently render nothing. Being uniform costs the tail: a stride
+    that does not divide the run stops short of the final frame. That is the
+    right trade for a development flag and no trade at all for the archive.
     """
     if limit is None or limit >= n_total:
         return list(range(n_total))
     if limit < 2:
         raise ValueError(f"--max-timepoints must be at least 2, got {limit}")
-    return sorted(set(np.linspace(0, n_total - 1, limit).round().astype(int).tolist()))
+    stride = max(1, (n_total - 1) // (limit - 1))
+    return list(range(0, n_total, stride))[:limit]
 
 
 # =============================================================================
@@ -288,7 +336,7 @@ def _fit_cache_path(frame: int) -> Path:
     return FITS_DIR / f"f{frame:04d}_k{SEEDS}_i{N_ITERS}.gsplats.zarr.zip"
 
 
-def fit_timepoint(volume: np.ndarray, frame: int, voxel: tuple, acquisition: tuple):
+def fit_timepoint(volume: np.ndarray, frame: int, acquisition: tuple):
     """Fit one timepoint, caching the result.
 
     The cached store is what gets stacked, not the in-memory fit: the cache is
@@ -318,7 +366,18 @@ def fit_timepoint(volume: np.ndarray, frame: int, voxel: tuple, acquisition: tup
         n_iters=N_ITERS,
         early_stop_patience=EARLY_STOP_PATIENCE,
         cull_retention=CULL_RETENTION,
-        voxel_size=voxel,
+        # Fit on the VOXEL grid, and apply the microns afterwards (see
+        # `to_microns`). Handing the fitter `voxel_size` instead puts the
+        # optimizer in physical space, which costs the same wall clock (A/B at
+        # 32k seeds: 38.1 s voxel vs 32.6 s physical on frame 110) but scores
+        # slightly worse on both frames tried — 34.26/10.44 dB against
+        # 34.00/10.08 global/foreground at t=110, 46.37/16.29 against
+        # 46.12/16.07 at t=0 — plausibly because a 4.28x-anisotropic grid makes
+        # the fitter's isotropic seed shapes a worse starting guess in microns
+        # than in voxels. It is also the space the SPLAT BUDGET table was
+        # measured in. The scale itself is exact either way: a diagonal affine,
+        # which `GSplatData.transform` carries into the Cholesky factors.
+        output_space="voxel",
         # One timepoint of the stored uint8 stack is the source; `volume` is a
         # normalized float32 copy of it, so without this the compression ratio
         # would be quoted against a denominator 4x too large.
@@ -338,7 +397,7 @@ def fit_timepoint(volume: np.ndarray, frame: int, voxel: tuple, acquisition: tup
     return GSplatData.load(cache_file, include_stats=True)
 
 
-def fit_all_timepoints(array, frames: list[int], voxel: tuple) -> list[GSplatData]:
+def fit_all_timepoints(array, frames: list[int]) -> list[GSplatData]:
     """Fit every selected timepoint, reading one frame of the movie at a time."""
     acquisition = (tuple(int(s) for s in array.shape[1:]), str(array.dtype))
     scale = (
@@ -352,25 +411,83 @@ def fit_all_timepoints(array, frames: list[int], voxel: tuple) -> list[GSplatDat
     ):
         for i, frame in enumerate(frames):
             volume = np.asarray(array[frame]).astype(np.float32) / scale
-            fits.append(fit_timepoint(volume, frame, voxel, acquisition))
+            fits.append(fit_timepoint(volume, frame, acquisition))
             if (i + 1) % 10 == 0 or i == len(frames) - 1:
                 aprint(
                     f"  {i + 1}/{len(frames)} — frame {frame}: "
                     f"{fits[-1].n_splats:,} splats"
                 )
+        report_fit_quality(fits)
     return fits
 
 
+def report_fit_quality(fits: list[GSplatData]) -> None:
+    """Print what the fits actually achieved, from their own stamps.
+
+    Each fit scores itself against the raw frame it was handed, so this costs
+    nothing to print and is the number the archive should be judged by. Both
+    columns are reported: on a volume this sparse, global PSNR is mostly the
+    reward for predicting empty space correctly, and the foreground figure is
+    the one that moves when the fit gets better or worse.
+    """
+
+    def column(key: str) -> Optional[np.ndarray]:
+        vals = [g.stats.get(key) for g in fits]
+        good = np.array([float(v) for v in vals if isinstance(v, (int, float))])
+        return good if good.size else None
+
+    counts = np.array([g.n_splats for g in fits])
+    aprint(
+        f"Splats per timepoint: median {int(np.median(counts)):,}, "
+        f"range {counts.min():,}-{counts.max():,}, total {counts.sum():,}"
+    )
+    for label, key in (("global", "psnr_db"), ("foreground", "foreground_psnr_db")):
+        col = column(key)
+        if col is None:
+            # A cache written before the fit stamped quality, or a fitter path
+            # that skipped it — say so rather than print a silent blank.
+            aprint(f"{label.capitalize()} PSNR: not stamped on these fits")
+        else:
+            aprint(
+                f"{label.capitalize()} PSNR: median {np.median(col):.2f} dB, "
+                f"range {col.min():.2f}-{col.max():.2f} dB"
+            )
+
+
+def acquisition_box_um() -> tuple[np.ndarray, np.ndarray]:
+    """The imaged block in microns, centred on the origin: ``(bmin, bmax)``.
+
+    Every timepoint shares one grid, so this is a constant of the recording —
+    which is what lets the splats be recentred on it and the cage drawn around
+    it without either needing the other in hand.
+    """
+    half = 0.5 * np.asarray(VOXEL_SIZE_ZYX_UM) * np.asarray(ACQUISITION_SHAPE_ZYX)
+    return -half, half
+
+
+def to_microns(fit: GSplatData) -> GSplatData:
+    """Put one voxel-space fit into microns, centred on the acquisition box.
+
+    The scale is the LSM's own voxel size — a diagonal affine, so
+    ``GSplatData.transform`` carries it exactly into the Cholesky factors and
+    the 4.28x axial anisotropy comes out corrected rather than merely stretched
+    at display time.
+
+    The recentring is on the *box* centre, not on the fit's own
+    amplitude-weighted centroid. That matters more here than in a static demo:
+    the labelled endoderm migrates across the yolk over five hours, so a
+    per-frame centroid would chase it and the embryo would appear to swim on the
+    spot while the cage slid past it.
+    """
+    scale = np.diag(np.asarray(VOXEL_SIZE_ZYX_UM, dtype=np.float64))
+    centre = 0.5 * np.asarray(VOXEL_SIZE_ZYX_UM) * np.asarray(ACQUISITION_SHAPE_ZYX)
+    return fit.transform(scale).translate(-centre)
+
+
 def combine_to_4d(
-    per_timepoint: list[GSplatData], centre_um: np.ndarray, times_min: list[float]
+    per_timepoint: list[GSplatData], times_min: list[float]
 ) -> GSplatData:
     """Stack per-timepoint 3D fits into one 4D (ZYX + time) dataset.
-
-    Each timepoint is first recentred on the *acquisition box* centre rather
-    than on its own amplitude-weighted centroid. That matters here more than in
-    a static demo: the labelled endoderm migrates across the yolk over five
-    hours, so a per-frame centroid would chase it and the embryo would appear to
-    swim on the spot while the cage slid past it.
 
     Amplitudes are left alone. Every frame of this recording is an 8-bit stack
     whose brightest cells sit at 255, so the fits already share a scale, and
@@ -379,7 +496,7 @@ def combine_to_4d(
     occupancy that is the developmental story.
     """
     stacked = GSplatData.combine_as_new_dimension(
-        [g.translate(-centre_um) for g in per_timepoint],
+        [to_microns(g) for g in per_timepoint],
         values=times_min,
         sigma=0.0,  # a splat is instantaneous; it must not smear across frames
     )
@@ -508,14 +625,11 @@ def load_or_build_gsplats() -> GSplatData:
         aprint(f"Falling back to download + fit (one-time; cached at {LOCAL_FIT}).")
 
     warn_if_no_cuda_gpu()
-    array, voxel, interval_s = open_lsm()
+    array = open_lsm()
     frames = select_timepoints(int(array.shape[0]), MAX_TIMEPOINTS)
-    fits = fit_all_timepoints(array, frames, voxel)
-
-    # Every frame shares the acquisition grid, so the box centre is one number.
-    centre_um = 0.5 * np.asarray(voxel, dtype=np.float64) * np.asarray(array.shape[1:])
-    times_min = [frame * interval_s / 60.0 for frame in frames]
-    stacked = combine_to_4d(fits, centre_um, times_min)
+    fits = fit_all_timepoints(array, frames)
+    times_min = [frame * FRAME_INTERVAL_S / 60.0 for frame in frames]
+    stacked = combine_to_4d(fits, times_min)
 
     with asection("Building the LOD ladder"):
         laddered = build_lod(stacked)
@@ -537,15 +651,25 @@ def load_or_build_gsplats() -> GSplatData:
 # =============================================================================
 def create_luxar_scene(stacked: GSplatData, output_path: Path) -> Path:
     """Build the 4D scene: one gsplats node, one cage layer, overlays."""
-    centers = stacked.centers
-    n_timepoints = int(np.unique(centers[:, 3]).size)
-    t_min, t_max = float(centers[:, 3].min()), float(centers[:, 3].max())
+    times = np.unique(stacked.centers[:, 3])
+    n_timepoints = int(times.size)
+    t_min, t_max = float(times.min()), float(times.max())
     step_min = (t_max - t_min) / max(n_timepoints - 1, 1)
 
-    # The cage is the acquisition box, which is what the splats were recentred
-    # on — so it is symmetric about the origin and no splat can sit outside it.
-    half = np.abs(centers[:, :3]).max(axis=0)
-    bmin, bmax = -half, half
+    # Time is a DISCRETE viewer dimension: navigation snaps to multiples of
+    # `step` anchored at 0 and a chunk is only fetched within a quarter-step of
+    # the snapped position, so a timepoint sitting off that grid produces a
+    # slider stop that renders nothing at all — silently. Cheap to check here,
+    # invisible if it ever stops holding.
+    off_grid = np.abs(times - np.round(times / step_min) * step_min).max()
+    if off_grid > 0.01 * step_min:
+        raise RuntimeError(
+            f"timepoints are not uniformly spaced (worst offset {off_grid:.4g} "
+            f"min against a {step_min:.4g} min step); the viewer's discrete "
+            "navigation would land on empty stops"
+        )
+
+    bmin, bmax = acquisition_box_um()
 
     with asection("Creating the 4D zebrafish scene"):
         aprint(f"Splats: {stacked.n_splats:,} over {n_timepoints} timepoints")
