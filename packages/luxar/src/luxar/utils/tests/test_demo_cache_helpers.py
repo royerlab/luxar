@@ -241,6 +241,55 @@ def test_stack_colorings_shapes_and_alignment():
     assert out.labels == [f"a{i}" for i in range(n)] + [f"b{i}" for i in range(n)]
 
 
+def test_stack_colorings_keys_tile_with_the_blocks():
+    """`keys` (#1917) is one list for the whole cloud, tiled once per coloring.
+
+    Labels are per-view because the hover text changes with the colour scheme;
+    a point's machine-readable identity does not, so passing keys per view would
+    invite two views to disagree about what a point IS. Tiled here so it stays
+    aligned with the stacked positions — the alignment this helper owns.
+    """
+    n = 4
+    coords = np.arange(n * 3, dtype=np.float32).reshape(n, 3)
+    c = np.zeros((n, 3), dtype=np.float32)
+    keys = [f"P{i}" for i in range(n)]
+    out = demo_utils.stack_colorings(
+        coords,
+        [
+            {"label": "A", "colors": c, "labels": [f"a{i}" for i in range(n)]},
+            {"label": "B", "colors": c, "labels": [f"b{i}" for i in range(n)]},
+        ],
+        keys=keys,
+    )
+    assert out.keys == keys + keys
+    assert len(out.keys) == len(out.positions)
+    # Same point, same key, whichever block it is in.
+    for i in range(n):
+        assert out.keys[i] == out.keys[i + n]
+
+
+def test_stack_colorings_keys_default_to_none():
+    """Every existing caller omits `keys`, and must keep getting a node with no
+    keys channel rather than an empty one."""
+    n = 3
+    coords = np.zeros((n, 3), dtype=np.float32)
+    c = np.zeros((n, 3), dtype=np.float32)
+    out = demo_utils.stack_colorings(coords, [{"label": "A", "colors": c}])
+    assert out.keys is None
+
+
+def test_stack_colorings_rejects_a_wrong_length_keys():
+    """A short keys list would tile into a shape that still looks plausible, so
+    it is refused here rather than misaligned downstream."""
+    n = 4
+    coords = np.zeros((n, 3), dtype=np.float32)
+    c = np.zeros((n, 3), dtype=np.float32)
+    with pytest.raises(ValueError, match="keys has 2 entries"):
+        demo_utils.stack_colorings(
+            coords, [{"label": "A", "colors": c}], keys=["a", "b"]
+        )
+
+
 def test_stack_colorings_labels_none_if_any_view_missing():
     n = 3
     coords = np.zeros((n, 3), dtype=np.float32)

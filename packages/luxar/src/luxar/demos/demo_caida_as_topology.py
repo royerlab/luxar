@@ -1076,6 +1076,7 @@ def build_node_points(
     np.ndarray,
     list[str],
     list[str],
+    list[str],
     np.ndarray,
     np.ndarray,
     np.ndarray,
@@ -1085,6 +1086,7 @@ def build_node_points(
 
     Returns:
         positions (2N, 4), colors (2N, 3), radii (2N,), labels (2N,),
+        keys (2N, bare AS numbers for the BGP-toolkit link),
         country_cats, country_codes, community_palette, country_palette,
         per-node radii (N,) for reuse by edge geometry
     """
@@ -1138,11 +1140,21 @@ def build_node_points(
         )
     labels = labels_per_node * 2
 
+    # Click an AS to open its BGP-toolkit page, right-click to copy the AS
+    # number (#1917). The label opens with "AS1234" but continues into the org
+    # name, country, degree and community on two lines, so a URL built from it
+    # would be nonsense — `keys=` carries the bare number.
+    #
+    # Duplicated `* 2` exactly like the labels: this node set is written twice,
+    # once per color view, and every per-element channel has to match.
+    keys = [str(asn) for asn in asns] * 2
+
     return (
         positions,
         colors,
         radii,
         labels,
+        keys,
         country_cats,
         country_codes,
         comm_palette,
@@ -1337,6 +1349,7 @@ def build_scene(
         node_colors,
         node_radii,
         node_labels,
+        node_keys,
         country_cats,
         country_codes,
         _comm_palette,
@@ -1391,6 +1404,9 @@ def build_scene(
                 opacity=0.95,
                 intensity=0.2,
                 labels=node_labels,
+                keys=node_keys,
+                link="https://bgp.he.net/AS{hover_key}",
+                copy="AS{hover_key}",
                 layer=True,
             )
 

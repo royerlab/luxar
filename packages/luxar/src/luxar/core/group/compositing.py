@@ -731,6 +731,7 @@ def validate_points_channels_before_split(
     scalars: Any = None,
     labels: Any = None,
     image_labels: Any = None,
+    keys: Any = None,
 ) -> None:
     """Run the flat Points write gate over every per-point channel, pre-split.
 
@@ -744,7 +745,7 @@ def validate_points_channels_before_split(
     This does not re-implement the checks: it calls
     :func:`~luxar.io._compiler.geometry_writers.points.validate_points_channels`,
     which IS the writer's own step-0d/0e sweep (colors → radii → sharpness →
-    scalars → labels), just against the source count. Sharing one
+    scalars → labels → keys → image labels), just against the source count. Sharing one
     implementation is deliberate — a channel added to the writer's gate is
     covered here the same day, so this gate cannot drift from what the child
     write accepts. Every legal broadcast form the flat path accepts therefore
@@ -807,6 +808,7 @@ def validate_points_channels_before_split(
             ever carried by the finest child of a ``substitutive_lod=``
             ladder; see the paragraph above for why it needs this gate
             specifically.
+        keys: One machine-readable string per point.
 
     Raises:
         ValidationError: If any channel is not a legal per-point or broadcast
@@ -821,6 +823,7 @@ def validate_points_channels_before_split(
         sharpness=sharpness,
         scalars=scalars,
         labels=labels,
+        keys=keys,
         image_labels=image_labels,
     )
 
@@ -834,6 +837,7 @@ def validate_lines_channels_before_split(
     scalars: Any = None,
     labels: Any = None,
     image_labels: Any = None,
+    keys: Any = None,
 ) -> None:
     """Run the flat Lines write gate over every per-vertex channel, pre-split.
 
@@ -843,7 +847,7 @@ def validate_lines_channels_before_split(
     written LAST, so this gate is what keeps a wrong length from stranding a
     truncated ``kind=lod`` ladder), for why the implementation is shared with
     the writer rather than repeated, and for the exact scope of the
-    identical-verdict promise. All five channels are per-VERTEX (not
+    identical-verdict promise. All seven channels are per-VERTEX (not
     per-segment), and ``widths`` is required, so it is validated first and
     unconditionally. The topology half of the same gate is
     :func:`validate_line_indices_before_split`, which must run BEFORE this one.
@@ -860,6 +864,7 @@ def validate_lines_channels_before_split(
             only ever carried by the finest child of a ``substitutive_lod=``
             ladder; see :func:`validate_points_channels_before_split` for why
             it needs this gate specifically.
+        keys: One machine-readable string per vertex.
 
     Raises:
         ValidationError: If any channel is not a legal per-vertex or broadcast
@@ -874,6 +879,7 @@ def validate_lines_channels_before_split(
         sharpness=sharpness,
         scalars=scalars,
         labels=labels,
+        keys=keys,
         image_labels=image_labels,
     )
 
@@ -919,6 +925,7 @@ def validate_gsplats_channels_before_split(
     *,
     colors: Any = None,
     labels: Any = None,
+    keys: Any = None,
 ) -> bool:
     """Run the flat GSplats write gate over the source arrays, pre-split.
 
@@ -936,6 +943,7 @@ def validate_gsplats_channels_before_split(
         colors: Per-splat ``(N, 3|4)`` array, a ``(1, c)`` broadcast row, or a
             uniform RGB(A) list/tuple.
         labels: One string per splat.
+        keys: One stable string key per splat.
 
     Returns:
         ``cholesky_is_uniform`` — whether ``cholesky_factors`` is the uniform
@@ -947,14 +955,17 @@ def validate_gsplats_channels_before_split(
     Raises:
         ValueError: If the trio's shapes/values are not a legal per-splat or
             broadcast combination for ``len(centers)`` splats.
-        ValidationError: If ``labels`` is not one string per splat.
+        ValidationError: If ``labels`` or ``keys`` is not one string per splat.
     """
     from ...io._compiler.gsplat_assembly import validate_gsplat_inputs
+    from ...validation.base import validate_labels_for_writing
 
     (*_normalized, n_splats, _n_dims, cholesky_is_uniform) = validate_gsplat_inputs(
         centers, amplitudes, cholesky_factors, colors
     )
     validate_labels_before_split(labels, n_splats)
+    if keys is not None:
+        validate_labels_for_writing(keys, n_splats, context="keys", noun="Keys")
     return bool(cholesky_is_uniform)
 
 

@@ -483,10 +483,11 @@ describe('InputHandler Utilities', () => {
 });
 
 describe('InputHandler Type Definitions', () => {
-  it('should export InputHandler class', { timeout: 15_000 }, async () => {
+  it('should export InputHandler class', { timeout: 30_000 }, async () => {
     // Dynamic import to avoid triggering complex dependencies.
     // The import pulls in the full dependency graph (THREE.js, scene managers,
-    // UI components), which normally takes ~600ms but can exceed 5s under load.
+    // UI components). It finishes in ~6s alone but can exceed 15s while the
+    // full parallel suite is transforming the rest of the viewer graph.
     const module = await import('../../../input/input-handler');
     expect(module.InputHandler).toBeDefined();
     expect(typeof module.InputHandler).toBe('function');

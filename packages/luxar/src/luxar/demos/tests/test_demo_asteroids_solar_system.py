@@ -201,9 +201,25 @@ class TestBrightestAndLabels:
         assert list(out["names"]) == ["b", "c"]  # smallest H first
 
     def test_labels_only_for_brightest(self) -> None:
-        labels = build_labels(self._cat(), top_n=1)
+        labels, _keys = build_labels(self._cat(), top_n=1)
         assert labels.count("") == 2
         assert labels[1].startswith("b")  # brightest gets the label
+
+    def test_keys_are_the_bare_designation_and_empty_where_labels_are(self) -> None:
+        """The SBDB key must be the designation ALONE (#1917).
+
+        The label appends the semi-major axis, so a URL built from it would look
+        up "b  ·  a=2.40 AU". And an asteroid with no label gets an empty key,
+        not a stray one: the viewer suppresses a link whose template has an empty
+        substitution, so the unlabelled majority is simply not clickable.
+        """
+        labels, keys = build_labels(self._cat(), top_n=1)
+        assert keys.count("") == 2
+        assert keys[1] == "b"
+        assert "a=" not in keys[1]
+        # Emptiness must line up exactly, or a point could be labelled and
+        # unlinkable, or linkable with no visible name.
+        assert [bool(x) for x in keys] == [bool(x) for x in labels]
 
 
 def _assert_sun_centered_opening_camera(path: Path) -> None:

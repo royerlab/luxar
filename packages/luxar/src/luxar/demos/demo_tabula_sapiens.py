@@ -678,6 +678,17 @@ def generate_tabula_sapiens(
 
         labels = [f"{cell_types[i]} ({tissues[i]})" for i in range(n_cells)]
 
+        # Click a cell to look its type up in the EBI Ontology Lookup Service,
+        # right-click to copy the type (#1917). The label appends the tissue, so
+        # the query has to come from `keys=`.
+        #
+        # A SEARCH rather than a direct term page on purpose: `cell_types` comes
+        # from whichever of several candidate columns the file happens to carry,
+        # so the value may be an ontology term id or a human-readable class name
+        # depending on the tissue. OLS search resolves both; a term-page URL
+        # would 404 on half of them.
+        ontology_keys = [str(ct).strip() for ct in cell_types]
+
     # Write to Zarr
     with asection("Writing to Zarr"):
         dims = Dimensions(
@@ -706,6 +717,9 @@ def generate_tabula_sapiens(
                 opacity=0.85,
                 intensity=0.15,
                 labels=labels,
+                keys=ontology_keys,
+                link="https://www.ebi.ac.uk/ols4/search?q={hover_key}",
+                copy="{hover_key}",
                 layer=True,
             )
 

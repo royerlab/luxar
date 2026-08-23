@@ -74,6 +74,8 @@ export interface CachedPick {
   elementIndex: number;
   /** The element's label, or null when it has none. */
   label: string | null;
+  /** The element's machine-readable key, or null when it has none (#1917). */
+  key: string | null;
   /** Canvas-local cursor position the pick was taken at, in CSS pixels. */
   screenX: number;
   screenY: number;

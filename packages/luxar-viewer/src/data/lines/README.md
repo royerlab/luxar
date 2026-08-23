@@ -49,7 +49,7 @@ worker dispatcher kernel in-process. `projection.ts` here exports only
   widths, colors, sharpness, scalars) is fetched with one zarr read
   per range.
 - **Labelled nodes publish their on-disk vertex ranges.** A node declaring
-  `has_labels` / `has_image_labels` gets `LoadedLinesData.vertexRangeBounds` — the
+  `has_labels` / `has_image_labels` / `has_keys` gets `LoadedLinesData.vertexRangeBounds` — the
   ascending, disjoint ON-DISK vertex ranges the loaded per-vertex arrays
   concatenate, flattened as `[start0, end0, start1, end1, …]` in a `Uint32Array`
   so the SliceCache measures and deep-copies them like any other per-vertex

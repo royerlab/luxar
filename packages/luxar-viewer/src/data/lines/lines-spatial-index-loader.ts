@@ -486,9 +486,10 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     // declares one. They are one link of the slot → on-disk map picking
     // resolves labels through (issue #1424), and nothing else reads them;
     // ungated, every lines node would drag the array through each SliceCache
-    // snapshot for no reader. `LabelLoader.hasLabels()` keys on the same two
+    // snapshot for no reader. `LabelLoader.hasLabels()` keys on the same three
     // attrs; the Points / GSplats twins gate identically.
-    const wantsElementIds = attrs.has_labels === true || attrs.has_image_labels === true;
+    const wantsElementIds =
+      attrs.has_labels === true || attrs.has_image_labels === true || attrs.has_keys === true;
     // Flattened to `[start0, end0, …]` so the SliceCache MEASURES and
     // DEEP-COPIES it like every other per-vertex array (see
     // `LoadedLinesData.vertexRangeBounds`).

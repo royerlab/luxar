@@ -82,7 +82,7 @@ import type { EncodingName } from '../../types/format-contract';
  * `.zarray` + `.zattrs` and nothing else. Optional entries are `undefined` when
  * the node's presence flags say the array is absent.
  *
- * The label/image-label CSR arrays are included even though this loader never
+ * The label/image-label/key CSR arrays are included even though this loader never
  * fetches them: picking resolves a vertex ordinal that indexes the CSR directly,
  * and the shared lazy `loaders/picking/label-loader.ts` reads the arrays on first
  * hover. They are still part of the node's declared footprint, so budgeting them
@@ -98,6 +98,8 @@ export interface MeshArrayHandles {
   labelBytes?: zarr.Array<zarr.DataType, zarr.Readable>;
   imageLabelOffsets?: zarr.Array<zarr.DataType, zarr.Readable>;
   imageLabelBytes?: zarr.Array<zarr.DataType, zarr.Readable>;
+  keyOffsets?: zarr.Array<zarr.DataType, zarr.Readable>;
+  keyBytes?: zarr.Array<zarr.DataType, zarr.Readable>;
 }
 
 /**
@@ -118,6 +120,8 @@ export const MESH_ARRAY_NAMES: Record<keyof MeshArrayHandles, string> = {
   labelBytes: 'label_bytes',
   imageLabelOffsets: 'image_label_offsets',
   imageLabelBytes: 'image_label_bytes',
+  keyOffsets: 'key_offsets',
+  keyBytes: 'key_bytes',
 };
 
 /**
@@ -866,7 +870,7 @@ export async function preflightMesh(
   // Only this direction is checked. The converse — an array the flags disown — is
   // NOT reachable through the loader, which opens an optional array only when its
   // flag is set, so asserting it here would be testing a state production cannot
-  // construct. The label CSR arrays are checked as a PAIR for the same reason the
+  // construct. The string-channel CSR arrays are checked as PAIRS for the same reason the
   // others are checked at all: this loader never fetches them, but a `has_labels`
   // with one array missing is a store whose first hover would fail confusingly
   // inside the lazy label loader instead of here, at load.
@@ -880,6 +884,7 @@ export async function preflightMesh(
       attrs.has_image_labels,
       [arrays.imageLabelOffsets, arrays.imageLabelBytes] as const,
     ],
+    ['has_keys', attrs.has_keys, [arrays.keyOffsets, arrays.keyBytes] as const],
   ] as const) {
     if (flag && required.some((a) => !a)) {
       rejectMesh(path, `${flagName} is set but its array(s) are missing from the store.`);

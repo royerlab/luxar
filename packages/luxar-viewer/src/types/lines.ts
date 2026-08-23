@@ -125,6 +125,9 @@ export interface LinesMetadata {
   /** Whether per-element image labels exist (CSR-encoded, for hover thumbnails) */
   has_image_labels?: boolean;
 
+  /** Whether per-element stable string keys exist (CSR-encoded, for element actions) */
+  has_keys?: boolean;
+
   /** Spatial ordering method */
   ordering: 'morton' | 'hilbert' | 'none';
 
@@ -266,9 +269,10 @@ export interface LoadedLinesData {
    * `LinesSpatialIndexLoader` queries visible SEGMENT ranges, then derives the
    * vertex ranges those segments reference and loads only those.
    *
-   * Published ONLY when the node declares a per-element label CSR
-   * (`has_labels` / `has_image_labels`): nothing else reads the map, and the
-   * field would otherwise ride along in every SliceCache snapshot for free.
+   * Published ONLY when the node declares a per-element string/image CSR
+   * (`has_labels` / `has_image_labels` / `has_keys`): nothing else reads the
+   * map, and the field would otherwise ride along in every SliceCache snapshot
+   * for free.
    * Absent ⇒ no map is composed and picking falls back to the raw slot.
    */
   vertexRangeBounds?: Uint32Array;

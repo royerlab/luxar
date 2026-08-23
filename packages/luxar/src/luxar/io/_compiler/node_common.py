@@ -68,6 +68,7 @@ POINTS_RESERVED_ATTRS: FrozenSet[str] = frozenset(
         "has_scalars",
         "has_labels",
         "has_image_labels",
+        "has_keys",
         "position_bounds",
         "max_radius",
         "ordering",
@@ -85,6 +86,7 @@ LINES_RESERVED_ATTRS: FrozenSet[str] = frozenset(
         "has_scalars",
         "has_labels",
         "has_image_labels",
+        "has_keys",
         "max_width",
         "position_bounds",
         "ordering",
@@ -98,6 +100,7 @@ GSPLATS_RESERVED_ATTRS: FrozenSet[str] = frozenset(
         "has_colors",
         "has_labels",
         "has_image_labels",
+        "has_keys",
         "amplitude_range",
         "amplitude_data_range",
         # Writer-derived mass statistics that drive the finalize-time
@@ -127,6 +130,7 @@ MESH_RESERVED_ATTRS: FrozenSet[str] = frozenset(
         "has_scalars",
         "has_labels",
         "has_image_labels",
+        "has_keys",
         "shading",
         "double_sided",
         "position_bounds",
@@ -155,7 +159,8 @@ KNOWN_RENDER_ATTRS: FrozenSet[str] = frozenset(
         # Per-element interaction templates (issue #1917). ``link`` builds a
         # URL opened on left-click, ``copy`` a plain string offered by the
         # right-click menu, both substituting the hover vocabulary
-        # (``{hover_label}`` / ``{hover_node}`` / ``{hover_index}``).
+        # (``{hover_label}`` / ``{hover_key}`` / ``{hover_node}`` /
+        # ``{hover_index}``).
         # ``link_target`` picks the browsing context. Advertised here rather
         # than hidden in ``_ALLOWED_NODE_ATTRS`` for the same reason as
         # lines-only ``join``: they are real knobs a user authors, so a typo

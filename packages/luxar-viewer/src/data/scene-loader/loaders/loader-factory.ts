@@ -210,6 +210,7 @@ export async function createProgressiveGSplatsLoader(
         // and Lines ladders write one parent-level union CSR instead — #1422.)
         has_labels: false,
         has_image_labels: false,
+        has_keys: false,
       },
       hasSpatialIndex: false,
       children: [],
@@ -356,6 +357,7 @@ export async function createProgressiveMeshLoader(
       // per-level label ranges the concat would then have to discard.
       has_labels: false,
       has_image_labels: false,
+      has_keys: false,
     } as unknown as MeshMetadata;
 
     lodLoaders.push(
@@ -498,27 +500,29 @@ export async function createProgressivePointsLoader(
     onDiskCounts.push(typeof lodAttrs.n_points === 'number' ? lodAttrs.n_points : undefined);
   }
 
-  // Does the PARENT node carry the ladder's UNION label CSR? That CSR is keyed
+  // Does the PARENT node carry a UNION string/image CSR? Each CSR is keyed
   // by the concatenation `additive_0 || additive_1 || …`, each level in its own
   // stored order (#1422), so it is the parent — never a sub-LOD — that decides
-  // whether a ladder has readable labels at all.
-  const parentDeclaresLabels =
-    node.attrs.has_labels === true || node.attrs.has_image_labels === true;
+  // whether a ladder has readable per-element metadata at all.
+  const parentDeclaresStringChannel =
+    node.attrs.has_labels === true ||
+    node.attrs.has_image_labels === true ||
+    node.attrs.has_keys === true;
   // CSR-style bounds over the on-disk counts, length `nAdditive + 1`:
   // `levelOffsets[i]` is where level `i` starts inside the parent's union CSR
   // index space (so [0] === 0) and `levelOffsets[i + 1]` is where it ends, so
   // the composer can also BOUND each level's ids instead of only shifting
   // them. The last entry is the union's total row count.
-  // Only meaningful when the parent declares labels; on anything unusable stay
+  // Only meaningful when the parent declares a string/image channel; otherwise stay
   // null (hover then reports the raw slot — no better than before #1439, but
   // never an id composed into someone else's CSR row).
   let levelOffsets: number[] | null = null;
-  if (parentDeclaresLabels) {
+  if (parentDeclaresStringChannel) {
     const usable = onDiskCounts.every((n) => n !== undefined && Number.isSafeInteger(n) && n >= 0);
     if (!usable) {
       log.warning(
         Modules.SCENE_LOADER,
-        `Progressive Points ${node.path} declares labels but a sub-LOD is missing a valid ` +
+        `Progressive Points ${node.path} declares a string/image channel but a sub-LOD is missing a valid ` +
           '`n_points`; per-level picking maps are disabled (hover falls back to the ' +
           'visible-buffer slot).'
       );
@@ -533,7 +537,7 @@ export async function createProgressivePointsLoader(
         log.warning(
           Modules.SCENE_LOADER,
           `Progressive Points ${node.path}: sub-LOD row counts sum to ${total} but the parent ` +
-            `declares n_points=${node.attrs.n_points}; the label CSR and the levels disagree, ` +
+            `declares n_points=${node.attrs.n_points}; the parent CSR and the levels disagree, ` +
             'so per-level picking maps are disabled (hover falls back to the visible-buffer slot).'
         );
       } else if (total > 0xffffffff) {
@@ -562,7 +566,7 @@ export async function createProgressivePointsLoader(
     }
   }
   // Per-level maps are only ever USED when the offsets exist to place them.
-  const levelsBuildMaps = parentDeclaresLabels && levelOffsets !== null;
+  const levelsBuildMaps = parentDeclaresStringChannel && levelOffsets !== null;
 
   // PASS 2 — synthesize each sub-LOD node and its loader.
   const lodLoaders: PointsSpatialIndexLoader[] = levels.map(
@@ -579,9 +583,9 @@ export async function createProgressivePointsLoader(
           offset: parentEffectiveAttrs.offset,
           blending_mode: parentEffectiveAttrs.blending_mode,
           extend_to_all: node.attrs.extend_to_all,
-          // A ladder's label CSR lives on the PARENT node, spanning the levels in
+          // A ladder's string/image CSR lives on the PARENT node, spanning the levels in
           // `additive_<i>` order (#1422), and that is also the only path the pick
-          // path ever resolves labels against — a sub-LOD carries no CSR of ITS
+          // path ever resolves per-element metadata against — a sub-LOD carries no CSR of ITS
           // OWN that any reader can key by, so a sub-LOD's stored flags are never
           // trusted and are always overridden here. They are overridden with the
           // parent's declaration, AND only
@@ -589,11 +593,12 @@ export async function createProgressivePointsLoader(
           // builds its own level-space slot → on-disk map and
           // `concatenatePointsData` offsets it into the parent's index space by
           // the preceding levels' on-disk counts (#1439). Without them (no parent
-          // CSR, or a failed cross-check) both stay false, so no per-level map is
+          // CSR, or a failed cross-check) all stay false, so no per-level map is
           // built only to be discarded, and picking stays allocation-free exactly
           // as before.
           has_labels: levelsBuildMaps && node.attrs.has_labels === true,
           has_image_labels: levelsBuildMaps && node.attrs.has_image_labels === true,
+          has_keys: levelsBuildMaps && node.attrs.has_keys === true,
         },
         hasSpatialIndex: false,
         children: [],
@@ -658,9 +663,9 @@ export async function createProgressiveLinesLoader(
         offset: parentEffectiveAttrs.offset,
         blending_mode: parentEffectiveAttrs.blending_mode,
         extend_to_all: node.attrs.extend_to_all,
-        // A ladder's label CSR lives on the PARENT node, per-VERTEX and spanning
+        // A ladder's string/image CSR lives on the PARENT node, per-VERTEX and spanning
         // the levels in `additive_<i>` order (#1422), and that is also the only
-        // path the pick path ever resolves labels against — a sub-LOD carries no
+        // path the pick path ever resolves per-element metadata against — a sub-LOD carries no
         // CSR of its own, so no reader can key by a sub-LOD's on-disk index.
         // Clearing the flags here keeps the spatial-index loader from publishing
         // per-level `vertexRangeBounds` — and the projection from composing a
@@ -673,6 +678,7 @@ export async function createProgressiveLinesLoader(
         // ladder still needs it, and at the per-VERTEX granularity above.
         has_labels: false,
         has_image_labels: false,
+        has_keys: false,
       },
       hasSpatialIndex: false,
       children: [],

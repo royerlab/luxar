@@ -78,7 +78,9 @@ function makeSceneManager(scene: THREE.Scene): SceneManagerStub {
   };
 }
 
-function makeLuxarRoot(opts: { hasLabels?: boolean; hasImageLabels?: boolean } = {}): THREE.Group {
+function makeLuxarRoot(
+  opts: { hasLabels?: boolean; hasImageLabels?: boolean; hasKeys?: boolean } = {}
+): THREE.Group {
   const root = new THREE.Group();
   root.name = 'LuxarScene';
   const child = new THREE.Group();
@@ -86,6 +88,7 @@ function makeLuxarRoot(opts: { hasLabels?: boolean; hasImageLabels?: boolean } =
     attrs: {
       ...(opts.hasLabels ? { has_labels: true } : {}),
       ...(opts.hasImageLabels ? { has_image_labels: true } : {}),
+      ...(opts.hasKeys ? { has_keys: true } : {}),
     },
   };
   root.add(child);
@@ -107,6 +110,7 @@ function makePreviousEmpty(): InitPickingResult {
     pickingSystem: undefined,
     labelLoader: undefined,
     imageLabelLoader: undefined,
+    keyLoader: undefined,
   };
 }
 
@@ -134,6 +138,7 @@ describe('initPicking', () => {
           pickingSystem: prevPicking as never,
           labelLoader: prevLabel as never,
           imageLabelLoader: prevImage as never,
+          keyLoader: undefined,
         },
         getOverlayManager: () => undefined,
       });
@@ -171,6 +176,7 @@ describe('initPicking', () => {
           pickingSystem: prevPicking as never,
           labelLoader: prevLabel as never,
           imageLabelLoader: prevImage as never,
+          keyLoader: undefined,
         },
       });
 
@@ -202,6 +208,7 @@ describe('initPicking', () => {
         pickingSystem: undefined,
         labelLoader: undefined,
         imageLabelLoader: undefined,
+        keyLoader: undefined,
       });
       expect(PickingSystem).not.toHaveBeenCalled();
     });
@@ -373,6 +380,31 @@ describe('initPicking', () => {
       expect(ImageLabelLoader).toHaveBeenCalledOnce();
       expect(result.labelLoader).toBeUndefined();
       expect(result.imageLabelLoader).toBeDefined();
+    });
+  });
+
+  describe('success path — keys-only scene', () => {
+    it('constructs the keys LabelLoader and provisions picking', async () => {
+      (getSceneLoader as unknown as ReturnType<typeof vi.fn>).mockReturnValue(
+        makeSceneLoader({ hasStore: true })
+      );
+      const scene = new THREE.Scene();
+      scene.add(makeLuxarRoot({ hasKeys: true }));
+
+      const result = await initPicking({
+        sceneManager: makeSceneManager(scene) as never,
+        pickingEvents,
+        previous: makePreviousEmpty(),
+        getOverlayManager: () => undefined,
+      });
+
+      expect(LabelLoader).toHaveBeenCalledExactlyOnceWith(
+        { kind: 'store' },
+        { kind: 'zarr-root-loc' },
+        'keys'
+      );
+      expect(result.keyLoader).toBeDefined();
+      expect(result.pickingSystem).toBeDefined();
     });
   });
 
