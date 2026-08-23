@@ -2096,6 +2096,16 @@ class TestCoarsenDims:
         # resolved without ever reading the width.
         assert resolved_merge_coarsen_dims((2, 0, 0), None) == [0, 2]
 
+    def test_an_empty_explicit_coarsen_request_raises(self):
+        """An empty list must never become an every-axis barrier stamp."""
+        from luxar.gsplats.batch.merge_orchestrator import _recipe_pipeline_info
+        from luxar.gsplats.lod.recipes import RecipeParams
+
+        with pytest.raises(ValueError, match="coarsen_dims must be non-empty"):
+            resolved_merge_coarsen_dims((), None)
+        with pytest.raises(ValueError, match="coarsen_dims must be non-empty"):
+            _recipe_pipeline_info("levels", RecipeParams(coarsen_dims=()))
+
     def test_single_barrier_value_is_noop(self):
         # All splats share barrier value 0 → one group → identical to all-dims.
         data = _stacked_categorical(n_per=1200, n_groups=1)

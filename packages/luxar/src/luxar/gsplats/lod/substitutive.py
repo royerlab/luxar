@@ -311,9 +311,11 @@ def resolved_merge_coarsen_dims(
     means plumbing a composed recipe's parameters into its record, which is a
     separate change tracked on #1600.
 
-    Always a literal list, never ``None`` — including for the coarsen-everything
-    case (the ``coarsen_dims=None`` default, and a request naming every dim,
-    which :func:`_normalise_coarsen_dims` collapses to the same thing). The two
+    Always a non-empty literal list, never ``None`` — including for the
+    coarsen-everything case (the ``coarsen_dims=None`` default, and a request
+    naming every dim, which :func:`_normalise_coarsen_dims` collapses to the
+    same thing). An empty explicit request is invalid: its empty complement
+    would claim every axis as a barrier. The two valid coarsen-everything
     spellings are NOT interchangeable on disk:
     :func:`~luxar.gsplats.io.save_gsplats._barrier_from_coarsen_dims` cannot tell
     a written ``null`` from an absent key, so both read as "no provenance" and
@@ -348,7 +350,10 @@ def resolved_merge_coarsen_dims(
                 "ndim is None too."
             )
         return list(range(int(ndim)))
-    return sorted({int(d) for d in coarsen_dims})
+    resolved = sorted({int(d) for d in coarsen_dims})
+    if not resolved:
+        raise ValueError("coarsen_dims must be non-empty")
+    return resolved
 
 
 def _subset_gsplatdata(data: GSplatData, mask: np.ndarray) -> GSplatData:
