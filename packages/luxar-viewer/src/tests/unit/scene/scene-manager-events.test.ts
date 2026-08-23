@@ -18,6 +18,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import { SceneManager } from '../../../scene/scene-manager';
+import { config } from '../../../config';
 
 describe('SceneManager event surface', () => {
   it('extends THREE.EventDispatcher with the public scene event names', () => {
@@ -29,6 +30,7 @@ describe('SceneManager event surface', () => {
     const handlers = {
       change: vi.fn(),
       'camera-changed': vi.fn(),
+      'projection-changed': vi.fn(),
       'webgl-context-restored': vi.fn(),
       'webgpu-device-lost': vi.fn(),
     } as const;
@@ -41,13 +43,84 @@ describe('SceneManager event surface', () => {
     // that the dispatch reaches the registered listener.
     sm.dispatchEvent({ type: 'change' });
     sm.dispatchEvent({ type: 'camera-changed' });
+    sm.dispatchEvent({ type: 'projection-changed' });
     sm.dispatchEvent({ type: 'webgl-context-restored' });
     sm.dispatchEvent({ type: 'webgpu-device-lost', reason: 'test', message: 'synthetic' });
 
     expect(handlers.change).toHaveBeenCalledTimes(1);
     expect(handlers['camera-changed']).toHaveBeenCalledTimes(1);
+    expect(handlers['projection-changed']).toHaveBeenCalledTimes(1);
     expect(handlers['webgl-context-restored']).toHaveBeenCalledTimes(1);
     expect(handlers['webgpu-device-lost']).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * Issue #1916 — a field-of-view edit reprojects the SAME camera, so it moves
+ * every element on screen while producing NO controls `change` event: the
+ * rendering-controls panel calls `updateFOV` directly, and the Ctrl/Cmd-wheel
+ * path is explicitly declined by the orbit controls
+ * (`luxar-orbit-controls/input/pointer.ts`). `projection-changed` is the only
+ * notification projection-dependent caches get, and the GPU pick buffer is one
+ * — without it, hover picking answered at the pre-FOV projection until some
+ * unrelated camera move happened to dirty it.
+ */
+describe('SceneManager.updateFOV — projection-changed', () => {
+  /**
+   * Bare SceneManager with just the state `adjustFOV` →
+   * `updateMaterialsForCurrentCamera` reads. `init()` is not run: it would
+   * need a real WebGL context. `boundsCache` / `_bufferSize` are field
+   * initializers so they already exist; `scene` and `renderer` are not.
+   */
+  function makeFovSceneManager(fov: number): SceneManager {
+    const sm = new SceneManager();
+    const camera = new THREE.PerspectiveCamera(fov, 1, 0.1, 100);
+    const inject = sm as unknown as { camera: unknown; scene: unknown; renderer: unknown };
+    inject.camera = camera;
+    inject.scene = new THREE.Scene();
+    inject.renderer = { getDrawingBufferSize: (v: THREE.Vector2) => v.set(800, 600) };
+    return sm;
+  }
+
+  it('dispatches when the live FOV actually moves', () => {
+    const sm = makeFovSceneManager(50);
+    const listener = vi.fn();
+    sm.addEventListener('projection-changed', listener);
+
+    expect(sm.updateFOV(10)).toBe(true);
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(sm.currentFov).not.toBe(50);
+  });
+
+  it('does NOT dispatch when the request is clamped to the FOV already in effect', () => {
+    // Already at fovMax (170); pushing further out clamps to the same value.
+    // `adjustFOV` still returns true, so gating on its return value alone would
+    // fire on every wheel tick at the bound and fade the tooltip for nothing.
+    const sm = makeFovSceneManager(config.camera.fovMax);
+    const listener = vi.fn();
+    sm.addEventListener('projection-changed', listener);
+
+    expect(sm.updateFOV(100)).toBe(true);
+
+    expect(listener).not.toHaveBeenCalled();
+    expect(sm.currentFov).toBe(config.camera.fovMax);
+  });
+
+  it('does NOT dispatch in orthographic mode, where only the perspective stash moves', () => {
+    const sm = new SceneManager();
+    const inject = sm as unknown as { camera: unknown; scene: unknown; renderer: unknown };
+    inject.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100);
+    inject.scene = new THREE.Scene();
+    inject.renderer = { getDrawingBufferSize: (v: THREE.Vector2) => v.set(800, 600) };
+    const listener = vi.fn();
+    sm.addEventListener('projection-changed', listener);
+
+    // Returns true (the stash was updated for a later ortho→perspective swap)
+    // but the LIVE projection is untouched, so nothing may be invalidated.
+    expect(sm.updateFOV(10)).toBe(true);
+
+    expect(listener).not.toHaveBeenCalled();
   });
 });
 

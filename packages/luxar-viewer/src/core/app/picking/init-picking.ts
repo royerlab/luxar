@@ -234,6 +234,19 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
     ports.sceneManager.removeEventListener('camera-changed', cameraChangedHandler)
   );
 
+  // A field-of-view edit changes the projection of the SAME camera, so it moves
+  // every element on screen without producing a controls `change` — the panel
+  // slider calls `SceneManager.updateFOV` directly, and the Ctrl/Cmd-wheel path
+  // is deliberately declined by the orbit controls. Without this the cached
+  // pick buffer kept answering at the pre-FOV projection until some unrelated
+  // camera move dirtied it (#1916). `setCamera` is not the right verb here: the
+  // camera instance is unchanged.
+  const projectionChangedHandler = () => pickingSystem.markDirty();
+  ports.sceneManager.addEventListener('projection-changed', projectionChangedHandler);
+  ports.pickingEvents.add(() =>
+    ports.sceneManager.removeEventListener('projection-changed', projectionChangedHandler)
+  );
+
   log.info(Modules.APP, 'GPU picking system initialized (labels detected)');
   return { pickingSystem, labelLoader, imageLabelLoader };
 }

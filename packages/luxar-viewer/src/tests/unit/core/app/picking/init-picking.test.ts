@@ -565,13 +565,12 @@ describe('initPicking', () => {
       expect(targets).toContain('resize');
       expect(targets).toContain('scroll');
 
-      // core.md W10 strengthening: previously `>=4`. Pin to EXACTLY 4 so
-      // a regression that double-registered a cleanup (or added a 5th
-      // listener without considering teardown) gets flagged. The four
-      // are: controls.removeEventListener('change' | 'start' | 'end')
-      // and sceneManager.removeEventListener('camera-changed') — see
-      // core/app/picking/init-picking.ts lines 144, 161, 162, 169.
-      expect(addSpy.mock.calls.length).toBe(4);
+      // core.md W10 strengthening: previously `>=4`. Pin to EXACTLY the
+      // current count so a regression that double-registered a cleanup (or
+      // added a listener without considering teardown) gets flagged. The five
+      // are: controls.removeEventListener('change' | 'start' | 'end') and
+      // sceneManager.removeEventListener('camera-changed' | 'projection-changed').
+      expect(addSpy.mock.calls.length).toBe(5);
       // Each registered cleanup is a function (not a value / object).
       for (const call of addSpy.mock.calls) {
         expect(typeof call[0]).toBe('function');
@@ -583,6 +582,40 @@ describe('initPicking', () => {
       expect(sm.controls.addEventListener).toHaveBeenCalledWith('start', expect.any(Function));
       expect(sm.controls.addEventListener).toHaveBeenCalledWith('end', expect.any(Function));
       expect(sm.addEventListener).toHaveBeenCalledWith('camera-changed', expect.any(Function));
+      expect(sm.addEventListener).toHaveBeenCalledWith('projection-changed', expect.any(Function));
+    });
+
+    /**
+     * Issue #1916. A FOV edit reprojects the SAME camera: no controls `change`
+     * fires (the panel calls `SceneManager.updateFOV` directly and the orbit
+     * controls explicitly decline the Ctrl/Cmd-wheel event), so the cached pick
+     * buffer would keep answering at the old projection. The handler must be
+     * `markDirty`, NOT `setCamera` — the camera instance has not changed.
+     */
+    it('dirties the pick buffer on projection-changed (FOV edit)', async () => {
+      (getSceneLoader as unknown as ReturnType<typeof vi.fn>).mockReturnValue(
+        makeSceneLoader({ hasStore: true })
+      );
+      const scene = new THREE.Scene();
+      scene.add(makeLuxarRoot({ hasLabels: true }));
+      const sm = makeSceneManager(scene);
+
+      const { pickingSystem } = await initPicking({
+        sceneManager: sm as never,
+        pickingEvents: new EventGroup(),
+        previous: makePreviousEmpty(),
+        getOverlayManager: () => undefined,
+      });
+
+      const handler = (sm.addEventListener as unknown as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c: unknown[]) => c[0] === 'projection-changed'
+      )?.[1] as () => void;
+      expect(handler).toBeTypeOf('function');
+
+      expect(pickingSystem?.markDirty).not.toHaveBeenCalled();
+      handler();
+      expect(pickingSystem?.markDirty).toHaveBeenCalledTimes(1);
+      expect(pickingSystem?.setCamera).not.toHaveBeenCalled();
     });
   });
 });

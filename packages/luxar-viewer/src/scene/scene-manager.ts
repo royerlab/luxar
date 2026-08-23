@@ -111,6 +111,21 @@ export class SceneManager extends THREE.EventDispatcher<{
   change: {};
   'camera-changed': {};
   /**
+   * Fired when the SAME camera's projection matrix changed — today only a
+   * field-of-view edit (`updateFOV`). Distinct from `camera-changed`, which
+   * announces that the camera INSTANCE was swapped (perspective ↔ ortho).
+   *
+   * Subscribers are anything holding a projection-dependent cache that the
+   * controls' own `change` event would otherwise have invalidated for them.
+   * The FOV paths bypass the controls entirely — the rendering-controls panel
+   * calls `updateFOV` directly, and the Ctrl/Cmd-wheel handler is deliberately
+   * declined by the orbit controls (`luxar-orbit-controls/input/pointer.ts`,
+   * "Ctrl/Meta+scroll belongs to the window-level FOV handler") — so without
+   * this event the GPU pick buffer kept reading the pre-FOV projection until
+   * some unrelated camera move happened to dirty it. See issue #1916.
+   */
+  'projection-changed': {};
+  /**
    * Fired after a successful WebGL context restore. Subscribers (e.g.
    * SceneLoader, which owns the NodeFactory and picking registrations)
    * use this to re-register / rebuild any GPU-bound resources their
@@ -1062,12 +1077,22 @@ export class SceneManager extends THREE.EventDispatcher<{
    * applied. In orthographic mode there is no live FOV to change, but the
    * request is applied to the stashed perspective FOV so a FOV set while in
    * ortho is honored on the next ortho→perspective swap.
+   *
+   * Dispatches `projection-changed` when the live FOV actually moved, so
+   * projection-dependent caches (the GPU pick buffer) are invalidated. This is
+   * the only notification those caches get: the FOV paths never touch the
+   * controls, so no `change` event fires (#1916). The comparison is against the
+   * camera's own `fov` rather than `adjustFOV`'s return value, which is `true`
+   * even when `validateFOV` clamped the request to the value already in effect
+   * — at the min/max bound that would otherwise dispatch on every wheel tick
+   * and fade the hover tooltip for nothing.
    */
   updateFOV(deltaY: number): boolean {
     if (!isPerspectiveCamera(this.camera)) {
       // Ortho renders no FOV, but keep the perspective stash coherent so a
       // Reset-to-Defaults / zarr-authored FOV applied while in ortho is honored
-      // on the next ortho→perspective swap.
+      // on the next ortho→perspective swap. No `projection-changed`: the live
+      // (orthographic) projection is untouched, only the stash for a later swap.
       const fovChange = deltaY * config.camera.fovSensitivity;
       this.lastPerspectiveFov = validateFOV(
         this.lastPerspectiveFov + fovChange,
@@ -1076,7 +1101,12 @@ export class SceneManager extends THREE.EventDispatcher<{
       );
       return true;
     }
-    return adjustFOV(this.makeCameraMaterialsCtx(), deltaY);
+    const fovBefore = this.camera.fov;
+    const applied = adjustFOV(this.makeCameraMaterialsCtx(), deltaY);
+    if (applied && this.camera.fov !== fovBefore) {
+      this.dispatchEvent({ type: 'projection-changed' });
+    }
+    return applied;
   }
 
   /** Update camera clipping planes with validation. */
