@@ -240,7 +240,7 @@ See `docs/guides/developer/BUILD_SYSTEM_SPEC.md` for complete documentation.
 
 ### Luxar CLI
 ```bash
-luxar demo                       # List the 86 bundled demos (table)
+luxar demo                       # List the 85 bundled demos (table)
 luxar demo run lorenz            # Run a demo by key/index (forwards -- args)
 luxar demo stop                  # Stop running demos and free their ports (--dry-run lists)
 luxar demo cache list            # Inventory / clear demo caches (cache clear …)
@@ -484,7 +484,7 @@ luxar gsplat convert splats.gsplats.zarr scene.luxar.zarr --colormap plasma --to
 # back into [0, 1] with --intensity/exposure and use `None`, or accept ACES's
 # filmic rolloff. Decide with an actual render, not from first principles.
 
-# Render gsplats back to volume for quality comparison
+# Render gsplats back to a background-relative volume
 luxar gsplat render splats.gsplats.zarr rendered.npy --shape 128,128,128
 
 # Compare reconstruction quality against original (PSNR, SSIM, MSE)

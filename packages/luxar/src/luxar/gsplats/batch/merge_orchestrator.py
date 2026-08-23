@@ -542,9 +542,12 @@ def _finalize_part_node(
 
     import dataclasses
 
+    from luxar.gsplats.fit_basis import fit_image_min
     from luxar.gsplats.lod.recipes import RecipeParams, build_part_lod
 
     params = recipe_params if recipe_params is not None else RecipeParams()
+    if params.image_min is None:
+        params = dataclasses.replace(params, image_min=fit_image_min(part.stats))
     if recipe == "levels" and params.coarsen_dims is None:
         # Stacked-timepoint axis (the last column) is a barrier; coarsen the rest.
         n_spatial = part.ndim - (1 if n_timepoints > 1 else 0)
@@ -553,6 +556,13 @@ def _finalize_part_node(
     # build_part_lod clamps LOD depth to the part's splat count (small tiles never
     # synthesise degenerate levels) — the exact per-part logic of tiles/adaptive.
     return build_part_lod(part.tree, recipe, params, cell=cell)
+
+
+def _stamp_recipe_floor(
+    part: "GSplatData", recipe: Optional[str], floor_stats: Dict[str, Any]
+) -> None:
+    if recipe is not None:
+        part.stats.update(floor_stats)
 
 
 def _effective_refine_iters(
@@ -867,6 +877,7 @@ def _merge_partition(
             else:
                 from luxar.gsplats.io.save_gsplats import write_gsplats_tree
 
+                part.stats.update(floor_stats)
                 node = _finalize_part_node(
                     part,
                     recipe,
@@ -917,6 +928,7 @@ def _merge_partition(
                 if verbose:
                     aprint(f"  {label} {k}: empty, skipping")
                 continue
+            _stamp_recipe_floor(part, recipe, floor_stats)
             # Each part is a single nD splat set → a matrix-shaped tree (a leaf,
             # or — with a per-part recipe — a leaf-with-ladder / substitutive lod
             # group). Hand the tree node straight to the streaming writer; it

@@ -446,25 +446,32 @@ luxar demo run network_performance -- --points=2000000 --profile satellite
 
 ### Embedding and UMAP Demos
 
-#### demo_arxiv_embeddings_semantic_scholar.py - arXiv Papers (Semantic Scholar)
-Visualizes scientific papers in 3D embedding space. Papers cluster by topic, colored by research field, sized by citation count.
-
-**Run**: `luxar demo run arxiv_papers_semantic_scholar`
-
-**Requires**: Internet access, `sentence-transformers` and `umap-learn` packages. Embeds abstracts with Sentence-BERT (all-MiniLM-L6-v2) and reduces to 3D with UMAP. `luxar[gsplats]` (torch + scipy) is optional — without it the scene builds as a flat, fully viewable point cloud instead of the Points LOD ladder.
-
-**Demonstrates**: Semantic embedding of text, UMAP dimensionality reduction (384D to 3D), citation-based sizing, research field clustering, Semantic Scholar API usage.
-
----
-
 #### demo_arxiv_embeddings_kaggle.py - arXiv Papers (Kaggle / OpenAI)
-Visualizes arXiv papers using pre-computed OpenAI embeddings from the Kaggle "openai-arxiv-embeddings" dataset (2M+ papers, 3072D).
+Visualizes the **whole** `tomtum/openai-arxiv-embeddings` corpus — 3,286,365 preprints
+(2,902,228 arXiv + 308,367 bioRxiv + 75,770 medRxiv, through 2025-12) with pre-computed
+`text-embedding-3-large` vectors (3072D), projected to 3D by UMAP.
 
 **Run**: `luxar demo run arxiv_papers_kaggle`
 
-**Requires**: Internet access, Kaggle account (for first download, ~30 GB cached to `~/.cache/mlcroissant/`), `mlcroissant` and `umap-learn` packages. First run takes 8-15 minutes; subsequent runs use cache. `luxar[gsplats]` (torch + scipy) is optional — without it the scene builds as a flat, fully viewable point cloud instead of the Points LOD ladder.
+**Requires**: Internet access for the one-time ~30 GB embeddings download plus the ~1.8 GB
+Cornell arXiv metadata snapshot (budget ~39 GB of disk under `~/.cache/luxar/`,
+since the metadata ZIP is also extracted), and `scikit-learn` + `umap-learn`. No
+Kaggle credentials are needed. `luxar[gsplats]` (torch + scipy) is optional
+— without it the scene builds as a flat, fully viewable point cloud instead of the Points
+LOD ladder.
 
-**Demonstrates**: Large-scale embedding visualization (2M+ papers), pre-computed OpenAI text-embedding-3-large, UMAP reduction, Kaggle dataset integration via mlcroissant.
+The 3072D vectors are never held in RAM: `vectors.dat` is streamed in blocks and projected
+through a PCA basis down to 128D (fitted on a 300k-row uniform subsample), and only that
+`(N, 128) float32` matrix is cached and handed to UMAP. Pass `--sample=N` for a *uniform
+random* subset on a smaller machine, and `--pca-dim` / `--device` to trade quality for time.
+The sample bounds UMAP, metadata, and label RAM/time; a cold run still downloads the full
+archive, streams every vector twice, and writes the corpus-wide PCA cache. When launching
+through `hatch run`, override its one-thread CPU defaults, for example with
+`OMP_NUM_THREADS=16 MKL_NUM_THREADS=16`.
+
+**Demonstrates**: Multi-million-element embedding visualization, streaming decode of a
+40 GB binary attached to a ZIP, PCA pre-reduction before UMAP, optional GPU (cuML) UMAP,
+self-calibrating point radii, Points substitutive LOD.
 
 ---
 
@@ -1012,13 +1019,13 @@ Fetches the aerial "small city" MatrixCity scene — **13,589,514 Gaussians** �
 ---
 
 #### demo_gsplats_4d_zebrafish_timelapse.py - 4D Zebrafish Embryo Time-Lapse
-4D (3D + time) confocal recording of a living zebrafish embryo during gastrulation, with per-timepoint Gaussian splatting and a time dimension slider.
+Five hours of zebrafish gastrulation (Zenodo 1211599, confocal, 151 timepoints two minutes apart) as **one** 4D Gaussian-splat node: each timepoint is fitted separately, then the fits are stacked with `combine_as_new_dimension` so time is the fourth centre column rather than a per-timepoint sibling node. That single node carries a substitutive LOD ladder in which time is a **hard coarsening barrier**, so a coarse level never blends one frame's cells into the next. The labelled endodermal cells fill under 2% of the imaged voxels, so a second toggleable layer draws the acquisition volume as a **wireframe cage ruled every 100 µm** — without it the specimen floats in an unmarked void and its migration across the yolk cannot be read. The Time slider is in **minutes** on an exact 2-minute grid (the LSM records 120.01 s; the axis is rounded so its last stop is actually reachable). The shipped archive is 1,590,010 splats — a median of 9,144 per timepoint at a median foreground PSNR of 20.95 dB — in four substitutive levels.
 
 **Run**: `luxar demo run gsplats_4d_zebrafish_timelapse`
 
-**Requires**: Internet access (downloads ~2.1 GB LSM from Zenodo), GPU recommended.
+**Requires**: Nothing but the bundled fit to view. `--recompute` downloads the ~2.1 GB LSM from Zenodo and refits all 151 timepoints (GPU strongly recommended).
 
-**Demonstrates**: 4D Gaussian splatting (3D + time), per-timepoint independent fitting, `dim_order` + `fill` for time coordinate assignment, zebrafish gastrulation imaging, Zeiss LSM format.
+**Demonstrates**: stacking per-timepoint 3D fits into one 4D node; barrier-aware substitutive LOD over a time axis; `extend_to_all` for a static reference layer that survives every scrub; a discrete viewer dimension carrying real physical units; and reading acquisition geometry out of a Zeiss LSM instead of assuming it.
 
 ---
 
@@ -1458,7 +1465,6 @@ hatch run python packages/luxar/src/luxar/demos/demo_hilbert_curve_3d.py
 hatch run python packages/luxar/src/luxar/demos/demo_network_performance.py
 
 # --- Embedding / UMAP ---
-hatch run python packages/luxar/src/luxar/demos/demo_arxiv_embeddings_semantic_scholar.py
 hatch run python packages/luxar/src/luxar/demos/demo_arxiv_embeddings_kaggle.py
 hatch run python packages/luxar/src/luxar/demos/demo_protein_embeddings_cafa5.py
 hatch run python packages/luxar/src/luxar/demos/demo_esm3_protein_landscape.py

@@ -90,6 +90,23 @@ def test_partition_merge_records_the_same_whole_volume_score(
     assert "No merged quality metrics" not in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("partition", [False, True])
+def test_tiled_quality_is_independent_of_the_removed_pedestal(
+    volume: np.ndarray, partition: bool
+) -> None:
+    """A merged fit and its reference must be scored on the same basis."""
+    low_result = _fit(volume + 50.0, partition=partition, cull_retention=None)
+    high_result = _fit(volume + 4000.0, partition=partition, cull_retention=None)
+    low = low_result.meta["fit_stats"] if partition else low_result.stats
+    high = high_result.meta["fit_stats"] if partition else high_result.stats
+    low_basis = low_result.meta if partition else low
+    high_basis = high_result.meta if partition else high
+
+    assert low_basis["image_min"] == pytest.approx(50.0, abs=0.1)
+    assert high_basis["image_min"] == pytest.approx(4000.0, abs=0.1)
+    assert high["psnr_db"] == pytest.approx(low["psnr_db"], abs=0.5)
+
+
 def test_partition_quality_reaches_the_archive_and_info(
     volume: np.ndarray,
     tmp_path: Path,
@@ -200,8 +217,39 @@ def test_partition_scoring_without_a_stats_target_keeps_the_finished_fit(
         grid_scale=None,
         device="cpu",
         verbose=False,
+        image_min=None,
     )
     assert "not given a stats target" in capsys.readouterr().out
+
+
+def test_merged_scoring_warns_when_the_basis_is_unknown(
+    volume: np.ndarray,
+    capsys: pytest.CaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    part = GSplatData(
+        centers=np.array([[1.0, 1.0, 1.0]], dtype=np.float32),
+        amplitudes=np.ones(1, dtype=np.float32),
+        cholesky_factors=np.array([[1.0, 0.0, 1.0, 0.0, 0.0, 1.0]], dtype=np.float32),
+    )
+    monkeypatch.setattr(merged_quality, "_quality_budget_gb", lambda: 0.0)
+
+    merged_quality.stamp_merged_quality(
+        part,
+        volume,
+        volume_shape=volume.shape,
+        grid_scale=None,
+        device="cpu",
+        verbose=False,
+        image_min=None,
+        stats={},
+    )
+
+    output = capsys.readouterr().out
+    assert "records no normalization basis" in output
+    assert "Merged quality metrics skipped" in output
 
 
 def test_the_returned_splats_stay_in_physical_coordinates(

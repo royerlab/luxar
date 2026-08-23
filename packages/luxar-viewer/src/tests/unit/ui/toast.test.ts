@@ -41,6 +41,13 @@ describe('showToast', () => {
     expect(toast.style.opacity).toBe('1');
   });
 
+  it('announces the message as a polite status update', () => {
+    showToast('try again in a moment');
+    const toast = currentToast()!;
+    expect(toast.getAttribute('role')).toBe('status');
+    expect(toast.getAttribute('aria-live')).toBe('polite');
+  });
+
   it('replaces any existing toast so rapid calls collapse into one', () => {
     showToast('first');
     showToast('second');

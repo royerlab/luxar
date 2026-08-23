@@ -28,6 +28,7 @@ from typing import Any, Optional, Sequence
 import numpy as np
 from arbol import aprint, asection
 
+from luxar.gsplats.fit_basis import fit_image_min
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 from luxar.gsplats.fitting.preprocessing import (
     NORM_RANGE_MIN_SPAN,
@@ -579,6 +580,7 @@ def _score_merged_if_reference(
     grid_scale: "tuple[float, ...] | None",
     device: Optional[str],
     verbose: bool,
+    image_min: Optional[float],
     stats: "dict[str, Any] | None" = None,
 ) -> None:
     """Score a flat merge or partition parts when a reference is available."""
@@ -591,6 +593,7 @@ def _score_merged_if_reference(
         grid_scale=grid_scale,
         device=device,
         verbose=verbose,
+        image_min=image_min,
         stats=stats,
     )
 
@@ -1118,6 +1121,7 @@ def merge_tile_results(
             grid_scale=grid_scale,
             device=device,
             verbose=verbose,
+            image_min=fit_image_min(node.meta),
             stats=fit_stats,
         )
         node.meta["fit_stats"] = fit_stats
@@ -1178,6 +1182,7 @@ def merge_tile_results(
         grid_scale=grid_scale,
         device=device,
         verbose=verbose,
+        image_min=fit_image_min(merged.stats),
     )
 
     return merged

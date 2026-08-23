@@ -46,7 +46,10 @@ DEMO_FILE_MAP = {
     "opencell_map4": ("demo_gsplats_3d_opencell_map4.py", "MAX_SPLATS"),
     "tribolium_embryo": ("demo_gsplats_3d_tribolium_embryo.py", "MAX_SPLATS"),
     "celegans_tracking": ("demo_gsplats_4d_celegans_tracking.py", "MAX_SPLATS"),
-    "zebrafish_timelapse": ("demo_gsplats_4d_zebrafish_timelapse.py", "MAX_SPLATS"),
+    # zebrafish_timelapse is deliberately absent: its seed budget is a MEASURED
+    # plateau (see the demo's SPLAT BUDGET table), and cal puts K* at 1,852 for
+    # that dataset — the second point of its own grid. Wiring it here would let
+    # a calibration run silently undo the budget.
     "cmu1_pathology": ("demo_gsplats_2d_cmu1_pathology.py", "SEEDS_PER_TILE"),
     "codex_pancreas": ("demo_gsplats_2d_codex_pancreas.py", "SEEDS_PER_TILE"),
 }

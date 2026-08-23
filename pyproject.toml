@@ -426,6 +426,11 @@ check-data-manifest = "python scripts/gen_data_manifest.py --check"
 # Audit built demo scenes when present; a checkout without generated scenes is
 # a read-only no-op. The underlying gate is unit-tested in the Python suite.
 check-demo-ladders = "python scripts/check_demo_ladders.py {args}"
+# Built scenes must carry the citation their demo declares. The source-level
+# gate (test_credited_demo_wires_citation) cannot see what reached disk: a
+# rebuild from a checkout predating the wiring ships an uncredited store and
+# nothing complains. Also a no-op without built scenes.
+check-scene-credits = "python scripts/check_scene_credits.py {args}"
 # Ratchet ruff's C901 against scripts/complexity_baseline.json: existing debt is
 # tolerated, a newly over-complex (or newly worse) function fails.
 check-complexity = "python scripts/check_complexity.py {args}"
@@ -441,6 +446,7 @@ check-static = [
     "check-contract",
     "check-data-manifest",
     "check-demo-ladders",
+    "check-scene-credits",
     "security"
 ]
 # The complete gate: static checks plus the coverage-measured suite. Kept for

@@ -17,6 +17,7 @@ from typer.testing import CliRunner
 
 from luxar.cli import app
 from luxar.gsplats.gsplat_data import GSplatData
+from luxar.utils.tests.test_arbol_warnings import _default_display_sandbox
 
 N_SPLATS = 64
 
@@ -88,6 +89,44 @@ def test_target_and_fraction_are_mutually_exclusive(
     assert both.exit_code == 1
     assert neither.exit_code == 1
     assert not out.exists()
+
+
+def test_the_ignored_coarsen_dims_notice_reaches_a_cli_user(
+    runner: CliRunner, source: Path, tmp_path: Path
+) -> None:
+    """The prefix family's dropped-knob notice is a WARNING, and must still show.
+
+    It moved off ``aprint`` so a programmatic ``verbose=False`` call stays quiet
+    (#1600 review), which only works because the CLI displays warnings: the root
+    ``luxar`` callback installs ``install_arbol_warnings``, rendering them as
+    arbol lines. This is the half of that trade the library test cannot see —
+    without it, the fix would silence the notice for the users who need it.
+
+    Run inside ``_default_display_sandbox``, because the hook deliberately steps
+    aside for pytest's own per-test warning recorder: without it every warning
+    in this process goes to the recorder and no CLI test could ever observe the
+    display path a real user gets.
+    """
+    out = tmp_path / "small.gsplats.zarr"
+    with _default_display_sandbox():
+        result = runner.invoke(
+            app,
+            # -f 0.5 is at the crossover, so `auto` resolves to prefix and the
+            # --coarsen-dims request is dropped.
+            [
+                "gsplat",
+                "decimate",
+                str(source),
+                str(out),
+                "-f",
+                "0.5",
+                "--coarsen-dims",
+                "0,1",
+            ],
+        )
+    assert result.exit_code == 0, result.stdout
+    assert "coarsen_dims=[0, 1] is IGNORED" in result.stdout
+    assert "method='auto' resolved to prefix" in result.stdout
 
 
 def test_unknown_prefix_ordering_is_rejected(

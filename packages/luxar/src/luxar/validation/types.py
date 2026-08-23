@@ -24,6 +24,10 @@ from ..typing_utils.constants import (
     INTENSITY_MAX,
     INTENSITY_MIN,
     LINE_JOIN_STYLES,
+    LINK_SCHEMES,
+    LINK_TARGETS,
+    MAX_COPY_CHARS,
+    MAX_LINK_CHARS,
     OFFSET_MAX,
     OFFSET_MIN,
     OPACITY_MAX,
@@ -605,6 +609,150 @@ def validate_layer(value: Any) -> bool:
     if isinstance(value, (int, float)):
         return bool(value)
     raise TypeError(f"Layer must be a boolean, got {type(value).__name__}")
+
+
+def validate_link(value: Any) -> str:
+    """Validate a node's ``link`` URL template (issue #1917).
+
+    The template is substituted per element in the viewer and the result is
+    NAVIGATED to, so the checks here mirror the viewer's own and exist to turn
+    an authoring mistake into a failed write rather than a link that silently
+    does nothing when clicked.
+
+    Validated on the template with its placeholders left in place: they are
+    ``{...}`` runs, which no URL parser objects to, so scheme and shape can be
+    settled at write time. What cannot be settled here is the substituted
+    result — a label supplies the rest of the URL at click time — which is why
+    the viewer re-checks after substitution. Substituted values are
+    percent-encoded there, so a placeholder cannot introduce a scheme, a host,
+    or a path segment that is not already visible in this template.
+
+    Args:
+        value: Value to validate as a URL template
+
+    Returns:
+        The template unchanged
+
+    Raises:
+        TypeError: If value is not a string
+        ValueError: If the template is empty, over-long, has no scheme
+            (relative), or names a scheme outside ``LINK_SCHEMES``
+    """
+    from urllib.parse import urlsplit
+
+    if not isinstance(value, str):
+        raise TypeError(f"link must be a string, got {type(value).__name__}")
+    if not value.strip():
+        raise ValueError("link must not be empty")
+    if len(value) > MAX_LINK_CHARS:
+        raise ValueError(
+            f"link is {len(value)} characters, exceeding the "
+            f"{MAX_LINK_CHARS}-character limit"
+        )
+
+    try:
+        parts = urlsplit(value)
+    except ValueError as exc:
+        raise ValueError(f"link is not a parseable URL: {value!r} ({exc})") from exc
+
+    scheme = parts.scheme.lower()
+    if not scheme:
+        # A relative template would resolve against whatever origin the VIEWER
+        # is served from, so a third-party store could aim a click at the
+        # embedder's own site. Absolute or nothing.
+        raise ValueError(
+            f"link must be an absolute URL, got the relative {value!r}. "
+            f"A relative link would resolve against the viewer's own origin. "
+            f"Prefix it with {' or '.join(sorted(s + '://' for s in LINK_SCHEMES))}."
+        )
+    if scheme not in LINK_SCHEMES:
+        raise ValueError(
+            f"link scheme {scheme!r} is not allowed "
+            f"(permitted: {', '.join(sorted(LINK_SCHEMES))}). "
+            f"Got {value!r}."
+        )
+    if not parts.netloc:
+        # Deliberately STRICTER than the viewer here. For a "special" scheme
+        # the browser's WHATWG parser collapses `https:///nowhere` into host
+        # `nowhere`, so it would navigate happily; `urlsplit` instead reports
+        # an empty netloc and a `/nowhere` path. Refusing at authoring time is
+        # the right way round — that spelling is a typo far more often than an
+        # intent, and failing the write costs nothing, whereas the viewer must
+        # faithfully model what the browser will do with a store it did not
+        # author. Do not "align" this by dropping the check.
+        raise ValueError(f"link has no host: {value!r}")
+
+    # Refuse embedded credentials. `https://good.example@evil.example/`
+    # navigates to evil.example while reading as good.example — including in
+    # the viewer's own "Copy link address", which is the one place a user might
+    # vet the destination before following it. Nothing legitimate needs
+    # userinfo in a scene link, and credentials inside a shareable scene file
+    # would be a mistake in their own right.
+    if parts.username or parts.password:
+        raise ValueError(
+            f"link must not embed credentials (user:pass@host): {value!r}. "
+            f"They disguise the real destination from anyone reading the URL."
+        )
+
+    return value
+
+
+def validate_copy_template(value: Any) -> str:
+    """Validate a node's ``copy`` template (issue #1917).
+
+    Plain text destined for the clipboard, not a URL — so there is nothing to
+    check beyond the type and a length bound. It is deliberately NOT escaped
+    or restricted in content: the whole point is to hand the user the string
+    the author chose.
+
+    Args:
+        value: Value to validate as a copy template
+
+    Returns:
+        The template unchanged
+
+    Raises:
+        TypeError: If value is not a string
+        ValueError: If the template is empty or over-long
+    """
+    if not isinstance(value, str):
+        raise TypeError(f"copy must be a string, got {type(value).__name__}")
+    if not value.strip():
+        raise ValueError("copy must not be empty")
+    if len(value) > MAX_COPY_CHARS:
+        raise ValueError(
+            f"copy is {len(value)} characters, exceeding the "
+            f"{MAX_COPY_CHARS}-character limit"
+        )
+    return value
+
+
+def validate_link_target(value: Any) -> str:
+    """Validate a node's ``link_target`` browsing context (issue #1917).
+
+    Only the two keywords that imply ``noopener`` are accepted. Any other
+    value — including a near-miss like ``"_blank "`` — is a *named* target,
+    which the browser opens with a live ``window.opener`` the destination can
+    use to cross-origin navigate the viewer tab.
+
+    Args:
+        value: Value to validate as a browsing context
+
+    Returns:
+        The target unchanged
+
+    Raises:
+        TypeError: If value is not a string
+        ValueError: If value is not one of ``LINK_TARGETS``
+    """
+    if not isinstance(value, str):
+        raise TypeError(f"link_target must be a string, got {type(value).__name__}")
+    if value not in LINK_TARGETS:
+        raise ValueError(
+            f"link_target must be one of {', '.join(sorted(LINK_TARGETS))}, "
+            f"got {value!r}"
+        )
+    return value
 
 
 def validate_visible(value: Any) -> bool:

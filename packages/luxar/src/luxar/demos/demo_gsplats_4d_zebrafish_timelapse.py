@@ -1,80 +1,126 @@
 #!/usr/bin/env python3
-"""GSplats Demo: 4D Zebrafish Embryo Time-Lapse (Zenodo)
+"""GSplats Demo: 4D Zebrafish Embryo Time-Lapse (Zenodo 1211599).
 
-Visualises a 4D (3D + time) confocal laser-scanning microscopy recording of a
-living zebrafish embryo during gastrulation, using Gaussian splatting with a
-time dimension slider.
+A 4D (3D + time) confocal recording of a living zebrafish embryo during
+gastrulation, as **one** Gaussian-splat node with time as a real axis of the
+data: 151 timepoints over five hours, while the fluorescently labelled
+endodermal cells spread from a tight cluster over the whole yolk sphere.
 
-================================================================================
-4D TIME-LAPSE — ZEBRAFISH GASTRULATION
-================================================================================
+The specimen occupies well under 2% of the imaged voxels, so a **wireframe cage
+with a 100 um grid** is drawn around the acquisition volume as its own
+toggleable layer. Without it there is nothing to judge scale, depth or drift
+against — the cells float in an unmarked void, and the migration that is the
+whole point of the recording is impossible to read.
 
-The dataset is a time-lapse volumetric fluorescence microscopy image sequence
-of a living zebrafish embryo (cxcr4aMO).  Endodermal cells are fluorescently
-labelled and imaged during gastrulation — the critical stage when the embryo
-reorganises from a ball of cells into a layered body plan.
-
-Each time-point is fitted independently as 3D Gaussian splats, then embedded
-into a 4D scene using ``dim_order`` + ``fill`` to assign each fit to its
-corresponding time coordinate.
+WHAT MAKES THIS A 4D NODE (and not 64 nodes in a trench coat):
+    Every timepoint is still fitted on its own — that is what keeps each fit
+    small and separately cacheable — but the fits are then
+    ``combine_as_new_dimension``-stacked into ONE 4D ``GSplatData`` whose fourth
+    centre column is time (sigma = 0: a splat is instantaneous and must not
+    smear across frames). That single node then gets a substitutive LOD ladder
+    with time as a hard coarsening barrier, and the viewer's Time slider walks
+    the axis. The previous version of this demo instead wrote one flat gsplats
+    node per timepoint with ``fill={"time": t}`` — 64 sibling nodes, no LOD, no
+    shared appearance, one Layers row each.
 
 DATA SOURCE & CITATIONS:
-========================
+    Zenodo record 1211599 — ``cxcr4aMO2_290112.lsm`` (Zeiss LSM, 2.1 GB),
+    Danio rerio (zebrafish) cxcr4a morphant, endoderm label, confocal
+    laser-scanning microscopy. DOI 10.5281/zenodo.1211599, CC BY-SA 4.0.
 
-Dataset:
---------
-Source:  Zenodo record 1211599
-URL:    https://zenodo.org/records/1211599
-File:   cxcr4aMO2_290112.lsm (Zeiss LSM format)
-Size:   ~2.1 GB
-DOI:    10.5281/zenodo.1211599
+    Please cite the record if you use this data. ShareAlike binds whoever
+    receives a scene built from it, which is why the licence is carried into
+    the store rather than only mentioned here.
 
-Imaging:
---------
-Microscope:  Confocal laser-scanning microscope (Zeiss LSM)
-Organism:    Danio rerio (zebrafish), cxcr4aMO morphant
-Label:       Fluorescent endoderm label
-Stage:       Gastrulation
+ACQUISITION (read from the LSM's own metadata, not assumed):
+    151 timepoints x 44 x 512 x 512 uint8, voxel 7.1847 x 1.6774 x 1.6774 um
+    (ZYX) — anisotropic by 4.28x along Z — one frame every 120.01 s, so the
+    recording spans 5 h 00 m. Each fit runs on the voxel grid and is then scaled
+    by that voxel size (an exact diagonal affine, carried into the Cholesky
+    factors), so the shipped centres are in microns and the embryo has its true
+    proportions; the imaged block is 316 x 859 x 859 um.
 
-How to Cite:
-------------
-If you use this dataset, please cite the original Zenodo record:
-DOI: 10.5281/zenodo.1211599
+SPLAT BUDGET (measured on this data, 2026-08-22, RTX PRO 6000):
+    The previous version asked for 2,000 seeds and shipped a few hundred splats,
+    because it also took the fitter's bare defaults: 1,000 iterations (below the
+    ``draft`` preset's 2,000) and ``cull_retention=0.95``, which discards most of
+    the splats along with the last 5% of amplitude. Every arm below is frame 110
+    with the floor OFF (see FLOOR), scored against the raw frame; "energy" is the
+    share of the frame's total intensity the reconstruction puts back.
 
-WORKFLOW:
-=========
+    | fit                                   | splats | global | foreground | energy |
+    |---------------------------------------|--------|--------|------------|--------|
+    | shipped config (2k, 1000 it, cull .95)|    767 |  33.92 |  10.10 dB  |  0.74  |
+    | 8k seeds, 5000 it, cull .9999         |  7,877 |  37.37 |  14.98 dB  |  0.90  |
+    | 16k seeds, 5000 it, cull .9999        | 12,439 |  39.66 |  18.88 dB  |  0.98  |
+    | 32k seeds, 5000 it, cull .9999        | 12,940 |  40.68 |  20.30 dB  |  0.98  |
+    | 64k seeds, 5000 it, cull .9999        | 13,006 |  40.81 |  20.46 dB  |  0.98  |
+    | 32k seeds, 5000 it, cull .95          |  9,889 |  39.17 |  16.90 dB  |  0.91  |
 
-1. **Download** LSM file from Zenodo (2.1 GB, with resume support)
-2. **Load** with tifffile (native LSM support) -> (T, [C,] Z, Y, X)
-3. **Fit** each time-point as 3D GSplats (with per-timepoint caching)
-4. **Create 4D scene** [X, Y, Z, Time] using dim_order + fill
-5. **Visualise** — scrub through time with the Time slider
+    32,000 seeds is the plateau, not a compromise: doubling it again moves the
+    reconstruction by 0.13 dB and adds 66 splats, because the post-fit cull —
+    not the seed budget — is what sets the final count on data this
+    heavy-tailed. The last row isolates that cull: at the SAME seeds, retaining
+    0.9999 of the amplitude instead of 0.95 is worth +1.5 dB global and +3.4 dB
+    foreground, since on a volume this sparse the discarded 5% of amplitude *is*
+    the dim cells. Against the config that shipped, the fit this demo now does
+    is +6.8 dB global, +10.2 dB foreground and 17x the splats. Side-by-side MIPs
+    at matched zoom agree: at a few hundred splats the cells are blurred blobs
+    with many missing entirely; by ~13,000 the population is complete and
+    further splats change nothing visible.
+
+    ``cal`` is deliberately not consulted. Its blind-spot sweep put K* at 1,852
+    for this dataset — the second point of its own grid, with a 0.17 dB
+    confidence margin, measured on the XY-halved copy the demo used to fit.
+
+FLOOR (why this demo turns off a default the house rule says to keep):
+    ``--floor auto`` estimates the histogram mode of the NON-ZERO voxels, capped
+    at their median. That is right on a stack with a camera pedestal, where the
+    non-zero population is background. Here 98.7-99.8% of voxels are exactly
+    zero, so the non-zero population IS the specimen and the level lands inside
+    it — and climbs as the embryo brightens. At 32k seeds, scored against the
+    unfloored frames:
+
+    | frame | non-zero | level auto picked | auto (global / fg / energy) | none  |
+    |-------|----------|-------------------|-----------------------------|-------|
+    |     0 |    0.20% |            26/255 | 46.37 / 16.28 dB / 0.73     | 48.18 / 19.31 / 1.01 |
+    |    75 |    0.35% |            63/255 | 38.37 / 11.51 dB / 0.55     | 45.94 / 22.14 / 1.00 |
+    |   150 |    1.35% |            91/255 | 29.23 /  8.13 dB / 0.44     | 36.73 / 18.82 / 0.97 |
+
+    Up to +7.6 dB global (frame 75) and +10.7 dB foreground (frame 150) for
+    turning it off, and reproduced energy goes from 44-73% back to ~100%. Read
+    the energy column: global PSNR barely moves at frame 0 and hides how much
+    was being deleted.
 
 USAGE:
-======
-    python demo_gsplats_4d_zebrafish_timelapse.py [--recompute] [--no-serve] [--serve-only] [--max-timepoints=N]
+    python demo_gsplats_4d_zebrafish_timelapse.py [--recompute] [--no-serve]
+        [--serve-only] [--max-timepoints=N]
 
-Options:
-    --recompute:         Force re-fitting from scratch (ignore precomputed/cached results)
-    --no-serve:          Generate scene without launching viewer
-    --serve-only:        Just serve a previously generated scene
-    --show-roundtrip:    Show matplotlib comparison of original vs reconstructed volumes
-    --max-timepoints=N:  Max number of timepoints to process (default: 64)
-    --downsample-xy=N:   XY downsample factor (default: 2)
+    --recompute:        Download the LSM and refit from scratch (needs a GPU).
+                        It bypasses the per-timepoint cache too, as the name
+                        says — so an interrupted refit of all 151 frames does
+                        NOT resume, it starts over. Drop the flag to have the
+                        cache honoured once the hosted archive is in place.
+    --no-serve:         Build the scene without launching the viewer.
+    --serve-only:       Serve an already-built scene.
+    --max-timepoints=N: Fit only N evenly spaced timepoints (refit path only).
 
-Output:
+OUTPUT:
     - Scene saved to:  datasets/demos/gsplats_4d_zebrafish_timelapse.luxar.zarr
-    - Automatically opens in browser
+    - Opens in the browser; press L for the Layers panel, play the Time slider.
 """
 
 DEMO_META = {
     "key": "gsplats_4d_zebrafish_timelapse",
     "title": "4D Zebrafish Timelapse",
-    "description": "A 4D confocal timelapse of zebrafish gastrulation as per-timepoint Gaussian splats.",
+    "description": (
+        "Five hours of zebrafish gastrulation as one 4D Gaussian-splat node, "
+        "inside a gridded cage that gives the sparse embryo a scale."
+    ),
     "category": "microscopy",
-    "geometry": "gsplats",
+    "geometry": "mixed",
     "requirements": {
-        "download_mb": 2,
+        "download_mb": 23,  # the 22,348,280-byte archive, and nothing else
         "compute": "medium",
         "gpu": "optional",
         "local_data": "git-lfs",
@@ -92,6 +138,7 @@ DEMO_META = {
 
 import sys
 from pathlib import Path
+from typing import Any, Optional
 
 import numpy as np
 from arbol import Arbol, aprint, asection
@@ -99,15 +146,19 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
-    MissingDependencyError,
+    DatasetUnavailable,
     add_demo_caption,
+    detect_device,
     launch_viewer,
-    load_dataset_bundle,
+    load_dataset_gsplats,
+    load_local_fit_gsplats_at,
+    local_fit_path,
     parse_demo_flags,
+    parse_int_arg,
     require_module,
     warn_if_no_cuda_gpu,
 )
-from luxar.demos._lod_policy import save_with_lod
+from luxar.demos.registry import DEMO_CACHE_ROOT
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.paths import get_demos_output_dir
@@ -116,658 +167,756 @@ from luxar.utils.paths import get_demos_output_dir
 # Configuration
 # =============================================================================
 
-# Data source
+DEMO_NAME = "gsplats_zebrafish"
+GSPLATS_FILE = "zebrafish_4d.gsplats.zarr.zip"
+SCENE_NAME = "gsplats_4d_zebrafish_timelapse.luxar.zarr"
+
+#: The raw acquisition, only needed on the ``--recompute`` path.
 ZENODO_URL = "https://zenodo.org/api/records/1211599/files/cxcr4aMO2_290112.lsm/content"
+LSM_BYTES = 2_080_484_264
 
-# Fit parameters (fixed-K, seeds=K*)
-MAX_SPLATS = 2000
+#: The acquisition geometry, as the LSM records it. Held here rather than only
+#: read from the file because the SCENE needs it and the scene is normally built
+#: from the shipped archive, with no LSM in reach: the cage must be the imaged
+#: BLOCK, and a box fitted to the splats instead would shrink around a specimen
+#: that fills under 2% of it — a ruler cut to the size of the thing it measures.
+#: :func:`open_lsm` checks the file against these on the refit path, so they
+#: cannot drift silently.
+ACQUISITION_SHAPE_ZYX = (44, 512, 512)
+VOXEL_SIZE_ZYX_UM = (7.184696827249337, 1.6774389429296399, 1.6774389429296399)
+FRAME_INTERVAL_S = 120.00882789993899
 
-# Cache location
-CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_zebrafish"
+#: The Time axis step, in minutes: the recorded interval ROUNDED to exactly 2.
+#:
+#: Not cosmetic. A discrete dimension becomes an ``<input type="range">`` whose
+#: value is snapped onto ``min + k*step``, and with the raw 2.0001470947... the
+#: browser's sanitiser computes ``150 * step`` a hair above ``max`` and clamps to
+#: 149 — so the FINAL timepoint cannot be selected with the slider at all. Two is
+#: exact in binary and every multiple of it up to 300 is too.
+#:
+#: The cost is 0.0001471 min per frame, 1.3 s of drift accumulated over the whole
+#: five hours, against a frame interval of two minutes. The axis is therefore
+#: nominal-but-exact rather than recorded-but-unreachable.
+AXIS_STEP_MIN = 2.0
 
-# Precomputed data configuration
-_PRECOMPUTED_DEMO_NAME = "gsplats_zebrafish"
-_PRECOMPUTED_BUNDLE_NAME = "zebrafish.gsplats.zarr.zip"
-# Precomputed bundle contains 64 frames at step 2: 0, 2, 4, ..., 126
-_PRECOMPUTED_FRAME_INDICES = list(range(0, 128, 2))  # 64 frames
-_PRECOMPUTED_VOXEL_SIZE_ZYX = (3.99, 0.91, 0.91)  # µm
+CACHE_DIR = DEMO_CACHE_ROOT / DEMO_NAME
+LSM_PATH = CACHE_DIR / "cxcr4aMO2_290112.lsm"
+#: Per-timepoint fits, keyed on EVERY knob of the fit schedule so retuning
+#: cannot hit a stale entry. All of them change the result while leaving the
+#: frame index identical, and the cull is the sharpest: the SPLAT BUDGET table
+#: is the proof — same 32k seeds, retention .95 gives 9,889 splats and .9999
+#: gives 12,940. A cache keyed on the frame alone would serve the old fits back
+#: to anyone re-running that sweep.
+FITS_DIR = CACHE_DIR / "fits"
+#: The stacked 4D archive this machine built, in the demo's own namespace. It is
+#: a different artifact from the hosted file of the same purpose, so it must NOT
+#: live at the manifest path — ``ensure_dataset`` hashes whatever it finds there
+#: and quarantines a mismatch, which would refit on every launch (#1618).
+LOCAL_FIT = local_fit_path(DEMO_NAME, GSPLATS_FILE)
 
-# Parse command-line flags
+#: Fit schedule. See the module docstring's SPLAT BUDGET table for the sweep
+#: these came from. ``seeds`` proposes and ``cull_retention`` disposes: 32,000
+#: seeds deliver ~9,400 splats on a busy frame and fewer on an early, near-empty
+#: one, which is the point — the budget adapts to how much embryo there is.
+SEEDS = 32_000
+N_ITERS = 5_000
+EARLY_STOP_PATIENCE = 500
+CULL_RETENTION = 0.9999
+
+#: NO background floor, stated rather than defaulted. The house rule is to stay
+#: on ``auto`` unless you have measured otherwise; this is a dataset where
+#: measuring says otherwise, by up to 10.7 dB of foreground. See the module
+#: docstring's FLOOR section for the table and why `auto` inverts here.
+FLOOR = "none"
+
+#: Substitutive LOD: three coarse levels, each 4x lighter than the last, every
+#: level carrying its own progressive ladder. Coarsening is restricted to the
+#: three SPATIAL centre columns — time (column 3) is a hard barrier, because
+#: merging across it would blend one timepoint's cells into the next and smear
+#: the whole recording into a single haze.
+#:
+#: The archive is built with ``build_recipe`` rather than through
+#: ``luxar.demos._lod_policy.save_with_lod``, for the reason its 4D sibling
+#: ``demo_gsplats_4d_cell_tracking_challenge`` has: the helper writes exactly one
+#: topology per demo and takes no barrier argument, while this demo writes two
+#: kinds of store — the per-timepoint fits, which are scratch consumed by the
+#: stack and want no ladder at all, and the one 4D archive it ships.
+LOD_COMPRESSION_FACTOR = 4
+LOD_LEVELS = 3
+LOD_N_LODS = 4
+LOD_COARSEN_DIMS = (0, 1, 2)
+
+#: Appearance. Volumetric with a modest kappa: the specimen is a thin shell of
+#: cells on a sphere, so a little occlusion separates near from far, while a
+#: large one would hide the far side entirely. ``inferno`` starts at (0, 0, 4)
+#: rather than viridis's dark purple, so the 98% of the volume that is empty
+#: reads as true black instead of a haze.
+COLORMAP = "inferno"
+VOLUME_OPACITY = 1.0
+VOLUME_ABSORPTION = 0.5
+
+#: The acquisition cage: wireframe box + grid, in microns.
+GRID_STEP_UM = 100.0
+BOX_EDGE_WIDTH_UM = 2.0
+GRID_LINE_WIDTH_UM = 1.0
+#: Dim, and dimmer still for the rulings. These are ADDITIVE lines drawn over
+#: a specimen that occupies 2% of the frame: at the first values tried
+#: ((0.42, 0.62, 0.72) / (0.16, 0.26, 0.32)) the cage read as a solid glowing
+#: box and buried the cells it exists to give a scale to. A reference must be
+#: legible and lose every contest for attention.
+BOX_EDGE_COLOR = (0.20, 0.30, 0.36)
+GRID_LINE_COLOR = (0.075, 0.115, 0.145)
+
 FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
 RECOMPUTE = FLAGS["recompute"]
-SHOW_ROUNDTRIP = "--show-roundtrip" in sys.argv
 
-MAX_TIMEPOINTS = 64
-DOWNSAMPLE_XY = 2
+#: ``None`` = every timepoint in the recording. Only consulted when refitting.
+MAX_TIMEPOINTS = parse_int_arg("max-timepoints", None, sys.argv)
 
-for _arg in sys.argv:
-    if _arg.startswith("--max-timepoints="):
-        MAX_TIMEPOINTS = int(_arg.split("=")[1])
-    elif _arg.startswith("--downsample-xy="):
-        DOWNSAMPLE_XY = int(_arg.split("=")[1])
-
-# Arbol logging depth
 Arbol.max_depth = 5
 
-# Auto-detected on first fit
-DEVICE = None
+DEVICE: Optional[str] = None
 
 
 # =============================================================================
-# Data Loading
+# Acquisition
 # =============================================================================
+def open_lsm() -> Any:
+    """Download the LSM if needed, check its geometry, and open it lazily.
 
+    Returns a lazy ``(T, Z, Y, X)`` zarr view: the movie is 1.7 GB of voxels and
+    only one timepoint is ever needed at a time, so it is never read whole.
 
-def download_zebrafish_data() -> Path:
-    """Download the zebrafish LSM from Zenodo (~2.1 GB).
-
-    Returns:
-        Path to downloaded LSM file.
+    The LSM's own voxel size and frame interval are compared against the module
+    constants above rather than merely read, because the scene uses the
+    constants — a record re-uploaded with a different calibration would
+    otherwise mislabel every axis of a rebuilt archive without a word.
     """
-    from luxar.utils.download import robust_download
+    import zarr  # a core dependency, unlike tifffile
 
-    lsm_path = CACHE_DIR / "cxcr4aMO2_290112.lsm"
-
-    with asection("Downloading zebrafish embryo dataset from Zenodo"):
-        aprint("Source: https://zenodo.org/records/1211599")
-        aprint("Size:   ~1.9 GB")
-
-        robust_download(
-            ZENODO_URL,
-            lsm_path,
-            max_retries=5,
-            timeout=600,
-            expected_size=2_080_484_264,
-        )
-
-    return lsm_path
-
-
-def load_zebrafish_volumes() -> tuple:
-    """Download and load the zebrafish LSM as a list of 3D volumes.
-
-    Returns:
-        Tuple of (volumes, voxel_size_zyx, time_indices, acquisition):
-        - volumes: List of 3D float32 volumes, one per timepoint, each normalised to [0, 1].
-        - voxel_size_zyx: Tuple of (Z, Y, X) voxel spacing in micrometres, or None.
-        - time_indices: List of source frame indices used (for cache key stability).
-        - acquisition: ``(shape, dtype)`` of ONE stored timepoint, declared to the
-          fit — every volume above is a normalised, possibly resized copy of one.
-    """
     tifffile = require_module("tifffile")
 
-    lsm_path = download_zebrafish_data()
+    from luxar.utils.download import robust_download
 
-    with asection("Loading zebrafish LSM"):
-        # Extract voxel spacing from LSM metadata
-        voxel_size_zyx = None
-        try:
-            with tifffile.TiffFile(str(lsm_path)) as tif:
-                if hasattr(tif, "lsm_metadata") and tif.lsm_metadata:
-                    meta = tif.lsm_metadata
-                    vz = meta.get("VoxelSizeZ", 0) * 1e6  # m → µm
-                    vy = meta.get("VoxelSizeY", 0) * 1e6
-                    vx = meta.get("VoxelSizeX", 0) * 1e6
-                    if vz > 0 and vy > 0 and vx > 0:
-                        voxel_size_zyx = (vz, vy, vx)
-                        aprint(
-                            f"LSM voxel spacing (Z,Y,X): "
-                            f"({vz:.4f}, {vy:.4f}, {vx:.4f}) µm"
-                        )
-        except Exception as e:
-            aprint(f"Could not extract voxel spacing from LSM: {e}")
-
-        raw = tifffile.imread(str(lsm_path))
-        aprint(f"LSM shape: {raw.shape}, dtype: {raw.dtype}")
-
-        # tifffile returns LSM as (T, C, Z, Y, X) or (T, Z, Y, X) or other combos
-        # Handle various shapes:
-        if raw.ndim == 5:
-            # (T, C, Z, Y, X) — select channel 0
-            aprint(
-                f"  5D detected: (T={raw.shape[0]}, C={raw.shape[1]}, "
-                f"Z={raw.shape[2]}, Y={raw.shape[3]}, X={raw.shape[4]})"
-            )
-            aprint("  Using channel 0")
-            raw = raw[:, 0, :, :, :]
-        elif raw.ndim == 4:
-            # (T, Z, Y, X) — already good
-            aprint(
-                f"  4D detected: (T={raw.shape[0]}, Z={raw.shape[1]}, "
-                f"Y={raw.shape[2]}, X={raw.shape[3]})"
-            )
-        elif raw.ndim == 3:
-            # Single volume — treat as single timepoint
-            aprint(f"  3D detected: single volume {raw.shape}")
-            raw = raw[np.newaxis, ...]
-        else:
-            raise ValueError(f"Unexpected LSM shape: {raw.shape} ({raw.ndim}D)")
-
-        n_total = raw.shape[0]
-        n_use = min(n_total, MAX_TIMEPOINTS)
-
-        # Sample timepoints evenly across the full recording so we capture
-        # the developmental progression, not just the first few frames.
-        stride = max(1, n_total // n_use)
-        time_indices = list(range(0, n_total, stride))[:n_use]
-        aprint(
-            f"Using {len(time_indices)} of {n_total} timepoints "
-            f"(stride={stride}, indices={time_indices[0]}..{time_indices[-1]})"
+    with asection("Zebrafish LSM (Zenodo 1211599)"):
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        robust_download(
+            ZENODO_URL, LSM_PATH, max_retries=5, timeout=900, expected_size=LSM_BYTES
         )
 
-        # The acquisition grid + stored type of one timepoint, taken before the
-        # normalization and the optional resize in the loop below. Every timepoint
-        # shares the grid, so it is read once here rather than per iteration.
-        acquisition = (tuple(int(x) for x in raw.shape[1:]), str(raw.dtype))
-
-        volumes = []
-        for t in time_indices:
-            V = raw[t].astype(np.float32)
-            # Normalise to [0, 1]
-            vmin, vmax = V.min(), V.max()
-            V = (V - vmin) / (vmax - vmin + 1e-8)
-
-            if DOWNSAMPLE_XY > 1:
-                from scipy.ndimage import zoom
-
-                factors = (1.0, 1.0 / DOWNSAMPLE_XY, 1.0 / DOWNSAMPLE_XY)
-                V = zoom(V, factors, order=1)
-
-            volumes.append(V)
-
-        # Adjust voxel spacing for XY downsampling
-        if voxel_size_zyx is not None and DOWNSAMPLE_XY > 1:
-            vz, vy, vx = voxel_size_zyx
-            voxel_size_zyx = (vz, vy * DOWNSAMPLE_XY, vx * DOWNSAMPLE_XY)
-            aprint(
-                f"Adjusted voxel spacing for {DOWNSAMPLE_XY}x XY downsample: "
-                f"({voxel_size_zyx[0]:.4f}, {voxel_size_zyx[1]:.4f}, {voxel_size_zyx[2]:.4f}) µm"
+        with tifffile.TiffFile(str(LSM_PATH)) as tif:
+            meta = getattr(tif, "lsm_metadata", None) or {}
+            voxel = tuple(
+                float(meta.get(k, 0.0)) * 1e6
+                for k in ("VoxelSizeZ", "VoxelSizeY", "VoxelSizeX")
             )
+            interval = float(meta.get("TimeIntervall", 0.0))
 
-        aprint(f"Loaded {len(volumes)} volumes, shape per volume: {volumes[0].shape}")
+        # series 0 is the image data; series 1 is the embedded RGB thumbnail.
+        array = zarr.open(
+            tifffile.imread(str(LSM_PATH), aszarr=True, series=0), mode="r"
+        )
+        aprint(f"Acquisition: {array.shape} {array.dtype}")
+        aprint(f"Voxel (Z,Y,X): {voxel[0]:.4f} x {voxel[1]:.4f} x {voxel[2]:.4f} um")
+        aprint(
+            f"Frame interval: {interval:.2f} s "
+            f"({array.shape[0] * interval / 3600:.2f} h total)"
+        )
 
-    return volumes, voxel_size_zyx, time_indices, acquisition
+        drift = [
+            f"{what}: file says {got}, this demo assumes {want}"
+            for what, got, want, ok in (
+                (
+                    "grid",
+                    tuple(array.shape[1:]),
+                    ACQUISITION_SHAPE_ZYX,
+                    tuple(array.shape[1:]) == ACQUISITION_SHAPE_ZYX,
+                ),
+                (
+                    "voxel size (um)",
+                    voxel,
+                    VOXEL_SIZE_ZYX_UM,
+                    np.allclose(voxel, VOXEL_SIZE_ZYX_UM, rtol=1e-4),
+                ),
+                (
+                    "frame interval (s)",
+                    interval,
+                    FRAME_INTERVAL_S,
+                    abs(interval - FRAME_INTERVAL_S) < 1e-3,
+                ),
+            )
+            if not ok
+        ]
+        if drift:
+            raise RuntimeError(
+                "The downloaded LSM does not match the acquisition this demo is "
+                "written against:\n  "
+                + "\n  ".join(drift)
+                + "\nUpdate ACQUISITION_SHAPE_ZYX / VOXEL_SIZE_ZYX_UM / "
+                "FRAME_INTERVAL_S, and the numbers quoted in the docstring."
+            )
+        return array
 
 
-# =============================================================================
-# Colour Utilities
-# =============================================================================
+def select_timepoints(n_total: int, limit: Optional[int]) -> list[int]:
+    """Frame indices to fit — every frame, or a uniform subsample of ``limit``.
 
+    The shipped archive takes every frame, which is the change that matters:
+    the previous version asked for 64 of 151 and computed ``stride =
+    n_total // n_use`` = 2, so it stopped at frame 126 and the last 50 minutes
+    of gastrulation — the part where the endoderm has actually spread — never
+    made it into the demo at all.
 
-def _time_color(t_frac: float) -> tuple:
-    """Map a normalised time fraction [0, 1] to an RGB colour.
+    A subsample is UNIFORM by construction, not merely evenly spread. Time
+    becomes a discrete viewer dimension whose navigation snaps to multiples of
+    one ``step``, so unevenly spaced frames would land between stops and those
+    stops would silently render nothing.
 
-    Produces a visually appealing cyan -> green -> yellow -> orange progression.
+    The stride is SEARCHED rather than computed, because neither closed form
+    is good enough. Rounding ``(n - 1) / (limit - 1)`` down and truncating to
+    ``limit`` — what this demo used to do — takes frames 0-99 for
+    ``--max-timepoints=100`` of 151 and stops two thirds of the way through
+    gastrulation. Rounding it up fixes that case and breaks a smaller one: 3 of
+    10 frames becomes 2, spanning 56%. Scanning every stride and keeping the
+    most frames that fit in the budget (ties to the one reaching furthest)
+    dominates both — measured over n = 2..199 and limit = 2..59, its worst span
+    is 80% against 50.4% for rounding down and 50.3% for rounding up. (At the
+    151 frames this demo actually has, the search never drops below 95.3%.)
+
+    The scan is over at most ``n_total`` strides on a list of timepoints, so it
+    is free next to a single fit.
     """
-    # Simple three-stop gradient: cyan -> green -> warm yellow
-    if t_frac < 0.5:
-        f = t_frac * 2.0
-        r = 0.0 + f * 0.3
-        g = 0.8 + f * 0.2
-        b = 1.0 - f * 0.7
-    else:
-        f = (t_frac - 0.5) * 2.0
-        r = 0.3 + f * 0.7
-        g = 1.0 - f * 0.2
-        b = 0.3 - f * 0.2
-    return (max(0, min(1, r)), max(0, min(1, g)), max(0, min(1, b)))
+    if limit is None or limit >= n_total:
+        return list(range(n_total))
+    if limit < 2:
+        raise ValueError(f"--max-timepoints must be at least 2, got {limit}")
+    best: list[int] = []
+    for stride in range(1, n_total):
+        frames = list(range(0, n_total, stride))
+        if len(frames) > limit:
+            continue
+        if (len(frames), frames[-1]) > ((len(best), best[-1]) if best else (0, 0)):
+            best = frames
+    return best
 
 
 # =============================================================================
-# GSplats Fitting
+# Fitting
 # =============================================================================
-
-
-def fit_timepoint(
-    volume: np.ndarray,
-    label: str,
-    cache_file: Path,
-    voxel_size=None,
-    acquisition=None,
-) -> GSplatData:
-    """Fit GSplats to a single timepoint volume with caching.
-
-    Args:
-        volume: 3D float32 volume (Z, Y, X), normalised to [0, 1].
-        label: Human-readable label for logging.
-        cache_file: Path to .gsplats.zarr.zip cache file.
-        voxel_size: Optional tuple of (Z, Y, X) voxel spacing.
-
-    Returns:
-        Fitted GSplatData.
-    """
-    # Check cache
-    if cache_file.exists() and not RECOMPUTE:
-        try:
-            # include_stats=True: the cache carries the fit's normalization
-            # provenance (floor / image_min / image_max), and `concatenate`
-            # only propagates a background floor into the stacked scene when
-            # every part reports one (#1175).
-            result = GSplatData.load(cache_file, include_stats=True)
-            aprint(f"  Loaded {len(result.amplitudes):,} cached splats ({label})")
-            return result
-        except Exception as e:
-            aprint(f"  Cache load failed: {e}, re-fitting...")
-
-    # Auto-detect device
-    global DEVICE
-    if DEVICE is None:
-        from luxar.demos import detect_device
-
-        DEVICE = detect_device()
-
-    from luxar.gsplats import fit_gaussian_splats
-
-    aprint(f"Fitting {label} (fixed-K joint fit: seeds={MAX_SPLATS})...")
-
-    src_shape, src_dtype = acquisition or (None, None)
-    result = fit_gaussian_splats(
-        volume,
-        # One timepoint of the stored stack is the source; the fitted array is
-        # a normalized, possibly resized float32 copy of it.
-        source_shape=src_shape,
-        source_dtype=src_dtype,
-        seeds=MAX_SPLATS,
-        device=DEVICE,
-        verbose=True,
-        voxel_size=voxel_size,
+def _fit_cache_path(frame: int) -> Path:
+    return FITS_DIR / (
+        f"f{frame:04d}_k{SEEDS}_i{N_ITERS}_p{EARLY_STOP_PATIENCE}"
+        f"_c{CULL_RETENTION}_{FLOOR}.gsplats.zarr.zip"
     )
 
-    aprint(f"  Fitted {len(result.amplitudes):,} splats")
 
-    # Cache
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    save_with_lod(
-        result,
+def fit_timepoint(volume: np.ndarray, frame: int, acquisition: tuple):
+    """Fit one timepoint, caching the result.
+
+    The cached store is what gets stacked, not the in-memory fit: the cache is
+    written under a lossy encoding, so returning the unquantized object would
+    make a cold run and a warm run build different scenes. ``include_stats=True``
+    on the read keeps the fit's normalization provenance (floor / image range),
+    which ``combine_as_new_dimension`` only propagates into the stacked result
+    when every part reports one (#1175).
+    """
+    global DEVICE
+    cache_file = _fit_cache_path(frame)
+    if cache_file.exists() and not RECOMPUTE:
+        try:
+            return GSplatData.load(cache_file, include_stats=True)
+        except Exception as exc:  # noqa: BLE001
+            aprint(f"  frame {frame}: cache unreadable ({exc}); refitting")
+            cache_file.unlink(missing_ok=True)
+
+    if DEVICE is None:
+        DEVICE = detect_device()
+    from luxar.gsplats import fit_gaussian_splats
+
+    src_shape, src_dtype = acquisition
+    result = fit_gaussian_splats(
+        volume,
+        seeds=SEEDS,
+        n_iters=N_ITERS,
+        early_stop_patience=EARLY_STOP_PATIENCE,
+        cull_retention=CULL_RETENTION,
+        floor=FLOOR,
+        # Fit on the VOXEL grid, and apply the microns afterwards (see
+        # `to_microns`). Handing the fitter `voxel_size` instead puts the
+        # optimizer in physical space, which costs the same wall clock (A/B at
+        # 32k seeds: 38.1 s voxel vs 32.6 s physical on frame 110) but scores
+        # slightly worse on both frames tried — 34.26/10.44 dB against
+        # 34.00/10.08 global/foreground at t=110, 46.37/16.29 against
+        # 46.12/16.07 at t=0 — plausibly because a 4.28x-anisotropic grid makes
+        # the fitter's isotropic seed shapes a worse starting guess in microns
+        # than in voxels. It is also the space the SPLAT BUDGET table was
+        # measured in. The scale itself is exact either way: a diagonal affine,
+        # which `GSplatData.transform` carries into the Cholesky factors.
+        output_space="voxel",
+        # One timepoint of the stored uint8 stack is the source; `volume` is a
+        # normalized float32 copy of it, so without this the compression ratio
+        # would be quoted against a denominator 4x too large.
+        source_shape=src_shape,
+        source_dtype=src_dtype,
+        device=DEVICE,
+        verbose=False,
+    )
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    result.save(
         cache_file,
-        recipe="stream",
         encoding_mode=EncodingMode.MEMORY,
         include_fitting_info=True,
         compress="zip",
         zip_deflate=True,
     )
-
-    # Return what was STORED, not the in-memory fit: the cache is written under
-    # a lossy encoding, so returning `result` here would make a cold run
-    # (unquantized) and a warm run (the cache-hit branch above, which loads the
-    # quantized store) build different scenes. Same include_stats=True as that
-    # branch, so the two agree AND the fit's normalization provenance survives
-    # into the stacked scene.
     return GSplatData.load(cache_file, include_stats=True)
 
 
-def fit_all_timepoints(
-    volumes: list, voxel_size=None, time_indices=None, acquisition=None
-) -> list:
-    """Fit GSplats to every timepoint.
-
-    Args:
-        volumes: List of 3D float32 volumes.
-        voxel_size: Optional tuple of (Z, Y, X) voxel spacing.
-        time_indices: Source frame indices (for cache key stability).
-            If None, uses sequential indices 0, 1, 2, ...
-
-    Returns:
-        List of GSplatData, one per timepoint.
-    """
-    if time_indices is None:
-        time_indices = list(range(len(volumes)))
-
-    with asection(f"Fitting GSplats ({len(volumes)} timepoints)"):
-        gsplats_list = []
-        for t, (volume, src_idx) in enumerate(zip(volumes, time_indices)):
-            # Use source frame index in cache filename so changing
-            # MAX_TIMEPOINTS doesn't cause stale cache hits.
-            cache_file = CACHE_DIR / f"zebrafish_frame{src_idx:04d}.gsplats.zarr.zip"
-            with asection(f"Timepoint {t}/{len(volumes) - 1} (frame {src_idx})"):
-                gsplats = fit_timepoint(
-                    volume,
-                    f"T={t} (frame {src_idx})",
-                    cache_file,
-                    voxel_size=voxel_size,
-                    acquisition=acquisition,
+def fit_all_timepoints(array, frames: list[int]) -> list[GSplatData]:
+    """Fit every selected timepoint, reading one frame of the movie at a time."""
+    acquisition = (tuple(int(s) for s in array.shape[1:]), str(array.dtype))
+    scale = (
+        float(np.iinfo(array.dtype).max)
+        if np.issubdtype(array.dtype, np.integer)
+        else 1.0
+    )
+    fits: list[GSplatData] = []
+    with asection(
+        f"Fitting {len(frames)} timepoints (seeds={SEEDS:,}, {N_ITERS} iters)"
+    ):
+        for i, frame in enumerate(frames):
+            volume = np.asarray(array[frame]).astype(np.float32) / scale
+            fits.append(fit_timepoint(volume, frame, acquisition))
+            if (i + 1) % 10 == 0 or i == len(frames) - 1:
+                aprint(
+                    f"  {i + 1}/{len(frames)} — frame {frame}: "
+                    f"{fits[-1].n_splats:,} splats"
                 )
-                gsplats_list.append(gsplats)
-        return gsplats_list
+        report_fit_quality(fits)
+    return fits
 
 
-# =============================================================================
-# Scene Creation
-# =============================================================================
+def report_fit_quality(fits: list[GSplatData]) -> None:
+    """Print what the fits actually achieved, from their own stamps.
 
-
-def create_luxar_scene(
-    gsplats_list: list,
-    output_path: Path | None = None,
-) -> Path:
-    """Create 4D Luxar scene with Time dimension.
-
-    Each timepoint's 3D GSplats are embedded into the 4D scene using
-    ``dim_order=["z", "y", "x"]`` with ``fill={"time": t}``.
-
-    Args:
-        gsplats_list: List of GSplatData, one per timepoint.
-        output_path: Output .zarr path.
-
-    Returns:
-        Path to saved scene.
+    Each fit scores itself against the raw frame it was handed, so this costs
+    nothing to print and is the number the archive should be judged by. Both
+    columns are reported: on a volume this sparse, global PSNR is mostly the
+    reward for predicting empty space correctly, and the foreground figure is
+    the one that moves when the fit gets better or worse.
     """
-    if output_path is None:
-        output_path = (
-            get_demos_output_dir() / "gsplats_4d_zebrafish_timelapse.luxar.zarr"
+
+    def column(key: str) -> Optional[np.ndarray]:
+        vals = [g.stats.get(key) for g in fits]
+        good = np.array([float(v) for v in vals if isinstance(v, (int, float))])
+        return good if good.size else None
+
+    counts = np.array([g.n_splats for g in fits])
+    aprint(
+        f"Splats per timepoint: median {int(np.median(counts)):,}, "
+        f"range {counts.min():,}-{counts.max():,}, total {counts.sum():,}"
+    )
+    for label, key in (("global", "psnr_db"), ("foreground", "foreground_psnr_db")):
+        col = column(key)
+        if col is None:
+            # A cache written before the fit stamped quality, or a fitter path
+            # that skipped it — say so rather than print a silent blank.
+            aprint(f"{label.capitalize()} PSNR: not stamped on these fits")
+        else:
+            aprint(
+                f"{label.capitalize()} PSNR: median {np.median(col):.2f} dB, "
+                f"range {col.min():.2f}-{col.max():.2f} dB"
+            )
+
+
+def acquisition_box_um() -> tuple[np.ndarray, np.ndarray]:
+    """The imaged block in microns, centred on the origin: ``(bmin, bmax)``.
+
+    Every timepoint shares one grid, so this is a constant of the recording —
+    which is what lets the splats be recentred on it and the cage drawn around
+    it without either needing the other in hand.
+    """
+    half = 0.5 * np.asarray(VOXEL_SIZE_ZYX_UM) * np.asarray(ACQUISITION_SHAPE_ZYX)
+    # float32, because that is the width the cage vertices are STORED at. Left in
+    # float64 the declared dimension range and the written vertex disagree in the
+    # last bit, and the compiler correctly warns that a vertex sits outside its
+    # own axis — a warning that would be noise here and hides real ones.
+    half = half.astype(np.float32)
+    return -half, half
+
+
+def to_microns(fit: GSplatData) -> GSplatData:
+    """Put one voxel-space fit into microns, centred on the acquisition box.
+
+    The scale is the LSM's own voxel size — a diagonal affine, so
+    ``GSplatData.transform`` carries it exactly into the Cholesky factors and
+    the 4.28x axial anisotropy comes out corrected rather than merely stretched
+    at display time.
+
+    The recentring is on the *box* centre, not on the fit's own
+    amplitude-weighted centroid. That matters more here than in a static demo:
+    the labelled endoderm migrates across the yolk over five hours, so a
+    per-frame centroid would chase it and the embryo would appear to swim on the
+    spot while the cage slid past it.
+    """
+    scale = np.diag(np.asarray(VOXEL_SIZE_ZYX_UM, dtype=np.float64))
+    # +0.5 voxel: a fitted centre is a voxel INDEX, and voxel i occupies
+    # [i, i+1) of the block, so its middle is i + 0.5. Without the shift the
+    # mapping is asymmetric — index 0 lands exactly ON bmin with no slack while
+    # a whole voxel goes spare at the far face, so any splat the optimizer moves
+    # to a slightly negative index falls outside the range the scene declares.
+    # With it, both faces keep half a voxel and index -0.5 lands exactly on bmin.
+    offset = 0.5 * np.asarray(VOXEL_SIZE_ZYX_UM, dtype=np.float64)
+    # The box's own half-extent IS the centre offset, so the splats and the cage
+    # cannot drift apart: both read it from the same place.
+    _, half = acquisition_box_um()
+    return fit.transform(scale).translate(offset - half)
+
+
+def combine_to_4d(
+    per_timepoint: list[GSplatData], times_min: list[float]
+) -> GSplatData:
+    """Stack per-timepoint 3D fits into one 4D (ZYX + time) dataset.
+
+    Amplitudes are left alone. Every frame of this recording is an 8-bit stack
+    whose brightest cells sit at 255, so the fits already share a scale, and
+    normalising each frame to a fixed peak — the usual defence against a
+    brightness pop — would flatten the real signal growth from 0.2% to 1.4%
+    occupancy that is the developmental story.
+    """
+    stacked = GSplatData.combine_as_new_dimension(
+        [to_microns(g) for g in per_timepoint],
+        values=times_min,
+        sigma=0.0,  # a splat is instantaneous; it must not smear across frames
+    )
+    aprint(f"Stacked {stacked.n_splats:,} splats over {len(per_timepoint)} timepoints")
+    return stacked
+
+
+def build_lod(stacked: GSplatData) -> GSplatData:
+    """Give the 4D archive its substitutive ladder, with time a hard barrier."""
+    from luxar.gsplats.lod import RecipeParams, build_recipe
+
+    return build_recipe(
+        stacked,
+        "levels",
+        RecipeParams(
+            compression_factor=LOD_COMPRESSION_FACTOR,
+            levels=LOD_LEVELS,
+            n_lods=LOD_N_LODS,
+            coarsen_dims=LOD_COARSEN_DIMS,
+            device=DEVICE or "auto",
+        ),
+    )
+
+
+# =============================================================================
+# The acquisition cage
+# =============================================================================
+#: The 12 edges of a box, as index pairs into the 8 corners of :func:`_corners`
+#: (axis a is bit ``2 - a`` of the corner index: axis 0 is the HIGH bit).
+_BOX_EDGES = (
+    (0, 1),
+    (2, 3),
+    (4, 5),
+    (6, 7),  # along axis 2
+    (0, 2),
+    (1, 3),
+    (4, 6),
+    (5, 7),  # along axis 1
+    (0, 4),
+    (1, 5),
+    (2, 6),
+    (3, 7),  # along axis 0
+)
+
+
+def _corners(bmin: np.ndarray, bmax: np.ndarray) -> np.ndarray:
+    """The 8 corners of an axis-aligned box; axis a is bit ``2 - a``."""
+    return np.array(
+        [
+            [bmax[a] if (i >> (2 - a)) & 1 else bmin[a] for a in range(3)]
+            for i in range(8)
+        ],
+        dtype=np.float32,
+    )
+
+
+def cage_lines(
+    bmin: np.ndarray, bmax: np.ndarray, step: float
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """A wireframe box plus a grid ruled on its six faces.
+
+    Returns ``(vertices, colors, widths)`` for ``line_type="segments"`` —
+    consecutive vertex PAIRS are independent edges, so nothing ever joins the
+    end of one grid line to the start of the next.
+
+    The grid is anchored at 0 in scene coordinates (the box centre), not at the
+    box minimum, so the rulings are symmetric about the specimen and a reading
+    off them is a signed distance from the middle of the acquisition. Lines that
+    land within a hair of a face are dropped, since the box edge already draws
+    there and a doubled line reads as a brighter one.
+
+    Colours are authored in sRGB and returned linearized, because the viewer
+    composites in linear light.
+    """
+    segs: list[np.ndarray] = []
+    cols: list[np.ndarray] = []
+    widths: list[float] = []
+
+    corners = _corners(bmin, bmax)
+    for a, b in _BOX_EDGES:
+        segs.append(np.stack([corners[a], corners[b]]))
+        cols.append(np.tile(np.float32(BOX_EDGE_COLOR) ** 2.2, (2, 1)))
+        widths += [BOX_EDGE_WIDTH_UM] * 2
+
+    eps = 1e-3 * float(np.max(bmax - bmin))
+    for face_axis in range(3):
+        u, v = [a for a in range(3) if a != face_axis]
+        for face_at in (bmin[face_axis], bmax[face_axis]):
+            # Rule the face along u (spanning v), then along v (spanning u).
+            for ruled, spanned in ((u, v), (v, u)):
+                lo = np.ceil(bmin[ruled] / step) * step
+                for pos in np.arange(lo, bmax[ruled] + eps, step):
+                    if min(abs(pos - bmin[ruled]), abs(pos - bmax[ruled])) < eps:
+                        continue  # coincides with a box edge already drawn
+                    a = np.empty(3, dtype=np.float32)
+                    a[face_axis] = face_at
+                    a[ruled] = pos
+                    b = a.copy()
+                    a[spanned], b[spanned] = bmin[spanned], bmax[spanned]
+                    segs.append(np.stack([a, b]))
+                    cols.append(np.tile(np.float32(GRID_LINE_COLOR) ** 2.2, (2, 1)))
+                    widths += [GRID_LINE_WIDTH_UM] * 2
+
+    return (
+        np.concatenate(segs).astype(np.float32),
+        np.concatenate(cols).astype(np.float32),
+        np.asarray(widths, dtype=np.float32),
+    )
+
+
+# =============================================================================
+# Data resolution
+# =============================================================================
+def load_or_build_gsplats() -> GSplatData:
+    """Return the 4D stacked splats: hosted archive, local rebuild, or a refit."""
+    if not RECOMPUTE:
+        try:
+            hosted = load_dataset_gsplats(DEMO_NAME, [GSPLATS_FILE])
+            if hosted is not None:
+                return hosted[0]
+        except DatasetUnavailable:
+            aprint("Precomputed 4D fit unavailable (Git LFS asset not pulled).")
+        local = load_local_fit_gsplats_at([LOCAL_FIT], label=DEMO_NAME)
+        if local is not None:
+            return local[0]
+        aprint(f"Falling back to download + fit (one-time; cached at {LOCAL_FIT}).")
+
+    warn_if_no_cuda_gpu()
+    array = open_lsm()
+    frames = select_timepoints(int(array.shape[0]), MAX_TIMEPOINTS)
+    fits = fit_all_timepoints(array, frames)
+    times_min = [frame * AXIS_STEP_MIN for frame in frames]
+    stacked = combine_to_4d(fits, times_min)
+
+    with asection("Building the LOD ladder"):
+        laddered = build_lod(stacked)
+        LOCAL_FIT.parent.mkdir(parents=True, exist_ok=True)
+        laddered.save(
+            LOCAL_FIT,
+            encoding_mode=EncodingMode.MEMORY,
+            include_fitting_info=True,
+            compress="zip",
+            zip_deflate=True,
         )
+    loaded = load_local_fit_gsplats_at([LOCAL_FIT], label=DEMO_NAME)
+    assert loaded is not None, LOCAL_FIT  # just written
+    return loaded[0]
 
-    n_timepoints = len(gsplats_list)
 
+# =============================================================================
+# Scene
+# =============================================================================
+def create_luxar_scene(stacked: GSplatData, output_path: Path) -> Path:
+    """Build the 4D scene: one gsplats node, one cage layer, overlays."""
+    times = np.unique(stacked.centers[:, 3])
+    n_timepoints = int(times.size)
     if n_timepoints < 2:
+        # One timepoint has no interval to derive a step from, and what follows
+        # would divide by zero on its way to `Dimension(step=0.0)`, which is
+        # refused several frames later by a message that does not mention time.
         raise ValueError(
-            f"Need at least 2 timepoints for a 4D scene, got {n_timepoints}. "
-            f"Use --max-timepoints=N with N >= 2."
+            f"a timelapse needs at least 2 timepoints, got {n_timepoints}; "
+            "this archive is a single stack, not a recording"
+        )
+    t_min, t_max = float(times.min()), float(times.max())
+    step_min = (t_max - t_min) / (n_timepoints - 1)
+
+    # Time is a DISCRETE viewer dimension: navigation snaps to multiples of
+    # `step` anchored at 0 and a chunk is only fetched within a quarter-step of
+    # the snapped position, so a timepoint sitting off that grid produces a
+    # slider stop that renders nothing at all — silently. Cheap to check here,
+    # invisible if it ever stops holding.
+    off_grid = np.abs(times - np.round(times / step_min) * step_min).max()
+    if off_grid > 0.01 * step_min:
+        raise RuntimeError(
+            f"timepoints are not uniformly spaced (worst offset {off_grid:.4g} "
+            f"min against a {step_min:.4g} min step); the viewer's discrete "
+            "navigation would land on empty stops"
         )
 
-    with asection("Creating 4D Luxar Scene"):
-        aprint(f"Output: {output_path.name}")
-        aprint(f"Timepoints: {n_timepoints}")
+    bmin, bmax = acquisition_box_um()
 
-        # When voxel_size is provided to the fitting function, output centers
-        # are in physical coordinates (µm) by default (output_space="real").
+    with asection("Creating the 4D zebrafish scene"):
+        aprint(f"Splats: {stacked.n_splats:,} over {n_timepoints} timepoints")
+        aprint(f"Time: 0 to {t_max:.0f} min, step {step_min:.2f} min")
+        aprint(f"Box: {' x '.join(f'{s:.0f}' for s in (bmax - bmin))} um")
+
+        # X, Y, Z — the ORDER of this list is what the viewer maps onto screen
+        # x/y/z, and it does not have to match the centre-column order (which
+        # `dim_order` maps by name). Listing Z first shows the specimen edge-on:
+        # the 316 um axial extent becomes screen-x and the two 859 um lateral
+        # axes become screen-y and depth, so the opening view is a tall narrow
+        # column of a block that is actually a wide flat slab. Lateral first
+        # gives the en-face view the microscope was pointed at.
         dims = Dimensions(
             [
-                Dimension("x", unit="um", display=True),
-                Dimension("y", unit="um", display=True),
-                Dimension("z", unit="um", display=True),
                 Dimension(
-                    "time",
-                    unit="frame",
+                    "X", unit="um", display=True, range=(float(bmin[2]), float(bmax[2]))
+                ),
+                Dimension(
+                    "Y", unit="um", display=True, range=(float(bmin[1]), float(bmax[1]))
+                ),
+                Dimension(
+                    "Z", unit="um", display=True, range=(float(bmin[0]), float(bmax[0]))
+                ),
+                # Real minutes, not a frame index: the LSM records a 120.01 s
+                # interval, so the slider can read in the unit the biology
+                # happens in. Values sit exactly on multiples of `step`, which
+                # the viewer's discrete navigation snaps to.
+                Dimension(
+                    "Time",
+                    unit="min",
                     display=False,
                     discrete=True,
-                    range=(0, n_timepoints - 1),
-                    step=1.0,
-                ),
+                    step=step_min,
+                    range=(t_min, t_max),
+                ),  # step is AXIS_STEP_MIN; see why it is rounded, there
             ]
         )
 
-        with LuxarZarrCompiler(
-            output_path, encoding_mode=EncodingMode.PRECISION
-        ) as compiler:
+        # AUTO, the house default, rather than the PRECISION this demo used to
+        # ask for. PRECISION stores every channel as float32, which on a 4D node
+        # of this size is ~60 bytes a splat before compression — a scene the
+        # viewer has to stream. AUTO picks per-axis fixed point instead, and the
+        # margins here are wide: 859 um of extent across uint16 is a 0.013 um
+        # step against a 1.68 um voxel, and the time axis is on an exact grid,
+        # which the encoder snaps to rather than quantizes.
+        with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
                 dimensions=dims,
                 citation=DEMO_META["citation"],
-                viewer_config=ViewerConfig(cinematic_mode=True),
+                viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="ACES"),
+            )
+            scene.attrs["title"] = "GSplats: Zebrafish Gastrulation, 4D Time-Lapse"
+            scene.attrs["description"] = (
+                f"A living zebrafish embryo (cxcr4a morphant) imaged by confocal "
+                f"laser-scanning microscopy through gastrulation: {n_timepoints} "
+                f"timepoints over {t_max / 60:.1f} hours, {stacked.n_splats:,} "
+                f"Gaussian splats in one 4D node with time as its fourth centre "
+                f"column. The labelled endodermal cells start as a tight cluster "
+                f"and spread over the yolk; the wireframe cage is the imaged "
+                f"volume, ruled every {GRID_STEP_UM:.0f} um. Play the Time slider "
+                f"to run the recording; press L for per-layer controls. "
+                f"Zenodo 1211599, DOI 10.5281/zenodo.1211599, CC BY-SA 4.0."
             )
 
-            scene.attrs["title"] = "GSplats: Zebrafish Embryo 4D Time-Lapse (Confocal)"
-            scene.attrs["description"] = f"""
-4D Gaussian Splatting — Zebrafish Embryo Gastrulation
-======================================================
+            scene.add_gsplats_from_data(
+                "endoderm",
+                stacked,
+                lod_group=True,
+                dim_order=["Z", "Y", "X", "Time"],
+                extend_to_all=[],
+                colormap=COLORMAP,
+                opacity=VOLUME_OPACITY,
+                absorption=VOLUME_ABSORPTION,
+                blending_mode="volumetric",
+                layer=True,
+            )
 
-A time-lapse (4D) volumetric fluorescence microscopy recording of a
-living zebrafish embryo during gastrulation.  Fluorescently labelled
-endodermal cells are captured with confocal laser-scanning microscopy.
+            verts, colors, widths = cage_lines(bmin, bmax, GRID_STEP_UM)
+            scene.add_lines(
+                "acquisition cage",
+                vertices=verts,
+                widths=widths,
+                colors=colors,
+                line_type="segments",
+                dim_order=["Z", "Y", "X"],
+                # The cage is the instrument, not the specimen: it is stored
+                # once and shown at every timepoint.
+                extend_to_all=["Time"],
+                blending_mode="additive",
+                opacity=0.9,
+                layer=True,
+            )
 
-Each of the {n_timepoints} time-points is independently fitted as 3D
-Gaussian splats and embedded into this 4D scene.
-
-Data Source:
-  - Zenodo record 1211599
-  - DOI: 10.5281/zenodo.1211599
-  - Organism: Danio rerio (zebrafish), cxcr4aMO morphant
-
-Navigation:
-  - Use the Time slider to scrub through development
-  - Mouse drag to rotate, scroll to zoom, right-click drag to pan
-  - Colours progress from cyan (early) to warm yellow (late)
-            """
-
-            # Compute shared centroid across ALL timepoints for alignment
-            with asection("Computing shared centroid"):
-                all_centers = [g.centers for g in gsplats_list]
-                all_amps = [g.amplitudes for g in gsplats_list]
-                total_amp = sum(a.sum() for a in all_amps)
-                if total_amp > 0:
-                    shared_centroid = (
-                        sum(c.T @ a for c, a in zip(all_centers, all_amps)) / total_amp
-                    )
-                else:
-                    shared_centroid = np.mean(
-                        np.concatenate(all_centers, axis=0), axis=0
-                    )
-                aprint(f"Shared centroid: {shared_centroid}")
-
-            # Add each timepoint
-            for t, gsplats in enumerate(gsplats_list):
-                with asection(f"Adding timepoint {t}"):
-                    gsplats = gsplats.translate(-shared_centroid)
-
-                    # Normalise per-timepoint so max amplitude = 0.1.
-                    # Without this, early frames (very sparse signal) are
-                    # invisible while late frames dominate.
-                    amp_max = gsplats.amplitudes.max()
-                    if amp_max > 0:
-                        gsplats = gsplats.scale_intensity(0.1 / amp_max)
-                    else:
-                        gsplats = gsplats.scale_intensity(0.1)
-
-                    n_splats = len(gsplats.amplitudes)
-
-                    # Time-based colour
-                    t_frac = t / max(n_timepoints - 1, 1)
-                    color = _time_color(t_frac)
-                    colors = np.tile(np.array(color, dtype=np.float32), (n_splats, 1))
-
-                    scene.add_gsplats(
-                        name=f"gsplats_t{t:04d}",
-                        centers=gsplats.centers,
-                        amplitudes=gsplats.amplitudes,
-                        cholesky_factors=gsplats.cholesky_factors,
-                        colors=colors,
-                        dim_order=["z", "y", "x"],
-                        fill={"time": float(t)},
-                        fill_sigma={"time": 0},
-                        extend_to_all=[],
-                        opacity=1.0,
-                        absorption=1.0,
-                        blending_mode="volumetric",
-                        layer=True,
-                    )
-                    aprint(f"  Added {n_splats:,} splats at time={t}")
-
-            # --- Overlays ---
             scene.add_text(
-                "Zebrafish Gastrulation Timelapse",
+                "Zebrafish gastrulation",
                 position=(0.02, 0.02),
-                font_size=0.055,
+                font_size=0.05,
                 anchor="top-left",
                 color="rgba(255,255,255,0.6)",
                 blend_mode="difference",
             )
-
-            # Per-timepoint labels
-            for t in range(n_timepoints):
-                scene.add_text(
-                    f"t = {t} / {n_timepoints - 1}",
-                    position=(0.02, 0.97),
-                    font_size=0.015,
-                    anchor="bottom-left",
-                    color="#ffcc44",
-                    visible_range={"time": t},
-                    transition="fade",
-                    transition_duration=0.15,
-                )
-
+            scene.add_text(
+                f"{n_timepoints} timepoints over {t_max / 60:.1f} h\n"
+                f"{stacked.n_splats:,} Gaussian splats\n"
+                f"cage {bmax[2] - bmin[2]:.0f} x {bmax[1] - bmin[1]:.0f} x "
+                f"{bmax[0] - bmin[0]:.0f} um, grid {GRID_STEP_UM:.0f} um",
+                position=(0.02, 0.10),
+                font_size=0.018,
+                font="mono",
+                color="white",
+                line_height=1.45,
+            )
             add_demo_caption(
                 scene,
-                f"{n_timepoints} timepoints \u2022 Confocal laser-scanning microscopy",
+                "Confocal laser-scanning microscopy • endoderm label",
                 DEMO_META.get("citation"),
             )
 
-        aprint(f"Scene saved: {output_path}")
-        return output_path
-
-
-# =============================================================================
-# Round-Trip Visualisation
-# =============================================================================
-
-# Show first, middle, and last timepoints in the round-trip comparison
-_ROUNDTRIP_SAMPLE_COUNT = 3
-
-
-def show_roundtrip_comparison(
-    volumes: list[np.ndarray],
-    gsplats_list: list[GSplatData],
-) -> None:
-    """Show original vs round-trip reconstructed volumes for sample timepoints."""
-    try:
-        plt = require_module("matplotlib.pyplot")
-    except MissingDependencyError as exc:
-        aprint(f"Skipping --show-roundtrip: {exc}")
-        return
-
-    n_total = len(volumes)
-    # Pick first, middle, last
-    if n_total <= _ROUNDTRIP_SAMPLE_COUNT:
-        sample_indices = list(range(n_total))
-    else:
-        sample_indices = [0, n_total // 2, n_total - 1]
-    n_show = len(sample_indices)
-
-    with asection(
-        f"Round-trip reconstruction comparison ({n_show} of {n_total} timepoints)"
-    ):
-        reconstructions = []
-        for t in sample_indices:
-            with asection(f"Rendering timepoint {t}"):
-                recon = gsplats_list[t].render_to_volume(
-                    shape=volumes[t].shape, device=DEVICE
-                )
-                reconstructions.append(recon)
-                mse = float(np.mean((volumes[t] - recon) ** 2))
-                psnr = 10 * np.log10(1.0 / mse) if mse > 0 else float("inf")
-                aprint(f"  T={t}: PSNR: {psnr:.2f} dB, MSE: {mse:.6g}")
-
-        fig, axes = plt.subplots(n_show, 3, figsize=(14, 4.5 * n_show), squeeze=False)
-
-        for row, (t, recon) in enumerate(zip(sample_indices, reconstructions)):
-            volume = volumes[t]
-            mid_z = volume.shape[0] // 2
-            orig_slice = volume[mid_z]
-            recon_slice = recon[mid_z]
-            diff_slice = np.abs(orig_slice - recon_slice)
-
-            mse = float(np.mean((volume - recon) ** 2))
-            psnr = 10 * np.log10(1.0 / mse) if mse > 0 else float("inf")
-
-            axes[row, 0].imshow(orig_slice, cmap="gray", vmin=0, vmax=1)
-            axes[row, 0].set_title(f"Original — T={t}")
-            axes[row, 0].axis("off")
-
-            axes[row, 1].imshow(recon_slice, cmap="gray", vmin=0, vmax=1)
-            axes[row, 1].set_title(f"Reconstructed (PSNR {psnr:.1f} dB)")
-            axes[row, 1].axis("off")
-
-            im = axes[row, 2].imshow(diff_slice, cmap="inferno", vmin=0, vmax=0.3)
-            axes[row, 2].set_title("|Difference|")
-            axes[row, 2].axis("off")
-            fig.colorbar(im, ax=axes[row, 2], fraction=0.046, pad=0.04)
-
-        fig.suptitle(
-            f"Zebrafish Time-Lapse — Round-Trip Comparison — z-slice {mid_z}  "
-            f"({sum(len(g.amplitudes) for g in gsplats_list):,} total splats)",
-            fontsize=14,
-        )
-        plt.tight_layout()
-        plt.show()
+    aprint(f"Scene saved: {output_path}")
+    return output_path
 
 
 # =============================================================================
 # Main
 # =============================================================================
-
-
-def main():
-    """Main demo execution."""
+def main() -> None:
+    """Resolve the 4D splats, build the scene, and optionally serve it."""
     aprint("=" * 70)
-    aprint("GSplats Demo: 4D Zebrafish Embryo Time-Lapse (Confocal)")
+    aprint("GSplats Demo: 4D Zebrafish Embryo Time-Lapse")
     aprint("=" * 70)
-    aprint("Per-timepoint 3D fitting -> 4D scene with dim_order + fill")
+    aprint("One 4D node • time as a real centre column • gridded acquisition cage")
     aprint("")
 
-    output_path = get_demos_output_dir() / "gsplats_4d_zebrafish_timelapse.luxar.zarr"
+    output_path = get_demos_output_dir() / SCENE_NAME
 
-    # Serve-only mode
     if SERVE_ONLY:
         if output_path.exists():
-            aprint("Serve-only mode: Launching viewer...")
+            aprint("Serve-only mode: launching viewer…")
             launch_viewer(output_path)
         else:
-            aprint(f"No scene found at {output_path}. Run without --serve-only first.")
+            aprint(f"No scene at {output_path}. Run without --serve-only first.")
         return
 
-    # Try loading precomputed data from Git LFS bundle
-    # The bundle contains 64 frames (indices 0, 2, 4, ..., 126)
-    # If MAX_TIMEPOINTS < 64, subsample from the precomputed set
-    precomputed_indices = _PRECOMPUTED_FRAME_INDICES
-    if MAX_TIMEPOINTS < len(precomputed_indices):
-        # Subsample evenly from the precomputed set
-        stride = max(1, len(precomputed_indices) // MAX_TIMEPOINTS)
-        precomputed_indices = precomputed_indices[::stride][:MAX_TIMEPOINTS]
+    scene_path = create_luxar_scene(load_or_build_gsplats(), output_path)
 
-    precomputed_file_names = [
-        f"zebrafish_frame{idx:04d}.gsplats.zarr.zip" for idx in precomputed_indices
-    ]
-
-    gsplats_list = load_dataset_bundle(
-        _PRECOMPUTED_DEMO_NAME,
-        _PRECOMPUTED_BUNDLE_NAME,
-        precomputed_file_names,
-        recompute=RECOMPUTE,
-    )
-
-    volumes = None
-
-    if gsplats_list is None:
-        # Recompute path: warn about GPU requirements, load data, fit
-        warn_if_no_cuda_gpu()
-
-        # Load data — per-timepoint cache checks happen inside fit_all_timepoints().
-        # We can't skip the load here because the time_indices (which frames to use)
-        # depend on the stride computed from the data's total frame count.
-        volumes, voxel_size_zyx, time_indices, acquisition = load_zebrafish_volumes()
-
-        # Fit GSplats per timepoint (with per-frame caching)
-        gsplats_list = fit_all_timepoints(
-            volumes,
-            voxel_size=voxel_size_zyx,
-            time_indices=time_indices,
-            acquisition=acquisition,
-        )
-
-    # Optional round-trip visualisation
-    if SHOW_ROUNDTRIP:
-        if volumes is not None:
-            show_roundtrip_comparison(volumes, gsplats_list)
-        else:
-            aprint(
-                "Cannot show round-trip: original volumes not available "
-                "(loaded from precomputed cache). Re-run with --recompute."
-            )
-
-    # Report
-    with asection("Fitting Summary"):
-        total_splats = sum(len(g.amplitudes) for g in gsplats_list)
-        aprint(f"Total splats: {total_splats:,} across {len(gsplats_list)} timepoints")
-        for t, g in enumerate(gsplats_list):
-            aprint(f"  T={t}: {len(g.amplitudes):,} splats")
-
-    # Create 4D scene
-    scene_path = create_luxar_scene(gsplats_list)
-
-    # Launch viewer
     if not NO_SERVE:
-        aprint("\nLaunching viewer...")
+        aprint("\nLaunching viewer… (press L for the Layers panel)")
         launch_viewer(scene_path)
 
     aprint("\nDone!")

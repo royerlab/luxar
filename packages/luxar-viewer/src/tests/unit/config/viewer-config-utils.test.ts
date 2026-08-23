@@ -2,18 +2,25 @@
  * Tests for viewer-config-utils: zarr viewer_config ↔ RenderingSettings conversion
  */
 
-import { describe, it, expect } from 'vitest';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
 import {
+  _warnedFovPresetConflicts,
   extractRenderingOverrides,
   extractCameraOverrides,
   extractBackgroundColor,
   renderingSettingsToZarr,
   RENDERING_SETTINGS_MAP,
 } from '../../../config/zarr-bridge/viewer-config-utils';
+import { config } from '../../../config';
 import { buildCinematicValues, CINEMATIC_SNAPSHOT_KEYS } from '../../../config/cinematic-preset';
 import type { ZarrViewerConfig } from '../../../types/zarr';
+import { log, Modules } from '../../../utils/log';
 
 describe('extractRenderingOverrides', () => {
+  beforeEach(() => {
+    _warnedFovPresetConflicts.clear();
+  });
+
   it('should return empty object for empty config', () => {
     const overrides = extractRenderingOverrides({});
     expect(Object.keys(overrides)).toHaveLength(0);
@@ -202,6 +209,65 @@ describe('extractRenderingOverrides', () => {
     expect(overrides.near).toBe(0.1);
     expect(overrides.far).toBe(1000);
   });
+
+  it('resolves camera.fov_preset to its numeric FOV when camera.fov is absent', () => {
+    const overrides = extractRenderingOverrides({
+      camera: { fov_preset: '85mm Portrait' },
+    });
+
+    expect(overrides.fov).toBe(config.camera.fovPresets['85mm Portrait']);
+    expect(overrides.fovPreset).toBe('85mm Portrait');
+  });
+
+  it('keeps an explicit camera.fov authoritative and warns once when the preset disagrees', () => {
+    const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    const configWithConflict = {
+      camera: { fov: 90, fov_preset: '85mm Portrait' },
+    } satisfies ZarrViewerConfig;
+
+    const overrides = extractRenderingOverrides(configWithConflict);
+    extractRenderingOverrides(configWithConflict);
+
+    expect(overrides.fov).toBe(90);
+    expect(overrides.fovPreset).toBe('85mm Portrait');
+    expect(warnSpy).toHaveBeenCalledOnce();
+    expect(warnSpy).toHaveBeenCalledWith(
+      Modules.CONFIG,
+      expect.stringMatching(/numeric FOV wins.*preset label will be re-derived/)
+    );
+    warnSpy.mockRestore();
+  });
+
+  it('does not warn when camera.fov remains within the preset label tolerance', () => {
+    const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+
+    const overrides = extractRenderingOverrides({
+      camera: { fov: 29.2, fov_preset: '85mm Portrait' },
+    });
+
+    expect(overrides.fov).toBe(29.2);
+    expect(overrides.fovPreset).toBe('85mm Portrait');
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it('does not invent a numeric FOV for the Custom preset', () => {
+    const overrides = extractRenderingOverrides({
+      camera: { fov_preset: 'Custom' },
+    });
+
+    expect('fov' in overrides).toBe(false);
+    expect(overrides.fovPreset).toBe('Custom');
+  });
+
+  it('does not invent a numeric FOV for an unknown preset name', () => {
+    const overrides = extractRenderingOverrides({
+      camera: { fov_preset: 'nonsense' },
+    });
+
+    expect('fov' in overrides).toBe(false);
+    expect(overrides.fovPreset).toBe('nonsense');
+  });
 });
 
 describe('extractRenderingOverrides — cinematic_mode preset expansion', () => {
@@ -241,9 +307,8 @@ describe('extractRenderingOverrides — cinematic_mode preset expansion', () => 
   });
 
   // `fov` and `fovPreset` are a COUPLED pair: an author who set either half
-  // owns the framing, so neither half is filled from the preset. Filling only
-  // the missing half would make the slider and the dropdown name different
-  // lenses (and the first panel open would rewrite the author's preset name).
+  // owns the framing, so neither half is filled from the cinematic preset.
+  // A recognized authored preset supplies its own numeric FOV upstream.
   it('leaves BOTH fov keys alone when the author set camera.fov', () => {
     const overrides = extractRenderingOverrides({
       cinematic_mode: true,
@@ -256,14 +321,14 @@ describe('extractRenderingOverrides — cinematic_mode preset expansion', () => 
     expect(overrides.toneMapping).toBe(buildCinematicValues().toneMapping);
   });
 
-  it('leaves BOTH fov keys alone when the author set camera.fov_preset', () => {
+  it('fills fov from the preset table — not the cinematic lens — when the author set camera.fov_preset', () => {
     const overrides = extractRenderingOverrides({
       cinematic_mode: true,
       camera: { fov_preset: '85mm Portrait' },
     });
 
     expect(overrides.fovPreset).toBe('85mm Portrait');
-    expect('fov' in overrides).toBe(false);
+    expect(overrides.fov).toBe(config.camera.fovPresets['85mm Portrait']);
     expect(overrides.toneMapping).toBe(buildCinematicValues().toneMapping);
   });
 
