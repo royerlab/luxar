@@ -1677,13 +1677,13 @@ export function evaluateDepthSortPerFrame(): void {
   if (!depthSortEnabled || nodeStates.size === 0) return;
   const camera = getCamera?.();
   if (!camera) return;
-  if (isLoadInProgress?.()) return;
-  // Past the load gate on purpose: a starved init must not be retried while
+  const loadInProgress = isLoadInProgress?.() ?? false;
+  // Keep worker retry behind the load gate: a starved init must not run while
   // a view-update sweep is in flight, since that sweep IS the main-thread
   // saturation that starved it. Everything else the retry needs to know
   // (something visible actually wants sorting, the backoff, an offline
   // capture) it checks itself.
-  maybeRetryStarvedWorkerInit();
+  if (!loadInProgress) maybeRetryStarvedWorkerInit();
 
   if (!scratch) {
     scratch = {
@@ -1699,9 +1699,6 @@ export function evaluateDepthSortPerFrame(): void {
   for (const [nodeId, state] of nodeStates) {
     const mesh = state.mesh;
     if (!isEffectivelyVisible(mesh)) continue;
-    // LOD demotion returned the geometry to the pool — same signal the
-    // resolve path checks; a sort dispatched now would be dropped there.
-    if (!hasCommittedData(mesh)) continue;
     const mode = liveBlendingMode(mesh);
     if (!isLiveOrderDependent(mode)) {
       // No longer order-dependent (e.g. switched to additive) — clear any
@@ -1729,6 +1726,16 @@ export function evaluateDepthSortPerFrame(): void {
     // renderOrder scale (full rationale in
     // `depth-sort-coordinator/render-order.ts`).
     collectRenderOrderSlot(mesh, scratch.mv, scratch.camPos);
+
+    // Everything below dispatches or evaluates a within-mesh worker sort.
+    // Keep that work paused during a loader sweep, but do not pause the
+    // pure-main-thread cross-mesh ordering collected above.
+    if (loadInProgress) continue;
+    // LOD demotion returned the geometry to the pool — same signal the
+    // resolve path checks; a sort dispatched now would be dropped there.
+    // A temporarily stamp-less tracked mesh still receives its cross-mesh
+    // rank above so visible partition parts never alias renderOrder 0.
+    if (!hasCommittedData(mesh)) continue;
     const bs = (mesh.geometry as THREE.BufferGeometry | undefined)?.boundingSphere;
 
     // === Within-mesh re-sort trigger (Phase 3) ===

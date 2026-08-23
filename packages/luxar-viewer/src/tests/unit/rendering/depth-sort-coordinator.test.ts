@@ -987,6 +987,59 @@ describe('depth-sort coordinator', () => {
     expect(mockApi.sort).not.toHaveBeenCalled(); // worker path stays inert
   });
 
+  it('keeps partition renderOrder a permutation while a load sweep is in progress', async () => {
+    const bspTree = {
+      axis: 0,
+      split: 0,
+      left: { part: 0 },
+      right: { part: 1 },
+    };
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({
+      getCamera: () => cameraAt(1000, 0, 0),
+      requestRender: vi.fn(),
+      isLoadInProgress: () => true,
+    });
+
+    const parts = [0, 1].map(() => makeGSplatsMesh(2, 'normal'));
+    makePartitionWrapper(bspTree, parts);
+    for (const part of parts) {
+      coord.noteDepthSortCommit(part, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    }
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    expect(parts.map((part) => part.renderOrder)).toEqual([0, 1]);
+  });
+
+  it('ranks visible tracked partition parts whose commit stamp is temporarily absent', async () => {
+    const bspTree = {
+      axis: 0,
+      split: 0,
+      left: { part: 0 },
+      right: { part: 1 },
+    };
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({
+      getCamera: () => cameraAt(1000, 0, 0),
+      requestRender: vi.fn(),
+      isLoadInProgress: () => false,
+    });
+
+    const parts = [0, 1].map(() => makeGSplatsMesh(2, 'normal'));
+    makePartitionWrapper(bspTree, parts);
+    for (const part of parts) {
+      coord.noteDepthSortCommit(part, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    }
+    await flush();
+    delete parts[1].userData.committedData;
+
+    coord.evaluateDepthSortPerFrame();
+
+    expect(parts.map((part) => part.renderOrder)).toEqual([0, 1]);
+  });
+
   it('keeps per-node state independent across two nodes sharing the worker', async () => {
     // Two order-dependent nodes → two independent in-flight sorts on
     // the SAME worker; resolving one must not touch the other, and
