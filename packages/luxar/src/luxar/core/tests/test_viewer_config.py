@@ -8,11 +8,11 @@ import pytest
 
 from luxar.conftest import find_repo_relative_file
 from luxar.core.viewer_config import (
+    VALID_FOV_PRESETS,
     AnimationConfig,
     CameraConfig,
     DimensionsConfig,
     UIConfig,
-    VALID_FOV_PRESETS,
     ViewerConfig,
 )
 
