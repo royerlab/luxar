@@ -609,7 +609,16 @@ class StructuralEncoderMixin(BaseEncoderMixin):
         """log_scalar_uint{8,16}: log1p compand then linear quantize."""
         bits = 8 if "uint8" in encoder_name else 16
         max_int = (2**bits) - 1
+        if data.size == 0:
+            raise ValueError(f"{encoder_name} requires non-empty data")
+        min_val = float(np.min(data))
+        if not np.isfinite(min_val) or min_val < 0.0:
+            raise ValueError(
+                f"{encoder_name} requires finite, non-negative values, "
+                f"got minimum {min_val}"
+            )
         max_val = float(np.max(data))
+        # The decoder rejects non-finite or non-positive max_log metadata.
         if not np.isfinite(max_val) or max_val <= 0.0:
             raise ValueError(
                 f"{encoder_name} requires a finite, positive maximum value, "

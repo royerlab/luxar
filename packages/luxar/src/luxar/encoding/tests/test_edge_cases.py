@@ -230,20 +230,59 @@ class TestCustomEncoders:
     """Test all custom encoder types."""
 
     @pytest.mark.parametrize("encoder_name", ["log_scalar_uint8", "log_scalar_uint16"])
+    @pytest.mark.parametrize(
+        ("data", "error"),
+        [
+            (np.array([], dtype=np.float32), "non-empty data"),
+            (np.zeros(5, dtype=np.float32), "finite, positive maximum"),
+            (
+                np.array([1.0, np.nan, 5.0], dtype=np.float32),
+                "finite, non-negative values",
+            ),
+            (
+                np.array([1.0, np.inf], dtype=np.float32),
+                "finite, positive maximum",
+            ),
+            (
+                np.array([-np.inf, 0.0, 5.0], dtype=np.float32),
+                "finite, non-negative values",
+            ),
+        ],
+    )
     @pytest.mark.filterwarnings("error::RuntimeWarning")
-    def test_custom_log_scalar_rejects_all_zero_data(self, encoder_name):
-        """Test custom log scalar encoders reject an undefined log range."""
+    def test_custom_log_scalar_rejects_invalid_data(self, encoder_name, data, error):
+        """Test custom log scalar encoders reject invalid input ranges."""
         with tempfile.TemporaryDirectory() as tmpdir:
             group = zarr.open_group(tmpdir, mode="w")
             encoder = ArrayEncoder()
 
-            with pytest.raises(ValueError, match="finite, positive maximum"):
+            with pytest.raises(ValueError, match=error):
                 encoder._encode_custom(
                     group,
                     "test",
-                    np.zeros(5, dtype=np.float32),
+                    data,
                     encoder_name,
                     None,
+                )
+
+            assert "test" not in group
+
+    @pytest.mark.parametrize("encoder_name", ["log_scalar_uint8", "log_scalar_uint16"])
+    @pytest.mark.filterwarnings("error::RuntimeWarning")
+    def test_custom_log_scalar_rejects_negative_data_publicly(self, encoder_name):
+        """Test negative bounded scalars cannot be silently clamped to zero."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(tmpdir, mode="w")
+            encoder = ArrayEncoder()
+
+            with pytest.raises(ValueError, match="finite, non-negative values"):
+                encoder.encode(
+                    np.array([-2.0, 0.0, 5.0], dtype=np.float32),
+                    group,
+                    "test",
+                    SemanticType.BOUNDED_SCALAR,
+                    mode=EncodingMode.CUSTOM,
+                    custom_encoder=encoder_name,
                 )
 
             assert "test" not in group
