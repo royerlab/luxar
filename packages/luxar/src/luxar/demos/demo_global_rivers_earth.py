@@ -438,7 +438,7 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
                 # win the race.
                 #
                 # Two fixes were tried and rejected, so that the data stays as it
-                # is (8M points is the honest resolution of the source):
+                # is:
                 #
                 #  * `substitutive_lod` — builds correctly (15,590 / 124,878 /
                 #    999,830 gsplat levels over the 8M-point finest, at 776 KB /
