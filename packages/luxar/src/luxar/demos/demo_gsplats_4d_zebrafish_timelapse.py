@@ -186,6 +186,19 @@ ACQUISITION_SHAPE_ZYX = (44, 512, 512)
 VOXEL_SIZE_ZYX_UM = (7.184696827249337, 1.6774389429296399, 1.6774389429296399)
 FRAME_INTERVAL_S = 120.00882789993899
 
+#: The Time axis step, in minutes: the recorded interval ROUNDED to exactly 2.
+#:
+#: Not cosmetic. A discrete dimension becomes an ``<input type="range">`` whose
+#: value is snapped onto ``min + k*step``, and with the raw 2.0001470947... the
+#: browser's sanitiser computes ``150 * step`` a hair above ``max`` and clamps to
+#: 149 — so the FINAL timepoint cannot be selected with the slider at all. Two is
+#: exact in binary and every multiple of it up to 300 is too.
+#:
+#: The cost is 0.0001471 min per frame, 1.3 s of drift accumulated over the whole
+#: five hours, against a frame interval of two minutes. The axis is therefore
+#: nominal-but-exact rather than recorded-but-unreachable.
+AXIS_STEP_MIN = 2.0
+
 CACHE_DIR = DEMO_CACHE_ROOT / DEMO_NAME
 LSM_PATH = CACHE_DIR / "cxcr4aMO2_290112.lsm"
 #: Per-timepoint fits, keyed on the fit schedule so retuning cannot hit a stale
@@ -243,8 +256,13 @@ VOLUME_ABSORPTION = 0.5
 GRID_STEP_UM = 100.0
 BOX_EDGE_WIDTH_UM = 2.0
 GRID_LINE_WIDTH_UM = 1.0
-BOX_EDGE_COLOR = (0.42, 0.62, 0.72)
-GRID_LINE_COLOR = (0.16, 0.26, 0.32)
+#: Dim, and dimmer still for the rulings. These are ADDITIVE lines drawn over
+#: a specimen that occupies 2% of the frame: at the first values tried
+#: ((0.42, 0.62, 0.72) / (0.16, 0.26, 0.32)) the cage read as a solid glowing
+#: box and buried the cells it exists to give a scale to. A reference must be
+#: legible and lose every contest for attention.
+BOX_EDGE_COLOR = (0.20, 0.30, 0.36)
+GRID_LINE_COLOR = (0.075, 0.115, 0.145)
 
 FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
@@ -694,7 +712,7 @@ def load_or_build_gsplats() -> GSplatData:
     array = open_lsm()
     frames = select_timepoints(int(array.shape[0]), MAX_TIMEPOINTS)
     fits = fit_all_timepoints(array, frames)
-    times_min = [frame * FRAME_INTERVAL_S / 60.0 for frame in frames]
+    times_min = [frame * AXIS_STEP_MIN for frame in frames]
     stacked = combine_to_4d(fits, times_min)
 
     with asection("Building the LOD ladder"):
@@ -750,18 +768,23 @@ def create_luxar_scene(stacked: GSplatData, output_path: Path) -> Path:
         aprint(f"Time: 0 to {t_max:.0f} min, step {step_min:.2f} min")
         aprint(f"Box: {' x '.join(f'{s:.0f}' for s in (bmax - bmin))} um")
 
-        # Centre-column order is (Z, Y, X, time) — the order the fits were
-        # stacked in — so the Dimensions list must follow it exactly.
+        # X, Y, Z — the ORDER of this list is what the viewer maps onto screen
+        # x/y/z, and it does not have to match the centre-column order (which
+        # `dim_order` maps by name). Listing Z first shows the specimen edge-on:
+        # the 316 um axial extent becomes screen-x and the two 859 um lateral
+        # axes become screen-y and depth, so the opening view is a tall narrow
+        # column of a block that is actually a wide flat slab. Lateral first
+        # gives the en-face view the microscope was pointed at.
         dims = Dimensions(
             [
                 Dimension(
-                    "Z", unit="um", display=True, range=(float(bmin[0]), float(bmax[0]))
+                    "X", unit="um", display=True, range=(float(bmin[2]), float(bmax[2]))
                 ),
                 Dimension(
                     "Y", unit="um", display=True, range=(float(bmin[1]), float(bmax[1]))
                 ),
                 Dimension(
-                    "X", unit="um", display=True, range=(float(bmin[2]), float(bmax[2]))
+                    "Z", unit="um", display=True, range=(float(bmin[0]), float(bmax[0]))
                 ),
                 # Real minutes, not a frame index: the LSM records a 120.01 s
                 # interval, so the slider can read in the unit the biology
@@ -774,7 +797,7 @@ def create_luxar_scene(stacked: GSplatData, output_path: Path) -> Path:
                     discrete=True,
                     step=step_min,
                     range=(t_min, t_max),
-                ),
+                ),  # step is AXIS_STEP_MIN; see why it is rounded, there
             ]
         )
 

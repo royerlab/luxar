@@ -390,7 +390,7 @@ class TestTheStackedArchiveSurvivesItsRoundTrip:
         monkeypatch.setattr(_demo, "ACQUISITION_SHAPE_ZYX", shape)
         monkeypatch.setattr(_demo, "DEVICE", "cpu")
 
-        times = [t * _demo.FRAME_INTERVAL_S / 60.0 for t in range(len(fits))]
+        times = [t * _demo.AXIS_STEP_MIN for t in range(len(fits))]
         laddered = _demo.build_lod(_demo.combine_to_4d(fits, times))
         assert laddered.n_substitutive > 1, "no coarse levels were built"
 
@@ -418,7 +418,7 @@ class TestTheStackedArchiveSurvivesItsRoundTrip:
         monkeypatch.setattr(_demo, "ACQUISITION_SHAPE_ZYX", shape)
         monkeypatch.setattr(_demo, "DEVICE", "cpu")
 
-        times = [t * _demo.FRAME_INTERVAL_S / 60.0 for t in range(len(fits))]
+        times = [t * _demo.AXIS_STEP_MIN for t in range(len(fits))]
         laddered = _demo.build_lod(_demo.combine_to_4d(fits, times))
         for level in laddered.substitutive_levels:
             centers = np.concatenate([sub.centers for sub in level.additive_sublods])
@@ -453,7 +453,7 @@ class TestTheStackedArchiveSurvivesItsRoundTrip:
         monkeypatch.setattr(_demo, "GRID_STEP_UM", 10.0)
         monkeypatch.setattr(_demo, "DEVICE", "cpu")
 
-        times = [t * _demo.FRAME_INTERVAL_S / 60.0 for t in range(len(fits))]
+        times = [t * _demo.AXIS_STEP_MIN for t in range(len(fits))]
         laddered = _demo.build_lod(_demo.combine_to_4d(fits, times))
         out = _demo.create_luxar_scene(laddered, tmp / "scene.luxar.zarr")
 
@@ -463,7 +463,11 @@ class TestTheStackedArchiveSurvivesItsRoundTrip:
         dims = {
             d["name"]: d for d in dict(root.attrs)["scene_dimensions"]["dimensions"]
         }
-        assert [*dims] == ["Z", "Y", "X", "Time"], "column order must match the stack"
+        # Lateral first: this list's ORDER is what the viewer maps to screen
+        # x/y/z, and Z first would show a 859x859x316 um slab edge-on as a tall
+        # narrow column. It deliberately does NOT match the centre-column order,
+        # which `dim_order` maps by name.
+        assert [*dims] == ["X", "Y", "Z", "Time"], "the screen axes are misordered"
 
         bmin, bmax = _demo.acquisition_box_um()
         for axis, lo, hi in zip("ZYX", bmin, bmax):
@@ -473,7 +477,14 @@ class TestTheStackedArchiveSurvivesItsRoundTrip:
 
         time = dims["Time"]
         assert time["unit"] == "min" and time["discrete"]
-        assert time["step"] == pytest.approx(_demo.FRAME_INTERVAL_S / 60.0)
+        assert time["step"] == pytest.approx(_demo.AXIS_STEP_MIN)
+        # Exactly representable, and so is every stop up to the last: a range
+        # input snaps onto min + k*step, and with the raw recorded interval the
+        # browser clamps the final timepoint out of reach.
+        assert all(
+            (i * _demo.AXIS_STEP_MIN) == pytest.approx(t, abs=0.0)
+            for i, t in enumerate(times)
+        )
         assert time["range"] == pytest.approx([times[0], times[-1]])
 
         cage = dict(root["acquisition cage"].attrs)

@@ -403,9 +403,9 @@
       "dir": "gsplats_zebrafish",
       "files": [
         {
-          "name": "zebrafish.gsplats.zarr.zip",
-          "sha256": "09c4bd33de5989f64d6845dfc7517227c73bee0e85fb5ab40553312231a8c086",
-          "bytes": 1705409
+          "name": "zebrafish_4d.gsplats.zarr.zip",
+          "sha256": "79e9d34948673095aa7ddd7715652b15e5ea02f99955f53a8b0ec2d718e1fec3",
+          "bytes": 22359702
         }
       ]
     },
