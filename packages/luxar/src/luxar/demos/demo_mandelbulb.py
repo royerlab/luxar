@@ -181,8 +181,11 @@ def _mandelbulb_distance_core(
             # A plane orbit trap records the closest approach of each orbit to
             # x=0. Unlike escape iterations, it varies across nearby surface
             # points and exposes the Mandelbulb's internal folds.
-            orbit_trap[active] = np.minimum(
-                orbit_trap[active], np.abs(z_active_new[:, 0])
+            active_indices = np.flatnonzero(active)
+            bounded = r[active] <= bailout
+            bounded_indices = active_indices[bounded]
+            orbit_trap[bounded_indices] = np.minimum(
+                orbit_trap[bounded_indices], np.abs(z_active_new[bounded, 0])
             )
 
         # Check for escape

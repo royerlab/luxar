@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from luxar.colormaps import scalars_to_colors
 from luxar.demos.demo_mandelbulb import (
@@ -38,6 +39,14 @@ def test_orbit_trap_equalization_preserves_ties_and_order() -> None:
     assert equalized[1] < equalized[3] < equalized[0]
 
 
+def test_orbit_trap_excludes_the_iterate_that_escapes() -> None:
+    point = np.array([[-0.8478260869565217, -0.508695652173913, 0.28260869565217384]])
+
+    _, _, orbit_trap = _mandelbulb_distance_and_orbit_trap(point)
+
+    np.testing.assert_allclose(orbit_trap, [0.472142513913466])
+
+
 def test_surface_appearance_handles_an_empty_surface() -> None:
     colors, lighting, ambient_occlusion = _mandelbulb_surface_appearance(
         np.empty((0, 3)),
@@ -69,6 +78,27 @@ def test_surface_appearance_has_broad_colour_and_lighting_range() -> None:
     assert np.ptp(ambient_occlusion) > 0.1
     assert np.all(np.isfinite(colors))
     assert np.all((colors >= 0.0) & (colors <= 1.0))
+
+
+def test_orbit_trap_colours_follow_local_surface_structure() -> None:
+    scipy_spatial = pytest.importorskip("scipy.spatial")
+    positions, _, orbit_trap = _surface_sample()
+    trap_quantiles = _equalize_orbit_trap(orbit_trap)
+
+    _, neighbour_indices = scipy_spatial.cKDTree(positions).query(positions, k=6)
+    neighbour_differences = np.abs(
+        trap_quantiles[:, None] - trap_quantiles[neighbour_indices[:, 1:]]
+    )
+
+    random = np.random.default_rng(0)
+    random_indices = random.integers(
+        0, len(positions), size=neighbour_indices[:, 1:].shape
+    )
+    random_pair_differences = np.abs(
+        trap_quantiles[:, None] - trap_quantiles[random_indices]
+    )
+
+    assert neighbour_differences.mean() < 0.8 * random_pair_differences.mean()
 
 
 def test_ambient_occlusion_darkens_more_enclosed_surface_points() -> None:
