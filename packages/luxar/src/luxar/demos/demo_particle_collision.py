@@ -249,6 +249,27 @@ PARTICLE_TYPES = {
 }
 
 
+def _legend_swatches(*particle_types: str) -> str:
+    swatches = []
+    for particle_type in particle_types:
+        red, green, blue = PARTICLE_TYPES[particle_type]["color"]
+        css_color = f"rgb({round(red * 255)} {round(green * 255)} {round(blue * 255)})"
+        swatches.append(f'<span style="color:{css_color}">\u2588</span>')
+    return "".join(swatches)
+
+
+PARTICLE_LEGEND_HTML = (
+    '<div style="font-size:1.3vh;line-height:1.6;background:rgba(0,0,0,0.5);padding:0.6vh;border-radius:3px">'
+    '<div style="font-weight:bold;color:#ccc;margin-bottom:0.4vh">Particle Tracks</div>'
+    f"<div>{_legend_swatches('electron', 'positron')} e\u207b/e\u207a (electrons)</div>"
+    f"<div>{_legend_swatches('muon_minus', 'muon_plus')} \u03bc\u207b/\u03bc\u207a (muons)</div>"
+    f"<div>{_legend_swatches('pion_plus', 'pion_minus', 'kaon')} \u03c0\u00b1/K\u00b1 (hadrons)</div>"
+    f"<div>{_legend_swatches('proton')} p/p\u0304 (protons)</div>"
+    f"<div>{_legend_swatches('photon')} \u03b3 (photons)</div>"
+    "</div>"
+)
+
+
 # =============================================================================
 # Particle Track Generation
 # =============================================================================
@@ -365,7 +386,7 @@ def generate_helix_track(
 
     Returns:
         points: (N, 3) array of polyline vertices (one continuous track)
-        widths: (N,) per-vertex line widths (energy visualization)
+        widths: (N,) per-vertex p_T-scaled line widths
         colors: (N, 3) per-vertex RGB colors (particle identification)
     """
     if particle.charge == 0:
@@ -388,7 +409,11 @@ def generate_helix_track(
         shower_radius=shower_radius,
     )
     if len(points) < 2:
-        return np.empty((0, 3)), np.empty(0), np.empty((0, 3))
+        return (
+            np.empty((0, 3), dtype=np.float32),
+            np.empty(0, dtype=np.float32),
+            np.empty((0, 3), dtype=np.float32),
+        )
 
     # Per-VERTEX arrays — the track is one continuous curve, so it is
     # authored as unique vertices + an explicit edge list (line_type=
@@ -1192,14 +1217,7 @@ def generate_detector_scene(
 
         # Particle type legend (bottom-left)
         scene.add_html(
-            '<div style="font-size:1.3vh;line-height:1.6;background:rgba(0,0,0,0.5);padding:0.6vh;border-radius:3px">'
-            '<div style="font-weight:bold;color:#ccc;margin-bottom:0.4vh">Particle Tracks</div>'
-            '<div><span style="color:#6699ff">\u2588</span> e\u207b/e\u207a (electrons)</div>'
-            '<div><span style="color:#ff4466">\u2588</span> \u03bc\u207b/\u03bc\u207a (muons)</div>'
-            '<div><span style="color:#44cc44">\u2588</span> \u03c0\u00b1/K\u00b1 (hadrons)</div>'
-            '<div><span style="color:#ffaa22">\u2588</span> p/p\u0304 (protons)</div>'
-            '<div><span style="color:#ffff44">\u2588</span> \u03b3 (photons)</div>'
-            "</div>",
+            PARTICLE_LEGEND_HTML,
             position=(0.02, 0.97),
             anchor="bottom-left",
         )

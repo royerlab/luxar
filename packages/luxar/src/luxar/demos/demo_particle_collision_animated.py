@@ -162,6 +162,7 @@ from luxar.demos.demo_particle_collision import (
     HCAL_OUTER,
     MUON_INNER,
     MUON_OUTER,
+    PARTICLE_LEGEND_HTML,
     TRACKER_INNER,
     TRACKER_OUTER,
     Particle,
@@ -231,10 +232,10 @@ def generate_helix_track_with_times(
     )
     if len(points) < 2:
         return (
-            np.empty((0, 3)),
-            np.empty(0),
-            np.empty((0, 3)),
-            np.empty(0),
+            np.empty((0, 3), dtype=np.float32),
+            np.empty(0, dtype=np.float32),
+            np.empty((0, 3), dtype=np.float32),
+            np.empty(0, dtype=np.float32),
         )
 
     segment_lengths = np.linalg.norm(np.diff(points, axis=0), axis=1)
@@ -1037,14 +1038,7 @@ def generate_animated_detector_scene(
 
         # Particle type legend (bottom-left) — same as static demo
         scene.add_html(
-            '<div style="font-size:1.3vh;line-height:1.6;background:rgba(0,0,0,0.5);padding:0.6vh;border-radius:3px">'
-            '<div style="font-weight:bold;color:#ccc;margin-bottom:0.4vh">Particle Tracks</div>'
-            '<div><span style="color:#6699ff">\u2588</span> e\u207b/e\u207a (electrons)</div>'
-            '<div><span style="color:#ff4466">\u2588</span> \u03bc\u207b/\u03bc\u207a (muons)</div>'
-            '<div><span style="color:#44cc44">\u2588</span> \u03c0\u00b1/K\u00b1 (hadrons)</div>'
-            '<div><span style="color:#ffaa22">\u2588</span> p/p\u0304 (protons)</div>'
-            '<div><span style="color:#ffff44">\u2588</span> \u03b3 (photons)</div>'
-            "</div>",
+            PARTICLE_LEGEND_HTML,
             position=(0.02, 0.97),
             anchor="bottom-left",
         )

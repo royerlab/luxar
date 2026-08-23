@@ -7,7 +7,13 @@ from luxar.demos._particle_collision_tracks import (
     MAX_AZIMUTH_SAMPLE_STEP,
     generate_helix_points,
 )
-from luxar.demos.demo_particle_collision import B_FIELD, Particle, generate_helix_track
+from luxar.demos.demo_particle_collision import (
+    B_FIELD,
+    PARTICLE_LEGEND_HTML,
+    PARTICLE_TYPES,
+    Particle,
+    generate_helix_track,
+)
 from luxar.demos.demo_particle_collision_animated import (
     generate_helix_track_with_times,
 )
@@ -182,3 +188,37 @@ def test_pure_longitudinal_track_reaches_detector_endcap(
 
     assert points[:, :2] == pytest.approx(np.zeros((11, 2)))
     assert points[-1, 2] == pytest.approx(expected_z)
+
+
+@pytest.mark.parametrize(
+    "particle_type",
+    [
+        "electron",
+        "positron",
+        "muon_minus",
+        "muon_plus",
+        "pion_plus",
+        "pion_minus",
+        "kaon",
+        "proton",
+        "photon",
+    ],
+)
+def test_particle_legend_uses_rendered_track_colors(particle_type: str) -> None:
+    red, green, blue = PARTICLE_TYPES[particle_type]["color"]
+    css_color = f"rgb({round(red * 255)} {round(green * 255)} {round(blue * 255)})"
+
+    assert f'color:{css_color}' in PARTICLE_LEGEND_HTML
+
+
+@pytest.mark.parametrize(
+    "generator", [generate_helix_track, generate_helix_track_with_times]
+)
+def test_empty_charged_track_arrays_remain_float32(generator: TrackGenerator) -> None:
+    result = generator(
+        _particle(charge=1, px=0.0, py=0.0, pz=0.0),
+        np.random.default_rng(0),
+        8,
+    )
+
+    assert all(array.dtype == np.float32 for array in result)
