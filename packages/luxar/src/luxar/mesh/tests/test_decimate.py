@@ -518,6 +518,25 @@ class TestDecimateQEM:
     def test_small_system_solver_matches_numpy_and_rejects_rank_deficiency(
         self, ndim: int
     ) -> None:
+        """The tolerance has to follow the CONDITIONING, not sit at a constant.
+
+        ``_solve_system`` takes two different routes. At ndim != 3 it delegates
+        to ``np.linalg.solve``, so this comparison is against itself and the
+        error is exactly 0 — that arm pins the delegation, not any arithmetic.
+        At ndim == 3 it uses a closed-form adjugate inverse to avoid a LAPACK
+        call on a tiny matrix, and an adjugate loses accuracy faster than LU:
+        measured over 400 random draws per rung, its relative disagreement with
+        LAPACK is 4e-16 at kappa=1, 7.4e-12 at 1e4, but reaches 8.6e-6 at 1e8 —
+        roughly ``kappa**1.5 * eps`` rather than LU's ``kappa * eps``.
+
+        A flat ``rtol=1e-6`` therefore failed the kappa=1e8 rung for a large
+        share of seeds (median 3.3e-7, p99 6.5e-6). It survived on Linux and
+        failed on macOS only because the two LAPACKs build a different ``qr``
+        basis from the same seed — platform roulette, not a platform bug. The
+        bound below tracks the algorithm's real error growth and still sits
+        orders of magnitude below anything a broken solver would produce.
+        """
+        eps = np.finfo(np.float64).eps
         rng = np.random.default_rng(1798 + ndim)
         for condition in (1.0, 1e4, 1e8):
             basis, _ = np.linalg.qr(rng.normal(size=(ndim, ndim)))
@@ -528,8 +547,11 @@ class TestDecimateQEM:
             solved = _solve_system(matrix, rhs)
 
             assert solved is not None
+            # ndim != 3 delegates, so hold it to exactness; the adjugate path
+            # gets the conditioning-aware bound, floored so kappa=1 stays tight.
+            rtol = 0.0 if ndim != 3 else max(1e-9, condition**1.5 * eps)
             np.testing.assert_allclose(
-                solved, np.linalg.solve(matrix, rhs), rtol=1e-6, atol=1e-8
+                solved, np.linalg.solve(matrix, rhs), rtol=rtol, atol=1e-8
             )
 
         rank_deficient = np.eye(ndim, dtype=np.float64)

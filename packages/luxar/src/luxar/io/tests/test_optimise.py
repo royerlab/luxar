@@ -56,6 +56,23 @@ from luxar.io.optimise import (
 _META_DOCS = frozenset({"zarr.json", ".zarray", ".zgroup", ".zattrs", ".zmetadata"})
 
 
+def _is_case_insensitive_fs(where: Path) -> bool:
+    """Does ``where``'s filesystem fold case (macOS, Windows)?
+
+    Shared because BOTH payload-name tests need it and only one of them had it:
+    a case-differing payload name like ``Zarr.json`` is an ordinary distinct
+    file on Linux and the group's own ``zarr.json`` here, so each test's
+    fixture is unbuildable on one side of that divide. Inlining the probe is
+    what let the second test ship without the guard and fail only on macOS.
+    """
+    probe = where / "CaseProbe"
+    probe.write_text("x")
+    try:
+        return (where / "caseprobe").exists()
+    finally:
+        probe.unlink()
+
+
 def _walk(group: Any, path: str = ""):
     """Yield ``(path, node, is_array)`` for every node, root included."""
     yield path or "/", group, False
@@ -531,9 +548,7 @@ class TestPayloadFiles:
         an ordinary distinct file the source really holds, and skipping it
         shipped — under exit code 0 — the very state the copy exists to prevent:
         an ``image_file`` attr naming a file the output does not have."""
-        probe = tmp_path / "CaseProbe"
-        probe.write_text("x")
-        if (tmp_path / "caseprobe").exists():
+        if _is_case_insensitive_fs(tmp_path):
             pytest.skip("a case-insensitive filesystem cannot hold the fixture")
         src = _store_with_a_payload_attr(
             tmp_path / "src.luxar.zarr", "Zarr.json", payload=None
@@ -558,7 +573,22 @@ class TestPayloadFiles:
         """Refusing is about BYTES the copy cannot carry faithfully. With no
         file behind the attr there are none, so the same name that stops the
         pass above must not strand a store that is merely missing its overlay —
-        the output is exactly as complete as its input."""
+        the output is exactly as complete as its input.
+
+        Unrunnable on a case-insensitive filesystem (macOS, Windows). The
+        scenario needs ``Zarr.json`` to be a DANGLING name, but there the same
+        name resolves to the group's own ``zarr.json``, so the attr is not
+        dangling at all and ``optimise_store`` refuses exactly as the test above
+        requires. That refusal is the correct answer on such a filesystem — the
+        two cases are genuinely indistinguishable — so this asserts nothing
+        there and is skipped rather than made to pass by weakening it.
+        """
+        if _is_case_insensitive_fs(tmp_path):
+            pytest.skip(
+                "case-insensitive filesystem: a dangling 'Zarr.json' cannot "
+                "exist here, it resolves to the group's own zarr.json"
+            )
+
         src = _store_with_a_payload_attr(
             tmp_path / "src.luxar.zarr", "Zarr.json", payload=None
         )
