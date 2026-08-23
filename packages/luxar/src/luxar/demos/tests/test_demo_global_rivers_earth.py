@@ -14,7 +14,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-_DEMO_PATH = Path(__file__).resolve().parents[1] / "demo_global_rivers_earth.py"
+from luxar.typing_utils.constants import MAX_POINTS_PER_POINTS_NODE
+
+_DEMO_PATH = (
+    Path(__file__).resolve().parents[1] / "demo_global_rivers_earth.py"
+)
 
 
 def _load_demo_module():
@@ -63,13 +67,10 @@ class TestLonLatToXyz:
         # (a mirror/left-handed mapping would point inward). Regression guard.
         eps = 1e-3
         base = _demo.lonlat_to_xyz(np.array([0.0]), np.array([0.0]), np.zeros(1))[0]
-        east = (
-            _demo.lonlat_to_xyz(np.array([eps]), np.array([0.0]), np.zeros(1))[0] - base
-        )
-        north = (
-            _demo.lonlat_to_xyz(np.array([0.0]), np.array([eps]), np.zeros(1))[0] - base
-        )
+        east = _demo.lonlat_to_xyz(np.array([eps]), np.array([0.0]), np.zeros(1))[0] - base
+        north = _demo.lonlat_to_xyz(np.array([0.0]), np.array([eps]), np.zeros(1))[0] - base
         assert float(np.dot(np.cross(east, north), base)) > 0
+
 
 
 class TestHypsometricScalars:
@@ -81,14 +82,8 @@ class TestHypsometricScalars:
         assert 0.20 < float(s[2]) < 0.24  # sea level at the ocean/land break
 
     def test_degenerate_inputs_no_crash(self) -> None:
-        assert (
-            _demo.hypsometric_scalars(np.array([-9000, -10.0], dtype=np.float32)).max()
-            <= 1.0
-        )
-        assert (
-            _demo.hypsometric_scalars(np.array([10, 5000.0], dtype=np.float32)).min()
-            >= 0.0
-        )
+        assert _demo.hypsometric_scalars(np.array([-9000, -10.0], dtype=np.float32)).max() <= 1.0
+        assert _demo.hypsometric_scalars(np.array([10, 5000.0], dtype=np.float32)).min() >= 0.0
         z = _demo.hypsometric_scalars(np.zeros(3, dtype=np.float32))
         assert not np.isnan(z).any()
 
@@ -115,3 +110,13 @@ class TestLutFrom:
         assert lut.shape == (256, 3) and lut.dtype == np.uint8
         assert lut[0].tolist() == [0, 0, 0]
         assert lut[-1].tolist() == [255, 255, 255]
+
+
+def test_terrain_is_partitioned_below_the_point_texture_bound() -> None:
+    """The 8M-point terrain must not overflow one viewer Points node."""
+    assert _demo.MAX_GLOBE_POINTS_PER_NODE <= MAX_POINTS_PER_POINTS_NODE
+    assert _demo.N_GLOBE > _demo.MAX_GLOBE_POINTS_PER_NODE
+
+    source = _DEMO_PATH.read_text()
+    points_call = source.split("scene.add_points(")[1].split("scene.add_lines(")[0]
+    assert "partition=dict(max_elements=MAX_GLOBE_POINTS_PER_NODE)" in points_call
