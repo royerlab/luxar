@@ -108,7 +108,9 @@ def test_finally_teardown_runs_on_keyboard_interrupt(monkeypatch) -> None:
 
 def test_non_isolate_uses_pid_signals_not_killpg(monkeypatch) -> None:
     recorded: list[int] = []
-    monkeypatch.setattr(process.os, "killpg", lambda *a, **k: recorded.append(-1))
+    monkeypatch.setattr(
+        process.os, "killpg", lambda *a, **k: recorded.append(-1)
+    )
     proc = _FakeProc(alive=True)
     _teardown(proc, pgid=None, interrupt_timeout=0.02, term_timeout=0.02)
 
@@ -212,10 +214,9 @@ def test_external_sigterm_reaps_grandchild() -> None:
     # Grandchild must be gone (teardown escalated to it).
     dead_deadline = time.monotonic() + 3.0
     while time.monotonic() < dead_deadline:
-        alive = (
-            subprocess.run(["kill", "-0", grandchild], capture_output=True).returncode
-            == 0
-        )
+        alive = subprocess.run(
+            ["kill", "-0", grandchild], capture_output=True
+        ).returncode == 0
         if not alive:
             break
         time.sleep(0.05)
@@ -235,7 +236,9 @@ def test_sigkill_reaches_signal_ignoring_child() -> None:
         "signal.signal(signal.SIGTERM, signal.SIG_IGN);"
         "time.sleep(30)"
     )
-    proc = subprocess.Popen([sys.executable, "-c", stubborn], start_new_session=True)
+    proc = subprocess.Popen(
+        [sys.executable, "-c", stubborn], start_new_session=True
+    )
     try:
         _teardown(proc, pgid=proc.pid, interrupt_timeout=0.2, term_timeout=0.2)
         deadline = time.monotonic() + 3.0
@@ -307,10 +310,8 @@ def test_proc_table_is_unknown_when_proc_and_ps_are_unavailable(monkeypatch) -> 
 
 
 @posix_only
-@pytest.mark.parametrize("force_ps", [False, True], ids=["native", "ps-fallback"])
-def test_teardown_does_not_wait_out_an_unreaped_zombie(
-    monkeypatch, force_ps: bool
-) -> None:
+@linux_only
+def test_teardown_does_not_wait_out_an_unreaped_zombie() -> None:
     """A dead-but-unreaped child must not hold the escalation ladder open.
 
     `killpg(pgid, 0)` still succeeds for a zombie, so without looking at the
@@ -324,12 +325,6 @@ def test_teardown_does_not_wait_out_an_unreaped_zombie(
     )
     try:
         os.killpg(proc.pid, signal.SIGKILL)
-        if force_ps:
-
-            def no_proc(_path: str) -> list[str]:
-                raise OSError
-
-            monkeypatch.setattr(process.os, "listdir", no_proc)
         # Wait for the corpse to appear — Popen has not reaped it, so the
         # group still answers killpg(0) with a zombie in it.
         deadline = time.monotonic() + 5.0
@@ -343,6 +338,41 @@ def test_teardown_does_not_wait_out_an_unreaped_zombie(
         start = time.monotonic()
         _teardown(proc, pgid=proc.pid, interrupt_timeout=5.0, term_timeout=3.0)
         assert time.monotonic() - start < 2.0
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=5)
+
+
+@posix_only
+def test_terminate_process_group_accepts_ps_reported_zombie(monkeypatch) -> None:
+    """A killed direct child is success before its parent reaps the zombie."""
+    import subprocess
+
+    proc = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True
+    )
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+
+        def no_proc(_path: str) -> list[str]:
+            raise OSError
+
+        monkeypatch.setattr(process.os, "listdir", no_proc)
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            states = [s for _p, g, s, _c in process.proc_table() if g == proc.pid]
+            if states == ["Z"]:
+                break
+            time.sleep(0.05)
+        assert states == ["Z"], f"expected a ps-reported zombie group, saw {states}"
+
+        start = time.monotonic()
+        assert process.terminate_process_group(
+            proc.pid, interrupt_timeout=5.0, term_timeout=5.0
+        )
+        assert time.monotonic() - start < 2.0
+        assert proc.wait(timeout=5) == -signal.SIGKILL
     finally:
         if proc.poll() is None:
             proc.kill()
