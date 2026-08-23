@@ -3909,6 +3909,12 @@ describe('LODGroupRegistry — stale-hold over a far coarser fallback', () => {
     expect(reg.get('/g')!.displayedChildIndex).toBe(0);
     expect(coarse.object.visible).toBe(true);
     expect(fine.object.visible).toBe(false);
+
+    recommit(fine, 2, 400, false); // count crossover releases the ordinary gate
+    reg.evaluatePerFrame();
+    expect(reg.get('/g')!.displayedChildIndex).toBe(1);
+    expect(coarse.object.visible).toBe(false);
+    expect(fine.object.visible).toBe(true);
   });
 
   it('takes the fresh fallback immediately when it is comparably good', () => {

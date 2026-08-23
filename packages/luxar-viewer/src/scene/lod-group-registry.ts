@@ -1241,7 +1241,7 @@ export class LODGroupRegistry {
       version == null || (!!aspiration && this.childFreshAndCount(aspiration, version).fresh);
     // Preserve this across the fresh-aspiration branch below, which re-arms
     // the hold state before the never-downgrade gate evaluates the handoff.
-    const staleHoldWasActive = entry.staleHoldSinceMs != null;
+    const staleHoldEnded = aspirationReady && aspirationFresh && entry.staleHoldSinceMs != null;
     let displayIdx: number;
     if (aspirationReady && aspirationFresh) {
       // Aspiration is committed and fresh (or freshness untracked) → show it.
@@ -1328,7 +1328,7 @@ export class LODGroupRegistry {
       // its first fresh prefix lands, compare that prefix against the fresh
       // fallback the hold displaced; otherwise prevIdx === displayIdx skips
       // the never-downgrade gate and can reveal less geometry than fallback.
-      if (prevIdx === displayIdx && staleHoldWasActive && version != null) {
+      if (prevIdx === displayIdx && staleHoldEnded && version != null) {
         prevIdx = this.coarsestFreshOrReadyIndex(entry, version);
       }
       if (prevIdx != null && prevIdx !== displayIdx) {
