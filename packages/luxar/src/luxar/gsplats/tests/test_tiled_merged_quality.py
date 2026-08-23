@@ -91,6 +91,18 @@ def test_partition_merge_records_the_same_whole_volume_score(
     assert "No merged quality metrics" not in capsys.readouterr().out
 
 
+def test_tiled_quality_is_independent_of_the_removed_pedestal(
+    volume: np.ndarray,
+) -> None:
+    """A merged fit and its reference must be scored on the same basis."""
+    low = _fit(volume + 50.0, partition=False).stats
+    high = _fit(volume + 4000.0, partition=False).stats
+
+    assert low["image_min"] == pytest.approx(50.0, abs=0.1)
+    assert high["image_min"] == pytest.approx(4000.0, abs=0.1)
+    assert high["psnr_db"] == pytest.approx(low["psnr_db"], abs=0.5)
+
+
 def test_partition_quality_reaches_the_archive_and_info(
     volume: np.ndarray,
     tmp_path: Path,

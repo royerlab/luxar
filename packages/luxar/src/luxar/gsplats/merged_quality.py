@@ -9,6 +9,7 @@ from typing import Any, Optional, Sequence
 import numpy as np
 from arbol import aprint
 
+from luxar.gsplats.fit_basis import fit_image_min, reference_on_fit_basis
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.tree import GSplatNode, GSplatPartition
 
@@ -223,12 +224,11 @@ def stamp_merged_quality(
     actually ships. Without this a tiled archive carries no PSNR at all — which
     is exactly what a published dataset is asked for.
 
-    The reference is ``volume`` exactly as the caller handed it in: the pedestal
-    the tiles subtracted is NOT put back and per-tile denoising is not applied to
-    it, so the score is against the acquisition — the same basis
-    ``luxar gsplat compare`` uses, and the same one the non-tiled path scores a
-    floor-suppressed fit against (its consequences are issue #1173's, not this
-    function's; matching it is what keeps the two paths' numbers comparable).
+    The reference is shifted onto the merged fit's background-relative basis
+    using the normalization level in ``target_stats``. The tiles reconstruct
+    ``V - image_min``, not the raw acquisition, so leaving the pedestal in the
+    reference would make tiled and non-tiled fits publish different metrics for
+    the same signal (#1173).
     Under ``--denoise`` that parity ends, and not in this path's favor: the tiles
     reconstruct denoised data while the reference here keeps its noise, so the
     score is capped by that noise, whereas ``--tiling none`` denoises the whole
@@ -288,9 +288,10 @@ def stamp_merged_quality(
                     else:
                         rendered.add_(part_render)
                         del part_render
-                reference = torch.as_tensor(
-                    np.asarray(volume, dtype=np.float32), device=rendered.device
+                reference_np = reference_on_fit_basis(
+                    np.asarray(volume, dtype=np.float32), fit_image_min(target_stats)
                 )
+                reference = torch.as_tensor(reference_np, device=rendered.device)
                 quality = compute_quality_metrics(rendered, reference)
         finally:
             # Released whether or not the score succeeded: the failure this most
