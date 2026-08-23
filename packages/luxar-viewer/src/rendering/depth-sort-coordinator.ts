@@ -824,18 +824,17 @@ function maybeRetryStarvedWorkerInit(): void {
       `${SORT_WORKER_INIT_MAX_ATTEMPTS})`
   );
   // The re-registration below invalidates both freshness stamps on several
-  // nodes at once, and that has two accepted, transient costs. A cleared
+  // nodes at once, with one accepted, transient cost. A cleared
   // `loadedViewVersion` makes the node STALE for the LOD freshness check
   // (`scene/lod-freshness.ts::isFresh`), so a substitutive-LOD group's
   // display falls back to its coarsest ready level (`coarsestFreshOrReadyIndex`
   // in `scene/lod-group-registry.ts`) until the settle-gated `maybeKickReload`
-  // climbs back; and while `committedData` is absent the per-frame pass skips
-  // the node, so it is not collected into that frame's cross-node
-  // `renderOrder` assignment — a transient wrong back-to-front order across
-  // parts. Both self-heal on the re-commit, and both are exactly what the
-  // switch-to-sorted blending-mode hook has always done for ONE node; an
-  // automatic recovery just does it for several, which is why it is written
-  // down here rather than left to be discovered.
+  // climbs back. While `committedData` is absent, the node keeps its exact
+  // cross-node `renderOrder`; only its within-mesh permutation stays stale
+  // until the re-commit. The LOD fallback is exactly what the switch-to-sorted
+  // blending-mode hook has always done for ONE node; an automatic recovery
+  // just does it for several, which is why it is written down here rather than
+  // left to be discovered.
   void ensureWorker().then(
     () => {
       // Epoch guard: a dispose (or another retry) between the dispatch and
