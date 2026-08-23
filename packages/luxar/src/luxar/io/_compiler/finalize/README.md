@@ -102,15 +102,22 @@ sentinel so they cannot hash alike:
   stamps, so reading one would make the digest non-convergent.
 - **unreadable** — the store raised while reading (`OSError`/`ValueError`, the
   latter covering the `UnicodeEncodeError` a lone surrogate in the name
-  produces), or it could not provide the targeted case-exact listing described
-  above. Readability is the store's verdict, and a name heuristic in its place
-  would be wrong in
-  **both** directions: a `LocalStore` refuses an over-long component that a
-  `MemoryStore` or `ZipStore` reads back fine, or an embedded NUL that a
-  `MemoryStore` reads fine, while a short name still fails once the group's
-  directory pushes the whole path past `PATH_MAX`. Why this degrades to a term
-  instead of aborting the compile, and what that costs: see the `except` in
-  `hashing.py`.
+  produces), or the store advertises no listing support for the targeted
+  case-exact probe described above. Consequently, the same keys and bytes can
+  hash differently on a listing store and a non-listing store for this narrow
+  metadata-name collision class. Readability is the store's verdict, and a name
+  heuristic in its place would be wrong in **both** directions: a `LocalStore`
+  refuses an over-long component that a `MemoryStore` or `ZipStore` reads back
+  fine, or an embedded NUL that a `MemoryStore` reads fine, while a short name
+  still fails once the group's directory pushes the whole path past `PATH_MAX`.
+  Why this degrades to a term instead of aborting the compile, and what that
+  costs: see the `except` in `hashing.py`.
+
+Only the metadata-document collision class gets the case-exact listing gate,
+because those are the names whose resolved bytes can carry the hash being
+stamped. Ordinary payload names keep store-native lookup semantics: for example,
+`image_file = "Logo.PNG"` against a stored `logo.png` can still hash as absent on
+Linux and as the file's bytes on a case-insensitive macOS or Windows store.
 
 The walk must be **total** over whatever attrs a store on disk actually carries —
 including one edited by hand or written by another tool — so any `str` filename

@@ -166,7 +166,7 @@ scene.luxar.zarr/
     └── <overlay_name>/     # Individual overlay
         ├── .zattrs         # Overlay metadata (type, position, style, visible_range, hover)
         ├── .zgroup
-        └── image.png       # Raw image file (image overlays only; bytes folded into content_hash at compile time)
+        └── image.png       # Raw image payload (exact name; metadata-name collisions hash as absent)
 ```
 
 ### Compression & the `luxar_delta_v1` filter
@@ -1278,6 +1278,17 @@ The image file (PNG/JPEG/WebP) is stored directly in the overlay's zarr director
 Its bytes are folded into the `content_hash` at compile time, so two builds
 differing only in the image get different hashes; editing the file inside an
 already-finalized store restamps nothing, since nothing re-hashes on the fly.
+For a payload name that differs from a zarr metadata document only by case
+(`Zarr.json`, `.ZATTRS`, ...), the authored spelling must appear exactly in the
+store's immediate-child listing before any read. Otherwise it is not treated as
+a payload and contributes the deterministic `absent:` hash term, with no bytes
+read. Ordinary non-colliding names retain the store's native lookup semantics.
+
+The viewer fetches `overlays/<name>/<image_file>` directly. A case-insensitive
+static host may therefore return the real metadata document for a dangling
+case-shifted name even though the compiler hashes it as absent; the result is a
+broken image response, not a valid overlay. Producers should avoid all payload
+names that collide case-insensitively with zarr metadata documents.
 
 Note: the overlay `blend_mode` is a screen-space-overlay compositing concept
 (how the 2D overlay image blends over the rendered frame) — distinct from the
