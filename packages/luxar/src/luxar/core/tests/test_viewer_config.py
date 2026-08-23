@@ -101,7 +101,9 @@ class TestCameraConfig:
             source,
             re.DOTALL | re.MULTILINE,
         )
-        assert presets_match is not None, "cannot find cameraConfig.fovPresets in viewer data.ts"
+        assert presets_match is not None, (
+            "cannot find cameraConfig.fovPresets in viewer data.ts"
+        )
         preset_names = tuple(
             quoted or bare
             for quoted, bare in re.findall(

@@ -108,6 +108,8 @@ export const REVERSE_SETTINGS_MAP: Record<string, string> = Object.fromEntries(
  * Returns only the fields that are set (partial object), plus — when the
  * scene asks for cinematic mode — the cinematic preset expanded into the
  * fields the scene left unset (see `expandCinematicPreset` below).
+ * A recognized camera FOV preset supplies its numeric FOV when absent; a
+ * conflicting numeric FOV wins and warns once per preset/value pair.
  *
  * @param zarrConfig - Viewer config from zarr root attributes
  * @returns Partial RenderingSettings with the fields set in zarr

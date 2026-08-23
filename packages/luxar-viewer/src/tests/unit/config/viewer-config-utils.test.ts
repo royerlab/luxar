@@ -307,9 +307,8 @@ describe('extractRenderingOverrides — cinematic_mode preset expansion', () => 
   });
 
   // `fov` and `fovPreset` are a COUPLED pair: an author who set either half
-  // owns the framing, so neither half is filled from the preset. Filling only
-  // the missing half would make the slider and the dropdown name different
-  // lenses (and the first panel open would rewrite the author's preset name).
+  // owns the framing, so neither half is filled from the cinematic preset.
+  // A recognized authored preset supplies its own numeric FOV upstream.
   it('leaves BOTH fov keys alone when the author set camera.fov', () => {
     const overrides = extractRenderingOverrides({
       cinematic_mode: true,
@@ -322,7 +321,7 @@ describe('extractRenderingOverrides — cinematic_mode preset expansion', () => 
     expect(overrides.toneMapping).toBe(buildCinematicValues().toneMapping);
   });
 
-  it('leaves BOTH fov keys alone when the author set camera.fov_preset', () => {
+  it('fills fov from the preset table — not the cinematic lens — when the author set camera.fov_preset', () => {
     const overrides = extractRenderingOverrides({
       cinematic_mode: true,
       camera: { fov_preset: '85mm Portrait' },
