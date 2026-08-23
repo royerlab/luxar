@@ -9,7 +9,7 @@
  * Validates the UX improvements for better onboarding.
  */
 
-import { test, expect } from './fixtures';
+import { test, expect, type Locator, type Page } from './fixtures';
 import { focusCanvas, waitForLuxarReady, waitForNextRender } from './helpers';
 
 test.describe('First-Time User Experience', () => {
@@ -182,6 +182,33 @@ test.describe('First-Time User Experience', () => {
     }
   });
 
+  /**
+   * Load the rainbow-sphere dataset, wait until the `O` shortcut is live, and
+   * return the dataset-browser locator with the canvas focused.
+   *
+   * Must be `waitForLuxarReady`, NOT `__luxarDebug.app`: the latter is
+   * published at construction, but the window-level `open-dataset-browser`
+   * listener is only installed at the end of `LuxarApp.init()`, after the
+   * awaited dataset load. An `O` pressed before that dispatches its event
+   * into the void and nothing opens. The 30 s bound (vs the 45 s default)
+   * keeps the worst case inside the 60 s per-test cap, so a slow shard fails
+   * on the readiness gate's own message instead of a bare test timeout.
+   */
+  async function openViewerReadyForShortcut(page: Page): Promise<Locator> {
+    await page.goto(
+      '/?src=http://localhost:9000/datasets/examples/rainbow_sphere_4d_example.luxar.zarr&debug'
+    );
+    await waitForLuxarReady(page, 30000);
+
+    const browser = page.locator('.luxar-dataset-browser').first();
+    // A `?src=` load must not auto-open the browser. Asserted before
+    // `focusCanvas`, which would Escape it away and make this vacuous.
+    await expect(browser).toBeHidden({ timeout: 5000 });
+
+    await focusCanvas(page);
+    return browser;
+  }
+
   test('Escape closes the dataset browser AND `O` reopens it cleanly', async ({ page }) => {
     test.info().annotations.push({
       type: 'allow-console-errors',
@@ -194,22 +221,7 @@ test.describe('First-Time User Experience', () => {
     // `open-dataset-browser` toggle still sees `hasOpenBrowser() === true`
     // and the next `O` closes a phantom browser instead of reopening
     // the real one.
-    await page.goto(
-      '/?src=http://localhost:9000/datasets/examples/rainbow_sphere_4d_example.luxar.zarr&debug'
-    );
-    // Must be `waitForLuxarReady`, NOT `__luxarDebug.app`: the latter is
-    // published at construction, but the window-level
-    // `open-dataset-browser` listener is only installed at the end of
-    // `LuxarApp.init()`, after the awaited dataset load. An `O` pressed
-    // before that dispatches its event into the void and nothing opens.
-    await waitForLuxarReady(page);
-
-    const browser = page.locator('.luxar-dataset-browser').first();
-    // A `?src=` load must not auto-open the browser. Asserted before
-    // `focusCanvas`, which would Escape it away and make this vacuous.
-    await expect(browser).toBeHidden();
-
-    await focusCanvas(page);
+    const browser = await openViewerReadyForShortcut(page);
 
     // First: confirm `O` opens it on a fresh page.
     await page.keyboard.press('o');
@@ -237,22 +249,7 @@ test.describe('First-Time User Experience', () => {
     // manual-path field, the debug-console filter, etc.) so panels
     // close. `InputHandler.onKeyDown` exempts Escape from the typing
     // guard.
-    await page.goto(
-      '/?src=http://localhost:9000/datasets/examples/rainbow_sphere_4d_example.luxar.zarr&debug'
-    );
-    // Must be `waitForLuxarReady`, NOT `__luxarDebug.app`: the latter is
-    // published at construction, but the window-level
-    // `open-dataset-browser` listener is only installed at the end of
-    // `LuxarApp.init()`, after the awaited dataset load. An `O` pressed
-    // before that dispatches its event into the void and nothing opens.
-    await waitForLuxarReady(page);
-
-    const browser = page.locator('.luxar-dataset-browser').first();
-    // A `?src=` load must not auto-open the browser. Asserted before
-    // `focusCanvas`, which would Escape it away and make this vacuous.
-    await expect(browser).toBeHidden();
-
-    await focusCanvas(page);
+    const browser = await openViewerReadyForShortcut(page);
 
     // Open the browser via the O shortcut.
     await page.keyboard.press('o');
