@@ -29,6 +29,12 @@ PAYLOAD_FILE_ATTRS: tuple[str, ...] = ("image_file",)
 _ZARR_METADATA_DOCS: frozenset[str] = frozenset(
     (*NODE_ATTR_DOCS, *NODE_GROUP_DOCS, ".zarray", ".zmetadata")
 )
+#: Lowercased for the narrow case-insensitive metadata-name collision test.
+#:
+#: ``str.lower()`` rather than ``str.casefold()``: every metadata name is
+#: lowercase ASCII, so both catch the real hazard (``Zarr.json``, ``.ZAttrs``),
+#: while casefolding would also map ``ſ`` (U+017F) to ``s`` and wrongly refuse
+#: an ordinary distinct payload such as ``.zattrſ``.
 _ZARR_METADATA_DOCS_LOWERCASED: frozenset[str] = frozenset(
     name.lower() for name in _ZARR_METADATA_DOCS
 )
@@ -91,6 +97,9 @@ def _payload_terms(group: zarr.Group, attrs: dict[str, Any]) -> Iterator[bytes]:
             yield b"unsafe:"  # rejected by name, never read
             continue
         if filename.lower() in _ZARR_METADATA_DOCS_LOWERCASED:
+            if not group.store_path.store.supports_listing:
+                yield b"unreadable:"
+                continue
             try:
                 present_exactly = filename in list_raw_keys(group)
             except (NotImplementedError, OSError, ValueError):

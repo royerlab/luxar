@@ -119,7 +119,7 @@ from ..typing_utils.constants import (
 )
 from ._compiler.chunking import _atom_aligned_rows
 from ._compiler.finalize.hashing import (
-    _ZARR_METADATA_DOCS,
+    _ZARR_METADATA_DOCS_LOWERCASED,
     PAYLOAD_FILE_ATTRS,
     _is_safe_payload_name,
     _payload_terms,
@@ -717,27 +717,6 @@ def _copy_group(
         )
 
 
-#: zarr's metadata document names, lowercased for a CASE-INSENSITIVE test.
-#:
-#: :func:`_is_safe_payload_name` compares them exactly, which is right where it
-#: sits: it is a READ gate, and it also decides digest terms, so tightening it
-#: would move the content hash of every store carrying an affected name.
-#: Writing is the stricter direction. On a case-insensitive filesystem — macOS
-#: is first-class here — the key ``Zarr.json`` resolves to the group's own
-#: ``zarr.json``, so a payload named that would CLOBBER the node document the
-#: whole store is read through. The write side therefore treats the names
-#: case-insensitively while the read side keeps answering exactly.
-#:
-#: ``str.lower()`` rather than ``str.casefold()``. Every name in
-#: :data:`_ZARR_METADATA_DOCS` is lowercase ASCII, so the two are equally strong
-#: against the real hazard (``Zarr.json``, ``.ZAttrs``), and casefolding is
-#: strictly WIDER in a direction with no hazard in it: it maps ``ſ`` (U+017F) to
-#: ``s``, so a payload legitimately named ``.zattrſ`` — an ordinary distinct
-#: file under every filesystem's case rules — would be taken for zarr's
-#: ``.zattrs`` and refused.
-_METADATA_DOCS_LOWERCASED = frozenset(doc.lower() for doc in _ZARR_METADATA_DOCS)
-
-
 def _read_payload_or_refuse(
     group: zarr.Group, attr_key: str, filename: str
 ) -> bytes | None:
@@ -786,8 +765,11 @@ def _copy_payload_files(source: zarr.Group, dest: zarr.Group) -> None:
     a real file in the output, which is what a self-contained store needs (a
     symlink would not survive the ``.zarr.zip`` packaging either).
 
-    A name colliding case-insensitively with a zarr metadata document
-    (:data:`_METADATA_DOCS_LOWERCASED`) is decided by whether the SOURCE really
+    The hasher's name gate remains exact: a case-shifted collision reaches a
+    listing probe, and a genuinely held key contributes its bytes. The copy is
+    stricter because it must be portable: a name colliding case-insensitively
+    with a zarr metadata document
+    (:data:`_ZARR_METADATA_DOCS_LOWERCASED`) is decided by whether the SOURCE really
     holds a key spelled EXACTLY that, not by the name alone. On a case-SENSITIVE
     filesystem a file called ``Zarr.json`` is an ordinary distinct file: skipping
     it would produce exactly the state this function exists to prevent — an
@@ -834,7 +816,7 @@ def _copy_payload_files(source: zarr.Group, dest: zarr.Group) -> None:
                 f"one of zarr's own metadata documents"
             )
             continue
-        if filename.lower() in _METADATA_DOCS_LOWERCASED:
+        if filename.lower() in _ZARR_METADATA_DOCS_LOWERCASED:
             # The listing GATES the read, and a listing is not folded: a name
             # the store does not really hold never reaches the read that would
             # resolve onto the node document, so the dangling case stays visible
@@ -1063,7 +1045,7 @@ def _verify_payloads(path: str, src: zarr.Group, dst: zarr.Group) -> int:
             continue
         if not _is_safe_payload_name(filename):
             continue
-        if filename.lower() in _METADATA_DOCS_LOWERCASED:
+        if filename.lower() in _ZARR_METADATA_DOCS_LOWERCASED:
             continue
         expected = _read_payload_or_refuse(src, attr_key, filename)
         if expected is None:

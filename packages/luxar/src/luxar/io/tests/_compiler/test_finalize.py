@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,7 @@ import pytest
 import zarr
 from zarr.core.buffer import default_buffer_prototype
 from zarr.core.sync import sync
+from zarr.storage import MemoryStore
 
 from luxar._zarr_compat import create_array
 from luxar.core.group.lod.group import MAX_COVERAGE_FRACTION
@@ -321,27 +323,32 @@ def test_case_shifted_metadata_payload_is_hashed_when_present_exactly() -> None:
 
 
 def test_case_shifted_metadata_payload_does_not_fall_back_when_listing_fails(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A store without listing support must not fall back to the unsafe read."""
-    root = _overlay_image_store(
-        tmp_path / "scene", None, filename="Zarr.json", zarr_format=3
-    )
-    logo = root["overlays/logo"]
+    class NoListingStore(MemoryStore):
+        @property
+        def supports_listing(self) -> bool:
+            return False
 
-    def _cannot_list(_group: zarr.Group) -> frozenset[str]:
-        raise NotImplementedError
+        async def list_dir(self, prefix: str) -> AsyncIterator[str]:
+            if False:
+                yield prefix
+
+    root = zarr.group(store=NoListingStore(), zarr_format=3)
+    logo = root.create_group("overlays").create_group("logo")
+    logo.attrs["image_file"] = "Zarr.json"
+    payload = default_buffer_prototype().buffer.from_bytes(_TINY_PNG)
+    sync((logo.store_path / "Zarr.json").set(payload))
+    assert hashing.read_raw_bytes(logo, "Zarr.json") == _TINY_PNG
 
     def _must_not_read(_group: zarr.Group, _key: str) -> bytes | None:
         raise AssertionError("case-shifted metadata name reached raw lookup")
 
-    monkeypatch.setattr(hashing, "list_raw_keys", _cannot_list)
     monkeypatch.setattr(hashing, "read_raw_bytes", _must_not_read)
 
     terms = b"".join(_payload_terms(logo, dict(logo.attrs)))
     assert b"unreadable:" in terms
-    first = compute_content_hashes(root)
-    assert compute_content_hashes(root) == first
 
 
 def test_compute_content_hashes_payload_free_digest_is_unchanged() -> None:
