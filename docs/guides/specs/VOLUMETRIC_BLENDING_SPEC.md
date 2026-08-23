@@ -190,13 +190,6 @@ commutative ⇒ unsorted*: it is emissive for the projection taxonomy
 why §5.2 introduces a `needsDepthSort(mode)` predicate distinct from
 `usesPeakProjection`.
 
-The `opaque` row is the intent, not today's behaviour for every geometry type:
-three.js disables blending outright for `NormalBlending` + `transparent: false`,
-so a point's or line's emitted alpha never reaches the framebuffer at all. Those
-two carry all their photometry in alpha — opacity, falloff, sub-pixel
-compensation, near-fade — and lose it; gsplats premultiply theirs into RGB and
-lose nothing. Issue **#1993**.
-
 ---
 
 ## 2. Relation to NeRF and 3DGS (facts, to prevent drift)
@@ -880,10 +873,10 @@ Invariant and behavior tests:
   PEAK ratio over the four radii: `max` 30.66/12.15/4.05/1.57 and `normal`
   29.73/7.81/1.835/1.028, both BRIGHTER, with `normal` understating the
   divergence because its gsplat peak is already saturating near 1.0 (0.91/0.86
-  at the two asserted radii). `opaque` is that same factor multiplied by the
-  point `uOpacity` and points the OTHER way
-  — 0.093/0.037/0.012/0.005, i.e. DIMMER — because of a second, independent
-  defect (#1993, §1.1).
+  at the two asserted radii). After #1994 restored point/line alpha-over,
+  `opaque` measures 4.386/0.720/0.219/0.055: the gsplat peak remains effect C,
+  while the points peak grows with radius under depth-tested alpha-over, so the
+  divergence changes sign and then grows toward the coarse radii.
 - **2026-07-24 (later)** — Phase 4 (lines) implemented — the plan is
   complete: transverse chord-integral rayMass through the Gaussian-profile
   ribbon (`LINE_CHORD_SCALE = √(π/ln 100)`,

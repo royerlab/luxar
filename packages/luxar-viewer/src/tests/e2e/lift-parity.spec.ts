@@ -14,21 +14,21 @@
  * reading through ACES.
  *
  * Four distinct defects have been measured with this shape — A/B/C from
- * VOLUMETRIC_BLENDING_SPEC.md (2026-08-02), D filed as issue #1993:
+ * VOLUMETRIC_BLENDING_SPEC.md (2026-08-02), D fixed by #1994:
  *   A  τ chord factor             volumetric only    1/(R·chord)       FIXED
  *   B  uncompensated 2D dilation  all sum modes      (σ_px²+d)/σ_px²   FIXED
  *   C  peak-vs-sum lift calib.    max/normal/opaque  1/(uRIF·σ)        OPEN
- *   D  opaque drops point alpha   opaque only        1/opacity         OPEN
+ *   D  opaque drops point alpha   opaque only        1/opacity         FIXED
  *
  * So the sum modes assert parity on the crop MEAN; the peak modes assert a
- * divergence of known MAGNITUDE and known DIRECTION on the crop PEAK — effect C
- * alone for max/normal (the lifted gsplat is brighter), C compounded with #1993
- * for opaque, where the points lose all their alpha-carried photometry and the
- * gsplat therefore comes out dimmer. A per-mode DIRECTION plus a
+ * divergence of known MAGNITUDE and known DIRECTION on the crop PEAK. Effect C
+ * makes the lifted gsplat brighter for max/normal. Under post-#1994 `opaque`,
+ * depth-tested alpha-over makes the points peak grow with radius while the
+ * gsplat peak stays bit-identical to `max`, so their ratio crosses parity and
+ * becomes strongly dimmer at the coarse radii. A per-mode DIRECTION plus a
  * per-(mode, radius) EXPECTED magnitude with a relative band bracket that
- * divergence from every side, so whichever of the two open defects lands first
- * the assertion goes red and names what moved — see the DELETE-WHEN-IT-LANDS
- * note, which enumerates the three landings and the check that catches each.
+ * divergence from every side, so an effect-C change goes red and names what
+ * moved — see the DELETE-WHEN-IT-LANDS note at the assertion site.
  */
 
 import { test, expect, type Page } from '@playwright/test';
@@ -65,16 +65,23 @@ const PARITY_TOLERANCE = 0.1;
 
 /** Modes whose output is a functional of the sum-projected ray mass. */
 const SUM_MODES = ['additive', 'luminous', 'volumetric'] as const;
-/** Modes that use peak projection — effect C, not yet calibrated (opaque also carries #1993). */
+/** Modes that use peak projection — effect C is not yet calibrated. */
 const PEAK_MODES = ['max', 'normal', 'opaque'] as const;
 
+/** Radius indices whose measured divergence is strong and has one stable direction per mode. */
+const PEAK_DIVERGENCE_INDICES: Record<(typeof PEAK_MODES)[number], readonly [number, number]> = {
+  max: [0, 1],
+  normal: [0, 1],
+  opaque: [2, 3],
+};
+
 /**
- * How far apart the two families are under peak projection, per mode, at the
- * two asserted radii (r=0.02, r=0.05). The quantity is the direction-free
+ * How far apart the two families are under peak projection, per mode, at its
+ * two asserted radii. The quantity is the direction-free
  * magnitude `max(ratio, 1/ratio)`:
- *   max      30.7× / 12.2×  brighter
- *   normal   29.7× /  7.8×  brighter
- *   opaque   10.8× / 27.0×  dimmer  (printed as ratios 0.093 and 0.037)
+ *   max      r=0.02 / 0.05  30.7× / 12.2×  brighter
+ *   normal   r=0.02 / 0.05  29.7× /  7.8×  brighter
+ *   opaque   r=0.15 / 0.40   4.57× / 18.1×  dimmer
  *
  * These are measurements, not budgets — `max` reproduces the analytic
  * 1/(uRIF·σ) to ~1% (see the cross-check at the assertion site), so the band
@@ -83,16 +90,16 @@ const PEAK_MODES = ['max', 'normal', 'opaque'] as const;
  * RE-MEASURE ALL SIX after any change to the `LIFT_PARITY_*` fixture constants
  * (generate_test_data.py:2316 — `LIFT_PARITY_OPACITY` above all, whose own
  * comment invites tuning it), to the radii or blob geometry, to the pinned
- * camera, or to the viewport. Only `max` (analytic, 1/(uRIF·σ)) and `opaque`
- * (`max` × uOpacity) can be re-derived on paper; `normal`'s 29.7 / 7.8 is pure
- * measurement, because both families are over-composited and saturating there.
+ * camera, or to the viewport. Only `max` can be re-derived on paper (analytic,
+ * 1/(uRIF·σ)); `normal` and post-#1994 `opaque` are measurements because their
+ * points and gsplats composite differently.
  * Raising the opacity from 0.003 to 0.01 turns four of these six cells red with
  * a message blaming a shader regression that did not happen.
  */
 const PEAK_DIVERGENCE_EXPECTED: Record<(typeof PEAK_MODES)[number], readonly [number, number]> = {
   max: [30.7, 12.2],
   normal: [29.7, 7.8],
-  opaque: [10.8, 27.0],
+  opaque: [4.57, 18.1],
 };
 
 /**
@@ -102,7 +109,7 @@ const PEAK_DIVERGENCE_EXPECTED: Record<(typeof PEAK_MODES)[number], readonly [nu
  *
  * i.e. a factor of 1.5 either way: `max` at r=0.02 must land in [20.5, 46.1],
  * at r=0.05 in [8.1, 18.3]; `normal` in [19.8, 44.6] and [5.2, 11.7]; `opaque`
- * in [7.2, 16.2] and [18.0, 40.5].
+ * at r=0.15 in [3.0, 6.9] and at r=0.40 in [12.1, 27.2].
  *
  * This replaces a single global (3, 100) window — 33× wide end to end, 97 units
  * of room at EVERY cell, around numbers this file certifies to ~1%. These bands
@@ -118,9 +125,9 @@ const PEAK_DIVERGENCE_EXPECTED: Record<(typeof PEAK_MODES)[number], readonly [nu
  * resulting magnitude stayed inside (3, 100) with its direction unchanged, so
  * all seven tests stayed green on a 2.43× regression in the exact quantity this
  * spec exists to pin. Against these bands it fails four of the six asserted
- * cells: `max` r=0.02 goes 30.7 → 74.6, outside [20.5, 46.1]; `opaque` r=0.05
- * goes 27.0 → 11.1, outside [18.0, 40.5] (and `max` r=0.05 → 29.6, `opaque`
- * r=0.02 → 4.42).
+ * cells: `max` r=0.02 goes 30.7 → 74.6, outside [20.5, 46.1]; `opaque` r=0.15
+ * goes 4.57 → 1.88, outside [3.0, 6.9] (and `max` r=0.05 → 29.6, `opaque`
+ * r=0.40 → 7.44).
  *
  * Why a factor of 1.5 and not tighter: `normal`'s gsplat peak is already
  * saturating toward 1.0 — 0.855 at r=0.05 and 0.913 at r=0.02. A driver that
@@ -145,20 +152,11 @@ const PEAK_DIVERGENCE_BAND = 0.5;
  *                a_lift = opacity/(uRIF·σ) without the sum branch's
  *                `rayIntegrationBoost · dilationCompensation`, so the lifted
  *                twin is genuinely BRIGHTER, by 1/(uRIF·σ).
- *   opaque       effect C multiplied by #1993 on the POINTS side: three.js
- *                disables blending outright for `NormalBlending` +
- *                `transparent: false`, so the emitted alpha never reaches the
- *                framebuffer. Points carry ALL their photometry in alpha and
- *                lose opacity, falloff, sub-pixel compensation and near-fade
- *                (every covered pixel lands at 1.0); gsplats premultiply theirs
- *                into RGB and lose nothing. Net: the gsplat reads DIMMER. The
- *                arithmetic closes — multiplying the opaque peak ratios by
- *                1/0.003 (the fixture's authored uOpacity) recovers `max`'s to
- *                within ~3% at the three finer radii and ~6% at r=0.40, where
- *                the printed 0.005 carries only one significant figure
- *                (0.005/0.003 = 1.667 against `max`'s 1.57). One
- *                radius-independent factor, nothing density- or
- *                radius-dependent.
+ *   opaque       #1994 restored the points' alpha-over photometry while keeping
+ *                depth writes. The gsplat peak remains effect C, bit-identical
+ *                to `max`; the points peak grows with radius under depth-tested
+ *                alpha-over. The ratio therefore crosses 1 between r=0.02 and
+ *                r=0.05, then the lifted gsplat reads increasingly DIMMER.
  */
 const PEAK_DIVERGENCE_DIRECTION: Record<(typeof PEAK_MODES)[number], 'brighter' | 'dimmer'> = {
   max: 'brighter',
@@ -580,49 +578,22 @@ test.describe('Lifted-gsplat / Points parity', () => {
       // `expectPointsRendered` above already fails loudly if the points family
       // renders nothing.
       //
-      // DELETE THIS WHEN IT LANDS — but not all of it at once. Three landings
-      // are possible and every one of them moves at least one cell out of its
-      // BAND, whose message names the expected value it left; `opaque`'s ratio
-      // is effect C times #1993's uOpacity = 0.003, so run that product
-      // forward:
-      //   C alone      max/normal collapse to ≈ 1, 5–20× under their band
-      //                floors (20.5 / 19.8 at r=0.02, 8.1 / 5.2 at r=0.05), so
-      //                the BAND fails.
-      //                `opaque` keeps #1993 alone — 1 × 0.003, still 'dimmer' —
-      //                and its magnitude jumps 10.8× → 333×, over its 16.2
-      //                ceiling. Fold max/normal into the SUM_MODES loop.
-      //                NOTE this prediction assumes C is fixed in the PEAK
-      //                BRANCH (`shader-glsl.ts:337`). `lift.py:347` bakes ONE
-      //                amplitude that BOTH branches consume, so "fixing" C by
-      //                changing what the lift bakes (a = opacity) collapses
-      //                max/normal to ≈ 1 as well but breaks the SUM branch by
-      //                uRIF·σ, turning all three SUM_MODES tests and the κ test
-      //                red — at which point folding max/normal in there is the
-      //                wrong move. C is not fixable in the lift without
-      //                regressing sum parity.
-      //   #1993 alone  (PR #1994) `opaque` recovers its 1/0.003 and flips to
-      //                'brighter' at ≈ 30.7× / 12.2×, failing on DIRECTION and
-      //                on the band (it is expected at 10.8× / 27.0×). Change
-      //                `PEAK_DIVERGENCE_EXPECTED.opaque` to [30.7, 12.2] and
-      //                `PEAK_DIVERGENCE_DIRECTION.opaque` to 'brighter' in the
-      //                same landing, and remove the now-stale #1993 paragraph
-      //                below the mode taxonomy in VOLUMETRIC_BLENDING_SPEC.md.
-      //                max/normal unchanged.
-      //   both         all three reach parity and fail on the BAND at every
-      //                cell. Direction is NOT what catches this one: at true
-      //                parity the ratio straddles 1, so `ratio > 1` is a coin
-      //                flip per cell and a cell at 0.999 reads 'dimmer' and
-      //                passes. Delete these assertions and fold every peak mode
-      //                into the SUM_MODES loop.
+      // DELETE THIS WHEN C LANDS. If the peak branch is calibrated without
+      // changing the sum branch, max/normal collapse to parity and fail their
+      // BAND floors; re-measure opaque, then fold each mode that reaches parity
+      // into the parity loop. Direction is not sufficient at true parity: a
+      // ratio of 0.999 still reads 'dimmer', so the BAND is the landing signal.
       //
-      // Only the two finest radii are asserted: by r=0.40 `normal` diverges by
-      // just 1.028×, so DIRECTION is a coin flip and no relative band means
-      // anything there (`max`'s 1.57× is better but the same species). That
-      // costs real teeth — under the uRIF mutation above, `max` would go
-      // 4.05 → 9.85 at r=0.15 and 1.57 → 3.82 at r=0.40, both outside their
-      // bands. Two catches deliberately not taken, in exchange for not
-      // asserting on cells where the divergence has faded into the noise.
-      for (const i of [0, 1]) {
+      // `lift.py:347` bakes ONE amplitude that both branches consume. Changing
+      // that amplitude to `opacity` also collapses max/normal, but breaks every
+      // sum arm by uRIF·σ; the SUM_MODES tests and κ-response test must reject
+      // that implementation rather than prompting a fold into the parity loop.
+      //
+      // max/normal use the two finest radii; their coarse divergence fades into
+      // noise. Post-#1994 opaque does the opposite: r=0.05 is a dead 1.389× cell
+      // whose band would contain parity, while r=0.15/r=0.40 are strong and
+      // share one direction. Keep the selected cells explicit per mode.
+      for (const [expectedIndex, i] of PEAK_DIVERGENCE_INDICES[mode].entries()) {
         const ratio = rows[i].peakRatio;
         // A gsplat cell that rendered NOTHING would sail through a `dimmer`
         // magnitude check (1/0 → ∞), so require it on screen first —
@@ -643,7 +614,7 @@ test.describe('Lifted-gsplat / Points parity', () => {
         // value measured for THIS (mode, radius) — see PEAK_DIVERGENCE_BAND
         // for why a single global window could not do this job.
         const magnitude = Math.max(ratio, 1 / ratio);
-        const expected = PEAK_DIVERGENCE_EXPECTED[mode][i];
+        const expected = PEAK_DIVERGENCE_EXPECTED[mode][expectedIndex];
         const low = expected / (1 + PEAK_DIVERGENCE_BAND);
         const high = expected * (1 + PEAK_DIVERGENCE_BAND);
         const message =

@@ -2344,9 +2344,9 @@ def generate_lift_parity_test() -> None:
     VOLUMETRIC_BLENDING_SPEC.md (2026-08-02): the tau chord factor (volumetric,
     fixed), uncompensated 2D dilation (every sum mode, including additive,
     fixed), and the peak-vs-sum lift calibration (max/normal/opaque, still
-    open). The fourth is issue #1993 — ``opaque`` drops the points' alpha, and
-    with it all their alpha-carried photometry, so the lifted twin reads dimmer
-    there instead of brighter (still open).
+    open). The fourth was issue #1993 — ``opaque`` dropped the points' alpha and
+    all their alpha-carried photometry until #1994 restored alpha-over while
+    preserving the mode's depth semantics (fixed).
     """
     from luxar.gsplats.lift import lift_points_to_gsplats
 
