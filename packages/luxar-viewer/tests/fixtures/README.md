@@ -15,7 +15,7 @@ running the generators below. Both paths are explicitly listed in the repo
 | File | Purpose |
 |------|---------|
 | `generate_test_data.py` | Single source of truth for the fixture set. Each fixture corresponds to one `generate_*` function and writes a `FIXTURES_DIR / "test_*.zarr"` archive using the real Python encoder (`luxar.LuxarZarrCompiler` / `luxar.encoding.ArrayEncoder`). Compression is disabled (`compressor=None`) and `float16_allowed=False` so the output is consumable from Node.js without blosc/numcodecs WASM bindings. |
-| `generate_expectations.py` | Walks every `test_*.zarr` directory, decodes each numeric array with Python's `ArrayDecoder`, and writes `roundtrip_expectations.json` — flat-array shapes, SHA-256 hashes, sample values, stats, and representative first-axis range slices. The Vitest contract tests cross-check the TypeScript `ArrayDecoder` against this snapshot in pure Node (no browser, no GPU). |
+| `generate_expectations.py` | Walks every `test_*.zarr` directory, decodes each numeric array with Python's `ArrayDecoder`, and writes `roundtrip_expectations.json` — flat-array shapes, Python SHA-256 hashes, sample values, stats, representative first-axis range slices, and exact viewer-kernel hashes where f32 operation order intentionally differs. The Vitest contract tests cross-check the TypeScript `ArrayDecoder` against this snapshot in pure Node (no browser, no GPU). |
 
 The fixture list is parsed at test-startup time from the `FIXTURE_NAMES`
 declaration at the top of `generate_test_data.py` by
@@ -41,15 +41,24 @@ pnpm test:with-fixtures           # generate then run unit tests
 pnpm test                         # global-setup regenerates missing/stale ones automatically
 
 # Equivalent direct invocations (from repo root):
-hatch run python packages/luxar-viewer/tests/fixtures/generate_test_data.py
-hatch run python packages/luxar-viewer/tests/fixtures/generate_expectations.py
+hatch run fixtures:python packages/luxar-viewer/tests/fixtures/generate_test_data.py
+hatch run fixtures:python packages/luxar-viewer/tests/fixtures/generate_expectations.py
 ```
+
+The first of these commands creates a dedicated Hatch environment of roughly
+1.2 GB. It is separate from the larger default development environment, so both
+may occupy disk until the fixture environment is removed with
+`hatch env remove fixtures`.
 
 `src/tests/global-setup.ts` runs once before the Vitest suite, detects
 missing `test_*.zarr` archives or an out-of-date `roundtrip_expectations.json`
-(checked by mtime against the generators and fixtures), and re-runs the
-relevant generator. The expectations file is regenerated whenever any
-fixture or either generator script has changed.
+(staleness is deliberately NOT an mtime check — a content digest of the
+generators and the encoder sources they write through is recorded next to the
+fixtures and compared on each run), and re-runs the relevant generator. The
+expectations file is regenerated whenever any fixture or either generator
+script has changed. Playwright's pre-flight only checks that the fixtures are
+PRESENT, so after editing a generator run `pnpm test` or
+`pnpm test:generate-fixtures` before `pnpm test:e2e`.
 
 ## Fixture matrix
 

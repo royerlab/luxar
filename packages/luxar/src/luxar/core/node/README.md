@@ -60,14 +60,21 @@ are cached but nothing is written to disk.
 
 ### Attributes and persistence
 
-The `attrs` property exposes the cached attribute dict. The private
-`_persist_attr(key, value)` helper updates both the cache and the on-disk Zarr
-store via the writer. If the writer has already been finalized (after the
-`LuxarZarrCompiler` context exits, or after `Scene.to_zarr`), the on-disk
-attribute can no longer be updated through it — the in-memory cache is still
-updated, but a `UserWarning` is raised so the disk/memory drift is not silent.
-Set attributes inside the compiler context (or before `to_zarr`) for
-persistence.
+The `attrs` property exposes a mutable view of the cached attributes. Mutating
+that mapping writes through to the Zarr store: item assignment, deletion, and
+the standard mutable-mapping helpers (`update`, `pop`, `clear`, `setdefault`)
+all use the same persistence path as the node property setters. Recognized
+render attributes are assigned through those setters first, preserving their
+validation and transform normalization; other keys are checked by the writer's
+schema before the cache changes. The scene ROOT is the standing exception to
+that last part: it carries its own metadata schema and so accepts free-form
+keys (`title`, `description`, `sample`, ...) — and a typo alongside them.
+
+If the writer has already been finalized (after the `LuxarZarrCompiler` context
+exits, or after `Scene.to_zarr`), the on-disk attribute can no longer be updated
+through it — the in-memory cache is still updated, but a `UserWarning` is raised
+so the disk/memory drift is not silent. Set attributes inside the compiler
+context (or before `to_zarr`) for persistence.
 
 Clearing an attribute (`_delete_attr`, reached by setting `transform` /
 `nd_transform` to `None`) has the same post-finalize contract: it updates the
@@ -146,15 +153,22 @@ path) fall back to object identity.
 Free-function bodies for the two specialized-`Group` builders on `Node`,
 extracted to keep `node.py` readable.
 
-- **`add_lod_group_impl`** — validates `selector` (only `"coverage"` is
-  currently supported) and `default_level >= 0`, then creates a child group
+- **`add_lod_group_impl`** — validates `selector` against `LOD_SELECTORS` (BOTH
+  `"coverage"` and `"screen-area"` are accepted; `LEGACY_LOD_SELECTOR` =
+  `"coverage"` is merely the *default*, since a hand-built ladder is authored
+  rather than derived) and `default_level >= 0`, then creates a child group
   with `kind="lod"`. A `kind=lod` group picks one of N alternative children at
-  runtime by projecting the group's bbox diagonal to screen pixels and
-  comparing against each child's `coverage_fraction` threshold (a
-  dimensionless, viewport-relative value — `0.0` coarsest, `1.0` a
-  whole-object ladder's finest anchor, up to `4.0` for a partition-bound or
-  explicitly authored one — multiplied by half of the current viewport's
-  fitted screen axis (`min(width, height)`) to get the pixel comparison).
+  runtime by comparing the group's on-screen size against each child's
+  `coverage_fraction` threshold — a dimensionless, viewport-relative value,
+  `0.0` coarsest, whose finest anchor depends on how the ladder was made: a
+  derived whole-object ladder ends at `0.5`, a derived partition-bound one at
+  `1.0`, and a *legacy* authored list may run up to
+  `MAX_COVERAGE_FRACTION` = `4.0`. The `selector` names the units of that
+  comparison: under `"screen-area"` each threshold is a literal fraction of the
+  viewport AREA covered by the projected bbox rect, while under the legacy
+  `"coverage"` the viewer projects the group's bbox *diagonal* to pixels and
+  compares it against the threshold times half of the current viewport's fitted
+  screen axis (`min(width, height)`).
 - **`add_partition_group_impl`** — validates `display_type` against the
   partition-capable rows of `typing_utils/geometry_capabilities.py`
   (`points` / `lines` / `gsplats` / `mesh` today — `mesh` earned it with

@@ -4,23 +4,31 @@
  * Tracks every `lod_group` scene-graph node currently loaded. For each
  * one, every frame:
  *
- *   1. Fold each child's nD ``positionBounds`` directly into a cached
- *      per-entry **local-space** :type:`BoundingBox`, using the current
- *      ``displayDims`` to map nD axes onto X/Y/Z. (No intermediate
- *      per-child boxes — the union is computed in place.)
- *   2. Transform the local box into world space via
+ *   1. Fold each child's raw nD ``positionBounds`` into a cached per-entry
+ *      **local-space** :type:`BoundingBox`, using the current ``displayDims``
+ *      to map nD axes onto X/Y/Z, then transform it to world space for the
+ *      frustum gate. Eviction uses the same full-geometry box.
+ *   2. When any child publishes optional robust ``lodBounds``, fold them the
+ *      same way (falling back per child to ``positionBounds``) for metric
+ *      sizing only, so excluded outliers remain visible and resident.
+ *   3. Transform the metric box into world space via
  *      :func:`transformBoundingBox` and the lod_group's ``matrixWorld``.
- *   3. Project the 8 corners through the camera to NDC and back to
- *      pixel coordinates; the diagonal of the screen-space AABB, divided
- *      by ``FILL_FACTOR × fittedAxisPx`` (``fittedAxisPx`` is
- *      ``min(viewport.width, viewport.height)`` — the extent
- *      ``calculateCameraDistance`` actually fits; see the ``FILL_FACTOR`` doc),
- *      is the dimensionless **coverage metric** (1.0 == the object's projected
- *      diagonal has reached ``FILL_FACTOR`` of the fitted axis).
- *   4. Pick the **finest** child whose ``coverage_fraction`` threshold is
+ *   4. Project the 8 corners through the camera and reduce them to the
+ *      dimensionless **coverage metric**, on whichever scale the entry's
+ *      ``selector`` names — the two branches of ``evaluateEntry``:
+ *      - ``'screen-area'`` (what every derived ladder stamps): the fraction of
+ *        the viewport the projected AABB covers by AREA, via
+ *        {@link projectBoxAreaFraction}. Aspect-free, tops out at 1.0.
+ *      - ``'coverage'`` (legacy): back to pixel coordinates, then the diagonal
+ *        of the screen-space AABB divided by ``FILL_FACTOR × fittedAxisPx``
+ *        (``fittedAxisPx`` is ``min(viewport.width, viewport.height)`` — the
+ *        extent ``calculateCameraDistance`` actually fits; see the
+ *        ``FILL_FACTOR`` doc), so 1.0 == the object's projected diagonal has
+ *        reached ``FILL_FACTOR`` of the fitted axis.
+ *   5. Pick the **finest** child whose ``coverage_fraction`` threshold is
  *      satisfied by that coverage metric, with 10% asymmetric hysteresis on
  *      the downgrade direction to suppress threshold-edge flicker.
- *   5. If the desired child differs from the current active one, swap
+ *   6. If the desired child differs from the current active one, swap
  *      visibility atomically — gated by the **never-downgrade display
  *      gate**: a fresh aspiration whose additive ladder is still streaming
  *      is not shown while the previously-displayed level looks strictly
@@ -127,47 +135,32 @@ const FINE_RELOAD_SETTLE_TICKS = 8;
  * an ultrawide monitor (#1361's blur, returning at wide aspects).
  *
  * ``fittedAxisPx`` is exactly the extent ``calculateCameraDistance`` fits in
- * each regime — ``height`` for aspect ≥ 1, ``width`` for aspect < 1 — and this
- * is provably, not just empirically, the fix for the aspect ≥ 1 case: distance
- * there has no aspect dependence at all, so a box's camera-relative corner
- * positions (and hence its Y-axis NDC projection) are IDENTICAL for every
- * aspect ≥ 1, and the X-axis projection's aspect-dependent scaling exactly
- * cancels against the viewport-width term when converting NDC to pixels —
- * leaving the projected pixel diagonal EXACTLY proportional to ``height``,
- * independent of both aspect and absolute viewport size (verified to 12
- * significant digits for every shape in the test matrix, at 1:1/16:9/21:9/32:9
- * viewports of differing absolute size). The aspect < 1 branch is the mirror
- * image (distance ∝ 1/aspect) and is exactly invariant to viewport SIZE at a
- * fixed aspect, but only APPROXIMATELY invariant across different aspect < 1
- * values for a box whose depth (extent along the view axis) is a large
- * fraction of its in-plane size: there, unlike the aspect ≥ 1 branch, the
- * camera distance itself changes with aspect, so the near/far corner
- * correction from the box's own depth no longer cancels exactly. Measured at
- * the opening framing, 9:16 vs. the (exact) aspect ≥ 1 value: a cube (depth ==
- * width) is off by ~14%, "umap-ish" 100×80×60 by ~8%, while the two thin
- * shapes (an in-plane rod, a flat pancake) are off by ~0.1% — all comfortably
- * inside the headroom below.
+ * each regime — ``height`` for aspect ≥ 1, ``width`` for aspect < 1. The fit
+ * uses the larger X/Y extent at the box's nearest face: ``halfDepth +
+ * inPlane/(2·fitRatio·tan(halfFov))`` (and divides the second term by aspect in
+ * portrait). The near-face distance is therefore proportional to the fitted
+ * axis in both regimes, so the projected pixel diagonal divided by
+ * ``fittedAxisPx`` is EXACTLY invariant across aspect and absolute viewport
+ * size for the default centre fit modelled here. Preserving an authored
+ * off-centre controls target changes which depth face bounds each side of the
+ * projected rectangle. The identity remains exact while the target lies inside
+ * the box's screen-plane footprint and at or behind its near face (``target.z
+ * <= box.max.z``). It degrades when either condition is violated: for an
+ * 8×8×100 box, a target 20 units off-axis drifts 23.8%, while a centred target
+ * 10 units in front of the near face drifts 50.8%. The test matrix verifies the
+ * centre-fit identity to 9 decimal digits for a cube, pancake, in-plane rod,
+ * UMAP-like box, and a 1×1×100 view-axis rod from 1:4 portrait through 32:9
+ * ultrawide.
  *
  * Why 0.5 and not 1.0: at 1.0 the finest level only activates once the object
  * OVERFILLS the fitted axis, reproducing the original #1361 symptom at the
  * default opening framing. Measured opening-framing ``diagonalPx /
- * fittedAxisPx`` across all four shapes in the test matrix, at 1:1, 16:9, 9:16,
- * 21:9 and 32:9, ranges **0.626 (in-plane rod, worst case) – 1.214 (cube, best
- * case)**. Dividing by 0.5 turns that into a metric of **1.25 – 2.43** — past
- * the finest threshold of 1.0 with **~25% headroom even in the worst case** —
- * and, unlike the old anchor, this range barely moves across aspect ratio (see
- * above), so there is no longer a wide-canvas crossover where a shape drops
- * back below the threshold.
- *
- * 0.5 was chosen specifically to keep the metric's VALUE unchanged at the
- * mainstream 16:9 reference, not re-tuned from scratch: at 16:9,
- * ``fittedAxisPx == height`` and ``diagonalPx / height == (diagonalPx / hypot)
- * × hypot(16, 9) / 9 ≈ (diagonalPx / hypot) × 2.0398``, so ``new metric == old
- * metric × 2.0398 / 2 ≈ old metric × 1.02`` — measured as *exactly* a ×1.0199
- * factor for every shape at 16:9 (it is a pure viewport-geometry constant,
- * independent of the shape being measured). Every existing ``coverage_fraction``
- * threshold, the hysteresis band, and the cross-fade band therefore keep their
- * meaning; the only behavioural change is that the wide-canvas drift is gone.
+ * fittedAxisPx`` across all five shapes and seven aspect ratios in the test
+ * matrix ranges **0.750 (in-plane rod) – 1.061 (cube, pancake, and view-axis
+ * rod)**. Dividing by 0.5 turns that into a metric of **1.50 – 2.12** — past
+ * the finest threshold of 1.0 with **50% headroom in the worst case**. The
+ * factor remains necessary: at 1.0 the in-plane rod would still open below the
+ * finest rung even though the framing itself is now aspect-exact.
  *
  * **Coupled constant.** Python's ``MAX_COVERAGE_FRACTION`` (the upper bound on
  * any ``coverage_fraction``, authored or derived — a partition-bound ladder
@@ -212,13 +205,12 @@ const FINE_RELOAD_SETTLE_TICKS = 8;
  * 16:9 geometric value it stands for (so the two constants can't silently
  * compensate for each other).
  *
- * Also deliberately NOT covered: a cloud elongated along the VIEW axis (e.g.
- * 1×1×100) measures a metric of only ~0.024 at the default opening framing on a
- * 16:9 viewport (still far below 1.0), because ``calculateCameraDistance``
- * sizes the distance from the largest dimension even when that dimension is
- * pure depth and barely contributes to the projected AABB. That is a
- * camera-framing quirk, not a normalisation one — the fitted-axis change here
- * does not touch it; see issue #1410's "Related" note.
+ * **View-axis depth fix (#1543).** A 1×1×100 cloud previously measured only
+ * ~0.024 at the default 16:9 framing because the distance was sized from its
+ * pure-depth dimension plus a hardcoded 20% margin. The exact near-face fit
+ * above raises it to **2.121**, so it opens on the finest rung like the other
+ * full-scene shapes. The same fit removes the margin: keeping both would count
+ * depth twice and pull ordinary 3D scenes unnecessarily far back.
  *
  * **Known limitation: resize without a re-fit (out of scope here).**
  * ``updateCameraAspect`` (``utils/camera-utils.ts``) only updates
@@ -296,16 +288,24 @@ export interface LODGroupChild {
   object: THREE.Object3D;
   /**
    * Viewport-relative LOD-switch threshold, strictly monotonic increasing in
-   * coarsest→finest order (coarsest 0.0; the auto-derived WHOLE-OBJECT ladder
-   * anchors its finest at 1.0). Multiplied by ``FILL_FACTOR × fittedAxisPx``
-   * at selection time to compare against the group's projected bbox diagonal in
-   * pixels — so 1.0 activates once that diagonal reaches half of the fitted
-   * screen axis (any normal full-frame view), and coarser levels take over
-   * as it shrinks. An explicitly authored **or partition-bound** ladder may go up
-   * to ``SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR`` (4.0, a screen-filling
-   * object) to hold a level until later than that — a spatially tiled layer's
-   * tiles each project to a fraction of the viewport, so the producer derives
-   * that anchor for them automatically.
+   * coarsest→finest order (coarsest 0.0). Its UNITS — and so its finest anchor —
+   * come from the entry's ``selector``:
+   *
+   * - ``'screen-area'`` (every ladder the producer derives today): a literal
+   *   fraction of the viewport AREA, compared against
+   *   ``projectBoxAreaFraction``. A whole-object ladder anchors its finest at
+   *   0.5 (full detail while the object covers at least half the screen); one
+   *   bound to a spatial partition anchors at 1.0 (the tile alone fills the
+   *   screen), which the producer derives for it automatically because a tile
+   *   projects to only a fraction of the whole object's rect.
+   * - ``'coverage'`` (legacy stores, and explicitly authored
+   *   ``coverage_fractions=[...]`` lists): multiplied by
+   *   ``FILL_FACTOR × fittedAxisPx`` at selection time and compared against the
+   *   group's projected bbox DIAGONAL in pixels, so 1.0 activates once that
+   *   diagonal reaches half of the fitted screen axis. An author may go up to
+   *   ``SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR`` (4.0, roughly a
+   *   screen-filling object) to hold a level until later than that.
+   *
    * No upper bound is enforced here.
    */
   coverageFraction: number;
@@ -316,6 +316,14 @@ export interface LODGroupChild {
    * selector re-projects each frame.
    */
   positionBounds: { min: readonly number[]; max: readonly number[] };
+  /**
+   * Optional robust nD bounds from the child's ``lod_bounds`` zarr attribute.
+   * The selector uses these only to size the node for either LOD metric;
+   * frustum gating and eviction keep the full ``positionBounds`` so visible
+   * outliers are never treated as absent. Missing bounds fall back to
+   * ``positionBounds`` for legacy stores.
+   */
+  lodBounds?: { min: readonly number[]; max: readonly number[] };
   /**
    * Lazy-loading readiness. ``undefined`` means "always ready" (eagerly
    * loaded — the default for callers that don't opt into lazy loading,
@@ -444,6 +452,37 @@ export interface LODGroupEntry {
    * mistaken for a selection bug. Updated each ``evaluatePerFrame``.
    */
   offScreen?: boolean;
+  /**
+   * The level index the selector WANTED this frame, recorded BEFORE the
+   * ready/freshness gates below it get a say. Written by ``evaluateEntry``
+   * once a ``desired`` has been computed — the explicit lock and all three
+   * auto branches (off-screen hold, screen-area pick, legacy coverage pick).
+   * ``undefined`` (never evaluated) ⇒ read it as ``activeChildIndex``.
+   *
+   * It is NOT rewritten on every frame: ``evaluateEntry`` returns before
+   * computing a ``desired`` when the entry has no registration cache or no
+   * world box, and ``evaluatePerFrame`` returns before reaching the entries at
+   * all on a zero-sized viewport or with fewer than two display dims. The
+   * field then keeps its previous value. That is benign — both early returns
+   * are stable properties of the entry/viewport rather than transient states,
+   * so a stale value cannot describe a level the selector has since moved off,
+   * and an entry that never got one reads as ``activeChildIndex`` (i.e.
+   * "nothing pending"), which is the right answer for a group the selector has
+   * never been able to evaluate.
+   *
+   * Purely diagnostic for the renderer — nothing about display reads it. It
+   * exists so an OFFLINE CAPTURE can tell "the selector wants a finer level it
+   * has not got yet" apart from "settled" (see
+   * {@link LODGroupRegistry.isCaptureQuiescent}). ``activeChildIndex`` alone
+   * cannot express that: the aspiration only ever advances ONTO A READY LEVEL,
+   * so in the frame where a lazy fine level's async load lands (the thunk sets
+   * ``ready=true`` and clears ``loading``) the registry has not swapped yet —
+   * that happens on the NEXT selector pass. A quiescence predicate reading only
+   * ``loading`` / ``ready`` / ``displayedChildIndex`` would call that window
+   * "settled" and the capture would film the coarse level one frame before the
+   * swap, which is exactly the LOD pop this field exists to close.
+   */
+  desiredChildIndex?: number;
 }
 
 /**
@@ -458,14 +497,17 @@ export interface LODGroupEntry {
  */
 interface LODGroupEntryCache {
   /**
-   * Per-child ``coverage_fraction`` thresholds (dimensionless, ascending,
-   * coarsest 0.0 → finest 1.0), rebuilt once at registration. The selector
-   * compares these against the projected bbox diagonal normalised by
-   * ``FILL_FACTOR × fittedAxisPx`` (a dimensionless coverage metric — the
-   * finest, 1.0, activates at half the fitted screen axis), so the list is
-   * viewport-independent and needs no per-frame rebuild.
+   * Per-child ``coverage_fraction`` thresholds (dimensionless, ascending from a
+   * 0.0 coarsest floor to whatever finest anchor the entry's ``selector`` units
+   * imply — see ``LODGroupChild.coverageFraction``), rebuilt once at
+   * registration. The selector compares them against ``projectBoxAreaFraction``
+   * under ``'screen-area'``, or against the projected bbox diagonal normalised
+   * by ``FILL_FACTOR × fittedAxisPx`` under the legacy ``'coverage'``. Either
+   * way the list is viewport-independent and needs no per-frame rebuild.
    */
   thresholds: number[];
+  /** Whether any child needs the optional robust-bounds metric fold. */
+  hasLodBounds: boolean;
   localBoxScratch: BoundingBox;
 }
 
@@ -638,6 +680,7 @@ export class LODGroupRegistry {
     this.entries.set(entry.path, entry);
     this.caches.set(entry.path, {
       thresholds: entry.children.map((c) => c.coverageFraction),
+      hasLodBounds: entry.children.some((c) => c.lodBounds != null),
       localBoxScratch: {
         min: { x: 0, y: 0, z: 0 },
         max: { x: 0, y: 0, z: 0 },
@@ -695,6 +738,149 @@ export class LODGroupRegistry {
   /** All registered entries (mainly for the layers panel UI). */
   list(): LODGroupEntry[] {
     return Array.from(this.entries.values());
+  }
+
+  /**
+   * Whether every lod_group that contributes pixels to the CURRENT view is
+   * already showing its own selected level at final quality — i.e. one more
+   * frame of waiting would not improve what is on screen.
+   *
+   * **Why this exists.** An offline turntable capture (``OfflineCaptureStrategy``)
+   * takes exactly one ``requestAnimationFrame`` per exported frame. Since the
+   * rAF loop runs for the whole sweep, the auto-selector is live and
+   * frustum-aware, so a tile that leaves the frustum mid-orbit is demoted to
+   * its coarsest ready level and the resident-byte budget may release its fine
+   * one. When it swings back into view the fine level reloads ASYNCHRONOUSLY —
+   * and without a wait those frames go into the ZIP/MP4 at the coarse level and
+   * pop back a few frames later. The capture loop therefore drains on this
+   * predicate (bounded) before grabbing each frame. Forcing finest instead was
+   * deliberately rejected: a capture visits the whole scene, so peak residency
+   * would be the entire dataset.
+   *
+   * Per entry, in order:
+   *
+   * - **Off-screen entries are skipped entirely.** ``offScreen`` means the
+   *   selector is deliberately holding the group coarse *because it draws
+   *   nothing this frame* — blocking on it would wait for a level that will
+   *   never be selected while it is culled.
+   * - **Entries that are not EFFECTIVELY VISIBLE are skipped too** (a layer
+   *   toggled off in the panel, or authored ``visible=false``, anywhere up the
+   *   ancestor chain). They draw nothing, and — decisively —
+   *   {@link kickDeferredLoadIfVisible} refuses to START a deferred load while
+   *   the group is hidden, whereas the selector's frustum test is purely
+   *   geometric and still records a fine ``desiredChildIndex`` for it. Without
+   *   this skip such an entry has ``desired !== active`` with nothing ever
+   *   loading, failing or becoming ready, so the predicate would be
+   *   PERMANENTLY false and every capture frame would burn the full drain
+   *   budget before giving up.
+   * - **An entry with no child at the aspiration index is skipped** —
+   *   ``children`` can legitimately be EMPTY (every level failed its
+   *   ``getObjectByName`` attach in ``load-lod-group-node``, which warns and
+   *   carries on). Nothing at a non-existent index can ever become ready, so
+   *   blocking on it is the permanently-false trap again: the drain would burn
+   *   its whole budget on every frame and then report a degraded-LOD verdict
+   *   the scene never earned. An out-of-range ``desiredChildIndex`` is the same
+   *   shape but is NOT skipped — the rest of the entry is still checked and
+   *   only the missing ``desired`` is let through (see its bullet below).
+   * - ``displayed !== activeChildIndex`` ⇒ not quiescent. A stale slice
+   *   fallback or a never-downgrade hold is on screen instead of the
+   *   aspiration, so what renders is not what the selector settled on.
+   * - ``desired !== activeChildIndex`` ⇒ not quiescent — UNLESS that desired
+   *   child is ``failed``, or absent (an out-of-range ``desired``, handled
+   *   right here rather than by skipping the entry). The aspiration only
+   *   advances onto a READY level, so this is the one-frame window after a lazy
+   *   load lands but before the next selector pass swaps (see
+   *   ``LODGroupEntry.desiredChildIndex``); it is also the whole in-flight
+   *   load. A ``failed`` level can never become ready this frame, so blocking
+   *   on it only buys a timeout — treat it as the best available and keep
+   *   checking the rest.
+   * - The aspiration must be ``isReady``.
+   * - When freshness is tracked (``getViewVersion`` wired), the aspiration must
+   *   be FRESH for the current view version — via the group-aware
+   *   {@link childFreshAndCount}, not the leaf-only ``isFresh``, so a deferred
+   *   ``kind=partition`` subtree stamped for an older slice counts as stale.
+   * - The aspiration's additive ladder must be complete, on BOTH available
+   *   signals. A lazy child's live ``hasMoreLODs()`` thunk answers first:
+   *   still true means only a prefix of the level has committed. Then
+   *   {@link childFreshAndCount}'s ``subtreeLadderComplete`` — the
+   *   commit-time ``committedLadderComplete`` stamp, taken from the child
+   *   itself for a tracked LEAF and folded over the visible stamped leaves of
+   *   a deferred GROUP child (a nested ``kind=partition`` / ``kind=lod``
+   *   subtree — the ``overview`` recipe's fine branch). Neither alone is
+   *   enough: a group child carries no thunk, so without the fold the drain
+   *   released the frame the moment such a branch became ready, with its part
+   *   leaves at chunk-1 by construction; and only the DEFERRED path gets a
+   *   thunk, so without the stamp the eagerly-loaded default level — still
+   *   climbing its ladder under the sweep-driven refinement loop — read as
+   *   complete. Anything with no stamp at all (never committed, or a
+   *   non-progressive loader) carries no signal and counts as complete.
+   * - No child of the entry may be ``loading`` — an in-flight commit can change
+   *   what renders on a later frame.
+   *
+   * An empty registry (and an entry-free scene) is quiescent: there is nothing
+   * to wait for.
+   *
+   * Called from the capture drain — once per drain rAF, so up to the drain's
+   * own frame cap (``LOD_SETTLE_MAX_FRAMES``, which is itself INCLUSIVE of the
+   * mandatory catch-up tick) plus one for the strategy's opening tri-state
+   * probe, per exported frame in the worst case; twice on a scene that is
+   * already settled (probe + one poll), and once on a latched frame (the
+   * re-arm probe alone). Either way NOT the rAF hot path, so unlike the rest of this file
+   * it does not avoid allocation: it walks the entry Map with ``for…of`` and
+   * resolves freshness through ``childFreshAndCount``, which returns a fresh
+   * object per entry. That cost is genuinely irrelevant here.
+   */
+  isCaptureQuiescent(): boolean {
+    const version = this.deps.getViewVersion?.();
+    for (const entry of this.entries.values()) {
+      // Deliberately excluded: an off-screen group is held coarse on purpose
+      // and contributes no pixels to the frame being captured.
+      if (entry.offScreen === true) continue;
+      // Likewise excluded, and this one is load-bearing rather than merely an
+      // optimisation: a hidden group draws nothing AND cannot start a deferred
+      // load (``kickDeferredLoadIfVisible``), while the selector — whose
+      // frustum test is pure geometry — happily records a fine
+      // ``desiredChildIndex`` for it. Blocking on that combination never
+      // resolves.
+      if (!isEffectivelyVisible(entry.groupObject)) continue;
+
+      const active = entry.activeChildIndex;
+      const desired = entry.desiredChildIndex ?? active;
+      const displayed = entry.displayedChildIndex ?? active;
+
+      const aspiration = entry.children[active];
+      // Degenerate entry — skipped, not blocked on. ``children`` is empty when
+      // every level failed its ``getObjectByName`` attach at load (the loader
+      // warns and continues), and an aspiration index can otherwise point past
+      // the end. There is no child to become ready, so returning false here
+      // would make the predicate PERMANENTLY false: every capture frame would
+      // spend the full drain budget and the run would end claiming frames were
+      // filmed at a coarse LOD, on a scene that has no level to wait for.
+      if (!aspiration) continue;
+
+      if (displayed !== active) return false;
+      if (desired !== active) {
+        const target = entry.children[desired];
+        // A failed level never becomes ready, so waiting on it only times out.
+        // An out-of-range ``desired`` (no child there at all) is the same trap
+        // as the missing aspiration above and likewise must not block.
+        if (target && target.failed !== true) return false;
+      }
+
+      if (!isReady(aspiration)) return false;
+      // One fold for both group-aware answers: per-slice freshness AND — for a
+      // deferred GROUP child, which has no ``hasMoreLODs`` thunk — whether its
+      // subtree's committed additive ladders are complete.
+      const progress = this.childFreshAndCount(aspiration, version ?? null);
+      if (version != null && !progress.fresh) return false;
+      if (aspiration.hasMoreLODs?.() === true) return false;
+      if (!progress.subtreeLadderComplete) return false;
+
+      for (let i = 0; i < entry.children.length; i++) {
+        if (entry.children[i].loading) return false;
+      }
+    }
+    return true;
   }
 
   /**
@@ -884,46 +1070,70 @@ export class LODGroupRegistry {
       if (!forceFinest && !frustum.intersectsBox(WORLD_BOX3_SCRATCH)) {
         desired = this.coarsestReadyIndex(entry);
         entry.offScreen = true;
-      } else if (entry.selector === 'screen-area') {
-        // Screen-area selector: the metric IS the fraction of the viewport
-        // area the group's projected bbox rect covers (viewport-size
-        // independent by construction — see projectBoxAreaFraction). The
-        // thresholds are literal area fractions ([0, …, 1/4, 1/2] whole-object;
-        // a partition tile anchors at 1.0), so no FILL_FACTOR normalisation.
-        // Camera inside the box → +Infinity → finest, same as the diagonal
-        // path; ``?lod-finest`` forces Infinity → always finest.
-        coverageMetric = forceFinest
-          ? Infinity
-          : projectBoxAreaFraction(worldBox, camera, FRUSTUM_MATRIX_SCRATCH);
-        desired = pickChildWithHysteresis(cache.thresholds, entry.activeChildIndex, coverageMetric);
-        entry.offScreen = false;
       } else {
-        // Legacy 'coverage' selector (the default for older stores).
-        // Reuse the per-frame projection×view product (FRUSTUM_MATRIX_SCRATCH,
-        // built in evaluatePerFrame) instead of recomputing it per group.
-        const diagonalPx = projectBoxDiagonalPx(worldBox, camera, viewport, FRUSTUM_MATRIX_SCRATCH);
-        // Normalise the projected pixel diagonal to a dimensionless **coverage
-        // metric** (1.0 == the projected diagonal has reached FILL_FACTOR of the
-        // FITTED AXIS) so the viewport-relative coverage_fraction thresholds
-        // anchor the finest at half the fitted screen axis — any normal
-        // full-frame view — on any monitor OR aspect ratio (see the
-        // ``FILL_FACTOR`` doc for why this denominator, unlike the viewport
-        // diagonal it replaces, stays (near-)invariant across aspect ratio).
-        // diagonalPx == +Infinity (camera inside the box) → Infinity →
-        // finest, unchanged. fittedAxisPx is > 0 here (evaluatePerFrame guards
-        // width/height == 0). ``?lod-finest`` forces Infinity → always finest.
-        //
-        // fittedAxisPx mirrors calculateCameraDistance's own fit selection
-        // (bounds-math.ts): that function fits the VERTICAL fov for aspect >= 1
-        // (distance independent of width) and the HORIZONTAL fov for aspect < 1
-        // (distance ∝ 1/aspect) — i.e. ``min(width, height)`` in pixel space is
-        // exactly the extent the opening framing fits, on both sides of aspect 1.
-        const fittedAxisPx = Math.min(viewport.width, viewport.height);
-        coverageMetric = forceFinest ? Infinity : diagonalPx / (FILL_FACTOR * fittedAxisPx);
+        if (forceFinest) {
+          coverageMetric = Infinity;
+        } else {
+          const metricWorldBox = cache.hasLodBounds
+            ? (this.computeWorldBox(entry, displayDims, true) ?? worldBox)
+            : worldBox;
+          if (entry.selector === 'screen-area') {
+            // Screen-area selector: the metric IS the fraction of the viewport
+            // area the group's projected bbox rect covers (viewport-size
+            // independent by construction — see projectBoxAreaFraction). The
+            // thresholds are literal area fractions ([0, …, 1/4, 1/2] whole-object;
+            // a partition tile anchors at 1.0), so no FILL_FACTOR normalisation.
+            // Camera inside the box → +Infinity → finest, same as the diagonal path.
+            coverageMetric = projectBoxAreaFraction(metricWorldBox, camera, FRUSTUM_MATRIX_SCRATCH);
+            if (cache.hasLodBounds) {
+              // The thin-rectangle ramp is not monotone under box containment:
+              // trimming the thin axis can increase the robust metric. Robust
+              // bounds may only keep or reduce the raw-bounds selection.
+              coverageMetric = Math.min(
+                coverageMetric,
+                projectBoxAreaFraction(worldBox, camera, FRUSTUM_MATRIX_SCRATCH)
+              );
+            }
+          } else {
+            // Legacy 'coverage' selector (the default for older stores).
+            // Reuse the per-frame projection×view product (FRUSTUM_MATRIX_SCRATCH,
+            // built in evaluatePerFrame) instead of recomputing it per group.
+            const diagonalPx = projectBoxDiagonalPx(
+              metricWorldBox,
+              camera,
+              viewport,
+              FRUSTUM_MATRIX_SCRATCH
+            );
+            // Normalise the projected pixel diagonal to a dimensionless **coverage
+            // metric** (1.0 == the projected diagonal has reached FILL_FACTOR of the
+            // FITTED AXIS) so the viewport-relative coverage_fraction thresholds
+            // anchor the finest at half the fitted screen axis — any normal
+            // full-frame view — on any monitor OR aspect ratio (see the
+            // ``FILL_FACTOR`` doc for why this denominator, unlike the viewport
+            // diagonal it replaces, stays invariant across aspect ratio).
+            // diagonalPx == +Infinity (camera inside the box) → Infinity →
+            // finest, unchanged. fittedAxisPx is > 0 here (evaluatePerFrame guards
+            // width/height == 0).
+            //
+            // fittedAxisPx mirrors calculateCameraDistance's own fit selection
+            // (bounds-math.ts): that function fits the VERTICAL fov for aspect >= 1
+            // (distance independent of width) and the HORIZONTAL fov for aspect < 1
+            // (distance ∝ 1/aspect) — i.e. ``min(width, height)`` in pixel space is
+            // exactly the extent the opening framing fits, on both sides of aspect 1.
+            const fittedAxisPx = Math.min(viewport.width, viewport.height);
+            coverageMetric = diagonalPx / (FILL_FACTOR * fittedAxisPx);
+          }
+        }
         desired = pickChildWithHysteresis(cache.thresholds, entry.activeChildIndex, coverageMetric);
         entry.offScreen = false;
       }
     }
+
+    // Record what the selector WANTS this frame, before any of the ready /
+    // freshness gates below can veto it. Read by ``isCaptureQuiescent`` only —
+    // see ``LODGroupEntry.desiredChildIndex`` for why the aspiration index
+    // cannot answer the same question.
+    entry.desiredChildIndex = desired;
 
     // ── Advance the aspiration (``activeChildIndex``) toward ``desired`` ──
     // The aspiration is the hysteresis anchor and only moves onto a READY level;
@@ -1223,22 +1433,30 @@ export class LODGroupRegistry {
   }
 
   /**
-   * Fold an entry's children nD ``positionBounds`` into a single world-space
+   * Fold an entry's children nD bounds into one world-space
    * :type:`BoundingBox` (see {@link computeEntryWorldBox} in
-   * ``lod-selector-math.ts`` for the math). Shared by the auto selector
-   * (diagonal pick + frustum gate) and the eviction ranking so both reason
-   * over identical geometry. This wrapper supplies the per-entry
-   * ``localBoxScratch`` and the registry's ``matrixScratch``;
+   * ``lod-selector-math.ts`` for the math). The default uses raw
+   * ``positionBounds`` for frustum gating and eviction; ``useLodBounds`` uses
+   * robust bounds with a per-child raw fallback for selector metrics. This
+   * wrapper supplies the per-entry ``localBoxScratch`` and the registry's
+   * ``matrixScratch``;
    * ``transformBoundingBox`` allocates the returned box, so it is independent
    * of those scratches and safe to keep past the next call.
    */
   private computeWorldBox(
     entry: LODGroupEntry,
-    displayDims: readonly number[]
+    displayDims: readonly number[],
+    useLodBounds: boolean = false
   ): BoundingBox | null {
     const cache = this.caches.get(entry.path);
     if (!cache) return null;
-    return computeEntryWorldBox(entry, displayDims, cache.localBoxScratch, this.matrixScratch);
+    return computeEntryWorldBox(
+      entry,
+      displayDims,
+      cache.localBoxScratch,
+      this.matrixScratch,
+      useLodBounds
+    );
   }
 
   /**
@@ -1260,31 +1478,68 @@ export class LODGroupRegistry {
    * empty-guard redirect, blend pairing) may ever elect it. A READY group with
    * no stamped leaf (nested group with no slice-dependent geometry) carries no
    * per-slice staleness signal and reports ``fresh: true, count: null``.
+   *
+   * ``subtreeLadderComplete`` is the third answer, folded from the same walk
+   * (``SubtreeDisplayProgress.complete``): false when any visible stamped leaf
+   * under the subtree has committed only a prefix of its additive ladder. A
+   * tracked LEAF has no subtree to fold, so it answers with its OWN
+   * ``committedLadderComplete`` stamp.
+   *
+   * That stamp rather than the child's ``hasMoreLODs()`` thunk, because the
+   * thunk does not exist on every leaf: ``load-lod-group-node`` attaches it
+   * only on the DEFERRED path, so the eagerly-loaded default level — whose
+   * ladder is advanced by the sweep-driven background refinement loop — has
+   * none, and reporting an unconditional ``true`` here declared a still-
+   * streaming coarse level complete. The stamp is also the safer of the two
+   * where both exist (see ``lod-display-gate``'s "committed state only" note:
+   * a live getter flips when the last fetch resolves, frames before the commit
+   * lands). Callers still read ``hasMoreLODs()`` directly on top of this, since
+   * it is what re-fires ``ensureLoaded`` to advance a lazy ladder. Only
+   * {@link isCaptureQuiescent} consults this field; the display paths ignore
+   * it.
+   *
+   * ``version === null`` means no view-version tracking is wired: the per-slice
+   * staleness test is skipped and every READY child reads fresh — which is
+   * exactly what the ``version != null`` guards at the display call sites
+   * already assume, so those are unaffected.
    */
   private childFreshAndCount(
     child: LODGroupChild,
-    version: number
-  ): { fresh: boolean; count: number | null } {
+    version: number | null
+  ): { fresh: boolean; count: number | null; subtreeLadderComplete: boolean } {
     // Leaf detection is by tracked nodeType, NOT by "has a count stamp": a leaf
     // that has not committed a count yet is still a leaf whose freshness is its
     // own ``loadedViewVersion`` stamp. Only a genuine group subtree folds.
     if (isTrackedLeaf(child)) {
-      return { fresh: isFresh(child, version), count: visibleElementCount(child) };
+      return {
+        fresh: version == null ? isReady(child) : isFresh(child, version),
+        count: visibleElementCount(child),
+        // The leaf's own commit stamp — absent (never committed, or a
+        // non-progressive loader) reads as complete, so an unstamped leaf
+        // never blocks. See the doc above for why not ``hasMoreLODs()``.
+        subtreeLadderComplete: child.object.userData?.committedLadderComplete !== false,
+      };
     }
     // Ready gate for group children (the leaf branch gets it from ``isFresh``).
     // Without it, a not-ready deferred-group placeholder (no stamped leaves →
     // ``!aggregate`` below) would read fresh-with-unknown-count and the
     // empty-level guard could redirect display onto a level that CANNOT draw,
-    // blanking the group permanently.
-    if (!isReady(child)) return { fresh: false, count: null };
+    // blanking the group permanently. Nothing has committed, so no completeness
+    // can be claimed either.
+    if (!isReady(child)) return { fresh: false, count: null, subtreeLadderComplete: false };
     const aggregate = subtreeDisplayProgress(child.object as unknown as ProgressNode, version);
     // Ready, but no stamped leaf under the subtree (nested group with no
     // slice-dependent geometry): no per-slice staleness signal, so treat as
     // fresh — exactly the pre-existing ``isFresh`` behaviour for a ready
     // non-leaf. Only a subtree that DOES carry stamped-but-stale leaves (a
     // non-null aggregate with ``fresh === false``) triggers the coarse fallback.
-    if (!aggregate) return { fresh: true, count: null };
-    return { fresh: aggregate.fresh, count: aggregate.count };
+    // No stamped leaf likewise means no ladder to be waiting on: complete.
+    if (!aggregate) return { fresh: true, count: null, subtreeLadderComplete: true };
+    return {
+      fresh: aggregate.fresh,
+      count: aggregate.count,
+      subtreeLadderComplete: aggregate.complete,
+    };
   }
 
   /**
@@ -1486,8 +1741,8 @@ export class LODGroupRegistry {
    * Bound resident LOD geometry to the GPU-pool byte budget — see
    * {@link enforceResidentByteBudget} (``lod-eviction.ts``) for the full
    * policy. This wrapper supplies the registry's entries, the pool-accounting
-   * deps, and the shared per-entry world-box fold (so eviction and the auto
-   * selector reason over identical geometry).
+   * deps, and the raw per-entry world-box fold, so eviction matches the
+   * selector's frustum gate rather than its optional robust metric bounds.
    */
   private enforceByteBudget(
     camera: THREE.Camera,

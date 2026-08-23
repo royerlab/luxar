@@ -56,6 +56,13 @@ This module hosts:
   ``partitioned_coverage_fractions``, and the ``derive_coverage_fractions`` /
   ``is_partition_bound`` pair the scene adders use to choose between them from
   the ladder's insertion point.
+* ``resolve_lod_ladder`` — the single decision the four ``substitutive_lod=`` /
+  ``lod_group=`` scene adders share: thresholds AND the ``selector`` that names
+  their units (an explicit list keeps the legacy units it was authored in;
+  otherwise derive and stamp screen-area). The detached-tree writers answer the
+  related "what does a STORED tree already claim?" question separately, through
+  ``gsplats.tree.gate_authored_selector`` — see that function and
+  ``resolve_lod_ladder``'s own docstring.
 * The free-function validator ``validate_lod_group``, callable on any
   ``Group`` whose ``attrs["kind"] == "lod"``.
 * The shared ``resolve_display_type`` helper used by both LOD and Partition
@@ -72,10 +79,25 @@ from __future__ import annotations
 
 import math
 import warnings
-from typing import TYPE_CHECKING, Any, Callable, Dict, Final, List, Literal, Optional
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    Final,
+    List,
+    Literal,
+    Optional,
+    Sequence,
+)
 
 from arbol import aprint
 
+from ....typing_utils.constants import (
+    DERIVED_LOD_SELECTOR,
+    LEGACY_LOD_SELECTOR,
+    LOD_SELECTORS,
+)
 from ....typing_utils.geometry_capabilities import require_lod_display_type
 from ....validation.types import validate_truncation_radius
 from .reveal import is_reveal_additive_method, pop_reveal_knobs
@@ -119,8 +141,9 @@ if TYPE_CHECKING:
 #:    keep the legacy selector, so this constant IS their ceiling);
 #: 2. automatically, via :func:`partitioned_coverage_fractions` — what every
 #:    partition-bound producer derives (the ``adaptive`` / ``overview`` gsplat
-#:    recipes, the two gsplat writers' topology-aware fallback, and the scene
-#:    adders through :func:`derive_coverage_fractions`);
+#:    recipes, the two gsplat writers' topology-aware fallback, scene adders
+#:    inserted under a partition ancestor, and the Points overview composition
+#:    after it verifies a multi-part fine branch);
 #: 3. a hand-authored per-child ``coverage_fraction=`` on ``add_lod_group`` (the
 #:    shape ``examples/partition_of_lod_example.py`` builds), for which
 #:    :func:`validate_lod_group` is the only guard — it bypasses the resolvers
@@ -463,7 +486,11 @@ def is_partition_bound(node: "Node") -> bool:
 
 
 def derive_coverage_fractions(
-    element_counts: list[int], insertion_point: "Node", *, name: str
+    element_counts: list[int],
+    insertion_point: "Node",
+    *,
+    name: str,
+    partition_bound: bool = False,
 ) -> list[float]:
     """Pick the right anchor for an auto-derived ladder, from where it is going.
 
@@ -475,35 +502,153 @@ def derive_coverage_fractions(
       :func:`is_partition_bound`) → :func:`partitioned_coverage_fractions`, the
       fills-screen anchor, because this ladder switches on ONE TILE's projected
       size, which is intrinsically a fraction of the whole object's;
+    * ``partition_bound=True`` → the same fills-screen anchor for an overview
+      ladder whose finest child is a verified multi-part partition. Here the
+      group's bbox is the whole object, so the reason is the overview contract:
+      keep the global coarse cap at the opening framing and reveal fine parts on
+      zoom, rather than geometry;
     * otherwise → :func:`coverage_fractions`, the whole-object anchor.
 
-    The adders reject ``partition=`` together with ``substitutive_lod=``, so the
-    partition-bound shape only ever arrives hand-built: a caller creates the
+    The ancestor-bound shape is hand-built: a caller creates the
     ``kind=partition`` wrapper itself and calls the adder once per part (what
-    ``demos/demo_biodiversity_planetary_scale.py`` does). That is worth one log
-    line rather than a silent anchor switch, so the partition-bound case reports
-    which anchor it chose.
+    ``demos/demo_biodiversity_planetary_scale.py`` does). The explicit flag is
+    used by ``add_points(partition=..., substitutive_lod=...)`` after it verifies
+    that the partition has at least two parts. Both switches are worth one log
+    line rather than a silent anchor change.
 
     Args:
         element_counts: One entry per level, coarsest→finest (same contract as
             :func:`coverage_fractions`).
         insertion_point: The node the ``kind=lod`` group is being added to.
         name: The lod group's name, for the log line.
+        partition_bound: Whether the finest child is a verified multi-part
+            partition even though ``insertion_point`` has no partition ancestor.
 
     Returns:
         The derived ladder, on whichever anchor the insertion point implies.
     """
-    if not is_partition_bound(insertion_point):
+    ancestor_bound = is_partition_bound(insertion_point)
+    if not partition_bound and not ancestor_bound:
         return coverage_fractions(element_counts)
     fractions = partitioned_coverage_fractions(element_counts)
+    if partition_bound:
+        reason = (
+            "verified partitioned finest child — anchoring this overview ladder "
+            "at fills-screen so the global coarse cap remains at the opening framing"
+        )
+    else:
+        reason = (
+            "kind=partition ancestor detected — anchoring this per-tile ladder at "
+            "fills-screen since a tile's projected size is only a fraction of the "
+            "whole object's"
+        )
     aprint(
-        f"  🧩 Substitutive-LOD '{name}': kind=partition ancestor detected — "
-        "anchoring this per-tile ladder at fills-screen (finest "
-        f"coverage_fraction={fractions[-1]:.1f} of the screen area, not "
-        f"{WHOLE_OBJECT_FINEST_ANCHOR:.1f}), since a tile's projected size is "
-        "only a fraction of the whole object's."
+        f"  🧩 Substitutive-LOD '{name}': {reason} (finest coverage_fraction="
+        f"{fractions[-1]:.1f} of the screen area, not "
+        f"{WHOLE_OBJECT_FINEST_ANCHOR:.1f})."
     )
     return fractions
+
+
+def resolve_lod_ladder(
+    explicit: Optional[Sequence[float]],
+    element_counts: list[int],
+    insertion_point: "Node",
+    *,
+    name: str,
+    partition_bound: bool = False,
+    length_error: Callable[[int, int], str],
+) -> tuple[list[float], str]:
+    """Decide a lod group's thresholds AND the selector that describes them.
+
+    The one decision shared by the four SCENE ADDERS that build a ``kind=lod``
+    group from user-supplied data (``add_points`` / ``add_lines`` / ``add_mesh``
+    ``substitutive_lod=`` and ``add_gsplats_from_data`` ``lod_group=``): all four
+    call this instead of restating it, because thresholds and selector are ONE
+    decision — the selector names the UNITS the thresholds are in, so a site that
+    derives a ladder and stamps the legacy selector (or vice versa) writes a store
+    whose switch points the viewer reads on the wrong scale — silently, since both
+    vocabularies are individually valid.
+
+    **Not the only producer of the pairing** — two DETACHED-TREE paths answer a
+    related but different question, "what does a STORED tree already claim about
+    its own thresholds?", which has no ``explicit`` argument to branch on and so
+    cannot route through here:
+
+    * :func:`luxar.gsplats.tree.gate_authored_selector` — the shared gate for a
+      ``GSplatNode`` tree being serialized (``io/_compiler/gsplat_tree``
+      ``write_gsplat_node``) or grafted into a scene
+      (``gsplats_pipeline/from_io`` ``graft_gsplat_node``). Keyed on how much of
+      the ladder the store already carries: a fully authored one KEEPS its own
+      stored selector verbatim (so a ``screen-area`` store does not lose its
+      stamp on re-save — its thresholds are re-validated against that selector's
+      ceiling and may raise), and falls back to legacy only when it carries none,
+      while a partially- or un-authored one is re-derived and stamped
+      screen-area. An out-of-vocabulary stored selector raises ahead of all of
+      that.
+    * :func:`luxar.gsplats.tree.tree_from_substitutive_levels`, whose ``selector``
+      default is keyed on whether the caller supplied a ``coverage`` callable.
+
+    ``graft_gsplat_node`` is itself a scene-adder path
+    (``add_gsplats_from_file`` on a non-matrix-shaped subtree) that builds a
+    ``kind=lod`` group and calls ``coverage_fractions`` /
+    ``partitioned_coverage_fractions`` directly, pairing them with
+    ``gate_authored_selector``'s answer rather than this function's — it is on the
+    stored-tree side of that split, and the guard in
+    ``core/tests/group/lod/test_lod_selector_contract.py`` exempts it by name.
+
+    The rule:
+
+    * **Explicit** ``coverage_fractions=[...]`` → used verbatim, stamped
+      :data:`~luxar.typing_utils.constants.LEGACY_LOD_SELECTOR`. An authored list
+      was tuned against the legacy diagonal metric (that is the historical
+      ``add_lod_group`` default and what every existing dataset means), so
+      re-labelling it ``"screen-area"`` would move every switch point the author
+      chose. Its ceiling is therefore :data:`MAX_COVERAGE_FRACTION`, not the
+      screen-area 1.0 — the per-geometry resolvers enforce that.
+    * **Derived** (``explicit is None``) → :func:`derive_coverage_fractions`,
+      stamped :data:`~luxar.typing_utils.constants.DERIVED_LOD_SELECTOR`. The
+      halving ladder is in literal screen-area fractions, re-anchored at
+      fills-screen when the insertion point is partition-bound.
+
+    Args:
+        explicit: The caller's ``coverage_fractions`` list, or ``None`` to derive.
+        element_counts: One entry per level, coarsest→finest (same contract as
+            :func:`coverage_fractions`); also the length an explicit list must
+            match.
+        insertion_point: The node the ``kind=lod`` group is being added to (the
+            anchor choice for a derived ladder — see
+            :func:`derive_coverage_fractions`).
+        name: The lod group's name, for the derivation's log line.
+        partition_bound: Forwarded to :func:`derive_coverage_fractions` when the
+            ladder is bound to a verified partition without a partition ancestor.
+        length_error: ``(n_explicit, n_levels) -> message`` for the
+            length-mismatch ``ValueError``. A callback because each geometry
+            words that message in its own terms (how many of its levels are
+            lifted gsplats, that mesh levels which could not reduce the surface
+            are dropped, …), and those texts are user-facing.
+
+    Returns:
+        ``(coverage_fractions, selector)`` — the per-child thresholds in
+        coarsest→finest order and the selector to stamp on the group.
+
+    Raises:
+        ValueError: If ``explicit`` is given and its length differs from
+            ``element_counts``, worded by ``length_error``.
+    """
+    if explicit is not None:
+        if len(explicit) != len(element_counts):
+            raise ValueError(length_error(len(explicit), len(element_counts)))
+        return list(explicit), LEGACY_LOD_SELECTOR
+    return (
+        derive_coverage_fractions(
+            element_counts,
+            insertion_point,
+            name=name,
+            partition_bound=partition_bound,
+        ),
+        DERIVED_LOD_SELECTOR,
+    )
 
 
 def _apply_monotonicity_guard(
@@ -615,8 +760,6 @@ def validate_lod_group(group: "Node") -> None:
     # vocabulary is rejected — node attrs are mutable, so a modified/imported
     # group could otherwise pass validation and serialize an invalid selector
     # (matching add_lod_group_impl and gate_authored_selector).
-    from ....typing_utils.constants import LOD_SELECTORS
-
     raw_selector = group.attrs.get("selector")
     if raw_selector is not None and raw_selector not in LOD_SELECTORS:
         raise ValueError(
@@ -625,8 +768,8 @@ def validate_lod_group(group: "Node") -> None:
             "(it names the units of the children's coverage_fraction "
             "thresholds)"
         )
-    selector = str(raw_selector) if raw_selector is not None else "coverage"
-    if selector == "screen-area":
+    selector = str(raw_selector) if raw_selector is not None else LEGACY_LOD_SELECTOR
+    if selector == DERIVED_LOD_SELECTOR:
         cap = PARTITION_FINEST_AREA
         cap_rationale = (
             "Screen-area thresholds are literal screen-area fractions; the "
@@ -710,7 +853,11 @@ def validate_authored_coverage_ladder(
     ascending. Derived ladders satisfy all of this by construction; only
     authored (preserved) ladders need the gate.
     """
-    cap = PARTITION_FINEST_AREA if selector == "screen-area" else MAX_COVERAGE_FRACTION
+    cap = (
+        PARTITION_FINEST_AREA
+        if selector == DERIVED_LOD_SELECTOR
+        else MAX_COVERAGE_FRACTION
+    )
     prev = float("-inf")
     for i, value in enumerate(values):
         value = float(value)
@@ -777,15 +924,12 @@ SUBSTITUTIVE_METHODS = frozenset(
 #: nothing the code can do, so it is refused with the reason rather than
 #: silently mapped onto something else.
 #:
-#: ``qem`` — Garland-Heckbert edge collapse — is the tier this set is shaped to
-#: admit next (issue #1348). It is not listed until it exists: a method name
-#: that validates and then raises is worse than one that never validated.
-MESH_SUBSTITUTIVE_METHODS = frozenset({"auto", "cluster"})
+#: ``qem`` is Garland-Heckbert edge collapse with a link-condition veto;
+#: ``cluster`` is the vectorized large-mesh tier.
+MESH_SUBSTITUTIVE_METHODS = frozenset({"auto", "cluster", "qem"})
 
-#: Default mesh coarsening method. ``auto`` resolves to ``cluster`` today — the
-#: only implemented tier — and becomes a real size-derived choice when ``qem``
-#: lands (#1348). Kept as the default anyway so that upgrade is not a
-#: behaviour change for anyone who wrote ``method="auto"``.
+#: Default mesh coarsening method. ``auto`` uses topology-preserving QEM through
+#: 10,000 vertices and the vectorized clustering tier above that measured limit.
 DEFAULT_MESH_SUBSTITUTIVE_METHOD: str = "auto"
 
 

@@ -12,6 +12,17 @@ Tests for the Luxar CLI package.
 - `test_export.py` - Tests for the standalone scene export command
 - `test_network_simulation.py` - Tests for network simulation middleware and profiles
 - `test_gsplat_cli_extended.py` - Tests for gsplat subcommands
+- `test_restamp_lod_command.py` - What `luxar restamp-lod` adds over
+  `luxar.io.lod_restamp`: the printed old→new audit trail (with each anchor
+  pinned to its own group path on one line, so swapping the two labels cannot
+  pass), `--dry-run`, a repeatable `--group`, and the exit code — 1 for an
+  unmatched `--group`, a missing or non-Luxar store, a re-verification residual
+  from a genuinely stale consolidated index, or a ladder left alone for a reason
+  worth acting on (which still writes the ladders it could convert)
+- `test_gsplat_content_scoped_metrics.py` - Every `gsplat` subcommand (the
+  `batch-fit` group included) is classified as content-changing or not, and a
+  rewrite must drop (or keep) the fit's measured scores accordingly — through both
+  writers, and identically for a flat store and a partition
 
 ## Running
 

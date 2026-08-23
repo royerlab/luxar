@@ -24,6 +24,64 @@ import type { PanelStates, RecordingMode, RecordingOptions } from './types';
 
 export type CaptureKind = 'screenshot' | 'video' | 'offline';
 
+/**
+ * How many candidate sizes the encoder alignment tries — the requested
+ * one plus at most ten pixels of walk down — before giving up.
+ */
+const MAX_ALIGN_STEPS = 11;
+
+/**
+ * Align a capture dimension DOWN until the PHYSICAL frame it produces —
+ * `round(value × scale)` — is even.
+ *
+ * H.264/H.265 with yuv420p need even dimensions — x265 refuses an odd
+ * one outright ("height must be an integer multiple of the specified
+ * chroma subsampling") and WebCodecs H.264 falls back to another codec
+ * with nothing but a console warning (`drivers/video-mode-driver.ts`)
+ * — but the encoder never sees the size requested here.
+ * SSAA renders at `scale` times it, and the frames written to disk are
+ * that physical size, so aligning the requested size alone still lets an
+ * odd frame through: a 3024×1698 native target at SSAA 1.5× captures at
+ * 4536×2547. Only the product has to be even, so the walk steps by ONE
+ * and accepts an odd request whose product is even (at scale 1 that
+ * collapses to the plain even floor, and at scale 2 nothing ever moves).
+ * Requiring the request to be even as well throws away half the
+ * candidates and costs far more than a factor of two: at a legal 1.05×
+ * the even-only walk needs up to ten steps (six at height 1700) where
+ * stepping by one never needs more than two, so it throws away twenty
+ * pixels of frame where the unit walk throws away two — and when it runs
+ * out it ships the odd physical frame it was there to prevent.
+ * The multiplier is a free-form float (a scene's `viewer_config` clamps
+ * it to [1, 8] and `setSSAAMultiplier` re-clamps to [1, 4]), so no fixed
+ * alignment covers it.
+ *
+ * Best-effort, and deliberately so. Swept over every millesimal scale in
+ * [1, 4] and every height in [16, 8000], two steps cover 87% of the
+ * pairs — but 888 of those 3001 scales need three or more somewhere even
+ * when they sit further than 0.2 from an even multiplier, worst case
+ * five (1.751, where 753 walks to 748). Hence eleven candidates. What
+ * the cap still gives up on is the scales within 0.1 of 2 or of 4 but
+ * not ON them, 297 of the 3001: there the product's parity is locked
+ * across a thousand consecutive heights — at 2.001 it flips at 500,
+ * 1500, 2500, … — so no bounded walk can help, and at 1.999/2.001 about
+ * half of all heights end odd (2.5% of the swept pairs overall). Those
+ * take the even floor, which beats shrinking the frame by hundreds of
+ * pixels to chase an even product. Exactly 2 and 4 never need a step;
+ * 1 and 3 need at most one (1701 → 1700).
+ */
+function alignForEncoder(value: number, scale: number): number {
+  if (!Number.isFinite(value)) return 2;
+  const evenFloor = Math.max(2, value - (value % 2));
+  if (!Number.isFinite(scale) || scale <= 0) return evenFloor;
+  const start = Math.floor(value);
+  for (let i = 0; i < MAX_ALIGN_STEPS; i++) {
+    const candidate = start - i;
+    if (candidate < 2) break;
+    if (Math.round(candidate * scale) % 2 === 0) return candidate;
+  }
+  return evenFloor;
+}
+
 export interface SavedRecordingState {
   dprEnabled: boolean;
   dpr: number;
@@ -34,7 +92,7 @@ export interface SavedRecordingState {
 export interface SaveRecordingStateOptions {
   lockResize?: boolean;
   disableDPR?: boolean;
-  scaleResolution?: { targetH: number; align16?: boolean };
+  scaleResolution?: { targetH: number; alignEven?: boolean };
 }
 
 export interface ConfirmationDialogInfo {
@@ -144,7 +202,13 @@ export class RecordingSession {
     const dprEnabled = this.adaptiveDPRManager?.isActive() ?? false;
     const dpr = this.adaptiveDPRManager?.getCurrentDPR() ?? window.devicePixelRatio;
     const renderer = this.sceneManager.renderer;
-    const currentSize = renderer.getSize(new THREE.Vector2());
+    // The DISPLAY size, not `renderer.getSize()`: post-processing hands
+    // the renderer the SSAA-multiplied size, so the renderer reports
+    // `display × multiplier` while `resize()` — which is what both the
+    // capture below and `restoreRecordingState` call — takes the display
+    // size and applies the multiplier itself. Restoring the renderer's
+    // own number grew the viewport by the multiplier on every capture.
+    const currentSize = this.sceneManager.postProcessing.getDisplaySize();
     this.savedRecordingState = {
       dprEnabled,
       dpr,
@@ -171,15 +235,28 @@ export class RecordingSession {
     }
 
     if (options.scaleResolution) {
-      this.savedRecordingState.rendererSize = { width: currentSize.x, height: currentSize.y };
-      const { targetH, align16 } = options.scaleResolution;
-      const aspect = currentSize.x / currentSize.y;
-      let w = Math.round(targetH * aspect);
-      let h = targetH;
-      if (align16) {
-        w = w & ~15;
-        h = h & ~15;
-      }
+      this.savedRecordingState.rendererSize = {
+        width: currentSize.width,
+        height: currentSize.height,
+      };
+      const { targetH, alignEven } = options.scaleResolution;
+      // A canvas with no height yet (hidden container, pre-layout) would
+      // make the aspect Infinity or NaN and carry it into the render
+      // target and the camera. Square is a harmless stand-in.
+      const rawAspect = currentSize.width / currentSize.height;
+      const aspect = currentSize.height > 0 && Number.isFinite(rawAspect) ? rawAspect : 1;
+      // Align the HEIGHT first, then derive the width from the aligned
+      // height, so the output aspect still tracks the source. Deriving
+      // the width from the requested height and then truncating both
+      // independently widened the frame relative to what the user
+      // framed. Even, not a multiple of 16: H.264/H.265 with yuv420p
+      // need even dimensions and the encoder pads to its own macroblock
+      // size. `alignForEncoder` also folds in the SSAA scale, since the
+      // frames on disk are the physical size, not this one.
+      const scale = this.sceneManager.postProcessing.getEffectiveRenderScale();
+      const h = alignEven ? alignForEncoder(targetH, scale) : targetH;
+      const wRaw = Math.round(h * aspect);
+      const w = alignEven ? alignForEncoder(wRaw, scale) : wRaw;
       renderer.setPixelRatio(1);
       this.sceneManager.postProcessing.resize(w, h);
       const canvas = renderer.domElement;
@@ -328,9 +405,16 @@ export class RecordingSession {
       // quietly produce a file without them.
       const hasOverlays = (this.overlayManager?.getVisibleOverlays().length ?? 0) > 0;
       if (options.includeOverlays && hasOverlays && (realtimeWebm || fmt === 'exr')) {
+        // Only the turntable group has a "Smooth (offline)" toggle — it
+        // is hidden in Video mode, and `startVideoRecording` ignores
+        // `frameByFrame` outside a turntable — so pointing a Video-mode
+        // user at it prescribes a control they cannot reach. Video mode
+        // is WebM-only too, so there is no remedy to name from here.
+        const realtimeRemedy =
+          mode === 'turntable' ? ' Enable <em>Smooth (offline)</em> to composite them.' : '';
         details += realtimeWebm
           ? '<br><strong>Overlays will NOT be included</strong> — real-time WebM records the ' +
-            'canvas alone. Enable <em>Smooth (offline)</em> to composite them.'
+            `canvas alone.${realtimeRemedy}`
           : '<br><strong>Overlays will NOT be included</strong> — EXR frames are the raw HDR buffer.';
       }
 

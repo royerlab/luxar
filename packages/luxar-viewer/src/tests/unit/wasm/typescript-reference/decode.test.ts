@@ -20,6 +20,12 @@ import {
   decode_broadcasted,
 } from '../../../../wasm/typescript';
 
+function expectFloat32Bits(output: Float32Array, expected: number[]): void {
+  expect(Array.from(new Uint32Array(output.buffer, output.byteOffset, output.length))).toEqual(
+    expected
+  );
+}
+
 describe('decode: quantized functions', () => {
   // wasm.md O6 / Phase E4: the four `decode: quantized` tests form a
   // 2x2 grid of {u8, u16} × {linear, log-space}. Each previously used
@@ -67,6 +73,36 @@ describe('decode: quantized functions', () => {
     expect(output[2]).toBeCloseTo(expected[2], precision[2]);
   });
 
+  it.each<{
+    label: string;
+    decode: (data: Uint8Array | Uint16Array, lo: number, hi: number, out: Float32Array) => void;
+    data: Uint8Array | Uint16Array;
+    lo: number;
+    hi: number;
+    expectedBits: number[];
+  }>([
+    {
+      label: 'u8',
+      decode: decode_quantized_u8 as never,
+      data: new Uint8Array([0, 1, 9, 25, 128, 255]),
+      lo: -9860308715.14231,
+      hi: 33712563323.788345,
+      expectedBits: [0xd012ee18, 0xd0106243, 0xcff80734, 0xcfa68c8f, 0x5032fc7a, 0x50fb2d9c],
+    },
+    {
+      label: 'u16',
+      decode: decode_quantized_u16 as never,
+      data: new Uint16Array([0, 1, 39, 32768, 65535]),
+      lo: 2.6769986296248494e-5,
+      hi: 6.059071789834555,
+      expectedBits: [0x37e0901c, 0x38fa087c, 0x3b6e0f8f, 0x4041e4e5, 0x40c1e3eb],
+    },
+  ])('linear quantization: $label exact f32 golden', ({ decode, data, lo, hi, expectedBits }) => {
+    const output = new Float32Array(data.length);
+    decode(data, lo, hi, output);
+    expectFloat32Bits(output, expectedBits);
+  });
+
   // --- Log-space quantization (u8 / u16): decode(data, maxLog, out) ---
   // expm1(0)=0; expm1(~2.5)≈11.2-11.3 (between 10 and 13); expm1(maxLog)
   // at index N-1. The middle assertion uses bounds (not toBeCloseTo)
@@ -92,6 +128,80 @@ describe('decode: quantized functions', () => {
     expect(output[1]).toBeLessThan(13);
     expect(output[2]).toBeCloseTo(Math.expm1(maxLog), 1);
   });
+
+  it.each<{
+    label: string;
+    decode: (data: Uint8Array | Uint16Array, maxLog: number, out: Float32Array) => void;
+    data: Uint8Array | Uint16Array;
+    maxLog: number;
+    expectedBits: number[];
+  }>([
+    {
+      label: 'u8',
+      decode: decode_log_scalar_u8 as never,
+      data: new Uint8Array([0, 1, 127, 255]),
+      maxLog: 0.123456789012345,
+      expectedBits: [0x00000000, 0x39fde47b, 0x3d81e039, 0x3e068e04],
+    },
+    {
+      label: 'u16',
+      decode: decode_log_scalar_u16 as never,
+      data: new Uint16Array([0, 1, 170, 32768, 65535]),
+      maxLog: Math.log(1e5),
+      expectedBits: [0x00000000, 0x393839cd, 0x3cf857e2, 0x439da0b3, 0x47c34f7c],
+    },
+  ])(
+    'log-space quantization: $label exact f32 golden',
+    ({ decode, data, maxLog, expectedBits }) => {
+      const output = new Float32Array(data.length);
+      decode(data, maxLog, output);
+      expectFloat32Bits(output, expectedBits);
+    }
+  );
+
+  it.each<{
+    label: string;
+    decode: (data: Uint8Array | Uint16Array, maxLog: number, output: Float32Array) => void;
+    data: Uint8Array | Uint16Array;
+    maxLog: number;
+    expectedBits: number[];
+  }>([
+    {
+      label: 'u8 code 7, maxLog=9',
+      decode: decode_log_scalar_u8 as never,
+      data: new Uint8Array([7]),
+      maxLog: 9,
+      expectedBits: [0x3e8f7d82],
+    },
+    {
+      label: 'u8 code 15, maxLog=9',
+      decode: decode_log_scalar_u8 as never,
+      data: new Uint8Array([15]),
+      maxLog: 9,
+      expectedBits: [0x3f32abc2],
+    },
+    {
+      label: 'u16 code 183, maxLog=9',
+      decode: decode_log_scalar_u16 as never,
+      data: new Uint16Array([183]),
+      maxLog: 9,
+      expectedBits: [0x3cd07caa],
+    },
+    {
+      label: 'u16 code 398, maxLog=ln(10)',
+      decode: decode_log_scalar_u16 as never,
+      data: new Uint16Array([398]),
+      maxLog: Math.log(10),
+      expectedBits: [0x3c66b85a],
+    },
+  ])(
+    'log-space quantization: $label matches Rust expm1f',
+    ({ decode, data, maxLog, expectedBits }) => {
+      const output = new Float32Array(1);
+      decode(data, maxLog, output);
+      expectFloat32Bits(output, expectedBits);
+    }
+  );
 });
 
 describe('decode: LUT functions', () => {

@@ -168,11 +168,18 @@ quarter-cell `0.25 × step`, while the **membership** role
 the lines projection-clipping path) uses the half-cell `0.5 × step`, matching
 the points/gsplats projection gates:
 
-| Geometry  | Hidden spatial dim                                            | Hidden discrete dim (query)   | Discrete membership gate        |
-| --------- | ------------------------------------------------------------- | ----------------------------- | ------------------------------- |
-| `points`  | `maxRadius` (discrete rule if `spatialExtendDims[d]` false)   | `0.25 × step` (0.25 fallback) | 0.5 absolute (projection stage) |
-| `lines`   | 0 (segment bounds already include line width)                 | `0.25 × step` (0.25 fallback) | `0.5 × step` via `discreteRole` |
-| `gsplats` | `max(1e-3 × step, 2.75e-5)` float-safety epsilon, not a reach | `0.25 × step` (0.25 fallback) | `step × 0.5` (projection stage) |
+| Geometry  | Hidden spatial dim                                             | Hidden discrete dim (query)   | Discrete membership gate        |
+| --------- | -------------------------------------------------------------- | ----------------------------- | ------------------------------- |
+| `points`  | `maxRadius` (discrete rule if `spatialExtendDims[d]` false)    | `0.25 × step` (0.25 fallback) | 0.5 absolute (projection stage) |
+| `lines`   | 0 (segment bounds already include line width)                  | `0.25 × step` (0.25 fallback) | `0.5 × step` via `discreteRole` |
+| `gsplats` | `max(1e-3 × step, T × 1e-5)` float-safety epsilon, not a reach | `0.25 × step` (0.25 fallback) | `step × 0.5` (projection stage) |
+
+`T` is the node's own `truncation_radius` (`ToleranceOptions.truncationRadius`, from
+the gsplats loader), defaulting to 2.75 — so the gsplats row is
+`max(1e-3 × step, 2.75e-5)` for a typical node. The gsplats spatial cell has a third
+case the table cannot hold: a "demoted" dim (absent from the writer's published
+barrier set, `discrete` in the scene) gets the half-cell `0.5 × step`, not the
+epsilon — see below.
 
 GSplats' continuous arm is near-zero on purpose: the chunk bounds already carry
 the `truncation_radius · σ` expansion on hidden continuous dims
@@ -183,19 +190,35 @@ attenuation `(e^{-m²/2} − c)/(1 − c)` in
 (`project_gsplats_nd_to_3d`) is clamped at 0 and reaches exactly 0 at
 `m = truncation_radius`; the shader's `uTruncate` discard is the displayed-dim
 counterpart and plays no part here. So a chunk a zero-tolerance query misses
-contains only splats that would not render. That holds under a precondition — the
-write side's barrier set must agree with the `discrete` set read here, which it
-does for a scene that declares dimensions but not necessarily for a standalone
-`.gsplats.zarr` whose barriers are value-detected; see
-[spatial-query/README.md](spatial-query/README.md) for the full statement.
+contains only splats that would not render. WHICH dims that covers is the write
+side's call, and the reader asks rather than guesses: the gsplats loader forwards the
+writer's published `slice_dims` set as `ToleranceOptions.barrierDims`, and
+barrier-ness is resolved from it (falling back to `DimensionInfo.discrete` only for a
+legacy store that publishes none). `isBarrierDim` honours that set for GSPLATS ONLY —
+it picks the rule matching the BOUNDS and can therefore narrow a window the renderer
+still draws, so every other arm would need its own floor first. A wrong choice by the
+WRITER still produces bounds tighter than the splats' extent; what is gone is the two
+sides classifying a dim differently. Each override direction is then checked against
+what the read side draws for that dim: a dim the writer omitted but the scene declares
+`discrete` gets the HALF-cell `0.5 × step`, because the binary membership gate keyed on
+the scene flag is the only visibility test the projection applies to it (wider than the
+`0.25 × step` it got before #1655); the promote direction is allowed to narrow — it
+does, on a micro-step axis — because the write-side `_BARRIER_BOUND_EPS` pad on such a
+dim is ABSOLUTE (`1e-3`) and already covers the band. Every derivation, plus which
+path actually reaches the demote arm, lives in
+`spatial-query/tolerance-computer.ts` — see
+[spatial-query/README.md](spatial-query/README.md) for the map of which docstring
+owns which argument.
+
 The epsilon (`gsplatsContinuousDimTolerance`) exists so a continuous dim with ZERO
 variance still matches its query: its bounds get no σ expansion, and float32
 storage of the bound (the dominant term, ≈1.9e-7 at a coordinate of 5.3 — the
 `start + k × step` arithmetic drift is secondary) puts them off the float64 query
 position. Its second term covers the band such a splat still RENDERS in, because
 the read side regularizes a degenerate pivot rather than using a raw zero: an
-ABSOLUTE ≈2.75e-5, which therefore dominates below `step = 2.75e-2` and spans many
-cells on a micro-step axis (≈27 at `step = 1e-6`). That is deliberate — the
+ABSOLUTE `T × 1e-5` (≈2.75e-5 at the default `T`), which therefore dominates below
+`step = T × 1e-2` and spans many cells on a micro-step axis (≈27 at
+`step = 1e-6`). That is deliberate — the
 rendered band does not shrink with the declared step, and a sub-cell cap would hide
 content the renderer shows; see
 [spatial-query/README.md](spatial-query/README.md). It replaced a `step × 3.0`

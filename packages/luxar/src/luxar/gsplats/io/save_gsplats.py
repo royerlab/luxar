@@ -42,7 +42,11 @@ from luxar._zarr_compat import consolidate, create_root_group, open_store
 if TYPE_CHECKING:
     from luxar.gsplats.tree import GSplatNode
 
+from luxar.core.group.compositing import WRITER_STAMPED_APPEARANCE_DEFAULTS
 from luxar.encoding import EncodingMode
+from luxar.io._compiler.finalize.amplitude_window import (
+    harmonize_gsplat_amplitude_windows,
+)
 from luxar.io._compiler.gsplat_tree import (
     json_safe_value,
     make_dataset_ctx,
@@ -179,6 +183,50 @@ _HEADER_STATS_KEYS = (
     "timestamp",
     "description",
 )
+
+#: The normalization-provenance block: what a fit did to the intensity scale
+#: before optimising. ONE key name (``floor``) and ONE location (the root
+#: ``pipeline/`` group) on every writer path — see
+#: ``docs/specs/GSPLATS_ZARR_FORMAT.md`` §"Pipeline Group Attributes" (#1175).
+#:
+#: The values are in the INPUT VOLUME's own units: ``floor`` is the background
+#: level subtracted before fitting (``None``/``null`` when suppression was
+#: disabled or refused), ``image_min`` / ``image_max`` are the normalization
+#: bounds and ``intensity_range`` their span. A tiled/progressive path removes
+#: the pedestal OUTSIDE the fitter and then fits with ``floor="none"``, so it
+#: must shift its inner bounds back into those units before recording them —
+#: otherwise ``image_min`` would mean the tile's post-subtraction minimum on one
+#: path and the applied level on another.
+NORMALIZATION_STATS_KEYS = ("floor", "image_min", "image_max", "intensity_range")
+
+
+def agreed_normalization_stats(
+    stats_list: "Sequence[Optional[Dict[str, Any]]]",
+) -> Dict[str, Any]:
+    """The :data:`NORMALIZATION_STATS_KEYS` block the inputs UNANIMOUSLY agree on.
+
+    Merging several fits (tiles of one volume, boxes of one plan, arbitrary
+    datasets) must not invent a normalization record. Inputs can legitimately
+    disagree — two independently fitted volumes have two different pedestals —
+    and promoting the first one's block would silently mislabel every other
+    input. So a key is carried only when every input that HAS an opinion agrees;
+    on any disagreement it is dropped, and the merged artifact simply says
+    nothing rather than something false.
+
+    An input that does not carry a key casts no vote: an empty/skipped tile
+    records no bounds at all, and vetoing on that would erase the block for the
+    whole merge. At least one input must carry the key for it to appear.
+    """
+    agreed: Dict[str, Any] = {}
+    for key in NORMALIZATION_STATS_KEYS:
+        values = [s[key] for s in stats_list if s is not None and key in s]
+        if not values:
+            continue
+        first = values[0]
+        if all(v == first for v in values):
+            agreed[key] = first
+    return agreed
+
 
 #: Fit-runtime scratch keys that live in ``stats`` but are NOT persistable
 #: reduction/topology provenance: napari-movie capture buffers (``movie_frames``
@@ -374,11 +422,12 @@ def _stamp_content_hash(root: zarr.Group) -> str:
     identity for the same reasons the compiler-side hash folds them in — see
     :func:`luxar.io._compiler.finalize.hashing._storage_identity`, which is where
     that argument lives. Both digests should agree on what a store's identity IS,
-    and this one carries an extra obligation: it is what the two IN-PLACE
-    re-stampers (``gsplat annotate-quality`` and ``gsplat doctor --fix``) write,
-    and they leave the per-save ``timestamp`` untouched. Neither of them can
-    change layout today — every mutation on those paths is attrs-only — so what
-    moves their digest is the changed attrs, as it already did. The fold is here so
+    and this one carries an extra obligation: it is what the three IN-PLACE
+    re-stampers (``gsplat annotate-quality``, ``gsplat doctor --fix``, and
+    ``luxar restamp-lod``) write, and they leave the per-save ``timestamp``
+    untouched. None of them can change layout today — every mutation on those
+    paths is attrs-only — so what moves their digest is the changed attrs, as it
+    already did. The fold is here so
     that a future in-place RE-LAYOUT tool cannot re-stamp a store to its input's
     digest. The two remain separate digests over different serializations (this one
     an f-string over metadata only; the compiler's a sorted-key JSON dict plus the
@@ -458,6 +507,33 @@ def _barrier_from_coarsen_dims(
     return [d for d in range(ndim) if d not in coarsen_set]
 
 
+def _with_root_normalization(
+    pipeline_info: Optional[Dict[str, Any]], node: Any
+) -> Optional[Dict[str, Any]]:
+    """Fold the root node's normalization block into ``pipeline_info`` (#1175).
+
+    A ``kind=partition`` (or any tree) result has nowhere to put fit stats — the
+    writer takes them from a flat leaf's ``stats`` — which is how the background
+    level a tiled/content fit removed used to be lost on save. The producing path
+    stamps it onto the ROOT node's ``meta`` instead and this promotes it into the
+    store's ``pipeline/`` group, so a partition and a flat leaf answer the same
+    question with the same key in the same place. Deliberately NOT added to
+    ``_NODE_META_ATTR_KEYS``: a second on-disk home for one fact is the very
+    inconsistency #1175 is about.
+    """
+    meta = getattr(node, "meta", None)
+    if not meta:
+        return pipeline_info
+    merged = dict(pipeline_info) if pipeline_info else {}
+    for key in NORMALIZATION_STATS_KEYS:
+        if key not in meta or key in merged:
+            continue
+        ok, converted = json_safe_value(meta[key])
+        if ok:
+            merged[key] = converted
+    return merged or None
+
+
 def write_gsplats_tree(
     path: str | Path,
     node: Any,  # luxar.gsplats.tree.GSplatNode
@@ -496,8 +572,14 @@ def write_gsplats_tree(
     chunk ordering groups by them first and per-slice reads stay local. When
     ``None`` it is derived from ``pipeline_info["coarsen_dims"]`` (barrier =
     complement) if present; failing that each leaf auto-detects from its centers.
+
+    A tree has no flat ``stats`` dict for :func:`split_fitting_info` to route, so
+    the :data:`NORMALIZATION_STATS_KEYS` block rides on the ROOT node's ``meta``
+    and is promoted here into ``pipeline/`` — the one location the format spec
+    names for it (#1175). An explicit ``pipeline_info`` entry wins.
     """
     path = Path(path)
+    pipeline_info = _with_root_normalization(pipeline_info, node)
     temp_dir, zarr_path = _resolve_zarr_path(path, compress)
     if not compress:
         # Crash-safety: write into a hidden temp sibling and atomically swap
@@ -527,6 +609,7 @@ def write_gsplats_tree(
             store=root,
             barrier_dims=barrier_dims,
             attrs=dict(root_attrs) if root_attrs else None,
+            warn_on_missing_tone_mapping=False,
         )
 
         # Self-identifying v3.0 header (the node's own type/kind/position_bounds attrs
@@ -539,8 +622,10 @@ def write_gsplats_tree(
         root.attrs["luxar_gsplats_version"] = GSPLATS_VERSION
         # A standalone file opened directly (?src=…gsplats.zarr) is the whole layer,
         # so expose the root in the viewer's Layers panel (the scene-embed graft uses
-        # the scene builders instead and does not carry this root attr).
-        root.attrs.setdefault("layer", True)
+        # the scene builders instead and does not carry this root attr). The value
+        # is single-sourced with the READER that has to recognise it as a stamp
+        # rather than as an authored choice (`agreed_authored_appearance`).
+        root.attrs.setdefault("layer", WRITER_STAMPED_APPEARANCE_DEFAULTS["layer"])
         if description:
             root.attrs["description"] = description
 
@@ -565,6 +650,10 @@ def write_gsplats_tree(
             # coverage_inflation, refine, ...) — everything split_fitting_info's
             # other buckets do not consume. Optional group: absent for plain fits.
             root.create_group("pipeline").attrs.update(pipeline_info)
+
+        # One colormap window per gsplat structure (#1691) — before the hash so
+        # the stamp covers the corrected attrs.
+        harmonize_gsplat_amplitude_windows(root)
 
         # Stamp BEFORE consolidating so the hash lands in ``.zmetadata`` too.
         _stamp_content_hash(root)
@@ -691,6 +780,7 @@ def write_partition_streaming(
                 # standalone partition writer (prevents part_10 < part_2 reorder).
                 attrs={"child_index": n_written},
                 barrier_dims=part_barrier,
+                warn_on_missing_tone_mapping=False,
                 # This writer's ROOT is stamped kind=partition below, so every
                 # part_<i> is under a partition by construction — exactly what the
                 # GSplatPartition branch of write_gsplat_node passes. Without it a
@@ -726,7 +816,7 @@ def write_partition_streaming(
             datetime.timezone.utc
         ).isoformat()
         root.attrs["luxar_gsplats_version"] = GSPLATS_VERSION
-        root.attrs.setdefault("layer", True)
+        root.attrs.setdefault("layer", WRITER_STAMPED_APPEARANCE_DEFAULTS["layer"])
         if description:
             root.attrs["description"] = description
 
@@ -739,6 +829,10 @@ def write_partition_streaming(
             root.create_group("provenance").attrs.update(provenance_info)
         if pipeline_info:
             root.create_group("pipeline").attrs.update(pipeline_info)
+
+        # One colormap window per gsplat structure (#1691) — before the hash so
+        # the stamp covers the corrected attrs.
+        harmonize_gsplat_amplitude_windows(root)
 
         # Stamp BEFORE consolidating so the hash lands in ``.zmetadata`` too.
         _stamp_content_hash(root)

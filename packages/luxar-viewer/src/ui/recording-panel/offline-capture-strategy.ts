@@ -12,13 +12,21 @@
  * be running (see the wake-up in `runOfflineCaptureLoop`). Each frame
  * is:
  * 1. Camera orbited by one step (quaternion rotation, same as auto-rotate)
- * 2. Scene rendered (full pipeline, into the capture's own target)
- * 3. Pixels read back asynchronously (PBO fence on WebGL2, mapAsync on
+ * 2. One mandatory rAF (so the LOD selector, which runs BEFORE the orbit
+ *    callback in the same frame, has evaluated the new pose) plus a
+ *    bounded wait for it to settle (`hooks.isLODSettled`) — the rAF loop
+ *    is live for the whole sweep, so a tile that left the frustum
+ *    mid-orbit can be mid-reload when it swings back, and capturing
+ *    immediately bakes a coarse-level pop into the sequence (#1695).
+ *    Skipped entirely — that mandatory rAF included — when the hook
+ *    answers `null`, i.e. this scene has no lod_group to wait for
+ * 3. Scene rendered (full pipeline, into the capture's own target)
+ * 4. Pixels read back asynchronously (PBO fence on WebGL2, mapAsync on
  *    WebGPU) — the rAF loop keeps ticking through the await, which is
  *    why the loop's own render is suppressed for the whole capture
  *    (see the render-skip predicate wired in `core/app/init/pipeline`)
- * 4. Frame stored / encoded
- * 5. Brief yield to keep the browser responsive
+ * 5. Frame stored / encoded
+ * 6. Brief yield to keep the browser responsive
  *
  * The loop owns shared scaffolding (state save/restore via Session,
  * modal overlay, animation pump, progress display, error tolerance);
@@ -45,6 +53,10 @@
  *    environment that forbids it fails before any state is mutated.
  * 3. The finally block is idempotent — every removal/restore handles
  *    the "wasn't set" case gracefully.
+ * 4. The LOD settle drain (step 2) runs AFTER the orbit callback has
+ *    been removed. The camera pose is fixed by then, so the extra
+ *    frames only let pending loads land; draining before the removal
+ *    would keep orbiting the camera while waiting and smear the sweep.
  */
 
 import * as THREE from 'three';
@@ -73,9 +85,73 @@ export interface OfflineCaptureStrategyHooks {
   renderFrameToCanvas(): Promise<HTMLCanvasElement>;
   downloadBlob(blob: Blob, filename: string): void;
   generateFilename(ext: string): string;
+  /**
+   * Whether every in-frame LOD group is showing its selected level at final
+   * quality (`LODGroupRegistry.isCaptureQuiescent()`). The capture drains on
+   * this before grabbing each frame, so an asynchronous fine-level reload —
+   * kicked when a tile swings back into the frustum mid-orbit — cannot be
+   * filmed at its coarse fallback and pop back a few frames later (#1695).
+   *
+   * TRI-STATE, and the third state is what keeps a plain points/lines scene
+   * free:
+   * - `true` / `false` — this scene HAS level-of-detail groups, so the loop
+   *   drains. It then always spends at least one extra rAF per frame even when
+   *   the answer is already `true`, because the selector runs before the orbit
+   *   callback within a frame and so is a pose behind until it ticks once more.
+   * - `null` — this scene has no lod_group to wait for (no registry, or a
+   *   registry with none in it). The loop skips the drain entirely, INCLUDING
+   *   that mandatory tick, which is the pre-#1695 behaviour to the frame. Note
+   *   the narrowness: `null` is NOT "nothing here could ever be mid-load". A
+   *   `--recipe stream` scene — one leaf with an additive ladder and no
+   *   lod_group — answers `null` while its progressive refinement is still
+   *   climbing the ladder, so its early frames can be exported at a partial
+   *   prefix. Same artifact class, not covered by this drain.
+   *
+   * Absent ⇒ identical to `null`. The panel wires this unconditionally and the
+   * pipeline's provider is the one that answers `null`, so "the hook exists"
+   * must never be read as "this scene needs draining".
+   */
+  isLODSettled?(): boolean | null;
 }
 
 type OfflineMode = 'exr' | 'webm' | 'mp4' | 'mkv' | 'png' | 'webp' | 'jpeg';
+
+/**
+ * Wall-clock ceiling on the per-frame wait for the LOD selector to settle
+ * (`hooks.isLODSettled`). A fine level that is genuinely being refetched over
+ * the network can take a while; 2 s is generous enough to cover a normal
+ * reload and short enough that a scene which cannot settle does not multiply
+ * a 600-frame capture's runtime beyond recovery.
+ */
+const LOD_SETTLE_TIMEOUT_MS = 2000;
+
+/**
+ * Frame ceiling on the same wait (≈2 s at 60 fps), inclusive of the mandatory
+ * selector-catch-up tick. NOT redundant with the millisecond deadline: under a
+ * stubbed clock — unit tests, fake timers — `performance.now()` never advances,
+ * so the ms deadline alone would spin forever. Whichever bound trips first ends
+ * the drain.
+ */
+const LOD_SETTLE_MAX_FRAMES = 120;
+
+/**
+ * Consecutive per-frame settle timeouts after which the capture PAUSES
+ * draining. A scene that can never settle (e.g. resident-byte thrash on a
+ * partition that does not fit the budget) would otherwise pay
+ * `LOD_SETTLE_TIMEOUT_MS` on EVERY remaining frame, silently multiplying the
+ * capture's wall-clock. One successful settle resets the counter.
+ *
+ * The pause RE-ARMS: a latched frame still spends a free, non-waiting probe of
+ * the predicate (no rAF, no poll — so a latched frame costs exactly what it did
+ * before the latch fired) and clears the latch the moment that probe reports
+ * settled. Without the re-arm the latch was terminal, and on exactly the scenes
+ * this drain targets — an over-budget `adaptive` / `overview` partition, or a
+ * Capture pressed before the initial load finished — the first three frames
+ * would burn their budget, the latch would fire at frame 3, and the remaining
+ * hundreds of frames would be exported with the pre-#1695 behaviour even though
+ * the scene settles seconds later.
+ */
+const MAX_CONSECUTIVE_LOD_TIMEOUTS = 3;
 
 /** THREE tone-mapping constants → the names the ffmpeg script knows. */
 const TONE_MAP_BY_THREE_CONSTANT: Record<number, ToneMapName> = {
@@ -87,27 +163,21 @@ const TONE_MAP_BY_THREE_CONSTANT: Record<number, ToneMapName> = {
   [THREE.NeutralToneMapping]: 'neutral',
 };
 
-/** Ungraded clamp — the fallback when the renderer can't report a grade. */
-const NEUTRAL_GRADE: GradeSettings = {
-  toneMapping: 'linear',
-  exposure: 0,
-  offset: 0,
-  gamma: 1,
-};
-
 /**
  * Read the display transform an EXR capture bypasses, so the bundled
  * ffmpeg script can put it back.
  *
- * Falls back to an ungraded clamp if the renderer doesn't expose it
- * (older mocks in tests). It must not return `undefined`: that makes the
- * script skip the colour chain entirely, which encodes the scene-linear
- * floats as if they were display-referred — the dark, colour-shifted
- * video this whole path exists to prevent.
+ * Returns `undefined` when the renderer doesn't expose the grade (older
+ * mocks in tests), which is what the script's `unknown-grade` chain is
+ * for: it still converts the transfer — linear floats must never go out
+ * untouched — and says in the header that the curve is missing. Handing
+ * it a fabricated neutral grade instead produced identical pixels but a
+ * header claiming the viewer's own curve had been written out, while the
+ * viewer may well have been on ACES.
  */
-function readGradeSettings(sceneManager: SceneManager): GradeSettings {
+function readGradeSettings(sceneManager: SceneManager): GradeSettings | undefined {
   const grade = sceneManager.postProcessing?.getGradeSettings?.();
-  if (!grade) return NEUTRAL_GRADE;
+  if (!grade) return undefined;
   return {
     toneMapping: TONE_MAP_BY_THREE_CONSTANT[grade.toneMapping] ?? 'neutral',
     exposure: grade.exposure,
@@ -212,23 +282,32 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
     this.hooks.hideAllPanels();
 
     // Save state, disable DPR, lock resize, scale resolution.
-    // Dimensions are rounded to a multiple of 16 (macroblock alignment).
+    // Dimensions are aligned DOWN to even numbers — H.264/H.265 with
+    // yuv420p need even width and height, and encoders pad internally to
+    // their own macroblock size, so nothing here has to.
     //
     // `videoResolution === 0` is the panel's "Native" option, documented
     // in its tooltip as "current canvas size" — so capture at the size
-    // the canvas actually has (logical size × native DPR, which is what
-    // the real-time path records once adaptive DPR is switched off)
-    // rather than silently forcing 1080. Forcing it downscaled every
-    // Retina/4K capture and, because it changed the capture-to-CSS pixel
-    // ratio, rescaled the composited overlays with it.
-    const logicalH = this.sceneManager.renderer.getSize(new THREE.Vector2()).y;
+    // the canvas actually has (display size × native DPR) rather than
+    // silently forcing 1080. Forcing it downscaled every Retina/4K
+    // capture and, because it changed the capture-to-CSS pixel ratio,
+    // rescaled the composited overlays with it.
+    //
+    // The display size comes from post-processing, NOT from
+    // `renderer.getSize()`: the renderer is handed the SSAA-multiplied
+    // size, so under SSAA it reports `display × multiplier` and asking
+    // to render THAT squares the multiplier (2× on a 3024×1700 canvas
+    // asked for a 12096×6800 target). `saveRecordingState` re-applies
+    // the multiplier itself, so the frames on disk still carry SSAA —
+    // which is what the real-time path's canvas backbuffer includes too.
+    const displayH = this.sceneManager.postProcessing.getDisplaySize().height;
     const nativeDPR = session.adaptiveDPRManager?.getNativeDPR() ?? window.devicePixelRatio ?? 1;
     const targetH =
-      opts.videoResolution > 0 ? opts.videoResolution : Math.round(logicalH * nativeDPR);
+      opts.videoResolution > 0 ? opts.videoResolution : Math.round(displayH * nativeDPR);
     session.saveRecordingState({
       disableDPR: true,
       lockResize: true,
-      scaleResolution: { targetH, align16: true },
+      scaleResolution: { targetH, alignEven: true },
     });
     await new Promise((r) => requestAnimationFrame(r));
 
@@ -423,6 +502,14 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
     const captureCallbackId = OfflineCaptureStrategy.CAPTURE_CALLBACK_ID;
     const keepAliveId = OfflineCaptureStrategy.KEEPALIVE_CALLBACK_ID;
     let capturedFrames = 0;
+    /**
+     * Frames the loop actually tried to capture — incremented before
+     * `driver.captureFrame`, so it counts the ones that threw too. The LOD
+     * settle report's denominator: `lodSettleTimeouts` is also counted before
+     * the capture attempt, so measuring it against `capturedFrames` (successes
+     * only) could print "2 of 1".
+     */
+    let attemptedFrames = 0;
     let setupCompleted = false;
     let finalizeSucceeded = false;
 
@@ -446,6 +533,61 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
 
       let consecutiveErrors = 0;
       const MAX_CONSECUTIVE_ERRORS = 3;
+
+      // LOD settle bookkeeping (see the drain inside the frame loop).
+      let lodSettleTimeouts = 0;
+      let consecutiveLodTimeouts = 0;
+      let lodDrainDisabled = false;
+      /**
+       * Sticky counterpart of `lodDrainDisabled`: true once the latch has fired
+       * at any point in the run, and never cleared by a re-arm. The latch
+       * itself comes back on, so it cannot answer "were any frames captured
+       * without waiting?" at the end of the run — this can. It doubles as the
+       * warn-once guard, so a run that latches and re-arms repeatedly logs one
+       * line rather than one per latch.
+       */
+      let lodDrainEverDisabled = false;
+      let lodPredicateThrew = false;
+
+      /**
+       * Read the injected quiescence predicate, tri-state and throw-safe.
+       *
+       * `null` means "do not wait": either this scene has no lod_group to wait
+       * for (no hook, no registry, or a registry with none in it), or the
+       * predicate threw. The guard mirrors
+       * `AnimationController.pacingSuspended()` and exists for the same
+       * reason — this is a guard on the INJECTION POINT, not on a known
+       * thrower. Unguarded, a throw would be caught by the loop's outer
+       * handler, reported as "Recording failed" and discard the whole
+       * sequence, which is a catastrophic price for a diagnostic predicate.
+       *
+       * The degradation is FRAME-SCOPED, not run-scoped: the predicate is
+       * re-probed on the next frame, so a transient throw costs that one
+       * frame's wait and nothing more. Only the WARNING is once-per-run, so a
+       * persistently throwing provider does not emit one line per frame.
+       *
+       * A frame whose opening probe throws is skipped whole: it counts no
+       * settle timeout AND does not reset `consecutiveLodTimeouts`. So an
+       * alternating throw/timeout run latches `lodDrainDisabled` over more
+       * than `MAX_CONSECUTIVE_LOD_TIMEOUTS` frames. That is intended — the
+       * streak measures consecutive *timeouts*, not consecutive frames — but
+       * it is worth stating rather than rediscovering.
+       */
+      const readLODSettled = (): boolean | null => {
+        try {
+          return this.hooks.isLODSettled?.() ?? null;
+        } catch (err) {
+          if (!lodPredicateThrew) {
+            lodPredicateThrew = true;
+            log.warning(
+              Modules.RECORDING,
+              'LOD settle predicate threw — that frame was captured without waiting for LOD ' +
+                `(warned once per run; the predicate is retried on the next frame): ${err}`
+            );
+          }
+          return null;
+        }
+      };
 
       // Wake the rAF loop, exactly as the real-time strategy does. The
       // turntable's rotation is applied from a per-frame callback, and
@@ -480,8 +622,129 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
 
         this.animationController.removePerFrameCallback(captureCallbackId);
 
+        // ── Wait for the LOD selector to settle on this pose (#1695) ──
+        // The rAF loop runs for the whole capture, so the auto-LOD selector
+        // is live and frustum-aware: a tile whose world bbox left the frustum
+        // mid-orbit was demoted to its coarsest ready level (and the
+        // resident-byte pass may have released its fine one), and swinging
+        // back into view kicks an ASYNCHRONOUS reload. Grabbing the frame
+        // immediately bakes that coarse level into the ZIP/MP4 and pops back
+        // a few frames later. So spend extra rAF ticks here until every
+        // in-frame LOD group shows its selected level at final quality.
+        //
+        // This MUST stay after the orbit callback's removal above: the camera
+        // pose is fixed from that point on, so the extra frames only let
+        // pending loads land. Draining before it would keep advancing the
+        // turntable while we wait, smearing the sweep.
+        //
+        // The FIRST rAF below is mandatory, not part of the wait — it is what
+        // makes the predicate describe the pose we are about to capture.
+        // `AnimationController.animate` runs `controls.update()`, then every
+        // per-frame callback in Map insertion order, then the render. The LOD
+        // selector (`lod-group-selector`) is registered at pipeline init,
+        // while the capture's orbit callback is removed and re-added on every
+        // loop iteration and is therefore always LAST in that Map — and
+        // `LuxarOrbitControls.applyOrbitRotation` moves the camera
+        // synchronously. So inside the single rAF awaited above, the selector
+        // evaluated pose N−1 and only THEN did the orbit callback advance the
+        // camera to pose N. Polling straight away would read state computed
+        // for the previous pose, and on the exact frame a tile re-enters the
+        // frustum the selector has not seen the re-entry yet — the predicate
+        // would report settled and that one frame would still be filmed
+        // coarse, which is precisely the pop this drain exists to remove.
+        // One more tick puts the selector on pose N.
+        //
+        // Cost: one rAF per frame even on a fully settled scene THAT HAS LOD
+        // GROUPS. At ~16 ms against a full pipeline render plus an async GPU
+        // readback plus an encode for every frame, that is noise — and a scene
+        // with no lod_group at all pays nothing, because the predicate answers
+        // `null` and the whole block below (that tick included) is skipped.
+        //
+        // Not force-finest: a capture visits the whole scene, so pinning the
+        // finest level across a tiled partition would make peak residency the
+        // entire dataset. Waiting costs time, not memory.
+        if (!sessionAbort.signal.aborted && session.isRecording) {
+          if (lodDrainDisabled) {
+            // Latched off after three consecutive timeouts — but the latch
+            // re-arms (see MAX_CONSECUTIVE_LOD_TIMEOUTS). This probe is FREE:
+            // no rAF, no poll, so a latched frame still costs exactly what it
+            // did pre-#1695. Its boolean describes pose N−1 rather than the
+            // pose being captured, which is fine for a re-arm signal — this
+            // frame is captured undrained either way, and the next frame gets
+            // the full, correctly-timed drain.
+            if (readLODSettled() === true) {
+              lodDrainDisabled = false;
+              consecutiveLodTimeouts = 0;
+            }
+          } else {
+            // Tri-state probe, spent BEFORE the mandatory tick so a scene with
+            // nothing to wait for does not pay for it. Only the NULL-ness of
+            // this read is used: its boolean answer describes pose N−1 (see
+            // above) and is deliberately discarded.
+            const drainApplies = readLODSettled() !== null;
+            if (drainApplies) {
+              // `performance.now()` rather than `Date.now()`: monotonic, so an
+              // NTP/DST step cannot move the deadline backwards mid-drain. It
+              // is also the clock the animation controller measures frames
+              // with.
+              const deadline = performance.now() + LOD_SETTLE_TIMEOUT_MS;
+              // The mandatory selector-catch-up tick (see above). Counts
+              // against the frame budget like any other drain frame.
+              await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+              let drainFrames = 1;
+              // Re-check before polling: a Stop landing during that first frame
+              // must break out without being counted as a settle timeout. A
+              // `null` here (the predicate threw) reads as settled — "do not
+              // wait" — rather than as a timeout to report.
+              let settled =
+                sessionAbort.signal.aborted || !session.isRecording
+                  ? false
+                  : readLODSettled() !== false;
+              // Bounded by BOTH a wall-clock deadline and a frame count —
+              // whichever trips first (see LOD_SETTLE_MAX_FRAMES for why the
+              // frame cap is not redundant).
+              while (
+                !settled &&
+                !sessionAbort.signal.aborted &&
+                session.isRecording &&
+                drainFrames < LOD_SETTLE_MAX_FRAMES &&
+                performance.now() < deadline
+              ) {
+                await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+                drainFrames++;
+                settled = readLODSettled() !== false;
+              }
+              if (settled) {
+                consecutiveLodTimeouts = 0;
+              } else if (!sessionAbort.signal.aborted && session.isRecording) {
+                // A genuine timeout (not an abort/stop breaking out of the
+                // wait).
+                lodSettleTimeouts++;
+                consecutiveLodTimeouts++;
+                if (consecutiveLodTimeouts >= MAX_CONSECUTIVE_LOD_TIMEOUTS) {
+                  lodDrainDisabled = true;
+                  // Warned once per run, not once per latch: the latch re-arms,
+                  // so a scene that keeps stalling would otherwise log a line
+                  // every three frames.
+                  if (!lodDrainEverDisabled) {
+                    lodDrainEverDisabled = true;
+                    log.warning(
+                      Modules.RECORDING,
+                      `${MAX_CONSECUTIVE_LOD_TIMEOUTS} consecutive LOD settle timeouts — ` +
+                        'pausing the per-frame LOD wait. It resumes on the first frame whose ' +
+                        'free probe reports the scene settled; frames captured meanwhile may ' +
+                        'not show the level the selector settled on.'
+                    );
+                  }
+                }
+              }
+            }
+          }
+        }
+
         if (sessionAbort.signal.aborted) break;
 
+        attemptedFrames++;
         try {
           await driver.captureFrame(ctx, capturedFrames, progress);
           capturedFrames++;
@@ -505,6 +768,57 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
 
       if (sessionAbort.signal.aborted) {
         return;
+      }
+
+      // Make a degraded sequence visible rather than a mystery: some frames
+      // were captured before their LOD levels finished loading, so they may not
+      // show the level the selector had settled on.
+      //
+      // "May not show the settled level" rather than "may be coarse", in both
+      // branches, because the predicate is direction-blind: `displayed !==
+      // active` also fires while the never-downgrade gate legitimately holds a
+      // FINER previously-displayed level over a coarser aspiration that is
+      // still streaming. Those frames look better than the selection, not
+      // worse, and telling the user they are coarse would be wrong.
+      //
+      // The two branches report genuinely different things, and conflating
+      // them was actively misleading. Once the latch has fired (sticky
+      // `lodDrainEverDisabled`, since the latch itself re-arms),
+      // `lodSettleTimeouts` stops describing the run: it counts only the
+      // frames that WAITED and gave up, while every frame captured while the
+      // wait was off was taken with no wait at all — so on a 600-frame capture
+      // a handful of counted timeouts can sit in front of hundreds of undrained
+      // frames. (It is NOT pinned at MAX_CONSECUTIVE_LOD_TIMEOUTS: that
+      // constant bounds the consecutive STREAK, and a run that alternates
+      // timeout/settle can reach any total before three land in a row.) So: an
+      // exact count only when waiting stayed on for the whole run; otherwise
+      // say what actually happened and claim no number. The exact branch's
+      // denominator is `attemptedFrames`, not `capturedFrames` — a timeout is
+      // counted before the capture attempt, so a frame that timed out and then
+      // threw would otherwise be in the numerator but not the denominator.
+      if (lodSettleTimeouts > 0) {
+        if (lodDrainEverDisabled) {
+          log.warning(
+            Modules.RECORDING,
+            `LOD settle waiting was paused after ${MAX_CONSECUTIVE_LOD_TIMEOUTS} consecutive ` +
+              `timeouts (${LOD_SETTLE_TIMEOUT_MS} ms / ${LOD_SETTLE_MAX_FRAMES} frame limit ` +
+              'each), and the frames captured while it was off were taken without waiting. An ' +
+              `unknown number of this run's ${capturedFrames} frame(s) may therefore not show ` +
+              'the level the selector had settled on.'
+          );
+          // Says what happened (waiting was paused), NOT "LOD never settled" —
+          // a 600-frame run that settled cleanly for 550 frames and then hit a
+          // network stall lands here too.
+          showToast('Paused waiting for LOD — some frames may not show the settled level');
+        } else {
+          log.warning(
+            Modules.RECORDING,
+            `${lodSettleTimeouts} of ${attemptedFrames} frame(s) were captured before their ` +
+              `LOD levels settled (${LOD_SETTLE_TIMEOUT_MS} ms / ${LOD_SETTLE_MAX_FRAMES} frame ` +
+              'limit). Those frames may not show the level the selector had settled on.'
+          );
+          showToast(`${lodSettleTimeouts} frame(s) captured before LOD settled`);
+        }
       }
 
       try {

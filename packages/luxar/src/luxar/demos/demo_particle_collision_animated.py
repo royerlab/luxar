@@ -134,6 +134,8 @@ DEMO_META = {
     },
     "caches": [],
     "outputs": ["collision_animated"],
+    # Procedurally generated: no external dataset, nothing to credit.
+    "citation": None,
 }
 
 import sys
@@ -144,7 +146,8 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer
+from luxar.core.viewer_config import ViewerConfig
+from luxar.demos import add_demo_caption, launch_viewer
 
 # Reuse the shared physics constants + event generator from the static particle
 # collision demo (now a normal sibling import; see the retired sys.modules alias).
@@ -710,7 +713,9 @@ def generate_animated_detector_scene(
                 ),
             ]
         )
-        scene = compiler.create_scene(dimensions=dims)
+        scene = compiler.create_scene(
+            dimensions=dims, viewer_config=ViewerConfig(cinematic_mode=True)
+        )
 
         rng = np.random.default_rng(42)
 
@@ -1123,12 +1128,10 @@ def generate_animated_detector_scene(
         )
 
         # Info (bottom-right)
-        scene.add_text(
+        add_demo_caption(
+            scene,
             "Animated tracks \u2022 Detector simulation",
-            position=(0.98, 0.97),
-            font_size=0.015,
-            anchor="bottom-right",
-            color="rgba(200,200,200,0.45)",
+            DEMO_META.get("citation"),
         )
 
     return total_segments, total_points

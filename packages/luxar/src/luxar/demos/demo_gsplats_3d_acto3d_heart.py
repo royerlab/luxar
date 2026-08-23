@@ -88,6 +88,11 @@ DEMO_META = {
     },
     "caches": ["gsplats_acto3d_heart"],
     "outputs": ["gsplats_3d_acto3d_heart"],
+    "citation": {
+        "short": "Takeshita et al. 2024 (Acto3D)",
+        "ref": "Takeshita et al. 2024",
+        "doi": "10.1242/dev.202550",
+    },
 }
 
 # Enable MPS->CPU fallback for unsupported PyTorch ops (must be before torch import)
@@ -103,7 +108,9 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
+    add_demo_caption,
     launch_viewer,
     load_precomputed_gsplats,
     parse_demo_flags,
@@ -527,7 +534,11 @@ def create_luxar_scene(
                     Dimension("z", unit="um", display=True),
                 ]
             )
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                citation=DEMO_META["citation"],
+                dimensions=dims,
+                viewer_config=ViewerConfig(cinematic_mode=True),
+            )
 
             scene.attrs["title"] = "GSplats: Mouse Embryo Heart E13.5 (Acto3D)"
             scene.attrs["description"] = """
@@ -617,12 +628,10 @@ Controls:
                 anchor="bottom-left",
             )
 
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 "Light-sheet \u2022 1.06\u00d71.06\u00d72.40 \u03bcm",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
 
         aprint(f"Scene saved: {output_path}")

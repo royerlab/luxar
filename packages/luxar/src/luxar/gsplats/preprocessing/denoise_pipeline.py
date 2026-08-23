@@ -219,11 +219,13 @@ def calibrate_h_for_channel(
     search_distance: int = 5,
     backend: str = "auto",
     device: Optional[str] = None,
+    axes: Optional[str] = None,
 ) -> float:
     """Calibrate NLM h for one channel by sampling timepoints.
 
     Loads the central 2D slice at each sample timepoint, normalizes to [0,1],
     runs Noise2Self calibration, and returns the median h across timepoints.
+    ``axes`` explicitly labels the source array when positional slicing is unsafe.
     """
     import torch
 
@@ -239,6 +241,7 @@ def calibrate_h_for_channel(
                 channel=channel,
                 timepoint=tp,
                 array_key=array_key,
+                axes=axes,
             )
             # Normalize to [0,1]
             norm_vol, _, _ = normalize_volume(vol)
@@ -285,8 +288,11 @@ def calibrate_all_channels(
     backend: str = "auto",
     device: Optional[str] = None,
     h_override: Optional[float] = None,
+    axes: Optional[str] = None,
 ) -> dict[int, float]:
     """Calibrate NLM h for all channels.
+
+    ``axes`` explicitly labels the source array when positional slicing is unsafe.
 
     Returns
     -------
@@ -317,6 +323,7 @@ def calibrate_all_channels(
                 channel=c,
                 sample_timepoints=sample_tps,
                 array_key=array_key,
+                axes=axes,
                 patch_size=patch_size,
                 search_distance=search_distance,
                 backend=backend,

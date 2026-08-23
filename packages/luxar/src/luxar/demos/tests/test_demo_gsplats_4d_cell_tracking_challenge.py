@@ -237,8 +237,38 @@ class TestVoxelSize:
     def test_metadata_without_multiscales_fails_clearly(self, tmp_path) -> None:
         """Not a KeyError from the middle of a subscript chain."""
         path = self._store(tmp_path, {"ome": {"version": "0.5"}})
-        with pytest.raises(ValueError, match="multiscales"):
+        with pytest.raises(ValueError, match="has no OME-Zarr `multiscales`"):
             _demo.voxel_size_of(path)
+
+    def test_multiscales_without_a_scale_transform_says_which_half_is_missing(
+        self, tmp_path
+    ) -> None:
+        """The store IS an OME-Zarr crop; it just states no spacing.
+
+        The two failures need different messages: blaming absent `multiscales`
+        for a store that declares them sends the reader looking for the wrong
+        thing (and lists attributes that plainly include `ome`).
+        """
+        no_scale = [
+            {
+                "datasets": [
+                    {
+                        "path": "0",
+                        "coordinateTransformations": [
+                            {"type": "translation", "translation": [0, 0, 0, 0]}
+                        ],
+                    }
+                ]
+            }
+        ]
+        path = self._store(
+            tmp_path, {"ome": {"version": "0.5", "multiscales": no_scale}}
+        )
+
+        with pytest.raises(ValueError, match="states no `scale`") as excinfo:
+            _demo.voxel_size_of(path)
+
+        assert "has no OME-Zarr `multiscales`" not in str(excinfo.value)
 
 
 class TestTrackWindow:
@@ -669,6 +699,24 @@ class TestPrecomputedRoundTrip:
             )
             is None
         )
+
+    def test_a_fault_propagates_instead_of_triggering_kaggle_and_a_gpu_fit(
+        self, tmp_path
+    ) -> None:
+        """Only a routable absence may be answered with the fallback (#1618).
+
+        The fallback here is not cheap: an authenticated Kaggle download plus a
+        multi-crop GPU fit. A dataset key the manifest does not carry is a typo
+        or a rename — a fault — and used to come back as ``None`` while the
+        expensive fallback was announced over it.
+        """
+        from luxar.utils.data_fetch import DatasetNotFound
+
+        manifest = {"records": {"cc-by": {}}, "datasets": {}}
+        with pytest.raises(DatasetNotFound):
+            _demo.load_precomputed_crops(
+                ["crop_x"], manifest=manifest, cache_root=tmp_path
+            )
 
     def test_a_crop_without_annotation_round_trips_as_none(self, tmp_path) -> None:
         """`tracks: None` is what the scene builder reads as "volume only".

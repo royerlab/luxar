@@ -51,6 +51,17 @@ DEMO_META = {
     },
     "caches": ["esm3_swissprot"],
     "outputs": ["esm3_protein_landscape"],
+    # The proteins are UniProt's and the coordinates are the model's, so the
+    # credit names both -- crediting only the model would attribute someone
+    # else's dataset to it. The model is chosen at RUNTIME (`--model=`), so this
+    # static entry names the default (`esmc-300m`); the scene itself is stamped
+    # with whichever model actually ran. Keep the two in step if the default
+    # changes.
+    "citation": {
+        "short": "UniProt/Swiss-Prot; embeddings by EvolutionaryScale ESM C, 2024",
+        "ref": "UniProt / EvolutionaryScale 2024",
+        "license": "CC BY 4.0",
+    },
 }
 
 import gzip
@@ -63,8 +74,10 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
     MissingDependencyError,
+    add_demo_caption,
     launch_viewer,
     require_module,
     stack_colorings,
@@ -657,7 +670,9 @@ def _reduce_to_3d(
 def generate_esm3_landscape(
     output_path: Path,
     sample_size: int = DEFAULT_SAMPLE_SIZE,
-    model_name: str = "esm3-open",
+    # Same default as `main()`, so a caller that omits it gets the model
+    # DEMO_META credits rather than one the CLI never runs.
+    model_name: str = "esmc-300m",
     cache_dir: Path | None = None,
     already_reported_quarantine: frozenset[Path] = frozenset(),
 ) -> int:
@@ -808,7 +823,18 @@ def generate_esm3_landscape(
             else "EvolutionaryScale ESM C, 2024"
         )
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                dimensions=dims,
+                # Stamp the model that actually produced these embeddings, not
+                # the one DEMO_META names for the default run -- otherwise a
+                # `--model=` override writes a credit contradicting this
+                # scene's own footer two calls below.
+                citation={
+                    **DEMO_META["citation"],
+                    "short": f"UniProt/Swiss-Prot; embeddings by {model_citation}",
+                },
+                viewer_config=ViewerConfig(cinematic_mode=True),
+            )
 
             # Substitutive Points LOD: ~572k proteins is a large cloud, so coarse
             # levels replace it with fewer, larger merged splats when zoomed out
@@ -840,12 +866,10 @@ def generate_esm3_landscape(
                 blend_mode="difference",
             )
 
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 f"{n:,} proteins • {model_label} embeddings • 3D UMAP • {model_citation}",
-                position=(0.98, 0.97),
-                font_size=0.012,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
 
             # Per-view color legends (each visible only on its coloring slot).

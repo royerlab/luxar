@@ -933,6 +933,22 @@ class TestTransformCentralization:
             with pytest.raises(KeyError):
                 _ = store["missing"]
 
+    def test_node_rollback_primitives(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
+            compiler = LuxarZarrCompiler(zarr_path)
+            compiler.create_scene(dimensions=Dimensions.default_3d())
+            compiler.write_group("parent/child", opacity=0.5)
+
+            assert compiler.node_exists("parent/child")
+            assert not compiler.node_exists("missing")
+            compiler.delete_node("missing")
+            compiler.delete_node("parent")
+
+            assert not compiler.node_exists("parent")
+            with pytest.raises(ValueError, match="Cannot delete the scene root"):
+                compiler.delete_node("")
+
 
 class TestSpatialOrdering:
     """Test spatial ordering with Morton/Hilbert curves."""
@@ -1333,6 +1349,19 @@ class TestFinalizeGuards:
 
             with pytest.raises(RuntimeError, match="finalized"):
                 compiler.delete_group_attr("pts", "transform")
+
+    @pytest.mark.parametrize("method_name", ["node_exists", "delete_node"])
+    def test_node_rollback_primitives_after_finalize_raise(
+        self, method_name: str
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
+            compiler = LuxarZarrCompiler(zarr_path)
+            compiler.create_scene(dimensions=Dimensions.default_3d())
+            compiler.finalize()
+
+            with pytest.raises(RuntimeError, match="finalized"):
+                getattr(compiler, method_name)("missing")
 
     def test_writes_inside_context_still_work(self) -> None:
         """Sanity check: the guard only fires after finalize, not at context entry."""
@@ -1963,6 +1992,111 @@ class TestUnknownRenderAttrRejected:
             root = zarr.open_group(str(zarr_path), mode="r")
             assert root["styled"].attrs["join"] == "none"
             assert "join" not in root["styled"]["lns"].attrs
+
+    @pytest.mark.parametrize(
+        "attr,value",
+        [
+            ("ambient", 0.3),
+            ("shade_exponent", 1.5),
+            ("specular", 0.5),
+            ("shininess", 24.0),
+            ("alpha_cutoff", 0.2),
+        ],
+    )
+    @pytest.mark.parametrize("node_type", ["points", "lines", "gsplats", "group"])
+    def test_mesh_appearance_refused_on_a_non_mesh_node(
+        self, node_type: str, attr: str, value: float
+    ) -> None:
+        """Mesh appearance attrs must not persist as dead non-mesh metadata."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            with pytest.raises(ValueError, match="mesh-only attribute") as exc_info:
+                attrs = {attr: value}
+                if node_type == "points":
+                    scene.add_points("node", self.POS, **attrs)
+                elif node_type == "lines":
+                    scene.add_lines("node", self.POS, 0.5, **attrs)
+                elif node_type == "gsplats":
+                    scene.add_gsplats(
+                        "node",
+                        centers=self.POS,
+                        amplitudes=np.ones(len(self.POS), dtype=np.float32),
+                        cholesky_factors=np.ones((len(self.POS), 6), dtype=np.float32),
+                        **attrs,
+                    )
+                else:
+                    scene.add_group("node", **attrs)
+            error = str(exc_info.value)
+            assert "set them on each mesh leaf (part_<i> / child_<i>)" in error
+            assert "pass them to add_mesh(...)" in error
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert "node" not in root
+
+    def test_mesh_appearance_guard_covers_every_validated_key(self) -> None:
+        """Every mesh appearance validator must have a non-mesh refusal."""
+        from luxar.core.group.compositing import MESH_ONLY_APPEARANCE_ATTRS
+        from luxar.io._compiler.node_common import _MESH_APPEARANCE_VALIDATORS
+
+        assert MESH_ONLY_APPEARANCE_ATTRS == _MESH_APPEARANCE_VALIDATORS.keys()
+
+    @pytest.mark.parametrize(
+        "attr,value",
+        [
+            ("ambient", 0.3),
+            ("shade_exponent", 1.5),
+            ("specular", 0.5),
+            ("shininess", 24.0),
+            ("alpha_cutoff", 0.2),
+        ],
+    )
+    @pytest.mark.parametrize("node_type", ["points", "lines", "gsplats", "group"])
+    def test_mesh_appearance_refused_via_write_through_attrs(
+        self, node_type: str, attr: str, value: float
+    ) -> None:
+        """The adder's refusal is worthless if the write-through mapping re-opens
+        the same door (#1782). ``node.attrs["specular"] = 0.5`` on a non-mesh node
+        persists straight to the store via the #1764 mapping, so it must be
+        refused there too — never left as dead metadata the viewer ignores."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            if node_type == "points":
+                node = scene.add_points("node", self.POS)
+            elif node_type == "lines":
+                node = scene.add_lines("node", self.POS, 0.5)
+            elif node_type == "gsplats":
+                node = scene.add_gsplats(
+                    "node",
+                    centers=self.POS,
+                    amplitudes=np.ones(len(self.POS), dtype=np.float32),
+                    cholesky_factors=np.ones((len(self.POS), 6), dtype=np.float32),
+                )
+            else:
+                node = scene.add_group("node")
+            with pytest.raises(ValueError, match="mesh-only attribute") as exc_info:
+                node.attrs[attr] = value
+            error = str(exc_info.value)
+            assert "set them on each mesh leaf (part_<i> / child_<i>)" in error
+            assert "pass them to add_mesh(...)" in error
+            assert attr not in node._attrs_cache
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert attr not in root["node"].attrs
+
+    def test_mesh_appearance_allowed_via_write_through_on_a_mesh_leaf(self) -> None:
+        """The write-through guard must not block a genuine mesh leaf — its
+        construction fills the attr cache directly (never through the setter), and
+        a post-hoc set is how an author tweaks a mesh after ``add_mesh`` returns."""
+        verts = np.random.RandomState(1).rand(12, 3).astype(np.float32)
+        faces = np.array([[0, 1, 2], [3, 4, 5], [6, 7, 8]], dtype=np.uint32)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            mesh = scene.add_mesh("m", verts, faces)
+            mesh.attrs["specular"] = 0.4
+            assert mesh._attrs_cache["specular"] == 0.4
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert root["m"].attrs["specular"] == 0.4
 
     @pytest.mark.parametrize("geometry_type", ["points", "gsplats", "mesh"])
     @pytest.mark.parametrize("via", ["property", "set_join"])

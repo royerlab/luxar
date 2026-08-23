@@ -88,6 +88,24 @@ export interface GSplatsMetadata {
   /** Bits per dimension for space-filling curve encoding (when ordering != 'none') */
   ordering_bits_per_dim?: number;
 
+  /**
+   * BARRIER (categorical) center-column indices the writer's spatial ordering
+   * grouped by — the authoritative answer to "which dims did `chunk_bounds` NOT
+   * get the `truncation_radius · σ` expansion on". Stamped whenever
+   * `ordering != 'none'` by
+   * `luxar/io/_compiler/gsplat_assembly.py::apply_gsplat_group_attrs` (full leaves)
+   * and by the lightweight `additive_<i>` sub-LOD branch of
+   * `luxar/io/_compiler/gsplat_tree.py::_write_single_splat_set`, from whichever
+   * set `compute_chunk_bounds_gsplats` actually used.
+   *
+   * Read by `gsplats-spatial-index-loader.ts` and passed to the tolerance computer
+   * as `ToleranceOptions.barrierDims`. Absent on a legacy store (and on
+   * `ordering: 'none'` nodes, which run no spatial query), where the reader falls
+   * back to the scene dimensions' `discrete` flags. Same index space as `ndim` /
+   * `chunk_bounds` columns / `slicePosition`.
+   */
+  slice_dims?: number[];
+
   /** 4x4 transform matrix (column-major for THREE.js) */
   transform?: number[];
 

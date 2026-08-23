@@ -12,14 +12,20 @@ See demos/README.md for more information on creating new demos.
 """
 
 from ..utils.data_fetch import (
+    LOCAL_FIT_DIRNAME,
     DatasetNotFound,
+    DatasetUnavailable,
     LocalComputeDataset,
     dataset_spec,
     ensure_dataset,
     load_dataset_gsplats,
+    load_local_fit_gsplats,
+    load_local_fit_gsplats_at,
     load_manifest,
+    local_fit_path,
 )
 from ..utils.demos import (
+    BundleMemberNotFound,
     cache_computed,
     cached_download,
     create_lorenz_attractor,
@@ -41,6 +47,7 @@ from ..utils.demos import (
     voxel_sampled_payload_agreement,
     warn_if_no_cuda_gpu,
 )
+from ._caption import add_demo_caption, format_demo_caption
 from ._dependencies import (
     INSTALL_SPECS,
     DependencySpec,
@@ -55,11 +62,15 @@ from ._dependencies import (
 
 __all__ = [
     "INSTALL_SPECS",
+    "LOCAL_FIT_DIRNAME",
+    "BundleMemberNotFound",
     "DatasetNotFound",
+    "DatasetUnavailable",
     "DependencySpec",
     "DependencyStatus",
     "LocalComputeDataset",
     "MissingDependencyError",
+    "add_demo_caption",
     "cache_computed",
     "cached_download",
     "create_lorenz_attractor",
@@ -69,15 +80,19 @@ __all__ = [
     "detect_device",
     "ensure_dataset",
     "extras_for",
+    "format_demo_caption",
     "hsv_to_rgb",
     "is_installed",
     "is_lfs_pointer",
     "launch_viewer",
     "load_dataset_bundle",
     "load_dataset_gsplats",
+    "load_local_fit_gsplats",
+    "load_local_fit_gsplats_at",
     "load_manifest",
     "load_precomputed_bundle",
     "load_precomputed_gsplats",
+    "local_fit_path",
     "parse_demo_flags",
     "parse_int_arg",
     "parse_path_arg",

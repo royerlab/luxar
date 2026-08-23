@@ -378,6 +378,34 @@ def test_reserved_attrs_rejected(tmp_path) -> None:
             compiler.write_mesh("m", _TETRA_V, _TETRA_F, **{"n_faces": 99})
 
 
+def test_mesh_appearance_attrs_are_written_and_validated(tmp_path) -> None:
+    """All mesh lighting controls survive authoring, while invalid values fail early."""
+    with LuxarZarrCompiler(tmp_path / "appearance.luxar.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        mesh = scene.add_mesh(
+            "m",
+            _TETRA_V,
+            _TETRA_F,
+            ambient=0.3,
+            shade_exponent=2.0,
+            specular=0.12,
+            shininess=24.0,
+            alpha_cutoff=0.4,
+        )
+        assert mesh.attrs["ambient"] == 0.3
+        assert mesh.attrs["shade_exponent"] == 2.0
+        assert mesh.attrs["specular"] == 0.12
+        assert mesh.attrs["shininess"] == 24.0
+        assert mesh.attrs["alpha_cutoff"] == 0.4
+
+        with pytest.raises(ValueError, match="Specular must be finite and between"):
+            scene.add_mesh("bad_specular", _TETRA_V, _TETRA_F, specular=2.0)
+        with pytest.raises(
+            ValueError, match="Shininess must be finite and greater than 0"
+        ):
+            scene.add_mesh("bad_shininess", _TETRA_V, _TETRA_F, shininess=0.0)
+
+
 def test_bad_vertices_shape(tmp_path) -> None:
     """Vertices must be 2D ``(V, D)`` — mirrors the lines/points equivalents."""
     with LuxarZarrCompiler(tmp_path / "v.luxar.zarr") as compiler:

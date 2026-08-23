@@ -70,11 +70,31 @@ import torch
 from arbol import aprint, asection
 
 from luxar.gsplats.fitting.results import (
+    lift_normalization_stats,
     lift_source_grid_stats,
     stamp_voxels_per_splat,
 )
 from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
 from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
+
+
+def _pin_pass0_norm_range(
+    pass_i: int,
+    image_max: float,
+    applied_floor: "float | None",
+    pass_kwargs: dict[str, Any],
+) -> None:
+    """Put progressive pass 0 on the floor-subtracted normalization basis."""
+    if pass_i != 0 or applied_floor is None:
+        return
+    from luxar.gsplats.fitting.preprocessing import NORM_RANGE_MIN_SPAN
+
+    shifted_max = float(image_max) - float(applied_floor)
+    pass_kwargs["norm_range"] = (
+        (0.0, shifted_max)
+        if np.isfinite(shifted_max) and shifted_max > NORM_RANGE_MIN_SPAN
+        else None
+    )
 
 
 def _compute_psnr_chunked(
@@ -299,7 +319,7 @@ def fit_progressive_gaussian_splats(
     on the same GPU and fill the utilization gap.
     """
     from luxar.gsplats.fit_gsplats import fit_gaussian_splats
-    from luxar.gsplats.fitting.preprocessing import _resolve_floor
+    from luxar.gsplats.fitting.preprocessing import _resolve_applied_norm_bounds
     from luxar.gsplats.fitting.validation import _validate_floor
     from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
 
@@ -338,23 +358,15 @@ def fit_progressive_gaussian_splats(
 
     start_time = time.time()
     V_original = V.astype(np.float32)
-    applied_floor = _resolve_floor(V_original, floor_spec)
-    # A floor at/above the brightest voxel would clip everything to 0; refuse it
-    # (mirrors the single-pass guard in _normalize_data). `auto` is capped at the
-    # median, so only an explicit too-high float/percentile can reach here.
-    if applied_floor is not None and applied_floor >= float(V_original.max()):
-        if verbose:
-            aprint(
-                f"Warning: floor {applied_floor:.6g} >= volume max "
-                f"{float(V_original.max()):.6g}; ignoring (would erase all signal)."
-            )
-        applied_floor = None
+    _, image_max, applied_floor = _resolve_applied_norm_bounds(
+        V_original,
+        float(kwargs.get("norm_percentile", 0.0)),
+        verbose,
+        floor_spec,
+        kwargs.get("norm_range"),
+    )
     if applied_floor is not None:
         V_original = np.clip(V_original - applied_floor, 0.0, None).astype(np.float32)
-        if verbose:
-            aprint(
-                f"Floor suppression: subtracted background level {applied_floor:.6g}"
-            )
 
     accumulated_lods: list[AdditiveSubLOD] = []
     prev_psnr = 0.0
@@ -473,6 +485,10 @@ def fit_progressive_gaussian_splats(
         # on the (already background-relative) full volume or its residuals would
         # wrongly eat signal.
         pass_kwargs["floor"] = "none"
+
+        # When the effective baseline was subtracted up front, pin pass 0 to the
+        # same zero-based bounds resolved by the single-pass fitter.
+        _pin_pass0_norm_range(pass_i, image_max, applied_floor, pass_kwargs)
 
         # A supplied whole-volume intensity scale describes the VOLUME, not the
         # residual chain built from it. Pass 0 shares it (that is the point);
@@ -605,6 +621,10 @@ def fit_progressive_gaussian_splats(
         torch.cuda.empty_cache()
 
     # --- Build result ---
+    # Deferred: luxar.gsplats.io imports GSplatData from this package's
+    # __init__, which is still executing when this module is first imported.
+    from luxar.gsplats.io.save_gsplats import NORMALIZATION_STATS_KEYS
+
     total_time = time.time() - start_time
     total_splats = sum(lod.n_splats for lod in accumulated_lods)
 
@@ -630,7 +650,17 @@ def fit_progressive_gaussian_splats(
         # Full per-pass stats (one dict per pass) -- the per-pass LOD
         # intermediates are not preserved on the flattened return value,
         # so any caller that wants per-pass detail must read this list.
-        "pass_stats": [dict(lod.stats) for lod in accumulated_lods],
+        #
+        # MINUS the normalization block (#1175). This dict is not in
+        # `_FITTING_INFO_KEYS`, so `split_fitting_info` routes it verbatim into
+        # `pipeline/` — right beside the corrected top-level block. Every pass
+        # ran with floor="none" on the ALREADY-subtracted array, so its own
+        # `floor: null, image_min: 0.0` describes the fitter's input, not the
+        # artifact, and shipping both put two contradicting answers in one group.
+        "pass_stats": [
+            {k: v for k, v in lod.stats.items() if k not in NORMALIZATION_STATS_KEYS}
+            for lod in accumulated_lods
+        ],
     }
 
     if verbose:
@@ -664,6 +694,12 @@ def fit_progressive_gaussian_splats(
     # pass's splat count, and the merged result has all of them — it is stamped
     # below instead, after the cull.
     lift_source_grid_stats(overall_stats, accumulated_lods)
+
+    # Same treatment for the normalization block (#1175): the pedestal was
+    # removed from V_original up front and every pass then ran with
+    # floor="none", so without this a progressive fit ships no record at all of
+    # the background it subtracted.
+    lift_normalization_stats(overall_stats, accumulated_lods, applied_floor)
     final_result = GSplatData.from_additive_sublods(
         accumulated_lods, stats=overall_stats
     )
@@ -702,8 +738,19 @@ def fit_progressive_gaussian_splats(
         and 0 < cull_retention < 1.0
         and final_result.n_splats > 0
     ):
+        from luxar.gsplats._data.filtering import (
+            measured_stats_snapshot,
+            restore_measured_stats,
+        )
+
         n_before = final_result.n_splats
+        # The per-pass and overall PSNRs were measured above, on the pre-trim
+        # splats. `cull` drops inherited scores (#1600), but this trim is the
+        # last step of the FIT — carried across rather than re-rendered, and
+        # rather than shipping a progressive fit with no ladder scores at all.
+        measured = measured_stats_snapshot(final_result)
         final_result = final_result.cull(method="cumulative", retention=cull_retention)
+        restore_measured_stats(final_result, measured)
         n_removed = n_before - final_result.n_splats
         if verbose:
             aprint(

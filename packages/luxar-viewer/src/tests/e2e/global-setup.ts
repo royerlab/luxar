@@ -48,6 +48,12 @@ const REQUIRED_DATASETS = [
   // slice-cache.spec.ts: 4D progressive points (additive LODs + hidden
   // discrete frame dim) — the S-cache's target configuration.
   'progressive_timelapse_example.luxar.zarr',
+  // Read by frame-pacing.spec.ts (the #1724 regression) and by the un-parked
+  // case in all-examples-smoke-test.spec.ts. Listed so a run without it
+  // reports the name up front (and so its reachability is probed) — like
+  // every example above, a missing one WARNS rather than throwing; the throw
+  // path is check 3's generated fixtures.
+  'performance_benchmark_example.luxar.zarr',
 ];
 
 /**

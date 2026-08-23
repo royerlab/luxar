@@ -70,7 +70,7 @@ REQUIREMENTS
       demo needs it), PLUS an API token, which no install can supply: create one
       at https://www.kaggle.com/settings ("API tokens") and save it as
       ``~/.kaggle/access_token`` or export ``KAGGLE_API_TOKEN``.
-      Neither is needed once the fit cache is warm.
+      Neither is needed once the fit cache and downloaded crop metadata are warm.
     - CUDA GPU strongly recommended: ~24 s per timepoint fit at the default
       budget on an RTX PRO 6000 (~40 min per crop). Apple MPS is roughly 6x
       slower, so a full crop there is measured in hours.
@@ -98,6 +98,12 @@ DEMO_META = {
     },
     "caches": ["gsplats_cell_tracking"],
     "outputs": ["gsplats_4d_cell_tracking_challenge"],
+    "citation": {
+        "short": "CZ Biohub San Francisco; imaging by the Royer Group",
+        "ref": "CZ Biohub / Royer Group",
+        "license": "CC0 1.0",
+        "url": "https://www.kaggle.com/competitions/biohub-cell-tracking-during-development",
+    },
 }
 
 import math
@@ -112,7 +118,9 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler, transforms
+from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
+    add_demo_caption,
     detect_device,
     hsv_to_rgb,
     launch_viewer,
@@ -381,14 +389,24 @@ def load_precomputed_crops(
       ``pending_upload``, so until the bytes are on Zenodo there is nothing to
       resolve; that is an expected state during the migration rather than a
       fault, and it is reported rather than swallowed.
+    * the hosted record does not carry one of the CHOSEN crops. That is the same
+      condition one crop at a time — ``--datasets N`` asks for the first N of a
+      list the record may only partly cover — so it is routed the same way, and
+      announced by name. It is not detectable as a fault: a partial record is
+      exactly what a migration in progress looks like.
 
-    Anything else — a checksum that will not verify, a half-listed dataset —
-    raises, because those are faults a demo must not route around.
+    Anything else — a checksum that will not verify, a missing packaged
+    manifest, a ``PRECOMPUTED_DATASET`` the manifest does not know
+    (:class:`DatasetNotFound`) — raises, because those are faults a demo must
+    not route around. The fallback here is not cheap: it downloads from the
+    authenticated Kaggle endpoint and fits every chosen crop on the GPU, so
+    disguising a broken install as "the data is not published yet" costs a user
+    many minutes and an account they may not have.
 
     ``manifest`` / ``cache_root`` exist for tests, mirroring
     :func:`~luxar.utils.data_fetch.ensure_dataset`.
     """
-    from luxar.demos import DatasetNotFound, LocalComputeDataset, ensure_dataset
+    from luxar.demos import DatasetUnavailable, LocalComputeDataset, ensure_dataset
 
     try:
         paths = ensure_dataset(
@@ -399,8 +417,14 @@ def load_precomputed_crops(
         )
     except LocalComputeDataset:
         return None
-    except (FileNotFoundError, DatasetNotFound) as exc:
-        aprint(f"Precomputed crops unavailable ({exc}); fitting locally instead.")
+    except DatasetUnavailable as exc:
+        # The one routable condition: nothing anywhere holds these bytes yet.
+        # `DatasetNotFound` is deliberately NOT caught — a dataset key the
+        # manifest does not carry is a typo or a rename, i.e. a fault.
+        aprint(
+            f"Precomputed crops unavailable ({exc}); falling back to the Kaggle "
+            "download and local fit (already-fitted timepoints are reused)."
+        )
         return None
 
     by_name = {p.name: p for p in paths}
@@ -409,7 +433,8 @@ def load_precomputed_crops(
         volume_name, tracks_name = precomputed_file_names(dataset)
         if volume_name not in by_name or tracks_name not in by_name:
             aprint(
-                f"Hosted dataset has no entry for {dataset}; fitting locally instead."
+                f"Hosted dataset has no entry for {dataset}; falling back to the "
+                "Kaggle download and local fit (already-fitted timepoints are reused)."
             )
             return None
         crops.append(
@@ -660,27 +685,40 @@ def _device() -> str:
 def voxel_size_of(image_store: Path) -> tuple[float, float, float]:
     """Read the crop's ZYX voxel size (um) from its OME-Zarr metadata.
 
-    Both metadata layouts are accepted. OME-Zarr **0.5** (which is what a zarr v3
-    store declares) nests everything under an ``ome`` key, while 0.4 puts
-    ``multiscales`` at the top level — and a zarr v3 store written by a 0.4-era
-    tool has the v3 chunk layout with the 0.4 attributes, so neither spelling can
-    be assumed from the store version alone.
+    Both metadata layouts are accepted — see
+    :func:`luxar.io.ome_zarr.resolve_ngff_attrs`, which owns that resolution. The
+    scale vector is likewise looked up by :func:`luxar.io.ome_zarr.
+    ngff_scale_transform`, which SEARCHES ``coordinateTransformations`` for the
+    ``type == "scale"`` entry: indexing ``[0]`` here broke on any store whose
+    first transform is a ``translation``.
+
+    The two ways this can fail say different things, because they are fixed
+    differently: no ``multiscales`` at all (the store is not the OME-Zarr crop
+    this demo downloads) versus a ``multiscales`` that declares no ``scale``
+    transform (it is, but it states no spacing).
     """
     import zarr
 
+    from luxar.io.ome_zarr import ngff_scale_transform, resolve_ngff_attrs
+
     group = zarr.open_group(str(image_store), mode="r")
     attrs = dict(group.attrs)
-    ome = attrs.get("ome")
-    root = ome if isinstance(ome, dict) and "multiscales" in ome else attrs
-    if "multiscales" not in root:
+    root = resolve_ngff_attrs(attrs)
+    if not root.get("multiscales"):
         raise ValueError(
             f"{image_store} has no OME-Zarr `multiscales` metadata "
             f"(attributes present: {sorted(attrs)}); the crop's voxel size is "
             "read from it."
         )
-    scale = root["multiscales"][0]["datasets"][0]["coordinateTransformations"][0][
-        "scale"
-    ]
+    scale = ngff_scale_transform(
+        root["multiscales"][0]["datasets"][0].get("coordinateTransformations")
+    )
+    if scale is None:
+        raise ValueError(
+            f"{image_store} declares OME-Zarr `multiscales` metadata but its "
+            "first dataset states no `scale` coordinateTransformation; the "
+            "crop's voxel size is read from it."
+        )
     return tuple(float(s) for s in scale[1:])  # drop the time axis
 
 
@@ -749,7 +787,11 @@ def fit_timelapse(
             marker = cache_file.with_suffix(cache_file.suffix + ".tmp")
             if not FLAGS["recompute"] and is_cached(t):
                 try:
-                    results.append(GSplatData.load(cache_file, include_stats=False))
+                    # include_stats=True: the cache carries the fit's
+                    # normalization provenance (floor / image_min / image_max),
+                    # and `concatenate` only propagates a background floor into
+                    # the stacked scene when every part reports one (#1175).
+                    results.append(GSplatData.load(cache_file, include_stats=True))
                     continue
                 except Exception as exc:  # noqa: BLE001
                     aprint(f"  t={t} cache unreadable ({exc}); re-fitting")
@@ -790,7 +832,13 @@ def fit_timelapse(
                 zip_deflate=True,
             )
             marker.unlink(missing_ok=True)
-            results.append(fitted)
+            # Stack what was STORED, not the in-memory fit: the cache is written
+            # under a lossy encoding, so appending `fitted` here would make a
+            # cold run (unquantized) and a warm run (the cache-hit branch above,
+            # which loads the quantized store) produce different scenes. Same
+            # include_stats=True as that branch, so the two agree AND the fit's
+            # normalization provenance survives into the stacked scene.
+            results.append(GSplatData.load(cache_file, include_stats=True))
             if (t + 1) % 10 == 0 or t == n_timepoints - 1:
                 aprint(f"  {t + 1}/{n_timepoints} fitted ({fitted.n_splats:,} splats)")
     return results
@@ -1055,7 +1103,11 @@ def create_luxar_scene(
         with LuxarZarrCompiler(
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                citation=DEMO_META["citation"],
+                dimensions=dims,
+                viewer_config=ViewerConfig(cinematic_mode=True),
+            )
 
             scene.attrs["title"] = (
                 f"GSplats: Cell Tracking Challenge — {n} zebrafish embryo timelapses"
@@ -1163,12 +1215,10 @@ Navigation:
                 color="rgba(255,255,255,0.6)",
                 blend_mode="difference",
             )
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 "Light-sheet microscopy • zebrafish • tracked lineages",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
             scene.add_text(
                 f"{n} embryo crops • {n_timepoints} timepoints each\n"

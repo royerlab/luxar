@@ -31,7 +31,7 @@ architecture, trained on billions of protein sequences. It learns to:
 The model generates 1,024-dimensional embeddings that encode a protein's
 characteristics.
 
-Cite: Elnaggar et al. (2021), "ProtTrans: Toward Understanding the Language of
+Cite: Elnaggar et al. (2022), "ProtTrans: Toward Understanding the Language of
 Life Through Self-Supervised Learning", IEEE TPAMI. DOI: 10.1109/TPAMI.2021.3095381
 CAFA5 challenge: https://www.kaggle.com/competitions/cafa-5-protein-function-prediction
 
@@ -107,6 +107,16 @@ DEMO_META = {
     },
     "caches": ["protein_embeddings"],
     "outputs": ["protein_landscape"],
+    # The proteins are CAFA5's and the coordinates are ProtT5's, so the credit
+    # names both -- crediting only the model would attribute someone else's
+    # dataset to it (same shape as demo_esm3_protein_landscape). The DOI is the
+    # model paper, which is what the short names second; CAFA5 itself is a
+    # Kaggle competition with no DOI of its own.
+    "citation": {
+        "short": "CAFA5 (Kaggle); embeddings by ProtT5 (Elnaggar et al. 2022)",
+        "ref": "Elnaggar et al. 2022",
+        "doi": "10.1109/TPAMI.2021.3095381",
+    },
 }
 
 import gzip
@@ -126,7 +136,8 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer, require_module
+from luxar.core.viewer_config import ViewerConfig
+from luxar.demos import add_demo_caption, launch_viewer, require_module
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -1129,7 +1140,11 @@ def generate_protein_landscape(
         )
 
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                dimensions=dims,
+                citation=DEMO_META["citation"],
+                viewer_config=ViewerConfig(cinematic_mode=True),
+            )
 
             scene.add_points(
                 "proteins",
@@ -1183,13 +1198,11 @@ def generate_protein_landscape(
                 anchor="bottom-left",
             )
 
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 f"{n_proteins:,} proteins • ProtT5 embeddings • 3D UMAP • "
-                "clusters named by UniProt keyword enrichment • Elnaggar et al. 2021",
-                position=(0.98, 0.97),
-                font_size=0.012,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                "clusters named by UniProt keyword enrichment • Elnaggar et al. 2022",
+                DEMO_META.get("citation"),
             )
 
         aprint(f"✓ Visualization created with {n_proteins:,} proteins")

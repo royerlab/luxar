@@ -8,7 +8,7 @@ canopy, staggered per tree so maturity rolls across the field in waves) and a
 frost). Press play on either axis and the viewer animates a growth time-lapse
 or a cycling year. All four Luxar geometry types share the frame:
 
-- **Mesh** — an fBm heightfield terrain, shaded by the viewer's headlight,
+- **Mesh** — an fBm heightfield terrain, shaded by the viewer's offset key,
   with per-season vertex colours (snow in winter). The forest floor has
   actual depth instead of a flat line grid.
 - **Lines** — the trees: indexed line networks (joints and branch points
@@ -81,6 +81,8 @@ DEMO_META = {
     },
     "caches": ["forest"],
     "outputs": ["forest"],
+    # Procedurally generated: no external dataset, nothing to credit.
+    "citation": None,
 }
 
 import html
@@ -95,7 +97,14 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, DimensionsConfig, ViewerConfig
-from luxar.demos import cache_computed, launch_viewer, parse_demo_flags, parse_int_arg
+from luxar.demos import (
+    add_demo_caption,
+    cache_computed,
+    launch_viewer,
+    parse_demo_flags,
+    parse_int_arg,
+)
+from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -1723,17 +1732,29 @@ def _forest_dimensions() -> Dimensions:
 
 
 def _viewer_config() -> ViewerConfig:
+    camera_target = (4.0, 6.0, 4.5)
+    view_from = np.asarray((-48.0, -42.0, 14.0))
+    view_direction = view_from - np.asarray(camera_target)
+    view_direction /= np.linalg.norm(view_direction)
+    # Carry over the authored view direction, but solve the standoff from the
+    # cinematic lens and planted span so the opening eye stays outside the trees.
+    camera_distance = (FOREST_SIZE / 2.0) / math.tan(
+        math.radians(CINEMATIC_FOV_DEG / 2.0)
+    )
+    camera_position = tuple(
+        np.asarray(camera_target) + view_direction * camera_distance
+    )
     return ViewerConfig(
+        cinematic_mode=True,
         # ACES explicitly — the house default; the luminous accents +
         # emissive foliage mix is exactly what its filmic rolloff is for.
         tone_mapping="ACES",
-        # Opening pose: low vantage from the forest edge at canopy height,
-        # looking into the depth of the field — not the default top-down.
+        # Opening pose: low vantage outside the forest edge at canopy height,
+        # looking into the field — the pose test locks that clearance.
         camera=CameraConfig(
-            position=(-48.0, -42.0, 14.0),
-            target=(4.0, 6.0, 4.5),
+            position=camera_position,
+            target=camera_target,
             up=(0.0, 0.0, 1.0),
-            fov=50.0,
             near=0.5,
             far=800.0,
         ),
@@ -1820,12 +1841,10 @@ def _add_overlays(scene: Any) -> None:
         anchor="center-right",
         opacity=0.9,
     )
-    scene.add_text(
-        "keys 1/2 select season/growth · [ ] step · play animates · hover a trunk",
-        position=(0.98, 0.97),
-        font_size=0.013,
-        anchor="bottom-right",
-        color="rgba(200,200,200,0.45)",
+    add_demo_caption(
+        scene,
+        "keys 1/2 select season/growth • [ ] step • play animates • hover a trunk",
+        DEMO_META.get("citation"),
     )
 
 

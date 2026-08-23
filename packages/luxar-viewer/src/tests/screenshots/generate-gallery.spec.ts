@@ -13,7 +13,7 @@
  *     screenshot, decoded in-page) and picks an exposure in three phases:
  *     (1) drive the lit foreground's p99 just below clipping (bright, not blown
  *     out); (2) if the lit histogram turns out to be NARROW (p99 − p10 <
- *     `NARROW_SPREAD_MAX` — a headlit shaded mesh, where p99 says nothing), re-
+ *     `NARROW_SPREAD_MAX`, where p99 says nothing about mid-tone placement), re-
  *     target the lit MEDIAN to `TARGET_MID` so the surface keeps its colour
  *     instead of washing out in the ACES shoulder; (3) step down while the
  *     subject is blown white or the background is lifted to grey. The decision
@@ -152,6 +152,13 @@ interface DemoEntry {
   category: string;
   script: string | null;
   dataset: string; // repo-relative
+  // Dataset credit, copied VERBATIM from the demo's DEMO_META citation.short (a
+  // Python test cross-checks the two). Present only when the demo declares a
+  // real credit: an ABSENT key means "unknown or not yet recorded", which is not
+  // the same claim as "nothing to credit", so a procedural demo carries no
+  // `citation` either. Declared so the manifest and this interface agree; the
+  // capture code never reads it (the on-scene footer is what a tile renders).
+  citation?: string;
   exposure?: number; // per-demo exposure override (log2 stops); else auto
   // Skip the screenshot-heavy auto steps for very heavy scenes (e.g. the 3M-star
   // Gaia field, where ~20 measurement screenshots time out in software GL). When
@@ -240,17 +247,29 @@ async function waitForLuxarReady(page: any, timeout = 60000): Promise<void> {
   );
 }
 
-async function waitForDataLoaded(page: any, timeout = 60000): Promise<void> {
+async function waitForDataLoaded(
+  page: any,
+  timeout = 60000,
+  requireElements = true
+): Promise<void> {
   // Geometry-agnostic: totalElements sums points + gsplats + lines + triangles,
   // so this works for all four geometry types and mixed scenes (totalPoints alone
   // stays 0 for a pure Lines demo like dipc_3d_genome, or a pure Mesh one).
+  //
+  // `requireElements = false` waits only for the loader to go idle. That is the
+  // pre-`dimensionNav` gate: a scene whose DEFAULT slice is empty (an nD demo
+  // parked on a hidden-axis position that holds nothing) has zero elements until
+  // the dimension is stepped, so insisting on elements here would time out before
+  // the navigation that fills the scene ever runs.
   await page.waitForFunction(
-    () => {
+    (needElements: boolean) => {
       const debug = (window as any).__luxarDebug;
       if (!debug || !debug.getState) return false;
       const state = debug.getState();
-      return state && !state.isLoading && state.totalElements > 0;
+      if (!state || state.isLoading) return false;
+      return needElements ? state.totalElements > 0 : true;
     },
+    requireElements,
     { timeout }
   );
 }
@@ -649,7 +668,7 @@ async function measureLuminance(page: any): Promise<LumaStats> {
         return { hiLuma: 0, loLuma: 0, midLuma: 0, litFraction: 0, clippedFrac: 0, bgLuma };
       // loLuma/midLuma come from the SAME histogram as hiLuma — no extra pass
       // over the pixels, no extra screenshot. hiLuma − loLuma is the lit
-      // histogram's spread, which tells a headlit (flat) subject apart from an
+      // histogram's spread, which tells a flat subject apart from an
       // emissive one; midLuma is the flat-subject exposure anchor.
       return {
         hiLuma: pctile(hist, litCount, hiPercentile),
@@ -761,8 +780,8 @@ async function measureBorderLitOrNull(
  *      TARGET_HI (bright but not clipped). Exposure is ~log-linear in
  *      luminance, so a few log2 corrections converge.
  *   2. Flat-subject pass — if the lit histogram's spread (p99 − p10) is under
- *      NARROW_SPREAD_MAX, the subject has no internal dynamic range (a headlit
- *      shaded mesh: N·L ≈ 1 everywhere) and p99 is a meaningless anchor, so
+ *      NARROW_SPREAD_MAX, the subject has no internal dynamic range and p99 is
+ *      a meaningless anchor, so
  *      re-target the lit MEDIAN to TARGET_MID instead. An EMPIRICAL gate — see
  *      NARROW_SPREAD_MAX for the measured margins; when it fires, the capture
  *      log says so ("flat subject") so a sweep can spot a false positive.
@@ -1215,15 +1234,24 @@ for (const demo of DEMOS) {
     await installChromeHider(page); // survives Vite reloads (must precede goto)
     await page.goto(viewerUrl, { waitUntil: 'networkidle' });
     await waitForLuxarReady(page);
-    await waitForDataLoaded(page);
+    // A dimensionNav demo may be EMPTY at its default slice, so only require a
+    // settled loader until after the navigation has run.
+    const needsNav = Boolean(demo.dimensionNav);
+    await waitForDataLoaded(page, 60000, !needsNav);
     // Settle: a Vite "re-optimizing deps" full reload can fire right after first
     // paint; wait out any in-flight reload and re-confirm the scene is loaded.
     await page.waitForTimeout(1500);
-    await waitForDataLoaded(page);
+    await waitForDataLoaded(page, 60000, !needsNav);
     console.log(`[${demo.id}] data loaded`);
 
     if (demo.dimensionNav) {
       await navigateDimension(page, demo.dimensionNav.key, demo.dimensionNav.steps);
+      // NOW the scene must have content: the navigation is what fills it, and a
+      // still of an empty canvas is worse than a failed capture.
+      await waitForDataLoaded(page);
+      console.log(
+        `[${demo.id}] dimensionNav key=${demo.dimensionNav.key} steps=${demo.dimensionNav.steps}`
+      );
     }
     // Timelapse: frame the STILL at a content-rich timepoint (a developmental
     // series is nearly empty at t0). The orbit video still plays the full range.

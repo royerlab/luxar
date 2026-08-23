@@ -20,6 +20,7 @@ import zarr
 from luxar._zarr_compat import consolidate as zc_consolidate
 from luxar._zarr_compat import open_group as zc_open_group
 from luxar._zarr_compat import read_consolidated_attrs, read_node_attrs
+from luxar.conftest import confine_temp_dirs
 from luxar.gsplats.doctor import diagnose_store
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.io.save_gsplats import write_gsplats_tree
@@ -41,6 +42,103 @@ def _partition_store(tmp: Path, n: int = 400, parts_cap: int = 80) -> Path:
     return path
 
 
+def _partition_scene(
+    tmp: Path, geometry: str = "points", *, drop_tree: bool = True
+) -> tuple[Path, str]:
+    """A real scene containing one native points or mesh partition."""
+    from luxar import Dimensions, LuxarZarrCompiler
+
+    rng = np.random.default_rng(12)
+    positions = (rng.random((120, 3)) * 100).astype(np.float32)
+    path = tmp / "scene.luxar.zarr"
+    with LuxarZarrCompiler(path) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        if geometry == "points":
+            scene.add_points(
+                "points",
+                positions,
+                radii=1.0,
+                partition={"max_elements": 40},
+                additive_lod=False,
+            )
+        elif geometry == "mesh":
+            offsets = np.arange(40, dtype=np.float32)[:, None] * 10.0
+            vertices = np.stack(
+                (
+                    np.concatenate(
+                        (offsets, np.zeros((40, 2), dtype=np.float32)), axis=1
+                    ),
+                    np.concatenate(
+                        (offsets + 1.0, np.zeros((40, 2), dtype=np.float32)), axis=1
+                    ),
+                    np.concatenate(
+                        (
+                            offsets,
+                            np.ones((40, 1), dtype=np.float32),
+                            np.zeros((40, 1), dtype=np.float32),
+                        ),
+                        axis=1,
+                    ),
+                ),
+                axis=1,
+            )
+            faces = np.arange(120, dtype=np.uint32).reshape(40, 3)
+            scene.add_mesh(
+                "mesh",
+                vertices.reshape(120, 3),
+                faces,
+                partition={"max_elements": 12},
+            )
+        else:
+            raise ValueError(f"unsupported geometry: {geometry}")
+        scene.add_points("sibling", np.zeros((3, 3), dtype=np.float32))
+
+    root = zc_open_group(str(path), mode="r+")
+    group = root[geometry]
+    if drop_tree and "bsp_tree" in group.attrs:
+        del group.attrs["bsp_tree"]
+    zc_consolidate(root)
+    return path, geometry
+
+
+def _disjoint_centroid_split_lines_scene(tmp: Path) -> Path:
+    """A native lines partition whose valid plane crosses one part's bounds."""
+    from luxar import Dimensions, LuxarZarrCompiler
+
+    first = np.column_stack(
+        (
+            np.arange(11, dtype=np.float32),
+            np.zeros(11, dtype=np.float32),
+            np.zeros(11, dtype=np.float32),
+        )
+    )
+    second = np.column_stack(
+        (
+            np.arange(12, 15, dtype=np.float32),
+            np.zeros(3, dtype=np.float32),
+            np.zeros(3, dtype=np.float32),
+        )
+    )
+    positions = np.concatenate((first, second))
+    indices = np.array(
+        [(i, i + 1) for i in range(10)] + [(i, i + 1) for i in range(11, 13)],
+        dtype=np.uint32,
+    )
+
+    path = tmp / "disjoint-lines.luxar.zarr"
+    with LuxarZarrCompiler(path) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_lines(
+            "lines",
+            positions,
+            widths=0.1,
+            indices=indices,
+            line_type="indexed",
+            partition={"max_elements": 12, "rule": "median"},
+        )
+    return path
+
+
 def _uniform_tiled_store(tmp: Path) -> Path:
     """A uniform-tiled partition on disk: overlapping parts, approximate planes.
 
@@ -58,9 +156,12 @@ def _uniform_tiled_store(tmp: Path) -> Path:
         hi = lo + np.array(spec.shape, dtype=float)
         chol = np.zeros((40, 6), dtype=np.float32)
         chol[:, [0, 2, 5]] = 1.0
+        centers = rng.uniform(lo, hi, size=(40, 3)).astype(np.float32)
+        centers[0] = lo
+        centers[1] = hi
         regions.append(
             GSplatData(
-                centers=rng.uniform(lo, hi, size=(40, 3)).astype(np.float32),
+                centers=centers,
                 amplitudes=np.ones(40, dtype=np.float32),
                 cholesky_factors=chol,
             )
@@ -74,6 +175,149 @@ def _uniform_tiled_store(tmp: Path) -> Path:
     path = tmp / "uniform.gsplats.zarr"
     write_gsplats_tree(path, node)
     return path
+
+
+def _sparse_uniform_tiled_store(tmp: Path) -> Path:
+    """A producer-shaped grid whose sparse content under-fills one halo."""
+    from luxar.gsplats.tiling import compute_tile_specs, grid_bsp_tree
+
+    specs = compute_tile_specs((96, 16, 16), 32, 8)
+    x_bounds = ((0.0, 32.0), (24.0, 56.0), (72.0, 74.0), (72.0, 74.0))
+    assert len(specs) == len(x_bounds)
+    regions = []
+    for lo_x, hi_x in x_bounds:
+        centers = np.array([[lo_x, 1.0, 1.0], [hi_x, 2.0, 2.0]], dtype=np.float32)
+        chol = np.zeros((2, 6), dtype=np.float32)
+        chol[:, [0, 2, 5]] = 1.0
+        regions.append(
+            GSplatData(
+                centers=centers,
+                amplitudes=np.ones(2, dtype=np.float32),
+                cholesky_factors=chol,
+            )
+        )
+    node = GSplatData.partition_from_regions(
+        regions,
+        bsp_tree=grid_bsp_tree(specs),
+        region_labels=[spec.index for spec in specs],
+    )
+    path = tmp / "sparse-uniform.gsplats.zarr"
+    write_gsplats_tree(path, node)
+    return path
+
+
+def _mixed_overlap_store(tmp: Path) -> tuple[Path, dict]:
+    """Three x-ordered parts: one overlapping cut and one clean cut."""
+    bounds = ((0.0, 32.0), (24.0, 56.0), (80.0, 112.0))
+    regions = []
+    for lo_x, hi_x in bounds:
+        lo = np.array([lo_x, 0.0, 0.0], dtype=np.float32)
+        hi = np.array([hi_x, 10.0, 10.0], dtype=np.float32)
+        centers = np.stack((lo, hi))
+        chol = np.zeros((2, 6), dtype=np.float32)
+        chol[:, [0, 2, 5]] = 1.0
+        regions.append(
+            GSplatData(
+                centers=centers,
+                amplitudes=np.ones(2, dtype=np.float32),
+                cholesky_factors=chol,
+            )
+        )
+    tree = {
+        "axis": 0,
+        "split": 68.0,
+        "left": {
+            "axis": 0,
+            "split": 28.0,
+            "left": {"part": 0},
+            "right": {"part": 1},
+        },
+        "right": {"part": 2},
+    }
+    node = GSplatData.partition_from_regions(
+        regions, bsp_tree=tree, region_labels=[0, 1, 2]
+    )
+    path = tmp / "mixed.gsplats.zarr"
+    write_gsplats_tree(path, node)
+    return path, tree
+
+
+def _centered_mixed_overlap_store(tmp: Path) -> tuple[Path, dict]:
+    """Three x-ordered parts with an overlapping cut and a clean cut at zero."""
+    bounds = ((-80.0, -48.0), (-56.0, -24.0), (24.0, 56.0))
+    regions = []
+    for lo_x, hi_x in bounds:
+        lo = np.array([lo_x, 0.0, 0.0], dtype=np.float32)
+        hi = np.array([hi_x, 10.0, 10.0], dtype=np.float32)
+        centers = np.stack((lo, hi))
+        chol = np.zeros((2, 6), dtype=np.float32)
+        chol[:, [0, 2, 5]] = 1.0
+        regions.append(
+            GSplatData(
+                centers=centers,
+                amplitudes=np.ones(2, dtype=np.float32),
+                cholesky_factors=chol,
+            )
+        )
+    tree = {
+        "axis": 0,
+        "split": 0.0,
+        "left": {
+            "axis": 0,
+            "split": -52.0,
+            "left": {"part": 0},
+            "right": {"part": 1},
+        },
+        "right": {"part": 2},
+    }
+    node = GSplatData.partition_from_regions(
+        regions, bsp_tree=tree, region_labels=[0, 1, 2]
+    )
+    path = tmp / "centered-mixed.gsplats.zarr"
+    write_gsplats_tree(path, node)
+    return path, tree
+
+
+def _two_part_overlap_store(tmp: Path) -> tuple[Path, dict]:
+    """Two overlapping x-ordered parts with one band-midpoint cut."""
+    regions = []
+    for lo_x, hi_x in ((0.0, 32.0), (24.0, 56.0)):
+        lo = np.array([lo_x, 0.0, 0.0], dtype=np.float32)
+        hi = np.array([hi_x, 10.0, 10.0], dtype=np.float32)
+        centers = np.stack((lo, hi))
+        chol = np.zeros((2, 6), dtype=np.float32)
+        chol[:, [0, 2, 5]] = 1.0
+        regions.append(
+            GSplatData(
+                centers=centers,
+                amplitudes=np.ones(2, dtype=np.float32),
+                cholesky_factors=chol,
+            )
+        )
+    tree = {
+        "axis": 0,
+        "split": 28.0,
+        "left": {"part": 0},
+        "right": {"part": 1},
+    }
+    node = GSplatData.partition_from_regions(
+        regions, bsp_tree=tree, region_labels=[0, 1]
+    )
+    path = tmp / "two-part.gsplats.zarr"
+    write_gsplats_tree(path, node)
+    return path, tree
+
+
+def _scale_tree_planes(tree: dict, factors: tuple[float, ...]) -> dict:
+    if "part" in tree:
+        return dict(tree)
+    axis = int(tree["axis"])
+    return {
+        "axis": axis,
+        "split": float(tree["split"]) * factors[axis],
+        "left": _scale_tree_planes(tree["left"], factors),
+        "right": _scale_tree_planes(tree["right"], factors),
+    }
 
 
 def _root_attrs(path: Path) -> dict:
@@ -270,6 +514,34 @@ class TestSplitPlanesCheck:
             boxes = _part_boxes(path)
             assert _order_violations(_root_attrs(path)["bsp_tree"], boxes) == 0
 
+    def test_small_stale_offset_on_points_remains_an_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path, group_path = _partition_scene(Path(tmp), drop_tree=False)
+            node_path = path / group_path
+            attrs = read_node_attrs(node_path)
+            assert attrs is not None
+
+            def shift(node: dict) -> dict:
+                if "part" in node:
+                    return node
+                return {
+                    "axis": node["axis"],
+                    "split": node["split"] + 2.0,
+                    "left": shift(node["left"]),
+                    "right": shift(node["right"]),
+                }
+
+            root = zc_open_group(str(path), mode="r+")
+            root[group_path].attrs["bsp_tree"] = shift(attrs["bsp_tree"])
+            zc_consolidate(root)
+
+            report = diagnose_store(path)
+            (finding,) = report.findings
+            assert finding.path == group_path
+            assert finding.severity == "error"
+            assert finding.fixable
+            assert not report.healthy
+
     def test_an_approximate_tree_over_overlapping_parts_is_left_alone(self) -> None:
         """A uniform-tiled fit's parts overlap, so NO tree separates them and
         failing the separation test says nothing about staleness. Condemning one
@@ -283,10 +555,186 @@ class TestSplitPlanesCheck:
             (finding,) = report.findings
             assert finding.severity == "note"
             assert not finding.fixable
+            assert "centroid-split lines or mesh" in finding.detail
             assert report.healthy  # a note does not fail the gate
 
             diagnose_store(path, fix=True)
             assert _root_attrs(path)["bsp_tree"] == before
+
+    def test_disjoint_centroid_split_lines_are_approximate_and_rebuilt(self) -> None:
+        from luxar.core.group.partition import serialized_bsp_tree_separates
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _disjoint_centroid_split_lines_scene(Path(tmp))
+            node_path = path / "lines"
+            before_attrs = read_node_attrs(node_path)
+            assert before_attrs is not None
+            before = before_attrs["bsp_tree"]
+            boxes = _part_boxes(node_path)
+            assert not serialized_bsp_tree_separates(before, boxes)
+
+            report = diagnose_store(path)
+            (finding,) = report.findings
+            assert finding.path == "lines"
+            assert finding.severity == "note"
+            assert finding.fixable
+            assert report.healthy
+
+            fixed = diagnose_store(path, fix=True)
+            after_attrs = read_node_attrs(node_path)
+            assert after_attrs is not None
+            after = after_attrs["bsp_tree"]
+            assert after != before
+            assert serialized_bsp_tree_separates(after, boxes)
+            assert fixed.healthy
+
+    def test_sparse_uniform_content_keeps_the_producer_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _sparse_uniform_tiled_store(Path(tmp))
+            before = _root_attrs(path)["bsp_tree"]
+
+            report = diagnose_store(path)
+
+            (finding,) = report.findings
+            assert finding.severity == "note"
+            assert not finding.fixable
+            assert report.healthy
+
+            diagnose_store(path, fix=True)
+            assert _root_attrs(path)["bsp_tree"] == before
+
+            _set_root_attr(path, "bsp_tree", _scale_tree_planes(before, (0.25,) * 3))
+            report = diagnose_store(path)
+            (finding,) = report.findings
+            assert finding.severity == "error"
+            assert finding.fixable
+
+            repaired = diagnose_store(path, fix=True)
+            assert repaired.healthy
+            assert _root_attrs(path)["bsp_tree"] == before
+
+    def test_an_approximate_tree_is_recovered_without_overclaiming_scale(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _uniform_tiled_store(Path(tmp))
+            healthy = _root_attrs(path)["bsp_tree"]
+            _set_root_attr(
+                path, "bsp_tree", _scale_tree_planes(healthy, (0.25, 0.5, 0.125))
+            )
+
+            report = diagnose_store(path)
+            (finding,) = report.findings
+            assert finding.severity == "error"
+            assert finding.fixable
+            assert "coordinate frame" not in finding.summary
+            assert "overlap band" in finding.detail
+
+            repaired = diagnose_store(path, fix=True)
+            assert repaired.healthy
+            assert _root_attrs(path)["bsp_tree"] == healthy
+
+    def test_a_clean_cut_does_not_disable_overlap_scale_recovery(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path, healthy = _mixed_overlap_store(Path(tmp))
+            _set_root_attr(path, "bsp_tree", _scale_tree_planes(healthy, (0.25,) * 3))
+
+            report = diagnose_store(path)
+            (finding,) = report.findings
+            assert finding.fixable
+            assert "coordinate frame" in finding.summary
+
+            repaired = diagnose_store(path, fix=True)
+            assert repaired.healthy
+            assert _root_attrs(path)["bsp_tree"] == healthy
+
+    def test_a_zero_clean_cut_does_not_disable_overlap_scale_recovery(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path, healthy = _centered_mixed_overlap_store(Path(tmp))
+            _set_root_attr(path, "bsp_tree", _scale_tree_planes(healthy, (0.25,) * 3))
+
+            report = diagnose_store(path)
+            (finding,) = report.findings
+            assert finding.fixable
+
+            repaired = diagnose_store(path, fix=True)
+            assert repaired.healthy
+            assert _root_attrs(path)["bsp_tree"] == healthy
+
+    def test_uniform_scale_across_axes_has_store_wide_support(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _uniform_tiled_store(Path(tmp))
+            healthy = _root_attrs(path)["bsp_tree"]
+            _set_root_attr(path, "bsp_tree", _scale_tree_planes(healthy, (0.25,) * 3))
+
+            report = diagnose_store(path)
+            (finding,) = report.findings
+            assert finding.fixable
+            assert "coordinate frame" in finding.summary
+            assert "downscale" in finding.detail
+
+            repaired = diagnose_store(path, fix=True)
+            assert repaired.healthy
+            assert _root_attrs(path)["bsp_tree"] == healthy
+
+    def test_overlap_recovery_does_not_claim_a_frame_scale_without_evidence(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path, healthy = _mixed_overlap_store(Path(tmp))
+            broken = _scale_tree_planes(healthy, (0.25,) * 3)
+            broken["left"]["split"] *= 1.2
+            _set_root_attr(path, "bsp_tree", broken)
+
+            report = diagnose_store(path)
+            (finding,) = report.findings
+            assert finding.fixable
+            assert "coordinate frame" not in finding.summary
+            assert "downscale" not in finding.detail
+            assert "overlap band" in finding.detail
+
+    def test_one_plane_is_recovered_without_claiming_a_frame_scale(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path, healthy = _two_part_overlap_store(Path(tmp))
+            broken = dict(healthy)
+            broken["split"] = 1e-6
+            _set_root_attr(path, "bsp_tree", broken)
+
+            report = diagnose_store(path)
+            (finding,) = report.findings
+            assert finding.fixable
+            assert "coordinate frame" not in finding.summary
+            assert "downscale" not in finding.detail
+            assert "overlap band" in finding.detail
+
+            repaired = diagnose_store(path, fix=True)
+            assert repaired.healthy
+            assert _root_attrs(path)["bsp_tree"] == healthy
+
+    def test_unrecoverable_overlap_violation_names_the_actual_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _uniform_tiled_store(Path(tmp))
+            broken = _scale_tree_planes(_root_attrs(path)["bsp_tree"], (0.25,) * 3)
+            broken["left"]["split"] *= 2.0
+            _set_root_attr(path, "bsp_tree", broken)
+
+            report = diagnose_store(path)
+            (finding,) = report.findings
+            assert "centers do not straddle" in finding.detail
+            assert "measured overlap band" in finding.detail
+
+    def test_inconsistent_plane_scales_are_not_guessed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _uniform_tiled_store(Path(tmp))
+            broken = _scale_tree_planes(_root_attrs(path)["bsp_tree"], (0.25,) * 3)
+            broken["left"]["split"] *= 2.0
+            _set_root_attr(path, "bsp_tree", broken)
+
+            report = diagnose_store(path)
+            (finding,) = report.findings
+            assert finding.severity == "error"
+            assert "cannot be rebuilt" in finding.summary
+
+            diagnose_store(path, fix=True)
+            assert "bsp_tree" not in _root_attrs(path)
 
     def test_a_repair_that_leaves_a_lesser_condition_does_not_report_healthy(
         self,
@@ -332,11 +780,47 @@ class TestSplitPlanesCheck:
 
 
 class TestStoreGuards:
+    def test_a_scene_partition_is_diagnosed_and_repaired_in_place(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path, group_path = _partition_scene(Path(tmp))
+            root = zc_open_group(str(path), mode="r+")
+            before = root.attrs["content_hash"]
+            sibling_before = root["sibling"].attrs["content_hash"]
+
+            report = diagnose_store(path)
+            assert [finding.path for finding in report.findings] == [group_path]
+            assert report.findings[0].severity == "error"
+            assert "no split planes" in report.findings[0].summary
+
+            fixed = diagnose_store(path, fix=True)
+            assert fixed.healthy
+            reopened = zc_open_group(str(path), mode="r")
+            assert reopened.attrs["content_hash"] != before
+            assert reopened["sibling"].attrs["content_hash"] == sibling_before
+            node_attrs = read_node_attrs(path / group_path)
+            assert node_attrs is not None
+            assert (
+                node_attrs["bsp_tree"]
+                == read_consolidated_attrs(path)[group_path]["bsp_tree"]
+            )
+            assert diagnose_store(path).findings == []
+
+    def test_a_native_mesh_partition_is_diagnosed_and_repaired(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path, group_path = _partition_scene(Path(tmp), geometry="mesh")
+            report = diagnose_store(path)
+            assert [finding.path for finding in report.findings] == [group_path]
+            assert "no split planes" in report.findings[0].summary
+
+            fixed = diagnose_store(path, fix=True)
+            assert fixed.healthy
+            assert diagnose_store(path).findings == []
+
     def test_a_non_gsplats_store_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "plain.zarr"
             zarr.open_group(str(path), mode="w")
-            with pytest.raises(ValueError, match="not a standalone"):
+            with pytest.raises(ValueError, match="not a Luxar scene"):
                 diagnose_store(path)
 
     @staticmethod
@@ -370,12 +854,14 @@ class TestStoreGuards:
             with pytest.raises(ValueError, match="unpack"):
                 diagnose_store(self._archive(Path(tmp)), fix=True)
 
-    def test_diagnosing_an_archive_leaves_no_temp_directory_behind(self) -> None:
-        import tempfile as _tempfile
+    def test_diagnosing_an_archive_leaves_no_temp_directory_behind(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        archive = self._archive(tmp_path)
+        confine_temp_dirs(tmp_path, monkeypatch)
+        assert Path(tempfile.gettempdir()) == tmp_path
 
-        with tempfile.TemporaryDirectory() as tmp:
-            archive = self._archive(Path(tmp))
-            root = Path(_tempfile.gettempdir())
-            before = set(root.glob("luxar_gsplat_*"))
+        # Stand in for a concurrent compressed save in the confined root.
+        with tempfile.TemporaryDirectory(prefix="luxar_gsplat_save_", dir=tmp_path):
             diagnose_store(archive)
-            assert set(root.glob("luxar_gsplat_*")) == before
+            assert list(tmp_path.glob("luxar_gsplat_archive_*")) == []

@@ -2,17 +2,111 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator, MutableMapping
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 import numpy as np
 from arbol import aprint
 
-from ...typing_utils.aliases import GroupAttrs, SceneHierarchy, TransformMatrix
+from ...typing_utils.aliases import SceneHierarchy, TransformMatrix
+from ...typing_utils.constants import LEGACY_LOD_SELECTOR
 
 if TYPE_CHECKING:
     from ...io.writer import ZarrWriterProtocol
     from ..dimensions import Dimensions
     from ..group import Group
+
+
+class _WriteThroughAttrs(MutableMapping[str, Any]):
+    """Mutable view of a node's cached attrs that persists every mutation."""
+
+    _PROPERTY_KEYS = frozenset(
+        {
+            "absorption",
+            "blending_mode",
+            "colormap",
+            "gamma",
+            "intensity",
+            "join",
+            "layer",
+            "nd_transform",
+            "offset",
+            "opacity",
+            "transform",
+            "visible",
+        }
+    )
+
+    def __init__(self, node: Node) -> None:
+        self._node = node
+
+    def __getitem__(self, key: str) -> Any:
+        return self._node._attrs_cache[key]
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        descriptor = getattr(type(self._node), key, None)
+        if (
+            key in self._PROPERTY_KEYS
+            and isinstance(descriptor, property)
+            and descriptor.fset is not None
+        ):
+            setattr(self._node, key, value)
+            return
+        self._reject_mesh_only_on_non_mesh(key)
+        self._node._persist_attr(key, value)
+
+    def _reject_mesh_only_on_non_mesh(self, key: str) -> None:
+        """Close the second door onto mesh-only appearance attrs (#1782).
+
+        The leaf adders refuse the mesh-only appearance keys on a non-mesh node
+        (:func:`reject_mesh_only_appearance`), but this write-through mapping
+        (#1764) persists straight to the store, so ``node.attrs["specular"] =
+        0.5`` on a points/lines/gsplats/group node would otherwise reach disk and
+        the viewer would silently ignore it. Node construction fills the cache
+        DIRECTLY (see ``__init__``), never through here, so a mesh leaf authored
+        WITH these attrs is unaffected; only a post-hoc set on a non-mesh node is
+        refused. ``type`` is the geometry token every node carries in its cache
+        (``"mesh"`` for a mesh leaf); anything else — including an absent one —
+        is not a mesh.
+        """
+        from ..group.compositing import MESH_ONLY_APPEARANCE_ATTRS
+
+        if (
+            key in MESH_ONLY_APPEARANCE_ATTRS
+            and self._node._attrs_cache.get("type") != "mesh"
+        ):
+            node_type = self._node._attrs_cache.get("type") or "non-mesh"
+            raise ValueError(
+                f"Cannot set mesh-only attribute '{key}' on {node_type} node "
+                f"'{self._node.name}'. The viewer applies these attributes only to "
+                "mesh leaves, and they do not compose through non-mesh nodes. Remove "
+                "them, set them on each mesh leaf (part_<i> / child_<i>), or pass "
+                "them to add_mesh(...), which stamps every generated mesh leaf."
+            )
+
+    def __delitem__(self, key: str) -> None:
+        if key not in self._node._attrs_cache:
+            raise KeyError(key)
+        self._node._delete_attr(key)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._node._attrs_cache)
+
+    def __len__(self) -> int:
+        return len(self._node._attrs_cache)
+
+    def copy(self) -> Dict[str, Any]:
+        """Return a detached dict, matching the former cache-dict API."""
+        return self._node._attrs_cache.copy()
+
+    def __repr__(self) -> str:
+        """Render as the dict it wraps.
+
+        ``attrs`` used to BE the cache dict, so a print/notebook/log of it
+        showed the attributes. Without this it shows a bare object address
+        instead, which is a worse debugging experience than what it replaced.
+        """
+        return repr(self._node._attrs_cache)
 
 
 class Node:
@@ -57,6 +151,7 @@ class Node:
         self.children: List[Node] = []
         self._metadata: Dict[str, Any] = {}  # Metadata storage
         self._attrs_cache: Dict[str, Any] = {}  # Attributes cache
+        self._attrs = _WriteThroughAttrs(self)
 
         # Determine path in hierarchy
         if parent is not None:
@@ -168,6 +263,16 @@ class Node:
                 # Dimensions resolved from the parent chain or the writer's own
                 # store.
                 self._writer.write_group(self.path, _transform_normalized=True, **attrs)
+                # Mirror the writer's custom-colormap resolution (ndarray /
+                # non-builtin name → ``"custom"`` + a sibling ``colormap_lut``
+                # array) into the cache, the same way the leaf adders do for
+                # the node they return: ``write_group`` mutates its own
+                # ``**attrs`` copy, so without this a Group authored with an
+                # ndarray LUT would report the array while zarr holds the
+                # sentinel.
+                from ..group.compositing import sync_custom_colormap_attr
+
+                sync_custom_colormap_attr(attrs)
                 self._attrs_cache.update(attrs)
             else:
                 # Metadata-only mode (no writer available)
@@ -252,13 +357,19 @@ class Node:
 
     # --------------------------------------------------------------------- attrs
     @property
-    def attrs(self) -> GroupAttrs:
+    def attrs(self) -> _WriteThroughAttrs:
         """Get node attributes.
 
+        Annotated with the concrete view rather than the ``GroupAttrs`` alias
+        so its ``copy()`` — kept for parity with the cache dict this replaced —
+        is visible to type checkers. ``_WriteThroughAttrs`` is a
+        ``MutableMapping[str, Any]``, so it still satisfies
+        ``NodeProtocol.attrs``.
+
         Returns:
-            Dictionary of node attributes from cache
+            Mutable mapping backed by the cache and the zarr store.
         """
-        return self._attrs_cache
+        return self._attrs
 
     def _persist_attr(self, key: str, value: Any) -> None:
         """Update an attribute in both the cache and the zarr store.
@@ -276,8 +387,8 @@ class Node:
             key: Attribute key
             value: Attribute value
         """
-        self._attrs_cache[key] = value
         if self._writer is None:
+            self._attrs_cache[key] = value
             return
         # Inspect the writer's finalization state without coupling to its
         # concrete class. The `_check_not_finalized` helper raises on the
@@ -285,6 +396,7 @@ class Node:
         # clearer warning instead.
         is_finalized = bool(getattr(self._writer, "_is_finalized", False))
         if is_finalized:
+            self._attrs_cache[key] = value
             import warnings
 
             warnings.warn(
@@ -301,6 +413,7 @@ class Node:
         # already normalized/validated by the setters; flag the write so
         # write_group does not re-transpose them (no-op for other keys).
         self._writer.write_group(self.path, _transform_normalized=True, **{key: value})
+        self._attrs_cache[key] = value
 
     def _delete_attr(self, key: str) -> None:
         """Remove an attribute from both the cache and the zarr store.
@@ -321,14 +434,15 @@ class Node:
         """
         if key not in self._attrs_cache:
             return
-        del self._attrs_cache[key]
         if self._writer is None:
+            del self._attrs_cache[key]
             return
         # Inspect the writer's finalization state without coupling to its
         # concrete class, mirroring ``_persist_attr``. Sniffing the flag lets
         # us emit a clear warning instead of touching the sealed store.
         is_finalized = bool(getattr(self._writer, "_is_finalized", False))
         if is_finalized:
+            del self._attrs_cache[key]
             import warnings
 
             warnings.warn(
@@ -342,6 +456,7 @@ class Node:
             )
             return
         self._writer.delete_group_attr(self.path, key)
+        del self._attrs_cache[key]
 
     # --------------------------------------------------------------- hierarchy
     def _ensure_no_duplicate_child(self, name: str) -> None:
@@ -378,9 +493,12 @@ class Node:
             ValueError: If group creation fails
         """
         from ..group import Group
+        from ..group.compositing import reject_mesh_only_appearance
 
         try:
             aprint(f"Adding child group '{name}' to node '{self.name}'.")
+
+            reject_mesh_only_appearance("group", name, attrs)
 
             # Duplicate child check and writing to storage, attr validation,
             # and caching are all handled by Node.__init__.
@@ -401,7 +519,7 @@ class Node:
         self,
         name: str,
         *,
-        selector: str = "coverage",
+        selector: str = LEGACY_LOD_SELECTOR,
         default_level: int = 0,
         **attrs: Any,
     ) -> "Group":

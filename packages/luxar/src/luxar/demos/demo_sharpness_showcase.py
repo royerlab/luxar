@@ -42,6 +42,8 @@ DEMO_META = {
     },
     "caches": [],
     "outputs": ["sharpness_showcase"],
+    # Procedurally generated: no external dataset, nothing to credit.
+    "citation": None,
 }
 
 import sys
@@ -52,7 +54,8 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer
+from luxar.core.viewer_config import ViewerConfig
+from luxar.demos import add_demo_caption, launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
 
@@ -331,7 +334,9 @@ def generate_sharpness_showcase(
         )
 
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                dimensions=dims, viewer_config=ViewerConfig(cinematic_mode=True)
+            )
 
             # Add all four examples
             create_sharpness_gradient_example(scene, n_points=gradient_points)
@@ -351,12 +356,10 @@ def generate_sharpness_showcase(
             )
 
             # Info
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 "Sharpness range 0\u20131 (super-Gaussian \u03b2 = 2^(6s-2))",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
 
         total_points = gradient_points + 120 + mixed_points + wave_points

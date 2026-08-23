@@ -690,6 +690,7 @@ monitor.element; // the widget element (mounted by the control rail)
 - `?no-lod-fade` — Disable replacement-LOD cross-fading (enabled by default)
 - `?no-lod-energy` — Disable stream-ladder energy compensation (enabled by default)
 - `?lod-finest` — Force the finest replacement LOD regardless of projected coverage
+- `?no-blend-warmup` — Disable the WebGL blend-variant program warm-up (enabled by default): each reachable blend-mode program is otherwise pre-linked off the interaction path after a dataset load, so the first Layers-panel blend switch does not pay the link cost on the click
 - `?depthSort=0` — Disable worker depth sorting (`false` and `off` are also accepted)
 - `?renderer=webgpu` — Use `WebGPURenderer` (TSL `NodeMaterial`) instead of the default `WebGLRenderer`
 - `?renderer=webgpu&webgpu-force-webgl` — Keep the WebGPU/TSL API surface while Three.js routes through its internal WebGL2 backend (diagnostic)

@@ -20,13 +20,17 @@ import datetime
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, List, Optional, Sequence, Tuple
 
 import typer
 from arbol import aprint, asection
 
+from luxar.cli.gsplat_ops.fitting.fit_utils import CONTENT_UNSUPPORTED_FIT_FLAGS
 from luxar.core.group.partition import prune_serialized_bsp_tree
 from luxar.gsplats.batch.manifest import BatchJob, BatchManifest, output_filename
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from luxar.io.ome_zarr import OMEZarrInfo
 
 # ---------------------------------------------------------------------------
 # Grouped option contracts (the shared surface both commands populate)
@@ -187,6 +191,37 @@ def effective_floor_spec(fit: FitConfig) -> "str | float | None":
     )
 
 
+def effective_norm_percentile(fit: FitConfig) -> float:
+    """The ``norm_percentile`` every task will inherit from preset/config."""
+    from luxar.cli.gsplat_config import load_fit_config
+
+    cfg = load_fit_config(preset=fit.preset, config_path=fit.config)
+    try:
+        value = float(cfg.get("norm_percentile", 0.0))
+    except (TypeError, ValueError) as exc:
+        raise typer.BadParameter(f"config `norm_percentile` is invalid: {exc}") from exc
+    if not 0.0 <= value < 50.0:
+        raise typer.BadParameter(
+            f"config `norm_percentile` must be in [0, 50), got {value}"
+        )
+    return value
+
+
+def effective_norm_range(fit: FitConfig) -> "Optional[Tuple[float, float]]":
+    """A deliberate ``norm_range`` from preset/config, if one was supplied."""
+    from luxar.cli.gsplat_config import load_fit_config
+    from luxar.gsplats.fitting.validation import _validate_norm_range
+
+    raw = load_fit_config(preset=fit.preset, config_path=fit.config).get("norm_range")
+    if raw is None:
+        return None
+    try:
+        _validate_norm_range(raw)
+        return float(raw[0]), float(raw[1])
+    except (IndexError, TypeError, ValueError) as exc:
+        raise typer.BadParameter(f"config `norm_range` is invalid: {exc}") from exc
+
+
 def _floor_axis_pins(
     axes_labels: List[str],
     channel_shape: Tuple[int, ...],
@@ -282,6 +317,12 @@ def _pinned_slice_volume(
         else:
             if spatial_shape is None or tuple(view.shape) == tuple(spatial_shape):
                 return view
+            singleton_pins = {
+                axis: 0 for axis, size in enumerate(view.shape) if int(size) == 1
+            }
+            squeezed_view = pin_volume_axes(view, singleton_pins)
+            if tuple(squeezed_view.shape) == tuple(spatial_shape):
+                return squeezed_view
             problem = (
                 f"pinning {pins} left shape {tuple(view.shape)}, not the "
                 f"discovered spatial shape {tuple(spatial_shape)}"
@@ -298,7 +339,7 @@ def _pinned_slice_volume(
                     timepoint=timepoint,
                     array_key=array_key,
                     axes=",".join(axes_labels),
-                )
+                ).squeeze()
             except ValueError as exc:
                 # load_volume's --axes vocabulary is narrower than discovery's
                 # (no `view`/`angle`), so an exotic label lands here.
@@ -323,17 +364,98 @@ def _materialize(view: Any) -> Any:
     return _np.asarray(view[:], dtype=_np.float32)
 
 
+def _bounded_exact_range(view: Any, max_block_voxels: int) -> Tuple[float, float]:
+    """Return exact finite endpoints without materializing the whole view."""
+    import itertools
+
+    import numpy as np
+
+    shape = tuple(int(size) for size in view.shape)
+    if not shape or any(size <= 0 for size in shape):
+        raise ValueError("volume is empty")
+    block_shape = list(shape)
+    while np.prod(block_shape, dtype=np.int64) > max_block_voxels:
+        axis = max(range(len(block_shape)), key=block_shape.__getitem__)
+        block_shape[axis] = max(1, block_shape[axis] // 2)
+    starts = [range(0, size, block) for size, block in zip(shape, block_shape)]
+    lo = float("inf")
+    hi = float("-inf")
+    for origin in itertools.product(*starts):
+        selection = tuple(
+            slice(start, min(start + block, size))
+            for start, block, size in zip(origin, block_shape, shape)
+        )
+        block = np.asarray(view[selection], dtype=np.float32)
+        if not bool(np.isfinite(block).all()):
+            raise ValueError("volume contains non-finite values")
+        lo = min(lo, float(block.min()))
+        hi = max(hi, float(block.max()))
+    return lo, hi
+
+
 # Bounded, deterministic (t, c) sampling for the ONE global floor level (see
 # :func:`resolve_batch_floor`). The two axes get INDEPENDENT caps, deliberately:
 # a shared budget spent on channels first would leave a store with >= 5
 # channel-like coordinates sampling a single timepoint, which is #1174's erase
 # bug back again in the time direction. 4 timepoints x 4 channel-like
 # coordinates = at most 16 slices, and the per-slice read budget is
-# FLOOR_SAMPLE_BUDGET_VOXELS // n_pairs (2M voxels at the cap), so the TOTAL
-# voxels read never exceed the single-slice whole-volume budget.
+# FLOOR_SAMPLE_BUDGET_VOXELS // n_pairs (2M voxels at the cap), so floor samples
+# total at most one whole-volume budget. Deferred on-the-fly resolution also
+# scans each sampled slice once for exact endpoints and reads bounded probe blocks.
 FLOOR_SAMPLE_MAX_SLICES = 16
 FLOOR_SAMPLE_MAX_TIMEPOINTS = 4
 FLOOR_SAMPLE_MAX_CHANNELS = 4
+
+
+def _should_defer_floor_resolution(
+    mode: str,
+    denoise: DenoiseConfig,
+    floor_spec: "str | float | None",
+    denoise_mode: Optional[str],
+) -> bool:
+    """Whether a uniform denoise plan must resolve its floor after planning."""
+    from luxar.cli.gsplat_ops.fitting.fit_utils import floor_spec_needs_volume
+    from luxar.gsplats.fitting.preprocessing import _floor_spec_is_percentile
+
+    if mode != "uniform" or not denoise.denoise:
+        return False
+    if not floor_spec_needs_volume(floor_spec):
+        return False
+    # Content planning consumes the level while placing boxes, so deferring it
+    # would require reordering the content plan itself.
+    return denoise_mode == "preprocess" or _floor_spec_is_percentile(floor_spec)
+
+
+def _resolve_planned_floor(
+    *,
+    deferred: bool,
+    input_path: Path,
+    fit: FitConfig,
+    fit_args: dict[str, Any],
+    n_timepoints: int,
+    n_channels: int,
+    array_key: Optional[str],
+    axes: Optional[str],
+    axes_labels: List[str],
+    channel_shape: Tuple[int, ...],
+    spatial_shape: Tuple[int, ...],
+    sampled_slices: "Optional[List[Tuple[int, int, Any]]]" = None,
+) -> tuple[Optional[float], Optional[float]]:
+    if deferred:
+        return None, None
+    return _resolve_and_record_floor(
+        input_path,
+        fit,
+        fit_args,
+        n_timepoints=n_timepoints,
+        n_channels=n_channels,
+        array_key=array_key,
+        axes=axes,
+        axes_labels=axes_labels,
+        channel_shape=channel_shape,
+        spatial_shape=spatial_shape,
+        sampled_slices=sampled_slices,
+    )
 
 
 def _evenly_spaced(n: int, k: int) -> List[int]:
@@ -397,6 +519,115 @@ def _floor_sample_pairs(n_timepoints: int, n_channels: int) -> List[Tuple[int, i
     return [(t, c) for c in channels for t in times]
 
 
+def _sample_batch_slices(
+    input_path: Path,
+    *,
+    n_timepoints: int,
+    n_channels: int,
+    array_key: Optional[str],
+    axes: Optional[str],
+    axes_labels: Optional[List[str]],
+    channel_shape: Tuple[int, ...],
+    spatial_shape: Optional[Tuple[int, ...]],
+) -> "List[Tuple[int, int, Any]]":
+    """Read bounded raw samples used to resolve one shared normalization range."""
+    from luxar.gsplats.fitting.preprocessing import (
+        FLOOR_SAMPLE_BUDGET_VOXELS,
+        _sample_volume_for_floor,
+    )
+
+    pairs = _floor_sample_pairs(n_timepoints, n_channels)
+    budget = max(1, int(FLOOR_SAMPLE_BUDGET_VOXELS) // len(pairs))
+    sampled = []
+    for timepoint, channel in pairs:
+        view = _pinned_slice_volume(
+            input_path,
+            channel=channel,
+            timepoint=timepoint,
+            array_key=array_key,
+            axes=axes,
+            axes_labels=axes_labels,
+            channel_shape=channel_shape,
+            spatial_shape=spatial_shape,
+        )
+        sample = _sample_volume_for_floor(view, budget)
+        if sample is not None and sample.size:
+            sampled.append((timepoint, channel, sample))
+    return sampled
+
+
+def _floor_resolution_pairs(
+    n_timepoints: int,
+    n_channels: int,
+    denoise_h_values: Optional[dict[int, float]],
+) -> List[Tuple[int, int]]:
+    """Choose full-store raw pairs or full-time calibrated-channel pairs."""
+    if denoise_h_values is None:
+        return _floor_sample_pairs(n_timepoints, n_channels)
+    calibrated_channels = sorted(denoise_h_values)
+    if not calibrated_channels:
+        raise ValueError("denoised floor resolution has no calibrated channels")
+    n_t = max(1, n_timepoints)
+    times = _evenly_spaced(n_t, min(n_t, FLOOR_SAMPLE_MAX_TIMEPOINTS))
+    channel_positions = _evenly_spaced(
+        len(calibrated_channels),
+        min(len(calibrated_channels), FLOOR_SAMPLE_MAX_CHANNELS),
+    )
+    channels = [calibrated_channels[index] for index in channel_positions]
+    return [(timepoint, channel) for channel in channels for timepoint in times]
+
+
+def _resolve_floor_slice(
+    view: Any,
+    floor_spec: "str | float | None",
+    *,
+    budget: int,
+    timepoint: int,
+    channel: int,
+    denoise_h_values: Optional[dict[int, float]],
+    denoise_params: Optional[dict[str, Any]],
+) -> Tuple[Optional[float], Optional[float], bool]:
+    """Return one slice's level, optional sampled max, and whether it was read."""
+    from luxar.gsplats.fitting.preprocessing import (
+        _sample_volume_for_floor,
+        resolve_volume_floor,
+        resolve_volume_floor_denoised,
+    )
+
+    if denoise_h_values is None:
+        sample = _sample_volume_for_floor(view, budget)
+        if sample is None or sample.size == 0:
+            return None, None, False
+        return resolve_volume_floor(sample, floor_spec), float(sample.max()), True
+
+    params = dict(denoise_params or {})
+    denoise_h = denoise_h_values.get(channel)
+    if denoise_h is None:
+        aprint(
+            f"Note: t={timepoint}, c={channel} has no calibrated denoise h; "
+            "resolving this slice on the raw basis."
+        )
+    try:
+        params["norm_range"] = _bounded_exact_range(view, budget)
+    except (TypeError, ValueError) as exc:
+        aprint(
+            f"Note: t={timepoint}, c={channel} exact normalization range could "
+            f"not be read ({exc}); resolving this slice on the raw basis."
+        )
+        return resolve_volume_floor(view, floor_spec, sample_budget=budget), None, True
+    return (
+        resolve_volume_floor_denoised(
+            view,
+            floor_spec,
+            denoise_h=denoise_h,
+            denoise_params=params,
+            sample_budget=budget,
+        ),
+        None,
+        True,
+    )
+
+
 def resolve_batch_floor(
     input_path: Path,
     floor_spec: "str | float | None",
@@ -408,27 +639,32 @@ def resolve_batch_floor(
     axes_labels: Optional[List[str]] = None,
     channel_shape: Tuple[int, ...] = (),
     spatial_shape: Optional[Tuple[int, ...]] = None,
+    denoise_h_values: Optional[dict[int, float]] = None,
+    denoise_params: Optional[dict[str, Any]] = None,
+    sampled_slices: "Optional[List[Tuple[int, int, Any]]]" = None,
 ) -> "Tuple[Optional[float], Optional[str | float]]":
     """Resolve the batch's background floor ONCE, globally for the whole run.
 
     ``batch-fit`` uses **one global level for the whole timelapse**: it is
-    resolved here at plan time, recorded in the manifest (``floor_level``), and
-    handed as a concrete number to every ``(t, c)`` task. Forwarding the *spec*
+    resolved once here (at plan time or in the dependent post-denoise stage),
+    recorded in the manifest (``floor_level``), and handed as a concrete number
+    to every ``(t, c)`` task. Forwarding the *spec*
     instead would make each task re-estimate on its own timepoint — a
     time-varying pedestal, i.e. brightness flicker across the merged partition
     (issue #1174).
 
     One global level has to be safe for the dimmest **sampled** slice, not just
     for a typical one: the tile workers subtract it unguarded, so a level above
-    some ``(t, c)``'s maximum clips that whole sub-volume to zero — 0 splats, an
-    ``.empty`` marker, a task that exits 0 and a merge that skips it, i.e. a
-    silently MISSING slice while ``status`` reports success. Under
+    some ``(t, c)``'s maximum clips that whole sub-volume to zero. Status and
+    merge now reject an all-empty uniform slice, but the level is still biased
+    low to avoid destructive over-subtraction in the first place. Under
     ``clip(V - level, 0)`` a too-LOW level is a recoverable under-subtraction
     while a too-HIGH one destroys signal, so the level is biased low:
 
     * the spec is resolved on a bounded, deterministic set of evenly spaced
-      slices spanning the store's FULL extent — over time AND over channel-like
-      coordinates, with independent caps so both axes are covered
+      slices spanning the store's FULL time extent. Raw-basis resolution also
+      spans the full channel extent; denoised resolution spans the selected,
+      calibrated channels because NLM strength is channel-specific
       (:func:`_floor_sample_pairs`, at most :data:`FLOOR_SAMPLE_MAX_SLICES`) —
       each read through a lazy axis-pinned view with the whole-volume sample
       budget divided among them;
@@ -441,8 +677,8 @@ def resolve_batch_floor(
       "would erase all signal" guard refusing it), suppression is downgraded to
       none for the whole run, loudly, rather than erasing a slice.
 
-    Because the sampled set spans the whole store rather than the selection, the
-    same store resolves the same level for ``--timepoints 0:50`` and ``0:100``.
+    Because the sampled timepoints span the whole store rather than the selection,
+    the same store resolves the same level for ``--timepoints 0:50`` and ``0:100``.
 
     RESIDUAL RISK: the bound holds for the sampled slices only. A dimmer
     NON-sampled slice (a blank/bleached frame between samples, a channel above
@@ -474,8 +710,6 @@ def resolve_batch_floor(
     )
     from luxar.gsplats.fitting.preprocessing import (
         FLOOR_SAMPLE_BUDGET_VOXELS,
-        _sample_volume_for_floor,
-        resolve_volume_floor,
     )
 
     if floor_spec is None:
@@ -491,37 +725,52 @@ def resolve_batch_floor(
             None, floor_spec, guard_numeric=False, scope="every (t, c) task"
         )
 
-    pairs = _floor_sample_pairs(n_timepoints, n_channels)
+    pairs = _floor_resolution_pairs(n_timepoints, n_channels, denoise_h_values)
     budget = max(1, int(FLOOR_SAMPLE_BUDGET_VOXELS) // len(pairs))
+    sampled_times = sorted({t for t, _ in pairs})
+    sampled_channels = sorted({c for _, c in pairs})
     levels: List[Optional[float]] = []
-    maxima: List[float] = []
+    sampled_by_pair = (
+        {(timepoint, channel): sample for timepoint, channel, sample in sampled_slices}
+        if sampled_slices is not None and denoise_h_values is None
+        else {}
+    )
     with asection(
         f"Resolving background floor '{floor_spec}' (minimum over "
-        f"{len(pairs)} slices spanning T={n_timepoints}, C={n_channels})"
+        f"{len(pairs)} slices; sampled T={sampled_times}, C={sampled_channels})"
     ):
         for t, c in pairs:
-            view = _pinned_slice_volume(
-                input_path,
-                channel=c,
+            view = sampled_by_pair.get((t, c))
+            if view is None:
+                view = _pinned_slice_volume(
+                    input_path,
+                    channel=c,
+                    timepoint=t,
+                    array_key=array_key,
+                    axes=axes,
+                    axes_labels=axes_labels,
+                    channel_shape=channel_shape,
+                    spatial_shape=spatial_shape,
+                )
+            level_here, sampled_max, processed = _resolve_floor_slice(
+                view,
+                floor_spec,
+                budget=budget,
                 timepoint=t,
-                array_key=array_key,
-                axes=axes,
-                axes_labels=axes_labels,
-                channel_shape=channel_shape,
-                spatial_shape=spatial_shape,
+                channel=c,
+                denoise_h_values=denoise_h_values,
+                denoise_params=denoise_params,
             )
-            sample = _sample_volume_for_floor(view, budget)
-            if sample is None or sample.size == 0:
+            if not processed:
                 continue
-            # `sample` is already within `budget`, so re-sampling it inside
-            # resolve_volume_floor reads it whole: one read, level + max both.
-            level_here = resolve_volume_floor(sample, floor_spec)
             levels.append(level_here)
-            maxima.append(float(sample.max()))
+            max_note = (
+                "" if sampled_max is None else f" (sampled max {sampled_max:.6g})"
+            )
             aprint(
                 f"t={t}, c={c}: level "
-                f"{'none' if level_here is None else format(level_here, '.6g')} "
-                f"(sampled max {maxima[-1]:.6g})"
+                f"{'none' if level_here is None else format(level_here, '.6g')}"
+                f"{max_note}"
             )
 
         level: Optional[float] = None
@@ -579,6 +828,7 @@ def _resolve_and_record_floor(
     axes_labels: Optional[List[str]] = None,
     channel_shape: Tuple[int, ...] = (),
     spatial_shape: Optional[Tuple[int, ...]] = None,
+    sampled_slices: "Optional[List[Tuple[int, int, Any]]]" = None,
 ) -> "Tuple[Optional[float], Optional[float]]":
     """:func:`resolve_batch_floor` + write the level into ``fit_args``/the manifest.
 
@@ -597,6 +847,7 @@ def _resolve_and_record_floor(
         axes_labels=axes_labels,
         channel_shape=channel_shape,
         spatial_shape=spatial_shape,
+        sampled_slices=sampled_slices,
     )
     recorded: Optional[float] = None
     if forward is not None:
@@ -604,6 +855,115 @@ def _resolve_and_record_floor(
         if not isinstance(forward, str):
             recorded = float(forward)
     return level, recorded
+
+
+def resolve_batch_norm_range(
+    input_path: Path,
+    norm_percentile: float,
+    *,
+    n_timepoints: int = 1,
+    n_channels: int = 1,
+    array_key: Optional[str] = None,
+    axes: Optional[str] = None,
+    axes_labels: Optional[List[str]] = None,
+    channel_shape: Tuple[int, ...] = (),
+    spatial_shape: Optional[Tuple[int, ...]] = None,
+    sampled_slices: "Optional[List[Tuple[int, int, Any]]]" = None,
+) -> "Optional[Tuple[float, float]]":
+    """Resolve one raw-input normalization range for the whole batch run."""
+    import numpy as np
+
+    from luxar.gsplats.fitting.preprocessing import (
+        _norm_range_has_usable_span,
+        resolve_volume_norm_range,
+    )
+
+    pairs = _floor_sample_pairs(n_timepoints, n_channels)
+    sampled = sampled_slices
+    if sampled is None:
+        sampled = _sample_batch_slices(
+            input_path,
+            n_timepoints=n_timepoints,
+            n_channels=n_channels,
+            array_key=array_key,
+            axes=axes,
+            axes_labels=axes_labels,
+            channel_shape=channel_shape,
+            spatial_shape=spatial_shape,
+        )
+    with asection(
+        f"Resolving normalization range over {len(pairs)} slices spanning "
+        f"T={n_timepoints}, C={n_channels}"
+    ):
+        if not sampled:
+            aprint(
+                "No sampled voxels; each task resolves its own normalization "
+                "range (no shared range pinned)."
+            )
+            return None
+        norm_range = resolve_volume_norm_range(
+            np.concatenate([sample for _, _, sample in sampled]),
+            norm_percentile,
+            verbose=False,
+        )
+        if not _norm_range_has_usable_span(norm_range):
+            aprint(
+                f"Sampled normalization range [{norm_range[0]:.6g}, "
+                f"{norm_range[1]:.6g}] has no usable extent; each task resolves "
+                "its own scale."
+            )
+            return None
+        aprint(
+            f"Every (t, c) task uses normalization range "
+            f"[{norm_range[0]:.6g}, {norm_range[1]:.6g}]"
+        )
+        return norm_range
+
+
+def _record_batch_norm_range(
+    fit_args: dict[str, Any], norm_range: "Optional[Tuple[float, float]]"
+) -> None:
+    """Forward a resolved batch range when one is usable."""
+    if norm_range is not None:
+        fit_args["norm_range"] = f"{norm_range[0]:.17g},{norm_range[1]:.17g}"
+
+
+def _resolve_planned_norm_range(
+    *,
+    input_path: Path,
+    configured: "Optional[Tuple[float, float]]",
+    denoise: bool,
+    norm_percentile: float,
+    n_timepoints: int,
+    n_channels: int,
+    array_key: Optional[str],
+    axes: Optional[str],
+    axes_labels: List[str],
+    channel_shape: Tuple[int, ...],
+    spatial_shape: Tuple[int, ...],
+    sampled_slices: "List[Tuple[int, int, Any]]",
+) -> "Optional[Tuple[float, float]]":
+    """Resolve the batch range without putting raw sampled bounds on denoised data."""
+    if configured is not None:
+        return configured
+    if denoise:
+        aprint(
+            "Denoising is enabled; each task resolves its normalization range "
+            "on the data it fits."
+        )
+        return None
+    return resolve_batch_norm_range(
+        input_path,
+        norm_percentile,
+        n_timepoints=n_timepoints,
+        n_channels=n_channels,
+        array_key=array_key,
+        axes=axes,
+        axes_labels=axes_labels,
+        channel_shape=channel_shape,
+        spatial_shape=spatial_shape,
+        sampled_slices=sampled_slices,
+    )
 
 
 def _load_scan_volume(
@@ -711,6 +1071,213 @@ def _validate_merge_refine_source(
     )
     if problem:
         raise typer.BadParameter(f"--merge-refine volume: {problem}")
+
+
+def _loader_task_axes(
+    ndim: int, emits_channel: bool, emits_timepoint: bool
+) -> "Tuple[Optional[int], Tuple[int, ...]]":
+    """Which axes the POSITIONAL loader indexes away for one task, and as what.
+
+    Returns ``(time_axis, channel_axes)``: the axis the loader hands the task's
+    ``--timepoint`` to (or ``None``), and the axes it folds the flat ``--channel``
+    index over, in decode order. Everything else is left for the volume. Read off
+    :func:`luxar.io.volume._load_zarr_volume` branch by branch:
+
+    * ``ndim >= 6``: ``arr[t, *decode_flat_channel_index(channel, shape[1:ndim-3])]``
+      — axis 0 takes the timepoint, axes ``1 … ndim-4`` fold the channel index.
+    * ``ndim == 5``: ``arr[t, c, :, :, :]``.
+    * ``ndim == 4``: ``arr[channel]`` when the argv carries ``--channel``, else
+      ``arr[timepoint]`` when it carries ``--timepoint``, else the whole array.
+      At most ONE axis is consumed and channel wins — the one ndim where the
+      branch depends on which flags :func:`~luxar.gsplats.batch.fit_command.build_task_fit_argv`
+      emitted.
+    * ``ndim <= 3``: ``np.array(arr)`` — nothing is consumed and both flags are
+      ignored.
+    """
+    if ndim >= 6:
+        return 0, tuple(range(1, ndim - 3))
+    if ndim == 5:
+        return 0, (1,)
+    if ndim == 4:
+        if emits_channel:
+            return None, (0,)
+        if emits_timepoint:
+            return 0, ()
+    return None, ()
+
+
+def _worker_reproduces_the_plan(
+    info: "OMEZarrInfo", emits_channel: bool, emits_timepoint: bool
+) -> bool:
+    """Whether a positionally-slicing worker lands on the plan's spatial volume.
+
+    Asked of the decomposition discovery ITSELF used —
+    ``time_axis``/``channel_indices``/``spatial_indices`` on
+    :class:`~luxar.io.ome_zarr.OMEZarrInfo` — never of the axis LABELS. NGFF
+    classifies by the ``type`` field, so re-deriving the roles from the names
+    disagrees in both directions: a channel axis named ``stain`` looks spatial to
+    a name rule (a false refusal of a canonical 5D store that always worked),
+    while an axis typed ``view`` is spatial to the parser and channel-like to a
+    name rule (a false pass, whose plan tiles a 4-D "spatial" shape the worker
+    never sees).
+
+    Two sets are compared, rather than a per-ndim table of whole layouts (which
+    demanded an exact axis partition and so refused ``t,c,y,x`` at ``(5, 1,
+    32, 32)`` — a 2D timelapse with a singleton channel — while admitting its
+    ``T=1`` sibling):
+
+    * what the loader CONSUMES for a task (:func:`_loader_task_axes`), and
+    * what the plan FANS over, ``{time_axis} | channel_indices``, one task per
+      combination.
+
+    Reproducible when both of these hold:
+
+    1. the two agree axis for axis, once singleton axes are dropped from both:
+       the loader's time axis is the plan's (or neither varies), and its folded
+       channel axes are the plan's channel axes in the same order. Dropping
+       singletons is exact, not a fudge — a size-1 axis is indexed at 0 whatever
+       the task index says, and ``decode_flat_channel_index`` gives it digit 0
+       and a stride of 1, so it contributes nothing to either side. This is the
+       clause that makes each task a DISTINCT volume. It also subsumes "no axis
+       the plan calls spatial is indexed away": a consumed non-singleton axis
+       outside the fan shows up on the loader's side of this comparison and on
+       nothing on the plan's.
+    2. the shape the loader hands back — the axes it did not consume — is the
+       plan's ``spatial_shape``, both with size-1 axes dropped, because
+       ``load_volume`` squeezes its positional result (``luxar/io/volume.py``,
+       the ``np.squeeze`` in the ``axes is None`` branch). That squeeze is what
+       lets a layout whose non-spatial axes are all singletons — ``z,y,x,c`` at
+       ``(16, 32, 32, 1)``, ``t,c,y,x`` at ``(1, 1, 32, 32)`` — plan even though
+       its axes do not lead.
+
+    The plan now applies the same singleton-spatial-axis squeeze through
+    :func:`_worker_spatial_shape`, so clause 2's squeezed-to-squeezed comparison
+    is an equality between the shape the plan records and the worker emits.
+    """
+    shape = tuple(info.shape)
+    ndim = len(shape)
+    loader_t, loader_c = _loader_task_axes(ndim, emits_channel, emits_timepoint)
+
+    def _varying(axis: Optional[int]) -> Optional[int]:
+        return axis if axis is not None and shape[axis] > 1 else None
+
+    # 1. same axes, same roles, same fold order (singletons excluded: they carry
+    #    no index either way).
+    if _varying(loader_t) != _varying(info.time_axis):
+        return False
+    if tuple(a for a in loader_c if shape[a] > 1) != tuple(
+        a for a in info.channel_indices if shape[a] > 1
+    ):
+        return False
+
+    # 2. what is left after the loader's indexing IS the planned volume.
+    consumed = set(loader_c) | ({loader_t} if loader_t is not None else set())
+    loaded = tuple(s for i, s in enumerate(shape) if i not in consumed)
+    return tuple(s for s in loaded if s != 1) == tuple(
+        s for s in info.spatial_shape if s != 1
+    )
+
+
+def _axes_spec_luxar_can_slice(
+    labels: Sequence[str],
+) -> "Tuple[Optional[str], Optional[str]]":
+    """``(spec, None)`` when ``--axes <spec>`` would really run, else ``(None, why)``.
+
+    Two conditions, both asked of :func:`luxar.io.volume._axis_kind` itself rather
+    than of a copied word list, because that function IS the ``--axes``
+    vocabulary — and it is deliberately narrower than discovery's (no
+    ``view``/``angle``, and it raises rather than defaulting to spatial). Only its
+    ``ValueError`` is caught, and only per label, so nothing else is swallowed.
+
+    1. every label is in that vocabulary, else the spec is rejected outright;
+    2. at most ONE time label. One ``--timepoint`` cannot address multiple time
+       axes independently, and :func:`luxar.io.volume._apply_axes_spec` rejects
+       such a spec. Multiple channel-like labels are valid: ``--channel`` is a
+       flat row-major index decoded across all of them.
+    """
+    from luxar.io.volume import _axis_kind
+
+    normalised = [str(label).strip().lower() for label in labels]
+    kinds: List[str] = []
+    unrecognised: List[str] = []
+    for label in normalised:
+        try:
+            kinds.append(_axis_kind(label))
+        except ValueError:
+            unrecognised.append(label)
+    if unrecognised:
+        return None, (
+            f"this store's own labels are not ones luxar can slice by "
+            f"({', '.join(repr(u) for u in unrecognised)} unrecognised), so they "
+            f"cannot be quoted back at you"
+        )
+    time_labels = [
+        label for label, kind in zip(normalised, kinds, strict=True) if kind == "t"
+    ]
+    if len(time_labels) > 1:
+        return None, (
+            f"this store folds more than one time axis "
+            f"({', '.join(repr(label) for label in time_labels)}), but one "
+            "--timepoint cannot address them independently, so the discovered "
+            "labels cannot be quoted back at you"
+        )
+    return ",".join(normalised), None
+
+
+def _refuse_layout_the_workers_cannot_slice(
+    axes_list: Optional[List[str]],
+    info: "OMEZarrInfo",
+    emits_channel: bool,
+    emits_timepoint: bool,
+) -> None:
+    """Refuse a discovered layout the per-task worker cannot reproduce.
+
+    A no-op when the user passed ``--axes`` (``axes_list``), which the manifest
+    forwards to every worker so it slices by LABEL. Otherwise the manifest records
+    no axes and every worker falls back to the POSITIONAL slicing in
+    :func:`luxar.io.volume._load_zarr_volume`, whose per-task indexing
+    :func:`_loader_task_axes` reads off branch by branch and
+    :func:`_worker_reproduces_the_plan` compares against the plan's own fan.
+
+    Discovery now reads real NGFF labels, so it can learn a layout — a ``(t, c,
+    y, x)`` store, say — that the positional loader silently mis-slices: the plan
+    fans over 5 timepoints × 3 channels while every worker prefers ``--channel``
+    and ignores ``--timepoint``, so the merged partition is the same 3 volumes
+    repeated. Nothing raises, so this does.
+
+    The ``--axes`` escape hatch is only SUGGESTED when running it would really
+    reproduce the plan (:func:`_axes_spec_luxar_can_slice`): the spec's
+    vocabulary is narrower than discovery's, so labels such as ``stain`` and
+    heuristic ``dim0…dimN`` cannot be quoted back. A second time axis is also
+    unquotable because one ``--timepoint`` cannot address both independently.
+    Every other suggested spec is preflighted against the worker vocabulary,
+    including folded channel-like axes decoded by one flat ``--channel``.
+    """
+    if axes_list is not None:
+        return
+    if _worker_reproduces_the_plan(info, emits_channel, emits_timepoint):
+        return
+
+    labels = [str(a) for a in info.axes]
+    spec, why = _axes_spec_luxar_can_slice(labels)
+    if spec is not None:
+        advice = f"Pass '--axes {spec}' to slice by label instead."
+    else:
+        reason = why or "this store's labels cannot be quoted back at you"
+        advice = (
+            f"{reason[0].upper()}{reason[1:]}: pass '--axes' with {len(labels)} "
+            "labels of your own — time/t, channel/c/ch/camera/cam or z/y/x, one "
+            "per dimension — saying what each axis means."
+        )
+    raise typer.BadParameter(
+        f"the store's axes are '{','.join(labels)}' with shape "
+        f"{tuple(info.shape)}, a layout batch-fit's per-task volume loader "
+        f"cannot reproduce: without --axes it slices by POSITION — at most a "
+        f"leading timepoint and the channel-like axes before the last three, "
+        f"and at 3-D or less nothing at all. Planning "
+        f"would fan out over axes the workers never see, producing duplicate "
+        f"tiles. {advice}"
+    )
 
 
 def _validate_merge_refine_frame(
@@ -1166,31 +1733,104 @@ def _assemble_fit_args(
     return fit_args, denoise_mode, None
 
 
+def _validate_content_fit_flags(tiling: str, fit_args: dict) -> None:
+    """Reject fit flags that content workers would silently ignore."""
+    if tiling != "content":
+        return
+    unsupported = [
+        flag
+        for flag in CONTENT_UNSUPPORTED_FIT_FLAGS
+        if flag.removeprefix("--") in fit_args
+    ]
+    if not unsupported:
+        return
+    advice = "Use --tiling uniform"
+    if "--denoise" in unsupported:
+        advice += ", or use --preprocess with batch-fit submit"
+    raise typer.BadParameter(
+        f"--tiling content with {', '.join(unsupported)} is not supported: "
+        f"content workers ignore these options. {advice}."
+    )
+
+
 def _announce_seed_split(mode: str, fit_args: dict, n_tiles: int) -> None:
     """Announce how an integer ``--seeds`` budget divides across a task's tiles.
 
-    Emitted ONCE at plan time — the only place the tile count is known before
-    any task runs, so both ``batch-fit run`` and ``batch-fit submit --dry-run``
-    show it. Every task is a ``--tile k/M`` fit that divides the budget itself,
-    but its own notice never reaches the console: the task pool captures worker
-    output (``task_pool.py``, ``capture_output=True``) and Slurm sends it to a
-    log. The split's return value is deliberately DROPPED — applying it here
-    would double-divide the count that goes into ``fit_args``. Content plans
-    ignore ``--seeds`` (per-box budgets come from the density), so they are
-    skipped.
+    Emitted ONCE at plan time as a lower bound: planning knows the geometric
+    tile count but does not hold the task's array to count non-empty tiles. Both
+    ``batch-fit run`` and ``batch-fit submit --dry-run`` therefore show what is
+    guaranteed, while each ``--tile k/M`` task resolves the exact divisor. Task
+    output does not reach this console: the local pool captures it and Slurm
+    sends it to a log. Content plans ignore ``--seeds`` because per-box budgets
+    come from the density model.
     """
     if mode == "content" or not fit_args.get("seeds"):
         return
     from luxar.cli.gsplat_config import parse_seeds
-    from luxar.cli.gsplat_ops.fitting.fit_utils import split_seeds_across_tiles
+    from luxar.cli.gsplat_ops.fitting.fit_utils import announce_seed_split_lower_bound
 
     # batch does not parse --seeds itself (it forwards the string verbatim, and
     # each task's own `fit` validates it), so guard: a malformed value must fail
     # in the task as it always has, not break planning here over a notice.
     try:
-        split_seeds_across_tiles(parse_seeds(fit_args["seeds"]), n_tiles)
+        announce_seed_split_lower_bound(parse_seeds(fit_args["seeds"]), n_tiles)
     except ValueError:
         pass
+
+
+def _worker_spatial_shape(
+    spatial_shape: Tuple[int, ...], axes_list: Optional[List[str]]
+) -> Tuple[int, ...]:
+    """Return the spatial shape the task's volume loader will expose."""
+    if axes_list is not None:
+        return spatial_shape
+    return tuple(size for size in spatial_shape if size != 1)
+
+
+def _validate_content_spatial_shape(
+    mode: str,
+    spatial: Tuple[int, ...],
+    discovered_spatial: Tuple[int, ...],
+    axes_list: Optional[List[str]],
+) -> None:
+    """Reject content scans whose worker-visible volume is not 3-D."""
+    if mode != "content" or len(spatial) == 3:
+        return
+    if axes_list is None and spatial != discovered_spatial:
+        reason = (
+            f"the store's spatial axes squeeze to {spatial} because the "
+            "positional volume loader drops singleton dimensions"
+        )
+        alternative = "Use --tiling uniform, or pass --axes to keep the axis."
+    elif axes_list is None:
+        reason = f"the store's spatial shape {spatial} is already {len(spatial)}-D"
+        alternative = "Use --tiling uniform, or provide a 3-D spatial array."
+    else:
+        reason = f"--axes resolves the store's spatial shape to {spatial}"
+        alternative = "Use --tiling uniform, or provide a 3-D spatial array."
+    raise typer.BadParameter(
+        f"--tiling content requires exactly 3 spatial dimensions, but {reason}. "
+        f"{alternative}"
+    )
+
+
+def _validate_worker_axes(axes_list: Optional[List[str]]) -> None:
+    """Reject axis specs the per-task volume loader cannot apply."""
+    if axes_list is None:
+        return
+
+    from luxar.io.volume import _axis_kind
+
+    labels = [str(label).strip().lower() for label in axes_list]
+    try:
+        kinds = [_axis_kind(label) for label in labels]
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if sum(kind == "t" for kind in kinds) > 1:
+        raise typer.BadParameter(
+            f"--axes {','.join(labels)!r} names more than one time axis; one "
+            "--timepoint cannot index them independently."
+        )
 
 
 def plan_batch(
@@ -1257,21 +1897,39 @@ def plan_batch(
         )
 
     fit_args, denoise_mode, _ = _assemble_fit_args(fit, denoise)
+    _validate_content_fit_flags(tiling, fit_args)
     denoised_zarr_path = None
     if denoise_mode == "preprocess":
         denoised_zarr_path = str(output_dir.resolve() / "denoised.zarr")
 
     # 2. Discover dataset shape + apply --timepoints/--channels slicing.
+    _validate_worker_axes(axes_list)
     with asection("Discovering dataset shape"):
         ome_info = discover_ome_zarr_shape(
             input_path, axes_override=axes_list, array_key=array_key
         )
         n_t_full = ome_info.n_timepoints
         n_c_full = ome_info.n_channels
-        spatial = ome_info.spatial_shape
+        # Positional workers call load_volume without --axes, whose legacy
+        # post-processing squeezes every size-1 dimension. Plan the exact
+        # spatial volume those workers fit so tile coordinates and the merge's
+        # stacked-axis index use the same dimensionality.
+        spatial = _worker_spatial_shape(ome_info.spatial_shape, axes_list)
         aprint(f"Axes: {ome_info.axes}")
         aprint(f"Shape: {ome_info.shape}")
         aprint(f"T={n_t_full}, C={n_c_full}, spatial={'x'.join(map(str, spatial))}")
+
+        # Without --axes the manifest carries no axes, so the workers slice
+        # POSITIONALLY. Refuse a discovered layout they would slice differently
+        # from what this plan assumes, instead of emitting duplicate tiles. The
+        # two flags mirror `build_task_fit_argv`'s emission rule, since the 4D
+        # branch of the loader depends on which of them is present.
+        _refuse_layout_the_workers_cannot_slice(
+            axes_list,
+            ome_info,
+            emits_channel=n_c_full > 1 or bool(channels_slice),
+            emits_timepoint=n_t_full > 1 or bool(timepoints_slice),
+        )
 
         t_indices = (
             _parse_slice(timepoints_slice, n_t_full)
@@ -1321,6 +1979,7 @@ def plan_batch(
 
     # 3. Decompose the spatial volume into the slots fanned across (t, c).
     mode = "content" if tiling == "content" else "uniform"
+    _validate_content_spatial_shape(mode, spatial, ome_info.spatial_shape, axes_list)
     content_plan = None
     plan_path_str: Optional[str] = None
     total_voxels = math.prod(spatial)
@@ -1352,25 +2011,69 @@ def plan_batch(
     # FULL extent, reduced by MINIMUM — a level above some slice's maximum would
     # clip that whole sub-volume to zero and drop it silently from the merge, so
     # the level is made a lower bound on every SAMPLED slice's pedestal (bounded
-    # sampling cannot bound an unsampled one), and must not
-    # depend on the --timepoints/--channels selection (see resolve_batch_floor).
+    # sampling cannot bound an unsampled one). Raw resolution must not depend on
+    # either selection; on-the-fly denoised resolution spans the full time extent
+    # but follows the selected channels because NLM h is calibrated per channel
+    # (see resolve_batch_floor).
     # Deliberately not the content plan's max-projection either, whose per-voxel
     # maximum biases the background mode upward relative to any single slice.
-    floor_level, recorded_floor_level = _resolve_and_record_floor(
-        input_path,
-        fit,
-        fit_args,
+    from luxar.cli.gsplat_ops.fitting.fit_utils import (
+        floor_spec_needs_volume,
+        validate_floor_spec,
+    )
+
+    floor_spec = effective_floor_spec(fit)
+    validate_floor_spec(floor_spec)
+    floor_deferred = _should_defer_floor_resolution(
+        mode, denoise, floor_spec, denoise_mode
+    )
+    configured_norm_range = effective_norm_range(fit)
+    resolve_sampled_norm_range = configured_norm_range is None and not denoise.denoise
+    sampled_slices = (
+        _sample_batch_slices(
+            input_path,
+            n_timepoints=n_t_full,
+            n_channels=n_c_full,
+            array_key=array_key,
+            axes=",".join(axes_list) if axes_list else None,
+            axes_labels=list(ome_info.axes),
+            channel_shape=tuple(ome_info.channel_shape),
+            spatial_shape=tuple(spatial),
+        )
+        if (not floor_deferred and floor_spec_needs_volume(floor_spec))
+        or resolve_sampled_norm_range
+        else []
+    )
+    floor_level, recorded_floor_level = _resolve_planned_floor(
+        deferred=floor_deferred,
+        input_path=input_path,
+        fit=fit,
+        fit_args=fit_args,
         n_timepoints=n_t_full,
         n_channels=n_c_full,
         array_key=array_key,
         axes=",".join(axes_list) if axes_list else None,
-        # The DISCOVERED labels, so the representative slice is pinned by label
-        # even when the user passed no --axes (the positional 4D heuristic reads
-        # a (T, Z, Y, X) store as CZYX and would silently sample t=0).
+        # The DISCOVERED labels pin the representative slice even without --axes.
         axes_labels=list(ome_info.axes),
         channel_shape=tuple(ome_info.channel_shape),
         spatial_shape=tuple(spatial),
+        sampled_slices=sampled_slices,
     )
+    norm_range = _resolve_planned_norm_range(
+        input_path=input_path,
+        configured=configured_norm_range,
+        denoise=denoise.denoise,
+        norm_percentile=effective_norm_percentile(fit),
+        n_timepoints=n_t_full,
+        n_channels=n_c_full,
+        array_key=array_key,
+        axes=",".join(axes_list) if axes_list else None,
+        axes_labels=list(ome_info.axes),
+        channel_shape=tuple(ome_info.channel_shape),
+        spatial_shape=tuple(spatial),
+        sampled_slices=sampled_slices,
+    )
+    _record_batch_norm_range(fit_args, norm_range)
 
     if mode == "content":
         import numpy as _np
@@ -1540,6 +2243,9 @@ def plan_batch(
         preset=fit.preset,
         fit_args=fit_args,
         floor_level=recorded_floor_level,
+        floor_spec=floor_spec if floor_deferred else None,
+        floor_deferred=floor_deferred,
+        norm_range=norm_range,
         grid_scale=grid_scale,
         gpu_name=resolved_gpu,
         estimated_seconds_per_task=est_seconds,

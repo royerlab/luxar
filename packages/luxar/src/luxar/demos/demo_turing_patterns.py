@@ -53,6 +53,8 @@ DEMO_META = {
     },
     "caches": [],
     "outputs": ["turing_patterns"],
+    # Procedurally generated: no external dataset, nothing to credit.
+    "citation": None,
 }
 
 import sys
@@ -64,7 +66,8 @@ from arbol import aprint, asection
 from scipy.ndimage import laplace
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer
+from luxar.core.viewer_config import ViewerConfig
+from luxar.demos import add_demo_caption, launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
 
@@ -270,7 +273,9 @@ def generate_turing_patterns(
         )
 
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                dimensions=dims, viewer_config=ViewerConfig(cinematic_mode=True)
+            )
 
             # Small flat points for 2D appearance
             radii = np.full(len(positions), 0.6, dtype=np.float32)
@@ -325,8 +330,13 @@ def generate_turing_patterns(
                 '<div style="font-size:1.3vh;color:rgba(200,200,200,0.5);font-family:monospace">'
                 "\u2202V/\u2202t = D\u2207\u00b2V + UV\u00b2 \u2212 (F+k)V"
                 "</div>",
-                position=(0.98, 0.97),
-                anchor="bottom-right",
+                position=(0.98, 0.02),
+                anchor="top-right",
+            )
+            add_demo_caption(
+                scene,
+                "Gray-Scott reaction-diffusion • 6 patterns",
+                DEMO_META.get("citation"),
             )
 
         aprint(f"✓ Written to {output_path}")

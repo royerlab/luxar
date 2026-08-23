@@ -113,22 +113,34 @@ def load_fit_config(
     preset: Optional[str] = None,
     config_path: Optional[Path] = None,
     cli_overrides: Optional[Dict[str, Any]] = None,
+    command_defaults: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Build a merged fit config from preset, YAML file, and CLI overrides.
 
     Priority chain (highest wins):
-        CLI flags > YAML config > preset > function defaults
+        CLI flags > YAML config > preset > command defaults > function defaults
 
     Args:
         preset: Preset name ("draft", "standard", "hifi", "ultra", "n2s") or None
         config_path: Path to YAML config file or None
         cli_overrides: Dict of CLI-provided values (None values are ignored)
+        command_defaults: Per-command defaults that displace the harvested
+            function defaults but yield to preset / YAML / CLI (None values are
+            ignored, so a caller can pass a sentinel-free dict). Lets one command
+            carry a different baseline from a bare ``fit`` — e.g. the
+            content-tiling path's near-lossless ``cull_retention``.
 
     Returns:
         Merged config dict ready to pass as ``**kwargs`` to fit_gaussian_splats
     """
     # Start with function defaults
     config = get_fit_defaults()
+
+    # Layer per-command defaults (skip None so a caller may pass a sparse dict)
+    if command_defaults:
+        for key, value in command_defaults.items():
+            if value is not None:
+                config[key] = value
 
     # Layer preset
     if preset is not None:
@@ -212,7 +224,7 @@ def dump_default_config(preset: str = "standard") -> str:
         "# Luxar Gaussian Splat Fitting Configuration",
         "# ============================================================",
         f"# Base preset: {preset}",
-        "# Priority: CLI flags > YAML config > preset > function defaults",
+        "# Priority: CLI flags > YAML config > preset > command defaults > function defaults",
         "#",
         "# Usage:",
         "#   luxar gsplat fit volume.npy output.gsplats.zarr --config this_file.yaml",

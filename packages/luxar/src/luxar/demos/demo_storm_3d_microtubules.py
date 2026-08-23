@@ -48,15 +48,23 @@ structural skeleton and highway system. They're perfect for STORM because:
 
 GAUSSIAN SPLATS FOR STORM:
 ---------------------------
-Each localization is NATURALLY a Gaussian splat!
+The two views deliberately use Gaussian splats with different provenance:
+
+Widefield splats are a BASIS fitted to a continuous diffraction-blurred field:
+- Rasterize localization events, weighted by detected photons
+- Convolve with the lateral/axial widefield PSF
+- Fit a compact set of anisotropic Gaussian splats to that volume
+
+Super-resolution splats are EPISTEMIC uncertainty ellipsoids, placed directly
+from the detector output — there is nothing to fit:
 - **Center**: Detected molecule position (x, y, z)
-- **Covariance**: Localization precision (σx, σy, σz)
+- **Covariance**: CRLB combined with antibody-label linkage uncertainty
 - **Amplitude**: Photon count or intensity
-- **Sharpness**: Can represent localization quality
+- **Variation**: Dimmer, uncertain localizations remain visibly fuzzier
 
 This demo shows:
 1. **Super-resolved view**: Each localization as a Gaussian splat
-2. **Widefield comparison**: Synthetic conventional microscopy
+2. **Widefield comparison**: Photon-weighted raster, PSF blur, and fitted splats
 3. **Categorical dimension**: Toggle between widefield ↔ super-resolution
 
 DATA SOURCE:
@@ -68,7 +76,8 @@ https://zenodo.org/records/3547521
 - **Target**: Alpha-tubulin (microtubule protein)
 - **Stain**: Alexa Fluor 647 immunofluorescence
 - **Method**: 3D STORM with astigmatism
-- **Resolution**: ~20 nm lateral, ~50 nm axial
+- **Displayed uncertainty**: CRLB combined with 17 nm antibody-linkage error;
+  median splat sigma is about 18-19 nm on each axis and is linkage-dominated
 - **Localizations**: Millions per field of view
 - **Format**: CSV with columns (x, y, z, precision, photons, etc.)
 
@@ -84,9 +93,11 @@ Usage:
     python demo_storm_3d_microtubules.py [--max-localizations=N]
 
     Options:
-    --max-localizations=N   Limit number of localizations (default: 5M)
+    --max-localizations=N   Use the first N frame-ordered rows for both views
+                            (default: 5M; widefield is then a partial acquisition)
     --no-serve              Generate dataset without launching viewer
     --field=N               Select field of view (default: 4)
+    --recompute             Ignore the cached widefield fit
 
 Controls:
     - Press '1' to select VIEW dimension
@@ -107,22 +118,34 @@ DEMO_META = {
     "requirements": {
         "download_mb": 1800,
         "compute": "heavy",
-        "gpu": "none",
+        "gpu": "required",
         "local_data": None,
     },
     "caches": ["storm_data"],
     "outputs": ["storm_3d_microtubules"],
+    "citation": {
+        "short": "Sieben 2019",
+        "doi": "10.5281/zenodo.3547521",
+        "license": "CC BY 4.0",
+    },
 }
 
+import hashlib
 import sys
 from pathlib import Path
 
 import numpy as np
-import requests
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer, require_module
+from luxar.core.viewer_config import ViewerConfig
+from luxar.demos import (
+    add_demo_caption,
+    cached_download,
+    launch_viewer,
+    require_module,
+    warn_if_no_cuda_gpu,
+)
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -132,27 +155,66 @@ from luxar.utils.paths import get_demos_output_dir
 # Zenodo dataset
 ZENODO_RECORD = "3547521"
 ZENODO_BASE_URL = f"https://zenodo.org/records/{ZENODO_RECORD}/files"
+STORM_LOCALIZATION_SIZES = {
+    2: 603_229_618,
+    4: 1_762_998_675,
+}
 
 # Default parameters
 DEFAULT_FIELD = 4  # Field of view number
 DEFAULT_MAX_LOCALIZATIONS = 5_000_000  # Limit for demo performance
 
 # Visualization parameters
-WIDEFIELD_PSF_SIGMA = 100.0  # nm - conventional microscopy PSF width
+WIDEFIELD_PSF_SIGMA_NM = 100.0  # lateral conventional microscopy PSF width
+WIDEFIELD_AXIAL_PSF_SIGMA_NM = 200.0
 SUPERRES_PSF_SIGMA = 20.0  # nm - super-resolution PSF width
+LABEL_LINKAGE_SIGMA_NM = 17.0  # primary + secondary IgG linkage error
 PIXEL_SIZE = 106.0  # nm - from dataset metadata
+WIDEFIELD_VOXEL_SIZE_UM = 0.075
+WIDEFIELD_TILE_SIZE = (64, 256, 256)
+WIDEFIELD_OVERLAP = (8, 32, 32)
+WIDEFIELD_SEEDS_PER_TILE = 6000
+WIDEFIELD_N_ITERS = 5000
+WIDEFIELD_CULL_RETENTION = 0.999
+# The raster is synthetic photon mass, not a camera image with a DC pedestal.
+WIDEFIELD_FLOOR = "none"
+WIDEFIELD_OUTPUT_SPACE = "real"
 
-# Visualization scale factor applied to every splat sigma (widefield and
-# super-res alike), preserving their relative sizes. 1.0 = physically faithful
-# widths (super-res splats really are ~tens of nm in a ~60 μm scene, so they
-# read as fine points); raise it only if you want to exaggerate splat size for
-# a zoomed-out overview.
+# Visualization scale factor for the measured super-resolution uncertainty
+# ellipsoids. 1.0 = physically faithful widths (tens of nm in a ~60 μm scene);
+# raise it only to make that view more legible in a zoomed-out overview.
 VIS_SCALE = 1.0
 
 
 # Cache paths
 CACHE_DIR = Path.home() / ".cache" / "luxar" / "storm_data"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _widefield_cache_path(
+    csv_path: Path,
+    max_localizations: int | None,
+) -> Path:
+    """Return a cache path keyed by source identity and every fit parameter."""
+    source_stat = csv_path.stat()
+    cache_spec = (
+        csv_path.name,
+        source_stat.st_size,
+        max_localizations,
+        WIDEFIELD_PSF_SIGMA_NM,
+        WIDEFIELD_AXIAL_PSF_SIGMA_NM,
+        WIDEFIELD_VOXEL_SIZE_UM,
+        WIDEFIELD_TILE_SIZE,
+        WIDEFIELD_OVERLAP,
+        WIDEFIELD_SEEDS_PER_TILE,
+        WIDEFIELD_N_ITERS,
+        WIDEFIELD_CULL_RETENTION,
+        WIDEFIELD_FLOOR,
+        WIDEFIELD_OUTPUT_SPACE,
+        "stream",
+    )
+    digest = hashlib.sha256(repr(cache_spec).encode()).hexdigest()[:12]
+    return CACHE_DIR / f"{csv_path.stem}_widefield_{digest}.gsplats.zarr.zip"
 
 
 # =============================================================================
@@ -162,188 +224,29 @@ CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 def download_storm_localizations(
     field: int = 4,
-    cache_dir: Path = CACHE_DIR,
 ) -> Path:
     """Download STORM localization CSV from Zenodo.
 
     Args:
-        field: Field of view number (4 or 5)
-        cache_dir: Where to cache the download
+        field: Field of view number (2 or 4)
 
     Returns:
         Path to downloaded CSV file
     """
+    if field not in STORM_LOCALIZATION_SIZES:
+        raise ValueError(f"field must be one of {sorted(STORM_LOCALIZATION_SIZES)}")
+
     filename = f"Cos7_MT_A647_FOV_{field}_Localizations.csv"
-    cache_file = cache_dir / filename
     url = f"{ZENODO_BASE_URL}/{filename}"
-
     with asection(f"Downloading STORM localizations (FOV {field})"):
-        if cache_file.exists():
-            size_mb = cache_file.stat().st_size / (1024**2)
-            aprint(f"✓ Using cached file: {cache_file.name}")
-            aprint(f"  Size: {size_mb:.1f} MB")
-            return cache_file
-
         aprint("Dataset: 3D STORM - COS7 Microtubules")
         aprint(f"Source: Zenodo record {ZENODO_RECORD}")
-        aprint(f"URL: {url}")
-        aprint("")
-        aprint("⏱️  Downloading ~1.8 GB (may take 2-5 minutes)...")
-        aprint("")
-
-        # Try curl first (more robust), fallback to requests
-        import shutil
-        import subprocess
-        import time
-
-        if shutil.which("curl"):
-            # Use curl for robust download with automatic resume
-            aprint("Using curl for download (automatic resume support)...")
-            try:
-                cmd = [
-                    "curl",
-                    "-L",  # Follow redirects
-                    "-C",
-                    "-",  # Resume from partial
-                    "--retry",
-                    "10",
-                    "--retry-delay",
-                    "5",
-                    "--max-time",
-                    "3600",
-                    "-o",
-                    str(cache_file),
-                    "-#",  # Progress bar
-                    url,
-                ]
-
-                subprocess.run(cmd, check=True)
-                aprint(f"✓ Downloaded to {cache_file}")
-                aprint(f"  Size: {cache_file.stat().st_size / (1024**2):.1f} MB")
-                return cache_file
-
-            except subprocess.CalledProcessError:
-                aprint("⚠️  curl failed, trying Python requests...")
-
-        # Fallback: Python requests with manual resume
-        try:
-            temp_file = cache_file.parent / f"{cache_file.name}.partial"
-            resume_pos = 0
-            if temp_file.exists():
-                resume_pos = temp_file.stat().st_size
-                aprint(
-                    f"Found partial download ({resume_pos / (1024**2):.1f} MB), resuming..."
-                )
-
-            # Robust download with resume support
-            max_retries = 5
-            retry_delay = 10
-
-            for attempt in range(max_retries):
-                try:
-                    # Request with resume support + browser headers
-                    headers = {
-                        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                        "Accept-Language": "en-US,en;q=0.5",
-                        "Accept-Encoding": "gzip, deflate, br",
-                        "DNT": "1",
-                        "Connection": "keep-alive",
-                        "Upgrade-Insecure-Requests": "1",
-                    }
-                    if resume_pos > 0:
-                        headers["Range"] = f"bytes={resume_pos}-"
-
-                    response = requests.get(
-                        url, headers=headers, stream=True, timeout=300
-                    )
-
-                    # Handle rate limiting
-                    if response.status_code == 429:
-                        if attempt < max_retries - 1:
-                            aprint(
-                                f"⚠️  Rate limited, waiting {retry_delay}s (attempt {attempt + 1}/{max_retries})..."
-                            )
-                            time.sleep(retry_delay)
-                            retry_delay *= 2
-                            continue
-                        else:
-                            raise Exception("Rate limit exceeded after retries")
-
-                    # Handle resume response codes
-                    if response.status_code == 206:  # Partial content (resume)
-                        aprint(f"✓ Resuming from {resume_pos / (1024**2):.1f} MB")
-                        mode = "ab"  # Append mode
-                    elif response.status_code == 200:  # Full download
-                        mode = "wb"  # Write mode
-                        resume_pos = 0
-                    else:
-                        response.raise_for_status()
-                        continue
-
-                    # Get total size
-                    content_range = response.headers.get("Content-Range")
-                    if content_range:
-                        total_size = int(content_range.split("/")[-1])
-                    else:
-                        total_size = (
-                            int(response.headers.get("content-length", 0)) + resume_pos
-                        )
-
-                    aprint(f"File size: {total_size / (1024**2):.1f} MB")
-
-                    downloaded = resume_pos
-                    chunk_size = 1024 * 1024  # 1 MB chunks
-
-                    with open(temp_file, mode) as f:
-                        last_progress = downloaded
-                        for chunk in response.iter_content(chunk_size=chunk_size):
-                            if chunk:
-                                f.write(chunk)
-                                downloaded += len(chunk)
-
-                                # Progress every 100 MB
-                                if downloaded - last_progress >= 100 * 1024 * 1024:
-                                    percent = (
-                                        (downloaded / total_size * 100)
-                                        if total_size > 0
-                                        else 0
-                                    )
-                                    aprint(
-                                        f"  Progress: {downloaded / (1024**2):.0f} / {total_size / (1024**2):.0f} MB ({percent:.0f}%)"
-                                    )
-                                    last_progress = downloaded
-
-                    # Download complete - move temp to final
-                    temp_file.rename(cache_file)
-                    aprint(f"✓ Downloaded to {cache_file}")
-                    aprint(
-                        f"  Final size: {cache_file.stat().st_size / (1024**2):.1f} MB"
-                    )
-                    break  # Success!
-
-                except (
-                    requests.exceptions.ChunkedEncodingError,
-                    requests.exceptions.ConnectionError,
-                ) as e:
-                    if attempt < max_retries - 1:
-                        aprint(f"⚠️  Download interrupted ({e})")
-                        aprint(
-                            f"   Retrying in {retry_delay}s (attempt {attempt + 1}/{max_retries})..."
-                        )
-                        time.sleep(retry_delay)
-                        retry_delay = min(retry_delay * 2, 120)  # Max 2 min
-                        continue
-                    else:
-                        raise
-
-        except Exception as e:
-            aprint(f"❌ Download failed: {e}")
-            if cache_file.exists():
-                cache_file.unlink()
-            raise
-
-    return cache_file
+        return cached_download(
+            url,
+            "storm_data",
+            filename,
+            expected_size=STORM_LOCALIZATION_SIZES[field],
+        )
 
 
 # =============================================================================
@@ -382,11 +285,14 @@ def parse_storm_localizations(
             df = pd.read_csv(csv_path)
             aprint(f"✓ Loaded {len(df):,} total localizations")
 
+        df.columns = [column.strip() for column in df.columns]
         aprint(f"  Columns: {list(df.columns)[:10]}")
 
         # Extract key columns (column names may vary)
         # Common formats: x, y, z or xnm, ynm, znm
         result = {}
+
+        coordinate_scales = {}
 
         # Extract coordinates (prioritize nm columns!)
         for key_base in ["x", "y", "z"]:
@@ -400,10 +306,10 @@ def parse_storm_localizations(
             ]:
                 if variant in df.columns:
                     values = df[variant].values
-                    # Convert pixels to nm if needed
-                    if "_pix" in variant:
-                        values = values * PIXEL_SIZE
+                    scale = PIXEL_SIZE if "_pix" in variant else 1.0
+                    values = values * scale
                     result[key_base] = values
+                    coordinate_scales[key_base] = scale
                     break
 
         # Precision/uncertainty (CRLB = Cramér-Rao Lower Bound)
@@ -417,14 +323,8 @@ def parse_storm_localizations(
             ]:
                 if variant in df.columns:
                     values = df[variant].values
-                    # CRLB is already in nm (or pixels)
-                    if (
-                        "crlb_" in variant
-                        and "_pix" not in variant
-                        and "nm" not in variant
-                    ):
-                        # Plain 'crlb_x' might be in pixels
-                        values = values * PIXEL_SIZE
+                    if variant.startswith("crlb_") and "nm" not in variant:
+                        values = values * coordinate_scales.get(key_base, 1.0)
                     result[f"precision_{key_base}"] = values
                     break
 
@@ -477,9 +377,9 @@ def extract_centers_and_amplitudes(
     Returns:
         Tuple ``(centers_um, amplitudes, precision_um)`` where centers are in
         micrometers and ``precision_um`` is an ``(N, 3)`` array of per-axis
-        localization precision (σx, σy, σz) in micrometers — the physical width
-        of each super-resolution Gaussian. ``precision_um`` is ``None`` when the
-        dataset carries no CRLB columns (caller falls back to a fixed sigma).
+        uncertainty (σx, σy, σz) in micrometers, combining the localization CRLB
+        and label-linkage error in quadrature. ``precision_um`` is ``None`` when
+        the dataset carries no CRLB columns (caller falls back to a fixed sigma).
     """
     with asection("Extracting splat data from localizations"):
         n_loc = len(localizations["x"])
@@ -507,19 +407,22 @@ def extract_centers_and_amplitudes(
 
         amplitudes = np.clip(amplitudes, 0.01, 1.0)
 
-        # Per-localization precision (CRLB, nm) → the physical width of each
-        # super-resolution splat. Present only if the dataset carried CRLB
-        # columns; clip to a sane [5, 150] nm range so a degenerate (zero/huge)
-        # estimate can't produce an invisible or scene-spanning splat.
+        # CRLB is only the localization-estimator uncertainty. The fluorophore
+        # is displaced from alpha-tubulin by the primary + secondary antibody
+        # sandwich, so the physical uncertainty is their independent error
+        # budget in quadrature. The 17 nm linkage term removes the arbitrary
+        # lower floor while preserving genuine per-localization variation.
         precision_um: np.ndarray | None = None
         if all(f"precision_{a}" in localizations for a in "xyz"):
-            precision_nm = np.column_stack(
+            crlb_nm = np.column_stack(
                 [localizations[f"precision_{a}"] for a in "xyz"]
             ).astype(np.float32)
-            precision_nm = np.clip(precision_nm, 5.0, 150.0)
+            crlb_nm = np.maximum(crlb_nm, 0.0)
+            precision_nm = np.hypot(crlb_nm, LABEL_LINKAGE_SIGMA_NM)
+            precision_nm = np.minimum(precision_nm, 150.0)
             precision_um = precision_nm / 1000.0
             aprint(
-                "  Using per-localization anisotropic precision (CRLB): "
+                "  Using CRLB + antibody-linkage uncertainty: "
                 f"median σ = [{np.median(precision_nm, axis=0).round(1)}] nm"
             )
         else:
@@ -537,35 +440,191 @@ def extract_centers_and_amplitudes(
     return centers_um, amplitudes, precision_um
 
 
+def rasterize_widefield_volume(
+    centers_um: np.ndarray,
+    photon_weights: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Rasterize photon-weighted localizations and convolve with the PSF.
+
+    Args:
+        centers_um: Centered localization coordinates in ``(x, y, z)`` order.
+        photon_weights: Raw detected photons per localization.
+
+    Returns:
+        ``(volume, origin_zyx)`` where the volume is in ``(z, y, x)`` order and
+        ``origin_zyx`` maps voxel index zero back into centered scene space.
+    """
+    centers_um = np.asarray(centers_um, dtype=np.float32)
+    photon_weights = np.asarray(photon_weights, dtype=np.float32)
+    if centers_um.ndim != 2 or centers_um.shape[1] != 3:
+        raise ValueError(f"centers_um must have shape (N, 3), got {centers_um.shape}")
+    if photon_weights.shape != (len(centers_um),):
+        raise ValueError(
+            "photon_weights must have one value per center, got "
+            f"{photon_weights.shape} for {len(centers_um)} centers"
+        )
+    if len(centers_um) == 0:
+        raise ValueError("cannot rasterize an empty localization set")
+    if not np.all(np.isfinite(centers_um)) or not np.all(np.isfinite(photon_weights)):
+        raise ValueError("centers_um and photon_weights must be finite")
+    if np.any(photon_weights < 0):
+        raise ValueError("photon_weights must be non-negative")
+
+    gaussian_filter = require_module("scipy.ndimage").gaussian_filter
+    centers_zyx = centers_um[:, ::-1]
+    sigma_um = np.array(
+        [
+            WIDEFIELD_AXIAL_PSF_SIGMA_NM / 1000.0,
+            WIDEFIELD_PSF_SIGMA_NM / 1000.0,
+            WIDEFIELD_PSF_SIGMA_NM / 1000.0,
+        ],
+        dtype=np.float64,
+    )
+    padding_um = 4.0 * sigma_um
+    origin_zyx = (
+        np.floor((centers_zyx.min(axis=0) - padding_um) / WIDEFIELD_VOXEL_SIZE_UM)
+        * WIDEFIELD_VOXEL_SIZE_UM
+    )
+    upper_zyx = centers_zyx.max(axis=0) + padding_um
+    shape = np.ceil((upper_zyx - origin_zyx) / WIDEFIELD_VOXEL_SIZE_UM).astype(int) + 1
+    indices = np.rint((centers_zyx - origin_zyx) / WIDEFIELD_VOXEL_SIZE_UM).astype(
+        np.int64
+    )
+    indices = np.clip(indices, 0, shape - 1)
+
+    volume = np.zeros(tuple(shape), dtype=np.float32)
+    np.add.at(volume, tuple(indices.T), photon_weights)
+    volume = gaussian_filter(
+        volume,
+        sigma=sigma_um / WIDEFIELD_VOXEL_SIZE_UM,
+        mode="reflect",
+    ).astype(np.float32, copy=False)
+    return volume, origin_zyx.astype(np.float32)
+
+
+def fit_widefield_gsplats(
+    centers_um: np.ndarray,
+    photon_weights: np.ndarray,
+    cache_file: Path,
+    *,
+    recompute: bool = False,
+):
+    """Fit and cache a compact gsplat basis for the synthetic widefield image."""
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    if cache_file.exists() and not recompute:
+        with asection("Loading cached widefield fit"):
+            result = GSplatData.load(cache_file, include_stats=False)
+            aprint(f"✓ Loaded {len(result.amplitudes):,} fitted splats")
+            return result
+
+    warn_if_no_cuda_gpu()
+
+    from luxar.demos import detect_device
+    from luxar.demos._lod_policy import save_with_lod
+    from luxar.encoding import EncodingMode
+    from luxar.gsplats import fit_tiled
+
+    volume, origin_zyx = rasterize_widefield_volume(centers_um, photon_weights)
+    peak = float(volume.max())
+    if peak <= 0:
+        raise ValueError("widefield photon raster contains no positive signal")
+    volume /= peak
+    device = detect_device()
+
+    with asection("Fitting photon-weighted widefield volume"):
+        aprint(f"  Volume (z,y,x): {volume.shape}")
+        aprint(f"  Voxel size: {WIDEFIELD_VOXEL_SIZE_UM} μm")
+        aprint(f"  Device: {device}")
+        result = fit_tiled(
+            volume,
+            tile_size=WIDEFIELD_TILE_SIZE,
+            overlap=WIDEFIELD_OVERLAP,
+            seeds=WIDEFIELD_SEEDS_PER_TILE,
+            n_iters=WIDEFIELD_N_ITERS,
+            cull_retention=WIDEFIELD_CULL_RETENTION,
+            device=device,
+            voxel_size=WIDEFIELD_VOXEL_SIZE_UM,
+            output_space=WIDEFIELD_OUTPUT_SPACE,
+            floor=WIDEFIELD_FLOOR,
+            verbose=True,
+        ).translate(origin_zyx)
+        aprint(f"✓ Fitted {len(result.amplitudes):,} widefield splats")
+        save_with_lod(
+            result,
+            cache_file,
+            recipe="stream",
+            encoding_mode=EncodingMode.MEMORY,
+            include_fitting_info=True,
+            compress="zip",
+            zip_deflate=True,
+        )
+        aprint(f"✓ Cached {cache_file.name}")
+    return GSplatData.load(cache_file, include_stats=False)
+
+
+def _make_superresolution_gsplats(
+    centers_um: np.ndarray,
+    amplitudes: np.ndarray,
+    precision_um: np.ndarray | None,
+):
+    """Build epistemic per-localization splats in three spatial dimensions."""
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    n_splats = len(centers_um)
+    cholesky = np.zeros((n_splats, 6), dtype=np.float32)
+    if precision_um is not None:
+        sigma_um = (precision_um * VIS_SCALE).astype(np.float32)
+        cholesky[:, 0] = sigma_um[:, 0]
+        cholesky[:, 2] = sigma_um[:, 1]
+        cholesky[:, 5] = sigma_um[:, 2]
+    else:
+        sigma_um = np.empty((n_splats, 3), dtype=np.float32)
+        sigma_um[:, :2] = (SUPERRES_PSF_SIGMA * VIS_SCALE) / 1000.0
+        sigma_um[:, 2] = (SUPERRES_PSF_SIGMA * VIS_SCALE * 2) / 1000.0
+        cholesky[:, 0] = sigma_um[:, 0]
+        cholesky[:, 2] = sigma_um[:, 1]
+        cholesky[:, 5] = sigma_um[:, 2]
+    colors = np.tile(np.array([0.2, 1.0, 1.0], dtype=np.float32), (n_splats, 1))
+    return GSplatData(
+        centers=np.asarray(centers_um, dtype=np.float32),
+        cholesky_factors=cholesky,
+        amplitudes=np.asarray(amplitudes, dtype=np.float32),
+        colors=colors,
+    )
+
+
 # =============================================================================
 # Scene Creation
 # =============================================================================
 
 
 def create_storm_scene(
-    centers_um: np.ndarray,
+    centered_centers_um: np.ndarray,
     amplitudes: np.ndarray,
+    widefield_gsplats,
     precision_um: np.ndarray | None = None,
     output_path: Path | None = None,
+    localization_limit: int | None = None,
 ) -> Path:
     """Create Luxar scene with STORM data comparing widefield vs super-resolution.
 
     Two views on a categorical ``view`` dimension:
-    - Widefield: fixed diffraction-limited PSF (WIDEFIELD_PSF_SIGMA, 100 nm), the
-      blurry reference — a widefield microscope can't resolve better than the
-      diffraction limit no matter how bright a molecule is.
+    - Widefield: a compact fitted basis for the photon-weighted localization
+      raster after convolution with the diffraction-limited PSF.
     - Super-resolution: each splat's covariance is the localization's OWN
-      anisotropic precision (σx, σy, σz from the CRLB in ``precision_um``) — this
-      is the whole point of STORM, so uncertain molecules render as larger, fuzzy
-      splats and well-localized ones as tight points. Falls back to a fixed
-      SUPERRES_PSF_SIGMA sigma only when the dataset has no CRLB columns.
+      anisotropic error budget (CRLB plus label linkage in ``precision_um``).
 
     Args:
-        centers_um: Splat centers in micrometers (N, 3)
+        centered_centers_um: Localization centers in micrometers (N, 3), already
+            shifted into the same centered coordinate frame as ``widefield_gsplats``.
         amplitudes: Splat amplitudes (N,)
+        widefield_gsplats: Fitted 3D ``GSplatData`` in ``(z, y, x)`` order.
         precision_um: Per-localization precision (N, 3) in μm, or None for a
             fixed super-resolution sigma.
         output_path: Optional path to save the scene (default: demos directory)
+        localization_limit: Frame-ordered CSV prefix used for both views, or None
+            when the complete localization file was loaded.
 
     Returns:
         Path to output scene
@@ -592,143 +651,57 @@ def create_storm_scene(
         )
 
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                dimensions=dims,
+                citation=DEMO_META["citation"],
+                viewer_config=ViewerConfig(cinematic_mode=True),
+            )
 
             # Add metadata (keep simple for JSON compatibility)
             scene.attrs["title"] = "3D STORM Microtubule Network"
 
-            # Create BOTH views as gsplats with different PSF sizes
-            with asection("Adding both microscopy views as gsplats"):
-                from luxar.gsplats.gsplat_data import GSplatData
-
-                # Center at center-of-mass (amplitude-weighted)
-                total_amplitude = amplitudes.sum()
-                if total_amplitude > 0:
-                    centroid = (centers_um.T @ amplitudes) / total_amplitude
-                else:
-                    centroid = centers_um.mean(axis=0)
-
-                centered = centers_um - centroid
-                aprint(
-                    f"Centered at COM (was at [{centroid[0]:.1f}, {centroid[1]:.1f}, {centroid[2]:.1f}] μm)"
-                )
-                aprint(
-                    f"  New range: [{centered.min(axis=0)}] to [{centered.max(axis=0)}]"
-                )
-
-                n_splats = len(centers_um)
-                aprint(f"Creating {n_splats:,} splats × 2 views...")
-                aprint(
-                    f"  Physical PSF: widefield={WIDEFIELD_PSF_SIGMA} nm, super-res={SUPERRES_PSF_SIGMA} nm"
-                )
-                aprint(
-                    f"  Vis scale: {VIS_SCALE}x (effective: {WIDEFIELD_PSF_SIGMA * VIS_SCALE} nm / {SUPERRES_PSF_SIGMA * VIS_SCALE} nm)"
-                )
-
-                # Widefield view: a fixed, diffraction-limited isotropic PSF
-                # (z 2× worse, typical for 3D). This is the blurry reference —
-                # a widefield microscope cannot resolve below the diffraction
-                # limit no matter how bright a molecule is.
-                widefield_sigma_um = (WIDEFIELD_PSF_SIGMA * VIS_SCALE) / 1000  # nm→μm
-                widefield_cov = np.diag(
-                    [
-                        widefield_sigma_um**2,
-                        widefield_sigma_um**2,
-                        (widefield_sigma_um * 2) ** 2,
-                    ]
-                )
-
-                def make_4d_cholesky(cov_3d: np.ndarray) -> np.ndarray:
-                    """Pack a 3D spatial covariance into a 4D lower-triangular
-                    Cholesky vector (the view axis gets a tiny variance)."""
-                    cov_4d = np.zeros((4, 4), dtype=np.float32)
-                    cov_4d[1:, 1:] = cov_3d  # Spatial part
-                    cov_4d[0, 0] = 1e-6  # Tiny variance in the view dimension
-                    chol = np.linalg.cholesky(cov_4d)
-                    # Pack lower triangular: [L00, L10, L11, L20, L21, L22, L30, L31, L32, L33]
-                    return np.array(
-                        [
-                            chol[0, 0],
-                            chol[1, 0],
-                            chol[1, 1],
-                            chol[2, 0],
-                            chol[2, 1],
-                            chol[2, 2],
-                            chol[3, 0],
-                            chol[3, 1],
-                            chol[3, 2],
-                            chol[3, 3],
-                        ],
-                        dtype=np.float32,
+            with asection("Adding fitted and measured microscopy views"):
+                widefield_max = float(widefield_gsplats.amplitudes.max())
+                if widefield_max > 0:
+                    widefield_gsplats = widefield_gsplats.scale_intensity(
+                        0.3 / widefield_max
                     )
-
-                widefield_chol = make_4d_cholesky(widefield_cov)
-
-                # Super-resolution view: each splat's covariance is the
-                # localization's OWN anisotropic precision (σx, σy, σz from the
-                # CRLB) — the whole point of STORM. The per-splat covariance is
-                # diagonal, so its packed Cholesky is just the per-axis sigma on
-                # the diagonal (L11, L22, L33); build it vectorized for all splats.
-                superres_chol = np.zeros((n_splats, 10), dtype=np.float32)
-                superres_chol[:, 0] = 1e-3  # sqrt(view variance), matches make_4d
-                if precision_um is not None:
-                    sigma_um = (precision_um * VIS_SCALE).astype(np.float32)
-                    superres_chol[:, 2] = sigma_um[:, 0]  # L11 = σx
-                    superres_chol[:, 5] = sigma_um[:, 1]  # L22 = σy
-                    superres_chol[:, 9] = sigma_um[:, 2]  # L33 = σz
-                    aprint(
-                        "  Super-res: per-localization anisotropic σ, median "
-                        f"[{np.median(sigma_um, axis=0).round(4)}] μm"
-                    )
-                else:
-                    s = (SUPERRES_PSF_SIGMA * VIS_SCALE) / 1000
-                    superres_chol[:, 2] = s
-                    superres_chol[:, 5] = s
-                    superres_chol[:, 9] = s * 2  # z 2× worse
-                    aprint(f"  Super-res: fixed σ = {s:.4f} μm (no CRLB in data)")
-
-                aprint(f"  Widefield sigma: {widefield_sigma_um:.3f} μm")
-
-                # Build arrays for both views (vectorized where possible)
-                # VIEW 0: Widefield (gray, dimmer)
-                # VIEW 1: Super-resolution (cyan, brighter)
-                all_centers = np.zeros((n_splats * 2, 4), dtype=np.float32)
-                all_cholesky = np.zeros((n_splats * 2, 10), dtype=np.float32)
-                all_amplitudes = np.zeros(n_splats * 2, dtype=np.float32)
-                all_colors = np.zeros((n_splats * 2, 3), dtype=np.float32)
-
-                # Widefield view (indices 0 to n_splats-1)
-                all_centers[:n_splats, 0] = 0.0  # view = 0
-                all_centers[:n_splats, 1:] = centered
-                all_cholesky[:n_splats] = widefield_chol
-                all_amplitudes[:n_splats] = amplitudes * 0.3  # Dimmer for widefield
-                all_colors[:n_splats] = [0.7, 0.7, 0.7]  # Gray
-
-                # Super-resolution view (indices n_splats to 2*n_splats-1)
-                all_centers[n_splats:, 0] = 1.0  # view = 1
-                all_centers[n_splats:, 1:] = centered
-                all_cholesky[n_splats:] = superres_chol
-                all_amplitudes[n_splats:] = amplitudes  # Full brightness
-                all_colors[n_splats:] = [0.2, 1.0, 1.0]  # Cyan
-
-                # Create GSplatData
-                gsplat_data = GSplatData(
-                    centers=all_centers,
-                    cholesky_factors=all_cholesky,
-                    amplitudes=all_amplitudes,
-                    colors=all_colors,
+                superresolution_gsplats = _make_superresolution_gsplats(
+                    centered_centers_um,
+                    amplitudes,
+                    precision_um,
                 )
 
                 scene.add_gsplats_from_data(
-                    name="microtubules",
-                    result=gsplat_data,
+                    name="widefield_fit",
+                    result=widefield_gsplats,
+                    dim_order=["z", "y", "x"],
+                    fill={"view": 0.0},
+                    fill_sigma={"view": 0.1},
+                    extend_to_all=[],
+                    opacity=0.8,
+                    absorption=1.0,
+                    blending_mode="volumetric",
+                    colormap="gray",
+                    layer=True,
+                )
+                scene.add_gsplats_from_data(
+                    name="superresolution_localizations",
+                    result=superresolution_gsplats,
+                    dim_order=["x", "y", "z"],
+                    fill={"view": 1.0},
+                    fill_sigma={"view": 0.1},
+                    extend_to_all=[],
                     opacity=0.8,
                     absorption=1.0,
                     blending_mode="volumetric",
                     layer=True,
                 )
-
-                aprint(f"✓ Added {n_splats * 2:,} splats (2 views × {n_splats:,})")
+                aprint(
+                    "✓ Added independently sized views: "
+                    f"{len(widefield_gsplats.amplitudes):,} fitted widefield / "
+                    f"{len(superresolution_gsplats.amplitudes):,} measured super-res"
+                )
 
             # --- Overlays ---
             # Title
@@ -742,9 +715,14 @@ def create_storm_scene(
             )
 
             # Dimension-aware view mode labels
+            widefield_source = (
+                f"up to first {localization_limit:,} frame-ordered localizations"
+                if localization_limit is not None
+                else "complete localization acquisition"
+            )
             scene.add_html(
                 '<div style="font-size:1.5vh;font-weight:bold;color:#88bbff">Widefield</div>'
-                f'<div style="font-size:1.3vh;color:#aaa">\u03c3 \u2248 {WIDEFIELD_PSF_SIGMA} nm (diffraction-limited)</div>',
+                f'<div style="font-size:1.3vh;color:#aaa">{widefield_source}; fitted after {WIDEFIELD_PSF_SIGMA_NM:.0f}/{WIDEFIELD_AXIAL_PSF_SIGMA_NM:.0f} nm PSF blur</div>',
                 position=(0.02, 0.97),
                 anchor="bottom-left",
                 visible_range={"view": 0},
@@ -753,7 +731,7 @@ def create_storm_scene(
             )
             scene.add_html(
                 '<div style="font-size:1.5vh;font-weight:bold;color:#44ff88">Super-Resolution</div>'
-                '<div style="font-size:1.3vh;color:#aaa">\u03c3 = per-localization CRLB (STORM)</div>',
+                f'<div style="font-size:1.3vh;color:#aaa">\u03c3 = CRLB \u2295 {LABEL_LINKAGE_SIGMA_NM:.0f} nm label linkage</div>',
                 position=(0.02, 0.97),
                 anchor="bottom-left",
                 visible_range={"view": 1},
@@ -762,12 +740,10 @@ def create_storm_scene(
             )
 
             # Sample info (always visible)
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 "COS7 \u03b1-tubulin \u2022 Zenodo 3547521",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
 
         aprint("✓ Scene saved")
@@ -784,6 +760,7 @@ def main() -> None:
     """Main demo entry point."""
     field = DEFAULT_FIELD
     max_loc = DEFAULT_MAX_LOCALIZATIONS
+    recompute = "--recompute" in sys.argv
 
     for arg in sys.argv[1:]:
         if arg.startswith("--field="):
@@ -805,8 +782,8 @@ def main() -> None:
     aprint("")
     aprint("Resolution:")
     aprint("  • Conventional microscopy: ~250 nm (diffraction limit)")
-    aprint("  • STORM super-resolution: ~20 nm lateral, ~50 nm axial")
-    aprint("  • Improvement: 10-12x better!")
+    aprint("  • Displayed STORM σ: ~18-19 nm on each axis")
+    aprint("  • σ = localization CRLB ⊕ 17 nm label linkage (linkage-dominated)")
     aprint("")
     aprint("Parameters:")
     aprint(f"  • Field of view: {field}")
@@ -820,23 +797,57 @@ def main() -> None:
         # Parse localizations
         localizations = parse_storm_localizations(csv_file, max_localizations=max_loc)
 
-        # Extract centers, amplitudes, and per-localization CRLB precision.
+        # The measured localization amplitudes stay separately authored for the
+        # epistemic super-resolution view. The widefield image is integrated
+        # from raw photon counts before fitting its compact Gaussian basis.
         centers_um, amplitudes, precision_um = extract_centers_and_amplitudes(
             localizations
+        )
+        if "photons" in localizations:
+            photon_weights = localizations["photons"].astype(np.float32)
+        elif "intensity" in localizations:
+            photon_weights = localizations["intensity"].astype(np.float32)
+        else:
+            photon_weights = np.ones(len(centers_um), dtype=np.float32)
+
+        total_photons = float(photon_weights.sum())
+        if total_photons > 0:
+            centroid_um = (centers_um.T @ photon_weights) / total_photons
+        else:
+            centroid_um = centers_um.mean(axis=0)
+        centered_centers_um = centers_um - centroid_um
+        aprint(f"Centered both views at photon-weighted COM: {centroid_um.round(3)} μm")
+
+        widefield_gsplats = fit_widefield_gsplats(
+            centered_centers_um,
+            photon_weights,
+            _widefield_cache_path(csv_file, max_loc),
+            recompute=recompute,
         )
 
         # If --no-serve, generate and exit without launching viewer
         if "--no-serve" in sys.argv:
             output_path = get_demos_output_dir() / "storm_3d_microtubules.luxar.zarr"
             scene_path = create_storm_scene(
-                centers_um, amplitudes, precision_um, output_path=output_path
+                centered_centers_um,
+                amplitudes,
+                widefield_gsplats,
+                precision_um,
+                output_path=output_path,
+                localization_limit=max_loc,
             )
             aprint(f"Dataset generated at {scene_path}")
             aprint(f"Localizations: {len(centers_um):,}")
             return
 
         # Create scene in demos directory for serving
-        scene_path = create_storm_scene(centers_um, amplitudes, precision_um)
+        scene_path = create_storm_scene(
+            centered_centers_um,
+            amplitudes,
+            widefield_gsplats,
+            precision_um,
+            localization_limit=max_loc,
+        )
 
         # Stats
         aprint("")
@@ -852,7 +863,7 @@ def main() -> None:
         aprint("  - Press '1' to select VIEW dimension")
         aprint("  - Press '['/']' to toggle Widefield / Super-Resolution")
         aprint("  - Widefield: Blurry ~250 nm resolution (gray)")
-        aprint("  - Super-res: Sharp ~20 nm resolution (cyan splats)")
+        aprint("  - Super-res: ~18-19 nm displayed uncertainty (cyan splats)")
         aprint("  - Zoom in to see individual microtubules!")
         aprint("")
         aprint("=" * 70)

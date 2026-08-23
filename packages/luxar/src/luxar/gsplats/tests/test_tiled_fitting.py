@@ -780,7 +780,7 @@ class TestTiledFloorHandling:
         ftg.fit_tiled(volume, tile_size=48, overlap=16, floor="auto", verbose=False)
 
         assert len(records) > 1
-        floors = [rec["result"].stats["applied_floor"] for rec in records]
+        floors = [rec["result"].stats["floor"] for rec in records]
         assert all(f is not None for f in floors)
         assert all(f == floors[0] for f in floors)
         expected = resolve_volume_floor(volume, "auto")
@@ -861,15 +861,73 @@ class TestTiledFloorHandling:
             w = cosine_window(spec)
             expected = np.clip(volume[spec.slices] - 100.0, 0.0, None) * w
             np.testing.assert_allclose(rec["data"], expected, atol=1e-4)
-            assert rec["result"].stats["applied_floor"] == 100.0
+            assert rec["result"].stats["floor"] == 100.0
+
+    def test_pre_resolved_floor_skips_run_level_resolution(self, monkeypatch) -> None:
+        """The CLI divisor scan hands ``fit_tiled`` its resolved level once."""
+        import luxar.gsplats.fit_tiled_gsplats as ftg
+
+        records: list = []
+        monkeypatch.setattr(ftg, "fit_gaussian_splats", _recording_stub(records))
+
+        real_resolve = ftg.resolve_volume_floor_denoised
+        run_level_guard_values: list[object] = []
+
+        def spy(volume, floor, **kwargs):
+            if "guard_numeric" in kwargs:
+                run_level_guard_values.append(kwargs["guard_numeric"])
+            return real_resolve(volume, floor, **kwargs)
+
+        monkeypatch.setattr(ftg, "resolve_volume_floor_denoised", spy)
+
+        volume = self._pedestal_volume(pedestal=100.0)
+        ftg.fit_tiled(
+            volume,
+            tile_size=48,
+            overlap=16,
+            floor=100.0,
+            _floor_resolved=True,
+            verbose=False,
+        )
+
+        assert records
+        assert run_level_guard_values == []
+
+    @pytest.mark.parametrize(
+        ("floor", "applied_floor", "pedestal"),
+        [("none", None, 0.0), (3.0, 3.0, 2.0)],
+    )
+    def test_nonempty_scan_matches_fitted_tiles(
+        self, monkeypatch, floor, applied_floor, pedestal
+    ) -> None:
+        """Every tile counted for the seed divisor must enter the fitter."""
+        import luxar.gsplats.fit_tiled_gsplats as ftg
+
+        volume = np.full((96, 96), pedestal, dtype=np.float32)
+        volume[:24, :24] = 10.0
+        specs = compute_tile_specs(volume.shape, tile_size=24, overlap=4)
+
+        records: list = []
+        monkeypatch.setattr(ftg, "fit_gaussian_splats", _recording_stub(records))
+        ftg.fit_tiled(
+            volume,
+            tile_size=24,
+            overlap=4,
+            floor=floor,
+            _floor_resolved=True,
+            verbose=False,
+        )
+
+        predicted = ftg.count_nonempty_tiles(volume, specs, applied_floor)
+        assert predicted == 4
+        assert len(records) == predicted
 
     def test_negative_background_level_is_subtracted(self, monkeypatch) -> None:
         """A negative resolved level (dark-frame-corrected data) IS subtracted.
 
         Floor suppression means "put the background at 0": if the background
-        sits at -2, then V - (-2) = V + 2 is correct — and it is what the
-        non-tiled path's ``image_min = max(resolved_floor, image_min)`` does
-        with a negative level. Dropping a negative level here would silently
+        sits at -2, then V - (-2) = V + 2 is correct. The tiled path must apply
+        that concrete level before apodization. Dropping a negative level here would silently
         fall back to per-tile hard-min normalization of the windowed tile —
         exactly the seam-producing bug tiled floor resolution exists to fix.
         A constant offset subtracted before windowing also preserves the
@@ -898,7 +956,7 @@ class TestTiledFloorHandling:
         assert len(records) == len(specs)
 
         # Every tile subtracts the SAME negative level ...
-        floors = [rec["result"].stats["applied_floor"] for rec in records]
+        floors = [rec["result"].stats["floor"] for rec in records]
         assert all(f == level for f in floors)
 
         # ... and the recorded tiles still sum to clip(V - m, 0) everywhere.
@@ -933,7 +991,7 @@ class TestTiledFloorHandling:
         for spec, rec in zip(specs, records):
             w = cosine_window(spec)
             np.testing.assert_allclose(rec["data"], volume[spec.slices] * w, rtol=1e-5)
-            assert rec["result"].stats["applied_floor"] is None
+            assert rec["result"].stats["floor"] is None
 
     def test_fit_tile_resolves_live_spec_against_whole_volume(
         self, monkeypatch
@@ -972,7 +1030,7 @@ class TestTiledFloorHandling:
         monkeypatch.setattr(ftg, "fit_gaussian_splats", _recording_stub(records))
         result = ftg.fit_tile(volume, spec, floor="auto", verbose=False)
 
-        applied = result.stats["applied_floor"]
+        applied = result.stats["floor"]
         assert applied == pytest.approx(whole)
         assert applied != pytest.approx(local)
         # And the tile handed to the fitter had the WHOLE-volume level removed.
@@ -995,11 +1053,12 @@ class TestTiledFloorHandling:
         result = ftg.fit_tile(volume, background_spec, floor=100.0, verbose=False)
         assert result.n_splats == 0
         assert result.stats.get("skipped") is True
-        assert result.stats["applied_floor"] == 100.0
+        assert result.stats["floor"] == 100.0
 
-    def test_applied_floor_recorded_on_merge_paths(self, monkeypatch) -> None:
-        """Flat merge stamps stats['applied_floor']; the partition path stamps
-        the returned node's meta['applied_floor'] (in-memory bookkeeping)."""
+    def test_floor_recorded_on_merge_paths(self, monkeypatch) -> None:
+        """Flat merge stamps stats['floor']; the partition path stamps the
+        returned root node's meta['floor'], which the tree writer promotes into
+        the store's pipeline/ group on save (#1175)."""
         import luxar.gsplats.fit_tiled_gsplats as ftg
         from luxar.gsplats.fitting.preprocessing import resolve_volume_floor
 
@@ -1018,7 +1077,7 @@ class TestTiledFloorHandling:
             cull_retention=None,
             verbose=False,
         )
-        assert flat.stats["applied_floor"] == pytest.approx(expected)
+        assert flat.stats["floor"] == pytest.approx(expected)
 
         node = ftg.fit_tiled(
             volume,
@@ -1029,7 +1088,7 @@ class TestTiledFloorHandling:
             partition=True,
             verbose=False,
         )
-        assert node.meta["applied_floor"] == pytest.approx(expected)
+        assert node.meta["floor"] == pytest.approx(expected)
 
     def test_floor_none_subtracts_nothing(self, monkeypatch) -> None:
         """floor='none' leaves the tile untouched (behaviour unchanged)."""
@@ -1047,7 +1106,7 @@ class TestTiledFloorHandling:
             w = cosine_window(spec)
             np.testing.assert_allclose(rec["data"], volume[spec.slices] * w, rtol=1e-5)
             assert rec["floor"] == "none"
-            assert rec["result"].stats["applied_floor"] is None
+            assert rec["result"].stats["floor"] is None
 
 
 class _CountingArray:
@@ -1324,7 +1383,7 @@ class TestSingleTileWorkerFloor:
         result = fit_single_tile(
             _single_tile_ctx("0/4"), volume, {"floor": "auto"}, None
         )
-        assert result.stats["applied_floor"] == pytest.approx(expected)
+        assert result.stats["floor"] == pytest.approx(expected)
 
     def test_too_high_numeric_floor_is_applied_but_announced(
         self, monkeypatch, capsys
@@ -1347,7 +1406,7 @@ class TestSingleTileWorkerFloor:
         result = fit_single_tile(
             _single_tile_ctx("0/4"), volume, {"floor": 10_000.0}, None
         )
-        assert result.stats["applied_floor"] == pytest.approx(10_000.0)
+        assert result.stats["floor"] == pytest.approx(10_000.0)
         # Subtracting it clips the whole tile to zero, so the fit is skipped
         # outright and the tile yields 0 splats — exactly the outcome the warning
         # has to name up front (level, sampled max, consequence).
@@ -1370,7 +1429,7 @@ class TestSingleTileWorkerFloor:
         result = fit_single_tile(_single_tile_ctx("0/4"), volume, {"floor": None}, None)
         assert len(records) == 1
         assert records[0]["floor"] == "none"
-        assert result.stats["applied_floor"] is None
+        assert result.stats["floor"] is None
         specs = compute_tile_specs(volume.shape, 48, 16)
         w = cosine_window(specs[0])
         np.testing.assert_allclose(
@@ -1469,7 +1528,7 @@ class TestTiledFloorOnDenoisedBasis:
         )
 
         assert len(records) > 1
-        floors = [rec["result"].stats["applied_floor"] for rec in records]
+        floors = [rec["result"].stats["floor"] for rec in records]
         assert all(f == pytest.approx(denoised) for f in floors)
         assert floors[0] != pytest.approx(raw, rel=1e-3)
 
@@ -1492,8 +1551,8 @@ class TestTiledFloorOnDenoisedBasis:
             _denoise_h=_D_H,
             _denoise_params=_d_params(volume),
         )
-        assert result.stats["applied_floor"] == pytest.approx(denoised)
-        assert result.stats["applied_floor"] != pytest.approx(raw, rel=1e-3)
+        assert result.stats["floor"] == pytest.approx(denoised)
+        assert result.stats["floor"] != pytest.approx(raw, rel=1e-3)
 
     def test_single_tile_worker_applies_the_denoised_basis_level(
         self, monkeypatch
@@ -1517,8 +1576,8 @@ class TestTiledFloorOnDenoisedBasis:
             },
             None,
         )
-        assert result.stats["applied_floor"] == pytest.approx(denoised)
-        assert result.stats["applied_floor"] != pytest.approx(raw, rel=1e-3)
+        assert result.stats["floor"] == pytest.approx(denoised)
+        assert result.stats["floor"] != pytest.approx(raw, rel=1e-3)
         # The tile really was denoised: the worker only PEEKED at the keys, so
         # they survived into `fit_tile` (which pops them).
         assert len(records) == 1
@@ -1576,7 +1635,7 @@ class TestTiledFloorOnDenoisedBasis:
         monkeypatch.setattr(ftg, "fit_gaussian_splats", _recording_stub(records))
         ftg.fit_tiled(volume, tile_size=48, overlap=16, floor="auto", verbose=False)
 
-        floors = [rec["result"].stats["applied_floor"] for rec in records]
+        floors = [rec["result"].stats["floor"] for rec in records]
         assert floors and all(f == pytest.approx(raw) for f in floors)
 
     def test_denoise_off_logs_nothing_new_about_the_floor(

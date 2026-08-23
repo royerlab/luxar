@@ -69,9 +69,18 @@ DEFAULT_LINE_JOIN: Final[str] = "miter"
 #
 # The viewer mirror is `packages/luxar-viewer/src/types/lod-group.ts`; keep the
 # spellings in step with it.
-LOD_SELECTORS: Final[frozenset[str]] = frozenset({"coverage", "screen-area"})
+#
+# The two spellings are defined FIRST and `LOD_SELECTORS` is built from them, so
+# the vocabulary cannot drift from the constants that name its members.
 # The selector every derived (auto-computed) ladder stamps.
 DERIVED_LOD_SELECTOR: Final[str] = "screen-area"
+# The UNITS an explicitly authored `coverage_fractions=[...]` list is in — the
+# legacy diagonal metric, whose values were tuned against it — and the
+# `add_lod_group` default (a hand-built ladder is authored, not derived).
+LEGACY_LOD_SELECTOR: Final[str] = "coverage"
+LOD_SELECTORS: Final[frozenset[str]] = frozenset(
+    {LEGACY_LOD_SELECTOR, DERIVED_LOD_SELECTOR}
+)
 
 # Absorption (kappa) — the volumetric blending mode's per-node coefficient.
 # Multiplicative composition, identity 1.0; no upper bound (physical
@@ -91,6 +100,13 @@ SHARPNESS_DEFAULT: Final[float] = 0.5  # -> beta = 2 (Gaussian)
 COLOR_SDR_MIN: Final[float] = 0.0  # Standard dynamic range minimum
 COLOR_SDR_MAX: Final[float] = 1.0  # Standard dynamic range maximum
 COLOR_HDR_TYPICAL_MAX: Final[float] = 10.0  # Typical HDR maximum
+
+# Per-axis COORDINATE extent at/above which uint16 per-axis fixed-point can no
+# longer resolve a unit step, so AUTO/MEMORY store float32 instead. Read by the
+# encoder that applies it (encoding._encoders.perchannel) AND by the gsplat
+# writer's sigma rail (io._compiler.gsplat_assembly), which defers to it rather
+# than pre-empting its clearer diagnosis — the two must not drift apart.
+COORDINATE_U16_MAX_EXTENT: Final[float] = 65_536.0
 
 # Chunk size constants (SINGLE SOURCE OF TRUTH - bytes, not elements)
 # Consumers (io, gsplats.io) convert to element counts based on array dtype

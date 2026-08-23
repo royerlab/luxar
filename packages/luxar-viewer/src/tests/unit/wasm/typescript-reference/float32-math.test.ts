@@ -1,0 +1,135 @@
+import { describe, expect, it } from 'vitest';
+import { expf, expm1f, logf } from '../../../../wasm/typescript/float32-math';
+
+const bitBuffer = new ArrayBuffer(4);
+const bitView = new DataView(bitBuffer);
+
+function fromBits(bits: number): number {
+  bitView.setUint32(0, bits, true);
+  return bitView.getFloat32(0, true);
+}
+
+function toBits(value: number): number {
+  bitView.setFloat32(0, value, true);
+  return bitView.getUint32(0, true);
+}
+
+const EXP_VECTORS: ReadonlyArray<readonly [number, number]> = [
+  [0xff800000, 0x00000000],
+  [0xc2d00000, 0x00000000],
+  [0xc2cff1b4, 0x00000001],
+  [0xc2cfc000, 0x00000001],
+  [0xc2af5ea4, 0x005a5a81],
+  [0xc2aeb308, 0x007e54b6],
+  [0xc2ae9cee, 0x0083e756],
+  [0xc2a90000, 0x0288742e],
+  [0xc2642f32, 0x164febb7],
+  [0xc1c6f8ac, 0x2d8aebd4],
+  [0xc1a00000, 0x310da433],
+  [0xc0f20000, 0x3a083411],
+  [0xbf800000, 0x3ebc5ab2],
+  [0xbe800000, 0x3f475f7d],
+  [0xb8000000, 0x3f7ffe00],
+  [0x80000000, 0x3f800000],
+  [0x00000000, 0x3f800000],
+  [0x38000000, 0x3f800100],
+  [0x39000001, 0x3f800400],
+  [0x3e800000, 0x3fa45af2],
+  [0x3eb17218, 0x3fb504f3],
+  [0x3f547feb, 0x4012c8a0],
+  [0x3f800000, 0x402df854],
+  [0x3f851593, 0x403504f4],
+  [0x41200000, 0x46ac14ee],
+  [0x42b00000, 0x7ef882b7],
+  [0x42b12981, 0x7f5e291f],
+  [0x42b17217, 0x7f7fff84],
+  [0x42b20000, 0x7f800000],
+  [0x7f800000, 0x7f800000],
+];
+
+const LOG_VECTORS: ReadonlyArray<readonly [number, number]> = [
+  [0x00000000, 0xff800000],
+  [0x80000000, 0xff800000],
+  [0x00000001, 0xc2ce8ed0],
+  [0x0000009f, 0xc2c46b88],
+  [0x007fffff, 0xc2aeac50],
+  [0x00800000, 0xc2aeac50],
+  [0x014be658, 0xc2ac5b08],
+  [0x2fb2ebb1, 0xc1aec431],
+  [0x3dcccccd, 0xc0135d8e],
+  [0x3e35fc6a, 0xbfdd2019],
+  [0x3f000000, 0xbf317218],
+  [0x3f35068b, 0xbeb16d97],
+  [0x3f7fffff, 0xb3800000],
+  [0x3f800000, 0x00000000],
+  [0x3f800001, 0x33ffffff],
+  [0x40000000, 0x3f317218],
+  [0x4028ee5f, 0x3f7879c6],
+  [0x4f000001, 0x41abe687],
+  [0x52235b25, 0x41cf1f6f],
+  [0x7f7fffff, 0x42b17218],
+  [0x7f800000, 0x7f800000],
+];
+
+const EXPM1_VECTORS: ReadonlyArray<readonly [number, number]> = [
+  [0x00000000, 0x00000000],
+  [0x80000000, 0x80000000],
+  [0x00000001, 0x00000001],
+  [0x007fffff, 0x007fffff],
+  [0x00800000, 0x00800000],
+  [0x33000000, 0x33000000],
+  [0x33000001, 0x33000001],
+  [0x3e800000, 0x3e916bc8],
+  [0xbe800000, 0xbe62820c],
+  [0x3eb17218, 0x3ed413cd],
+  [0x3eb17219, 0x3ed413ce],
+  [0x3f851591, 0x3fea09e4],
+  [0x3f851592, 0x3fea09e6],
+  [0xbf333333, 0xbf00dfc9],
+  [0xc0a00000, 0xbf7e466c],
+  [0x4195b843, 0x4cffffd9],
+  [0x4195b844, 0x4cfffff9],
+  [0xc195b844, 0xbf800000],
+  [0x42340000, 0x5ff267bb],
+  [0x42700000, 0x6abcede5],
+  [0x42b17180, 0x7f7fb40f],
+  [0x42b17181, 0x7f800000],
+  [0x7f800000, 0x7f800000],
+  [0xff800000, 0xbf800000],
+];
+
+describe('compiler-builtins float32 math', () => {
+  // Expected bits were captured from direct temporary exports in the real
+  // rustc 1.92 wasm32 build, rather than from another JavaScript math library.
+  it('matches Rust expf bit-for-bit across normal, subnormal, and special values', () => {
+    for (const [inputBits, expectedBits] of EXP_VECTORS) {
+      expect(toBits(expf(fromBits(inputBits))), inputBits.toString(16)).toBe(expectedBits);
+    }
+  });
+
+  it('matches Rust logf bit-for-bit across normal, subnormal, and special values', () => {
+    for (const [inputBits, expectedBits] of LOG_VECTORS) {
+      expect(toBits(logf(fromBits(inputBits))), inputBits.toString(16)).toBe(expectedBits);
+    }
+  });
+
+  it('matches Rust expm1f bit-for-bit across normal, subnormal, and special values', () => {
+    for (const [inputBits, expectedBits] of EXPM1_VECTORS) {
+      expect(toBits(expm1f(fromBits(inputBits))), inputBits.toString(16)).toBe(expectedBits);
+    }
+  });
+
+  it('covers inputs where rounded JavaScript transcendentals choose another float', () => {
+    const expInput = fromBits(0xc07fff04);
+    const logInput = fromBits(0x0001a2a2);
+    expect(expf(expInput)).not.toBe(Math.fround(Math.exp(expInput)));
+    expect(logf(logInput)).not.toBe(Math.fround(Math.log(logInput)));
+  });
+
+  it('preserves the Rust special-value contract without pinning NaN payloads', () => {
+    expect(Number.isNaN(expf(Number.NaN))).toBe(true);
+    expect(Number.isNaN(expm1f(Number.NaN))).toBe(true);
+    expect(Number.isNaN(logf(-1))).toBe(true);
+    expect(Number.isNaN(logf(Number.NaN))).toBe(true);
+  });
+});

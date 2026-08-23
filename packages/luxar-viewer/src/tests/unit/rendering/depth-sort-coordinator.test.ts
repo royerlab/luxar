@@ -1167,6 +1167,30 @@ describe('depth-sort coordinator', () => {
     expect(await run([0, 1, 2], bspTree, onX)).not.toEqual(await run([0, 1, 2], undefined, onX));
   });
 
+  it('orders a partition wrapper without a bsp tree like the centroid-only path', async () => {
+    // `undefined` is the state a rejected tree leaves; the loader half of that
+    // contract is covered in load-partition-group-node.test.ts.
+    const run = async (wrapped: boolean): Promise<number[]> => {
+      const coord = await loadCoordinator();
+      coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+      const parts = [0, 1, 2].map(() => makeGSplatsMesh(2, 'normal'));
+      parts[0].geometry.boundingSphere!.center.z = -10;
+      parts[1].geometry.boundingSphere!.center.z = -30;
+      parts[2].geometry.boundingSphere!.center.z = -20;
+      if (wrapped) makePartitionWrapper(undefined, parts);
+      for (const mesh of parts) {
+        coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+      }
+      await flush();
+      coord.evaluateDepthSortPerFrame();
+      return parts.map((mesh) => mesh.renderOrder);
+    };
+
+    const wrappedOrder = await run(true);
+    expect(wrappedOrder).toEqual(await run(false));
+    expect(wrappedOrder).toEqual([2, 0, 1]);
+  });
+
   it('orders BSP-partition parts correctly with the camera INSIDE the volume (centroid fails here)', async () => {
     // The camera-inside case the per-part centroid heuristic gets wrong: parts
     // spread perpendicular to the view axis all share ~the same centroid

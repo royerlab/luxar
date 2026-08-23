@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from typing import AbstractSet, Any, Mapping, Optional, Sequence
 
 import typer
 from arbol import aprint
@@ -158,10 +158,24 @@ def parse_lod_breakpoints(spec: str) -> "str | list[int] | list[float]":
 
 #: Assumed stored bytes per scalar for (centers, amplitudes, cholesky) under
 #: each encoding mode (see :func:`estimate_bytes_per_splat`). AUTO and MEMORY
-#: write the SAME widths: centers u16 (coordinates never drop to u8),
-#: amplitude ~u16 (width picked from dynamic range identically in both modes),
-#: cholesky u8 (AUTO certified — escalation to u16 is the exception, not the
-#: model; MEMORY unconditional). PRECISION: float32 everywhere.
+#: write the SAME widths: centers u16 (coordinates never drop to u8, though they
+#: do escalate to float32 once an axis spans 2**16, or once a NON-gridded axis's
+#: grid would displace MORE THAN 0.1% of the splats past their own sigma — a
+#: gridded axis is snapped instead and stays u16), amplitude ~u16 (width picked from
+#: dynamic range identically in both modes), cholesky u8 (AUTO certified —
+#: escalation to u16 is the exception, not the model; MEMORY unconditional).
+#: PRECISION: float32 everywhere.
+#:
+#: Under an escalated centers array the ``center_b = 2.0`` row under-reports by
+#: ``1.5 × 2 × ndim`` bytes/splat — 12 B/splat on a 4-D fit — which sizes a
+#: ``stream:C`` first chunk derived from ``--target-ms`` too small. The estimate
+#: is not corrected for it: :func:`estimate_bytes_per_splat` is called only when
+#: no store exists to measure, and it sees just ``(ndim, has_colors, encoding)``
+#: — the escalation is a property of the splats' own Cholesky, which is not in
+#: scope here and is not knowable before the fit runs. Measure the store, or use
+#: ``--bytes-per-splat``, when a degenerate sub-population on a NON-gridded axis
+#: is in play. (A plain stacked axis is the grid-snapped case, which stays u16
+#: and needs no correction.)
 _ENCODING_ARRAY_BYTES = {
     "auto": (2.0, 2.0, 1.0),
     "precision": (4.0, 4.0, 4.0),
@@ -211,7 +225,53 @@ def carried_appearance(input_path: Path) -> dict:
     """
     from luxar.gsplats.io.load_gsplats import read_authored_appearance
 
-    carried = read_authored_appearance(input_path)
+    return _announce_carried(read_authored_appearance(input_path))
+
+
+def carried_appearance_from_inputs(
+    input_paths: "Sequence[Path]",
+    *,
+    exclude: "Mapping[str, str] | AbstractSet[str]" = frozenset(),
+    input_has_colors: "Sequence[bool] | None" = None,
+    output_has_colors: "bool | None" = None,
+) -> dict:
+    """The appearance N inputs AGREE on, announced as it is picked up.
+
+    The multi-input form of :func:`carried_appearance`, for ``gsplat merge``:
+    same lowest-precedence ``root_attrs`` channel, but the value has to be
+    agreed rather than simply read — see
+    :func:`~luxar.gsplats.io.load_gsplats.agreed_authored_appearance` for the
+    unanimity rule, what does and does not count as an OPINION (an absent key,
+    and a value equal to the one the writer manufactures, are both silence —
+    with the single ``visible`` exception), and ``exclude`` (keys the merge MODE
+    itself invalidates). The helper does the warning; this adds the same
+    one-line "carrying" announcement its single-input sibling prints, so the two
+    commands read alike.
+
+    ``exclude`` is a SET, not a ``Collection``, so a bare ``str`` cannot be
+    passed by accident — ``set("colormap")`` is a set of characters and would
+    exclude nothing.
+
+    ``input_has_colors`` supplies the color state already measured by merge.
+    A colored input with no authored palette is not silent: it is asking the
+    viewer to use its per-splat RGB, so a sibling's palette cannot be carried.
+    ``output_has_colors`` supplies the merged state so a dropped colormap's
+    warning can distinguish no palette from the writer's colorless ``gray``.
+    """
+    from luxar.gsplats.io.load_gsplats import agreed_authored_appearance
+
+    return _announce_carried(
+        agreed_authored_appearance(
+            input_paths,
+            exclude=exclude,
+            input_has_colors=input_has_colors,
+            output_has_colors=output_has_colors,
+        )
+    )
+
+
+def _announce_carried(carried: dict) -> dict:
+    """Print the one-line carry announcement (quiet when nothing is carried)."""
     if carried:
         aprint("Carrying authored appearance: " + ", ".join(sorted(carried)))
     return carried

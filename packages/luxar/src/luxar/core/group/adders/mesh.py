@@ -52,6 +52,7 @@ from ..compositing import (
     funnel_add_error,
     is_broadcast_color,
     position_bounds_from_array,
+    preflight_extend_to_all,
     reject_lines_only_join,
     slice_optional_array,
     strip_absent_attr_kwargs,
@@ -390,8 +391,8 @@ def _reject_partition_with_substitutive_lod(
 ) -> None:
     """Refuse ``partition=`` together with ``substitutive_lod=``.
 
-    The same refusal ``add_points`` / ``add_lines`` carry, with the same message: a
-    ``kind=partition`` of per-part LOD ladders is a topology nothing writes yet.
+    Lines carries the same refusal. Points instead supports a global overview LOD
+    above partitioned fine detail; Mesh does not implement that topology yet.
     Mesh needs it for one extra reason — the substitutive branch RETURNS before the
     partition branch is reached, so accepting both would silently drop the split.
 
@@ -408,7 +409,8 @@ def _reject_partition_with_substitutive_lod(
     if _requested(partition) and _requested(substitutive_lod):
         raise ValueError(
             "partition= and substitutive_lod= cannot be combined yet "
-            "(partition-of-substitutive is not implemented). Use one or the other."
+            "(Points supports a global overview LOD above partitioned fine detail; "
+            "Mesh does not implement that topology yet). Use one or the other."
         )
 
 
@@ -462,8 +464,7 @@ def _maybe_add_mesh_substitutive_lod(
 
     from ..lod.mesh import resolve_substitutive_axis_mesh
 
-    if extend_to_all is not None:
-        scene._resolve_extend_to_all(extend_to_all, vert_arr, "mesh")
+    preflight_extend_to_all(scene, extend_to_all, vert_arr, "mesh")
 
     substitutive_spec = resolve_substitutive_axis_mesh(substitutive_lod)
     if substitutive_spec is None:
@@ -1162,11 +1163,13 @@ def add_mesh_substitutive_lod_wrapper_impl(
     is simply decimated (its per-vertex colours and scalars are averaged per
     cluster, so both reach every level). What is shared is the SHAPE: a
     ``kind=lod`` group, children coarsest→finest, viewport-relative
-    ``coverage_fraction`` per child from
-    :func:`luxar.core.group.lod.group.derive_coverage_fractions` (so a ladder
-    hand-placed under a ``kind=partition`` wrapper gets the fills-screen per-tile
-    anchor, exactly as the Points/Lines wrappers do), compositing attrs on the
-    group and everything else on the children.
+    ``coverage_fraction`` per child AND the group ``selector`` naming their units
+    from :func:`luxar.core.group.lod.group.resolve_lod_ladder` — which calls
+    ``derive_coverage_fractions`` underneath when no explicit
+    ``coverage_fractions=`` list was given, so a ladder hand-placed under a
+    ``kind=partition`` wrapper gets the fills-screen per-tile anchor, exactly as
+    the Points/Lines wrappers do — compositing attrs on the group and everything
+    else on the children.
 
     **Level targets are vertex counts**, ``V / K**i``, because that is the
     currency the decimator's search is expressed in. Triangle count would be an
@@ -1177,14 +1180,17 @@ def add_mesh_substitutive_lod_wrapper_impl(
     A requested level is DROPPED rather than written when it cannot be a real
     level: below the decimator's 4-vertex floor, or reducing to no fewer vertices
     than the level before it. Writing it anyway would put two identical surfaces
-    in the ladder and give ``coverage_fractions`` a duplicate ratio, which is not
-    strictly ascending and raises. If every level drops — a surface already too
+    in the ladder, each claiming its own halving of screen occupancy — so the
+    viewer would swap between them and pay a load for nothing. (The thresholds
+    come from the ladder's LENGTH, not from count ratios, so a duplicate count is
+    not a duplicate threshold and nothing downstream objects.) If every level
+    drops — a surface already too
     coarse to reduce — the ladder is abandoned and a plain leaf is written, which
     is the same degenerate-path behaviour the Points wrapper has.
     """
     from ....io._compiler.geometry_writers.mesh import validate_mesh_arrays
-    from ....mesh.decimate import decimate_cluster
-    from ..lod.group import derive_coverage_fractions, resolve_coarsen_dims
+    from ....mesh.decimate import decimate_ladder
+    from ..lod.group import resolve_coarsen_dims, resolve_lod_ladder
 
     # Fail-fast pre-write gate, part two: the ARRAYS, run BEFORE any decimation
     # and before `add_lod_group` creates the group. The adder already ran the
@@ -1276,28 +1282,31 @@ def add_mesh_substitutive_lod_wrapper_impl(
         else None
     )
 
+    targets = [
+        n_vertices // (compression_factor**power)
+        for power in range(levels, 0, -1)
+        if n_vertices // (compression_factor**power) >= 4
+    ]
+    candidates = decimate_ladder(
+        vert_arr,
+        faces_arr.reshape(-1, 3).astype(np.uint32),
+        target_vertices=targets,
+        method=spec["method"],
+        normals=normals if normals is not None else None,
+        # Normals live in their own 3D FRAME, not necessarily the coarsening axes.
+        normal_dims=tuple(normal_dims) if normal_dims is not None else None,
+        colors=per_vertex_colors,
+        scalars=per_vertex_scalars,
+        spatial_dims=spatial_dims,
+    )
+
     coarse: List[Any] = []
     previous = 0
-    for power in range(levels, 0, -1):
-        target = n_vertices // (compression_factor**power)
-        if target < 4:
-            continue
-        level = decimate_cluster(
-            vert_arr,
-            faces_arr.reshape(-1, 3).astype(np.uint32),
-            target_vertices=target,
-            normals=normals if normals is not None else None,
-            # The normal FRAME, which is not the coarsening axes — a grid may merge
-            # over any number of dims while a normal always lives in exactly three.
-            normal_dims=tuple(normal_dims) if normal_dims is not None else None,
-            colors=per_vertex_colors,
-            scalars=per_vertex_scalars,
-            spatial_dims=spatial_dims,
-        )
+    for level in candidates:
         count = int(level.vertices.shape[0])
         # Strictly between the previous (coarser) level and the original, or it
-        # adds nothing: a duplicate count would also give `coverage_fractions` a
-        # repeated ratio, which is not strictly ascending and raises.
+        # adds nothing: a duplicate would still be handed its own halving of
+        # screen occupancy, so the viewer would swap between identical surfaces.
         if count <= previous or count >= n_vertices:
             continue
         coarse.append(level)
@@ -1336,35 +1345,26 @@ def add_mesh_substitutive_lod_wrapper_impl(
 
     counts = [int(c.vertices.shape[0]) for c in coarse] + [n_vertices]
     parent_node = parent or group
-    explicit = spec.get("coverage_fractions")
-    if explicit is not None:
-        if len(explicit) != len(counts):
-            raise ValueError(
-                f"coverage_fractions has {len(explicit)} entries but the LOD ladder "
-                f"has {len(counts)} levels ({len(coarse)} decimated + 1 original). "
-                "Levels that could not reduce the surface are dropped, so the ladder "
-                "can be shorter than the requested `levels`."
-            )
-        coverage_vals = list(explicit)
-        # Explicit lists keep the legacy diagonal-metric units they were
-        # authored in (selector="coverage", the add_lod_group default).
-        lod_selector = "coverage"
-    else:
-        # Screen-area fractions by occupancy halving (finest holds while the
-        # node occupies at least half the screen; one level coarser per halving
-        # of occupied area). Independent of vertex-count ratios, and stamped
-        # selector="screen-area" so the viewer reads the thresholds in the
-        # units they were derived in.
-        #
-        # The ANCHOR is chosen from the insertion point: ``add_mesh`` rejects
-        # ``partition=`` together with ``substitutive_lod=``, so a caller who wants
-        # per-tile mesh ladders MUST hand-build the ``kind=partition`` wrapper and
-        # call this once per part — and such a per-tile ladder needs the
-        # fills-screen anchor. ``derive_coverage_fractions`` detects that ancestor
-        # automatically and logs the choice; an explicit ``coverage_fractions=[...]``
-        # still wins (the branch above).
-        coverage_vals = derive_coverage_fractions(counts, parent_node, name=name)
-        lod_selector = "screen-area"
+    # Thresholds AND the selector naming their units, from the one shared rule
+    # (``lod.group.resolve_lod_ladder``): an explicit ``coverage_fractions=[...]``
+    # is used verbatim under the legacy units it was authored in, otherwise the
+    # screen-area halving ladder is derived — re-anchored at fills-screen when the
+    # insertion point is partition-bound. ``add_mesh`` rejects ``partition=``
+    # together with ``substitutive_lod=``, so a caller who wants per-tile mesh
+    # ladders MUST hand-build the ``kind=partition`` wrapper and call this once per
+    # part, which is how that anchor is reached here.
+    coverage_vals, lod_selector = resolve_lod_ladder(
+        spec.get("coverage_fractions"),
+        counts,
+        parent_node,
+        name=name,
+        length_error=lambda n_explicit, n_levels: (
+            f"coverage_fractions has {n_explicit} entries but the LOD ladder "
+            f"has {n_levels} levels ({len(coarse)} decimated + 1 original). "
+            "Levels that could not reduce the surface are dropped, so the ladder "
+            "can be shorter than the requested `levels`."
+        ),
+    )
 
     lod_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
     child_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
@@ -1564,10 +1564,10 @@ def _add_mesh_partition(
     """
     from ....mesh.split import duplication_factor, face_centroids, split_mesh_by_faces
     from ..partition import (
-        median_bsp_partition,
-        midpoint_bsp_partition,
+        bsp_leaf_parts,
+        persist_pruned_bsp_tree,
         resolve_partition_spec,
-        sah_bsp_partition,
+        spatial_bsp_tree,
         warn_if_oversized_single_part,
     )
 
@@ -1610,12 +1610,8 @@ def _add_mesh_partition(
 
     faces2d = faces_arr.reshape(-1, 3)
     centroids = face_centroids(vert_arr, faces2d)
-    if rule == "sah":
-        face_parts = sah_bsp_partition(centroids, max_elements)
-    elif rule == "midpoint":
-        face_parts = midpoint_bsp_partition(centroids, max_elements)
-    else:
-        face_parts = median_bsp_partition(centroids, max_elements)
+    tree = spatial_bsp_tree(centroids, max_elements, rule=rule)
+    face_parts = bsp_leaf_parts(tree)
 
     warn_if_oversized_single_part(
         len(face_parts),
@@ -1683,6 +1679,8 @@ def _add_mesh_partition(
             partition=False,
             **leaf_attrs,
         )
+    # Unlike lines, split_mesh_by_faces returns one written part per BSP leaf.
+    persist_pruned_bsp_tree(wrapper, tree.to_serializable(), range(len(parts)))
 
     # Union of the parts' bounds == the whole input's bounds, computed straight
     # from the source rather than round-tripped through the children's attrs.

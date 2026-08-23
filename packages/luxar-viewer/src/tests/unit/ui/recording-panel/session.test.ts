@@ -25,6 +25,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import * as THREE from 'three';
 
 if (typeof globalThis.ImageData === 'undefined') {
   (globalThis as any).ImageData = class ImageData {
@@ -139,6 +140,173 @@ describe('RecordingSession', () => {
 
       expect(manager.setEnabled).not.toHaveBeenCalledWith(false);
       expect(mockSceneManager.setAdaptivePixelRatio).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('capture-resolution alignment', () => {
+    /**
+     * Point the mock at a viewport of the given DISPLAY size and give it
+     * the two collaborators the scale-resolution branch touches: a real
+     * PerspectiveCamera (the branch is gated on `instanceof`) and the
+     * material refresh.
+     *
+     * `renderer.getSize()` is set to the SSAA-multiplied size the real
+     * renderer would report, so a session that reads the renderer
+     * instead of the post-processing display size is visible here rather
+     * than passing on a coincidence.
+     */
+    function withCanvas(width: number, height: number): THREE.PerspectiveCamera {
+      const scale = mockSceneManager.postProcessing.getEffectiveRenderScale();
+      mockSceneManager.postProcessing.getDisplaySize = vi.fn().mockReturnValue({ width, height });
+      mockSceneManager.renderer.getSize = vi
+        .fn()
+        .mockReturnValue({ x: Math.round(width * scale), y: Math.round(height * scale) });
+      mockSceneManager.updateMaterialsForCurrentCamera = vi.fn();
+      const camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 1000);
+      mockSceneManager.camera = camera;
+      return camera;
+    }
+
+    it('records the 1080p preset at exactly 1920x1080', () => {
+      // Multiples of 16 are not an encoder requirement — H.264/H.265 with
+      // yuv420p need EVEN dimensions and encoders pad internally to their
+      // own macroblock size. Truncating to 16 recorded 1072 lines from the
+      // menu entry labelled 1080p, while the real-time path (which passes
+      // no alignment at all) recorded 1080 from the same entry.
+      withCanvas(1920, 1080);
+      panel.session.saveRecordingState({
+        scaleResolution: { targetH: 1080, alignEven: true },
+      });
+      expect(mockSceneManager.postProcessing.resize).toHaveBeenCalledWith(1920, 1080);
+    });
+
+    it('keeps a Native odd height, and the canvas aspect with it', () => {
+      // "Native" is documented as the canvas's own size: a 1512×850 CSS
+      // canvas at DPR 2 is 3024×1700, not 3024×1696. And the width comes
+      // from the ALIGNED height, so the output aspect tracks the source
+      // instead of widening the horizontal FOV the user framed.
+      const camera = withCanvas(3024, 1700);
+      panel.session.saveRecordingState({
+        scaleResolution: { targetH: 1700, alignEven: true },
+      });
+      expect(mockSceneManager.postProcessing.resize).toHaveBeenCalledWith(3024, 1700);
+      expect(camera.aspect).toBeCloseTo(3024 / 1700, 6);
+    });
+
+    it('never resizes a tiny canvas to zero', () => {
+      // A canvas smaller than the alignment used to truncate to 0, giving
+      // `resize(0, 0)` and `camera.aspect = 0/0`. Unreachable while every
+      // target height was a preset ≥ 1080; Native makes it reachable.
+      const camera = withCanvas(2, 1);
+      panel.session.saveRecordingState({
+        scaleResolution: { targetH: 1, alignEven: true },
+      });
+      const [w, h] = mockSceneManager.postProcessing.resize.mock.calls[0];
+      expect(w).toBeGreaterThanOrEqual(2);
+      expect(h).toBeGreaterThanOrEqual(2);
+      expect(Number.isFinite(camera.aspect)).toBe(true);
+    });
+
+    it('never resizes to a NaN aspect when the canvas has no height yet', () => {
+      // A hidden or not-yet-laid-out container reports height 0, so the
+      // aspect is Infinity. The old 16-alignment masked that with a
+      // bitwise AND (`Infinity & ~15` is 0), giving `resize(0, 1072)` and
+      // a zero camera aspect; arithmetic alignment carries the Infinity
+      // instead, so the aspect has to fall back on its own.
+      const camera = withCanvas(1920, 0);
+      panel.session.saveRecordingState({
+        scaleResolution: { targetH: 1080, alignEven: true },
+      });
+      const [w, h] = mockSceneManager.postProcessing.resize.mock.calls[0];
+      expect(Number.isFinite(w)).toBe(true);
+      expect(Number.isFinite(h)).toBe(true);
+      expect(w).toBeGreaterThanOrEqual(2);
+      expect(h).toBeGreaterThanOrEqual(2);
+      expect(Number.isFinite(camera.aspect)).toBe(true);
+      // Square, not a two-pixel-wide sliver: the aspect itself falls back
+      // rather than being caught downstream by the alignment's own guard.
+      expect(camera.aspect).toBe(1);
+    });
+
+    it('keeps the SSAA-multiplied frame size even, and close to what was asked for', () => {
+      // The encoder sees the PHYSICAL frame: post-processing renders at
+      // ssaaMultiplier × the size handed to `resize`, and that is what
+      // lands in the ZIP. A 3024×1698 Native target at 1.5× captures at
+      // 4536×2547 — x265 rejects the odd height outright and writes a
+      // 0-byte file after the whole archive has been downloaded.
+      //
+      // Only the PRODUCT has to be even; the requested size never
+      // reaches an encoder. Requiring both made the walk step by the
+      // multiplier's denominator and give up on perfectly legal scales.
+      mockSceneManager.postProcessing.getEffectiveRenderScale = vi.fn().mockReturnValue(1.5);
+      withCanvas(3024, 1698);
+      panel.session.saveRecordingState({
+        scaleResolution: { targetH: 1698, alignEven: true },
+      });
+      const [w, h] = mockSceneManager.postProcessing.resize.mock.calls[0];
+      expect(Math.round(w * 1.5) % 2).toBe(0);
+      expect(Math.round(h * 1.5) % 2).toBe(0);
+      // Alignment shrinks, never grows, and only by a pixel or two —
+      // parity alone would also be satisfied by a frame 1.5× too big.
+      expect(h).toBeLessThanOrEqual(1698);
+      expect(h).toBeGreaterThan(1698 - 6);
+      expect(w).toBeLessThanOrEqual(3024);
+      expect(w).toBeGreaterThan(3024 - 6);
+    });
+
+    it('finds an even physical frame at a scale where even-only candidates cannot', () => {
+      // At a 1.05× multiplier the nearest even height whose product is
+      // also even is six even steps down from 1700 — past the cap — so a
+      // walk restricted to even candidates gives up and ships 1700 →
+      // 1785, an odd physical height x265 refuses. Stepping by one finds
+      // 1699 → 1784 on the first try.
+      mockSceneManager.postProcessing.getEffectiveRenderScale = vi.fn().mockReturnValue(1.05);
+      withCanvas(3024, 1700);
+      panel.session.saveRecordingState({
+        scaleResolution: { targetH: 1700, alignEven: true },
+      });
+      const [w, h] = mockSceneManager.postProcessing.resize.mock.calls[0];
+      expect(Math.round(h * 1.05) % 2).toBe(0);
+      expect(Math.round(w * 1.05) % 2).toBe(0);
+      expect(h).toBe(1699);
+    });
+
+    it('aligns the DERIVED width too, not just the height', () => {
+      // The width comes from the aligned height × the source aspect, so
+      // it can land odd even when the height is even: a 3024×1698
+      // viewport recording the 1080p preset derives 1923.
+      withCanvas(3024, 1698);
+      panel.session.saveRecordingState({
+        scaleResolution: { targetH: 1080, alignEven: true },
+      });
+      const [w, h] = mockSceneManager.postProcessing.resize.mock.calls[0];
+      expect(h).toBe(1080);
+      expect(w).toBe(1922);
+    });
+
+    it('restores the DISPLAY size after a capture, not the SSAA-multiplied one', () => {
+      // `renderer.getSize()` reports the SSAA-multiplied size (post-
+      // processing hands the renderer `display × multiplier` and puts
+      // the display size on the canvas CSS), while `resize()` takes the
+      // display size and applies the multiplier itself. Snapshotting the
+      // renderer's number therefore grew the viewport by the multiplier
+      // on every capture, and compounded on the next one.
+      mockSceneManager.postProcessing.getEffectiveRenderScale = vi.fn().mockReturnValue(2);
+      withCanvas(1512, 850);
+      panel.session.saveRecordingState({
+        scaleResolution: { targetH: 1700, alignEven: true },
+      });
+      panel.session.restoreRecordingState();
+
+      const calls = mockSceneManager.postProcessing.resize.mock.calls;
+      expect(calls.at(-1)).toEqual([1512, 850]);
+    });
+
+    it('leaves the height alone when no alignment is asked for', () => {
+      // The real-time path passes `{ targetH }` only.
+      withCanvas(1920, 1080);
+      panel.session.saveRecordingState({ scaleResolution: { targetH: 1081 } });
+      expect(mockSceneManager.postProcessing.resize).toHaveBeenCalledWith(1922, 1081);
     });
   });
 
@@ -288,6 +456,38 @@ describe('RecordingSession', () => {
 
         const message = document.querySelector('#luxar-recording-confirm-message');
         expect(message?.textContent).toContain(expected);
+
+        (document.querySelector('[data-action="cancel"]') as HTMLElement)?.click();
+        await promise;
+      }
+    );
+
+    // "Smooth (offline)" lives in the turntable control group and is
+    // hidden in Video mode (whose only format is WebM), and
+    // startVideoRecording ignores `frameByFrame` outside turntable mode
+    // — so naming it there prescribes a control the user cannot reach.
+    it.each([
+      ['turntable', true],
+      ['video', false],
+    ] as const)(
+      'the overlay warning only names Smooth (offline) in %s mode',
+      async (mode, expected) => {
+        (panel as any).session.overlayManager = {
+          getVisibleOverlays: () => [{}],
+        };
+        const promise = (panel as any).session.showConfirmationDialog({
+          mode,
+          options: {
+            ...(panel as any).options,
+            outputFormat: 'webm',
+            includeOverlays: true,
+            frameByFrame: false,
+          },
+        });
+
+        const message = document.querySelector('#luxar-recording-confirm-message');
+        expect(message?.textContent).toContain('Overlays will NOT be included');
+        expect(message?.innerHTML.includes('Smooth (offline)')).toBe(expected);
 
         (document.querySelector('[data-action="cancel"]') as HTMLElement)?.click();
         await promise;

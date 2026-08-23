@@ -13,8 +13,8 @@ Inputs: `.npy`, `.npz`, `.tiff`/`.tif`, `.zarr`, `.zarr.zip` (TIFF/other need `p
 ### Core
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--seeds` / `-s` | auto | int = splat count — a WHOLE-VOLUME budget (what a default `cal` reports as K*); a tiled fit divides it across its N tiles (`ceil(K/N)`, floored at 1) instead of giving each tile the full count, so the total tracks the request, not the tile count. Not exact: near-zero tiles are skipped, and `K < N` gives N. A non-positive int is left alone so the fitter still rejects it. float in (0,1] = compression ratio, scale-free so applied per tile unchanged; `auto`. Ignored under `--tiling content` (budgets come from the density plan). A `cal --auto-region` K* is region-scoped, NOT a whole-volume budget — transfer it via `--cal` + `--tiling content`, not `--seeds` |
-| `--floor` | auto | background floor / DC-offset suppression subtracted (clip at 0) BEFORE normalization, so output amplitudes are background-relative. `auto` = histogram-mode estimate (capped at the median; a no-op on clean data). `pNN` = subtract that percentile; a plain number = fixed value; `none` = disable (legacy hard-min). Resolved against the WHOLE volume under any tiling — never against a tile or box crop, so every tile/box works from the same level. `uniform`/`content` resolve it once in the parent and pass the number down; the uniform `-j N` / `--tile k/M` workers each resolve the same spec against the same whole volume (the sampler is deterministic, so they agree) |
+| `--seeds` / `-s` | auto | int = splat count — a WHOLE-VOLUME budget (what a default `cal` reports as K*); a tiled fit divides it across its N non-empty tiles (`ceil(K/N)`, floored at 1) instead of giving each tile the full count. Non-empty means the tile survives the resolved floor plus Hann window; the scan does not replay optional per-tile denoising, so denoising can still skip a counted tile. Every worker computes the same N. `K < N` gives N. A non-positive int is left alone so the fitter still rejects it. float in (0,1] = compression ratio, scale-free so applied per tile unchanged; `auto`. Ignored under `--tiling content` (budgets come from the density plan). A `cal --auto-region` K* is region-scoped, NOT a whole-volume budget — transfer it via `--cal` + `--tiling content`, not `--seeds` |
+| `--floor` | auto | background floor / DC-offset suppression subtracted (clip at 0) BEFORE normalization, so output amplitudes are background-relative. `auto` = histogram-mode estimate (capped at the median; a no-op on clean data). `pNN` = subtract that percentile of non-zero voxels; a plain number = fixed value; `none` or `0` = disable (legacy hard-min). Resolved against the WHOLE volume under any tiling — never against a tile or box crop, so every tile/box works from the same level. `uniform`/`content` resolve it once in the parent and pass the number down; the uniform `-j N` / `--tile k/M` workers each resolve the same spec against the same whole volume (the sampler is deterministic, so they agree) |
 | `--iters` / `-n` | preset | max optimization iterations |
 | `--preset` | none | `draft` / `standard` / `hifi` / `ultra` / `n2s` (see preset table) |
 | `--config` | none | YAML config file (overrides preset) |
@@ -85,7 +85,7 @@ coordinate frames).
 ### Post-fit culling & denoising
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--cull-retention` | 0.95 | keep top fraction of cumulative amplitude (presets set 0.999); 0 keeps every splat |
+| `--cull-retention` | 0.95 | keep top fraction of cumulative amplitude (presets set 0.999, and so does `--tiling content` without one); 0 keeps every splat |
 | `--denoise` | false | NLM-denoise the volume before fitting |
 | `--denoise-h` | auto | manual NLM strength (skip auto-calibration) |
 | `--denoise-2d` | false | slice-by-slice 2D NLM |
@@ -109,6 +109,13 @@ default, and `load_fit_config` layers one only `if preset is not None`, so a bar
 
     load_fit_config(None, None, {})["n_iters"] == 1000     # bare CLI fit
     load_fit_config("draft", None, {})["n_iters"] == 2000
+
+One exception to that fall-through: `--tiling content` layers a *command default* of
+`cull_retention=0.999` between the preset and the function defaults, so a preset-less
+content fit is near-lossless per box. `--preset`, a `cull_retention:` in a `--config`
+and `--cull-retention` all still win. Nothing else is special-cased: a bare content fit
+still runs 1000 iterations, and a bare `--tiling uniform` still culls each tile at
+`0.95` even though its default partition merge is per-tile too.
 
 The Python API (`fit_gaussian_splats`, which has no `preset=` argument) shares those
 same defaults. Either way, a fifth of `standard` on thin filaments leaves splats at

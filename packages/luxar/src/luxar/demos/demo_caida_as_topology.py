@@ -151,6 +151,11 @@ DEMO_META = {
     },
     "caches": ["caida"],
     "outputs": ["caida_as_topology"],
+    "citation": {
+        "short": "CAIDA AS Relationships (Luckie et al. 2013)",
+        "ref": "Luckie et al. 2013",
+        "doi": "10.1145/2504730.2504735",
+    },
 }
 
 import bz2
@@ -170,7 +175,9 @@ import requests
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
+    add_demo_caption,
     cache_computed,
     launch_viewer,
     parse_int_arg,
@@ -1369,7 +1376,11 @@ def build_scene(
         )
 
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                citation=DEMO_META["citation"],
+                dimensions=dims,
+                viewer_config=ViewerConfig(cinematic_mode=True),
+            )
 
             scene.add_points(
                 "Autonomous Systems",
@@ -1461,15 +1472,11 @@ def build_scene(
                         transition_duration=0.2,
                     )
 
-            scene.add_text(
-                (
-                    f"{n_nodes:,} ASes · {n_edges_kept:,} relationships · "
-                    f"{n_tier1} tier-1 · {n_comms} communities · CAIDA serial-2"
-                ),
-                position=(0.98, 0.97),
-                font_size=0.012,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.5)",
+            add_demo_caption(
+                scene,
+                f"{n_nodes:,} ASes • {n_edges_kept:,} relationships • "
+                f"{n_tier1} tier-1 • {n_comms} communities • CAIDA serial-2",
+                DEMO_META.get("citation"),
             )
 
         aprint(

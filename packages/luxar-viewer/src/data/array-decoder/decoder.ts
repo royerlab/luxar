@@ -13,8 +13,15 @@
 import * as zarr from '../zarr';
 import { readArray, abortOptions } from '../zarr';
 import { log, Modules } from '../../utils/log';
+import { decode_log_scalar_u8, decode_log_scalar_u16 } from '../../wasm/typescript/decode';
 import { ArrayRefRegistry } from './ref-registry';
 import type { ArrayMetadata, EncodingMetadata } from './types';
+import {
+  decode_geolog_scalar_u8,
+  decode_geolog_scalar_u16,
+  decode_quantized_u8,
+  decode_quantized_u16,
+} from '../../wasm/typescript/decode';
 
 export { ArrayRefRegistry } from './ref-registry';
 export type { ArrayMetadata, EncodingMetadata } from './types';
@@ -460,36 +467,29 @@ export class ArrayDecoder {
    * Dequantize integer array to floats
    *
    * Format: uint8 or uint16 → float with bounds [min, max]
+   * Delegates to the TypeScript worker-fallback kernels for bit-exact routing parity.
    */
-  private dequantize(data: Float32Array, bounds: [number, number], dtype: string): Float32Array {
+  private dequantize(
+    data: ArrayLike<number>,
+    bounds: [number, number],
+    dtype: string
+  ): Float32Array {
     const [min_val, max_val] = ArrayDecoder.validateQuantizationBounds(
       bounds,
       'quantization bounds'
     );
 
-    // Determine max integer value from dtype
-    // NumPy dtype formats: 'uint8', '<u1' (little-endian), '|u1' (native byte order for single-byte)
-    let max_int: number;
+    const result = new Float32Array(data.length);
     if (dtype === 'uint8' || dtype === '<u1' || dtype === '|u1') {
-      max_int = 255;
+      decode_quantized_u8(data, min_val, max_val, result);
     } else if (dtype === 'uint16' || dtype === '<u2' || dtype === '>u2' || dtype === '|u2') {
-      max_int = 65535;
+      decode_quantized_u16(data, min_val, max_val, result);
     } else {
       throw new Error(`Unsupported quantization dtype: ${dtype}`);
     }
 
     // Note: Removed per-chunk dequantization logging - too verbose for production
     // Each array load can trigger 100+ log messages, causing performance issues
-
-    const result = new Float32Array(data.length);
-
-    for (let i = 0; i < data.length; i++) {
-      // Normalize to [0, 1]
-      const normalized = data[i] / max_int;
-
-      // Map to [min, max]
-      result[i] = min_val + normalized * (max_val - min_val);
-    }
 
     return result;
   }
@@ -498,11 +498,15 @@ export class ArrayDecoder {
    * Decode log-space encoded scalar array
    *
    * Format: log1p(value)/max_log → uint8/uint16
-   * Decoding: expm1(normalized * max_log)
+   * Decoding delegates to the shared decode_log_scalar_u8/u16 kernel.
    *
    * Used for positive scalars with wide dynamic range (e.g., radii)
    */
-  private decodeLogScalar(data: Float32Array, maxLog: number, dtype: string): Float32Array {
+  private decodeLogScalar(
+    data: Float32Array | Uint8Array | Uint16Array,
+    maxLog: number,
+    dtype: string
+  ): Float32Array {
     if (!Number.isFinite(maxLog) || maxLog <= 0) {
       throw new Error(
         `[ArrayDecoder] Invalid log_scalar max_log: ${maxLog}. Must be finite and > 0.`
@@ -512,10 +516,13 @@ export class ArrayDecoder {
     // Determine max integer value from dtype
     // NumPy dtype formats: 'uint8', '<u1' (little-endian), '|u1' (native byte order for single-byte)
     let max_int: number;
+    let decode: typeof decode_log_scalar_u8;
     if (dtype === 'uint8' || dtype === '<u1' || dtype === '|u1') {
       max_int = 255;
+      decode = decode_log_scalar_u8;
     } else if (dtype === 'uint16' || dtype === '<u2' || dtype === '>u2' || dtype === '|u2') {
       max_int = 65535;
+      decode = decode_log_scalar_u16;
     } else {
       throw new Error(`Unsupported log_scalar dtype: ${dtype}`);
     }
@@ -526,17 +533,21 @@ export class ArrayDecoder {
     );
 
     const result = new Float32Array(data.length);
+    if (data.length > max_int + 1) {
+      const codes = max_int === 255 ? new Uint8Array(max_int + 1) : new Uint16Array(max_int + 1);
+      for (let i = 0; i < codes.length; i++) codes[i] = i;
+
+      const lut = new Float32Array(codes.length);
+      decode(codes, maxLog, lut);
+      for (let i = 0; i < data.length; i++) result[i] = lut[data[i]];
+    } else {
+      decode(data, maxLog, result);
+    }
     let minValue = Number.POSITIVE_INFINITY;
     let maxValue = Number.NEGATIVE_INFINITY;
 
-    for (let i = 0; i < data.length; i++) {
-      // Normalize to [0, 1]
-      const normalized = data[i] / max_int;
-
-      // Apply inverse log1p transform: expm1(normalized * max_log)
-      // This reverses: log1p(value) / max_log → normalized
-      const value = Math.expm1(normalized * maxLog);
-      result[i] = value;
+    for (let i = 0; i < result.length; i++) {
+      const value = result[i];
       if (value < minValue) minValue = value;
       if (value > maxValue) maxValue = value;
     }
@@ -556,11 +567,12 @@ export class ArrayDecoder {
    *
    * Level 0 decodes to exactly 0; levels [1, 2^bits - 1] decode to
    * exp(minLog + (u - 1)/(2^bits - 2) * (maxLog - minLog)) — uniform
-   * relative precision across the array's own nonzero range. Mirrors
-   * Python `_decode_geolog_scalar` and the worker/WASM kernels exactly.
+   * relative precision across the array's own nonzero range. Matches the
+   * worker/WASM kernels bit-exactly; Python's f64 decode differs because the
+   * viewer rounds the logarithmic anchors to f32 first.
    */
   private decodeGeologScalar(
-    data: Float32Array,
+    data: ArrayLike<number>,
     minLog: number,
     maxLog: number,
     dtype: string
@@ -572,21 +584,15 @@ export class ArrayDecoder {
       );
     }
 
-    let top: number;
+    const result = new Float32Array(data.length);
     if (dtype === 'uint8' || dtype === '<u1' || dtype === '|u1') {
-      top = 255;
+      decode_geolog_scalar_u8(data, minLog, maxLog, result);
     } else if (dtype === 'uint16' || dtype === '<u2' || dtype === '>u2' || dtype === '|u2') {
-      top = 65535;
+      decode_geolog_scalar_u16(data, minLog, maxLog, result);
     } else {
       throw new Error(`Unsupported geolog_scalar dtype: ${dtype}`);
     }
 
-    const inv = Math.max(maxLog - minLog, 0) / Math.max(top - 1, 1);
-    const result = new Float32Array(data.length);
-    for (let i = 0; i < data.length; i++) {
-      const u = data[i];
-      result[i] = u === 0 ? 0 : Math.exp(minLog + (u - 1) * inv);
-    }
     return result;
   }
 
@@ -1258,28 +1264,15 @@ export class ArrayDecoder {
 
     if (quantMetadata.isGeologSpace) {
       // Geometric-log: bounds = [min_log, max_log], reserved zero level.
-      return this.decodeGeologScalar(
-        quantizedData instanceof Float32Array ? quantizedData : new Float32Array(quantizedData),
-        bounds[0],
-        bounds[1],
-        dtype
-      );
+      return this.decodeGeologScalar(quantizedData, bounds[0], bounds[1], dtype);
     }
 
     if (isLogSpace) {
-      // Log-space quantization: dequantize then exponentiate
-      return this.decodeLogScalar(
-        quantizedData instanceof Float32Array ? quantizedData : new Float32Array(quantizedData),
-        bounds[1], // max_log
-        dtype
-      );
+      // Log-space quantization: dequantize then exponentiate.
+      return this.decodeLogScalar(quantizedData, bounds[1], dtype);
     } else {
       // Linear quantization: standard dequantization
-      return this.dequantize(
-        quantizedData instanceof Float32Array ? quantizedData : new Float32Array(quantizedData),
-        bounds,
-        dtype
-      );
+      return this.dequantize(quantizedData, bounds, dtype);
     }
   }
 }

@@ -110,6 +110,100 @@ def test_standalone_leaf_matches_scene_leaf():
             )
 
 
+def test_standalone_leaf_matches_scene_leaf_under_the_centers_sigma_rail():
+    """Parity must also hold for a decision taken INSIDE the shared writer.
+
+    Every other case here writes at ``PRECISION``, where
+    ``_resolve_centers_encoding_mode`` returns immediately — so the centers
+    sigma rail (#1748), the one place the writer overrides the caller's
+    encoding mode, was never exercised by the parity invariant at all. It is
+    also the one decision that depends on a *sibling* array (the Cholesky), so
+    a path that lost the Cholesky, or called the rail with a different axis
+    count, would diverge here and nowhere else.
+
+    The fixture is the merge case the rail exists for: a continuous 4th axis
+    (no grid to snap to) carrying a 4% ``sigma=0`` track sub-population.
+    """
+    import pytest
+
+    from luxar.core.dimensions import Dimension
+    from luxar.encoding.decoder import ArrayDecoder
+
+    n, n_tracks = 5_000, 200
+    rng = np.random.default_rng(1748)
+    times = rng.random(n) * 4.0
+    times[-n_tracks:] = rng.integers(0, 5, size=n_tracks).astype(np.float64)
+    centers = np.column_stack([rng.random((n, 3)) * 10.0, times]).astype(np.float32)
+    chol = np.zeros((n, 10), dtype=np.float32)
+    chol[:, [0, 2, 5, 9]] = rng.uniform(0.5, 1.5, size=(n, 4))
+    chol[:, 9] = 3.0
+    chol[-n_tracks:, 9] = 1e-7
+    amplitudes = rng.uniform(0.1, 1.0, size=(n,)).astype(np.float32)
+
+    dims = Dimensions(
+        [
+            Dimension("X", display=True),
+            Dimension("Y", display=True),
+            Dimension("Z", display=True),
+            Dimension("Time", display=False, range=(0.0, 4.0)),
+        ]
+    )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+
+        scene_path = tmp / "scene.luxar.zarr"
+        with LuxarZarrCompiler(scene_path, encoding_mode=EncodingMode.AUTO) as c:
+            scene = c.create_scene(dimensions=dims)
+            with pytest.warns(UserWarning, match=r"axis 3.*sigma"):
+                scene.add_gsplats(
+                    "g",
+                    centers=centers,
+                    amplitudes=amplitudes,
+                    cholesky_factors=chol,
+                    extend_to_all=[],
+                )
+        scene_leaf = zarr.open_group(str(scene_path), mode="r")["g"]
+
+        std_path = tmp / "standalone.gsplats.zarr"
+        with pytest.warns(UserWarning, match=r"axis 3.*sigma"):
+            save_gsplats(
+                path=std_path,
+                centers=centers,
+                amplitudes=amplitudes,
+                cholesky_factors=chol,
+                ordering="hilbert",
+                encoding_mode=EncodingMode.AUTO,
+            )
+        std_leaf = zarr.open_group(str(std_path), mode="r")
+
+        # The rail really did fire (otherwise this asserts parity of the
+        # ordinary uint16 path the other tests already cover).
+        scene_enc = dict(scene_leaf["centers"].attrs["encoding"])
+        std_enc = dict(std_leaf["centers"].attrs["encoding"])
+        assert scene_enc["name"] == "float32"
+        assert std_enc == scene_enc
+
+        # Compared as row MULTISETS. The two paths do not agree on the row
+        # order for this fixture and are not meant to: the scene knows Time is
+        # a discrete dimension and groups by it, while the standalone writer
+        # auto-detects a barrier from the centers alone and finds none on a
+        # continuous axis. Row order is the subject of the other tests here;
+        # what the rail owes is that both stored the same VALUES, exactly.
+        decoder = ArrayDecoder()
+        std_rows = np.asarray(decoder.decode(std_leaf["centers"], zarr_root=std_leaf))
+        scene_rows = np.asarray(
+            decoder.decode(scene_leaf["centers"], zarr_root=scene_leaf)
+        )
+        np.testing.assert_array_equal(
+            std_rows[np.lexsort(std_rows.T)], scene_rows[np.lexsort(scene_rows.T)]
+        )
+        # ...and that those values are the originals, bit for bit.
+        np.testing.assert_array_equal(
+            scene_rows[np.lexsort(scene_rows.T)], centers[np.lexsort(centers.T)]
+        )
+
+
 def _sublod(n: int, seed: int):
     """A full-array AdditiveSubLOD (3D, diagonal Cholesky)."""
     from luxar.gsplats.gsplat_data import AdditiveSubLOD

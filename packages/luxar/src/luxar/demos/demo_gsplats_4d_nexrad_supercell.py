@@ -161,6 +161,16 @@ DEMO_META = {
     },
     "caches": ["gsplats_nexrad_supercell"],
     "outputs": ["gsplats_4d_nexrad_supercell"],
+    # The radar data is NOAA's; MetPy (May et al., doi:10.5065/D6WW7G29) is only
+    # the decoder this demo happens to use, and crediting it here would name the
+    # wrong party. The archive carries no dataset DOI, and NOAA asks to be
+    # attributed, so the credit is the archive itself.
+    "citation": {
+        "short": "NOAA NEXRAD Level II (KTLX, 2013-05-31)",
+        "ref": "NOAA NEXRAD 2013",
+        "license": "Public domain (17 U.S.C. 105)",
+        "url": "https://registry.opendata.aws/noaa-nexrad",
+    },
 }
 
 import sys
@@ -176,6 +186,9 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import (
+    BundleMemberNotFound,
+    DatasetUnavailable,
+    add_demo_caption,
     cached_download,
     detect_device,
     launch_viewer,
@@ -186,6 +199,7 @@ from luxar.demos import (
     require_module,
     warn_if_no_cuda_gpu,
 )
+from luxar.demos._cinematic_camera import pull_in
 from luxar.demos._lod_policy import save_with_lod
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
@@ -1188,7 +1202,11 @@ def fit_timepoint(volume: np.ndarray, index: int, label: str) -> GSplatData:
 
     cache_file = _frame_cache_file(index)
     if cache_file.exists() and not RECOMPUTE:
-        result = GSplatData.load(cache_file, include_stats=False)
+        # include_stats=True: the cache carries the fit's normalization
+        # provenance (floor / image_min / image_max), and `concatenate` only
+        # propagates a background floor into the stacked scene when every part
+        # that has an opinion reports one (#1175).
+        result = GSplatData.load(cache_file, include_stats=True)
         aprint(f"  Loaded {result.n_splats:,} cached splats ({label})")
         return result
 
@@ -1219,7 +1237,10 @@ def fit_timepoint(volume: np.ndarray, index: int, label: str) -> GSplatData:
             compress="zip",
             zip_deflate=True,
         )
-        return result
+        # Return what was STORED (see the note on the main fit path below). This
+        # placeholder is saved without fitting info, so there are no stats to
+        # find; the flag matches the other two loads so all three agree.
+        return GSplatData.load(cache_file, include_stats=True)
 
     if DEVICE is None:
         DEVICE = detect_device()
@@ -1259,7 +1280,13 @@ def fit_timepoint(volume: np.ndarray, index: int, label: str) -> GSplatData:
         compress="zip",
         zip_deflate=True,
     )
-    return result
+    # Return what was STORED, not the in-memory fit: the cache is written under
+    # a lossy encoding (and a stream ladder), so returning `result` here would
+    # make a cold run and a warm run (the cache-hit branch at the top, which
+    # loads the store back) produce different scenes. Same include_stats=True as
+    # that branch, so the two agree AND the fit's normalization provenance
+    # survives into the stacked scene.
+    return GSplatData.load(cache_file, include_stats=True)
 
 
 def fit_all_timepoints(paths: list[Path], indices: list[int]) -> list[GSplatData]:
@@ -1373,9 +1400,11 @@ def create_luxar_scene(
         with LuxarZarrCompiler(
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
+            camera_target = (-66.0, 26.0, 6.0)
             scene = compiler.create_scene(
                 dimensions=dims,
                 viewer_config=ViewerConfig(
+                    cinematic_mode=True,
                     tone_mapping="ACES",
                     camera=CameraConfig(
                         # WORLD UP MUST BE +Z HERE. The displayed dims map
@@ -1391,16 +1420,20 @@ def create_luxar_scene(
                         # earlier pose was tuned for a 180x120 km domain and now
                         # sits inside the 300x300 km one, where the reference cube
                         # degenerates into a couple of stray edges crossing frame.
-                        # ~300 km out, not the ~510 km that would frame the entire
+                        # ~202 km out, not the ~347 km that would frame the entire
                         # 425 km diagonal: the appearance above was tuned at a close
                         # view, and at full-domain distance the low opacity reads as
                         # faint. This keeps the storm substantial with most of the
                         # reference cube still in frame.
-                        position=(84.0, -199.0, 132.0),
-                        target=(-66.0, 26.0, 6.0),
-                        fov=45.0,
+                        position=pull_in(
+                            (84.0, -199.0, 132.0),
+                            camera_target,
+                            from_fov_deg=45.0,
+                        ),
+                        target=camera_target,
                     ),
                 ),
+                citation=DEMO_META["citation"],
             )
             scene.attrs["title"] = (
                 "El Reno Tornadic Supercell - NEXRAD Level II (2013-05-31)"
@@ -1521,12 +1554,10 @@ def create_luxar_scene(
                     transition="fade",
                     transition_duration=0.15,
                 )
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 "NEXRAD Level II - KTLX Twin Lakes, OK - NOAA NODD (public domain)",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
 
     aprint(f"Scene written to {output_path}")
@@ -1595,12 +1626,16 @@ def main() -> None:
         gsplats_list = load_dataset_bundle(
             DEMO_NAME, _PRECOMPUTED_BUNDLE_NAME, file_names, recompute=RECOMPUTE
         )
-    except FileNotFoundError as exc:
+    except (DatasetUnavailable, BundleMemberNotFound) as exc:
         # Two distinct causes land here and the message must not conflate
         # them: the LFS asset genuinely absent (pointer not pulled), or a
         # non-default --dbz-floor/--splats/--grid-m changing the per-frame
         # cache names so they miss the shipped bundle. The exception says
-        # which; pass it through.
+        # which; pass it through. Both are routable absences — the bytes are
+        # not obtainable — which is why this is not a bare `FileNotFoundError`
+        # (#1618): a checksum that will not verify, a missing packaged manifest
+        # or a bundle name the manifest does not list are faults, and a refit
+        # from the NEXRAD archive must not disguise them.
         aprint(
             f"Precomputed bundle unavailable ({exc}). "
             "Falling back to recomputing from the NEXRAD archive."

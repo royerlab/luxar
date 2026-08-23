@@ -13,6 +13,7 @@ import * as THREE from 'three';
 import { getSplatTexture } from './gsplat-geometry';
 import { getPointTexture } from './point-geometry';
 import { getLineTexture } from './line-geometry';
+import { scheduleBlendModeProgramWarmupForObject } from './webgl-blend-warmup';
 
 /*
  * Family detection is STRUCTURAL, not `instanceof`.
@@ -159,6 +160,8 @@ export function syncPointMaterialWithGeometry(points: THREE.Mesh): void {
       if (pointTexture) pickMat.updatePointTexture(pointTexture);
     }
   }
+
+  scheduleBlendModeProgramWarmupForObject(points);
 }
 
 /**
@@ -215,6 +218,8 @@ export function syncLineMaterialWithGeometry(mesh: THREE.Mesh): void {
       pickMat.updateLineTexture(lineTexture);
     }
   }
+
+  scheduleBlendModeProgramWarmupForObject(mesh);
 }
 
 /**
@@ -258,4 +263,6 @@ export function syncGSplatMaterialWithGeometry(mesh: THREE.Mesh): void {
       pickMat.updateSplatTexture(splatTexture);
     }
   }
+
+  scheduleBlendModeProgramWarmupForObject(mesh);
 }

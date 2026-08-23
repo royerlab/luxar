@@ -208,6 +208,8 @@ encoder.encode(
 **Methods:**
 - `encode(data, zarr_group, name, semantic_type, mode=AUTO, n_elements=None, bounds=None, positive_scalar_encoding="linear", custom_encoder=None, color_mode=None, chunks=None, compressor=None, deduplicate=True)` - Encode and write array or scalar
 - `reset()` - Clear internal registry (call between scenes)
+- `snapshot()` - Capture deduplication state for a transactional writer operation
+- `restore(state)` - Restore deduplication state after a transactional writer rollback
 
 **Key keyword arguments:**
 - `n_elements` - Broadcast target count. Required for scalar/tuple/list input; optional for arrays (opts into broadcast/uniform validation when given).
@@ -378,6 +380,67 @@ footgun for absolute positions). An **array-local extent rail** warns when a per
 extent exceeds 2¹² and falls back to float32 at/above 2¹⁶ (where uint16 can't resolve a
 unit step).
 
+A **gridded axis** — one whose distinct values all sit on a single regular grid — has its
+quantization grid **snapped onto the data's own spacing**: `hi` is widened to
+`lo + step·65535` so the stored grid coincides with the values, and they round-trip
+exactly. This is what keeps a
+stacked axis usable. `combine_as_new_dimension(sigma=0)` gives a time or channel axis an
+effective sigma of 1e-7 (the epsilon `trils.py` substitutes to keep the covariance
+positive-definite), so ordinary rounding puts an interior frame *thousands* of sigma from
+where it belongs and it stops matching a slice query — measured at 7 320 σ on a 100-frame
+stack, with only the two endpoints surviving (#1748). Snapping costs nothing: `lo`/`hi`
+are already stored per axis, so it is a scale choice rather than a dtype change (a
+float32 fallback would also be exact but converts *every* axis, measured at +78%).
+The only bound on distinct values is the number of levels the encoding has: beyond
+that no grid can represent the axis, so there is nothing to snap to. Eligibility is
+decided by *replaying* encode→decode over the axis's distinct values and requiring every
+one of them back bit-exactly at the float32 decode contract — not by testing the gaps for
+equality. That admits a grid with **missing rungs** (frames `0,1,2,7,8,9`, which is what a
+spatial tile of a stacked dataset sees) and a grid float32 only approximates (a 0.1 s
+frame interval), both of which a gap-equality test rejects while leaving them broken.
+Continuous coordinates, values that lie on no regular grid, and constant axes are all left
+exactly as they were. The predicate is exported as `gridded_axis_step` because the sigma
+rail below has to ask the same question.
+
+Chunk-bound writers ask the sibling
+`ArrayEncoder.coordinate_round_trip_slack(data, mode, *, allow_lut=True)`
+predicate how far a COORDINATE write can move each axis. It replays the same
+precision, extent, grid-snap, and LUT exits as the encoder and returns `None`
+when every axis is exact, otherwise the conservative per-axis half-quantum.
+Callers must pass the write's actual `allow_lut` value: LUT eligibility means
+exact storage only when that write is allowed to select the LUT path.
+
+The matching
+`ArrayEncoder.positive_scalar_round_trip_slack(data, mode, *, positive_scalar_encoding="linear", allow_lut=True)`
+predicate reports how far a POSITIVE_SCALAR write can enlarge a value. It
+replays the broadcast, precision, LUT, linear, and geometric-log paths and
+returns `None` for exact storage, otherwise one conservative array-wide pad.
+Chunk-bound writers add that pad to point radii and line widths on spatial
+dimensions only. The query assumes the matching write cannot resolve to an
+`array_ref`, so callers using it must disable content deduplication for that
+array.
+
+Neither the extent rail nor the snap sees anything but the coordinates. A
+geometry-aware **sigma rail** lives at the gsplat write choke point (`io/_compiler/gsplat_assembly.py`), which also
+holds the Cholesky factors and escalates centers to float32 when HALF an axis's grid
+step — the worst-case round-trip displacement — exceeds the per-splat marginal σ for
+more than 0.1% of the splats on that axis, i.e. when quantization can move those
+centers clear of their own cores. It is a population test on purpose: the few needle
+splats in an ordinary fit must not cost the whole array its uint16 win. Tripping that
+gate is **necessary but not sufficient**, because the rail stands down wherever this
+encoder is going to store the array exactly anyway. It is **snap-aware** — it runs
+`gridded_axis_step` on any axis that trips the population gate
+and skips it when the encoder will store it exactly, so a stacked axis (where 100% of
+the splats formally fail) keeps its uint16 centers and stays silent instead of doubling
+in size — and it is **LUT-aware**: it asks `ArrayEncoder.encodes_as_lut` before
+escalating, since a LUT-eligible centers array is already stored verbatim, exactly, at
+~1 B/value, and escalating it would quadruple those bytes for nothing. What is left for
+the rail is a degenerate sub-population on a *non-gridded*, non-LUT
+axis: a `sigma=0` track stack merged into a fit whose time axis is continuous, where
+the splats are destroyed and no grid can rescue them. An escalated
+centers array is written with `deduplicate=False`, because the rail's verdict depends on
+a sibling array (`cholesky_factors`) that this registry does not key on.
+
 **Usage Example:**
 ```python
 from luxar.encoding import EncodingMode
@@ -426,6 +489,12 @@ else:
 # Clear registry between scenes
 registry.clear()
 ```
+
+**Methods:**
+- `check(data, path)` - Check for a duplicate and register new array content
+- `clear()` - Clear all registered array references
+- `snapshot()` - Return an independent snapshot of the registry maps
+- `restore(state)` - Replace the registry maps from a snapshot
 
 **Detection Algorithm:**
 1. **Quick Check** (for arrays > 32KB): Hash first 32KB + dtype + shape

@@ -11,10 +11,12 @@ from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
+    Callable,
     Dict,
     List,
     Optional,
     Sequence,
+    TypeVar,
     Union,
 )
 
@@ -31,6 +33,8 @@ if TYPE_CHECKING:
     from ...gsplats.gsplat_data import GSplatData
     from ...io.writer import ZarrWriterProtocol
     from ..scene import Scene
+
+TNode = TypeVar("TNode")
 
 
 class Group(Node):
@@ -98,6 +102,24 @@ class Group(Node):
                 "Scene writer is not initialized. Use LuxarZarrCompiler to create scenes."
             )
         return writer
+
+    def _transactional_add(
+        self,
+        name: str,
+        parent: Optional[Node],
+        build: Callable[[], TNode],
+    ) -> TNode:
+        """Run one add call with store, graph, and compiler-state rollback."""
+        parent_node = parent or self
+        writer = self._require_scene_writer(self._find_scene())
+        path = f"{parent_node.path}/{name}" if parent_node.path else name
+        children_before = list(parent_node.children)
+        try:
+            with writer.transaction(path):
+                return build()
+        except BaseException:
+            parent_node.children[:] = children_before
+            raise
 
     # ---------------------------------------------------------- data methods
 
@@ -168,8 +190,10 @@ class Group(Node):
                 3.0; ``None`` disables).
                 Composes with ``additive_lod``, which then describes how
                 each level streams in (every level gets a streaming ladder by
-                default; pass ``additive_lod=False`` to opt out). Mutually
-                exclusive with ``partition``.
+                default; pass ``additive_lod=False`` to opt out). When combined
+                with an explicit ``partition=``, authors an overview topology:
+                global coarse gsplat levels above a spatially partitioned finest
+                Points branch, selected only once it fills the viewport.
                 ``scalars``+``colormap``
                 points are supported by baking scalars→RGB for the coarse gsplat
                 levels (the finest Points child stays scalar-driven; a live
@@ -183,16 +207,18 @@ class Group(Node):
                 When the decomposition yields more than one part, returns a
                 kind=partition ``Group`` wrapper carrying ``display_type=
                 "points"``; the wrapper's children are ``part_<i>`` Points
-                nodes. The wrapper's ``position_bounds`` is the union of
-                the children's so picking treats the layer as one entity.
+                nodes. When ``substitutive_lod=`` is also set, that wrapper is
+                instead the finest child of a kind=lod ``Group``. The partition
+                wrapper's ``position_bounds`` is the union of the children's so
+                picking treats the layer as one entity.
                 ``image_labels`` is not supported alongside ``partition=``
                 (the sparse-dict semantics complicate slicing).
             **attrs: Additional node attributes. Common ones:
 
                 - ``layer`` (bool): Expose this node in the viewer's Layers
-                  panel for per-node control. When ``partition=`` produces a
-                  wrapper, ``layer=True`` lands on the wrapper, not on
-                  each leaf part.
+                  panel for per-node control. When structural options produce
+                  wrappers, ``layer=True`` lands on the outermost wrapper, not
+                  on a nested partition wrapper or each leaf part.
                 - ``visible`` (bool): Initial visibility when scene loads
                   (default ``True``). Used by the Layers panel to start a
                   layer hidden.
@@ -207,29 +233,35 @@ class Group(Node):
                   like additive. Defaults to 1.0.
 
         Returns:
-            The created ``Points`` node, or a kind=partition ``Group``
-            wrapper when ``partition=`` produced more than one part.
+            The created ``Points`` node, a kind=partition ``Group`` when
+            ``partition=`` produces multiple parts, or a kind=lod ``Group``
+            when ``substitutive_lod=`` produces coarse levels (with the
+            partition as its finest child when both controls are combined).
         """
         from .adders.points import add_points_impl
 
-        return add_points_impl(
-            self,
-            name=name,
-            positions=positions,
-            colors=colors,
-            radii=radii,
-            sharpness=sharpness,
-            scalars=scalars,
-            labels=labels,
-            image_labels=image_labels,
-            parent=parent,
-            extend_to_all=extend_to_all,
-            dim_order=dim_order,
-            fill=fill,
-            partition=partition,
-            additive_lod=additive_lod,
-            substitutive_lod=substitutive_lod,
-            **attrs,
+        return self._transactional_add(
+            name,
+            parent,
+            lambda: add_points_impl(
+                self,
+                name=name,
+                positions=positions,
+                colors=colors,
+                radii=radii,
+                sharpness=sharpness,
+                scalars=scalars,
+                labels=labels,
+                image_labels=image_labels,
+                parent=parent,
+                extend_to_all=extend_to_all,
+                dim_order=dim_order,
+                fill=fill,
+                partition=partition,
+                additive_lod=additive_lod,
+                substitutive_lod=substitutive_lod,
+                **attrs,
+            ),
         )
 
     def add_lines(
@@ -326,26 +358,30 @@ class Group(Node):
         """
         from .adders.lines import add_lines_impl
 
-        return add_lines_impl(
-            self,
-            name=name,
-            vertices=vertices,
-            widths=widths,
-            colors=colors,
-            sharpness=sharpness,
-            scalars=scalars,
-            labels=labels,
-            image_labels=image_labels,
-            indices=indices,
-            line_type=line_type,
-            parent=parent,
-            extend_to_all=extend_to_all,
-            dim_order=dim_order,
-            fill=fill,
-            additive_lod=additive_lod,
-            substitutive_lod=substitutive_lod,
-            partition=partition,
-            **attrs,
+        return self._transactional_add(
+            name,
+            parent,
+            lambda: add_lines_impl(
+                self,
+                name=name,
+                vertices=vertices,
+                widths=widths,
+                colors=colors,
+                sharpness=sharpness,
+                scalars=scalars,
+                labels=labels,
+                image_labels=image_labels,
+                indices=indices,
+                line_type=line_type,
+                parent=parent,
+                extend_to_all=extend_to_all,
+                dim_order=dim_order,
+                fill=fill,
+                additive_lod=additive_lod,
+                substitutive_lod=substitutive_lod,
+                partition=partition,
+                **attrs,
+            ),
         )
 
     def add_mesh(
@@ -383,7 +419,7 @@ class Group(Node):
         finest child is the original. Its vocabulary is shorter than the sibling
         adders' — no ``truncation_radius`` / ``max_aspect`` / ``device`` / ``seed``,
         because those exist only for geometries that coarsen by lifting to gsplats,
-        and ``method`` is ``{'auto', 'cluster'}`` rather than the Gaussian-mixture
+        and ``method`` is ``{'auto', 'cluster', 'qem'}`` rather than the Gaussian-mixture
         reducers. See :func:`luxar.core.group.lod.mesh.resolve_substitutive_axis_mesh`.
 
         ``partition`` IS supported too. Returns the ``kind=partition`` wrapper
@@ -393,7 +429,7 @@ class Group(Node):
         ``kind=partition`` group you built yourself, provided that group declares
         ``display_type='mesh'`` — a partition is homogeneous, so a mismatched
         declaration is refused. ``partition`` and ``substitutive_lod`` cannot be
-        combined, exactly as for Points / Lines.
+        combined for Mesh or Lines; Points uses that pair for its overview shape.
 
         ``additive_lod`` IS supported, as a **reveal ladder and nothing else**: it
         writes ``additive_<i>/`` levels inside the leaf, each holding one concentric
@@ -471,7 +507,10 @@ class Group(Node):
                 grows outward as it loads.
             **attrs: Additional attributes — ``opacity``, ``intensity``,
                 ``offset``, ``gamma``, ``colormap``, ``layer``, ``visible``,
-                ``transform``, ``nd_transform``, ``blending_mode``. Note
+                ``transform``, ``nd_transform``, ``blending_mode``, and the
+                mesh-only appearance controls ``ambient``, ``specular``,
+                ``alpha_cutoff`` (each in ``[0, 1]``), ``shade_exponent``, and
+                ``shininess`` (both strictly positive and finite). Note
                 ``volumetric`` blending is rejected — it has no meaning for an
                 opaque surface. An explicit ``None`` for ``colormap`` or
                 ``coverage_fraction`` means "absent" — identical to omitting the
@@ -487,27 +526,31 @@ class Group(Node):
         """
         from .adders.mesh import add_mesh_impl
 
-        return add_mesh_impl(
-            self,
-            name=name,
-            vertices=vertices,
-            faces=faces,
-            normals=normals,
-            normal_dims=normal_dims,
-            colors=colors,
-            scalars=scalars,
-            shading=shading,
-            double_sided=double_sided,
-            labels=labels,
-            image_labels=image_labels,
-            partition=partition,
-            parent=parent,
-            extend_to_all=extend_to_all,
-            dim_order=dim_order,
-            fill=fill,
-            substitutive_lod=substitutive_lod,
-            additive_lod=additive_lod,
-            **attrs,
+        return self._transactional_add(
+            name,
+            parent,
+            lambda: add_mesh_impl(
+                self,
+                name=name,
+                vertices=vertices,
+                faces=faces,
+                normals=normals,
+                normal_dims=normal_dims,
+                colors=colors,
+                scalars=scalars,
+                shading=shading,
+                double_sided=double_sided,
+                labels=labels,
+                image_labels=image_labels,
+                partition=partition,
+                parent=parent,
+                extend_to_all=extend_to_all,
+                dim_order=dim_order,
+                fill=fill,
+                substitutive_lod=substitutive_lod,
+                additive_lod=additive_lod,
+                **attrs,
+            ),
         )
 
     def add_gsplats(
@@ -588,22 +631,26 @@ class Group(Node):
         """
         from .adders.gsplats import add_gsplats_impl
 
-        return add_gsplats_impl(
-            self,
-            name=name,
-            centers=centers,
-            amplitudes=amplitudes,
-            cholesky_factors=cholesky_factors,
-            colors=colors,
-            labels=labels,
-            image_labels=image_labels,
-            parent=parent,
-            extend_to_all=extend_to_all,
-            dim_order=dim_order,
-            fill=fill,
-            fill_sigma=fill_sigma,
-            partition=partition,
-            **attrs,
+        return self._transactional_add(
+            name,
+            parent,
+            lambda: add_gsplats_impl(
+                self,
+                name=name,
+                centers=centers,
+                amplitudes=amplitudes,
+                cholesky_factors=cholesky_factors,
+                colors=colors,
+                labels=labels,
+                image_labels=image_labels,
+                parent=parent,
+                extend_to_all=extend_to_all,
+                dim_order=dim_order,
+                fill=fill,
+                fill_sigma=fill_sigma,
+                partition=partition,
+                **attrs,
+            ),
         )
 
     def add_gsplats_from_data(
@@ -709,18 +756,22 @@ class Group(Node):
         """
         from .gsplats_pipeline.from_data import add_gsplats_from_data_impl
 
-        return add_gsplats_from_data_impl(
-            self,
-            name=name,
-            result=result,
-            parent=parent,
-            extend_to_all=extend_to_all,
-            dim_order=dim_order,
-            fill=fill,
-            fill_sigma=fill_sigma,
-            lod_group=lod_group,
-            additive_lod=additive_lod,
-            **attrs,
+        return self._transactional_add(
+            name,
+            parent,
+            lambda: add_gsplats_from_data_impl(
+                self,
+                name=name,
+                result=result,
+                parent=parent,
+                extend_to_all=extend_to_all,
+                dim_order=dim_order,
+                fill=fill,
+                fill_sigma=fill_sigma,
+                lod_group=lod_group,
+                additive_lod=additive_lod,
+                **attrs,
+            ),
         )
 
     def add_gsplats_from_file(
@@ -782,16 +833,20 @@ class Group(Node):
         """
         from .gsplats_pipeline.from_io import add_gsplats_from_file_impl
 
-        return add_gsplats_from_file_impl(
-            self,
-            name=name,
-            path=path,
-            parent=parent,
-            extend_to_all=extend_to_all,
-            dim_order=dim_order,
-            fill=fill,
-            fill_sigma=fill_sigma,
-            **attrs,
+        return self._transactional_add(
+            name,
+            parent,
+            lambda: add_gsplats_from_file_impl(
+                self,
+                name=name,
+                path=path,
+                parent=parent,
+                extend_to_all=extend_to_all,
+                dim_order=dim_order,
+                fill=fill,
+                fill_sigma=fill_sigma,
+                **attrs,
+            ),
         )
 
     def add_gsplats_from_volume(
@@ -843,24 +898,28 @@ class Group(Node):
         """
         from .gsplats_pipeline.from_io import add_gsplats_from_volume_impl
 
-        return add_gsplats_from_volume_impl(
-            self,
-            name=name,
-            volume=volume,
-            seeds=seeds,
-            n_iters=n_iters,
-            device=device,
-            progressive=progressive,
-            max_splats_per_pass=max_splats_per_pass,
-            psnr_patience=psnr_patience,
-            max_passes=max_passes,
-            parent=parent,
-            extend_to_all=extend_to_all,
-            dim_order=dim_order,
-            fill=fill,
-            fill_sigma=fill_sigma,
-            opacity=opacity,
-            absorption=absorption,
-            blending_mode=blending_mode,
-            **fit_kwargs,
+        return self._transactional_add(
+            name,
+            parent,
+            lambda: add_gsplats_from_volume_impl(
+                self,
+                name=name,
+                volume=volume,
+                seeds=seeds,
+                n_iters=n_iters,
+                device=device,
+                progressive=progressive,
+                max_splats_per_pass=max_splats_per_pass,
+                psnr_patience=psnr_patience,
+                max_passes=max_passes,
+                parent=parent,
+                extend_to_all=extend_to_all,
+                dim_order=dim_order,
+                fill=fill,
+                fill_sigma=fill_sigma,
+                opacity=opacity,
+                absorption=absorption,
+                blending_mode=blending_mode,
+                **fit_kwargs,
+            ),
         )

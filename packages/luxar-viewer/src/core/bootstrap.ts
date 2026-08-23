@@ -138,7 +138,7 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   // Install the line-primitive POLICY from user settings, same ordering
   // constraint. `?linePrimitive=` (the override above) stays the strongest
   // word; a forced policy ('capsule' | 'quad') replaces the default; 'auto'
-  // sizes each node at material build. See types/line-primitive.ts.
+  // sizes the scene before material build. See types/line-primitive.ts.
   setLinePrimitivePolicy(userSettings.advanced.linePrimitivePolicy);
 
   // Name the browser tab after the scene as early as possible. `luxar serve
@@ -286,6 +286,7 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     depthSort: urlParams.depthSort,
     // Opt-in capture-quality override (`?lod-finest` — the gallery harness).
     lodFinest: urlParams.lodFinest,
+    blendWarmup: urlParams.blendWarmup,
   };
 
   const app = new LuxarApp();

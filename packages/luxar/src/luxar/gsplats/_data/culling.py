@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from .base import _GSplatDataOps
+from .filtering import _stats_after_content_change, _substitutive_counts_changed
 
 if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import GSplatData
@@ -106,7 +107,8 @@ class CullingMixin(_GSplatDataOps):
                 contribution (0--1) below which a splat is redundant.
             max_binary_search_iters: *error_budget / redundancy only.*
                 Max iterations for the joint compounding binary search.
-            device: Device for GPU computation.  Auto-detected if None.
+            device: Device for GPU computation.  Auto-detected for None or
+                ``"auto"``.
             intensity_floor: Min intensity threshold for AABB computation.
             retention: *cumulative only.*  Fraction of total amplitude to
                 retain (0--1).
@@ -156,6 +158,14 @@ class CullingMixin(_GSplatDataOps):
                     verbose=verbose,
                 )
             )
+            # The per-level recursion scrubs each level's measured scores through
+            # filter(), but _map_substitutive rebuilds the TOP-level stats from
+            # `dict(self.stats)` — the dict `gsplat info` reads `psnr_db` from.
+            # Scrub BEFORE stamping: the scrub also takes the inherited cull record
+            # (`culled` / `n_original` / ...), which is what this update replaces.
+            out = _stats_after_content_change(
+                out, changed=_substitutive_counts_changed(self, out), source=self
+            )
             out.stats.update(
                 {
                     "culled": True,
@@ -190,7 +200,7 @@ class CullingMixin(_GSplatDataOps):
         import torch
 
         from luxar.gsplats.culling import cull_by_contribution
-        from luxar.gsplats.rendering.volume_rendering import auto_detect_device
+        from luxar.gsplats.utils.device import resolve_torch_device
 
         if target is not None and shape is None:
             shape = target.shape
@@ -201,8 +211,7 @@ class CullingMixin(_GSplatDataOps):
                 "or provide a target volume."
             )
 
-        if device is None:
-            device = auto_detect_device()
+        device = str(resolve_torch_device(device))
 
         # Convert to GPU tensors
         centers_t = torch.from_numpy(self.centers.astype(np.float32)).to(device)

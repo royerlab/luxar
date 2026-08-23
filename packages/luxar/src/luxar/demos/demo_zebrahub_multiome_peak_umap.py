@@ -50,6 +50,11 @@ DEMO_META = {
     },
     "caches": ["zebrahub_multiome_peak"],
     "outputs": ["zebrahub_multiome_peak_umap", "zebrahub_umap"],
+    "citation": {
+        # First author of the Zebrahub-Multiome preprint this demo cites above.
+        "short": "Kim et al. 2024",
+        "doi": "10.1101/2024.10.18.618987",
+    },
 }
 
 import sys
@@ -62,7 +67,9 @@ import zarr
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
+    add_demo_caption,
     cache_computed,
     launch_viewer,
     substitutive_lod_or_flat,
@@ -257,7 +264,11 @@ def create_zebrahub_scene(
 
         # Create scene
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                dimensions=dims,
+                citation=DEMO_META["citation"],
+                viewer_config=ViewerConfig(cinematic_mode=True),
+            )
 
             # Add points with small radii for dense point cloud
             total_points = len(positions_combined)
@@ -333,12 +344,10 @@ def create_zebrahub_scene(
                             transition_duration=0.2,
                         )
 
-            scene.add_text(
-                f"{n_points:,} peaks • Zebrafish • 3D UMAP • Lange et al., Cell 2024",
-                position=(0.98, 0.97),
-                font_size=0.012,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+            add_demo_caption(
+                scene,
+                f"{n_points:,} peaks • Zebrafish • 3D UMAP • Kim et al. 2024",
+                DEMO_META.get("citation"),
             )
 
         aprint(f"✓ Scene created with {n_points:,} points")

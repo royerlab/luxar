@@ -37,6 +37,7 @@ invented flag fails too, not just a stale command path.
 ```bash
 luxar info      # Dataset structure, dimensions, and compression statistics (--stats, --format json)
 luxar optimise  # Re-chunk an existing store for streaming; values stay bit-identical
+luxar restamp-lod  # Re-derive legacy LOD switch thresholds in place (attrs only)
 luxar serve     # Serve a .luxar.zarr over HTTP, optionally with the viewer (--viewer, --open)
 luxar viewer    # Serve the Luxar viewer, optionally with a dataset (--data)
 luxar export    # Export a scene + viewer as a standalone offline folder (or --native bundle)
@@ -130,6 +131,98 @@ interrupted or failed run leaves no partial store and never costs you both
 copies. Run `luxar info` with its
 detailed-statistics flag to see a store's chunk layout before and after.
 
+## `luxar restamp-lod`
+
+Re-derive the LOD switch thresholds of a store that already exists, in place.
+An **attributes-only** pass: the ladder rewrite moves no chunk data and opens no
+array.
+
+```bash
+luxar restamp-lod                          # Re-derive every legacy ladder in STORE
+luxar restamp-lod --dry-run                # Report the old→new ladders; write nothing
+luxar restamp-lod --group tiled/part_0     # Restrict to one ladder (repeatable)
+luxar restamp-lod --group /                # The store ROOT's own ladder
+```
+
+Every `kind=lod` group carries per-child `coverage_fraction` thresholds plus a
+group-level `selector` naming the units they are in. Ladders written before the
+screen-area metric existed sit on the legacy `coverage` diagonal one (or carry
+no `selector` at all, which means the same). This command re-derives those
+thresholds by screen-occupancy halving — the whole-object anchor for a plain
+ladder, the fills-screen anchor for a **tile-bound** one — and stamps the group
+`screen-area`. A group already on `screen-area` is skipped, so a second run
+changes nothing at all, down to the `content_hash`.
+
+Tile-bound is the tree writers' own two-clause rule, so a restamped store
+matches a freshly written one: a ladder is tile-anchored when a REAL multi-part
+`kind=partition` encloses it (the `tiles` and `adaptive` per-tile ladders), **or**
+when one of its own ladder children is itself a `kind=partition` — the `overview`
+recipe's `[coarse cap, fine partition]` pair, which is pinned at the fills-screen
+anchor deliberately so the opening framing shows the coarse cap instead of
+loading the whole dataset. A one-part partition is not a tiling (its single part
+IS the whole object) and does not bind.
+
+**It is an explicit opt-in, and it may override a deliberate choice.** An
+authored `coverage_fractions=[...]` list and a legacy derived ladder are
+indistinguishable on disk, which is exactly why nothing does this automatically
+and why the compiler's one-part-partition check only ever warns. The per-group
+old→new ladder and the anchor used are printed for that reason — run `--dry-run`
+first, and use `--group` (repeatable; an unmatched path is an error, not a
+silent no-op) to restrict the pass to the ladders you meant. Group paths are
+spelled as the store spells them (`tiled/part_0`), and the store root is `/` —
+the only way to name the ladder of a `.gsplats.zarr` whose root IS the
+`kind=lod` group.
+
+Sibling of `luxar optimise`, not a flag on it: that pass preserves every
+attribute and refuses same-path work, this one changes only attributes and works
+in place. Give it an uncompressed `.luxar.zarr` or `.gsplats.zarr`
+**directory** — a `.zarr.zip` is refused, since an archive is read through a
+temp directory and there is nothing to write back to.
+
+When anything changes, the store's `content_hash` is restamped and the metadata
+re-consolidated, in that order: an attrs-only edit must still invalidate a warm
+viewer cache. **That restamp is the one step that is not instant.** A compiled
+scene's `content_hash` is a digest of array VALUES, so restamping it reads every
+array in the store exactly once — linear in the store's total size, so expect
+minutes on a very large scene even though only two attributes changed. A
+standalone `.gsplats.zarr` takes the other branch, a metadata-only stamp, and
+stays instant. A `--dry-run`, and a run with nothing to change, read nothing at
+all. The result is then read back — from both the per-node documents and the
+consolidated index the viewer fetches — and verified. An index is **rebuilt,
+never introduced**: a store handed over without consolidated metadata leaves
+without it, because `is_consolidated` is how `batch-fit` tells a finished tile
+from an interrupted one and creating one here would report an unfinished tile as
+complete.
+
+If a write fails part-way, every attribute already rewritten is restored —
+including each `content_hash`, put back exactly as the store carried it rather
+than recomputed, so a legacy or hand-edited digest is not silently rewritten by
+a run that failed — and the error is reported. The metadata is re-consolidated
+only when the failed run had rewritten the store ROOT, the write that
+invalidates the index; a failure that never touched it leaves the valid index
+alone rather than risking a second one. The store is left as it was found rather
+than carrying a half-migrated ladder whose thresholds and `selector` disagree
+about their units — a disagreement nothing downstream can detect.
+
+The command exits 1 if any ladder was left alone for a reason worth acting on: a
+`selector` outside the vocabulary (migrate the store with `luxar gsplat
+migrate-format` first), a finest level whose element count the store does not
+record, a stored ladder that descends in the resolved coarsest→finest child
+order (its thresholds and its child order disagree, so re-deriving would invert
+it), a child group that carries a `coverage_fraction` but cannot be classified as
+a ladder level (re-deriving over the rest would leave a partial, non-monotonic
+ladder), or a re-verification residual. Ladders that *were* restamped are still
+written in that case — nothing is silently ignored, and nothing is silently
+half-done.
+
+It exits 1 for one more case, where the rewrite fully succeeded: a store that
+carries neither a scene `type` nor a `.gsplats.zarr` `content_hash` has no digest
+to restamp, so nothing tells a warm viewer cache that the ladder moved. At zarr
+format 2 — the legacy corpus this command exists for — even the viewer's
+`zattrs-hash` fallback digests the root `.zattrs` bytes, which an edit to a child
+ladder does not touch, so a warm cache would serve the old ladder indefinitely.
+The run says so with a `⚠️` and exits non-zero; republish under a new URL prefix.
+
 ## `luxar demo`
 
 Browse, run, and manage the bundled demos.
@@ -202,7 +295,7 @@ in [Formats & migration](./FORMAT_AND_MIGRATION.md).
 
 ```bash
 luxar gsplat info              # Dataset statistics (splat count, dimensions, bounds, LOD structure)
-luxar gsplat doctor           # Diagnose known problems (--fix repairs what is recoverable, in place)
+luxar gsplat doctor           # Diagnose standalone gsplats or scene partitions (--fix repairs in place)
 luxar gsplat napari           # Open a dataset in napari for visual inspection
 luxar gsplat view             # Open a .gsplats.zarr directly in the web viewer
 luxar gsplat compare          # Compare reconstruction quality vs a reference volume (PSNR/SSIM/MSE)
@@ -211,17 +304,25 @@ luxar gsplat annotate-quality # Retrofit Q·e quality stamps onto an existing da
 
 `doctor` is for the problems you cannot see: a dataset written by an older Luxar
 loads and renders fine while missing something a later version learned to record,
-or carrying metadata that went stale under an edit. Given a dataset path it prints
-the `info` report (suppress with `--no-info`), then a diagnosis, and exits non-zero
+or carrying metadata that went stale under an edit. Given a standalone gsplat path
+it prints the `info` report (suppress with `--no-info`); for a scene it notes that
+the gsplat report does not apply. It then prints a diagnosis and exits non-zero
 while a problem is still standing — so it can gate a pipeline. Pass `--fix` to
-repair in place (an uncompressed `.gsplats.zarr` directory; unpack a `.zip` first),
-or `--json` to write the findings out for a machine.
+repair an uncompressed `.gsplats.zarr` or `.luxar.zarr` directory in place (unpack
+a `.zip` or `.tar.gz` first), or `--json` to write the findings out for a machine.
 
 It currently diagnoses a `kind=partition` whose split planes (`bsp_tree`) are
 missing, or are present but disagree with where the parts actually sit. Without
 them the viewer orders parts by centroid, which is not a valid painter's order and
 pops at the seams under `normal`/`volumetric` blending; where the parts are
-disjoint the planes are recovered exactly from the part boxes. What cannot be
+disjoint the planes are recovered exactly from the part boxes. For overlapping
+uniform-tiled parts and centroid-split lines/mesh partitions, doctor uses the
+largest measured interpenetration on each axis as an overlap-tolerance floor,
+but still catches planes outside those bands. Disjoint points and splats must
+still separate exactly, even when stale cuts remain between the child centers.
+It can recover the band-bounded cuts, and reports a
+coordinate-frame scale only when repeated planes support each changed axis, or
+when a single plane agrees with a factor proven on another axis. What cannot be
 repaired is reported with a remedy rather than guessed at.
 
 ### Editing & selection
@@ -304,9 +405,18 @@ node is optional when the scene holds exactly one mesh (what `luxar mesh import`
 produces); with several, naming one is required rather than guessed at.
 
 `--subst-method` shares its **name** with `luxar gsplat lod` — on both commands it selects
-the substitutive, level-replacing reduction — but **not its values**: this one takes `auto`
-or `cluster`, because a mesh is decimated where a gsplat level reduces a Gaussian mixture,
-which a surface is not. `auto` resolves to `cluster` today.
+the substitutive, level-replacing reduction — but **not its values**: this one takes
+`auto`, `qem`, or `cluster`, because a mesh is decimated where a gsplat level reduces a
+Gaussian mixture, which a surface is not. QEM is Garland-Heckbert edge collapse with a
+link-condition veto, so it preserves manifold topology; clustering is the vectorized
+large-mesh tier. `auto` uses QEM through 10,000 source vertices and clustering above that
+measured worst-case open-surface envelope. A QEM ladder builds one collapse sequence and
+snapshots every level from it. On an open near-planar surface QEM's
+orientation veto can stop well above the requested count and shorten the ladder; use
+`cluster` when closely hitting the count matters more than topology preservation. QEM
+also requires at least three coarsening dimensions;
+`auto` falls back to clustering for a one- or two-dimensional coarsening, while explicit
+`qem` is refused. The selected tier is printed with the reason.
 
 The flag was called `--method` before August 2026, and `-m` was its short form. `--method`
 is gone, and `-m` has since been **claimed** by `--add-method` — the additive ordering it

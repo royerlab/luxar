@@ -1,6 +1,6 @@
 #version 300 es
 
-// Three.js r184 - Node System
+// Three.js r185 - Node System
 
 
 // extensions
@@ -28,6 +28,12 @@ precision highp isampler2DArray;
 precision highp sampler2DShadow;
 precision highp sampler2DArrayShadow;
 precision highp samplerCubeShadow;
+
+
+// structs
+
+
+
 
 
 // uniforms
@@ -256,12 +262,12 @@ void main() {
 	// code
 
 	modelViewMatrix = ( cameraViewMatrix * nodeUniform1 );
-	nodeVarying1 = 0.0;
 	nodeVarying2 = 0.0;
 	nodeVarying3 = 0.0;
 	nodeVarying4 = 0.0;
 	nodeVarying8 = 0.0;
 	nodeVarying9 = 0.0;
+	nodeVarying1 = 0.0;
 	nodeVarying0 = 0.0;
 	nodeVarying5 = 0.0;
 	nodeVarying6 = 0.0;
@@ -690,7 +696,7 @@ void main() {
 	nodeVar150 = vec4( ( nodeVar75.xy + ( ( ( ( nodeVar149 * vec2( aQuadCorner.y ) ) / nodeUniform19 ) * vec2( 2.0 ) ) * vec2( nodeVar75.w ) ) ), nodeVar75.z, nodeVar75.w );
 	clipPos = vec4( 0.0, 0.0, -2.0, 1.0 );
 
-	if ( (!( ( ( nodeVar51 < nodeVar54 ) && ( nodeVar52 < nodeVar54 ) ) || ( ( ( nodeVar51 < ( nodeVar54 * 2.0 ) ) && ( nodeVar52 < ( nodeVar54 * 2.0 ) ) ) && ( nodeVar89 > ( nodeVar85 * 2.0 ) ) ) )) ) {
+	if ( ( ! ( ( ( nodeVar51 < nodeVar54 ) && ( nodeVar52 < nodeVar54 ) ) || ( ( ( nodeVar51 < ( nodeVar54 * 2.0 ) ) && ( nodeVar52 < ( nodeVar54 * 2.0 ) ) ) && ( nodeVar89 > ( nodeVar85 * 2.0 ) ) ) ) ) ) {
 
 		clipPos = nodeVar150;
 

@@ -16,7 +16,11 @@ import numpy as np
 from arbol import aprint
 
 from ...gsplats import GSplats
-from ..compositing import COMPOSITING_ATTRS, sync_custom_colormap_attr
+from ..compositing import (
+    COMPOSITING_ATTRS,
+    mirror_written_colormap,
+    sync_custom_colormap_attr,
+)
 from ..dim_order import apply_dim_order_cholesky, apply_dim_order_positions
 
 if TYPE_CHECKING:
@@ -46,7 +50,7 @@ def add_gsplats_as_lod_group_impl(
     land on the kind=lod ``Group`` itself; per-leaf gsplats attrs
     (truncation_radius, extend_to_all, colormap) ride into each child.
     """
-    from ..lod.group import derive_coverage_fractions
+    from ..lod.group import resolve_lod_ladder
 
     # Substitutive convention: index 0 = finest, n-1 = coarsest. The
     # LOD group needs coarsest first.
@@ -62,37 +66,33 @@ def add_gsplats_as_lod_group_impl(
         for s in order
     ]
 
-    if explicit_coverage_fractions is not None:
-        if len(explicit_coverage_fractions) != n_sub:
-            raise ValueError(
-                f"coverage_fractions has {len(explicit_coverage_fractions)} "
-                f"entries but the lod_group has {n_sub} substitutive levels"
-            )
-        coverage_vals = list(explicit_coverage_fractions)
-        # Explicit lists keep the legacy diagonal-metric units they were
-        # authored in (selector="coverage", the add_lod_group default).
-        lod_selector = "coverage"
-    else:
-        # Auto-derive (coarsest-first) as screen-area fractions by occupancy
-        # halving — the finest level holds while the node occupies at least half
-        # the screen, one level coarser per halving of occupied area. Count-
-        # independent, so no per-level radius or world-extent is needed; stamped
-        # selector="screen-area" so the viewer reads the thresholds in the units
-        # they were derived in. A ladder whose insertion point sits under a
-        # hand-built ``kind=partition`` switches on ONE TILE, so it takes the
-        # fills-screen anchor (area 1.0) instead — detected and logged by
-        # ``derive_coverage_fractions``.
-        coverage_vals = derive_coverage_fractions(splat_counts, parent_node, name=name)
-        lod_selector = "screen-area"
+    # Thresholds AND the selector naming their units, from the one shared rule
+    # (``lod.group.resolve_lod_ladder``): an explicit ``coverage_fractions=[...]``
+    # is used verbatim under the legacy units it was authored in, otherwise the
+    # screen-area halving ladder is derived (coarsest-first) — re-anchored at
+    # fills-screen when the insertion point sits under a hand-built
+    # ``kind=partition``, since such a ladder switches on ONE TILE.
+    coverage_vals, lod_selector = resolve_lod_ladder(
+        explicit_coverage_fractions,
+        splat_counts,
+        parent_node,
+        name=name,
+        length_error=lambda n_explicit, n_levels: (
+            f"coverage_fractions has {n_explicit} "
+            f"entries but the lod_group has {n_levels} substitutive levels"
+        ),
+    )
 
     # Separate compositing attrs (go on the kind=lod Group) from
     # per-leaf gsplats attrs (go on each child). Anything not in the
     # compositing set falls through to the child level.
     #
-    # ``colormap`` is intentionally NOT compositing here: the writer
-    # auto-defaults a missing colormap to "gray" per leaf, which
-    # under nearest-ancestor-wins would shadow a parent's setting.
-    # Keep it on each child so the user's intent survives.
+    # ``colormap`` is not in COMPOSITING_ATTRS, so it falls through to each
+    # child. Since #1600 that is a routing preference rather than a
+    # correctness requirement (the writer no longer manufactures a shadowing
+    # "gray" and the viewer composes the attr root→leaf) — but a palette on
+    # every child is what the Layers panel's `deriveColormapFromDescendants`
+    # reads back, so the shape stays.
     lod_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
     child_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
     # Defense in depth: ``add_gsplats_from_data`` rejects coverage_fraction
@@ -267,8 +267,10 @@ def add_gsplats_multi_lod_impl(
 
         sync_custom_colormap_attr(attrs)
 
-        if not metadata.get("has_colors") and "colormap" not in attrs:
-            attrs["colormap"] = "gray"
+        # Mirror the writer's own colormap decision (see
+        # mirror_written_colormap): no manufactured gray under an
+        # ancestor-authored palette.
+        mirror_written_colormap(attrs, writer, path)
 
         return GSplats(
             name,

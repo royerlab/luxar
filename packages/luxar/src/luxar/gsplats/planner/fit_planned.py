@@ -19,9 +19,15 @@ from __future__ import annotations
 
 import gc
 import time
-from typing import TYPE_CHECKING, Any, Callable, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Optional, Sequence, Tuple
 
 import numpy as np
+
+from luxar.gsplats.merged_quality import (
+    announce_unscored_merge,
+    resolve_merged_reference,
+    stamp_merged_quality,
+)
 
 from .spec import FitPlan, PlanBox
 
@@ -29,6 +35,145 @@ if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import GSplatData
 
 ProgressCallback = Callable[[int, int, str], None]
+
+#: Near-lossless post-fit retention every content box is fitted at.
+#:
+#: The fitter's own default is ``0.95``, which discards the bottom 5% of
+#: cumulative amplitude after EVERY fit. Content is the ``--cal``-driven path, so
+#: it is where that ``0.95`` — one half of the false ``signal_limited`` curve
+#: ``luxar gsplat cal`` used to report, the other half being too few iterations at
+#: high K — is most in play; every preset overrides it, and a preset-less content
+#: fit should not be the one invocation that keeps it. A per-box cull also
+#: compounds (the merged store loses the weakest splats of every box rather than of
+#: the volume), though that argument does not single content out: uniform tiling's
+#: default partition merge culls each tile independently too (only its ``--flat``
+#: merge culls once, globally) and stays at the fitter default on purpose.
+#: The CLI content path imports this constant so its default and the library's
+#: cannot drift apart.
+CONTENT_CULL_RETENTION: float = 0.999
+
+
+def _require_plan_volume_shape(volume: np.ndarray, plan: FitPlan) -> None:
+    """Reject a volume whose voxel grid differs from the plan's boxes."""
+    plan_shape = tuple(int(size) for size in plan.volume_shape)
+    if volume.shape != plan_shape:
+        raise ValueError(
+            f"volume shape {volume.shape} does not match the plan grid {plan_shape}"
+        )
+
+
+def _planned_merge_stats(
+    regions: "Sequence[GSplatData]",
+    *,
+    n_boxes: int,
+    n_boxes_fit: int,
+    overlap: int,
+    volume_shape: tuple[int, ...],
+    elapsed: float,
+    delivered_splats: int,
+    parallel_jobs: Optional[int] = None,
+    partition: bool = False,
+) -> dict[str, Any]:
+    """Build common fit stats for flat and partition planned merges.
+
+    ``time_seconds`` is the merge's wall clock. On a sequential flat result it
+    overwrites ``concatenate``'s sum of box fit times; on a partition root this
+    block is its sole writer. Normal parallel workers deliberately omit fitting
+    info while preserving normalization provenance, so this is also the sole
+    writer for their flat merge. The overwrite still protects callers whose
+    custom workers do persist fitting info from summing concurrent fit times.
+    """
+
+    stats: dict[str, Any] = {
+        "planned_fit": True,
+        "n_boxes": n_boxes,
+        "n_boxes_fit": n_boxes_fit,
+        "overlap": overlap,
+        "volume_shape": list(volume_shape),
+        "time_seconds": float(elapsed),
+        "n_splats": int(delivered_splats),
+    }
+    if partition:
+        stats["splats_per_tile"] = [region.n_splats for region in regions]
+    if parallel_jobs is not None:
+        stats["parallel_jobs"] = int(parallel_jobs)
+        stats["elapsed_seconds"] = float(elapsed)
+    return stats
+
+
+def _stamp_planned_normalization(
+    target: dict[str, Any], regions: "Sequence[GSplatData]"
+) -> None:
+    """Carry unanimous box normalization provenance onto a merge root."""
+    from luxar.gsplats.io.save_gsplats import agreed_normalization_stats
+
+    target.update(agreed_normalization_stats([region.stats for region in regions]))
+
+
+def _score_planned_merge(
+    merged: "GSplatData | Sequence[GSplatData]",
+    volume: Any,
+    *,
+    plan_shape: tuple[int, ...],
+    device: Optional[str],
+    verbose: bool,
+    stats: "dict[str, Any] | None" = None,
+    partition: bool = False,
+) -> None:
+    """Score a planned merge, or explain why no score can be recorded."""
+    reference, unscored_reason = resolve_merged_reference(
+        volume,
+        plan_shape,
+        grid_name="plan grid",
+        missing_reason="this parallel merge was not given a reference volume",
+    )
+    if unscored_reason is not None:
+        announce_unscored_merge(unscored_reason, partition=partition)
+        return
+
+    # Forward guard for content-box denoising: once boxes can denoise, this
+    # raw reference retains acquisition noise while the merge reconstructs the
+    # denoised crops, so the score is intentionally not comparable to a
+    # whole-volume denoise scored against its own smoothed reference.
+    stamp_merged_quality(
+        merged,
+        reference,
+        volume_shape=plan_shape,
+        grid_scale=None,
+        device=device,
+        verbose=verbose,
+        stats=stats,
+    )
+
+
+def _ensure_planned_norm_range(
+    volume: np.ndarray, fit_kwargs: dict[str, Any], verbose: bool
+) -> None:
+    """Resolve one raw-input range for today's non-denoising content fits."""
+    if fit_kwargs.get("norm_range") is not None:
+        return
+    # Forward guard for #1813: once content boxes can denoise, they must resolve
+    # their range from the denoised crop rather than inherit this raw range.
+    if fit_kwargs.get("_denoise_h") is not None:
+        return
+    from arbol import aprint
+
+    from luxar.gsplats.fitting.preprocessing import (
+        _norm_range_has_usable_span,
+        resolve_volume_norm_range,
+    )
+
+    norm_range = resolve_volume_norm_range(
+        volume, float(fit_kwargs.get("norm_percentile", 0.0)), verbose=verbose
+    )
+    if not _norm_range_has_usable_span(norm_range):
+        aprint(
+            f"Whole-volume normalization range [{norm_range[0]:.6g}, "
+            f"{norm_range[1]:.6g}] has no usable extent — boxes fall back to "
+            "their own scale."
+        )
+        return
+    fit_kwargs["norm_range"] = norm_range
 
 
 def _padded_bounds(
@@ -111,7 +256,10 @@ def _fit_one_box(
     ``GSplatData.concatenate`` with a uniform-tiled one fitted from the same
     config ("Truncation radius mismatch") — issue #1637.
     """
-    from luxar.gsplats._data.filtering import _REGION_SCOPED_STATS_KEYS
+    from luxar.gsplats._data.filtering import (
+        _REGION_SCOPED_STATS_KEYS,
+        drop_content_scoped_stats,
+    )
     from luxar.gsplats.fit_gsplats import fit_gaussian_splats
     from luxar.gsplats.gsplat_data import GSplatData
     from luxar.gsplats.utils.trils import tril_size
@@ -194,6 +342,15 @@ def _fit_one_box(
     if padded_is_larger or n_kept < int(keep.size):
         for key in _REGION_SCOPED_STATS_KEYS:
             box_stats.pop(key, None)
+        # ...and the MEASURED scores go with them, for the second reason the same
+        # predicate covers: `psnr_db` / `ssim` / `final_*` were taken on the fit of
+        # the PADDED crop, i.e. with the halo splats present and against a target
+        # region larger than this part. Publishing them as the part's `lod_stats`
+        # would quote a reconstruction score for a splat set the part does not hold
+        # (#1600). Note the halo half is not a count question at all — every splat
+        # can land in the core and the crop still be 18³ for a 12³ part — which is
+        # why this rides the region predicate rather than `_is_crop`.
+        drop_content_scoped_stats(box_stats)
     box_stats["n_splats"] = n_kept
     # ...and the same RAW `lod_stats` write is why non-finite values cannot ride
     # along either: zarr emits them as bare `Infinity`/`NaN` tokens that a strict
@@ -252,16 +409,20 @@ def fit_planned(
     boundaries. The CLI resolves it once against the whole volume before calling
     here (``luxar.cli.gsplat_ops.fitting.fit_utils.resolve_shared_floor``). What
     is shared is the floor ARGUMENT, not the input: every box is still handed its
-    own crop, and the subtraction is not bit-exact either, because the
-    normalization floor is clamped up to a crop's own minimum
-    (``image_min = max(level, min(crop))``) — so a box lying entirely above the
-    pedestal subtracts its own minimum instead.
+    own crop. The whole-volume ``norm_range`` below gives those crops the same
+    effective lower bound even when its low endpoint exceeds the resolved level.
+
+    ``fit_kwargs["norm_range"]`` should likewise describe the whole source volume
+    in raw input units. When omitted, this function resolves it once from
+    ``volume`` and forwards the same pair to every box.
 
     With ``partition=True`` (the CLI default) the per-box splats are kept as a
     ``kind=partition`` tree — one part per box (boxes are core-disjoint, so this
     is exact) — for viewer frustum culling; a :class:`~luxar.gsplats.tree.GSplatNode`
     is returned. With ``partition=False`` the boxes are concatenated into a single
-    flat :class:`GSplatData` leaf (``--flat``).
+    flat :class:`GSplatData` leaf (``--flat``). Both shapes are scored against
+    the whole reference volume; tree-shaped results carry the merged block in
+    their root ``meta["fit_stats"]`` for the CLI writer to persist.
 
     Boxes are fit **sequentially**. For concurrent fitting on one GPU use
     :func:`luxar.gsplats.planner.fit_planned_parallel.fit_planned_parallel`
@@ -273,10 +434,12 @@ def fit_planned(
     V = np.asarray(volume, dtype=np.float32)
     if V.ndim != 3:
         raise ValueError(f"fit_planned expects a 3-D volume, got shape {V.shape}")
+    _require_plan_volume_shape(V, plan)
     pad = int(plan.overlap)
-    fit_kwargs.setdefault("cull_retention", 0.999)
+    fit_kwargs.setdefault("cull_retention", CONTENT_CULL_RETENTION)
     fit_kwargs.setdefault("verbose", False)
     fit_kwargs["device"] = device
+    _ensure_planned_norm_range(V, fit_kwargs, verbose)
 
     # Per-box saturation cap (from the calibration): the halo inflation must not
     # push the fit past the K the calibration measured as over-saturated.
@@ -306,7 +469,7 @@ def fit_planned(
             # stats reach the merge instead of being rebuilt away (#1637).
             regions.append(region)
             region_boxes.append(i)
-        if verbose:
+        if verbose and progress_callback is None:
             from arbol import aprint
 
             aprint(f"  box {i + 1}/{n}: kept {n_kept:,} splats")
@@ -319,7 +482,7 @@ def fit_planned(
         # One part per box — boxes are core-disjoint, so this is an exact
         # spatial partition (viewer frustum-culls per part). Returns a tree node.
         # ``recipe`` gives each part its own LOD ladder/group as it is assembled.
-        return GSplatData.partition_from_regions(
+        result = GSplatData.partition_from_regions(
             regions,
             recipe=recipe,
             recipe_params=recipe_params,
@@ -328,6 +491,31 @@ def fit_planned(
             bsp_tree=plan.bsp_tree,
             region_labels=region_boxes,
         )
+        from luxar.gsplats.tree import GSplatPartition, total_splats
+
+        _stamp_planned_normalization(result.meta, regions)
+        fit_stats = _planned_merge_stats(
+            regions,
+            n_boxes=n,
+            n_boxes_fit=n_fit,
+            overlap=pad,
+            volume_shape=tuple(int(s) for s in V.shape),
+            elapsed=elapsed,
+            delivered_splats=int(total_splats(result)),
+            partition=True,
+        )
+        is_partition = isinstance(result, GSplatPartition)
+        _score_planned_merge(
+            regions if is_partition else regions[0],
+            V,
+            plan_shape=tuple(int(s) for s in plan.volume_shape),
+            device=device,
+            verbose=verbose,
+            stats=fit_stats,
+            partition=is_partition,
+        )
+        result.meta["fit_stats"] = fit_stats
+        return result
 
     # `concatenate` (what the uniform tiled path's `merge_tile_results` uses)
     # carries the boxes' shared truncation_radius through the merge — a manual
@@ -335,19 +523,24 @@ def fit_planned(
     # It REPLACES stats with its own summary, so the planned-fit keys go on after.
     merged = GSplatData.concatenate(regions)
     merged.stats.update(
-        {
-            "planned_fit": True,
-            "n_boxes": n,
-            "n_boxes_fit": n_fit,
-            "overlap": pad,
-            "volume_shape": list(V.shape),
-            # Overwrite `concatenate`'s SUM of the boxes' own times with true
-            # wall clock, as the uniform tiled merge does (`merge_tile_results`):
-            # one key must not mean "summed fit time" here and "elapsed" there.
-            "time_seconds": float(elapsed),
-        }
+        _planned_merge_stats(
+            regions,
+            n_boxes=n,
+            n_boxes_fit=n_fit,
+            overlap=pad,
+            volume_shape=tuple(int(s) for s in V.shape),
+            elapsed=elapsed,
+            delivered_splats=merged.n_splats,
+        )
+    )
+    _score_planned_merge(
+        merged,
+        V,
+        plan_shape=tuple(int(s) for s in plan.volume_shape),
+        device=device,
+        verbose=verbose,
     )
     return merged
 
 
-__all__ = ["fit_planned"]
+__all__ = ["CONTENT_CULL_RETENTION", "fit_planned"]

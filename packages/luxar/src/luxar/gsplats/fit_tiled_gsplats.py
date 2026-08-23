@@ -14,12 +14,14 @@ denoises the whole volume first, estimates (#1178). That match is exact for a
 volume within the denoise probe's budget; above it, only a ``pNN`` floor is
 corrected onto the denoised basis and the default ``auto`` keeps its raw-basis
 level with a printed note.
+The shared normalization range follows the same basis: its whole-volume
+endpoints are shifted by the denoise-induced change measured on the bounded
+shape-preserving probe, so tiles are not normalized against raw extremes they
+never see.
 """
 
 from __future__ import annotations
 
-import math
-import os
 import time
 from typing import Any, Optional, Sequence
 
@@ -31,11 +33,12 @@ from luxar.gsplats.fitting.preprocessing import (
     NORM_RANGE_MIN_SPAN,
     _floor_spec_is_volume_derived,
     resolve_volume_floor_denoised,
-    resolve_volume_norm_range,
+    resolve_volume_norm_range_denoised,
 )
 from luxar.gsplats.fitting.results import stamp_voxels_per_splat
 from luxar.gsplats.fitting.validation import _validate_floor
 from luxar.gsplats.gsplat_data import GSplatData
+from luxar.gsplats.merged_quality import stamp_merged_quality
 from luxar.gsplats.tiling import (
     TileSpec,
     compute_tile_specs,
@@ -44,208 +47,67 @@ from luxar.gsplats.tiling import (
     resolve_grid_scale,
 )
 
-#: Upper bound, in GiB, on the memory a merged-quality score may hold resident.
-#: Above it the score is SKIPPED — and says so out loud, because an archive that
-#: silently carries no PSNR is the failure this scoring exists to end. Override
-#: with ``LUXAR_TILED_QUALITY_MAX_GB`` when the machine can take more, or set it
-#: to ``0`` to decline scoring outright. This is a CEILING, not the budget: the
-#: default is additionally held under a share of the memory actually free (see
-#: :func:`_default_quality_budget_gb`), since a fixed number describes whichever
-#: machine it was written on and not the one running the fit.
-_QUALITY_BUDGET_GB = 24.0
-
-#: Share of currently-free physical memory the default budget will commit to a
-#: score. Deliberately well under 1: the peak below is an estimate, the fit
-#: process is holding the merged splats too, and being wrong in this direction
-#: costs a metric while being wrong in the other costs the whole fit.
-_QUALITY_BUDGET_MEM_FRACTION = 0.5
-
-#: Full-size float32 volumes live at the scoring peak, which sits inside SSIM
-#: rather than at the render: the reconstruction and the reference, plus the
-#: convolution intermediates :func:`luxar.gsplats.metrics._ssim_nd` keeps live
-#: (``_SSIM_PEAK_TENSOR_COUNT``, the same count that function's own tiled
-#: fallback is sized by — and that fallback only engages on CUDA, so on CPU this
-#: is the true peak). Counting only the reconstruction and the reference
-#: under-reports it fourfold, and the shortfall does not merely cost a metric:
-#: scoring runs BEFORE the archive is written, so thrashing or an OOM kill here
-#: loses the whole fit.
-_QUALITY_PEAK_VOLUMES = 8
+_TILE_SIGNAL_EPS = 1e-8
 
 
-def _available_ram_gb() -> "float | None":
-    """Free physical memory in GiB, or ``None`` where it cannot be measured."""
-    try:
-        pages = os.sysconf("SC_AVPHYS_PAGES")
-        page_size = os.sysconf("SC_PAGE_SIZE")
-    except (AttributeError, OSError, ValueError):  # pragma: no cover - platform
-        return None
-    if pages <= 0 or page_size <= 0:  # pragma: no cover - platform
-        return None
-    return pages * page_size / 1024**3
+def tile_has_signal(tile_data: np.ndarray) -> bool:
+    """Whether a prepared tile should enter the fitter rather than be skipped."""
+    return not bool(tile_data.max() < _TILE_SIGNAL_EPS)
 
 
-def _default_quality_budget_gb() -> float:
-    """The default budget: the ceiling, held under a share of free memory.
+def count_nonempty_tiles(
+    volume: Any,
+    specs: Sequence[TileSpec],
+    applied_floor: "float | None",
+) -> int:
+    """Count tiles that survive floor subtraction and Hann apodization.
 
-    The ceiling alone is a number about some other machine. Scoring materializes
-    the whole volume — during the fit it is only ever read tile by tile — so on a
-    host smaller than the ceiling the guard would wave through a peak the machine
-    cannot hold, and the OOM kill lands BEFORE the archive is written, losing the
-    finished fit. That is the one outcome this budget exists to prevent, so the
-    default is the smaller of the two. An explicit override still wins outright:
-    the operator knows what the machine can take.
+    The floor, window, and predicate mirror :func:`fit_tile`'s skip decision,
+    but the scan deliberately does not replay optional per-tile denoising. If
+    the scan finds no signal at all, use the geometric count as the safe divisor
+    solely to avoid division by zero; no tile will be fitted, so the divisor is
+    otherwise moot.
     """
-    available = _available_ram_gb()
-    if available is None:  # pragma: no cover - platform
-        return _QUALITY_BUDGET_GB
-    return min(_QUALITY_BUDGET_GB, _QUALITY_BUDGET_MEM_FRACTION * available)
-
-
-def _quality_budget_gb() -> float:
-    """Resident-memory budget for scoring — the env override, or the default.
-
-    A malformed override falls back to the default with a note rather than
-    raising: this runs after every tile has been fitted, so an unparseable
-    environment variable must not be what loses a finished fit.
-    """
-    default = _default_quality_budget_gb()
-    raw = os.environ.get("LUXAR_TILED_QUALITY_MAX_GB")
-    if raw is None:
-        return default
-    try:
-        value = float(raw)
-    except ValueError:
-        value = math.nan
-    # NaN is the one malformed value that would DISABLE the guard instead of
-    # tripping it: `float("nan")` parses, and every comparison against it is
-    # False, so the over-budget test would silently pass whatever the volume
-    # size. Treated like any other unusable override. `inf` is left alone — it
-    # is a coherent way to say "score it no matter how big".
-    if math.isnan(value):
+    nonempty = 0
+    floor = 0.0 if applied_floor is None else applied_floor
+    for spec in specs:
+        tile_data = np.asarray(volume[spec.slices], dtype=np.float32)
+        if float(tile_data.max()) - floor < _TILE_SIGNAL_EPS:
+            continue
+        if applied_floor is not None:
+            tile_data = np.clip(tile_data - applied_floor, 0.0, None)
+        tile_data = tile_data * cosine_window(spec)
+        if tile_has_signal(tile_data):
+            nonempty += 1
+    if nonempty > 0:
+        return nonempty
+    if specs:
         aprint(
-            f"⚠️  Ignoring LUXAR_TILED_QUALITY_MAX_GB={raw!r} (not a usable "
-            f"number) — using the {default:g} GiB budget"
+            "Seed-budget scan found no non-empty tiles; using the full grid "
+            "count as the divisor."
         )
-        return default
-    return value
+    return len(specs)
 
 
-def _to_voxel_frame(merged: GSplatData, scale: Optional[Sequence[float]]) -> GSplatData:
-    """The same mixture expressed on the tile grid's own voxel frame.
+def _cull_keeping_measured_scores(data: GSplatData, retention: float) -> GSplatData:
+    """The fit's closing amplitude trim, keeping the score it just measured.
 
-    A real-space tiled fit emits physical coordinates, so the merged splats do
-    not sit on ``volume_shape``'s grid and cannot be rendered against it. The
-    frames differ by one per-axis factor (see :func:`resolve_grid_scale`), which
-    scales centers directly and Cholesky ROW ``i`` by ``scale[i]`` — so dividing
-    both undoes it exactly. Amplitudes are untouched by the conversion.
+    ``cull`` drops inherited reconstruction scores, because a score describes the
+    splat set it was taken on (#1600). This trim is the last step of the FIT
+    rather than a rewrite of a published artifact, and re-scoring would cost a
+    second full render of the volume — so the measurement is carried across, the
+    way it always was. See
+    :func:`luxar.gsplats._data.filtering.content_scoped_stats` for why a later
+    ``gsplat cull`` gets no such exemption.
     """
-    if scale is None:
-        return merged
-    vs = np.asarray(scale, dtype=np.float64)
-    d = merged.centers.shape[1] if merged.n_splats else len(vs)
-    tril_scales = np.concatenate([[vs[i]] * (i + 1) for i in range(d)])
-    return GSplatData(
-        centers=(merged.centers / vs).astype(np.float32),
-        amplitudes=merged.amplitudes,
-        cholesky_factors=(merged.cholesky_factors / tril_scales).astype(np.float32),
-        truncation_radius=merged.truncation_radius,
+    from luxar.gsplats._data.filtering import (
+        measured_stats_snapshot,
+        restore_measured_stats,
     )
 
-
-def _stamp_merged_quality(
-    merged: GSplatData,
-    volume: Any,
-    *,
-    volume_shape: tuple[int, ...],
-    grid_scale: Optional[Sequence[float]],
-    device: Optional[str],
-    verbose: bool,
-) -> None:
-    """Score the MERGED reconstruction against the whole volume, in place.
-
-    Each tile already scores itself, but those numbers are about crops of an
-    apodized decomposition: the tiles overlap, so their errors do not compose
-    into the merged one, and none of them can speak for the archive that
-    actually ships. Without this a tiled archive carries no PSNR at all — which
-    is exactly what a published dataset is asked for.
-
-    The reference is ``volume`` exactly as the caller handed it in: the pedestal
-    the tiles subtracted is NOT put back and per-tile denoising is not applied to
-    it, so the score is against the acquisition — the same basis
-    ``luxar gsplat compare`` uses, and the same one the non-tiled path scores a
-    floor-suppressed fit against (its consequences are issue #1173's, not this
-    function's; matching it is what keeps the two paths' numbers comparable).
-    Under ``--denoise`` that parity ends, and not in this path's favor: the tiles
-    reconstruct denoised data while the reference here keeps its noise, so the
-    score is capped by that noise, whereas ``--tiling none`` denoises the whole
-    volume up front and scores against its own smoothed copy. Neither number is
-    wrong, but they are not the same measurement — a gap between them under
-    ``--denoise`` is not a tiling artifact. A lazy source is materialized here — during the fit it
-    is only ever read tile-by-tile — which is what the budget below bounds.
-    """
-    if merged.n_splats == 0:
-        return
-    budget_gb = _quality_budget_gb()
-    needed_gb = _QUALITY_PEAK_VOLUMES * 4 * float(np.prod(volume_shape)) / 1024**3
-    if needed_gb > budget_gb:
-        # Said out loud even under `verbose=False`, like the failure path below
-        # and the norm-range declines above: a quiet run still ends up with an
-        # archive carrying no PSNR, and nothing downstream can say why.
-        aprint(
-            f"Merged quality metrics skipped: scoring {volume_shape} peaks at "
-            f"~{needed_gb:.1f} GiB (the reconstruction, the reference, and "
-            f"SSIM's intermediates), over the {budget_gb:g} GiB budget. Raise "
-            "LUXAR_TILED_QUALITY_MAX_GB to score it anyway, or run "
-            "`luxar gsplat compare` afterwards."
-        )
-        return
-
-    try:
-        import torch
-
-        from luxar.gsplats.metrics import compute_quality_metrics
-        from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
-
-        scored = _to_voxel_frame(merged, grid_scale)
-        rendered: Any = None
-        ref: Any = None
-        try:
-            with torch.no_grad():
-                rendered = render_to_volume_tensor(
-                    scored,
-                    shape=volume_shape,
-                    device=device,
-                    truncate=scored.truncation_radius,
-                )
-                ref = torch.as_tensor(
-                    np.asarray(volume, dtype=np.float32), device=rendered.device
-                )
-                quality = compute_quality_metrics(rendered, ref)
-        finally:
-            # Released whether or not the score succeeded: the failure this most
-            # often takes is an OOM inside SSIM, and leaving the peak reserved
-            # would carry it into whatever the caller does next (a `--recipe`
-            # reduction runs on the same device seconds later).
-            del rendered, ref
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-        merged.stats["mse"] = quality["mse"]
-        merged.stats["psnr_db"] = quality["psnr_db"]
-        merged.stats["ssim"] = quality["ssim"]
-        merged.stats["foreground_psnr_db"] = quality["foreground_psnr_db"]
-        merged.stats["foreground_threshold"] = quality["foreground_threshold"]
-        merged.stats["foreground_fraction"] = quality["foreground_fraction"]
-        if verbose:
-            aprint(
-                f"Merged quality: PSNR={quality['psnr_db']:.1f} dB, "
-                f"foreground PSNR={quality['foreground_psnr_db']:.1f} dB "
-                f"(over {quality['foreground_fraction'] * 100:.2f}% of voxels), "
-                f"SSIM={quality['ssim']:.4f}"
-            )
-    except Exception as exc:  # pragma: no cover - device/memory dependent
-        # Loud even when quiet: a missing PSNR is invisible downstream, and the
-        # archive is usually written seconds later.
-        aprint(f"⚠️  Merged quality metrics failed ({exc}) — archive carries no PSNR")
+    measured = measured_stats_snapshot(data)
+    out = data.cull(method="cumulative", retention=retention)
+    return restore_measured_stats(out, measured)
 
 
 def _tile_norm_range(
@@ -256,8 +118,9 @@ def _tile_norm_range(
 ) -> "tuple[float, float] | None":
     """Shared ``(image_min, image_max)`` for every tile of ``volume``.
 
-    The top comes from :func:`resolve_volume_norm_range` (whole volume, shifted
-    into post-floor terms). The bottom is pinned at **zero**, which is where the
+    The top comes from :func:`resolve_volume_norm_range_denoised` (whole volume,
+    shifted onto the denoised and post-floor basis). The bottom is pinned at
+    **zero**, which is where the
     array each tile fitter actually sees starts: the floor subtraction clips at
     0 and the Hann window then tapers every overlapped face down to 0.
 
@@ -302,10 +165,13 @@ def _tile_norm_range(
     this dim (a float stack topping out at 1e-13, floor or not) keeps its shared
     scale, because normalizing by its own true extent is exactly right.
     """
-    _, hi = resolve_volume_norm_range(
+    _, hi = resolve_volume_norm_range_denoised(
         volume,
         fit_kwargs.get("norm_percentile", 0.0),
+        denoise_h=fit_kwargs.get("_denoise_h"),
+        denoise_params=fit_kwargs.get("_denoise_params"),
         subtract=applied_floor,
+        probe_cache=fit_kwargs.get("_denoise_probe_cache"),
         verbose=verbose,
     )
     if not np.isfinite(hi):
@@ -347,10 +213,31 @@ def _ensure_tile_norm_range(
     underscore-prefixed tile-internal keys.
     """
     already_resolved = fit_kwargs.pop("_norm_range_resolved", False)
-    if not already_resolved and fit_kwargs.get("norm_range") is None:
+    if already_resolved:
+        return
+    supplied = fit_kwargs.get("norm_range")
+    if supplied is None:
         fit_kwargs["norm_range"] = _tile_norm_range(
             volume, fit_kwargs, applied_floor, verbose=verbose
         )
+        return
+
+    # A CLI/batch-supplied range is expressed in RAW input units. Uniform tiles
+    # see floor-subtracted, apodized data, whose bottom is always zero; shift only
+    # the top into that basis. Keep the no-ceiling semantics in _normalize_data.
+    hi = float(supplied[1]) - float(applied_floor or 0.0)
+    if (
+        not np.isfinite(hi)
+        or hi <= 0.0
+        or (applied_floor is not None and hi <= NORM_RANGE_MIN_SPAN)
+    ):
+        aprint(
+            f"Supplied normalization range collapses after shifting by the floor "
+            f"({float(applied_floor or 0.0):g}) — tiles fall back to their own scale."
+        )
+        fit_kwargs["norm_range"] = None
+    else:
+        fit_kwargs["norm_range"] = (0.0, hi)
 
 
 def fit_tile(
@@ -400,7 +287,7 @@ def fit_tile(
         All other keyword arguments forwarded to the fitting function.
         ``seeds`` here is **per tile**: an integer is the count for THIS tile
         alone. The CLI's ``--seeds`` is a whole-volume budget and is divided by
-        the tile count before reaching this function (see
+        the non-empty tile count before reaching this function (see
         ``luxar.cli.gsplat_ops.fitting.fit_utils.split_seeds_across_tiles``);
         a direct Python caller does that division itself if it wants the same
         semantics.
@@ -422,8 +309,8 @@ def fit_tile(
         applies unchanged to a dim timepoint). The level is subtracted from the
         tile — after any denoising, before apodization; the two do not commute
         the other way — and the inner fit then runs with ``floor="none"``
-        and the applied level is recorded in
-        ``result.stats["applied_floor"]``.
+        and the applied level is recorded in ``result.stats["floor"]`` (with
+        ``image_min``/``image_max`` shifted back into the input volume's units).
 
     Returns
     -------
@@ -455,6 +342,7 @@ def fit_tile(
     # not a user spec — _validate_floor guards user input and would reject
     # a legitimate negative resolved level.
     floor_spec = fit_kwargs.pop("floor", "auto")
+    probe_cache = fit_kwargs.setdefault("_denoise_probe_cache", {})
     if isinstance(floor_spec, str):
         _validate_floor(floor_spec)
     # Denoising is applied to the tile BELOW, before the level is subtracted, so
@@ -472,6 +360,7 @@ def fit_tile(
         floor_spec,
         denoise_h=fit_kwargs.get("_denoise_h"),
         denoise_params=fit_kwargs.get("_denoise_params"),
+        probe_cache=probe_cache,
     )
 
     # Resolve the INTENSITY SCALE against the whole volume too, for the same
@@ -497,6 +386,7 @@ def fit_tile(
     # Use pop to remove denoise keys before forwarding to fitting functions
     _denoise_h = fit_kwargs.pop("_denoise_h", None)
     _denoise_params = fit_kwargs.pop("_denoise_params", None)
+    fit_kwargs.pop("_denoise_probe_cache", None)
     if _denoise_h is not None and _denoise_params is not None:
         from arbol import asection as _asection
 
@@ -524,7 +414,7 @@ def fit_tile(
     tile_data = tile_data * window
 
     # 3. Skip fitting if tile has negligible signal (e.g., windowed to near-zero)
-    if tile_data.max() < 1e-8:
+    if not tile_has_signal(tile_data):
         from luxar.gsplats.utils.trils import tril_size
 
         ndim = tile_data.ndim
@@ -596,9 +486,113 @@ def fit_tile(
     result.stats["tile_index"] = spec.index
     result.stats["tile_grid_index"] = spec.grid_index
     result.stats["tile_origin"] = spec.origin
-    result.stats["applied_floor"] = applied_floor
+    _stamp_tile_normalization(result.stats, applied_floor)
 
     return result
+
+
+def _stamp_tile_normalization(
+    stats: dict[str, Any], applied_floor: "float | None"
+) -> None:
+    """Record a tile's normalization provenance in the VOLUME's units (#1175).
+
+    Under the one key name the format spec uses (``floor``, not the old
+    tiling-only ``applied_floor``). The pedestal was removed from the tile
+    before the fit and the inner fit then ran with ``floor="none"``, so its own
+    stats claim ``floor: None`` and measured ``image_min``/``image_max`` on the
+    already-subtracted tile. Shifting those back by the level makes a tiled
+    record mean what a flat one does, where ``image_min`` IS the applied level.
+
+    The merge carries the block up only if every tile agrees — which they do,
+    since :func:`fit_tiled` resolves one level and one ``norm_range`` for the
+    whole volume.
+    """
+    stats["floor"] = applied_floor
+    if applied_floor is None:
+        return
+    for bound in ("image_min", "image_max"):
+        value = stats.get(bound)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            stats[bound] = float(value) + float(applied_floor)
+
+
+def _stamp_merge_normalization(
+    target: dict[str, Any],
+    sources: "Sequence[Any]",
+    applied_floor: "float | None",
+) -> None:
+    """Record a MERGE's normalization provenance on ``target`` (#1175).
+
+    ``target`` is the flat merge's ``stats`` or the partition root node's
+    ``meta``; ``sources`` are the per-tile results. The bounds come from the
+    tiles (they agree by construction — one whole-volume ``norm_range``), which
+    is also the only source the subprocess merge paths have, since they hand
+    :func:`merge_tile_results` no ``applied_floor``. A level this call DID apply
+    is authoritative and overrides.
+
+    Nothing is written when neither the caller nor the tiles know: ``floor:
+    null`` asserts that no pedestal was removed, while an absent key reads as
+    "this artifact does not know", and only the second is honest here. Today's
+    tiled callers always know (``fit_tiled`` resolves one level for the whole
+    volume, and a tile store records its own), so this is a guard against a tile
+    written by an older luxar rather than a routine outcome.
+    """
+    # Deferred: luxar.gsplats.io imports GSplatData from this package's
+    # __init__, which is still executing when this module is first imported.
+    from luxar.gsplats.io.save_gsplats import agreed_normalization_stats
+
+    target.update(agreed_normalization_stats([r.stats for r in sources]))
+    if applied_floor is not None:
+        target["floor"] = applied_floor
+
+
+def _empty_merge(
+    volume_shape: tuple[int, ...],
+    sources: "Sequence[Any]",
+    applied_floor: "float | None",
+) -> GSplatData:
+    """A 0-splat merged result that still records what was subtracted (#1175).
+
+    Reached when there were no tile results at all, or when culling emptied
+    every one of them. Both used to return ``stats={}`` unconditionally, so an
+    empty merge could not say what its tiles had subtracted even when the level
+    was known — indistinguishable from a path that never records anything.
+    """
+    from luxar.gsplats.utils.trils import tril_size
+
+    ndim = len(volume_shape)
+    stats: dict[str, Any] = {}
+    _stamp_merge_normalization(stats, sources, applied_floor)
+    return GSplatData(
+        centers=np.zeros((0, ndim), dtype=np.float32),
+        amplitudes=np.zeros((0,), dtype=np.float32),
+        cholesky_factors=np.zeros((0, tril_size(ndim)), dtype=np.float32),
+        stats=stats,
+    )
+
+
+def _score_merged_if_reference(
+    merged: "GSplatData | Sequence[GSplatData]",
+    volume: "Any | None",
+    *,
+    volume_shape: tuple[int, ...],
+    grid_scale: "tuple[float, ...] | None",
+    device: Optional[str],
+    verbose: bool,
+    stats: "dict[str, Any] | None" = None,
+) -> None:
+    """Score a flat merge or partition parts when a reference is available."""
+    if volume is None:
+        return
+    stamp_merged_quality(
+        merged,
+        volume,
+        volume_shape=volume_shape,
+        grid_scale=grid_scale,
+        device=device,
+        verbose=verbose,
+        stats=stats,
+    )
 
 
 def _tiled_source_grid_stats(
@@ -660,6 +654,46 @@ def _tiled_source_grid_stats(
     if stored_bytes:
         out["source_stored_bytes"] = stored_bytes
     return out
+
+
+def _merged_fit_stats(
+    results: Sequence[GSplatData],
+    *,
+    delivered_splats: int,
+    volume_shape: tuple[int, ...],
+    tile_size: int | Sequence[int],
+    overlap: int | Sequence[int],
+    num_tiles: int,
+    progressive: bool,
+    elapsed: float,
+    source_shape: Optional[Sequence[int]],
+    source_dtype: Optional[str],
+    source_itemsize: Optional[int],
+    source_stored_bytes: Optional[int],
+) -> dict[str, Any]:
+    """Build the common root stats for flat and partition tile merges."""
+    stats = {
+        "tiled_fitting": True,
+        "progressive": progressive,
+        "num_tiles": num_tiles,
+        "tile_size": tile_size,
+        "overlap": overlap,
+        "volume_shape": volume_shape,
+        "time_seconds": elapsed,
+        "splats_per_tile": [result.n_splats for result in results],
+        "n_splats": delivered_splats,
+    }
+    stats.update(
+        _tiled_source_grid_stats(
+            volume_shape,
+            source_shape,
+            source_dtype,
+            source_itemsize,
+            source_stored_bytes,
+        )
+    )
+    stamp_voxels_per_splat(stats, delivered_splats)
+    return stats
 
 
 def fit_tiled(
@@ -749,7 +783,7 @@ def fit_tiled(
         ``seeds`` is handed to EVERY tile as-is, so an integer here is a
         **per-tile** count, not a whole-volume budget: N tiles fit ~N x seeds
         splats. The CLI's ``--seeds`` IS a whole-volume budget and is divided
-        by the tile count before this call (see
+        by the non-empty tile count before this call (see
         ``luxar.cli.gsplat_ops.fitting.fit_utils.split_seeds_across_tiles``);
         a direct Python caller that wants the same semantics divides itself.
 
@@ -757,10 +791,10 @@ def fit_tiled(
     -------
     GSplatData
         Merged result with all splats in global coordinates.
-        Multi-LOD if progressive=True. With ``partition=False`` the merged
-        reconstruction is also scored against the whole volume and the metrics
-        (``psnr_db``, ``ssim``, ``mse``, ``foreground_*``) land in ``stats`` —
-        see the merged-quality note below.
+        Multi-LOD if progressive=True. The merged reconstruction is also scored
+        against the whole volume. Metrics land in ``stats`` for a flat result
+        and in the root node's in-memory ``meta["fit_stats"]`` for a tree, ready
+        for the CLI writer to persist at the store root.
 
     Notes
     -----
@@ -770,10 +804,9 @@ def fit_tiled(
     volume, so it is bounded by a memory budget — half the memory actually free,
     held under a 24 GiB ceiling, with ``LUXAR_TILED_QUALITY_MAX_GB`` overriding
     both (``0`` declines outright). Over budget, or on a failure, it says so even
-    when ``verbose=False``. ``partition=True`` merges are not scored (the tree
-    node has no fit-stats dict and this path threads none through on save) and
-    say so too; ``luxar gsplat compare`` is the recourse, after
-    ``luxar gsplat flatten``.
+    when ``verbose=False``. A partition is scored by rendering each surviving
+    tile-part and summing the volumes in place, matching how the viewer composes
+    the parts without flattening or copying the full splat set.
 
     **GPU utilization with progressive**: When ``progressive=True``, each
     per-pass fit uses fewer splats (``max_splats_per_pass``), which may
@@ -791,32 +824,38 @@ def fit_tiled(
     # against "floor >= max erases everything" too (matching the non-tiled
     # path, which warns and ignores such a floor).
     floor_spec = fit_kwargs.pop("floor", "auto")
-    _validate_floor(floor_spec)
-    # Every tile is denoised before the level is subtracted, so a volume-derived
-    # spec is resolved on the DENOISED basis (#1178) — otherwise this path
-    # removes a different pedestal than `--tiling none` does on the same input.
-    # PEEK at the denoise keys: `fit_kwargs` is forwarded to `fit_tile`, which
-    # pops them itself.
-    applied_floor = resolve_volume_floor_denoised(
-        volume,
-        floor_spec,
-        denoise_h=fit_kwargs.get("_denoise_h"),
-        denoise_params=fit_kwargs.get("_denoise_params"),
-        guard_numeric=True,
-        # Log the DENOISED basis the level was resolved on (raw level + the
-        # measured shift) — the one number the summary line below cannot show.
-        # Gated on a VOLUME-DERIVED spec (`auto`/`pNN`) and on denoising actually
-        # being active, so `--denoise` off, and any absolute level, print exactly
-        # what they printed before #1178. `isinstance(str)` would not do: the CLI
-        # hands `--floor 110` down as the STRING "110", which is an absolute the
-        # summary line below already echoes.
-        verbose=(
-            verbose
-            and _floor_spec_is_volume_derived(floor_spec)
-            and fit_kwargs.get("_denoise_h") is not None
-            and fit_kwargs.get("_denoise_params") is not None
-        ),
-    )
+    probe_cache = fit_kwargs.setdefault("_denoise_probe_cache", {})
+    floor_already_resolved = fit_kwargs.pop("_floor_resolved", False)
+    if floor_already_resolved:
+        applied_floor = None if floor_spec == "none" else float(floor_spec)
+    else:
+        _validate_floor(floor_spec)
+        # Every tile is denoised before the level is subtracted, so a
+        # volume-derived spec is resolved on the DENOISED basis (#1178) —
+        # otherwise this path removes a different pedestal than `--tiling none`
+        # does on the same input. PEEK at the denoise keys: `fit_kwargs` is
+        # forwarded to `fit_tile`, which pops them itself.
+        applied_floor = resolve_volume_floor_denoised(
+            volume,
+            floor_spec,
+            denoise_h=fit_kwargs.get("_denoise_h"),
+            denoise_params=fit_kwargs.get("_denoise_params"),
+            probe_cache=probe_cache,
+            guard_numeric=True,
+            # Log the DENOISED basis the level was resolved on (raw level + the
+            # measured shift) — the one number the summary line below cannot show.
+            # Gated on a VOLUME-DERIVED spec (`auto`/`pNN`) and on denoising actually
+            # being active, so `--denoise` off, and any absolute level, print exactly
+            # what they printed before #1178. `isinstance(str)` would not do: the CLI
+            # hands `--floor 110` down as the STRING "110", which is an absolute the
+            # summary line below already echoes.
+            verbose=(
+                verbose
+                and _floor_spec_is_volume_derived(floor_spec)
+                and fit_kwargs.get("_denoise_h") is not None
+                and fit_kwargs.get("_denoise_params") is not None
+            ),
+        )
     if verbose and applied_floor is not None:
         aprint(
             f"Floor suppression: subtracting background level "
@@ -835,6 +874,9 @@ def fit_tiled(
         fit_kwargs["norm_range"] = _tile_norm_range(
             volume, fit_kwargs, applied_floor, verbose=verbose
         )
+    else:
+        _ensure_tile_norm_range(volume, fit_kwargs, applied_floor, verbose=verbose)
+        fit_kwargs["_norm_range_resolved"] = True
 
     volume_shape = tuple(volume.shape)
     specs = compute_tile_specs(volume_shape, tile_size, overlap)
@@ -903,39 +945,9 @@ def fit_tiled(
         # every tile's splats were offset by `origin * voxel_size`, so the
         # partition's split planes need the same factor (#1587).
         grid_scale=grid_scale,
+        volume=volume,
+        device=fit_kwargs.get("device"),
     )
-    # Flat merges only, and for a pipeline reason rather than a format one: the
-    # tree writer does take `fitting_info` for any node kind, but the merged
-    # partition is a frozen tree node with no `stats` dict to stamp into, and
-    # this path calls the writer with no `fitting_info` at all — so a score taken
-    # here would have nowhere to go without threading it through first. The
-    # caller's array is still in hand here, which is what makes scoring the WHOLE
-    # reconstruction possible at all.
-    if not partition:
-        _stamp_merged_quality(
-            merged,
-            volume,
-            volume_shape=volume_shape,
-            grid_scale=grid_scale,
-            # `device` rides in **fit_kwargs (it is a per-tile fit knob); score
-            # on whatever the tiles used rather than re-detecting.
-            device=fit_kwargs.get("device"),
-            verbose=verbose,
-        )
-    else:
-        # Said even on a quiet run: `--tiling uniform` asks for a
-        # `kind=partition` merge by default, and nothing about the omission
-        # reaches the store, so this notice is the only place it is ever stated.
-        # Keyed on the partition REQUEST, not on the shape the merge returned: a
-        # degenerate merge (a single surviving region, or none at all) hands back
-        # a matrix-shaped leaf, which is why the flatten step is worded as a
-        # condition rather than as a fact about this result.
-        aprint(
-            "No merged quality metrics: the merged partition is a tree node with "
-            "no fit-stats dict to stamp onto, and this path threads none through "
-            "on save. Score the written archive with `luxar gsplat compare` — on "
-            "a `kind=partition` result, run `luxar gsplat flatten` first."
-        )
     return merged
 
 
@@ -959,6 +971,8 @@ def merge_tile_results(
     source_dtype: Optional[str] = None,
     source_itemsize: Optional[int] = None,
     source_stored_bytes: Optional[int] = None,
+    volume: "Any | None" = None,
+    device: Optional[str] = None,
 ) -> "Any":
     """Merge per-tile fit results into a single (optionally multi-LOD) dataset.
 
@@ -998,13 +1012,11 @@ def merge_tile_results(
     applied_floor : float or None, default None
         The background level subtracted from every tile (after any denoising)
         before apodization. Supplied by the sequential :func:`fit_tiled` path; the
-        subprocess-based paths leave it ``None`` (a worker records the level
-        it applied in its own tile's in-memory stats, which do not survive
-        the reload at merge). Recorded in the flat merged result's stats;
-        on the ``partition=True`` path it is
-        stamped into the returned node's ``meta["applied_floor"]``
-        (in-memory bookkeeping only — the tree writer does not persist this
-        key).
+        subprocess-based paths leave it ``None`` and the level is recovered from
+        the tiles' own stats instead. Recorded as ``stats["floor"]`` on the flat
+        merge and as the root node's ``meta["floor"]`` on the ``partition=True``
+        path, which :func:`~luxar.gsplats.io.save_gsplats.write_gsplats_tree`
+        promotes into the store's ``pipeline/`` group (#1175).
     grid_scale : tuple of float or None, default None
         Per-axis factor mapping the tile grid's VOXEL frame (``volume_shape``,
         ``tile_size``, ``overlap``) onto the frame ``results`` carry their
@@ -1013,7 +1025,8 @@ def merge_tile_results(
         it with :func:`~luxar.gsplats.tiling.resolve_grid_scale`. Consumed only
         by the partition's split planes
         (:func:`~luxar.gsplats.tiling.grid_bsp_tree`), which would otherwise be
-        a factor too small and would no longer separate the parts they label.
+        a factor too small and would no longer separate the parts they label,
+        and by merged-quality scoring to render back on the reference grid.
         ``None`` when the grid and the splats share one frame.
     source_shape, source_dtype, source_itemsize : optional
         What the merged result is a representation of, stamped by
@@ -1021,10 +1034,9 @@ def merge_tile_results(
         a crop. ``source_shape`` is for a caller that decimated before tiling
         (``volume_shape`` is then the fitted grid, not the acquisition); the
         dtype/itemsize are the element type the volume was STORED in, without
-        which no compression ratio can be quoted. Only the flat merge carries
-        them: a ``partition=True`` tree has nowhere to persist fit stats (the
-        writer takes them from a flat leaf's ``stats``), which is also why
-        ``applied_floor`` above is in-memory only there.
+        which no compression ratio can be quoted. A partition carries the merged
+        block in its root ``meta["fit_stats"]``; :func:`save_fit_output` routes
+        that block through the same fitting/pipeline split as a flat leaf.
 
     Returns
     -------
@@ -1032,15 +1044,7 @@ def merge_tile_results(
         Merged result. Multi-LOD if ``progressive`` and tiles carry sublods.
     """
     if len(results) == 0:
-        ndim = len(volume_shape)
-        from luxar.gsplats.utils.trils import tril_size
-
-        return GSplatData(
-            centers=np.zeros((0, ndim), dtype=np.float32),
-            amplitudes=np.zeros((0,), dtype=np.float32),
-            cholesky_factors=np.zeros((0, tril_size(ndim)), dtype=np.float32),
-            stats={},
-        )
+        return _empty_merge(volume_shape, results, applied_floor)
 
     # Partition: keep one part per tile (frustum culling). Apodized tiles sum
     # correctly as additive parts; cull each tile independently (the flat path's
@@ -1053,22 +1057,16 @@ def merge_tile_results(
         # in `regions` is not the tile index the grid tree is labelled by.
         indexed = [(i, r) for i, r in enumerate(results) if r.n_splats > 0]
         if cull_retention is not None and 0 < cull_retention < 1.0:
+            # Each tile carries the score its own fit measured, and this is that
+            # fit's closing trim — so the measurement rides across it.
             indexed = [
-                (i, r.cull(method="cumulative", retention=cull_retention))
+                (i, _cull_keeping_measured_scores(r, cull_retention))
                 for i, r in indexed
             ]
             indexed = [(i, r) for i, r in indexed if r.n_splats > 0]
         regions = [r for _, r in indexed]
         if not regions:
-            ndim = len(volume_shape)
-            from luxar.gsplats.utils.trils import tril_size
-
-            return GSplatData(
-                centers=np.zeros((0, ndim), dtype=np.float32),
-                amplitudes=np.zeros((0,), dtype=np.float32),
-                cholesky_factors=np.zeros((0, tril_size(ndim)), dtype=np.float32),
-                stats={},
-            )
+            return _empty_merge(volume_shape, results, applied_floor)
         node = GSplatData.partition_from_regions(
             regions,
             recipe=recipe,
@@ -1093,10 +1091,36 @@ def merge_tile_results(
             ),
             region_labels=[i for i, _ in indexed],
         )
-        # In-memory bookkeeping only: "applied_floor" is not among the
-        # round-tripped node attrs, so it is visible on the returned node
-        # but not persisted by the tree writer.
-        node.meta["applied_floor"] = applied_floor
+        # A partition has no flat stats dict, so the block rides on the ROOT
+        # node's meta and `save_fit_output` splits it into the store's root
+        # fitting/config/provenance/pipeline groups.
+        _stamp_merge_normalization(node.meta, regions, applied_floor)
+        from luxar.gsplats.tree import total_splats
+
+        fit_stats = _merged_fit_stats(
+            results,
+            delivered_splats=int(total_splats(node)),
+            volume_shape=volume_shape,
+            tile_size=tile_size,
+            overlap=overlap,
+            num_tiles=num_tiles,
+            progressive=progressive,
+            elapsed=elapsed,
+            source_shape=source_shape,
+            source_dtype=source_dtype,
+            source_itemsize=source_itemsize,
+            source_stored_bytes=source_stored_bytes,
+        )
+        _score_merged_if_reference(
+            regions,
+            volume,
+            volume_shape=volume_shape,
+            grid_scale=grid_scale,
+            device=device,
+            verbose=verbose,
+            stats=fit_stats,
+        )
+        node.meta["fit_stats"] = fit_stats
         if verbose:
             lod_note = f", per-part recipe={recipe}" if recipe else ""
             aprint(
@@ -1112,30 +1136,6 @@ def merge_tile_results(
     else:
         merged = GSplatData.concatenate(results)
 
-    # Build merged stats
-    merged.stats.update(
-        {
-            "tiled_fitting": True,
-            "progressive": progressive,
-            "num_tiles": num_tiles,
-            "tile_size": tile_size,
-            "overlap": overlap,
-            "volume_shape": volume_shape,
-            "time_seconds": elapsed,
-            "splats_per_tile": [r.n_splats for r in results],
-            "applied_floor": applied_floor,
-        }
-    )
-    merged.stats.update(
-        _tiled_source_grid_stats(
-            volume_shape,
-            source_shape,
-            source_dtype,
-            source_itemsize,
-            source_stored_bytes,
-        )
-    )
-
     if verbose:
         lod_info = f", {merged.n_additive_sublods} LODs" if has_lods else ""
         aprint(
@@ -1146,16 +1146,39 @@ def merge_tile_results(
     # Post-fit cumulative culling on merged result
     if cull_retention is not None and 0 < cull_retention < 1.0 and merged.n_splats > 0:
         n_before = merged.n_splats
-        merged = merged.cull(method="cumulative", retention=cull_retention)
+        merged = _cull_keeping_measured_scores(merged, cull_retention)
         if verbose and merged.n_splats < n_before:
             aprint(
                 f"Post-fit culling: {n_before} -> {merged.n_splats} splats "
                 f"(retained {cull_retention * 100:.0f}% of amplitude)"
             )
 
-    # Density counts the splats actually DELIVERED, so it is set after the cull
-    # above rather than beside the other source-grid stamps.
-    stamp_voxels_per_splat(merged.stats, merged.n_splats)
+    merged.stats.update(
+        _merged_fit_stats(
+            results,
+            delivered_splats=merged.n_splats,
+            volume_shape=volume_shape,
+            tile_size=tile_size,
+            overlap=overlap,
+            num_tiles=num_tiles,
+            progressive=progressive,
+            elapsed=elapsed,
+            source_shape=source_shape,
+            source_dtype=source_dtype,
+            source_itemsize=source_itemsize,
+            source_stored_bytes=source_stored_bytes,
+        )
+    )
+    _stamp_merge_normalization(merged.stats, results, applied_floor)
+
+    _score_merged_if_reference(
+        merged,
+        volume,
+        volume_shape=volume_shape,
+        grid_scale=grid_scale,
+        device=device,
+        verbose=verbose,
+    )
 
     return merged
 

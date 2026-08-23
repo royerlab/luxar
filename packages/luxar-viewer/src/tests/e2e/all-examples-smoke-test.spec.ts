@@ -75,19 +75,17 @@ const KNOWN_FLAKY_LARGE_DATASETS = [
   // re-enable once we ship a downsized progressive_writing example or
   // sequential-mode override for oversized fixtures.
   'progressive_writing_example.luxar.zarr',
-  // 1M points (CubicArray group). Even at 120s the parallel HTTP-server
-  // + decompression contention causes the page.evaluate slot inside
-  // waitForLuxarReady / getLuxarState to stall past the test ceiling.
-  // The dataset itself loads fine in isolation; smoke coverage is
-  // provided by the smaller fixtures. Re-enable once we have a
-  // sequential-mode override for million-point examples.
+  // 1.5M points (a 1M-point CubicArray group plus a 500k background star
+  // field). Parked for HEADROOM, not for #1724:
+  // re-measured with frame pacing in place it loads and passes with zero
+  // console errors — but in 50 s of the 120 s budget at `--workers=1`. The
+  // documented failure mode is PARALLEL contention (the HTTP server plus
+  // decompression starving the page.evaluate slot inside waitForLuxarReady /
+  // getLuxarState past the ceiling), and 50 s with NO contention leaves no
+  // headroom under this suite's `mode: 'parallel'`. So it stays parked
+  // pending a sequential-mode override for million-point examples or a
+  // downsized fixture, not pending a viewer fix.
   'dense_cubic_gradient_example.luxar.zarr',
-  // 100 nodes / 100k points / 8 MB: renders a healthy ~59 fps for ~30s, then
-  // wedges into back-to-back ~1042 ms main-thread tasks. `getState()` costs
-  // 0.5 ms in-page but took 111 s across the CDP bridge, so the test dies on
-  // the ceiling with nothing to show. Reproducible at low box load, i.e. not
-  // suite contention. Un-park when the ~1 fps 100-node scene (#1724) is fixed.
-  'performance_benchmark_example.luxar.zarr',
 ];
 
 // Datasets that may legitimately have 0 visible points:

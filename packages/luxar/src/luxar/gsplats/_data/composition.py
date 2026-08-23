@@ -59,10 +59,22 @@ class CompositionMixin(_GSplatDataOps):
         if len(non_empty) == 0:
             # All empty: return a fresh empty instance (never alias an input,
             # per the immutability contract).
+            from luxar.gsplats.io.save_gsplats import (
+                NORMALIZATION_STATS_KEYS,
+                agreed_normalization_stats,
+            )
             from luxar.gsplats.utils.trils import tril_size
 
             d0 = datasets[0]
             d = d0.ndim
+            # The normalization block obeys the same unanimity rule here as on
+            # the non-empty path below (#1175): copying d0's stats wholesale
+            # would promote the FIRST input's pedestal onto a merge whose other
+            # inputs may have removed a different one.
+            empty_stats = {
+                k: v for k, v in d0.stats.items() if k not in NORMALIZATION_STATS_KEYS
+            }
+            empty_stats.update(agreed_normalization_stats([x.stats for x in datasets]))
             return make(
                 centers=np.empty((0, d), dtype=np.float32),
                 amplitudes=np.empty(0, dtype=np.float32),
@@ -70,7 +82,7 @@ class CompositionMixin(_GSplatDataOps):
                     (0, tril_size(d) if d > 0 else 0), dtype=np.float32
                 ),
                 colors=None,
-                stats=dict(d0.stats),
+                stats=empty_stats,
                 truncation_radius=d0.truncation_radius,
             )
 
@@ -102,6 +114,15 @@ class CompositionMixin(_GSplatDataOps):
             "concatenated_from": len(datasets),
             "splats_per_source": [d.n_splats for d in datasets],
         }
+        # Normalization provenance (#1175). A fresh stats dict used to drop the
+        # background level every input had removed, so a tiled merge shipped no
+        # record of its own pedestal. Carried only when every input that records
+        # a key AGREES on it — see `agreed_normalization_stats`; concatenating
+        # two unrelated fits legitimately has no single answer, and the merged
+        # result then says nothing rather than claiming the first input's.
+        from luxar.gsplats.io.save_gsplats import agreed_normalization_stats
+
+        merged_stats.update(agreed_normalization_stats([d.stats for d in datasets]))
         total_time = sum(d.stats.get("time_seconds", 0) for d in non_empty)
         if total_time > 0:
             merged_stats["time_seconds"] = total_time
@@ -415,7 +436,8 @@ class CompositionMixin(_GSplatDataOps):
             >>> data_4d = data_3d.embed_dimension(5.0, sigma=0.0)
             >>> data_4d = data_3d.embed_dimension(time_values, sigma=0.5)
         """
-        from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
+        from luxar.gsplats.lod.restamp import refresh_reduction_lod_stats
         from luxar.gsplats.utils.trils import embed_cholesky_packed
 
         # A 0-d numpy array is semantically a scalar; unwrap it so the
@@ -441,74 +463,44 @@ class CompositionMixin(_GSplatDataOps):
                     "different splat count). Pass a scalar coordinate to broadcast "
                     "across all levels, or operate per level via at_substitutive()."
                 )
-            return self._map_substitutive(
-                lambda lvl: lvl.embed_dimension(values, sigma)
+            scalar_value = cast(float, values)
+            out = self._map_substitutive(
+                lambda lvl: lvl.embed_dimension(scalar_value, sigma)
+            )
+            return refresh_reduction_lod_stats(out, self)
+
+        is_scalar = np.isscalar(values)
+        values_arr: Optional[np.ndarray] = None
+        if not is_scalar:
+            values_arr = np.asarray(values, dtype=self.centers.dtype)
+            if values_arr.shape != (n,):
+                raise ValueError(
+                    f"values shape {values_arr.shape} doesn't match splat count ({n},)"
+                )
+        dim_mapping = list(range(d))
+        fill_sigma = {d: sigma}
+
+        def _embed_lod(lod: "AdditiveSubLOD", offset: int, nl: int) -> "AdditiveSubLOD":
+            if is_scalar:
+                lod_col = np.full((nl, 1), values, dtype=lod.centers.dtype)
+            else:
+                assert values_arr is not None
+                lod_col = values_arr[offset : offset + nl].reshape(nl, 1)
+            lod_centers = np.concatenate([lod.centers, lod_col], axis=1)
+            lod_cholesky = embed_cholesky_packed(
+                lod.cholesky_factors, d, d + 1, dim_mapping, fill_sigma
+            )
+            return AdditiveSubLOD(
+                centers=lod_centers,
+                amplitudes=lod.amplitudes,
+                cholesky_factors=lod_cholesky,
+                colors=lod.colors,
+                stats=dict(lod.stats),
+                truncation_radius=lod.truncation_radius,
             )
 
-        # Multi-LOD path: embed each LOD independently
-        if self.n_additive_sublods > 1:
-            is_scalar = np.isscalar(values)
-            values_arr: Optional[np.ndarray] = None
-            if not is_scalar:
-                values_arr = np.asarray(values, dtype=self.centers.dtype)
-                if values_arr.shape != (n,):
-                    raise ValueError(
-                        f"values shape {values_arr.shape} doesn't match splat count ({n},)"
-                    )
-            dim_mapping = list(range(d))
-            fill_sigma = {d: sigma}
-
-            def _embed_lod(
-                lod: "AdditiveSubLOD", offset: int, nl: int
-            ) -> "AdditiveSubLOD":
-                if is_scalar:
-                    lod_col = np.full((nl, 1), values, dtype=lod.centers.dtype)
-                else:
-                    assert values_arr is not None
-                    lod_col = values_arr[offset : offset + nl].reshape(nl, 1)
-                lod_centers = np.concatenate([lod.centers, lod_col], axis=1)
-                lod_cholesky = embed_cholesky_packed(
-                    lod.cholesky_factors, d, d + 1, dim_mapping, fill_sigma
-                )
-                return AdditiveSubLOD(
-                    centers=lod_centers,
-                    amplitudes=lod.amplitudes,
-                    cholesky_factors=lod_cholesky,
-                    colors=lod.colors,
-                    stats=dict(lod.stats),
-                    truncation_radius=lod.truncation_radius,
-                )
-
-            return self._map_additive(_embed_lod)
-
-        # Single-LOD fast path (unchanged)
-        if np.isscalar(values):
-            new_col = np.full((n, 1), values, dtype=self.centers.dtype)
-        else:
-            values = np.asarray(values, dtype=self.centers.dtype)
-            if values.shape != (n,):
-                raise ValueError(
-                    f"values shape {values.shape} doesn't match splat count ({n},)"
-                )
-            new_col = values.reshape(n, 1)
-
-        new_centers = np.concatenate([self.centers, new_col], axis=1)
-        new_cholesky = embed_cholesky_packed(
-            self.cholesky_factors,
-            d_src=d,
-            d_dst=d + 1,
-            dim_mapping=list(range(d)),
-            fill_sigma={d: sigma},
-        )
-
-        return GSplatData(
-            centers=new_centers,
-            amplitudes=self.amplitudes,
-            cholesky_factors=new_cholesky,
-            colors=self.colors,
-            stats=dict(self.stats),
-            truncation_radius=self.truncation_radius,
-        )
+        out = self._map_additive(_embed_lod)
+        return refresh_reduction_lod_stats(out, self)
 
     @classmethod
     def merge_with_channel_colors(

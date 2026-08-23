@@ -87,8 +87,7 @@ materials/
 
 - [`mesh/`](./mesh/README.md) — The **shaded** one, and the only stack that
   draws a plain indexed `BufferGeometry` rather than instanced quads. A
-  light-free view-anchored headlight
-  (`mix(ambient, 1, pow(saturate(N·V·0.5 + 0.5), exponent))`) over stored
+  light-free view-anchored offset key with wrapped diffuse and a subtle additive Blinn–Phong highlight over stored
   view-space normals or a screen-space-derivative fallback, chosen as a
   compile-time variant; per-vertex alpha as the sole coverage term; and a
   three-way emission (hard cutout for the `opaque` default, premultiplied for

@@ -69,7 +69,11 @@ lut_tone_mapping_warned) -> bool` — if `attrs["colormap"]` is a numpy array or
 a non-built-in name (matplotlib/colorcet), resolves it to a `(256, 3)` uint8
 LUT, writes a `colormap_lut` dataset, and rewrites the attr value to
 `"custom"`. Built-in names are left untouched (the viewer resolves them
-directly). Emits an at-most-once `UserWarning` advising authors to pin
+directly), and so is `"custom"` itself — it is this function's OWN output
+sentinel, and a node can now reach the resolver twice (a GROUP colormap is
+resolved by `compiler.write_group`, which every node's attrs also pass through
+from `Node.__init__`), so re-resolving it would ask for a palette named
+"custom" and raise. Emits an at-most-once `UserWarning` advising authors to pin
 `tone_mapping="None"` — an exact passthrough, valid while the scene stays
 inside [0, 1] — when the scene uses a LUT but the viewer's default
 ACES tone-mapping would shift hues — skipped for the implicit `"gray"` default
@@ -103,9 +107,9 @@ The gsplat-specific pipeline sequenced by the shared walker
 | Function | Step |
 |----------|------|
 | `validate_gsplat_inputs(...)` | shape/sign checks; normalizes a 1-D Cholesky (uniform covariance) to `(1, K)` and flags `cholesky_is_uniform`; returns `n_splats`, `n_dims` (`K = D(D+1)/2`) |
-| `apply_gsplat_spatial_ordering(..., ctx: OrderingCtx)` | reorders centers/amplitudes/cholesky/colors along a space-filling curve, computes per-chunk bounds, returns `ordering_data` (or `None`) |
-| `write_gsplat_arrays(..., ctx: DatasetCtx)` | encodes `centers` (COORDINATE), `amplitudes` (via the shared positive-scalar writer), the packed input `cholesky_factors` split on disk into `cholesky_factors_diag` (CHOLESKY_DIAG) + `cholesky_factors_offdiag` (CHOLESKY_OFFDIAG; off-diagonal omitted for 1-D gsplats), optional `colors` (shared color writer), and `chunk_bounds`; returns a metadata dict |
-| `apply_gsplat_group_attrs(...)` | resolves the colormap LUT, prepares/validates `transform` + `nd_transform`, fills rendering defaults (`opacity`, `absorption`, `gamma`, `intensity`, `offset`, `truncation_radius` — `blending_mode` is deliberately never stamped: it has no identity value), then stamps authoritative `type="gsplats"` attrs and `position_bounds` |
+| `apply_gsplat_spatial_ordering(..., ctx: OrderingCtx)` | reorders centers/amplitudes/cholesky/colors along a space-filling curve, computes per-chunk bounds, and returns `ordering_data` plus the optional centers encoding plan |
+| `write_gsplat_arrays(..., ctx: DatasetCtx)` | encodes `centers` (COORDINATE), reusing the ordering-time encoding plan only when it matches the write context; encodes `amplitudes` (via the shared positive-scalar writer), the packed input `cholesky_factors` split on disk into `cholesky_factors_diag` (CHOLESKY_DIAG) + `cholesky_factors_offdiag` (CHOLESKY_OFFDIAG; off-diagonal omitted for 1-D gsplats), optional `colors` (shared color writer), and `chunk_bounds`; returns a metadata dict |
+| `apply_gsplat_group_attrs(...)` | stamps the implicit `colormap="gray"` on a colorless leaf **only when no ancestor authored a palette** (`inherited_gsplat_colormap` — a nearer manufactured value would shadow the authored one under the viewer's nearest-setter-wins composition, #1600), resolves the colormap LUT, prepares/validates `transform` + `nd_transform`, fills rendering defaults (`opacity`, `absorption`, `gamma`, `intensity`, `offset`, `truncation_radius` — `blending_mode` is deliberately never stamped: it has no identity value), then stamps authoritative `type="gsplats"` attrs and `position_bounds` |
 
 `amplitudes` and `cholesky_factors` go through `dataset_writers/scalars.py` and
 the gsplat-specific paths so default-precision selection stays symmetric with

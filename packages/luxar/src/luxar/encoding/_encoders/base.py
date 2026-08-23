@@ -20,8 +20,9 @@ class BaseEncoderMixin:
     resolve (and type-check) through a single base.
 
     ``ArrayEncoder.__init__`` assigns the instance attributes annotated below;
-    the two method stubs (``encode`` / ``_encode_dtype``) stay implemented on
-    ``ArrayEncoder`` but are declared here so mixins that call them type-check.
+    the three method stubs (``encode`` / ``_encode_dtype`` / ``encodes_as_lut``)
+    stay implemented on ``ArrayEncoder`` but are declared here so mixins that
+    call them type-check.
     """
 
     # Instance attributes assigned by ArrayEncoder.__init__.
@@ -66,6 +67,9 @@ class BaseEncoderMixin:
         compressor: Optional[Any],
         perchannel_bits: Optional[int] = None,
     ) -> None:
+        raise NotImplementedError
+
+    def encodes_as_lut(self, data: np.ndarray, semantic_type: SemanticType) -> bool:
         raise NotImplementedError
 
     def _is_uniform(self, data: np.ndarray) -> bool:
@@ -238,9 +242,11 @@ class BaseEncoderMixin:
         round (vs truncate toward zero), clip to ``[0, levels]``, and cast.
         Callers own the degenerate ``span == 0`` (all-equal) branch — this
         assumes ``span != 0``. ``round_values=False`` reproduces the custom
-        encoder's historical truncating behaviour exactly.
+        encoder's historical truncating behaviour exactly. The affine map uses
+        float64 so narrow input dtypes cannot overflow or change its precision.
         """
-        normalized = (data - min_val) / span
+        working = data.astype(np.float64, copy=False)
+        normalized = (working - min_val) / span
         scaled = normalized * levels
         if round_values:
             scaled = np.round(scaled)
@@ -265,6 +271,13 @@ class BaseEncoderMixin:
         cycles. After the first encode→decode→re-encode, the decoded values lie
         within ``[lo, hi]`` per column, so re-deriving ``lo``/``hi`` here yields
         the same scales and the same codes — subsequent cycles add zero error.
+
+        A 1-D input is treated as ONE column and its rails are still emitted as
+        length-1 LISTS. The reductions below give 0-d scalars there, and a bare
+        scalar ``col_lo``/``col_hi`` is not decodable — the decoder requires
+        equal-length 1-D rails and raises on shapes ``()``, so the array would
+        be written successfully and be unreadable. ``np.atleast_1d`` is a no-op
+        on the (N, C) path every production writer uses.
         """
         levels = (1 << bits) - 1
         udtype = np.uint8 if bits == 8 else np.uint16
@@ -278,7 +291,11 @@ class BaseEncoderMixin:
             hi = y.max(axis=0)
         rng = np.maximum(hi - lo, 1e-30)
         u = np.round((np.clip(y, lo, hi) - lo) / rng * levels).astype(udtype)
-        return u, lo.astype(np.float64).tolist(), hi.astype(np.float64).tolist()
+        return (
+            u,
+            np.atleast_1d(lo).astype(np.float64).tolist(),
+            np.atleast_1d(hi).astype(np.float64).tolist(),
+        )
 
     @staticmethod
     def _geolog_forward(

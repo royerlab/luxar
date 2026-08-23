@@ -96,6 +96,8 @@ DEMO_META = {
     },
     "caches": [],
     "outputs": ["quasicrystal"],
+    # Procedurally generated: no external dataset, nothing to credit.
+    "citation": None,
 }
 
 import sys
@@ -106,7 +108,8 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer
+from luxar.core.viewer_config import ViewerConfig
+from luxar.demos import add_demo_caption, launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
 
@@ -323,7 +326,9 @@ def generate_quasicrystal_3d(
         )
 
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                dimensions=dims, viewer_config=ViewerConfig(cinematic_mode=True)
+            )
 
             # Small points for dense quasicrystal appearance
             radii = np.full(len(positions_3d), 0.08, dtype=np.float32)
@@ -349,12 +354,8 @@ def generate_quasicrystal_3d(
                 color="rgba(255,255,255,0.6)",
                 blend_mode="difference",
             )
-            scene.add_text(
-                "Icosahedral aperiodic tiling",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+            add_demo_caption(
+                scene, "Icosahedral aperiodic tiling", DEMO_META.get("citation")
             )
 
         aprint(f"✓ Written to {output_path}")

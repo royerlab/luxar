@@ -81,6 +81,10 @@ DEMO_META = {
     },
     "caches": ["gsplats_opencell_map4"],
     "outputs": ["gsplats_3d_opencell_map4"],
+    "citation": {
+        "short": "Cho et al. 2022",
+        "doi": "10.1126/science.abi6983",
+    },
 }
 
 # Enable MPS->CPU fallback for unsupported PyTorch ops (must be before torch import)
@@ -95,10 +99,15 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
+    DatasetUnavailable,
+    add_demo_caption,
     cached_download,
     launch_viewer,
     load_dataset_gsplats,
+    load_local_fit_gsplats,
+    local_fit_path,
     parse_demo_flags,
     require_module,
     warn_if_no_cuda_gpu,
@@ -130,8 +139,17 @@ TIFF_URL = (
     "OC-FOV_MAP4_ENSG00000047849_CID000828_FID00002848_stack.tif"
 )
 
-# Cache location
-CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_opencell_map4"
+# Cache location. CACHE_DIR holds the DOWNLOADED source TIFF; a local refit is
+# OUR artifact, not a copy of the hosted fit, so it goes to the demo's local-fit
+# namespace (~/.cache/luxar/<name>/local/, see `local_fit_path`). Writing it to
+# ~/.cache/luxar/<name>/<file> — the path the manifest fetch owns — got it
+# quarantined on the next launch for failing the pinned sha256 (#1618).
+DEMO_NAME = "gsplats_opencell_map4"
+GSPLATS_FILES = [
+    "opencell_map4_ch0.gsplats.zarr.zip",
+    "opencell_map4_ch1.gsplats.zarr.zip",
+]
+CACHE_DIR = Path.home() / ".cache" / "luxar" / DEMO_NAME
 
 # Parse command-line flags
 FLAGS = parse_demo_flags()
@@ -267,7 +285,8 @@ def fit_channel(
     aprint(f"  Fitted {n_splats:,} splats")
 
     # Cache result
-    aprint(f"  Caching to {cache_file.name}")
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    aprint(f"  Caching to {cache_file}")
     result.save(
         cache_file,
         encoding_mode=EncodingMode.MEMORY,
@@ -288,7 +307,7 @@ def fit_all_channels(
 
         for i, (volume, ch_config) in enumerate(zip(volumes, CHANNELS)):
             ch_name = ch_config["name"]
-            cache_file = CACHE_DIR / f"opencell_map4_ch{i}.gsplats.zarr.zip"
+            cache_file = local_fit_path(DEMO_NAME, GSPLATS_FILES[i])
 
             with asection(f"Channel {i}: {ch_name}"):
                 gsplats = fit_channel(
@@ -336,7 +355,11 @@ def create_luxar_scene(
                     Dimension("z", unit="px", display=True),
                 ]
             )
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                dimensions=dims,
+                citation=DEMO_META["citation"],
+                viewer_config=ViewerConfig(cinematic_mode=True),
+            )
 
             scene.attrs["title"] = "GSplats: OpenCell MAP4 (Microtubule Cytoskeleton)"
             scene.attrs["description"] = """
@@ -416,12 +439,8 @@ Controls:
                 color="rgba(255,255,255,0.6)",
                 blend_mode="difference",
             )
-            scene.add_text(
-                "Fluorescence microscopy",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+            add_demo_caption(
+                scene, "Fluorescence microscopy", DEMO_META.get("citation")
             )
 
         aprint(f"Scene saved: {output_path}")
@@ -431,6 +450,30 @@ Controls:
 # =============================================================================
 # Main
 # =============================================================================
+
+
+def resolve_gsplats() -> list[GSplatData] | None:
+    """The manifest fetch, then this machine's own earlier refit; None ⇒ build it.
+
+    Only ``DatasetUnavailable`` falls through to the local door — the narrow
+    "these bytes are not obtainable from anywhere yet" case. An unknown file
+    name, a missing packaged manifest or an in-repo copy failing its sha256 are
+    faults, and must not be disguised as a routine multi-minute refit.
+    """
+    try:
+        precomputed = load_dataset_gsplats(
+            DEMO_NAME,
+            GSPLATS_FILES,
+            recompute=RECOMPUTE,
+        )
+    except DatasetUnavailable as exc:
+        aprint(f"Manifest fetch unavailable ({exc}).")
+        precomputed = None
+    if precomputed is None and not RECOMPUTE:
+        # A fit this machine built earlier, in its own namespace — checked
+        # BEFORE refitting, which is what makes the refit one-time.
+        precomputed = load_local_fit_gsplats(DEMO_NAME, GSPLATS_FILES)
+    return precomputed
 
 
 def main():
@@ -453,14 +496,7 @@ def main():
         return
 
     # Try the manifest-driven fetch (checksum-verified cache -> in-repo -> Zenodo)
-    precomputed = load_dataset_gsplats(
-        "gsplats_opencell_map4",
-        [
-            "opencell_map4_ch0.gsplats.zarr.zip",
-            "opencell_map4_ch1.gsplats.zarr.zip",
-        ],
-        recompute=RECOMPUTE,
-    )
+    precomputed = resolve_gsplats()
 
     volumes = None
 

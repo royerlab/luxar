@@ -87,6 +87,10 @@ DEMO_META = {
     },
     "caches": ["nuclear_pore_complex"],
     "outputs": ["nuclear_pore_complex"],
+    "citation": {
+        "short": "Bui et al. 2013",
+        "doi": "10.1016/j.cell.2013.10.055",
+    },
 }
 
 import shutil
@@ -98,7 +102,8 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import cached_download, launch_viewer
+from luxar.core.viewer_config import ViewerConfig
+from luxar.demos import add_demo_caption, cached_download, launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -574,7 +579,11 @@ def generate_nuclear_pore_complex(
                         Dimension("z", unit="nm", display=True),
                     ]
                 )
-                scene = compiler.create_scene(dimensions=dims)
+                scene = compiler.create_scene(
+                    dimensions=dims,
+                    citation=DEMO_META["citation"],
+                    viewer_config=ViewerConfig(cinematic_mode=True),
+                )
 
                 # Sharpness for crisp, sharp protein atoms (normalized [0, 1] knob)
                 sharpness = np.full(len(sym_positions), 0.85, dtype=np.float32)
@@ -639,12 +648,10 @@ def generate_nuclear_pore_complex(
                     color="rgba(255,255,255,0.6)",
                     blend_mode="difference",
                 )
-                scene.add_text(
+                add_demo_caption(
+                    scene,
                     "8-fold symmetry \u2022 PDB structure",
-                    position=(0.98, 0.97),
-                    font_size=0.015,
-                    anchor="bottom-right",
-                    color="rgba(200,200,200,0.45)",
+                    DEMO_META.get("citation"),
                 )
 
             aprint(f"✓ Scene created with {len(sym_positions):,} atoms")

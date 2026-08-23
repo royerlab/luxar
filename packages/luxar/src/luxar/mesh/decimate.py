@@ -9,7 +9,8 @@ outright. Decimation is the operation that produces a genuinely coarser SURFACE,
 and its absence — not any structural objection — is the only reason mesh had no
 substitutive ladder (``docs/specs/MESH_NODE_SPEC.md`` §9).
 
-``cluster`` (this module) is vertex clustering: snap vertices to a grid, collapse
+The dispatcher offers ``cluster`` and ``qem``. ``cluster`` is the vectorized
+implementation in this module: snap vertices to a grid, collapse
 each occupied cell to its centroid, reindex the faces, drop the triangles that
 collapsed to a line. It is O(V log V) per pass and fully vectorized, which matters
 because the writer's cap is 2**27 vertices and a Python edge-collapse loop is
@@ -21,8 +22,8 @@ The grid spacing is found by bisection, so the cost is several passes rather tha
 one. Measured ~0.2 MV/s per pass, with the bracket-convergence exit keeping it to a
 handful of passes rather than the full iteration budget.
 
-**The representative is the plain centroid, and a Garland-Heckbert quadric
-placement was tried and removed.** The theory says the quadric minimizer preserves
+**The clustering representative is the plain centroid; a Garland-Heckbert quadric
+placement inside each grid cell was tried and removed.** The theory says the quadric minimizer preserves
 creases a centroid rounds off, and the algebra does work — three orthogonal planes
 solve to their exact corner. It moved vertices (up to 0.067 on a unit sphere, most
 of them by something) but improved no measurable quality: same vertex counts, same
@@ -58,10 +59,16 @@ the topology underneath it, and two co-planar opaque triangles z-fight.
 
 from __future__ import annotations
 
-from typing import Any, NamedTuple
+from typing import Any, Literal, NamedTuple, Sequence, cast
 
 import numpy as np
+from arbol import aprint
 from numpy.typing import NDArray
+
+# Worst-case 3-level K=4 open-annulus ladder: 9,882 vertices takes 45.9 s.
+# Keep the automatic tier below the one-minute boundary.
+QEM_AUTO_VERTEX_LIMIT = 10_000
+DECIMATION_METHODS = frozenset({"cluster", "qem"})
 
 
 class DecimatedMesh(NamedTuple):
@@ -246,11 +253,11 @@ def decimate_cluster(
     Raises:
         ValueError: If inputs are malformed, ``target_vertices`` < 4, or the input
             surface is degenerate enough that no triangle survives. That last case
-            is an error rather than an empty result on purpose: a ``kind=lod`` group
-            derives its switch thresholds from element counts, and
-            :func:`luxar.core.group.lod.group.coverage_fractions` raises on a
-            zero-count level — so returning one here would only move the failure
-            somewhere with less context about which mesh caused it.
+            is an error rather than an empty result on purpose: the
+            substitutive-LOD wrapper keeps a decimated level only when its vertex
+            count strictly exceeds the previous one's, so an empty return (count
+            0) would be dropped in silence — a degenerate mesh would come out as a
+            plain leaf with nothing naming which mesh caused it.
     """
     vertices = np.ascontiguousarray(vertices, dtype=np.float32)
     faces = np.ascontiguousarray(faces, dtype=np.uint32)
@@ -328,6 +335,95 @@ def decimate_cluster(
             "degenerate (collinear or coincident vertices) rather than merely fine."
         )
     return best
+
+
+def resolve_decimation_method(
+    method: str,
+    n_vertices: int,
+    *,
+    spatial_ndim: int | None = None,
+    announce: bool = True,
+) -> Literal["cluster", "qem"]:
+    """Resolve ``auto`` once from source size and QEM's dimensional envelope."""
+    normalized = str(method).replace("-", "_")
+    if normalized == "qem" and spatial_ndim is not None and spatial_ndim < 3:
+        raise ValueError(
+            "mesh decimation method 'qem' requires at least 3 coarsening "
+            f"dimensions; got {spatial_ndim}"
+        )
+    if normalized == "auto":
+        qem_has_normal_space = spatial_ndim is None or spatial_ndim >= 3
+        normalized = (
+            "qem"
+            if qem_has_normal_space and n_vertices <= QEM_AUTO_VERTEX_LIMIT
+            else "cluster"
+        )
+        if announce:
+            if not qem_has_normal_space:
+                aprint(
+                    "  📐 Mesh decimation auto-selected 'cluster': "
+                    f"{spatial_ndim} coarsening dimensions is below QEM's "
+                    "3-dimension minimum."
+                )
+            else:
+                comparison = "at or below" if normalized == "qem" else "above"
+                aprint(
+                    f"  📐 Mesh decimation auto-selected '{normalized}': "
+                    f"{n_vertices:,} vertices is {comparison} the "
+                    f"{QEM_AUTO_VERTEX_LIMIT:,}-vertex QEM limit."
+                )
+    if normalized not in DECIMATION_METHODS:
+        raise ValueError(
+            "mesh decimation method must be one of ['auto', 'cluster', 'qem']; "
+            f"got {method!r}"
+        )
+    return cast(Literal["cluster", "qem"], normalized)
+
+
+def decimate(
+    vertices: NDArray[np.float32],
+    faces: NDArray[np.uint32],
+    *,
+    target_vertices: int,
+    method: str = "auto",
+    **kwargs: Any,
+) -> DecimatedMesh:
+    """Dispatch to the selected mesh decimator."""
+    return decimate_ladder(
+        vertices,
+        faces,
+        target_vertices=[target_vertices],
+        method=method,
+        **kwargs,
+    )[0]
+
+
+def decimate_ladder(
+    vertices: NDArray[np.float32],
+    faces: NDArray[np.uint32],
+    *,
+    target_vertices: Sequence[int],
+    method: str = "auto",
+    **kwargs: Any,
+) -> list[DecimatedMesh]:
+    """Dispatch a target sequence, sharing one collapse sequence for QEM."""
+    spatial_dims = kwargs.get("spatial_dims")
+    spatial_ndim = (
+        len(spatial_dims) if spatial_dims is not None else min(3, vertices.shape[1])
+    )
+    resolved = resolve_decimation_method(
+        method, len(vertices), spatial_ndim=spatial_ndim
+    )
+    if resolved == "cluster":
+        return [
+            decimate_cluster(vertices, faces, target_vertices=target, **kwargs)
+            for target in target_vertices
+        ]
+    from .qem import decimate_qem_ladder
+
+    return decimate_qem_ladder(
+        vertices, faces, target_vertices=target_vertices, **kwargs
+    )
 
 
 def _average_per_cluster(
@@ -410,8 +506,9 @@ def _cluster_once(
     a, b, c = new_f[:, 0], new_f[:, 1], new_f[:, 2]
     new_f = new_f[(a != b) & (b != c) & (a != c)]
     # Clustering also creates DUPLICATE triangles (two fine faces collapsing onto
-    # the same coarse corners). They render identically but inflate the face count
-    # the LOD thresholds are derived from, so drop them.
+    # the same coarse corners). They draw the same pixels twice — wasted index
+    # bytes and rasterization, and an inflated face count for the level — so drop
+    # them.
     if new_f.shape[0]:
         canonical = np.sort(new_f, axis=1)
         _, keep = np.unique(canonical, axis=0, return_index=True)
@@ -439,10 +536,9 @@ def _cluster_once(
         )
 
     # Drop representatives no surviving face references. They are not harmless
-    # padding: `coverage_fractions` derives the LOD switch thresholds from element
-    # COUNTS, so phantom vertices shift every threshold — and a vertex with no
-    # incident face has no defined normal, so it would take the arbitrary fallback
-    # and drag the level's shading statistics with it.
+    # padding: a vertex with no incident face has no defined normal, so it would
+    # take the arbitrary fallback and drag the level's shading statistics with it
+    # — and it still costs vertex-buffer bytes on every upload.
     if new_f.shape[0]:
         referenced = np.unique(new_f)
         if referenced.size != new_v.shape[0]:
@@ -493,4 +589,12 @@ def _recompute_normals(
     return out.astype(np.float32)
 
 
-__all__ = ["DecimatedMesh", "decimate_cluster"]
+__all__ = [
+    "DECIMATION_METHODS",
+    "DecimatedMesh",
+    "QEM_AUTO_VERTEX_LIMIT",
+    "decimate",
+    "decimate_cluster",
+    "decimate_ladder",
+    "resolve_decimation_method",
+]

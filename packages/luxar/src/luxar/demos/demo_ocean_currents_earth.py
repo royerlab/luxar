@@ -87,6 +87,11 @@ DEMO_META = {
     },
     "caches": ["ocean_currents_earth"],
     "outputs": ["ocean_currents_earth"],
+    "citation": {
+        "short": "HYCOM GOFS 3.1 (Chassignet et al. 2007); NASA Blue Marble",
+        "ref": "Chassignet et al. 2007 / NASA",
+        "doi": "10.1016/j.jmarsys.2005.09.016",
+    },
 }
 
 from pathlib import Path
@@ -97,7 +102,14 @@ from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
-from luxar.demos import cached_download, launch_viewer, parse_demo_flags, require_module
+from luxar.demos import (
+    add_demo_caption,
+    cached_download,
+    launch_viewer,
+    parse_demo_flags,
+    require_module,
+)
+from luxar.demos._cinematic_camera import pull_in
 from luxar.encoding import EncodingMode
 from luxar.utils.paths import get_demos_output_dir
 
@@ -489,11 +501,17 @@ def globe_camera(lon: float, lat: float, *, distance: float = 2.05) -> CameraCon
         [np.cos(la) * np.cos(lo), np.sin(la), -np.cos(la) * np.sin(lo)],
         dtype=np.float64,
     )
+    # This pose frames the local surface patch around a 0.9R target, so the
+    # target-relative planar pull-in is the intended invariant rather than the silhouette.
+    target = tuple((normal * RADIUS * 0.9).tolist())
     return CameraConfig(
-        position=tuple((normal * RADIUS * distance).tolist()),
-        target=tuple((normal * RADIUS * 0.9).tolist()),
+        position=pull_in(
+            tuple((normal * RADIUS * distance).tolist()),
+            target,
+            from_fov_deg=42.0,
+        ),
+        target=target,
         up=(0.0, 1.0, 0.0),
-        fov=42.0,
     )
 
 
@@ -602,8 +620,10 @@ def build_scene(hycom_path: Path, marble_path: Path, output_path: Path) -> Path:
         )
         with LuxarZarrCompiler(output_path, encoding_mode=EncodingMode.PRECISION) as c:
             scene = c.create_scene(
+                citation=DEMO_META["citation"],
                 dimensions=dims,
                 viewer_config=ViewerConfig(
+                    cinematic_mode=True,
                     # No tone mapping at all (#1459): the ramp is an encoding of
                     # speed, and every colour here — Blue Marble texture and
                     # blue->white LUT alike — already sits inside [0, 1], so a
@@ -662,12 +682,10 @@ def build_scene(hycom_path: Path, marble_path: Path, output_path: Path) -> Path:
                 color="rgba(255,255,255,0.75)",
                 blend_mode="difference",
             )
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 "HYCOM GLBy0.08 surface velocities • NASA Blue Marble topography",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,220,0.5)",
+                DEMO_META.get("citation"),
             )
         aprint(f"Scene saved: {output_path}")
     return output_path

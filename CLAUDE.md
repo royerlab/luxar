@@ -2,7 +2,7 @@
 
 Guidance for Claude Code when working with this repository.
 
-**Luxar** is a high-performance system for compiling and visualizing arbitrary-sized nD scientific scenes. It renders four first-class geometry types — **Points**, **Lines**, **Gaussian Splats**, and **Mesh** (triangle surfaces). Mesh is the newest and the only *shaded* one — the other three are purely emissive — via a light-free view-anchored headlight, and it is now feature-complete at the UI level: picking (at VERTEX granularity, keyed on `gl_VertexID` rather than an element-texture texel), the Layers-panel appearance controls, monitor/stats/debug counts. The docs pass is done and real WebGPU is verified pixel-equivalent to WebGL (see `docs/specs/MESH_NODE_SPEC.md` §11 and the CHANGELOG A/B notes). The contract still names the writable and drawable sets separately — `geometry_types` and `loader_types` — because a type becomes authorable before it becomes drawable; they simply agree on all four today.
+**Luxar** is a high-performance system for compiling and visualizing arbitrary-sized nD scientific scenes. It renders four first-class geometry types — **Points**, **Lines**, **Gaussian Splats**, and **Mesh** (triangle surfaces). Mesh is the newest and the only *shaded* one — the other three are purely emissive — via a light-free view-anchored offset key, and it is now feature-complete at the UI level: picking (at VERTEX granularity, keyed on `gl_VertexID` rather than an element-texture texel), the Layers-panel appearance controls, monitor/stats/debug counts. The docs pass is done and real WebGPU is verified pixel-equivalent to WebGL (see `docs/specs/MESH_NODE_SPEC.md` §11 and the CHANGELOG A/B notes). The contract still names the writable and drawable sets separately — `geometry_types` and `loader_types` — because a type becomes authorable before it becomes drawable; they simply agree on all four today.
 
 ## Quick Reference
 
@@ -273,6 +273,20 @@ luxar optimise scene.luxar.zarr --dry-run                  # report the plan, wr
 luxar optimise scene.luxar.zarr out.luxar.zarr --profile hosting  # hosting 256 KB / local 64 KB / archive 1 MB
 luxar optimise scene.luxar.zarr out.luxar.zarr --verify    # re-read the output, compare every array
 luxar optimise arbitrary.zarr out.zarr --generic           # a plain (non-Luxar) zarr store
+# Re-derive a store's LOD switch thresholds IN PLACE — attrs only, no chunk data
+# moves. Every `kind=lod` group still on the legacy `coverage` diagonal metric
+# (or carrying no `selector`) gets screen-occupancy-halved thresholds and a
+# `screen-area` stamp; the fills-screen anchor only under a REAL (>1 part)
+# partition. An EXPLICIT opt-in and nothing else may trigger it: an authored
+# `coverage_fractions=[...]` list and a legacy derived one are indistinguishable
+# on disk, so this may override a deliberate choice — hence the printed old→new
+# audit line, `--dry-run`, and `--group`. A group already on `screen-area` is
+# skipped, so a second run changes nothing, `content_hash` included. Exits 1 when
+# a ladder was left alone (unsupported selector → `gsplat migrate-format` first;
+# unresolvable finest element count).
+luxar restamp-lod scene.luxar.zarr                         # every legacy ladder
+luxar restamp-lod scene.luxar.zarr --dry-run               # report the old→new ladders
+luxar restamp-lod scene.luxar.zarr --group tiled/part_0    # one ladder (repeatable)
 luxar export scene.luxar.zarr -o my_export/             # Export scene + viewer as standalone offline folder
 luxar export scene.luxar.zarr -o my_export/ --open      # Export and serve in browser
 luxar export scene.luxar.zarr -o my_export/ --overwrite # Overwrite existing export
@@ -298,7 +312,7 @@ luxar gsplat fit --dump-config --preset hifi > config.yaml  # Generate config te
 # estimate (capped at the median; a no-op on clean data with no pedestal).
 #
 # STAY ON `auto` UNLESS YOU HAVE MEASURED OTHERWISE. A `pN` floor subtracts the
-# Nth percentile OF ALL VOXELS, which on sparse data lands wherever the sparsity
+# Nth percentile OF NON-ZERO VOXELS, which on sparse data lands wherever the sparsity
 # puts it, not where the noise ends. On a 96x640x640 crop of a sparse light-sheet
 # brain (1.01% of voxels foreground = >10% of max; 12.9% in the dim band 1-10%),
 # p99 sat at 1.34% of THAT CROP's max — squarely inside signal. (Over the whole
@@ -330,9 +344,10 @@ luxar gsplat fit volume.tiff splats.gsplats.zarr --floor none    # disable (hard
 # culling); pass `--flat` for a single flat leaf. Whole-volume fits
 # (`--tiling none`/small auto) stay a single leaf.
 # An integer `--seeds K` is a WHOLE-VOLUME budget (what a default `cal`
-# reports): a tiled fit DIVIDES it across its tiles instead of giving each
-# tile the full count. Not an exact count — signal-free tiles are skipped
-# (sparse volumes realize less) and K below the tile count gives 1 per tile.
+# reports): a tiled fit DIVIDES it across the tiles that survive the resolved
+# floor plus Hann window instead of giving each tile the full count. Every
+# worker derives the same non-empty count; K below it gives 1 per such tile.
+# The share is equal, not occupancy-weighted, so uneven grids can misallocate K.
 
 # Uniform tiled fitting for large volumes (Hann cosine apodization, seamless stitching)
 luxar gsplat fit large.zarr splats.gsplats.zarr --tiling uniform --tile-size 256 --overlap 32
@@ -692,7 +707,14 @@ luxar gsplat migrate-format old_pyr/ v3.gsplats.zarr                          # 
 # Re-quantize a fitted (current-format) .gsplats.zarr's Cholesky encoding (writes a copy).
 # Structure-preserving round-trip (leaf/lod/partition/nested + fitting/pipeline
 # groups kept); auto/memory also re-quantize the CENTERS to per-axis uint16
-# fixed-point, so centers are bit-exact only under -e precision; decode is always
+# fixed-point, so on ordinary spatial data centers are bit-exact only under
+# -e precision. Three exceptions stay exact in every mode: a GRIDDED axis (a
+# stacked sigma=0 time/channel axis) keeps uint16 but has its grid snapped onto
+# the data's own spacing; a LUT-eligible centers array is stored verbatim as
+# lut_uint8 (~1 B/value); and an axis that is NEITHER gridded nor LUT-eligible
+# whose grid would displace splats past their own sigma FOR MORE THAN 0.1% OF
+# THE SPLATS falls back to float32 (a smaller degenerate population is quantized
+# away silently — see MAX_UNREPRESENTABLE_SPLAT_FRACTION). Decode is always
 # float32 so viewer/GPU/WASM are unaffected. Unlike migrate-format (legacy→current,
 # float32 vs AUTO-uint16 only) this exposes the full ladder incl. memory=uint8.
 luxar gsplat reencode fit.gsplats.zarr fit_u8.gsplats.zarr -e memory      # uint8 (smallest, ~93 dB)
@@ -964,7 +986,8 @@ npx playwright test visual-regression.spec.ts theme-visual-regression.spec.ts
 # Geometry & rendering (blending-modes needs generate-fixtures!)
 pnpm test:generate-fixtures
 npx playwright test geometry-types.spec.ts blending-modes.spec.ts colormap-system.spec.ts \
-  post-processing-pipeline.spec.ts rendering-controls.spec.ts ortho-mode.spec.ts
+  post-processing-pipeline.spec.ts cinematic-auto-framing.spec.ts rendering-controls.spec.ts \
+  ortho-mode.spec.ts
 # Line joint artifacts (#780/#785/#790) — scores each joint topology as its
 # own band of one frame with TWO metrics (local-median outliers + axial flux
 # ripple; the first is structurally blind to the bead-notch class the second

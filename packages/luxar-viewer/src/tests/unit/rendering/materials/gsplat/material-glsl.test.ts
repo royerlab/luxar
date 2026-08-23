@@ -108,6 +108,21 @@ describe('clampTruncationRadius guard', () => {
     expect(clampTruncationRadius(2.5)).toBe(2.5);
   });
 
+  it('treats a NON-NUMBER exactly like a NaN, so a JSON string cannot reach the uniform', () => {
+    // `truncation_radius` is untrusted zarr JSON. A store stamping `"6"` satisfies
+    // `GSplatsMetadata` only nominally, and every numeric test in this function
+    // COERCES it — `Math.fround("6" * "6")` is 36 (finite) and `"6" < MIN` is false —
+    // so before the type guard the string was returned unchanged and uploaded as
+    // `uTruncate`, giving a 6σ material band while the fetch tolerance
+    // (`gsplats-spatial-index-loader.ts::resolveTruncationRadius`, which treats a
+    // non-number as absent) covered only 2.75σ. One rule, both call sites.
+    for (const hostile of ['6', '2.75', 'nonsense', null, undefined, {}, [], true]) {
+      expect(clampTruncationRadius(hostile as unknown as number)).toBe(
+        GSPLAT_DEFAULT_TRUNCATION_RADIUS
+      );
+    }
+  });
+
   it('clamps at the float32 degeneracy bound, agreeing with the Python writer', () => {
     // The write-side validator (MIN_TRUNCATION_RADIUS_FLOAT32 in
     // luxar/validation/types.py) accepts anything that normalizes in

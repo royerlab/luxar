@@ -10,9 +10,15 @@
  *   - the renderer's GL canvas (only needed for the HTML branch's
  *     coordinate mapping).
  *
- * Behavior is identical to the inline original: same blend-mode map,
- * same per-overlay save/restore, same anchor offset rules, same
- * SVG foreignObject rasterization for HTML overlays.
+ * Text and image overlays are drawn with canvas-2D primitives (one
+ * blend-mode map, one save/restore per overlay, the shared anchor
+ * offset rules); HTML overlays are rasterized by wrapping the live node
+ * in an `<svg><foreignObject>` data URL. That wrapper is parsed as XML,
+ * so the markup is XML-serialized rather than read off `outerHTML` —
+ * HTML serialization leaves void elements such as `<br>` unclosed,
+ * which is fatal there. Wrapped text follows the DOM's own
+ * `white-space: normal` layout, where a `\n` is a space and not a
+ * break.
  *
  * @module ui/recording-panel/overlay-compositor
  */
@@ -179,26 +185,31 @@ function breakWord(ctx: CanvasRenderingContext2D, word: string, maxWidth: number
  * break-word` alongside its `width`, so on screen an unbreakable token
  * (a long URL or identifier) breaks rather than overflowing, and the
  * capture has to do the same.
+ *
+ * Newlines are NOT line breaks here. Every overlay this module can see
+ * is laid out `white-space: normal` (the overlay manager only sets
+ * `pre-line` for hover overlays, and those are excluded from
+ * compositing), so on screen a `\n` collapses to a space like any other
+ * whitespace. Honouring it would break the line where the DOM does not
+ * — and a trailing newline would add an empty line to the block, lifting
+ * a bottom-anchored overlay by a whole line height.
  */
 function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
   const lines: string[] = [];
-  for (const paragraph of text.split('\n')) {
-    let line = '';
-    for (const word of paragraph.split(/\s+/).filter(Boolean)) {
-      const pieces =
-        ctx.measureText(word).width > maxWidth ? breakWord(ctx, word, maxWidth) : [word];
-      for (const piece of pieces) {
-        const candidate = line ? `${line} ${piece}` : piece;
-        if (line && ctx.measureText(candidate).width > maxWidth) {
-          lines.push(line);
-          line = piece;
-        } else {
-          line = candidate;
-        }
+  let line = '';
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    const pieces = ctx.measureText(word).width > maxWidth ? breakWord(ctx, word, maxWidth) : [word];
+    for (const piece of pieces) {
+      const candidate = line ? `${line} ${piece}` : piece;
+      if (line && ctx.measureText(candidate).width > maxWidth) {
+        lines.push(line);
+        line = piece;
+      } else {
+        line = candidate;
       }
     }
-    lines.push(line);
   }
+  lines.push(line);
   return lines;
 }
 
@@ -357,7 +368,14 @@ export function compositeHtmlOverlay(
   const svgNs = 'http://www.w3.org/2000/svg';
   const xhtmlNs = 'http://www.w3.org/1999/xhtml';
   const pct = '100%';
-  const svg = `<svg xmlns="${svgNs}" width="${elRect.width}" height="${elRect.height}"><foreignObject width="${pct}" height="${pct}"><div xmlns="${xhtmlNs}">${clone.outerHTML}</div></foreignObject></svg>`;
+  // XMLSerializer, not `outerHTML`: the markup goes into an
+  // `image/svg+xml` data URL, which the browser parses as XML, and HTML
+  // serialization leaves void elements unclosed. A single `<br>` — which
+  // the overlay allowlist permits and several demos use — is then a fatal
+  // well-formedness error, so the Image never loads and the overlay is
+  // missing from every captured frame rather than merely mis-drawn.
+  const markup = new XMLSerializer().serializeToString(clone);
+  const svg = `<svg xmlns="${svgNs}" width="${elRect.width}" height="${elRect.height}"><foreignObject width="${pct}" height="${pct}"><div xmlns="${xhtmlNs}">${markup}</div></foreignObject></svg>`;
 
   const img = new Image();
   img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);

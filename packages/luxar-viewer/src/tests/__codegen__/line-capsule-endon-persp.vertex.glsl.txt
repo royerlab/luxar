@@ -1,6 +1,6 @@
 #version 300 es
 
-// Three.js r184 - Node System
+// Three.js r185 - Node System
 
 
 // extensions
@@ -28,6 +28,12 @@ precision highp isampler2DArray;
 precision highp sampler2DShadow;
 precision highp sampler2DArrayShadow;
 precision highp samplerCubeShadow;
+
+
+// structs
+
+
+
 
 
 // uniforms
@@ -962,7 +968,7 @@ void main() {
 	nodeVar231 = ( ( ( nodeVar217 / nodeUniform23 ) * vec2( 2.0 ) ) - vec2( 1.0 ) );
 	nodeVar232 = vec4( 0.0, 0.0, -2.0, 1.0 );
 
-	if ( (!nodeVar100) ) {
+	if ( ( ! nodeVar100 ) ) {
 
 		nodeVar232 = vec4( ( nodeVar231 * vec2( nodeVar230 ) ), nodeVar229.z, nodeVar230 );
 

@@ -7,7 +7,12 @@ from typing import Literal, Optional, Sequence
 import numpy as np
 
 from ...typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
-from .bounds import _BARRIER_BOUND_EPS
+from .bounds import (
+    _BARRIER_BOUND_EPS,
+    _normalise_coord_slack,
+    _normalise_slice_dims,
+    _store_outward_f32_array,
+)
 from .compound import _compound_sort
 
 
@@ -33,14 +38,24 @@ def sort_splats_spatial(
         method: Spatial curve method ("morton" or "hilbert")
         resolution: Ignored (kept for signature stability; the grid resolution
             is derived per-axis from the bit budget, as it always has been).
-        slice_dims: Barrier/categorical column indices to order by first.
+        slice_dims: Barrier/categorical column indices to order by first. An
+            index outside ``[0, d)`` raises ``ValueError`` (see
+            :func:`_normalise_slice_dims`) — the SAME check
+            :func:`compute_chunk_bounds_gsplats` applies, so the failure lands at
+            the first door. ``apply_gsplat_spatial_ordering`` hands the same list
+            to both, and a negative index is a genuine sort-side bug of its own
+            (it lands in the barrier set AND in ``ordering_dims``) — see
+            :func:`_normalise_slice_dims` for the full argument.
 
     Returns:
         sort_indices: Indices to reorder splats
         metadata: Dict with ordering metadata (incl. slice_dims / ordering_dims)
+
+    Raises:
+        ValueError: If a ``slice_dims`` entry is outside ``[0, d)``.
     """
     ndim = centers.shape[1]
-    slice_set = set(int(d) for d in slice_dims) if slice_dims else set()
+    slice_set = _normalise_slice_dims(slice_dims, ndim)
     ordering_dims = [d for d in range(ndim) if d not in slice_set]
     return _compound_sort(centers, sorted(slice_set), ordering_dims, method)
 
@@ -51,6 +66,8 @@ def compute_chunk_bounds_gsplats(
     chunk_size: int,
     coverage_sigma: float = DEFAULT_TRUNCATION_RADIUS,
     slice_dims: Optional[Sequence[int]] = None,
+    *,
+    coord_slack: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """Compute chunk bounding boxes for GSplats (includes ellipsoidal extent).
 
@@ -61,6 +78,31 @@ def compute_chunk_bounds_gsplats(
     :func:`compute_chunk_bounds_points` and keeps a chunk's barrier-axis footprint
     from straddling categories, which is what makes single-timepoint queries fetch
     only their own chunks.
+
+    The extent is accumulated in float64 and narrowed to the float32 store with
+    OUTWARD rounding (see :func:`_store_outward_f32_array`), so a stored bound is
+    never tighter than the footprint at any coordinate magnitude — not only where
+    a small σ happens to survive float32 arithmetic and a round-to-nearest store.
+
+    ``coord_slack`` extends that guarantee to the DECODED centers. Under AUTO,
+    a non-gridded axis is stored as per-axis uint16 fixed point and can move by
+    half a quantum (``extent/131070``). The compiler asks the encoder for that
+    displacement using the centers' resolved mode and adds it on every axis:
+    on top of ``coverage_sigma·σ`` spatially, and on top of
+    ``_BARRIER_BOUND_EPS`` on a barrier axis. Exact paths answer zero/``None``
+    (a gridded time/channel axis, LUT encoding, or float32 escalation), so their
+    bounds remain unchanged. A direct caller that omits ``coord_slack`` gets
+    bounds for the authored centers only.
+
+    KNOWN GAP — THE DECODED CHOLESKY EXTENT IS NOT COVERED.
+    ``cholesky_factors`` is quantised in its own right (the diagonal uses
+    ``log_perchannel_u8`` under AUTO), and these bounds are built from the values
+    as handed in. A decoded diagonal can therefore produce a LARGER σ than the
+    one the ``coverage_sigma·σ`` pad was sized for, letting the rendered footprint
+    escape the stored bound. This is the extent half of the footprint:
+    ``coord_slack`` closes the center-coordinate half and does nothing for this
+    one, which needs the same encoder-reported round-trip treatment as decoded
+    point radii and line widths.
 
     Args:
         centers: Splat centers (already sorted), shape (N, d)
@@ -78,16 +120,21 @@ def compute_chunk_bounds_gsplats(
             ``truncation_radius`` positionally. The default here only applies to
             a direct call.
         slice_dims: Barrier/categorical dimension indices (no σ expansion).
-            Default None → expand all axes (historical behavior).
+            Default None → expand all axes (historical behavior). An index
+            outside ``[0, d)`` raises ``ValueError`` (see
+            :func:`_normalise_slice_dims`).
+        coord_slack: Per-axis outward pad covering the center encoder's
+            round-trip displacement. Default None → zero on every axis.
 
     Returns:
         chunk_bounds: Bounding boxes, shape (num_chunks, d, 2)
     """
     n_splats, ndim = centers.shape
+    discrete_dims = _normalise_slice_dims(slice_dims, ndim)
+    slack = _normalise_coord_slack(coord_slack, ndim)
     if n_splats == 0:
         return np.zeros((0, ndim, 2), dtype=np.float32)
     num_chunks = (n_splats + chunk_size - 1) // chunk_size
-    discrete_dims = set(int(d) for d in slice_dims) if slice_dims else set()
 
     # Uniform-Cholesky convenience: a single packed row (shape (1, k)) is shared
     # by all splats and never expanded to (N, k). It must be used for every
@@ -102,16 +149,18 @@ def compute_chunk_bounds_gsplats(
         start_idx = chunk_idx * chunk_size
         end_idx = min(start_idx + chunk_size, n_splats)
 
-        chunk_centers = centers[start_idx:end_idx]
+        # float64 throughout: a small σ added to a large center is lost outright
+        # in float32 arithmetic, before the outward store below can rescue it.
+        chunk_centers = centers[start_idx:end_idx].astype(np.float64, copy=False)
         chunk_cholesky = (
             cholesky_factors
             if uniform_cholesky
             else cholesky_factors[start_idx:end_idx]
-        )
+        ).astype(np.float64, copy=False)
 
         # Ellipsoidal extent (per spec:
         # extent[d] = sqrt(covariance[d,d]) * coverage_sigma)
-        extents = np.zeros((end_idx - start_idx, ndim), dtype=np.float32)
+        extents = np.zeros((end_idx - start_idx, ndim), dtype=np.float64)
 
         for d in range(ndim):
             if d in discrete_dims:
@@ -138,7 +187,11 @@ def compute_chunk_bounds_gsplats(
             mins[d] = chunk_centers[:, d].min() - _BARRIER_BOUND_EPS
             maxs[d] = chunk_centers[:, d].max() + _BARRIER_BOUND_EPS
 
-        chunk_bounds[chunk_idx, :, 0] = mins
-        chunk_bounds[chunk_idx, :, 1] = maxs
+        mins -= slack
+        maxs += slack
+
+        lo32, hi32 = _store_outward_f32_array(mins, maxs)
+        chunk_bounds[chunk_idx, :, 0] = lo32
+        chunk_bounds[chunk_idx, :, 1] = hi32
 
     return chunk_bounds

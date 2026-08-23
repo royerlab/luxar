@@ -494,17 +494,27 @@ test.describe('TSL → generated-shader snapshots', () => {
     // The snapshots pin this only implicitly — the difference is one indentation level
     // inside a 150-line file, which is the last thing a reviewer notices. This names it.
     //
-    // HONESTY NOTE — the two halves of the check have different reach at the currently
-    // pinned three r184. The READ-ORDER half is LIVE here: it fails whenever a reader is
-    // emitted before the prologue assigned the value. Drop the `fragmentPrologue()` call
-    // from mesh's `colorNode`, or move its `Discard`s above it, and at r184
-    // `meshPickNearFade` is read while still holding its 0.0 declaration default — `0 <
-    // 0.01` holds, every fragment of the pick pass discards — with every assignment
-    // still at brace depth 0. The BRACE-DEPTH half is what is inert at r184: r184 emits
-    // the COLOUR flow first, and with colour first even the pre-fix free-standing
-    // `.toVar()`s were built at top level. It becomes live the moment the runtime moves
-    // to r185, whose depth-first order is what produced the zero-pixel pick pass
-    // (issue #1683).
+    // HONESTY NOTE — the two halves have different reach, and moving the runtime pin from
+    // r184 to r185 FLIPPED which one is live rather than making both so.
+    //
+    // At the pinned r185 the DEPTH flow is built first, and its first statement is the
+    // `fragmentPrologue()` call, so every shared value is assigned at brace depth 0 at the
+    // top of `main()`. The BRACE-DEPTH half is the live one here: revert the prologue and
+    // the chain lands inside the `uSurfaceDepth` `else` arm, which is exactly the
+    // zero-pixel pick pass of issue #1683. The READ-ORDER half cannot fail from anything a
+    // reader does in `colorNode`, because the prologue already ran before that flow is
+    // emitted at all; it still fires for a reader hoisted above the prologue call inside
+    // the depth flow itself.
+    //
+    // Under r184 it was the mirror image — colour-first emission put even the pre-fix
+    // free-standing `.toVar()`s at top level, so the brace-depth half was the inert one and
+    // the read-order half caught a missing or late prologue call in `colorNode`.
+    //
+    // A consequence worth stating rather than discovering: at r185 `colorNode`'s own
+    // `fragmentPrologue()` call is verified by NOTHING — remove it and the generated GLSL
+    // is byte-identical, so neither this guard, the snapshots, nor the pixel-parity spec
+    // move. It is kept deliberately, as the insurance that makes both entry points
+    // self-sufficient whichever one a future three builds first. Do not delete it as dead.
     await bootHarness(page);
 
     const shared = [

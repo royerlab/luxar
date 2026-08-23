@@ -22,6 +22,9 @@ if TYPE_CHECKING:
     pass
 
 
+CONTENT_UNSUPPORTED_FIT_FLAGS = ("--denoise", "--downscale", "--progressive")
+
+
 def _invocation_token() -> str:
     """Unique per-invocation token for parallel-fit staging paths.
 
@@ -75,6 +78,7 @@ class FitPipelineCtx:
     axes: Optional[str]
     lr: Optional[float]
     floor: Optional[str]
+    norm_range: "Optional[tuple[float, float]]"
     seed_method: Optional[str]
     verbose: bool
     downscale: Optional[str]
@@ -261,13 +265,14 @@ def resolve_denoise_h(ctx: FitPipelineCtx, volume: "Any") -> Optional[float]:
     paths get there by correcting the whole-volume level onto the denoised basis
     with a bounded probe
     (:func:`~luxar.gsplats.fitting.preprocessing.resolve_volume_floor_denoised`,
-    #1178), which has three documented exceptions: a volume ABOVE the probe
-    budget keeps its raw-basis level under the default ``--floor auto`` (the
-    histogram-mode shift is not measurable on a bounded crop — a ``pNN`` spec is
-    corrected there), a probe that cannot be read or denoised keeps it too, and
-    ``batch-fit`` hands its tasks a numeric level resolved from the raw input
-    (see :func:`resolve_shared_floor`). The first two print a note; the third is a
-    known gap, tracked separately rather than announced per task.
+    #1178). A volume ABOVE the probe budget keeps its raw-basis level under the
+    default ``--floor auto`` because the histogram-mode shift is not measurable
+    on a bounded crop; a ``pNN`` spec is corrected there, and a failed probe
+    keeps the raw level with a note. Uniform batch plans defer that ``pNN``
+    correction until calibrated ``h`` exists, while uniform preprocess-mode plans
+    resolve every volume-derived spec directly from the selected denoised store.
+    Content plans need the floor while placing boxes and therefore keep the
+    plan-time raw-basis resolution.
     """
     if not ctx.denoise:
         return None
@@ -363,6 +368,7 @@ def assemble_fit_config(ctx: FitPipelineCtx, is_tiled: bool) -> "tuple[dict, Any
         "loss_type": ctx.loss,
         "lr": ctx.lr,
         "floor": ctx.floor,
+        "norm_range": ctx.norm_range,
         "seed_method": ctx.seed_method,
         "verbose": ctx.verbose,
         "cull_retention": ctx.cull_retention,
@@ -433,7 +439,10 @@ def assemble_fit_config(ctx: FitPipelineCtx, is_tiled: bool) -> "tuple[dict, Any
 
 
 def split_seeds_across_tiles(
-    parsed_seeds: "int | float | None", n_tiles: int
+    parsed_seeds: "int | float | None",
+    n_tiles: int,
+    *,
+    grid_tiles: "int | None" = None,
 ) -> "int | float | None":
     """Split a whole-volume ``--seeds`` budget across a tiled fit's tiles.
 
@@ -442,15 +451,16 @@ def split_seeds_across_tiles(
     value to EVERY tile, so an undivided integer budget realizes roughly
     ``K x n_tiles`` splats (issue #1556: ``--seeds 256000`` on a volume
     auto-tiled into 21 tiles produced 2.4M splats). An integer ``--seeds K`` is
-    therefore a whole-volume budget: each of ``n_tiles`` tiles is seeded with
-    ``ceil(K / n_tiles)``, so the budget is divided across the tiles instead of
-    being multiplied by them.
+    therefore a whole-volume budget: each of ``n_tiles`` non-empty tiles is
+    seeded with ``ceil(K / n_tiles)``, so the budget is divided across the
+    tiles instead of being multiplied by them.
 
     ``ceil`` itself guarantees at least one seed per tile for any positive K, so
-    ``0 < K < n_tiles`` gives 1 per tile and realizes ``n_tiles``, not ``K``. It
-    is not an exact count in the other direction either: tiles that window to
-    near-zero signal are skipped by the fitter, so a sparse volume realizes
-    ``K x (non-empty tiles / all tiles)``.
+    ``0 < K < n_tiles`` gives 1 per tile and realizes ``n_tiles``, not ``K``.
+    Empty tiles are excluded from the divisor using the fitter's
+    floor-subtracted, Hann-windowed predicate. The scan deliberately does not
+    replay optional per-tile denoising, so denoising can still skip a tile that
+    the budget scan counted.
 
     A **non-positive** K is returned UNCHANGED: it is invalid input, and the
     fitter rejects it with "seeds as int must be positive" exactly as it does on
@@ -461,22 +471,59 @@ def split_seeds_across_tiles(
     UNCHANGED. A ratio is a fraction of the voxels it is applied to, so it is
     already scale-free — per tile it means exactly the density it means
     whole-volume — and must never be divided by the tile count. ``None``
-    (auto) is likewise unchanged, as is any ``n_tiles <= 1`` (a single tile
-    already IS the whole volume, so there is nothing to split).
+    (auto) is likewise unchanged. A non-positive ``n_tiles`` is a defensive
+    no-op. When one non-empty tile survives a larger grid, K is unchanged but
+    the sparse-grid divisor is still announced.
     """
     if not isinstance(parsed_seeds, int) or isinstance(parsed_seeds, bool):
         return parsed_seeds
-    if n_tiles <= 1 or parsed_seeds <= 0:
+    if n_tiles <= 0 or parsed_seeds <= 0:
         return parsed_seeds
     # Integer ceiling division (not math.ceil on a quotient): a budget is an
     # arbitrary-precision Python int, and going through a float would round
     # wrong above 2**53 (and raise OverflowError on an absurdly large one).
+    per_tile = parsed_seeds if n_tiles == 1 else -(-parsed_seeds // n_tiles)
+    if n_tiles > 1 or (grid_tiles is not None and grid_tiles > n_tiles):
+        tile_label = "tile" if n_tiles == 1 else "tiles"
+        aprint(
+            f"Seeds: {parsed_seeds:,} whole-volume budget -> {per_tile:,} per tile "
+            f"across {n_tiles} non-empty {tile_label}"
+            + (
+                f" ({grid_tiles} grid tiles)"
+                if grid_tiles is not None and grid_tiles != n_tiles
+                else ""
+            )
+        )
+    return per_tile
+
+
+def announce_seed_split_lower_bound(
+    parsed_seeds: "int | float | None", n_tiles: int
+) -> None:
+    """Announce the conservative split when plan time cannot inspect content."""
+    if (
+        not isinstance(parsed_seeds, int)
+        or isinstance(parsed_seeds, bool)
+        or parsed_seeds <= 0
+        or n_tiles <= 1
+    ):
+        return
     per_tile = -(-parsed_seeds // n_tiles)
     aprint(
-        f"Seeds: {parsed_seeds:,} whole-volume budget -> {per_tile:,} per tile "
-        f"across {n_tiles} tiles"
+        f"Seeds: {parsed_seeds:,} whole-volume budget -> at least "
+        f"{per_tile:,} per non-empty tile across {n_tiles} grid tiles "
+        "(each worker resolves the exact non-empty count)"
     )
-    return per_tile
+
+
+def _needs_nonempty_tile_scan(parsed_seeds: "int | float | None", n_tiles: int) -> bool:
+    """Whether an integer budget will actually be divided across this grid."""
+    return (
+        isinstance(parsed_seeds, int)
+        and not isinstance(parsed_seeds, bool)
+        and parsed_seeds > 0
+        and n_tiles > 1
+    )
 
 
 def reject_rescaled_volume_refit(
@@ -557,14 +604,15 @@ def dispatch_parallel_tiled(
 ) -> bool:
     """Parallel tiled fitting: spawn one subprocess per tile.
 
-    Branches BEFORE the in-memory downscale in the command body — the parent
-    skips the in-memory downscale (it only needs the shape to compute the
-    grid); each worker re-invokes ``fit --tile i/M``, loading and downscaling
-    its own region and rescaling back to original coords, then we reload +
-    merge. (The parent still holds the loaded volume — only its shape is used
-    here.) When ``--jobs`` resolves to 1 (e.g. ``-j auto`` on a CPU/MPS box,
-    or an explicit ``-j 0/1``), falls through to the in-process sequential
-    path instead of spawning a subprocess.
+    Branches BEFORE the in-memory downscale in the command body. Each worker
+    re-invokes ``fit --tile i/M``, loading and downscaling the whole grid before
+    selecting its tile and rescaling the fitted splats to original coordinates;
+    the parent then reloads and merges the outputs. Once concurrency is confirmed,
+    the parent also decimates one matching reference for whole-merge quality
+    scoring. When ``--jobs``
+    resolves to 1 (e.g. ``-j auto`` on a CPU/MPS box, or an explicit ``-j
+    0/1``), it falls through without materializing that reference so the
+    in-process sequential path performs the downscale only once.
 
     Returns ``True`` when the parallel path ran to completion (the caller
     raises ``typer.Exit(0)``); ``False`` when the run should fall through to
@@ -574,18 +622,20 @@ def dispatch_parallel_tiled(
     if not (tiled and ctx.tile is None and ctx.jobs != "1"):
         return False
 
+    import numpy as np
+
     from luxar.gsplats.fit_tiled_parallel import (
         build_worker_cmd,
         fit_tiled_parallel,
         luxar_argv0,
         resolve_jobs,
     )
-    from luxar.gsplats.fitting.downscale import normalize_downscale
+    from luxar.gsplats.fitting.downscale import downscale_volume, normalize_downscale
     from luxar.gsplats.tiling import compute_tile_specs, resolve_grid_scale
 
-    # Compute the tile grid on the POST-downscale shape (shape math
-    # only — decimation is volume[::f]) so the parent and workers
-    # agree on the tile count M.
+    # Compute the tile grid on the POST-downscale shape without materializing
+    # the decimated reference yet, so a one-job fallback does not downscale the
+    # volume twice. Decimation is volume[::f], so shape math is exact here.
     ds_factors = (
         normalize_downscale(effective_downscale, volume.ndim)
         if effective_downscale is not None
@@ -597,7 +647,6 @@ def dispatch_parallel_tiled(
         )
     else:
         grid_shape = tuple(volume.shape)
-
     specs = compute_tile_specs(grid_shape, ctx.tile_size, ctx.tile_overlap)
     n_tiles = len(specs)
     tile_voxels = max((int(math.prod(s.shape)) for s in specs), default=1)
@@ -617,20 +666,26 @@ def dispatch_parallel_tiled(
     # Otherwise (n_jobs == 1) fall through to the sequential tiled
     # path below — no subprocess overhead for a single worker.
     if n_jobs > 1:
+        reference_volume = (
+            np.ascontiguousarray(downscale_volume(volume, ds_factors))
+            if ds_factors is not None
+            else volume
+        )
         aprint(
             f"Parallel tiled fitting: {n_tiles} tiles, grid={grid_shape}, "
             f"{n_jobs} concurrent worker(s)"
         )
-        # Announce the seed split HERE, in the parent. Each worker splits the
-        # budget itself (and prints this same notice), but workers run under
+        # Announce a conservative seed split HERE, in the parent. Each worker
+        # resolves the exact non-empty count itself, but workers run under
         # subprocess.run(capture_output=True), so on success their stdout is
         # discarded and the user would only ever see the parent's undivided
-        # "Seeds: K" line. The return value is deliberately DROPPED — applying
-        # it here as well would double-divide, since the raw whole-volume
-        # count is what gets forwarded to the workers below.
+        # "Seeds: K" line. The raw whole-volume count is still forwarded below;
+        # dividing it here as well would double-divide in each worker.
         from luxar.cli.gsplat_config import parse_seeds
 
-        split_seeds_across_tiles(parse_seeds(ctx.seeds), n_tiles)
+        parent_seeds = parse_seeds(ctx.seeds)
+        if _needs_nonempty_tile_scan(parent_seeds, n_tiles):
+            announce_seed_split_lower_bound(parent_seeds, n_tiles)
 
         # Format downscale for worker argv (scalar or per-axis).
         ds_arg: Optional[str] = None
@@ -671,6 +726,7 @@ def dispatch_parallel_tiled(
                 # above the volume's max windows every tile to zero, warned about
                 # per tile rather than silently ignored as it once was.
                 floor=ctx.floor,
+                norm_range=ctx.norm_range,
                 seed_method=ctx.seed_method,
                 downscale=ds_arg,
                 channel=ctx.channel,
@@ -737,6 +793,8 @@ def dispatch_parallel_tiled(
                     [int(s) for s in volume.shape] if ds_factors is not None else None
                 ),
                 source_dtype=fit_config.get("source_dtype"),
+                volume=reference_volume,
+                device=ctx.device,
             )
 
         with asection(f"Saving to {ctx.output_path.name}"):
@@ -781,6 +839,126 @@ def floor_spec_needs_volume(floor_spec: "str | float | None") -> bool:
         return False
     f = floor_spec.strip().lower()
     return f == "auto" or f.startswith("p")
+
+
+def _calibration_floor_level(cal: "Path") -> "Optional[float]":
+    """The CONCRETE level a ``cal.json`` records having subtracted, if any.
+
+    ``None`` means "this calibration has nothing usable to say" and covers five
+    cases deliberately treated alike: the file is unreadable, it predates the
+    stamp, it records ``null``, it records something that is not a number at all
+    (a hand-edited ``floor_subtracted: "auto"``), or it records a non-finite one
+    (``json`` round-trips ``NaN``/``Infinity`` happily, while ``--floor`` refuses
+    them — so forwarding one would abort the fit with an error about a flag the
+    user never passed).
+
+    A recorded ``null`` is NOT adopted as ``--floor none``. ``cal`` writes it
+    both when the user asked for ``none`` and when its own too-high guard
+    REFUSED the level (see ``gsplats/calibration/driver.py``), and the file
+    cannot distinguish the two — so honouring it would silently disable the
+    ``auto`` default on the strength of a guard that fired. A malformed file is
+    not diagnosed here either: the density resolver opens the same path and
+    reports it properly.
+    """
+    from luxar.gsplats.calibration import CalibrationResult
+
+    try:
+        fit_config = CalibrationResult.from_json(cal).fit_config or {}
+        level = fit_config.get("floor_subtracted")
+        if level is None:
+            return None
+        # float() inside the try on purpose: a hand-edited "auto" would
+        # otherwise raise a bare ValueError out of a helper whose whole contract
+        # is to say nothing when it has nothing to say.
+        value = float(level)
+        return value if math.isfinite(value) else None
+    except Exception:
+        return None
+
+
+def _config_pins_floor(config: "Optional[Path]") -> bool:
+    """Whether a YAML ``--config`` states a ``floor:`` of its own."""
+    if config is None:
+        return False
+    from luxar.cli.gsplat_config import _load_yaml_config
+
+    return "floor" in _load_yaml_config(config)
+
+
+def resolve_floor_with_calibration(
+    cal: "Optional[Path]",
+    floor: "Optional[str]",
+    config: "Optional[Path]",
+    *,
+    tiling: str,
+    verbose: bool = True,
+) -> "Optional[str]":
+    """The ``--floor`` spec to fit with, adopting a ``--cal``'s level (#1175).
+
+    ``gsplat cal`` subtracts a floor ONCE up front and measures the density's
+    ``feature_threshold`` on that floor-suppressed volume, recording the level
+    it used in ``fit_config.floor_subtracted``. Nothing consumed it: a
+    ``fit --tiling content --cal cal.json`` re-derived its own floor, so a
+    ``cal --floor p20`` was followed by a fit that scanned and fitted at
+    ``auto`` — the density's threshold and the volume it is applied to on two
+    different scales.
+
+    ``tiling`` is the RESOLVED decomposition, and anything but ``content`` is a
+    no-op: that is the one mode which honours ``--cal`` at all, and it is
+    required rather than defaulted, because the permissive value is the one
+    that CHANGES the fit — a caller who forgot it would adopt the calibration
+    floor under a decomposition that ignores everything else about the cal. And
+    :func:`warn_ignored_density_flags` announces the flag as ignored under every
+    other one. Silently changing the floor from a flag the CLI has just called
+    ignored would be the command contradicting itself.
+
+    Only fills a gap, never overrides. ``--floor`` is a Typer option whose
+    default is ``None`` (NOT ``"auto"`` — the "unset" state is representable),
+    so an explicit ``--floor auto`` still means the user asked for auto and
+    wins; a ``floor:`` in a YAML ``--config`` wins too. No preset sets a floor,
+    so a preset can never shadow this.
+
+    Only a CONCRETE non-negative level is adopted — see
+    :func:`_calibration_floor_level` for why a recorded ``null`` is silence
+    rather than ``"none"``. A NEGATIVE recorded level (dark-frame-corrected
+    data) is declined out loud: ``--floor`` cannot express it, and forwarding
+    one would abort the fit.
+
+    NOTE the adopted level is ABSOLUTE, in the volume's own units. Reusing one
+    ``cal.json`` across a timelapse therefore applies timepoint 0's pedestal to
+    every timepoint, where the ``auto`` default re-estimates per volume — which
+    is the point when the pedestal is an instrument offset, and wrong when it
+    drifts. Pass ``--floor auto`` to opt back out.
+
+    Returns ``floor`` unchanged whenever the calibration has nothing to add.
+    """
+    if (
+        tiling != "content"
+        or cal is None
+        or floor is not None
+        or _config_pins_floor(config)
+    ):
+        return floor
+    level = _calibration_floor_level(cal)
+    if level is None:
+        return floor
+    if level < 0.0:
+        if verbose:
+            aprint(
+                f"⚠ {cal.name} recorded a negative floor ({level:.6g}); "
+                "--floor cannot express it, so this fit resolves its own."
+            )
+        return floor
+    spec = repr(level)
+    if verbose:
+        aprint(
+            f"Floor from calibration: --floor {spec} (recorded by {cal.name} as "
+            "floor_subtracted; its density was calibrated on that scale). "
+            "The level is absolute, so re-calibrate rather than reusing this "
+            "cal.json on a volume with a different pedestal. Pass --floor "
+            "explicitly to override."
+        )
+    return spec
 
 
 def resolve_shared_floor(
@@ -942,7 +1120,7 @@ def fit_single_tile(
     ctx: FitPipelineCtx, volume: "Any", fit_config: dict, parsed_seeds: "Any"
 ) -> "Any":
     """Single-tile mode (Slurm-ready): fit tile ``--tile N/M`` of the grid."""
-    from luxar.gsplats.fit_tiled_gsplats import fit_tile
+    from luxar.gsplats.fit_tiled_gsplats import count_nonempty_tiles, fit_tile
     from luxar.gsplats.tiling import compute_tile_specs
 
     assert ctx.tile is not None
@@ -966,11 +1144,6 @@ def fit_single_tile(
     if tile_idx < 0 or tile_idx >= len(specs):
         aprint(f"Error: tile index {tile_idx} out of range [0, {len(specs)})")
         raise typer.Exit(1)
-
-    # An integer --seeds is a WHOLE-VOLUME budget (what `gsplat cal` reports),
-    # so this worker only gets its share of it. Split against the ACTUAL grid
-    # count, matching the tile the worker is about to fit.
-    tile_seeds = split_seeds_across_tiles(parsed_seeds, len(specs))
 
     # Extract params that are explicit in fit_tile to avoid
     # "got multiple values" conflicts with **fit_config
@@ -1010,12 +1183,14 @@ def fit_single_tile(
     from luxar.gsplats.fitting.validation import _validate_floor
 
     floor_spec = fit_config.get("floor", "auto")
+    probe_cache = fit_config.setdefault("_denoise_probe_cache", {})
     _validate_floor(floor_spec)
     resolved_floor = resolve_volume_floor_denoised(
         volume,
         floor_spec,
         denoise_h=fit_config.get("_denoise_h"),
         denoise_params=fit_config.get("_denoise_params"),
+        probe_cache=probe_cache,
         guard_numeric=False,
         # Log the raw level and the measured denoise shift — but ONLY where
         # denoising made this a new resolution to report. With `--denoise` off
@@ -1037,6 +1212,16 @@ def fit_single_tile(
             what=_tile_worker_label(ctx, tile_idx, len(specs)),
         )
     fit_config["floor"] = resolved_floor if resolved_floor is not None else "none"
+
+    # Every independent worker scans the same volume, grid and resolved floor,
+    # so all of them derive one identical divisor without parent-only state.
+    if _needs_nonempty_tile_scan(parsed_seeds, len(specs)):
+        nonempty_tiles = count_nonempty_tiles(volume, specs, resolved_floor)
+        tile_seeds = split_seeds_across_tiles(
+            parsed_seeds, nonempty_tiles, grid_tiles=len(specs)
+        )
+    else:
+        tile_seeds = split_seeds_across_tiles(parsed_seeds, len(specs))
 
     with asection(
         f"Fitting tile {tile_idx}/{len(specs)} grid={specs[tile_idx].grid_index}"
@@ -1064,17 +1249,40 @@ def fit_sequential_tiled(
     recipe_params: "Any",
 ) -> "Any":
     """Full (in-process, sequential) tiled fitting."""
-    from luxar.gsplats.fit_tiled_gsplats import fit_tiled
+    from luxar.gsplats.fit_tiled_gsplats import count_nonempty_tiles, fit_tiled
+    from luxar.gsplats.fitting.preprocessing import resolve_volume_floor_denoised
+    from luxar.gsplats.fitting.validation import _validate_floor
     from luxar.gsplats.tiling import compute_tile_specs
 
     # An integer --seeds is a WHOLE-VOLUME budget (what `gsplat cal` reports);
     # fit_tiled hands its `seeds` to EVERY tile, so split it across the grid
     # first. ``volume`` is already downscaled when --downscale is in play,
     # which is exactly the grid fit_tiled will build below.
-    tile_seeds = split_seeds_across_tiles(
-        parsed_seeds,
-        len(compute_tile_specs(volume.shape, ctx.tile_size, ctx.tile_overlap)),
-    )
+    specs = compute_tile_specs(volume.shape, ctx.tile_size, ctx.tile_overlap)
+    floor_spec = fit_config.get("floor", "auto")
+    probe_cache = fit_config.setdefault("_denoise_probe_cache", {})
+    _validate_floor(floor_spec)
+    if _needs_nonempty_tile_scan(parsed_seeds, len(specs)):
+        resolved_floor = resolve_volume_floor_denoised(
+            volume,
+            floor_spec,
+            denoise_h=fit_config.get("_denoise_h"),
+            denoise_params=fit_config.get("_denoise_params"),
+            probe_cache=probe_cache,
+            guard_numeric=True,
+            verbose=bool(fit_config.get("verbose", True))
+            and floor_spec_needs_volume(floor_spec)
+            and fit_config.get("_denoise_h") is not None
+            and fit_config.get("_denoise_params") is not None,
+        )
+        nonempty_tiles = count_nonempty_tiles(volume, specs, resolved_floor)
+        tile_seeds = split_seeds_across_tiles(
+            parsed_seeds, nonempty_tiles, grid_tiles=len(specs)
+        )
+        fit_config["floor"] = resolved_floor if resolved_floor is not None else "none"
+        fit_config["_floor_resolved"] = True
+    else:
+        tile_seeds = split_seeds_across_tiles(parsed_seeds, len(specs))
 
     # Extract params that are explicit in fit_tiled to avoid
     # "got multiple values" conflicts with **fit_config
@@ -1273,9 +1481,20 @@ def save_fit_output(
         result.save(output_path, compress=compress)
         n = int(result.n_splats)
     else:  # a partition / tree node has no flat-matrix equivalent
-        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.io.save_gsplats import split_fitting_info, write_gsplats_tree
 
-        write_gsplats_tree(output_path, result, compress=compress)
+        fitting, config, provenance, pipeline = split_fitting_info(
+            result.meta.get("fit_stats", {}), include_fitting_info=True
+        )
+        write_gsplats_tree(
+            output_path,
+            result,
+            compress=compress,
+            fitting_info=fitting,
+            fitting_config=config,
+            provenance_info=provenance,
+            pipeline_info=pipeline,
+        )
         n = int(getattr(result, "n_splats", 0))
     if verbose:
         aprint(f"Saved {n:,} splats")

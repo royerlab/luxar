@@ -8,6 +8,48 @@ from typing import Optional
 
 from luxar.gsplats.batch.fit_command import iter_fit_arg_flags
 from luxar.gsplats.batch.manifest import BatchManifest
+from luxar.io.ome_zarr import classify_axis_labels
+
+
+def _preprocessed_axes(manifest: BatchManifest) -> Optional[str]:
+    """Return explicit axes for the canonical preprocessed store."""
+    if manifest.axes is None:
+        spatial_rank = len(manifest.spatial_shape)
+        if spatial_rank < 2:
+            return None
+        spatial_axes = ["z"] * (spatial_rank - 2) + ["y", "x"]
+        return ",".join(["t", "c", *spatial_axes])
+    source_axes = [label.strip() for label in manifest.axes.split(",")]
+    _, _, spatial_indices = classify_axis_labels(source_axes)
+    spatial_axes = [source_axes[index] for index in spatial_indices]
+    return ",".join(["t", "c", *spatial_axes])
+
+
+def _retarget_preprocessed_fit_command(
+    fit_cmd_parts: list[str], manifest: BatchManifest, denoised_zarr_path: str
+) -> None:
+    """Retarget a fit command from the source to the canonical denoised store."""
+    fit_cmd_parts[0] = (
+        f'luxar gsplat fit {shlex.quote(denoised_zarr_path)} "${{STAGING}}"'
+    )
+    canonical_axes = _preprocessed_axes(manifest)
+    axes_replaced = False
+    array_key_replaced = False
+    for index, part in enumerate(fit_cmd_parts):
+        if canonical_axes is not None and part.strip().startswith("--axes "):
+            fit_cmd_parts[index] = f"    --axes {shlex.quote(canonical_axes)}"
+            axes_replaced = True
+        elif part.strip().startswith("--array-key "):
+            fit_cmd_parts[index] = "    --array-key data"
+            array_key_replaced = True
+        elif part.strip() == "--channel $C":
+            fit_cmd_parts[index] = "    --channel $C_IDX"
+        elif part.strip() == "--timepoint $T":
+            fit_cmd_parts[index] = "    --timepoint $T_IDX"
+    if canonical_axes is not None and not axes_replaced:
+        fit_cmd_parts.append(f"    --axes {shlex.quote(canonical_axes)}")
+    if not array_key_replaced:
+        fit_cmd_parts.append("    --array-key data")
 
 
 def _validated_output_dir(output_dir: str) -> str:
@@ -35,6 +77,51 @@ def _slurm_log_path(output_dir: str, log_name: str) -> str:
     ``log_name`` is appended verbatim, keeping its intentional ``%a``.
     """
     return shlex.quote(f"{output_dir.replace('%', '%%')}/logs/{log_name}")
+
+
+def _runtime_denoise_floor_lines(manifest: BatchManifest, output_dir: str) -> list[str]:
+    """Bash lines that load deferred denoise/floor values without hiding errors."""
+    lines: list[str] = []
+    if (
+        manifest.denoise
+        and manifest.denoise_mode == "on-the-fly"
+        and manifest.denoise_h is None
+    ):
+        h_json_path = shlex.quote(f"{output_dir}/denoise_h_values.json")
+        lines.extend(
+            [
+                f"    local H_JSON={h_json_path}",
+                "    local DENOISE_H",
+                '    if ! DENOISE_H=$(python3 -c "import json,sys; '
+                "d=json.load(open(sys.argv[1])); "
+                'print(d.get(str(int(sys.argv[2])), 0.04))" "$H_JSON" "$C"); then',
+                '        echo "Failed to read denoise h from $H_JSON" >&2',
+                "        return 1",
+                "    fi",
+                '    if [ -z "$DENOISE_H" ]; then',
+                '        echo "Empty denoise h in $H_JSON" >&2',
+                "        return 1",
+                "    fi",
+            ]
+        )
+    if manifest.floor_deferred:
+        floor_json_path = shlex.quote(f"{output_dir}/floor_level.json")
+        lines.extend(
+            [
+                f"    local FLOOR_JSON={floor_json_path}",
+                "    local FLOOR_LEVEL",
+                '    if ! FLOOR_LEVEL=$(python3 -c "import json,sys; '
+                'print(json.load(open(sys.argv[1]))[\'forward\'])" "$FLOOR_JSON"); then',
+                '        echo "Failed to read floor level from $FLOOR_JSON" >&2',
+                "        return 1",
+                "    fi",
+                '    if [ -z "$FLOOR_LEVEL" ]; then',
+                '        echo "Empty floor level in $FLOOR_JSON" >&2',
+                "        return 1",
+                "    fi",
+            ]
+        )
+    return lines
 
 
 def generate_fit_sbatch(
@@ -185,6 +272,8 @@ def generate_fit_sbatch(
             fit_cmd_parts.append(f"    {flag}")  # boolean flag
         else:
             fit_cmd_parts.append(f"    {flag} {shlex.quote(value)}")
+    if manifest.floor_deferred:
+        fit_cmd_parts.append('    --floor "$FLOOR_LEVEL"')
     if manifest.axes:
         # Forward the explicit axis order so each task loads the same shape the
         # planner discovered (else the positional heuristic can mis-order axes).
@@ -197,7 +286,7 @@ def generate_fit_sbatch(
     ):
         # The calibration job writes denoise_h_values.json.
         # Read per-channel h at runtime and inject --denoise-h.
-        fit_cmd_parts.append("    --denoise-h $DENOISE_H")
+        fit_cmd_parts.append('    --denoise-h "$DENOISE_H"')
 
     # For preprocess mode, override input path to denoised zarr.
     # The denoised.zarr stores volumes under "data" with shape
@@ -209,22 +298,9 @@ def generate_fit_sbatch(
         and manifest.denoise_mode == "preprocess"
         and manifest.denoised_zarr_path
     ):
-        # Replace the input path in the command
-        fit_cmd_parts[0] = (
-            f'luxar gsplat fit {shlex.quote(manifest.denoised_zarr_path)} "${{STAGING}}"'
+        _retarget_preprocessed_fit_command(
+            fit_cmd_parts, manifest, manifest.denoised_zarr_path
         )
-        # Replace or add --array-key data to point at the denoised dataset
-        array_key_replaced = False
-        for i, part in enumerate(fit_cmd_parts):
-            if part.strip().startswith("--array-key "):
-                fit_cmd_parts[i] = "    --array-key data"
-                array_key_replaced = True
-            elif part.strip() == "--channel $C":
-                fit_cmd_parts[i] = "    --channel $C_IDX"
-            elif part.strip() == "--timepoint $T":
-                fit_cmd_parts[i] = "    --timepoint $T_IDX"
-        if not array_key_replaced:
-            fit_cmd_parts.append("    --array-key data")
 
     fit_cmd = " \\\n    ".join(fit_cmd_parts)
 
@@ -300,21 +376,7 @@ def generate_fit_sbatch(
         ]
     )
 
-    # For on-the-fly denoise, read per-channel h at runtime
-    if (
-        manifest.denoise
-        and manifest.denoise_mode == "on-the-fly"
-        and manifest.denoise_h is None
-    ):
-        h_json_path = shlex.quote(f"{output_dir}/denoise_h_values.json")
-        lines.extend(
-            [
-                f"    local H_JSON={h_json_path}",
-                '    local DENOISE_H=$(python3 -c "import json,sys; '
-                "d=json.load(open(sys.argv[1])); "
-                'print(d.get(str(int(sys.argv[2])), 0.04))" "$H_JSON" "$C")',
-            ]
-        )
+    lines.extend(_runtime_denoise_floor_lines(manifest, output_dir))
 
     lines.extend(
         [
@@ -518,6 +580,42 @@ def generate_denoise_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     )
     lines.append("")
 
+    return "\n".join(lines)
+
+
+def generate_floor_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
+    """Generate the single dependent job that resolves a denoised floor."""
+    output_dir = _validated_output_dir(manifest.output_dir)
+    sampled_pairs = min(manifest.n_timepoints, 4) * min(manifest.n_channels, 4)
+    walltime_hours = (
+        max(1, sampled_pairs) if manifest.denoise_mode == "on-the-fly" else 1
+    )
+    lines = [
+        "#!/bin/bash",
+        "#SBATCH --job-name=luxar-floor",
+        f"#SBATCH --partition={manifest.slurm_partition}",
+        "#SBATCH --ntasks=1",
+        "#SBATCH --cpus-per-task=4",
+        f"#SBATCH --mem={max(manifest.slurm_mem_gb, 32)}G",
+        f"#SBATCH --time={walltime_hours:02d}:00:00",
+        f"#SBATCH --output={_slurm_log_path(output_dir, 'floor.out')}",
+        f"#SBATCH --error={_slurm_log_path(output_dir, 'floor.err')}",
+    ]
+    if manifest.denoise_mode == "on-the-fly":
+        lines.append("#SBATCH --gpus-per-task=1")
+    if manifest.slurm_account:
+        lines.append(f"#SBATCH --account={manifest.slurm_account}")
+    if manifest.slurm_qos:
+        lines.append(f"#SBATCH --qos={manifest.slurm_qos}")
+    lines.extend(
+        [
+            "",
+            env_preamble,
+            "",
+            f"luxar gsplat batch-fit resolve-floor {shlex.quote(output_dir)}",
+            "",
+        ]
+    )
     return "\n".join(lines)
 
 

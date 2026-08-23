@@ -27,6 +27,13 @@ authority at every step — a copy that fails it is quarantined, never returned:
 :class:`LocalComputeDataset`, signalling the caller to run its own
 fetch-raw-and-build path (these are the datasets we cannot redistribute, plus the
 cheap CPU-rebuild ones).
+
+A demo that builds its own stand-in for a hosted file (a local GPU refit, when
+the record is unpublished and the git-LFS object was never pulled) must NOT store
+it at ``<dataset>/<file>``: that path belongs to the manifest, and step 1 above
+quarantines anything sitting there that fails the pinned sha256 — which a local
+fit never matches. :func:`local_fit_path` gives such an artifact its own
+namespace, ``<dataset>/local/<file>``, which the fetch never looks at (#1618).
 """
 
 from __future__ import annotations
@@ -64,6 +71,28 @@ _LOCAL_BUCKETS = {"local-compute", "regenerate"}
 
 class DatasetNotFound(KeyError):
     """The dataset name is not present in the manifest."""
+
+
+class DatasetUnavailable(FileNotFoundError):
+    """A hosted dataset's bytes cannot be obtained from anywhere — yet.
+
+    The narrow, *routable* half of the ``FileNotFoundError`` surface: the
+    manifest lists no files for the entry yet (pending upload), or none of the
+    three sources holds a good copy and the record has no URL. Nothing is
+    broken; the data simply is not there, so a demo may legitimately fall back
+    to computing its own stand-in.
+
+    Every OTHER ``FileNotFoundError`` out of this module is a fault a demo must
+    NOT route around — an unknown file name requested of
+    :func:`load_dataset_gsplats`, a dataset that lists no gsplat file at all, a
+    missing packaged manifest (broken install), an in-repo copy that fails its
+    pinned sha256 with no hosted fallback. Those stay plain
+    ``FileNotFoundError``, so ``except DatasetUnavailable`` lets them through
+    instead of disguising them as a routine multi-minute refit.
+
+    Subclasses ``FileNotFoundError``, so a caller that does not care about the
+    distinction keeps working.
+    """
 
 
 class LocalComputeDataset(RuntimeError):
@@ -231,7 +260,12 @@ def ensure_dataset(
     Raises:
         DatasetNotFound: unknown dataset.
         LocalComputeDataset: dataset is local-compute/regenerate (or recompute=True).
-        FileNotFoundError: data is neither cached, in-repo, nor hosted yet.
+        DatasetUnavailable: data is neither cached, in-repo, nor hosted yet — the
+            one condition a caller may route around by building its own copy.
+        FileNotFoundError: a fault, not an absence — a missing packaged manifest,
+            or an in-repo copy that fails its sha256 with no hosted fallback.
+            :class:`DatasetUnavailable` subclasses this, so catch the subclass
+            when you mean "not there yet".
     """
     m = manifest or load_manifest()
     spec = dataset_spec(name, m)
@@ -245,7 +279,7 @@ def ensure_dataset(
     files, variant_name = resolve_variant(name, spec, variant)
     if not files:
         detail = f" variant {variant_name!r}" if variant_name else ""
-        raise FileNotFoundError(
+        raise DatasetUnavailable(
             f"Dataset {name!r}{detail} has no files listed in the manifest yet "
             "(pending upload). Nothing to fetch."
         )
@@ -389,13 +423,16 @@ def _ensure_one(
         return download_with_checksum(url, dest, expected_sha256=sha)
 
     if inrepo_is_bad:
+        # Deliberately NOT `DatasetUnavailable`: the bytes are RIGHT THERE and
+        # wrong. That is a broken checkout or a stale manifest, and a demo that
+        # swallowed it would present a repo fault as a routine refit.
         raise FileNotFoundError(
             f"{fname} is present in-repo but fails its manifest sha256, and the "
             "dataset has no Zenodo URL yet — there is no good copy to fall back "
             "to. Re-pull the LFS object, or regenerate the manifest if the data "
             "was intentionally updated."
         )
-    raise FileNotFoundError(
+    raise DatasetUnavailable(
         f"{fname} is not cached (any cached copy failed its checksum and was "
         "quarantined), not present in-repo, and the demo-data manifest builds no "
         "Zenodo URL for it yet — its record has no id, or is still an unpublished "
@@ -418,6 +455,200 @@ class _null_ctx:
     ) -> None:
         # Returning None (not False) so mypy knows exceptions are never swallowed.
         return None
+
+
+#: Subdirectory, inside a dataset's cache dir, holding artifacts the machine
+#: computed for itself rather than obtained from the manifest.
+LOCAL_FIT_DIRNAME = "local"
+
+
+def local_fit_path(
+    name: str,
+    filename: str,
+    *,
+    variant: Optional[str] = None,
+    cache_root: Optional[Path] = None,
+) -> Path:
+    """Where a demo's OWN locally computed stand-in for a hosted file belongs.
+
+    Returns ``<cache_root>/<name>/local/<filename>`` (plus the variant subdir
+    when one is given, mirroring :func:`ensure_dataset`'s layout).
+
+    The split exists because ``<name>/<filename>`` — with no ``local/`` in it —
+    is the path :func:`ensure_dataset` resolves for that manifest entry, and step
+    1 of :func:`_ensure_one` treats whatever it finds there as a candidate copy
+    of the HOSTED file: it hashes it against the manifest sha256 and QUARANTINES
+    it on a mismatch. A local fit is a different artifact that happens to answer
+    the same need, so it can never match that hash. Storing one under the hosted
+    name therefore guarantees it is destroyed by the next fetch, and the demo
+    refits from scratch on every single launch (#1618/#1672).
+
+    Nothing under ``local/`` is ever hashed, quarantined or overwritten by the
+    fetch — the cache dir is shared, the two namespaces are not.
+
+    Args:
+        name: Manifest dataset key, i.e. the cache-dir name (``"gsplats_dapi"``).
+        filename: Basename of the computed artifact. Deliberately allowed to be
+            the manifest's own file name: reusing it documents what the local
+            artifact stands in for, and is now safe.
+        variant: Size variant, for a dataset that has them; see
+            :func:`ensure_dataset`. ``None`` (every dataset that needs this
+            today) puts the file directly under ``<name>/local/``.
+        cache_root: Override the cache root (tests). Defaults to
+            ``~/.cache/luxar``.
+
+    Raises:
+        ValueError: if *variant* is ``"local"``, which is the one name that
+            would put a manifest destination and this namespace back on top of
+            each other. ``test_no_shipped_variant_is_named_local`` holds the
+            shipped manifest to it too, so the check can only fire on a hand
+            rolled call.
+    """
+    if variant == LOCAL_FIT_DIRNAME:
+        raise ValueError(
+            f"A variant named {LOCAL_FIT_DIRNAME!r} would collide with the "
+            "local-fit namespace: ensure_dataset caches a variant's files at "
+            f"<name>/<variant>/<file>, i.e. <name>/{LOCAL_FIT_DIRNAME}/<file> "
+            "— the very directory this namespace exists to keep out of its "
+            "reach. Rename the variant."
+        )
+    root = Path(cache_root) if cache_root else _DEFAULT_CACHE_ROOT
+    parts = [p for p in (name, variant, LOCAL_FIT_DIRNAME) if p]
+    return root.joinpath(*parts, filename)
+
+
+def load_local_fit_gsplats(
+    name: str,
+    file_names: list[str],
+    *,
+    variant: Optional[str] = None,
+    cache_root: Optional[Path] = None,
+    verbose: bool = True,
+) -> Optional[list[Any]]:
+    """Load a previous run's own local fit, or ``None`` if the caller must build it.
+
+    Same return contract as :func:`load_dataset_gsplats` — a list of
+    ``GSplatData`` in the requested order, or ``None`` meaning "build it
+    yourself" — but it reads the :func:`local_fit_path` namespace instead of the
+    manifest. A demo consults it AFTER the manifest fetch comes up empty and
+    BEFORE it refits, which is what makes the "one-time" refit actually one-time.
+
+    ``None`` is returned when any requested file is missing (a partial set is not
+    a usable answer: the caller refits, and the fit rewrites all of them), and
+    also when one of them fails to load.
+
+    A broken local file does NOT raise. Unlike the manifest cache, these bytes
+    have no checksum, no remote to re-fetch from and no second copy — the only
+    recovery is the refit the caller is already able to do, so raising would
+    strand a demo on rubble it can heal itself. It is reported loudly (⚠️, with
+    the path and the error) rather than silently: a fit that keeps re-running is
+    the bug this whole namespace exists to fix, so a machine that has quietly
+    started refitting every launch must be able to see why. The bad file is left
+    in place for inspection; the refit overwrites it.
+
+    The ONE exception is a store that is structurally unloadable — a
+    ``kind=partition`` / non-leaf lod tree, which has no flat ``GSplatData``
+    form at all. See :func:`load_local_fit_gsplats_at`.
+
+    An empty ``file_names`` raises: ``[]`` is neither a loaded set nor "rebuild
+    it", and returning it would break the ``if fits is not None: fits[0]`` shape
+    every caller uses.
+    """
+    paths = [
+        local_fit_path(name, f, variant=variant, cache_root=cache_root)
+        for f in file_names
+    ]
+    return load_local_fit_gsplats_at(paths, label=name, verbose=verbose)
+
+
+#: Reported when a local fit is present but unreadable — corrupt bytes, a
+#: truncated zip, a half-written store. The refit is the recovery.
+_LOCAL_FIT_UNREADABLE = (
+    "⚠️  Local fit {path} could not be loaded ({exc}). Rebuilding it from "
+    "scratch; delete the file if the rebuild keeps happening."
+)
+
+
+def load_local_fit_gsplats_at(
+    paths: list[Path],
+    *,
+    label: str = "local fit",
+    verbose: bool = True,
+) -> Optional[list[Any]]:
+    """:func:`load_local_fit_gsplats` for paths the caller already holds.
+
+    The name-based form re-derives its paths from the cache root, which is the
+    right default but is NOT the same object as a demo's module-level
+    ``LOCAL_FIT`` constant. A demo that publishes such a constant — and writes
+    its refit through it — must READ through it too, or the two halves of its
+    local door can be pointed at different files (a redirected constant that the
+    read side silently ignores; #1618 review finding A). Those demos call this.
+
+    Args:
+        paths: The artifacts to load, in the order they should be returned.
+        label: What to call this set in log output (usually the dataset name).
+        verbose: Print progress.
+
+    Returns:
+        ``list[GSplatData]``, or ``None`` when the caller should rebuild.
+
+    Raises:
+        ValueError: *paths* is empty, or the store is multi-part
+            (``kind=partition`` or a lod group with non-leaf children) and
+            therefore has no flat ``GSplatData`` form. The latter is
+            deliberately NOT swallowed into a rebuild: the rebuild would write
+            the same unloadable shape, so the caller would refit on every launch
+            — exactly the #1618 symptom this namespace exists to end. It is a
+            recipe/loader mismatch in the demo, and only a code change fixes it.
+            :func:`load_dataset_gsplats` translates the same error.
+    """
+    from ..gsplats.gsplat_data import GSplatData
+
+    if not paths:
+        # `[]` would otherwise sail through as a successful load of nothing, and
+        # the contract here is "a list, or None meaning rebuild" — a caller that
+        # tested `is not None` and indexed [0] would get an IndexError instead
+        # of taking its rebuild branch.
+        raise ValueError(
+            f"load_local_fit_gsplats_at({label!r}) was given no paths; asking for "
+            "zero artifacts is a caller bug, not an empty local fit."
+        )
+
+    missing = [p for p in paths if not p.exists()]
+    if missing:
+        if verbose and len(missing) < len(paths):
+            aprint(
+                f"Local fit for {label!r} is incomplete "
+                f"({len(paths) - len(missing)}/{len(paths)} files) — rebuilding."
+            )
+        return None
+
+    results: list[Any] = []
+    with asection(f"Loading local fit ({label})") if verbose else _null_ctx():
+        for path in paths:
+            try:
+                gsplats = GSplatData.load(path, include_stats=False)
+            except ValueError as exc:
+                if "matrix-shaped" not in str(exc):
+                    aprint(_LOCAL_FIT_UNREADABLE.format(path=path, exc=repr(exc)))
+                    return None
+                raise ValueError(
+                    f"{path} is a multi-part gsplats store (a partition, or a lod "
+                    "group with non-leaf children), which has no flat GSplatData "
+                    f"form and cannot be loaded by this helper: {exc}\n"
+                    "Rebuilding it would write the same shape again and refit on "
+                    "EVERY launch, so this is raised rather than routed around. "
+                    "Either save the local fit with a flat recipe, or keep the "
+                    "PATHS and hand them to Group.add_gsplats_from_file(), which "
+                    "grafts a multi-part subtree whole."
+                ) from exc
+            except Exception as exc:  # noqa: BLE001 — see the docstring
+                aprint(_LOCAL_FIT_UNREADABLE.format(path=path, exc=repr(exc)))
+                return None
+            if verbose:
+                aprint(f"Loaded {path.name}: {len(gsplats.amplitudes):,} splats")
+            results.append(gsplats)
+    return results
 
 
 #: Suffixes the gsplat loader understands. A dataset may legitimately carry
@@ -452,9 +683,11 @@ def load_dataset_gsplats(
       manifest's reason/strategy is printed and the caller's existing
       "fit from scratch" branch takes over.
 
-    Everything else raises — an unknown dataset, an unknown variant, a file that
-    is neither cached nor in-repo nor hosted, a checksum that will not verify.
-    Those are faults a demo must not silently route around.
+    :class:`DatasetUnavailable` is the one routable absence: the data is neither
+    cached, in-repo, nor hosted yet, so the caller may build its own copy.
+    Everything else raises — an unknown dataset, an unknown variant, or a
+    checksum that will not verify. Those are faults a demo must not silently
+    route around.
 
     Args:
         name: Manifest dataset key (e.g. ``"gsplats_kidney"``).
@@ -492,10 +725,10 @@ def load_dataset_gsplats(
           ``gsplats_acto3d_heart``, ``gsplats_tng_cosmic_web`` and
           ``milky_way_gaia_3m`` are marked ``local-compute`` and no longer ship
           files in-repo, so this returns ``None`` for them and the demo takes its
-          own build path: a GPU refit for the three gsplat ones, and for Gaia a
-          hand-run ``scripts/generate_galaxy_simple.py`` rebuild (or a copy the
-          user already placed in the cache). Migrate a demo only once its dataset
-          is ``zenodo``.
+          own build path: a GPU refit for the three gsplat ones, and for Gaia an
+          opt-in ``--build-catalog`` query of the ESA archive (or a copy the user
+          already placed in the cache). Migrate a demo only once its dataset is
+          ``zenodo``.
     """
     if recompute:
         return None

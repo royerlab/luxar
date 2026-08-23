@@ -13,13 +13,25 @@ import { loadScene } from '../data';
 import type { LoaderConfig } from '../data/data-loader-types';
 import { notifier } from '../utils/cross-layer/notifier';
 import { config } from '../config';
-import { extractCameraOverrides } from '../config/zarr-bridge/viewer-config-utils';
+import {
+  extractCameraOverrides,
+  extractRenderingOverrides,
+} from '../config/zarr-bridge/viewer-config-utils';
 import type { ZarrViewerConfig } from '../types/zarr';
 import type { PostProcessingManager } from '../rendering/post-processing/post-processing-manager';
 import { materialManager } from '../rendering';
 import { loadTslMaterials } from '../rendering/tsl/load';
 import { disposeColormapTextures } from '../rendering/colormap-textures';
-import type { Renderer, RendererCapabilities } from '../rendering/renderer-capabilities';
+import {
+  clearBlendModeProgramWarmup,
+  configureBlendModeProgramWarmup,
+  warmSceneBlendModePrograms,
+} from '../rendering/webgl-blend-warmup';
+import {
+  type Renderer,
+  type RendererCapabilities,
+  isWebGLRenderer,
+} from '../rendering/renderer-capabilities';
 import {
   BoundingBox,
   getBoundingBoxDiagonal,
@@ -77,6 +89,14 @@ import type { ControlType } from '../controls/controls-manager';
 
 /** Default scene up (world +Y) — overridden per scene by `viewer_config.up`. */
 const DEFAULT_SCENE_UP = new THREE.Vector3(0, 1, 0);
+/** Skip projection/material refreshes within the 0.5° deadband preserved from prior call sites. */
+const FOV_APPLY_DEADBAND_DEG = 0.5;
+
+/** Caller-resolved scene-load decisions that affect initial camera setup. */
+export interface SceneLoadOptions {
+  /** Apply scene FOV before auto-framing; authored positions carry it regardless. */
+  applyViewerConfigFov?: boolean;
+}
 
 /**
  * SceneManager orchestrates all Three.js components for 3D rendering
@@ -132,7 +152,7 @@ export class SceneManager extends THREE.EventDispatcher<{
    * Every method called on this field across the codebase
    * (`PostProcessingManager`, `picking-system`, `BloomChain`,
    * `FxaaPass`, UI panels) is part of the common `Renderer` surface
-   * in Three r184 — no `WebGLRenderer`-only API is used
+   * in Three r185 — no `WebGLRenderer`-only API is used
    * unconditionally. The discriminator for callers that genuinely
    * must branch is `this.capabilities.apiSurface` (see
    * `RendererCapabilities`).
@@ -257,6 +277,28 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
+   * Set an absolute perspective FOV using rendering-setting validation semantics.
+   * Invalid values fall back to the configured default rather than clamping.
+   */
+  setFov(degrees: number): boolean {
+    const fov =
+      Number.isFinite(degrees) && degrees >= config.camera.fovMin && degrees <= config.camera.fovMax
+        ? degrees
+        : config.renderingControls.defaults.fov;
+    if (Math.abs(this.currentFov - fov) <= FOV_APPLY_DEADBAND_DEG) return false;
+
+    if (isOrthographicCamera(this.camera)) {
+      this.lastPerspectiveFov = fov;
+      return true;
+    }
+
+    this.camera.fov = fov;
+    this.camera.updateProjectionMatrix();
+    this.updateMaterialsForCurrentCamera();
+    return true;
+  }
+
+  /**
    * Create a new scene manager instance.
    *
    * Sets up the EventDispatcher base class. Does not initialize Three.js
@@ -322,6 +364,8 @@ export class SceneManager extends THREE.EventDispatcher<{
    * bench. Off by default; flipped via `?perf-timestamp` URL param.
    */
   private perfTimestamp = false;
+  /** WebGL-only blend-variant warm-up (`?no-blend-warmup` disables). */
+  private blendWarmup = true;
 
   /**
    * Initialize the renderer pipeline.
@@ -354,16 +398,26 @@ export class SceneManager extends THREE.EventDispatcher<{
      * `?perf-timestamp` URL flag set by the perf bench.
      */
     perfTimestamp?: boolean;
+    /**
+     * WebGL-only blend warm-up. When true, classic `THREE.WebGLRenderer`
+     * sessions pre-compile each DISTINCT blend-mode program variant a
+     * material can reach, one compile per post-frame idle opportunity, so the first
+     * Layers-panel blend switch does not pay SwiftShader's synchronous
+     * link cost on the click path.
+     */
+    blendWarmup?: boolean;
   }): Promise<void> {
     this.canvasElement = options.canvas;
     this.debug = options.debug ?? false;
     this.rendererOverride = options.renderer;
     this.webgpuForceWebGL = options.webgpuForceWebGL ?? false;
     this.perfTimestamp = options.perfTimestamp ?? false;
+    this.blendWarmup = options.blendWarmup ?? true;
     await this.setupRenderer();
     this.setupContextLossHandling(); // Setup context loss recovery
     this.setupScene();
     this.setupCamera();
+    this.configureBlendWarmup();
     this.setupControls();
     this.setupPostProcessing();
 
@@ -452,7 +506,7 @@ export class SceneManager extends THREE.EventDispatcher<{
 
     // Fetch the TSL/WebGPU material cone before anything can ask for a
     // material. This is the ONLY place it is loaded on the production path, and
-    // the reason the default WebGL session never downloads the ~173 kB gzipped
+    // the reason the default WebGL session never downloads the ~182 kB gzipped
     // `three-webgpu` chunk (issue #1679).
     //
     // Ordering is load-bearing and already guaranteed: `init()` awaits
@@ -507,9 +561,15 @@ export class SceneManager extends THREE.EventDispatcher<{
         renderer: this.renderer as THREE.WebGLRenderer,
         getPostProcessing: () => this.postProcessing ?? null,
         updateRendererSize: () => this.resizeToCanvas(),
-        onContextRestored: () => this.dispatchEvent({ type: 'webgl-context-restored' }),
+        onContextRestored: () => {
+          this.dispatchEvent({ type: 'webgl-context-restored' });
+          void this.warmBlendModePrograms();
+        },
         triggerChange: () => this.dispatchEvent({ type: 'change' }),
-        onContextLost: () => reduceGpuByteBudgetForContextLoss(),
+        onContextLost: () => {
+          clearBlendModeProgramWarmup();
+          reduceGpuByteBudgetForContextLoss();
+        },
       });
       this.contextRecovery.attach();
       return;
@@ -551,6 +611,16 @@ export class SceneManager extends THREE.EventDispatcher<{
    */
   public isWebGLContextLost(): boolean {
     return this.contextRecovery?.getIsContextLost() ?? false;
+  }
+
+  private configureBlendWarmup(): void {
+    const renderer = isWebGLRenderer(this.renderer) ? this.renderer : null;
+    configureBlendModeProgramWarmup({
+      enabled: this.blendWarmup && this.capabilities.apiSurface === 'webgl2' && renderer !== null,
+      renderer,
+      camera: this.camera,
+      targetScene: this.scene,
+    });
   }
 
   /**
@@ -643,8 +713,18 @@ export class SceneManager extends THREE.EventDispatcher<{
    * Cache and prefetch flags propagate through `loaderConfig` from
    * LuxarApp (originally derived from `?no-cache`/`?cache-debug`/etc URL
    * parameters in main.ts).
+   * `options.applyViewerConfigFov` is the caller's localStorage-precedence
+   * decision, not a feature switch. Returning visitors keep their stored FOV
+   * for auto-framed scenes; an authored position instead carries the resolved
+   * scene FOV with it as one framing contract. Under an orthographic camera the
+   * FOV only stashes the next perspective value; framing uses camera zoom, and
+   * the later projection swap preserves that frustum.
    */
-  async loadSceneData(src: string, loaderConfig?: LoaderConfig): Promise<void> {
+  async loadSceneData(
+    src: string,
+    loaderConfig?: LoaderConfig,
+    options: SceneLoadOptions = {}
+  ): Promise<void> {
     notifier.showLoading();
 
     try {
@@ -679,9 +759,8 @@ export class SceneManager extends THREE.EventDispatcher<{
       // later UI call re-runs it identically.
       sceneDimsManager.initFromScene(this.scene);
 
-      // NOTE: Material parameters were already updated BEFORE loadScene() above
-      // Materials created during loading already have correct FOV/resolution
-      // No need to update again - this would be redundant work
+      // Material parameters were initialized before loadScene(). A scene FOV
+      // applied below refreshes them again before the first rendered frame.
 
       // Establish scale-aware orbit distance limits from scene bounds BEFORE
       // applying the author's camera. The orbit controls start with a small
@@ -702,6 +781,17 @@ export class SceneManager extends THREE.EventDispatcher<{
       // also extract once more to detect author-set target/targetNode.
       const viewerConfig = root.userData?.viewerConfig as ZarrViewerConfig | undefined;
       const { positionApplied, appliedUp } = this.applyZarrViewerConfig(root);
+      if ((options.applyViewerConfigFov || positionApplied) && viewerConfig) {
+        const fovOverride = extractRenderingOverrides(viewerConfig).fov;
+        const validFovOverride =
+          fovOverride !== undefined &&
+          Number.isFinite(fovOverride) &&
+          fovOverride >= config.camera.fovMin &&
+          fovOverride <= config.camera.fovMax;
+        if (fovOverride !== undefined && (options.applyViewerConfigFov || validFovOverride)) {
+          this.setFov(fovOverride);
+        }
+      }
       // The scene up governs every camera fit/reset (Home/F, center-on-
       // origin, this auto-frame): world +Y unless the author set one.
       this.sceneUp.copy(appliedUp ?? DEFAULT_SCENE_UP);
@@ -743,6 +833,11 @@ export class SceneManager extends THREE.EventDispatcher<{
     return root?.userData?.viewerConfig as ZarrViewerConfig | undefined;
   }
 
+  /** Arm WebGL blend warm-up after all scene-dependent dataset setup completes. */
+  public warmBlendModePrograms(): Promise<void> {
+    return warmSceneBlendModePrograms(this.scene);
+  }
+
   /**
    * Apply viewer config from zarr (camera position/target/up, background
    * color). Thin delegate over `applyZarrViewerConfig` in
@@ -763,6 +858,7 @@ export class SceneManager extends THREE.EventDispatcher<{
    * scene-manager/render-pipeline/scene-disposal.
    */
   private clearSceneContent(): void {
+    clearBlendModeProgramWarmup();
     this.invalidateBoundsCache();
     const removed = clearLoadedSceneContent(this.scene);
     log.info(Modules.SCENE_MANAGER, `Cleared ${removed} objects from scene`);
@@ -1187,6 +1283,7 @@ export class SceneManager extends THREE.EventDispatcher<{
   dispose(): void {
     // Cancel any pending resize operations to prevent memory leaks.
     this.resizer.dispose();
+    clearBlendModeProgramWarmup();
 
     // Tear down the WebGL context-recovery listeners.
     if (this.contextRecovery) {

@@ -56,7 +56,7 @@
     "./dist/lib/luxar-viewer-styles.js"
   ],
   "peerDependencies": {
-    "three": "~0.184.0"
+    "three": "~0.185.1"
   },
   "scripts": {
     "dev": "vite",
@@ -69,7 +69,7 @@
     "test:wasm": "cd src/wasm/rust && cargo test",
     "bench:wasm": "tsx src/tests/benchmarks/wasm-benchmark.ts",
     "preview": "vite preview",
-    "test:generate-fixtures": "cd ../.. && hatch run python packages/luxar-viewer/tests/fixtures/generate_test_data.py && hatch run python packages/luxar-viewer/tests/fixtures/generate_expectations.py",
+    "test:generate-fixtures": "cd ../.. && hatch run fixtures:python packages/luxar-viewer/tests/fixtures/generate_test_data.py && hatch run fixtures:python packages/luxar-viewer/tests/fixtures/generate_expectations.py",
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest --coverage",
@@ -109,7 +109,7 @@
   "dependencies": {
     "comlink": "^4.4.2",
     "fflate": "^0.8.3",
-    "mediabunny": "^1.54.0",
+    "mediabunny": "^1.55.1",
     "zarrita": "^0.7.4"
   },
   "devDependencies": {

@@ -409,6 +409,15 @@ export class InputHandler {
     this.dimensionSliders?.setVisible(true);
   }
 
+  /**
+   * The dimension animation manager, once a scene with an animatable
+   * dimension has been loaded. Undefined for a purely 3D scene, which never
+   * builds one — callers must handle that rather than assume it exists.
+   */
+  getAnimationManager(): DimensionAnimationManager | undefined {
+    return this.animationManager;
+  }
+
   private makeDimNavSetupCtx(): DimNavSetupCtx {
     return {
       sceneManager: this.sceneManager,

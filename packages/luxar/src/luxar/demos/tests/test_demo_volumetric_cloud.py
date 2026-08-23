@@ -1,0 +1,794 @@
+"""Guards for the evolving-cumulus demo.
+
+Every defect this file pins was found by MEASURING the demo, never by reading
+it, and not one of them raised: each produced a plausible-looking cloud. The
+original demo shipped for years emitting 790 points out of 800,000 candidates
+because its noise hash correlated with coordinate magnitude and it sampled less
+than one lattice cell — the scene rendered, the log said "7-octave fractal
+noise with turbulence", and the result was a smudge. That is the failure mode
+this module exists to catch, so the assertions here are on measured statistics
+rather than on the shape of the code.
+
+The thresholds are deliberately loose. They are tripwires for a defect
+returning, not a pin on the current tuning, which should stay free to change.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+import pytest
+
+from luxar import LuxarScene
+
+from .. import demo_volumetric_cloud as cloud
+
+#: Enough parcels for the statistics to mean something, few enough to stay fast.
+N_PARCELS = 40_000
+
+
+@pytest.fixture(scope="module")
+def parcels() -> np.ndarray:
+    """Seeded parcels, laid out exactly as the demo lays them out."""
+    rng = np.random.default_rng(42)
+    radius = cloud.SEED_RADIUS * np.sqrt(rng.random(N_PARCELS))
+    theta = rng.uniform(0.0, 2.0 * np.pi, N_PARCELS)
+    positions = np.empty((N_PARCELS, 3), dtype=np.float32)
+    positions[:, 0] = radius * np.cos(theta)
+    positions[:, 1] = rng.uniform(cloud.SEED_Y[0], cloud.SEED_Y[1], N_PARCELS)
+    positions[:, 2] = radius * np.sin(theta)
+    return positions
+
+
+@pytest.fixture(scope="module")
+def field(parcels: np.ndarray) -> cloud.NoiseField:
+    return cloud.build_noise_field((parcels / cloud.CLOUD_SIZE).astype(np.float32))
+
+
+@pytest.fixture(scope="module")
+def bubbles() -> cloud.Bubbles:
+    return cloud.build_bubbles(np.random.default_rng(42))
+
+
+class TestNoiseHash:
+    """The hash must actually mix. This is the 790-point bug."""
+
+    def test_value_is_uncorrelated_with_coordinate_magnitude(self) -> None:
+        # The old hash was `(xi*C1 + yi*C2 + zi*C3 + seed) % 1000000 / 500000 - 1`,
+        # whose low bits barely move, so the value tracked |coordinate| and every
+        # corner near the lattice origin came back close to -1. Sampled over a
+        # few cells around the origin — which is exactly where the demo samples —
+        # that shows up as a smooth radial ramp masquerading as noise.
+        rng = np.random.default_rng(0)
+        p = rng.uniform(-2.0, 2.0, (60_000, 3))
+        value = cloud.simple_noise_3d(p[:, 0], p[:, 1], p[:, 2], seed=7)
+        distance = np.linalg.norm(p, axis=1)
+
+        correlation = float(np.corrcoef(value, distance)[0, 1])
+        assert abs(correlation) < 0.05, (
+            f"noise value correlates with distance from the lattice origin "
+            f"(r={correlation:+.3f}); the hash has stopped mixing, and the "
+            f"visible symptom is a cloud with a systematically empty core"
+        )
+
+    def test_distribution_covers_its_stated_range(self) -> None:
+        rng = np.random.default_rng(1)
+        p = rng.uniform(-8.0, 8.0, (60_000, 3))
+        value = cloud.simple_noise_3d(p[:, 0], p[:, 1], p[:, 2], seed=3)
+        assert -1.0 <= value.min() and value.max() <= 1.0
+        assert value.max() - value.min() > 1.5, "noise barely varies"
+        assert abs(float(value.mean())) < 0.05, "noise is biased away from zero"
+
+    def test_seeds_give_independent_fields(self) -> None:
+        rng = np.random.default_rng(2)
+        p = rng.uniform(-4.0, 4.0, (40_000, 3))
+        a = cloud.simple_noise_3d(p[:, 0], p[:, 1], p[:, 2], seed=0)
+        b = cloud.simple_noise_3d(p[:, 0], p[:, 1], p[:, 2], seed=cloud.BILLOW_SEED)
+        assert abs(float(np.corrcoef(a, b)[0, 1])) < 0.05
+
+
+class TestNoiseFrequency:
+    """Several lattice cells must span the cloud, or the octaves do nothing."""
+
+    def test_the_base_frequency_resolves_more_than_one_cell(self) -> None:
+        # The demo samples material coordinates of roughly +/- 0.5, so the
+        # octave-0 lattice count across the domain IS the base frequency. Below
+        # about two, every octave lives inside one cell and the "fractal" field
+        # is a trilinear ramp.
+        assert cloud.NOISE_BASE_FREQ >= 2.0
+
+    def test_the_finest_octave_stays_above_the_point_size(self) -> None:
+        # Detail finer than a point cannot be seen, only aliased into speckle.
+        finest = cloud.NOISE_BASE_FREQ * 2 ** (cloud.NOISE_OCTAVES - 1)
+        feature_size = cloud.CLOUD_SIZE / finest
+        assert feature_size > 0.3 * cloud.MIN_RADIUS
+
+
+class TestTimeInterpolation:
+    """The time axis must be stationary — every parcel shares one tau."""
+
+    def test_variance_does_not_breathe_between_keyframes(
+        self, field: cloud.NoiseField
+    ) -> None:
+        # Lerping two independent keyframes with weights summing to one gives a
+        # variance of (1-u)^2 + u^2, which halves halfway between. Spatially
+        # that averages out; along time it makes the whole cloud pulse.
+        octave = 2
+        spreads = [
+            float(cloud.sample_octave(field.detail, octave, tau).std())
+            for tau in np.linspace(0.0, cloud.NOISE_TIME_SPAN, 25)
+        ]
+        swing = max(spreads) / min(spreads)
+        assert swing < 1.15, (
+            f"octave {octave} spread swings {swing:.2f}x over the sequence; the "
+            f"variance-preserving normalization in sample_octave has been lost "
+            f"and the cloud will breathe in and out of focus"
+        )
+
+    def test_the_field_stays_smooth_across_a_keyframe(
+        self, field: cloud.NoiseField
+    ) -> None:
+        taus = np.linspace(0.0, cloud.NOISE_TIME_SPAN, 200)
+        means = np.array(
+            [float(cloud.sample_noise_series(field.detail, t).mean()) for t in taus]
+        )
+        jumps = np.abs(np.diff(means))
+        assert jumps.max() < 8.0 * float(np.median(jumps)) + 1e-3, (
+            "the field jumps at a keyframe boundary — the quintic fade is gone"
+        )
+
+
+class TestFlow:
+    """Divergence-free is a requirement, not a description."""
+
+    def test_the_velocity_field_is_solenoidal(self) -> None:
+        # Central differences on the analytic field. The parcels are a Monte
+        # Carlo sample of a uniform density and only a solenoidal field keeps
+        # that sample uniform as it deforms; a compressive one piles parcels up
+        # and reads as brightness drifting where no water went.
+        rng = np.random.default_rng(5)
+        p = np.column_stack(
+            [
+                rng.uniform(-8.0, 8.0, 4000),
+                rng.uniform(-1.0, 16.0, 4000),
+                rng.uniform(-8.0, 8.0, 4000),
+            ]
+        ).astype(np.float32)
+
+        eps = 1e-2
+        divergence = np.zeros(len(p))
+        for axis in range(3):
+            step = np.zeros(3, dtype=np.float32)
+            step[axis] = eps
+            plus = cloud.velocity(p + step, cloud.UPDRAFT)[:, axis]
+            minus = cloud.velocity(p - step, cloud.UPDRAFT)[:, axis]
+            divergence += (plus - minus) / (2 * eps)
+
+        # Divergence has units of 1/time, so it has to be judged against a
+        # characteristic VELOCITY GRADIENT (speed / length), not against a
+        # speed divided by the finite-difference step. The old yardstick was
+        # `scale / eps`, which grows as the step shrinks — so it got looser the
+        # more accurate the derivative became, and a mutant with a uniform
+        # divergence of 0.05 injected into u_x sailed through it.
+        speed = float(np.linalg.norm(cloud.velocity(p, cloud.UPDRAFT), axis=1).mean())
+        gradient = speed / cloud.ROLL_A
+        assert float(np.abs(divergence).mean()) < 1e-3 * gradient, (
+            f"mean |div| {np.abs(divergence).mean():.3e} against a "
+            f"characteristic gradient of {gradient:.3e} — the field has stopped "
+            f"being solenoidal, and a compressive one piles parcels up"
+        )
+        assert float(np.abs(divergence).max()) < 2e-2 * gradient
+
+    def test_the_flow_is_frame_rate_independent(self, parcels: np.ndarray) -> None:
+        """`--frames` must be a resolution knob, not a physics knob.
+
+        Speeds are per unit PHASE and each frame advances by
+        ``dt = 1/(n_frames-1)``. Integrating a fixed displacement once per
+        frame instead would make total distance travelled proportional to the
+        frame count, so doubling the temporal resolution would silently double
+        how far the cloud drifts — the same sequence at a different sampling
+        rate would be a different cloud.
+
+        Midpoint integration is second order, so the two trajectories should
+        agree far more closely than either agrees with the exact flow.
+        """
+
+        def run(n_frames: int) -> np.ndarray:
+            positions = parcels.copy()
+            dt = 1.0 / (n_frames - 1)
+            for frame in range(n_frames - 1):
+                phase = frame / (n_frames - 1)
+                updraft = cloud.UPDRAFT * (
+                    0.35 + 0.65 * float(np.exp(-(((phase - 0.30) / 0.30) ** 2)))
+                )
+                cloud.advect(positions, updraft, dt)
+            return positions
+
+        coarse = run(60)
+        fine = run(120)
+
+        drift = np.linalg.norm(fine - parcels, axis=1)
+        disagreement = np.linalg.norm(fine - coarse, axis=1)
+        assert float(drift.mean()) > 1.0, "the parcels barely moved; test is vacuous"
+        assert float(disagreement.mean()) < 0.06 * float(drift.mean()), (
+            f"60 and 120 frames disagree by {disagreement.mean():.3f} against a "
+            f"mean drift of {drift.mean():.3f} — the frame count is changing "
+            f"the physics, not just how finely it is sampled"
+        )
+
+    def test_advection_preserves_parcel_density_in_the_core(
+        self, parcels: np.ndarray
+    ) -> None:
+        positions = parcels.copy()
+        radius = np.hypot(positions[:, 0], positions[:, 2])
+        before = int(
+            ((radius < 6) & (positions[:, 1] > 0) & (positions[:, 1] < 13)).sum()
+        )
+
+        # The SHIPPED frame count, so the guard tracks the configuration that
+        # actually goes out rather than one that used to.
+        frames = cloud.DEFAULT_FRAMES
+        dt = 1.0 / (frames - 1)
+        for frame in range(frames - 1):
+            phase = frame / (frames - 1)
+            updraft = cloud.UPDRAFT * (
+                0.35 + 0.65 * float(np.exp(-(((phase - 0.30) / 0.30) ** 2)))
+            )
+            cloud.advect(positions, updraft, dt)
+
+        radius = np.hypot(positions[:, 0], positions[:, 2])
+        after = int(
+            ((radius < 6) & (positions[:, 1] > 0) & (positions[:, 1] < 13)).sum()
+        )
+        assert 0.85 < after / before < 1.18, (
+            f"core parcel count moved {before} -> {after} over the run; the flow "
+            f"is draining or concentrating the region the cloud lives in"
+        )
+
+
+class TestEnvelope:
+    """Shape invariants that were each visible only in a rendered frame."""
+
+    @staticmethod
+    def _env(positions: np.ndarray, phase: float, bubbles: cloud.Bubbles) -> np.ndarray:
+        billow = np.zeros(len(positions), dtype=np.float32)
+        return cloud.envelope(positions, phase, billow, bubbles)
+
+    def test_nothing_condenses_above_the_crown(self, bubbles: cloud.Bubbles) -> None:
+        state = cloud.life_cycle(0.5)
+        above = state.top + 6.0
+        positions = np.array(
+            [[0.0, above, 0.0], [0.05, above, 0.0], [0.0, above + 8.0, 0.0]],
+            dtype=np.float32,
+        )
+        assert float(self._env(positions, 0.5, bubbles).max()) < 1e-2
+
+    def test_no_thermal_detaches_and_floats_above_the_cloud(
+        self, bubbles: cloud.Bubbles
+    ) -> None:
+        """The balloon bug: an isolated sphere hanging over the crown.
+
+        A thermal whose late fade is too gentle arrives at its ceiling still
+        most of full size, clear of the crowd below with nothing to merge into,
+        and renders as a detached ball above the cloud.
+
+        Neither of the obvious cheap tests catches it. Probing far above the
+        nominal top sees nothing, because thermals cap at 0.92 of it. Scanning
+        for an empty HEIGHT BAND sees nothing either, because a balloon sits
+        beside the crown as often as above it and shares its band. What the bug
+        actually is, is a second connected component — so that is what gets
+        measured: flood the envelope from the cloud base outward and require
+        that every occupied cell is reached.
+
+        The flood is six-neighbour dilation on a coarse boolean grid, which
+        needs nothing beyond numpy.
+        """
+        n = 34
+        for phase in (0.3, 0.5, 0.7, 0.9):
+            state = cloud.life_cycle(phase)
+            span_xz, y_hi = 15.0, state.top * 1.2
+            axis_x = np.linspace(-span_xz, span_xz, n)
+            axis_y = np.linspace(cloud.BASE_Y - 0.5, y_hi, n)
+            gx, gy, gz = np.meshgrid(axis_x, axis_y, axis_x, indexing="ij")
+            grid_pts = np.column_stack([gx.ravel(), gy.ravel(), gz.ravel()]).astype(
+                np.float32
+            )
+
+            occupied = (self._env(grid_pts, phase, bubbles) > 0.25).reshape(n, n, n)
+            assert occupied.any(), f"phase {phase}: no cloud at all"
+
+            # Seed from the lowest occupied layer — the slab on the base.
+            lowest = int(np.argmax(occupied.any(axis=(0, 2))))
+            reached = np.zeros_like(occupied)
+            reached[:, lowest, :] = occupied[:, lowest, :]
+
+            for _ in range(4 * n):
+                grown = reached.copy()
+                for axis in (0, 1, 2):
+                    grown |= np.roll(reached, 1, axis=axis)
+                    grown |= np.roll(reached, -1, axis=axis)
+                grown &= occupied
+                if grown.sum() == reached.sum():
+                    break
+                reached = grown
+
+            orphans = int((occupied & ~reached).sum())
+            assert orphans == 0, (
+                f"phase {phase}: {orphans} of {int(occupied.sum())} occupied "
+                f"cells are not connected to the cloud base — a thermal has "
+                f"detached and is floating free"
+            )
+
+    def test_nothing_condenses_below_the_base(self, bubbles: cloud.Bubbles) -> None:
+        positions = np.array(
+            [[0.0, cloud.BASE_Y - 2.0, 0.0], [1.0, cloud.BASE_Y - 5.0, 1.0]],
+            dtype=np.float32,
+        )
+        assert float(self._env(positions, 0.5, bubbles).max()) < 1e-3
+
+    def test_the_body_is_one_connected_column(self, bubbles: cloud.Bubbles) -> None:
+        """No horizontal gap between the base slab and the thermals above it.
+
+        The root slab exists because thermals alone leave the bottom ragged —
+        each is a sphere that has already left the base by the time it is big.
+        But a slab that does not reach far enough up separates from the tower
+        and renders as a second, unrelated cloud sitting underneath.
+        """
+        state = cloud.life_cycle(cloud.OPENING_PHASE)
+        heights = np.linspace(0.3, state.top, 120)
+        axis = np.column_stack(
+            [
+                cloud.TILT * (heights - cloud.BASE_Y),
+                heights,
+                np.zeros_like(heights),
+            ]
+        ).astype(np.float32)
+        along = self._env(axis, cloud.OPENING_PHASE, bubbles)
+
+        # `state.top` is the ceiling the thermals climb TOWARD, and a thermal
+        # arriving there has already faded to nothing — so the realized crown
+        # sits below it. Connectivity is only meaningful up to the real top.
+        solid = np.flatnonzero(along > 0.15)
+        assert len(solid) > 10, "no column found at all"
+        crown = solid[-1]
+
+        interior = along[: crown + 1]
+        assert float(interior.min()) > 0.06, (
+            f"envelope along the cloud's own axis dips to {interior.min():.3f} "
+            f"below the crown at y={heights[crown]:.1f}; the tower has "
+            f"separated from the slab at its base"
+        )
+
+    def test_the_column_is_taller_than_it_is_wide(self, bubbles: cloud.Bubbles) -> None:
+        """A cumulus congestus stands up. A squat one reads as a cotton ball."""
+        state = cloud.life_cycle(cloud.OPENING_PHASE)
+        rng = np.random.default_rng(9)
+        probe = np.column_stack(
+            [
+                rng.uniform(-14, 14, 60_000),
+                rng.uniform(-1, state.top + 4, 60_000),
+                rng.uniform(-14, 14, 60_000),
+            ]
+        ).astype(np.float32)
+        inside = probe[self._env(probe, cloud.OPENING_PHASE, bubbles) > 0.25]
+        assert len(inside) > 500
+
+        height = inside[:, 1].max() - inside[:, 1].min()
+        width = max(
+            inside[:, 0].max() - inside[:, 0].min(),
+            inside[:, 2].max() - inside[:, 2].min(),
+        )
+        assert height > width, f"cloud is {width:.1f} wide by {height:.1f} tall"
+
+    def test_dissipation_shrinks_the_silhouette(self) -> None:
+        """Decay has to be visible from OUTSIDE.
+
+        While the cloud rendered additively, dissipation was expressed by
+        raising the noise threshold, which erodes the interior. Once the medium
+        is opaque the interior cannot be seen at all, so that reads as no
+        change whatsoever; the silhouette itself has to come in.
+        """
+        mature = cloud.life_cycle(0.5)
+        late = cloud.life_cycle(1.0)
+        assert late.width < 0.9 * mature.width
+        assert late.top < 0.98 * mature.top
+
+
+class TestRenderingRegime:
+    """The renderer has to be in the same optical regime as the shading.
+
+    This is the class of bug that produced the worst artefact in the demo's
+    history. A cumulus is optically THICK, so you see its surface; ``additive``
+    blending models an optically THIN emissive medium and ignores depth
+    entirely. Shading the parcels by how much water is above them, and then
+    compositing them with a mode that cannot occlude, painted a dark interior
+    that was fully visible THROUGH the lit shell — the cloud rendered as a
+    glowing archway with a hole in the middle, and from overhead as a ring.
+    Measured on that build, the core had the HIGHEST point density (346 vs 51
+    per unit area at the rim) and the LOWEST brightness (0.46 vs 0.85).
+    """
+
+    def test_the_node_absorbs_what_is_behind_it(self) -> None:
+        import ast
+        from pathlib import Path
+
+        tree = ast.parse(Path(cloud.__file__).read_text())
+        modes = [
+            kw.value.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            for kw in node.keywords
+            if kw.arg == "blending_mode" and isinstance(kw.value, ast.Constant)
+        ]
+        assert modes, "no blending_mode found"
+        assert all(m == "volumetric" for m in modes), (
+            f"cloud node uses {modes}; the baked sunlight is computed from an "
+            f"occlusion integral and is only coherent in a mode that occludes"
+        )
+
+    def test_a_fully_lit_parcel_stays_inside_the_display_range(self) -> None:
+        """Exposure guard.
+
+        Under emission-absorption the accumulated radiance of a thick medium
+        tends to emission/extinction — that is, to the parcel colour itself. So
+        the brightest possible pixel is the brightest parcel colour, and if
+        that already exceeds 1 the shading is invisible: every lit face clips
+        to flat white. The preset's bloom threshold of 0.01 means the whole
+        cloud blooms onto itself as well, so there has to be real headroom.
+        """
+        brightest = cloud.SUN_COLOR + cloud.SKY_COLOR + cloud.GROUND_COLOR
+        assert float(brightest.max()) < 0.62, (
+            f"a fully lit parcel emits {brightest}; ACES plus the preset's "
+            f"all-over bloom will clip that to white"
+        )
+        # ...and the shadow side must not be black, or the cloud reads as a
+        # cut-out. Skylight alone has to carry it.
+        shadow = cloud.SKY_COLOR + cloud.GROUND_COLOR
+        assert float(shadow.max()) > 0.04
+        # Skylight is blue: that is why a real cumulus underside is cool grey.
+        assert cloud.SKY_COLOR[2] > cloud.SKY_COLOR[0] * 1.4
+
+
+class TestCondensate:
+    """The life cycle should be the only thing that moves the cloud."""
+
+    def test_every_frame_carries_condensate(
+        self, parcels: np.ndarray, field: cloud.NoiseField, bubbles: cloud.Bubbles
+    ) -> None:
+        # An empty frame is a hole in the time axis, and Home/End land on
+        # exactly the two frames most at risk of being one.
+        for phase in np.linspace(0.0, 1.0, 21):
+            water = cloud.condensate(parcels, field, float(phase), bubbles)
+            assert float(water.max()) > 0.05, f"phase {phase:.2f} has no water"
+
+    def test_the_point_count_does_not_collapse_at_either_end(
+        self, parcels: np.ndarray, field: cloud.NoiseField, bubbles: cloud.Bubbles
+    ) -> None:
+        rng = np.random.default_rng(11)
+        gate_u = rng.random(N_PARCELS).astype(np.float32)
+        probes = [
+            cloud.condensate(parcels, field, p, bubbles)
+            for p in cloud.CALIBRATION_PHASES
+        ]
+        gate = cloud.calibrate_gate(probes, N_PARCELS // 20)
+
+        counts = [
+            int(
+                (
+                    cloud.emission_odds(
+                        cloud.condensate(parcels, field, p, bubbles), gate
+                    )
+                    > gate_u
+                ).sum()
+            )
+            for p in np.linspace(0.0, 1.0, 13)
+        ]
+        assert min(counts) > 0.08 * max(counts), (
+            f"point count ranges {min(counts)}..{max(counts)} across the life "
+            f"cycle; emission goes as water^{cloud.DENSITY_POWER} and envelope "
+            f"volume as roughly width^2 x height, so a life cycle that reads "
+            f"gently on the page compounds into empty frames"
+        )
+
+    def test_the_gate_caps_the_busiest_frame(
+        self, parcels: np.ndarray, field: cloud.NoiseField, bubbles: cloud.Bubbles
+    ) -> None:
+        probes = [
+            cloud.condensate(parcels, field, p, bubbles)
+            for p in cloud.CALIBRATION_PHASES
+        ]
+        target = N_PARCELS // 10
+        gate = cloud.calibrate_gate(probes, target)
+        busiest = max(float(cloud.emission_odds(w, gate).sum()) for w in probes)
+        assert abs(busiest - target) < 0.02 * target
+
+
+class TestShading:
+    """The baked light has to have a range, and not depend on the sampling."""
+
+    def test_optical_depth_spans_a_visible_range(
+        self, parcels: np.ndarray, field: cloud.NoiseField, bubbles: cloud.Bubbles
+    ) -> None:
+        density = N_PARCELS / (
+            np.pi * cloud.SEED_RADIUS**2 * (cloud.SEED_Y[1] - cloud.SEED_Y[0])
+        )
+        water = cloud.condensate(parcels, field, cloud.OPENING_PHASE, bubbles)
+        keep = water > 0.4 * water.max()
+        rgb = cloud.shade(parcels[keep], water[keep], float(density))
+
+        luma = rgb @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
+        contrast = float(np.quantile(luma, 0.9)) / float(np.quantile(luma, 0.1))
+        assert contrast > 1.8, (
+            f"lit-to-shadow contrast is only {contrast:.2f}x — the shading is "
+            f"there but invisible, which is how EXTINCTION was mis-scaled"
+        )
+
+    def test_the_sun_is_not_straight_overhead(self) -> None:
+        """A vertical sun lights every lobe by depth alone.
+
+        Two lobes at the same altitude then receive identical light however
+        they face, so the relief that makes a cumulus legible disappears and
+        the cloud renders as a flat cut-out. The whole reason
+        :func:`optical_depth` takes a direction is to avoid that.
+        """
+        d = np.array(cloud.SUN_DIRECTION, dtype=np.float64)
+        d /= np.linalg.norm(d)
+        elevation = np.degrees(np.arcsin(d[1]))
+        assert 20.0 < elevation < 70.0, (
+            f"sun elevation {elevation:.0f} degrees is too close to vertical "
+            f"(or below the horizon) to model the cloud"
+        )
+
+    def test_optical_depth_follows_its_direction(self) -> None:
+        """A slab lit from the side is not lit like a slab lit from above."""
+        rng = np.random.default_rng(4)
+        slab = np.column_stack(
+            [
+                rng.uniform(-6, 6, 30_000),
+                rng.uniform(0, 2, 30_000),
+                rng.uniform(-6, 6, 30_000),
+            ]
+        ).astype(np.float32)
+        water = np.full(len(slab), 0.5, dtype=np.float32)
+
+        # A wide flat slab is deep along x and shallow along y, so a horizontal
+        # ray through it accumulates far more than a vertical one.
+        from_above = cloud.optical_depth(slab, water, 400.0, (0.0, 1.0, 0.0))
+        from_side = cloud.optical_depth(slab, water, 400.0, (1.0, 0.0, 0.0))
+        assert from_side.mean() > 2.0 * from_above.mean()
+
+    def test_optical_depth_is_independent_of_parcel_count(self) -> None:
+        """Folding the parcel count into the constant means --parcels relights it.
+
+        Sampled on a dense synthetic ball rather than on the demo's own
+        parcels: the estimator is a histogram, so at a few thousand points over
+        a 44-cubed grid most cells hold nothing and the comparison measures
+        shot noise instead of the scaling being guarded.
+        """
+        rng = np.random.default_rng(17)
+        n = 240_000
+        d = rng.normal(size=(n, 3))
+        d /= np.linalg.norm(d, axis=1, keepdims=True)
+        ball = (d * (6.0 * rng.random((n, 1)) ** (1 / 3))).astype(np.float32)
+        water = np.full(n, 0.5, dtype=np.float32)
+        volume = 4.0 / 3.0 * np.pi * 6.0**3
+
+        full = cloud.optical_depth(ball, water, float(n / volume), cloud.SUN_DIRECTION)
+        half = slice(None, None, 2)
+        halved = cloud.optical_depth(
+            ball[half], water[half], float(n / 2 / volume), cloud.SUN_DIRECTION
+        )
+        assert abs(float(halved.mean()) - float(full.mean())) < 0.12 * float(
+            full.mean()
+        ), (
+            f"halving the parcels moved mean tau {full.mean():.3f} -> "
+            f"{halved.mean():.3f}; the sampling is leaking into the lighting"
+        )
+
+
+class TestScene:
+    """What the written store has to promise the viewer."""
+
+    def test_the_scene_is_4d_with_an_integer_frame_axis(self, tmp_path) -> None:
+        path = tmp_path / "cloud.luxar.zarr"
+        cloud.generate_evolving_cloud(
+            path, n_parcels=20_000, n_frames=6, target_points_per_frame=2_000
+        )
+
+        scene = LuxarScene.load(path)
+        assert scene.dimensions is not None
+        dims = scene.dimensions.dimensions
+        assert [d.name for d in dims] == ["x", "y", "z", "time"]
+
+        time_dim = dims[3]
+        assert time_dim.display is False
+        assert time_dim.discrete is True
+        # Integer frames with step 1: the viewer's per-point membership gate is
+        # an absolute +/- 0.5, not 0.5 x step, so any other step either makes
+        # neighbouring frames visible at once or narrower than a cell.
+        assert float(time_dim.step) == 1.0
+        assert tuple(time_dim.range) == (0, 5)
+
+    def test_every_timepoint_is_populated(self, tmp_path) -> None:
+        path = tmp_path / "cloud.luxar.zarr"
+        cloud.generate_evolving_cloud(
+            path, n_parcels=20_000, n_frames=6, target_points_per_frame=2_000
+        )
+
+        scene = LuxarScene.load(path)
+        positions = np.asarray(scene.get_points("EvolvingCloud").positions)
+        assert positions.shape[1] == 4
+
+        frames, counts = np.unique(positions[:, 3], return_counts=True)
+        assert list(frames) == [0, 1, 2, 3, 4, 5]
+        assert counts.min() > 0
+
+    def test_the_points_carry_an_alpha_channel(self, tmp_path) -> None:
+        """Volumetric blending reads optical depth off the alpha column.
+
+        Written as RGB, every parcel would absorb identically regardless of how
+        much water it stands for, and the cloud would lose the density gradient
+        that makes its edge soft and its core solid.
+        """
+        path = tmp_path / "cloud.luxar.zarr"
+        cloud.generate_evolving_cloud(
+            path, n_parcels=20_000, n_frames=4, target_points_per_frame=2_000
+        )
+        colors = np.asarray(LuxarScene.load(path).get_points("EvolvingCloud").colors)
+        assert colors.shape[1] == 4, f"colors are {colors.shape[1]}-channel, not RGBA"
+        alpha = colors[:, 3]
+        assert 0.0 <= alpha.min() and alpha.max() <= 1.0
+        assert alpha.max() - alpha.min() > 0.2, "alpha carries no density gradient"
+
+    def test_no_timepoint_is_left_empty_even_on_a_starved_budget(
+        self, tmp_path
+    ) -> None:
+        """A hole in the time axis is worse than a thin frame.
+
+        The gate is calibrated once from a target point count, so a small
+        enough budget can leave a lean frame with nothing clearing it. The
+        dimension still advertises the full range, and the compiler says so
+        ("actual data ends at ...") while the viewer shows a blank scene
+        mid-scrub. Measured before the fix: a budget of one point per frame
+        wrote 2 of 3 timepoints.
+        """
+        path = tmp_path / "cloud.luxar.zarr"
+        cloud.generate_evolving_cloud(
+            path, n_parcels=5_000, n_frames=5, target_points_per_frame=1
+        )
+
+        scene = LuxarScene.load(path)
+        positions = np.asarray(scene.get_points("EvolvingCloud").positions)
+        frames = sorted({int(t) for t in positions[:, 3]})
+        assert frames == [0, 1, 2, 3, 4], f"time axis has holes: {frames}"
+
+        # ...and the declared range must not promise more than was written.
+        assert scene.dimensions is not None
+        assert tuple(scene.dimensions.dimensions[3].range) == (0, 4)
+
+    def test_an_empty_emission_reports_a_clear_error(self, tmp_path) -> None:
+        with pytest.raises(ValueError, match="No condensate was emitted"):
+            cloud.generate_evolving_cloud(
+                tmp_path / "cloud.luxar.zarr",
+                n_parcels=1,
+                n_frames=1,
+                target_points_per_frame=1,
+            )
+
+    def test_an_empty_opening_frame_uses_the_nearest_populated_frame(
+        self, tmp_path
+    ) -> None:
+        path = tmp_path / "cloud.luxar.zarr"
+        cloud.generate_evolving_cloud(path, n_parcels=2, n_frames=4)
+
+        scene = LuxarScene.load(path)
+        positions = np.asarray(scene.get_points("EvolvingCloud").positions)
+        opening_frame = int(round(cloud.OPENING_PHASE * 3))
+        assert not np.any(positions[:, 3] == opening_frame)
+
+        populated_frames = np.unique(positions[:, 3]).astype(int)
+        camera_frame = min(populated_frames, key=lambda f: abs(f - opening_frame))
+        camera_points = positions[positions[:, 3] == camera_frame, :3]
+        expected = cloud.compose_opening_camera(camera_points)
+
+        config = scene.viewer_config
+        assert config is not None
+        assert config.dimensions is not None
+        assert config.dimensions.current_step == [0.0, 0.0, 0.0, float(camera_frame)]
+        assert config.camera is not None
+        assert config.camera.position == pytest.approx(expected.position)
+        assert config.camera.target == pytest.approx(expected.target)
+
+    def test_the_scene_opens_on_a_turntable(self, tmp_path) -> None:
+        """Auto-rotate is honoured on load.
+
+        A cumulus is a 3D body whose whole point is that it looks different
+        from every side, and a still opening frame shows exactly one of those.
+        `RenderingControls.applyZarrDefaults` forwards `autoRotate` and
+        `autoRotateSpeed` to the controls manager, so this is a thing a scene
+        can actually ask for — measured on the running viewer, the camera comes
+        round once every 26 seconds.
+        """
+        path = tmp_path / "cloud.luxar.zarr"
+        cloud.generate_evolving_cloud(
+            path, n_parcels=20_000, n_frames=4, target_points_per_frame=2_000
+        )
+        config = LuxarScene.load(path).viewer_config
+        assert config is not None
+        assert config.auto_rotate is True
+        # Keep the authored speed inside the GUI slider's normal range even
+        # though the viewer accepts a wider validation range.
+        assert 0.1 <= float(config.auto_rotate_speed) <= 5.0
+
+    def test_the_scene_opens_playing_its_time_axis(self, tmp_path) -> None:
+        """The animation block is indexed BY DIMENSION, and only time runs.
+
+        Asking the wrong index to play would animate a displayed spatial axis,
+        which is not a thing anyone wants and is easy to get wrong because the
+        array is positional with no names in it.
+
+        Until recently the viewer dropped this block on load — it was written
+        by the Ctrl+Shift+S capture path, exposed by the Python config, and
+        read back by nothing. `applyViewerConfigState` now applies it, after
+        `current_step`, so the scene opens on the mature cloud and runs on.
+        """
+        path = tmp_path / "cloud.luxar.zarr"
+        cloud.generate_evolving_cloud(
+            path, n_parcels=20_000, n_frames=6, target_points_per_frame=2_000
+        )
+        config = LuxarScene.load(path).viewer_config
+        assert config is not None
+        assert config.animation is not None
+
+        playing = [i for i, a in enumerate(config.animation) if a.playing]
+        assert playing == [3], (
+            f"dimensions {playing} are set to play; only the hidden time axis "
+            f"(index 3) should be"
+        )
+        time_anim = config.animation[3]
+        assert time_anim.loop == "loop", (
+            "a life cycle that halts on its last frame reads as broken rather "
+            "than as finished"
+        )
+        assert float(time_anim.target_fps) > 0
+
+    def test_the_camera_never_lands_on_its_own_target(self) -> None:
+        """A degenerate cloud must still produce a usable pose.
+
+        With the framing radius taken straight from the data, a single-point
+        (or all-identical) frame puts the camera exactly on its target, and
+        `lookAt` along a zero-length direction is a NaN rather than a view.
+        One point per frame became reachable once the emission gate learned to
+        relax itself to keep the time axis unholed.
+        """
+        for points in (
+            np.array([[1.0, 2.0, 3.0]], dtype=np.float32),
+            np.full((5, 3), 2.0, dtype=np.float32),
+            np.array([[0.0, 0.0, 0.0], [1e-9, 0.0, 0.0]], dtype=np.float32),
+        ):
+            camera = cloud.compose_opening_camera(points)
+            assert camera.position is not None and camera.target is not None
+            separation = float(
+                np.linalg.norm(np.array(camera.position) - np.array(camera.target))
+            )
+            assert separation > 1e-3, f"camera sits on its target ({separation})"
+            assert np.isfinite(camera.position).all()
+
+    def test_the_opening_camera_is_outside_the_cloud_and_frames_it(self) -> None:
+        rng = np.random.default_rng(3)
+        points = rng.normal(0.0, 3.0, (5000, 3)).astype(np.float32) + np.array(
+            [1.0, 6.0, 0.0], dtype=np.float32
+        )
+
+        camera = cloud.compose_opening_camera(points)
+        assert camera.position is not None and camera.target is not None
+
+        position = np.array(camera.position)
+        target = np.array(camera.target)
+        distance = float(np.linalg.norm(position - target))
+        radius = float(np.quantile(np.linalg.norm(points - target, axis=1), 0.98))
+
+        assert distance > radius, "the camera opens inside the cloud"
+        # Composed for the cinematic lens: a sphere of radius R subtends
+        # asin(R / D), so the subject should fill most of the 63 degree frame.
+        half_angle = np.degrees(np.arcsin(min(radius / distance, 1.0)))
+        assert 15.0 < half_angle < cloud.CINEMATIC_FOV_DEG / 2

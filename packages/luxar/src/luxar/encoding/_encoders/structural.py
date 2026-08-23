@@ -15,6 +15,29 @@ from ..modes import EncodingMode
 from ..semantic_types import SemanticType
 from .base import BaseEncoderMixin
 
+#: Most distinct values a uint8 LUT index can address.
+LUT_UINT8_MAX_DISTINCT = 256
+
+#: Most distinct values a uint16 LUT index can address.
+LUT_UINT16_MAX_DISTINCT = 65_536
+
+#: Most distinct values a SCALAR-mode LUT can hold — i.e. the cap for every
+#: array that is not a ≤4-channel 2-D COLOR (the only ROW-mode shape). It
+#: equals the uint8 cap and NOT the uint16 one because the uint16 tier is row
+#: mode only (see :meth:`ArrayEncoder._lut_plan`: scalar-mode uint16 indices
+#: cost what the quantized scalar encodings cost, so the LUT JSON would be
+#: pure overhead).
+#:
+#: Exported because it is a SHARED bound, not an internal detail:
+#: :meth:`~luxar.encoding._encoders.perchannel.PerChannelEncoderMixin.coordinate_round_trip_slack`
+#: short-circuits the (expensive, whole-array) LUT probe on it. Its
+#: soundness argument is "distinct values in one COLUMN ≤ distinct values in
+#: the whole array", so a single column above this cap proves no
+#: COORDINATE array can LUT-encode — which holds only as long as COORDINATE
+#: stays scalar mode and scalar mode stays capped here. Both are pinned by
+#: ``encoding/tests/test_coordinate_quant.py``.
+LUT_SCALAR_MAX_DISTINCT = LUT_UINT8_MAX_DISTINCT
+
 
 @dataclass(frozen=True)
 class _LutPlan:
@@ -98,7 +121,7 @@ class StructuralEncoderMixin(BaseEncoderMixin):
             n_indices = data.size
 
         k = len(unique)
-        if k > 65_536:
+        if k > LUT_UINT16_MAX_DISTINCT:
             return None
 
         # JSON fidelity guard (applies to BOTH tiers): 64-bit integers with
@@ -113,7 +136,7 @@ class StructuralEncoderMixin(BaseEncoderMixin):
             return None
 
         lut_list = unique.tolist()
-        if k <= 256:
+        if k <= LUT_UINT8_MAX_DISTINCT:
             # uint8 tier: legacy eligibility, verbatim.
             if lut_mode == "row" and data.dtype == np.uint8:
                 if data.shape[0] < 2 * k:
@@ -588,7 +611,7 @@ class StructuralEncoderMixin(BaseEncoderMixin):
         max_int = (2**bits) - 1
         max_val = float(np.max(data))
         max_log = float(np.log1p(max_val))
-        log_vals = np.log1p(data)
+        log_vals = np.log1p(data.astype(np.float64, copy=False))
         normalized = log_vals / max_log
         encoded_data = np.clip(normalized * max_int, 0, max_int).astype(
             np.uint8 if bits == 8 else np.uint16
@@ -609,7 +632,7 @@ class StructuralEncoderMixin(BaseEncoderMixin):
     ) -> tuple[np.ndarray, dict[str, Any]]:
         """rgb_uint{8,16}: SDR color quantize (truncating)."""
         max_int = 255 if "uint8" in encoder_name else 65535
-        encoded_data = np.clip(data * max_int, 0, max_int).astype(
-            np.uint8 if "uint8" in encoder_name else np.uint16
-        )
+        encoded_data = np.clip(
+            data.astype(np.float64, copy=False) * max_int, 0, max_int
+        ).astype(np.uint8 if "uint8" in encoder_name else np.uint16)
         return encoded_data, {"name": encoder_name, "original_dtype": original_dtype}

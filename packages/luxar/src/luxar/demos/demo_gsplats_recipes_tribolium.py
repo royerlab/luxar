@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """GSplats Demo: LOD **recipe gallery** on a real Tribolium embryo (Light-Sheet)
 
-Takes the ~256K-splat fit of the *Tribolium castaneum* embryo (the same
+Takes the ~300K-splat fit of the *Tribolium castaneum* embryo (the same
 precomputed dataset as ``demo_gsplats_3d_tribolium_embryo.py``) and runs the
 unified ``luxar gsplat lod --recipe`` pipeline to build the SIX scale-ordered
 representation topologies side by side, so you can compare them directly:
@@ -55,7 +55,7 @@ recipe identity) — so what renders is byte-for-byte the topology the CLI build
 only recoloured.
 
 Pipeline:
-1. **Load** the precomputed ~256K-splat Tribolium fit (Git LFS / local cache)
+1. **Load** the locally cached ~300K-splat Tribolium fit (cold cache re-fits)
 2. **Center** it so all six columns sit at the origin before placement
 3. **Build** each recipe with ``build_recipe`` (the engine behind the CLI) and
    write each to a ``.gsplats.zarr`` — exactly what ``lod --recipe`` does
@@ -68,7 +68,7 @@ DATA SOURCE & CITATIONS:
 ========================
 Source:  Cell Tracking Challenge / Zenodo record 5270323 (GIANI paper)
 Imaging: Zeiss LightSheet Z.1, Tribolium castaneum, 0.381 um isotropic
-Cite:    Yin et al. (2022). GIANI. J. Cell Sci. 135(5), jcs259022.
+Cite:    Barry et al. (2022). GIANI. J. Cell Sci. 135, jcs259511.
          Maska et al. (2023). Cell Tracking Challenge. Nat. Methods 20, 1010-1020.
 
 USAGE:
@@ -105,6 +105,14 @@ DEMO_META = {
     },
     "caches": ["gsplats_tribolium"],
     "outputs": ["gsplats_recipes_tribolium"],
+    "citation": {
+        "short": (
+            "Barry 2021 (GIANI, Zenodo 5270323); "
+            "Cell Tracking Challenge (Maška et al. 2023)"
+        ),
+        "ref": "Barry / Maška et al. 2023",
+        "doi": "10.5281/zenodo.5270323",
+    },
 }
 
 import colorsys
@@ -119,6 +127,7 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core import transforms
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
+    add_demo_caption,
     detect_device,
     launch_viewer,
     load_precomputed_gsplats,
@@ -142,7 +151,7 @@ from luxar.utils.paths import get_demos_output_dir
 # Configuration
 # =============================================================================
 
-# Per-part BSP cap for tiles / overview / adaptive. The base fit is ~256K splats;
+# Per-part BSP cap for tiles / overview / adaptive. The base fit is ~300K splats;
 # 50K → ~5 spatial parts, enough to see the cells and the frustum-culling story.
 MAX_ELEMENTS = 50_000
 # Coarse-cap compression for overview / levels (one substitutive level ≈ N/FACTOR splats).
@@ -485,6 +494,7 @@ def create_luxar_scene(
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
             scene = compiler.create_scene(
+                citation=DEMO_META["citation"],
                 dimensions=dims,
                 # No tone mapping at all (#1459). Colour here IS the encoding
                 # (hue = which part, shade = which LOD level) and the whole
@@ -492,14 +502,14 @@ def create_luxar_scene(
                 # lifts highlights and shifts hue, and Neutral would subtract
                 # its offset and compress from peak 0.76 up — flattening
                 # exactly the shade steps the gallery is making.
-                viewer_config=ViewerConfig(tone_mapping="None"),
+                viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="None"),
             )
             scene.attrs["title"] = "GSplats: lod --recipe gallery — Tribolium Embryo"
             scene.attrs["description"] = """
 GSplats LOD recipe gallery — Tribolium castaneum embryo (Light-Sheet)
 =====================================================================
 
-The same ~256K-splat fit, laid out left→right as the six `luxar gsplat lod
+The same ~300K-splat fit, laid out left→right as the six `luxar gsplat lod
 --recipe` topologies: flat → stream → levels → tiles → overview → adaptive.
 
 Colour is applied AFTER the fact: hue = which spatial part, shade = which LOD
@@ -519,7 +529,7 @@ shade jump.
   (the per-part swap shows as that part's shade jumping).
 
 Pan across the row; zoom into a column to watch its level switch. Data: Cell
-Tracking Challenge / Zenodo 5270323. Cite: Yin et al. 2022; Maska et al. 2023.
+Tracking Challenge / Zenodo 5270323. Cite: Barry et al. 2022; Maska et al. 2023.
             """
 
             for i, recipe in enumerate(RECIPES):
@@ -544,12 +554,10 @@ Tracking Challenge / Zenodo 5270323. Cite: Yin et al. 2022; Maska et al. 2023.
                 color="rgba(255,255,255,0.6)",
                 blend_mode="difference",
             )
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 "Light-sheet microscopy • one fit, six LOD topologies",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
 
             # Legend: one tinted line per recipe (left→right), with its structure.
@@ -604,7 +612,7 @@ def main() -> None:
     aprint("=" * 70)
     aprint("GSplats Demo: lod --recipe gallery — Tribolium castaneum Embryo")
     aprint("=" * 70)
-    aprint("One ~256K-splat fit → flat | stream | levels | tiles | overview | adaptive")
+    aprint("One ~300K-splat fit → flat | stream | levels | tiles | overview | adaptive")
     aprint("")
 
     output_path = get_demos_output_dir() / "gsplats_recipes_tribolium.luxar.zarr"
@@ -624,6 +632,11 @@ def main() -> None:
         recompute=RECOMPUTE,
     )
     if precomputed is not None:
+        from luxar.demos.demo_gsplats_3d_tribolium_embryo import (
+            warn_if_cached_tribolium_fit_predates_floor,
+        )
+
+        warn_if_cached_tribolium_fit_predates_floor()
         base = precomputed[0]
     else:
         warn_if_no_cuda_gpu()

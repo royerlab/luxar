@@ -15,11 +15,12 @@ and the bodies live here so `compiler.py` stays a thin orchestration layer.
 
 ```
 finalize/
-├── __init__.py        (empty — functions imported directly by module)
-├── hashing.py         compute_content_hashes()
-├── lod_backfill.py    finalize_lod_position_bounds(), finalize_lod_display_types(),
-│                      warn_one_part_partition_anchors()
-└── validation.py      validate_discrete_dimension_ranges()
+├── __init__.py          (empty — functions imported directly by module)
+├── amplitude_window.py  harmonize_gsplat_amplitude_windows()
+├── hashing.py           compute_content_hashes()
+├── lod_backfill.py      finalize_lod_position_bounds(), finalize_lod_display_types(),
+│                        warn_one_part_partition_anchors()
+└── validation.py        prune_childless_wrappers(), validate_discrete_dimension_ranges()
 ```
 
 ## API
@@ -137,9 +138,12 @@ a mix of leaf types and never set the parent's `display_type`.
 ### `lod_backfill.warn_one_part_partition_anchors(store) -> None`
 
 The one pass here that **reports without writing anything**. A per-TILE
-(fills-screen) LOD ladder — one whose `coverage_fraction` thresholds reach
-`MAX_COVERAGE_FRACTION` = 4.0 — is correct only under a real tiling of **two or
-more** parts, because a tile's projected bbox diagonal is intrinsically a
+(fills-screen) LOD ladder — one whose `coverage_fraction` thresholds reach the
+anchor for the group's own `selector` units (`_tile_anchor`:
+`PARTITION_FINEST_AREA` = 1.0 for `selector="screen-area"`, the literal
+screen-area fraction; `MAX_COVERAGE_FRACTION` = 4.0 for the legacy
+`selector="coverage"` diagonal metric) — is correct only under a real tiling of
+**two or more** parts, because a tile's projected bbox is intrinsically a
 fraction of the whole object's. Under a **one-part** `kind=partition` that part's
 bbox _is_ the whole object, so the ladder holds its finest level back until the
 object overfills the viewport.
@@ -159,6 +163,117 @@ been added. Finalize is the first moment the count exists.
 - Never raises and never re-anchors: an authored
   `coverage_fractions=[0, …, 4.0]` list is indistinguishable on disk from a
   derived one, so a silent rewrite would override a deliberate choice.
+
+### `amplitude_window.harmonize_gsplat_amplitude_windows(store) -> None`
+
+Puts every node of a gsplat structure on **one** colormap window. Each writer
+derives `amplitude_data_range` per node as `[min(a), p99.9(a)]` of that node's
+own amplitudes, which is right for a lone flat leaf and wrong for anything
+bigger: on a `kind=lod` ladder a coarse level's merged representatives carry the
+same total mass in far fewer splats, so its p99.9 lands ~4.5x above the finest
+level's while its typical amplitude grows only ~1.1x — the object re-tones AND
+pops ~2x in brightness at every LOD switch. `kind=partition` compounds it
+(measured adjacent tiles of one object windowed at `[0.40, 4.04]` vs
+`[0.0036, 0.0355]`, ~100x across a single seam).
+
+For every **maximal gsplat structure root** — a `kind in {"lod", "partition"}`
+group whose subtree holds at least one `type == "gsplats"` leaf, not descended
+past in search of more roots — one reference window is taken and handed down:
+
+- **LOD levels** are scaled by the mass-weighted mean amplitude ratio
+  `child / reference`. That estimator measures exactly what a substitutive
+  reduction changes; measured on a rasterized proxy of the real colormap render,
+  luminance vs the finest level came out 1.04 / 1.01 / 1.00 (chroma L1
+  0.048 / 0.028 / 0.028) against 0.49 / 0.51 / 0.71 (0.187 / 0.183 / 0.100) for
+  the per-level windows. The p99.9 the window itself uses does not track it at
+  all. The ratio is **clamped into `[1/10, 10]`** (`_SCALE_BOUND`, mirroring
+  `gsplats/lod/substitutive.py::_MASS_SCALE_BOUND`): the real ratios are
+  ~1.1-1.2, `mwma` is a second-moment ratio and so not robust on heavy-tailed
+  amplitudes, and a 10x rescale would be a bigger switch pop than the ~2x defect
+  this fixes. Out of bounds the ratio is clamped, **not discarded** — at a
+  genuine ratio of 0.02, scale 1.0 leaves the level windowed 50x too wide (it
+  renders black) while clamping to 0.1 caps the error at 5x. Scale 1.0 is kept
+  only for the genuinely unusable cases: missing statistics on either side, a
+  non-positive `mwma`, a non-finite quotient.
+- **Partition parts** share the window **verbatim**. Parts are disjoint pieces
+  of one object with no representation change between them — a dim tile really
+  is dim (measured 1.00 / chroma 0.0001 shared, vs 0.62 / 0.123 per-part). Their
+  pooled reference is `min(part lows)` (exact) and the **count-weighted mean of
+  the part tops** (weights = each part's `n_splats`). Both candidate rules are
+  biased and neither recovers the union's true p99.9: `max` over part tops
+  drifts UPWARD without bound in the part count (1.05x at 2 parts, 1.58x at 256,
+  3.40x at 5000, ~1500x for 60 dim tiles plus one small bright one — the whole
+  object renders black), while the weighted mean is biased slightly LOW, since a
+  part's own p99.9 already under-estimates the union's. The mean is chosen
+  because its bias does not grow with the part count (the streaming merge
+  routinely writes thousands) and because its failure mode — clipping
+  outlier-bright content — is what a p99.9 window does by design. It is neither
+  unbiased nor consistent; do not read it as either.
+- **Reference child**: the finest LOD child that actually carries a **usable**
+  window (`hi > lo`), walking finest→coarsest — not necessarily the literal
+  finest. `add_points/add_lines(substitutive_lod=…)` puts a Points/Lines leaf
+  there, a scalar-amplitude level writes no window at all, and a
+  constant-amplitude level (every imported classical splat file, via
+  `gsplats/interop`) writes a degenerate `[x, x]` one. Any of the three used to
+  leave the whole structure un-harmonized, silently. The donor supplies both the
+  window and the reference `mwma`. A degenerate part top is likewise excluded
+  from the partition pool (its `lo` still counts toward the union minimum).
+- **Child enumeration** is name-agnostic. `Node.add_lod_group()` /
+  `add_partition_group()` are public, so the child names may be the author's
+  (`examples/partition_of_lod_example.py` uses `lod_coarse` / `lod_fine`): levels
+  and parts are every child group whose `type` is one of
+  `group`/`gsplats`/`points`/`lines`/`mesh` (the type filter keeps a `labels` or
+  other auxiliary subgroup from being mistaken for the finest level), minus the
+  reserved root buckets `fitting` / `provenance` / `pipeline` (excluded by name
+  too, because `pipeline_info` is an open passthrough of caller keys and a stray
+  `type` in it would rank `pipeline` last, i.e. "finest"). LOD children are
+  ordered coarsest→finest by `child_index` when every candidate has one, else by
+  a `child_<i>` numeric suffix, else by sorted name. That last rule assumes
+  alphabetically-last is finest — the same convention `lod_backfill.py` uses —
+  and is unreachable from any Python producer (`core/node/node.py` always stamps
+  `child_index`); it exists for a hand-edited or third-party store. An
+  `additive_<i>` sub-LOD keeps the prefix+digit rule — those names are
+  writer-owned.
+- **Legacy fallback**: a level missing the two mass statistics
+  (`amplitude_mass`, `amplitude_mass_weighted_mean`, stamped per leaf by
+  `gsplat_assembly.write_gsplat_arrays`) shares the reference window verbatim
+  rather than guessing. "Missing" means absent or non-finite — a mass-less leaf
+  is stamped `0.0` / `0.0` and does not count as missing, so it no longer drops
+  the enclosing structure to scale 1.0. Sharing is not provably better than the
+  self-consistent window a legacy sibling already had (it can be clipped by the
+  shared one); it is the honest answer when there is no ratio to scale by, and
+  it puts the structure on ONE window, which is what the partition arm does
+  anyway.
+
+- **Only ever overwrites** an existing `amplitude_data_range`; never creates one
+  where the writers left none (a scalar-amplitude leaf, a group wrapper), so
+  this is strictly a value correction. It also refuses to write anything that is
+  not a finite `lo < hi` (`[x, x]` reads as identity in the viewer, `lo > hi`
+  inverts the colormap), and skips the write entirely when the stored value
+  already equals the new one — so a re-run, and the reference level itself, cost
+  no `zarr.json` rewrite.
+- Never raises: a malformed or hand-edited subtree is skipped with a warning and
+  the rest of the tree is still processed. It is **not** transactional, though —
+  the assignment walk writes incrementally, so a failure partway through one
+  structure leaves that structure PARTIALLY rewritten (the warning reports how
+  many nodes had already been written).
+- Touches nothing but gsplats — points/lines/mesh `scalar_data_range` is left
+  alone, and a plain gsplats leaf on its own is a no-op.
+- One `aprint` line per harmonized structure, emitted only when at least one
+  window actually changed (so a re-run over an already-harmonized store is
+  silent), plus at most ONE rolled-up warning per structure reporting how many
+  levels were clamped to the bound and the most extreme ratio seen.
+
+A cross-recipe consequence worth knowing: a `levels` structure's reference top
+is one level's real p99.9, while an `overview` / `adaptive` one is a pooled
+estimate over parts, so the same splats can tone slightly differently depending
+on the topology they were written in (measured 222.34 vs 160.50 on one dataset).
+
+### `validation.prune_childless_wrappers(store) -> None`
+
+Post-order cleanup of empty `kind=partition` and `kind=lod` wrapper chains.
+Each removal emits a warning naming the path, keeping caught child-add refusals
+recoverable without publishing a structurally empty wrapper.
 
 ### `validation.validate_discrete_dimension_ranges(store, scene_bounds) -> None`
 
@@ -181,22 +296,36 @@ attr.
 
 ## How the compiler wires these
 
-`LuxarZarrCompiler.finalize()` calls each pass against the open store. The
-display-type pass runs before the position-bounds pass (LOD-of-LOD constructions
-need a resolved type before bounds aggregation), the one-part-anchor warning runs
-after both (it only reads), and `compute_content_hashes` runs last so the stamped
-hashes cover the back-filled attrs.
+`LuxarZarrCompiler.finalize()` calls each pass against the open store. After the
+discrete-range check, `prune_childless_wrappers` removes empty wrapper chains
+before the LOD back-fills can aggregate over them. The display-type pass then
+runs before the position-bounds pass (LOD-of-LOD constructions need a resolved
+type before bounds aggregation), the amplitude-window harmonization after
+those, the one-part-anchor warning after all three (it only reads), and
+`compute_content_hashes` runs last so the stamped hashes cover the back-filled
+and corrected attrs.
 
 ```python
 # packages/luxar/src/luxar/io/compiler.py (finalize-time)
+from ._compiler.finalize.amplitude_window import harmonize_gsplat_amplitude_windows
 from ._compiler.finalize.hashing import compute_content_hashes
 from ._compiler.finalize.lod_backfill import (
     finalize_lod_display_types,
     finalize_lod_position_bounds,
     warn_one_part_partition_anchors,
 )
-from ._compiler.finalize.validation import validate_discrete_dimension_ranges
+from ._compiler.finalize.validation import (
+    prune_childless_wrappers,
+    validate_discrete_dimension_ranges,
+)
 ```
+
+`harmonize_gsplat_amplitude_windows` is the one pass here that also runs
+**outside** the scene compiler: the two standalone `.gsplats.zarr` writers
+(`luxar.gsplats.io.save_gsplats.write_gsplats_tree` and
+`write_partition_streaming`) call it just before they stamp their root
+`content_hash`, so `luxar gsplat lod/fit/convert` and the batch-fit streaming
+merge get the same correction.
 
 ## Dependencies
 

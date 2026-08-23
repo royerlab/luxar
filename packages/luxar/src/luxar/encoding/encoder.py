@@ -17,7 +17,7 @@ from ._encoders.cholesky import CholeskyEncoderMixin
 from ._encoders.perchannel import PerChannelEncoderMixin
 from ._encoders.structural import StructuralEncoderMixin
 from .modes import EncodingMode
-from .registry import ArrayRefRegistry
+from .registry import ArrayRefRegistry, ArrayRefRegistrySnapshot
 from .semantic_types import SemanticType
 
 __all__ = ["ArrayEncoder"]
@@ -279,9 +279,68 @@ class ArrayEncoder(
             _perchannel_bits,
         )
 
+    def encodes_as_lut(self, data: np.ndarray, semantic_type: SemanticType) -> bool:
+        """Would :meth:`encode` store ``data`` as an (exact) LUT encoding?
+
+        LUT is priority 3 and is tried BEFORE the dtype/semantic encoder, so for
+        an eligible array the lossy per-axis quantization the dtype encoder
+        would apply never happens: a LUT stores the original values verbatim
+        and its index array is usually smaller than the quantized alternative.
+
+        This is public because a caller outside the encoder needs to know every
+        EXACT path the encoder has before deciding to override it. The gsplat
+        writer's sigma rail
+        (:func:`~luxar.io._compiler.gsplat_assembly._resolve_centers_encoding_mode`)
+        escalates centers to ``PRECISION`` when uint16 quantization would
+        displace splats past their own σ — but ``PRECISION`` also *disables*
+        LUT, so escalating a LUT-eligible array would replace an exact 1 B/value
+        encoding with an exact 4 B/value one and warn about damage that was
+        never going to happen. The grid snap
+        (:func:`~luxar.encoding.gridded_axis_step`) is the rail's other such
+        check; this is the second, and they must both be asked.
+
+        This answers the LUT question ALONE, and :meth:`encode` gates LUT on
+        more than that, so a ``True`` here is necessary but not sufficient for
+        the array actually being stored as a LUT. ``encode`` skips LUT under
+        ``PRECISION`` and under an explicit ``allow_lut=False``, and two
+        higher-priority paths pre-empt it even when it is eligible: priority 1
+        (a uniform array, stored as a broadcast constant — skipped for
+        ``COORDINATE``, which is never broadcast) and priority 2 (a
+        content-identical array already written, stored as an ``array_ref``,
+        skipped under ``deduplicate=False``). Both of those are exact too, so
+        for the gsplat sigma rail — which asks only in order NOT to escalate an
+        already-exact array, passes ``COORDINATE``, and writes escalated centers
+        with ``deduplicate=False`` — neither can change the answer's usefulness.
+        A caller wanting "will this be a LUT on disk" must account for them
+        itself.
+
+        The second in-repo caller,
+        :meth:`~luxar.encoding._encoders.perchannel.PerChannelEncoderMixin.coordinate_round_trip_slack`,
+        does exactly that for the one gate that DOES change its answer: it takes
+        an ``allow_lut`` mirroring :meth:`encode`'s and does not ask this at all
+        when the write forbids a LUT. It has to — the lines writer encodes
+        ``vertices`` with ``allow_lut=False``, so a LUT-eligible lines vertices
+        array is quantized on disk, and treating "eligible" as "exact" there
+        would write chunk bounds the decoded vertices fall outside of
+        (issue #1655).
+
+        Costs one ``np.unique`` pass over ``data``, and the plan is NOT memoized:
+        ``encode`` recomputes it from scratch, so asking and then encoding is two
+        passes (measured 0.77 s each on a 1.65M×4 centers array).
+        """
+        return self._lut_plan(data, semantic_type) is not None
+
     def reset(self) -> None:
         """Clear registry (call between independent scenes)."""
         self._registry.clear()
+
+    def snapshot(self) -> ArrayRefRegistrySnapshot:
+        """Capture deduplication state for a transactional writer operation."""
+        return self._registry.snapshot()
+
+    def restore(self, state: ArrayRefRegistrySnapshot) -> None:
+        """Restore deduplication state after a transactional writer rollback."""
+        self._registry.restore(state)
 
     def _encode_dtype(
         self,

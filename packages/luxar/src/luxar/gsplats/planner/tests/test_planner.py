@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import math
 import sys
 import textwrap
@@ -13,6 +14,7 @@ import pytest
 
 from luxar.gsplats.calibration import SplatDensity
 from luxar.gsplats.planner import (
+    CONTENT_CULL_RETENTION,
     FitPlan,
     PlanBox,
     fit_planned_parallel,
@@ -368,7 +370,9 @@ def _fake_box_builder(n_per_box: int = 5, truncation_radius: float | None = None
             chol = np.tile(np.array([1, 0, 1, 0, 0, 1], np.float32), (k, 1))
             GSplatData(centers=centers, amplitudes=amps,
                        cholesky_factors=chol{radius},
-                       stats={{"time_seconds": {_FAKE_BOX_TIME_SECONDS!r}}},
+                       stats={{"time_seconds": {_FAKE_BOX_TIME_SECONDS!r},
+                              "floor": 2.0, "image_min": 2.0,
+                              "image_max": 12.0, "intensity_range": 10.0}},
                        ).save(r"{out_path}")
             """
         )
@@ -422,6 +426,39 @@ class TestDefaultWorkerCmdBuilder:
         # Nothing to forward -> no flag (the worker resolves its own config).
         b2 = _default_worker_cmd_builder("in.zarr", "plan.json")
         assert "--floor" not in [str(c) for c in b2(0, tmp_path / "box0.gsplats.zarr")]
+
+    def test_forwards_shared_raw_normalization_range(self, tmp_path):
+        from luxar.gsplats.planner.fit_planned_parallel import (
+            _default_worker_cmd_builder,
+        )
+
+        builder = _default_worker_cmd_builder(
+            "in.zarr", "plan.json", norm_range=(10.25, 999.5)
+        )
+        cmd = builder(0, tmp_path / "box0.gsplats.zarr")
+        assert cmd[cmd.index("--norm-range") + 1] == "10.25,999.5"
+
+    def test_declines_a_degenerate_shared_normalization_range(self):
+        from luxar.gsplats.planner.fit_planned import _ensure_planned_norm_range
+
+        fit_kwargs = {"norm_percentile": 1.0}
+        volume = np.full((32, 32, 32), 100.0, np.float32)
+        volume.flat[:100] = 200.0
+
+        _ensure_planned_norm_range(volume, fit_kwargs, False)
+
+        assert fit_kwargs.get("norm_range") is None
+
+    def test_future_denoising_boxes_do_not_inherit_a_raw_shared_range(self):
+        """Keep the #1813 forward guard from sharing a raw range."""
+        from luxar.gsplats.planner.fit_planned import _ensure_planned_norm_range
+
+        fit_kwargs = {"_denoise_h": 0.04, "_denoise_params": {}}
+        volume = np.linspace(10.0, 110.0, 32**3, dtype=np.float32).reshape(32, 32, 32)
+
+        _ensure_planned_norm_range(volume, fit_kwargs, False)
+
+        assert "norm_range" not in fit_kwargs
 
     def test_forwards_the_runs_fit_configuration(self, tmp_path):
         # `truncate:` is settable ONLY through a YAML --config (no preset sets it,
@@ -812,6 +849,235 @@ class TestContentFitSharedFloor:
         assert "floor" in result.output.lower()
 
 
+class TestContentFitCullRetention:
+    """`fit --tiling content` fits every box near-losslessly (#1729).
+
+    The planner meant to install a content default of 0.999 with
+    ``fk.setdefault("cull_retention", 0.999)``, which could never fire: the
+    resolved config always already carries the fitter's own signature default of
+    0.95. So a preset-less content fit culled the bottom 5% of cumulative
+    amplitude out of EVERY box (and the boxes are re-merged, so the cull
+    compounds) while the code claimed otherwise.
+    """
+
+    @staticmethod
+    def _plan(tmp_path, volume) -> Path:
+        """Two abutting boxes splitting x in half (core-disjoint, no gap)."""
+        z, y, x = volume.shape
+        plan = FitPlan(
+            volume_shape=[z, y, x],
+            boxes=[
+                PlanBox(box=[0, z, 0, y, 0, x // 2], n_features=10, budget=50),
+                PlanBox(box=[0, z, 0, y, x // 2, x], n_features=10, budget=50),
+            ],
+            overlap=4,
+            feature_method="peaks",
+            min_leaf=8,
+            max_leaf=32,
+            density={"saturation_cap": 10_000},
+        )
+        plan_json = tmp_path / "plan.json"
+        plan.to_json(plan_json)
+        return plan_json
+
+    @staticmethod
+    def _spy_boxes(monkeypatch) -> list:
+        """Patch ``_fit_one_box`` with a spy recording each box's resolved kwargs.
+
+        Records ``n_iters`` alongside the retention: 0.999 alone cannot tell a
+        preset apart from the command default (they agree), so a preset test needs
+        a knob only the preset layer sets.
+        """
+        import importlib
+
+        fp = importlib.import_module("luxar.gsplats.planner.fit_planned")
+        seen: list = []
+
+        def _spy(volume_, box, overlap, cap, **fit_kwargs):
+            seen.append(
+                {
+                    "cull_retention": fit_kwargs.get("cull_retention"),
+                    "n_iters": fit_kwargs.get("n_iters"),
+                }
+            )
+            return TestContentFitSharedFloor._one_splat(
+                volume_, box, overlap, cap, **fit_kwargs
+            )
+
+        monkeypatch.setattr(fp, "_fit_one_box", _spy)
+        return seen
+
+    def _run_boxes(self, tmp_path, monkeypatch, **run_kwargs) -> list:
+        """Sequential 2-box content fit; returns each box's recorded fit kwargs."""
+        from luxar.cli.gsplat_ops.planner import run_content_fit
+
+        volume = _pedestal_blobs(shape=(16, 16, 32))
+        seen = self._spy_boxes(monkeypatch)
+        run_content_fit(
+            tmp_path / "unused.npy",
+            tmp_path / "out.gsplats.zarr",
+            volume=volume,
+            k_star_ref=4000,
+            n_features_ref=200,
+            plan=self._plan(tmp_path, volume),
+            floor="none",  # keep the run cheap; the floor is #1174's business
+            flat=True,
+            device="cpu",
+            verbose=False,
+            **run_kwargs,
+        )
+        return seen
+
+    def _run(self, tmp_path, monkeypatch, **run_kwargs) -> list:
+        """As :meth:`_run_boxes`, projected onto each box's ``cull_retention``."""
+        return [
+            r["cull_retention"]
+            for r in self._run_boxes(tmp_path, monkeypatch, **run_kwargs)
+        ]
+
+    def test_bare_content_fit_is_near_lossless(self, tmp_path, monkeypatch):
+        """No preset, no --config, no --cull-retention → 0.999 for every box.
+
+        FAILS pre-fix with 0.95 (the fitter's signature default falling all the
+        way through), which is the regression this pins.
+        """
+        assert self._run(tmp_path, monkeypatch) == [
+            pytest.approx(CONTENT_CULL_RETENTION),
+            pytest.approx(CONTENT_CULL_RETENTION),
+        ]
+
+    def test_preset_still_gives_its_own_retention(self, tmp_path, monkeypatch):
+        """A preset keeps outranking the command default.
+
+        ``standard``'s retention is ALSO 0.999, so the retention alone cannot tell
+        which layer supplied it. ``n_iters`` can: 5000 is the preset's, 1000 the
+        harvested function default a preset-less run resolves.
+        """
+        seen = self._run_boxes(tmp_path, monkeypatch, preset="standard")
+        assert [r["cull_retention"] for r in seen] == [
+            pytest.approx(0.999),
+            pytest.approx(0.999),
+        ]
+        assert [r["n_iters"] for r in seen] == [5000, 5000]  # the preset layer landed
+
+    def test_explicit_cli_value_reaches_every_box(self, tmp_path, monkeypatch):
+        seen = self._run(tmp_path, monkeypatch, cull_retention=0.5)
+        assert seen == [pytest.approx(0.5), pytest.approx(0.5)]
+
+    def test_config_value_beats_the_command_default(self, tmp_path, monkeypatch):
+        cfg = tmp_path / "fit.yaml"
+        cfg.write_text("cull_retention: 0.5\n")
+        seen = self._run(tmp_path, monkeypatch, config=cfg)
+        assert seen == [pytest.approx(0.5), pytest.approx(0.5)]
+
+    def test_zero_keeps_every_splat_and_is_not_replaced(self, tmp_path, monkeypatch):
+        """`--cull-retention 0` is a value, not an absence: it must win."""
+        seen = self._run(tmp_path, monkeypatch, cull_retention=0.0)
+        assert seen == [0.0, 0.0]
+
+    def test_parallel_worker_argv_only_carries_an_asked_for_retention(
+        self, tmp_path, monkeypatch
+    ):
+        """The command default must not leak into the ``-j N`` worker argv.
+
+        The workers re-enter ``_fit_kwargs`` and resolve the same default
+        themselves, so materializing it here would only make an absent flag
+        indistinguishable from an explicit one.
+        """
+        V = _pedestal_blobs(shape=(16, 16, 32))
+        bare = TestContentFitSharedFloor._capture_worker_argvs(
+            tmp_path, monkeypatch, V, floor="none"
+        )
+        assert len(bare) == 2
+        assert all("--cull-retention" not in argv for argv in bare)
+        asked = TestContentFitSharedFloor._capture_worker_argvs(
+            tmp_path, monkeypatch, V, floor="none", cull_retention=0.5
+        )
+        assert all(
+            float(a[a.index("--cull-retention") + 1]) == pytest.approx(0.5)
+            for a in asked
+        )
+
+    def test_worker_branch_resolves_the_same_default(self, tmp_path, monkeypatch):
+        """`--plan-box K` (the ``-j N`` subprocess) must not fit differently.
+
+        The worker re-enters ``_fit_kwargs`` in its own process, so a default
+        living only on the sequential path would make ``-j N`` and ``-j 1``
+        produce different splat sets — the #1637 class of bug.
+        """
+        from luxar.cli.gsplat_ops.planner import run_content_fit
+
+        volume = _pedestal_blobs(shape=(16, 16, 32))
+        seen = self._spy_boxes(monkeypatch)
+        run_content_fit(
+            tmp_path / "unused.npy",
+            tmp_path / "box0.gsplats.zarr",
+            volume=volume,
+            k_star_ref=4000,
+            n_features_ref=200,
+            plan=self._plan(tmp_path, volume),
+            plan_box=0,
+            floor="none",
+            device="cpu",
+            verbose=False,
+        )
+        assert [r["cull_retention"] for r in seen] == [
+            pytest.approx(CONTENT_CULL_RETENTION)
+        ]
+
+    def test_cli_flag_reaches_every_box_through_the_real_command(
+        self, tmp_path, monkeypatch
+    ):
+        """`--cull-retention` must survive the real ``fit`` dispatch, not just
+        ``run_content_fit``.
+
+        Every other test in this class calls ``run_content_fit`` directly, so
+        deleting ``cull_retention=cull_retention`` from ``fit.py``'s
+        ``--tiling content`` dispatch would leave the flag silently ineffective
+        with all of them still green — the same hole the ``-j`` builder test
+        above covers for the worker argv.
+        """
+        from typer.testing import CliRunner
+
+        from luxar.cli.gsplat_commands import app_gsplat
+
+        volume = _pedestal_blobs(shape=(16, 16, 32))
+        vol = tmp_path / "vol.npy"
+        np.save(vol, volume)
+        seen = self._spy_boxes(monkeypatch)
+        result = CliRunner().invoke(
+            app_gsplat,
+            # fmt: off
+            [
+                "fit",
+                str(vol),
+                str(tmp_path / "out.gsplats.zarr"),
+                "--tiling",
+                "content",
+                "--plan",
+                str(self._plan(tmp_path, volume)),
+                "--k-star-ref",
+                "4000",
+                "--n-features-ref",
+                "200",
+                "--cull-retention",
+                "0.5",
+                "--floor",
+                "none",
+                "--flat",
+                "--device",
+                "cpu",
+                "--quiet",
+            ],
+            # fmt: on
+        )
+        assert result.exit_code == 0, result.output
+        assert [r["cull_retention"] for r in seen] == [
+            pytest.approx(0.5),
+            pytest.approx(0.5),
+        ]
+
+
 class TestFitPlannedParallel:
     def test_merges_all_budgeted_boxes(self, tmp_path):
         plan = _toy_plan(n_boxes=3)
@@ -910,6 +1176,186 @@ class TestFitPlannedParallel:
         )
         assert d.exists() and any(d.iterdir())
 
+    def test_missing_reference_is_announced_even_when_quiet(self, tmp_path, capsys):
+        merged = fit_planned_parallel(
+            _toy_plan(n_boxes=1),
+            jobs=1,
+            tmp_dir=tmp_path / "boxes",
+            worker_cmd_builder=_fake_box_builder(5),
+            verbose=False,
+        )
+
+        assert "psnr_db" not in merged.stats
+        notice = capsys.readouterr().out
+        assert "No merged quality metrics" in notice
+        assert "reference volume" in notice
+        assert "gsplat compare" in notice
+
+    def test_flat_merge_with_reference_records_quality(self, tmp_path):
+        plan = _toy_plan(n_boxes=1)
+        volume = _corner_blobs(tuple(plan.volume_shape), n=3, corner=12)
+        merged = fit_planned_parallel(
+            plan,
+            jobs=1,
+            tmp_dir=tmp_path / "boxes",
+            worker_cmd_builder=_fake_box_builder(5),
+            volume=volume,
+            device="cpu",
+            verbose=False,
+        )
+
+        quality_keys = {
+            "mse",
+            "psnr_db",
+            "ssim",
+            "foreground_psnr_db",
+            "foreground_threshold",
+            "foreground_fraction",
+        }
+        assert quality_keys <= merged.stats.keys()
+        assert all(np.isfinite(merged.stats[key]) for key in quality_keys)
+
+    def test_mismatched_reference_shape_is_announced(self, tmp_path, capsys):
+        plan = _toy_plan(n_boxes=1)
+        merged = fit_planned_parallel(
+            plan,
+            jobs=1,
+            tmp_dir=tmp_path / "boxes",
+            worker_cmd_builder=_fake_box_builder(5),
+            volume=np.zeros((8, 8, 8), np.float32),
+            verbose=False,
+        )
+
+        assert "psnr_db" not in merged.stats
+        notice = capsys.readouterr().out
+        assert "No merged quality metrics" in notice
+        assert "does not match the plan grid" in notice
+        assert str(tuple(plan.volume_shape)) in notice
+
+    def test_partition_with_reference_records_flat_equivalent_quality(
+        self, tmp_path, capsys
+    ):
+        plan = _toy_plan(n_boxes=2)
+        volume = _corner_blobs(tuple(plan.volume_shape), n=3, corner=12)
+        flat = fit_planned_parallel(
+            plan,
+            jobs=2,
+            tmp_dir=tmp_path / "flat-boxes",
+            worker_cmd_builder=_fake_box_builder(5),
+            volume=volume,
+            device="cpu",
+            verbose=False,
+        )
+        node = fit_planned_parallel(
+            plan,
+            jobs=2,
+            tmp_dir=tmp_path / "partition-boxes",
+            worker_cmd_builder=_fake_box_builder(5),
+            volume=volume,
+            device="cpu",
+            partition=True,
+            verbose=False,
+        )
+
+        stats = node.meta["fit_stats"]
+        quality_keys = {
+            "mse",
+            "psnr_db",
+            "ssim",
+            "foreground_psnr_db",
+            "foreground_threshold",
+            "foreground_fraction",
+        }
+        assert quality_keys <= stats.keys()
+        assert stats["psnr_db"] == pytest.approx(flat.stats["psnr_db"])
+        assert stats["mse"] == pytest.approx(flat.stats["mse"])
+        assert "floor" not in stats
+        assert "concatenated_from" not in stats
+        assert stats["splats_per_tile"] == [5, 5]
+        assert node.meta["floor"] == pytest.approx(2.0)
+        assert node.meta["image_min"] == pytest.approx(2.0)
+        assert node.meta["image_max"] == pytest.approx(12.0)
+        assert node.meta["intensity_range"] == pytest.approx(10.0)
+        assert flat.stats["floor"] == pytest.approx(node.meta["floor"])
+        assert flat.stats["image_min"] == pytest.approx(node.meta["image_min"])
+        assert "No merged quality metrics" not in capsys.readouterr().out
+
+        from luxar.cli.gsplat_ops.fitting.fit_utils import save_fit_output
+
+        output = tmp_path / "partition.gsplats.zarr"
+        save_fit_output(node, output, compress=None, verbose=False)
+
+        import zarr
+
+        root = zarr.open_group(str(output), mode="r")
+        assert root["fitting"].attrs["psnr_db"] == pytest.approx(stats["psnr_db"])
+        assert root["fitting"].attrs["n_splats"] == node.n_splats
+        assert root["pipeline"].attrs["planned_fit"] is True
+
+    def test_single_region_partition_request_records_quality_without_flatten_notice(
+        self, tmp_path, capsys
+    ):
+        from luxar.gsplats.tree import GSplatPartition
+
+        plan = _toy_plan(n_boxes=1)
+        volume = _corner_blobs(tuple(plan.volume_shape), n=3, corner=12)
+        result = fit_planned_parallel(
+            plan,
+            jobs=1,
+            tmp_dir=tmp_path / "boxes",
+            worker_cmd_builder=_fake_box_builder(5),
+            volume=volume,
+            device="cpu",
+            partition=True,
+            verbose=False,
+        )
+
+        assert not isinstance(result, GSplatPartition)
+        assert np.isfinite(result.meta["fit_stats"]["psnr_db"])
+        notice = capsys.readouterr().out
+        assert "No merged quality metrics" not in notice
+        assert "gsplat flatten" not in notice
+
+    def test_partition_quality_budget_skip_is_announced(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        plan = _toy_plan(n_boxes=2)
+        monkeypatch.setenv("LUXAR_TILED_QUALITY_MAX_GB", "0")
+        node = fit_planned_parallel(
+            plan,
+            jobs=2,
+            tmp_dir=tmp_path / "boxes",
+            worker_cmd_builder=_fake_box_builder(5),
+            volume=np.zeros(plan.volume_shape, np.float32),
+            partition=True,
+            verbose=False,
+        )
+
+        assert "psnr_db" not in node.meta["fit_stats"]
+        notice = capsys.readouterr().out
+        assert "Merged quality metrics skipped" in notice
+        assert "gsplat flatten" in notice
+        assert "gsplat compare" in notice
+
+    def test_partition_missing_reference_is_announced_and_keeps_root_stats(
+        self, tmp_path, capsys
+    ):
+        node = fit_planned_parallel(
+            _toy_plan(n_boxes=2),
+            jobs=2,
+            tmp_dir=tmp_path / "boxes",
+            worker_cmd_builder=_fake_box_builder(5),
+            partition=True,
+            verbose=False,
+        )
+
+        assert node.meta["fit_stats"]["planned_fit"] is True
+        assert "psnr_db" not in node.meta["fit_stats"]
+        notice = capsys.readouterr().out
+        assert "No merged quality metrics" in notice
+        assert "reference volume" in notice
+        assert "gsplat flatten" in notice
+
 
 # ── The fit's truncation radius survives the planned path (#1637) ──
 #
@@ -977,11 +1423,75 @@ class TestPlannedFitTruncationRadius:
         assert merged.stats["n_boxes_fit"] >= 1
         assert merged.stats["overlap"] == plan.overlap
         assert list(merged.stats["volume_shape"]) == list(V.shape)
+        quality_keys = {
+            "mse",
+            "psnr_db",
+            "ssim",
+            "foreground_psnr_db",
+            "foreground_threshold",
+            "foreground_fraction",
+        }
+        assert quality_keys <= merged.stats.keys()
+        assert merged.stats["psnr_db"] > 10
+        assert 0 < merged.stats["ssim"] <= 1
+        assert np.isfinite(merged.stats["foreground_psnr_db"])
         # Wall clock for the fit loop, so it is bounded by the wall clock of the
         # whole call — the SUM of the boxes' own fit times need not be.
         assert 0 < merged.stats["time_seconds"] <= wall
 
-    def test_partition_parts_keep_the_configured_radius_and_box_stats(self, tmp_path):
+    def test_quality_budget_skip_is_announced_and_stamps_nothing(
+        self, monkeypatch, capsys
+    ):
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.planner import fit_planned as fit_planned_fn
+
+        fit_planned_module = __import__(
+            "luxar.gsplats.planner.fit_planned", fromlist=["_fit_one_box"]
+        )
+        volume = np.ones((16, 16, 16), np.float32)
+        plan = _toy_plan(n_boxes=1)
+
+        def _fake_fit(*args, **kwargs):
+            return GSplatData(
+                centers=np.array([[8.0, 8.0, 8.0]], np.float32),
+                amplitudes=np.ones((1,), np.float32),
+                cholesky_factors=np.array([[1, 0, 1, 0, 0, 1]], np.float32),
+            )
+
+        monkeypatch.setattr(fit_planned_module, "_fit_one_box", _fake_fit)
+        monkeypatch.setenv("LUXAR_TILED_QUALITY_MAX_GB", "0")
+        merged = fit_planned_fn(volume, plan, verbose=False)
+
+        assert "psnr_db" not in merged.stats
+        assert "foreground_psnr_db" not in merged.stats
+        notice = capsys.readouterr().out
+        assert "Merged quality metrics skipped" in notice
+        assert "LUXAR_TILED_QUALITY_MAX_GB" in notice
+
+    def test_rejects_a_volume_from_a_different_plan_grid(self, monkeypatch):
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.planner import fit_planned as fit_planned_fn
+
+        fit_planned_module = importlib.import_module(
+            "luxar.gsplats.planner.fit_planned"
+        )
+        plan = _toy_plan(n_boxes=1)
+
+        def _fake_fit(*args, **kwargs):
+            return GSplatData(
+                centers=np.array([[4.0, 4.0, 4.0]], np.float32),
+                amplitudes=np.ones((1,), np.float32),
+                cholesky_factors=np.array([[1, 0, 1, 0, 0, 1]], np.float32),
+            )
+
+        monkeypatch.setattr(fit_planned_module, "_fit_one_box", _fake_fit)
+
+        with pytest.raises(ValueError, match="does not match the plan grid"):
+            fit_planned_fn(np.zeros((8, 8, 8), np.float32), plan)
+
+    def test_partition_parts_keep_the_configured_radius_and_box_stats(
+        self, tmp_path, capsys
+    ):
         """Sequential ``partition=True``: every part leaf carries ``truncate``."""
         from luxar.gsplats._data.filtering import _REGION_SCOPED_STATS_KEYS
         from luxar.gsplats.io.load_gsplats import load_gsplat_node
@@ -989,7 +1499,19 @@ class TestPlannedFitTruncationRadius:
         from luxar.gsplats.planner import fit_planned
 
         V, plan = self._tiny_volume_and_plan()
+        flat = fit_planned(V, plan, partition=False, truncate=3.5, **_FAST_FIT)
         node = fit_planned(V, plan, partition=True, truncate=3.5, **_FAST_FIT)
+        notice = capsys.readouterr().out
+        assert np.isfinite(node.meta["fit_stats"]["psnr_db"])
+        assert node.meta["fit_stats"]["psnr_db"] == pytest.approx(flat.stats["psnr_db"])
+        assert node.meta["fit_stats"]["mse"] == pytest.approx(flat.stats["mse"])
+        assert node.meta["fit_stats"]["planned_fit"] is True
+        assert node.meta["fit_stats"]["n_splats"] == node.n_splats
+        assert "concatenated_from" not in node.meta["fit_stats"]
+        assert node.meta["fit_stats"]["splats_per_tile"]
+        assert "image_max" not in node.meta["fit_stats"]
+        assert node.meta["image_max"] == pytest.approx(flat.stats["image_max"])
+        assert "No merged quality metrics" not in notice
 
         leaves = _leaf_nodes(node)
         assert leaves
@@ -999,12 +1521,17 @@ class TestPlannedFitTruncationRadius:
                 assert sub.truncation_radius == pytest.approx(3.5)
             # The per-box fit stats ride along with the part they describe...
             box_stats = leaf.additive_sublods[0].stats
-            assert "final_loss" in box_stats
+            assert "iterations" in box_stats
             # ... but the count must describe THIS part, not the padded crop it
             # was fitted on (it becomes the part's on-disk `lod_stats`).
             assert box_stats["n_splats"] == leaf.n_splats
             if not any(k in box_stats for k in _REGION_SCOPED_STATS_KEYS):
                 n_cropped += 1
+                # A rescoped box also publishes no measured SCORE: `final_loss` /
+                # `psnr_db` were taken on the padded crop, with the halo splats
+                # present and against a bigger target region (#1600).
+                assert "final_loss" not in box_stats
+                assert "psnr_db" not in box_stats
         # A box is fitted on a halo-padded crop and then core-masked, so the
         # crop's grid stamps describe a bigger region than the part (the rule
         # itself is pinned by test_core_mask_rescopes_the_box_stats and
@@ -1026,7 +1553,7 @@ class TestPlannedFitTruncationRadius:
                 assert sub.truncation_radius == pytest.approx(3.5)
             # A per-box fit stat reaches the part ON DISK, not just in memory
             # (the writer persists a sub-LOD's stats as the leaf's `lod_stats`).
-            assert "final_loss" in leaf.additive_sublods[0].stats
+            assert "iterations" in leaf.additive_sublods[0].stats
 
     def test_zero_budget_box_carries_the_configured_radius(self):
         """The early-out has no fit to read the radius off — resolve it anyway."""
@@ -1072,6 +1599,37 @@ class TestPlannedFitTruncationRadius:
         # Summing the boxes would give 3000s; wall clock here is a fraction of one.
         assert merged.stats["time_seconds"] < 60.0
 
+    def test_planned_fit_resolves_one_range_for_every_box(self, monkeypatch):
+        import importlib
+
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.utils.trils import tril_size
+
+        fp = importlib.import_module("luxar.gsplats.planner.fit_planned")
+        seen = []
+
+        def _capture(volume, box, overlap, cap, **fit_kwargs):
+            seen.append(fit_kwargs["norm_range"])
+            return GSplatData(
+                centers=np.array([[1.0, 1.0, 1.0]], np.float32),
+                amplitudes=np.ones((1,), np.float32),
+                cholesky_factors=np.zeros((1, tril_size(3)), np.float32),
+            )
+
+        monkeypatch.setattr(fp, "_fit_one_box", _capture)
+        plan = _toy_plan(n_boxes=3)
+        volume = np.linspace(
+            10.0,
+            110.0,
+            num=int(np.prod(plan.volume_shape)),
+            dtype=np.float32,
+        ).reshape(plan.volume_shape)
+
+        fp.fit_planned(volume, plan)
+
+        assert len(seen) == 3
+        assert all(item == pytest.approx((10.0, 110.0)) for item in seen)
+
     def test_core_mask_rescopes_the_box_stats(self):
         """The kept subset's stats must describe IT, not the padded crop."""
         from luxar.gsplats._data.filtering import _REGION_SCOPED_STATS_KEYS
@@ -1086,18 +1644,25 @@ class TestPlannedFitTruncationRadius:
         assert 0 < out.n_splats
         assert out.stats["n_splats"] == out.n_splats
         assert [k for k in _REGION_SCOPED_STATS_KEYS if k in out.stats] == []
-        # Fit-quality / normalization metadata legitimately describes this box's
-        # own fit and must survive.
-        assert "final_loss" in out.stats
+        # The MEASURED scores go with them: they were taken on the fit of the
+        # padded crop, so they describe neither this splat set (the halo splats
+        # contributed) nor this region (#1600).
+        assert "final_loss" not in out.stats
+        assert "psnr_db" not in out.stats
+        # Descriptive run metadata legitimately describes this box's own fit and
+        # must survive.
+        assert "iterations" in out.stats
 
         # Negative control: the padded crop EQUALS the core box (no halo, box
         # covering the whole volume) and nothing is dropped, so the crop's grid
-        # stamps still describe this part exactly and must be kept.
+        # stamps still describe this part exactly and must be kept — and so does
+        # its score, which was measured on exactly these splats.
         whole = PlanBox(box=[0, 24, 0, 24, 0, 24], n_features=50, budget=120)
         full = _fit_one_box(V, whole, 0, 0, **_FAST_FIT)
         assert full.stats["n_splats"] == full.n_splats
         assert full.stats["fitted_shape"] == [24, 24, 24]
         assert "occupancy" in full.stats
+        assert "final_loss" in full.stats
 
     def test_a_halo_alone_rescopes_the_box_stats(self, monkeypatch):
         """A padded crop LARGER than the core invalidates the grid stamps...
@@ -1141,7 +1706,9 @@ class TestPlannedFitTruncationRadius:
         out = _fit_one_box(V, box, 6, 0)
         assert out.n_splats == 3  # nothing was dropped by the core mask
         assert [k for k in _REGION_SCOPED_STATS_KEYS if k in out.stats] == []
-        assert out.stats["final_loss"] == 0.25  # this box's own fit, still true
+        # The score is measured against the PADDED CROP's voxels, so a halo alone
+        # invalidates it even with the splat set intact (#1600).
+        assert "final_loss" not in out.stats
 
         # Negative control: the same halo CLAMPS to the core (the box is the whole
         # volume), so the stamps describe this part and must survive.
@@ -1150,6 +1717,7 @@ class TestPlannedFitTruncationRadius:
         assert full.n_splats == 3
         assert full.stats["fitted_shape"] == [18, 18, 18]
         assert full.stats["occupancy"] == 0.5
+        assert full.stats["final_loss"] == 0.25
 
     def test_box_stats_are_json_safe(self, monkeypatch, tmp_path):
         """A non-finite box stat must not reach a part's attrs.
@@ -1294,11 +1862,9 @@ class TestPlannedFitTruncationRadius:
         ).stats["time_seconds"]
         assert box_time == pytest.approx(_FAKE_BOX_TIME_SECONDS)
         # ... and whatever a box recorded, `time_seconds` on the merge means one
-        # thing: wall clock, as the uniform tiled merge stamps it. (Nothing has to
-        # be overwritten HERE — a reloaded box brings back its leaf `lod_stats`
-        # but not its top-level stats, so `concatenate` has no box times to sum;
-        # `test_flat_merge_stamps_wall_clock_time` covers the sequential branch
-        # where it does and the overwrite is load-bearing.)
+        # thing: wall clock, as the uniform tiled merge stamps it. This fake
+        # persists fitting info, so the reload and `concatenate` do bring back
+        # and sum the box times; the overwrite is load-bearing here too.
         assert merged.stats["time_seconds"] == pytest.approx(
             merged.stats["elapsed_seconds"]
         )
@@ -1309,9 +1875,8 @@ class TestPlannedFitTruncationRadius:
 
         The radius and the per-box fit stats reach a part by a different route
         than the sequential path's in-memory hand-off — through the box store: the
-        leaf writer stamps a box's stats as its `lod_stats`, and the reload
-        restores them onto the sub-LOD even though the top-level `stats` (which
-        would need `include_stats=True`) comes back empty.
+        leaf writer stamps a box's stats as its `lod_stats`, and the reload asks
+        for top-level `stats` while also restoring them onto the sub-LOD.
         """
         node = fit_planned_parallel(
             _toy_plan(n_boxes=2),

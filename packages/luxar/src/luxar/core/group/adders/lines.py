@@ -30,6 +30,8 @@ from ..compositing import (
     funnel_add_error,
     is_broadcast_color,
     position_bounds_from_array,
+    preflight_extend_to_all,
+    reject_mesh_only_appearance,
     slice_optional_array,
     strip_absent_attr_kwargs,
     sync_custom_colormap_attr,
@@ -38,11 +40,12 @@ from ..compositing import (
     validate_lines_channels_before_split,
 )
 from ..dim_order import apply_dim_order_positions
-from ..partition import reject_mismatched_partition_parent
+from ..partition import is_requested, reject_mismatched_partition_parent
 
 if TYPE_CHECKING:
     from ...node import Node
     from ..group import Group
+    from ..partition import BSPNode
 
 
 def _sah_polyline_centroids(
@@ -65,6 +68,34 @@ def _sah_polyline_centroids(
         ],
         dtype=np.float64,
     )
+
+
+def _build_line_partition_tree(
+    vert_arr: np.ndarray,
+    polyline_indices: List[np.ndarray],
+    n_vertices: int,
+    max_elements: int,
+    rule: str,
+) -> Tuple[Optional["BSPNode"], List[List[int]]]:
+    """Build the requested atomic-polyline BSP and flatten its leaves."""
+    from ..partition import bsp_leaf_parts, spatial_bsp_polyline_tree, spatial_bsp_tree
+
+    if rule != "sah":
+        tree = spatial_bsp_polyline_tree(
+            vert_arr, polyline_indices, max_elements, rule=rule
+        )
+    elif not polyline_indices:
+        tree = None
+    else:
+        centroids = _sah_polyline_centroids(vert_arr, polyline_indices)
+        approximate_vertices_per_polyline = max(
+            1, n_vertices // max(1, len(polyline_indices))
+        )
+        centroid_cap = max(1, max_elements // approximate_vertices_per_polyline)
+        tree = spatial_bsp_tree(centroids, max_elements=centroid_cap, rule="sah")
+
+    parts = [] if tree is None else [part.tolist() for part in bsp_leaf_parts(tree)]
+    return tree, parts
 
 
 def add_lines_impl(
@@ -93,10 +124,11 @@ def add_lines_impl(
     # renders at the current zoom, additive describes HOW each level streams in.
     # Passing substitutive_lod alone ladders every level by default; pass
     # additive_lod=False to opt out. See lod/group.py's "Composed axes" section.
-    if substitutive_lod is not None and partition is not None:
+    if is_requested(substitutive_lod) and is_requested(partition):
         raise ValueError(
             "partition= and substitutive_lod= cannot be combined yet "
-            "(partition-of-substitutive is not implemented). Use one or the other."
+            "(Points supports a global overview LOD above partitioned fine detail; "
+            "Lines does not implement that topology yet). Use one or the other."
         )
     try:
         # "An explicit None means absent" (#1574), applied ONCE here rather than
@@ -116,6 +148,7 @@ def add_lines_impl(
         validate_node_name(name)
         (parent or group)._ensure_no_duplicate_child(name)
         reject_mismatched_partition_parent(parent or group, "lines", name)
+        reject_mesh_only_appearance("lines", name, attrs)
 
         scene = group._find_scene()
 
@@ -223,6 +256,7 @@ def add_lines_impl(
                 # finest child is written LAST, so a malformed edge list was
                 # refused only after the coarse levels were already on disk.
                 validate_line_indices_before_split(indices, n_vertices, line_type)
+                preflight_extend_to_all(scene, extend_to_all, vert_arr, "lines")
                 return add_lines_substitutive_lod_wrapper_impl(
                     group,
                     name=name,
@@ -269,10 +303,7 @@ def add_lines_impl(
         if partition is not None:
             from ..lod.lines import identify_polylines
             from ..partition import (
-                median_bsp_polylines,
-                midpoint_bsp_polylines,
                 resolve_partition_spec,
-                sah_bsp_partition,
                 warn_if_oversized_single_part,
             )
 
@@ -291,32 +322,13 @@ def add_lines_impl(
 
             polyline_indices = identify_polylines(n_vertices, line_type, indices)
 
-            if partition_rule == "sah":
-                # SAH operates on per-polyline centroids in this
-                # context too — same atomic-polyline guarantee.
-                if not polyline_indices:
-                    polyline_parts: List[List[int]] = []
-                else:
-                    centroids = _sah_polyline_centroids(vert_arr, polyline_indices)
-                    # Cap is per-vertex; SAH gives us per-centroid
-                    # parts; we re-aggregate to vertex-count parts.
-                    approx_per_poly = max(
-                        1,
-                        n_vertices // max(1, len(polyline_indices)),
-                    )
-                    centroid_cap = max(1, max_elements // approx_per_poly)
-                    centroid_parts = sah_bsp_partition(
-                        centroids, max_elements=centroid_cap
-                    )
-                    polyline_parts = [idx_arr.tolist() for idx_arr in centroid_parts]
-            elif partition_rule == "midpoint":
-                polyline_parts = midpoint_bsp_polylines(
-                    vert_arr, polyline_indices, max_elements
-                )
-            else:
-                polyline_parts = median_bsp_polylines(
-                    vert_arr, polyline_indices, max_elements
-                )
+            tree, polyline_parts = _build_line_partition_tree(
+                vert_arr,
+                polyline_indices,
+                n_vertices,
+                max_elements,
+                partition_rule,
+            )
 
             warn_if_oversized_single_part(
                 len(polyline_parts),
@@ -327,6 +339,8 @@ def add_lines_impl(
                 name,
             )
             if len(polyline_parts) > 1:
+                assert tree is not None
+                preflight_extend_to_all(scene, extend_to_all, vert_arr, "lines")
                 return add_lines_partition_wrapper_impl(
                     group,
                     name=name,
@@ -344,6 +358,7 @@ def add_lines_impl(
                     parent=parent,
                     extend_to_all=extend_to_all,
                     max_elements=max_elements,
+                    bsp_tree=tree.to_serializable(),
                     additive_lod=additive_lod,
                     **attrs,
                 )
@@ -600,6 +615,7 @@ def add_lines_partition_wrapper_impl(
     parent: Optional["Node"],
     extend_to_all: Optional[Union[List[str], str]],
     max_elements: int,
+    bsp_tree: Dict[str, Any],
     additive_lod: Any = None,
     **attrs: Any,
 ) -> "Group":
@@ -689,6 +705,7 @@ def add_lines_partition_wrapper_impl(
     # - ``segments`` ⇒ re-emit as ``segments`` (consecutive member pairs).
     # - ``indexed`` ⇒ re-emit as ``indexed`` with the part's real edges
     #   remapped to part-local vertex indices.
+    written_parts = []
     for i, part_vertex_idx in enumerate(part_vertex_indices):
         if part_vertex_idx.size == 0:
             continue
@@ -765,6 +782,11 @@ def add_lines_partition_wrapper_impl(
             additive_lod=additive_lod,
             **leaf_attrs,
         )
+        written_parts.append(i)
+
+    from ..partition import persist_pruned_bsp_tree
+
+    persist_pruned_bsp_tree(wrapper, bsp_tree, written_parts)
 
     wrapper._persist_attr("position_bounds", position_bounds_from_array(vert_arr))
 
@@ -1012,9 +1034,9 @@ def add_lines_substitutive_lod_wrapper_impl(
     from ....gsplats.lift import coarse_substitutive_levels, lift_lines_to_gsplats
     from ..lod.group import (
         compose_additive_under_substitutive,
-        derive_coverage_fractions,
         gsplat_additive_lod_from,
         level_additive_lod,
+        resolve_lod_ladder,
     )
     from ..lod.lines import resolve_additive_axis_lines
 
@@ -1158,35 +1180,26 @@ def add_lines_substitutive_lod_wrapper_impl(
     # a different, much smaller scale and would collapse the top thresholds).
     counts = [int(c.n_splats) for c in coarse_first] + [int(lifted.n_splats)]
     parent_node = parent or group
-    explicit = spec.get("coverage_fractions")
-    if explicit is not None:
-        if len(explicit) != len(counts):
-            raise ValueError(
-                f"coverage_fractions has {len(explicit)} entries but the LOD ladder "
-                f"has {len(counts)} levels ({len(coarse_first)} gsplat + 1 lines)"
-            )
-        coverage_vals = list(explicit)
-        # Explicit lists keep the legacy diagonal-metric units they were
-        # authored in (selector="coverage", the add_lod_group default).
-        lod_selector = "coverage"
-    else:
-        # Screen-area fractions by occupancy halving (finest holds while the
-        # node occupies at least half the screen; one level coarser per halving
-        # of occupied area). Count-independent — no per-level radius or
-        # world-extent needed — and stamped selector="screen-area" so the
-        # viewer reads the thresholds in the units they were derived in.
-        #
-        # The ANCHOR is chosen from the insertion point: ``add_lines`` rejects
-        # ``partition=`` together with ``substitutive_lod=``, but a caller CAN
-        # hand-build a ``kind=partition`` wrapper and call this once per part —
-        # the shape ``demo_biodiversity_planetary_scale`` uses for its Points
-        # layers (its ``add_lines`` calls take the plain scene-level ``partition=``
-        # path instead, with no ladder). Such a per-tile ladder needs the
-        # fills-screen anchor; ``derive_coverage_fractions`` detects that ancestor
-        # automatically and logs the choice, and an explicit
-        # ``coverage_fractions=[...]`` still wins (the branch above).
-        coverage_vals = derive_coverage_fractions(counts, parent_node, name=name)
-        lod_selector = "screen-area"
+    # Thresholds AND the selector naming their units, from the one shared rule
+    # (``lod.group.resolve_lod_ladder``): an explicit ``coverage_fractions=[...]``
+    # is used verbatim under the legacy units it was authored in, otherwise the
+    # screen-area halving ladder is derived — re-anchored at fills-screen when the
+    # insertion point is partition-bound. ``add_lines`` rejects ``partition=``
+    # together with ``substitutive_lod=``, but a caller CAN hand-build a
+    # ``kind=partition`` wrapper and call this once per part — the shape
+    # ``demo_biodiversity_planetary_scale`` uses for its Points layers (its
+    # ``add_lines`` calls take the plain scene-level ``partition=`` path instead,
+    # with no ladder) — which is how that anchor is reached here.
+    coverage_vals, lod_selector = resolve_lod_ladder(
+        spec.get("coverage_fractions"),
+        counts,
+        parent_node,
+        name=name,
+        length_error=lambda n_explicit, n_levels: (
+            f"coverage_fractions has {n_explicit} entries but the LOD ladder "
+            f"has {n_levels} levels ({len(coarse_first)} gsplat + 1 lines)"
+        ),
+    )
 
     lod_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
     child_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}

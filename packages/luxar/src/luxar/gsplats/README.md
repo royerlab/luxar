@@ -8,11 +8,20 @@ This package implements a sophisticated Gaussian splatting system that fits coll
 
 ## Installation
 
-Gaussian splatting requires optional dependencies:
+Fitting Gaussian splats requires optional dependencies:
 
 ```bash
 pip install "luxar[gsplats]"
 ```
+
+> **Core-only carve-out.** The pure-NumPy half of this package works on a plain
+> `pip install luxar`: the `utils.trils` Cholesky helpers, and `GSplatData` —
+> construct, `.save()`, `.load()`, plus the geometric `translate` / `transform` /
+> `center_at_centroid` — so an existing `.gsplats.zarr` can be authored and
+> grafted into a scene (`scene.add_gsplats` / `add_gsplats_from_data` /
+> `add_gsplats_from_file`) without the extra. Fitting, calibration, culling, LOD
+> construction and intensity editing all need it; the `luxar.gsplats` package
+> docstring states exactly where the line falls.
 
 > **⚠️ torch ABI coupling.** The optional CUDA extension
 > (`models/gsplats/cuda/cuda_splatting_backend*.so`) is compiled against a
@@ -213,8 +222,8 @@ merged = GSplatData.concatenate(all_tile_results)
 
 **Key properties:**
 - Overlap must satisfy `overlap <= tile_size // 2` to avoid triple tile overlap.
-- The background floor (`floor`, default `"auto"`) is resolved once against the whole volume (never per tile) and subtracted from each tile before apodization — on the DENOISED basis when `--denoise` is active, since that is the data the level is subtracted from: `resolve_volume_floor_denoised` keeps the whole-volume level and adds the shift measured on a small bounded denoise probe, which reproduces the non-tiled path's denoised estimate exactly whenever the volume fits the probe budget. Above that budget the shift is applied for a `pNN` spec only; the default `auto` keeps its raw-basis level and says so, because the histogram-mode shift is not measurable on a bounded crop (#1178). On the floor-subtracted data the cosine windows guarantee seamless blending without post-merge pruning. The content-adaptive planner resolves it the same way — one whole-volume level, handed to the density scan and to every box (#1174) — but its boxes are unapodized and the level reaches them as the fit's `floor` argument, so a box lying entirely above the pedestal still normalizes against its own crop minimum (`image_min = max(level, min(crop))`) rather than the level.
-- The intensity scale is resolved whole-volume in the same spirit — but not on the denoised basis: `resolve_volume_norm_range` resolves one `(image_min, image_max)` against the RAW whole volume (same bounded sampler and determinism guarantee as the floor, no denoise probe) and every tile normalizes with it, so the optimiser's absolute criteria — convergence tolerance, seeding and culling thresholds, `amp_max` — mean the same thing in every tile. `image_min` is pinned at 0 (where floor-subtracted, apodized tile data starts) and a full-range scale carries no ceiling, since it is a bounded *sample* and a brighter voxel is real signal. A tile far dimmer than the volume maximum is therefore held to the same absolute tolerance as the rest of the volume, and converges earlier than it would have on its own scale. Because that unclipped scale can put a voxel above 1.0, the auto `amp_max` follows the normalized peak instead of capping at 1.0 (it stays 1.0 exactly whenever the range came from the array itself, so a whole-volume fit is unaffected). Because the bottom is pinned, a `norm_percentile > 0` keeps its bright-outlier clipping under tiling but not its low-end clipping. Where the measurement carries no usable scale — a non-finite top, a top with no positive extent (the sample landed in empty or masked space), or a top the applied floor reaches — every tile falls back to its own scale with a printed note, rather than being handed a zero, negative or epsilon range to divide by. A volume that is honestly dim is not one of those cases and keeps its shared scale. Uniform tiling only — the content-adaptive planner's boxes still normalize against their own crop.
+- The background floor (`floor`, default `"auto"`) is resolved once against the whole volume (never per tile) and subtracted from each tile before apodization — on the DENOISED basis when `--denoise` is active, since that is the data the level is subtracted from: `resolve_volume_floor_denoised` keeps the whole-volume level and adds the shift measured on a small bounded denoise probe, which reproduces the non-tiled path's denoised estimate exactly whenever the volume fits the probe budget. Above that budget the shift is applied for a `pNN` spec only; the default `auto` keeps its raw-basis level and says so, because the histogram-mode shift is not measurable on a bounded crop (#1178). On the floor-subtracted data the cosine windows guarantee seamless blending without post-merge pruning. The content-adaptive planner resolves it the same way — one whole-volume level, handed to the density scan and to every box (#1174) — and every box combines it with the shared normalization-range low endpoint, so boxes lying entirely above the pedestal still use the same effective lower bound.
+- Without denoising, the intensity scale is resolved whole-volume in the same spirit: `resolve_volume_norm_range` resolves one `(image_min, image_max)` against the raw whole volume and every tile or content box normalizes with it, so the optimiser's absolute criteria — convergence tolerance, seeding and culling thresholds, `amp_max` — mean the same thing across the decomposition. Batch denoising is the exception: an automatically sampled raw range is not forwarded, so each task resolves on the data it fits — denoise-corrected input for an on-the-fly uniform tile, or the denoised store in `preprocess` mode (including content boxes). An explicit configured `norm_range` remains an intentional override. Uniform tiles shift a shared raw range into their floor-subtracted basis and pin `image_min` at 0 (where apodized tile data starts); content boxes keep the raw pair and combine it with the shared floor. A full-range scale carries no ceiling, since it is a bounded *sample* and a brighter voxel is real signal. A region far dimmer than the volume maximum is therefore held to the same absolute tolerance as the rest of the volume, and converges earlier than it would have on its own scale. Because that unclipped scale can put a voxel above 1.0, the auto `amp_max` follows the normalized peak instead of capping at 1.0 (it stays 1.0 exactly whenever the range came from the array itself, so a whole-volume fit is unaffected). Under uniform tiling, the zero-pinned bottom means `norm_percentile > 0` keeps its bright-outlier clipping but not its low-end clipping. Where the tile measurement carries no usable scale — a non-finite top, a top with no positive extent, or a top the applied floor reaches — uniform tiles fall back to their own scale with a printed note rather than dividing by a zero, negative or epsilon range.
 - `fit_tile` rejects explicit seed arrays (use int count, float ratio, or None).
 - zarr arrays are supported for out-of-core processing -- only one tile is materialized at a time.
 
@@ -545,7 +554,7 @@ from luxar.gsplats.fit_gsplats import GaussianSplatFitter
 
 # Initialize fitter with specific device and options
 fitter = GaussianSplatFitter(
-    device="cuda",  # or "mps", "cpu"; None auto-selects CUDA → MPS → CPU
+    device="cuda",  # or "mps", "cpu"; None/"auto" selects CUDA → MPS → CPU
     enable_dynamic_ops=True,  # fixed-pool splat relocation during fitting (default)
 )
 
@@ -834,7 +843,7 @@ tensor = render_to_volume_tensor(gsplat_data, shape=(128, 128, 128), device="cud
 **Parameters** (shared by both functions):
 - `gsplat_data`: GSplatData to render
 - `shape`: Output volume shape, e.g. `(128, 128, 128)`
-- `device`: `"cuda"`, `"mps"`, `"cpu"`, or `None` (auto-detect)
+- `device`: `"cuda"`, `"mps"`, `"cpu"`, `"auto"`, or `None` (auto-detect)
 - `truncate`: Truncation radius in standard deviations (default `DEFAULT_TRUNCATION_RADIUS` = 2.75)
 - `intensity_floor`: Amplitude-aware culling threshold (default 1e-5)
 - `chunk_size`: Optional chunk size for memory management on large volumes
@@ -921,10 +930,11 @@ with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
 > `luxar gsplat lod --recipe levels`), `add_gsplats_from_data`
 > (and `add_gsplats_from_file`) route it by default into a `kind=lod`
 > scene group — one gsplats child per substitutive level, with
-> `coverage_fraction` thresholds derived as `sqrt(N_i / N_finest)` from the
-> per-level splat counts (a dimensionless, viewport-relative value; coarsest
-> = 0.0, finest = 1.0 for a whole-object ladder — a partition-bound one anchors
-> its finest at 4.0 instead, see `partitioned_coverage_fractions`), so the
+> `coverage_fraction` thresholds derived by SCREEN-OCCUPANCY HALVING (a
+> dimensionless, viewport-relative value; coarsest = 0.0, finest = 0.5 for a
+> whole-object ladder — a partition-bound one anchors its finest at 1.0 instead,
+> see `partitioned_coverage_fractions`; the per-level splat counts set only the
+> ladder's length), so the
 > viewer view-switches between levels identically on any monitor. In v3.3 a saved `.gsplats.zarr`
 > is already a `kind=lod` group on disk; scene embedding grafts that subtree
 > directly. No substitutive work is discarded. Pass `lod_group=False` to
@@ -981,7 +991,7 @@ Main fitting function with automatic optimizations.
 - `sigma_min_diag`: Minimum Gaussian size per axis
 - `sigma_max_diag`: Maximum Gaussian size per axis
 - `early_stop_patience`: Iterations without improvement before stopping (default: 300)
-- `device`: PyTorch device (auto-detect if None)
+- `device`: PyTorch device (auto-detect if `None` or `"auto"`)
 
 **Returns:** `GSplatData` with fields:
 - `centers`: np.ndarray, shape (N, d) - Splat center positions
@@ -1015,9 +1025,9 @@ above.
 - `source_shape` / `source_dtype`: Grid and stored element type of the ACQUISITION, when `volume` is already a preprocessed copy of it (a caller that decimated before tiling must declare the grid, or the merged result records the working copy as its source). Taken explicitly rather than through `**fit_kwargs` because they describe the MERGED result and are applied at the merge: forwarded to the tiles, each would claim the whole acquisition as its own crop's source. `source_shape=None` measures `volume`, which is right whenever nothing was preprocessed.
 - `**fit_kwargs`: All parameters from `fit_gaussian_splats` (seeds, n_iters, device, etc.)
 
-`seeds` is handed to **every** tile as-is, so an integer here is a *per-tile* count, not a whole-volume budget: N tiles fit ~N × `seeds` splats. This differs from the CLI, where `--seeds` **is** a whole-volume budget that `luxar gsplat fit` divides by the tile count before calling this function (`cli.gsplat_ops.fitting.fit_utils.split_seeds_across_tiles`). If you are fitting at a K\* from `gsplat cal` (see the calibration sections above), divide it yourself — or pass a float compression ratio, which is scale-free and needs no adjustment.
+`seeds` is handed to **every** tile as-is, so an integer here is a *per-tile* count, not a whole-volume budget: N tiles fit ~N × `seeds` splats. This differs from the CLI, where `--seeds` **is** a whole-volume budget that `luxar gsplat fit` divides by the non-empty tile count before calling this function (`cli.gsplat_ops.fitting.fit_utils.split_seeds_across_tiles`). If you are fitting at a K\* from `gsplat cal` (see the calibration sections above), divide it yourself — or pass a float compression ratio, which is scale-free and needs no adjustment.
 
-**Merged quality metrics:** the per-tile scores describe crops of an apodized decomposition and do not compose into the merged one, so a flat merge (`partition=False`) renders the merged reconstruction once against the whole volume and stamps `psnr_db` / `ssim` / `mse` / `foreground_*` into its `stats` (#1669). The reference is `volume` as handed in — the subtracted pedestal is not put back — which is the basis the non-tiled path and `gsplat compare` already use (#1173). Scoring materializes the whole volume (the fit itself only ever reads it tile by tile), so it is bounded: half the memory actually free, held under a 24 GiB ceiling, with `LUXAR_TILED_QUALITY_MAX_GB` overriding both (`0` declines outright, an unreadable value falls back with a note). Over budget, or on a failure, it says so even when `verbose=False` — an archive that silently carries no PSNR is the failure this exists to end. A `partition=True` merge is not scored (the tree node has no fit-stats dict, and this path threads none through on save) and says so as well; `gsplat compare` is the recourse, after `gsplat flatten`.
+**Merged quality metrics:** per-region scores describe apodized tile crops or halo-padded content boxes and do not compose into the merged result, so uniform and content-planned merges render the reconstruction against the whole volume and attach `psnr_db` / `ssim` / `mse` / `foreground_*` to the merged result (#1669, #1703, #1733, #1858). The CLI save path publishes that block at the archive root; a library caller that writes a returned partition node directly must pass its `meta["fit_stats"]` through `split_fitting_info` to `write_gsplats_tree`. A partition is rendered as the sum of its surviving parts, exactly as the parts compose, without flattening the splats: uniform tiles retain overlapping Hann-apodized contributions, while content boxes retain only splats centered in disjoint cores. The reference is the selected volume as handed in — the subtracted pedestal is not put back — which is the basis the non-tiled path and `gsplat compare` already use (#1173). Scoring materializes the whole volume (the fit itself may only read it region by region), so it is bounded: half the memory actually free, held under a 24 GiB ceiling, with `LUXAR_TILED_QUALITY_MAX_GB` overriding both (`0` declines outright, an unreadable value falls back with a note). Over budget, or on a failure, it says so even when `verbose=False` — an archive that silently carries no PSNR is the failure this exists to end.
 
 **Returns:** `GSplatData` with all splats in global coordinates. Hilbert curve resorting happens automatically on `save()`.
 

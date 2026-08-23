@@ -81,6 +81,13 @@ DEMO_META = {
     },
     "caches": ["gsplats_zebrafish"],
     "outputs": ["gsplats_4d_zebrafish_timelapse"],
+    "citation": {
+        "short": "Aanstad 2018",
+        "doi": "10.5281/zenodo.1211599",
+        # ShareAlike: worth carrying into the store, since it binds whoever
+        # receives a scene built from this data.
+        "license": "CC BY-SA 4.0",
+    },
 }
 
 import sys
@@ -90,8 +97,10 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
     MissingDependencyError,
+    add_demo_caption,
     launch_viewer,
     load_dataset_bundle,
     parse_demo_flags,
@@ -331,7 +340,11 @@ def fit_timepoint(
     # Check cache
     if cache_file.exists() and not RECOMPUTE:
         try:
-            result = GSplatData.load(cache_file, include_stats=False)
+            # include_stats=True: the cache carries the fit's normalization
+            # provenance (floor / image_min / image_max), and `concatenate`
+            # only propagates a background floor into the stacked scene when
+            # every part reports one (#1175).
+            result = GSplatData.load(cache_file, include_stats=True)
             aprint(f"  Loaded {len(result.amplitudes):,} cached splats ({label})")
             return result
         except Exception as e:
@@ -373,7 +386,13 @@ def fit_timepoint(
         zip_deflate=True,
     )
 
-    return result
+    # Return what was STORED, not the in-memory fit: the cache is written under
+    # a lossy encoding, so returning `result` here would make a cold run
+    # (unquantized) and a warm run (the cache-hit branch above, which loads the
+    # quantized store) build different scenes. Same include_stats=True as that
+    # branch, so the two agree AND the fit's normalization provenance survives
+    # into the stacked scene.
+    return GSplatData.load(cache_file, include_stats=True)
 
 
 def fit_all_timepoints(
@@ -472,6 +491,8 @@ def create_luxar_scene(
         ) as compiler:
             scene = compiler.create_scene(
                 dimensions=dims,
+                citation=DEMO_META["citation"],
+                viewer_config=ViewerConfig(cinematic_mode=True),
             )
 
             scene.attrs["title"] = "GSplats: Zebrafish Embryo 4D Time-Lapse (Confocal)"
@@ -573,12 +594,10 @@ Navigation:
                     transition_duration=0.15,
                 )
 
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 f"{n_timepoints} timepoints \u2022 Confocal laser-scanning microscopy",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
 
         aprint(f"Scene saved: {output_path}")

@@ -20,9 +20,15 @@ import pytest
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar._zarr_compat import read_consolidated_attrs
 from luxar.core.group.lod.group import (
+    MESH_SUBSTITUTIVE_METHODS,
     PARTITION_FINEST_AREA,
     WHOLE_OBJECT_FINEST_ANCHOR,
 )
+from luxar.mesh.decimate import DECIMATION_METHODS
+
+
+def test_mesh_lod_and_decimator_method_sets_stay_in_sync() -> None:
+    assert MESH_SUBSTITUTIVE_METHODS == {"auto"} | DECIMATION_METHODS
 
 
 def octasphere(subdivisions: int) -> Tuple[np.ndarray, np.ndarray]:
@@ -149,7 +155,9 @@ def ladder_children(nodes: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
 class TestLadderShape:
     def test_writes_a_kind_lod_group_of_progressively_coarser_meshes(self, tmp_path):
         verts, faces = octasphere(4)  # 1026 vertices, 2048 faces
-        nodes = write_ladder(tmp_path, verts, faces, substitutive_lod=True)
+        nodes = write_ladder(
+            tmp_path, verts, faces, substitutive_lod={"method": "cluster"}
+        )
 
         assert nodes["surf"]["kind"] == "lod"
         assert nodes["surf"]["display_type"] == "mesh"
@@ -173,7 +181,7 @@ class TestLadderShape:
         # triangles is a frame with nothing in it, not a cheaper frame.
         verts, faces = octasphere(4)
         children = ladder_children(
-            write_ladder(tmp_path, verts, faces, substitutive_lod=True)
+            write_ladder(tmp_path, verts, faces, substitutive_lod={"method": "cluster"})
         )
         for i, child in enumerate(children):
             assert child["n_faces"] > 0, f"level {i} has no triangles"
@@ -182,7 +190,7 @@ class TestLadderShape:
     def test_coverage_fractions_are_strictly_ascending_and_bounded(self, tmp_path):
         verts, faces = octasphere(4)
         children = ladder_children(
-            write_ladder(tmp_path, verts, faces, substitutive_lod=True)
+            write_ladder(tmp_path, verts, faces, substitutive_lod={"method": "cluster"})
         )
         fractions = [c["coverage_fraction"] for c in children]
         assert fractions == sorted(fractions)
@@ -195,7 +203,12 @@ class TestLadderShape:
     def test_level_count_follows_levels_and_K(self, tmp_path):
         verts, faces = octasphere(4)
         two = ladder_children(
-            write_ladder(tmp_path, verts, faces, substitutive_lod={"levels": 2, "K": 4})
+            write_ladder(
+                tmp_path,
+                verts,
+                faces,
+                substitutive_lod={"levels": 2, "K": 4, "method": "cluster"},
+            )
         )
         assert len(two) == 3, "2 coarse levels + the original"
 
@@ -210,7 +223,11 @@ class TestLadderShape:
         verts, faces = octasphere(3)
         children = ladder_children(
             write_ladder(
-                tmp_path, verts, faces, colors=(200, 0, 0), substitutive_lod=True
+                tmp_path,
+                verts,
+                faces,
+                colors=(200, 0, 0),
+                substitutive_lod={"method": "cluster"},
             )
         )
         assert len(children) >= 2
@@ -274,13 +291,15 @@ class TestLadderShape:
                 verts,
                 faces,
                 colors=colors,
-                substitutive_lod={"levels": 3, "compression_factor": 4},
+                substitutive_lod={
+                    "levels": 3,
+                    "compression_factor": 4,
+                    "method": "cluster",
+                },
             )
 
         levels = level_colors(store)
         assert len(levels) == 4, "3 coarse levels + the original"
-        # Integer channels round to whole values, so allow one step of slack there
-        # and none worth speaking of for the float rows.
         slack = 1.0 if np.issubdtype(np.dtype(dtype), np.integer) else 1e-4
         for index, level in enumerate(levels):
             assert level.dtype == dtype, (
@@ -333,7 +352,11 @@ class TestLadderShape:
                 verts,
                 faces,
                 colors=np.array([[200, 30, 30]], dtype=np.uint8),
-                substitutive_lod={"levels": 2, "compression_factor": 4},
+                substitutive_lod={
+                    "levels": 2,
+                    "compression_factor": 4,
+                    "method": "cluster",
+                },
             )
 
         levels = level_colors(store)
@@ -369,7 +392,7 @@ class TestLadderShape:
                 faces,
                 scalars=scalars,
                 colormap="viridis",
-                substitutive_lod={"levels": 2},
+                substitutive_lod={"levels": 2, "method": "cluster"},
             )
         children = ladder_children(read_nodes(store))
         assert len(children) >= 2
@@ -422,7 +445,7 @@ class TestLadderShape:
                 faces,
                 scalars=scalars,
                 colormap="viridis",
-                substitutive_lod={"levels": 3},
+                substitutive_lod={"levels": 3, "method": "cluster"},
             )
         children = ladder_children(read_nodes(store))
         assert len(children) >= 3
@@ -459,7 +482,7 @@ class TestLadderShape:
             faces,
             scalars=scalars,
             colormap="viridis",
-            substitutive_lod={"levels": 3},
+            substitutive_lod={"levels": 3, "method": "cluster"},
             _scalar_data_range=(0.0, 1.0),
         )
         children = ladder_children(nodes)
@@ -479,7 +502,7 @@ class TestLadderShape:
             faces,
             scalars=verts[:, 2].astype(np.float32),
             colormap="viridis",
-            substitutive_lod={"levels": 2},
+            substitutive_lod={"levels": 2, "method": "cluster"},
         )
         assert all("_scalar_data_range" not in attrs for attrs in nodes.values())
 
@@ -922,8 +945,8 @@ class TestDegenerateLadders:
         # An octahedron has 6 vertices: every requested target is below the
         # decimator's 4-vertex floor or fails to reduce. Writing a one-level
         # "ladder" would be a kind=lod group with a single child, which is a
-        # pointless indirection; writing duplicate levels would hand
-        # `coverage_fractions` a repeated ratio and raise.
+        # pointless indirection; writing duplicate levels would make the viewer
+        # swap between identical surfaces.
         verts, faces = octasphere(0)
         nodes = write_ladder(tmp_path, verts, faces, substitutive_lod=True)
         assert nodes["surf"].get("kind") != "lod"
@@ -982,9 +1005,9 @@ class TestVocabulary:
         assert key in message
         assert "does not apply to a mesh" in message
 
-    def test_cluster_and_auto_both_build_a_ladder(self, tmp_path):
+    def test_every_decimation_method_builds_a_ladder(self, tmp_path):
         verts, faces = octasphere(4)
-        for method in ("auto", "cluster"):
+        for method in ("auto", "cluster", "qem"):
             nodes = write_ladder(
                 tmp_path / method, verts, faces, substitutive_lod={"method": method}
             )
@@ -1239,15 +1262,19 @@ class TestPartitionBoundAnchorMesh:
         for i in range(2):
             assert self.coverage(nodes, f"tiled/part_{i}") == pytest.approx(explicit)
 
-    def test_an_explicit_list_may_reach_the_partition_anchor(self, tmp_path):
+    def test_an_explicit_list_may_reach_the_legacy_ceiling(self, tmp_path):
         """An explicit mesh ladder may END at `MAX_COVERAGE_FRACTION`, verbatim.
 
         The mesh resolver (`lod/mesh.py::_validate_coverage_fractions_spec`) bounds
         an explicit list at `[0, MAX_COVERAGE_FRACTION]`, exactly like the
-        Points/Lines/GSplats resolvers. It has to: under a `kind=partition` the
-        SAME ladder DERIVES a finest of exactly `MAX_COVERAGE_FRACTION`, so a bound
-        of `1.0` would have made the tile anchor reachable by derivation but not by
-        hand. Anything above the ceiling still raises.
+        Points/Lines/GSplats resolvers. It has to, because an explicit list is
+        stamped `LEGACY_LOD_SELECTOR` and `MAX_COVERAGE_FRACTION` = 4.0 IS the
+        legacy diagonal metric's ceiling — the range an author's values were tuned
+        in. (Not a derived anchor: a derived whole-object ladder ends at
+        `WHOLE_OBJECT_FINEST_ANCHOR` = 0.5 and a derived partition-bound one at
+        `PARTITION_FINEST_AREA` = 1.0, both well below this bound. Capping the
+        authored list at either would silently reject legal legacy values.)
+        Anything above the ceiling still raises.
         """
         from luxar.core.group.lod.group import MAX_COVERAGE_FRACTION
 

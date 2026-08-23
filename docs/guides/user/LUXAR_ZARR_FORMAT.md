@@ -217,6 +217,65 @@ The root `.zattrs` file contains scene-wide configuration:
 }
 ```
 
+Additional JSON-serializable scene metadata may be authored through
+`scene.attrs`, for example `title`, `description`, or `sample`. Mutations made
+while the `LuxarZarrCompiler` is open write through to the root `.zattrs`;
+mutating the live mapping after finalization only updates its in-memory cache
+and emits a warning.
+
+The structured root attrs Luxar owns — `scene_dimensions`, `viewer_config`,
+`citation` — each have a dedicated validating API (`Scene.dimensions`,
+`Scene.viewer_config`, `create_scene(citation=...)`). Author them there, not
+through `scene.attrs`: the mapping accepts free-form keys at the root, so
+writing one of those by hand skips its validation and leaves the `Scene`
+object's own copy stale.
+
+### `citation` (optional root attr)
+
+`citation` credits whoever produced the data the scene shows. It is written to
+the root attributes rather than to a companion file or a web page so the
+attribution travels with the store — through `luxar export`, through a copy of
+the `.luxar.zarr` handed to someone without the repo, and into any viewer that
+opens it.
+
+```javascript
+{
+  "citation": {
+    "short": "OpenCell (Cho et al. 2022); embeddings by cytoself (Kobayashi et al. 2022)", // REQUIRED: single line, what a UI renders
+    "ref": "Cho / Kobayashi et al. 2022",    // optional compact caption reference, max 40 chars
+    "doi": "10.1126/science.abi6983",        // optional, bare DOI (no https://doi.org/ prefix)
+    "license": "CC BY 4.0",                  // optional
+    "url": "https://example.org/dataset"     // optional
+  }
+}
+```
+
+Only `short` is required: a citation that cannot be displayed is not a
+citation. `ref` is the optional compact form used where the full byline does not
+fit, notably the bundled demos' bottom-right captions; it is refused above 40
+characters rather than truncated. A store carrying `ref` is intentionally a
+newer format-contract payload; feeding those attrs back through an older Luxar
+authoring path fails citation validation because that version does not recognise
+the key.
+
+Every field must be a single line of printable text — every line break and
+control character is refused, including a bare `\r` and a bidi override, since
+a credit that renders differently from the string that was stored is a spoofing
+risk rather than a cosmetic one. `doi`, when present, must match the full
+`10.<registrant>/<suffix>` shape, so the near-misses people paste (a URL, a
+`doi:` prefix, a registrant whose suffix was lost) are refused rather than
+stored. `url`, when present, must be `http://` or `https://`: it is the one field
+a UI turns into a link, and a citation travels inside data that is copied and
+published onward, so an executable or inline-payload scheme is not storable
+here. The key is **absent** — not `null`, not an empty object — when the scene
+owes no credit, which is the normal case for procedurally generated data.
+Readers should therefore treat a missing `citation` as "unknown or not
+applicable" and never as a claim that the data has no author.
+
+Written by passing `citation=` to `LuxarZarrCompiler.create_scene(...)`. The
+payload is validated at write time (`luxar.core.citation.validate_citation`), so
+a malformed citation raises instead of being baked into every copy of the data.
+
 ### `incomplete` (optional root attr)
 
 `incomplete` (boolean) is written to the root `.zattrs` only when the writer
@@ -251,6 +310,10 @@ Group nodes organize the scene hierarchy and can contain child nodes.
   "blending_mode": "additive",  // normal, additive, max, opaque, luminous, volumetric — written
                            //   only when explicitly set; unset ⇒ inherited from the
                            //   nearest ancestor that sets it (viewer default: additive)
+  "colormap": "viridis",   // Optional palette; nearest-setter-wins for rendering. GSplats
+                           //   inherit it directly; Points / Lines / Mesh scalar leaves must
+                           //   still author their own colormap today (see Rendering Attribute
+                           //   Composition)
   "layer": false,          // Optional: if true, node appears in the viewer's Layers panel
   "visible": true,         // Optional: initial visibility when the scene loads (default true)
   "child_index": 0         // Insertion order among siblings (stamped on add). The viewer
@@ -377,17 +440,32 @@ default (the finest level the `.centers` accessor returns).
   every tile on its finest level while the object is merely full-frame. Every
   producer emits it automatically once it can see the binding: the `adaptive` /
   `overview` gsplat recipes; the two gsplat writers' topology-aware fallback (a
-  `kind=partition` crossed on the way down); and all **four** scene-side adders
-  (`add_points` / `add_lines` / `add_mesh` `substitutive_lod=`, `lod_group=`, and
-  `add_gsplats_from_file`'s graft fallback), which detect a `kind=partition`
-  ancestor of the insertion point. An **explicitly authored**
+  `kind=partition` crossed on the way down); scene-side adders that detect a
+  `kind=partition` ancestor; and `add_points(partition=...,
+  substitutive_lod=...)`, which verifies a multi-part fine branch directly. In
+  that overview topology the group's bbox is the whole object, so the anchor is
+  the recipe contract (coarse at opening frame, fine on zoom), not tile geometry.
+  An **explicitly authored**
   `coverage_fractions=[...]` list always wins over all of them. The rule assumes
   >= 2 parts. Every producer that can see the final sibling count excludes a
   **one-part** partition and falls back to the whole-object `0.5` anchor —
-  `--recipe adaptive` and both gsplat writers do, which matters because a dataset
-  below `--max-elements` yields exactly that shape. The scene-side adders are the
-  one path that cannot check it (part 0's ladder is derived before part 1 exists);
+  `--recipe adaptive`, both gsplat writers, and the Points overview composition
+  do, which matters because a dataset below `--max-elements` yields exactly that
+  shape. The partition-ancestor scene-adder route cannot check it (part 0's
+  ladder is derived before part 1 exists);
   the compiler's finalize pass warns when it sees the result, without rewriting it.
+- A child MAY carry `"lod_bounds": {"min": [...], "max": [...]}` with the
+  same nD axis order and shape as `position_bounds`. This is a producer-chosen
+  robust extent (for example percentile bounds that exclude a sparse tail), used
+  **only** to size the node for either LOD selector metric. Frustum gating,
+  eviction, framing, clipping, and scene ranges continue to use the complete
+  `position_bounds`, so excluded outliers remain visible and resident when they
+  should. The robust bound must stay within `position_bounds`; a bound that is
+  not contained is rejected and the child falls back to `position_bounds`.
+  Missing or malformed `lod_bounds` fall back to that child's `position_bounds`;
+  producers should therefore stamp every child in a ladder when they want one
+  consistent robust extent. Decimation, culling, and filtering must recompute or
+  remove the derived bound. Producer-side authoring policy is tracked in #1655.
 - Children themselves are standard nodes — they retain their own
   `type` (`gsplats` / `points` / `lines` / `group`, possibly with their
   own `kind` attr) and full attr set.
@@ -439,6 +517,12 @@ directly (`?src=<file>.gsplats.zarr`) and frames on `position_bounds`. The
   "kind": "partition",
   "display_type": "points",     // All children resolve to this type.
   "max_elements": 1000000,      // Per-part cap that drove the BSP recursion.
+  "bsp_tree": {                 // Optional recursive tree; axis is a center-column
+    "axis": 0,                  //   index mapped through displayDims by the viewer.
+    "split": 0.0,
+    "left": { "part": 0 },
+    "right": { "part": 1 }
+  },
   "position_bounds": {           // Union of children's bboxes — lets
     "min": [-10, -10, -10],     //   picking / framing / scene-bounds-cache
     "max": [10, 10, 10]          //   treat the layer as one logical entity.
@@ -457,9 +541,16 @@ directly (`?src=<file>.gsplats.zarr`) and frames on `position_bounds`. The
 }
 ```
 
+For points and Gaussian splats, each split plane exactly separates the child
+bounds. Lines and mesh are partitioned atomically by polyline and face centroid,
+respectively, so their vertices may cross a split plane; their stored tree is a
+stable approximate order rather than an exact painter's-order separation.
+
 **Children**:
 - Subgroup naming is **not** enforced; the convenience kwarg writes
-  `part_0`, `part_1`, … in BSP recursion order.
+  `part_0`, `part_1`, … in BSP recursion order. Names may have gaps when an
+  empty region is omitted; the contiguous `child_index` attr is the identity
+  used by `bsp_tree` leaves and the viewer.
 - Each child is a standard `points` / `lines` / `gsplats` node (or
   itself a kind=lod / kind=partition group). All must resolve to the
   same `display_type`.
@@ -481,6 +572,9 @@ part = scene.add_partition_group("manual",
 part.add_points("part_0", subset0)
 part.add_points("part_1", subset1)
 ```
+
+`max_elements` and `rule` are the only accepted keys in a `partition` dict;
+unknown keys raise an error before any node is written.
 
 #### Multi-additive LOD (progressive loading) — Points / Lines / GSplats
 
@@ -708,6 +802,8 @@ per-array sizing.
   the array's own `[min, max]`) or, for wide dynamic range (> 65536:1),
   `geolog_scalar_uint16` (geometric-log grid, code 0 reserved for exact
   zeros). `float32` under PRECISION; `broadcasted` when uniform.
+- **Deduplication:** `false` — chunk bounds depend on this array's own
+  positive-scalar quantization grid.
 - **Chunks:** `(chunk_rows,)` — byte-based / spatial-index-aligned
 - **Compression:** Blosc with zstd, level 9 (width-aware shuffle policy)
 - **Description:** Point radii in scene units
@@ -900,9 +996,13 @@ Two structural differences from the other three types:
   "ordering": "none",                // always "none" in v1 (no spatial index)
   // ... plus the standard render attrs (opacity, gamma, intensity, offset,
   //     absorption, blending_mode, colormap, layer, transform, nd_transform,
-  //     extend_to_all)
+  //     extend_to_all) and mesh-only appearance attrs (ambient, shade_exponent,
+  //     specular, shininess, alpha_cutoff)
 }
 ```
+
+The five mesh-only appearance attrs control the view-anchored shading model;
+they are rejected on points, lines, Gaussian splats, and groups.
 
 #### vertices/ (Required)
 - **Shape:** `(V, D)` — nD vertex positions, exactly like `Lines.vertices`.
@@ -1051,8 +1151,9 @@ Any scene-graph node — `points`, `lines`, `gsplats`, `mesh`, or a container
 `group` — may be exposed as a layer in the viewer's Layers panel by setting
 `layer: true` in its zarr attrs. The panel (toggled with **L**) provides
 per-layer visibility, display-range, gamma, opacity, absorption (volumetric
-mode's κ), blending mode, and colormap controls, plus three mesh-only shading
-controls (ambient, shade falloff, alpha cutoff).
+mode's κ), blending mode, and colormap controls, plus five mesh-only shading
+controls (ambient, shade falloff, specular, shininess, alpha cutoff). The five
+shading attrs are valid only on mesh leaves and do not inherit through groups.
 
 ```javascript
 {
@@ -1080,13 +1181,20 @@ eye icon in the panel and is **not** persisted back to zarr.
 
 ### Rendering Attribute Composition
 
-Rendering attributes compose along the scene graph (root → leaf):
+Rendering attributes compose along the scene graph (nearest data/group root → leaf):
 
 - `opacity`, `absorption`, `gamma`, `intensity` — multiplied (`absorption`
   has identity 1.0, is floored at 0, and has no upper clamp)
 - `offset` — summed
-- `blending_mode`, `join` — the nearest ancestor that sets it wins
-  (`join` is lines-only)
+- `blending_mode`, `join`, `colormap` — the nearest ancestor that sets it wins
+  (`join` is lines-only; a `colormap='custom'` carries its sibling
+  `colormap_lut` bytes down with the name, and a leaf that names a different
+  palette does *not* inherit those bytes)
+
+The scene root is a carrier and is excluded from this composition chain. Put a
+scene-wide palette on a Group containing the geometry rather than on the scene
+root. A standalone `.gsplats.zarr` root is a data node, not a scene root, so its
+palette does compose into its children.
 
 Example: a group with `opacity=0.5` and a child with `opacity=0.5` yields
 an effective opacity of `0.25` for the child's material. Unset values are
@@ -1102,6 +1210,22 @@ it (with the other compositing attrs) onto the wrapper only — see
 `COMPOSITING_ATTRS` in `core/group/compositing.py`. Correspondingly, within a
 layer's own subtree the panel treats the layer's mode as authoritative and
 ignores a mode authored on a non-layer descendant.
+
+An inherited `colormap` is offered to every descendant at render time, but the
+current Python adders still require Points / Lines / Mesh scalar leaves to
+author a `colormap` themselves. Those types require a scalar channel
+(`has_scalars`) and otherwise keep rendering direct colours, while a
+GSplats leaf is always colormap-capable — its amplitude *is* the scalar — so an
+ancestor's palette overrides even per-splat colours there. This matches what the
+layers panel's colormap dropdown already does when it fans a palette out over a
+group. Note the corollary: the writers stamp the implicit `colormap="gray"` on a
+colorless gsplats leaf *only* when no ancestor authored a palette, since a
+manufactured value nearer the leaf would shadow the authored one.
+
+For GSplats, author the group palette before adding its children (normally by
+passing `colormap=...` to `add_group`). The writer consults ancestors while each
+leaf is created; assigning `group.attrs["colormap"]` afterwards does not
+retroactively remove a gray already stamped on existing leaves.
 
 ### Edits Are Viewer-Only
 
@@ -1244,6 +1368,12 @@ group (`ordering`, `ordering_dims`, `slice_dims`, `ordering_min`,
 `ordering_max`, `ordering_bits_per_dim`, `chunk_size`). Points and GSplats both
 do this and share that set.
 
+On a **gsplats** group `slice_dims` is not only descriptive: the viewer reads it to
+classify each hidden dimension's chunk-fetch tolerance (its barrier dims got a tight
+epsilon pad in `chunk_bounds` rather than the `truncation_radius · σ` expansion),
+instead of inferring that from the scene dimensions' `discrete` flags. The on-disk
+format is unchanged — a store stamping no `slice_dims` gets the old inference.
+
 A type with **more than one** ordering namespaces each into its own nested
 object instead, keeping a flat top-level `ordering` naming the curve. Lines is
 the only such type today: it indexes vertices in D-space and segments in
@@ -1264,7 +1394,11 @@ consumers must treat missing and `"none"` identically.
 - **Compression:** Blosc with zstd, level 9 (width-aware shuffle policy)
 - **Description:** Bounding box [min, max] for each dimension of each chunk
 - **Example:** For chunk 5 in a 4D dataset: `chunk_bounds[5, :, :]` = `[[x_min, x_max], [y_min, y_max], [z_min, z_max], [t_min, t_max]]`
-- **Note:** Bounds include point radii extent to ensure hyperspheres are found. A node with no `radii/` array is bounded by `DEFAULT_POINT_RADIUS` (0.5) — the radius it will be drawn at — not by zero. Discrete/barrier axes get no radius extent at all, only a tiny float-boundary epsilon, so a categorical value never bleeds into its neighbour.
+- **Note:** Bounds include point radii extent to ensure hyperspheres are found. A node with no `radii/` array is bounded by `DEFAULT_POINT_RADIUS` (0.5) — the radius it will be drawn at — not by zero. Discrete/barrier axes get no radius extent at all, only a tiny float-boundary epsilon, so a categorical value never bleeds into its neighbour. **A stored interval is never tighter than the chunk's footprint of the AUTHORED coordinates, at any coordinate magnitude**: every pad is a small *absolute* quantity that would fall under half a float32 ULP past `|x| ~ 2**23`, so producers accumulate the interval in float64 and narrow it to this float32 array by rounding each end *away* from the interval (a bound moves one ULP outward only when the cast moved it the wrong way, so a padless axis still stores its coordinates exactly). Consumers may rely on containment; they may not assume the bound is tight.
+- **Note (quantised coordinates — points and lines):** for **points and lines** the containment guarantee above holds against the coordinates *as decoded*, not merely as authored, and that takes an extra pad. `chunk_bounds` is always float32, but the coordinate arrays themselves are stored as **per-axis uint16 fixed point** under the default AUTO encoding, so a decoded coordinate can land up to half a quantum (`extent/131070`) away from the authored one on a **non-gridded** axis — 7.6e-3 at an axis extent of 1000, far above the float32 ULP the outward store closes, and enough for a reader to skip the chunk at that edge. Points and lines therefore widen every chunk bound outward by that per-axis half-quantum (on top of the radius/width footprint on a spatial axis, and on top of the float-boundary epsilon on a barrier axis); an axis the encoder stores exactly gets nothing extra, which covers a **gridded** axis (a stacked integer time/channel axis, snapped so its values round-trip bit-exactly), a constant axis and the ≥2¹⁶-extent float32 fallback. An array that is *actually* stored as a LUT (verbatim values, ≤256 distinct) is exempt too — but eligibility is not enough: **lines `vertices/` never store a LUT** (the spatial-index loader reads that array as raw chunked zarr, so the writer blocks LUT there), so a LUT-eligible lines node is quantised like any other and its vertex *and* segment bounds still get the pad. Stores written before this pad existed (2026-08) keep their old, occasionally-too-tight bounds.
+- **Note (quantised coordinates — gsplats):** gsplat containment comes from the encoder's per-axis round-trip slack alone: every spatial and barrier bound is widened by the full possible center displacement, so it contains decoded `centers/` without relying on the splat's σ. On a non-gridded uint16 axis that slack is the half-quantum (`extent/131070`), added on top of the geometric footprint or float-boundary epsilon; a gridded time/channel axis, LUT encoding, or float32 store answers zero and leaves the bound unchanged. The separate sigma rail is a **fidelity** guard: when a uint16 grid can move too many centers beyond their own cores it escalates the whole array to float32, but its population tolerance is not part of the containment contract. Stores written before this pad existed (2026-08) keep their old, occasionally-too-tight bounds.
+- **Note (quantised radii and widths):** a point's `radii/` and a line's `widths/` are themselves quantised (`bounded_scalar_uint8` under AUTO for a typical range), so their decoded value can exceed the authored value by roughly half a quantum. Points and segment bounds therefore add the positive-scalar encoder's single-array round-trip slack to the radius/width pad on **spatial dimensions only**. Barrier dimensions still receive no geometric footprint pad. Stores written before this scalar pad existed (2026-08) keep their old, occasionally-too-tight bounds.
+- **Note (quantised Cholesky factors):** a gsplat's packed `cholesky_factors` input is split on disk into `cholesky_factors_diag/` and `cholesky_factors_offdiag/`, while its footprint pad is still built from the **authored** values. The diagonal uses `log_perchannel_u8` under AUTO, so decoded σ can exceed the authored `coverage_sigma · σ` pad (measured decoded − authored σ up to 1.99e-2, putting 11 of 11 gsplat chunks outside their stored bound, worst 5.10e-2 after the 2.75× coverage factor). This remaining extent gap is not closed yet.
 
 #### Per-Element Labels (CSR-style)
 
@@ -1709,8 +1843,9 @@ per-array above (`linear_perchannel_u16`, `rgb_uint8`,
   shape `(0,)` / `(0, D)`) whose `encoding` carries `target` (path of the
   original array), `hash`, `original_shape`, and `original_dtype`. Readers
   must resolve and load the target array. (Structural arrays whose consumers
-  read raw zarr — line `vertices`/`segments` — are never dedup- or
-  LUT-encoded.)
+  read raw zarr — line `vertices`/`segments` — are never dedup- or LUT-encoded;
+  point `radii` and line `widths` are never deduplicated either, because their
+  chunk bounds depend on their own quantization grids.)
 - **`lut_uint8` / `lut_uint16`** — look-up-table encoding for arrays with few
   unique values (or few unique color rows): the array stores indices and the
   `encoding.lut` attr carries the unique values as JSON (`lut_mode` +
@@ -1869,6 +2004,6 @@ with LuxarZarrCompiler("output.luxar.zarr", enable_spatial_index=True) as compil
 
 - Support for volumes
 - Material system with shading models (mesh ships one deliberately minimal,
-  light-free headlight — lights and richer shading models are still ahead)
+  light-free view-anchored offset key — scene lights and richer shading models are still ahead)
 - Temporal interpolation for smooth animations
 - Multi-resolution spatial indices for LOD

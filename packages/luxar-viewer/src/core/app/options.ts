@@ -159,6 +159,15 @@ export interface LuxarAppOptions {
   lodFinest?: boolean;
 
   /**
+   * WebGL-only blend warm-up (pre-compile each DISTINCT reachable
+   * blend-mode program variant, one compile per macrotask). Default:
+   * true. Mirrors `UrlParams.blendWarmup` (`?no-blend-warmup`
+   * disables) — the standalone bootstrap threads it here; embedders
+   * set it directly.
+   */
+  blendWarmup?: boolean;
+
+  /**
    * GSplat depth sorting (worker back-to-front sorting of `normal`-mode
    * splats + the camera-motion re-sort scheduler). Default: true; false
    * pins the identity storage ordering for deterministic runs. Mirrors

@@ -14,7 +14,20 @@ from luxar.gsplats._data.base import _merge_lod_colors as _merge_lod_colors
 from luxar.gsplats._data.composition import CompositionMixin
 from luxar.gsplats._data.culling import CullingMixin
 from luxar.gsplats._data.filtering import FilteringMixin
+
+# The PUBLIC face of the `_data` package's stats-hygiene rules (#1600): a caller
+# outside `luxar.gsplats` that rewrites a store without ever building a
+# `GSplatData` — the CLI's node-tree `transform` path — needs the same predicate
+# and the same scrub as the dataset methods, and must not reach into the private
+# subpackage for them. `as` aliases mark them explicit re-exports for mypy strict.
+from luxar.gsplats._data.filtering import (
+    drop_content_scoped_stats as drop_content_scoped_stats,
+)
+from luxar.gsplats._data.filtering import (
+    stats_after_structure_change as stats_after_structure_change,
+)
 from luxar.gsplats._data.intensity import IntensityMixin
+from luxar.gsplats._data.intensity import amplitudes_changed as amplitudes_changed
 from luxar.gsplats._data.io_adapter import IOAdapterMixin
 from luxar.gsplats._data.lod_views import LODViewsMixin
 from luxar.gsplats._data.metrics import _SplatArrayMixin

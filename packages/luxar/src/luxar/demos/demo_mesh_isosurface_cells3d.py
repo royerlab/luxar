@@ -3,7 +3,7 @@
 
 Marching-cubes **isosurfaces** of the two-channel scikit-image ``cells3d``
 volume — cell membranes and nuclei — added as two independent, toggleable
-``layer=True`` mesh nodes and shaded by Luxar's view-anchored headlight.
+``layer=True`` mesh nodes and shaded by Luxar's view-anchored offset key.
 
 This is the reference demo for the **Mesh** geometry type, and it is deliberately
 the same dataset as ``demo_gsplats_3d_cells3d_multichannel``: run both and you
@@ -100,6 +100,15 @@ DEMO_META = {
     },
     "caches": [],
     "outputs": ["mesh_isosurface_cells3d"],
+    # scikit-image ships the sample, but the images are the Allen Institute's
+    # (see the Dataset block above and skimage's own cells3d docstring). The
+    # van der Walt PeerJ paper credits the LIBRARY, so citing it here would
+    # attribute someone else's microscopy to the software that loads it; the
+    # header keeps that software citation where it belongs.
+    "citation": {
+        "short": "Allen Institute for Cell Science (scikit-image cells3d)",
+        "ref": "Allen Institute for Cell Science",
+    },
 }
 
 import numpy as np
@@ -107,7 +116,13 @@ from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
-from luxar.demos import launch_viewer, parse_demo_flags, require_module
+from luxar.demos import (
+    add_demo_caption,
+    launch_viewer,
+    parse_demo_flags,
+    require_module,
+)
+from luxar.demos._cinematic_camera import pull_in
 from luxar.encoding import EncodingMode
 from luxar.utils.paths import get_demos_output_dir
 
@@ -188,7 +203,7 @@ def extract_isosurface(volume: np.ndarray, name: str) -> tuple:
     flag only controls FACE WINDING. Its ``"descent"`` default does
     ``np.fliplr(faces)``, which leaves each triangle's right-handed winding
     opposite the outward normals — so exterior triangles render back-facing and
-    the headlight shading inverts. We pass ``"ascent"`` to keep the winding
+    the lighting gradient inverts. We pass ``"ascent"`` to keep the winding
     consistent with the outward normals.
 
     NB: skimage documents ``"ascent"`` as "exterior was greater than object",
@@ -270,6 +285,7 @@ def create_scene(output_path) -> None:
             scene = compiler.create_scene(
                 dimensions=dims,
                 viewer_config=ViewerConfig(
+                    cinematic_mode=True,
                     # ACES set explicitly — the house default, and stating it keeps
                     # the compiler's "nothing was chosen" LUT notice quiet.
                     tone_mapping="ACES",
@@ -279,15 +295,22 @@ def create_scene(output_path) -> None:
                     # default up-axis convention frames the volume edge-on and it
                     # reads as a line. `up` along Z puts the slab face-on.
                     camera=CameraConfig(
-                        position=(
-                            float(extent[0]) * 3.0,
-                            float(extent[1]) * 0.9,
-                            float(extent[2]) * 1.1,
+                        # The extent multiples are the framing this pose was
+                        # tuned at; `pull_in` restates that framing for the
+                        # cinematic preset's wider 35 mm lens, which the scene
+                        # takes whole by pinning no `fov` of its own.
+                        position=pull_in(
+                            (
+                                float(extent[0]) * 3.0,
+                                float(extent[1]) * 0.9,
+                                float(extent[2]) * 1.1,
+                            )
                         ),
                         target=(0.0, 0.0, 0.0),
                         up=(1.0, 0.0, 0.0),
                     ),
                 ),
+                citation=DEMO_META["citation"],
             )
 
             for channel, vertices, faces, normals in surfaces:
@@ -308,6 +331,11 @@ def create_scene(output_path) -> None:
                     layer=True,
                 )
                 aprint(f"added '{channel['name']}' ({channel['label']})")
+            add_demo_caption(
+                scene,
+                "scikit-image cells3d • isosurfaces",
+                DEMO_META.get("citation"),
+            )
 
     aprint(f"Scene written to {output_path}")
 

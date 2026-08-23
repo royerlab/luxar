@@ -108,7 +108,7 @@ geometry, what it needs, and whether you have already built it:
  ASTRONOMY ───────────────────────────────────────────────────────────── 6 demos
  ✓  3  asteroids_solar_system                  points+lines  300 MB
  ✓ 12  cosmicflows_laniakea                    points+lines  25 MB
- • 15  desi_galaxies                           points        72 MB git-lfs
+ • 15  desi_galaxies                           points        73 MB git-lfs
 
  MEDICAL ─────────────────────────────────────────────────────────────── 4 demos
  ✓ 17  dmri_tractography                       lines         588 MB
@@ -292,12 +292,13 @@ stream:
 
 | Dataset | Source volume | Fitted representation |
 |---------|---------------|-----------------------|
-| **Tribolium embryo** — light-sheet, 1 timepoint | 965 × 1871 × 991 = 1.8 G voxels (3.3 GB as TIFF) | 256K splats · **2.6 MB** |
+| **Tribolium embryo** — light-sheet, 1 timepoint | 965 × 1871 × 991 = 1.8 G voxels (3.3 GB as TIFF) | 296,559 splats · **2.0 MB** |
 | **C. elegans embryo** — confocal, 400 timepoints | 400 × 41 × 512 × 512 = 4.3 G voxels | 5.5M splats · **72 MB** (180 KB per timepoint) |
 
-Both are the cached fits bundled with this repository under
-`packages/luxar/src/luxar/demos/data/`, fitted at full source resolution — the
-single-file Tribolium fit works out to about 10 bytes per splat on disk. They then
+The *C. elegans* fit is bundled under `packages/luxar/src/luxar/demos/data/`;
+the Tribolium fit is produced locally because its source is not redistributable.
+Both use full source resolution, and the single-file Tribolium fit works out to
+about 7 bytes per splat on disk. They then
 render in any WebGL2 desktop browser: no 3D textures, no ray-marching, and no CUDA
 on the viewing machine.
 
@@ -386,12 +387,14 @@ Apart from `flat`, every recipe carries a progressive streaming ladder by defaul
 splats are reordered so that early prefixes carry as much of the signal as possible,
 which means the first chunk to arrive is already a meaningful picture and later
 chunks only refine it. Where levels replace each other, the viewer picks between
-them using a viewport-relative `coverage_fraction = sqrt(N_i / N_finest)` — the
-finest level shows once an object's projected size reaches about half of the
-viewport's fitted screen axis (the smaller of its width/height), i.e. at any
-normal full-frame view, and coarser ones step in as it shrinks below that — so
-level switching self-calibrates on any monitor or aspect ratio with no
-threshold to tune.
+them by screen occupancy: each level's `coverage_fraction` is a literal
+**screen-area fraction** — the node's projected bounding-box rect area over the
+viewport area — and the ladder is derived by halving it, so the finest level
+shows while the object occupies at least half the screen and every halving of
+occupied area steps one level coarser. (`adaptive` and `overview` are
+partition-bound and anchor one step higher, at area `1.0`.) Being a viewport
+fraction rather than an absolute pixel count, the metric needs no per-resolution
+or DPI tuning, though occupancy does move with viewport aspect.
 
 The canonical end-to-end pipeline is three commands:
 
@@ -481,7 +484,7 @@ fitting model in detail.
 
 Triangle surfaces — isosurfaces, segmentation boundaries, cortical and organ
 meshes. The other three primitives are soft and emissive; a mesh is the one
-*connected, shaded* type, lit by a view-anchored headlight so shape reads from
+*connected, shaded* type, lit by a view-anchored offset key so shape reads from
 shading rather than from density.
 
 ```python
@@ -806,7 +809,8 @@ with LuxarZarrCompiler("output.luxar.zarr") as compiler:
     scene.add_lines(name, vertices, widths=..., colors=...)
     scene.add_group(name, transform=..., opacity=...)
 
-    # Gaussian splatting (requires luxar[gsplats])
+    # Gaussian splatting (embedding an existing fit works on a plain
+    # `pip install luxar`; producing one — `luxar gsplat fit` — needs luxar[gsplats])
     scene.add_gsplats_from_data(name, gsplat_result)
     scene.add_gsplats_from_file(name, "file.gsplats.zarr")
 ```
@@ -820,6 +824,7 @@ luxar serve PATH [OPTIONS]              # Serve Zarr dataset
 luxar viewer [--data PATH] [OPTIONS]    # Serve viewer only or viewer + data
 luxar info PATH [--stats]               # Dataset information (--stats also reports the chunk layout)
 luxar optimise SRC DST [--profile ...]  # Re-chunk an existing store for streaming (values stay bit-identical)
+luxar restamp-lod STORE [--dry-run]     # Re-derive legacy LOD thresholds in place (attrs only)
 luxar export SOURCE -o DIR              # Export standalone folder (Python 3 + browser)
 luxar export SOURCE -o DIR --native macos|linux-amd64|linux-arm64
                                         # Double-clickable native bundle (.app / portable folder)
@@ -997,10 +1002,10 @@ providers, under their respective licenses. Each demo script's docstring carries
 the full citation.
 
 **Microscopy & cell biology**
-- **Cells3D** — fluorescence microscopy sample data via scikit-image (`skimage.data.cells3d`); van der Walt et al. (2014), *PeerJ* 2:e453, [doi:10.7717/peerj.453](https://doi.org/10.7717/peerj.453).
+- **Cells3D** — fluorescence microscopy provided by the [Allen Institute for Cell Science](https://www.allencell.org/), distributed as scikit-image sample data (`skimage.data.cells3d`); scikit-image itself: van der Walt et al. (2014), *PeerJ* 2:e453, [doi:10.7717/peerj.453](https://doi.org/10.7717/peerj.453).
 - **3D Organoid** — Blin et al. (2019), via the [Image Data Resource](https://idr.openmicroscopy.org/) (IDR; Williams et al. 2017, *Nat. Methods*, [doi:10.1038/nmeth.4326](https://doi.org/10.1038/nmeth.4326)).
 - **Zebrafish Neuromast** — Adrian Jacobo lab (CZ Biohub SF / Rockefeller); iSIM, deconvolved 4D timelapse.
-- **Tribolium Embryo** — [Cell Tracking Challenge](https://celltrackingchallenge.net/) ([Zenodo](https://zenodo.org/records/5270323)); Yin et al. (2022), *J. Cell Sci.*, [doi:10.1242/jcs.259022](https://doi.org/10.1242/jcs.259022); Maška et al. (2023), *Nat. Methods*.
+- **Tribolium Embryo** — [Cell Tracking Challenge](https://celltrackingchallenge.net/) ([Zenodo](https://zenodo.org/records/5270323)); Barry et al. (2022), *J. Cell Sci.* 135, jcs259511, [doi:10.1242/jcs.259511](https://doi.org/10.1242/jcs.259511); Maška et al. (2023), *Nat. Methods*.
 - **C. elegans nuclei tracking** — Hirsch et al. (2022), 3D+time confocal nuclei dataset, [Zenodo 6460303](https://doi.org/10.5281/zenodo.6460303).
 
 **Medical & anatomy**
@@ -1023,7 +1028,7 @@ the full citation.
 **Single-cell atlases & embeddings**
 - **Tabula Sapiens** — Tabula Sapiens Consortium (2022), *Science*, [doi:10.1126/science.abl4896](https://doi.org/10.1126/science.abl4896); accessed via [CZ CELLxGENE Discover](https://cellxgene.cziscience.com/) (CC BY 4.0).
 - **Zebrahub** — [CZ Biohub Zebrahub](https://zebrahub.org); Zebrahub-Multiome, Kim et al. (2024), [bioRxiv:2024.10.18.618987](https://www.biorxiv.org/content/10.1101/2024.10.18.618987v2).
-- **Protein Landscape** — CAFA5 protein embeddings via ProtT5 (Elnaggar et al. 2021, *IEEE TPAMI*, [doi:10.1109/TPAMI.2021.3095381](https://doi.org/10.1109/TPAMI.2021.3095381)); [CAFA5 challenge](https://www.kaggle.com/competitions/cafa-5-protein-function-prediction).
+- **Protein Landscape** — CAFA5 protein embeddings via ProtT5 (Elnaggar et al. 2022, *IEEE TPAMI*, [doi:10.1109/TPAMI.2021.3095381](https://doi.org/10.1109/TPAMI.2021.3095381)); [CAFA5 challenge](https://www.kaggle.com/competitions/cafa-5-protein-function-prediction).
 - **Spotify Tracks** — [`maharshipandya/spotify-tracks-dataset`](https://huggingface.co/datasets/maharshipandya/spotify-tracks-dataset) (Hugging Face), derived from the Spotify Web API audio features.
 - **Human Multiome** — peak-accessibility UMAP of a human single-cell multiome; data from Domcke et al. (2020), *A human cell atlas of fetal chromatin accessibility*, *Science* 370:eaba7612, [doi:10.1126/science.aba7612](https://doi.org/10.1126/science.aba7612); peak-UMAP analysis from Zebrahub-Multiome, Kim et al. (2024), [bioRxiv:2024.10.18.618987](https://www.biorxiv.org/content/10.1101/2024.10.18.618987v2).
 - **Mouse Multiome** — peak-accessibility UMAP of a mouse single-cell multiome; data from Argelaguet et al. (2022), *Decoding gene regulation in the mouse embryo using single-cell multi-omics*, [bioRxiv:2022.06.15.496239](https://doi.org/10.1101/2022.06.15.496239); peak-UMAP analysis from Zebrahub-Multiome, Kim et al. (2024), [bioRxiv:2024.10.18.618987](https://www.biorxiv.org/content/10.1101/2024.10.18.618987v2).

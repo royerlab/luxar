@@ -7,8 +7,12 @@ that the TypeScript ArrayDecoder can correctly read Python-encoded data.
 IMPORTANT: Uses NO compression (compressor=None) to avoid blosc/numcodecs
 WASM binding issues in Node.js test environment.
 
+Editing this file makes every existing fixture store stale, and only `pnpm test`
+notices — the Playwright pre-flight checks presence, not staleness — so run
+`pnpm test` or `pnpm test:generate-fixtures` before `pnpm test:e2e`.
+
 Run from project root:
-    hatch run python packages/luxar-viewer/tests/fixtures/generate_test_data.py
+    hatch run fixtures:python packages/luxar-viewer/tests/fixtures/generate_test_data.py
 """
 
 import shutil
@@ -20,9 +24,11 @@ import zarr
 from arbol import aprint, asection
 
 from luxar import CameraConfig, Dimension, Dimensions, LuxarZarrCompiler, ViewerConfig
+from luxar._zarr_compat import consolidate as zarr_consolidate
 from luxar._zarr_compat import create_array
 from luxar._zarr_compat import open_group as zarr_open_group
 from luxar.encoding import ArrayEncoder, EncodingMode, SemanticType
+from luxar.io._compiler.finalize.hashing import compute_content_hashes
 
 # Output directory
 FIXTURES_DIR = Path(__file__).parent
@@ -104,6 +110,7 @@ FIXTURE_NAMES: list[str] = [
     "test_nd_transforms.luxar.zarr",
     "test_overview.gsplats.zarr",
     "test_partition_layer.luxar.zarr",
+    "test_partition_wrong_frame.luxar.zarr",
     "test_points_blending_modes.luxar.zarr",
     "test_points_normal_overlap.luxar.zarr",
     "test_points_normal_overlap_reversed.luxar.zarr",
@@ -256,7 +263,31 @@ def generate_lut_u16_test() -> None:
                 Dimension("z", unit="units", display=True),
             ]
         )
-        radii = np.ones(n_points, dtype=np.float32) * 0.5
+        # Radius 0.1, not the 0.5 the small fixtures use (#1746). The reasoning is in
+        # SCREEN pixels, not world-space area: the point shader clamps
+        # `pointSize = clamp(basePointSize, 1.5, maxPointSize)`
+        # (packages/luxar-viewer/src/rendering/materials/point/shader-glsl.ts),
+        # so shrinking a radius stops buying fill rate the moment the sprite
+        # reaches that floor. At the default auto-fit framing of this cloud's
+        # ~±45 bounds (fov 47, fit ratio 0.75, a 720 px-tall viewport) a
+        # 0.5-radius point rasterizes 9.4 px across and a 0.1-radius one
+        # 1.9 px — at/above the floor everywhere, the far side of the cloud
+        # landing right on it — so the sprite is still the size the radius asks
+        # for while shedding (1.9 / 9.4)^2 ≈ 25x of the overdraw that made this
+        # the one fixture heavy enough to starve a shared box under the E2E
+        # suite's parallel workers.
+        #
+        # Not smaller: 0.08 already sits on the 1.5 px floor, and below it the
+        # clamp caps any further fill-rate win while the fragment shader
+        # compensates the enforced sprite area with
+        # `sizeScale = min(vPointSize / 1.5, 1.0)` squared into alpha — 0.4x at
+        # radius 0.05 — so peak alpha drops by more than half for no saving at
+        # all. Do NOT reduce the point count instead: 100k is what puts the
+        # encoder in the lut_uint16 tier (see the docstring). Nothing asserts on
+        # the radius — the E2E test reads colors out of the element texture, the
+        # unit test reads `points/colors` only, and both readiness helpers gate
+        # on `initialized` / `totalPoints`, never pixels.
+        radii = np.ones(n_points, dtype=np.float32) * 0.1
 
         with LuxarZarrCompiler(
             output,
@@ -528,7 +559,7 @@ def generate_encoding_edge_cases_test() -> None:
         # Wide dynamic range (> 65536:1) AUTO positive scalar -> the writer's
         # geolog_scalar_uint16 (rescale-first, reserved zero level). Includes
         # exact zeros to pin the reserved level 0 round-trip.
-        wide = np.logspace(-4, 3, 32, dtype=np.float32)
+        wide = np.logspace(-4, 9, 32, dtype=np.float32)
         wide[::7] = 0.0
         encoder.encode(
             wide,
@@ -3559,7 +3590,8 @@ def generate_lod_group_test() -> None:
     Each child writes its own ``coverage_fraction`` attr (viewport-relative,
     coarsest 0.0 → finest 1.0), so the runtime selector has the data it needs
     even though this fixture's explicit thresholds are not the same as what a
-    real-world authoring path (auto-derived ``sqrt(N_i/N_finest)``) would supply.
+    real-world authoring path (auto-derived by screen-occupancy halving, finest
+    0.5 for a whole-object ladder) would supply.
     """
     with asection("Generating LODGroup Test"):
         output = FIXTURES_DIR / "test_lod_group.luxar.zarr"
@@ -3866,6 +3898,29 @@ def generate_partition_layer_test() -> None:
 
         aprint(f"  Created {output}")
         aprint("  partition layer: 1 layer row → 2 parts, blending_mode on the wrapper")
+
+        wrong_frame = FIXTURES_DIR / "test_partition_wrong_frame.luxar.zarr"
+        if wrong_frame.exists():
+            shutil.rmtree(wrong_frame)
+        shutil.copytree(output, wrong_frame)
+        root = zarr_open_group(wrong_frame, mode="r+")
+        partition = root["tiles"]
+
+        def shift_tree(node: dict) -> dict:
+            if "part" in node:
+                return dict(node)
+            return {
+                "axis": node["axis"],
+                "split": float(node["split"]) + 1000.0,
+                "left": shift_tree(node["left"]),
+                "right": shift_tree(node["right"]),
+            }
+
+        partition.attrs["bsp_tree"] = shift_tree(dict(partition.attrs["bsp_tree"]))
+        compute_content_hashes(root)
+        zarr_consolidate(root)
+        aprint(f"  Created {wrong_frame}")
+        aprint("  wrong-frame partition: valid Python scene with shifted BSP planes")
 
 
 def _icosphere(subdivisions: int = 2, radius: float = 1.0) -> tuple:

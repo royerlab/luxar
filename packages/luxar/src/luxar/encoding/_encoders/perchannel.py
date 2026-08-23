@@ -2,21 +2,466 @@
 scalar, geolog scalar, and the per-channel linear/log/signed-log/geolog family."""
 
 import warnings
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import numpy as np
 import zarr
+from arbol import aprint
+from numpy.typing import NDArray
 
 from luxar._zarr_compat import create_array
 
+from ...typing_utils.constants import COORDINATE_U16_MAX_EXTENT
 from ..compression import resolve_compressor
 from ..modes import EncodingMode
+from ..semantic_types import SemanticType
 from .base import BaseEncoderMixin
 from .delta_codec import probe_delta_filter
+from .structural import LUT_SCALAR_MAX_DISTINCT
+
+#: Coordinates are always uint16 -- never uint8 (256 levels is far too coarse for
+#: positions). Named once so the grid snap and the encode call cannot drift apart
+#: on the width they assume.
+_COORD_BITS = 16
+
+#: Number of quantization intervals of the COORDINATE fixed-point grid.
+COORDINATE_LEVELS = float(2**_COORD_BITS - 1)
+
+_SCALAR_LUT_PROBE_VALUES = 1024
+
+
+def gridded_axis_step(
+    col: np.ndarray, lo: float, extent: float, levels: float
+) -> Optional[tuple[float, int]]:
+    """The spacing of the regular grid ``col`` lies on, or ``None``.
+
+    Returns ``(step, n_distinct)``. The test IS the guarantee: a candidate
+    spacing is accepted only after replaying the encoder's own quantization and
+    the decoder's own dequantization over the distinct values and getting all of
+    them back bit-exactly at the COORDINATE decode dtype (float32). That is both
+    stricter and more permissive than testing the gaps for equality, and both
+    directions matter:
+
+    * A grid with MISSING rungs still qualifies. Frames ``0,1,2,7,8,9`` are what
+      a spatial tile of a stacked dataset sees, or what a filter that empties one
+      timepoint in one region leaves behind; an "all gaps equal" test rejects
+      that axis and leaves it broken by exactly the defect the snap exists to
+      prevent.
+    * A grid the float32 input only approximates still qualifies, because the
+      spacing is least-squares refit against every rung rather than taken from
+      the smallest gap. A 0.1 s frame interval jitters by more than a relative
+      1e-6 once rounded to float32, so a gap-equality test with any usable
+      tolerance rejects it.
+    * Conversely, continuous values whose smallest gap merely happens to be
+      coarse do NOT qualify, because they do not survive the replay.
+
+    The only cap on distinct values is ``levels`` itself: an axis with more
+    distinct values than the encoding has levels cannot be represented on any
+    grid, so there is nothing to snap to. Capping lower would reject stacks that
+    fit perfectly -- a 10 000-frame timelapse quantizes exactly at u16 -- and
+    would save no work, since ``np.unique`` has already run by then.
+
+    Module-level rather than a private encoder method because it is a SHARED
+    predicate: the gsplat writer's sigma rail
+    (:func:`~luxar.io._compiler.gsplat_assembly._center_quantization_offender`)
+    must know whether this encoder will store an axis exactly before deciding to
+    escalate it to float32, and the two must never answer differently. Call it
+    with exactly the ``lo``/``extent``/``levels`` the encoder will use.
+
+    A caller that needs the distinct values for something ELSE as well —
+    :meth:`PerChannelEncoderMixin.coordinate_round_trip_slack` needs the COUNT
+    to short-circuit its LUT probe — goes through
+    :func:`_gridded_step_from_uniques` with the ``np.unique`` it already ran,
+    rather than paying for a second pass. The split is deliberately a PRIVATE
+    sibling sharing one body: this public entry point keeps its exact
+    signature, so the shared contract cannot acquire a "and pass the right
+    uniques" footgun that an out-of-module caller could get wrong.
+    """
+    return _gridded_step_from_uniques(np.unique(col), lo, extent, levels)
+
+
+def _gridded_step_from_uniques(
+    uniq: np.ndarray, lo: float, extent: float, levels: float
+) -> Optional[tuple[float, int]]:
+    """:func:`gridded_axis_step`'s body, over an ALREADY-computed ``np.unique``.
+
+    ``uniq`` must be exactly ``np.unique(col)`` — sorted ascending, deduplicated
+    — for the column the ``lo``/``extent`` were derived from.
+    """
+    if uniq.size < 2 or uniq.size > levels + 1:
+        return None
+    offsets = uniq - lo
+    coarsest = float(np.diff(uniq).min())
+    if coarsest <= 0.0 or extent / coarsest > levels:
+        return None
+    # Rung index of each distinct value on the candidate grid, then a
+    # least-squares refit of the spacing against all of them.
+    rung = np.round(offsets / coarsest)
+    if rung[0] != 0.0 or np.any(np.diff(rung) <= 0.0) or rung[-1] > levels:
+        return None
+    step = float(rung @ offsets / (rung @ rung))
+    # `span` must be derived exactly as the quantizer will derive it from the
+    # stored rails (`hi - lo`), not as `step * levels`: for a large `lo` the two
+    # differ in the last bits, and this replay is only a guarantee if it is the
+    # same arithmetic.
+    candidate = lo + step * levels
+    span = candidate - lo
+    if span <= 0.0:
+        return None
+    codes = np.round((np.clip(uniq, lo, candidate) - lo) / span * levels)
+    back = lo + codes / levels * span
+    if not np.array_equal(back.astype(np.float32), uniq.astype(np.float32)):
+        return None
+    return step, int(uniq.size)
+
+
+def _coordinate_u16_slack(
+    arr: np.ndarray, lo: np.ndarray, hi: np.ndarray
+) -> tuple[NDArray[np.float64], int]:
+    """Per-axis uint16 half-quantum slack and largest axis cardinality."""
+    slack = np.zeros(arr.shape[1], dtype=np.float64)
+    max_axis_distinct = 1
+    for axis in range(arr.shape[1]):
+        extent = float(hi[axis] - lo[axis])
+        if extent <= 0.0:
+            # Constant axis: every value maps to level 0 and decodes to `lo`.
+            # One distinct value, so it cannot raise the maximum.
+            continue
+        uniq = np.unique(arr[:, axis])
+        max_axis_distinct = max(max_axis_distinct, int(uniq.size))
+        if (
+            _gridded_step_from_uniques(uniq, float(lo[axis]), extent, COORDINATE_LEVELS)
+            is not None
+        ):
+            # `_snap_gridded_axes` will snap this axis onto the data's own
+            # spacing, and `gridded_axis_step` proved it round-trips exactly by
+            # replaying the encode and the decode.
+            continue
+        slack[axis] = extent / (2.0 * COORDINATE_LEVELS)
+    return slack, max_axis_distinct
 
 
 class PerChannelEncoderMixin(BaseEncoderMixin):
     """Per-channel / scalar dtype encoding strategies for :class:`ArrayEncoder`."""
+
+    def _snap_gridded_axes(
+        self, name: str, arr: np.ndarray, lo: np.ndarray, hi: np.ndarray, bits: int
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Widen `hi` on gridded axes so their values quantize exactly.
+
+        Returns possibly-adjusted ``(lo, hi)``. An axis qualifies when every one of
+        its distinct values sits on one regular grid that still fits in the target
+        integer width (see :func:`gridded_axis_step`). Anything else is left
+        exactly as it was.
+        """
+        if arr.ndim != 2:
+            # No per-axis columns to test; the generic per-column quantizer
+            # handles this shape on its own. Leave the scales untouched.
+            return lo, hi
+        levels = float(2**bits - 1)
+        lo = np.array(lo, dtype=np.float64, copy=True)
+        hi = np.array(hi, dtype=np.float64, copy=True)
+        snapped = []
+        for axis in range(arr.shape[1]):
+            extent = float(hi[axis] - lo[axis])
+            if extent <= 0.0:
+                continue  # constant axis: already exact
+            found = gridded_axis_step(arr[:, axis], float(lo[axis]), extent, levels)
+            if found is None:
+                continue
+            step, n_distinct = found
+            hi[axis] = lo[axis] + step * levels
+            snapped.append((axis, n_distinct, step))
+
+        if snapped:
+            detail = ", ".join(
+                "axis %d (%d values, step %.6g)" % (a, n, st) for a, n, st in snapped
+            )
+            # Reported, not warned. `warnings.warn` means "the caller should act";
+            # this is a transparent correctness fix that costs nothing and needs no
+            # action, and warning here would fire on every stacked scene (and break
+            # tests that legitimately assert their own code stays silent).
+            aprint(f"  ✓ COORDINATE '{name}': grid-snapped {detail} — exact")
+        return lo, hi
+
+    def coordinate_round_trip_slack(
+        self,
+        data: np.ndarray,
+        mode: EncodingMode,
+        *,
+        allow_lut: bool = True,
+    ) -> Optional[NDArray[np.float64]]:
+        """How far can encoding ``data`` as a COORDINATE move a value, per axis?
+
+        Returns ``None`` when the write is EXACT on every axis, otherwise a
+        ``(d,)`` float64 vector of per-axis slack (0.0 on axes that are exact).
+
+        Why this exists: the chunk-bounds writers
+        (:func:`~luxar.io._ordering.points.compute_chunk_bounds_points`,
+        :func:`~luxar.io._ordering.lines.compute_vertex_chunk_bounds`,
+        :func:`~luxar.io._ordering.lines.compute_segment_chunk_bounds`,
+        :func:`~luxar.io._ordering.gsplats.compute_chunk_bounds_gsplats`) compute
+        a bound the READER trusts for containment, but they see the AUTHORED
+        coordinates while the store holds :meth:`_encode_coordinate`'s per-axis
+        uint16 fixed point. A decoded coordinate that lands outside its own
+        chunk's stored bound is a chunk the viewer never fetches — geometry
+        disappears with nothing to notice. So the bound writer has to know how
+        far the store will move a coordinate BEFORE it writes the bound, and
+        only the encoder knows that. This is that question, asked without
+        writing anything.
+
+        It is the CONSERVATIVE half-quantum bound (``extent / 2·levels``), not a
+        measured maximum: measuring would mean quantizing the array a second
+        time, and the bound writer wants a pad, not a statistic. It is
+        deliberately PER-AXIS — the scales are per-axis, so one wide continuous
+        axis must not inflate the bounds of a snapped, exactly-stored time axis
+        beside it.
+
+        ``allow_lut`` MIRRORS :meth:`~luxar.encoding.encoder.ArrayEncoder.encode`'s
+        own parameter and must be passed the same value the write will use. A
+        LUT stores the values verbatim, so a LUT-eligible array is exact — but
+        only if the write is actually allowed to reach for a LUT. The lines
+        writer encodes ``vertices`` with ``allow_lut=False`` (the spatial-index
+        loader reads that array as raw chunked zarr), so a LUT-eligible lines
+        vertices array is quantized like any other and its bounds need the
+        pad; asking with the default ``True`` there would report "exact" and
+        write bounds the decoded vertices escape.
+
+        Cost, honestly: the LUT probe
+        (:meth:`~luxar.encoding.encoder.ArrayEncoder.encodes_as_lut`) is a
+        whole-ARRAY ``np.unique`` and is the DOMINANT term whenever it runs —
+        more than the grid loop and the reductions combined — and
+        :meth:`encode` recomputes the plan from scratch afterwards, so a caller
+        that asks and then encodes pays it twice. Two things keep it off the
+        hot path:
+
+        * It is asked LAST, after the cheap exits and the per-axis grid loop,
+          and only when some axis came out with nonzero slack: if every axis is
+          already exact the answer is ``None`` regardless of the LUT, so the
+          probe would be pure waste.
+        * It is asked only when no single AXIS already has more distinct values
+          than a scalar-mode LUT can hold
+          (:data:`~luxar.encoding._encoders.structural.LUT_SCALAR_MAX_DISTINCT`,
+          256 — a COORDINATE array is never the ≤4-channel 2-D COLOR shape that
+          reaches the uint16 ROW-mode tier). Distinct values in one column are a
+          subset of the whole array's, so one column above the cap PROVES the
+          array cannot LUT-encode, and the probe can be skipped with the same
+          answer. The count is free: the grid loop's own ``np.unique`` supplies
+          it, via :func:`_gridded_step_from_uniques`.
+
+        Measured on float32 continuous coordinates, best of 3 — the case that
+        used to pay in full, because a continuous array has neither an exact
+        axis nor any chance of a LUT:
+
+        ==========  ==========  =========  ==============
+        array       before      after      of which probe
+        ==========  ==========  =========  ==============
+        1M × 3       467 ms      120 ms     352 ms
+        5M × 3      3408 ms      793 ms    2804 ms
+        ==========  ==========  =========  ==============
+
+        i.e. the predicate now costs what the ``allow_lut=False`` (lines) path
+        always cost (112 ms / 713 ms), and the second, redundant ``np.unique``
+        inside :meth:`encode` no longer has a first one to be redundant WITH.
+        In a whole 1M-point compile the predicate falls from ~350 ms to ~160 ms
+        of a ~2 s total. The
+        remaining pathological case is genuinely irreducible: an array with
+        ≤256 distinct values per axis but more than 256 overall (e.g. three
+        disjoint 200-value palettes) still pays one full probe, because only
+        the whole-array pass can settle it. Memoizing ``_lut_plan`` would help
+        THERE, and nowhere the profiles actually showed.
+
+        Cheap exits first is also what the gsplat sigma rail
+        (:func:`~luxar.io._compiler.gsplat_assembly._axis_center_offender`)
+        does, and for the same reason.
+
+        The exits below replay :meth:`_encode_coordinate`'s own — reordered as
+        described, which is safe because they are independent tests of the same
+        array — and deliberately WITHOUT its warnings: this is a query, and a
+        duplicate warning at query time would be noise.
+
+        Args:
+            data: The coordinate array (N, d) exactly as it will be encoded
+            mode: The encoding mode it will be encoded under
+            allow_lut: Whether the write will permit a LUT encoding, i.e. the
+                ``allow_lut`` the matching :meth:`encode` call passes.
+
+        Returns:
+            ``None`` if every axis round-trips exactly, else the per-axis slack.
+        """
+        if mode not in (EncodingMode.AUTO, EncodingMode.MEMORY):
+            # PRECISION is float32 (exact). The only other mode is CUSTOM,
+            # which never reaches `_encode_coordinate` at all: `encode` either
+            # raises at its `custom_encoder is None` check or routes to
+            # `_encode_custom`. Either way no COORDINATE fixed-point store
+            # happens here, so there is no displacement for this answer to
+            # describe.
+            return None
+
+        arr = np.asarray(data).astype(np.float64)
+        if arr.ndim != 2 or arr.shape[0] == 0:
+            # Not the (N, d) shape this predicate is defined for — NOT a claim
+            # of exactness. A 1-D COORDINATE array really is quantized (a
+            # `linspace(0, 1000, 5000)` moves by the full half-quantum), but the
+            # per-axis scales this answer is expressed in do not exist for it,
+            # and the bound builders all require (N, d) and never see anything
+            # else. An empty array has nothing to move.
+            return None
+
+        lo = arr.min(axis=0)
+        hi = arr.max(axis=0)
+        if not (bool(np.all(np.isfinite(lo))) and bool(np.all(np.isfinite(hi)))):
+            # A NaN/inf coordinate has no meaningful displacement, and returning
+            # a NaN entry would trip the bound builders' own finiteness check
+            # with a misleading message. The compiler's fail-fast position gate
+            # rejects such data long before here; this is for a direct caller.
+            return None
+        if float((hi - lo).max()) >= COORDINATE_U16_MAX_EXTENT:
+            return None  # the extent rail falls back to float32 (exact)
+
+        slack, max_axis_distinct = _coordinate_u16_slack(arr, lo, hi)
+
+        if not slack.any():
+            return None
+
+        if (
+            allow_lut
+            and max_axis_distinct <= LUT_SCALAR_MAX_DISTINCT
+            and self.encodes_as_lut(data, SemanticType.COORDINATE)
+        ):
+            return None  # a LUT stores the values verbatim
+        return slack
+
+    def positive_scalar_round_trip_slack(
+        self,
+        data: np.ndarray,
+        mode: EncodingMode,
+        *,
+        positive_scalar_encoding: Literal["linear", "log"] = "linear",
+        allow_lut: bool = True,
+    ) -> Optional[float]:
+        """How far can encoding ``data`` as POSITIVE_SCALAR enlarge a value?
+
+        Returns ``None`` when the write is exact, otherwise one conservative
+        float64 pad for the whole array. The chunk-bounds writers add it to a
+        point radius or line width on spatial dimensions only, so a decoded
+        footprint cannot escape a bound built from the authored scalar.
+
+        The exits mirror :meth:`_encode_positive_scalar` plus the exact
+        broadcast/LUT paths that precede it in :meth:`ArrayEncoder.encode`.
+        The answer is valid only when the matching write has deduplication
+        disabled, so it cannot resolve to an ``array_ref`` with another
+        array's encoding parameters.
+        Unlike :meth:`coordinate_round_trip_slack`, this query raises for
+        ``CUSTOM``: a POSITIVE_SCALAR write can reach :meth:`_encode_custom`,
+        whose arbitrary transform has no displacement model. The coordinate
+        sibling returns ``None`` because ``CUSTOM`` does not reach
+        :meth:`_encode_coordinate`, so no coordinate fixed-point displacement
+        applies.
+        Linear quantization uses half a grid quantum; geometric-log encoding
+        uses the corresponding half-step at the array maximum, capped at the
+        maximum because its grid is anchored there and cannot decode above it.
+        A relative-epsilon term for the wider of float32 and the authored dtype,
+        floored at one subnormal quantum of either dtype, covers the reader's
+        cast back to ``original_dtype`` and the viewer's float32 reconstruction.
+
+        Args:
+            data: The positive-scalar array exactly as it will be encoded.
+            mode: The encoding mode it will be encoded under.
+            positive_scalar_encoding: The matching write's linear/log choice.
+            allow_lut: Whether the matching write permits exact LUT storage.
+
+        Returns:
+            ``None`` when the matching write is exact, otherwise one
+            conservative array-wide outward pad.
+        """
+        arr = np.asarray(data)
+        if arr.size == 0 or not np.all(np.isfinite(arr)) or np.any(arr < 0):
+            return None
+        if mode not in (
+            EncodingMode.AUTO,
+            EncodingMode.MEMORY,
+            EncodingMode.PRECISION,
+        ):
+            raise ValueError(
+                "Cannot bound a CUSTOM POSITIVE_SCALAR array: an arbitrary "
+                "custom_encoder has no round-trip displacement model"
+            )
+
+        if self._is_uniform(arr):
+            first = float(arr.flat[0])
+            displacement = max(0.0, first - float(np.min(arr)))
+            return displacement or None
+
+        if mode == EncodingMode.PRECISION:
+            if arr.dtype == np.dtype(np.float32):
+                return None
+            max_val = float(np.max(arr))
+            return max(
+                max_val * float(np.finfo(np.float32).eps),
+                float(np.finfo(np.float32).smallest_subnormal),
+            )
+
+        # A scalar LUT has at most 256 values. A small prefix with more
+        # distinct values proves the full array cannot take that exit and
+        # avoids a second full-array ``np.unique`` on the common continuous
+        # radii/widths path (``encode`` performs its own LUT plan later).
+        prefix = arr.ravel()[:_SCALAR_LUT_PROBE_VALUES]
+        if (
+            allow_lut
+            and np.unique(prefix).size <= LUT_SCALAR_MAX_DISTINCT
+            and self.encodes_as_lut(arr, SemanticType.POSITIVE_SCALAR)
+        ):
+            return None
+
+        return self._positive_scalar_quantization_slack(
+            arr, mode, positive_scalar_encoding
+        )
+
+    def _positive_scalar_quantization_slack(
+        self,
+        arr: np.ndarray,
+        mode: EncodingMode,
+        positive_scalar_encoding: Literal["linear", "log"],
+    ) -> Optional[float]:
+        """Return the quantization plus float32 decode pad for one array."""
+
+        max_val = float(np.max(arr))
+        if max_val == 0.0:
+            return None
+
+        bits = self._compute_quantization_bits(arr)
+        use_geolog = positive_scalar_encoding == "log" or bits == 0
+        if use_geolog:
+            nonzero = arr[arr > 0].astype(np.float64, copy=False)
+            min_log = float(np.log(nonzero.min()))
+            max_log = float(np.log(nonzero.max()))
+            if max_log == min_log:
+                return None
+            quant_bits = 16 if mode == EncodingMode.AUTO else 8
+            intervals = (1 << quant_bits) - 2
+            # The grid is anchored at max_log, so no code decodes above max_val.
+            half_step = min(
+                float(np.expm1((max_log - min_log) / (2.0 * intervals))), 1.0
+            )
+            slack = max_val * half_step
+        else:
+            min_val = float(np.min(arr))
+            span = max_val - min_val
+            if span == 0.0:
+                return None
+            levels = (1 << bits) - 1
+            slack = span / (2.0 * levels)
+
+        decode_eps = float(np.finfo(np.float32).eps)
+        decode_floor = float(np.finfo(np.float32).smallest_subnormal)
+        if np.issubdtype(arr.dtype, np.floating):
+            decode_eps = max(decode_eps, float(np.finfo(arr.dtype).eps))
+            decode_floor = max(
+                decode_floor, float(np.finfo(arr.dtype).smallest_subnormal)
+            )
+        decode_ulp = max(max_val * decode_eps, decode_floor)
+        return float(min(slack + decode_ulp, float(np.finfo(np.float64).max)))
 
     def _encode_coordinate(
         self,
@@ -42,6 +487,42 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         (from the data's own per-axis extent): an extent ≥ 2¹⁶ can't resolve a unit
         step at uint16, so AUTO/MEMORY fall back to float32; an extent > 2¹² warns
         that sub-unit headroom is shrinking.
+
+        A GRIDDED axis — one whose distinct values all sit on a single regular
+        grid — additionally gets its quantization grid snapped onto the data's own
+        spacing (see :func:`gridded_axis_step` / :meth:`_snap_gridded_axes`), so
+        it round-trips bit-exactly at uint16. That is what keeps a
+        stacked/categorical axis (built with ``sigma=0``) usable, and it costs
+        nothing: ``lo``/``hi`` are stored per axis already, so it is a scale
+        choice rather than a dtype change.
+
+        Neither rail knows anything but the coordinates. A *second*,
+        geometry-aware rail lives at the gsplat write choke point
+        (:func:`~luxar.io._compiler.gsplat_assembly.write_gsplat_arrays`), which
+        also has the Cholesky factors in hand: it escalates centers to
+        ``PRECISION`` when HALF an axis's grid step — the worst-case round-trip
+        displacement — exceeds the per-splat marginal σ for more than 0.1% of the
+        splats on that axis, i.e. when quantization can move those centers clear
+        of their own cores (a population test, so the odd needle splat does not
+        cost the array its uint16 win). Tripping that gate is necessary but not
+        sufficient: the rail fires only where this encoder has NO exact path of
+        its own. It runs :func:`gridded_axis_step` on any axis that trips the
+        population gate and skips the axis when the snap will store it exactly,
+        and it asks
+        :meth:`~luxar.encoding.encoder.ArrayEncoder.encodes_as_lut` before
+        escalating, since a LUT-eligible centers array is already stored verbatim
+        (exactly, at ~1 B/value). What is left for it is a degenerate
+        sub-population on a NON-gridded, non-LUT axis — a ``sigma=0`` track stack
+        merged into a fit whose time axis is continuous, say — where the splats
+        really are destroyed. Callers encoding COORDINATE data that carries its
+        own notion of extent should route through that choke point rather than
+        here.
+
+        A caller that instead needs to know HOW FAR this method can move a value
+        — the points/lines/gsplats chunk-bounds writers, which must pad a bound
+        the reader trusts — asks :meth:`coordinate_round_trip_slack`, directly
+        above. It replays these same exits without writing (and takes the same
+        ``allow_lut`` the write will use); keep the two in step.
 
         Args:
             zarr_group: Zarr group to write to
@@ -72,7 +553,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             lo = arr.min(axis=0)
             hi = arr.max(axis=0)
             max_extent = float((hi - lo).max())
-            if max_extent >= 65536.0:
+            if max_extent >= COORDINATE_U16_MAX_EXTENT:
                 warnings.warn(
                     f"COORDINATE '{name}': per-axis extent {max_extent:.0f} ≥ 2¹⁶; "
                     "uint16 fixed-point cannot resolve a unit step — storing float32.",
@@ -92,6 +573,19 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
                     stacklevel=2,
                 )
 
+        # A GRIDDED axis (few distinct values, regularly spaced) is snapped so the
+        # quantization grid coincides with the data's own. This is what keeps a
+        # stacked/categorical axis usable: `combine_as_new_dimension(sigma=0)`
+        # gives such an axis an effective sigma of 1e-7, so ANY rounding puts a
+        # frame thousands of sigma from where it belongs and it stops matching a
+        # slice query at all — every frame disappears except the endpoints and
+        # the few that coincidentally land on the quantization grid (on a
+        # 100-frame stack that is four of them, #1748). Widening `hi` costs
+        # nothing: `lo`/`hi` are already stored per
+        # axis, so this is a scale choice, not a format or dtype change.
+        if lo is not None and hi is not None:
+            lo, hi = self._snap_gridded_axes(name, arr, lo, hi, _COORD_BITS)
+
         # Coordinates always u16 (never u8) for both AUTO and MEMORY. The decode
         # contract for COORDINATE is float32 (GPU/viewer target) regardless of the
         # input dtype — matching PRECISION's float32 cast — so original_dtype is
@@ -100,7 +594,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             zarr_group,
             name,
             arr,
-            16,
+            _COORD_BITS,
             chunks,
             compressor,
             lo=lo,
@@ -165,7 +659,9 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
                 encoder_name = "float32"
             elif mode == EncodingMode.MEMORY or mode == EncodingMode.AUTO:
                 # Quantize to uint8: [0, 1] → [0, 255]
-                encoded_data = np.clip(data * 255.0, 0, 255).astype(np.uint8)
+                encoded_data = np.clip(
+                    data.astype(np.float64, copy=False) * 255.0, 0, 255
+                ).astype(np.uint8)
                 encoder_name = "rgb_uint8"
             else:
                 raise ValueError(f"Unexpected mode for SDR COLOR: {mode}")

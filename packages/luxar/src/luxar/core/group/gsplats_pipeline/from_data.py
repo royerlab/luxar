@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from ..compositing import (
     ABSENT_WHEN_NONE_RENDER_ATTRS,
+    preflight_extend_to_all,
+    reject_mesh_only_appearance,
     strip_absent_attr_kwargs,
 )
 from .lod_dispatch import (
@@ -413,6 +415,7 @@ def _reject_before_wrapper(
     fill: Optional[Dict[str, float]],
     fill_sigma: Optional[Dict[str, float]],
     colormap: Any,
+    extend_to_all: Optional[Union[List[str], str]],
     attrs: Optional[Dict[str, Any]] = None,
     labels: Any = None,
     image_labels: Any = None,
@@ -504,6 +507,13 @@ def _reject_before_wrapper(
     below the attrs gate because that is the flat path's own order — the leaf
     validates node attrs at its entry and resolves the spec inside its
     partition branch, further down.
+
+    An explicit ``extend_to_all`` is checked next. Its invalid branches depend
+    only on the scene dimensions, not on a particular LOD child, so they can be
+    refused before the wrapper exists. It remains below the partition-spec gate
+    to match the leaf's order and above the per-rung colours loop because the
+    leaf resolves it before the writer's channel sweep. ``None`` stays
+    child-only so candidate analysis still warns once per written child.
 
     ``labels`` / ``image_labels`` are the ONE check here with no flat-path
     counterpart (#1471), which is why they come LAST. Both ride into every child
@@ -648,6 +658,7 @@ def _reject_before_wrapper(
         # function exists to prevent, one key over — see the helper, which also
         # states why ``False`` and a sub-2-D width are skipped rather than judged.
         reject_bad_partition_spec(attrs, effective_ndim)
+        preflight_extend_to_all(group._find_scene(), extend_to_all, centers, "splats")
         # The leaf's WHOLE colours validator, run against EVERY rung of EVERY
         # level, for the same reason the colours/colormap question above is asked
         # of every level — and below the width, because that is where the flat
@@ -745,6 +756,7 @@ def add_gsplats_from_data_impl(
     # the call it is about to make, so it is the more fundamental fault of the two
     # and there is nothing below it worth reporting first.
     reject_data_owned_channels(name, attrs)
+    reject_mesh_only_appearance("gsplats", name, attrs)
 
     # Propagate truncation_radius through attrs (unless caller overrode it — and
     # an explicit ``truncation_radius=None`` is NOT an override, having just been
@@ -803,6 +815,7 @@ def add_gsplats_from_data_impl(
             fill=fill,
             fill_sigma=fill_sigma,
             colormap=attrs.get("colormap"),
+            extend_to_all=extend_to_all,
             # The un-split caller attrs, for the node-attrs gate — see the
             # docstring. Handed whole (colormap/labels/image_labels included):
             # ``validate_render_attrs`` does not stop at KEYS (unknown-attr /

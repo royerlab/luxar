@@ -164,6 +164,7 @@ demos = [
     "esm>=3.0.0",
     "h5py>=3.0.0",
     "astropy>=6.0.0",
+    "astroquery>=0.4.7",
     "mrcfile>=1.4.0",
     "nibabel>=5.0.0",
     "pyshp>=2.3.0",
@@ -424,7 +425,7 @@ gen-data-manifest = "python scripts/gen_data_manifest.py"
 check-data-manifest = "python scripts/gen_data_manifest.py --check"
 # Audit built demo scenes when present; a checkout without generated scenes is
 # a read-only no-op. The underlying gate is unit-tested in the Python suite.
-check-demo-ladders = "python scripts/check_demo_ladders.py"
+check-demo-ladders = "python scripts/check_demo_ladders.py {args}"
 # Ratchet ruff's C901 against scripts/complexity_baseline.json: existing debt is
 # tolerated, a newly over-complex (or newly worse) function fails.
 check-complexity = "python scripts/check_complexity.py {args}"
@@ -448,6 +449,26 @@ check = [
     "check-static",
     "test-cov"
 ]
+
+# Viewer fixtures need the real gsplat LOD recipe pipeline, but none of the
+# dev/test/demo tooling in `default`. The extra index applies to every package
+# in this env; resolve torch from it so fixture generation cannot pull the
+# bundled NVIDIA CUDA runtime onto CI or a developer machine.
+[tool.hatch.envs.fixtures]
+# Named Hatch environments inherit `default` unless they explicitly select a
+# template. Self-templating keeps this environment independent while still
+# installing the project (unlike `detached = true`).
+template = "fixtures"
+features = ["gsplats"]
+
+[tool.hatch.envs.fixtures.env-vars]
+PIP_EXTRA_INDEX_URL = "https://download.pytorch.org/whl/cpu"
+# Preserve the default environment's tiny-op thread policy: the overview
+# recipe runs many small tensor operations and slows down under fork-join.
+OMP_NUM_THREADS = "{env:OMP_NUM_THREADS:1}"
+OPENBLAS_NUM_THREADS = "{env:OPENBLAS_NUM_THREADS:1}"
+MKL_NUM_THREADS = "{env:MKL_NUM_THREADS:1}"
+NUMEXPR_NUM_THREADS = "{env:NUMEXPR_NUM_THREADS:1}"
 
 # Documentation environment
 [tool.hatch.envs.docs]

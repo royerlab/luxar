@@ -35,6 +35,10 @@ stitching. Used by ``luxar gsplat fit --tiling uniform/content``.
 
 .. autofunction:: luxar.gsplats.fit_tiled
 
+.. automodule:: luxar.gsplats.merged_quality
+   :members:
+   :no-undoc-members:
+
 .. automodule:: luxar.gsplats.tiling
    :members:
    :no-undoc-members:
@@ -320,6 +324,8 @@ Density-driven box planning for content-adaptive tiled fits
    :members:
    :undoc-members:
    :show-inheritance:
+
+.. autodata:: luxar.gsplats.planner.fit_planned.CONTENT_CULL_RETENTION
 
 Scene Interop
 -------------

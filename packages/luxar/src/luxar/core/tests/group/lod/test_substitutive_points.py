@@ -682,9 +682,10 @@ def _partitioned_points(
     over-trigger control), so both variants get identical geometry and only the
     insertion point differs.
 
-    The shape ``demo_biodiversity_planetary_scale`` builds: ``add_points`` rejects
-    ``partition=`` with ``substitutive_lod=``, so a caller who wants per-tile
-    ladders creates the wrapper itself and calls the adder once per part.
+    The adaptive shape ``demo_biodiversity_planetary_scale`` builds: the combined
+    ``add_points(partition=..., substitutive_lod=...)`` spelling authors a global
+    overview cap, so a caller who wants one substitutive ladder per tile creates
+    the partition wrapper itself and calls the adder once per part.
 
     ``method="kmeans_lloyd"`` instead of the default ``"auto"``: at these sizes
     ``auto`` routes to the submodular ``greedy`` Runnalls path, whose sparse-Gram
@@ -862,14 +863,101 @@ class TestPartitionBoundAnchorPoints:
 
 
 class TestSubstitutiveLodGuards:
-    def test_partition_and_substitutive_raises(self, tmp_path) -> None:
-        # Must not silently drop the substitutive ladder when partition= is set.
+    def test_partition_and_substitutive_builds_overview(self, tmp_path) -> None:
+        """The combined spelling authors a coarse cap over fine spatial parts."""
+        out = tmp_path / "t.luxar.zarr"
+        rng = np.random.RandomState(0)
+        pos = rng.uniform(0, 40, (600, 3)).astype(np.float32)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_points(
+                "pts",
+                pos,
+                radii=1.0,
+                partition={"max_elements": 200},
+                substitutive_lod={
+                    "compression_factor": 4,
+                    "levels": 1,
+                    "method": "kmeans_lloyd",
+                    "device": "cpu",
+                    "seed": 0,
+                },
+                additive_lod=False,
+            )
+
+        group = zarr.open(str(out), mode="r")["pts"]
+        assert group.attrs["kind"] == "lod"
+        assert group.attrs["selector"] == "screen-area"
+        assert group.attrs["display_type"] == "points"
+        assert set(group.keys()) == {"child_0", "child_1"}
+
+        coarse = group["child_0"]
+        fine = group["child_1"]
+        assert coarse.attrs["type"] == "gsplats"
+        assert coarse.attrs["coverage_fraction"] == 0.0
+        assert fine.attrs["kind"] == "partition"
+        assert fine.attrs["display_type"] == "points"
+        assert fine.attrs["coverage_fraction"] == PARTITION_FINEST_AREA
+        part_names = list(fine.keys())
+        assert len(part_names) > 1
+        assert sum(int(fine[name].attrs["n_points"]) for name in part_names) == len(pos)
+        assert all(fine[name].attrs["type"] == "points" for name in part_names)
+
+    def test_overview_fine_parts_keep_streaming_ladders(self, tmp_path) -> None:
+        """Each fine part sizes its additive ladder from its own point count."""
+        out = tmp_path / "t.luxar.zarr"
+        pos = np.random.RandomState(0).uniform(0, 40, (1200, 3)).astype(np.float32)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_points(
+                "pts",
+                pos,
+                radii=1.0,
+                partition={"max_elements": 200},
+                substitutive_lod={
+                    "compression_factor": 4,
+                    "levels": 1,
+                    "method": "kmeans_lloyd",
+                    "device": "cpu",
+                    "seed": 0,
+                },
+                additive_lod={"method": "random", "counts": "stream:100", "seed": 0},
+            )
+
+        fine = zarr.open(str(out), mode="r")["pts/child_1"]
+        part_names = list(fine.keys())
+        assert len(part_names) > 1
+        assert all(
+            int(fine[name].attrs.get("n_additive_sublods", 1)) > 1
+            for name in part_names
+        )
+
+    def test_one_part_combination_falls_back_to_whole_object_lod(
+        self, tmp_path
+    ) -> None:
+        """A partition request that does not split must not take the overview anchor."""
         out = tmp_path / "t.luxar.zarr"
         pos = np.random.RandomState(0).rand(100, 3).astype(np.float32)
         with LuxarZarrCompiler(out) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            with pytest.raises(ValueError, match="partition.*substitutive_lod"):
-                scene.add_points("pts", pos, partition=True, substitutive_lod=True)
+            scene.add_points(
+                "pts",
+                pos,
+                radii=1.0,
+                partition={"max_elements": 200},
+                substitutive_lod={
+                    "levels": 1,
+                    "method": "kmeans_lloyd",
+                    "device": "cpu",
+                    "seed": 0,
+                },
+                additive_lod=False,
+            )
+
+        group = zarr.open(str(out), mode="r")["pts"]
+        assert group.attrs["kind"] == "lod"
+        assert group["child_1"].attrs["type"] == "points"
+        assert group["child_1"].attrs["coverage_fraction"] == WHOLE_OBJECT_FINEST_ANCHOR
 
     def test_substitutive_takes_precedence_over_auto_partition(self, tmp_path) -> None:
         # With compiler auto-partition enabled, substitutive_lod must still win
@@ -1007,6 +1095,34 @@ class TestSubstitutiveLodGuards:
         grp = zarr.open(str(out), mode="r")["pts"]
         assert grp.attrs.get("kind") != "lod"  # flat fallback, not a 1-child LOD
         assert grp.attrs.get("type") == "points"
+
+    def test_all_zero_radius_overview_falls_back_to_partition(self, tmp_path) -> None:
+        out = tmp_path / "t.luxar.zarr"
+        pos = np.random.RandomState(0).normal(0, 20, (600, 3)).astype(np.float32)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_points(
+                "pts",
+                pos,
+                radii=0.0,
+                partition={"max_elements": 200},
+                substitutive_lod=dict(levels=2, device="cpu", seed=0),
+                additive_lod=False,
+                opacity=0.5,
+            )
+
+        wrapper = zarr.open(str(out), mode="r")["pts"]
+        part_names = list(wrapper.keys())
+        assert wrapper.attrs["kind"] == "partition"
+        assert wrapper.attrs["opacity"] == pytest.approx(0.5)
+        assert len(part_names) > 1
+        assert sum(int(wrapper[name].attrs["n_points"]) for name in part_names) == len(
+            pos
+        )
+        assert all(
+            float(wrapper[name].attrs.get("opacity", 1.0)) == pytest.approx(1.0)
+            for name in part_names
+        )
 
     def test_tiny_input_builds_valid_group_without_crashing(self, tmp_path) -> None:
         # Very small N still reduces (each coarse level may be 1 splat); the

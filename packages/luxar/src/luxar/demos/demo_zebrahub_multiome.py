@@ -23,6 +23,14 @@ DEMO_META = {
     },
     "caches": ["zebrahub_multiome"],
     "outputs": ["zebrahub_multiome", "cells"],
+    "citation": {
+        # First author of the Zebrahub-Multiome preprint this demo cites above,
+        # and the only paper it draws on -- confirmed with the dataset's authors.
+        # The on-scene footers named the separate Zebrahub atlas paper (Lange et
+        # al., Cell 2024) and have been corrected to match.
+        "short": "Kim et al. 2024",
+        "doi": "10.1101/2024.10.18.618987",
+    },
 }
 
 import sys
@@ -35,7 +43,8 @@ import zarr
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import cache_computed, launch_viewer
+from luxar.core.viewer_config import ViewerConfig
+from luxar.demos import add_demo_caption, cache_computed, launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
 
@@ -160,7 +169,11 @@ def main() -> None:
             )
 
             with LuxarZarrCompiler(output) as compiler:
-                scene = compiler.create_scene(dimensions=dims)
+                scene = compiler.create_scene(
+                    dimensions=dims,
+                    citation=DEMO_META["citation"],
+                    viewer_config=ViewerConfig(cinematic_mode=True),
+                )
                 scene.add_points(
                     "Cells",
                     positions,
@@ -198,12 +211,10 @@ def main() -> None:
                     )
 
                 # Info + citation
-                scene.add_text(
-                    "95K cells • 32 cell types • Lange et al., Cell 2024",
-                    position=(0.98, 0.97),
-                    font_size=0.012,
-                    anchor="bottom-right",
-                    color="rgba(200,200,200,0.45)",
+                add_demo_caption(
+                    scene,
+                    "95K cells • 32 cell types • Kim et al. 2024",
+                    DEMO_META.get("citation"),
                 )
 
             aprint(f"{len(positions):,} total points ({len(coords):,} per view)")
@@ -254,7 +265,11 @@ def main() -> None:
             )
 
             with LuxarZarrCompiler(output) as compiler:
-                scene = compiler.create_scene(dimensions=dims)
+                scene = compiler.create_scene(
+                    dimensions=dims,
+                    citation=DEMO_META["citation"],
+                    viewer_config=ViewerConfig(cinematic_mode=True),
+                )
                 scene.add_points(
                     "Cells",
                     positions,
@@ -292,12 +307,10 @@ def main() -> None:
                     )
 
                 # Info + citation
-                scene.add_text(
-                    "95K cells • 32 cell types • Lange et al., Cell 2024",
-                    position=(0.98, 0.97),
-                    font_size=0.012,
-                    anchor="bottom-right",
-                    color="rgba(200,200,200,0.45)",
+                add_demo_caption(
+                    scene,
+                    "95K cells • 32 cell types • Kim et al. 2024",
+                    DEMO_META.get("citation"),
                 )
 
             aprint(f"{len(positions):,} total points ({len(coords):,} per view)")

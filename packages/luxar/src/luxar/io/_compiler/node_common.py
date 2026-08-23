@@ -22,6 +22,14 @@ import zarr
 from numpy.typing import NDArray
 
 from ...core.dimensions import Dimensions
+from ...core.group.compositing import (
+    IDENTITY_COMPOSITING_ATTRS,
+    WRITER_STAMPED_APPEARANCE_DEFAULTS,
+)
+from ...validation.types import (
+    validate_appearance_fraction,
+    validate_positive_finite,
+)
 
 # Writer-authoritative attrs each geometry writer stamps unconditionally.
 # User-supplied values for these keys are rejected in the fail-fast gate:
@@ -87,6 +95,10 @@ GSPLATS_RESERVED_ATTRS: FrozenSet[str] = frozenset(
         "has_image_labels",
         "amplitude_range",
         "amplitude_data_range",
+        # Writer-derived mass statistics that drive the finalize-time
+        # amplitude-window harmonization (see finalize/amplitude_window.py).
+        "amplitude_mass",
+        "amplitude_mass_weighted_mean",
         "center_bounds",
         "position_bounds",
         "ordering",
@@ -124,11 +136,15 @@ MESH_RESERVED_ATTRS: FrozenSet[str] = frozenset(
 # keys advertised in the "Unknown node attribute" hint. A user typo like
 # ``blending="max"`` (for ``blending_mode``) used to be persisted silently and
 # ignored by the viewer (issue #787); these are the legitimate render keys a
-# caller may set on any node. Keep in sync with the per-key validators in
+# caller may set on at least one node type. Type-restricted keys remain here so
+# the typo hint can advertise the full authoring surface, with per-type refusals
+# enforced before writing. Keep in sync with the per-key validators in
 # :func:`validate_render_attrs`.
 KNOWN_RENDER_ATTRS: FrozenSet[str] = frozenset(
     {
         "absorption",
+        "alpha_cutoff",
+        "ambient",
         "blending_mode",
         "colormap",
         "gamma",
@@ -141,9 +157,23 @@ KNOWN_RENDER_ATTRS: FrozenSet[str] = frozenset(
         "layer",
         "offset",
         "opacity",
+        # Mesh-only shading controls. Advertised for the same reason as
+        # lines-only ``join``; :func:`reject_mesh_only_appearance` refuses
+        # them on points, lines, gsplats, and groups before anything is written.
+        "shade_exponent",
+        "shininess",
+        "specular",
         "visible",
     }
 )
+
+_MESH_APPEARANCE_VALIDATORS = {
+    "ambient": (validate_appearance_fraction, "Ambient"),
+    "specular": (validate_appearance_fraction, "Specular"),
+    "alpha_cutoff": (validate_appearance_fraction, "Alpha cutoff"),
+    "shade_exponent": (validate_positive_finite, "Shade exponent"),
+    "shininess": (validate_positive_finite, "Shininess"),
+}
 
 # Non-appearance keys that legitimately reach :func:`validate_render_attrs` and
 # must NOT be flagged as unknown. These are user-settable node attrs that are
@@ -178,9 +208,8 @@ _ALLOWED_NODE_ATTRS: FrozenSet[str] = frozenset(
         "display_type",
         "max_elements",
         "position_bounds",
-        # BSP tree stamped on a kind=partition group by the gsplat graft path
-        # (add_partition_group); the viewer reads it for back-to-front part
-        # ordering.
+        # BSP tree stamped on a kind=partition group by the native leaf adders
+        # and gsplat graft path; the viewer reads it for back-to-front ordering.
         "bsp_tree",
         # Geometry-writer internal forwarding flags. NOT an exhaustive list of
         # them: a flag popped BEFORE this gate runs never needs listing here.
@@ -459,17 +488,15 @@ def apply_default_render_attrs(attrs: Dict[str, Any]) -> None:
     ancestor sets it.
 
     Mirrors the GSplat defaults in :func:`~luxar.io._compiler.gsplat_assembly.\
-    apply_gsplat_group_attrs` (which additionally defaults ``truncation_radius``).
+    apply_gsplat_group_attrs` (which additionally defaults ``truncation_radius``)
+    — literally, not by coincidence: both read their values from
+    :data:`~luxar.core.group.compositing.WRITER_STAMPED_APPEARANCE_DEFAULTS`,
+    which is also what the READER consults to tell a manufactured identity from
+    an authored one (the ``gsplat merge`` agreement rule).
     """
-    for key, default in (
-        ("opacity", 1.0),
-        ("absorption", 1.0),
-        ("gamma", 1.0),
-        ("intensity", 1.0),
-        ("offset", 0.0),
-    ):
+    for key in IDENTITY_COMPOSITING_ATTRS:
         if key not in attrs:
-            attrs[key] = default
+            attrs[key] = WRITER_STAMPED_APPEARANCE_DEFAULTS[key]
 
 
 def validate_render_attrs(
@@ -482,8 +509,8 @@ def validate_render_attrs(
     Called as the FIRST step of every geometry writer — before the zarr group
     is created — so an invalid value fails the write without leaving a partial
     node on disk. Covers every pure attr validator (no store access needed):
-    blending_mode / absorption / opacity / gamma / intensity / offset / layer /
-    visible / colormap. The values are validated only (not converted) — the
+    blending_mode / absorption / opacity / gamma / intensity / offset / mesh
+    appearance / layer / visible / colormap. The values are validated only (not converted) — the
     writer stores the caller's attrs unchanged.
 
     When ``reject_unknown`` is set, any attr key that is neither a known render
@@ -562,6 +589,8 @@ def validate_render_attrs(
 
         validate_opacity(attrs["opacity"])
 
+    _validate_mesh_appearance_attrs(attrs)
+
     if "truncation_radius" in attrs:
         from ...validation.types import validate_truncation_radius
 
@@ -596,3 +625,10 @@ def validate_render_attrs(
         from ...validation.types import validate_colormap
 
         validate_colormap(attrs["colormap"])
+
+
+def _validate_mesh_appearance_attrs(attrs: Dict[str, Any]) -> None:
+    """Validate the five mesh-only appearance values in the shared attr gate."""
+    for key, (validator, label) in _MESH_APPEARANCE_VALIDATORS.items():
+        if key in attrs:
+            validator(attrs[key], label)

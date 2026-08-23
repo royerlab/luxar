@@ -55,8 +55,11 @@ from a preset — it is the *fitter's* own default falling through, and it drops
 amplitude after every fit. Chasing a false `signal_limited` curve out of `cal`, treat
 BOTH as suspects — that retention *and* too few iterations at high K, which is the
 reason `cal` itself defaults to the `n2s` preset (20,000 iters, retention 0.999).
-A bare `fit` (no preset) still carries that `0.95` — on the CLI path, that is;
-a direct Python `fit_progressive_gaussian_splats` call defaults to `0.98`, which the
+A bare `fit` (no preset) still carries that `0.95` — on the CLI path, that is; and not
+under `--tiling content`, whose boxes default to `0.999` with or without a preset.
+Content only: `--tiling uniform` is not special-cased and a bare one still culls each
+tile at `0.95`.
+A direct Python `fit_progressive_gaussian_splats` call defaults to `0.98`, which the
 CLI overrides — so **`--seeds` proposes and `cull_retention` disposes**: a post-fit
 cumulative-amplitude cull discards the tail, and on heavy-tailed sparse data that
 tail is a lot of splats — the final count is not `--seeds`. A bigger preset is not
@@ -78,9 +81,9 @@ therefore background-relative. `--floor` is ON by default (`auto`):
 
 - `auto` — histogram-mode estimate, capped at the median (a no-op on clean data
   with no pedestal).
-- `pNN` — subtract that percentile, e.g. `--floor p10`.
+- `pNN` — subtract that percentile of non-zero voxels, e.g. `--floor p10`.
 - a plain number — subtract a fixed value, e.g. `--floor 110`.
-- `none` — disable (legacy hard-min behaviour; use to reproduce old numbers).
+- `none` or `0` — disable (legacy hard-min behaviour; use to reproduce old numbers).
 
 `cal` applies the same `--floor` up front so K* is measured on floor-suppressed
 data, matching how you fit.
@@ -102,8 +105,8 @@ bounds only what it samples, so pass `--floor none` or an explicit numeric
 `--floor N` when a particular slice must survive.
 
 **Stay on `auto` unless you have measured otherwise.** A `pNN` floor subtracts a
-percentile of *all* voxels, so on sparse data it lands wherever the sparsity puts
-it rather than where the noise ends. On a 96x640x640 crop of a sparse light-sheet
+percentile of non-zero voxels, so on sparse data it lands wherever the sparsity
+puts it rather than where the noise ends. On a 96x640x640 crop of a sparse light-sheet
 brain — 1.01% of its voxels foreground (above 10% of max), 12.9% in the dim band
 (1–10%, where thin faint neurites live) — `p99` sat at **1.34% of that crop's
 max**, squarely inside signal. Note it is a crop figure: over the whole stack the

@@ -41,8 +41,9 @@ Tracking:    StarryNite + manual curation (full lineage)
 
 How to Cite:
 ------------
-Hirsch, P. et al. (2022).  3D+time nuclei tracking dataset of confocal
-fluorescence microscopy time series of C. elegans embryos.
+Santella, A., Kovacevic, I., Bao, Z., Hirsch, P. (2022).  3D+time nuclei
+tracking dataset of confocal fluorescence microscopy time series of
+C. elegans embryos.  CC BY 4.0.
 DOI: 10.5281/zenodo.6460303
 
 WORKFLOW:
@@ -97,6 +98,11 @@ DEMO_META = {
     },
     "caches": ["gsplats_celegans"],
     "outputs": ["gsplats_4d_celegans_tracking"],
+    "citation": {
+        "short": "Santella et al. 2022",
+        "doi": "10.5281/zenodo.6460303",
+        "license": "CC BY 4.0",
+    },
 }
 
 import csv
@@ -109,8 +115,10 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
     MissingDependencyError,
+    add_demo_caption,
     launch_viewer,
     load_dataset_bundle,
     parse_demo_flags,
@@ -847,9 +855,14 @@ def preprocess_timepoint(
 
 
 def _load_cached(cache_file: Path, label: str) -> GSplatData | None:
-    """Try loading a cached GSplatData.  Returns None on failure."""
+    """Try loading a cached GSplatData.  Returns None on failure.
+
+    ``include_stats=True``: the cache carries the fit's normalization provenance
+    (floor / image_min / image_max), and ``concatenate`` only propagates a
+    background floor into the stacked scene when every part reports one (#1175).
+    """
     try:
-        result = GSplatData.load(cache_file, include_stats=False)
+        result = GSplatData.load(cache_file, include_stats=True)
         aprint(f"  Loaded {len(result.amplitudes):,} cached splats ({label})")
         return result
     except Exception as e:
@@ -926,7 +939,12 @@ def fit_timepoint(
     )
     tmp_file.unlink(missing_ok=True)  # save complete — remove marker
 
-    return result
+    # Return what was STORED, not the in-memory fit: the cache is written under
+    # a lossy encoding, so returning `result` here would make a cold run
+    # (unquantized) and a warm run (the `_load_cached` branch above) produce
+    # different scenes. Same include_stats=True as that branch, so the two agree
+    # AND the fit's normalization provenance survives into the stacked scene.
+    return GSplatData.load(cache_file, include_stats=True)
 
 
 def preprocess_and_fit_all_timepoints(tiff_files: list) -> list:
@@ -1715,6 +1733,8 @@ def create_luxar_scene(
         ) as compiler:
             scene = compiler.create_scene(
                 dimensions=dims,
+                citation=DEMO_META["citation"],
+                viewer_config=ViewerConfig(cinematic_mode=True),
             )
 
             scene.attrs["title"] = "GSplats: C. elegans Embryo — Nuclei Tracking"
@@ -1787,12 +1807,8 @@ Navigation:
             )
 
             # Info
-            scene.add_text(
-                "Confocal \u2022 Cell tracking",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+            add_demo_caption(
+                scene, "Confocal \u2022 Cell tracking", DEMO_META.get("citation")
             )
 
         aprint(f"Scene saved: {output_path}")

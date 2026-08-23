@@ -54,6 +54,16 @@ _CENTERS = np.array([[0, 0, 0]], dtype=np.float32)
 _CHOL = np.array([[1, 0, 1, 0, 0, 1]], dtype=np.float32)
 
 
+def _add_single_lod_child(lod: Group) -> None:
+    lod.add_gsplats(
+        "level_0",
+        centers=_CENTERS,
+        amplitudes=1.0,
+        cholesky_factors=_CHOL,
+        coverage_fraction=0.0,
+    )
+
+
 # ────────────────────────────────────────────────────────────────────────
 # Standalone builder — add_lod_group + child enumeration
 # ────────────────────────────────────────────────────────────────────────
@@ -73,6 +83,7 @@ class TestAddLodGroup:
             assert lod.attrs["kind"] == "lod"
             assert lod.attrs["selector"] == "coverage"
             assert lod.attrs["default_level"] == 0
+            _add_single_lod_child(lod)
 
         store = zarr.open(str(output_path), mode="r")
         attrs = store["multires"].attrs
@@ -87,7 +98,8 @@ class TestAddLodGroup:
 
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            scene.add_lod_group("multires", default_level=2)
+            lod = scene.add_lod_group("multires", default_level=2)
+            _add_single_lod_child(lod)
 
         store = zarr.open(str(output_path), mode="r")
         assert store["multires"].attrs["default_level"] == 2
@@ -132,7 +144,8 @@ class TestAddLodGroup:
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             g = scene.add_group("scene_root")
-            g.add_lod_group("multires")
+            lod = g.add_lod_group("multires")
+            _add_single_lod_child(lod)
 
         store = zarr.open(str(output_path), mode="r")
         nested = store["scene_root"]["multires"]
@@ -165,6 +178,7 @@ class TestLODGroupValidation:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             lod = scene.add_lod_group("multires", selector="screen-area")
             assert lod.attrs["selector"] == "screen-area"
+            _add_single_lod_child(lod)
 
         store = zarr.open(str(output_path), mode="r")
         assert store["multires"].attrs["selector"] == "screen-area"

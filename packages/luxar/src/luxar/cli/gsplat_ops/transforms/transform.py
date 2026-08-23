@@ -16,6 +16,7 @@ from .parsing import parse_csv_floats
 if TYPE_CHECKING:  # pragma: no cover - typing only
     import numpy as np
 
+    from luxar.gsplats.gsplat_data import GSplatData
     from luxar.gsplats.tree import GSplatNode
 
 
@@ -97,6 +98,65 @@ def _map_partition_planes(
             "re-partition after rotating to restore exact ordering."
         )
     return result
+
+
+class _IntensityChangeRecorder:
+    """Wrap the tree path's amplitude edits so the ROOT scrub keys off the VALUES.
+
+    An intensity edit rewrites the amplitudes, so the fit's measured reconstruction
+    scores no longer describe this artifact (PSNR/MSE are absolute-error metrics —
+    a global x0.5 changes them outright, #1600). The per-leaf ops scrub their own
+    ``GSplatData``, but the tree path writes the ROOT ``fitting/`` group from the
+    ``stats`` dict loaded off disk, so it needs the same pass — otherwise a
+    partition would stay exempt from a rule the flat path enforces.
+
+    The predicate has to be the SAME one, though: the ``GSplatData`` methods scrub
+    on :func:`~luxar.gsplats.gsplat_data.amplitudes_changed`, so gating this on the
+    flag's mere presence made ``transform --scale-intensity 1.0`` destroy a
+    partition's scores while the flat path (correctly) kept them — and
+    ``--normalize-intensity`` on an all-zero store scrubbed without running a
+    single leaf op. So every amplitude edit reports through here, and the root is
+    scrubbed only if at least one leaf really moved.
+
+    Geometry-only transforms keep the scores: the splat set is identical and only
+    its frame moved (the splats are what the score describes — the format spec's
+    reproducibility argument is weaker here, since ``transform`` records no scale
+    factor).
+    """
+
+    def __init__(self) -> None:
+        self.changed = False
+
+    def watching(
+        self, op: "Callable[[GSplatData], GSplatData]"
+    ) -> "Callable[[GSplatData], GSplatData]":
+        """``op``, with "did the amplitudes actually move" recorded on the side."""
+        from luxar.gsplats.gsplat_data import amplitudes_changed
+
+        def _fn(data: "GSplatData") -> "GSplatData":
+            out = op(data)
+            if amplitudes_changed(data.amplitudes, out.amplitudes):
+                self.changed = True
+            return out
+
+        return _fn
+
+    def scrub_root(self, stats: "Optional[dict]") -> None:
+        """Drop the measured scores from the root ``stats``, if anything moved."""
+        from luxar.gsplats.gsplat_data import drop_content_scoped_stats
+
+        if self.changed and stats:
+            drop_content_scoped_stats(stats)
+
+
+def _restamp_tree_after_intensity(
+    node: "GSplatNode", source: "GSplatNode", *, changed: bool
+) -> "GSplatNode":
+    if not changed:
+        return node
+    from luxar.gsplats.lod.restamp import refresh_reduction_lod_tree
+
+    return refresh_reduction_lod_tree(node, source)
 
 
 def run_transform_dataset(
@@ -350,6 +410,8 @@ def run_transform_dataset(
                 # Centroid shift applied by --center, captured for the split-plane
                 # remap below (it is only known once the centroid is measured).
                 center_shift: "Optional[np.ndarray]" = None
+                intensity = _IntensityChangeRecorder()
+                source_node = node
 
                 def _leaf_op(
                     op: "Callable[[GSplatData], GSplatData]",
@@ -405,7 +467,11 @@ def run_transform_dataset(
                         node = map_leaves(
                             node,
                             _leaf_op(
-                                lambda gd: gd.scale_intensity(scale_intensity_factor)
+                                intensity.watching(
+                                    lambda gd: gd.scale_intensity(
+                                        scale_intensity_factor
+                                    )
+                                )
                             ),
                         )
                 if normalize_intensity is not None:
@@ -418,15 +484,25 @@ def run_transform_dataset(
                         if current_max > 0:
                             factor = normalize_intensity / current_max
                             node = map_leaves(
-                                node, _leaf_op(lambda gd: gd.scale_intensity(factor))
+                                node,
+                                _leaf_op(
+                                    intensity.watching(
+                                        lambda gd: gd.scale_intensity(factor)
+                                    )
+                                ),
                             )
+                intensity.scrub_root(stats)
+                node = _restamp_tree_after_intensity(
+                    node, source_node, changed=intensity.changed
+                )
                 # Scrub the coverage_fraction LOD-switch threshold from EVERY node
                 # (leaves AND group nodes — an overview partition child, an adaptive
                 # per-part lod group) after a geometry transform so the writer
-                # re-derives it. coverage_fraction is a per-level COUNT ratio, hence
-                # invariant to scale/rotate/translate/center — so this re-derives the
-                # identical value; it is kept as a safety net for transforms that also
-                # re-ladder and change per-level counts. Intensity-only transforms
+                # re-derives it. coverage_fraction is derived from the ladder's LENGTH
+                # and its topology, not from geometry, hence invariant to
+                # scale/rotate/translate/center — so this re-derives the identical
+                # value; it is kept as a safety net for transforms that also
+                # re-ladder and change the number of levels. Intensity-only transforms
                 # leave it intact regardless. The re-derivation is TOPOLOGY-AWARE
                 # (``write_gsplat_node`` picks ``partitioned_coverage_fractions`` for a
                 # partition-bound ladder), so scrubbing an ``adaptive``/``overview``

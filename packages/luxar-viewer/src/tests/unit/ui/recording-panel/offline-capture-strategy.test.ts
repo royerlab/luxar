@@ -127,7 +127,8 @@ function makeSession(overrides: Record<string, unknown> = {}): any {
 }
 
 function makeSceneManager(
-  nativeSize: { width: number; height: number } = { width: 1280, height: 720 }
+  nativeSize: { width: number; height: number } = { width: 1280, height: 720 },
+  ssaaScale = 1
 ): {
   sm: any;
   orbitControls: { applyOrbitRotation: ReturnType<typeof vi.fn> };
@@ -137,11 +138,19 @@ function makeSceneManager(
   });
   const sm = {
     controls: { getControls: vi.fn(() => orbitControls) },
-    // The strategy reads the renderer's logical size to honour the
-    // panel's "Native" resolution option.
+    // The strategy reads the DISPLAY size to honour the panel's "Native"
+    // resolution option. `renderer.getSize()` reports the SSAA-multiplied
+    // size instead, so the two disagree whenever SSAA is on — the double
+    // models that rather than returning the same number twice.
+    postProcessing: {
+      getDisplaySize: vi.fn(() => ({ ...nativeSize })),
+    },
     renderer: {
       getSize: vi.fn((target: { set: (x: number, y: number) => unknown }) => {
-        target.set(nativeSize.width, nativeSize.height);
+        target.set(
+          Math.round(nativeSize.width * ssaaScale),
+          Math.round(nativeSize.height * ssaaScale)
+        );
         return target;
       }),
     },
@@ -221,6 +230,11 @@ describe('OfflineCaptureStrategy', () => {
     vi.mocked(ExrSequenceDriver).mockClear();
     vi.mocked(VideoModeDriver).mockClear();
     vi.mocked(showToast).mockClear();
+    // The log mock is module-scoped, so without this a test asserting that a
+    // particular warning was NOT emitted would see an earlier test's.
+    vi.mocked(log.warning).mockClear();
+    vi.mocked(log.error).mockClear();
+    vi.mocked(log.info).mockClear();
     activeAnim = null;
     // requestAnimationFrame resolves synchronously so the loop runs to
     // completion within the awaited run() call. Each simulated frame runs
@@ -318,15 +332,23 @@ describe('OfflineCaptureStrategy', () => {
       await strat.run(makeOpts({ videoResolution: 0 }), 'turntable', session);
 
       expect(session.saveRecordingState).toHaveBeenCalledWith(
-        expect.objectContaining({ scaleResolution: { targetH: 1440, align16: true } })
+        expect.objectContaining({ scaleResolution: { targetH: 1440, alignEven: true } })
       );
     });
 
     it('still converts EXR frames when the renderer cannot report a grade', async () => {
-      // No `postProcessing` on the scene manager → the grade is unknown.
-      // The script must still clamp and sRGB-encode: skipping the colour
-      // chain hands the encoder scene-linear floats, which is the dark,
+      // No `getGradeSettings` on the post-processing manager → the grade
+      // is unknown.
+      // The script must still sRGB-encode: skipping the colour chain
+      // hands the encoder scene-linear floats, which is the dark,
       // colour-shifted video the chain exists to prevent.
+      //
+      // It must NOT claim to have written out the viewer's own curve:
+      // an absent grade used to be replaced by a fabricated neutral one,
+      // whose header said the tone map had been reproduced when the
+      // viewer may well have been on ACES. The chain still clamps (a
+      // bare `geq`), since leaving over-range floats to be clipped after
+      // the RGB→YUV matrix shifts hue.
       const { sm } = makeSceneManager();
       const strat = new OfflineCaptureStrategy(sm, makeAnimController(), makeHooks());
 
@@ -337,7 +359,29 @@ describe('OfflineCaptureStrategy', () => {
       };
       const script = ctx.generateFfmpegScript(10, 'exr');
       expect(script).toContain('t=iec61966-2-1');
-      expect(script).toContain('geq=');
+      expect(script).toContain('grade could not be read');
+      expect(script).toContain("r='clip(max(r(X,Y),0),0,1)'");
+      expect(script).not.toContain('tone mapping:');
+    });
+
+    it('asks for the DISPLAY height under SSAA, not the multiplied one', async () => {
+      // Post-processing hands the renderer `display × multiplier`, so
+      // `renderer.getSize()` on a 1512×850 viewport at 2× reports 1700 —
+      // and `saveRecordingState` multiplies by the SSAA factor AGAIN.
+      // Reading the renderer therefore squared the multiplier: 3400
+      // requested, a 12096×6800 render target, ~1.3 GB per EXR readback
+      // and a lost context part-way through the capture.
+      const { sm } = makeSceneManager({ width: 1512, height: 850 }, 2);
+      const session = makeSession({
+        adaptiveDPRManager: { getNativeDPR: vi.fn(() => 2) },
+      });
+      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), makeHooks());
+
+      await strat.run(makeOpts({ videoResolution: 0 }), 'turntable', session);
+
+      expect(session.saveRecordingState).toHaveBeenCalledWith(
+        expect.objectContaining({ scaleResolution: { targetH: 1700, alignEven: true } })
+      );
     });
 
     it('multiplies the canvas height by the native DPR for Native', async () => {
@@ -352,7 +396,7 @@ describe('OfflineCaptureStrategy', () => {
       await strat.run(makeOpts({ videoResolution: 0 }), 'turntable', session);
 
       expect(session.saveRecordingState).toHaveBeenCalledWith(
-        expect.objectContaining({ scaleResolution: { targetH: 1440, align16: true } })
+        expect.objectContaining({ scaleResolution: { targetH: 1440, alignEven: true } })
       );
     });
 
@@ -380,7 +424,7 @@ describe('OfflineCaptureStrategy', () => {
       await strat.run(makeOpts({ videoResolution: 1080 }), 'turntable', session);
 
       expect(session.saveRecordingState).toHaveBeenCalledWith(
-        expect.objectContaining({ scaleResolution: { targetH: 1080, align16: true } })
+        expect.objectContaining({ scaleResolution: { targetH: 1080, alignEven: true } })
       );
     });
 
@@ -397,9 +441,12 @@ describe('OfflineCaptureStrategy', () => {
       // silently bakes the WRONG curve into the encode — and reads as a
       // plausible result, since Neutral is a gentle curve.
       const { sm } = makeSceneManager();
-      sm.postProcessing = {
-        getGradeSettings: () => ({ toneMapping, exposure: 0, offset: 0, gamma: 1 }),
-      };
+      sm.postProcessing.getGradeSettings = () => ({
+        toneMapping,
+        exposure: 0,
+        offset: 0,
+        gamma: 1,
+      });
       const strat = new OfflineCaptureStrategy(sm, makeAnimController(), makeHooks());
 
       await strat.run(makeOpts({ outputFormat: 'exr' }), 'turntable', makeSession());
@@ -676,6 +723,410 @@ describe('OfflineCaptureStrategy', () => {
 
       expect(flagDuringSetup).toBe(true);
       expect(session.isLoopRenderSuppressed).toBe(false);
+    });
+  });
+
+  describe('LOD settle drain (#1695)', () => {
+    it('never drains — not even one extra rAF — when the isLODSettled hook is absent', async () => {
+      // The hook is optional; without it the loop must be byte-for-byte the
+      // pre-#1695 one. Default opts → totalFrames = 2, so exactly one opening
+      // rAF plus one per frame.
+      const { sm } = makeSceneManager();
+      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), makeHooks());
+
+      await strat.run(makeOpts(), 'turntable', makeSession());
+
+      expect(rafSpy.mock.calls.length).toBe(1 + 2);
+      expect(mockState.driverInstances.at(-1)!.captureFrame).toHaveBeenCalledTimes(2);
+      expect(showToast).not.toHaveBeenCalled();
+    });
+
+    it('skips the drain entirely — mandatory tick included — when the hook answers null', async () => {
+      // `null` is the hook's "this scene has nothing that could ever need
+      // waiting for" answer (no scene loader, no LOD registry, or a registry
+      // with no lod_group). The provider is wired unconditionally in
+      // production, so a plain points/lines scene reaches this path on every
+      // capture and must cost exactly what it did pre-#1695 — the mandatory
+      // selector-catch-up rAF included. Compare the `() => true` test below,
+      // which spends two extra frames for the same two exported frames.
+      const { sm } = makeSceneManager();
+      const hooks = makeHooks();
+      hooks.isLODSettled = vi.fn(() => null);
+      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), hooks);
+
+      await strat.run(makeOpts(), 'turntable', makeSession());
+
+      expect(rafSpy.mock.calls.length).toBe(1 + 2);
+      // Consulted once per frame — the answer is read, not the hook's absence.
+      expect(hooks.isLODSettled).toHaveBeenCalledTimes(2);
+      expect(mockState.driverInstances.at(-1)!.captureFrame).toHaveBeenCalledTimes(2);
+      expect(showToast).not.toHaveBeenCalled();
+    });
+
+    it('spends exactly one rAF per frame when the hook is already settled', async () => {
+      // Not zero: `AnimationController.animate` runs controls.update(), then
+      // the per-frame callbacks in Map insertion order, then the render. The
+      // LOD selector is registered at pipeline init while the capture's orbit
+      // callback is re-added every iteration (hence always last), and
+      // applyOrbitRotation moves the camera synchronously — so within the
+      // frame the loop awaits for frame N the selector evaluated pose N−1 and
+      // only then did the camera advance to pose N. One more tick is what
+      // makes the predicate describe the pose being captured.
+      const { sm } = makeSceneManager();
+      const hooks = makeHooks();
+      hooks.isLODSettled = vi.fn(() => true);
+      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), hooks);
+
+      await strat.run(makeOpts(), 'turntable', makeSession());
+
+      expect(rafSpy.mock.calls.length).toBe(1 + 2 + 2);
+      // Twice per frame: the tri-state probe that decides whether this scene
+      // drains at all (read before the catch-up tick, so only its NULL-ness is
+      // used), then the real poll once the selector is on the captured pose.
+      expect(hooks.isLODSettled).toHaveBeenCalledTimes(4);
+    });
+
+    it('never DECIDES on the hook before the selector has ticked on the pose being captured', async () => {
+      // Pins the mandatory catch-up rAF directly: the read a frame actually
+      // acts on must come strictly after at least one rAF beyond the frame's
+      // orbit tick. (The frame's FIRST read is the tri-state probe, which
+      // deliberately sits at the orbit tick and whose boolean is discarded —
+      // hence "decides", not "polls".) Deleting the hoisted first await makes
+      // every read of a frame land at the orbit tick and turns this red.
+      const { sm } = makeSceneManager();
+      const hooks = makeHooks();
+      const rafAtRead: number[] = [];
+      hooks.isLODSettled = vi.fn(() => {
+        rafAtRead.push(rafSpy.mock.calls.length);
+        return true;
+      });
+      const rafAtCapture: number[] = [];
+      vi.mocked(ImageSequenceDriver).mockImplementationOnce(() => {
+        const d = mockState.makeDriver();
+        d.captureFrame = vi.fn(async () => {
+          rafAtCapture.push(rafSpy.mock.calls.length);
+        });
+        return d as never;
+      });
+      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), hooks);
+
+      await strat.run(makeOpts(), 'turntable', makeSession());
+
+      expect(rafAtRead).toHaveLength(4); // probe + deciding poll, per frame
+      expect(rafAtCapture).toHaveLength(2);
+      // Frame 0: opening rAF (1) + orbit tick (2, probe) + catch-up tick (3,
+      // poll). Frame 1: orbit tick (4, probe) + catch-up tick (5, poll).
+      rafAtCapture.forEach((atCapture, frame) => {
+        // The frame's orbit tick is the rAF right after the previous frame's
+        // capture (or the opening rAF for frame 0), so a read that has not
+        // spent a further tick sits exactly at it.
+        const orbitTick = (frame === 0 ? 1 : rafAtCapture[frame - 1]) + 1;
+        const decidingRead = rafAtRead.filter((r) => r <= atCapture).at(-1)!;
+        expect(decidingRead).toBeGreaterThan(orbitTick);
+      });
+    });
+
+    it('captures the whole sequence when the settle hook THROWS, instead of failing the run', async () => {
+      // The hook is a diagnostic injected from outside this module, and it is
+      // called inside the loop's main try — so an unguarded throw would be
+      // caught by the outer handler, reported as "Recording failed" and
+      // discard every frame already captured. It degrades to "do not wait"
+      // instead (the same treatment `AnimationController.pacingSuspended()`
+      // gives its injected predicate).
+      const { sm } = makeSceneManager();
+      const hooks = makeHooks();
+      hooks.isLODSettled = vi.fn(() => {
+        throw new Error('registry exploded');
+      });
+      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), hooks);
+
+      await strat.run(makeOpts(), 'turntable', makeSession());
+
+      const driver = mockState.driverInstances.at(-1)!;
+      expect(driver.captureFrame).toHaveBeenCalledTimes(2);
+      expect(driver.finalize).toHaveBeenCalled();
+      expect(showToast).not.toHaveBeenCalledWith('Recording failed');
+      // A throw is "do not wait", not a timeout: no degraded-sequence report.
+      // (Both report toasts name LOD; neither may fire here.)
+      expect(showToast).not.toHaveBeenCalledWith(expect.stringContaining('LOD'));
+      // …and it is surfaced once rather than silently swallowed.
+      expect(log.warning).toHaveBeenCalledWith(
+        'Recording',
+        expect.stringContaining('LOD settle predicate threw')
+      );
+    });
+
+    it('captures a frame only AFTER the hook reports the LOD levels settled', async () => {
+      // The regression: a tile reloading its fine level after re-entering the
+      // frustum must not be filmed at its coarse fallback.
+      const { sm, orbitControls } = makeSceneManager();
+      const trace: string[] = [];
+      const hooks = makeHooks();
+      let reads = 0;
+      hooks.isLODSettled = vi.fn(() => {
+        reads++;
+        const settled = reads > 3; // the first three reads report "still loading"
+        trace.push(settled ? 'settled' : 'draining');
+        return settled;
+      });
+      vi.mocked(ImageSequenceDriver).mockImplementationOnce(() => {
+        const d = mockState.makeDriver();
+        d.captureFrame = vi.fn(async () => {
+          trace.push('capture');
+        });
+        return d as never;
+      });
+      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), hooks);
+
+      await strat.run(makeOpts(), 'turntable', makeSession());
+
+      // Each frame opens with the tri-state probe (whose boolean is discarded)
+      // and then polls after every drain tick. Frame 0: probe + two more
+      // "draining" reads before the fourth settles; frame 1: probe + one
+      // settled poll.
+      expect(trace).toEqual([
+        'draining', // frame 0 probe — non-null, so this scene drains
+        'draining',
+        'draining',
+        'settled',
+        'capture',
+        'settled', // frame 1 probe
+        'settled',
+        'capture',
+      ]);
+      // Every capture is immediately preceded by a settled poll.
+      trace.forEach((entry, i) => {
+        if (entry === 'capture') expect(trace[i - 1]).toBe('settled');
+      });
+      // Opening rAF + one orbit tick per frame + each frame's drain. Frame 0
+      // spends the mandatory selector-catch-up tick plus two more before its
+      // fourth read settles; frame 1 spends only the catch-up tick.
+      expect(rafSpy.mock.calls.length).toBe(1 + 2 + (1 + 2) + 1);
+      // The camera advances ONCE PER EXPORTED FRAME, never once per drain rAF.
+      // This is what pins the drain's position after the orbit callback's
+      // removal: hoisting it above that removal leaves the callback registered
+      // for the drain's own ticks, so the turntable would keep rotating while
+      // waiting and smear the sweep across each exported frame. (Two frames,
+      // and frame 0 captures the opening pose without rotating — so one call.)
+      expect(orbitControls.applyOrbitRotation).toHaveBeenCalledTimes(1);
+      // No timeout occurred, so no warning and no toast.
+      expect(showToast).not.toHaveBeenCalled();
+    });
+
+    it('bounds the wait, still captures every frame, and stops draining after 3 consecutive timeouts', async () => {
+      // A scene that can never settle (e.g. resident-byte thrash on an
+      // over-budget partition) must not multiply the capture's wall-clock by
+      // the timeout for every remaining frame.
+      const { sm, orbitControls } = makeSceneManager();
+      const hooks = makeHooks();
+      hooks.isLODSettled = vi.fn(() => false);
+      const rafAtCapture: number[] = [];
+      vi.mocked(ImageSequenceDriver).mockImplementationOnce(() => {
+        const d = mockState.makeDriver();
+        d.captureFrame = vi.fn(async () => {
+          rafAtCapture.push(rafSpy.mock.calls.length);
+        });
+        return d as never;
+      });
+      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), hooks);
+
+      // fps 4 + speed 360 → totalFrames = 4: three timeouts to trip the
+      // consecutive limit, plus one frame that must no longer drain.
+      await strat.run(makeOpts({ videoFPS: 4, turntableSpeed: 360 }), 'turntable', makeSession());
+
+      const driver = mockState.driverInstances.at(-1)!;
+      expect(driver.captureFrame).toHaveBeenCalledTimes(4); // bounded, never stuck
+      // rAFs spent per frame: the first three burn the 120-frame drain cap —
+      // the mandatory selector-catch-up tick counts as drain frame 1, so the
+      // cap is inclusive of it — plus their own orbit frame. (performance.now
+      // barely advances under a synchronous rAF spy, so the frame cap, not the
+      // ms deadline, is what terminates them.) The fourth frame has had
+      // draining switched off and spends only its orbit frame.
+      const perFrame = rafAtCapture.map((n, i) => n - (i === 0 ? 1 : rafAtCapture[i - 1]));
+      expect(perFrame).toEqual([121, 121, 121, 1]);
+      // One camera step per exported frame (frame 0 captures the opening
+      // pose), never one per drain rAF — see the same assertion above. With
+      // 120 drain ticks a frame, a drain hoisted above the orbit callback's
+      // removal would show up here as hundreds of rotations.
+      expect(orbitControls.applyOrbitRotation).toHaveBeenCalledTimes(3);
+      // Reported rather than silent.
+      expect(log.warning).toHaveBeenCalledWith(
+        'Recording',
+        expect.stringContaining('consecutive LOD settle timeouts')
+      );
+      // Deliberately NOT "3 of 4 frame(s)". Once draining latches off the
+      // counter stops describing the run: it only counts the frames that
+      // WAITED and gave up, while every frame captured with the wait off was
+      // taken without one (here 1 of 4; on a 600-frame capture, hundreds).
+      // The report says that instead of a number it cannot know.
+      //
+      // The toast says waiting was PAUSED, not that the LOD never settled:
+      // this branch is also reached by a run that settled cleanly for hundreds
+      // of frames and then hit a stall long enough for three in a row. And it
+      // says "may not show the settled level" rather than "coarse", because
+      // the predicate is direction-blind — a never-downgrade hold on a FINER
+      // level reads as unsettled too.
+      expect(showToast).toHaveBeenCalledWith(
+        'Paused waiting for LOD — some frames may not show the settled level'
+      );
+      expect(log.warning).toHaveBeenCalledWith(
+        'Recording',
+        expect.stringContaining('the frames captured while it was off were taken without waiting')
+      );
+      expect(driver.finalize).toHaveBeenCalled();
+    });
+
+    it('re-arms the drain when a scene that timed out three times settles later', async () => {
+      // The latch must not be terminal. On the scenes this drain targets — an
+      // over-budget `adaptive`/`overview` partition, or a Capture pressed
+      // before the initial load has finished — the first frames burn the whole
+      // budget and the latch fires at frame 3, so a terminal latch would export
+      // every remaining frame with the pre-#1695 behaviour even though the
+      // scene settles seconds later. A latched frame therefore still spends a
+      // FREE probe (no rAF, no poll) and clears the latch on a settled answer.
+      const { sm } = makeSceneManager();
+      const hooks = makeHooks();
+      let settles = false;
+      hooks.isLODSettled = vi.fn(() => settles);
+      const rafAtCapture: number[] = [];
+      vi.mocked(ImageSequenceDriver).mockImplementationOnce(() => {
+        const d = mockState.makeDriver();
+        d.captureFrame = vi.fn(async () => {
+          rafAtCapture.push(rafSpy.mock.calls.length);
+          // The scene comes good right after the third (latching) frame.
+          if (rafAtCapture.length === 3) settles = true;
+        });
+        return d as never;
+      });
+      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), hooks);
+
+      // fps 6 + speed 360 → totalFrames = 6: three frames to trip the limit,
+      // the latched frame that re-arms, then two normally-drained frames.
+      await strat.run(makeOpts({ videoFPS: 6, turntableSpeed: 360 }), 'turntable', makeSession());
+
+      const perFrame = rafAtCapture.map((n, i) => n - (i === 0 ? 1 : rafAtCapture[i - 1]));
+      // Frames 0-2 burn the 120-frame drain cap plus their orbit frame. Frame 3
+      // is latched: orbit frame only, and its free probe (now settled) re-arms
+      // the drain. Frames 4-5 drain again — orbit frame + the mandatory
+      // selector-catch-up tick, which is what a healthy drained frame costs.
+      // Without the re-arm the last three frames would each read 1.
+      expect(perFrame).toEqual([121, 121, 121, 1, 2, 2]);
+      expect(mockState.driverInstances.at(-1)!.captureFrame).toHaveBeenCalledTimes(6);
+      // The latch still happened, so the report keeps the no-number branch:
+      // frame 3 was captured without waiting, which the timeout count (3) does
+      // not describe.
+      expect(showToast).toHaveBeenCalledWith(
+        'Paused waiting for LOD — some frames may not show the settled level'
+      );
+      // Warned once per run, not once per latch.
+      expect(
+        vi
+          .mocked(log.warning)
+          .mock.calls.filter(([, msg]) => String(msg).includes('consecutive LOD settle timeouts'))
+      ).toHaveLength(1);
+    });
+
+    it('reports an EXACT count when waiting stayed on for the whole run', async () => {
+      // The other reporting branch: a single frame times out and the next one
+      // settles, so the consecutive counter resets, draining is never switched
+      // off, and the count genuinely describes the sequence.
+      const { sm } = makeSceneManager();
+      const hooks = makeHooks();
+      let capturedSoFar = 0;
+      // Frame 0 can never settle; every later frame settles at once.
+      hooks.isLODSettled = vi.fn(() => capturedSoFar > 0);
+      vi.mocked(ImageSequenceDriver).mockImplementationOnce(() => {
+        const d = mockState.makeDriver();
+        d.captureFrame = vi.fn(async () => {
+          capturedSoFar++;
+        });
+        return d as never;
+      });
+      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), hooks);
+
+      // Default opts → totalFrames = 2.
+      await strat.run(makeOpts(), 'turntable', makeSession());
+
+      expect(capturedSoFar).toBe(2); // both frames still exported
+      // Never latched off (one timeout, then a success resetting the streak).
+      expect(log.warning).not.toHaveBeenCalledWith(
+        'Recording',
+        expect.stringContaining('consecutive LOD settle timeouts')
+      );
+      expect(log.warning).toHaveBeenCalledWith(
+        'Recording',
+        expect.stringContaining('1 of 2 frame(s) were captured before their LOD levels settled')
+      );
+      expect(showToast).toHaveBeenCalledWith('1 frame(s) captured before LOD settled');
+    });
+
+    it('counts the exact report against ATTEMPTED frames, so a timing-out run that also throws cannot read "2 of 0"', async () => {
+      // `lodSettleTimeouts` is incremented before `driver.captureFrame`, while
+      // `capturedFrames` only advances on success — so a run whose frames both
+      // time out and then throw printed a numerator larger than its
+      // denominator. Two frames, both timing out (short of the three
+      // consecutive needed to latch draining off) and both failing to capture.
+      const { sm } = makeSceneManager();
+      const hooks = makeHooks();
+      hooks.isLODSettled = vi.fn(() => false);
+      vi.mocked(ImageSequenceDriver).mockImplementationOnce(() => {
+        const d = mockState.makeDriver();
+        d.captureFrame = vi.fn(async () => {
+          throw new Error('encoder blew up');
+        });
+        return d as never;
+      });
+      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), hooks);
+
+      // Default opts → totalFrames = 2, i.e. under MAX_CONSECUTIVE_LOD_TIMEOUTS
+      // (3) and under MAX_CONSECUTIVE_ERRORS (3): the exact-count branch.
+      await strat.run(makeOpts(), 'turntable', makeSession());
+
+      expect(log.warning).not.toHaveBeenCalledWith(
+        'Recording',
+        expect.stringContaining('consecutive LOD settle timeouts')
+      );
+      expect(log.warning).toHaveBeenCalledWith(
+        'Recording',
+        expect.stringContaining('2 of 2 frame(s) were captured before their LOD levels settled')
+      );
+      // The pre-fix denominator was `capturedFrames`, which is 0 here.
+      expect(log.warning).not.toHaveBeenCalledWith(
+        'Recording',
+        expect.stringContaining('2 of 0 frame(s)')
+      );
+    });
+
+    it('breaks out of the drain cleanly when the session is aborted mid-wait', async () => {
+      const { sm } = makeSceneManager();
+      const hooks = makeHooks();
+      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), hooks);
+      let polls = 0;
+      hooks.isLODSettled = vi.fn(() => {
+        polls++;
+        if (polls === 2) strat.abort(); // user hits Stop while we wait
+        return false;
+      });
+
+      await strat.run(makeOpts(), 'turntable', makeSession());
+
+      const driver = mockState.driverInstances.at(-1)!;
+      // The abort is observed by the drain's own guard and then by the frame
+      // loop's existing post-drain check — no frame is captured, no finalize.
+      expect(driver.captureFrame).not.toHaveBeenCalled();
+      expect(driver.finalize).not.toHaveBeenCalled();
+      // The wait stopped on the abort, not on a bound: one tri-state probe and
+      // one poll, versus the 121 reads the frame cap would have allowed. This
+      // is the assertion that pins the drain's abort handling — the loop's
+      // `!aborted` guard on the timeout counter is NOT observable from here,
+      // because an aborted run returns before the end-of-run report either
+      // way, so the absent toast below only records that an aborted capture
+      // reports nothing at all.
+      expect(polls).toBe(2);
+      expect(showToast).not.toHaveBeenCalled();
+      // …and the normal teardown still ran.
+      expect(document.querySelector('.luxar-recording-overlay')).toBeNull();
+      expect(strat.sessionAbort).toBeNull();
     });
   });
 

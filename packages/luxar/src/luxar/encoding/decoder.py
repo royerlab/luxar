@@ -257,7 +257,8 @@ class ArrayDecoder:
             raise ValueError(f"log_scalar requires bits > 0, got {bits}")
         original_dtype = np.dtype(enc.get("original_dtype", "float32"))
 
-        # Use float64 intermediate for precision, then cast to original dtype
+        # The viewer's shared decode_log_scalar_* f32 kernel is the display contract;
+        # small differences from this float64 metadata/reference helper are expected.
         normalized = data.astype(np.float64) / (2**bits - 1)
         result = np.expm1(normalized * max_log)
         return np.asarray(result, dtype=original_dtype)
@@ -327,7 +328,12 @@ class ArrayDecoder:
                 f"{name} requires equal-length 1-D col_lo/col_hi, "
                 f"got shapes {lo.shape} and {hi.shape}"
             )
-        cols = data.shape[-1] if data.ndim >= 1 else 1
+        # A 1-D array is ONE column of N values, not one row of N channels —
+        # that is how the encoder reduces it (``_quantize_per_column`` /
+        # ``_encode_coordinate`` both take ``min/max`` over axis 0), so reading
+        # its channel count off ``shape[-1]`` rejected every 1-D array the
+        # writer can produce.
+        cols = data.shape[-1] if data.ndim >= 2 else 1
         if lo.shape[0] != cols:
             raise ValueError(
                 f"{name} expects {cols} per-column scales, got {lo.shape[0]}"

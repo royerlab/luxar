@@ -69,7 +69,7 @@ are allowed inside commit — by contract.
   off by default); on classic WebGL it is skipped, since that backend
   re-reads geometry attributes every draw and the same event would
   instead destroy the compiled program. See the file-level docstring
-  in `invalidate-render-object.ts` for the full r184 trace.
+  in `invalidate-render-object.ts` for the full r185 trace.
 - **Soft dispose, not real dispose.** The `'dispose'` event we
   dispatch (WebGPU only) is tagged via the `SOFT_DISPOSE_FLAG` symbol on the
   material so Luxar's `MaterialManager` skips its registry-cleanup

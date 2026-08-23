@@ -226,7 +226,13 @@ def write_points(
     radii_for_ordering = radii
 
     ordering_data = build_points_ordering(
-        positions, n_points, n_dims, radii_for_ordering, ctx.ordering_ctx, ctx.store
+        positions,
+        n_points,
+        n_dims,
+        radii_for_ordering,
+        ctx.ordering_ctx,
+        ctx.store,
+        dataset_ctx=ctx.dataset_ctx,
     )
 
     # Apply spatial reordering to arrays only (skip scalars and broadcasted arrays)

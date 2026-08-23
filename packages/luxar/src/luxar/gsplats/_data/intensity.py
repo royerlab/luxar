@@ -7,25 +7,54 @@ ladder-preserving: a pyramid is rebuilt level by level, never collapsed.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Sequence, cast
+from typing import TYPE_CHECKING, Callable, Sequence, cast
 
 import numpy as np
 
 from .base import _GSplatDataOps
+from .filtering import _stats_after_content_change
 
 if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import GSplatData
+
+
+def amplitudes_changed(before: np.ndarray, after: np.ndarray) -> bool:
+    """Whether an amplitude edit actually moved anything.
+
+    Rewriting amplitudes invalidates the inherited measured scores — PSNR/MSE
+    are absolute-error metrics, so a global ``x0.5`` changes them outright — but
+    several call sites pass through unchanged values on purpose
+    (``normalize_intensity`` on an all-zero dataset scales by 1.0 solely to
+    preserve the pyramid, ``soft_scale_filter`` with no cutoff), and those must
+    keep the stamp like any other no-op rewrite.
+
+    Public (re-exported from :mod:`luxar.gsplats.gsplat_data`) because the CLI's
+    node-tree path needs the SAME predicate: it scrubs the root ``fitting/`` group
+    itself, and gating that on the flag's mere presence made ``transform
+    --scale-intensity 1.0`` destroy a partition's scores while the flat path kept
+    them.
+    """
+    return before.shape != after.shape or not bool(np.array_equal(before, after))
 
 
 class IntensityMixin(_GSplatDataOps):
     """Amplitude and color edits — ``scale_intensity`` and friends."""
 
     def _with_new_amplitudes(self, new_amplitudes: np.ndarray) -> "GSplatData":
-        """Return a new GSplatData with replaced amplitudes, preserving LODs."""
-        from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
+        """Return a new GSplatData with replaced amplitudes, preserving LODs.
 
-        if self.n_additive_sublods > 1:
-            return self._map_additive(
+        The chokepoint for every amplitude edit on a single-substitutive view,
+        so the measured reconstruction scores are dropped here (see
+        :data:`~luxar.gsplats._data.filtering._CONTENT_SCOPED_STATS_KEYS`): a
+        rescaled, clamped or soft-attenuated splat set renders different values
+        than the one the fit scored.
+        """
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
+
+        changed = amplitudes_changed(self.amplitudes, new_amplitudes)
+
+        return _stats_after_content_change(
+            self._map_additive(
                 lambda lod, offset, n: AdditiveSubLOD(
                     centers=lod.centers,
                     amplitudes=new_amplitudes[offset : offset + n],
@@ -34,14 +63,39 @@ class IntensityMixin(_GSplatDataOps):
                     stats=dict(lod.stats),
                     truncation_radius=lod.truncation_radius,
                 )
-            )
-        return GSplatData(
-            centers=self.centers,
-            amplitudes=new_amplitudes,
-            cholesky_factors=self.cholesky_factors,
-            colors=self.colors,
-            stats=dict(self.stats),
-            truncation_radius=self.truncation_radius,
+            ),
+            changed=changed,
+            source=self,
+        )
+
+    def _map_amplitudes_per_level(
+        self, fn: "Callable[[GSplatData], GSplatData]"
+    ) -> "GSplatData":
+        """``_map_substitutive`` for an amplitude edit — pyramid AND stats.
+
+        The per-level recursion scrubs each level through
+        :meth:`_with_new_amplitudes`, but ``_map_substitutive`` rebuilds the
+        TOP-level stats from ``dict(self.stats)`` (the dict ``gsplat info``
+        reads ``psnr_db`` from), so it needs the same pass. Mirrors what
+        ``filter_by`` / ``cull`` do on their own multi-substitutive branch.
+        """
+        out = self._map_substitutive(fn)
+        before_levels = self.substitutive_levels
+        after_levels = out.substitutive_levels
+        return _stats_after_content_change(
+            out,
+            changed=len(before_levels) != len(after_levels)
+            or any(
+                len(old.additive_sublods) != len(new.additive_sublods)
+                or any(
+                    amplitudes_changed(old_lod.amplitudes, new_lod.amplitudes)
+                    for old_lod, new_lod in zip(
+                        old.additive_sublods, new.additive_sublods
+                    )
+                )
+                for old, new in zip(before_levels, after_levels)
+            ),
+            source=self,
         )
 
     def with_colors(self, colors: "np.ndarray | tuple[float, ...]") -> "GSplatData":
@@ -56,7 +110,7 @@ class IntensityMixin(_GSplatDataOps):
         Returns:
             New GSplatData with the specified colors.
         """
-        from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
 
         arr = (
             colors
@@ -90,24 +144,15 @@ class IntensityMixin(_GSplatDataOps):
                 f"colors shape {colors.shape} doesn't match "
                 f"({self.n_splats}, 3) or ({self.n_splats}, 4)"
             )
-        if self.n_additive_sublods > 1:
-            return self._map_additive(
-                lambda lod, offset, n: AdditiveSubLOD(
-                    centers=lod.centers,
-                    amplitudes=lod.amplitudes,
-                    cholesky_factors=lod.cholesky_factors,
-                    colors=colors[offset : offset + n],
-                    stats=dict(lod.stats),
-                    truncation_radius=lod.truncation_radius,
-                )
+        return self._map_additive(
+            lambda lod, offset, n: AdditiveSubLOD(
+                centers=lod.centers,
+                amplitudes=lod.amplitudes,
+                cholesky_factors=lod.cholesky_factors,
+                colors=colors[offset : offset + n],
+                stats=dict(lod.stats),
+                truncation_radius=lod.truncation_radius,
             )
-        return GSplatData(
-            centers=self.centers,
-            amplitudes=self.amplitudes,
-            cholesky_factors=self.cholesky_factors,
-            colors=colors,
-            stats=dict(self.stats),
-            truncation_radius=self.truncation_radius,
         )
 
     def affine_intensity(self, scale: float = 1.0, offset: float = 0.0) -> "GSplatData":
@@ -121,7 +166,7 @@ class IntensityMixin(_GSplatDataOps):
             New GSplatData with transformed amplitudes.
         """
         if self.n_substitutive > 1:
-            return self._map_substitutive(
+            return self._map_amplitudes_per_level(
                 lambda lvl: lvl.affine_intensity(scale, offset)
             )
         return self._with_new_amplitudes(self.amplitudes * scale + offset)
@@ -159,7 +204,9 @@ class IntensityMixin(_GSplatDataOps):
             New GSplatData with clamped amplitudes.
         """
         if self.n_substitutive > 1:
-            return self._map_substitutive(lambda lvl: lvl.clamp_intensity(min, max))
+            return self._map_amplitudes_per_level(
+                lambda lvl: lvl.clamp_intensity(min, max)
+            )
         new_amps = self.amplitudes.copy()
         if min is not None:
             new_amps = np.maximum(new_amps, min)
@@ -186,7 +233,9 @@ class IntensityMixin(_GSplatDataOps):
             >>> brightened = data.scale_intensity(2.0)
         """
         if self.n_substitutive > 1:
-            return self._map_substitutive(lambda lvl: lvl.scale_intensity(factor))
+            return self._map_amplitudes_per_level(
+                lambda lvl: lvl.scale_intensity(factor)
+            )
         return self._with_new_amplitudes(self.amplitudes * factor)
 
     def reweight_amplitude(self, multiplier: np.ndarray) -> "GSplatData":
@@ -233,7 +282,7 @@ class IntensityMixin(_GSplatDataOps):
             return cast("GSplatData", self)
         if self.n_substitutive > 1:
             # Reweight each substitutive level against its OWN scale distribution.
-            return self._map_substitutive(
+            return self._map_amplitudes_per_level(
                 lambda lvl: lvl.soft_scale_filter(
                     highpass=highpass,
                     lowpass=lowpass,

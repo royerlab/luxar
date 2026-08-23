@@ -14,17 +14,18 @@ number, so it is checked against the same fit scored with no conversion at all.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pytest
 
-from luxar.gsplats import fit_tiled_gsplats
-from luxar.gsplats.fit_tiled_gsplats import (
+from luxar.gsplats import merged_quality
+from luxar.gsplats.fit_tiled_gsplats import fit_tiled
+from luxar.gsplats.merged_quality import (
     _QUALITY_BUDGET_GB,
     _QUALITY_PEAK_VOLUMES,
     _quality_budget_gb,
-    fit_tiled,
 )
 
 #: Anisotropic on purpose: an isotropic spacing would hide a per-axis error in
@@ -75,6 +76,88 @@ def test_a_tiled_fit_records_merged_quality(
     assert "No merged quality metrics" not in capsys.readouterr().out
 
 
+def test_partition_merge_records_the_same_whole_volume_score(
+    volume: np.ndarray, capsys: pytest.CaptureFixture
+) -> None:
+    """The default partition path scores the parts as one reconstruction."""
+    flat = _fit(volume, partition=False, cull_retention=None)
+    partition = _fit(volume, partition=True, cull_retention=None)
+
+    stats = partition.meta["fit_stats"]
+    missing = [key for key in _QUALITY_KEYS if key not in stats]
+    assert not missing, f"the partition merge lost {missing}"
+    assert stats["psnr_db"] == pytest.approx(flat.stats["psnr_db"], abs=0.5)
+    assert "No merged quality metrics" not in capsys.readouterr().out
+
+
+def test_partition_quality_reaches_the_archive_and_info(
+    volume: np.ndarray,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """Root fitting metrics are persisted and visible through ``gsplat info``."""
+    from luxar.cli.gsplat_ops.fitting.fit_utils import save_fit_output
+    from luxar.cli.gsplat_ops.inspect_commands import _print_gsplat_tree_summary
+
+    result = _fit(volume, partition=True)
+    output = tmp_path / "partition.gsplats.zarr"
+    save_fit_output(result, output, compress=None, verbose=False)
+
+    import zarr
+
+    root = zarr.open_group(str(output), mode="r")
+    fitting = dict(root["fitting"].attrs)
+    assert fitting["psnr_db"] == pytest.approx(result.meta["fit_stats"]["psnr_db"])
+    assert fitting["n_splats"] == result.n_splats
+
+    _print_gsplat_tree_summary(output)
+    info = capsys.readouterr().out
+    assert "Fitting (fitting/):" in info
+    assert f"psnr_db: {fitting['psnr_db']:.6f}" in info
+
+
+def test_partition_lod_density_uses_the_persisted_total_splat_count() -> None:
+    """Root ``n_splats`` and ``voxels_per_splat`` describe the same artifact."""
+    from luxar.gsplats.fit_tiled_gsplats import merge_tile_results
+    from luxar.gsplats.gsplat_data import GSplatData
+    from luxar.gsplats.lod.recipes import RecipeParams
+    from luxar.gsplats.tree import total_splats
+
+    def _region(offset: float) -> GSplatData:
+        centers = np.stack(
+            [np.linspace(offset, offset + 3, 12, dtype=np.float32)] * 3, axis=1
+        )
+        return GSplatData(
+            centers=centers,
+            amplitudes=np.linspace(1.0, 0.2, 12, dtype=np.float32),
+            cholesky_factors=np.tile(
+                np.array([[1.0, 0.0, 1.0, 0.0, 0.0, 1.0]], np.float32),
+                (12, 1),
+            ),
+        )
+
+    node = merge_tile_results(
+        [_region(0.0), _region(8.0)],
+        volume_shape=(8, 8, 8),
+        tile_size=4,
+        overlap=0,
+        num_tiles=2,
+        progressive=False,
+        cull_retention=None,
+        elapsed=0.0,
+        verbose=False,
+        partition=True,
+        recipe="levels",
+        recipe_params=RecipeParams(levels=1, additive_ladders=False),
+    )
+
+    stats = node.meta["fit_stats"]
+    persisted_count = total_splats(node)
+    assert persisted_count > node.n_splats
+    assert stats["n_splats"] == persisted_count
+    assert stats["voxels_per_splat"] == pytest.approx(8**3 / persisted_count)
+
+
 def test_the_merged_score_survives_the_physical_coordinate_round_trip(
     volume: np.ndarray,
 ) -> None:
@@ -84,15 +167,41 @@ def test_the_merged_score_survives_the_physical_coordinate_round_trip(
     physical centers on a voxel grid, or undoing the Cholesky scaling on the
     wrong axis, would collapse the PSNR rather than merely nudge it.
     """
-    plain = _fit(volume).stats
-    real = _fit(volume, voxel_size=VOXEL_SIZE, output_space="real").stats
-    assert real["psnr_db"] == pytest.approx(plain["psnr_db"], abs=0.5), (
-        f"physical-coordinate scoring diverged: {real['psnr_db']:.2f} dB vs "
-        f"{plain['psnr_db']:.2f} dB — the voxel-frame inverse is wrong"
+    for partition in (False, True):
+        plain_result = _fit(volume, partition=partition)
+        real_result = _fit(
+            volume,
+            partition=partition,
+            voxel_size=VOXEL_SIZE,
+            output_space="real",
+        )
+        plain = plain_result.meta["fit_stats"] if partition else plain_result.stats
+        real = real_result.meta["fit_stats"] if partition else real_result.stats
+        assert real["psnr_db"] == pytest.approx(plain["psnr_db"], abs=0.5), (
+            f"physical-coordinate scoring diverged: {real['psnr_db']:.2f} dB vs "
+            f"{plain['psnr_db']:.2f} dB — the voxel-frame inverse is wrong"
+        )
+        assert real["foreground_fraction"] == pytest.approx(
+            plain["foreground_fraction"], abs=1e-6
+        )
+
+
+def test_partition_scoring_without_a_stats_target_keeps_the_finished_fit(
+    volume: np.ndarray, capsys: pytest.CaptureFixture
+) -> None:
+    """A caller mistake after fitting must decline scoring, not raise."""
+    from luxar.gsplats.merged_quality import stamp_merged_quality
+
+    part = _fit(volume, partition=False)
+    stamp_merged_quality(
+        [part],
+        volume,
+        volume_shape=volume.shape,
+        grid_scale=None,
+        device="cpu",
+        verbose=False,
     )
-    assert real["foreground_fraction"] == pytest.approx(
-        plain["foreground_fraction"], abs=1e-6
-    )
+    assert "not given a stats target" in capsys.readouterr().out
 
 
 def test_the_returned_splats_stay_in_physical_coordinates(
@@ -122,6 +231,19 @@ def test_the_memory_budget_skips_rather_than_thrashes(
     assert "gsplat compare" in out
 
 
+def test_a_partition_budget_skip_includes_the_required_flatten_step(
+    volume: np.ndarray, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """The fallback command must accept the tree-shaped archive it describes."""
+    monkeypatch.setenv("LUXAR_TILED_QUALITY_MAX_GB", "0.0000001")
+    node = _fit(volume, partition=True)
+    assert "psnr_db" not in node.meta["fit_stats"]
+    out = capsys.readouterr().out
+    assert "Merged quality metrics skipped" in out
+    assert "gsplat flatten" in out
+    assert "gsplat compare" in out
+
+
 def test_the_peak_estimate_covers_ssims_intermediates() -> None:
     """The budget must count the SSIM peak, not just the two volumes it scores.
 
@@ -146,16 +268,16 @@ def test_the_default_budget_is_held_under_the_memory_actually_free(
     """
     monkeypatch.delenv("LUXAR_TILED_QUALITY_MAX_GB", raising=False)
 
-    monkeypatch.setattr(fit_tiled_gsplats, "_available_ram_gb", lambda: 4.0)
+    monkeypatch.setattr(merged_quality, "_available_ram_gb", lambda: 4.0)
     assert _quality_budget_gb() == pytest.approx(2.0)
 
     # A machine with room to spare gets the ceiling, not a multiple of its RAM.
-    monkeypatch.setattr(fit_tiled_gsplats, "_available_ram_gb", lambda: 1024.0)
+    monkeypatch.setattr(merged_quality, "_available_ram_gb", lambda: 1024.0)
     assert _quality_budget_gb() == pytest.approx(_QUALITY_BUDGET_GB)
 
     # Unmeasurable (a platform without SC_AVPHYS_PAGES) falls back to the ceiling
     # rather than declining to score at all.
-    monkeypatch.setattr(fit_tiled_gsplats, "_available_ram_gb", lambda: None)
+    monkeypatch.setattr(merged_quality, "_available_ram_gb", lambda: None)
     assert _quality_budget_gb() == pytest.approx(_QUALITY_BUDGET_GB)
 
 
@@ -163,7 +285,7 @@ def test_an_explicit_override_still_wins_over_the_memory_cap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The operator knows what the machine can take; the cap is for the default."""
-    monkeypatch.setattr(fit_tiled_gsplats, "_available_ram_gb", lambda: 4.0)
+    monkeypatch.setattr(merged_quality, "_available_ram_gb", lambda: 4.0)
     monkeypatch.setenv("LUXAR_TILED_QUALITY_MAX_GB", "64")
     assert _quality_budget_gb() == pytest.approx(64.0)
 
@@ -177,7 +299,7 @@ def test_a_nan_override_cannot_switch_the_guard_off(
     trip it — every volume would look in-budget — so it has to be refused like
     any other unusable value, not accepted because ``float()`` took it.
     """
-    monkeypatch.setattr(fit_tiled_gsplats, "_available_ram_gb", lambda: 1024.0)
+    monkeypatch.setattr(merged_quality, "_available_ram_gb", lambda: 1024.0)
     for raw in ("nan", "NaN", "-nan"):
         monkeypatch.setenv("LUXAR_TILED_QUALITY_MAX_GB", raw)
         budget = _quality_budget_gb()
@@ -205,26 +327,3 @@ def test_an_unparseable_budget_override_does_not_lose_the_fit(
     stats = _fit(volume).stats
     assert np.isfinite(stats["psnr_db"])
     assert "LUXAR_TILED_QUALITY_MAX_GB" in capsys.readouterr().out
-
-
-def test_a_partition_is_left_alone_but_says_so(
-    volume: np.ndarray, capsys: pytest.CaptureFixture
-) -> None:
-    """A partition merge has no fit-stats dict to stamp, so it is not scored.
-
-    Asserted rather than assumed: the scoring call sits right after the merge,
-    and a partition returns a node with no ``stats`` dict to write into. The
-    absence is announced, so the missing PSNR is a stated limitation rather than
-    a hole the user has to discover in the store. ``verbose=False`` is
-    deliberate: a quiet scripted fit is exactly where the unexplained gap would
-    otherwise appear, since nothing about the omission reaches the store.
-    """
-    node = _fit(volume, partition=True, verbose=False)
-    assert not hasattr(node, "stats") or "psnr_db" not in getattr(node, "stats", {})
-    out = capsys.readouterr().out
-    assert "No merged quality metrics" in out
-    assert "gsplat compare" in out
-    # `compare` cannot load a `kind=partition` store directly
-    # (``GSplatData.load`` raises "not matrix-shaped"), so a recourse that omits
-    # the flatten step tracebacks on the tiled default.
-    assert "gsplat flatten" in out

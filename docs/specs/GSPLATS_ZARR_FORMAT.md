@@ -66,7 +66,7 @@ Each Gaussian splat is parameterized by:
 
 | Field | Shape | Dtype | Semantic Type | Description |
 |-------|-------|-------|---------------|-------------|
-| `centers` | (N, d) | uint16 / float32 | COORDINATE | Splat center positions (not broadcastable). AUTO/MEMORY: uint16 per-axis fixed-point (`linear_perchannel_u16`), decoded to float32; PRECISION / large-extent: float32 |
+| `centers` | (N, d) | uint16 / uint8 (LUT) / float32 | COORDINATE | Splat center positions (not broadcastable). AUTO/MEMORY: uint16 per-axis fixed-point (`linear_perchannel_u16`), decoded to float32, with a *gridded* axis snapped so it round-trips exactly — or `lut_uint8` (exact, values stored verbatim) when few enough distinct values make a LUT eligible; PRECISION / large-extent / able to displace splats past their own σ on an axis that is neither gridded nor LUT-eligible (see the sigma rail below): float32 |
 | `amplitudes` | (N,) or (1,) | uint8/uint16/float32 | POSITIVE_SCALAR | Non-negative intensity |
 | `cholesky_factors_diag` | (N, d) or (1, d) | uint8/uint16/float32 | CHOLESKY_DIAG | Diagonal of L (positive, scale-like) |
 | `cholesky_factors_offdiag` | (N, d*(d-1)/2) or (1, …) | uint8/uint16/float32 | CHOLESKY_OFFDIAG | Strictly-lower elements of L (signed); absent when d=1 |
@@ -140,8 +140,10 @@ a v3.3 store without the filter is byte-identical to v3.2. **v3.2** differs
 from **v3.1** only in the `kind=lod` selector attrs: the group `selector` value
 `pixel_size` and the per-child `min_pixel_size` (absolute pixels) are renamed
 to `coverage` / `coverage_fraction` (viewport-relative `sqrt(N_i/N_finest)` in
-`[0, 1]`, strictly ascending coarsest→finest, finest `1.0`; the upper bound later
-widened to `4.0` for partition-bound ladders — see the `kind=lod` section).
+`[0, 1]`, strictly ascending coarsest→finest, finest `1.0`; the bound later
+widened to `MAX_COVERAGE_FRACTION` = 4.0 when the diagonal metric was rescaled
+×4, and is superseded for derived ladders by v3.4's `screen-area` anchors above
+— see the `kind=lod` section).
 **v3.1** differs
 from **v3.0** only in storing the Cholesky factors as two arrays
 (`cholesky_factors_diag` + `cholesky_factors_offdiag`) instead of a single packed
@@ -190,12 +192,13 @@ fitted.gsplats.zarr/
 ├── .zattrs           # type: "gsplats", n_splats, ndim, has_colors, ordering,
 │                     # ordering_min/max/bits, slice_dims, ordering_dims,
 │                     # chunk_size, amplitude_range, amplitude_data_range,
+│                     # amplitude_mass, amplitude_mass_weighted_mean,
 │                     # center_bounds, position_bounds, truncation_radius,
 │                     # opacity, absorption, gamma, intensity, offset, blending_mode?,
 │                     # format_version: "3.4", format_type: "gsplats_zarr",
 │                     # timestamp, luxar_gsplats_version, description?
 ├── .zmetadata        # Consolidated metadata for fast loading
-├── centers                   # (N, d) uint16 (AUTO; float32 if an axis extent ≥ 2¹⁶) / float32 (PRECISION), spatially ordered
+├── centers                   # (N, d) uint16 (AUTO; lut_uint8 when a LUT is eligible; float32 if an axis extent ≥ 2¹⁶, or if a neither-gridded-nor-LUT axis's grid is too coarse for the splats' σ) / float32 (PRECISION), spatially ordered
 ├── amplitudes                # (N,) uint8/uint16 (AUTO) / float32 (PRECISION)
 ├── cholesky_factors_diag     # (N, d) uint8 (AUTO, certified — escalates to uint16 if the covariance certificate fails) / float32 (PRECISION)  (diagonal of L)
 ├── cholesky_factors_offdiag  # (N, d*(d-1)/2) uint8 (AUTO, certified as above) / float32 (PRECISION) (off-diagonal; absent if d=1)
@@ -267,7 +270,8 @@ deliberately independent of per-level element counts (a count ratio is blind
 to element size, overlap, and intent; the retired derivation
 `sqrt(N_i/N_finest)` held the finest level until the object was far away on
 dense sub-pixel data). The metric is built from NDC fractions, so selection is
-identical on any monitor/viewport.
+independent of viewport resolution and size — though occupancy still moves with
+viewport ASPECT, since the camera framing is fitted to one screen axis.
 
 Note the semantics this deliberately REVISES: under the retired diagonal
 metric, a fitted high-aspect object read HIGH (a rod's diagonal ≈ its
@@ -307,6 +311,30 @@ which end of a ladder renders, so consumers must agree on them):
   discontinuity, and a wide node panned to a thin visible sliver still reads
   its true (tiny) visible area because the gate is on the content's raw
   thinness, not the clipped one.
+
+Both selectors size a child from its optional nD `lod_bounds` attribute when
+present:
+
+```json
+{"lod_bounds": {"min": [-1, -1, -1], "max": [1, 1, 1]}}
+```
+
+The arrays MUST be finite, ordered (`min[i] <= max[i]`), have the same length
+and axis order as `position_bounds`, and be contained within that complete
+bound. A bound that is not contained is rejected and the child falls back to
+`position_bounds`. This is a producer-chosen robust extent — for example
+percentile bounds that exclude a sparse tail — and affects only the selector
+metric. A robust bound MUST NOT make a node select a finer level than its
+complete `position_bounds`; the screen-area selector clamps the robust metric
+to the complete-bound metric to preserve that invariant. Frustum gating,
+eviction, root framing, clipping, and scene ranges
+continue to use the complete `position_bounds`, so excluded outliers remain
+part of the drawable geometry. A missing or malformed `lod_bounds` falls back
+to that child's `position_bounds`; producers SHOULD stamp every child in a
+ladder when they intend one consistent robust extent. Any operation that
+decimates, culls, or filters a child MUST recompute or remove its `lod_bounds`.
+Producer-side authoring policy is tracked in #1655. This optional metadata is
+backward-compatible and does not change the v3.4 format version.
 
 Under the legacy `selector: "coverage"`
 (older stores; never written for derived ladders since v3.4) the thresholds
@@ -379,8 +407,9 @@ bands, which confines misordering to the band rather than letting whole tiles
 swap; treat such a tree as a good approximation, not a guarantee.
 
 A partition may still omit `bsp_tree` — a pre-2026.7 store, a decomposition that
-is not axis-aligned, or a transform that could not carry the planes (see below).
-A viewer then falls back to a per-part centroid-distance heuristic, which is
+is not axis-aligned, or a transform that could not carry the planes (see below) —
+and a viewer may reject a stored tree that fails structural or split validation.
+The viewer then falls back to a per-part centroid-distance heuristic, which is
 *not* a valid painter's order: it flips discretely as the camera moves and shows
 as popping at the seams between parts.
 
@@ -452,6 +481,8 @@ attrs are `type`, `kind`, `selector`, `default_level`, `display_type`,
   "chunk_size": 2048,
   "amplitude_range": {"min": 0.01, "max": 1.5},
   "amplitude_data_range": [0.01, 1.5],
+  "amplitude_mass": 8421.7,
+  "amplitude_mass_weighted_mean": 0.32,
   "center_bounds": {
     "min": [0.0, 0.0, 0.0],
     "max": [256.0, 256.0, 128.0]
@@ -474,17 +505,126 @@ ancestor that sets it (viewer default: `additive`). No default is stamped:
 blending has no identity value, so a stamped default would shadow
 ancestor-set modes.
 
+**`slice_dims` is read, not just recorded**: besides describing the compound
+ordering, the barrier (categorical) column indices it lists are the set
+`compute_chunk_bounds_gsplats` gave the fixed epsilon pad plus any encoder
+coordinate round-trip slack instead of the `truncation_radius · σ` expansion —
+so the viewer's gsplats loader now CONSUMES it,
+to classify each hidden dimension's chunk-fetch tolerance instead of inferring
+barrier-ness from the scene's `discrete` flags
+(`data/loaders/spatial-query/tolerance-computer.ts`). The on-disk format is
+unchanged; a store that stamps no `slice_dims` falls back to the old inference.
+
 **Bounds clarification**: `center_bounds` records the tight center AABB;
 `position_bounds` is the same value (centers only — chunk bounds widen per-chunk
 by the ellipsoidal extent). Encoding metadata on each array carries tighter
 per-array quantization bounds.
 
 **Amplitude ranges**: `amplitude_range` (`{"min", "max"}` dict) is the
-metadata bounds record; `amplitude_data_range` (`[min, max]` list, written
-alongside it whenever amplitudes are given as a non-empty array — a scalar amplitude
-skips it) mirrors the Points/Lines
-`color_data_range` convention and seeds the viewer's layer display-range
-controls. Both hold the min/max of the original (pre-quantization) amplitudes.
+metadata bounds record and holds the true min/max of the original
+(pre-quantization) amplitudes. `amplitude_data_range` (`[min, max]` list,
+written alongside it whenever amplitudes are given as a non-empty array — a
+scalar amplitude skips it) mirrors the Points/Lines `color_data_range`
+convention and is the viewer's colormap **window**, seeding the layer
+display-range controls. Each writer first derives it per node as
+`[min(a), p99.9(a)]` (gsplat amplitudes are heavily right-skewed, so a `[0, max]`
+window would map ~99% of splats to near-black), and then **finalize HARMONIZES
+it across each gsplat structure**.
+
+**Window harmonization (#1691)**. A per-node window is right for one flat leaf
+and wrong for a multi-node structure: on a `kind=lod` ladder a coarse level's
+merged representatives carry the same mass in far fewer splats, so its p99.9
+lands ~4.5x above the finest level's and the object re-tones and pops in
+brightness at every LOD switch; adjacent `kind=partition` tiles of one object
+were measured windowed ~100x apart. So for every maximal `kind in {lod,
+partition}` group holding gsplats, one reference window is taken and handed
+down:
+
+- **LOD levels** take the reference window scaled by
+  `child.amplitude_mass_weighted_mean / reference.amplitude_mass_weighted_mean` —
+  the mass-weighted amplitude ratio measures exactly the representation change a
+  substitutive reduction makes (measured luminance ratio vs the finest level:
+  1.04 / 1.01 / 1.00, against 0.49 / 0.51 / 0.71 for per-level windows). The
+  ratio is **clamped into `[1/10, 10]`** (mirroring
+  `gsplats/lod/substitutive.py`'s `_MASS_SCALE_BOUND`): real ratios are ~1.1-1.2,
+  `mwma` is a second-moment ratio and so not robust on heavy-tailed amplitudes,
+  and a 10x rescale would be a bigger switch pop than the defect. Out of bounds
+  the ratio is clamped, not discarded — discarding applies the full uncorrected
+  error, clamping caps it (at a genuine ratio of 0.02, scale 1.0 leaves the level
+  50x too wide and it renders black; clamping to 0.1 caps that at 5x). Scale 1.0
+  is kept only when there is no usable ratio at all: missing statistics, a
+  non-positive `mwma`, a non-finite quotient.
+- **Partition parts** share the window **verbatim**, unscaled: parts are
+  disjoint pieces of ONE object with no representation change between them, and
+  a dim tile really is dim (measured 1.00 shared vs 0.62 per-part). A partition's
+  own reference is pooled from its parts: `lo` is the exact union minimum, `hi`
+  the **count-weighted mean of the usable part tops** (weights = each part's
+  `n_splats`). Both candidate rules are biased, in opposite directions, and
+  neither recovers the union's true p99.9: `max` over part tops drifts upward
+  without bound in the part count (1.05x at 2 parts, 1.58x at 256, 3.40x at 5000,
+  ~1500x for 60 dim tiles plus one small bright one, at which point the whole
+  object renders black), while the count-weighted mean is biased slightly low
+  (a part's own p99.9 already under-estimates the union's). The mean is chosen
+  because its bias does not grow with the part count —
+  `write_partition_streaming` routinely emits thousands of parts — and because
+  its failure mode, clipping outlier-bright content, is what a p99.9 window does
+  by design. It is neither unbiased nor a consistent estimator of what a flat
+  store would derive.
+- **Reference child**: the finest child that actually carries a **usable**
+  `amplitude_data_range` (`hi > lo`), walking finest→coarsest — not necessarily
+  the literal finest. `add_points(substitutive_lod=…)` puts a Points leaf there,
+  a scalar-amplitude level writes no window at all, and a constant-amplitude
+  level writes the degenerate `[x, x]`; taking the finest child unconditionally
+  left the whole structure un-harmonized in all three cases. That donor supplies
+  both the window and the reference `mwma`. A degenerate part top is likewise
+  excluded from the partition pool (its `lo` still bounds the union minimum).
+- **Child enumeration** is name-agnostic: `Node.add_lod_group()` /
+  `add_partition_group()` are public, so LOD levels and partition parts are
+  every child group whose `type` is one of
+  `group`/`gsplats`/`points`/`lines`/`mesh`, whatever it is named — minus the
+  reserved root buckets `fitting` / `provenance` / `pipeline`, which are excluded
+  by name too (`pipeline_info` is an open passthrough of caller keys, so a stray
+  `type` in it must not rank `pipeline` as the finest child). LOD children are
+  ordered coarsest→finest by `child_index` when every candidate has one, else by
+  a `child_<i>` numeric suffix, else by sorted name — that last rule assuming
+  alphabetically-last is finest, and unreachable from any Python producer, which
+  always stamps `child_index`. (`additive_<i>` sub-LODs keep the prefix+digit
+  rule — those names are writer-owned.)
+- **Fallback**: a level whose statistics are missing (a legacy store) shares the
+  reference window verbatim, i.e. scale 1.0. That is not necessarily better than
+  the self-consistent window that level already had — it can be clipped by the
+  shared one — but it is the honest answer with no ratio to scale by, and it puts
+  the structure on ONE window, as the partition arm does regardless.
+
+The pass only ever OVERWRITES an existing `amplitude_data_range`; it never
+creates one on a node that lacked it, so the attr set on disk is unchanged. It
+also refuses to write anything that is not a finite `lo < hi` (a degenerate
+`[x, x]` reads as identity in the viewer, an inverted `lo > hi` inverts the
+colormap), leaving the writer's value in place. One consequence of pooling is
+cross-recipe: a `levels` structure's reference top is a real p99.9 while an
+`overview` / `adaptive` one is a pooled estimate, so the same splats can tone
+slightly differently depending on the topology they were written in (measured
+222.34 vs 160.50 on one dataset).
+
+**Mass statistics** — two per-leaf `float` attrs the writer stamps on each splat
+set, including each `additive_<i>` sub-LOD (whose parent carries the ladder
+aggregate `Σ massᵢ` and `Σ(massᵢ·mwmaᵢ) / Σ massᵢ`). They are independent of
+`amplitude_data_range` — a scalar amplitude skips the window but still gets
+these — and, unlike it, **unconditional**: an empty, mass-less or otherwise
+degenerate set is stamped `0.0` / `0.0` rather than skipped (there is no
+non-finite case to skip; `compute_amplitude_mass_stats` normalizes them all to
+zero, so a bare `NaN`/`Infinity` token, which is not JSON and would cost a
+strict reader the whole store, can never be produced). A ladder parent whose
+summed mass is not positive likewise stamps `0.0` / `0.0`: "present and zero"
+and "absent" must stay distinguishable, because the harmonization reads absence
+as a legacy store. Both use the RAW amplitudes, the same units
+`amplitude_data_range` windows, and drop the shared `(2π)^{D/2}` constant:
+
+- **`amplitude_mass`** — total integral mass `Σᵢ aᵢ·|Σᵢ|^½`, with
+  `|Σ|^½ = Π diag(L)`.
+- **`amplitude_mass_weighted_mean`** — `Σᵢ aᵢ²·|Σᵢ|^½ / Σᵢ aᵢ·|Σᵢ|^½`, i.e.
+  total self-energy over total mass: the amplitude a unit of mass typically
+  carries. This is the quantity the harmonization scales LOD windows by.
 
 **Note**: Broadcasting information is stored per-array via encoding metadata
 (see Broadcasting Convention above), not in the group attributes.
@@ -655,12 +795,206 @@ onto the source grid will not reproduce these numbers — divide the spacing bac
 out first. The metrics describe the fit, not the coordinate frame it was
 delivered in.
 
+On a node tree, a root `fitting/` score is a whole-tree claim: the additive sum
+of the finest surviving parts, after each part's post-fit cull, measured on that
+same fitter voxel grid. It does not describe the coarser content a viewer may
+select initially from a `levels` or `stream` per-part recipe.
+
 A metric that is mathematically undefined is **omitted, not written**: a volume
 with no foreground (a constant tile, a signal-free crop) has no
 `foreground_psnr_db`, and an exact reconstruction has no `psnr_db`. Writing them
 would put a bare `NaN` / `Infinity` token in the metadata document — not JSON,
 and fatal to a strict reader for the whole store rather than for that one key.
 `foreground_fraction` is still present in that case, so the artifact says why.
+
+**What survives a rewrite.** Inherited `fitting/` and `pipeline/` stamps fall
+into three categories, invalidated along three independent axes, and a tool that
+rewrites a store must apply all three rules:
+
+* **Content-scoped** — every number MEASURED against the source volume: the
+  scores above, `final_loss` / `final_rel_l2` / `final_max_abs_error`, the
+  error-budget cull's own `error_budget` / `max_joint_error` (and its
+  `phase1_candidates` / `phase2_iterations` search counters, which mean nothing
+  without it), and the per-sub-LOD `lod_stats.cumulative_psnr_db` /
+  `delta_psnr_db` a progressive fit stamps one level down. Beside them, the
+  **record of the reduction that produced the artifact** — `culled`,
+  `culling_method`, `n_original`, `n_culled`, `amplitude_retention` — which is
+  true of the operation that stamped it and false of anything downstream. They
+  describe one specific splat set, so they are **dropped by any operation that
+  changes which splats the artifact holds**: `cull`, `filter`, `slice`, `decimate`
+  (a merge-family reduction lands on the requested count while replacing every
+  splat with a representative), a reduced LOD **view** (a strict additive prefix,
+  or a coarser substitutive level — which is why `lod --recipe overview` does not
+  put the input fit's `psnr_db` on its merged coarse cap), and any intensity edit
+  — PSNR and MSE are absolute-error metrics, so a global `x0.5` changes them
+  outright. An operation that stamps its own record does so *after* the scrub, so
+  a rewrite publishes the reduction it actually performed and no other.
+
+  **Artifact-local measured stamps:** the LOD Q·e ladder stamps —
+  `lod_stats.energy_fraction_cum` (a rung's prefix energy e(k)),
+  `level_stats.reference_energy` (its weight w) and `level_stats.quality` (a
+  level's measured Q against its group's finest). These are measured on the
+  artifact's **own content** rather than against a source volume, so a coarse
+  level's stamps are statements about that coarse level and a plain accessor keeps
+  them exactly as authored; the scene-authoring path builds every coarse child of
+  a `kind=lod` group through `at_substitutive` and copies those numbers onto it. A
+  content-changing rewrite, however, **recomputes** the counts, e(k), and the
+  group-consistent finest-content w from the rewritten artifact. It removes
+  stale Q rather than hiding its expensive Torch kNN measurement inside ordinary
+  filtering; `gsplat annotate-quality --with-quality` restores it explicitly.
+  A `--refine l2|volume` level's `level_stats.refine_stats` (`mse_seed` /
+  `mse_refit`) is source-volume measured and cannot be remeasured by a rewriter;
+  a reduction removes that nested block while keeping the descriptive `refine`
+  method.
+
+  A geometry-only transform (scale / rotate / translate / center) **keeps** them:
+  the splat set is identical and only the frame moved. Dimensional embedding is
+  a widening rather than a geometry-only transform: it preserves dataset-level
+  source-volume metrics, but recomputes counts, e(k), and w in the promoted
+  dimensionality while removing stale Q and `refine_stats`. Note this is a weaker
+  claim than the reproducibility paragraph above — that argument holds for a
+  `voxel_size` fit because the spacing is *recorded*, whereas `gsplat transform
+  --scale` records no factor and does not update `fitted_shape` / `source_shape`,
+  so the score is not reproducible from the artifact afterwards. It is kept
+  because it is still a true statement about these splats, not because you could
+  re-derive it. A rewrite that changes nothing at all keeps them too — a
+  threshold that removed no splat, `flatten`, `additive`, `annotate-quality`,
+  `partition` (the same splats, regrouped), and `reencode -e precision` (exact).
+  `reencode -e auto` / `-e memory` and `migrate-format` re-quantize the Cholesky
+  factors *and* (for `auto`/`memory`) the centers to fixed point, so the decoded
+  values are not bit-identical to the ones that were scored; the loss is
+  deliberate and bounded (~93 dB at `memory`, far below the reconstruction error
+  any of these scores report), so the scores are kept as still-valid to well
+  within their own precision rather than thrown away.
+
+  One exemption, on the producing side: the fitters end with a high-retention
+  cumulative trim (`cull_retention`, 0.95 by default) *after* scoring, and carry
+  their measurement across it — so a stored fit's score is taken on the pre-trim
+  splats, which hold 100% of the amplitude minus the retention. Re-scoring would
+  cost a second full render of the volume, and the alternative is a fit that
+  publishes no score at all. A content-planned box fit gets the opposite
+  treatment: its score was measured on the halo-padded crop, with neighbour
+  splats present and against a larger target region, so a part whose crop was
+  padded (or whose core mask dropped splats) publishes no score at all.
+* **Region-scoped** — the source grid (`source_shape`, `source_voxels`,
+  `source_bytes`, `source_stored_bytes`, `fitted_shape`, `fitted_voxels`,
+  `occupancy`, `voxels_per_splat`, and the `source_declared` marker that
+  qualifies the grid). Dropped only by a **spatial** restriction that actually
+  excluded splats, because that is what makes the compression ratio quote a
+  volume the artifact no longer represents. `source_dtype` is exempt: a crop
+  cannot change the element type. A non-spatial cull keeps this whole block.
+* **Structure-scoped** — the artifact's own **topology** record in `pipeline/`:
+  `lod_kind`, `recipe`, `compression_factor`, `method`, `n_substitutive_levels`,
+  `coverage_inflation`, `conserve_mass`, `refine`, `refine_iters`, the additive
+  ladder summary (`lod_method`, `lod_n_lods`, `lod_breakpoints_kind`,
+  `lod_cutpoints`, `lod_substitutive_level`) and the `batch-fit merge` per-part
+  knobs (`per_part`, `n_lods`, `breakpoints`, `levels`, `additive_ladders`).
+  Dropped only by a rewrite that changes the **structure kind**. The test for a
+  new command is one question — *can this command's output have a different
+  structure kind than its input?* — and if the answer is yes it must scrub, even
+  when a particular run happens to preserve the kind. Four commands qualify
+  today: `flatten` (one flat leaf), `partition` (a `kind=partition` of bare
+  leaves), `decimate` (one flat leaf whenever it actually reduces; its
+  `target >= n_splats` early return hands the input straight back, which
+  correctly republishes the record because nothing changed) and `lod`, whose
+  every `--recipe` starts from `data.flattened()` — so no `lod` output preserves
+  its input's shape, and a laddered or substitutive store is a legal input (the
+  gate is matrix-shaped-ness, so a partition and a lod group with non-leaf
+  children are both refused). `lod` is also the one of the four that publishes
+  a topology record of its own, and it publishes **only** what its own builder
+  stamped: `recipe` alone for `flat` / `tiles` / `overview` / `adaptive`, plus the
+  additive ladder summary for `stream`, plus the substitutive block as well for
+  `levels`. Nothing positive is invented to fill the gap — an absent `lod_kind`
+  is the format's "this artifact does not know", and the alternative (stamping
+  `lod_kind: additive` on a `stream` output) would be a new claim rather than a
+  scrub. Content-changing but structure-**preserving** ops keep the block and
+  *re-stamp* the counts that moved instead: a `cull` of a substitutive pyramid is
+  still that pyramid, with refreshed `lod_n_lods` / `lod_cutpoints`.
+
+  Two things in `pipeline/` are **exempt**, which is why this is a deny-list of
+  key names rather than "drop the group". The normalization block (`floor`,
+  `image_min`, `image_max`, `intensity_range`) describes the *input volume's*
+  intensity scale, which regrouping splats cannot change. And `coarsen_dims` is
+  read back by the writer — `write_gsplats_tree` derives the chunk-ordering
+  barrier axes from its complement — so dropping it would silently change the
+  output's chunk layout, not just its metadata.
+
+No category subsumes another, which is why one predicate cannot serve them: an
+amplitude-threshold cull loses the scores and keeps the grid and the topology, a
+whole-volume bbox that excluded nothing keeps all three, a real crop loses the
+scores and the grid but keeps the topology, and `flatten` loses only the
+topology. Descriptive counters are never dropped by any rule — `iterations`,
+`best_iteration`, `converged`, `time_seconds`, `fitter_name` and `filtered` /
+`filter_criteria` describe the run or the edit, both of which happened.
+
+**What survives a rewrite: the authored appearance.** The rules above govern
+what a rewriting tool must *drop*; the mirror-image obligation is what it must
+*keep*. A rewriting command owns the **structure**, not the **look**: the
+builders construct fresh nodes that know nothing about the input, so unless the
+source root's authored compositing attrs are handed back to the writer, its own
+defaults take over — `blending_mode` disappears entirely and
+`opacity` / `absorption` / `gamma` / `intensity` / `offset` snap back to their
+identity, silently resetting whatever was tuned in the Layers panel. The key set
+is `AUTHORED_APPEARANCE_ATTRS` (`core/group/compositing.py`): the compositing
+attrs minus `transform` (a stored matrix is column-major and would be transposed
+a second time on the way back in), plus `colormap`. It is read with
+`gsplats/io/load_gsplats.read_authored_appearance` — directories and `.zip` /
+`.tar.gz` archives alike — and passed as `root_attrs=` to
+`write_gsplats_tree` / `GSplatData.save`, which seeds it at **lowest
+precedence** so the command's own structural attrs still win. The one attr
+refused on the way through is a `colormap` of `"custom"`: it names a sibling
+`colormap_lut` array the attrs-only read cannot carry, so the bare sentinel
+would dangle.
+
+With **several** inputs (`gsplat merge`) there is no single source root, so the
+carried value must be **agreed**: a key rides along only when every input that
+*has* an opinion on it agrees, and an input with no opinion casts no vote (at
+least one input must have one for the key to appear). On any disagreement the
+key is dropped and the command **says so**, naming the key, the differing values
+(each with the input it came from) and what lands on disk instead — the same
+unanimity rule as
+`agreed_normalization_stats`, but loud rather than silent, because appearance is
+hand-authored and a user who tuned two datasets has to be told which choice did
+not survive.
+
+"Having an opinion" is narrower than "carrying the key", and that is the
+load-bearing detail. The writer STAMPS identity values on every save —
+`opacity: 1.0` / `absorption: 1.0` / `gamma: 1.0` / `intensity: 1.0` /
+`offset: 0.0` / `layer: true`, plus `colormap: "gray"` on a colorless store —
+so a value **equal to the writer's manufactured default** counts as silence,
+exactly like an absent key (the values live in one place,
+`WRITER_STAMPED_APPEARANCE_DEFAULTS` in `core/group/compositing.py`, which is
+what both the writers and the vote read). The cost is stated plainly: nothing on
+disk distinguishes a deliberately authored `opacity: 1.0` from an untouched
+store, so a deliberate identity loses to a sibling's `0.75`. The alternative is
+worse — it is what the code did first: a tuned dataset merged with a freshly
+fitted one disagreed on **seven** keys, dropped all seven, and the writer then
+stamped its defaults back, which *is* the untouched input's value. Same result,
+plus seven warnings.
+
+`visible` is the one key where ABSENCE is itself a vote. The viewer treats a
+missing `visible` as visible, so an input without the key is positively saying
+"shown": `visible: false` is carried only when **every** input hides, and one
+hidden input plus one silent one is a disagreement rather than a unanimous hide.
+Without that exception a single hidden input opened the whole merged dataset
+hidden. `blending_mode` / `nd_transform` / `join` keep the plain no-vote rule,
+where absence genuinely means "no opinion".
+
+One key is additionally dropped because the merge itself invalidates it:
+`colormap`, whenever the merged output carries per-splat RGB that the inputs'
+palettes do not describe. Three predicates cover that: `--channel-colors`
+always bakes RGB, `GSplatData.concatenate` white-fills a colorless input to
+match a colored sibling, and a colored input with no authored palette is
+positively asking the viewer to use its per-splat RGB. The white-fill case
+happens on a plain merge and under `--as-dimension` too. The viewer makes an
+ancestor palette override per-splat RGB unconditionally, so a carried palette
+would render those splats through a scalar ramp. `colormap` is also refused
+outright when any input root declares the `"custom"` sentinel: that palette
+cannot be carried, and treating the input as having no opinion would hand the
+merged root a *sibling's* palette. `--as-dimension` does **not** invalidate
+`nd_transform`: the new axis is appended LAST, so every existing dimension keeps
+its name and its index and the new one simply has no entry — the identity
+default.
 
 ### Pipeline Group Attributes (Optional)
 
@@ -680,21 +1014,69 @@ substitutive/pyramid/recipe build round-trips its parameters:
   "refine_iters": 120,
   "coarsen_dims": null,
   "n_substitutive_levels": 4,
-  "image_min": 98.0,
+  "image_min": 110.0,
   "image_max": 4095.0,
-  "intensity_range": 3997.0,
+  "intensity_range": 3985.0,
   "floor": 110.0
 }
 ```
 
-Every fit also persists its **normalization metadata** here (routed through
-the same splitter from the fit `stats` — see `gsplats/fitting/results.py`):
+A fit also persists its **normalization metadata** here (see the per-writer
+table below for exactly which keys, and where the record comes from):
 `image_min` / `image_max` / `intensity_range` record how the source volume
 was normalized, and `floor` is the background level subtracted before
-fitting (`null` when floor suppression was disabled). **Semantic contract:**
-the floor is NOT added back — stored amplitudes are background-relative
-(intensity above the subtracted pedestal), so renders reconstruct the
-floor-suppressed volume, not the raw one.
+fitting (`null` when floor suppression was disabled or refused). **Semantic
+contract:** the floor is NOT added back — stored amplitudes are
+background-relative (intensity above the subtracted pedestal), so renders
+reconstruct the floor-suppressed volume, not the raw one.
+
+Wherever it is recorded it is under one key name (`floor`) in one location
+(`pipeline/`). The full key set is `NORMALIZATION_STATS_KEYS` in
+`gsplats/io/save_gsplats.py`; which of those four a given writer can honestly
+fill differs, and the last column says so.
+
+| Writer | How it reaches `pipeline/` | Keys |
+|---|---|---|
+| flat fit (`--tiling none`) | `stats` → `split_fitting_info` (`gsplats/fitting/results.py`) | all four |
+| progressive fit | `stats`, stamped by `lift_normalization_stats` — the pedestal is removed once up front, so no individual pass records it | all four |
+| sequential tiled merge (`fit_tiled`), flat leaf or `kind=partition` | `_stamp_merge_normalization` on the merged `stats` / the ROOT node's `meta`, from the level the merge applied plus the bounds its tiles agree on | all four |
+| parallel tiled merge (`fit -j N`) | same stamp, but the merge applied no level itself: the tiles are reloaded WITH stats and the block is recovered from what they unanimously recorded | all four |
+| `--tiling content` | the one level `resolve_shared_floor` gave every box, stamped on the merged leaf's `stats` or the root node's `meta` — unless the boxes themselves recorded a level, which wins (content boxes now share one `norm_range`, so their recorded bounds agree across boxes; a recorded floor can still exceed the planned level when the shared low endpoint does) | `floor`, plus any bound the in-process boxes of a `--flat` fit agreed on |
+| `batch-fit merge` (default `kind=partition`, and its K=1 bare leaf) | `manifest.floor_level`, the ONE level the plan pinned for every `(t, c)` task, folded into `pipeline_info` | `floor` only |
+
+Two paths deliberately write nothing rather than guess. `batch-fit merge` is
+silent when the manifest pinned no level — a negative resolved level is
+forwarded as a SPEC for each task to re-resolve, so there is no single answer —
+and the legacy `batch-fit merge --flat` fan-in (a multi-stage reload through
+`combine_as_new_dimension` / `merge_with_channel_colors`) carries no block at
+all. An **absent** key means "this artifact does not know"; `floor: null`
+asserts that no pedestal was removed, so the two are never interchangeable.
+
+Where a writer records `image_min`, it records it in the **input volume's own
+units** and, when a floor was applied, equal to `floor`: `_normalize_data` sets
+`image_min = max(resolved_floor, image_min)` and records that applied value as
+`floor`, so `image_min == floor` whenever suppression ran. #1616 makes the
+pre-clamp `image_min` shared across content and batch children. A tiled or progressive path subtracts the pedestal OUTSIDE the fitter and
+then fits with `floor="none"`, so it shifts its inner `image_min` / `image_max`
+back by the applied level before recording them — otherwise `image_min` would
+mean a post-subtraction minimum on one path and the applied level on another.
+
+The two differ in what is left for the inner fit to remove, and therefore in
+what `floor` means. A **tiled** fit hands every tile a shared `norm_range`
+pinned at `image_min = 0`, precisely so no second constant comes out (a
+per-tile one would be subtracted twice across an overlap band and reintroduce
+the seam apodization exists to hide), so its `floor` is the level it subtracted
+up front, verbatim. A **progressive** fit has no such shared range: pass 0's own
+normalization removes whatever pedestal is LEFT on top, so the level actually
+taken out is the sum of the two, and its `floor` is the shifted `image_min`
+rather than the requested level — which would understate the removal whenever
+the request sits below the volume's minimum.
+
+Merging is unanimous-or-silent: `GSplatData.concatenate` carries a key only when
+every input that records it agrees, because two independently fitted volumes
+have two different pedestals and promoting the first would mislabel the rest.
+`gsplat info` lists the block among its headline metadata, on both its flat
+report and its node-tree (`kind=partition`) one.
 
 Values are JSON-attr-safe (numpy scalars coerced; non-serializable values
 dropped at write). Readers merge these into `stats` on
@@ -748,9 +1130,20 @@ GSplats have ellipsoidal extent (unlike point radii). Chunk bounds include this 
 
 extent[d] = sqrt(covariance[d, d]) * truncation_radius  # default 2.75 (per-axis support radius, in sigmas)
 
-# Chunk bounds include extent
+# Chunk bounds include extent -- EXCEPT on a barrier/categorical axis
+# (slice_dims: time, channel), which gets no sigma expansion at all, only a
+# tiny float-boundary epsilon, so a category never bleeds into its neighbour:
+#   chunk_bounds[i, d, 0] = min(centers[chunk_i, d]) - 1e-3
+#   chunk_bounds[i, d, 1] = max(centers[chunk_i, d]) + 1e-3
 chunk_bounds[i, d, 0] = min(centers[chunk_i, d] - extent[chunk_i, d])
 chunk_bounds[i, d, 1] = max(centers[chunk_i, d] + extent[chunk_i, d])
+
+# Both arms are accumulated in float64 and narrowed to the float32 store
+# OUTWARD (lo down, hi up, by one ULP -- but only when the cast moved the bound
+# the wrong way). Without that step a small absolute pad past |x| ~ 2**23 falls
+# under half a float32 ULP and rounds away, storing an interval TIGHTER than
+# the footprint. A stored interval therefore always contains the chunk's
+# geometric footprint, at any coordinate magnitude.
 ```
 
 **Ordering Metadata** (stored on each leaf group's `.zattrs`):
@@ -865,7 +1258,39 @@ Quantization is handled by `luxar.encoding` based on semantic types:
 MEMORY — each axis quantized over its own [min, max] to 65536 levels, decoded back to
 float32 (visually lossless, sub-unit, ~2× smaller). float16 is NOT used (relative
 precision is a footgun for absolute positions); a per-axis extent ≥ 2¹⁶ falls back to
-float32. **Cholesky factors** are stored split (diagonal + off-diagonal); bit depth
+float32.
+
+A **gridded axis** — one whose distinct values all sit on a single regular grid, which a
+stacked/categorical axis built with `sigma=0` (e.g. `combine_as_new_dimension`) normally
+is, though `values=` is arbitrary and a stack with more distinct values than uint16 has
+levels is not gridded either — keeps its uint16 encoding but has its grid **snapped onto
+the data's own spacing**:
+the stored `col_hi` is widened to `col_lo + step·65535`, so every value round-trips
+bit-exactly. That is what lands a stacked axis exactly on its integer frame coordinates,
+and it changes no dtype and no bytes on disk (`col_lo`/`col_hi` are stored per axis
+regardless).
+
+A third, geometry-aware **sigma rail** backstops what no grid can cover, falling back to
+float32 (with a `UserWarning`) when **half** an axis's grid step `(hi - lo) / 65535` —
+the worst-case round-trip displacement — exceeds `MAX_CENTER_DISPLACEMENT_SIGMAS` (1.0)
+× the marginal σ of **more than `MAX_UNREPRESENTABLE_SPLAT_FRACTION` (0.1%) of the
+splats** on that axis, i.e. when quantization can move those centers clear of the cores
+they were fitted to describe and out of a slice query that used to match them. That
+population gate is necessary but **not sufficient**: the rail stands down wherever the
+encoder is already exact. An axis the snap will store exactly is skipped, and so is a
+LUT-eligible centers array (stored verbatim at ~1 B/value, which float32 would only make
+4× larger) — so the case this catches is a degenerate
+sub-population on an axis that is neither gridded nor LUT-eligible — a 2,000-splat
+`sigma=0` track stack merged
+into a 300,000-splat fit whose time axis is continuous is 0.662% of the store and
+displaced by up to 1,373 σ. Sub-σ displacement is deliberately left alone: an
+8192-voxel axis has a 0.125-voxel step, so its worst displacement is 0.0625 voxel, and
+the handful of needle splats every real fit contains (measured ≤ 0.03% under this
+criterion) keeps the uint16 size win. Only `centers` escalates; the Cholesky tier is
+unaffected. An escalated `centers` array is never stored as an `array_ref` — the
+encoder's content dedup is keyed on the centers bytes, which do not determine the rail's
+verdict.
+**Cholesky factors** are stored split (diagonal + off-diagonal); bit depth
 follows the mode: PRECISION→float32; AUTO→uint8, escalating to uint16 only when the
 encode-time covariance certificate measures excessive Σ error (float32 as the
 practically-unreachable last rung); MEMORY→uint8.
@@ -1326,6 +1751,20 @@ finest level instead). Both paths go through the shared
 
 ## Changelog
 
+- **amplitude mass statistics** (2026-08-19, format-additive, no version bump):
+  each written splat set may now carry `amplitude_mass` and
+  `amplitude_mass_weighted_mean` (see **Mass statistics** above) alongside its
+  `amplitude_data_range`. Every splat set a current writer produces carries both
+  (a degenerate or mass-less one as `0.0` / `0.0`), but they remain OPTIONAL in
+  the format: a reader that does not know them is unaffected, and a store
+  written before they existed stays valid — the harmonization reads their
+  absence as a legacy store and falls back to sharing the reference window
+  verbatim. They exist so finalize can put every node of a `kind=lod` /
+  `kind=partition` structure on ONE colormap window (**Window harmonization
+  (#1691)** above) instead of a per-node `[min(a), p99.9(a)]`. No existing attr
+  changed meaning; only `amplitude_data_range` **values** are corrected, and
+  only where a writer had already stamped one.
+
 - **v3.4.0** (2026-08-12): `kind=lod` gains the `selector: "screen-area"` mode
   - Per-child `coverage_fraction` under this selector is a literal screen-area
     fraction (projected bbox rect area / viewport area). Derived ladders use
@@ -1419,8 +1858,15 @@ finest level instead). Both paths go through the shared
   - Group `selector: "pixel_size"` → `"coverage"`; per-child `min_pixel_size`
     (absolute pixel threshold) → `coverage_fraction` (viewport-relative
     `sqrt(N_i/N_finest)` in `[0, 1]`, strictly ascending coarsest→finest,
-    finest `1.0`) — device-independent LOD switching. (The upper bound later
-    widened to `4.0` for partition-bound ladders; see the `kind=lod` section.)
+    finest `1.0`) — device-independent LOD switching. (The bound later widened
+    to `MAX_COVERAGE_FRACTION` = 4.0 so a hand-tuned `coverage_fractions=[...]`
+    list stayed expressible after the viewer's fill anchor was loosened so the
+    finest level engaged at a normal full-frame view instead of only once the
+    object overfilled the screen (a ×4 rescale of the diagonal metric) —
+    approximately fills-screen in these legacy diagonal units. That is not
+    today's anchor: since v3.4 a derived threshold is a screen-AREA fraction,
+    whole-object finest `0.5` and partition tile `1.0`; see the `kind=lod`
+    section.)
   - v3.0 / v3.1 stores that still carry the legacy attrs remain loadable: the
     Python re-save derives fresh `coverage_fraction` thresholds, and the web
     viewer auto-adapts the legacy ladder (normalizing `min_pixel_size` by its

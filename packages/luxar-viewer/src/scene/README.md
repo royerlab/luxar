@@ -28,7 +28,7 @@ scene/
 ├── animation/                      # animation-controller, dimension-animation-manager
 ├── scene-dims-manager.ts           # nD dimension coordination
 ├── lod-group-registry.ts           # Per-frame LOD-group selector (policy/state machine)
-├── lod-selector-math.ts            # Selector math: world-box fold, box→pixel projection, hysteresis pick
+├── lod-selector-math.ts            # Selector math: world-box fold, box→area/diagonal projections, hysteresis pick
 ├── lod-blend.ts                    # Pure opacity math: coverage cross-fade + energy compensation
 ├── lod-fade.ts                     # Material-level fade appliers (clone-on-first-fade)
 ├── lod-eviction.ts                 # VRAM-budget LRU eviction policy for LOD levels
@@ -75,7 +75,11 @@ class SceneManager extends THREE.EventDispatcher {
     webgpuForceWebGL?: boolean;
     perfTimestamp?: boolean;
   }): Promise<void>;
-  loadSceneData(src: string, loaderConfig?: LoaderConfig): Promise<void>;
+  loadSceneData(
+    src: string,
+    loaderConfig?: LoaderConfig,
+    options?: SceneLoadOptions
+  ): Promise<void>;
   updateSize(): void;
   dispose(): void;
 
@@ -151,7 +155,11 @@ animationController.startAnimation();
 private animate = (): void => {
   if (!this.isAnimating) return;
 
-  requestAnimationFrame(this.animate);
+  // Schedule the next frame: a bare requestAnimationFrame, or — once
+  // consecutive frames have been pathologically slow — a bounded cooldown
+  // first, so the main thread gets a slot (#1724). See
+  // `animation/animation-controller.ts`.
+  this.scheduleNextFrame();
 
   // Update controls
   this.sceneManager.controls.update();
@@ -320,32 +328,49 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    `BoundingBox`, mapping nD axes onto X/Y/Z via the current
    `displayDims`.
 2. Lift that box to world space through the group's `matrixWorld`
-   (`transformBoundingBox`).
-3. **Off-screen gate**: if the world box is entirely outside the
-   camera frustum, hold the group at its coarsest _ready_ level
-   instead of loading a fine level the renderer would frustum-cull.
-4. Otherwise, project the 8 world corners to NDC and measure the
-   diagonal of the screen-space AABB in pixels
-   (`projectBoxDiagonalPx`). The projection is `w`-aware: if any corner
-   is at/behind the camera near plane (camera inside or straddling the
-   box), it returns `+Infinity` so the selector saturates to the finest
-   level — instead of the collapsed/garbage diagonal an unguarded
-   perspective divide would produce on close approach. The pixel
-   diagonal is normalised to a dimensionless coverage metric
+   (`transformBoundingBox`). When any child publishes `lodBounds`, fold
+   a second box the same way for metric sizing, falling back per child
+   to `positionBounds`.
+3. **Off-screen gate**: if the complete-geometry world box is entirely
+   outside the camera frustum, hold the group at its coarsest _ready_
+   level instead of loading a fine level the renderer would
+   frustum-cull. Eviction also keeps using this complete-geometry box.
+4. Otherwise, project the 8 corners of the metric world box to NDC and
+   measure how much of the screen the group covers, in the units its
+   `selector` attr names. A DERIVED ladder stamps `screen-area`: the
+   metric is the screen-space AABB's **area** as a fraction of the viewport area
+   (`projectBoxAreaFraction` — each NDC axis spans 2, so the fraction is
+   the product of the per-axis half-extents after clipping to the
+   viewport, viewport-size independent by construction and topping out
+   at exactly `1.0` for any finite projection; sub-pixel-thin content
+   ramps to its linear span instead, so an edge-on plane is not pinned
+   to the coarsest level). Those thresholds are literal area fractions,
+   so nothing is normalised: a whole-object ladder anchors its finest at
+   `0.5` (half the screen occupied) and steps one level coarser per
+   halving of occupied area, while a partition-bound one anchors at
+   `1.0` (the tile alone fills the screen). The LEGACY `coverage`
+   selector — pre-v3.4 stores and explicitly authored
+   `coverage_fractions=[...]` lists — measures the pixel diagonal of
+   that AABB instead (`projectBoxDiagonalPx`) and normalises it to a
+   dimensionless coverage metric
    (`diagonalPx / (FILL_FACTOR * fittedAxisPx)`, `FILL_FACTOR = 0.5`,
    `fittedAxisPx = min(viewport.width, viewport.height)` — the extent
-   `calculateCameraDistance` actually fits, so the metric stays
-   (near-)invariant across viewport aspect ratio, not just size), so the
-   comparison is viewport-relative rather than an absolute pixel
-   count. The anchor means the finest child (`coverage_fraction` 1.0)
-   activates once the projected diagonal reaches half of the fitted
-   screen axis — any normal full-frame view — and coarser levels
-   step in as the object shrinks below that.
+   `calculateCameraDistance` actually fits), so its finest anchor
+   (`coverage_fraction` 1.0) is reached once the projected diagonal is
+   half of the fitted screen axis. Both projections are `w`-aware: if
+   any corner is at/behind the camera near plane (camera inside or
+   straddling the box), they return `+Infinity` so the selector
+   saturates to the finest level — instead of the collapsed/garbage
+   value an unguarded perspective divide would produce on close
+   approach. Under an ORTHOGRAPHIC projection nothing degenerates (`w`
+   stays 1), so neither function ever saturates and each metric's plain
+   value is used directly.
 5. Pick the finest child whose `coverageFraction` threshold (the
-   viewport-normalised per-child value read from the zarr attr
-   `coverage_fraction`) is satisfied by the coverage metric, with 10%
-   asymmetric, spacing-aware hysteresis on the downgrade direction to
-   suppress threshold-edge flicker (`pickChildWithHysteresis`).
+   per-child value read from the zarr attr `coverage_fraction`, in
+   whichever units step 4's `selector` names) is satisfied by that
+   metric, with 10% asymmetric, spacing-aware hysteresis on the
+   downgrade direction to suppress threshold-edge flicker
+   (`pickChildWithHysteresis`).
 6. Swap visibility atomically when the desired child differs; lazy
    targets that are not yet committed kick `ensureLoaded()` and swap
    on a later frame once `ready` flips true — unless the
@@ -411,6 +436,62 @@ registry.setSelectorMode(path, 'auto');
 registry.setSelectorMode(path, { lockLevel: 2 });
 ```
 
+**Capture quiescence:** `registry.isCaptureQuiescent()` answers "is
+every lod_group that contributes pixels to the current view already
+showing its own selected level at final quality?" — i.e. would one more
+frame of waiting improve what is on screen. The offline turntable
+capture drains on it (bounded) before exporting each frame, because the
+rAF loop — and therefore this frustum-aware selector — runs for the
+whole sweep: a tile that leaves the frustum mid-orbit is demoted, may
+have its fine level released by the byte budget, and reloads
+asynchronously on re-entry, which a one-rAF-per-frame capture would
+otherwise film at the coarse level (#1695). Off-screen entries are
+skipped (they draw nothing and are held coarse on purpose), and so are
+entries that are not _effectively_ visible — a layer toggled off or
+authored `visible=false` anywhere up the ancestor chain. That second
+skip is load-bearing, not tidiness: a hidden group cannot start a
+deferred load (`kickDeferredLoadIfVisible` refuses), while the
+frustum-only selector still records a fine `desiredChildIndex` for it,
+so blocking on it would never resolve and every capture frame would
+burn its whole drain budget. An entry whose aspiration index holds no
+child is skipped for that same reason — `children` is empty when every
+level failed its `getObjectByName` attach at load — since nothing at a
+missing index can ever become ready. An entry blocks while its displayed
+level differs from the aspiration, while the aspiration is not ready /
+not fresh / still streaming additive LODs, while any of its children is
+`loading`, or while the selector's `desiredChildIndex` differs from the
+aspiration **at all** — a finer level it has not got yet, but equally a
+coarser one the aspiration has not moved onto. That last clause is the
+subtle one: `activeChildIndex` only advances onto a READY level, so in
+the frame where a lazy level's load lands (`ready` true, `loading`
+cleared) the swap has not happened yet — a predicate reading only
+ready/loading/displayed would call that window settled. A `desired`
+level that has `failed` does not block, since it can never become ready
+this frame.
+
+"Still streaming additive LODs" takes **both** available signals, and
+either one alone leaves a hole. A lazy child's live `hasMoreLODs()` thunk
+answers first. Then the commit-time `committedLadderComplete` stamp,
+surfaced as `subtreeLadderComplete` through the registry's
+`childFreshAndCount` — read off the child itself for a tracked **leaf**,
+and folded over the visible stamped leaves
+(`subtreeDisplayProgress().complete`) for a deferred **group** child, i.e.
+a nested `kind=partition` / `kind=lod` subtree such as the `overview`
+recipe's fine branch. Neither is sufficient on its own: a group child
+carries no thunk, so without the fold the drain released the frame the
+instant the fine branch became ready, with its part leaves at chunk-1 by
+construction; and `load-lod-group-node` attaches the thunk only on the
+DEFERRED path, so without the stamp the eagerly-loaded default level —
+still climbing its ladder under the sweep-driven background refinement
+loop — read as complete. Either way the frame is exported at the first
+additive chunk and refines in over the next seconds, which is the exact
+artifact class #1695 exists to remove. Anything carrying no stamp at all
+(never committed, or a non-progressive loader) counts as complete and
+never blocks.
+
+Forcing the finest level instead was rejected: a capture
+visits the whole scene, so peak residency would be the entire dataset.
+
 **Retention + VRAM budget:** swaps never `release()` outgoing
 geometry — retention keeps loaded levels resident so swapping back is
 a sub-millisecond visibility toggle. Memory is bounded once per frame
@@ -430,8 +511,9 @@ hooks `evaluatePerFrame()` into `AnimationController` alongside the
 dynamic-clipping callback. The injected `LODGroupRegistryDeps` supply
 the camera, viewport size, `displayDims`, and the optional resident
 byte budget / measurement — omitting the budget accessors yields pure
-retention (the unit-test default). `projectBoxDiagonalPx` and
-`pickChildWithHysteresis` are exported as pure functions for testing.
+retention (the unit-test default). `projectBoxAreaFraction`,
+`projectBoxDiagonalPx` and `pickChildWithHysteresis` are exported as
+pure functions for testing.
 
 ---
 
@@ -877,6 +959,11 @@ const animationConfig = {
   idleTimeoutMs: 2000, // Pause after 2 seconds
   targetFPS: 60, // Target frame rate
   adaptiveQuality: true, // Reduce quality if FPS drops
+  pacing: {
+    enabled: true, // Frame pacing on (false = the back-to-back rAF loop)
+    slowFrameMs: 250, // A frame past this is "pathologically slow" (4 fps)
+    maxCooldownMs: 250, // Ceiling on the inserted gap
+  },
 };
 ```
 
@@ -954,25 +1041,26 @@ function disposeObject(object: THREE.Object3D) {
 
 ### SceneManager
 
-| Method                                           | Description                                                    |
-| ------------------------------------------------ | -------------------------------------------------------------- |
-| `init(options)`                                  | Build renderer, scene, camera, controls, post-processing       |
-| `loadSceneData(src, loaderConfig?)`              | Load zarr scene; clears prior content, auto-frames, auto-clips |
-| `centerCameraOnScene()`                          | Frame camera on scene bounding box                             |
-| `toggleCentering()`                              | Switch center mode (origin ↔ bbox)                             |
-| `getCurrentCenter()`                             | Get active center point                                        |
-| `updateFOV(delta)`                               | Adjust field of view                                           |
-| `updateClippingPlanes(near, far)`                | Set camera clipping planes                                     |
-| `autoAdjustClippingPlanes()`                     | Calculate optimal clipping from scene                          |
-| `setDynamicClipping(enabled)`                    | Enable/disable per-frame clipping update                       |
-| `getDynamicClippingState()`                      | Get current dynamic clipping state                             |
-| `updateDynamicClippingPlanes()`                  | Manually trigger dynamic clipping update                       |
-| `setControlType(type)` / `getControlType()`      | Switch / read current control type                             |
-| `setAdaptivePixelRatio(dpr)`                     | Set DPR override (AdaptiveDPRManager)                          |
-| `updateExposure/GlobalOffset/GlobalGamma(value)` | Update post-processing tone-mapping uniforms                   |
-| `isWebGLContextLost()`                           | Query WebGL context-loss state                                 |
-| `updateSize()`                                   | Handle resize (rAF-debounced)                                  |
-| `dispose()`                                      | Clean up resources                                             |
+| Method                                           | Description                                                                                                            |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `init(options)`                                  | Build renderer, scene, camera, controls, post-processing                                                               |
+| `loadSceneData(src, loaderConfig?, options?)`    | Load zarr scene; `applyViewerConfigFov` gates pre-frame scene FOV unless an authored position carries its resolved FOV |
+| `centerCameraOnScene()`                          | Frame camera on scene bounding box                                                                                     |
+| `toggleCentering()`                              | Switch center mode (origin ↔ bbox)                                                                                     |
+| `getCurrentCenter()`                             | Get active center point                                                                                                |
+| `setFov(degrees)`                                | Set an absolute validated perspective FOV                                                                              |
+| `updateFOV(delta)`                               | Adjust field of view                                                                                                   |
+| `updateClippingPlanes(near, far)`                | Set camera clipping planes                                                                                             |
+| `autoAdjustClippingPlanes()`                     | Calculate optimal clipping from scene                                                                                  |
+| `setDynamicClipping(enabled)`                    | Enable/disable per-frame clipping update                                                                               |
+| `getDynamicClippingState()`                      | Get current dynamic clipping state                                                                                     |
+| `updateDynamicClippingPlanes()`                  | Manually trigger dynamic clipping update                                                                               |
+| `setControlType(type)` / `getControlType()`      | Switch / read current control type                                                                                     |
+| `setAdaptivePixelRatio(dpr)`                     | Set DPR override (AdaptiveDPRManager)                                                                                  |
+| `updateExposure/GlobalOffset/GlobalGamma(value)` | Update post-processing tone-mapping uniforms                                                                           |
+| `isWebGLContextLost()`                           | Query WebGL context-loss state                                                                                         |
+| `updateSize()`                                   | Handle resize (rAF-debounced)                                                                                          |
+| `dispose()`                                      | Clean up resources                                                                                                     |
 
 ### AnimationController
 
@@ -1016,14 +1104,18 @@ _For implementation details, see the source files in this directory._
   objects in the scene (exported as both class `SceneDimsManager`
   and lazy-Proxy singleton `sceneDimsManager`).
 - `lod-group-registry.ts` — `LODGroupRegistry`: per-frame `lod_group`
-  child selector (screen-space-diagonal pick + frustum off-screen gate
+  child selector (pick on the group's screen-area or legacy diagonal
+  metric + frustum off-screen gate
   - asymmetric hysteresis), lazy-load gating, and the display/fade/
-    eviction orchestration. Re-exports `projectBoxDiagonalPx` and
-    `pickChildWithHysteresis` from `lod-selector-math.ts`.
+    eviction orchestration. Re-exports `projectBoxAreaFraction`,
+    `projectBoxDiagonalPx` and `pickChildWithHysteresis` from
+    `lod-selector-math.ts`.
 - `lod-selector-math.ts` — The selector's camera-geometry math:
-  `computeEntryWorldBox` (nD position-bounds → world box via
-  displayDims), `projectBoxDiagonalPx` (world box → screen-space pixel
-  diagonal with near-plane saturation), and `pickChildWithHysteresis`.
+  `computeEntryWorldBox` (nD raw or robust bounds → world box via
+  displayDims), `projectBoxAreaFraction` (world box → fraction of the
+  viewport area) and `projectBoxDiagonalPx` (→ screen-space pixel
+  diagonal) — both with near-plane saturation — and
+  `pickChildWithHysteresis`.
 - `lod-fade.ts` — Material-level appliers for the two LOD anti-popping
   mechanisms: `applyLodFade` (write coverage-weight × `1/e(k)` opacity
   per fadeable leaf, clone-on-first-fade) and `isBlendableSubtree`

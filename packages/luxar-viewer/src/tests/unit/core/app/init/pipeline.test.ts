@@ -43,6 +43,7 @@ function makeAnimationStub() {
     setContextLostPredicate: vi.fn(),
     setIdleRestorePredicate: vi.fn(),
     setRenderSkipPredicate: vi.fn(),
+    setPacingSuspendPredicate: vi.fn(),
     addPerFrameCallback: vi.fn(),
     setAdaptiveDPRManager: vi.fn(),
     startAnimation: vi.fn(),
@@ -58,6 +59,10 @@ function makeRecordingPanelStub() {
   return {
     setPanelStateCallbacks: vi.fn(),
     setAdaptiveDPRManager: vi.fn(),
+    // The offline loop's LOD-quiescence predicate (#1695) is injected here
+    // too, since reaching `getSceneLoader` from the panel itself would pull
+    // the whole data/cache stack into its module graph.
+    setLODSettledProvider: vi.fn(),
     // The two capture flags the pipeline's injected predicates read.
     // `isCurrentlyRecording()` covers BOTH capture kinds; only the
     // narrower `isLoopRenderSuppressed()` may gate the render skip.
@@ -162,6 +167,7 @@ vi.mock('../../../../../rendering/depth-sort-coordinator', () => ({
 }));
 
 import { InputHandler } from '../../../../../input/input-handler';
+import { getSceneLoader } from '../../../../../data/scene-loader-manager';
 import {
   configureDepthSort,
   setDepthSortEnabled,
@@ -327,6 +333,7 @@ describe('runInitPipeline', () => {
           renderer: 'webgpu',
           webgpuForceWebGL: false,
           perfTimestamp: true,
+          blendWarmup: false,
           factories: factories as never,
         },
         events: new EventGroup(),
@@ -342,6 +349,7 @@ describe('runInitPipeline', () => {
         renderer: 'webgpu',
         webgpuForceWebGL: false,
         perfTimestamp: true,
+        blendWarmup: false,
       });
     });
   });
@@ -446,6 +454,91 @@ describe('runInitPipeline', () => {
       // dropped before the capture's teardown awaits its driver abort.
       panel.isLoopRenderSuppressed.mockReturnValue(true);
       expect(predicate()).toBe(true);
+    });
+
+    it('the pacing-suspend predicate follows the BROAD recording flag, not loop-render suppression', async () => {
+      // Opposite polarity to the render-skip predicate above, and that is
+      // the point: frame pacing must be off for BOTH capture families,
+      // because both depend on the loop's untouched cadence (the real-time
+      // MediaRecorder path records the canvas this loop paints, so a paced
+      // gap is a dropped frame in the video; the offline capture drives its
+      // own rAF cadence with one-shot per-frame orbit callbacks). Keying it
+      // on the narrow `isLoopRenderSuppressed()` instead would silently drop
+      // a frame per gap from an exported video, and nothing else in the
+      // suite would notice.
+      const { factories } = makeFactoryOverrides();
+      const ports = makePorts();
+      ports.options.factories = factories as never;
+
+      await runInitPipeline(ports, {});
+
+      const animation = factories.animationController.mock.results[0].value as {
+        setPacingSuspendPredicate: ReturnType<typeof vi.fn>;
+      };
+      const panel = factories.recordingPanel.mock.results[0].value as {
+        isCurrentlyRecording: ReturnType<typeof vi.fn>;
+        isLoopRenderSuppressed: ReturnType<typeof vi.fn>;
+      };
+      expect(animation.setPacingSuspendPredicate).toHaveBeenCalledTimes(1);
+      const predicate = animation.setPacingSuspendPredicate.mock.calls[0][0] as () => boolean;
+
+      expect(predicate()).toBe(false);
+
+      panel.isCurrentlyRecording.mockReturnValue(true);
+      expect(predicate()).toBe(true);
+
+      // The narrow flag alone must NOT suspend pacing: it is set only for
+      // an offline capture, which already reports `isCurrentlyRecording()`.
+      panel.isCurrentlyRecording.mockReturnValue(false);
+      panel.isLoopRenderSuppressed.mockReturnValue(true);
+      expect(predicate()).toBe(false);
+    });
+
+    it('the LOD-settle provider delegates to the registry, and answers null when there is nothing to wait for', async () => {
+      // The only integration seam of the #1695 fix: the offline capture drains
+      // on this provider, and the panel cannot build it itself (reaching the
+      // registry from `ui/recording-panel` would pull the whole data/cache
+      // stack into its module graph).
+      const { factories } = makeFactoryOverrides();
+      const ports = makePorts();
+      ports.options.factories = factories as never;
+
+      await runInitPipeline(ports, {});
+
+      const panel = factories.recordingPanel.mock.results[0].value as {
+        setLODSettledProvider: ReturnType<typeof vi.fn>;
+      };
+      expect(panel.setLODSettledProvider).toHaveBeenCalledTimes(1);
+      const provider = panel.setLODSettledProvider.mock.calls[0][0] as () => boolean | null;
+
+      try {
+        // Read LIVE — the scene loader is created after the panel, so at wiring
+        // time there is none. That is `null` ("nothing here could ever need
+        // waiting for"), NOT `true` ("settled"): a `true` still costs the
+        // capture a mandatory selector-catch-up rAF on every exported frame.
+        expect(provider()).toBeNull();
+
+        const isCaptureQuiescent = vi.fn(() => false);
+        const size = vi.fn(() => 0);
+        vi.mocked(getSceneLoader).mockReturnValue({
+          lodGroupRegistry: { size, isCaptureQuiescent },
+        } as never);
+
+        // A registry with no lod_group registered — a plain points/lines scene
+        // — is equally nothing to wait for, and the predicate is not consulted.
+        expect(provider()).toBeNull();
+        expect(isCaptureQuiescent).not.toHaveBeenCalled();
+
+        // With entries registered the answer is the registry's own, both ways.
+        size.mockReturnValue(2);
+        expect(provider()).toBe(false);
+        isCaptureQuiescent.mockReturnValue(true);
+        expect(provider()).toBe(true);
+        expect(isCaptureQuiescent).toHaveBeenCalledTimes(2);
+      } finally {
+        // The module mock is shared; restore the suite-wide default.
+        vi.mocked(getSceneLoader).mockReturnValue(null as never);
+      }
     });
   });
 

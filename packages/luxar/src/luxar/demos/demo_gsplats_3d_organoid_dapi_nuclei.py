@@ -53,29 +53,31 @@ Dataset:
 --------
 Image ID: 6001240 (idr6001240)
 Source: Image Data Resource (IDR) - https://idr.openmicroscopy.org/
-Study: idr0062 - Intestinal organoid development and nuclear segmentation
+Study: idr0062-blin-nuclearsegmentation - nuclear segmentation benchmark
 Format: OME-ZARR 5D (Time × Channel × Z × Y × X)
-Data Type: High-resolution 3D light microscopy of mouse intestinal organoid
+Data Type: High-resolution 3D confocal microscopy of a mouse blastocyst (E3.5),
+           LaminB1-stained nuclei, imaged for segmentation benchmarking
 Resolution: Downscaled to 128³ for this demo
 
 Original Authors & Study:
 --------------------------
-Principal Investigator: Prisca Liberali
-Institution: Friedrich Miescher Institute for Biomedical Research (FMI)
+Principal Investigator: Sally Lowell
+Institution: University of Edinburgh (data published by the University of Dundee)
 
-This data is part of research on intestinal organoid development, nuclear
-segmentation, and symmetry breaking in organoids.
+The image is one of the benchmark volumes behind Nessys, a nuclear-segmentation
+method for dense 3D tissue.
 
 How to Cite:
 ------------
 If you use this dataset, please cite:
 
-1. Original Research:
-   Blin, G., et al. (2019). "A conserved role for β-catenin in
-   organ-specific branching morphogenesis."
-   (Or related publications from Liberali lab associated with IDR study idr0062)
+1. Original Research (what the credit in DEMO_META names):
+   Blin, G., Sadurska, D., Portero Migueles, R., Chen, N., Watson, J.A.,
+   Lowell, S. (2019). "Nessys: A new set of tools for the automated detection
+   of nuclei within intact tissues and dense 3D cultures." PLoS Biology.
+   DOI: 10.1371/journal.pbio.3000388 (CC BY 4.0)
 
-2. Image Data Resource (IDR):
+2. Image Data Resource (IDR) — the repository, not the data's authors:
    Williams, E. et al. (2017). "The Image Data Resource: a bioimage data
    integration and publication platform."
    Nature Methods, 14(8), 775-781.
@@ -109,7 +111,8 @@ Use --recompute to re-fit from scratch (requires network + GPU).
 
 Output:
     - Scene saved to: demos/gsplats_3d_organoid_dapi_nuclei.luxar.zarr
-    - Cache saved to: ~/.cache/luxar/gsplats_dapi/dapi.gsplats.zarr.zip
+    - Local refit cached to: ~/.cache/luxar/gsplats_dapi/local/dapi.gsplats.zarr.zip
+      (the fetched copy lands beside it, at ~/.cache/luxar/gsplats_dapi/)
     - Automatically opens in your browser on the demo's own derived port
 
 Controls:
@@ -134,14 +137,27 @@ DEMO_META = {
     },
     "caches": ["gsplats_dapi"],
     "outputs": ["gsplats_3d_organoid_dapi_nuclei"],
+    # The study that produced the image, not the repository that hosts it:
+    # IDR's own record for idr0062 names Blin et al. and the PLoS Biology DOI,
+    # and crediting the IDR platform paper instead would attribute someone
+    # else's data to the archive it happens to sit in.
+    "citation": {
+        "short": "Blin et al. 2019",
+        "doi": "10.1371/journal.pbio.3000388",
+        "license": "CC BY 4.0",
+    },
 }
 
 # Enable MPS→CPU fallback for unsupported PyTorch ops (must be before torch import)
 import os
 
 from luxar.demos import (
+    DatasetUnavailable,
+    add_demo_caption,
     launch_viewer,
     load_dataset_gsplats,
+    load_local_fit_gsplats_at,
+    local_fit_path,
     parse_demo_flags,
     warn_if_no_cuda_gpu,
 )
@@ -179,8 +195,13 @@ MAX_SPLATS = 12000
 DEVICE = None  # Auto-detect (cuda/mps/cpu)
 
 # Cache paths (use user cache directory for intermediate fit results)
-CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_dapi"
-CACHE_FILE = CACHE_DIR / "dapi.gsplats.zarr.zip"
+DEMO_NAME = "gsplats_dapi"
+GSPLATS_FILE = "dapi.gsplats.zarr.zip"
+# The local refit is OUR artifact, not a copy of the hosted one, so it lives in
+# the demo's local-fit namespace. Writing it to ~/.cache/luxar/<name>/<file> —
+# the path the manifest fetch owns — got it quarantined on the next launch for
+# failing the pinned sha256, and the demo refit every time (#1618).
+LOCAL_FIT = local_fit_path(DEMO_NAME, GSPLATS_FILE)
 
 # Parse command line flags
 FLAGS = parse_demo_flags()
@@ -192,7 +213,6 @@ SHOW_ROUNDTRIP = "--show-roundtrip" in sys.argv
 
 # Setup
 Arbol.max_depth = 3
-CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # =============================================================================
@@ -216,13 +236,13 @@ def load_dapi_data():
     copy of the data instead of the data.
 
     Data Source: Image Data Resource (IDR) study idr0062, Image 6001240
-    Original Authors: Prisca Liberali lab, FMI
-    Citation: Blin et al. (2019) + Williams et al. (2017) Nature Methods 14(8):775-781
+    Original Authors: Blin et al., Lowell lab (University of Edinburgh)
+    Citation: Blin et al. (2019), PLoS Biology, doi:10.1371/journal.pbio.3000388
     """
     with asection("Loading DAPI microscopy data"):
         aprint(f"📦 Source: {ZARR_URL}")
         aprint("🔬 Channel: DAPI (nuclear stain)")
-        aprint("📚 Dataset: IDR idr0062, Image 6001240 (Liberali lab, FMI)")
+        aprint("📚 Dataset: IDR idr0062, Image 6001240 (Blin et al. 2019, Lowell lab)")
         aprint(f"📐 Target size: {TARGET_SIZE}³ voxels")
 
         try:
@@ -371,10 +391,10 @@ def fit_dapi_gsplats(volume, acquisition=None):
         aprint(f"  Cholesky: {result.cholesky_factors.shape}")
 
         # Cache result in gsplats.zarr.zip format
-        CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        aprint(f"Caching fit to: {CACHE_FILE.name}")
+        LOCAL_FIT.parent.mkdir(parents=True, exist_ok=True)
+        aprint(f"Caching fit to: {LOCAL_FIT}")
         result.save(
-            CACHE_FILE,
+            LOCAL_FIT,
             encoding_mode=EncodingMode.MEMORY,
             include_fitting_info=True,
             compress="zip",
@@ -408,7 +428,8 @@ def create_luxar_scene(gsplats_data, output_path: Path | None = None):
             # LUT's hues slightly, accepted for its highlight rolloff.
             scene = compiler.create_scene(
                 dimensions=Dimensions.default_3d(),
-                viewer_config=ViewerConfig(tone_mapping="ACES"),
+                viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="ACES"),
+                citation=DEMO_META["citation"],
             )
 
             # Add scene metadata
@@ -422,9 +443,9 @@ from confocal microscopy imaging.
 
 Data Source:
   - Image Data Resource (IDR) study idr0062, Image 6001240
-  - High-resolution 3D microscopy of mouse intestinal organoid
-  - Original research: Prisca Liberali lab, FMI
-  - Citation: Blin et al. (2019) + Williams et al. (2017) Nat Methods 14(8):775-781
+  - High-resolution 3D confocal microscopy of a mouse blastocyst (E3.5)
+  - Original research: Blin et al. (2019), PLoS Biology (Lowell lab, Edinburgh),
+    doi:10.1371/journal.pbio.3000388, CC BY 4.0
 
 Resolution: 128×128×128 voxels (downscaled from original)
 Compression: ~20-25x (3D Gaussians vs raw voxels)
@@ -449,6 +470,11 @@ Controls:
                 blending_mode="volumetric",
                 colormap="plasma",
                 layer=True,
+            )
+            add_demo_caption(
+                scene,
+                "Light-sheet microscopy • DAPI-labelled nuclei",
+                DEMO_META.get("citation"),
             )
 
         aprint(f"Scene saved: {output_path}")
@@ -585,6 +611,33 @@ def serve_scene(scene_path):
 # =============================================================================
 
 
+def resolve_gsplats() -> list[GSplatData] | None:
+    """The manifest fetch, then this machine's own earlier refit; None ⇒ build it.
+
+    Only ``DatasetUnavailable`` falls through to the local door — the narrow
+    "these bytes are not obtainable from anywhere yet" case. An unknown file
+    name, a missing packaged manifest or an in-repo copy failing its sha256 are
+    faults, and must not be disguised as a routine multi-minute refit.
+    """
+    try:
+        precomputed = load_dataset_gsplats(
+            DEMO_NAME,
+            [GSPLATS_FILE],
+            recompute=RECOMPUTE,
+        )
+    except DatasetUnavailable as exc:
+        aprint(f"Manifest fetch unavailable ({exc}).")
+        precomputed = None
+    if precomputed is None and not RECOMPUTE:
+        # A fit this machine built earlier, in its own namespace — checked
+        # BEFORE refitting, which is what makes the refit one-time. Read through
+        # LOCAL_FIT, the same constant the fit writes through: a door that
+        # re-derives the path from the cache root instead is a second source of
+        # truth for it (#1618 review, A).
+        precomputed = load_local_fit_gsplats_at([LOCAL_FIT], label=DEMO_NAME)
+    return precomputed
+
+
 def main():
     """Main demo execution."""
     aprint("=" * 70)
@@ -611,16 +664,13 @@ def main():
     volume = None
     gsplats_data_original = None
 
-    precomputed = load_dataset_gsplats(
-        "gsplats_dapi",
-        ["dapi.gsplats.zarr.zip"],
-        recompute=RECOMPUTE,
-    )
+    precomputed = resolve_gsplats()
 
     if precomputed is not None:
         gsplats_data_original = precomputed[0]
     else:
-        # --recompute path: download raw data, fit from scratch
+        # --recompute path (or no data to be had): download raw data, fit from
+        # scratch, and cache the fit under LOCAL_FIT.
         warn_if_no_cuda_gpu()
         volume, acquisition = load_dapi_data()
         gsplats_data_original = fit_dapi_gsplats(volume, acquisition)

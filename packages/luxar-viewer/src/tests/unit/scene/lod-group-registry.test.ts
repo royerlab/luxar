@@ -422,6 +422,14 @@ function makeChild(coverageFraction: number): LODGroupChild {
   };
 }
 
+function withLodBounds(
+  child: LODGroupChild,
+  lodBounds: { min: readonly number[]; max: readonly number[] }
+): LODGroupChild {
+  child.lodBounds = lodBounds;
+  return child;
+}
+
 function makeEntry(
   children: LODGroupChild[],
   activeIndex: number = 0,
@@ -760,6 +768,93 @@ describe('LODGroupRegistry — auto evaluation', () => {
     expect(children[3].object.visible).toBe(true);
   });
 
+  it("selector='screen-area': sizes the node from lod_bounds instead of an outlier-dominated raw AABB", () => {
+    const rawBounds = { min: [-4, -4, -0.5], max: [4, 4, 0.5] };
+    const robustBounds = { min: [-0.4, -0.4, -0.5], max: [0.4, 0.4, 0.5] };
+    const rawReg = makeRegistry();
+    const rawChildren = [0, 0.25, 0.5].map((threshold) => ({
+      ...makeChild(threshold),
+      positionBounds: rawBounds,
+    }));
+    const rawEntry = makeEntry(rawChildren, 0, '/raw');
+    rawEntry.selector = 'screen-area';
+    rawReg.register(rawEntry);
+    rawReg.evaluatePerFrame();
+    expect(rawChildren.map((child) => child.object.visible)).toEqual([false, false, true]);
+
+    const reg = makeRegistry();
+    const children = [0, 0.25, 0.5].map((threshold) =>
+      withLodBounds({ ...makeChild(threshold), positionBounds: rawBounds }, robustBounds)
+    );
+    const entry = makeEntry(children, 0, '/g');
+    entry.selector = 'screen-area';
+    reg.register(entry);
+
+    reg.evaluatePerFrame();
+
+    expect(children[0].object.visible, 'robust box occupies only 16% of the viewport').toBe(true);
+    expect(children[2].object.visible, 'raw AABB would clip to full-screen and pick finest').toBe(
+      false
+    );
+  });
+
+  it("selector='screen-area': contained lod_bounds cannot select finer than position_bounds", () => {
+    const rawBounds = { min: [-0.5, -0.0021, -0.5], max: [0.5, 0.0021, 0.5] };
+    const robustBounds = { min: [-0.4, -0.0004, -0.5], max: [0.4, 0.0004, 0.5] };
+    const reg = makeRegistry();
+    const children = [0, 0.1].map((threshold) =>
+      withLodBounds({ ...makeChild(threshold), positionBounds: rawBounds }, robustBounds)
+    );
+    const entry = makeEntry(children, 0, '/g');
+    entry.selector = 'screen-area';
+    reg.register(entry);
+
+    reg.evaluatePerFrame();
+
+    expect(children[0].object.visible, 'raw metric is 0.00105, below the fine threshold').toBe(
+      true
+    );
+    expect(
+      children[1].object.visible,
+      'the thin-box ramp makes the robust metric 0.24 unless it is clamped to raw'
+    ).toBe(false);
+  });
+
+  it("selector='coverage': sizes the node from lod_bounds instead of an outlier-dominated raw AABB", () => {
+    const rawBounds = { min: [-4, -4, -0.5], max: [4, 4, 0.5] };
+    const robustBounds = { min: [-0.05, -0.05, -0.5], max: [0.05, 0.05, 0.5] };
+    const rawReg = makeRegistry();
+    const rawChildren = [0, 0.5].map((threshold) => ({
+      ...makeChild(threshold),
+      positionBounds: rawBounds,
+    }));
+    rawReg.register(makeEntry(rawChildren, 0, '/raw'));
+    rawReg.evaluatePerFrame();
+    expect(rawChildren.map((child) => child.object.visible)).toEqual([false, true]);
+
+    const reg = makeRegistry();
+    const children = [0, 0.5].map((threshold) =>
+      withLodBounds({ ...makeChild(threshold), positionBounds: rawBounds }, robustBounds)
+    );
+    reg.register(makeEntry(children, 0, '/g'));
+
+    reg.evaluatePerFrame();
+
+    expect(children[0].object.visible, 'robust diagonal stays below the fine threshold').toBe(true);
+    expect(children[1].object.visible, 'raw AABB would saturate the legacy metric').toBe(false);
+  });
+
+  it('does not fold a second world box when no child publishes lod_bounds', () => {
+    const reg = makeRegistry();
+    const entry = makeEntry([makeChild(0), makeChild(0.5)], 0, '/g');
+    const updateWorldMatrix = vi.spyOn(entry.groupObject, 'updateWorldMatrix');
+    reg.register(entry);
+
+    reg.evaluatePerFrame();
+
+    expect(updateWorldMatrix).toHaveBeenCalledTimes(1);
+  });
+
   it("selector='screen-area' is viewport-size independent (same pick on any monitor)", () => {
     // The metric is built from NDC fractions, so pixel dimensions must not
     // matter. Same 37%-occupancy box, tiny and 4K viewports → same level.
@@ -895,13 +990,13 @@ describe('LODGroupRegistry — auto evaluation', () => {
 // not only once the object overfills the screen (#1361), and that must hold at
 // EVERY viewport aspect ratio, not just near-square ones (#1410). These tests
 // drive the real fit math end to end — `calculateCameraDistance` (fitRatio
-// 0.75, +20% margin) at the default fov 47, then the real
+// 0.75, exact near-face depth term) at the default fov 47, then the real
 // `projectBoxDiagonalPx` — instead of hard-coding a metric, so they pin the
 // anchor against the framing code that actually produces it.
 //
 // Every "finest at the opening framing" assertion below FAILS at FILL_FACTOR
 // 1.0: the raw `diagonalPx / fittedAxisPx` ratio of a default framing is only
-// 0.626–1.214 across `SHAPES` × `VIEWPORTS` (asserted explicitly, which is also
+// 0.750–1.061 across `SHAPES` × `VIEWPORTS` (asserted explicitly, which is also
 // the guard that the projection is NOT saturating to +Infinity), so the
 // WORST-case shape's finest threshold of 1.0 is not reached without the ÷0.5.
 // It would ALSO fail under the pre-#1410 diagonal normalisation at aspect
@@ -992,15 +1087,14 @@ describe('LODGroupRegistry — opening-framing anchor (FILL_FACTOR)', () => {
     return diagonalPx / Math.min(viewport.width, viewport.height);
   }
 
-  // Shapes that bracket what real scenes look like: an isotropic cloud, a flat
-  // pancake, and the worst realistic case — a cloud elongated IN the view plane
-  // (the framing distance is sized from its long axis, so its projected AABB
-  // diagonal is the smallest fraction of the viewport of any common shape).
+  // Shapes that bracket what real scenes look like, including the #1543
+  // regression: a cloud elongated along the view axis.
   const SHAPES: ReadonlyArray<{ name: string; bounds: { min: number[]; max: number[] } }> = [
     { name: 'cube 100×100×100', bounds: centredBounds(100, 100, 100) },
     { name: 'pancake 100×100×1', bounds: centredBounds(100, 100, 1) },
     { name: 'in-plane elongated 100×1×1', bounds: centredBounds(100, 1, 1) },
     { name: 'umap-ish 100×80×60', bounds: centredBounds(100, 80, 60) },
+    { name: 'view-axis elongated 1×1×100', bounds: centredBounds(1, 1, 100) },
   ];
 
   // The full aspect matrix from issue #1410: 1:1, 16:9, 9:16, 21:9 and 32:9.
@@ -1017,12 +1111,8 @@ describe('LODGroupRegistry — opening-framing anchor (FILL_FACTOR)', () => {
     { name: 'portrait 9:16 900×1600', width: 900, height: 1600 },
     { name: 'ultrawide 21:9 2560×1080', width: 2560, height: 1080 },
     { name: 'super-ultrawide 32:9 3840×1080', width: 3840, height: 1080 },
-    // Extreme-portrait rows (aspect < 1). The aspect < 1 branch is only
-    // APPROXIMATELY invariant across aspect (see the invariance test below),
-    // and the deviation grows with how far the aspect is from 1 — these two
-    // are deliberately more extreme than any real browser window to prove the
-    // asserted bound isn't just "wide enough to clear whatever the matrix
-    // happens to contain".
+    // Extreme-portrait rows prove the exact fitted-axis invariant well beyond
+    // ordinary browser shapes.
     { name: 'extreme-portrait 9:32 900×3200', width: 900, height: 3200 },
     { name: 'extreme-portrait 1:4 800×3200', width: 800, height: 3200 },
   ];
@@ -1054,10 +1144,10 @@ describe('LODGroupRegistry — opening-framing anchor (FILL_FACTOR)', () => {
     // diagonal-normalised ratio (always < 1 by construction, since a sub-viewport
     // box can never project past the viewport's own diagonal), the fitted-axis
     // ratio can itself exceed 1 for a shape whose cross-section isn't much
-    // smaller than the fitted axis — measured range across all 4 shapes and all
+    // smaller than the fitted axis — measured range across all 5 shapes and all
     // 7 aspects in `VIEWPORTS` (including the two extreme-portrait rows):
-    // 0.625 (in-plane rod at 1:4, worst case) … 1.214 (cube, best case,
-    // unchanged by the extra rows). The finest-level anchor (FILL_FACTOR)
+    // 0.750 (in-plane rod, worst case) … 1.061 (cube, pancake, and view-axis
+    // rod, best case). The finest-level anchor (FILL_FACTOR)
     // still does real work for the worst case — see the next test.
     for (const shape of SHAPES) {
       for (const viewport of VIEWPORTS) {
@@ -1065,8 +1155,8 @@ describe('LODGroupRegistry — opening-framing anchor (FILL_FACTOR)', () => {
         const ratio = rawCoverageRatio(shape.bounds, camera, viewport);
         const label = `${shape.name} on ${viewport.name}`;
         expect(Number.isFinite(ratio), `finite for ${label}`).toBe(true);
-        expect(ratio, `at least the measured worst case for ${label}`).toBeGreaterThan(0.6);
-        expect(ratio, `at most the measured best case for ${label}`).toBeLessThan(1.25);
+        expect(ratio, `at least the measured worst case for ${label}`).toBeGreaterThanOrEqual(0.75);
+        expect(ratio, `at most the measured best case for ${label}`).toBeLessThan(1.07);
       }
     }
   });
@@ -1074,10 +1164,10 @@ describe('LODGroupRegistry — opening-framing anchor (FILL_FACTOR)', () => {
   it('FILL_FACTOR is exactly what turns those sub-viewport ratios into a finest-level metric', () => {
     // Reads the REAL exported constant rather than hard-coding 0.5, so this
     // fails if the anchor moves: at 1.0, the measured opening ratios (see above)
-    // would leave the WORST case (the in-plane rod, ratio ~0.626) short of the
+    // would leave the WORST case (the in-plane rod, ratio 0.750) short of the
     // finest threshold of 1.0 — reproducing #1361's blur. FILL_FACTOR = 0.5 is
-    // what turns that same worst-case ratio into a metric of ~1.25, clearing the
-    // rung with ~25% headroom.
+    // what turns that same worst-case ratio into a metric of 1.50, clearing the
+    // rung with 50% headroom.
     const finestThreshold = SUBSTITUTIVE_LADDER[SUBSTITUTIVE_LADDER.length - 1];
     let worstCaseRatio = Infinity;
     for (const shape of SHAPES) {
@@ -1111,7 +1201,7 @@ describe('LODGroupRegistry — opening-framing anchor (FILL_FACTOR)', () => {
     expect(SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR).toBeCloseTo(4.0, 10);
   });
 
-  it('the raw fitted-axis ratio is (near-)invariant across viewport aspect ratio — the #1410 root-cause pin', () => {
+  it('the raw fitted-axis ratio is invariant across viewport aspect ratio', () => {
     // THE root-cause fix. Under the OLD (viewport-diagonal) normalisation a
     // shape's raw ratio fell off sharply with aspect
     // (`raw(aspect) = raw(1)·√2 / hypot(aspect, 1)` for aspect >= 1), so a shape
@@ -1119,64 +1209,35 @@ describe('LODGroupRegistry — opening-framing anchor (FILL_FACTOR)', () => {
     // (#1361's blur, returning at wide aspects). The fitted-axis ratio does not
     // have that problem:
     //
-    // EXACT for aspect >= 1 (proven, not just measured — see the `FILL_FACTOR`
-    // doc): `calculateCameraDistance` has NO aspect dependence in this regime,
-    // so the box's camera-relative geometry — and therefore the projected pixel
-    // diagonal — is IDENTICAL for every aspect >= 1. Checked here across 1:1,
-    // 16:9, 21:9 and 32:9 to 9 decimal digits, for every shape.
-    //
-    // APPROXIMATE for aspect < 1: `calculateCameraDistance` scales distance as
-    // 1/aspect in this regime, so the ratio is exactly invariant to viewport
-    // SIZE at a fixed aspect but only approximately invariant ACROSS aspect <
-    // 1 values — the camera distance itself changes there, and interacts with
-    // the box's own depth (extent along the view axis) in a way that does not
-    // cancel as cleanly as the aspect >= 1 case, and the deviation GROWS the
-    // further the aspect gets from 1. Measured deviation from the (exact)
-    // aspect >= 1 value, across the matrix's aspect < 1 rows (9:16, then the
-    // two deliberately-extreme 9:32 / 1:4 rows): the two THIN shapes (in-plane
-    // rod, flat pancake) stay off by ~0.1-0.2% throughout; "umap-ish"
-    // 100×80×60 grows from ~7.9% (9:16) to ~12.3% (9:32) to ~12.7% (1:4); a
-    // cube (depth == width, the worst case here) grows from ~14.0% (9:16) to
-    // ~21.1% (9:32) to ~21.9% (1:4) — the largest measured deviation anywhere
-    // in this matrix. The bound below (25%) is set from that measured worst
-    // case (21.9%) with a ~3-point margin, not from the old (and, per issue
-    // #1410 review finding 4, dishonest) 20% bound that only "passed" because
-    // the matrix stopped at 9:16 — it would fail at either extreme-portrait
-    // row above. All of this remains dramatically smaller than the OLD
-    // scheme's multi-fold drift (e.g. a cube's OLD metric fell from 3.43 at
-    // 1:1 to 1.31 at 32:9 — a ~62% drop), and the #1410 fix's ~25% headroom
-    // (see the `FILL_FACTOR` doc and the worst-case-ratio test above) holds at
-    // every aspect measured here, extreme-portrait included — see the
-    // "selects the FINEST level" matrix above, which already covers these two
-    // rows for every shape.
-    const aspectGe1 = VIEWPORTS.filter((v) => v.width >= v.height);
-    const aspectLt1 = VIEWPORTS.filter((v) => v.width < v.height);
-    expect(aspectGe1.length).toBeGreaterThanOrEqual(2); // guard: the matrix above must stay non-trivial
-    expect(aspectLt1.length).toBeGreaterThanOrEqual(3); // 9:16 plus the two extreme-portrait rows
+    // The exact near-face fit added for #1543 makes the portrait branch exact
+    // too: the half-depth term no longer changes relative to the projected
+    // screen-plane extent as aspect changes.
+    expect(VIEWPORTS.length).toBeGreaterThanOrEqual(7);
+    expect(
+      VIEWPORTS.filter((viewport) => viewport.width < viewport.height).length
+    ).toBeGreaterThanOrEqual(3);
     for (const shape of SHAPES) {
-      const ratios = aspectGe1.map((viewport) =>
+      const ratios = VIEWPORTS.map((viewport) =>
         rawCoverageRatio(shape.bounds, framedCamera(shape.bounds, viewport), viewport)
       );
       const reference = ratios[0];
       for (let i = 1; i < ratios.length; i++) {
         expect(
           ratios[i],
-          `${shape.name}: ${aspectGe1[i].name} vs ${aspectGe1[0].name} (both aspect >= 1)`
+          `${shape.name}: ${VIEWPORTS[i].name} vs ${VIEWPORTS[0].name}`
         ).toBeCloseTo(reference, 9);
       }
-      for (const viewport of aspectLt1) {
-        const ratio = rawCoverageRatio(
-          shape.bounds,
-          framedCamera(shape.bounds, viewport),
-          viewport
-        );
-        const relativeDeviation = Math.abs(ratio - reference) / reference;
-        expect(
-          relativeDeviation,
-          `${shape.name} on ${viewport.name} within 25% of the aspect >= 1 value`
-        ).toBeLessThan(0.25);
-      }
     }
+  });
+
+  it('frames a view-axis rod on the finest rung instead of the coarsest', () => {
+    const viewport = { width: 1600, height: 900 };
+    const bounds = centredBounds(1, 1, 100);
+    const camera = framedCamera(bounds, viewport);
+    const metric = rawCoverageRatio(bounds, camera, viewport) / FILL_FACTOR;
+
+    expect(metric).toBeCloseTo(2.1213, 4);
+    expect(metric).toBeGreaterThan(SUBSTITUTIVE_LADDER.at(-1)!);
   });
 
   it('pins the resize-without-a-re-fit asymmetry documented on FILL_FACTOR', () => {
@@ -1262,9 +1323,9 @@ describe('LODGroupRegistry — opening-framing anchor (FILL_FACTOR)', () => {
 
   it('a substantially zoomed-out view falls back to a coarser level', () => {
     // Cube at 4× the opening distance. Projected diagonal shrinks roughly as
-    // 1/distance, so the raw ratio drops 1.214 → ≈0.237 and the coverage metric
-    // 2.43 → ≈0.474: past level 3's downgrade band (hysteresis edge at
-    // 1.0 − 0.1·(1.0 − 0.354) = 0.935, so ≈0.474 is comfortably clear) and into
+    // 1/distance, so the raw ratio drops 1.061 → ≈0.213 and the coverage metric
+    // 2.12 → ≈0.426: past level 3's downgrade band (hysteresis edge at
+    // 1.0 − 0.1·(1.0 − 0.354) = 0.935, so ≈0.426 is comfortably clear) and into
     // level 2's range [0.354, 1.0).
     const viewport = { width: 1600, height: 900 };
     const bounds = centredBounds(100, 100, 100);
@@ -1281,7 +1342,7 @@ describe('LODGroupRegistry — opening-framing anchor (FILL_FACTOR)', () => {
   });
 
   it('a far-away view falls all the way back to the coarsest level', () => {
-    // 40× the opening distance → metric ≈ 0.0445, below every threshold but 0.
+    // 40× the opening distance → metric ≈ 0.0402, below every threshold but 0.
     const viewport = { width: 1600, height: 900 };
     const bounds = centredBounds(100, 100, 100);
     const camera = framedCamera(bounds, viewport, 40);
@@ -1853,6 +1914,25 @@ describe('LODGroupRegistry — frustum-aware selection & eviction', () => {
     expect(children[1].object.visible).toBe(true);
     expect(children[0].object.visible).toBe(false);
     expect(entry.offScreen).toBe(false); // on-screen → no "(off-screen)" hint
+  });
+
+  it('auto: keeps raw position_bounds for the frustum gate when lod_bounds are off-screen', () => {
+    const reg = registryWith(cameraLookingDownNegZ());
+    const positionBounds = { min: [-1, -1, -1], max: [100, 1, 1] };
+    const lodBounds = { min: [99, -1, -1], max: [100, 1, 1] };
+    const children = [0, 0.5].map((threshold) =>
+      withLodBounds({ ...makeChild(threshold), positionBounds }, lodBounds)
+    );
+    const entry = placeAt(makeEntry(children, 1, '/g'), 0, 0, -5);
+    entry.selector = 'screen-area';
+    reg.register(entry);
+
+    reg.evaluatePerFrame();
+
+    expect(entry.offScreen).toBe(false);
+    expect(children[0].object.visible, 'off-screen robust core still drives a coarse metric').toBe(
+      true
+    );
   });
 
   it('eviction: demotes an off-screen group before an on-screen colder level', () => {
@@ -3251,6 +3331,21 @@ describe('LODGroupRegistry — force-finest capture override (?lod-finest / Luxa
     return child;
   }
 
+  it('does not fold lod_bounds when force-finest bypasses the selector metric', () => {
+    const reg = makeForceFinestRegistry(true);
+    const children = [0, 0.5].map((threshold) =>
+      withLodBounds(makeChild(threshold), { min: [0, 0, 0], max: [1, 1, 1] })
+    );
+    const entry = makeEntry(children, 0, '/g');
+    const updateWorldMatrix = vi.spyOn(entry.groupObject, 'updateWorldMatrix');
+    reg.register(entry);
+
+    reg.evaluatePerFrame();
+
+    expect(updateWorldMatrix).toHaveBeenCalledTimes(1);
+    expect(children[1].object.visible).toBe(true);
+  });
+
   function settle(reg: LODGroupRegistry): void {
     for (let i = 0; i < 5; i++) reg.evaluatePerFrame();
   }
@@ -3324,5 +3419,354 @@ describe('LODGroupRegistry — blending-mode-switch stamp-clear recovery (depth-
     reg.evaluatePerFrame();
     expect(fine.object.visible).toBe(true);
     expect(coarse.object.visible).toBe(false);
+  });
+});
+
+describe('LODGroupRegistry — capture quiescence (isCaptureQuiescent)', () => {
+  /** Bounds that fall entirely outside the identity camera's NDC frustum. */
+  const FAR_BOUNDS = { min: [100, 100, 100], max: [101, 101, 101] };
+
+  it('reports quiescent for an empty registry (nothing to wait for)', () => {
+    expect(makeRegistry().isCaptureQuiescent()).toBe(true);
+  });
+
+  it('reports quiescent for a settled single-level group', () => {
+    const reg = makeRegistry();
+    const children = [makeChild(0)];
+    reg.register(makeEntry(children, 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+
+  it('reports quiescent for a multi-level group whose every level is already resident', () => {
+    const reg = makeRegistry();
+    const children = [makeChild(0), makeChild(0.5), makeChild(1.0)];
+    reg.register(makeEntry(children, 0, '/g'));
+    // Several passes so the selector reaches its steady state (a non-lazy
+    // target swaps on the very frame it is desired).
+    for (let f = 0; f < 3; f++) reg.evaluatePerFrame();
+    const entry = reg.get('/g')!;
+    expect(entry.desiredChildIndex).toBe(entry.activeChildIndex);
+    expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+
+  // ── The regression that motivates the whole predicate ──
+  it('is NOT quiescent in the one-frame window after a lazy level loads but before the swap', () => {
+    const reg = makeRegistry();
+    const children = [makeChild(0), makeLazyChild(0.5, () => {})];
+    reg.register(makeEntry(children, 0, '/g'));
+    // Lock so the test does not depend on projection math; the lock branch
+    // writes ``desiredChildIndex`` exactly like the auto branches do.
+    reg.setSelectorMode('/g', { lockLevel: 1 });
+
+    reg.evaluatePerFrame(); // desired 1, not ready → kicks the load, no swap
+    const entry = reg.get('/g')!;
+    expect(entry.desiredChildIndex).toBe(1); // the selector WANTS the fine level
+    expect(entry.activeChildIndex).toBe(0); // …but the aspiration only moves onto a READY level
+    expect(reg.isCaptureQuiescent()).toBe(false); // in flight
+
+    // The thunk lands: ready flips true and loading clears. The registry has
+    // NOT swapped — that happens on the next selector pass.
+    children[1].ready = true;
+    children[1].loading = false;
+
+    // Nothing is `loading`, level 0 is ready, and displayed === active === 0,
+    // so a predicate reading only ready/loading/displayed would call this
+    // "settled" and the capture would film the coarse level one frame before
+    // the swap. `desiredChildIndex` is what closes that hole.
+    expect(reg.isCaptureQuiescent()).toBe(false);
+
+    reg.evaluatePerFrame(); // the swap
+    expect(reg.get('/g')!.activeChildIndex).toBe(1);
+    expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+
+  it('is NOT quiescent while any child of an in-frame group is loading', () => {
+    const reg = makeRegistry();
+    const children = [makeChild(0), makeLazyChild(0.5, () => {})];
+    reg.register(makeEntry(children, 0, '/g'));
+    reg.setSelectorMode('/g', { lockLevel: 0 }); // pin the coarse level: nothing to load
+    reg.evaluatePerFrame();
+    expect(reg.isCaptureQuiescent()).toBe(true); // coarse selected, nothing in flight
+
+    // A load kicked for a level the selector is not (yet) aspiring to still
+    // means the frame can change under the capture.
+    children[1].loading = true;
+    expect(reg.isCaptureQuiescent()).toBe(false);
+  });
+
+  it('is NOT quiescent when a fallback level is displayed instead of the aspiration', () => {
+    const reg = makeRegistry();
+    const children = [makeChild(0), makeChild(0.5)];
+    reg.register(makeEntry(children, 1, '/g'));
+    reg.setSelectorMode('/g', { lockLevel: 1 });
+    reg.evaluatePerFrame();
+    expect(reg.isCaptureQuiescent()).toBe(true);
+
+    // Isolate the clause: everything else about the entry is settled, only the
+    // DISPLAYED level differs from the aspiration — what a slice fallback or a
+    // never-downgrade hold leaves on screen.
+    reg.get('/g')!.displayedChildIndex = 0;
+    expect(reg.isCaptureQuiescent()).toBe(false);
+  });
+
+  it('is NOT quiescent while a re-slice shows the coarse fallback for a stale aspiration', () => {
+    // The same clause reached through a real evaluation pass: bump the view
+    // version so the fine level's committed geometry is stale and the
+    // slice-aware fallback displays the fresh coarse level instead.
+    let version = 1;
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => version);
+    const coarse = makeGsplatChild(0, 1);
+    const fine = makeGsplatChild(0.5, 1);
+    reg.register(makeEntry([coarse, fine], 1, '/g'));
+    reg.setSelectorMode('/g', { lockLevel: 1 });
+    reg.evaluatePerFrame();
+    expect(reg.isCaptureQuiescent()).toBe(true);
+
+    version = 2;
+    (coarse.object.userData as { loadedViewVersion?: number }).loadedViewVersion = 2;
+    reg.evaluatePerFrame();
+    const entry = reg.get('/g')!;
+    expect(entry.activeChildIndex).toBe(1);
+    expect(entry.displayedChildIndex).toBe(0);
+    expect(reg.isCaptureQuiescent()).toBe(false);
+  });
+
+  it('is NOT quiescent while the displayed level still has additive LODs to stream', () => {
+    const reg = makeRegistry();
+    const children = [makeChild(0)];
+    children[0].hasMoreLODs = () => true;
+    reg.register(makeEntry(children, 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(reg.isCaptureQuiescent()).toBe(false); // only a prefix has committed
+
+    children[0].hasMoreLODs = () => false; // ladder completes
+    expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+
+  it('is NOT quiescent while an EAGER leaf aspiration is still climbing its own ladder', () => {
+    // `load-lod-group-node` attaches `hasMoreLODs` only on the DEFERRED path,
+    // so the eagerly-loaded default level never has one — its ladder is
+    // advanced by the sweep-driven background refinement loop instead. Reading
+    // the thunk alone therefore declared a still-streaming coarse level
+    // complete, and a Capture pressed before the initial load finished
+    // exported its first frames at chunk-1. The commit stamp is the signal
+    // that exists on this shape.
+    const reg = makeRegistry();
+    const leaf = makeChild(0);
+    leaf.object.userData = {
+      nodeType: 'gsplats',
+      visibleSplatCount: 1000,
+      committedLadderComplete: false,
+    };
+    expect(leaf.hasMoreLODs).toBeUndefined();
+    reg.register(makeEntry([leaf], 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(reg.isCaptureQuiescent()).toBe(false);
+
+    leaf.object.userData.committedLadderComplete = true; // final chunk commits
+    expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+
+  it('does not block on a leaf that carries no ladder stamp at all', () => {
+    // A non-progressive loader stamps nothing (`stamp-view-version` only writes
+    // `committedLadderComplete` when it has a loader to ask), and an unstamped
+    // leaf must read as complete rather than wedging the drain.
+    const reg = makeRegistry();
+    const leaf = makeChild(0);
+    leaf.object.userData = { nodeType: 'points', visiblePointCount: 500 };
+    reg.register(makeEntry([leaf], 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+
+  /**
+   * A deferred-GROUP LOD child, as ``loadLodGroupNode``'s ``canDeferGroup``
+   * path builds it: a placeholder ``THREE.Group`` holding a loaded subtree, and
+   * — decisively — NO ``hasMoreLODs`` thunk (that call site passes only five
+   * arguments). Its one stamped part leaf carries the ladder-completeness stamp
+   * the fold reads.
+   */
+  function makeDeferredGroupChild(
+    coverageFraction: number,
+    ladderComplete: boolean
+  ): LODGroupChild {
+    const group = new THREE.Group();
+    const partLeaf = new THREE.Group();
+    partLeaf.userData = {
+      nodeType: 'gsplats',
+      visibleSplatCount: 1000,
+      committedLadderComplete: ladderComplete,
+    };
+    group.add(partLeaf);
+    return {
+      object: group,
+      coverageFraction,
+      positionBounds: { min: [0, 0, 0], max: [10, 10, 10] },
+      ready: true,
+    };
+  }
+
+  it('is NOT quiescent while a deferred GROUP aspiration sits at chunk-1 of its parts ladders', () => {
+    // The `overview` shape: the fine `kind=partition` branch is a GROUP child
+    // with no `hasMoreLODs` thunk, so the leaf-only completeness clause is a
+    // no-op for it — yet its part leaves are at chunk-1 by construction the
+    // moment the branch loads (the deferred-group call site kicks refinement
+    // precisely because of that). Ready, fresh, nothing loading: without the
+    // subtree fold the predicate calls this settled and the frame is exported
+    // at the first additive chunk, refining in over the next seconds.
+    const reg = makeRegistry();
+    const child = makeDeferredGroupChild(0, false);
+    reg.register(makeEntry([child], 0, '/ov'));
+    reg.evaluatePerFrame();
+    // Documents the shape this case is about — a deferred GROUP child carries
+    // no ladder thunk — but only for the literal built above. It pins nothing
+    // about production: the deferred-group call site in the node factory is
+    // free to start passing a `hasMoreLODs`, and this assertion would stay
+    // green while the case below stopped exercising the subtree fold.
+    expect(child.hasMoreLODs).toBeUndefined();
+    expect(reg.isCaptureQuiescent()).toBe(false);
+
+    // Control: the same subtree with its ladders complete IS quiescent, so the
+    // false above is the completeness fold and not some unrelated blocker.
+    (
+      child.object.children[0].userData as { committedLadderComplete?: boolean }
+    ).committedLadderComplete = true;
+    expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+
+  it('treats an entry with no child at the aspiration index as nothing to wait for', () => {
+    // `children` is legitimately EMPTY when every level failed its
+    // `getObjectByName` attach in `load-lod-group-node` (it warns and carries
+    // on). Nothing at a missing index can ever become ready, so blocking would
+    // make the predicate permanently false: each frame burns the whole drain
+    // budget (2 s / 120 rAFs) until three in a row latch draining off — ~6 s
+    // spent, and the run then reports frames filmed at a coarse LOD that no
+    // level was ever going to improve.
+    const reg = makeRegistry();
+    reg.register(makeEntry([], 0, '/broken'));
+    expect(reg.isCaptureQuiescent()).toBe(true);
+
+    // The same trap through an out-of-range aspiration on a populated entry.
+    const reg2 = makeRegistry();
+    const children = [makeChild(0)];
+    const entry = makeEntry(children, 0, '/g');
+    reg2.register(entry);
+    reg2.evaluatePerFrame();
+    expect(reg2.isCaptureQuiescent()).toBe(true);
+    entry.activeChildIndex = 7;
+    entry.displayedChildIndex = 7;
+    expect(reg2.isCaptureQuiescent()).toBe(true);
+
+    // …and through an out-of-range DESIRED index, which is the same shape one
+    // clause earlier: no child there either, so nothing to block on.
+    entry.activeChildIndex = 0;
+    entry.displayedChildIndex = 0;
+    entry.desiredChildIndex = 7;
+    expect(reg2.isCaptureQuiescent()).toBe(true);
+  });
+
+  it('excludes an OFF-SCREEN group that is deliberately held at its coarse level', () => {
+    const reg = makeRegistry();
+    const coarse = { ...makeChild(0), positionBounds: FAR_BOUNDS };
+    const fine = { ...makeLazyChild(0.5, () => {}), positionBounds: FAR_BOUNDS };
+    fine.loading = true; // a load kicked before the tile left the frustum
+    const entry = makeEntry([coarse, fine], 0, '/g');
+    reg.register(entry);
+
+    reg.evaluatePerFrame();
+    expect(entry.offScreen).toBe(true);
+    // Skipped entirely: an off-screen group draws nothing this frame and is
+    // held coarse on purpose, so waiting for its fine level only times out.
+    expect(reg.isCaptureQuiescent()).toBe(true);
+
+    // Control — the exclusion is what makes it quiescent, not the entry being
+    // vacuously settled: the same entry on screen would block on the load.
+    entry.offScreen = false;
+    expect(reg.isCaptureQuiescent()).toBe(false);
+  });
+
+  it('excludes a group hidden by an ancestor, whose desired level can never load', () => {
+    // The permanently-false trap. `kickDeferredLoadIfVisible` refuses to START
+    // a deferred load while the group is effectively hidden, but the
+    // selector's frustum test is pure geometry and still records a fine
+    // `desiredChildIndex`. So `desired !== active` with nothing loading,
+    // nothing failing and nothing ever becoming ready: without the
+    // visibility skip the predicate could never be satisfied again, and every
+    // capture frame would burn its whole drain budget before giving up.
+    const reg = makeRegistry();
+    const children = [makeChild(0), makeLazyChild(0.5, () => {})];
+    const entry = makeEntry(children, 0, '/g');
+    // The hidden flag sits on an ANCESTOR (a layer toggled off in the panel),
+    // not on the lod_group itself — which is why the check has to be the
+    // ancestor-aware one.
+    const layer = new THREE.Group();
+    layer.visible = false;
+    layer.add(entry.groupObject);
+    reg.register(entry);
+    reg.setSelectorMode('/g', { lockLevel: 1 });
+
+    reg.evaluatePerFrame();
+    expect(entry.desiredChildIndex).toBe(1); // the selector wants the fine level
+    expect(entry.activeChildIndex).toBe(0); // …which never loaded
+    expect(children[1].loading).toBeFalsy(); // the load gate refused to start it
+    expect(children[1].failed).toBeFalsy(); // …so it cannot fail out either
+    expect(reg.isCaptureQuiescent()).toBe(true);
+
+    // Control — the exclusion is what makes it quiescent, not the entry being
+    // vacuously settled: the same entry visible blocks on the pending level.
+    layer.visible = true;
+    expect(reg.isCaptureQuiescent()).toBe(false);
+  });
+
+  it('is NOT quiescent while the DISPLAYED aspiration is stale for the current view version', () => {
+    // Isolates the freshness clause: unlike the re-slice test above (which
+    // returns false two clauses earlier, at displayed !== active), this group
+    // has a single level, so the slice-aware fallback has nothing coarser to
+    // fall back to and keeps displaying the aspiration. Only the stale stamp
+    // distinguishes the two answers — delete the freshness check and this
+    // test goes green on a group that is showing the previous slice.
+    let version = 1;
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => version);
+    const only = makeGsplatChild(0, 1);
+    const entry = makeEntry([only], 0, '/g');
+    reg.register(entry);
+    reg.evaluatePerFrame();
+    expect(entry.displayedChildIndex).toBe(entry.activeChildIndex);
+    expect(reg.isCaptureQuiescent()).toBe(true);
+
+    // A slice/displayDims scrub: the committed geometry now describes the
+    // previous view version, and nothing has re-committed it yet.
+    version = 2;
+    reg.evaluatePerFrame();
+    expect(entry.displayedChildIndex).toBe(entry.activeChildIndex); // same clause NOT hit
+    expect(entry.desiredChildIndex).toBe(entry.activeChildIndex); // …nor this one
+    expect(only.loading).toBeFalsy(); // …nor the loading one
+    expect(reg.isCaptureQuiescent()).toBe(false);
+
+    // The re-commit lands with a fresh stamp → settled again.
+    (only.object.userData as { loadedViewVersion?: number }).loadedViewVersion = 2;
+    expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+
+  it('does not block forever on a desired level that FAILED to load', () => {
+    const reg = makeRegistry();
+    const children = [makeChild(0), makeLazyChild(0.5, () => {})];
+    reg.register(makeEntry(children, 0, '/g'));
+    reg.setSelectorMode('/g', { lockLevel: 1 });
+    reg.evaluatePerFrame(); // kicks the load
+    expect(reg.isCaptureQuiescent()).toBe(false);
+
+    // The thunk fails: ready never flips, loading clears, failed is set.
+    children[1].failed = true;
+    children[1].loading = false;
+    reg.evaluatePerFrame();
+
+    const entry = reg.get('/g')!;
+    expect(entry.desiredChildIndex).toBe(1); // the selector still WANTS it
+    expect(entry.activeChildIndex).toBe(0);
+    // …but a failed level can never become ready this frame, so blocking on it
+    // would buy a timeout on every remaining capture frame.
+    expect(reg.isCaptureQuiescent()).toBe(true);
   });
 });

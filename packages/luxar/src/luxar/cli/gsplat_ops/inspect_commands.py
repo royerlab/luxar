@@ -19,7 +19,46 @@ from ..utils import _DEFAULT_CORS_ORIGIN, format_memory_size
 if TYPE_CHECKING:
     import numpy as np
 
-    from luxar.gsplats.doctor import DoctorReport, Finding
+    from luxar.gsplats.doctor import DoctorReport, Finding, StoreKind
+
+
+_IMPORTANT_FITTING_KEYS = (
+    "n_splats",
+    "ndim",
+    "ordering",
+    "format_version",
+    "timestamp",
+    "luxar_gsplats_version",
+    "description",
+    "fitter_name",
+    "n_iters",
+    "final_loss",
+    "psnr_db",
+    "foreground_psnr_db",
+    "foreground_threshold",
+    "foreground_fraction",
+    "ssim",
+    "mse",
+    # Amplitudes are background-relative, so these normalization stamps are
+    # interpretation-critical rather than generic trailing metadata (#1175).
+    "floor",
+    "image_min",
+    "image_max",
+    "intensity_range",
+    "convergence_time",
+    "culled",
+    "culling_method",
+    "n_original",
+    "n_culled",
+    "amplitude_retention",
+)
+
+
+def _print_fitting_value(key: str, value: Any) -> None:
+    if isinstance(value, float):
+        aprint(f"  {key}: {value:.6f}")
+    else:
+        aprint(f"  {key}: {value}")
 
 
 def _ascii_histogram(
@@ -295,39 +334,10 @@ def info_dataset(
             aprint("─" * 70)
 
             # Display important metadata
-            important_keys = [
-                "n_splats",
-                "ndim",
-                "ordering",
-                "format_version",
-                "timestamp",
-                "luxar_gsplats_version",
-                "description",
-                "fitter_name",
-                "n_iters",
-                "final_loss",
-                "psnr_db",
-                "foreground_psnr_db",
-                "foreground_threshold",
-                "foreground_fraction",
-                "ssim",
-                "mse",
-                "convergence_time",
-                "culled",
-                "culling_method",
-                "n_original",
-                "n_culled",
-                "amplitude_retention",
-            ]
-
             displayed_keys = set()
-            for key in important_keys:
+            for key in _IMPORTANT_FITTING_KEYS:
                 if key in data.stats:
-                    value = data.stats[key]
-                    if isinstance(value, float):
-                        aprint(f"  {key}: {value:.6f}")
-                    else:
-                        aprint(f"  {key}: {value}")
+                    _print_fitting_value(key, data.stats[key])
                     displayed_keys.add(key)
 
             # Display remaining metadata. The source-volume block above already
@@ -481,6 +491,34 @@ def napari_viewer(
         raise typer.Exit(1)
 
 
+def _resolve_view_target(path: Path) -> tuple[Path, Optional[Path]]:
+    """Resolve a ``gsplat view`` argument to a servable store + its temp dir.
+
+    Through :func:`~luxar.gsplats.io._archive.resolve_store_path`, the same call
+    the loader makes, so this command cannot disagree with it about which node an
+    archive holds. A store is served over HTTP as a DIRECTORY, so the archive
+    file itself is never a usable target here (no ``flat_zip_in_place``).
+
+    The pre-check keys on the SUFFIX, not on the file type: anything not named
+    ``*.zip`` / ``*.tar.gz`` must be a directory or it is refused HERE rather
+    than by the resolver, which only rejects a REGULAR file — so a FIFO or a
+    device node (both of which pass typer's ``exists=True``) would otherwise be
+    handed to the data server as the mount root, which fails deep inside a
+    background thread while the command sits blocked on a viewer serving
+    nothing. The converse is not covered and never was: a DIRECTORY named
+    ``x.zip`` takes the archive branch and dies in the extractor. An unusable or
+    unsafe ARCHIVE is a real error and propagates.
+    """
+    from luxar.gsplats.io._archive import resolve_store_path
+
+    if str(path).endswith((".zip", ".tar.gz")):
+        aprint("Extracting compressed dataset...")
+    elif not path.is_dir():
+        aprint(f"❌ Not a .gsplats.zarr directory or archive: {path}")
+        raise typer.Exit(1)
+    return resolve_store_path(path)
+
+
 def quick_view(
     path: Path = typer.Argument(
         ..., exists=True, help="Path to .gsplats.zarr dataset (or .zip/.tar.gz)"
@@ -509,6 +547,10 @@ def quick_view(
         open_browser: Whether to open browser automatically
         cors_origin: Allowed CORS origin for both servers (default "local").
     """
+    # Bound before the `try` so the `finally` below can test it: the store
+    # resolver answers None for a directory store, and `rmtree(None)` raises —
+    # turning a real error into an unrelated one.
+    temp_dir: Optional[Path] = None
     try:
         import threading
 
@@ -519,7 +561,6 @@ def quick_view(
             pick_port,
             wait_for_server,
         )
-        from luxar.gsplats.io._archive import extract_compressed_zarr
 
         # Check viewer is built
         if not ensure_viewer_built():
@@ -530,15 +571,7 @@ def quick_view(
             # a temp dir, otherwise serve the directory in place. No GSplatData
             # round-trip — the viewer consumes the node tree directly, which is
             # the only path that supports partition/nested roots.
-            if str(path).endswith((".zip", ".tar.gz")):
-                aprint("Extracting compressed dataset...")
-                serve_target = extract_compressed_zarr(path)
-                temp_dir = serve_target.parent
-            elif path.is_dir():
-                serve_target = path
-            else:
-                aprint(f"❌ Not a .gsplats.zarr directory or archive: {path}")
-                raise typer.Exit(1)
+            serve_target, temp_dir = _resolve_view_target(path)
 
             aprint(f"Serving node tree directly: {serve_target.name}")
 
@@ -587,9 +620,6 @@ def quick_view(
 
     except KeyboardInterrupt:
         aprint("\n🛑 Shutting down viewer...")
-        # Cleanup temp directory
-        if "temp_dir" in locals():
-            shutil.rmtree(temp_dir, ignore_errors=True)
     except typer.Exit:
         raise
     except Exception as e:
@@ -597,10 +627,15 @@ def quick_view(
         import traceback
 
         traceback.print_exc()
-        # Cleanup temp directory
-        if "temp_dir" in locals():
-            shutil.rmtree(temp_dir, ignore_errors=True)
         raise typer.Exit(1)
+    finally:
+        # Every exit removes the extraction, not just the two error handlers
+        # that used to: a NORMAL return from `_serve_viewer`, and the
+        # `typer.Exit` a failed `pick_port` raises AFTER the archive has been
+        # extracted, both left a full uncompressed copy of the dataset behind
+        # in /tmp.
+        if temp_dir is not None:
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def _print_quality_comparison(
@@ -696,10 +731,8 @@ def compare_quality(
         from luxar.cli.gsplat_config import load_volume, parse_shape
         from luxar.gsplats.gsplat_data import GSplatData
         from luxar.gsplats.metrics import compute_quality_metrics
-        from luxar.gsplats.rendering.volume_rendering import (
-            auto_detect_device,
-            render_to_volume_tensor,
-        )
+        from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
+        from luxar.gsplats.utils.device import resolve_torch_device
 
         with asection("Quality Comparison"):
             # Load gsplat dataset
@@ -743,7 +776,7 @@ def compare_quality(
                 raise typer.Exit(1)
 
             # Select device
-            dev = device if device else auto_detect_device()
+            dev = str(resolve_torch_device(device))
 
             # Render gsplats to tensor (stays on GPU)
             with torch.no_grad():
@@ -817,6 +850,27 @@ def compare_quality(
         raise typer.Exit(1)
 
 
+def _print_normalization_block(root: Any) -> None:
+    """List a store's ``pipeline/`` normalization block, if it has one (#1175).
+
+    The tree branch of ``info`` has no ``stats`` dict and no "Additional
+    Metadata" dump, so without this a ``kind=partition`` — the tiled CLI's
+    DEFAULT output — showed nothing at all about the background level its fit
+    subtracted, even though amplitudes are relative to exactly that level.
+    """
+    from luxar.gsplats.io.save_gsplats import NORMALIZATION_STATS_KEYS
+
+    if "pipeline" not in root:
+        return
+    attrs = dict(root["pipeline"].attrs)
+    present = [(k, attrs[k]) for k in NORMALIZATION_STATS_KEYS if k in attrs]
+    if not present:
+        return
+    aprint("\nNormalization (pipeline/):")
+    for key, value in present:
+        aprint(f"  {key}: {value}")
+
+
 def _print_gsplat_tree_summary(path: Path) -> None:
     """Report the node-tree shape of a partition / nested .gsplats.zarr.
 
@@ -827,7 +881,7 @@ def _print_gsplat_tree_summary(path: Path) -> None:
     import shutil
 
     from luxar._zarr_compat import open_group as zarr_open_group
-    from luxar.gsplats.io._archive import extract_compressed_zarr
+    from luxar.gsplats.io._archive import resolve_store_path
     from luxar.gsplats.tree import (
         GSplatLodGroup,
         GSplatPartition,
@@ -841,8 +895,12 @@ def _print_gsplat_tree_summary(path: Path) -> None:
     tmp = None
     try:
         if path.is_file():  # compressed archive
-            zarr_path = extract_compressed_zarr(path)
-            tmp = zarr_path.parent
+            # The same resolver `load_gsplat_node` gated on just above: `info`
+            # uses that load purely as a gate and then re-resolves here, so the
+            # two must not be able to disagree about which node the archive holds
+            # (they did for a FLAT archive — the gate saw one node, this saw an
+            # arbitrary child).
+            zarr_path, tmp = resolve_store_path(path)
         root = zarr_open_group(str(zarr_path), mode="r")
         node = read_gsplat_node(root, root)
 
@@ -870,6 +928,17 @@ def _print_gsplat_tree_summary(path: Path) -> None:
         pb = root.attrs.get("position_bounds")
         if pb:
             aprint(f"Position bounds: min={pb.get('min')} max={pb.get('max')}")
+        if "fitting" in root:
+            aprint("\nFitting (fitting/):")
+            fitting = dict(root["fitting"].attrs)
+            displayed_keys = set()
+            for key in _IMPORTANT_FITTING_KEYS:
+                if key in fitting:
+                    _print_fitting_value(key, fitting[key])
+                    displayed_keys.add(key)
+            for key in sorted(set(fitting) - displayed_keys):
+                _print_fitting_value(key, fitting[key])
+        _print_normalization_block(root)
     finally:
         if tmp is not None and tmp.exists():
             shutil.rmtree(tmp, ignore_errors=True)
@@ -1002,20 +1071,51 @@ def _print_report(report: "DoctorReport") -> None:
             _print_finding(finding)
 
 
+def _resolve_doctor_store_kind(path: Path) -> "StoreKind":
+    """Classify a doctor input while keeping CLI errors concise."""
+    from luxar.gsplats.doctor import resolve_store_kind
+
+    try:
+        return resolve_store_kind(path)
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        aprint(f"❌ {exc}")
+        raise typer.Exit(1) from None
+
+
+def _print_doctor_info(
+    path: Path, store_kind: "StoreKind", *, histograms: bool
+) -> None:
+    """Print the optional report appropriate for a doctor input."""
+    if store_kind == "gsplats":
+        info_dataset(path, show_histograms=histograms, bins=40)
+    elif store_kind == "scene":
+        aprint("ℹ️ The gsplat info report does not apply to a Luxar scene.")
+    else:
+        aprint(
+            "ℹ️ Could not classify this store from its metadata; "
+            "skipping the optional info report."
+        )
+
+
 def doctor(
     path: Path = typer.Argument(
-        ..., exists=True, help="Path to a .gsplats.zarr dataset (or .zip/.tar.gz)"
+        ...,
+        exists=True,
+        help="Path to a .gsplats.zarr dataset or .luxar.zarr scene (or .zip/.tar.gz)",
     ),
     fix: bool = typer.Option(
         False,
         "--fix",
         help="Repair what can be repaired, in place. Requires an UNCOMPRESSED "
-        ".gsplats.zarr directory. Without this, doctor only reports.",
+        "zarr directory. Without this, doctor only reports.",
     ),
     info: bool = typer.Option(
         True,
         "--info/--no-info",
-        help="Also print the full `gsplat info` report above the diagnosis.",
+        help="Also print the full `gsplat info` report above the diagnosis for "
+        "standalone .gsplats.zarr inputs.",
     ),
     histograms: bool = typer.Option(
         False,
@@ -1026,7 +1126,7 @@ def doctor(
         None, "--json", help="Write the findings to a JSON file as well."
     ),
 ) -> None:
-    """Examine a .gsplats.zarr, diagnose known problems, and optionally fix them.
+    """Examine Luxar partition metadata and optionally repair it.
 
     A dataset can load perfectly and still be missing something a later Luxar
     learned to record, or be carrying metadata that went stale under an edit —
@@ -1047,6 +1147,7 @@ def doctor(
 
     Examples:
         luxar gsplat doctor data.gsplats.zarr
+        luxar gsplat doctor scene.luxar.zarr --no-info
         luxar gsplat doctor data.gsplats.zarr --fix
         luxar gsplat doctor data.gsplats.zarr --no-info --json report.json
     """
@@ -1056,13 +1157,16 @@ def doctor(
 
     if histograms:
         info = True
+    store_kind = _resolve_doctor_store_kind(path)
     if info:
-        info_dataset(path, show_histograms=histograms, bins=40)
+        _print_doctor_info(path, store_kind, histograms=histograms)
 
     with asection(f"Diagnosing: {path.name}"):
         try:
             report = diagnose_store(path, fix=fix)
-        except ValueError as exc:
+        except typer.Exit:
+            raise
+        except Exception as exc:
             aprint(f"❌ {exc}")
             raise typer.Exit(1) from None
 

@@ -41,6 +41,7 @@ if TYPE_CHECKING:
         GSplatData,
         SubstitutiveLevel,
     )
+    from luxar.gsplats.tree import GSplatLeaf
 
 
 class _GSplatDataOps(_SplatArrayMixin):
@@ -131,6 +132,16 @@ class _GSplatDataOps(_SplatArrayMixin):
         raise NotImplementedError
 
     def _view_of_level(self, src_level: "SubstitutiveLevel") -> "GSplatData":
+        raise NotImplementedError
+
+    def _finest_leaf(self) -> "GSplatLeaf":
+        raise NotImplementedError
+
+    def at_substitutive(self, level: int) -> "GSplatData":
+        raise NotImplementedError
+
+    @property
+    def tree(self) -> GSplatNode:
         raise NotImplementedError
 
     def flattened(self) -> "GSplatData":

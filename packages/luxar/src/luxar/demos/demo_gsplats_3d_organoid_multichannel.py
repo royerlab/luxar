@@ -21,28 +21,30 @@ Dataset:
 --------
 Image ID: 6001240 (idr6001240)
 Source: Image Data Resource (IDR) - https://idr.openmicroscopy.org/
-Study: idr0062 - Intestinal organoid development and nuclear segmentation
+Study: idr0062-blin-nuclearsegmentation - nuclear segmentation benchmark
 Format: OME-ZARR 5D (Time × Channel × Z × Y × X)
-Data Type: High-resolution 3D light microscopy of mouse intestinal organoid
+Data Type: High-resolution 3D confocal microscopy of a mouse blastocyst (E3.5),
+           imaged for segmentation benchmarking
 
 Original Authors & Study:
 --------------------------
-Principal Investigator: Prisca Liberali
-Institution: Friedrich Miescher Institute for Biomedical Research (FMI)
+Principal Investigator: Sally Lowell
+Institution: University of Edinburgh (data published by the University of Dundee)
 
-This data is part of research on intestinal organoid development, nuclear
-segmentation, and symmetry breaking in organoids.
+The image is one of the benchmark volumes behind Nessys, a nuclear-segmentation
+method for dense 3D tissue.
 
 How to Cite:
 ------------
 If you use this dataset, please cite:
 
-1. Original Research:
-   Blin, G., et al. (2019). "A conserved role for β-catenin in
-   organ-specific branching morphogenesis."
-   (Or related publications from Liberali lab associated with IDR study idr0062)
+1. Original Research (what the credit in DEMO_META names):
+   Blin, G., Sadurska, D., Portero Migueles, R., Chen, N., Watson, J.A.,
+   Lowell, S. (2019). "Nessys: A new set of tools for the automated detection
+   of nuclei within intact tissues and dense 3D cultures." PLoS Biology.
+   DOI: 10.1371/journal.pbio.3000388 (CC BY 4.0)
 
-2. Image Data Resource (IDR):
+2. Image Data Resource (IDR) — the repository, not the data's authors:
    Williams, E. et al. (2017). "The Image Data Resource: a bioimage data
    integration and publication platform."
    Nature Methods, 14(8), 775-781.
@@ -103,6 +105,15 @@ DEMO_META = {
     },
     "caches": ["gsplats_multichannel"],
     "outputs": ["gsplats_3d_organoid_multichannel"],
+    # The study that produced the image, not the repository that hosts it:
+    # IDR's own record for idr0062 names Blin et al. and the PLoS Biology DOI,
+    # and crediting the IDR platform paper instead would attribute someone
+    # else's data to the archive it happens to sit in.
+    "citation": {
+        "short": "Blin et al. 2019",
+        "doi": "10.1371/journal.pbio.3000388",
+        "license": "CC BY 4.0",
+    },
 }
 
 # Enable MPS→CPU fallback for unsupported PyTorch ops (must be before torch import)
@@ -121,14 +132,19 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
+    DatasetUnavailable,
+    add_demo_caption,
     launch_viewer,
     load_dataset_gsplats,
+    load_local_fit_gsplats,
+    local_fit_path,
     parse_demo_flags,
     warn_if_no_cuda_gpu,
 )
 from luxar.demos._roundtrip_common import show_roundtrip_comparison
 from luxar.encoding import EncodingMode
 from luxar.gsplats import fit_gaussian_splats
+from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.models.gsplats.metal import is_metal_available
 from luxar.utils.paths import get_demos_output_dir
 
@@ -151,8 +167,16 @@ CHANNELS = [
 MAX_SPLATS = 22000
 DEVICE = None  # Auto-detect (cuda/mps/cpu)
 
-# Cache paths
-CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_multichannel"
+# Manifest dataset + the files it pins, one per channel. A local refit is OUR
+# artifact, not a copy of the hosted one, so it lives in the demo's local-fit
+# namespace (~/.cache/luxar/<name>/local/, see `local_fit_path`). Writing it to
+# ~/.cache/luxar/<name>/<file> — the path the manifest fetch owns — got it
+# quarantined on the next launch for failing the pinned sha256 (#1618).
+DEMO_NAME = "gsplats_multichannel"
+GSPLATS_FILES = [
+    "organoids_ch0.gsplats.zarr.zip",
+    "organoids_ch1.gsplats.zarr.zip",
+]
 
 # Parse command-line flags
 FLAGS = parse_demo_flags()
@@ -164,7 +188,6 @@ SHOW_ROUNDTRIP = "--show-roundtrip" in sys.argv
 
 # Setup
 Arbol.max_depth = 10
-CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # =============================================================================
@@ -191,12 +214,12 @@ def load_multichannel_data():
         here and so are their own source.
 
     Data Source: Image Data Resource (IDR) study idr0062, Image 6001240
-    Original Authors: Prisca Liberali lab, FMI
-    Citation: Blin et al. (2019) + Williams et al. (2017) Nature Methods 14(8):775-781
+    Original Authors: Blin et al., Lowell lab (University of Edinburgh)
+    Citation: Blin et al. (2019), PLoS Biology, doi:10.1371/journal.pbio.3000388
     """
     with asection("Loading multi-channel microscopy data"):
         aprint(f"Source: {ZARR_URL}")
-        aprint("Dataset: IDR idr0062, Image 6001240 (Liberali lab, FMI)")
+        aprint("Dataset: IDR idr0062, Image 6001240 (Blin et al. 2019, Lowell lab)")
         aprint("Resolution: native (no zoom resample)")
 
         try:
@@ -315,7 +338,8 @@ def fit_channel(volume, channel_name, cache_file, source_dtype=None):
     aprint(f"  Fitted {n_splats} splats")
 
     # Cache result in compressed zarr format
-    aprint(f"  Caching to {cache_file.name}")
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    aprint(f"  Caching to {cache_file}")
     result.save(
         cache_file,
         encoding_mode=EncodingMode.MEMORY,
@@ -334,7 +358,7 @@ def fit_all_channels(volumes, source_dtype=None):
 
         for i, (volume, ch_config) in enumerate(zip(volumes, CHANNELS)):
             ch_name = ch_config["name"]
-            cache_file = CACHE_DIR / f"organoids_ch{i}.gsplats.zarr.zip"
+            cache_file = local_fit_path(DEMO_NAME, GSPLATS_FILES[i])
 
             with asection(f"Channel {i}: {ch_name}"):
                 gsplats = fit_channel(
@@ -445,7 +469,8 @@ def create_luxar_scene(gsplats_list, output_path: Path | None = None):
             # the accepted trade for its highlight rolloff).
             scene = compiler.create_scene(
                 dimensions=Dimensions.default_3d(),
-                viewer_config=ViewerConfig(tone_mapping="ACES"),
+                viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="ACES"),
+                citation=DEMO_META["citation"],
             )
 
             # Add scene metadata
@@ -459,9 +484,9 @@ Gaussian splats with per-channel colors as separate layers.
 
 Data Source:
   - Image Data Resource (IDR) study idr0062, Image 6001240
-  - High-resolution 3D microscopy of mouse intestinal organoid
-  - Original research: Prisca Liberali lab, FMI
-  - Citation: Blin et al. (2019) + Williams et al. (2017) Nat Methods 14(8):775-781
+  - High-resolution 3D confocal microscopy of a mouse blastocyst (E3.5)
+  - Original research: Blin et al. (2019), PLoS Biology (Lowell lab, Edinburgh),
+    doi:10.1371/journal.pbio.3000388, CC BY 4.0
 
 Each channel is a separate layer with its own colormap:
 - Magenta: Channel 0
@@ -504,6 +529,11 @@ Controls:
                     layer=True,
                     colormap=colormap,
                 )
+            add_demo_caption(
+                scene,
+                f"Light-sheet microscopy • {len(gsplats_list)} channels",
+                DEMO_META.get("citation"),
+            )
 
         aprint(f"Scene saved: {output_path}")
         return output_path
@@ -512,6 +542,30 @@ Controls:
 # =============================================================================
 # Main
 # =============================================================================
+
+
+def resolve_gsplats() -> list[GSplatData] | None:
+    """The manifest fetch, then this machine's own earlier refit; None ⇒ build it.
+
+    Only ``DatasetUnavailable`` falls through to the local door — the narrow
+    "these bytes are not obtainable from anywhere yet" case. An unknown file
+    name, a missing packaged manifest or an in-repo copy failing its sha256 are
+    faults, and must not be disguised as a routine multi-minute refit.
+    """
+    try:
+        precomputed = load_dataset_gsplats(
+            DEMO_NAME,
+            GSPLATS_FILES,
+            recompute=RECOMPUTE,
+        )
+    except DatasetUnavailable as exc:
+        aprint(f"Manifest fetch unavailable ({exc}).")
+        precomputed = None
+    if precomputed is None and not RECOMPUTE:
+        # A fit this machine built earlier, in its own namespace — checked
+        # BEFORE refitting, which is what makes the refit one-time.
+        precomputed = load_local_fit_gsplats(DEMO_NAME, GSPLATS_FILES)
+    return precomputed
 
 
 def main():
@@ -537,21 +591,15 @@ def main():
             return
 
     # Try the manifest-driven fetch (checksum-verified cache -> in-repo -> Zenodo)
-    precomputed = load_dataset_gsplats(
-        "gsplats_multichannel",
-        [
-            "organoids_ch0.gsplats.zarr.zip",
-            "organoids_ch1.gsplats.zarr.zip",
-        ],
-        recompute=RECOMPUTE,
-    )
+    precomputed = resolve_gsplats()
 
     volumes = None
 
     if precomputed is not None:
         gsplats_list = precomputed
     else:
-        # --recompute path: download raw data, fit from scratch
+        # --recompute path (or no data to be had): download raw data, fit from
+        # scratch, and cache the fits in the local-fit namespace.
         warn_if_no_cuda_gpu()
         volumes, source_dtype = load_multichannel_data()
 

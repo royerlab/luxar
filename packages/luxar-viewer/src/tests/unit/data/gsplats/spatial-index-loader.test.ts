@@ -20,11 +20,21 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as zarr from 'zarrita';
-import { GSplatsSpatialIndexLoader } from '../../../../data/gsplats/gsplats-spatial-index-loader';
+import {
+  GSplatsSpatialIndexLoader,
+  resetSliceDimsWarningForTests,
+} from '../../../../data/gsplats/gsplats-spatial-index-loader';
 import type { SceneNode, ViewState } from '../../../../data';
+import {
+  computeTolerance,
+  type DimensionInfo,
+  type ToleranceOptions,
+} from '../../../../data/loaders';
 import type { MonitorEvent, MonitorEventListener } from '../../../../types/data-monitor-types';
 import { makeMockZarrLocation } from '../../../builders/spatial-loader-fixtures';
 import { SliceCache } from '../../../../cache/slice-cache';
+import { log } from '../../../../utils/log';
+import { MIN_TRUNCATION_RADIUS } from '../../../../rendering/materials/gsplat/math';
 
 vi.mock('zarrita', () => ({
   registry: {},
@@ -470,6 +480,299 @@ describe('GSplatsSpatialIndexLoader', () => {
         const result = await bodyLoader.loadGSplats(viewState);
         expect(result.splatCount).toBe(0);
         expect(result.positions.length).toBe(0);
+      });
+    });
+
+    // ────────────────────────────────────────────────────────────────
+    // Issue #1655 items 2 + 3: the loader is the only place that has the node
+    // attrs in hand at query time, so it is the only place that can tell the
+    // tolerance computer (a) which dims the WRITER barrier-padded in
+    // `chunk_bounds` (its published `slice_dims`) and (b) which truncation
+    // radius the renderer will draw this node with. Without both, the computer
+    // re-derives barrier-ness from the scene's `discrete` flags and pins the
+    // degenerate band to the DEFAULT radius.
+    describe('tolerance options forwarded to the builder (#1655)', () => {
+      const viewState: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0],
+        tolerance: [0, 0, 0],
+      };
+
+      interface ForwardedOptions {
+        toleranceOptions?: { barrierDims?: unknown; truncationRadius?: unknown };
+      }
+
+      // The malformed-attr warning is latched per PROCESS (see `sliceDimsWarned`), so
+      // re-arm it per case or the cases become order-dependent.
+      beforeEach(() => {
+        resetSliceDimsWarningForTests();
+      });
+
+      /**
+       * Run one load against a node whose attrs carry `extra`, and return the
+       * options object the loader handed the (mocked) `SpatialQueryBuilder`.
+       * The fixture node is 3D, so a valid barrier index is 0..2.
+       */
+      const optionsFor = async (extra: Record<string, unknown>): Promise<ForwardedOptions> => {
+        const builder = SpatialQueryBuilder as unknown as ReturnType<typeof vi.fn>;
+        const before = builder.mock.calls.length;
+        const loaderUnderTest = new GSplatsSpatialIndexLoader(
+          mockZarrLocation as unknown as ConstructorParameters<typeof GSplatsSpatialIndexLoader>[0],
+          { ...mockNode, attrs: { ...mockNode.attrs, ...extra } } as SceneNode
+        );
+        try {
+          await loaderUnderTest.loadGSplats(viewState);
+        } catch {
+          // A deliberately nonsense `ndim` can fail the array LOAD, which runs after
+          // the query. The tolerance options were still built and forwarded — the
+          // assertion below guarantees we read this call's, not a previous test's.
+        } finally {
+          loaderUnderTest.dispose();
+        }
+        const calls = builder.mock.calls;
+        expect(calls.length).toBeGreaterThan(before);
+        return calls[calls.length - 1][2] as ForwardedOptions;
+      };
+
+      it('passes the published slice_dims through as barrierDims', async () => {
+        const options = await optionsFor({ slice_dims: [2] });
+        expect(options.toleranceOptions?.barrierDims).toEqual([2]);
+      });
+
+      it('passes an EMPTY slice_dims through as an empty array, not undefined', async () => {
+        // `[]` is a real answer from the writer ("pure spatial ordering, nothing is
+        // a barrier"); collapsing it to `undefined` would silently restore the
+        // `discrete`-flag guess.
+        const options = await optionsFor({ slice_dims: [] });
+        expect(options.toleranceOptions?.barrierDims).toEqual([]);
+        expect(options.toleranceOptions?.barrierDims).not.toBeUndefined();
+      });
+
+      it('omits barrierDims for a legacy node that publishes no slice_dims', async () => {
+        const options = await optionsFor({});
+        expect(options.toleranceOptions?.barrierDims).toBeUndefined();
+      });
+
+      it('rejects a malformed slice_dims WHOLESALE rather than filtering it', async () => {
+        // These attrs come off disk. Element-wise filtering would silently DROP a
+        // genuine barrier dim, and the reader would then query barrier-tight bounds
+        // with the ~1e-3 continuous epsilon — a NARROWER fetch window than either the
+        // published set or the legacy `discrete` fallback gives. So anything
+        // suspicious falls all the way back to `undefined`.
+        const malformed: unknown[] = [
+          'not an array',
+          42,
+          {},
+          [2, 'x'], // a non-number entry
+          [2, 3], // 3 is out of range for the 3D fixture
+          [-1],
+          [1.5], // not an integer
+          [2, null],
+          [2, NaN],
+        ];
+        for (const slice_dims of malformed) {
+          const options = await optionsFor({ slice_dims });
+          expect(
+            options.toleranceOptions?.barrierDims,
+            `slice_dims=${JSON.stringify(slice_dims)} must be rejected wholesale`
+          ).toBeUndefined();
+        }
+      });
+
+      it("passes the node's own truncation_radius through, clamped", async () => {
+        const options = await optionsFor({ truncation_radius: 6 });
+        expect(options.toleranceOptions?.truncationRadius).toBe(6);
+      });
+
+      it('sanitizes a hostile truncation_radius with the material path’s own rule', async () => {
+        // `clampTruncationRadius` (rendering/materials/gsplat/math.ts) is the single
+        // rule; reusing it is what keeps the fetch band equal to the band the
+        // material actually draws. 1e308 is float64-finite but float32-Infinity.
+        expect(
+          (await optionsFor({ truncation_radius: 1e308 })).toleranceOptions?.truncationRadius
+        ).toBe(2.75);
+        expect(
+          (await optionsFor({ truncation_radius: NaN })).toleranceOptions?.truncationRadius
+        ).toBe(2.75);
+        // Non-numeric attrs are treated as absent, so the computer applies its own
+        // default (one spelling of the fallback). The MATERIAL path reaches the same
+        // 2.75 for these, via `clampTruncationRadius`'s own non-number branch —
+        // without it a JSON `"6"` coerced through every numeric test there
+        // (`"6" * "6" === 36`) and reached `uTruncate` unchanged, giving a 6σ material
+        // band against this side's 2.75σ fetch band.
+        for (const truncation_radius of ['6', null, {}, []]) {
+          expect(
+            (await optionsFor({ truncation_radius })).toleranceOptions?.truncationRadius
+          ).toBeUndefined();
+        }
+      });
+
+      it('a zero truncation_radius arrives as MIN_TRUNCATION_RADIUS, not the default', async () => {
+        // Two DIFFERENT sub-minimum rules exist and this pins which one the real
+        // caller sees. The authoritative `clampTruncationRadius` floors a
+        // 0/negative/sub-minimum radius at `MIN_TRUNCATION_RADIUS` (≈2.44e-4, where
+        // the shifted-Gaussian normalization stops surviving float32), so THAT is what
+        // the tolerance computer is handed. Its own defensive backstop — which maps
+        // 0/negative/non-finite to `GSPLAT_DEFAULT_TRUNCATION_RADIUS` instead — is
+        // therefore unreachable from here; it only catches a caller that skips the
+        // clamp (see the hostile-input case in `tolerance-computer.test.ts`).
+        expect(MIN_TRUNCATION_RADIUS).toBeGreaterThan(1e-4);
+        expect(MIN_TRUNCATION_RADIUS).toBeLessThan(1e-3);
+        for (const truncation_radius of [0, -1, 1e-5]) {
+          expect((await optionsFor({ truncation_radius })).toleranceOptions?.truncationRadius).toBe(
+            MIN_TRUNCATION_RADIUS
+          );
+        }
+      });
+
+      it('omits truncationRadius for a node that stamps none', async () => {
+        const options = await optionsFor({});
+        expect(options.toleranceOptions?.truncationRadius).toBeUndefined();
+      });
+
+      it('accepts slice_dims: null as "absent" WITHOUT warning', async () => {
+        // A JSON `null` is how some writers spell "not applicable"; it is not
+        // malformed, so it must fall back silently.
+        const warn = vi.spyOn(log, 'warning');
+        try {
+          const options = await optionsFor({ slice_dims: null });
+          expect(options.toleranceOptions?.barrierDims).toBeUndefined();
+          expect(warn).not.toHaveBeenCalled();
+        } finally {
+          warn.mockRestore();
+        }
+      });
+
+      it('rejects a VALID array when the node ndim is unusable, and says so', async () => {
+        // `[0, ndim)` is the range check's only bound, so a missing/garbage `ndim`
+        // leaves the entries unvalidatable — reject rather than accept unchecked
+        // indices that would later address non-existent `chunk_bounds` columns.
+        // (The guard also rejects a NEGATIVE, fractional or non-numeric `ndim`; those
+        // are not exercised here because such a node cannot finish `initialize()` —
+        // the accumulator is sized from `ndim` — so no query is ever issued.)
+        const warn = vi.spyOn(log, 'warning');
+        try {
+          for (const ndim of [undefined, 0]) {
+            resetSliceDimsWarningForTests();
+            warn.mockClear();
+            const options = await optionsFor({ slice_dims: [0], ndim });
+            expect(options.toleranceOptions?.barrierDims).toBeUndefined();
+            expect(warn).toHaveBeenCalledWith(
+              expect.anything(),
+              expect.stringContaining('node ndim is')
+            );
+          }
+        } finally {
+          warn.mockRestore();
+        }
+      });
+
+      it('warns ONCE PER PROCESS about a malformed slice_dims, naming the first node', async () => {
+        // A corrupt store is corrupt in every one of its nodes, and one store mints
+        // one loader per `additive_<i>` sub-LOD / per `kind=partition` part — all
+        // carrying the same attr. Per-loader logging turned that into hundreds of
+        // identical lines, so the warning is latched per process (mirroring
+        // `truncationClampWarned`). The FALLBACK is not latched: every node still
+        // reports `barrierDims: undefined`.
+        const warn = vi.spyOn(log, 'warning');
+        try {
+          const first = await optionsFor({ slice_dims: 'not an array' });
+          expect(first.toleranceOptions?.barrierDims).toBeUndefined();
+          expect(warn).toHaveBeenCalledTimes(1);
+          // The message names the offending node and the reason.
+          const [, message] = warn.mock.calls[0] as [unknown, string];
+          expect(message).toContain('/test_gsplats');
+          expect(message).toContain('slice_dims');
+          expect(message).toContain('not an array');
+
+          // Two more loaders over the same corrupt attr, plus a repeat load through
+          // the SAME loader: still exactly one line.
+          const second = await optionsFor({ slice_dims: 'not an array' });
+          const third = await optionsFor({ slice_dims: [99] });
+          expect(second.toleranceOptions?.barrierDims).toBeUndefined();
+          expect(third.toleranceOptions?.barrierDims).toBeUndefined();
+          expect(warn).toHaveBeenCalledTimes(1);
+        } finally {
+          warn.mockRestore();
+        }
+      });
+
+      it('memoizes the options object: repeated loads forward the SAME reference', async () => {
+        // Load-bearing: the query path runs on every view update, and the attrs it
+        // derives from never change for the life of a loader. Re-deriving would
+        // re-validate the array on every slice move.
+        const loaderUnderTest = new GSplatsSpatialIndexLoader(
+          mockZarrLocation as unknown as ConstructorParameters<typeof GSplatsSpatialIndexLoader>[0],
+          { ...mockNode, attrs: { ...mockNode.attrs, slice_dims: [2] } } as SceneNode
+        );
+        try {
+          await loaderUnderTest.loadGSplats(viewState);
+          await loaderUnderTest.loadGSplats({ ...viewState, slicePosition: [1, 1, 1] });
+        } finally {
+          loaderUnderTest.dispose();
+        }
+        const calls = (SpatialQueryBuilder as unknown as ReturnType<typeof vi.fn>).mock.calls;
+        const a = (calls[calls.length - 2][2] as ForwardedOptions).toleranceOptions;
+        const b = (calls[calls.length - 1][2] as ForwardedOptions).toleranceOptions;
+        expect(a).toBeDefined();
+        expect(b).toBe(a);
+      });
+
+      /**
+       * The block above observes what the loader HANDED the (mocked) query builder.
+       * That pins the wiring but not its consequence, so drive the REAL
+       * `computeTolerance` with those forwarded options and assert the per-dimension
+       * numbers a live query would use.
+       */
+      describe('the forwarded options, run through the real computeTolerance', () => {
+        // The fixture node is 3D, so display dims 0-1 and read the tolerance for the
+        // one hidden dim, 2. Nothing here mocks the computer: these are the numbers a
+        // live query would carry.
+        const HIDDEN = 2;
+        const sceneDims = (discrete: boolean, step = 1.0): DimensionInfo[] => [
+          { discrete: false },
+          { discrete: false },
+          { discrete, step },
+        ];
+        const tolerance = async (
+          extra: Record<string, unknown>,
+          dims: DimensionInfo[]
+        ): Promise<number> => {
+          const options = await optionsFor(extra);
+          // `ForwardedOptions` types the two fields as `unknown` on purpose (the
+          // rejection cases above assert on garbage); here they are the real thing.
+          const forwarded = options.toleranceOptions as ToleranceOptions | undefined;
+          return computeTolerance('gsplats', [0, 1], 3, dims, forwarded)[HIDDEN];
+        };
+
+        it('a published barrier dim gets the quarter-cell reach', async () => {
+          expect(await tolerance({ slice_dims: [HIDDEN] }, sceneDims(false))).toBe(0.25);
+        });
+
+        it('a dim the writer OMITTED but the scene calls discrete gets the half-cell', async () => {
+          // The under-fetch regression: demoting to the bare continuous epsilon (1e-3)
+          // would fetch a thousandth of a cell while the projection still renders half
+          // of one. The window has to EQUAL that half-cell gate — the quarter-cell
+          // barrier reach only half-covers it (an axis 0.3 off the grid renders and
+          // does not match).
+          expect(await tolerance({ slice_dims: [] }, sceneDims(true))).toBe(0.5);
+        });
+
+        it('a truly continuous hidden dim takes the epsilon, scaled by the node radius', async () => {
+          // Micro-step axis → the degenerate band dominates: T × 1e-5 with T = 6.
+          const tol = await tolerance(
+            { slice_dims: [], truncation_radius: 6 },
+            sceneDims(false, 1e-6)
+          );
+          expect(tol).toBeCloseTo(6e-5, 12);
+          // …and 2.75 (the default) would NOT have covered it — the gap item 3 closes.
+          expect(tol).toBeGreaterThan(2.75e-5);
+        });
+
+        it('a legacy node with no slice_dims falls back to the scene discrete flags', async () => {
+          expect(await tolerance({}, sceneDims(true))).toBe(0.25);
+          expect(await tolerance({}, sceneDims(false))).toBe(1e-3);
+        });
       });
     });
 

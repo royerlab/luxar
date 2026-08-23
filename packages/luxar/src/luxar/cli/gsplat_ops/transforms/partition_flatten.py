@@ -25,9 +25,12 @@ def run_partition_dataset(
     try:
         import math
 
-        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.gsplat_data import (
+            GSplatData,
+            stats_after_structure_change,
+        )
         from luxar.gsplats.io.load_gsplats import read_authored_appearance
-        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.io.save_gsplats import split_fitting_info, write_gsplats_tree
         from luxar.gsplats.tree import iter_leaves
 
         if max_elements is None and parts is None:
@@ -62,11 +65,25 @@ def run_partition_dataset(
                 )
 
             with asection(f"Saving to {output_path.name}"):
+                # Thread the loaded provenance through the tree writer (it used to
+                # be silently dropped, so partitioning a fit erased `psnr_db`,
+                # `fitter_name` and the source grid alike). A BSP partition is
+                # content-PRESERVING — the same splats, regrouped — so the measured
+                # scores stay true of it and no content scrub applies. Its
+                # STRUCTURE is not: the output is a `kind=partition` of bare
+                # leaves, so the input's LOD topology record is false of it.
+                fitting, config, provenance, pipeline = split_fitting_info(
+                    stats_after_structure_change(data.stats), include_fitting_info=True
+                )
                 write_gsplats_tree(
                     output_path,
                     partition_node,
                     encoding_mode=encoding_mode_obj,
                     compress=compress,
+                    fitting_info=fitting,
+                    fitting_config=config,
+                    provenance_info=provenance,
+                    pipeline_info=pipeline,
                     root_attrs=read_authored_appearance(input_path),
                 )
                 aprint(
@@ -94,7 +111,10 @@ def run_flatten_dataset(
 ) -> None:
     """Run flatten command implementation."""
     try:
-        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.gsplat_data import (
+            GSplatData,
+            stats_after_structure_change,
+        )
         from luxar.gsplats.io.load_gsplats import (
             load_gsplat_node,
             read_authored_appearance,
@@ -125,10 +145,15 @@ def run_flatten_dataset(
 
             flat = GSplatData.concatenate(parts)
             # concatenate() builds a fresh stats dict from the first input; keep
-            # the root-level provenance/fitting stats from the source tree.
+            # the root-level provenance/fitting stats from the source tree — minus
+            # its TOPOLOGY record, which this command has just invalidated: the
+            # output is one flat leaf, so an inherited `lod_kind: substitutive` /
+            # `n_substitutive_levels: 4` / `lod_cutpoints: [...]` describes a tree
+            # that no longer exists (#1600).
             if stats:
                 flat = GSplatData.from_additive_sublods(
-                    list(flat.additive_sublods), stats=stats
+                    list(flat.additive_sublods),
+                    stats=stats_after_structure_change(stats),
                 )
             aprint(
                 f"Flattened {len(parts)} leaf/leaves → {flat.n_splats:,} splats "

@@ -11,6 +11,7 @@ from arbol import aprint, asection
 from luxar.utils.lod_methods import GSPLAT_ADDITIVE_CHOICES_HELP
 
 from .fit_utils import (
+    CONTENT_UNSUPPORTED_FIT_FLAGS,
     FitPipelineCtx,
     assemble_fit_config,
     dispatch_parallel_tiled,
@@ -21,12 +22,33 @@ from .fit_utils import (
     reject_rescaled_volume_refit,
     rescale_and_save,
     resolve_denoise_h,
+    resolve_floor_with_calibration,
     validate_and_build_recipe,
     warn_ignored_density_flags,
 )
 from .fit_utils import (
     resolve_tiling as _resolve_tiling_impl,
 )
+
+
+def _parse_norm_range(value: Optional[str]) -> "Optional[tuple[float, float]]":
+    """Parse the internal ``--norm-range LO,HI`` worker handoff."""
+    if value is None:
+        return None
+    try:
+        parts = [float(part.strip()) for part in value.split(",")]
+    except ValueError as exc:
+        raise typer.BadParameter("--norm-range must be LO,HI") from exc
+    if len(parts) != 2:
+        raise typer.BadParameter("--norm-range must be LO,HI")
+    from luxar.gsplats.fitting.validation import _validate_norm_range
+
+    norm_range = (parts[0], parts[1])
+    try:
+        _validate_norm_range(norm_range)
+    except ValueError as exc:
+        raise typer.BadParameter(f"--norm-range: {exc}") from exc
+    return norm_range
 
 
 def _stamp_source_dtype(fit_config: dict, source_info: dict) -> None:
@@ -91,10 +113,9 @@ def run_fit_volume(
         help=(
             "Seed count (int), compression ratio (float in (0,1]), or 'auto'. "
             "An integer is a WHOLE-VOLUME budget (what a default `gsplat cal` "
-            "reports): a tiled fit divides it across its tiles instead of "
-            "giving every tile the full count. Not an exact count — tiles with "
-            "no signal are skipped (a sparse volume realizes less) and a K "
-            "below the tile count gives one seed per tile. A ratio is "
+            "reports): a tiled fit divides it across the tiles that contain "
+            "signal instead of giving every tile the full count. A K below "
+            "the non-empty tile count gives one seed per such tile. A ratio is "
             "scale-free and is applied per tile unchanged."
         ),
     ),
@@ -143,8 +164,9 @@ def run_fit_volume(
         "--axes",
         help="Per-dimension axis labels overriding the positional "
         "TCZYX/CZYX/ZYX heuristic, e.g. 'z,c,y,x' or 't,z,y,x'. Use when your "
-        "data's axis order differs. Time/channel axes are sliced (by "
-        "--timepoint/--channel) and dropped; spatial axes kept in the given order.",
+        "data's axis order differs. Time/channel axes are sliced and dropped; "
+        "--channel is a flat row-major index across all channel-like axes, and "
+        "more than one time axis is rejected. Spatial axes stay in the given order.",
         rich_help_panel="Input selection",
     ),
     # Frequently used fit params
@@ -155,13 +177,24 @@ def run_fit_volume(
         help="Background floor / DC-offset suppression before normalization "
         "(default: auto). auto = histogram-mode estimate (capped at median; "
         "no-op on clean data) | pN = Nth percentile (e.g. p10) | <float> = "
-        "fixed value | none = disable (hard-min normalization). Unset lets a "
+        "fixed value | none or 0 = disable (hard-min normalization). auto and "
+        "pN ignore exact-zero padding. Negative user levels are rejected; a "
+        "negative estimate from dark-frame-corrected data is preserved. The "
+        "erase-all guard compares against a `norm_range:` supplied in "
+        "--config; "
+        "otherwise it uses the data maximum, not the configured normalization "
+        "percentile's high endpoint. A configured "
+        "norm_percentile may still raise the applied low endpoint above the "
+        "requested floor. Unset lets a "
         "`floor:` in --config/preset apply, else defaults to auto. Under any "
         "--tiling the spec is resolved against the WHOLE volume — never a tile "
-        "or box crop — so every tile/box works from the same level. (Uniform "
-        "tiles subtract it before apodization, so their boundaries match; a "
-        "--tiling content box whose crop lies entirely above the level still "
-        "normalizes against its own crop minimum.)",
+        "or box crop — so every tile/box works from the same level.",
+    ),
+    norm_range: Optional[str] = typer.Option(
+        None,
+        "--norm-range",
+        hidden=True,
+        help="Internal worker handoff: raw-input normalization range LO,HI.",
     ),
     seed_method: Optional[str] = typer.Option(
         None, "--seed-method", help="Seed generation method"
@@ -188,7 +221,10 @@ def run_fit_volume(
         False,
         "--flat",
         help="Tiled fits emit a kind=partition (one part per tile/box) by "
-        "default for viewer frustum culling; --flat merges to a single leaf.",
+        "default for viewer frustum culling; --flat merges to a single leaf "
+        "instead. Uniform and content merges record bounded whole-volume "
+        "quality metrics for both shapes (override with "
+        "LUXAR_TILED_QUALITY_MAX_GB).",
         rich_help_panel="Tiling",
     ),
     tile_size: int = typer.Option(
@@ -347,7 +383,12 @@ def run_fit_volume(
     cal: Optional[Path] = typer.Option(
         None,
         "--cal",
-        help="Calibration JSON (gsplat cal) supplying the splats-per-feature density.",
+        help="Calibration JSON (gsplat cal) supplying the splats-per-feature "
+        "density. Under --tiling content it also supplies the background floor "
+        "when --floor is unset, so the fit runs on the intensity scale the "
+        "density was measured on. That level is ABSOLUTE: reusing one cal.json "
+        "across a timelapse applies the calibrated timepoint's pedestal to "
+        "every other one, where --floor auto re-estimates per volume.",
         rich_help_panel="Content-aware tiling",
     ),
     k_star_ref: Optional[int] = typer.Option(
@@ -463,9 +504,11 @@ def run_fit_volume(
         help="After fitting, remove the weakest splats that collectively "
         "contribute less than (1 - value) of the total amplitude. "
         "For example, 0.95 — what a bare fit falls through to — discards splats "
-        "in the bottom 5% of cumulative amplitude, typically removing 10-30% of "
-        "them with negligible quality loss. Every --preset sets 0.999 instead "
-        "(near-lossless). Set to 0 to keep every splat.",
+        "in the bottom 5% of cumulative amplitude; how many splats that is "
+        "depends on how heavy-tailed the data is, and on a sparse volume it can "
+        "be most of them. Every --preset sets 0.999 instead "
+        "(near-lossless), and so does --tiling content even without a preset. "
+        "Set to 0 to keep every splat.",
     ),
     # Denoising
     denoise: bool = typer.Option(
@@ -555,6 +598,7 @@ def run_fit_volume(
     if not input_path.exists():
         aprint(f"Error: Input file not found: {input_path}")
         raise typer.Exit(1)
+    parsed_norm_range = _parse_norm_range(norm_range)
 
     try:
         from luxar.gsplats import fit_gaussian_splats
@@ -593,6 +637,19 @@ def run_fit_volume(
                 tiling, volume.shape, tile_size, _has_density
             )
 
+            # A calibration records the floor it subtracted, and measured its
+            # density's feature_threshold on that scale — so consume it when the
+            # user said nothing about --floor, rather than silently fitting on a
+            # different scale than the density was calibrated for (#1175).
+            # ONLY under `--tiling content` (the resolver enforces it): that is
+            # the only mode where --cal is honoured at all, and
+            # `warn_ignored_density_flags` below says so out loud for every
+            # other mode. Adopting a floor from a flag the very next line calls
+            # ignored would be the CLI contradicting itself.
+            floor = resolve_floor_with_calibration(
+                cal, floor, config, tiling=resolved_tiling, verbose=verbose
+            )
+
             # Pipeline ctx: the parameter state the extracted helpers consume.
             ctx = FitPipelineCtx(
                 input_path=input_path,
@@ -610,6 +667,7 @@ def run_fit_volume(
                 axes=axes,
                 lr=lr,
                 floor=floor,
+                norm_range=parsed_norm_range,
                 seed_method=seed_method,
                 verbose=verbose,
                 downscale=downscale,
@@ -665,16 +723,17 @@ def run_fit_volume(
 
                 # Flags the content path does not implement — warn loudly rather
                 # than silently ignore (the fit knobs below ARE honored).
+                enabled_unsupported = {
+                    "--denoise": denoise,
+                    "--downscale": downscale is not None,
+                    "--progressive": progressive,
+                }
                 _unsupported = [
-                    name
-                    for name, on in (
-                        ("--denoise", denoise),
-                        ("--downscale", downscale is not None),
-                        ("--progressive", progressive),
-                    )
-                    if on
+                    flag
+                    for flag in CONTENT_UNSUPPORTED_FIT_FLAGS
+                    if enabled_unsupported[flag]
                 ]
-                if _unsupported and plan_box is None:
+                if _unsupported:
                     aprint(
                         f"⚠ {', '.join(_unsupported)} are not supported with "
                         "--tiling content and are ignored."
@@ -711,6 +770,7 @@ def run_fit_volume(
                     loss=loss,
                     lr=lr,
                     floor=floor,
+                    norm_range=parsed_norm_range,
                     cull_retention=cull_retention,
                     device=device,
                     jobs=jobs,

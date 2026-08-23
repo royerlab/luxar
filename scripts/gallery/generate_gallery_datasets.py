@@ -9,16 +9,19 @@ the dataset already exists (idempotent / resumable).
 Entries with ``script: null`` live only on a feature branch; their dataset must
 already be present (typically generated once, then committed/kept locally). Such
 entries are reported as *capture-only* and skipped by the generator — the
-capture spec still picks them up if their dataset is on disk.
+capture spec still picks them up if their dataset is on disk. The manifest does
+not currently contain any capture-only entries, but the shape remains supported.
 
-A demo whose ``DEMO_META`` declares ``local_data`` (``manual-file`` — the Gaia
-catalog is CC BY-NC, so it is not shipped and has to be placed by hand — or
-``kaggle-auth``, which needs API credentials) exits non-zero wherever that input
-is absent, which used to make the whole run report a hard ``failed`` and return
-1. Such an entry is now *demoted on failure*: it is RUN like any other (so the
-machine that does have the input regenerates its tile on every route, ``--force``
-included), and only a NON-ZERO EXIT is reclassified into the soft *manual-data*
-bucket instead of ``failed``.
+A demo whose ``DEMO_META`` declares machine-local ``local_data`` exits non-zero
+wherever that input is absent, which used to make the whole run report a hard
+``failed`` and return 1. ``manual-file`` (the Gaia catalog is CC BY-NC, so it has
+to be placed by hand) and ``kaggle-auth`` are always treated this way. A
+``git-lfs`` demo is treated this way only while one of the payload files named by
+its manifest cache is missing or still an unpulled pointer; once every payload is
+present, a non-zero exit is a real failure. Such an entry is RUN like any other
+(so the machine that does have the input regenerates its tile on every route,
+``--force`` included), and only a positive exit with unavailable input is
+reclassified into the soft *manual-data* bucket instead of ``failed``.
 
 A demo listed in ``UNBUILDABLE_IDS`` is skipped WITHOUT being run at all — not
 demoted after the fact — because there is no machine on which it currently
@@ -27,16 +30,18 @@ reporting a hard failure. That list is temporary by construction: each entry
 names the issue that put it there and is deleted when the cause is gone.
 
 Two limits of the demote-on-failure rule, both deliberate. A genuine bug inside
-one of those demos also lands in the soft bucket rather than returning 1 — its
-error tail is still printed, so it stays visible. And a ``timeout``, a
+a manual-file / Kaggle demo (or an LFS demo whose payload is absent) also lands
+in the soft bucket rather than returning 1 — its error tail is still printed, so
+it stays visible. And a ``timeout``, a
 ``no-output`` (exit 0 having written nothing) or a death by signal (a negative
-return code: the OOM killer, a segfault) stays HARD even for them, which leaves
-one real case unrescued:
-``arxiv_papers_kaggle`` needs no credentials to start and declares a ~30 GB
-download, so on a cold machine it can exhaust ``GEN_TIMEOUT_S`` and land in
-``timeout`` — a non-zero exit for the whole run. Fixing that by skipping large
-downloads is deliberately NOT done: it would stop regenerating the tile on a
-machine whose cache is warm.
+return code: the OOM killer, a segfault) stays HARD even for them. Two real cases
+remain unrescued: ``arxiv_papers_kaggle`` needs no credentials to start and
+declares a ~30 GB download, so on a cold machine it can exhaust
+``GEN_TIMEOUT_S`` and land in ``timeout``; and ``cellxgene_census_umap`` declares
+no cache key, so its LFS payload cannot be probed and a positive exit stays hard.
+Fixing the former by skipping large downloads would stop regenerating the tile
+on a machine whose cache is warm; guessing at payloads for the latter would
+weaken the observed-state rule.
 
 Usage::
 
@@ -60,31 +65,25 @@ from arbol import aprint, asection
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = Path(__file__).resolve().parent / "manifest.json"
 DEMOS_DIR = REPO_ROOT / "packages" / "luxar" / "src" / "luxar" / "demos"
+DATA_MANIFEST = DEMOS_DIR / "data_manifest.json"
 
 # Per-demo generation timeout (seconds). Some demos download data or fit
 # Gaussian splats; give them room but don't hang the whole run forever.
 GEN_TIMEOUT_S = 3600
 
-# Provisioning modes whose input cannot be fetched by the demo itself, so a
-# non-zero exit is more likely to mean "this machine doesn't have it" than "the
-# demo is broken". Mirrors the pair `luxar demo run-all` skips outright.
-LOCAL_INPUT_MODES = ("manual-file", "kaggle-auth")
+# Provisioning modes that may make a positive demo exit mean "this machine does
+# not have the input". Git LFS is checked against the observed payload state;
+# unlike `luxar demo run-all`, the gallery still attempts every runnable entry.
+LOCAL_INPUT_MODES = ("manual-file", "kaggle-auth", "git-lfs")
 
 # Manifest ids that CANNOT currently be built on any machine, mapped to why.
-# Soft-skipped without spawning anything, the way an un-fetchable `local_data`
+# Soft-skipped without spawning anything, the way a machine-local `local_data`
 # entry is demoted: the alternative is a hard `timeout` that returns 1 and aborts
 # `make generate-gallery` before it captures a single tile.
 #
 # This is a temporary list, not a policy. DELETE an entry the moment its cause is
 # gone — the demo is then generated like any other.
-UNBUILDABLE_IDS: dict[str, str] = {
-    "gsplats_3d_visible_human_head": (
-        "#1670: the shipped vh_head_colors.npz sidecar is misordered against the "
-        "fit it ships with, so the demo refuses the pair and its default path is "
-        "a ~1.1 GB download plus a 4M-splat fit — well past GEN_TIMEOUT_S. "
-        "Delete this entry once vh_head_colors.npz is regenerated."
-    ),
-}
+UNBUILDABLE_IDS: dict[str, str] = {}
 
 
 def load_manifest() -> list[dict[str, Any]]:
@@ -97,14 +96,52 @@ def dataset_exists(entry: dict[str, Any]) -> bool:
     return bool((REPO_ROOT / entry["dataset"]).exists())
 
 
-def needs_local_input(entry: dict[str, Any]) -> str | None:
-    """The entry's demo's ``local_data`` mode, if it is one of the un-fetchable ones.
+def _git_lfs_input_missing(meta: dict[str, Any]) -> bool:
+    """Whether a validated demo cache names a missing or unpulled LFS file."""
+    try:
+        with DATA_MANIFEST.open() as fh:
+            datasets = json.load(fh)["datasets"]
+    except (OSError, KeyError, TypeError, json.JSONDecodeError):
+        return False
+    if not isinstance(datasets, dict):
+        return False
 
-    Returns ``"manual-file"`` / ``"kaggle-auth"``, or ``None`` for everything else
-    — including ``git-lfs``, which `git lfs pull` provides and whose ~20 demos
-    must keep failing hard. Read straight from the demo's ``DEMO_META`` by AST
-    (never importing it): the gallery manifest carries no such field, and the demo
-    file is the source of truth the ``luxar demo`` commands already use. A
+    paths: list[Path] = []
+    for cache_key in meta["caches"]:
+        record = datasets.get(cache_key)
+        if not isinstance(record, dict):
+            continue
+        directory = record.get("dir", cache_key)
+        files = record.get("files")
+        if not isinstance(directory, str) or not isinstance(files, list) or not files:
+            continue
+        record_paths: list[Path] = []
+        for file_info in files:
+            if not isinstance(file_info, dict) or not isinstance(
+                file_info.get("name"), str
+            ):
+                break
+            record_paths.append(DEMOS_DIR / "data" / directory / file_info["name"])
+        else:
+            paths.extend(record_paths)
+
+    if not paths:
+        return False
+
+    try:
+        from luxar.utils.demos import is_lfs_pointer
+    except ImportError:
+        return False
+    return any(not path.exists() or is_lfs_pointer(path) for path in paths)
+
+
+def needs_local_input(entry: dict[str, Any]) -> str | None:
+    """The entry's demo's ``local_data`` mode, if it is machine-local.
+
+    Returns ``"manual-file"`` / ``"kaggle-auth"`` / ``"git-lfs"``, or ``None``
+    for everything else. Read straight from the demo's ``DEMO_META`` by AST
+    (never importing it): the gallery manifest carries no such field, and the
+    demo file is the source of truth the ``luxar demo`` commands already use. A
     malformed or missing block is *not* this predicate's business — report
     ``None`` and let the normal generation path fail loudly in its own vocabulary.
     """
@@ -128,7 +165,11 @@ def needs_local_input(entry: dict[str, Any]) -> str | None:
     except registry.DemoMetaError:
         return None
     mode = meta["requirements"]["local_data"]
-    return str(mode) if mode in LOCAL_INPUT_MODES else None
+    if mode not in LOCAL_INPUT_MODES:
+        return None
+    if mode == "git-lfs" and not _git_lfs_input_missing(meta):
+        return None
+    return str(mode)
 
 
 def generate_one(entry: dict[str, Any]) -> tuple[str, str]:
@@ -149,7 +190,7 @@ def generate_one(entry: dict[str, Any]) -> tuple[str, str]:
 
     script = entry.get("script")
     if not script:
-        return ("capture-only", "no generator script (feature-branch demo)")
+        return ("capture-only", "no generator script (capture-only entry)")
 
     script_path = DEMOS_DIR / script
     if not script_path.exists():
@@ -278,7 +319,7 @@ def main() -> int:
 
     # Non-zero only on hard generation failures. capture-only, manual-data and
     # unbuildable are expected states, not errors: manual-data is a demo whose
-    # un-fetchable input this machine does not have, unbuildable one that cannot
+    # machine-local input this machine does not have, unbuildable one that cannot
     # be built anywhere yet (see `generate_one`).
     hard_failures = results["failed"] + results["timeout"] + results["no-output"]
     return 1 if hard_failures else 0

@@ -227,8 +227,9 @@ invalidation* below).
 ```python
 from luxar.io.optimise import optimise_store, plan_optimisation, summarise_chunk_layout
 
-plan = optimise_store("scene.luxar.zarr", "out.luxar.zarr", target_bytes=65_536,
-                      verify=True)
+plan = optimise_store(
+    "scene.luxar.zarr", "out.luxar.zarr", target_bytes=65_536, verify=True
+)
 print(plan.source_n_chunks, "→", plan.target_n_chunks)
 ```
 
@@ -301,6 +302,211 @@ root document bytes. The scene restamp is a slab-wise reimplementation of the
 finalize-time walk — the same digest, without the whole-array materialisation
 that would peak at twice a 629 MB array's size.
 
+### Re-deriving LOD thresholds in an existing store (`lod_restamp.py`)
+
+`luxar.io.lod_restamp` rewrites the LOD switch thresholds of a store that is
+**already on disk**, in place. It backs the `luxar restamp-lod` CLI command. The
+sibling of `optimise.py`, deliberately not a flag on it: that pass preserves
+every attribute and refuses same-path work, this one changes **only** attributes
+and moves no chunk.
+
+```python
+from luxar.io.lod_restamp import restamp_lod_store
+
+report = restamp_lod_store("scene.luxar.zarr", dry_run=True)
+for group in report.restamped:
+    print(group.path, group.anchor, group.old_thresholds, "→", group.new_thresholds)
+```
+
+Every `kind=lod` group still on the legacy `coverage` diagonal metric (or
+carrying no `selector` at all, which means the same) has its per-child
+`coverage_fraction` re-derived by screen-occupancy halving —
+`partitioned_coverage_fractions` when the group is TILE-BOUND,
+`coverage_fractions` otherwise — and its group stamped `screen-area`. Children
+are ordered coarsest→finest by `child_index`, and a group already on
+`screen-area` is skipped, so a second run is a no-op down to the `content_hash`.
+
+Tile-binding is both gsplat tree writers' full rule, `under_partition or
+any(isinstance(c, GSplatPartition) for c in on_disk)`, read off the store — and
+it has two clauses, not one:
+
+- **ancestry** — an enclosing `kind=partition` that is a REAL tiling (>1 part;
+  a one-part partition's single part IS the whole object);
+- **own children** — one of this lod group's own ladder children is a
+  `kind=partition`. That is the `overview` recipe's `[coarse_leaf,
+  fine_partition]` cap, which `partitioned_coverage_fractions` documents as a
+  deliberate product contract. Miss this clause and an `overview` cap comes back
+  at the whole-object anchor, i.e. the viewer loads the entire dataset at the
+  opening framing — the one cost that recipe exists to avoid.
+
+The binding a lod group resolves is threaded down to its own descendants, as the
+writers thread `under_partition=partition_bound`.
+
+- `restamp_lod_store(path, *, dry_run=False, groups=None)` → `RestampReport` —
+  the groups restamped, skipped-as-current, skipped-as-unsupported and
+  skipped-as-unresolved, plus the new `content_hash` (with a
+  `content_hash_status` of `unchanged` / `restamped` / `unstampable`, since a
+  `None` hash alone cannot distinguish "nothing changed" from "this store
+  carries no digest to move") and any re-verification residual. `report.clean`
+  is False when anything was left alone for a reason the caller must act on —
+  and also on `unstampable`, which can only happen after a real rewrite: the
+  ladders landed but no digest moved, so a warm viewer cache goes on serving the
+  old ones (at zarr format 2 the `zattrs-hash` fallback digests the root
+  `.zattrs`, which a child's ladder edit does not touch either) until the store
+  is republished under a new URL prefix. The CLI keys its exit code on it.
+  `report.was_consolidated` says whether the store carried a consolidated index
+  when the run started — and therefore whether it has one now.
+
+**Never automatic.** An authored `coverage_fractions=[...]` list and a legacy
+derived one are indistinguishable on disk — the point
+`_compiler/finalize/lod_backfill.py::warn_one_part_partition_anchors` makes
+normatively, which is why that check only warns. Calling this IS the opt-in, and
+the per-group old→new ladder is printed as the audit trail for a rewrite that may
+be overriding a deliberate choice.
+
+**What is refused, and what is skipped.** A compressed store is refused (an
+archive is read through a temp directory, so in-place is impossible), as is a
+store that is not a Luxar scene or `.gsplats.zarr` tree. A `selector` outside the
+vocabulary (`pixel_size`, the pre-v3.2 gsplats spelling) is REPORTED and left
+alone rather than converted, and so is a ladder whose finest child records no
+element count — the derivation's "finest LOD level is empty" guard reads that
+count, and fabricating one would defeat it on exactly the store that needs it. A
+coarser level's missing count is harmless (only the ladder's length and the
+finest entry are consumed) and is reported as `None` rather than invented. A
+ladder whose stored thresholds DESCEND in the resolved child order is refused
+too: the order and the thresholds disagree about which level is finest, so
+writing an ascending ladder onto that order would silently invert it. So is a
+group with a child that carries a `coverage_fraction` but no scene-node `type`
+attr — the node filter drops it, and re-deriving over the rest would write a
+PARTIAL ladder, leaving that rung stranded on its legacy threshold (possibly
+above the screen-area ceiling of 1.0, where nothing can ever select it).
+
+**Cache invalidation, and what it costs.** When something changed,
+`_restamp_content_hash` runs and the metadata is re-consolidated, in that
+order — an attrs-only edit must still invalidate a warm viewer cache. This is
+the only part of the pass that is not free: a compiled SCENE's digest is over
+array VALUES, so the restamp streams every array in the store once (linear in
+total store size); a standalone `.gsplats.zarr` takes the metadata-only branch.
+A dry run, and a run that changes nothing, hash nothing. Then the store is read
+back and verified through BOTH readers, because they can disagree and the
+disagreement is the failure worth catching: `open_group` reports the per-node
+documents, while `read_consolidated_attrs` reports the root index, which is the
+only thing the viewer fetches. An index is REBUILT, never introduced — a store
+that arrives unconsolidated leaves that way (`is_consolidated` is `batch-fit`'s
+finished-tile sentinel, so writing one would mark an interrupted tile complete),
+and the verifier then expects no index rather than reporting its absence.
+
+**All-or-nothing writes.** Every group is classified in a read-only planning
+walk before anything is written; if a write then fails, each attr already
+rewritten is restored (an absent `coverage_fraction` back to absent) and the
+original error is re-raised with a note saying what was rolled back. Without
+that, a mid-walk failure leaves a TORN ladder — a screen-area threshold under
+`selector="coverage"` — which is the silent, unrecoverable disagreement
+`resolve_lod_ladder` warns about.
+
+The recovery is a pure RESTORE, digests included: every `content_hash` is read
+into the same undo ledger before the hash pass overwrites it, so a store whose
+stored digest is not what a fresh recompute yields — a legacy one, a
+hand-edited one, a scene whose inner groups carry none — comes back carrying
+exactly what it came in with, and the failure path stays metadata-only instead
+of streaming every array again. The index is re-consolidated only when the run
+had rewritten the ROOT document (the write that destroys a format-3 index): a
+failure at attr write #1 needs no root write at all, and re-consolidating there
+would turn a recoverable failure into a store with no index — which the viewer
+loads as an empty scene.
+
+### Screening a store's ladders against the opening shot (`lod_screening.py`)
+
+`lod_restamp.py` above can re-derive any legacy ladder. `luxar.io.lod_screening`
+answers the question that decides whether doing so **buys anything on a given
+store**: per `kind=lod` group, at the framing the viewer actually opens with,
+does the re-derived `screen-area` ladder pick a COARSER level than the stored
+one? It is read-only and it is a report — no verdict it produces is a failure.
+It backs `scripts/check_demo_ladders.py --screen` / `--screen-only`.
+
+```bash
+hatch run check-demo-ladders --screen-only datasets/examples/*.luxar.zarr
+hatch run check-demo-ladders --screen-only --screen-verdict win --screen-render-fov 63  datasets/demos/*.luxar.zarr
+```
+
+```python
+from luxar.io.lod_screening import screen_stores, print_screen_report
+
+report = screen_stores(["scene.luxar.zarr"])
+print_screen_report(report, verdicts=["win", "fragile"])
+```
+
+Each group lands in exactly one bucket:
+
+| verdict | meaning |
+|---|---|
+| `win` | strictly coarser under the re-derived ladder at EVERY tested aspect |
+| `no-op` | no tested aspect picks a coarser level |
+| `fragile` | coarser at some aspects and not others; the answer depends on the window |
+| `off-screen` | the world box misses the frustum, so no metric is ever taken |
+| `already-current` | already `screen-area` — all `restamp-lod` looks at before skipping |
+| `skipped` | undecidable; `GroupScreening.reason` says why |
+
+A `[FINER]` row means the re-derived ladder would open on a more expensive
+level than today's ladder. It remains in `no-op` because that bucket means only
+that no tested aspect gets coarser; it does not promise an unchanged opening
+cost.
+
+Five things the screen is careful about, each of which a cruder measurement gets
+wrong:
+
+- **The cut is the group's own anchor.** A whole-object ladder's finest rung is
+  `WHOLE_OBJECT_FINEST_ANCHOR` = 0.5, not 1.0, so a group opening anywhere in
+  `[0.5, 1.0)` still shows full detail and re-deriving it changes nothing. The
+  anchor (and the clause of the two-clause rule that decided it) is reported per
+  group, resolved through `lod_restamp`'s own `_is_partition_bound`.
+- **Every refusal is `restamp-lod`'s refusal.** The screen predicts what that
+  command would do, so it must decline exactly the groups the command declines
+  or it reports a rewrite that never happens. `already-current` is decided on
+  the SELECTOR ALONE (`_plan_lod` returns before reading a threshold — a
+  `screen-area` group with an odd ladder is still left alone, and the screen
+  prints the stored-vs-derived diff as evidence without calling it a win). For
+  a legacy group, a descending stored ladder or an orphan `coverage_fraction`
+  child is `skipped` through `lod_restamp`'s own predicates; an already-current
+  group keeps that same hygiene finding as detail without changing buckets.
+- **The two selectors are in different units.** `today` is scored under the
+  STAMPED selector — the legacy `coverage` metric is an UNCLIPPED pixel diagonal
+  over `FILL_FACTOR × min(W, H)`, range ~`[0, 4]` — while the re-derived side is
+  always the clipped area fraction, range `[0, 1]`. Feeding one into the other's
+  ladder inverts the answer; there is a test that does exactly that.
+- **No inherited baseline.** What the store does TODAY is measured, never
+  assumed. Against an assumed baseline a genuine win and a no-op look identical.
+- **Aspect ratio is an input.** Every group is measured at 1:1, 16:9 and 21:9.
+  The legacy metric happens to be aspect-invariant under the fitted framing; the
+  area metric is not, so a lone object filling the shot reads 0.56 at 1:1 and
+  0.24 at 21:9 — two different levels. Those groups are `fragile`, not wins.
+
+The camera pose is the viewer's own: the scene root's `position_bounds` projected
+onto the displayed axes and fitted face-on down `-Z` by a transcription of
+`bounds-math.ts::calculateCameraDistance`. The fitted DISTANCE always uses the
+default FOV (47) because the cinematic preset overrides the FOV only after the
+fit, so `fit_fov` and `render_fov` are separate parameters. A scene that authors
+`viewer_config.camera.position` / `target` / `target_node` / `up` opens somewhere
+else and is skipped by name rather than screened against a framing nobody sees.
+So is a scene whose FOV comes from `viewer_config.cinematic_mode` or
+`camera.fov_preset`: those name an entry in the viewer's own TypeScript preset
+table, and a second unverified copy of it here would be worse than asking for
+`--screen-render-fov 63`. That flag supplies a fallback only where the store
+does not author numeric `camera.fov`; an authored FOV always wins. A scene
+displaying fewer than two dimensions is skipped too —
+`lod-group-registry.ts::evaluatePerFrame` bails there before it evaluates any
+group.
+Dynamic near/far clipping is deliberately NOT modelled — the near-plane hazard
+that matters is the homogeneous-`w` straddle inside `project_box_ndc_rect`,
+which never reads `camera.near`.
+
+Every metric primitive is exported and unit-tested against hand-derived values
+(`project_box_ndc_rect`, `project_box_area_fraction`, `project_box_diagonal_px`,
+`legacy_coverage_metric`, `pick_child_with_hysteresis`, `frustum_planes`,
+`calculate_camera_distance`, `transform_box`,
+`project_bounds_to_display_dims`), so a divergence from the TypeScript twin each
+one cites shows up as a failing test rather than as a plausible wrong number.
+
 ### Input Volume Loading
 
 `luxar.io.volume` and `luxar.io.ome_zarr` load arbitrary input volumes (the
@@ -317,7 +523,108 @@ sources fed to gsplat fitting/calibration), independent of the compiled
   the honest denominator of any size/compression figure quoted about the result.
 - `ome_zarr.discover_ome_zarr_shape(path, ...)` → `OMEZarrInfo` — discovers the
   T/C/Z/Y/X layout, voxel size, unit, and resolution levels from NGFF
-  `multiscales` (with custom-`axes` and shape-heuristic fallbacks).
+  `multiscales` (with custom-`axes` and shape-heuristic fallbacks). Both
+  OME-Zarr layouts parse: 0.4's top-level block and 0.5's block nested under an
+  `ome` key — resolved by the exported `ome_zarr.resolve_ngff_attrs(attrs)`,
+  which every reader of NGFF attributes should go through (the layout can not be
+  inferred from the store's zarr format version, and it decides which array gets
+  SELECTED as well as how it is described). The nested block wins only when it
+  carries a NON-EMPTY `multiscales` (or when the top level declares none at all),
+  so neither an `ome` block holding just `omero` rendering metadata nor an empty
+  `ome.multiscales` displaces a top-level 0.4 pyramid. A `multiscales` block
+  whose `axes` count disagrees with the SELECTED array's ndim is not metadata
+  about that array (a 5D image beside its 3D `labels/…`) and is skipped rather
+  than parsed.
+- **Whose block describes the selected array.** The root's is what is used,
+  **unless** the group that OWNS the array declares that very array as one of its
+  own `multiscales` levels — then that block wins: a bioformats2raw store puts
+  the block on the image group and leaves only `bioformats2raw.layout` at the
+  root, so reading the root alone would silently fall through to the shape
+  heuristic. The override is gated on **evidence**, not on the block merely
+  existing: one of the owner's `datasets[*].path` entries has to resolve to the
+  selected array. A same-length but permuted axis list is not evidence, and
+  adopting it would rewrite a T/C decomposition the root already had right — a
+  silently wrong `batch-fit` fan-out rather than an error. Evidence is the *only*
+  gate — the parser degrades honestly on a malformed `datasets`, so a second
+  shape check could only discard a block that does describe the selected array.
+  An owner block that fails the evidence gate is reported as such in the give-up
+  notice ("declares a `multiscales` block that does not name it"), because the
+  store plainly declared something. An owner block that wins the evidence gate
+  but is then unusable (wrong axis count, no `axes` list) does not hide the
+  root's; the root's is retried. Dataset paths are matched exactly relative to
+  whichever group won — exactly after normalising surrounding slashes and one
+  leading `./`, since the reader accepts `"0"`, `"/0"` and `"./0"` as spellings of
+  the same child and NGFF writers do emit the explicitly relative form — so a
+  same-named root pyramid level cannot be mistaken for a nested array. Resolving
+  a declared level to an actual array normalises the same way, so a pyramid
+  spelled `["./0", "./1"]` selects and describes the same arrays as one spelled
+  `["0", "1"]`. Although NGFF requires strings, real numeric scalar paths are
+  coerced for compatibility while other non-string values name nothing; lookup
+  and metadata matching apply that same rule. The custom (non-NGFF) bare `axes`
+  attribute goes the other way round, **root first**, because such a list names
+  nothing and so no evidence about it is obtainable; an owner's `axes` is
+  consulted only when the root has no usable list of its own.
+- Voxel size composes any multiscales-level `coordinateTransformations` on top;
+  where that match or that composition cannot be made honestly (an `array_key`
+  matching no entry of a multi-level pyramid, or two scale vectors of different
+  lengths) it reports no spacing rather than a plausible wrong one. Malformed
+  metadata degrades to a fallback throughout, never a traceback — a `multiscales`
+  whose `axes` is not a list (`{"axes": null}`) or whose `datasets` is not a list
+  of mappings, an axis record with no `name` or a `null` `type`, a `scale`
+  carrying a `null` or a non-numeric string. Falling through to the shape
+  heuristic on a ≥4D store guesses the T/C roles and recovers no voxel size, so it
+  says so on the console — stating whether nothing was declared or something was
+  declared but unusable — and points at `axes_override` / `--axes`.
+- The returned `OMEZarrInfo` publishes the decomposition it used, not just its
+  results: `time_axis`, `channel_indices` and `spatial_indices` are indices into
+  `shape`. **Read those rather than re-classifying `info.axes`** — NGFF is
+  classified by the axis `type` field, so a name-driven rule disagrees in both
+  directions (a channel axis named `stain`; an axis typed `view`, which discovery
+  treats as spatial), and two vocabularies deciding the same question is how a
+  consumer silently plans against a layout discovery never reported.
+- `ome_zarr.ngff_scale_transform(transforms)` → the `scale` vector of a NGFF
+  `coordinateTransformations` list, or `None`. The list is SEARCHED for the
+  `type == "scale"` entry rather than indexed at `[0]`, which breaks on any store
+  whose first transform is a `translation`.
+
+Which array gets read out of a group is ONE rule, `volume._select_zarr_array`,
+shared by `load_volume`, `open_volume_lazy` and `discover_ome_zarr_shape` — they
+have to agree, because a re-fit re-opens a store whose shape another command
+already read, and a different choice would silently target a downsampled level.
+In order: an explicit `array_key` (which may be nested, `h2afva/fused`, and may
+name a *group* — then the rule descends into it; blank counts as absent); else
+the OME-NGFF resolution level `"0"`; else the largest array found recursively,
+with a size tie broken on the lowest key path so two processes reading the same
+store cannot disagree. When `"0"` (or the key) is a **group** rather than an
+array — the bioformats2raw layout, whose pyramid levels are `0/0`, `0/1`, … —
+that is resolved, not refused, and scoped to that image group, so a store holding
+several series (`0`, `1`, …) plus an `OME` metadata group still resolves to full
+resolution of the *first* image. Within the image group the candidates are the
+levels its own `multiscales` block declares, else its direct array children, else
+(skipping `labels/` at any depth) whatever is nested below: NGFF puts an image's
+segmentation masks at `<image>/labels/<name>/<level>`, and inside an image group
+a mask as big as level 0 must never be selected as the image. That guarantee is
+**terminal**: an image group that resolves to no array of its own is a
+`ValueError`, never a fall-through to the whole-store sweep — an image group
+holding only `0/labels/seg/0` would otherwise select the *mask*, and an empty one
+a *different series*, both silently — and on the very same store an explicit
+`--array-key 0` used to crash outright (`AttributeError: 'Group' object has no
+attribute 'shape'`), so one store answered three different ways depending on how
+(or whether) the key was spelled. All three now raise the same clear `ValueError`.
+The whole-store fallback is therefore reached only when there is no `"0"` key at
+all (the `h2afva/fused` layout), and it sweeps every group recursively, `labels/`
+included, as it always has. A store with no array
+anywhere is still a clear `ValueError`, naming what led there — the key, or the
+OME-NGFF `"0"` convention when no key was passed, since blaming a key the caller
+never typed sends them hunting their own command line — what the store does hold,
+and the array keys that *would* work. Whichever spelling reaches an array — no
+key at all (the whole-store sweep included, which reports the level's immediate
+parent), the image group, an intermediate group, or the level itself — its
+**owner** is resolved by one rule (the nearest ancestor whose `multiscales`
+declares it), so all of them describe the store the same way. Leaving any single
+route out of that is not a rule: the one left out gives the same array a
+different owner, hence different axes and a different voxel size, decided by
+nothing but the spelling.
 
 These are domain-layer helpers (no CLI dependency); the gsplat CLI re-exports
 them. Dimension inference from a splat bounding box lives in

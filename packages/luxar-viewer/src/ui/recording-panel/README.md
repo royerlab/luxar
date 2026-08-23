@@ -113,8 +113,20 @@ frame-by-frame capture for turntable + EXR-sequence modes:
 1. Show the confirmation dialog; bail if cancelled.
 2. Assign `sessionAbort` BEFORE any state mutation, so a `dispose()`
    during the early state-save / rAF window aborts cleanly.
-3. Hide panels, save renderer state, disable DPR, lock resize,
-   scale resolution to a 16-pixel-aligned multiple of the target.
+3. Hide panels, save renderer state, disable DPR, lock resize, scale
+   resolution to the target height — "Native" being the DISPLAY size
+   (`PostProcessingManager.getDisplaySize()`, _not_ `renderer.getSize()`,
+   which reports the SSAA-multiplied size) times the native DPR. The
+   height is aligned _down_ until the PHYSICAL frame, i.e. after the SSAA
+   multiplier, is even, since that is the size the frames are written at
+   and H.264/H.265 with yuv420p reject an odd dimension; the width is
+   then derived from the aligned height and aligned the same way. The
+   walk is best-effort: it tries eleven candidates (ten pixels of walk),
+   which covers every multiplier measured except those within 0.1 of an
+   even one but not on it — at 2.001 and the like the product's parity is
+   locked across a thousand consecutive heights, so no bounded walk helps
+   and the even floor is taken instead. Exactly 2 and 4 never need a
+   step; 1 and 3 need at most one.
 4. Pause auto-rotate and compute per-frame angle for the turntable.
 5. Build the per-mode driver (`ImageSequenceDriver` /
    `ExrSequenceDriver` / `VideoModeDriver`).
@@ -132,7 +144,8 @@ frame-by-frame capture for turntable + EXR-sequence modes:
    it stuck true would leave a dark viewport with no recovery but a
    reload.
 8. For each frame: register a per-frame callback that orbits the
-   camera one step, `await requestAnimationFrame`, then call
+   camera one step, `await requestAnimationFrame`, remove the orbit
+   callback, **drain on `hooks.isLODSettled`** (below), then call
    `driver.captureFrame(ctx, frameIndex, progress)`. Tolerate up to
    `MAX_CONSECUTIVE_ERRORS = 3` consecutive frame failures before
    bailing.
@@ -141,6 +154,169 @@ frame-by-frame capture for turntable + EXR-sequence modes:
     finalize didn't succeed, remove per-frame callbacks, hide the
     indicator + overlay, restore auto-rotate + recording state, wake
     the loop once more, and clear the abort controller reference.
+
+### Step 8's LOD settle drain
+
+Because the rAF loop runs for the whole capture (that is what makes the
+turntable rotate at all), the auto-LOD selector is live for the entire
+sweep — and it is frustum-aware. On a `tiles` / `adaptive` / `overview`
+gsplat scene, a tile whose world bbox leaves the frustum mid-orbit is
+demoted to its coarsest ready level, and the resident-byte budget may
+release the fine one. When it swings back into view the fine level
+reloads **asynchronously**, so a loop that takes exactly one rAF per
+exported frame writes those frames at the coarse level and pops back a
+few frames later (#1695).
+
+So each frame, after the orbit callback has been removed, the loop spends
+extra rAF ticks until `hooks.isLODSettled()` reports every in-frame LOD
+group is showing its selected level at final quality
+(`LODGroupRegistry.isCaptureQuiescent()`, injected from
+`core/app/init/pipeline` via `RecordingPanel.setLODSettledProvider`). The
+drain sits **after** the callback removal on purpose: the camera pose is
+fixed from that point on, so the extra frames only let pending loads
+land. Draining before it would keep advancing the turntable while waiting
+and smear the sweep.
+
+The hook is **tri-state** — `true` / `false` / `null` — and the third
+state is what keeps scenes without LOD free. The pipeline wires the
+provider unconditionally, so "a hook is present" says nothing about
+whether this scene has anything to wait for; `null` says there is no
+`lod_group` to wait for (no scene loader, no registry, or a registry with
+zero registered lod\_groups) and makes the loop skip the drain
+**entirely, including the mandatory catch-up rAF below**. A `true` does
+not: it means the LOD tree exists and is settled, which the loop can only
+know one tick late. An absent hook is identical to `null`, which is what
+the unit tests that don't supply it get. The hook is also called through a `try`/`catch`
+(the same treatment `AnimationController.pacingSuspended()` gives its
+injected predicate) — a throw degrades to `null`, i.e. "do not wait",
+rather than being caught by the loop's outer handler and discarding the
+whole sequence as "Recording failed".
+
+The **first** of those ticks is mandatory, not part of the wait, and the
+reason is per-frame callback ordering. `AnimationController.animate` runs
+`controls.update()`, then every per-frame callback in Map insertion
+order, then the render. The LOD selector (`lod-group-selector`) is
+registered once at pipeline init, while this loop removes and re-adds its
+orbit callback on every iteration — so the orbit callback is always
+_last_ in that Map, and `LuxarOrbitControls.applyOrbitRotation` moves the
+camera synchronously. Inside the single rAF the loop awaits for frame N,
+therefore: the selector evaluates pose N−1, and only afterwards does the
+camera advance to pose N. Polling immediately would read
+`desiredChildIndex` / `activeChildIndex` / `offScreen` computed for the
+_previous_ pose, and on the exact frame a tile re-enters the frustum the
+selector has not seen the re-entry yet — the predicate would report
+settled and that frame would still be filmed coarse. That is one popped
+frame per re-entry, i.e. a slice of the very bug being fixed. One extra
+tick puts the selector on the pose about to be captured.
+
+The cost is one rAF per frame even on a fully settled scene — one that
+has LOD groups, that is; a scene whose provider answers `null` pays
+nothing. Against a full pipeline render plus an asynchronous GPU readback
+plus an encode for every frame, ~16 ms is noise.
+
+The wait is bounded by `LOD_SETTLE_TIMEOUT_MS = 2000` **and**
+`LOD_SETTLE_MAX_FRAMES = 120` (≈2 s at 60 fps, inclusive of the mandatory
+catch-up tick), whichever trips first. The deadline is read from
+`performance.now()`, which is monotonic — `Date.now()` can step backwards
+under NTP/DST and take the deadline with it. The frame cap is not
+redundant with the deadline: under a stubbed clock (unit tests, fake
+timers) `performance.now()` never advances and the ms bound alone would
+spin forever. After `MAX_CONSECUTIVE_LOD_TIMEOUTS = 3` consecutive
+timeouts the loop PAUSES draining and warns once; otherwise a scene that
+can never settle (resident-byte thrash on an over-budget partition) would
+multiply the capture's wall-clock by the timeout on every remaining
+frame. A successful settle resets the counter.
+
+That pause **re-arms**, and it has to. A latched frame still spends a
+free, non-waiting probe of the predicate — no rAF, no poll, so it costs
+exactly what an undrained frame cost before — and clears the latch as
+soon as that probe reports settled; the next frame then gets the full,
+correctly-timed drain. A terminal latch would make the fix inert on
+precisely the scenes it targets: an over-budget `adaptive` / `overview`
+partition, or simply a Capture pressed before the initial load finished,
+burns the budget on frames 0–2, latches at frame 3, and would export the
+remaining hundreds of frames with the pre-#1695 behaviour even though the
+scene settles seconds later. (The probe's boolean describes the previous
+pose, which is fine for a re-arm signal — the latched frame is captured
+undrained either way.) The warning is once per _run_, not once per latch,
+so a scene that keeps stalling and recovering does not log a line every
+three frames.
+
+At the end of the run, any timeouts at all produce a `log.warning` plus a
+toast, so a degraded sequence is visible rather than a mystery — but the
+two cases report different things on purpose. If waiting stayed on for
+the whole run the count is exact ("N of M frames", M being the frames the
+loop _attempted_, since a timeout is counted before the capture attempt
+and a frame can still throw). If waiting was ever paused the count cannot
+describe the run at all: it counts only the frames that waited and gave
+up, while every frame captured while the wait was off was taken without
+one — so the report says _that_ and claims no number. (Which branch runs
+is keyed on a sticky "the latch fired at some point" flag, not on the
+live latch, since the live one re-arms.) (The total is not pinned at
+`MAX_CONSECUTIVE_LOD_TIMEOUTS`; that constant bounds the consecutive
+_streak_, and a run alternating timeout/settle can reach any total before
+three land in a row.) The toast for that branch says waiting was paused
+rather than "LOD never settled", because a run that settled cleanly for
+hundreds of frames and then hit a stall lands there too.
+
+Both reports say the frames "may not show the level the selector had
+settled on" rather than "may be coarse". The predicate is
+direction-blind: `displayed !== active` also fires while the
+never-downgrade gate is legitimately holding a **finer**
+previously-displayed level over a coarser aspiration that is still
+streaming, so a frame counted here can be better than the selection, not
+worse.
+
+The drain is offline-only, and one turntable route does not go through
+it: `startVideoRecording()` sends a turntable to `VideoRecordingStrategy`
+(`video-recording-strategy.ts`) whenever frame-by-frame is off **and**
+the format is WebM. That path records the live canvas through
+`MediaRecorder` in real time, so it cannot wait for anything — a tile
+reloading its fine level on frustum re-entry can still pop in its output.
+Use frame-by-frame (or any non-WebM format) to get the drain.
+
+The drain's scope is exactly "every registered `lod_group` shows its
+selected level at final quality", which is narrower than "nothing in this
+scene is still loading". A `--recipe stream` scene — a single leaf with
+an additive ladder and no `lod_group` — has no registered entry at all,
+so the provider answers `null` and the loop does not wait, yet that
+leaf's progressive refinement loop can still be climbing its ladder while
+the capture runs and early frames can be exported at a partial prefix.
+Same artifact class; not covered here.
+
+Waiting rather than forcing is deliberate. `?lod-finest`
+(`LODGroupRegistryDeps.getForceFinestLOD`) would pin the finest level and
+skip the off-screen gate outright, but a capture visits the whole scene:
+peak residency would become the entire dataset, which is exactly what the
+resident-byte budget exists to prevent. Waiting costs time, not memory.
+
+Also deliberately left alone:
+
+- **The distance-driven coverage cross-fade.** Its weight is a function
+  of projected bbox area, not wall-clock, so across a turntable it
+  already spreads smoothly over consecutive exported frames — draining it
+  would turn a dissolve into a hard cut.
+- **The realtime WebM route** (above): `MediaRecorder` records the canvas
+  as it is painted, so there is no per-frame point at which the loop
+  could wait.
+- **The depth-sort ordering.** `rendering/depth-sort-coordinator.ts`
+  exports `resortForCapture(maxWaitMs)`, whose own doc calls it "the
+  offline-capture entry point" — but the only caller is `__luxarDebug`
+  (the gallery harness, which stops the rAF loop and drives each frame by
+  hand). This loop keeps the rAF loop running, so the per-frame depth-sort
+  scheduler does fire; with the default 3° re-sort threshold
+  (`config.depthSort.angleThresholdDeg`) and a turntable stepping
+  ~1°/frame, an order-dependent (`normal` / `volumetric`) gsplat
+  node is nonetheless filmed with an ordering up to a few degrees stale,
+  and the LOD drain makes _how_ stale vary with load timing. Wiring the
+  helper in is a separate change with its own risk (it suppresses
+  `requestRender` and bypasses the sorted-index apply back-pressure,
+  both of which assume the loop is stopped), so it is not done here.
+  Beware the name collision while reading that file: it also has a
+  module-private `isCaptureQuiescent()`, unrelated to the registry
+  method of the same name — it asks whether the depth-sort subsystem has
+  settled (no sort RPC in flight, no queued re-sort, no chunked ordering
+  apply streaming), not whether the LOD tree has.
 
 Step 7's wake-up is load-bearing, not belt-and-braces: the turntable's
 rotation is applied from a per-frame callback, those only run while the
@@ -165,6 +341,21 @@ a loop render landing inside the window painted a blown-out frame
 through the translucent overlay, once per captured frame. The predicate
 is offline-only: the real-time MediaRecorder path records the canvas the
 loop paints, so suppressing its render there would yield an empty video.
+
+The loop's **cadence** is the other half of the contract, and it is a
+BROADER pairing: `core/app/init/pipeline` also gives the animation
+controller a pacing-suspend predicate, keyed on this package's
+`isCurrentlyRecording()` (`session.isAnyCaptureActive()`, i.e.
+`session.isRecording`) rather than the narrower
+`isLoopRenderSuppressed()`. While it returns true, frame pacing (#1724) is
+off and every frame re-arms rAF back-to-back. Both capture families need
+that, which is why the broad flag is the right key: a paced gap is a
+dropped frame in a real-time MediaRecorder capture of the canvas this loop
+paints, and a missed window — hence a dropped orbit step — for the offline
+capture, which drives its own `await requestAnimationFrame` cadence while
+registering one-shot per-frame orbit callbacks on the controller. A plain
+screenshot sets neither flag and needs no suspension: it reads the canvas
+after its own awaited frame rather than depending on the loop's cadence.
 
 What the user sees behind the scrim for the duration is a DARK viewport,
 not a frozen frame: step 3's resolution scaling already resized the

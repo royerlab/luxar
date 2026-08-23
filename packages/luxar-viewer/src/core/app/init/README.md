@@ -12,7 +12,7 @@ sibling `lifecycle/`, `dataset/`, `debug/`, `overlays/` folders).
 
 | File                    | Role                                                                                                                                                                                                                                                                                                                                                                                                       |
 | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `environment-guards.ts` | Two upfront fail-fast checks: `assertBrowserEnvironment()` (rejects SSR / non-browser callers when `window` / `document` is missing) and `assertThreeRevision(min=184)` (parses `THREE.REVISION`, rejects hosts whose `three` peer is below what the viewer's Timer / post-processing APIs require). Both throw with a remediation message instead of letting a cryptic `ReferenceError` surface mid-init. |
+| `environment-guards.ts` | Two upfront fail-fast checks: `assertBrowserEnvironment()` (rejects SSR / non-browser callers when `window` / `document` is missing) and `assertThreeRevision(min=185)` (parses `THREE.REVISION`, rejects hosts whose `three` peer is below what the viewer's Timer / post-processing APIs require). Both throw with a remediation message instead of letting a cryptic `ReferenceError` surface mid-init. |
 | `module-overrides.ts`   | `applyModuleOverrides({ wasmPath, workerPath })` — forwards optional asset-URL overrides into the `wasm/` and `workers/worker-pool` module singletons via `setWasmJsUrl` / `setDataWorkerUrl`. Each call is skipped when the option is undefined so default `import.meta.url` resolution still kicks in. Overrides are module-level and persist across `init()` calls (one `LuxarApp` per page in v1).     |
 | `pipeline.ts`           | `runInitPipeline(ports, partial)` — builds the full subsystem graph in order, populating a `Partial<InitPipelineResult>` accumulator the orchestrator pre-allocates so a thrown step still leaves disposable references behind. Returns the same object cast to the full `InitPipelineResult` once every field is set.                                                                                     |
 | `build-rail-items.ts`   | `buildRailItems(deps)` — assembles the left control-rail's `ControlRailItem` descriptors. Extracted from the pipeline so the rail's wiring lives in one focused, independently-testable place. Each button fires the SAME command as its keyboard shortcut (via `inputHandler.getUiActions()`), so on-screen and keyboard behaviour never drift; rich controls open rail popovers (see `ui/rail-panels/`). |
@@ -68,12 +68,14 @@ runInitPipeline(ports, partial)
 ├── 16. RecordingPanel        factories.recordingPanel; setPanelState
 │                              Callbacks(ports.get/restorePanelVisibility);
 │                              setAdaptiveDPRManager; setRecordingPanel
-│                              on input handler; then the controller's two
-│                              predicates: setIdleRestorePredicate (idle
-│                              native-DPR restore gated on the panel not
-│                              currently recording) and
+│                              on input handler; then the controller's
+│                              three predicates: setIdleRestorePredicate
+│                              (idle native-DPR restore gated on the panel
+│                              not currently recording),
 │                              setRenderSkipPredicate (loop render skipped
-│                              while panel.isLoopRenderSuppressed())
+│                              while panel.isLoopRenderSuppressed()) and
+│                              setPacingSuspendPredicate (frame pacing off
+│                              while panel.isCurrentlyRecording())
 ├── 17. LayersPanel           factories.layersPanel(document.body, ctrl);
 │                              setLayersPanel on input handler
 ├── 18. ControlRail           buildRailItems(deps) → new ControlRail(items,

@@ -162,6 +162,7 @@ describe('LuxarApp', () => {
     mockSceneManager = {
       init: vi.fn().mockResolvedValue(undefined),
       loadSceneData: vi.fn().mockResolvedValue(undefined),
+      warmBlendModePrograms: vi.fn(),
       updateDynamicClippingPlanes: vi.fn(),
       getSceneViewerConfig: vi.fn().mockReturnValue(undefined),
       dispose: vi.fn(),
@@ -184,6 +185,7 @@ describe('LuxarApp', () => {
       setContextLostPredicate: vi.fn(),
       setIdleRestorePredicate: vi.fn(),
       setRenderSkipPredicate: vi.fn(),
+      setPacingSuspendPredicate: vi.fn(),
       dispose: vi.fn(),
       isActive: false,
     };
@@ -343,7 +345,7 @@ describe('LuxarApp', () => {
       }
     });
 
-    it('should start animation loop before loading data', async () => {
+    it('starts animation before loading and warms only after the final dataset render start', async () => {
       mockFetch.mockResolvedValue({ ok: true });
       const callOrder: string[] = [];
 
@@ -353,10 +355,19 @@ describe('LuxarApp', () => {
       mockSceneManager.loadSceneData.mockImplementation(async () => {
         callOrder.push('loadSceneData');
       });
+      mockSceneManager.warmBlendModePrograms.mockImplementation(() => {
+        callOrder.push('warmBlendModePrograms');
+      });
 
       await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
 
-      expect(callOrder.indexOf('startAnimation')).toBeLessThan(callOrder.indexOf('loadSceneData'));
+      const loadIndex = callOrder.indexOf('loadSceneData');
+      const firstStartIndex = callOrder.indexOf('startAnimation');
+      const finalStartIndex = callOrder.lastIndexOf('startAnimation');
+      const warmIndex = callOrder.indexOf('warmBlendModePrograms');
+      expect(firstStartIndex).toBeLessThan(loadIndex);
+      expect(finalStartIndex).toBeGreaterThan(loadIndex);
+      expect(warmIndex).toBeGreaterThan(finalStartIndex);
     });
 
     it('initialized starts false on a freshly-constructed LuxarApp (pre-init invariant)', () => {
@@ -456,7 +467,8 @@ describe('LuxarApp', () => {
       );
       expect(mockSceneManager.loadSceneData).toHaveBeenCalledWith(
         'http://example.com/data.zarr',
-        undefined
+        undefined,
+        { applyViewerConfigFov: true }
       );
       expect(DatasetBrowser).not.toHaveBeenCalled();
     });
@@ -1056,7 +1068,8 @@ describe('LuxarApp', () => {
       expect(mockSceneManager.loadSceneData).toHaveBeenCalledTimes(1);
       expect(mockSceneManager.loadSceneData).toHaveBeenCalledWith(
         'http://example.com/a.zarr',
-        undefined
+        undefined,
+        { applyViewerConfigFov: true }
       );
       // The rejected selection must not leave the configured src or the
       // host-page URL pointing at the dataset that never loaded.

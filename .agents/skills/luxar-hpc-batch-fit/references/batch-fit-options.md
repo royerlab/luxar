@@ -23,7 +23,11 @@ box plan is scanned from a temporal **max-projection** over up to `--plan-sample
 evenly-spaced timepoints (covers signal at ANY t); `--plan-timepoint N` pins one
 timepoint instead. Tuning: `--saturation-exponent` (0.44), `--saturation-cap`,
 `--feature-threshold`, `--feature-metric` (peaks/edges/intensity), `--cell` (16),
-`--target-features`, `--min-leaf` (256), `--max-leaf` (512).
+`--target-features`, `--min-leaf` (256), `--max-leaf` (512). Content-box workers do
+not implement on-the-fly denoising or progressive fitting, so batch planning rejects
+those combinations instead of emitting tasks that silently ignore them. `batch-fit
+submit --preprocess` is supported: it denoises to a store first, then points every
+content-box worker at that store.
 
 ## Shared fit params
 `--preset` (standard), `--config PATH`, `--seeds`, `--iters`/`-n`, `--progressive`,
@@ -34,9 +38,10 @@ uniform tiles, 0.999 for content boxes" split never existed in the batch path.
 
 Under **uniform** tiling an integer `--seeds K` is a **whole-volume budget per
 (t, c) volume**: every task is a `--tile k/M` fit, which divides K across that
-volume's M tiles (`ceil(K/M)`, floored at 1) instead of fitting K per tile, so
-each timepoint/channel tracks K rather than K x M. Not an exact count — tiles
-windowing to near-zero signal are skipped, and `K < M` gives M. A float ratio is
+volume's M non-empty tiles (`ceil(K/M)`, floored at 1) instead of fitting K per
+tile, so each timepoint/channel tracks K rather than K x the grid size. Every
+task derives the same M from the volume, grid, resolved floor, and Hann-window
+skip predicate. `K < M` gives M. A float ratio is
 scale-free and applied per tile unchanged. Under **content** tiling `--seeds` is
 ignored: tasks are emitted as `--tiling content --plan … --plan-box k` and each
 box takes its budget from the shared density plan.
@@ -44,13 +49,22 @@ box takes its budget from the shared density plan.
 `--floor` (default `auto`, same as `fit`/`cal`): subtract a background floor /
 DC-offset (clip at 0) before normalization, so amplitudes are background-relative.
 `auto` = histogram-mode estimate (capped at median; no-op on clean data);
-`pNN` = subtract that percentile; a number = fixed value; `none` = disable.
+`pNN` = subtract that percentile of non-zero voxels; a number = fixed value;
+`none` or `0` = disable.
 
 The spec is resolved to **one global level for the whole timelapse** at plan time,
 recorded in the manifest (`floor_level`), and handed as a concrete number to every
 `(t, c)` task and every tile/box. It is deliberately *not* re-estimated per
 timepoint or per tile: that would be a time-varying pedestal, i.e. brightness
 flicker across the merged partition.
+
+Without denoising, the plan likewise records one sampled raw-input normalization
+range (`norm_range`) and forwards it to every task, keeping normalized optimizer
+thresholds consistent across timepoints, channels, and spatial partitions.
+Denoising runs leave that sampled range unset so each task resolves on the data it
+fits: denoise-corrected input for an on-the-fly uniform tile, or the denoised store in
+`preprocess` mode (including content boxes). A deliberately configured range remains
+an intentional override.
 
 That one level is the **minimum** of the levels resolved on a bounded set of at
 most 16 evenly spaced `(t, c)` slices spanning the store's **full** extent: up to 4

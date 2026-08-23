@@ -23,59 +23,7 @@ import type { PickingSystem } from '../picking/picking-system';
 import { applyTransform } from './transforms';
 import { resolveColormapWindow } from '../display-range';
 import { parseLineJoinStyle, LINE_JOIN_STYLES } from '../../types/line-join';
-import { resolveLinePrimitiveForNode } from '../../types/line-primitive';
-
-/**
- * Diagonal of one authored min/max pair, or `undefined` when the pair is
- * missing, ragged, empty, or degenerate (zero / non-finite extent).
- */
-function boundsDiagonal(min: unknown, max: unknown): number | undefined {
-  if (!Array.isArray(min) || !Array.isArray(max) || min.length !== max.length || !min.length) {
-    return undefined;
-  }
-  const diag = Math.hypot(...max.map((hi, i) => hi - min[i]));
-  return Number.isFinite(diag) && diag > 0 ? diag : undefined;
-}
-
-/**
- * Diagonal of a lines node's AUTHORED spatial bounds, or `undefined`
- * when the node carries none — the auto policy's width normalization
- * then falls back to count-only rather than guessing a scale.
- *
- * Read from AUTHORED metadata, never from the worker's projection
- * `bounds`, which do not exist yet on the streaming path (the material
- * is built on the empty placeholder mesh). Two authored sources, in
- * order:
- *
- * 1. the spatial-index ordering metadata (`ordering_min/max` over the
- *    ordering dims), which excludes discrete slice dims and so is the
- *    tightest extent available;
- * 2. `position_bounds`, the full nD vertex AABB the compiler stamps on
- *    EVERY lines node (`geometry_writers/lines.py`). This is what keeps
- *    the width factor alive on a node compiled without a spatial index
- *    (`enable_spatial_index=False`, or a scene with no
- *    `scene_dimensions`, where `build_lines_ordering` returns `None`) —
- *    such a node is not necessarily small, so falling straight through
- *    to count-only would silently drop the width term for a whole class
- *    of scenes. Extra non-spatial dims only grow this denominator, which
- *    is the conservative direction (a smaller width factor keeps the
- *    capsule longer).
- *
- * VERTEX ordering, not segment ordering: vertices are indexed in
- * D-space, so its bounds ARE the node's bbox, while segment ordering
- * runs in (2×D)-space (both endpoints concatenated — see
- * `io/_ordering/lines.py`) and its two coordinate blocks span the same
- * extent, which makes a hypot over them exactly √2 × the diagonal. The
- * compiler always writes both together, so the segment fallback only
- * ever fires on hand-written metadata; it stays because a √2-large
- * denominator is merely conservative, never wrong in the dangerous
- * direction.
- */
-function lineBoundsDiagonal(attrs: LinesMetadata): number | undefined {
-  const ordering = attrs.vertex_ordering ?? attrs.segment_ordering;
-  const indexed = ordering && boundsDiagonal(ordering.ordering_min, ordering.ordering_max);
-  return indexed ?? boundsDiagonal(attrs.position_bounds?.min, attrs.position_bounds?.max);
-}
+import { lineNodeLoadFromAttrs, resolveLinePrimitiveForNode } from '../../types/line-primitive';
 
 /** Build a Lines mesh + optional picking shadow node. */
 export function createLinesNode(
@@ -120,8 +68,8 @@ export function createLinesNode(
     );
   }
 
-  // Per-node primitive under the auto policy (#1352 follow-up): resolved
-  // ONCE here, at first material build, from the authored size — NOT from
+  // Auto-policy primitive (#1352 follow-up): resolved ONCE here, at first
+  // material build, from the scene load and authored node size — NOT from
   // `processed.segmentCount`, which is 0 on the streaming path (the
   // placeholder mesh) and grows monotonically afterwards while the
   // material is never rebuilt. The width factor normalizes the authored
@@ -130,11 +78,7 @@ export function createLinesNode(
   // back to count-only. Both the visual and picking materials below receive
   // the SAME resolved value, and the userData stamp carries it to
   // clones and the node-factory retro picking pass.
-  const primitive = resolveLinePrimitiveForNode({
-    nSegments: attrs.n_segments,
-    maxWidth: attrs.max_width,
-    bboxDiagonal: lineBoundsDiagonal(attrs),
-  });
+  const primitive = resolveLinePrimitiveForNode(lineNodeLoadFromAttrs(attrs));
 
   const material = materialManager.getLineMaterial({
     primitive,

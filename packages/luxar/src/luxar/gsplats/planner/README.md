@@ -52,7 +52,16 @@ fit_planned(volume, plan)        -> GSplatData|GSplatNode   # fit each box, merg
   because a tile keeps every splat it fitted; a core-masked box does not).
   Non-finite values are dropped as well: the leaf writer stamps `lod_stats` raw, so
   a signal-free box's `psnr_db = inf` would reach a part's attrs as a bare
-  `Infinity` token that a strict JSON parser refuses.
+  `Infinity` token that a strict JSON parser refuses. Flat and partition merges are
+  scored once against the whole reference volume and carry the merged `psnr_db` /
+  `ssim` / `mse` / foreground metrics. Partition scoring renders and sums the
+  surviving core-disjoint parts, exactly matching their additive composition, and
+  stores the block in the root node's `meta["fit_stats"]`. With a per-part LOD
+  recipe, `n_splats` counts every stored level while the quality score describes
+  the finest content regions. For content partitions, `splats_per_tile` lists
+  surviving parts in part order; it is not positionally aligned with every box in
+  the plan. The score uses the same memory guard as uniform tiling
+  (`LUXAR_TILED_QUALITY_MAX_GB`); every decline is announced.
 - **`fit_planned_parallel`** (`fit_planned_parallel.py`) — the `-j N` path: fit
   each box in its own subprocess (`fit --plan-box`), then merge identically. A box
   that fits 0 splats writes a sibling `<output>.empty` marker (skipped at merge).
@@ -63,18 +72,30 @@ fit_planned(volume, plan)        -> GSplatData|GSplatNode   # fit each box, merg
   `truncate:` is settable only through a YAML `--config` (no preset sets it, and
   there is no `--truncate` flag), so without the forwarding `-j N` silently fitted
   at the 2.75 default; and substituting `standard` for an absent `--preset` made a
-  box resolve 5000 iterations where `-j 1` resolves 1000 (#1637).
+  box resolve 5000 iterations where `-j 1` resolves 1000 (#1637). An absent
+  `--cull-retention` does NOT mean the fitter's 0.95: the worker re-enters the same
+  CLI resolution and lands on `CONTENT_CULL_RETENTION` itself, so `-j N` and `-j 1`
+  cull identically. The CLI also hands the parent process's reference volume to
+  the merge, so parallel flat and partition results get the same whole-volume
+  score as the sequential path; direct callers that omit it receive an explicit
+  notice.
+- **`CONTENT_CULL_RETENTION = 0.999`** (`fit_planned.py`) — the near-lossless
+  post-fit retention every content box is fitted at, instead of the fitter's own
+  0.95 (whose bottom-5% cull would compound across the re-merged boxes).
+  `fit_planned` defaults to it directly; `fit_planned_parallel` has no fit kwargs to
+  default, so its boxes reach the same value through the CLI content path described
+  above, which imports this same constant as its per-command default — the CLI and
+  library halves cannot drift (#1729).
 
 Both drivers expect the background floor to arrive as a **concrete level** (or
 `"none"`): the CLI resolves `--floor` once against the whole volume and hands the
 same number to every box and to the density scan. A spec (`auto`/`pNN`) forwarded
 into the per-box fit would be re-estimated against each box CROP, so abutting
-core-kept boxes would subtract wildly different pedestals and normalize by different
-ranges — visible brightness steps at box boundaries. What is shared is the floor
-ARGUMENT, not the input: every box is still handed its own crop, and the
-normalization floor inside a box is still clamped up to that crop's own minimum
-(`image_min = max(level, min(crop))`), so a box lying entirely above the pedestal
-subtracts its own minimum.
+core-kept boxes would subtract wildly different pedestals — visible brightness
+steps at box boundaries. The raw normalization range is likewise resolved once
+against the whole volume and handed to every box, so every crop uses the same
+effective lower bound and absolute optimizer thresholds do not vary with local
+crop contrast.
 
 ## Consumers
 

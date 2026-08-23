@@ -188,6 +188,11 @@ DEMO_META = {
     },
     "caches": ["dmri_tractography"],
     "outputs": ["dmri_tractography"],
+    "citation": {
+        "short": "Yeh 2022",
+        "doi": "10.1038/s41467-022-32595-4",
+        "license": "CC BY-SA 4.0",
+    },
 }
 
 import gzip
@@ -203,6 +208,7 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import (
+    add_demo_caption,
     cached_download,
     launch_viewer,
     parse_demo_flags,
@@ -210,6 +216,7 @@ from luxar.demos import (
     require_module,
     substitutive_lod_or_flat,
 )
+from luxar.demos._cinematic_camera import pull_in
 from luxar.encoding import EncodingMode
 from luxar.utils.paths import get_demos_output_dir
 
@@ -812,10 +819,11 @@ def brain_camera(radius: float) -> CameraConfig:
     pulled forward, which is how these atlases are shown in the literature.
     """
     return CameraConfig(
-        position=(-2.6 * radius, 0.55 * radius, 0.85 * radius),
+        position=pull_in(
+            (-2.6 * radius, 0.55 * radius, 0.85 * radius), from_fov_deg=38.0
+        ),
         target=(0.0, 0.0, 0.0),
         up=(0.0, 1.0, 0.0),
-        fov=38.0,
     )
 
 
@@ -994,9 +1002,11 @@ def build_scene(bundles: dict, output_path: Path, *, points: int) -> Path:
             scene = c.create_scene(
                 dimensions=dims,
                 viewer_config=ViewerConfig(
+                    cinematic_mode=True,
                     tone_mapping="ACES",
                     camera=brain_camera(extent),
                 ),
+                citation=DEMO_META["citation"],
             )
             scene.attrs["title"] = (
                 "Human White-Matter Tractography — HCP-1065 population atlas"
@@ -1050,12 +1060,10 @@ def build_scene(bundles: dict, output_path: Path, *, points: int) -> Path:
                 color="rgba(255,255,255,0.75)",
                 blend_mode="difference",
             )
-            scene.add_text(
-                "HCP-1065 atlas (Yeh 2022, CC BY-SA 4.0) — 87 tracts",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,220,0.5)",
+            add_demo_caption(
+                scene,
+                "HCP-1065 atlas (CC BY-SA 4.0) — 87 tracts",
+                DEMO_META.get("citation"),
             )
             # The one user-visible statement of the LOD caveat. Without it the
             # first contact with this scene is "hover does nothing", which is

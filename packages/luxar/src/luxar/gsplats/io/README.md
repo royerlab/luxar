@@ -48,7 +48,11 @@ save_gsplats(
 
 Transparently handles compressed formats (`.gsplats.zarr.zip`, `.gsplats.zarr.tar.gz`) by extracting to a temporary directory automatically (via the shared, hardened `_archive.extract_compressed_zarr` — it rejects links/devices, validates every member before extracting, and caps member count / total size to guard against path-traversal and archive-bomb attacks). Arrays are decoded from their stored encoding (quantization, broadcasting, etc.) to float32.
 
-Its read-only sibling `_archive.read_archive_root_attrs` extracts *nothing*: it scans the archive index (zip central directory / tar headers) for the store root's `.zattrs`, reads that one member's bytes, and returns the parsed attrs. Only that one payload is ever *read*, but only a zip has a real index: a gzipped tar's headers are walked lazily and the walk stops at the first top-level `*.gsplats.zarr/.zattrs` — member #1 of everything a compressed save writes — so the normal layout costs a couple of headers. The unnamed-fallback layout gets no such stop (a later member could still outrank the candidate, and the sole-top-level-directory rule needs the whole member list), and reaching the end of a gzip stream means inflating it, so *that* shape costs one decompression pass. It answers `{}` when there is no root `.zattrs` to read (and for a missing path or a non-archive file), but a *corrupt* archive raises — `BadZipFile`, `tarfile.ReadError`, `json.JSONDecodeError` — and it is `load_gsplats.read_authored_appearance` that absorbs those into `{}` for its best-effort carry. The store root is resolved as the same *kind* of node `extract_compressed_zarr` picks — the top-level `*.gsplats.zarr` directory, else, **only when it is the sole top-level directory**, that directory whatever it is named — which for any archive holding one store (every archive a compressed save writes) is the very node the extractor loads. An archive holding *several* `*.gsplats.zarr` directories is not a single dataset; the extractor picks among them arbitrarily (`iterdir()` order) and the peek may pick another. Either way a child group's attrs is never mistaken for the root's, and no link is ever followed. An archive with several top-level directories and no `*.gsplats.zarr`-named one is ambiguous (the extractor settles it by unpredictable `iterdir()` order) and deliberately carries nothing rather than guessing a sibling's attrs. Used by `load_gsplats.read_authored_appearance`, which carries a source root's authored compositing attrs across a structure-only rebuild (`gsplat lod`) for archive inputs as well as directories.
+The store root is resolved from the extracted tree in three tiers: a top-level `*.gsplats.zarr` directory (what a compressed save writes); else the archive ROOT itself when a zarr group document (`zarr.json` / `.zgroup`) sits at depth 0 — the *flat* shape `zip -r x.gsplats.zarr.zip .` from inside a store produces; else the first top-level directory whatever it is called (a stray depth-0 file beside it — a `README.md`, a `.DS_Store` — must not decide the outcome, and `iterdir()` order is not a decision). The named directory deliberately keeps winning over the flat reading, matching `_zip_is_flat_store`. A flat tree is moved one level down under a store-shaped name so the returned path's parent is still a removable temp directory, which is the contract every caller relies on.
+
+Ranking the flat tier above the directory tier reversed one shape: an archive that carries a depth-0 group document *and* the real store one level down under a non-`*.gsplats.zarr` name (`zip -r x.gsplats.zarr.zip .` from inside a parent zarr group that merely contains the store) used to fall through to the directory and load, and now resolves to the wrapper and fails loudly with `Invalid format_type: None`. The order is nonetheless right: nothing in an archive tells "a store whose root has one child group" apart from "a wrapper around a store", and gating the flat tier on "the sole child is not itself a group" would break the flat partition that is #1628's own repro. Re-archive the inner directory on its own to read such a wrapper.
+
+Its read-only sibling `_archive.read_archive_root_attrs` extracts *nothing*: it scans the archive index (zip central directory / tar headers) for the store root's metadata document — `.zattrs` at zarr format 2, `zarr.json` at format 3 — reads that one member's bytes, and returns the attrs (unwrapping them out of the node document at format 3). Only that one payload is ever *read*, but only a zip has a real index: a gzipped tar's headers are walked lazily and the walk stops at the first top-level `*.gsplats.zarr/` root document. How early that stop comes depends on the on-disk format, because `tarfile.add` walks a directory in sorted order: a format-2 store's `.zattrs` is a dotfile and lands second (measured: member 1 of 24), so that layout really does cost a couple of headers, but a format-3 store's `zarr.json` sorts *after* every array sub-directory and lands last (measured: member 26 of 27) — so on the format Luxar writes by default the stop effectively never fires and the peek pays a full inflate. The other two layouts get no such stop (a later member could still outrank the candidate, and both the flat and the sole-top-level-directory rules need the whole member list), and reaching the end of a gzip stream means inflating it, so *those* shapes cost one decompression pass. The member is budgeted by its document *name*, and the two budgets are far apart on purpose: a `.zattrs` **is** the attributes mapping and keeps a small 4 MiB cap, while a format-3 `zarr.json` at a consolidated root also carries the entire consolidated index of the tree (one entry per *node*: measured ~8-10 KB per part for bare leaves, ~48-54 KB with a 6-step `stream` ladder, ~100-110 KB for an `adaptive`-shaped part) and gets 128 MiB; a member whose bytes actually exceeded 4 MiB — only ever a `zarr.json` read under the raised budget — has the attributes it unwraps to re-capped at 4 MiB, so raising the document budget cannot raise what the peek hands back. Any size refusal emits a `UserWarning` naming the archive, member, measured size and budget — `{}` is indistinguishable from "this dataset authored no appearance", so a *silent* refusal would reach the user only as a rebuild that quietly reset the look. It answers `{}` quietly when there is no root metadata document to read (and for a missing path or a non-archive file), but a *corrupt* archive raises — `BadZipFile`, `tarfile.ReadError`, `json.JSONDecodeError` — and it is `load_gsplats.read_authored_appearance` that absorbs those into `{}` for its best-effort carry. The store root is resolved as the same *kind* of node `extract_compressed_zarr` picks, tier for tier — the top-level `*.gsplats.zarr` directory; else the archive root itself, **only when a zarr group document sits at depth 0 and no top-level `*.gsplats.zarr` directory is present** (the flat shape); else, **only when it is the sole top-level directory**, that directory whatever it is named — which for any archive holding one store (every archive a compressed save writes) is the very node the extractor loads. Those are `_zip_is_flat_store`'s rules exactly, all three, so the peek and the extractor classify the same archives as flat — including the *bare* `x.gsplats.zarr/` directory entry `zip -r` emits for an empty subdirectory, which is tracked separately from the top-level-directory set because the sole-directory tier deliberately ignores it (an empty directory holds no store, so counting it there would manufacture false ambiguity). The group-document condition on the flat tier is what keeps a stray depth-0 `.zattrs` (a name that also sits beside an array) from outranking a real store one directory down, and the sole-directory tier is refused outright once the archive is flat, so a flat store that authored no root attrs carries nothing rather than an array sub-directory's attrs. A store carrying *both* format documents at its root — a half-finished in-place migration — is settled here by archive order, so this index-only peek can answer the stale format-2 view where `open_group` sees format 3; a known limitation rather than a contract, and no Luxar writer produces the state. An archive holding *several* `*.gsplats.zarr` directories is not a single dataset; the extractor picks among them arbitrarily (`iterdir()` order) and the peek may pick another. Either way a child group's attrs is never mistaken for the root's, and no link is ever followed. An archive with several top-level directories and no `*.gsplats.zarr`-named one is ambiguous (the extractor settles it by unpredictable `iterdir()` order) and deliberately carries nothing rather than guessing a sibling's attrs. Used by `load_gsplats.read_authored_appearance`, which carries a source root's authored compositing attrs across a structure-only rebuild (`gsplat lod`) for archive inputs as well as directories.
 
 ```python
 from luxar.gsplats.io import load_gsplats
@@ -167,7 +171,7 @@ This package uses `luxar.encoding` for semantic type-aware array encoding:
 
 | Array | Semantic Type | MEMORY Mode Encoding |
 |-------|---------------|---------------------|
-| `centers` | COORDINATE | `linear_perchannel_u16` per-axis fixed-point (AUTO/MEMORY; extent rail falls back to `float32`) / `float32` (PRECISION) |
+| `centers` | COORDINATE | `linear_perchannel_u16` per-axis fixed-point (AUTO/MEMORY, with a gridded axis's grid snapped so it is exact; extent rail and sigma rail fall back to `float32`) / `float32` (PRECISION) |
 | `amplitudes` | POSITIVE_SCALAR | canonical positive-scalar encoding (may quantize to uint8) |
 | `cholesky_factors_diag` | CHOLESKY_DIAG | per-channel log: `log_perchannel_u8` (AUTO — certified, escalates to `u16`; MEMORY) / `float32` (PRECISION) |
 | `cholesky_factors_offdiag` | CHOLESKY_OFFDIAG | per-channel signed-log: `signed_log_perchannel_u8` (escalates with the diagonal — one shared tier) / `float32`; absent if d==1 |
@@ -178,6 +182,63 @@ This package uses `luxar.encoding` for semantic type-aware array encoding:
 ≥ 2¹⁶ falls back to float32). float16 is never used on coordinates — its
 *relative* precision is a footgun for absolute positions, so the writer
 disables it (there is no `float16_allowed` knob).
+
+**Grid snap (what keeps a stacked axis exact).** A time or channel axis built with
+`combine_as_new_dimension(..., sigma=0.0)` has a tiny extent (so it passes the
+extent rail) but essentially no width, so an ordinary uint16 grid step of
+thousands of σ knocks every interior frame off its integer coordinate — measured
+at 7 320 σ on a 100-frame stack, with only the two endpoints surviving (#1748).
+Such an axis is **gridded**, though, so the encoder widens its stored `hi` until
+the quantization grid coincides with the data's own spacing and every value
+round-trips bit-exactly at uint16. It costs nothing (`lo`/`hi` are stored per axis
+regardless — a scale choice, not a dtype change) and needs no action from the
+caller, so it reports through arbol rather than warning. See
+`luxar/encoding/README.md` for the eligibility test.
+
+**Sigma rail (a geometry-aware backstop).** The rails above only see coordinates.
+The gsplat writer also has the Cholesky factors in hand, so it compares **half**
+each axis's grid step `(hi - lo) / 65535` — the worst-case round-trip
+displacement — against *each splat's own* marginal σ on that axis: a splat is
+**unrepresentable** there when that displacement exceeds
+`MAX_CENTER_DISPLACEMENT_SIGMAS` (1.0) × its σ, i.e. when quantization can push
+the center clear of its own core and out of a slice query that used to match it.
+The centers are stored as `float32` (with a `UserWarning`) once more than
+`MAX_UNREPRESENTABLE_SPLAT_FRACTION` (0.1%) of the splats are unrepresentable on
+some axis **and** the encoder has no exact path of its own for that array —
+tripping the population gate is necessary but not sufficient. An axis the snap
+covers is **not** an offender: the rail runs the
+encoder's own `gridded_axis_step` on any axis that trips the population gate
+(lazily — `np.unique` per axis is 0.30 s of a 2.85 s encode on 5M×3 coordinates,
+and a tripped axis is rare) and skips it when the encoder will store it exactly.
+Nor is a **LUT-eligible** centers array, which the encoder already stores verbatim
+(exactly, at ~1 B/value) — the rail asks `ArrayEncoder.encodes_as_lut` before
+escalating, since float32 would be 4× the bytes for no gain in fidelity.
+So a stacked dataset keeps uint16 centers and stays silent, and what is left for
+the rail is a degenerate sub-population on a **non-gridded**, non-LUT axis — a
+`sigma=0` track stack merged into a fit whose time axis is continuous, or an axis
+with more distinct values than uint16 has levels — where the splats really are
+destroyed.
+
+Both numbers are set by harm rather than by jitter. Sub-σ displacement is
+invisible — a whole-volume light-sheet fit over an 8192-voxel axis has a
+0.125-voxel step, so its worst displacement is 0.0625 voxel, and paying 2× the
+centers bytes for that is not worth it. The test is over the population rather
+than the minimum because real fits contain a few needle Gaussians (an SPZ import
+decodes scales as `exp(u8/16 - 10)`; a random-Cholesky fixture draws σ from
+`U(0, 1)`), and one of those must not cost the whole array its uint16 win — but
+0.1% rather than a looser 1%, because a degenerate *minority* is just as destroyed
+as a degenerate whole: merging a 2,000-splat `sigma=0` track stack into a
+300,000-splat fit leaves 0.662% of the splats displaced by up to 1,373 σ. Under
+the displacement criterion the benign populations measure 0.03% or less, so
+0.1% still clears them by 3× or more. Only the centers escalate — the
+Cholesky/amplitude/color tiers keep whatever the mode selected. An escalated
+centers array is also written with `deduplicate=False`: the encoder's content
+registry is keyed on the centers bytes alone, and would otherwise hand the
+escalated node an `array_ref` to a sibling's quantized array. The sigma rail
+stands down entirely once an axis reaches `COORDINATE_U16_MAX_EXTENT` (2¹⁶):
+the extent rail above already stores that array as float32, so it leaves the
+clearer "extent ≥ 2¹⁶" diagnosis in place — and leaves the array its dedup,
+which is safe for a verdict that depends only on the centers bytes.
 
 **Encoding modes**:
 - `AUTO`: Analyzes data and selects encoding (may quantize)
@@ -231,13 +292,15 @@ arrays live in `additive_<i>/` subgroups; the parent leaf group carries
 
 **Substitutive LOD** (`kind=lod`):
 `child_<i>/` subgroups, coarsest→finest on disk; each child carries
-`coverage_fraction` (a dimensionless, viewport-relative value,
-`sqrt(N_i / N_finest)`; coarsest = 0.0, finest = 1.0 for a whole-object ladder).
+`coverage_fraction` (a dimensionless, viewport-relative value derived by
+SCREEN-OCCUPANCY HALVING; coarsest = 0.0, finest = 0.5 for a whole-object ladder).
 A ladder bound to a spatial partition — the `adaptive` recipe's per-tile groups,
-the `overview` recipe's coarse-cap/fine-partition pair — is scaled to anchor its
-finest at `MAX_COVERAGE_FRACTION` (4.0) instead, keeping the fills-screen switch
-point a tile needs; the writer derives the same anchor from the topology when a
-node carries no stamped value.
+the `overview` recipe's coarse-cap/fine-partition pair — is scaled ×2 (in area
+units) to anchor its finest at `PARTITION_FINEST_AREA` (1.0) instead, keeping the
+fills-screen switch point a tile needs; the writer derives the same anchor from
+the topology when a node carries no stamped value. (`MAX_COVERAGE_FRACTION` = 4.0
+is a different bound: the ceiling on a LEGACY `selector="coverage"` ladder, i.e.
+on authored values, not on anything derived.)
 
 **Spatial partition** (`kind=partition`):
 `part_<i>/` subgroups; the viewer renders all parts simultaneously.
@@ -419,10 +482,10 @@ Migration mappings:
 - **v2.0** (`splats/substitutive_<s>/additive_<a>/`) → v3.3 node tree
   (bare leaf, additive ladder, or `kind=lod` group depending on shape)
 - **v3.0/v3.1 with `selector: "pixel_size"` / per-child `min_pixel_size`** →
-  same tree re-written with `selector: "coverage"` + derived per-child
-  `coverage_fraction` (`sqrt(N_i/N_finest)`, or that × `MAX_COVERAGE_FRACTION`
-  = 4.0 for a partition-bound ladder — i.e. a legacy `adaptive` / `overview`
-  store, whose derivation is topology-aware), stamped v3.3
+  same tree re-written with `selector: "screen-area"` + freshly derived per-child
+  `coverage_fraction` (occupancy halving to finest `0.5`, or that × 2 in area
+  units — finest `1.0` — for a partition-bound ladder, i.e. a legacy `adaptive` /
+  `overview` store, whose derivation is topology-aware), stamped v3.3
 
 Migrated arrays are written with `ordering="none"` so element order is
 preserved (no Morton/Hilbert re-sort), but **encoding follows the current policy**:
@@ -449,8 +512,33 @@ is `luxar gsplat migrate-format`.
   Also `read_authored_appearance(path)` — the source root's authored compositing
   attrs (`AUTHORED_APPEARANCE_ATTRS`), for a command that rewrites a dataset to
   hand back to `write_gsplats_tree(root_attrs=…)` / `GSplatData.save(root_attrs=…)`
-  so a structure-only rebuild does not silently reset the look. Best-effort:
-  a missing/unreadable store, or an archive input, yields `{}`.
+  so a structure-only rebuild does not silently reset the look. Archive inputs
+  are carried too — a `.gsplats.zarr.zip` / `.tar.gz` is peeked in place via
+  `_archive.read_archive_root_attrs` (see above), no extraction. Best-effort:
+  a missing/unreadable store yields `{}`.
+  Its N-input sibling `agreed_authored_appearance(paths, exclude=…)` is what a
+  command with several inputs (`gsplat merge`) uses: a key is carried only when
+  every input that *has* an opinion agrees, an input with no opinion casts no
+  vote, and a disagreement drops the key **with a warning** naming the differing
+  values (each with the input it came from) and what lands instead. Same unanimity rule as
+  `save_gsplats.agreed_normalization_stats`, deliberately loud rather than
+  silent because appearance is hand-authored. Two refinements make the rule
+  usable, both on `_appearance_votes`: a value equal to the one the WRITER
+  manufactures (`WRITER_STAMPED_APPEARANCE_DEFAULTS`) is silence, not a vote —
+  otherwise merging a tuned dataset with a freshly fitted one disagrees on seven
+  keys and reverts to the untouched look; and `visible` is the one key where
+  ABSENCE votes (`true`), so a unilateral `visible: false` cannot hide the merged
+  whole. `colormap` is refused outright when any input declares the `"custom"`
+  sentinel (warned once for N inputs), since demoting it to "no opinion" would
+  let a sibling's palette repaint those splats. `exclude` names keys the CALLER
+  invalidates whatever the inputs say — for `gsplat merge` that is `colormap`
+  whenever the merge manufactured per-splat RGB; pass a `{key: reason}` mapping
+  to have the reason quoted in the warning. It is typed as a set/mapping so a
+  bare `str` cannot be passed by accident. `input_has_colors` identifies a
+  colored input with no authored palette as relying on its per-splat RGB, so a
+  sibling palette is refused rather than repainting it. `output_has_colors`
+  lets a drop warning say whether the merged writer leaves `colormap` unset or
+  stamps its colorless `"gray"` default.
 - **`inspect_gsplats.py`**: Metadata inspection without loading arrays
   (`inspect_gsplats_zarr`, `format_gsplats_info`).
 - **`migrate.py`**: Legacy-format migration (`migrate_format`,
