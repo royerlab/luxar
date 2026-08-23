@@ -12,5 +12,5 @@ that leaves the viewer's sorted-transparent set and unconditionally writes depth
 — so the terrain finally gives the rivers a surface to be hidden behind, and only
 the visible hemisphere's network is drawn. The river display window is narrowed
 to `0 – 0.38` as well (authored as `RIVER_DISPLAY_MAX` and inverted into the
-shader gain), keeping the brighter trunks off the clip point now that they are
-composited against a lit globe instead of near-black space.
+shader gain), lifting the network so it still reads against a lit globe instead
+of near-black space; the authored `-1.0` exposure absorbs the added headroom.
