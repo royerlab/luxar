@@ -333,9 +333,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 the zarr file and read by the viewer at load time as
                 scene-specific defaults.
             citation: Optional credit for whoever produced the underlying
-                dataset -- ``{"short", "doi"?, "license"?, "url"?}``. Stored in
-                the root attributes so it travels with the data. ``None`` means
-                there is no external dataset to credit.
+                dataset -- ``{"short", "ref"?, "doi"?, "license"?, "url"?}``.
+                Stored in the root attributes so it travels with the data.
+                ``None`` means there is no external dataset to credit.
 
         Returns:
             Scene object configured with this compiler as writer

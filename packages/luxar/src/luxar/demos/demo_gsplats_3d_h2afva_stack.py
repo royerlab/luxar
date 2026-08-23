@@ -90,6 +90,7 @@ DEMO_META = {
     "outputs": ["gsplats_3d_h2afva_stack"],
     "citation": {
         "short": "Lange et al. 2024 (Zebrahub)",
+        "ref": "Lange et al. 2024",
         "doi": "10.1016/j.cell.2024.09.047",
         "license": "CC BY 4.0",
     },
@@ -104,7 +105,12 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
-from luxar.demos import ensure_dataset, launch_viewer, parse_demo_flags
+from luxar.demos import (
+    add_demo_caption,
+    ensure_dataset,
+    launch_viewer,
+    parse_demo_flags,
+)
 from luxar.gsplats.io.load_gsplats import load_gsplat_node
 from luxar.gsplats.tree import center_bounds
 from luxar.utils.paths import get_demos_output_dir
@@ -256,7 +262,7 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
             scene = compiler.create_scene(
                 citation=DEMO_META["citation"],
                 dimensions=dims,
-                viewer_config=ViewerConfig(tone_mapping="ACES"),
+                viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="ACES"),
             )
             scene.attrs["title"] = "GSplats: Zebrafish Embryo (h2afva stack)"
             scene.attrs["description"] = (
@@ -342,12 +348,10 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                 color="rgba(255,255,255,0.6)",
                 blend_mode="difference",
             )
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 "Light-sheet • histone-labelled nuclei",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
 
     aprint(f"Scene saved: {output_path}")

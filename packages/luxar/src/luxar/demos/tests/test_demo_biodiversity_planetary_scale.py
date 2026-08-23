@@ -15,7 +15,9 @@ import pytest
 
 from luxar.conftest import find_repo_relative_file, read_ts_number_const
 from luxar.core.group.lod.group import MAX_COVERAGE_FRACTION
+from luxar.core.group.partition import serialized_bsp_tree_separates
 from luxar.demos import demo_biodiversity_planetary_scale as demo_module
+from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
 from luxar.demos.demo_biodiversity_planetary_scale import (
     ALL_LIFE_SLOT,
     ALLOWED_LICENSES,
@@ -116,10 +118,16 @@ def test_lonlat_to_xyz_longitude_is_periodic():
 def test_globe_camera_looks_at_origin_from_outside():
     cam = globe_camera(-40.0, 25.0, distance=2.6)
     assert cam.target == (0.0, 0.0, 0.0)
-    assert np.linalg.norm(cam.position) == pytest.approx(RADIUS * 2.6, rel=1e-6)
+    distance = np.linalg.norm(cam.position)
+    old_fill = math.tan(math.asin(1.0 / 2.6)) / math.tan(math.radians(42.0) / 2.0)
+    new_fill = math.tan(math.asin(RADIUS / distance)) / math.tan(
+        math.radians(CINEMATIC_FOV_DEG) / 2.0
+    )
+    assert new_fill == pytest.approx(old_fill, rel=1e-6)
+    assert cam.fov is None
     # The camera must sit over the requested surface point.
     surface = lonlat_to_xyz(np.array([-40.0]), np.array([25.0]), np.zeros(1))[0]
-    cos = float(np.dot(cam.position / np.linalg.norm(cam.position), surface / RADIUS))
+    cos = float(np.dot(cam.position / distance, surface / RADIUS))
     assert cos == pytest.approx(1.0, abs=1e-5)
 
 
@@ -715,6 +723,63 @@ def test_tile_count_for_rejects_bad_input():
         tile_count_for(0, 100)
     with pytest.raises(ValueError):
         tile_count_for(100, 0)
+
+
+def test_add_lod_tiles_records_the_bsp_tree(monkeypatch):
+    class RecordingWrapper:
+        def __init__(self) -> None:
+            self.parts: list[np.ndarray] = []
+
+        def add_points(self, _name, positions, **_attrs):
+            self.parts.append(positions)
+
+    class RecordingScene:
+        def __init__(self) -> None:
+            self.attrs = None
+            self.wrapper = RecordingWrapper()
+
+        def add_partition_group(self, _name, **attrs):
+            self.attrs = attrs
+            return self.wrapper
+
+    monkeypatch.setattr(
+        demo_module, "substitutive_lod_or_flat", lambda _config: {"levels": 1}
+    )
+    positions = np.array(
+        [
+            [-4.0, 0.0, 0.0],
+            [-3.0, 0.0, 0.0],
+            [-2.0, 0.0, 0.0],
+            [-1.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+            [3.0, 0.0, 0.0],
+            [4.0, 0.0, 0.0],
+        ],
+        dtype=np.float32,
+    )
+    scene = RecordingScene()
+
+    demo_module.add_lod_tiles(
+        scene,
+        "occurrences",
+        positions,
+        np.ones((positions.shape[0], 3), dtype=np.float32),
+        radii=1.0,
+        opacity=1.0,
+        max_elements=2,
+        levels=1,
+        coverage=[1.0],
+    )
+
+    assert scene.attrs is not None
+    tree = scene.attrs["bsp_tree"]
+    boxes = [(part.min(axis=0), part.max(axis=0)) for part in scene.wrapper.parts]
+    assert len(scene.wrapper.parts) == 4
+    assert serialized_bsp_tree_separates(tree, boxes)
+    np.testing.assert_array_equal(
+        np.sort(np.concatenate(scene.wrapper.parts, axis=0)[:, 0]), positions[:, 0]
+    )
 
 
 def test_parts_needed_for_oversamples_the_point_target():

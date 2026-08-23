@@ -14,6 +14,7 @@
  * Build with: pnpm build:wasm (or make build-wasm)
  */
 
+import { readFileSync } from 'node:fs';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { TypeScriptFallback } from '../../../wasm/typescript';
 import { ArrayDecoder } from '../../../data/array-decoder/decoder';
@@ -38,6 +39,17 @@ let tsModule: WasmModule;
 // Pre-check if WASM files exist (synchronous check at module load time)
 const wasmFilesExist = wasmArtifactExists();
 const requireWasmTests = process.env.LUXAR_REQUIRE_WASM_TESTS === '1';
+
+const RUST_DECODE_SOURCE_URL = new URL('../../../wasm/rust/src/decode.rs', import.meta.url);
+const TYPESCRIPT_DECODE_SOURCE_URL = new URL('../../../wasm/typescript/decode.ts', import.meta.url);
+
+function exportedDecodeNames(source: string, language: 'rust' | 'typescript'): string[] {
+  const pattern =
+    language === 'rust'
+      ? /^pub fn (decode_[a-z0-9_]+)/gm
+      : /^export function (decode_[a-z0-9_]+)/gm;
+  return [...source.matchAll(pattern)].map((match) => match[1]).sort();
+}
 
 /**
  * Local wrappers around the shared helpers — preserve this file's
@@ -177,6 +189,24 @@ beforeAll(async () => {
     console.log(`[Test] ${WASM_BUILD_HINT}`);
   });
   if (wasmModule) console.log('[Test] WASM module loaded successfully');
+});
+
+describe('decode kernel source parity', () => {
+  it('keeps Rust and TypeScript decode exports in sync', () => {
+    const rustNames = exportedDecodeNames(readFileSync(RUST_DECODE_SOURCE_URL, 'utf8'), 'rust');
+    const typescriptNames = exportedDecodeNames(
+      readFileSync(TYPESCRIPT_DECODE_SOURCE_URL, 'utf8'),
+      'typescript'
+    );
+
+    expect(rustNames, 'The Rust export scan must find the established decode kernels').toContain(
+      'decode_quantized_u8'
+    );
+    expect(
+      rustNames,
+      'Rust and TypeScript decode_* exports must match; TypeScript is the production fallback'
+    ).toEqual(typescriptNames);
+  });
 });
 
 describe('WASM artifact requirement', () => {

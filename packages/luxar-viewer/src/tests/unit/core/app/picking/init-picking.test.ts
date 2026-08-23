@@ -601,10 +601,12 @@ describe('initPicking', () => {
       // core.md W10 strengthening: previously `>=4`. Pin to EXACTLY the
       // current count so a regression that double-registered a cleanup (or
       // added a listener without considering teardown) gets flagged. The five
-      // are: controls.removeEventListener('change' | 'start' | 'end'),
-      // sceneManager.removeEventListener('camera-changed'), and the canvas
-      // actions' cursor reset (#1917), which must run on teardown so a
-      // session disposed mid-hover leaves no pointer cursor behind.
+      // are: controls.removeEventListener('start' | 'end'),
+      // sceneManager.removeEventListener('change' | 'camera-changed') — the
+      // pair #1920 moved picking onto, so a FOV or clipping change invalidates
+      // it — and the canvas actions' cursor reset (#1917), which must run on
+      // teardown so a session disposed mid-hover leaves no pointer cursor
+      // behind.
       expect(addSpy.mock.calls.length).toBe(5);
       // Each registered cleanup is a function (not a value / object).
       for (const call of addSpy.mock.calls) {
@@ -613,10 +615,23 @@ describe('initPicking', () => {
 
       // Direct addEventListener on controls + sceneManager (Three.js
       // EventDispatcher doesn't satisfy the EventTarget type).
-      expect(sm.controls.addEventListener).toHaveBeenCalledWith('change', expect.any(Function));
       expect(sm.controls.addEventListener).toHaveBeenCalledWith('start', expect.any(Function));
       expect(sm.controls.addEventListener).toHaveBeenCalledWith('end', expect.any(Function));
+      expect(sm.addEventListener).toHaveBeenCalledWith('change', expect.any(Function));
       expect(sm.addEventListener).toHaveBeenCalledWith('camera-changed', expect.any(Function));
+
+      const dirtyHandler = sm.addEventListener.mock.calls.find(([type]) => type === 'change')?.[1];
+      expect(dirtyHandler).toBeTypeOf('function');
+      dirtyHandler();
+      const pickingSystem = vi.mocked(PickingSystem).mock.results.at(-1)?.value;
+      expect(pickingSystem.markDirty).toHaveBeenCalledTimes(1);
+
+      events.dispose();
+      expect(sm.removeEventListener).toHaveBeenCalledWith('change', dirtyHandler);
+      expect(sm.controls.removeEventListener).not.toHaveBeenCalledWith(
+        'change',
+        expect.any(Function)
+      );
     });
   });
 });

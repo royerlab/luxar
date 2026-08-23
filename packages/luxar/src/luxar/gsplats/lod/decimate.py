@@ -48,7 +48,10 @@ from typing import Literal, Optional, Sequence, Union
 import numpy as np
 from arbol import aprint, asection
 
-from luxar.gsplats._data.filtering import scrub_measured_stats
+from luxar.gsplats._data.filtering import (
+    scrub_measured_stats,
+    stats_after_structure_change,
+)
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.lod.additive import compute_additive_order
 from luxar.gsplats.lod.substitutive import merge_to_count
@@ -207,7 +210,19 @@ def decimate(
         # surviving splat is a new one. The region stamps are NOT touched: neither
         # family is a spatial restriction, so the survivors still represent the
         # whole fitted volume.
-        out = GSplatData.from_tree(out.tree, stats=dict(data.stats))
+        #
+        # The input's TOPOLOGY record goes with them, and it goes HERE rather than
+        # in the CLI because the RETURN TYPE is the reason: this function's
+        # contract is one flat leaf whatever it was handed, so an inherited
+        # `lod_kind: substitutive` / `n_substitutive_levels: 4` /
+        # `lod_cutpoints: [...]` is false of every result it can produce — no
+        # caller can want it kept. Scrubbing in the command instead left the
+        # public `luxar.gsplats.lod.decimate` API publishing the defect (#1600).
+        # `coarsen_dims` is exempt (the writer reads it back to derive the
+        # chunk-ordering barrier) — see _STRUCTURE_SCOPE_EXEMPT_KEYS.
+        out = GSplatData.from_tree(
+            out.tree, stats=stats_after_structure_change(data.stats)
+        )
         scrub_measured_stats(out)
         from luxar.gsplats.lod.restamp import refresh_reduction_lod_stats
 

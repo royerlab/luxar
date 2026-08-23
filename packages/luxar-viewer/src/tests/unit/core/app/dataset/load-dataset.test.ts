@@ -11,9 +11,17 @@
 import * as THREE from 'three';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { loadDataset, type LoadDatasetPorts } from '../../../../../core/app/dataset/load-dataset';
+import { captureViewerState } from '../../../../../config/zarr-bridge/viewer-state-capture';
+import { config } from '../../../../../config';
+import { syncCameraFovState } from '../../../../../ui/rendering-controls/sync-current-state';
 
 vi.mock('../../../../../data/scene-loader-manager', () => ({
   getSceneLoader: vi.fn(),
+}));
+vi.mock('../../../../../themes/theme-manager', () => ({
+  ThemeManager: {
+    getInstance: () => ({ getCurrentTheme: () => ({ id: 'dark', name: 'Dark Theme' }) }),
+  },
 }));
 import { getSceneLoader } from '../../../../../data/scene-loader-manager';
 
@@ -29,10 +37,12 @@ function makePorts(trace: Trace, overrides: Partial<LoadDatasetPorts> = {}): Loa
     initDimensionSliders: vi.fn(() => trace.order.push('initDimensionSliders')),
   };
   const renderingControls = {
+    settings: { ...config.renderingControls.defaults },
     setSceneId: vi.fn(() => trace.order.push('setSceneId')),
     setZarrViewerConfig: vi.fn(() => trace.order.push('setZarrViewerConfig')),
     hasStoredSettings: vi.fn().mockReturnValue(false),
     applyZarrDefaults: vi.fn(() => trace.order.push('applyZarrDefaults')),
+    syncCameraFovState: vi.fn(() => trace.order.push('syncCameraFovState')),
     updateSceneScale: vi.fn(() => trace.order.push('updateSceneScale')),
   };
   const sceneManager = {
@@ -147,20 +157,69 @@ describe('loadDataset', () => {
     );
   });
 
-  it('applyZarrDefaults runs only when hasStoredSettings=false AND viewerConfig present', async () => {
+  it('allows viewer-config FOV framing only when hasStoredSettings=false', async () => {
     const trace: Trace = { order: [], recordedViewerConfig: undefined };
-    await loadDataset('scene.zarr', makePorts(trace));
+    const ports = makePorts(trace);
+    await loadDataset('scene.zarr', ports);
 
+    expect(ports.sceneManager.loadSceneData).toHaveBeenCalledExactlyOnceWith(
+      'scene.zarr',
+      undefined,
+      { applyViewerConfigFov: true }
+    );
     expect(trace.order).toContain('applyZarrDefaults');
   });
 
-  it('applyZarrDefaults is SKIPPED when hasStoredSettings=true', async () => {
+  it('preserves stored FOV during framing and skips zarr defaults', async () => {
     const trace: Trace = { order: [], recordedViewerConfig: undefined };
     const ports = makePorts(trace);
     (ports.renderingControls.hasStoredSettings as ReturnType<typeof vi.fn>).mockReturnValue(true);
     await loadDataset('scene.zarr', ports);
 
+    expect(ports.sceneManager.loadSceneData).toHaveBeenCalledExactlyOnceWith(
+      'scene.zarr',
+      undefined,
+      { applyViewerConfigFov: false }
+    );
     expect(ports.renderingControls.applyZarrDefaults).not.toHaveBeenCalled();
+  });
+
+  it('syncs an authored-position FOV into exported state when stored settings exist', async () => {
+    const trace: Trace = { order: [], recordedViewerConfig: undefined };
+    const ports = makePorts(trace);
+    (ports.renderingControls.hasStoredSettings as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    ports.renderingControls.settings.fov = 47;
+    ports.renderingControls.settings.fovPreset = '50mm Normal';
+
+    const camera = new THREE.PerspectiveCamera(47, 1, 0.1, 1000);
+    const focusTarget = new THREE.Vector3();
+    Object.assign(ports.sceneManager, {
+      camera,
+      controls: { getFocusTarget: () => focusTarget },
+    });
+    Object.defineProperty(ports.sceneManager, 'currentFov', {
+      configurable: true,
+      get: () => camera.fov,
+    });
+    (ports.sceneManager.loadSceneData as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      trace.order.push('loadSceneData');
+      camera.fov = 63;
+    });
+    (ports.renderingControls.syncCameraFovState as ReturnType<typeof vi.fn>).mockImplementation(
+      () => {
+        trace.order.push('syncCameraFovState');
+        syncCameraFovState(ports.renderingControls.settings, ports.sceneManager);
+      }
+    );
+
+    await loadDataset('scene.zarr', ports);
+
+    const exported = captureViewerState(ports.sceneManager, ports.renderingControls, {
+      getDims: () => null,
+    } as never);
+    expect(ports.renderingControls.syncCameraFovState).toHaveBeenCalledOnce();
+    expect(exported.camera?.fov).toBe(camera.fov);
+    expect(exported.camera?.fov_preset).toBe('35mm');
   });
 
   it('layers panel hydration runs only when layersPanel present AND sceneLoader has sceneGraph', async () => {
@@ -333,7 +392,8 @@ describe('loadDataset', () => {
 
     expect(ports.sceneManager.loadSceneData).toHaveBeenCalledExactlyOnceWith(
       'scene.zarr',
-      loaderConfig
+      loaderConfig,
+      { applyViewerConfigFov: true }
     );
   });
 });

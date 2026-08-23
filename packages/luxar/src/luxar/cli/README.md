@@ -306,6 +306,21 @@ luxar gsplat merge a.zarr b.zarr -o merged.zarr
 luxar gsplat merge t0.zarr t1.zarr t2.zarr -o 4d.zarr --as-dimension --values 0,1,2
 luxar gsplat merge ch0.zarr ch1.zarr -o multi.zarr --channel-colors "#ff0080,#00ff00"
 ```
+The inputs' authored appearance (blending mode, opacity, colormap, …) is carried
+onto the merged root wherever the inputs **agree**; an input with no opinion on a
+key casts no vote, and a key they genuinely disagree on is dropped with a warning
+naming the differing values (each with the input it came from) and what lands
+instead, rather than one input's choice being promoted. A plain save STAMPS the identity values (`opacity=1.0`,
+`colormap="gray"`, …), and a value equal to such a stamp counts as no opinion —
+so merging a tuned dataset with a freshly fitted one keeps the tuned look instead
+of dropping seven keys back to those same defaults. The flip side: a deliberately
+authored identity is indistinguishable from an untouched store and loses to a
+sibling's value. `visible` is the exception where ABSENCE votes ("shown"), so
+`visible=false` is carried only when every input hides. `colormap` is dropped
+even under agreement whenever the merge gave the output per-splat RGB an input
+did not have — `--channel-colors`, or the white fill a mixed colored/colorless
+merge applies — whenever a colored input authored no palette and therefore
+relies on its per-splat RGB, and whenever any input declares a custom LUT.
 
 #### `luxar gsplat cull`
 Remove low-contribution splats to reduce dataset size while preserving visual quality.

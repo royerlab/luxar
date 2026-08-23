@@ -110,9 +110,21 @@ jobs:
             # python-tests also hosts the CROSS-LANGUAGE gates, so dom_py owns their
             # non-Python inputs: format-contract/contract.yaml and the generated TS
             # half (`check-contract`), the viewer package.json version (version
-            # consistency), and the demos/data tree + its manifest
-            # (`check-data-manifest`). None of those carries a Python extension.
-            printf '%s\n' "$changed" | grep -qE '(\.py$|^pyproject\.toml$|\.(pyx|pxd|cu|cuh)$|^format-contract/|^packages/luxar/src/luxar/demos/data|^packages/luxar-viewer/(package\.json$|src/types/format-contract\.ts$))' && dom_py=true || true
+            # consistency), the demos/data tree + its manifest
+            # (`check-data-manifest`), and the non-Python entry points guarded by
+            # test_fixture_environment.py. None carries a Python extension.
+            # Same reason for the non-.py files the pytest suite itself READS,
+            # each the only unclassified input of a test that would else skip:
+            # scripts/complexity_baseline.json (the C901 ratchet's only non-.py
+            # input — unclassified, a baseline-only diff went green in 7s without
+            # checking the baseline still MATCHES the tree, #1678), the Makefile
+            # (test_python_version_declarations.py, test_demo_commands.py),
+            # scripts/gallery/manifest.json (test_demo_meta.py cross-validates it
+            # against the demo registry), docs/guides/user/CLI_REFERENCE.md
+            # (test_docs_command_coverage.py), and the root and demos README files
+            # (test_readme_demo_docs.py, test_demo_import_spelling.py). Markdown
+            # alone runs only docs-quality, so these need explicit Python ownership.
+            printf '%s\n' "$changed" | grep -qE '(\.py$|^Makefile$|^README\.md$|^pyproject\.toml$|\.(pyx|pxd|cu|cuh)$|^scripts/complexity_baseline\.json$|^scripts/gallery/manifest\.json$|^docs/guides/user/CLI_REFERENCE\.md$|^format-contract/|^packages/luxar/src/luxar/demos/(README\.md$|data)|^packages/luxar-viewer/(package\.json$|src/tests/(global-setup\.ts|README\.md)$|src/types/format-contract\.ts$|tests/fixtures/README\.md$))' && dom_py=true || true
             # TS domain = the WHOLE viewer package (its py fixture-generators feed TS tests -> hierarchy) + root TS config
             printf '%s\n' "$changed" | grep -qE '(^packages/luxar-viewer/|^tsconfig[^/]*\.json$|(^|/)vitest[^/]*\.(ts|js|mjs)$)' && dom_ts=true || true
             printf '%s\n' "$changed" | grep -qE '(\.rs$|^wasm/|(^|/)Cargo\.(toml|lock)$)' && dom_rust=true || true
@@ -455,15 +467,12 @@ jobs:
           sudo docker image prune --all --force 2>/dev/null || true
           df -h /
 
-      # LFS intentionally disabled — `hatch run test-cov` covers
-      # packages/luxar/src/luxar and none of its unit tests open the
-      # LFS-backed demo fixtures under packages/luxar/src/luxar/demos/data/.
-      # (The two demo tests that exist — test_demo_ppi_flow_field.py and
-      # test_demo_zebrahub_velocity_streamlines.py — exercise pure
-      # helpers, not the LFS payloads.) Keeping `lfs: true` here made
-      # every PR's checkout fail catastrophically when the repo's GitHub
-      # LFS budget was exhausted; the LFS pointer files in the work tree
-      # are sufficient for the test suite.
+      # LFS intentionally disabled. Payload-dependent tests detect unpulled
+      # pointer stubs and skip themselves. `check-data-manifest` still catches
+      # pointer/manifest drift, and the Visible Human pair has an additional
+      # CI-runnable manifest pin. Keeping `lfs: true` here made every PR's
+      # checkout fail catastrophically when the repo's GitHub LFS budget was
+      # exhausted; the LFS pointer files in the work tree are sufficient.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -471,8 +480,6 @@ jobs:
         if: needs.changes.outputs.dom_py != 'false'
         with:
           python-version: ${{ matrix.python-version }}
-          cache: pip
-          cache-dependency-path: pyproject.toml
 
       - name: Install Hatch
         if: needs.changes.outputs.dom_py != 'false'
@@ -666,17 +673,20 @@ jobs:
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
         with:
           python-version: '3.12'
-          cache: pip
-          cache-dependency-path: pyproject.toml
 
       - name: Install Hatch
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
         run: pipx install hatch
 
+      - name: Verify fixture environment is lean and CPU-only
+        if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
+        working-directory: .
+        run: hatch run fixtures:python scripts/check_fixture_env.py
+
       - name: Generate test fixtures
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
         working-directory: .
-        run: hatch run python packages/luxar-viewer/tests/fixtures/generate_test_data.py
+        run: hatch run fixtures:python packages/luxar-viewer/tests/fixtures/generate_test_data.py
 
       - name: Check (overrides + typecheck + lint + layers + knip + coverage)
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
@@ -919,8 +929,6 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
-          cache: pip
-          cache-dependency-path: pyproject.toml
 
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         with:

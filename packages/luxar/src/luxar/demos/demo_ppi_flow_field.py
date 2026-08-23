@@ -72,7 +72,8 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, UIConfig, ViewerConfig
-from luxar.demos import launch_viewer, require_module
+from luxar.demos import add_demo_caption, launch_viewer, require_module
+from luxar.demos._cinematic_camera import pull_in
 from luxar.demos._graph_common import (
     compute_communities as louvain_communities,
 )
@@ -1058,6 +1059,7 @@ def write_scene(
         float(center[1] - 1.65 * side),
         float(center[2] + 1.05 * side),
     )
+    camera_target = tuple(float(v) for v in center)
 
     with asection("Writing Luxar PPI flow scene"):
         # float() the grid bounds: they come out of numpy as float32, which
@@ -1087,11 +1089,15 @@ def write_scene(
             ]
         )
         viewer_config = ViewerConfig(
+            cinematic_mode=True,
             camera=CameraConfig(
-                position=camera_position,
-                target=tuple(float(v) for v in center),
+                position=pull_in(
+                    camera_position,
+                    camera_target,
+                    from_fov_deg=42.0,
+                ),
+                target=camera_target,
                 up=(0.0, 0.0, 1.0),
-                fov=42.0,
                 near=0.01,
                 far=side * 12.0,
             ),
@@ -1212,14 +1218,12 @@ def write_scene(
                 anchor="center-right",
                 opacity=0.92,
             )
-            scene.add_text(
-                f"{len(nodes):,} proteins · {len(edges):,} HuRI interactions · "
-                f"{streamline_data.streamline_count:,} streamlines · "
-                f"{preset.grid_size}³ field · {preset.name} preset",
-                position=(0.98, 0.97),
-                font_size=0.0125,
-                anchor="bottom-right",
-                color="rgba(220,220,220,0.52)",
+            add_demo_caption(
+                scene,
+                f"{len(nodes):,} proteins • {len(edges):,} HuRI interactions • "
+                f"{streamline_data.streamline_count:,} streamlines • "
+                f"{preset.grid_size}³ field • {preset.name} preset",
+                DEMO_META.get("citation"),
             )
 
         aprint(f"  ✓ Scene written to {output_path}")

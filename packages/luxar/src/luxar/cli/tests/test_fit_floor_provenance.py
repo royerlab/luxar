@@ -194,8 +194,16 @@ def test_content_fit_records_the_level_every_box_subtracted(
     def _fake_fit_planned(vol: Any, fitplan: Any, **kwargs: Any) -> Any:
         regions = [_stub_leaf(), _stub_leaf()]
         if kwargs.get("partition", True):
-            return GSplatData.partition_from_regions(regions)
-        return GSplatData.concatenate(regions)
+            result = GSplatData.partition_from_regions(regions)
+            result.meta["fit_stats"] = {
+                "planned_fit": True,
+                "n_splats": result.n_splats,
+                "psnr_db": 33.3,
+            }
+            return result
+        result = GSplatData.concatenate(regions)
+        result.stats.update({"planned_fit": True, "psnr_db": 33.3})
+        return result
 
     # `run_content_fit` re-imports `fit_planned` from its source module on every
     # call, so the stub has to replace it THERE.
@@ -226,6 +234,7 @@ def test_content_fit_records_the_level_every_box_subtracted(
     else:
         _, stats = load_gsplat_node(output, include_stats=True)
     assert stats["floor"] == pytest.approx(100.0)
+    assert stats["psnr_db"] == pytest.approx(33.3)
 
 
 def test_parallel_content_fit_hands_the_loaded_volume_to_the_merge(
@@ -394,6 +403,7 @@ def test_the_content_stamp_never_contradicts_the_boxes(tmp_path: Path) -> None:
     different asked level, which would ship a store whose ``floor`` and
     ``image_min`` contradict each other."""
     from luxar.cli.gsplat_ops.planner import _stamp_content_floor
+    from luxar.gsplats.planner.fit_planned import _stamp_planned_normalization
 
     leaf = _stub_leaf()
     leaf.stats.update({"floor": 100.0, "image_min": 100.0, "intensity_range": 150.0})
@@ -401,6 +411,25 @@ def test_the_content_stamp_never_contradicts_the_boxes(tmp_path: Path) -> None:
 
     assert leaf.stats["floor"] == pytest.approx(100.0)
     assert leaf.stats["image_min"] == pytest.approx(100.0)
+
+    regions = [_stub_leaf(), _stub_leaf()]
+    for region in regions:
+        region.stats.update(
+            {
+                "floor": 100.0,
+                "image_min": 100.0,
+                "image_max": 250.0,
+                "intensity_range": 150.0,
+            }
+        )
+    node = GSplatData.partition_from_regions(regions)
+    _stamp_planned_normalization(node.meta, regions)
+    node.meta["fit_stats"] = {"planned_fit": True, "psnr_db": 33.3}
+    _stamp_content_floor(node, 5.0, 5.0)
+
+    assert node.meta["floor"] == pytest.approx(100.0)
+    assert node.meta["image_min"] == pytest.approx(100.0)
+    assert "floor" not in node.meta["fit_stats"]
 
 
 def test_info_lists_the_normalization_block_not_just_the_generic_dump(

@@ -105,7 +105,7 @@ export function disposePickingSession(ports: {
  * 4. Construct {@link PickingSystem} with the pick-result handler that
  *    forwards to {@link OverlayManager.updateHoverContent}.
  * 5. Wire DOM + Three.js EventDispatcher listeners (mousemove,
- *    mouseleave, controls change/start/end, window resize,
+ *    mouseleave, sceneManager change, controls start/end, window resize,
  *    sceneManager 'camera-changed') through the supplied
  *    {@link EventGroup} so a future `dispose()` removes them in one call.
  *
@@ -267,10 +267,8 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
   ports.pickingEvents.on(canvas, 'mouseleave', leaveHandler, { passive: true });
 
   const dirtyHandler = () => pickingSystem.markDirty();
-  ports.sceneManager.controls.addEventListener('change', dirtyHandler);
-  ports.pickingEvents.add(() =>
-    ports.sceneManager.controls.removeEventListener('change', dirtyHandler)
-  );
+  ports.sceneManager.addEventListener('change', dirtyHandler);
+  ports.pickingEvents.add(() => ports.sceneManager.removeEventListener('change', dirtyHandler));
   ports.pickingEvents.on(window, 'resize', dirtyHandler);
 
   // Page scroll / layout shift moves the canvas on screen without changing

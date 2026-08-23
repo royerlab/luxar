@@ -98,11 +98,13 @@ def check_partition_split_planes(root: "zarr.Group") -> List[Finding]:
       still returns a plausible permutation — the ordering is confidently wrong
       instead of falling back. Repaired by recovering planes when possible, and
       by REMOVING the tree when not: the centroid fallback is at least honest.
-    * **Approximate.** Overlapping parts cannot be separated exactly. A stored
-      tree is reported as a note when every cut remains plausible within the
-      measured overlap band and its per-axis tolerance floor. A cut outside
-      that band is repaired when its
-      position can be recovered safely, or removed when it cannot.
+    * **Approximate.** Some producer planes are center-based rather than exact
+      separators of the written part bounds: uniform tiles overlap, while lines
+      and mesh split polyline/face centroids whose vertices can cross a cut. A
+      stored tree is reported as a note when every cut remains plausible under
+      the viewer's center-straddle rule and per-axis tolerance floor. A cut
+      outside that band is repaired when its position can be recovered safely,
+      or removed when it cannot.
     """
     from luxar.core.group.partition import (
         reconstruct_serialized_bsp_tree,
@@ -121,12 +123,21 @@ def check_partition_split_planes(root: "zarr.Group") -> List[Finding]:
         if stored is not None and boxes is not None:
             if serialized_bsp_tree_separates(dict(stored), boxes):
                 continue  # healthy
+            stored_dict = dict(stored)
             rebuilt = reconstruct_serialized_bsp_tree(boxes)
-            if rebuilt is None and _labels_name_the_parts(dict(stored), len(boxes)):
-                stored_dict = dict(stored)
-                if serialized_bsp_tree_straddles_centers(stored_dict, boxes):
-                    findings.append(_approximate_finding(where, len(boxes)))
-                    continue
+            labels_name_parts = _labels_name_the_parts(stored_dict, len(boxes))
+            approximate_ok = rebuilt is None or group.attrs.get("display_type") in (
+                "lines",
+                "mesh",
+            )
+            if (
+                labels_name_parts
+                and approximate_ok
+                and serialized_bsp_tree_straddles_centers(stored_dict, boxes)
+            ):
+                findings.append(_approximate_finding(group, where, len(boxes), rebuilt))
+                continue
+            if rebuilt is None and labels_name_parts:
                 recovered = _recover_frame_scale(stored_dict, boxes)
                 if recovered is not None:
                     repaired, factors, frame_scale_supported = recovered
@@ -336,23 +347,41 @@ def _labels_name_the_parts(stored: Dict[str, Any], n_parts: int) -> bool:
         return False
 
 
-def _approximate_finding(where: str, n_parts: int) -> Finding:
+def _approximate_finding(
+    group: "zarr.Group",
+    where: str,
+    n_parts: int,
+    rebuilt: Optional[Dict[str, Any]],
+) -> Finding:
+    def replace() -> None:
+        assert rebuilt is not None
+        group.attrs["bsp_tree"] = rebuilt
+
+    if rebuilt is None:
+        remedy = (
+            "Nothing to do. Exact ordering requires non-overlapping part bounds; "
+            "for tiled gsplats, use a content plan or non-overlapping tiles."
+        )
+    else:
+        remedy = (
+            "Replace the stored planes with exact cuts recovered from the part boxes."
+        )
+
     return Finding(
         check="split-planes",
         severity="note",
         path=where,
-        summary=f"split planes over {n_parts} parts that overlap — approximate",
+        summary=f"split planes over {n_parts} parts are centroid-valid but approximate",
         detail=(
-            "The parts share space, so no tree separates them and the stored "
-            "planes cannot be checked exactly. This is the documented shape of a "
-            "uniform-tiled fit, whose apodized tiles keep their overlap band: the "
-            "cuts sit at each band's midplane, which confines any misordering to "
-            "the band instead of letting whole parts swap."
+            "The stored planes do not separate the part bounds, but every cut "
+            "still lies between its child-box centers. This is the documented shape of "
+            "uniform-tiled fits, whose apodized tiles keep their overlap band, and "
+            "centroid-split lines or mesh parts, whose vertices can cross a cut. "
+            "The producer's cuts still confine ordering ambiguity to geometry that "
+            "crosses a cut instead of letting whole parts swap."
         ),
-        remedy=(
-            "Nothing to do. For an exactly-ordered partition, fit with a content "
-            "plan (or non-overlapping tiles) instead."
-        ),
+        remedy=remedy,
+        fix=replace if rebuilt is not None else None,
     )
 
 

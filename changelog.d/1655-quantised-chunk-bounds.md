@@ -101,9 +101,5 @@ turn it red.
 
 GSplats close the corresponding decoded-center gap in the companion
 `1870-gsplat-barrier-bound-slack` entry by applying the same encoder-reported
-coordinate slack to their chunk bounds. The same issue remains in the SCALAR
-half of a points/lines footprint:
-`radii` and `widths` are quantised too, and the pad is built from the authored
-value, so a decoded radius/width can still escape by up to half its own quantum
-(measured 9.6e-3 on `radii ~ U(0.1, 5.0)`). Both docstrings now carry that
-caveat rather than claiming a guarantee they do not have.
+coordinate slack to their chunk bounds. The scalar half of points/lines
+footprints is addressed by the companion entry on decoded radii and widths.

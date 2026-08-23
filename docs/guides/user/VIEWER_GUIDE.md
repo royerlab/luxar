@@ -390,7 +390,8 @@ with luxar.LuxarZarrCompiler("output.luxar.zarr") as compiler:
 
 Settings are resolved with the following priority (highest first):
 
-1. **localStorage overrides** -- per-scene user changes made in the browser
+1. **localStorage overrides** -- per-scene user changes made in the browser,
+   except that an authored camera position is restored with its resolved scene FOV
 2. **viewer_config** -- defaults stored in the Zarr file
 3. **Built-in defaults** -- the viewer's own defaults
 
@@ -420,16 +421,21 @@ at — which is what keeps a reloaded or shared post-switch link named.
 | Fly controls | `fly_movement_speed`, `fly_rotation_speed`, `fly_inertial_mode`, `fly_damping` |
 | UI visibility | `ui.show_help`, `ui.show_rendering_controls`, `ui.show_dimensions`, `ui.show_performance_monitor`, `ui.show_scale_bar`, `ui.show_layers` |
 | Dimensions | `dimensions.current_step`, `dimensions.selected_dimension` |
-| Animation | `animation` (per-dimension: loop mode, direction, speed) |
+| Animation | `animation` (per-dimension: `playing`, `target_fps`, `loop`, `direction`, `step_size`) — a scene with `playing: true` on a dimension starts that dimension animating on load, from wherever `dimensions.current_step` put it |
 
 Setting `cinematic_mode=True` expands the whole cinematic preset (ACES tone
 mapping, a subtle wide bloom, detector noise, vignette, and the 35 mm
 chromatic lens + FOV) for every field the scene does not set itself — so you
 can enable the look and still override, say, `bloom_strength` on top of it.
 Note that the preset also widens the camera to the 35 mm field of view (63°),
-which is wider than the default auto-framing; if you have composed a specific
-framing, pin `camera.fov` (or `camera.fov_preset`) alongside `cinematic_mode`
-and the preset will leave your framing alone.
+which is applied before automatic framing so the fitted subject occupancy
+matches that lens. Pin `camera.fov` (or `camera.fov_preset`) only when composing
+an explicit camera pose for a specific lens; the preset then leaves the authored
+FOV alone but still applies its 35 mm distortion to that different framing. The
+bundled demos instead leave the FOV unpinned and compose their authored positions
+for 63°. A returning visitor's stored FOV still takes precedence for auto-framed
+scenes; an authored camera position is always restored with the resolved scene FOV
+it was composed for.
 
 See `luxar.ViewerConfig` docstring for the full field list with types and
 valid ranges.
