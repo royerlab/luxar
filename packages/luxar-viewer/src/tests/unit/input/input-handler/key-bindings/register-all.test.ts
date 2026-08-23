@@ -110,12 +110,16 @@ function makePanels(): {
 
 function makeSceneManager(): {
   sceneManager: SceneManager;
+  canvas: HTMLCanvasElement;
   flyHandleKeyDown: ReturnType<typeof vi.fn>;
   flyHandleKeyUp: ReturnType<typeof vi.fn>;
 } {
   const flyHandleKeyDown = vi.fn();
   const flyHandleKeyUp = vi.fn();
+  const canvas = document.createElement('canvas');
+  document.body.appendChild(canvas);
   const sceneManager = {
+    renderer: { domElement: canvas },
     controls: {
       getFlyControls: () => ({
         handleKeyDown: flyHandleKeyDown,
@@ -123,7 +127,7 @@ function makeSceneManager(): {
       }),
     },
   } as unknown as SceneManager;
-  return { sceneManager, flyHandleKeyDown, flyHandleKeyUp };
+  return { sceneManager, canvas, flyHandleKeyDown, flyHandleKeyUp };
 }
 
 function makeDebugConsole(initiallyVisible = false): {
@@ -140,7 +144,7 @@ function makeDebugConsole(initiallyVisible = false): {
 
 function setup() {
   const { manager, bindings } = makeContextManager();
-  const { sceneManager, flyHandleKeyDown, flyHandleKeyUp } = makeSceneManager();
+  const { sceneManager, canvas, flyHandleKeyDown, flyHandleKeyUp } = makeSceneManager();
   const { console: debugConsole, toggle: debugToggle } = makeDebugConsole();
   const commands = makeCommands();
   const panelsBundle = makePanels();
@@ -154,6 +158,7 @@ function setup() {
   return {
     bindings,
     commands,
+    canvas,
     flyHandleKeyDown,
     flyHandleKeyUp,
     debugToggle,
@@ -277,6 +282,31 @@ describe('registerAllKeyBindings — NAVIGATION command dispatch', () => {
       expect(listener).toHaveBeenCalledTimes(1);
     } finally {
       window.removeEventListener('open-dataset-browser', listener);
+    }
+  });
+
+  it('element-menu shortcuts dispatch only while focus is on the scene or body', () => {
+    const { bindings, canvas } = setup();
+    const listener = vi.fn();
+    const button = document.createElement('button');
+    document.body.appendChild(button);
+    window.addEventListener('luxar-open-element-menu', listener);
+    try {
+      canvas.tabIndex = 0;
+      canvas.focus();
+      findBinding(bindings, InputContext.NAVIGATION, 'F10', { shift: true }).handler(
+        new KeyboardEvent('keydown', { shiftKey: true })
+      );
+      expect(listener).toHaveBeenCalledTimes(1);
+
+      button.focus();
+      findBinding(bindings, InputContext.NAVIGATION, 'ContextMenu').handler(
+        new KeyboardEvent('keydown')
+      );
+      expect(listener).toHaveBeenCalledTimes(1);
+    } finally {
+      window.removeEventListener('luxar-open-element-menu', listener);
+      button.remove();
     }
   });
 

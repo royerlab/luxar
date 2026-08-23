@@ -7,6 +7,7 @@
 import { config } from '../../../config';
 import { log, Modules } from '../../../utils/log';
 import { InputContext } from '../context-manager';
+import { isFocusOnSceneCanvas } from '../commands/focus-utils';
 import type { KeyBindingsDeps } from './register-all';
 
 export function registerNavigationBindings(deps: KeyBindingsDeps): void {
@@ -77,6 +78,9 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
   // listener is rebuilt on every dataset load while this binding lives for the
   // app's lifetime. Same decoupling as `open-dataset-browser` above.
   const openElementMenu = (): void => {
+    if (!isFocusOnSceneCanvas(document.activeElement, deps.sceneManager.renderer.domElement)) {
+      return;
+    }
     window.dispatchEvent(new CustomEvent('luxar-open-element-menu'));
   };
   contextManager.registerBinding(InputContext.NAVIGATION, {

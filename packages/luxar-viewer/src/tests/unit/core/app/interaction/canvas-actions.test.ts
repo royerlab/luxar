@@ -33,6 +33,11 @@ import type {
   ContextMenuItem,
   ContextMenuOptions,
 } from '../../../../../ui/overlay-widgets/context-menu';
+import { isMacPlatform } from '../../../../../utils/platform';
+
+vi.mock('../../../../../utils/platform', () => ({
+  isMacPlatform: vi.fn(),
+}));
 
 class FakePicking implements PickGenerationPort {
   pickGeneration = 1;
@@ -171,6 +176,7 @@ const LINKED = { link: 'https://www.uniprot.org/uniprotkb/{hover_label}/entry' }
 
 beforeEach(() => {
   document.body.innerHTML = '';
+  vi.mocked(isMacPlatform).mockReturnValue(false);
 });
 
 describe('left-click', () => {
@@ -320,17 +326,26 @@ describe('right-click menu', () => {
   });
 
   it('macOS Ctrl+primary-click opens the menu, not the link', () => {
+    vi.mocked(isMacPlatform).mockReturnValue(true);
     const h = setup({}, LINKED);
     gesture(h.canvas, { x: 100, y: 80, button: 0, ctrlKey: true });
     expect(h.openMenu).toHaveBeenCalledOnce();
     expect(h.openUrl).not.toHaveBeenCalled();
   });
 
-  it('passes restoreFocus: null — the canvas has no tabindex to return to', () => {
+  it('non-macOS Ctrl+primary-click opens the link, not the menu', () => {
+    vi.mocked(isMacPlatform).mockReturnValue(false);
+    const h = setup({}, LINKED);
+    gesture(h.canvas, { x: 100, y: 80, button: 0, ctrlKey: true });
+    expect(h.openUrl).toHaveBeenCalledOnce();
+    expect(h.openMenu).not.toHaveBeenCalled();
+  });
+
+  it('uses the default focus restore — the canvas has no tabindex to return to', () => {
     const h = setup({}, LINKED);
     gesture(h.canvas, { x: 100, y: 80, button: 2 });
     const opts = h.openMenu.mock.calls.at(-1)?.[0] as ContextMenuOptions;
-    expect(opts.restoreFocus).toBeNull();
+    expect(opts.restoreFocus).toBeUndefined();
     expect(opts.ariaLabel).toContain('42');
   });
 

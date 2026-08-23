@@ -34,6 +34,7 @@
  */
 
 import { log, Modules } from '../../../utils/log';
+import { isMacPlatform } from '../../../utils/platform';
 import type { EventGroup } from '../../../utils/cross-layer/event-group';
 import { openContextMenu, type ContextMenuItem } from '../../../ui/overlay-widgets/context-menu';
 import { showToast } from '../../../ui/toast';
@@ -229,15 +230,13 @@ export function installCanvasActions(ports: CanvasActionsPorts): CanvasActionsHa
     // with neither templates nor labels is the common case in most scenes.
     if (items.length === 0) return;
 
+    // The canvas has no tabindex, so `document.activeElement` at open time
+    // is <body>; the default focus restore is therefore a no-op.
     (ports.openMenu ?? openContextMenu)({
       x: clientX,
       y: clientY,
       ariaLabel: `Actions for element ${pick.elementIndex} in ${pick.nodeName}`,
       items,
-      // The canvas has no tabindex, so `document.activeElement` at open time
-      // is <body> and focusing it back is a no-op. Say so explicitly rather
-      // than leaning on the default doing nothing useful.
-      restoreFocus: null,
     });
   };
 
@@ -259,8 +258,7 @@ export function installCanvasActions(ports: CanvasActionsPorts): CanvasActionsHa
     const start = down.get(ev.pointerId);
     down.delete(ev.pointerId);
     if (!start) return;
-    // A second pointer was down at some point in this gesture — a pinch, not
-    // a click.
+    // Another pointer is still down — this is part of a pinch, not a click.
     if (down.size > 0) return;
     if (start.button !== ev.button) return;
 
@@ -270,7 +268,7 @@ export function installCanvasActions(ports: CanvasActionsPorts): CanvasActionsHa
 
     // macOS secondary click is Ctrl + primary button, and fires with
     // `button === 0`. Treat it as the menu gesture, matching every native app.
-    const isSecondary = ev.button === 2 || (ev.button === 0 && ev.ctrlKey);
+    const isSecondary = ev.button === 2 || (ev.button === 0 && ev.ctrlKey && isMacPlatform());
     if (ev.button !== 0 && ev.button !== 2) return;
 
     const { x, y } = toCanvas(ev);
