@@ -553,7 +553,9 @@
       "geometry": "points",
       "category": "synthetic",
       "script": "demo_particle_collision.py",
-      "dataset": "datasets/demos/collision.luxar.zarr"
+      "dataset": "datasets/demos/collision.luxar.zarr",
+      "fillTarget": 0.8,
+      "note": "FILLTARGET: the corrected #1970 tracks run farther toward the detector edge. Measured on every encoded 900x900 orbit frame at luma >0.04, summed border-lit pixels (worst frame): previous tile 194,404 (1,974); merged geometry at 0.95 214,205 (2,611); 0.90 219,151 (2,696); 0.80 37,489 (408). The lower target restores margin rather than preserving the tighter full-bleed wash"
     },
     {
       "id": "protein_landscape",
