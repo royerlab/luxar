@@ -193,9 +193,9 @@ test.describe('First-Time User Experience', () => {
    * into the void and nothing opens. `&no-opfs` because neither test asserts
    * the L2 OPFS cache tier and automated Chromium's OPFS stalls systemically
    * (10 s per op — issue #1645), which can eat the readiness budget before
-   * the circuit breaker trips. The 30 s bound (vs the 45 s default) means a
-   * slow-but-eventually-ready shard fails on the readiness gate's own message
-   * rather than as a bare test timeout.
+   * the circuit breaker trips. The 30 s bound (vs the 45 s default) only helps
+   * when readiness itself overruns, pinning the failure on this call's frame
+   * instead of the whole test timeout.
    */
   async function openViewerReadyForShortcut(page: Page): Promise<Locator> {
     await page.goto(
