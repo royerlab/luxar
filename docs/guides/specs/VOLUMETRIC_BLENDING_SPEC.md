@@ -188,6 +188,13 @@ commutative ⇒ unsorted*: it is emissive for the projection taxonomy
 why §5.2 introduces a `needsDepthSort(mode)` predicate distinct from
 `usesPeakProjection`.
 
+The `opaque` row is the intent, not today's behaviour for every geometry type:
+three.js disables blending outright for `NormalBlending` + `transparent: false`,
+so a point's or line's emitted alpha never reaches the framebuffer at all. Those
+two carry all their photometry in alpha — opacity, falloff, sub-pixel
+compensation, near-fade — and lose it; gsplats premultiply theirs into RGB and
+lose nothing. Issue **#1993**.
+
 ---
 
 ## 2. Relation to NeRF and 3DGS (facts, to prevent drift)
@@ -863,9 +870,17 @@ Invariant and behavior tests:
   overlays row-for-row (κ* ratio 0.97/1.02/1.02/1.00, was 208/34.6/8.5/3.1).
   The per-layer κ slider track (`absorptionBoundsForNode`) retires with it — it
   was a units conversion for exactly this factor and could never serve a mixed
-  points→gsplat LOD ladder. NOT addressed: peak-projection modes
-  (max/normal/opaque), where the lift's sum-only calibration leaves a separate
-  `1/(uRIF·σ)` mismatch (12–39× measured).
+  points→gsplat LOD ladder. NOT addressed: peak-projection modes, where the
+  lift's sum-only calibration leaves a separate `1/(uRIF·σ)` mismatch — but the
+  three modes do not share one number, so the earlier "12–39× measured" here was
+  imprecise: that band is the `max` crop-MEAN ratio at r=0.05 and r=0.02 alone.
+  Gsplat/points
+  PEAK ratio over the four radii: `max` 30.66/12.15/4.05/1.57 and `normal`
+  29.73/7.81/1.835/1.028, both BRIGHTER, with `normal` understating the
+  divergence because its gsplat peak is already clipping at 1.0. `opaque` is
+  that same factor multiplied by the point `uOpacity` and points the OTHER way
+  — 0.093/0.037/0.012/0.005, i.e. DIMMER — because of a second, independent
+  defect (#1993, §1.1).
 - **2026-07-24 (later)** — Phase 4 (lines) implemented — the plan is
   complete: transverse chord-integral rayMass through the Gaussian-profile
   ribbon (`LINE_CHORD_SCALE = √(π/ln 100)`,
