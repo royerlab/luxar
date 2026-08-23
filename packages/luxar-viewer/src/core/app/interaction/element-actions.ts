@@ -166,10 +166,11 @@ export function buildElementUrl(template: string, values: HoverTemplateValues): 
 /**
  * Why a template can never produce a usable URL, independent of any element.
  *
- * Called once per node at scene load so an authoring mistake surfaces as a log
- * line naming the layer, instead of a click that silently does nothing. Only
- * reports element-INDEPENDENT faults: a per-element failure (an empty label)
- * is normal and must not be logged per hover.
+ * Called once per distinct template at scene load so an authoring mistake
+ * surfaces as a log line naming the first node that carries it, instead of a
+ * click that silently does nothing. Only reports element-INDEPENDENT faults: a
+ * per-element failure (an empty label) is normal and must not be logged per
+ * hover.
  *
  * Returns null when the template looks usable.
  */
