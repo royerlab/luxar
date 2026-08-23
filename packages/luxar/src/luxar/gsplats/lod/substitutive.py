@@ -291,6 +291,71 @@ def _normalise_coarsen_dims(
     return tuple(cd)
 
 
+def resolved_merge_coarsen_dims(
+    coarsen_dims: Optional[Sequence[int]], ndim: Optional[int]
+) -> list[int]:
+    """The dims a substitutive reduction ACTUALLY coarsens over, spelled EXPLICITLY.
+
+    The single resolution shared by every path that WRITES the ``coarsen_dims``
+    stamp (:func:`make_substitutive_lod` here, :func:`~luxar.gsplats.lod.decimate
+    .decimate`'s ``merge`` family, and the ``batch-fit merge`` per-part record)
+    — one function so a fourth one cannot quietly publish the same choice a
+    second way.
+
+    Three substitutive producers write NO stamp at all and are therefore not
+    reached by this: ``lod --recipe adaptive`` / ``--recipe overview`` and
+    ``fit --recipe levels`` build their ``pipeline/`` group out of their INPUT's
+    stats rather than out of the recipe they ran, so the reduction's own choice
+    — an explicit ``--coarsen-dims`` included — never lands on disk, and an
+    absent key reads exactly like the ``null`` below. Routing those through here
+    means plumbing a composed recipe's parameters into its record, which is a
+    separate change tracked on #1600.
+
+    Always a non-empty literal list, never ``None`` — including for the
+    coarsen-everything case (the ``coarsen_dims=None`` default, and a request
+    naming every dim, which :func:`_normalise_coarsen_dims` collapses to the
+    same thing). An empty explicit request is invalid: its empty complement
+    would claim every axis as a barrier. The two valid coarsen-everything
+    spellings are NOT interchangeable on disk:
+    :func:`~luxar.gsplats.io.save_gsplats._barrier_from_coarsen_dims` cannot tell
+    a written ``null`` from an absent key, so both read as "no provenance" and
+    fall through to ``detect_barrier_dims`` auto-detection — a GUESS about the
+    result's coordinates, not "no barrier".
+
+    What that guess costs depends on the data, and it was measured rather than
+    asserted (#1600 review). Auto-detection re-imposes the very barrier this
+    merge blended over exactly when the reduction leaves the stacked axis' grid
+    INTACT: on 200 4D splats over three timepoints spaced 1000 apart against a
+    spatial extent of 100, no cluster ever spans two timepoints, the coordinates
+    stay integral, and the fallback hands back ``[3]``. On a fine grid (step 1)
+    the merge averages those coordinates away, the axis stops looking integral,
+    and the fallback finds nothing — but only on the levels it actually merged,
+    so a ladder came out with a per-level MIXTURE (``[[], [], [3]]``: the finest
+    level is the unreduced input and keeps its integral grid). ``[0, …, d-1]``
+    asserts the empty complement outright on either grid and on every level,
+    i.e. the no-barrier layout the reduction actually earned.
+
+    ``ndim`` is only read to EXPAND a ``None`` request, so a caller that always
+    names its dims may pass ``None`` for it rather than a stand-in width — a
+    made-up width is the one thing this must not appear to assert. The two
+    ``None``\\ s together are a caller bug, not a coarsen-everything answer, and
+    raise instead of returning the empty list (whose complement is every axis a
+    barrier — the splat-dropping direction).
+    """
+    if coarsen_dims is None:
+        if ndim is None:
+            raise ValueError(
+                "resolved_merge_coarsen_dims: a coarsen-everything request "
+                "(coarsen_dims=None) needs the width to expand it over, but "
+                "ndim is None too."
+            )
+        return list(range(int(ndim)))
+    resolved = sorted({int(d) for d in coarsen_dims})
+    if not resolved:
+        raise ValueError("coarsen_dims must be non-empty")
+    return resolved
+
+
 def _subset_gsplatdata(data: GSplatData, mask: np.ndarray) -> GSplatData:
     """Boolean-index a flat ``GSplatData`` (preserves truncation_radius)."""
     colors = np.asarray(data.colors)[mask] if data.colors is not None else None
@@ -1122,7 +1187,17 @@ def make_substitutive_lod(
             "conserve_mass": bool(conserve_mass),
             "refine": refine,
             "refine_iters": eff_refine_iters,
-            "coarsen_dims": list(norm_coarsen) if norm_coarsen is not None else None,
+            # ALWAYS the explicit dim list, coarsen-everything included. The
+            # writer derives the chunk-ordering barrier from this key's
+            # COMPLEMENT, and it cannot tell a written `null` from an absent
+            # one — so the `None` this used to publish for the coarsen-all case
+            # landed back on auto-detection and re-imposed a barrier on the very
+            # axis every level had just been blended over (#1600). See
+            # `resolved_merge_coarsen_dims` for the measurement. `src.ndim` is
+            # the right width: every level is a reduction of `src` in the same
+            # center columns, so the node the stamp is read back against has
+            # exactly these dims.
+            "coarsen_dims": resolved_merge_coarsen_dims(norm_coarsen, src.ndim),
         }
     )
     return GSplatData.from_substitutive_levels(sub_levels, stats=out_stats)

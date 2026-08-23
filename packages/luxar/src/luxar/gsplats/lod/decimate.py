@@ -55,7 +55,14 @@ from luxar.gsplats._data.filtering import (
 )
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.lod.additive import compute_additive_order
-from luxar.gsplats.lod.substitutive import merge_to_count
+
+# `resolved_merge_coarsen_dims` is imported rather than defined here: it moved
+# next to `_normalise_coarsen_dims` (the collapse it compensates for) when
+# `make_substitutive_lod` and the `batch-fit merge` per-part record started
+# sharing it, so the three producers of the `coarsen_dims` stamp cannot drift
+# apart again. Still reachable under its original
+# `luxar.gsplats.lod.decimate` name.
+from luxar.gsplats.lod.substitutive import merge_to_count, resolved_merge_coarsen_dims
 from luxar.utils.lod_methods import AutoOrMethod as AdditiveOrdering
 
 #: Which reduction FAMILY to use — distinct from `AdditiveOrdering`, which
@@ -95,45 +102,6 @@ def resolve_target_count(target: Union[int, float], n_in: int) -> int:
                 f"An int target is a splat COUNT and must be >= 1; got {n}"
             )
     return max(1, min(n, n_in))
-
-
-def resolved_merge_coarsen_dims(
-    coarsen_dims: Optional[Sequence[int]], ndim: int
-) -> list[int]:
-    """The dims a ``merge`` ACTUALLY coarsens over, spelled EXPLICITLY.
-
-    Always a literal list, never ``None`` — including for the coarsen-everything
-    case (the ``coarsen_dims=None`` default, and a request naming every dim,
-    which :func:`~luxar.gsplats.lod.substitutive._normalise_coarsen_dims`
-    collapses to the same thing). The two spellings are NOT interchangeable on
-    disk: :func:`~luxar.gsplats.io.save_gsplats._barrier_from_coarsen_dims`
-    cannot tell a written ``null`` from an absent key, so both read as "no
-    provenance" and fall through to ``detect_barrier_dims`` auto-detection —
-    a GUESS about the result's coordinates, not "no barrier".
-
-    What that guess costs depends on the data, and it was measured rather than
-    asserted (#1600 review). Auto-detection re-imposes the very barrier this
-    merge blended over exactly when the reduction leaves the stacked axis' grid
-    INTACT: on 200 4D splats over three timepoints spaced 1000 apart against a
-    spatial extent of 100, no cluster ever spans two timepoints, the coordinates
-    stay integral, and the fallback hands back ``[3]``. On a fine grid (step 1)
-    the merge averages those coordinates away, the axis stops looking integral,
-    and the fallback finds nothing — there it is merely redundant. ``[0, …,
-    d-1]`` asserts the empty complement outright on either grid, i.e. the
-    no-barrier layout the reduction actually earned.
-
-    KNOWN DIVERGENCE from :func:`~luxar.gsplats.lod.substitutive
-    .make_substitutive_lod`, the sibling producer of the same operator: it
-    stamps a literal ``None`` for its own coarsen-everything case and therefore
-    carries the same latent auto-detect fallback. Changing it would move the
-    chunk layout of every ``lod --recipe levels`` build, so it is deliberately
-    left alone here and recorded on #1600 instead. The consequence is that the
-    same choice can be published two ways depending on which command made it —
-    ``decimate`` publishes the honest one.
-    """
-    if coarsen_dims is None:
-        return list(range(int(ndim)))
-    return sorted({int(d) for d in coarsen_dims})
 
 
 def _validate_coarsen_dims(
@@ -347,9 +315,10 @@ def decimate(
             # writer and lands back on auto-detect, which re-imposes a barrier
             # on a blended axis whenever the reduction left that axis' grid
             # intact (and is redundant when it did not — measured both ways in
-            # `resolved_merge_coarsen_dims`). That diverges from
-            # `make_substitutive_lod`, which still spells that case `None`; see
-            # `resolved_merge_coarsen_dims` for why it is not changed here.
+            # `resolved_merge_coarsen_dims`). Shared with
+            # `make_substitutive_lod` and the `batch-fit merge` per-part record,
+            # which resolve their own stamp through the same function, so the
+            # producers of this key cannot spell the same choice two ways.
             out.stats["coarsen_dims"] = resolved_merge_coarsen_dims(
                 coarsen_dims, data.ndim
             )
