@@ -17,12 +17,12 @@ import { cameraConfig } from '../sections/camera/data';
 import { log, Modules } from '../../utils/log';
 
 /**
- * Module-local set of camelCase keys we have already warned about, so that
- * each unknown RenderingSettings field surfaces exactly once instead of
- * spamming the console on repeated calls. Exported for tests to reset.
+ * Module-local sets of values we have already warned about, so each warning
+ * surfaces exactly once instead of spamming the console on repeated calls.
+ * Exported for tests to reset.
  */
 export const _warnedUnknownRenderingKeys = new Set<string>();
-const _warnedFovPresetConflicts = new Set<string>();
+export const _warnedFovPresetConflicts = new Set<string>();
 
 /**
  * Mapping from snake_case zarr viewer_config keys to camelCase RenderingSettings keys.

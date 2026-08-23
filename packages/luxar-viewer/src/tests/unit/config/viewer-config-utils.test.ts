@@ -2,8 +2,9 @@
  * Tests for viewer-config-utils: zarr viewer_config ↔ RenderingSettings conversion
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
 import {
+  _warnedFovPresetConflicts,
   extractRenderingOverrides,
   extractCameraOverrides,
   extractBackgroundColor,
@@ -16,6 +17,10 @@ import type { ZarrViewerConfig } from '../../../types/zarr';
 import { log, Modules } from '../../../utils/log';
 
 describe('extractRenderingOverrides', () => {
+  beforeEach(() => {
+    _warnedFovPresetConflicts.clear();
+  });
+
   it('should return empty object for empty config', () => {
     const overrides = extractRenderingOverrides({});
     expect(Object.keys(overrides)).toHaveLength(0);
