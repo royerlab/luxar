@@ -11,8 +11,8 @@ store re-laddered from three rungs to six went on advertising three, under the
 method and breakpoints kind of the ladder that no longer existed. That block is
 now rebuilt from the tree actually written — counts and cutpoints from the
 ladder, `lod_method` and `lod_breakpoints_kind` read back off the rebuilt leaf so
-an `auto` request publishes the method it resolved to — and deleted outright when
-the rebuilt leaf publishes neither, rather than left carrying the inherited
+an `auto` request publishes the method it resolved to — and each is deleted outright
+when the rebuilt leaf does not publish it, rather than left carrying the inherited
 value, which is the one thing the refresh exists to prevent. It summarises ONE
 ladder,
 following the rule `cull` already uses: the leaf itself for a flat store, and for

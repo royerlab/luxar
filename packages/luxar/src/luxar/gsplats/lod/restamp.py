@@ -115,7 +115,7 @@ def refresh_root_ladder_summary(
     summary does not acquire one here. ``lod_method`` and
     ``lod_breakpoints_kind`` are read back off the leaf the rebuild wrote rather
     than from the request, so ``auto`` publishes the method it resolved to — and
-    when the rebuilt leaf publishes neither, the root key is DELETED rather than
+    when the rebuilt leaf does not publish it, the root key is DELETED rather than
     left describing the ladder that is gone, exactly as
     :func:`_refresh_recipe_ladder` treats its ``method`` twin. Absence is the
     format's "this artifact does not know"; keeping the inherited value is the

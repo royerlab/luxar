@@ -920,8 +920,8 @@ rewrites a store must apply all three rules:
   the same refresh. `additive` re-ladders every leaf, so the root ladder summary
   is rebuilt from the tree it wrote — `lod_n_lods` / `lod_cutpoints` from the
   ladder, `lod_method` / `lod_breakpoints_kind` read back off the rebuilt leaf so
-  an `auto` request publishes the method it resolved to (and *deleted* when the
-  rebuilt leaf publishes neither — absence is the format's "this artifact does
+  an `auto` request publishes the method it resolved to (and each is *deleted*
+  when the rebuilt leaf does not publish it — absence is the format's "this artifact does
   not know", while the inherited value would describe the ladder that is gone).
   The summary describes
   ONE ladder: the leaf itself for a flat store, and for a `kind=lod` group the
