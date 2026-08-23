@@ -602,9 +602,29 @@ class TestSceneRowBudget:
                 ]
                 assert layer_attrs["selector"] == "screen-area"
 
-                # The finest child is the WHOLE catalog: no row cap any more.
+                # The finest child partitions the WHOLE catalog under the
+                # conservative per-node Points capacity: no row cap, and no
+                # viewer-side tail clamp on a 4096-class GPU.
+                finest_path = f"{layer_name}/{child_names[-1]}"
                 finest = child_attrs[-1]
-                n_finest = finest.get("n_splats", finest.get("n_points"))
+                assert finest["kind"] == "partition"
+                assert finest["max_elements"] == _demo.SCENE_MAX_POINTS_PER_NODE
+                part_names = sorted(
+                    name.removeprefix(f"{finest_path}/").removesuffix("/zarr.json")
+                    for name in names
+                    if name.startswith(f"{finest_path}/part_")
+                    and name.count("/") == 3
+                    and name.endswith("/zarr.json")
+                )
+                assert part_names == ["part_0", "part_1", "part_2", "part_3"]
+                part_attrs = [
+                    read_attrs(f"{finest_path}/{part_name}") for part_name in part_names
+                ]
+                assert all(
+                    attrs["n_points"] <= _demo.SCENE_MAX_POINTS_PER_NODE
+                    for attrs in part_attrs
+                )
+                n_finest = sum(attrs["n_points"] for attrs in part_attrs)
                 assert n_finest > 9_000_000, (
                     f"shipped finest level holds {n_finest:,} points; the row cap "
                     "was removed, so it should carry the full ~9.75M catalog"
@@ -612,18 +632,35 @@ class TestSceneRowBudget:
 
                 # And no single additive rung may exceed the commit ceiling —
                 # the invariant that makes the full catalog streamable at all.
-                n_sublods = finest["n_additive_sublods"]
-                increments = [
-                    read_attrs(f"{layer_name}/{child_names[-1]}/additive_{i}").get(
-                        "n_points", 0
-                    )
-                    for i in range(n_sublods)
-                ]
+                increments = []
+                position_encodings = []
+                for part_name, attrs in zip(part_names, part_attrs):
+                    part_path = f"{finest_path}/{part_name}"
+                    part_increments = []
+                    for index in range(attrs["n_additive_sublods"]):
+                        rung_path = f"{part_path}/additive_{index}"
+                        part_increments.append(read_attrs(rung_path)["n_points"])
+                        position_encodings.append(
+                            read_attrs(f"{rung_path}/positions")["encoding"]
+                        )
+                    assert sum(part_increments) == attrs["n_points"]
+                    increments.extend(part_increments)
                 assert sum(increments) == n_finest
                 assert max(increments) <= _demo.SCENE_MAX_COMMIT, (
                     f"largest rung {max(increments):,} exceeds the "
                     f"{_demo.SCENE_MAX_COMMIT:,} ceiling"
                 )
+                if layer_name == "By tracer type":
+                    assert all(
+                        encoding["name"] != "array_ref"
+                        for encoding in position_encodings
+                    )
+                else:
+                    assert all(
+                        encoding["name"] == "array_ref"
+                        and encoding["target"].startswith("By tracer type/child_2/")
+                        for encoding in position_encodings
+                    )
 
 
 class TestEnsureOriginFraming:
