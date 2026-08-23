@@ -113,7 +113,7 @@ def test_default_partition_load_retains_requested_root_stats(tmp_path: Path) -> 
         ("merge", "merge"),
     ],
 )
-def test_flat_output_commands_reject_partition_without_traceback(
+def test_matrix_rewrite_commands_reject_partition_without_traceback(
     tmp_path: Path,
     case: str,
     command_name: str,
