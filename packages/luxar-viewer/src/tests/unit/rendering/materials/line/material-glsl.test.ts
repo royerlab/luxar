@@ -466,7 +466,9 @@ describe('LineMaterial', () => {
 
       expect(material.transparent).toBe(false);
       expect(material.depthWrite).toBe(true);
-      expect(material.blending).toBe('NormalBlending');
+      expect(material.blending).toBe('CustomBlending');
+      expect(material.blendSrc).toBe(THREE.SrcAlphaFactor);
+      expect(material.blendDst).toBe(THREE.OneMinusSrcAlphaFactor);
       expect(material.userData.depthTest).toBe(true);
     });
   });

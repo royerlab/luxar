@@ -301,6 +301,75 @@ exports group into the categories below.
 | `captureCanvasRGBA(page, selector?)`           | Decode one element screenshot into a full-frame RGBA buffer — whole-image / multi-region analysis on a single identical frame.                                                                                                                        |
 | `getElementPixelStats(page, ...)`              | Pixel-statistics rollup used by visual-regression-adjacent specs.                                                                                                                                                                                     |
 
+### Camera placement
+
+Writing `camera.position` from a spec does **not** move the camera: the active
+controls own target / orientation / distance, and `runUpdateStep` step 8
+re-applies them to the camera every frame. A placement only sticks if the
+controls `reinitialize()` from it first — that one trap made three specs
+silently inert (#1930), so use these instead of hand-rolling the sequence, and
+**assert the returned placement** rather than discarding it.
+
+| Helper                                                                  | Use when                                                                                                                                                                                                                                                                                                                 |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `placeCameraAt(page, position, { target?, up? })`                       | Move the camera and make it stick (pivot defaults to the active controls' target). Returns the POST-clamp position/distance plus `viaOrbitControls`, so a spec can PROVE the camera moved rather than assuming it did. `null` means the debug camera was missing.                                                        |
+| `getCameraPivot(page)`                                                  | Read the active controls' pivot, to express a pose relative to the content centre before placing. REJECTS when there is no pivot (no orbit target, no `getFocusTarget()`) instead of answering with the world origin — that silent fallback is half of #1930.                                                            |
+| `withOrbitDistanceLimits(page, limits, body)`                           | Rarely. Runs `body` with the orbit distance clamp widened, restoring the previous limits in a `finally`, and THROWS if the widening could not be applied. The window must span the placement AND the sampling — restoring early lets the next frame pull the camera back.                                                |
+| `UNCLAMPED_ORBIT_DISTANCE_LIMITS`                                       | "Wherever I put it, leave it" limits for the above.                                                                                                                                                                                                                                                                      |
+| `InPageCameraApi`, `Vec3Like`, `CameraPlacement`, `OrbitDistanceLimits` | Types. `InPageCameraApi` types `window.__luxarE2ECamera`, the in-page object the helpers install — a spec that places the camera many times inside ONE `page.evaluate` (the lod-group sweep) drives that object directly, so `placeCameraAt`, that sweep and `ortho-mode.spec.ts` all share one definition of the idiom. |
+
+The distance clamp is **not** a second trap, despite how often it gets blamed
+for one. After auto-framing it is `[D / ZOOM_IN_FACTOR, D * ZOOM_OUT_FACTOR]` =
+`[D / 1000, D × 10000]` around the framing distance `D` (`camera-framing.ts`;
+before framing, `deriveScaleLimits` applies the same 1/1000 … 10000 factors to
+the scene diagonal). Measured on `test_lines`: `D = 13.799`, so
+`minDistance = 0.0138` and `maxDistance = 137990`. Ordinary placements —
+"right up against the geometry", "two decades back" — are nowhere near that, so
+reach for `withOrbitDistanceLimits` only when the arithmetic says you are
+outside it, and check that arithmetic before adding it.
+
+A camera **sweep** has a real second trap on top of the `reinitialize()` one: it
+can outrun data loading. An LOD registry requests a level's chunks only when that
+level is first needed and keeps the currently resident level on screen until the
+replacement has arrived, so a sweep that crosses a boundary faster than the fetch
+completes skips that band without any error. Warm the residency up first — coarse
+passes over the same range, repeated until every level has been observed visible
+at least once — rather than one guessed sleep up front. The waiting still happens
+(a ≤500 ms backoff between passes, to let in-flight fetches land), but it sits
+INSIDE a loop whose exit is the condition, so a fast page pays one pass and a slow
+one keeps going. Bound the warm-up on **wall clock alone**, so that an incomplete
+warm-up has by construction spent its whole budget
+(`lod-group.spec.ts`'s volumetric cross-fade sweep is the worked example). A pass
+count is a tempting second bound and is the wrong one: residency is gated on
+CHUNK FETCHES, so the only useful response to "not resident yet" is to keep
+waiting, and stopping early with budget left gives up on the one resource that
+helps. It also makes the exit condition a function of RENDER SPEED — that sweep
+once failed hard on "out of passes with budget to spare", which worked out to
+"a pass ran faster than ~1 s", i.e. a fast machine was more likely to be called
+broken than a slow one.
+
+Bounded warm-ups and in-page deadlines mean a run can end up with less evidence
+than the assertion wants, so let the strength of the claim follow the evidence —
+but **narrow the contract rather than dropping it**. That sweep makes its strict
+every-boundary claim when the warm-up reached residency AND the sweep was not
+truncated; when the warm-up came up short it still requires a genuine cross-fade
+for every adjacent pair among the levels that DID become resident (a level that
+never arrived cannot fade, but every pair not touching it still has to — on a
+three-level ladder a missing middle level leaves no pair at all, and the run
+says so), and only a
+truncated sweep — which never visited part of the range, so no subset of pairs is
+implied — falls all the way back to "at least one genuine cross-fade". Every
+narrowing is stated in the failure text and in a `degraded` annotation, naming
+the levels that were never displayed, so a weakened run is never a quiet one.
+Size an in-page deadline from the budget you actually have, too
+(that sweep's is 90 s inside a 150 s test), or the "exceptional" degraded path
+becomes the normal CI outcome and the strict branch is never exercised.
+
+Give any test with in-page deadlines its own `test.setTimeout` that
+covers their sum with headroom — being killed by the suite-wide budget
+mid-`page.evaluate` throws away the attachment and the annotation, which is the
+least diagnosable way for a diagnostic test to fail.
+
 ### Pattern for a new helper
 
 Helpers follow a few conventions worth matching:

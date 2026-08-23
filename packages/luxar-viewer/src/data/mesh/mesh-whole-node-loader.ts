@@ -81,6 +81,8 @@ const OPTIONAL_ARRAYS = [
   ['labelBytes', 'has_labels'],
   ['imageLabelOffsets', 'has_image_labels'],
   ['imageLabelBytes', 'has_image_labels'],
+  ['keyOffsets', 'has_keys'],
+  ['keyBytes', 'has_keys'],
 ] as const satisfies readonly (readonly [keyof MeshArrayHandles, keyof MeshMetadata])[];
 
 export class MeshWholeNodeLoader implements MeshDataLoader {
@@ -201,7 +203,7 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
    *
    * Opening is metadata-only — `zarr.open(..., { kind: 'array' })` reads
    * `.zarray` and `.zattrs` and nothing else — which is what makes it safe to do
-   * for *all* declared arrays, including the label CSR pair v1 never fetches.
+   * for *all* declared arrays, including the string-channel CSR pairs v1 never fetches.
    * The budget has to see them to be a budget.
    *
    * Captures `generation` up front and guards BOTH publishes below with it,

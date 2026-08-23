@@ -7,6 +7,7 @@ from Git LFS (shipped with the package) or a local cache.
 
 from __future__ import annotations
 
+import hashlib
 import pickle
 import re
 import shutil
@@ -15,11 +16,12 @@ import zipfile
 import zlib
 from contextlib import nullcontext
 from pathlib import Path, PurePosixPath
-from typing import Any, Callable, NamedTuple, Optional, Union, overload
+from typing import Any, Callable, Final, NamedTuple, Optional, Sequence, Union, overload
 
 import numpy as np
 from arbol import aprint, asection
 
+from .._zarr_compat import is_consolidated, read_node_attrs
 from ..core.dimensions import Dimension, Dimensions
 from ..typing_utils.aliases import PathLike
 from ..typing_utils.config import check_dataset_size_warning
@@ -271,13 +273,101 @@ def _validate_lfs_files(paths: list[Path]) -> None:
 def parse_demo_flags() -> dict:
     """Parse common GSplat demo command-line flags from ``sys.argv``.
 
-    Returns a dict with keys: ``recompute``, ``no_serve``, ``serve_only``.
+    Returns a dict with keys: ``recompute``, ``no_serve``, ``serve_only``,
+    ``keep_stale``.
     """
     return {
         "recompute": "--recompute" in sys.argv,
         "no_serve": "--no-serve" in sys.argv,
         "serve_only": "--serve-only" in sys.argv,
+        "keep_stale": "--keep-stale" in sys.argv,
     }
+
+
+#: Scene-root attr holding the fingerprint of the builder that wrote the scene.
+BUILDER_FINGERPRINT_ATTR: Final[str] = "builder_fingerprint"
+
+
+def demo_source_fingerprint(module_file: Union[str, Path]) -> str:
+    """Short content hash of a demo module's source, for staleness checks.
+
+    Call as ``demo_source_fingerprint(__file__)``. The hash covers that demo
+    module's SOURCE TEXT, so an edit to the file produces a different
+    fingerprint, while re-running an unchanged demo produces the same one.
+
+    Args:
+        module_file: Path to the demo module (normally ``__file__``).
+
+    Returns:
+        16 hex characters, or ``""`` if the source cannot be read (in which case
+        :func:`scene_is_current` degrades to a plain existence check rather than
+        rebuilding a large scene on every run).
+    """
+    try:
+        source = Path(module_file).read_bytes()
+    except OSError:
+        return ""
+    return hashlib.sha256(source).hexdigest()[:16]
+
+
+def scene_is_current(
+    output_path: Path,
+    fingerprint: str,
+    *,
+    recompute: bool = False,
+    keep_stale: bool = False,
+) -> bool:
+    """True if the scene at ``output_path`` can be reused as-is.
+
+    Demos cache their built scene and, historically, reused it whenever the
+    path merely EXISTED. That let a scene built by an older version of the demo
+    be served forever: #1957 was reported against an ocean-currents scene whose
+    missing streamlines had been fixed three weeks earlier, because the fix
+    never rebuilt the stale store on disk.
+
+    So a scene is current only when its save finished AND it was written by
+    this exact builder. A scene from before fingerprinting carries no attr and
+    is treated as stale — one rebuild, then it stamps itself.
+
+    This gates SCENE ASSEMBLY only. Downloads, gsplat fits and precomputed
+    bundles keep their own caches under ``~/.cache/luxar``, so a source edit
+    costs a scene rebuild and never a re-download or a re-fit.
+
+    Args:
+        output_path: The ``.luxar.zarr`` the demo would write.
+        fingerprint: This build's :func:`demo_source_fingerprint`.
+        recompute: The demo's ``--recompute`` flag; forces a rebuild.
+        keep_stale: The demo's ``--keep-stale`` flag; reuse whatever is on disk
+            even when the builder changed. An escape hatch for an expensive
+            scene the caller knows is good enough.
+
+    Returns:
+        True to reuse the existing scene, False to rebuild.
+    """
+    if not output_path.exists():
+        return False
+    if recompute:
+        return False
+    if not is_consolidated(output_path):
+        return False
+    if keep_stale:
+        return True
+    if not fingerprint:
+        # Unreadable source: no basis to call it stale, and rebuilding a large
+        # scene on a bad guess is worse than serving the one on disk.
+        return True
+
+    attrs = read_node_attrs(output_path) or {}
+    stored = attrs.get(BUILDER_FINGERPRINT_ATTR)
+    if stored == fingerprint:
+        return True
+
+    aprint(
+        f"Demo source changed since this scene was built "
+        f"({stored or 'unstamped'} -> {fingerprint}); rebuilding. "
+        f"Pass --keep-stale to reuse it instead."
+    )
+    return False
 
 
 def _flag_token(name: str) -> str:
@@ -586,11 +676,13 @@ class StackedColorings(NamedTuple):
     colors: np.ndarray  # (N*K, 3) float32
     labels: Optional[list[str]]  # (N*K,) hover labels, or None if any view lacks them
     categories: list[str]  # K coloring category names (for the `coloring` Dimension)
+    keys: Optional[list[str]] = None  # (N*K,) machine-readable keys, or None
 
 
 def stack_colorings(
     coords: np.ndarray,
     colorings: list[dict],
+    keys: Optional[Sequence[str]] = None,
 ) -> StackedColorings:
     """Replicate a point cloud once per coloring scheme along a categorical axis.
 
@@ -611,6 +703,13 @@ def stack_colorings(
             - ``"labels"`` (optional): ``(N,)`` per-point hover strings for this
               scheme. If ANY coloring omits labels, the combined ``labels`` is
               ``None`` (hover disabled) rather than misaligned.
+
+        keys: optional ``(N,)`` machine-readable per-point strings for `link` /
+            `copy` templates to substitute as ``{hover_key}`` (#1917). Passed
+            once for the whole cloud rather than per coloring, because a point's
+            IDENTITY does not change with the colour scheme — only its label
+            does. Tiled K times here so it stays aligned with the stacked
+            positions, which is the alignment this helper exists to own.
 
     Returns:
         A :class:`StackedColorings`. ``positions`` has shape ``(N*K, D+1)`` with
@@ -656,7 +755,14 @@ def stack_colorings(
     labels: Optional[list[str]] = None
     if have_labels:
         labels = [x for block in label_blocks for x in block]
-    return StackedColorings(positions, colors, labels, categories)
+
+    stacked_keys: Optional[list[str]] = None
+    if keys is not None:
+        if len(keys) != n:
+            raise ValueError(f"keys has {len(keys)} entries != {n} points")
+        stacked_keys = [str(x) for x in keys] * len(colorings)
+
+    return StackedColorings(positions, colors, labels, categories, stacked_keys)
 
 
 # |center| at or above this has no int64 voxel index (the cast would overflow),

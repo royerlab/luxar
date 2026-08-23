@@ -188,7 +188,7 @@ def main():
             body=(
                 "Points lie on a true 4D sphere (X, Y, Z, W all spatial); the "
                 "non-displayed <code>W</code> axis is sliced to reveal 3D "
-                "cross-sections. Press <code>4</code> then <code>[</code>/"
+                "cross-sections. Press <code>1</code> then <code>[</code>/"
                 "<code>]</code> to step through W."
             ),
             observe=[

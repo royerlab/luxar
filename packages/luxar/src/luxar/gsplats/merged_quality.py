@@ -98,34 +98,21 @@ def _quality_budget_gb() -> float:
     return value
 
 
-def _compare_recourse(*, partition: "bool | None") -> str:
-    if partition:
-        return (
-            "Flatten the written archive with `luxar gsplat flatten`, then run "
-            "`luxar gsplat compare`."
-        )
-    if partition is None:
-        return (
-            "Run `luxar gsplat compare` on the written archive; if it is "
-            "`kind=partition`, run `luxar gsplat flatten` first."
-        )
-    return "Run `luxar gsplat compare` on the written archive instead."
+#: What to do about an archive this module could not score. One wording for
+#: every shape: ``luxar gsplat compare`` reads the written archive whatever tree
+#: it is, ``kind=partition`` included (#1978), so nothing needs flattening first.
+_COMPARE_RECOURSE = "Run `luxar gsplat compare` on the written archive instead."
 
 
-def announce_unscored_merge(reason: str, *, partition: "bool | None" = False) -> None:
+def announce_unscored_merge(reason: str) -> None:
     """Explain why a merged result carries no whole-volume quality metrics.
 
     Parameters
     ----------
     reason : str
         The reason scoring was unavailable.
-    partition : bool or None, default False
-        ``False`` when the result is known to be flat, ``True`` when it is a
-        partition, and ``None`` when the caller cannot determine its kind.
     """
-    aprint(
-        f"No merged quality metrics: {reason}. {_compare_recourse(partition=partition)}"
-    )
+    aprint(f"No merged quality metrics: {reason}. {_COMPARE_RECOURSE}")
 
 
 def resolve_merged_reference(
@@ -216,17 +203,14 @@ def stamp_merged_quality(
     is only ever read tile-by-tile — which is what the budget below bounds.
     """
     if stats is not None:
-        is_partition = not isinstance(merged, GSplatData)
         parts = [merged] if isinstance(merged, GSplatData) else list(merged)
         target_stats = stats
     elif isinstance(merged, GSplatData):
-        is_partition = False
         parts = [merged]
         target_stats = merged.stats
     else:
         announce_unscored_merge(
-            "partition merged-quality scoring was not given a stats target",
-            partition=True,
+            "partition merged-quality scoring was not given a stats target"
         )
         return
     if not parts or sum(part.n_splats for part in parts) == 0:
@@ -235,12 +219,11 @@ def stamp_merged_quality(
     budget_gb = _quality_budget_gb()
     needed_gb = _QUALITY_PEAK_VOLUMES * 4 * float(np.prod(volume_shape)) / 1024**3
     if needed_gb > budget_gb:
-        recourse = _compare_recourse(partition=is_partition)
         aprint(
             f"Merged quality metrics skipped: scoring {volume_shape} peaks at "
             f"~{needed_gb:.1f} GiB (the reconstruction, the reference, and "
             f"SSIM's intermediates), over the {budget_gb:g} GiB budget. Raise "
-            f"LUXAR_TILED_QUALITY_MAX_GB to score it anyway. {recourse}"
+            f"LUXAR_TILED_QUALITY_MAX_GB to score it anyway. {_COMPARE_RECOURSE}"
         )
         return
 

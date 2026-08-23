@@ -27,6 +27,16 @@ import { escapeHtml } from './escape-html';
 export interface HoverTemplateValues {
   /** The element's label, or null/empty when it has none. */
   label?: string | null;
+  /**
+   * The element's machine-readable key, or null/empty when it has none
+   * (issue #1917).
+   *
+   * Separate from `label` because in practice they are different strings: a
+   * label is composite prose a reader sees ("P04637 · DNA-binding cluster"),
+   * while a link needs the bare id ("P04637"). Folding one into the other
+   * means either a degraded tooltip or an unusable URL.
+   */
+  key?: string | null;
   /** Reported layer path — the outermost `kind=partition` wrapper if any. */
   nodeName: string;
   /** Element index within the hit leaf. */
@@ -77,7 +87,7 @@ export interface HoverTemplateResult {
  * stays in `OverlayManager` where both are in scope. It is meaningless in a
  * URL or on the clipboard.
  */
-const PLACEHOLDER_PATTERN = /\{(hover_label|hover_node|hover_index)\}/g;
+const PLACEHOLDER_PATTERN = /\{(hover_key|hover_label|hover_node|hover_index)\}/g;
 
 /** Escape a substituted value for the target consumer. */
 function escapeFor(mode: TemplateMode, value: string): string {
@@ -109,6 +119,9 @@ export function substituteHoverTemplate(
   const text = template.replace(PLACEHOLDER_PATTERN, (_match, name: string) => {
     let raw: string;
     switch (name) {
+      case 'hover_key':
+        raw = values.key ?? '';
+        break;
       case 'hover_label':
         raw = values.label ?? '';
         break;

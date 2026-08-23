@@ -23,6 +23,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from luxar.gsplats.gsplat_data import GSplatData
+
 _DEMO_PATH = (
     Path(__file__).resolve().parents[1] / "demo_gsplats_3d_flylight_mcfo_neurons.py"
 )
@@ -42,6 +44,14 @@ def _load_demo_module():
 _demo = _load_demo_module()
 splat_colors = _demo.splat_colors
 _HttpRangeFile = _demo._HttpRangeFile
+
+
+def _tiny_gsplat_data(n: int = 8) -> GSplatData:
+    return GSplatData(
+        centers=np.zeros((n, 3), dtype=np.float32),
+        amplitudes=np.ones(n, dtype=np.float32),
+        cholesky_factors=np.tile([1, 0, 1, 0, 0, 1], (n, 1)).astype(np.float32),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1211,24 +1221,19 @@ def test_fit_volume_forwards_the_schedule_to_the_fitter(tmp_path, monkeypatch) -
     """
     seen: dict = {}
 
-    class _Result:
-        amplitudes = np.zeros(3, dtype=np.float32)
-
-        def save(self, *a, **k):
-            seen["saved"] = True
-
     def _fake_fit(volume, **kwargs):
         seen.update(kwargs)
-        return _Result()
+        return _tiny_gsplat_data()
 
     import luxar.gsplats as _gs
 
     monkeypatch.setattr(_gs, "fit_gaussian_splats", _fake_fit)
     monkeypatch.setattr(_demo, "CACHE_DIR", tmp_path)
 
-    _demo.fit_volume(
+    cache_file = tmp_path / "absent.gsplats.zarr.zip"
+    stored = _demo.fit_volume(
         np.zeros((4, 4, 4), dtype=np.float32),
-        tmp_path / "absent.gsplats.zarr.zip",
+        cache_file,
         1000,
         "auto",
         0.99,
@@ -1240,6 +1245,9 @@ def test_fit_volume_forwards_the_schedule_to_the_fitter(tmp_path, monkeypatch) -
     for knob, value in _demo.NEURON_FIT_SCHEDULE.items():
         assert seen[knob] == value, f"{knob} never reached fit_gaussian_splats"
     assert seen["source_dtype"] == "uint16", "the acquisition dtype was dropped"
+    assert cache_file.exists()
+    assert len(stored.amplitudes) == 8
+    assert stored.n_additive_sublods == 4
 
 
 def test_fit_volume_without_a_schedule_passes_no_overrides(
@@ -1248,24 +1256,19 @@ def test_fit_volume_without_a_schedule_passes_no_overrides(
     """The neuropil is deliberately left on the library defaults."""
     seen: dict = {}
 
-    class _Result:
-        amplitudes = np.zeros(3, dtype=np.float32)
-
-        def save(self, *a, **k):
-            pass
-
     def _fake_fit(volume, **kwargs):
         seen.update(kwargs)
-        return _Result()
+        return _tiny_gsplat_data()
 
     import luxar.gsplats as _gs
 
     monkeypatch.setattr(_gs, "fit_gaussian_splats", _fake_fit)
     monkeypatch.setattr(_demo, "CACHE_DIR", tmp_path)
 
-    _demo.fit_volume(
+    cache_file = tmp_path / "absent2.gsplats.zarr.zip"
+    stored = _demo.fit_volume(
         np.zeros((4, 4, 4), dtype=np.float32),
-        tmp_path / "absent2.gsplats.zarr.zip",
+        cache_file,
         1000,
         "auto",
         0.95,
@@ -1274,6 +1277,9 @@ def test_fit_volume_without_a_schedule_passes_no_overrides(
 
     for knob in _demo.NEURON_FIT_SCHEDULE:
         assert knob not in seen, f"{knob} leaked into the neuropil fit"
+    assert cache_file.exists()
+    assert len(stored.amplitudes) == 8
+    assert stored.n_additive_sublods == 4
 
 
 def test_fit_cache_paths_differ_between_components_and_settings() -> None:

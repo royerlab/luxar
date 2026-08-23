@@ -112,7 +112,9 @@ def build_points_ordering(
     # `allow_lut` is deliberately left at its default here, unlike the lines
     # glue: `write_positions` (dataset_writers/positions.py) does not pass
     # `allow_lut=False`, so a LUT-eligible positions array really is stored
-    # verbatim as `lut_uint8` and really is exact. The two must agree.
+    # as `lut_uint8`. Its viewer float32 cast cannot cross the bound because
+    # `_store_outward_f32` applies the same rounding map and then widens. The
+    # two must agree.
     coord_slack = (
         dataset_ctx.encoder.coordinate_round_trip_slack(
             sorted_positions, dataset_ctx.encoding_mode
@@ -120,14 +122,21 @@ def build_points_ordering(
         if dataset_ctx is not None
         else None
     )
+    scalar_values = (
+        sorted_radii
+        if isinstance(sorted_radii, np.ndarray)
+        else np.atleast_1d(np.asarray(radii)).reshape(-1)[:1]
+        if radii is not None
+        else None
+    )
     scalar_slack = (
         dataset_ctx.encoder.positive_scalar_round_trip_slack(
-            np.asarray(sorted_radii),
+            scalar_values,
             dataset_ctx.encoding_mode,
             # Must match write_positive_scalar's default used by write_radii.
             positive_scalar_encoding="linear",
         )
-        if dataset_ctx is not None and isinstance(sorted_radii, np.ndarray)
+        if dataset_ctx is not None and scalar_values is not None
         else None
     )
 

@@ -38,7 +38,7 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
         }
       },
       preventDefault: false,
-      description: `Select dimension ${i}`,
+      description: `Select non-displayed dimension ${i}`,
     });
   }
 
@@ -63,7 +63,7 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
     key: config.input.keyboard.shortcuts.toggleDatasetBrowser,
     handler: () => window.dispatchEvent(new CustomEvent('open-dataset-browser')),
     preventDefault: true,
-    description: 'Open dataset browser',
+    description: 'Toggle dataset browser',
   });
 
   // Element context menu at the current hover (issue #1917) — the keyboard

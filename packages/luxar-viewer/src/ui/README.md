@@ -108,8 +108,9 @@ ui/
 ├── overlay-widgets/                    # Shared base for scale-bar / colormap-legend
 │   ├── ui-component.ts
 │   └── context-menu.ts                 # Shared right-click menu (openContextMenu; full menu ARIA)
-├── help-overlay/                       # Help overlay's private helper
-│   └── focus-trap.ts                   # Tab/Shift+Tab focus trap (also used by error-overlay)
+├── help-overlay/                       # Shared modal-panel helpers (folder name predates the sharing)
+│   ├── focus-trap.ts                   # Tab/Shift+Tab focus trap (also used by error-overlay, dataset-browser)
+│   └── type-to-filter.ts               # Container focus + first-keystroke filtering (help-overlay, dataset-browser)
 ├── control-rail/                       # Control rail's private helpers (orchestrator: ../control-rail.ts)
 │   ├── rail-overlay.ts (flyout + popover lifecycle),
 │   │ icons.ts (RAIL_ICONS), dom-helpers.ts, types.ts
@@ -394,6 +395,27 @@ File browser for navigating and loading Zarr datasets from servers.
 - Search and filter capabilities
 - Recent datasets history
 
+Initial focus is on the panel container, not the search field (nor the
+manual-entry field of the unlistable-server fallback), so the `O` shortcut
+still toggles the browser shut — see the type-to-filter note under
+[Helper Overlays](#7-helper-overlays) (issue #1922). Typing still narrows the
+listing from the first keystroke whenever the search bar is on screen — it is
+hidden while a directory loads, after an error, in an empty directory and in the
+manual fallback, and keystrokes are contained by the modal in those states — and
+`ArrowDown` moves into the list from the panel container as well as from the
+search field. If a navigation loading state, breadcrumb rebuild or cancelled
+path edit removes the focused child, the browser re-parks focus on the panel
+only when focus is otherwise unclaimed (`null` or `<body>`), preserving modal
+containment without stealing focus from a dialog stacked on top.
+
+The panel declares `O` and `H` as passthrough keys: `O` is its own toggle, and
+`H` is the shortcut its welcome banner advertises with an `H Help` chip — modal
+containment would otherwise make that chip dead. The manual-entry
+`#manual-path` field is deliberately NOT wired into type-to-filter: it takes a
+URL, not a filter query, so stray keystrokes should not be routed into it. Click
+or Tab into it to type, which is a deliberate act; from there the ordinary
+typing guard applies, and `Escape` still closes the panel.
+
 **Interface:**
 
 ```typescript
@@ -628,6 +650,28 @@ and the focus-trap release are all tracked and cancelled by `hideHelpOverlay()`;
 the delayed callback also verifies that it still belongs to the currently mounted
 overlay before attaching. Rapid `H` toggles therefore cannot arm stale handlers
 that close or retain a subsequently opened panel.
+
+Initial focus goes to the overlay **container**, not its filter field. A focused
+text input trips `InputHandler`'s typing guard, which drops every key but
+`Escape` — that made `H` one-way (it opened the overlay but the second `H` was
+swallowed as typing, issue #1922). `help-overlay/type-to-filter.ts` restores
+type-to-filter by forwarding the first printable keystroke into the filter, and
+the dataset browser (`O`) uses the same mechanism. The panel's own toggle key is
+passed through to the global binding while focus is on the container, so it
+cannot be the first character of a filter query (`Shift`+that key types it like
+any other character — the global lookup spells the shifted form `"h+shift"`,
+which matches no binding).
+
+The same container listener keeps the panel **modal**: no panel pushes an
+`InputContext`, so it stops every other key from reaching the global bindings
+behind the dialog (`Home`/`End` would otherwise jump the selected dimension,
+`Shift`+arrows change the animation speed). Containment applies to keys
+bubbling up from inner controls too — a listing row, the filter, a breadcrumb —
+so one `Tab` cannot hand the scene its shortcuts back. Only `Escape`, `Tab` and
+the panel's declared passthrough keys get out, the last of those only while
+focus is still on the container itself. Containment never calls
+`preventDefault`, so panel scrolling and browser-level shortcuts (`Ctrl+F`,
+`Cmd+W`, `F5`) still work.
 
 ### 8. Recording Panel
 
@@ -1074,13 +1118,15 @@ Override default styles:
 ### DimensionSliders
 
 Constructed with `SliderConfig` (`container`, `dims`, `dimensionRanges`,
-`dimensionNames`, optional `dimensionUnits`). Slider movements propagate
-through `sceneDimsManager.setDimensionValue()` rather than a local event
-emitter, so there is no `on()` / `setDimensions()` / `setValue()` API.
+`dimensionNames`, optional `dimensionUnits`, optional `selectedDimension`).
+Slider movements propagate through `sceneDimsManager.setDimensionValue()`
+rather than a local event emitter, so there is no `on()` / `setDimensions()` /
+`setValue()` API.
 
 | Method                         | Description                                   |
 | ------------------------------ | --------------------------------------------- |
 | `setAnimationManager(manager)` | Connect animation manager and build controls  |
+| `setSelectedDimension(slot)`   | Set the dimension the `[` / `]` keys target   |
 | `toggle()`                     | Toggle slider panel visibility                |
 | `setVisible(visible)`          | Explicitly show/hide the panel                |
 | `hide()`                       | Hide the panel                                |
@@ -1228,9 +1274,11 @@ of the same name at this folder's root (plus the folder-module
   (`GUI`, `Folder`, `Controller`, per-type controllers, DOM plumbing,
   formatting); `gui.ts` re-exports only the default `GUI` and `Controller`,
   with the rest imported directly from leaf modules under `ui/gui/`.
-- [`help-overlay/`](./help-overlay/README.md) — Shared `focus-trap.ts`
-  (Tab/Shift+Tab focus cycling) used by `help-overlay.ts` and
-  `error-overlay.ts`.
+- [`help-overlay/`](./help-overlay/README.md) — Shared modal-panel
+  helpers: `focus-trap.ts` (Tab/Shift+Tab focus cycling) used by
+  `help-overlay.ts`, `error-overlay.ts` and `dataset-browser.ts`, and
+  `type-to-filter.ts` (container focus + first-keystroke filtering) used
+  by the two filtered panels.
 - [`layers/`](./layers/README.md) — Layers panel implementation
   (`LayersPanel`, `LayerStateManager`, range/labeled sliders); `layers.ts`
   re-exports only `LayersPanel`, with the rest imported directly from leaf

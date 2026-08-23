@@ -175,6 +175,7 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import MissingDependencyError, require_module
+from luxar.demos._lod_policy import save_with_lod
 from luxar.encoding import EncodingMode
 from luxar.gsplats import fit_gaussian_splats
 from luxar.gsplats.gsplat_data import GSplatData
@@ -393,15 +394,17 @@ def fit_dapi_gsplats(volume, acquisition=None):
         # Cache result in gsplats.zarr.zip format
         LOCAL_FIT.parent.mkdir(parents=True, exist_ok=True)
         aprint(f"Caching fit to: {LOCAL_FIT}")
-        result.save(
+        save_with_lod(
+            result,
             LOCAL_FIT,
+            recipe="stream",
             encoding_mode=EncodingMode.MEMORY,
             include_fitting_info=True,
             compress="zip",
             zip_deflate=True,
         )
 
-        return result
+        return GSplatData.load(LOCAL_FIT, include_stats=False)
 
 
 # =============================================================================

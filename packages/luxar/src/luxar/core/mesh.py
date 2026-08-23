@@ -127,6 +127,15 @@ class Mesh(DataNode):
         return bool(self._metadata.get("has_image_labels", False))
 
     @property
+    def has_keys(self) -> bool:
+        """Check if the mesh has per-element machine-readable keys.
+
+        The string a ``link`` / ``copy`` template substitutes as
+        ``{hover_key}``, independent of ``has_labels``.
+        """
+        return bool(self._metadata.get("has_keys", False))
+
+    @property
     def shading(self) -> ShadingMode:
         """Get the shading mode ('smooth' or 'flat')."""
         return cast(ShadingMode, str(self._metadata.get("shading", "flat")))

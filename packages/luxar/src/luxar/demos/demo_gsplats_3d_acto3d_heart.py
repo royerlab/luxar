@@ -117,6 +117,7 @@ from luxar.demos import (
     require_module,
     warn_if_no_cuda_gpu,
 )
+from luxar.demos._lod_policy import save_with_lod
 from luxar.demos._roundtrip_common import show_roundtrip_comparison
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
@@ -486,15 +487,17 @@ def fit_channel(
 
     # Cache result
     aprint(f"  Caching to {cache_file.name}")
-    result.save(
+    save_with_lod(
+        result,
         cache_file,
+        recipe="stream",
         encoding_mode=EncodingMode.MEMORY,
         include_fitting_info=True,
         compress="zip",
         zip_deflate=True,
     )
 
-    return result
+    return GSplatData.load(cache_file, include_stats=False)
 
 
 def fit_all_channels(

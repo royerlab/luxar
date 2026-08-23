@@ -28,7 +28,7 @@ from ..labels.image_labels import (
     validate_image_labels_for_writing,
     write_image_labels_csr,
 )
-from ..labels.text_labels import write_labels_csr
+from ..labels.text_labels import write_string_channels_csr
 from ..node_common import (
     GSPLATS_RESERVED_ATTRS,
     validate_node_path,
@@ -53,6 +53,33 @@ def scene_barrier_dims(store: zarr.Group, n_dims: int) -> Optional[List[int]]:
     ]
 
 
+def _write_element_annotations(
+    group: zarr.Group,
+    *,
+    labels: Optional["Sequence[str]"],
+    keys: Optional["Sequence[str]"],
+    image_labels: Optional[Any],
+    n_splats: int,
+    compressor: Any,
+    ordering_data: Optional[dict[str, Any]],
+    metadata: dict[str, Any],
+) -> None:
+    """Write optional per-element annotation channels with one permutation."""
+    sort_order = ordering_data["sort_order"] if ordering_data is not None else None
+    write_string_channels_csr(
+        group,
+        labels=labels,
+        keys=keys,
+        n_elements=n_splats,
+        compressor=compressor,
+        sort_order=sort_order,
+        metadata=metadata,
+    )
+    if image_labels is not None:
+        write_image_labels_csr(group, image_labels, n_splats, compressor, sort_order)
+        metadata["has_image_labels"] = True
+
+
 def write_gsplats(
     ctx: GSplatsWriteCtx,
     path: NodePath,
@@ -62,6 +89,7 @@ def write_gsplats(
     colors: Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]] = None,
     labels: Optional["Sequence[str]"] = None,
     image_labels: Optional[Any] = None,
+    keys: Optional["Sequence[str]"] = None,
     **attrs: Any,
 ) -> dict[str, Any]:
     """Write Gaussian splats data to Zarr (single-LOD, flat layout).
@@ -104,10 +132,17 @@ def write_gsplats(
     # 0d. Labels: sequence-of-str type + length check (the CSR serializer
     # would otherwise AttributeError on a non-str entry AFTER the arrays
     # were written).
-    if labels is not None:
+    if labels is not None or keys is not None:
+        # Hoisted above both branches: `keys` rides the same pre-flight as
+        # `labels` — the CSR serializer UTF-8-encodes each entry, so a non-str
+        # or a length mismatch must be caught BEFORE any array reaches disk
+        # (#1917) — and a per-branch import would leave the second use unbound.
         from ....validation.base import validate_labels_for_writing
 
-        validate_labels_for_writing(labels, n_splats)
+        if labels is not None:
+            validate_labels_for_writing(labels, n_splats)
+        if keys is not None:
+            validate_labels_for_writing(keys, n_splats, context="keys", noun="Keys")
 
     # 0e. Image labels: length (dense) / index bounds (sparse dict) — see
     # validate_image_labels_for_writing for why this moved out of the CSR
@@ -187,19 +222,16 @@ def write_gsplats(
     # Update scene-level bounds
     ctx.update_scene_bounds(metadata["position_bounds"])
 
-    # Write labels if provided (CSR-style: label_offsets + label_bytes)
-    if labels is not None:
-        sort_order = ordering_data["sort_order"] if ordering_data is not None else None
-        write_labels_csr(group, labels, n_splats, ctx.compressor, sort_order)
-        metadata["has_labels"] = True
-
-    # Write image labels if provided (CSR-style, no compression on blobs)
-    if image_labels is not None:
-        sort_order = ordering_data["sort_order"] if ordering_data is not None else None
-        write_image_labels_csr(
-            group, image_labels, n_splats, ctx.compressor, sort_order
-        )
-        metadata["has_image_labels"] = True
+    _write_element_annotations(
+        group,
+        labels=labels,
+        keys=keys,
+        image_labels=image_labels,
+        n_splats=n_splats,
+        compressor=ctx.compressor,
+        ordering_data=ordering_data,
+        metadata=metadata,
+    )
 
     aprint(f"✅ GSplats written to {path}")
 

@@ -53,6 +53,8 @@ export interface DisposePipelinePorts {
   pickingSystem: PickingSystem | undefined;
   labelLoader: LabelLoader | undefined;
   imageLabelLoader: ImageLabelLoader | undefined;
+  /** The `keys` CSR reader — a LabelLoader on the 'keys' channel (#1917). */
+  keyLoader: LabelLoader | undefined;
   datasetBrowser: DatasetBrowser | undefined;
   // Per-field reset callbacks for the things the helper must NOT keep
   // dangling references to. The orchestrator clears its own field via
@@ -65,6 +67,7 @@ export interface DisposePipelinePorts {
   clearControlRail: () => void;
   clearPickingSystem: () => void;
   clearLabelLoader: () => void;
+  clearKeyLoader: () => void;
   clearImageLabelLoader: () => void;
   clearDatasetBrowser: () => void;
 }
@@ -144,6 +147,10 @@ export function runDisposePipeline(ports: DisposePipelinePorts): void {
   safeDispose('labelLoader', () => {
     ports.labelLoader?.dispose();
     ports.clearLabelLoader();
+  });
+  safeDispose('keyLoader', () => {
+    ports.keyLoader?.dispose();
+    ports.clearKeyLoader();
   });
   safeDispose('imageLabelLoader', () => {
     ports.imageLabelLoader?.dispose();

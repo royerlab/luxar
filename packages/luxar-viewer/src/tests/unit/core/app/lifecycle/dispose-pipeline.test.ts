@@ -74,6 +74,7 @@ interface Stubs {
   pickingSystem: DisposableStub;
   labelLoader: DisposableStub;
   imageLabelLoader: DisposableStub;
+  keyLoader: DisposableStub;
   datasetBrowser: ReturnType<typeof makeDatasetBrowser>;
   events: EventGroup;
   pickingEvents: EventGroup;
@@ -87,6 +88,7 @@ interface Stubs {
     pickingSystem: ReturnType<typeof vi.fn>;
     labelLoader: ReturnType<typeof vi.fn>;
     imageLabelLoader: ReturnType<typeof vi.fn>;
+    keyLoader: ReturnType<typeof vi.fn>;
     datasetBrowser: ReturnType<typeof vi.fn>;
   };
 }
@@ -109,6 +111,7 @@ function makeStubs(): Stubs {
     pickingSystem: makeDisposable(),
     labelLoader: makeDisposable(),
     imageLabelLoader: makeDisposable(),
+    keyLoader: makeDisposable(),
     datasetBrowser: makeDatasetBrowser(),
     events: new EventGroup(),
     pickingEvents: new EventGroup(),
@@ -122,6 +125,7 @@ function makeStubs(): Stubs {
       pickingSystem: vi.fn(),
       labelLoader: vi.fn(),
       imageLabelLoader: vi.fn(),
+      keyLoader: vi.fn(),
       datasetBrowser: vi.fn(),
     },
   };
@@ -151,6 +155,7 @@ function makePorts(s: Stubs): DisposePipelinePorts {
     pickingSystem: s.pickingSystem as unknown as DisposePipelinePorts['pickingSystem'],
     labelLoader: s.labelLoader as unknown as DisposePipelinePorts['labelLoader'],
     imageLabelLoader: s.imageLabelLoader as unknown as DisposePipelinePorts['imageLabelLoader'],
+    keyLoader: s.keyLoader as unknown as DisposePipelinePorts['keyLoader'],
     datasetBrowser: s.datasetBrowser as unknown as DisposePipelinePorts['datasetBrowser'],
     // vitest's Mock type doesn't structurally satisfy `() => void`,
     // so cast each clearX through unknown at the call site.
@@ -162,6 +167,7 @@ function makePorts(s: Stubs): DisposePipelinePorts {
     clearControlRail: s.clears.controlRail as unknown as () => void,
     clearPickingSystem: s.clears.pickingSystem as unknown as () => void,
     clearLabelLoader: s.clears.labelLoader as unknown as () => void,
+    clearKeyLoader: s.clears.keyLoader as unknown as () => void,
     clearImageLabelLoader: s.clears.imageLabelLoader as unknown as () => void,
     clearDatasetBrowser: s.clears.datasetBrowser as unknown as () => void,
   };
@@ -220,6 +226,7 @@ describe('runDisposePipeline', () => {
       expect(s.clears.layersPanel).toHaveBeenCalledOnce();
       expect(s.clears.pickingSystem).toHaveBeenCalledOnce();
       expect(s.clears.labelLoader).toHaveBeenCalledOnce();
+      expect(s.clears.keyLoader).toHaveBeenCalledOnce();
       expect(s.clears.imageLabelLoader).toHaveBeenCalledOnce();
       expect(s.clears.datasetBrowser).toHaveBeenCalledOnce();
     });
@@ -387,6 +394,7 @@ describe('runDisposePipeline', () => {
         pickingSystem: undefined,
         labelLoader: undefined,
         imageLabelLoader: undefined,
+        keyLoader: undefined,
         datasetBrowser: undefined,
         clearScaleBar: vi.fn(),
         clearColormapLegend: vi.fn(),
@@ -396,6 +404,7 @@ describe('runDisposePipeline', () => {
         clearControlRail: vi.fn(),
         clearPickingSystem: vi.fn(),
         clearLabelLoader: vi.fn(),
+        clearKeyLoader: vi.fn(),
         clearImageLabelLoader: vi.fn(),
         clearDatasetBrowser: vi.fn(),
       };

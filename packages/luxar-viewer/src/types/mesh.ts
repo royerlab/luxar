@@ -125,6 +125,9 @@ export interface MeshMetadata {
   /** Whether per-vertex image labels exist (CSR-encoded, for hover thumbnails) */
   has_image_labels?: boolean;
 
+  /** Whether per-vertex stable string keys exist (CSR-encoded, for element actions) */
+  has_keys?: boolean;
+
   /** 4x4 transform matrix (column-major for THREE.js) */
   transform?: number[];
 

@@ -595,13 +595,13 @@ export function collectRenderOrderSlot(
  *    the single-wrapper special case); otherwise the whole group falls
  *    back to member view-z (a partition with no stored tree, or one whose
  *    tree does not name every part).
- * 5. Sequential global integers 0..M-1 are written to mesh.renderOrder.
+ * 5. Sequential global integers 1..M are written to mesh.renderOrder.
  *
  * Transparent objects OUTSIDE the coordinator's sorted set (commutative
- * modes) keep renderOrder 0 and tie with the globally-farthest sorted
- * mesh (falling back to THREE's per-object z) — depth interleaving with
- * unsorted content stays out of scope, unchanged from the per-wrapper
- * scheme this replaces.
+ * modes, plus empty parts that have never committed) keep renderOrder 0
+ * and draw before the globally-farthest sorted mesh. Depth interleaving
+ * with unsorted content stays out of scope, unchanged from the
+ * per-wrapper scheme this replaces.
  */
 export function assignGlobalRenderOrder(): void {
   const slots = orderSlots;
@@ -627,7 +627,9 @@ export function assignGlobalRenderOrder(): void {
   );
   const ordered = orderGroupsWithContainment(byDepth);
 
-  let nextRank = 0;
+  // Reserve THREE's default 0 for meshes the coordinator does not track yet,
+  // so an empty never-committed partition placeholder cannot alias a live rank.
+  let nextRank = 1;
   for (const group of ordered) {
     // BSP ranks when EVERY member has one; view-z otherwise (a rank-less legacy
     // wrapper, or a partition with no stored tree).

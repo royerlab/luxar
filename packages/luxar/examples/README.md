@@ -122,7 +122,7 @@ Each script prints the absolute output path on completion. Defaults to
 
 ## Keyboard controls (in viewer)
 
-- **1-9** — select dimension to navigate; **`[`** / **`]`** — step backward/forward
+- **1-9** — select which non-displayed dimension to navigate; **`[`** / **`]`** — step backward/forward
 - **Left-drag** — pan; **Right-drag** — orbit; **Wheel** — zoom
 - **L** — layers panel; **D** — dimension sliders; **H** — help overlay
 - Full reference: `packages/luxar-viewer` docs.

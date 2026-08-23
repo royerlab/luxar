@@ -35,6 +35,65 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
+describe('DimensionSliders - keyboard selection indicator', () => {
+  const dims: SimpleDims = {
+    ndim: 5,
+    displayed: [0, 1, 2],
+    currentStep: [0, 0, 0, 7, 1],
+    metadata: [
+      { name: 'X', unit: '', scale: 1, discrete: false, step: 1 },
+      { name: 'Y', unit: '', scale: 1, discrete: false, step: 1 },
+      { name: 'Z', unit: '', scale: 1, discrete: false, step: 1 },
+      { name: 'Frame', unit: '', scale: 1, discrete: true, step: 1 },
+      {
+        name: 'Channel',
+        unit: '',
+        scale: 1,
+        discrete: true,
+        step: 1,
+        categories: ['RED', 'GREEN', 'BLUE'],
+      },
+    ],
+  };
+
+  function buildSliders(): DimensionSliders {
+    return new DimensionSliders({
+      container: document.getElementById('test-container')!,
+      dims,
+      dimensionRanges: [
+        [0, 100],
+        [0, 100],
+        [0, 100],
+        [0, 15],
+        [0, 2],
+      ],
+      dimensionNames: ['X', 'Y', 'Z', 'Frame', 'Channel'],
+      selectedDimension: 0,
+    });
+  }
+
+  it('shows the selected navigable key and dimension name in the panel header', () => {
+    const sliders = buildSliders();
+    const status = document.querySelector('.luxar-dimension-sliders__status');
+
+    expect(status?.textContent).toContain('[/]: 1 · Frame');
+
+    sliders.setSelectedDimension(1);
+    expect(status?.textContent).toContain('[/]: 2 · Channel');
+    sliders.dispose();
+  });
+
+  it('shows an unavailable target instead of silently naming another dimension', () => {
+    const sliders = buildSliders();
+    const status = document.querySelector('.luxar-dimension-sliders__status');
+
+    sliders.setSelectedDimension(9);
+    expect(status?.textContent).toContain('[/]: unavailable');
+    expect(status?.textContent).not.toContain('[/]: 10 · Channel');
+    sliders.dispose();
+  });
+});
+
 // ui.md O1 / Phase E39: previously named "Memory Leak Prevention" — a
 // concern, not a behavior. The inner tests now cover real
 // slider/dropdown lifecycle contracts (construction → re-init →
