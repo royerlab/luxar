@@ -177,8 +177,20 @@ async function setBlendingMode(page: Page, mode: string): Promise<void> {
  * anything.
  */
 async function cellLuminances(page: Page, centres: Cell[]): Promise<Map<string, CellMetrics>> {
-  const canvas = page.locator('canvas').first();
-  await canvas.waitFor({ state: 'visible' });
+  // By id, not by tag: the viewer also mounts a hidden 0×0 `.luxar-perf__graph`
+  // canvas (the performance overlay's graph). It happens to come second in DOM
+  // order today, so a bare `canvas` locator's `.first()` picks the right one by
+  // accident — if the control rail ever moved ahead of `#app` this spec would
+  // silently screenshot the hidden one.
+  const canvas = page.locator('canvas#app');
+  // The global `actionTimeout` is 10 s, and this is the first thing measured
+  // after a blending-mode switch that can recompile the programs / rebuild the
+  // TSL graph for all eight nodes. On a loaded machine Playwright's in-page
+  // visibility poll starves for longer than that while the renderer holds the
+  // main thread — the element is visible by every CSS measure the whole time.
+  // The generous timeout only guards against that false failure, which has
+  // nothing to do with what this spec measures.
+  await canvas.waitFor({ state: 'visible', timeout: 30000 });
   const png = await canvas.screenshot({ animations: 'disabled' });
   const dataUrl = `data:image/png;base64,${png.toString('base64')}`;
 
