@@ -22,6 +22,7 @@ import { log, Modules } from '../../utils/log';
  * spamming the console on repeated calls. Exported for tests to reset.
  */
 export const _warnedUnknownRenderingKeys = new Set<string>();
+const _warnedFovPresetConflicts = new Set<string>();
 
 /**
  * Mapping from snake_case zarr viewer_config keys to camelCase RenderingSettings keys.
@@ -138,9 +139,19 @@ export function extractRenderingOverrides(
   if (zarrConfig.camera?.fov_preset != null) {
     const fovPreset = zarrConfig.camera.fov_preset as RenderingSettings['fovPreset'];
     overrides.fovPreset = fovPreset;
+    const presetFov = cameraConfig.fovPresets[fovPreset];
     if (overrides.fov === undefined) {
-      const presetFov = cameraConfig.fovPresets[fovPreset];
+      // `> 0` rejects both the sentinel Custom value and unknown preset names.
       if (presetFov > 0) overrides.fov = presetFov;
+    } else if (presetFov > 0 && presetFov !== overrides.fov) {
+      const conflictKey = `${fovPreset}:${overrides.fov}`;
+      if (!_warnedFovPresetConflicts.has(conflictKey)) {
+        _warnedFovPresetConflicts.add(conflictKey);
+        log.warning(
+          Modules.CONFIG,
+          `camera.fov (${overrides.fov}°) conflicts with camera.fov_preset "${fovPreset}" (${presetFov}°); the numeric FOV wins and the preset label will read "Custom".`
+        );
+      }
     }
   }
 

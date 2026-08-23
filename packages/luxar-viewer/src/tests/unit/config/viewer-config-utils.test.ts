@@ -2,7 +2,7 @@
  * Tests for viewer-config-utils: zarr viewer_config ↔ RenderingSettings conversion
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   extractRenderingOverrides,
   extractCameraOverrides,
@@ -13,6 +13,7 @@ import {
 import { config } from '../../../config';
 import { buildCinematicValues, CINEMATIC_SNAPSHOT_KEYS } from '../../../config/cinematic-preset';
 import type { ZarrViewerConfig } from '../../../types/zarr';
+import { log, Modules } from '../../../utils/log';
 
 describe('extractRenderingOverrides', () => {
   it('should return empty object for empty config', () => {
@@ -213,13 +214,23 @@ describe('extractRenderingOverrides', () => {
     expect(overrides.fovPreset).toBe('85mm Portrait');
   });
 
-  it('keeps an explicit camera.fov authoritative over camera.fov_preset', () => {
-    const overrides = extractRenderingOverrides({
+  it('keeps an explicit camera.fov authoritative and warns once when the preset disagrees', () => {
+    const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    const configWithConflict = {
       camera: { fov: 90, fov_preset: '85mm Portrait' },
-    });
+    } satisfies ZarrViewerConfig;
+
+    const overrides = extractRenderingOverrides(configWithConflict);
+    extractRenderingOverrides(configWithConflict);
 
     expect(overrides.fov).toBe(90);
     expect(overrides.fovPreset).toBe('85mm Portrait');
+    expect(warnSpy).toHaveBeenCalledOnce();
+    expect(warnSpy).toHaveBeenCalledWith(
+      Modules.CONFIG,
+      expect.stringMatching(/numeric FOV wins.*preset label will read "Custom"/)
+    );
+    warnSpy.mockRestore();
   });
 
   it('does not invent a numeric FOV for the Custom preset', () => {
@@ -229,6 +240,15 @@ describe('extractRenderingOverrides', () => {
 
     expect('fov' in overrides).toBe(false);
     expect(overrides.fovPreset).toBe('Custom');
+  });
+
+  it('does not invent a numeric FOV for an unknown preset name', () => {
+    const overrides = extractRenderingOverrides({
+      camera: { fov_preset: 'nonsense' },
+    });
+
+    expect('fov' in overrides).toBe(false);
+    expect(overrides.fovPreset).toBe('nonsense');
   });
 });
 
