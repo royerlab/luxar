@@ -636,10 +636,21 @@ def validate_render_attrs(
 
         validate_colormap(attrs["colormap"])
 
-    # Interaction templates (#1917). Checked here, before the node exists on
-    # disk, because the failure they prevent is otherwise SILENT: a bad
-    # `link` writes cleanly and simply does nothing when the user clicks it,
-    # with nothing in the file or the console to point at.
+    _validate_interaction_attrs(attrs)
+
+
+def _validate_mesh_appearance_attrs(attrs: Dict[str, Any]) -> None:
+    """Validate the five mesh-only appearance values in the shared attr gate."""
+    for key, (validator, label) in _MESH_APPEARANCE_VALIDATORS.items():
+        if key in attrs:
+            validator(attrs[key], label)
+
+
+def _validate_interaction_attrs(attrs: Dict[str, Any]) -> None:
+    """Validate element interaction templates in the shared attr gate."""
+    # Checked before the node exists on disk because the failure they prevent
+    # is otherwise silent: a bad link writes cleanly and simply does nothing
+    # when the user clicks it, with no file or console diagnostic (#1917).
     if "link" in attrs:
         from ...validation.types import validate_link
 
@@ -665,10 +676,3 @@ def validate_render_attrs(
             "context for a link, so on its own it has no effect. Add "
             "link='https://...' or drop link_target."
         )
-
-
-def _validate_mesh_appearance_attrs(attrs: Dict[str, Any]) -> None:
-    """Validate the five mesh-only appearance values in the shared attr gate."""
-    for key, (validator, label) in _MESH_APPEARANCE_VALIDATORS.items():
-        if key in attrs:
-            validator(attrs[key], label)
