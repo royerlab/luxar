@@ -911,6 +911,21 @@ rewrites a store must apply all three rules:
   *re-stamp* the counts that moved instead: a `cull` of a substitutive pyramid is
   still that pyramid, with refreshed `lod_n_lods` / `lod_cutpoints`.
 
+  A structure-preserving rewrite that REPLACES the thing a stamp summarises owes
+  the same refresh. `additive` re-ladders every leaf, so the root ladder summary
+  is rebuilt from the tree it wrote — `lod_n_lods` / `lod_cutpoints` from the
+  ladder, `lod_method` / `lod_breakpoints_kind` read back off the rebuilt leaf so
+  an `auto` request publishes the method it resolved to. The summary describes
+  ONE ladder: the leaf itself for a flat store, and for a `kind=lod` group the
+  level `lod_substitutive_level` names (the rule `cull` already follows).
+  `lod_substitutive_level` itself is untouched — a re-ladder moves no level. On a
+  shape where no single leaf can be the summary (a `kind=partition`, whose parts
+  hold different counts and therefore different rung counts) the block is
+  *dropped* rather than filled from an arbitrary part; that is also what the
+  `tiles` / `overview` / `adaptive` builders publish at the root. Present keys
+  only, in both directions: a store that never published a summary does not
+  acquire one.
+
   Two things in `pipeline/` are **exempt**, which is why this is a deny-list of
   key names rather than "drop the group". The normalization block (`floor`,
   `image_min`, `image_max`, `intensity_range`) describes the *input volume's*
@@ -918,6 +933,18 @@ rewrites a store must apply all three rules:
   read back by the writer — `write_gsplats_tree` derives the chunk-ordering
   barrier axes from its complement — so dropping it would silently change the
   output's chunk layout, not just its metadata.
+
+  Exempt from the scrub is not exempt from being TRUE. A rewrite that coarsens
+  over its own choice of axes owes the output a fresh `coarsen_dims`, because the
+  inherited one would put the barrier on an axis this reduction just blended.
+  `decimate`'s `merge` family therefore re-stamps the set it resolved: the sorted
+  list for a proper subset, and `None` for coarsen-everything (the default, and
+  what a request naming every dim normalises to) — the same spelling
+  `make_substitutive_lod` uses, so the same choice publishes the same value
+  whichever command made it. Its `prefix` family stamps nothing: a prefix merges
+  no axis and every survivor is one of the input's splats at its own coordinates,
+  so the inherited value — and the layout derived from it — stays true.
+  `--coarsen-dims` is a merge-only knob and is never published by a prefix.
 
 No category subsumes another, which is why one predicate cannot serve them: an
 amplitude-threshold cull loses the scores and keeps the grid and the topology, a

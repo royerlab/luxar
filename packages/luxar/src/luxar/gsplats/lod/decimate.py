@@ -96,6 +96,31 @@ def resolve_target_count(target: Union[int, float], n_in: int) -> int:
     return max(1, min(n, n_in))
 
 
+def resolved_merge_coarsen_dims(
+    coarsen_dims: Optional[Sequence[int]], ndim: int
+) -> Optional[list[int]]:
+    """The dims a ``merge`` ACTUALLY coarsens over, in the producer's spelling.
+
+    Mirrors :func:`~luxar.gsplats.lod.substitutive._normalise_coarsen_dims`,
+    which ``merge_to_count`` has already run (and validated) by the time this is
+    called: ``None`` means "coarsen every dim, no barrier", and a request naming
+    every dim collapses to the same thing.
+
+    Spelled as :func:`~luxar.gsplats.lod.substitutive.make_substitutive_lod`
+    spells it — the sibling producer of the same operator — so a store that went
+    through ``lod`` and one that went through ``decimate`` publish the same value
+    for the same choice. That matters concretely: ``make_substitutive_lod``
+    stamps a literal ``None`` for coarsen-everything, which the writer reads as
+    "no barrier provenance → auto-detect", and stamping ``[0, …, d-1]`` here
+    instead would assert an explicit EMPTY barrier and move every chunk of an
+    otherwise unchanged pipeline.
+    """
+    if coarsen_dims is None:
+        return None
+    dims = sorted({int(d) for d in coarsen_dims})
+    return None if len(dims) == ndim else dims
+
+
 def resolve_method(method: AutoOrMethod, n_target: int, n_in: int) -> MethodName:
     """Resolve ``"auto"`` against the measured crossover (see module docstring)."""
     if method != "auto":
@@ -135,7 +160,10 @@ def decimate(
         seed: Seed for the ``random`` ordering (prefix only; every other
             ordering, and the clustering, is deterministic).
         coarsen_dims: Center-column indices merging may combine over; the rest
-            are hard barriers (merge only). Default: all dims.
+            are hard barriers (merge only). Default: all dims. A ``merge``
+            stamps the RESOLVED set on the result (the writer turns it into the
+            chunk-ordering barrier); a ``prefix`` ignores the argument and keeps
+            the input's stamp, having coarsened nothing.
         lloyd_iterations: Lloyd refinement passes (merge only).
         verbose: Narrate the reduction.
 
@@ -218,11 +246,31 @@ def decimate(
         # `lod_cutpoints: [...]` is false of every result it can produce — no
         # caller can want it kept. Scrubbing in the command instead left the
         # public `luxar.gsplats.lod.decimate` API publishing the defect (#1600).
-        # `coarsen_dims` is exempt (the writer reads it back to derive the
-        # chunk-ordering barrier) — see _STRUCTURE_SCOPE_EXEMPT_KEYS.
+        # `coarsen_dims` is exempt from that scrub (the writer reads it back to
+        # derive the chunk-ordering barrier) — see _STRUCTURE_SCOPE_EXEMPT_KEYS —
+        # and is RE-STAMPED just below instead.
         out = GSplatData.from_tree(
             out.tree, stats=stats_after_structure_change(data.stats)
         )
+        if chosen == "merge":
+            # The one inherited pipeline key this reduction OWNS. The writer
+            # derives the ordering barrier from its complement
+            # (`_barrier_from_coarsen_dims`), so an inherited `[0, 1, 2]` over a
+            # merge told `--coarsen-dims 1,2,3` — or over the default, which
+            # coarsens EVERYTHING — puts the barrier on an axis this merge just
+            # blended, and the absent-stamp direction silently fell back to
+            # auto-detect instead of recording the barrier the user asked for
+            # (#1600). Stamped unconditionally: the merge decides these dims
+            # whether or not the input had an opinion.
+            out.stats["coarsen_dims"] = resolved_merge_coarsen_dims(
+                coarsen_dims, data.ndim
+            )
+        # A `prefix` KEEPS the input's stamp. It merges nothing — every surviving
+        # splat is one of the input's, at its own coordinates — so whichever axes
+        # were hard barriers for this splat set still are, and the inherited value
+        # (and the layout the writer derives from it) stays true of the result.
+        # Stamping the request would be the lie here: `coarsen_dims` is a
+        # merge-only knob that this family ignored.
         scrub_measured_stats(out)
         from luxar.gsplats.lod.restamp import refresh_reduction_lod_stats
 

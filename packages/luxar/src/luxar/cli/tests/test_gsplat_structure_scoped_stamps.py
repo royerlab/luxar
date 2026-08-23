@@ -30,6 +30,11 @@ input volume's intensity scale) and ``coarsen_dims``, which the writer READS BAC
 to derive the chunk-ordering barrier — so a naive scrub does not merely delete a
 stamp, it changes the output's layout.
 
+Surviving the scrub is not the same as being TRUE, and the two rewrites that
+preserve the structure KIND while invalidating a stamp inside it are pinned here
+as well: ``decimate``'s ``coarsen_dims`` (which reduction axes it merged over)
+and ``additive``'s root ladder summary (which ladder the store now has).
+
 :func:`test_every_gsplat_command_is_classified` closes the table against the
 commands that actually exist. ``lod`` slipped the first pass of this axis
 precisely because nothing did that — the sibling appearance-carry guard in
@@ -320,8 +325,9 @@ _KIND_CHANGING: List[tuple[str, Sequence[str], frozenset[str]]] = [
 _NOT_KIND_CHANGING: Dict[str, str] = {
     # ── structure-PRESERVING rewrites: the kind stays true of the output ──
     "additive": "re-ladders every leaf in place; leaf / lod levels / partition "
-    "parts all keep their shape (its root ladder summary is left stale by the "
-    "re-ladder — a stale-VALUE defect within a preserved kind, tracked on #1600)",
+    "parts all keep their shape (the root ladder SUMMARY does move with the "
+    "re-ladder and is re-stamped from the tree written — "
+    "test_additive_refreshes_the_root_ladder_summary)",
     "cull": "a culled pyramid is still that pyramid (and the counts that moved "
     "are re-stamped, not dropped)",
     "filter": "same splat set narrowed, same tree shape",
@@ -412,8 +418,15 @@ def test_every_gsplat_command_is_classified() -> None:
 #: written ordering barrier is a clean read of the exempted key. ``lod`` is left
 #: out: its substitutive builder RE-STAMPS ``coarsen_dims`` from ``--coarsen-dims``
 #: (to ``None`` when the flag is absent), which is a claim about what that builder
-#: stamps rather than about this scrub.
-_BARRIER_ROWS = [row for row in _KIND_CHANGING if not row[0].startswith("lod:")]
+#: stamps rather than about this scrub. ``decimate`` is out for the same reason
+#: since #1600 — its ``merge`` family re-stamps the dims it resolved, and
+#: :func:`test_decimate_stamps_the_coarsen_dims_it_used` measures that barrier
+#: (including the case where the INHERITED one must not be re-imposed).
+_BARRIER_ROWS = [
+    row
+    for row in _KIND_CHANGING
+    if not row[0].startswith("lod:") and row[0] != "decimate"
+]
 
 
 @pytest.mark.parametrize(
@@ -457,8 +470,15 @@ def test_a_kind_change_drops_the_topology_record(
     if "recipe" in published:
         assert pipeline["recipe"] == argv[argv.index("--recipe") + 1]
 
-    # The survivors, by key and by value.
+    # The survivors, by key and by value. ``decimate`` is the one exception, and
+    # only on ``coarsen_dims``: it does not pass that key through, it RE-STAMPS
+    # the dims its reduction actually coarsened over (#1600), which for the
+    # default merge here is "all of them". Pinned by
+    # :func:`test_decimate_stamps_the_coarsen_dims_it_used`.
+    restamped = {"coarsen_dims"} if argv[0] == "decimate" else set()
     for key, value in _EXEMPT.items():
+        if key in restamped:
+            continue
         got = pipeline.get(key)
         assert (list(got) if isinstance(got, list) else got) == value, (
             f"{key!r} must survive a structure change (got {got!r})"
@@ -513,6 +533,149 @@ def test_the_ordering_barrier_survives_the_scrub(
     _run(argv, bare, bare_out)
     assert all(b == [] for b in _ordering_barriers(bare_out)), (
         "auto-detect found the barrier on its own; the control proves nothing"
+    )
+
+
+#: ``(id, lod tail, additive tail, method, breakpoints kind)`` — one row per
+#: SHAPE ``gsplat additive`` re-ladders and can summarise: a single flat leaf
+#: (the summary IS that leaf's ladder) and a ``kind=lod`` group (the summary is
+#: the level ``lod_substitutive_level`` names, the rule
+#: ``_map_substitutive`` / ``cull`` already follow). Both rows move the METHOD
+#: and the rung count together, because the summary is refreshed key by key —
+#: a row that only moved the counts would leave ``lod_method`` unmeasured.
+_RE_LADDERED: List[tuple[str, Sequence[str], Sequence[str], str, str]] = [
+    (
+        "leaf",
+        ("--recipe", "stream", "--n-lods", "3"),
+        ("--n-lods", "6", "--add-method", "mass"),
+        "mass",
+        "equal-count",
+    ),
+    (
+        "levels",
+        (
+            "--recipe",
+            "levels",
+            "-K",
+            "4",
+            "-L",
+            "1",
+            "--n-lods",
+            "2",
+            "--coarsen-dims",
+            "0,1,2",
+        ),
+        ("-b", "counts:5,15,40", "--add-method", "self_energy"),
+        "self_energy",
+        "explicit-counts",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("lod_tail", "additive_tail", "method", "kind"),
+    [(lod, add, method, kind) for _, lod, add, method, kind in _RE_LADDERED],
+    ids=[row[0] for row in _RE_LADDERED],
+)
+def test_additive_refreshes_the_root_ladder_summary(
+    tmp_path: Path,
+    lod_tail: Sequence[str],
+    additive_tail: Sequence[str],
+    method: str,
+    kind: str,
+) -> None:
+    """``additive`` REPLACES the ladder its root block summarises (#1600).
+
+    Every leaf's own stats are rebuilt (``_merged_leaf_meta`` exists for that),
+    but the root ``pipeline/`` block was threaded through from the input, so a
+    store re-laddered from three rungs to six went on advertising three, under
+    the method and breakpoints kind of the ladder that no longer existed. The
+    structure KIND is untouched here — this is the stale-VALUE half of the same
+    hygiene axis, which is why ``additive`` sits in ``_NOT_KIND_CHANGING``.
+    """
+    src = _fixture(tmp_path / "src.gsplats.zarr")
+    pyr = tmp_path / "pyr.gsplats.zarr"
+    _run(("lod", "{in}", "{out}", *lod_tail), src, pyr)
+    before = _pipeline_attrs(pyr)
+    assert set(_LADDER_SUMMARY) <= set(before), (
+        f"the input published no ladder summary; nothing to go stale: {before}"
+    )
+
+    out = tmp_path / "out.gsplats.zarr"
+    _run(("additive", "{in}", "{out}", *additive_tail), pyr, out)
+    after = _pipeline_attrs(out)
+
+    # The summary must describe the ladder that is ON DISK, rung for rung.
+    loaded = GSplatData.load(out)
+    level = loaded.substitutive_levels[int(after["lod_substitutive_level"])]
+    counts = [lod.n_splats for lod in level.additive_sublods]
+    assert after["lod_n_lods"] == len(counts)
+    assert after["lod_cutpoints"] == list(np.cumsum(counts))
+    assert after["lod_method"] == method
+    assert after["lod_breakpoints_kind"] == kind
+    # ...and it MOVED. Without these the row would pass on a ladder that the
+    # rebuild happened to reproduce, proving nothing about the refresh.
+    assert before["lod_n_lods"] != after["lod_n_lods"]
+    assert before["lod_method"] != after["lod_method"]
+    # A re-ladder moves no LEVEL, so the summary still names the same one.
+    assert after["lod_substitutive_level"] == before["lod_substitutive_level"]
+
+
+#: ``(id, argv tail, stamp, barrier)`` for ``decimate``'s ``coarsen_dims``. The
+#: fixture is stamped ``[1, 2, 3]`` (barrier ``[0]``) so a re-stamp is visible
+#: BOTH in the key and in the layout: every expected barrier below differs from
+#: the inherited one, and the timepoints sit on a half-integer grid so
+#: ``detect_barrier_dims`` cannot supply ``[3]`` on its own.
+_DECIMATE_COARSEN: List[tuple[str, Sequence[str], Any, List[int]]] = [
+    # The request the merge was given, and the barrier IT implies.
+    (
+        "merge-honours-the-request",
+        ("-m", "merge", "--coarsen-dims", "0,1,2"),
+        [0, 1, 2],
+        [3],
+    ),
+    # No flag: the merge blends over every axis, so no axis is a barrier — and
+    # the inherited one must not be re-imposed on splats it just blended.
+    ("merge-coarsens-everything", ("-m", "merge"), None, []),
+    # A prefix merges nothing, so the input's stamp is still true of the
+    # survivors and stays — the ignored request must NOT be published.
+    ("prefix-inherits", ("-m", "prefix", "--coarsen-dims", "0,1,2"), [1, 2, 3], [0]),
+]
+
+
+@pytest.mark.parametrize(
+    ("tail", "stamp", "barrier"),
+    [(tail, stamp, barrier) for _, tail, stamp, barrier in _DECIMATE_COARSEN],
+    ids=[row[0] for row in _DECIMATE_COARSEN],
+)
+def test_decimate_stamps_the_coarsen_dims_it_used(
+    tmp_path: Path, tail: Sequence[str], stamp: Any, barrier: List[int]
+) -> None:
+    """``coarsen_dims`` is exempt from the scrub, not exempt from being TRUE.
+
+    The writer turns this key into the chunk-ordering barrier
+    (``_barrier_from_coarsen_dims``), so publishing the input's list over a
+    reduction that coarsened different axes does not merely misdescribe the
+    output — it puts the barrier on an axis the merge blended, and the
+    no-inherited-stamp direction dropped the user's own ``--coarsen-dims`` on
+    the floor and fell back to auto-detect (#1600). Asserted on the LAYOUT as
+    well as the key, for the same reason the scrub twin is.
+    """
+    src = tmp_path / "pyr.gsplats.zarr"
+    _data(
+        200,
+        stats={**_TOPOLOGY, **_EXEMPT, **_DESCRIPTIVE, "coarsen_dims": [1, 2, 3]},
+        time_step=0.5,
+    ).save(src, include_fitting_info=True)
+    out = tmp_path / "out.gsplats.zarr"
+    _run(("decimate", "{in}", "{out}", "--target", "50", *tail), src, out)
+
+    got = _pipeline_attrs(out).get("coarsen_dims")
+    assert (list(got) if isinstance(got, list) else got) == stamp
+    barriers = _ordering_barriers(out)
+    assert barriers, "no ordering attrs written at all"
+    assert all(b == barrier for b in barriers), (
+        f"the written ordering barrier {barriers} does not follow the stamp"
     )
 
 

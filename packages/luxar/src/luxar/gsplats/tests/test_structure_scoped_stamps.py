@@ -11,6 +11,12 @@ the rule is applied at THIS layer rather than by a command:
 :func:`~luxar.gsplats.lod.decimate.decimate`, whose contract is one flat leaf
 whatever it was handed — advertised as public API in ``CLAUDE.md``, so a
 CLI-only scrub left it publishing the defect.
+
+Surviving the scrub is not the same as being TRUE, and the two stamps a rewrite
+still OWNS after it are pinned here as well: the ``coarsen_dims`` a reduction
+actually coarsened over, and the root ladder summary
+(:func:`~luxar.gsplats.lod.restamp.refresh_root_ladder_summary`) a re-ladder
+replaces.
 """
 
 from __future__ import annotations
@@ -28,9 +34,11 @@ from luxar.gsplats._data.filtering import (
     _STRUCTURE_SCOPED_STATS_KEYS,
     stats_after_structure_change,
 )
-from luxar.gsplats.gsplat_data import GSplatData
+from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData, SubstitutiveLevel
 from luxar.gsplats.io.save_gsplats import NORMALIZATION_STATS_KEYS
 from luxar.gsplats.lod.decimate import decimate
+from luxar.gsplats.lod.restamp import refresh_root_ladder_summary
+from luxar.gsplats.tree import GSplatNode, GSplatPartition
 
 #: One recognisable value per registry key, so a survivor is unmistakable.
 _TOPOLOGY: Dict[str, Any] = {
@@ -163,8 +171,14 @@ def test_the_python_decimate_api_drops_the_topology_record(method: str) -> None:
     survivors = [k for k in _STRUCTURE_SCOPED_STATS_KEYS if k in out.stats]
     assert not survivors, f"the flat result still advertises a topology: {survivors}"
     # The exempt key and the descriptive fit provenance come through (dropping
-    # those would trade one silent loss for another).
-    assert list(out.stats["coarsen_dims"]) == _KEEP["coarsen_dims"]
+    # those would trade one silent loss for another) — except that a `merge`
+    # RE-STAMPS `coarsen_dims` with what it coarsened over, which on this 3D
+    # fixture is every dim: the inherited [0, 1, 2] says the same thing, and the
+    # producers spell that `None`. Pinned properly just below.
+    coarsen = out.stats["coarsen_dims"]
+    assert (list(coarsen) if coarsen is not None else None) == (
+        None if method == "merge" else _KEEP["coarsen_dims"]
+    )
     assert out.stats["fitter_name"] == _KEEP["fitter_name"]
     assert out.stats["iterations"] == _KEEP["iterations"]
     # ...and the caller's own dataset was not scrubbed underneath it.
@@ -176,8 +190,172 @@ def test_a_no_op_decimate_returns_the_input_verbatim() -> None:
 
     ``target >= n_splats`` returns the INPUT object, still a pyramid if it was
     one. Scrubbing there would delete a true record (and mutate a dataset the
-    caller still holds).
+    caller still holds) — and it must not acquire a fresh ``coarsen_dims``
+    either, since no reduction ran.
     """
     data = _flat_dataset()
-    assert decimate(data, target=data.n_splats) is data
+    assert decimate(data, target=data.n_splats, coarsen_dims=[0, 1]) is data
     assert data.stats == _laddered_stats()
+
+
+def _stacked_dataset(n: int = 200) -> GSplatData:
+    """4D splats on three integer timepoints, stamped ``coarsen_dims=[1, 2, 3]``.
+
+    A DIFFERENT list from any request below, so an inherited value is never
+    mistaken for a re-stamped one; and the barrier it implies (``[0]``) is a
+    continuous spatial axis, i.e. exactly the stale-provenance case.
+    """
+    rng = np.random.default_rng(0)
+    chol = np.zeros((n, 10), dtype=np.float32)
+    chol[:, [d * (d + 1) // 2 + d for d in range(4)]] = 2.0
+    centers = np.empty((n, 4), dtype=np.float32)
+    centers[:, :3] = rng.random((n, 3)) * 100.0
+    centers[:, 3] = rng.integers(0, 3, size=n).astype(np.float32)
+    return GSplatData(
+        centers=centers,
+        amplitudes=np.linspace(1.0, 0.1, n).astype(np.float32),
+        cholesky_factors=chol,
+        stats={**_laddered_stats(), "coarsen_dims": [1, 2, 3]},
+    )
+
+
+@pytest.mark.parametrize(
+    ("method", "request_dims", "expected"),
+    [
+        # A proper subset: stamped as asked, so the writer's barrier is [3].
+        ("merge", [0, 1, 2], [0, 1, 2]),
+        # Every dim, spelled out — `_normalise_coarsen_dims` collapses it to the
+        # no-barrier path, and the producers spell that `None`.
+        ("merge", [0, 1, 2, 3], None),
+        # ...which is also the default.
+        ("merge", None, None),
+        # A prefix merges nothing: the knob is merge-only and the input's stamp
+        # is still true of the survivors, so neither is overwritten by the other.
+        ("prefix", [0, 1, 2], [1, 2, 3]),
+    ],
+    ids=["merge-subset", "merge-all-dims", "merge-default", "prefix-inherits"],
+)
+def test_decimate_stamps_the_coarsen_dims_the_reduction_used(
+    method: str, request_dims: "list[int] | None", expected: "list[int] | None"
+) -> None:
+    """``coarsen_dims`` survives the topology scrub; it must still be true.
+
+    The writer reads it back to place the chunk-ordering barrier
+    (``_barrier_from_coarsen_dims``), so an inherited list over a merge that
+    coarsened different axes puts the barrier on an axis this reduction blended
+    (#1600). The command-level twin measures the resulting LAYOUT; here it is
+    the value, at the domain layer the public API also goes through.
+    """
+    data = _stacked_dataset()
+    out = decimate(data, target=50, method=method, coarsen_dims=request_dims)
+
+    got = out.stats["coarsen_dims"]
+    assert (list(got) if got is not None else None) == expected
+    assert data.stats["coarsen_dims"] == [1, 2, 3], "the caller's dict was edited"
+
+
+# ── the root ladder summary a re-ladder replaces (`gsplat additive`) ──
+
+
+def _sublod(n: int) -> AdditiveSubLOD:
+    """One rung of ``n`` 3D splats; geometry irrelevant, only the widths are."""
+    chol = np.zeros((n, 6), dtype=np.float32)
+    chol[:, [0, 2, 5]] = 2.0
+    return AdditiveSubLOD(
+        centers=np.zeros((n, 3), dtype=np.float32),
+        amplitudes=np.ones(n, dtype=np.float32),
+        cholesky_factors=chol,
+    )
+
+
+def _laddered_tree(rungs_per_level: "list[list[int]]", **stats: Any) -> GSplatNode:
+    """A tree with the given rung widths per level, FINEST LEVEL FIRST.
+
+    One level gives a bare leaf; several give a ``kind=lod`` group, which stores
+    its children the other way round (coarsest-first) — the mirror
+    :func:`refresh_root_ladder_summary` has to get right.
+    """
+    return GSplatData.from_substitutive_levels(
+        [
+            SubstitutiveLevel(
+                additive_sublods=[_sublod(n) for n in rungs],
+                compression_factor=4**index,
+                level_index=index,
+                stats=dict(stats),
+            )
+            for index, rungs in enumerate(rungs_per_level)
+        ]
+    ).tree
+
+
+def test_the_root_ladder_summary_follows_lod_substitutive_level() -> None:
+    """The rule is the producers': the root summarises ONE named level.
+
+    ``make_additive_lod`` stamps the root block for the level it laddered and
+    names it in ``lod_substitutive_level``; ``_map_substitutive`` and ``cull``
+    already refresh it that way. ``gsplat additive`` re-ladders every leaf and
+    left the block describing the ladder it had just replaced (#1600).
+    """
+    tree = _laddered_tree(
+        [[10, 10, 10], [8, 8], [5]],
+        lod_method="mass",
+        lod_breakpoints_kind="explicit-counts",
+    )
+    stale = {
+        "lod_method": "greedy",
+        "lod_n_lods": 3,
+        "lod_breakpoints_kind": "equal-count",
+        "lod_cutpoints": [10, 20, 30],
+        "lod_substitutive_level": 2,
+        "recipe": "levels",
+    }
+    fresh = refresh_root_ladder_summary(stale, tree)
+
+    # Level 2 is the coarsest (matrix order) = the group's FIRST child.
+    assert fresh["lod_n_lods"] == 1
+    assert fresh["lod_cutpoints"] == [5]
+    # Read back off the rebuilt leaf, so an `auto` request publishes what it
+    # resolved to rather than the word "auto".
+    assert fresh["lod_method"] == "mass"
+    assert fresh["lod_breakpoints_kind"] == "explicit-counts"
+    # A re-ladder moves no level, and the rest of the record is not its business.
+    assert fresh["lod_substitutive_level"] == 2
+    assert fresh["recipe"] == "levels"
+    assert stale["lod_n_lods"] == 3, "the caller's dict was edited"
+
+
+def test_the_root_ladder_summary_refreshes_only_keys_that_were_there() -> None:
+    """A store that never published a summary must not acquire one.
+
+    Same contract as ``_refresh_ladder_summary``, whose count/cutpoint half this
+    reuses: the refresh corrects a claim, it does not start making one.
+    """
+    leaf = _laddered_tree([[10, 10, 10]])
+    assert refresh_root_ladder_summary({"recipe": "stream"}, leaf) == {
+        "recipe": "stream"
+    }
+    assert refresh_root_ladder_summary({"lod_n_lods": 9}, leaf) == {"lod_n_lods": 3}
+
+
+def test_a_partition_root_publishes_no_single_ladder() -> None:
+    """Parts differ in count, so any root rung number is true of at most one.
+
+    The block is dropped rather than refreshed from an arbitrary part — which is
+    also what the ``tiles`` / ``overview`` / ``adaptive`` builders publish at the
+    root, for the same reason.
+    """
+    parts = GSplatPartition(
+        children=[_laddered_tree([[10, 10]]), _laddered_tree([[7, 7, 7]])]
+    )
+    fresh = refresh_root_ladder_summary(
+        {
+            "lod_method": "greedy",
+            "lod_n_lods": 3,
+            "lod_breakpoints_kind": "equal-count",
+            "lod_cutpoints": [10, 20, 30],
+            "lod_substitutive_level": 0,
+            "recipe": "tiles",
+        },
+        parts,
+    )
+    assert fresh == {"recipe": "tiles"}
