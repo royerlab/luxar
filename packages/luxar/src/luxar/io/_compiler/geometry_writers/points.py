@@ -201,8 +201,8 @@ def write_points(
     path = validate_node_path(path)
     # 0c. Positions shape/finiteness.
     n_points, n_dims = validate_positions_for_writing(positions)
-    # 0d-0f. Per-point channel sweep (colors, radii, sharpness, scalars, then
-    # labels, then image_labels), shared verbatim with the pre-split gate the
+    # 0d-0f. Per-point channel sweep (colors, radii, sharpness, scalars, labels,
+    # keys, then image_labels), shared verbatim with the pre-split gate the
     # partition / LOD wrappers run against the source count — see
     # validate_points_channels.
     validate_points_channels(

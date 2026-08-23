@@ -745,7 +745,7 @@ def validate_points_channels_before_split(
     This does not re-implement the checks: it calls
     :func:`~luxar.io._compiler.geometry_writers.points.validate_points_channels`,
     which IS the writer's own step-0d/0e sweep (colors → radii → sharpness →
-    scalars → labels), just against the source count. Sharing one
+    scalars → labels → keys → image labels), just against the source count. Sharing one
     implementation is deliberate — a channel added to the writer's gate is
     covered here the same day, so this gate cannot drift from what the child
     write accepts. Every legal broadcast form the flat path accepts therefore
@@ -808,6 +808,7 @@ def validate_points_channels_before_split(
             ever carried by the finest child of a ``substitutive_lod=``
             ladder; see the paragraph above for why it needs this gate
             specifically.
+        keys: One machine-readable string per point.
 
     Raises:
         ValidationError: If any channel is not a legal per-point or broadcast
@@ -846,7 +847,7 @@ def validate_lines_channels_before_split(
     written LAST, so this gate is what keeps a wrong length from stranding a
     truncated ``kind=lod`` ladder), for why the implementation is shared with
     the writer rather than repeated, and for the exact scope of the
-    identical-verdict promise. All five channels are per-VERTEX (not
+    identical-verdict promise. All seven channels are per-VERTEX (not
     per-segment), and ``widths`` is required, so it is validated first and
     unconditionally. The topology half of the same gate is
     :func:`validate_line_indices_before_split`, which must run BEFORE this one.
@@ -863,6 +864,7 @@ def validate_lines_channels_before_split(
             only ever carried by the finest child of a ``substitutive_lod=``
             ladder; see :func:`validate_points_channels_before_split` for why
             it needs this gate specifically.
+        keys: One machine-readable string per vertex.
 
     Raises:
         ValidationError: If any channel is not a legal per-vertex or broadcast

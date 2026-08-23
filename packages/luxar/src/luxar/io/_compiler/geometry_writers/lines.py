@@ -153,7 +153,7 @@ def validate_lines_channels(
     — read that docstring (including the ``image_labels`` / issue #1491
     paragraph on why the finest-child-written-last ``substitutive_lod=``
     wrapper needs this pre-split, not just at the flat writer). ``widths`` is
-    required, so it is validated unconditionally and FIRST; all five channels
+    required, so it is validated unconditionally and FIRST; all seven channels
     are per-VERTEX, not per-segment.
     """
     from ....validation.base import (
@@ -298,7 +298,7 @@ def write_lines(
     )
 
     # 0e-0h. Per-vertex channel sweep (widths first, then colors, sharpness,
-    # scalars, labels, image_labels), shared verbatim with the pre-split gate
+    # scalars, labels, image_labels, keys), shared verbatim with the pre-split gate
     # the partition / LOD wrappers run against the source count — see
     # validate_lines_channels.
     validate_lines_channels(

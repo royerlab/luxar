@@ -115,6 +115,8 @@ class ZarrWriterProtocol(Protocol):
                 Used for colormap lookup when a colormap is applied.
             labels: Optional list of strings, one per point, for hover tooltips
             image_labels: Optional per-element images for hover thumbnails
+            keys: Optional machine-readable strings, one per point, for link and
+                copy templates.
             **attrs: Additional attributes for the points
 
         Returns:
@@ -162,6 +164,8 @@ class ZarrWriterProtocol(Protocol):
             line_type: Type of line connectivity
             labels: Optional list of strings, one per vertex, for hover tooltips
             image_labels: Optional per-element images for hover thumbnails
+            keys: Optional machine-readable strings, one per vertex, for link and
+                copy templates.
             **attrs: Additional attributes for the lines
 
         Returns:
@@ -209,6 +213,8 @@ class ZarrWriterProtocol(Protocol):
             double_sided: Whether back faces render (default True)
             labels: Optional list of strings, one per vertex, for hover tooltips
             image_labels: Optional per-element images for hover thumbnails
+            keys: Optional machine-readable strings, one per vertex, for link and
+                copy templates.
             **attrs: Additional attributes for the mesh
 
         Returns:
@@ -242,6 +248,8 @@ class ZarrWriterProtocol(Protocol):
             colors: Optional - array of shape (N, 3), tuple/list (R,G,B), or None
             labels: Optional list of strings, one per splat, for hover tooltips
             image_labels: Optional per-element images for hover thumbnails
+            keys: Optional machine-readable strings, one per splat, for link and
+                copy templates.
             **attrs: Additional attributes for the gsplats
 
         Returns:

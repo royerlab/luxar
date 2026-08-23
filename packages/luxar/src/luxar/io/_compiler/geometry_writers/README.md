@@ -79,13 +79,14 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
    - Validate `line_type` in `("segments", "polyline", "loop", "indexed")`
    - Type-specific vertex count checks (segments: even, polyline: ≥2, loop: ≥3, indexed: requires `indices`)
    - `validate_line_indices(indices, n_vertices)` — the indexed edge list, shared with a second caller like the two functions below. Normalizes with `np.asarray` and accepts only a flat even-element `(2E,)` array or an `(E, 2)` pair array, then integer dtype and `[0, n_vertices)` bounds — all before `convert_to_indexed`, which is what makes the bounds check meaningful. Returns the normalized array. `compositing.validate_line_indices_before_split` runs it from each split branch of `add_lines`, ahead of that branch's topology builder: `lod.lines.identify_polylines` checks only dtype and bounds and then reshapes to pairs, so an `(E, 3)` array was reinterpreted as `3E/2` edges the author never wound and written (#1437). Topology before channels, mirroring mesh's faces-first order
-   - `validate_lines_channels(n_vertices, widths=…, colors=…, sharpness=…, scalars=…, labels=…, image_labels=…)` — every per-vertex channel check in one shared function, the Points sibling (see its entry above for why it is shared). `widths` is required, so it is validated first and unconditionally; all five channels are per-VERTEX, not per-segment. It covers, in this order:
+   - `validate_lines_channels(n_vertices, widths=…, colors=…, sharpness=…, scalars=…, labels=…, image_labels=…, keys=…)` — every per-vertex channel check in one shared function, the Points sibling (see its entry above for why it is shared). `widths` is required, so it is validated first and unconditionally; all seven channels are per-VERTEX, not per-segment. It covers, in this order:
      - `validate_widths_for_writing(widths, n_vertices)` — arrays AND broadcast scalars
      - `validate_colors_for_writing(colors, n_vertices, channels=(3,4))` — if colors is an array
      - `validate_broadcast_color(colors, "colors")` — if colors is a tuple/list
      - `validate_sharpness_for_writing(sharpness, n_vertices)` — arrays AND broadcast scalars
      - `validate_scalars_preflight(scalars, n_vertices)` — length check
      - `validate_labels_for_writing(labels, n_vertices)` — if `labels is not None` (labels are per-vertex)
+     - `validate_labels_for_writing(keys, n_vertices, context="keys", noun="Keys")` — if `keys is not None`
      - `validate_image_labels_for_writing(image_labels, n_vertices)` — length (dense) / index bounds (sparse dict) + per-item type, if `image_labels is not None` (#1491)
    - `prepare_transform_attrs(attrs, ctx.store)`
 

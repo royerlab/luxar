@@ -73,7 +73,7 @@ export interface InitPickingPorts {
 /**
  * Tear down a picking session: event listeners (DOM + Three
  * EventDispatcher, all funneled through the session's EventGroup), the
- * PickingSystem, and the label loaders. Idempotent — every step
+ * PickingSystem, and the string/image loaders. Idempotent — every step
  * tolerates an already-disposed / absent collaborator.
  *
  * Called from two places:
@@ -114,7 +114,7 @@ export function disposePickingSession(ports: {
  *    sceneManager 'camera-changed') through the supplied
  *    {@link EventGroup} so a future `dispose()` removes them in one call.
  *
- * Returns the new system + loaders; the orchestrator stores all three
+ * Returns the new system + loaders; the orchestrator stores all four
  * on its own fields. The handler closures capture the locally-created
  * pickingSystem so they always see the current instance (not a stale
  * reference from a previous session).
@@ -357,6 +357,6 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
     onElementContextMenu: ports.onElementContextMenu,
   });
 
-  log.info(Modules.APP, 'GPU picking system initialized (labels detected)');
+  log.info(Modules.APP, 'GPU picking system initialized');
   return { pickingSystem, labelLoader, imageLabelLoader, keyLoader };
 }

@@ -48,7 +48,7 @@ def write_labels_csr(
 ) -> None:
     """Write a per-element string channel using CSR-style encoding.
 
-    Stores two zarr arrays, named per {@link STRING_CHANNELS}. For the default
+    Stores two zarr arrays, named per :data:`STRING_CHANNELS`. For the default
     ``labels`` channel:
     - ``label_offsets``: uint64 of shape (N+1,) — byte offset of each label
     - ``label_bytes``: uint8 — concatenated UTF-8 encoded label strings
