@@ -13,14 +13,19 @@
  * and a pinned camera (`ViewerConfig`) so this is real photometry and not a
  * reading through ACES.
  *
- * Three distinct defects have been measured with this shape — see
- * VOLUMETRIC_BLENDING_SPEC.md (2026-08-02):
+ * Four distinct defects have been measured with this shape — A/B/C from
+ * VOLUMETRIC_BLENDING_SPEC.md (2026-08-02), D filed as issue #1993:
  *   A  τ chord factor             volumetric only    1/(R·chord)       FIXED
  *   B  uncompensated 2D dilation  all sum modes      (σ_px²+d)/σ_px²   FIXED
  *   C  peak-vs-sum lift calib.    max/normal/opaque  1/(uRIF·σ)        OPEN
+ *   D  opaque drops point alpha   opaque only        1/opacity         OPEN
  *
- * So the sum modes assert parity; the peak modes assert the known effect-C
- * divergence is present, and flag it loudly the day C lands and it collapses.
+ * So the sum modes assert parity on the crop MEAN; the peak modes assert a
+ * divergence of known MAGNITUDE and known DIRECTION on the crop PEAK — effect C
+ * alone for max/normal (the lifted gsplat is brighter), C compounded with #1993
+ * for opaque, where the points lose all their alpha-carried photometry and the
+ * gsplat therefore comes out dimmer. Either way it flags loudly the day the
+ * underlying defect lands and the divergence moves.
  */
 
 import { test, expect, type Page } from '@playwright/test';
@@ -51,8 +56,49 @@ const PARITY_TOLERANCE = 0.1;
 
 /** Modes whose output is a functional of the sum-projected ray mass. */
 const SUM_MODES = ['additive', 'luminous', 'volumetric'] as const;
-/** Modes that use peak projection — effect C, not yet calibrated. */
+/** Modes that use peak projection — effect C, not yet calibrated (opaque also carries #1993). */
 const PEAK_MODES = ['max', 'normal', 'opaque'] as const;
+
+/**
+ * How far apart the two families must be under peak projection, in EITHER
+ * direction — `max(ratio, 1/ratio)` has to clear this.
+ *
+ * Measured peak ratios at the two asserted radii (r=0.02, r=0.05):
+ *   max      30.7× / 12.2×  brighter
+ *   normal   29.7× /  7.8×  brighter
+ *   opaque   10.8× / 27.0×  dimmer  (printed as 0.093 and 0.037)
+ * The smallest magnitude anywhere in that set is 7.8× — `normal` at r=0.05,
+ * where the gsplat peak is already saturating at 0.855 and so UNDERSTATES the
+ * divergence — which leaves ~2.6× of headroom over this floor. The `> 1.1` it
+ * replaces sat inside the parity band's own width and could not tell a real
+ * divergence from measurement noise.
+ */
+const PEAK_DIVERGENCE_FLOOR = 3;
+
+/**
+ * Which way each peak mode diverges. This is NOT the sign the old assertion
+ * assumed (it tested `> 1 + PARITY_TOLERANCE` for all three):
+ *
+ *   max, normal  effect C alone. The gsplat peak branch renders the raw
+ *                a_lift = opacity/(uRIF·σ) unmodified, so the lifted twin is
+ *                genuinely BRIGHTER, by 1/(uRIF·σ).
+ *   opaque       effect C multiplied by #1993 on the POINTS side: three.js
+ *                disables blending outright for `NormalBlending` +
+ *                `transparent: false`, so the emitted alpha never reaches the
+ *                framebuffer. Points carry ALL their photometry in alpha and
+ *                lose opacity, falloff, sub-pixel compensation and near-fade
+ *                (every covered pixel lands at 1.0); gsplats premultiply theirs
+ *                into RGB and lose nothing. Net: the gsplat reads DIMMER. The
+ *                arithmetic closes — multiplying the opaque peak ratios by
+ *                1/0.003 (the fixture's authored uOpacity) recovers `max`'s to
+ *                within 3% at all four radii, i.e. one radius-independent
+ *                factor and nothing density- or radius-dependent.
+ */
+const PEAK_DIVERGENCE_DIRECTION: Record<(typeof PEAK_MODES)[number], 'brighter' | 'dimmer'> = {
+  max: 'brighter',
+  normal: 'brighter',
+  opaque: 'dimmer',
+};
 
 /**
  * sRGB code point (0…255) → linear channel value.
@@ -364,29 +410,66 @@ test.describe('Lifted-gsplat / Points parity', () => {
   }
 
   for (const mode of PEAK_MODES) {
-    test(`${mode}: lifted gsplat shows the known effect-C divergence`, async ({ page }) => {
+    test(`${mode}: lifted gsplat shows the known peak-projection divergence`, async ({ page }) => {
       const centres = await cellCentres(page);
       await setBlendingMode(page, mode);
       const rows = await parityMetrics(page, centres);
       logMetricsTable(mode, rows);
-      const ratios = rows.map((row) => row.meanRatio);
-      // Effect C (peak-vs-sum lift calibration) is OPEN: under peak projection
-      // the lifted gsplat reports a raw a_lift = opacity/(uRIF·σ) that diverges
-      // as 1/σ — the gsplat renders ~12× brighter than its point at R=0.05 and
-      // ~30× at R=0.02. We assert that divergence is PRESENT at the two smallest
-      // radii rather than marking the whole test `test.fail()`: an unconditional
-      // test.fail() silently accepts a blank render, a shader-compile error, or a
-      // no-op mode switch (all of which would otherwise leave the ratio ≈ 1) as
-      // the "expected" failure. `parityMetrics` already fails loudly if either
-      // family renders nothing. When effect C lands these ratios collapse to ≈ 1
-      // and this assertion fails — delete it then and fold the mode into the
-      // SUM_MODES loop.
-      expect(ratios[0], `r=${RADII[0]} in ${mode}: expected effect-C divergence`).toBeGreaterThan(
-        1 + PARITY_TOLERANCE
-      );
-      expect(ratios[1], `r=${RADII[1]} in ${mode}: expected effect-C divergence`).toBeGreaterThan(
-        1 + PARITY_TOLERANCE
-      );
+      const direction = PEAK_DIVERGENCE_DIRECTION[mode];
+      // Asserted on the PEAK, not on the crop mean, because the peak is the
+      // quantity peak projection actually calibrates: the gsplat peak branch
+      // renders a_lift = opacity/(uRIF·σ) unmodified, and under `max` — whose
+      // points peak is a flat authored opacity at every radius — the measured
+      // ratio reproduces the analytic 1/(uRIF·σ) to ~1% (30.8 / 12.3 / 4.11 /
+      // 1.54 predicted vs 30.66 / 12.15 / 4.05 / 1.57 measured). The mean cannot
+      // be read that way: `opaque` is the only peak mode with depthWrite, and a
+      // gsplat quad stamps one centre depth across its whole truncated
+      // footprint, so faint tails depth-reject the bright cores behind them and
+      // gsplat coverage collapses 0.34 → 0.05 over the radii on peaks that are
+      // bit-identical to `max`'s. That is geometry, not photometry — the mean
+      // (coverage × value) swallows it whole and the peak is immune to it.
+      //
+      // The SUM_MODES tests and the κ test stay on the MEAN for the mirror
+      // reason: their peak ratio is 0.66 at r=0.02 — a handful of 8-bit-
+      // quantised pixels, nowhere near surviving the 10% parity band — while
+      // their mean ratio sits at 0.96–0.99.
+      //
+      // We assert the divergence is PRESENT rather than marking the whole test
+      // `test.fail()`: an unconditional test.fail() silently accepts a blank
+      // render, a shader-compile error, or a no-op mode switch — all of which
+      // would leave the ratio ≈ 1 — as the "expected" failure. `parityMetrics`
+      // already fails loudly if the points family renders nothing.
+      //
+      // DELETE THIS WHEN IT LANDS — but not all of it at once. For `max` and
+      // `normal` the divergence is effect C alone and collapses to ≈ 1 the day C
+      // lands: delete the assertion then and fold those two modes into the
+      // SUM_MODES loop. `opaque` needs BOTH C and #1993 fixed before it can
+      // reach parity — with C alone the points are still missing their opacity
+      // factor, so `opaque` keeps diverging and FLIPS to 'brighter'. The
+      // direction lookup is what makes that flip fail loudly instead of quietly
+      // passing a magnitude-only check.
+      for (const i of [0, 1]) {
+        const ratio = rows[i].peakRatio;
+        // A gsplat cell that rendered NOTHING would sail through a `dimmer`
+        // magnitude check (1/0 → ∞), so require it on screen first —
+        // `parityMetrics` only vouches for the points side.
+        expect(
+          rows[i].gsp.peak,
+          `r=${RADII[i]} in ${mode}: gsplat cell must render something`
+        ).toBeGreaterThan(1e-6);
+        expect(
+          ratio > 1 ? 'brighter' : 'dimmer',
+          `r=${RADII[i]} in ${mode}: peak ratio ${ratio.toFixed(3)} — the lifted gsplat is ` +
+            `expected to render ${direction} than its point`
+        ).toBe(direction);
+        const magnitude = Math.max(ratio, 1 / ratio);
+        expect(
+          magnitude,
+          `r=${RADII[i]} in ${mode}: peak ratio ${ratio.toFixed(3)} is only ` +
+            `${magnitude.toFixed(2)}× from parity — the smallest divergence ever measured ` +
+            'at these radii is 7.8×'
+        ).toBeGreaterThan(PEAK_DIVERGENCE_FLOOR);
+      }
     });
   }
 
