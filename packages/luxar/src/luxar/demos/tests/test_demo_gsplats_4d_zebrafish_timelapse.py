@@ -468,6 +468,7 @@ class TestTheStackedArchiveSurvivesItsRoundTrip:
         monkeypatch.setattr(_demo, "ACQUISITION_SHAPE_ZYX", shape)
         monkeypatch.setattr(_demo, "GRID_STEP_UM", 10.0)
         monkeypatch.setattr(_demo, "DEVICE", "cpu")
+        monkeypatch.setattr(_demo, "DENOISE_H", 0.0)
 
         times = [t * _demo.AXIS_STEP_MIN for t in range(len(fits))]
         laddered = _demo.build_lod(_demo.combine_to_4d(fits, times))
@@ -475,6 +476,7 @@ class TestTheStackedArchiveSurvivesItsRoundTrip:
 
         root = zarr.open_group(str(out), mode="r")
         assert {"endoderm", "acquisition cage"} <= set(root.group_keys())
+        assert "non-local-means denoised" not in root.attrs["description"]
 
         dims = {
             d["name"]: d for d in dict(root.attrs)["scene_dimensions"]["dimensions"]

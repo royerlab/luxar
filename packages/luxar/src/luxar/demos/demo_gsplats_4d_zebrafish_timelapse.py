@@ -394,10 +394,9 @@ LOCAL_FIT = local_fit_path(DEMO_NAME, GSPLATS_FILE)
 #: amplitude is accounted for, so the count that ships is whatever the frame
 #: needs — measured over the full run, 12,462 to 23,478, median 17,977. Both
 #: numbers matter, and the second is the one people forget: raising `seeds`
-#: past the plateau changes
-#: nothing, while moving `cull_retention` from the fitter's default 0.95 to
-#: 0.9999 was worth +3.4 dB of foreground on its own, because on data this
-#: sparse the discarded 5% of amplitude IS the dim cells.
+#: past the plateau changes nothing, while moving `cull_retention` from the
+#: fitter's default 0.95 to 0.9999 was worth +3.4 dB of foreground on its own,
+#: because on data this sparse the discarded 5% of amplitude IS the dim cells.
 SEEDS = 32_000
 N_ITERS = 5_000
 EARLY_STOP_PATIENCE = 500
@@ -626,10 +625,11 @@ def _fit_cache_path(frame: int) -> Path:
 def denoise(volume: np.ndarray) -> np.ndarray:
     """Non-local-means the frame before it is fitted, at the measured strength.
 
-    Runs on the GPU when the NLM CUDA extension is built (``make build-nlm-cuda``)
-    and falls back to a much slower PyTorch path when it is not — over 151
-    timepoints that difference is hours, so the warning the library prints is
-    worth acting on before a refit.
+    Runs through the NLM CUDA extension when it is built
+    (``make build-nlm-cuda``), through PyTorch on a GPU without the extension,
+    and through scikit-image on CPU. The CPU path takes roughly 15 minutes per
+    frame here, so the warning the library prints is worth acting on before a
+    151-timepoint refit.
 
     Note what this does to the DOWNSTREAM fit: it raises the splat count rather
     than lowering it (6,926 -> 23,514 on frame 0 at a fixed seed budget). The
@@ -1062,14 +1062,18 @@ def create_luxar_scene(stacked: GSplatData, output_path: Path) -> Path:
                 citation=DEMO_META["citation"],
                 viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="ACES"),
             )
+            denoise_clause = (
+                f", each timepoint non-local-means denoised (h={DENOISE_H}) before fitting"
+                if DENOISE_H
+                else ""
+            )
             scene.attrs["title"] = "GSplats: Zebrafish Gastrulation, 4D Time-Lapse"
             scene.attrs["description"] = (
                 f"A living zebrafish embryo (cxcr4a morphant) imaged by confocal "
                 f"laser-scanning microscopy through gastrulation: {n_timepoints} "
                 f"timepoints over {t_max / 60:.1f} hours, {stacked.n_splats:,} "
                 f"Gaussian splats in one 4D node with time as its fourth centre "
-                f"column, each timepoint non-local-means denoised (h={DENOISE_H}) "
-                f"before fitting. The labelled endodermal cells start as a tight "
+                f"column{denoise_clause}. The labelled endodermal cells start as a tight "
                 f"cluster and spread over the yolk; the wireframe cage is the "
                 f"imaged volume, ruled every {GRID_STEP_UM:.0f} um. Play the Time "
                 f"slider to run the recording; press L for per-layer controls. "
