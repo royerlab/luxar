@@ -9,8 +9,18 @@ legend extend instead of re-implementing.
 
 ```
 overlay-widgets/
-└── ui-component.ts   # UIComponent<TConfig>: abstract base class
+├── ui-component.ts   # UIComponent<TConfig>: abstract base class
+└── context-menu.ts   # openContextMenu(): the shared right-click menu
 ```
+
+`context-menu.ts` is unrelated to `UIComponent` — it is a function, not a
+subclass — but it lives here as the other shared overlay widget. It is the ONE
+cursor-anchored menu implementation (UI Design Guide §7.8); do not hand-roll
+another. `openContextMenu({ x, y, ariaLabel, items, onClose?, restoreFocus? })`
+mounts on the viewer container, positions `fixed` with viewport clamping, and
+returns an idempotent close handle. Menu ARIA, roving focus, one level of
+submenu, and dismissal (Escape / outside pointerdown / re-invocation) come with
+it. Only one menu exists at a time, module-wide.
 
 ## What `UIComponent` provides
 
@@ -64,6 +74,14 @@ Per the doc comments in `ui-component.ts`:
 These are the two scene-dependent HUD overlays constructed and torn down
 by [`../../core/app/overlays/`](../../core/app/overlays) on each
 `loadDataset()` call.
+
+`openContextMenu` has two callers:
+
+- [`../layers/layers-panel.ts`](../layers/layers-panel.ts) — per-layer and
+  per-eye menus, plus the Shift+F10 / ContextMenu keyboard path.
+- [`../../core/app/interaction/canvas-actions.ts`](../../core/app/interaction/canvas-actions.ts) —
+  the picked-element menu on the 3D canvas (`Copy`, `Open link in new tab`,
+  `Copy link address`).
 
 ## See also
 

@@ -5,6 +5,9 @@ import { getSceneLoader } from '../../../data/scene-loader-manager';
 import { PickingSystem } from '../../../rendering/picking/picking-system';
 import { LabelLoader, ImageLabelLoader } from '../../../data/loaders';
 import { buildPickResultHandler } from './pick-result-handler';
+import { PickedElementCache } from '../interaction/picked-element-cache';
+import { explainLinkRejection } from '../interaction/element-actions';
+import { installCanvasActions, type ElementPointerPayload } from '../interaction/canvas-actions';
 import type { SceneManager } from '../../../scene/scene-manager';
 import type { OverlayManager } from '../../../ui/overlay-manager';
 import type { EventGroup } from '../../../utils/cross-layer/event-group';
@@ -36,6 +39,29 @@ export interface InitPickingPorts {
    * only run while someone consumes them.
    */
   hasSelectionConsumer?: () => boolean;
+  /**
+   * Whether an embedder `element-click` / `element-contextmenu` listener
+   * currently exists (issue #1917).
+   *
+   * Separate from {@link hasSelectionConsumer} because the two answer
+   * different questions and are read at different times, but they are OR'd
+   * for both provisioning and gating: a host that subscribes ONLY to
+   * `element-click`, on a scene with no labels and no interaction templates,
+   * would otherwise get a viewer that never picks and therefore an event that
+   * never fires — with nothing to indicate why.
+   */
+  hasElementActionConsumer?: () => boolean;
+  /**
+   * Whether a picked element's `link` may be opened (issue #1917). False
+   * suppresses navigation, the two link menu items and the pointer cursor,
+   * while leaving `Copy` working — an embedder showing scenes it did not
+   * author needs the guarantee that no navigation can originate in data.
+   * Defaults to true.
+   */
+  allowLinks?: boolean;
+  /** Sinks for the public `element-click` / `element-contextmenu` events. */
+  onElementClick?: (payload: ElementPointerPayload) => void;
+  onElementContextMenu?: (payload: ElementPointerPayload) => void;
 }
 
 /**
@@ -109,20 +135,50 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
 
   let hasAnyLabels = false;
   let hasAnyImageLabels = false;
+  let hasAnyInteraction = false;
+  const linkDiagnostics = new Map<string, { nodeName: string; rejection: string | null }>();
   root.traverse((obj) => {
-    if (obj.userData?.attrs?.has_labels) {
+    const attrs = obj.userData?.attrs;
+    if (attrs?.has_labels) {
       hasAnyLabels = true;
     }
-    if (obj.userData?.attrs?.has_image_labels) {
+    if (attrs?.has_image_labels) {
       hasAnyImageLabels = true;
     }
+    // A layer can carry a click action WITHOUT labels — a link built purely
+    // from `{hover_index}` is perfectly usable — and such a scene auto-injects
+    // no hover overlay either. Without this it would fall through the gate
+    // below and never pick at all, so the link would silently never fire
+    // (#1917).
+    if (typeof attrs?.link === 'string' || typeof attrs?.copy === 'string') {
+      hasAnyInteraction = true;
+    }
+    // Inspect each distinct template once. Partition adders copy non-
+    // compositing attrs onto every part, so warning directly in this traversal
+    // would flood the console with one identical line per leaf.
+    // Deliberately only element-INDEPENDENT faults (bad scheme, relative URL,
+    // over-length): a per-element miss such as an unlabelled element is normal
+    // and must not log per hover. The Python writer refuses these at authoring
+    // time, so reaching here means a hand-edited or third-party store.
+    if (typeof attrs?.link === 'string' && !linkDiagnostics.has(attrs.link)) {
+      linkDiagnostics.set(attrs.link, {
+        nodeName: obj.name,
+        rejection: explainLinkRejection(attrs.link),
+      });
+    }
   });
-  // Provision picking when the scene declares labels OR an embedder
-  // `selection` listener exists at load time. Without either there is no
-  // consumer, so skip the pick-mesh/GPU overhead entirely (keeps the
-  // bench-only synthetic scenes free of picking cost).
-  const wantsSelection = ports.hasSelectionConsumer?.() ?? false;
-  if (!hasAnyLabels && !hasAnyImageLabels && !wantsSelection) {
+  for (const { nodeName, rejection } of linkDiagnostics.values()) {
+    if (rejection) {
+      log.warning(Modules.APP, `Invalid link template on node "${nodeName}": ${rejection}`);
+    }
+  }
+  // Provision picking when the scene declares labels, declares an interaction
+  // template, OR an embedder `selection` listener exists at load time. Without
+  // any of those there is no consumer, so skip the pick-mesh/GPU overhead
+  // entirely (keeps the bench-only synthetic scenes free of picking cost).
+  const wantsSelection =
+    (ports.hasSelectionConsumer?.() ?? false) || (ports.hasElementActionConsumer?.() ?? false);
+  if (!hasAnyLabels && !hasAnyImageLabels && !hasAnyInteraction && !wantsSelection) {
     return { pickingSystem: undefined, labelLoader: undefined, imageLabelLoader: undefined };
   }
 
@@ -151,6 +207,14 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
   // lives in `pick-result-handler.ts` so its branch logic (null /
   // label-only / image-only / both / neither / fetch reject /
   // missing loaders) can be unit-tested with stub ports.
+  // Retains the settled pick so a click can act on it without a fresh
+  // (asynchronous, user-activation-spending) GPU readback. Session-scoped:
+  // a dataset switch builds a new one alongside the new PickingSystem.
+  const pickedElements = new PickedElementCache();
+  // Assigned right after the system is constructed; the `onPicked` closure
+  // below only runs on a real pick, which cannot happen before then.
+  let canvasActions: { refreshCursor(): void } | undefined;
+
   const pickingSystem = new PickingSystem(
     ports.sceneManager.renderer,
     ports.sceneManager.capabilities,
@@ -160,6 +224,15 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
       imageLabelLoader,
       overlayManager: ports.getOverlayManager(),
       onSelection: ports.onSelection,
+      onPicked: (pick) => {
+        if (pick) {
+          pickedElements.store(pick, pickingSystem);
+        } else {
+          pickedElements.clear();
+        }
+        // Keep the pointer affordance in step with the tooltip.
+        canvasActions?.refreshCursor();
+      },
     })
   );
 
@@ -172,13 +245,18 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
   // Retroactively register already-loaded nodes (scene loads before picking init)
   sceneLoader.nodeFactory.registerExistingSceneNodes(root);
 
-  // Gate picks on having a consumer: a visible hover overlay (tooltips) OR
-  // a live embedder `selection` listener. Read LIVE so unsubscribing stops
-  // the pick renders without re-initialising the pipeline.
+  // Gate picks on having a consumer: a visible hover overlay (tooltips), an
+  // element carrying an interaction template (click/menu), OR a live embedder
+  // `selection` listener. The overlay and selection sides are read LIVE so
+  // unsubscribing stops the pick renders without re-initialising the pipeline;
+  // `hasAnyInteraction` is a property of the loaded scene, so it is constant
+  // for the session.
   pickingSystem.setShouldPick(
     () =>
       (ports.getOverlayManager()?.hasVisibleHoverOverlay() ?? false) ||
-      (ports.hasSelectionConsumer?.() ?? false)
+      hasAnyInteraction ||
+      (ports.hasSelectionConsumer?.() ?? false) ||
+      (ports.hasElementActionConsumer?.() ?? false)
   );
 
   // DOM events go through EventGroup.on(); Three.js EventDispatcher events
@@ -231,6 +309,19 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
   ports.pickingEvents.add(() =>
     ports.sceneManager.removeEventListener('camera-changed', cameraChangedHandler)
   );
+
+  // Canvas click / context-menu actions on the picked element. Registered
+  // through the same EventGroup, so one `pickingEvents.dispose()` still tears
+  // down the whole session.
+  canvasActions = installCanvasActions({
+    canvas,
+    events: ports.pickingEvents,
+    cache: pickedElements,
+    picking: pickingSystem,
+    allowLinks: ports.allowLinks ?? true,
+    onElementClick: ports.onElementClick,
+    onElementContextMenu: ports.onElementContextMenu,
+  });
 
   log.info(Modules.APP, 'GPU picking system initialized (labels detected)');
   return { pickingSystem, labelLoader, imageLabelLoader };

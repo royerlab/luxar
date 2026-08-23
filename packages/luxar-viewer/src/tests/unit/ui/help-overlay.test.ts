@@ -157,6 +157,15 @@ describe('showHelpOverlay - Memory Leak Prevention', () => {
     expect(title?.id).toBe('luxar-help-overlay-title');
     expect(title?.textContent).toContain('Luxar Controls');
   });
+
+  it('lists the pointer and keyboard element actions', () => {
+    showHelpOverlay();
+    const text = document.getElementById('luxar-help-overlay')?.textContent ?? '';
+
+    expect(text).toContain('Open the hovered element link');
+    expect(text).toContain('Actions for the hovered element');
+    expect(text).toContain('Context menu for the hovered element');
+  });
 });
 
 describe('hideHelpOverlay', () => {

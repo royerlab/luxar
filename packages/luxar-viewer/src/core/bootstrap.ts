@@ -282,6 +282,7 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     // an embedder-supplied `urlParams` object controls them too — the
     // init pipeline reads options, never window.location.
     lodFade: urlParams.lodFade,
+    allowLinks: urlParams.allowLinks,
     lodEnergyComp: urlParams.lodEnergyComp,
     depthSort: urlParams.depthSort,
     // Opt-in capture-quality override (`?lod-finest` — the gallery harness).
