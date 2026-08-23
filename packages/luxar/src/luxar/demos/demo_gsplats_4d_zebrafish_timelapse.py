@@ -41,33 +41,55 @@ ACQUISITION (read from the LSM's own metadata, not assumed):
     proportions; the imaged block is 316 x 859 x 859 um.
 
 SPLAT BUDGET (measured on this data, 2026-08-22, RTX PRO 6000):
-    The previous version asked for 2,000 seeds and shipped **533 splats** for a
-    busy timepoint, because it also took the fitter's bare defaults: 1,000
-    iterations (below the ``draft`` preset's 2,000) and ``cull_retention=0.95``,
-    which discards 73% of the splats along with the last 5% of amplitude. At
-    t=110, scored against the raw frame:
+    The previous version asked for 2,000 seeds and shipped a few hundred splats,
+    because it also took the fitter's bare defaults: 1,000 iterations (below the
+    ``draft`` preset's 2,000) and ``cull_retention=0.95``, which discards most of
+    the splats along with the last 5% of amplitude. Every arm below is frame 110
+    with the floor OFF (see FLOOR), scored against the raw frame; "energy" is the
+    share of the frame's total intensity the reconstruction puts back.
 
-    | fit                              | splats | global | foreground | energy |
-    |----------------------------------|--------|--------|------------|--------|
-    | shipped (2k seeds, 1000 it, .95) |    549 |  31.24 |   6.71 dB  |  0.36  |
-    | 16k seeds, 5000 it, cull .999    |  5,925 |  33.39 |   9.30 dB  |  0.46  |
-    | 32k seeds, 5000 it, cull .9999   |  9,432 |  34.27 |  10.46 dB  |  0.50  |
-    | 32k seeds, 5000 it, cull 1.0     | 32,000 |  34.27 |  10.45 dB  |  0.50  |
-    | 64k seeds, 5000 it, cull 1.0     | 64,000 |  34.30 |  10.52 dB  |  0.50  |
+    | fit                                   | splats | global | foreground | energy |
+    |---------------------------------------|--------|--------|------------|--------|
+    | shipped config (2k, 1000 it, cull .95)|    767 |  33.92 |  10.10 dB  |  0.74  |
+    | 8k seeds, 5000 it, cull .9999         |  7,877 |  37.37 |  14.98 dB  |  0.90  |
+    | 16k seeds, 5000 it, cull .9999        | 12,439 |  39.66 |  18.88 dB  |  0.98  |
+    | 32k seeds, 5000 it, cull .9999        | 12,940 |  40.68 |  20.30 dB  |  0.98  |
+    | 64k seeds, 5000 it, cull .9999        | 13,006 |  40.81 |  20.46 dB  |  0.98  |
+    | 32k seeds, 5000 it, cull .95          |  9,889 |  39.17 |  16.90 dB  |  0.91  |
 
-    So ~9,400 splats is the plateau, not a compromise: keeping all 32,000
-    changes the reconstruction by 0.01 dB, and doubling the seed budget on top
-    buys 0.07 dB. Retaining 0.9999 of the amplitude instead of 0.95 is what
-    actually moved the number — +3.7 dB on the foreground — because on a volume
-    this sparse the discarded 5% of amplitude *is* the dim cells. Absolute
-    foreground PSNR stays low because the labelled cells are clipped at 255 in
-    an 8-bit acquisition and a Gaussian cannot reproduce a flat-topped plateau;
-    read the column as a comparison between fits, not as an absolute grade.
+    32,000 seeds is the plateau, not a compromise: doubling it again moves the
+    reconstruction by 0.13 dB and adds 66 splats, because the post-fit cull —
+    not the seed budget — is what sets the final count on data this
+    heavy-tailed. The last row isolates that cull: at the SAME seeds, retaining
+    0.9999 of the amplitude instead of 0.95 is worth +1.5 dB global and +3.4 dB
+    foreground, since on a volume this sparse the discarded 5% of amplitude *is*
+    the dim cells. Against the config that shipped, the fit this demo now does
+    is +6.8 dB global, +10.2 dB foreground and 17x the splats. Side-by-side MIPs
+    at matched zoom agree: at a few hundred splats the cells are blurred blobs
+    with many missing entirely; by ~13,000 the population is complete and
+    further splats change nothing visible.
 
-    ``cal`` is deliberately not consulted here. Its blind-spot sweep put K* at
-    1,852 for this dataset — the second point of its own grid, with a 0.17 dB
-    confidence margin, measured on the XY-halved copy the demo used to fit — and
-    the table above is what the archive is actually judged by.
+    ``cal`` is deliberately not consulted. Its blind-spot sweep put K* at 1,852
+    for this dataset — the second point of its own grid, with a 0.17 dB
+    confidence margin, measured on the XY-halved copy the demo used to fit.
+
+FLOOR (why this demo turns off a default the house rule says to keep):
+    ``--floor auto`` estimates the histogram mode of the NON-ZERO voxels, capped
+    at their median. That is right on a stack with a camera pedestal, where the
+    non-zero population is background. Here 98.7-99.8% of voxels are exactly
+    zero, so the non-zero population IS the specimen and the level lands inside
+    it — and climbs as the embryo brightens. At 32k seeds, scored against the
+    unfloored frames:
+
+    | frame | non-zero | level auto picked | auto (global / fg / energy) | none  |
+    |-------|----------|-------------------|-----------------------------|-------|
+    |     0 |    0.20% |            26/255 | 46.37 / 16.28 dB / 0.73     | 48.18 / 19.31 / 1.01 |
+    |    75 |    0.35% |            63/255 | 38.37 / 11.51 dB / 0.55     | 45.94 / 22.14 / 1.00 |
+    |   150 |    1.35% |            91/255 | 29.23 /  8.13 dB / 0.44     | 36.73 / 18.82 / 0.97 |
+
+    Up to +7.6 dB global and +10.6 dB foreground for turning it off, and
+    reproduced energy goes from 44-73% back to ~100%. Read the energy column:
+    global PSNR barely moves at frame 0 and hides how much was being deleted.
 
 USAGE:
     python demo_gsplats_4d_zebrafish_timelapse.py [--recompute] [--no-serve]
@@ -180,26 +202,10 @@ N_ITERS = 5_000
 EARLY_STOP_PATIENCE = 500
 CULL_RETENTION = 0.9999
 
-#: NO background floor, stated rather than defaulted — the house rule is to stay
-#: on ``auto`` unless you have measured otherwise, and this is a dataset where
-#: measuring says otherwise.
-#:
-#: ``auto`` estimates the histogram mode of the NON-ZERO voxels, capped at their
-#: median. That is the right instinct on a stack with a camera pedestal, where
-#: the non-zero population is background. Here 98.7-99.8% of voxels are exactly
-#: zero, so the non-zero population IS the specimen, and its mode is the dim
-#: halo around each labelled cell: at t=0 the level lands at 26/255, the median
-#: of every non-zero voxel in the frame. Measured at 32k seeds on frame 0,
-#: scored against the unfloored data:
-#:
-#:     floor    splats   global   foreground   image energy reproduced
-#:     auto     6,114    46.37    16.28 dB     73.4%
-#:     none     6,924    48.18    19.31 dB     100.7%
-#:
-#: So the floor was not removing a pedestal, it was deleting a quarter of the
-#: signal — +3.0 dB of foreground for turning it off. This is the failure mode
-#: the CLI guide warns about for a `pNN` floor ("lands wherever the sparsity puts
-#: it"), reached here by `auto` on a volume sparse enough that the two coincide.
+#: NO background floor, stated rather than defaulted. The house rule is to stay
+#: on ``auto`` unless you have measured otherwise; this is a dataset where
+#: measuring says otherwise, by up to 10.6 dB of foreground. See the module
+#: docstring's FLOOR section for the table and why `auto` inverts here.
 FLOOR = "none"
 
 #: Substitutive LOD: three coarse levels, each 4x lighter than the last, every
