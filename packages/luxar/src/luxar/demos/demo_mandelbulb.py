@@ -492,7 +492,7 @@ def generate_mandelbulb_volumetric(
                 # -min/(max-min) (rendering/display-range.ts::computeUniforms),
                 # so a min of 0 leaves offset at its identity and the max is
                 # simply 1/intensity. A max of 26 preserves the new shadow
-                # range. The gallery harness selected a -0.31 EV adjustment to
+                # range. The final gallery framing selected a +1.53 EV adjustment to
                 # converge on its exposure target; that is not residual clipping
                 # or an uncompensated authoring offset.
                 intensity=1.0 / 26.0,
