@@ -340,6 +340,32 @@ class TestStreamingPcaReduction:
         again = demo.build_pca_matrix(zip_path, cache, pca_dim=8, seed=0)
         assert np.array_equal(np.asarray(again), np.asarray(reduced))
 
+    def test_interrupted_basis_write_does_not_poison_the_cache(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        zip_path, _ = self._fixture(tmp_path, n=400)
+        cache = tmp_path / "cache"
+        basis_path = cache / "pca8_basis.npz"
+
+        def interrupted_savez(destination, **arrays) -> None:
+            if hasattr(destination, "write"):
+                destination.write(b"partial")
+            else:
+                destination.write_bytes(b"partial")
+            raise OSError("simulated interruption")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(demo.np, "savez", interrupted_savez)
+            with pytest.raises(OSError, match="simulated interruption"):
+                demo.build_pca_matrix(zip_path, cache, pca_dim=8, seed=0)
+
+        assert not basis_path.exists(), "an incomplete basis must never look cached"
+
+        reduced = demo.build_pca_matrix(zip_path, cache, pca_dim=8, seed=0)
+        assert reduced.shape == (400, 8)
+        assert basis_path.exists()
+        assert not list(cache.glob("*.tmp")), "retry must replace partial temp files"
+
     def test_pca_preserves_neighbourhood_structure(self, tmp_path) -> None:
         """The point of PCA here is that UMAP still sees the same neighbours.
 

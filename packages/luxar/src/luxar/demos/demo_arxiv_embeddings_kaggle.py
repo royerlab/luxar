@@ -470,6 +470,7 @@ def build_pca_matrix(
     """
     cache_dir.mkdir(parents=True, exist_ok=True)
     basis_path = cache_dir / f"pca{pca_dim}_basis.npz"
+    basis_tmp_path = basis_path.with_suffix(".npz.tmp")
     proj_path = cache_dir / f"pca{pca_dim}_all.npy"
 
     if proj_path.exists():
@@ -507,14 +508,16 @@ def build_pca_matrix(
             evr = float(pca.explained_variance_ratio_.sum())
             aprint(f"✓ PCA fitted on {filled:,} rows — explains {evr:.1%} of variance")
 
-            np.savez(
-                basis_path,
-                components=pca.components_.astype(np.float32),
-                mean=pca.mean_.astype(np.float32),
-                explained_variance_ratio=pca.explained_variance_ratio_.astype(
-                    np.float32
-                ),
-            )
+            with basis_tmp_path.open("wb") as basis_file:
+                np.savez(
+                    basis_file,
+                    components=pca.components_.astype(np.float32),
+                    mean=pca.mean_.astype(np.float32),
+                    explained_variance_ratio=pca.explained_variance_ratio_.astype(
+                        np.float32
+                    ),
+                )
+            basis_tmp_path.rename(basis_path)
             del subsample
 
     basis = np.load(basis_path)
