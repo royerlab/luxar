@@ -256,10 +256,7 @@ describe('InputHandler — dimension selection feedback', () => {
       (
         handler as unknown as { handleDimensionNavigation(direction: -1 | 1): void }
       ).handleDimensionNavigation(1);
-      expect(showToast).toHaveBeenCalledWith(
-        'Channel is already at its maximum (BLUE).',
-        2000
-      );
+      expect(showToast).toHaveBeenCalledWith('Channel is already at its maximum (BLUE).', 2000);
     } finally {
       clearNotifierBackend();
       handler.dispose();
