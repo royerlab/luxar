@@ -15,7 +15,7 @@
  *
  * Key interaction patterns:
  * - [ ] keys navigate through dimensions with adaptive step sizes
- * - Number keys (1-9) select which dimension to control
+ * - Number keys (1-9) select which non-displayed dimension to control
  * - Space bar toggles fullscreen mode
  * - Ctrl+wheel adjusts field of view, Shift+wheel rolls the view axis
  * - P key toggles performance statistics
@@ -380,7 +380,7 @@ export class InputHandler {
    * inputHandler.initDimensionSliders();
    *
    * // Now users can:
-   * // - Press 1-9 to select dimension
+   * // - Press 1-9 to select a non-displayed dimension
    * // - Press [ ] to navigate selected dimension
    * // - Use sliders to navigate visually
    * ```
