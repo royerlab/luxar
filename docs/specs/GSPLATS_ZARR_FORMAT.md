@@ -764,7 +764,9 @@ Absent on datasets written before these keys existed; readers should report
 nothing rather than infer a source grid from the bounding box.
 
 **Quality metrics** (fitting/.zattrs, optional) — the round-trip score of the
-fit, measured by re-rendering the splats against the volume they were fitted to:
+fit, measured by re-rendering the splats against the fit-basis reference
+`clip(V - image_min, 0, None)`, not the raw acquisition. The PSNR `data_range`
+and relative-L2 denominator are derived from that shifted reference too:
 
 ```json
 {
