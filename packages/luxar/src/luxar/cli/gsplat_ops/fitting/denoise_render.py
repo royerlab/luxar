@@ -123,11 +123,11 @@ def run_render_to_file(
         import numpy as np
 
         from luxar.cli.gsplat_config import parse_shape
-        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.io.load_gsplats import load_default_gsplats
 
         with asection(f"Rendering: {input_path.name}"):
             with asection("Loading gsplat dataset"):
-                data = GSplatData.load(input_path, include_stats=False)
+                data = load_default_gsplats(input_path, include_stats=False)
                 ndim = data.ndim
                 aprint(f"Loaded {data.n_splats:,} splats ({ndim}D)")
 

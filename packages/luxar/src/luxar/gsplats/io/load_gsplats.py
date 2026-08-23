@@ -48,6 +48,38 @@ def load_gsplats(
     return GSplatData.from_tree(node, stats=stats)
 
 
+def load_default_gsplats(
+    path: str | Path,
+    include_stats: bool = False,
+) -> GSplatData:
+    """Load the splats selected by the tree's default rendering semantics.
+
+    Matrix-shaped inputs retain their existing substitutive/additive structure.
+    For a partition or nested tree, all partition children, the default (finest)
+    child of each substitutive LOD group, and every additive sub-LOD are
+    materialized as one flat in-memory dataset. Root stats are deliberately
+    retained unchanged when requested because this helper is read-only; a
+    writer that changes topology must scrub structure-scoped metadata itself.
+    """
+    from luxar.gsplats.tree import is_matrix_shaped, iter_default_leaves
+
+    node, stats = load_gsplat_node(path, include_stats=include_stats)
+    if is_matrix_shaped(node):
+        return GSplatData.from_tree(node, stats=stats)
+
+    parts = [
+        GSplatData.from_tree(leaf).flattened() for leaf in iter_default_leaves(node)
+    ]
+    if not parts:
+        raise ValueError("GSplat tree has no default-rendered leaves")
+
+    flat = GSplatData.concatenate(parts)
+    return GSplatData.from_additive_sublods(
+        list(flat.additive_sublods),
+        stats=stats,
+    )
+
+
 def read_authored_appearance(path: str | Path) -> Dict[str, Any]:
     """Read the authored appearance attrs off a ``.gsplats.zarr`` ROOT.
 
