@@ -869,7 +869,7 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
       drainSortedIndexApply(geom);
       expect(activeSortedIndexSlot(geom)).toBe(1);
 
-      writeSortedIndexOrdering(geom, new Uint32Array([0, 1, 3, 2]), 4);
+      writeSortedIndexOrdering(geom, new Uint32Array([2, 3, 0, 1]), 4);
       expect(pumpSortedIndexOrderingApply(geom).more).toBe(true);
       expect(hasPendingSortedIndexOrderingApply(geom)).toBe(true);
 
