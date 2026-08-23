@@ -346,16 +346,21 @@ def select_timepoints(n_total: int, limit: Optional[int]) -> list[int]:
     A subsample is UNIFORM by construction, not merely evenly spread. Time
     becomes a discrete viewer dimension whose navigation snaps to multiples of
     one ``step``, so unevenly spaced frames would land between stops and those
-    stops would silently render nothing. Being uniform costs the tail: a stride
-    that does not divide the run stops short of the final frame. That is the
-    right trade for a development flag and no trade at all for the archive.
+    stops would silently render nothing.
+
+    Given the choice, it spends frames on SPAN rather than on count: the stride
+    is rounded up, so a subsample may return fewer frames than asked for but
+    reaches within one stride of the last one. Rounding down instead maximises
+    the count and can cost a third of the recording — ``--max-timepoints=100``
+    of 151 would take frames 0-99 and stop two thirds of the way through
+    gastrulation, which is the same defect this function exists to remove.
     """
     if limit is None or limit >= n_total:
         return list(range(n_total))
     if limit < 2:
         raise ValueError(f"--max-timepoints must be at least 2, got {limit}")
-    stride = max(1, (n_total - 1) // (limit - 1))
-    return list(range(0, n_total, stride))[:limit]
+    stride = -(-(n_total - 1) // (limit - 1))  # ceil
+    return list(range(0, n_total, stride))
 
 
 # =============================================================================
@@ -515,10 +520,17 @@ def to_microns(fit: GSplatData) -> GSplatData:
     spot while the cage slid past it.
     """
     scale = np.diag(np.asarray(VOXEL_SIZE_ZYX_UM, dtype=np.float64))
+    # +0.5 voxel: a fitted centre is a voxel INDEX, and voxel i occupies
+    # [i, i+1) of the block, so its middle is i + 0.5. Without the shift the
+    # mapping is asymmetric — index 0 lands exactly ON bmin with no slack while
+    # a whole voxel goes spare at the far face, so any splat the optimizer moves
+    # to a slightly negative index falls outside the range the scene declares.
+    # With it, both faces keep half a voxel and index -0.5 lands exactly on bmin.
+    offset = 0.5 * np.asarray(VOXEL_SIZE_ZYX_UM, dtype=np.float64)
     # The box's own half-extent IS the centre offset, so the splats and the cage
     # cannot drift apart: both read it from the same place.
     _, half = acquisition_box_um()
-    return fit.transform(scale).translate(-half)
+    return fit.transform(scale).translate(offset - half)
 
 
 def combine_to_4d(
@@ -690,8 +702,16 @@ def create_luxar_scene(stacked: GSplatData, output_path: Path) -> Path:
     """Build the 4D scene: one gsplats node, one cage layer, overlays."""
     times = np.unique(stacked.centers[:, 3])
     n_timepoints = int(times.size)
+    if n_timepoints < 2:
+        # One timepoint has no interval to derive a step from, and what follows
+        # would divide by zero on its way to `Dimension(step=0.0)`, which is
+        # refused several frames later by a message that does not mention time.
+        raise ValueError(
+            f"a timelapse needs at least 2 timepoints, got {n_timepoints}; "
+            "this archive is a single stack, not a recording"
+        )
     t_min, t_max = float(times.min()), float(times.max())
-    step_min = (t_max - t_min) / max(n_timepoints - 1, 1)
+    step_min = (t_max - t_min) / (n_timepoints - 1)
 
     # Time is a DISCRETE viewer dimension: navigation snaps to multiples of
     # `step` anchored at 0 and a chunk is only fetched within a quarter-step of

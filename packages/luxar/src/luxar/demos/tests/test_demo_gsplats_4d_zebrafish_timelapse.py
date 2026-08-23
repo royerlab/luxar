@@ -16,6 +16,7 @@ The demo is loaded by file path, like its cell-tracking sibling.
 from __future__ import annotations
 
 import importlib.util
+import itertools
 import sys
 from pathlib import Path
 
@@ -64,6 +65,21 @@ class TestTimepointSelection:
     def test_frames_stay_inside_the_recording(self) -> None:
         assert max(_demo.select_timepoints(151, 64)) < 151
 
+    @pytest.mark.parametrize("limit", [2, 3, 4, 8, 16, 32, 64, 100, 150])
+    def test_a_subsample_reaches_the_end_of_the_recording(self, limit: int) -> None:
+        """Span over count: a subsample must not stop two thirds of the way in.
+
+        Rounding the stride DOWN maximises the frame count and can leave a third
+        of the recording out — ``--max-timepoints=100`` of 151 took frames 0-99,
+        the very defect this function replaced.
+        """
+        frames = _demo.select_timepoints(151, limit)
+        stride = frames[1] - frames[0]
+        assert frames[-1] >= 150 - stride, (
+            f"limit {limit} stops at frame {frames[-1]} of 150 with stride "
+            f"{stride}; it should reach within one stride of the end"
+        )
+
     def test_a_single_timepoint_is_refused(self) -> None:
         # One timepoint has no step to derive, and the scene it would build is
         # not a timelapse. Say so instead of writing a degenerate axis.
@@ -85,6 +101,62 @@ class TestAcquisitionBox:
     def test_the_box_is_centred_on_the_origin(self) -> None:
         bmin, bmax = _demo.acquisition_box_um()
         assert np.allclose(bmin, -bmax)
+
+
+class TestVoxelToMicrons:
+    """A fitted centre is a voxel INDEX; the cage is the imaged BLOCK."""
+
+    def test_each_axis_is_scaled_by_its_own_voxel_pitch(self, monkeypatch) -> None:
+        """A geometric-mean check would pass a permuted or partial scaling."""
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        shape = (8, 16, 16)
+        monkeypatch.setattr(_demo, "ACQUISITION_SHAPE_ZYX", shape)
+        # One isotropic unit-sigma splat: inverse-Cholesky diag of 1 per axis.
+        fit = GSplatData(
+            centers=np.zeros((1, 3), dtype=np.float32),
+            amplitudes=np.ones(1, dtype=np.float32),
+            cholesky_factors=np.array([[1, 0, 1, 0, 0, 1]], dtype=np.float32),
+        )
+        scaled = _demo.to_microns(fit)
+        ratio = scaled.marginal_sigmas()[0] / fit.marginal_sigmas()[0]
+        assert np.allclose(ratio, _demo.VOXEL_SIZE_ZYX_UM, rtol=1e-4), (
+            f"axes scaled by {ratio}, not by the voxel size {_demo.VOXEL_SIZE_ZYX_UM}"
+        )
+
+    def test_the_grid_maps_symmetrically_inside_the_box(self, monkeypatch) -> None:
+        """Half a voxel of slack at BOTH faces, not zero at one and a whole at the other.
+
+        A centre is a voxel index and voxel i spans [i, i+1) of the block, so
+        index 0 belongs half a voxel inside bmin. Getting this wrong puts any
+        splat at a slightly negative index outside the scene's declared range.
+        """
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        shape = (8, 16, 16)
+        monkeypatch.setattr(_demo, "ACQUISITION_SHAPE_ZYX", shape)
+        voxel = np.asarray(_demo.VOXEL_SIZE_ZYX_UM)
+        corners = np.array(
+            [[0.0, 0.0, 0.0], [s - 1.0 for s in shape], [-0.5, -0.5, -0.5]],
+            dtype=np.float32,
+        )
+        mapped = _demo.to_microns(
+            GSplatData(
+                centers=corners,
+                amplitudes=np.ones(3, dtype=np.float32),
+                cholesky_factors=np.tile(
+                    np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (3, 1)
+                ),
+            )
+        ).centers
+        bmin, bmax = _demo.acquisition_box_um()
+
+        assert np.allclose(mapped[0] - bmin, 0.5 * voxel, rtol=1e-4)
+        assert np.allclose(bmax - mapped[1], 0.5 * voxel, rtol=1e-4)
+        # The half-index below the first voxel is exactly the block's face.
+        assert np.allclose(mapped[2], bmin, atol=1e-3)
+        # And the mapping is centred: first and last voxel are mirror images.
+        assert np.allclose(mapped[0], -mapped[1], atol=1e-3)
 
 
 class TestCageLines:
@@ -112,11 +184,74 @@ class TestCageLines:
         assert np.all(on_face.any(axis=1))
 
     def test_the_twelve_box_edges_are_drawn_and_are_the_thick_ones(self, cage) -> None:
-        _, _, (verts, _, widths) = cage
+        bmin, bmax, (verts, _, widths) = cage
         thick = widths == _demo.BOX_EDGE_WIDTH_UM
         assert int(thick.sum()) == 24, "12 edges x 2 vertices"
         # ...and they are the first 24, which is what pairs them correctly.
         assert np.all(thick[:24])
+
+        # Counting 24 thick vertices would also pass for twelve DIAGONALS, so
+        # identify each edge by the pair of corners it joins and demand exactly
+        # the twelve real ones. `_corners` bit i selects max on axis i, so two
+        # corners share an edge iff their ids differ in exactly one bit.
+        segs = verts[:24].reshape(-1, 2, 3)
+        corner_id = lambda p: tuple(  # noqa: E731
+            int(np.isclose(p[a], bmax[a], atol=1e-4)) for a in range(3)
+        )
+        drawn = {frozenset((corner_id(s[0]), corner_id(s[1]))) for s in segs}
+        expected = {
+            frozenset((c, tuple(v ^ (i == a) for i, v in enumerate(c))))
+            for c in itertools.product((0, 1), repeat=3)
+            for a in range(3)
+        }
+        assert drawn == expected, "the twelve edges are not the box's twelve edges"
+
+    def test_every_ruling_lies_in_a_face_and_spans_it(self, cage) -> None:
+        """A ruling that floats inside the box, or stops short, is not a ruler."""
+        bmin, bmax, (verts, _, widths) = cage
+        rulings = verts.reshape(-1, 2, 3)[
+            widths.reshape(-1, 2)[:, 0] == _demo.GRID_LINE_WIDTH_UM
+        ]
+        assert len(rulings) > 0
+        for seg in rulings:
+            varying = np.flatnonzero(np.abs(seg[0] - seg[1]) > 1e-4)
+            assert len(varying) == 1, "a ruling must be axis-aligned"
+            axis = int(varying[0])
+            pinned = [a for a in range(3) if a != axis]
+            assert any(
+                np.isclose(seg[0][a], bmin[a], atol=1e-4)
+                or np.isclose(seg[0][a], bmax[a], atol=1e-4)
+                for a in pinned
+            ), "a ruling must lie in one of the six faces"
+            lo, hi = sorted((seg[0][axis], seg[1][axis]))
+            assert np.isclose(lo, bmin[axis], atol=1e-4)
+            assert np.isclose(hi, bmax[axis], atol=1e-4)
+
+    def test_the_grid_is_anchored_at_the_centre_not_at_a_corner(self, cage) -> None:
+        """The docstring's claim: a reading off the grid is a signed distance."""
+        _, _, (verts, _, widths) = cage
+        rulings = verts.reshape(-1, 2, 3)[
+            widths.reshape(-1, 2)[:, 0] == _demo.GRID_LINE_WIDTH_UM
+        ]
+        # Some ruling must sit at 0 on its own axis, which only holds for a
+        # grid anchored at the origin.
+        at_origin = [
+            s
+            for s in rulings
+            if np.any(
+                np.isclose(s[0], 0.0, atol=1e-4) & np.isclose(s[1], 0.0, atol=1e-4)
+            )
+        ]
+        assert at_origin, "no ruling passes through the centre"
+
+    def test_colours_are_linearized_and_the_edges_read_brighter(self, cage) -> None:
+        """Demo colours are authored sRGB and consumed as LINEAR light."""
+        _, _, (verts, colors, widths) = cage
+        edge = colors[widths == _demo.BOX_EDGE_WIDTH_UM][0]
+        grid = colors[widths == _demo.GRID_LINE_WIDTH_UM][0]
+        assert np.allclose(edge, np.float32(_demo.BOX_EDGE_COLOR) ** 2.2, atol=1e-6)
+        assert np.allclose(grid, np.float32(_demo.GRID_LINE_COLOR) ** 2.2, atol=1e-6)
+        assert edge.mean() > grid.mean(), "the box must read brighter than the grid"
 
     def test_grid_lines_land_on_multiples_of_the_step(self, cage) -> None:
         _, _, (verts, _, widths) = cage
@@ -222,6 +357,21 @@ class TestTheStackedArchiveSurvivesItsRoundTrip:
                 f"level {level.level_index} kept {len(present)} of {len(times)} "
                 "timepoints; coarsening crossed the time barrier"
             )
+
+    def test_a_single_timepoint_archive_is_refused_by_name(self, toy, monkeypatch):
+        """Not a timelapse — say so, rather than divide by a zero step.
+
+        Without the guard this reaches `Dimension(step=0.0)`, which raises
+        "Step size must be positive" several frames later, after a numpy
+        divide-by-zero warning and with nothing in the message about time.
+        """
+        shape, fits, tmp = toy
+        monkeypatch.setattr(_demo, "ACQUISITION_SHAPE_ZYX", shape)
+        monkeypatch.setattr(_demo, "DEVICE", "cpu")
+
+        one = _demo.combine_to_4d(fits[:1], [0.0])
+        with pytest.raises(ValueError, match="at least 2 timepoints"):
+            _demo.create_luxar_scene(one, tmp / "one.luxar.zarr")
 
     def test_the_scene_declares_the_cage_box_and_a_gridded_time_axis(
         self, toy, monkeypatch
