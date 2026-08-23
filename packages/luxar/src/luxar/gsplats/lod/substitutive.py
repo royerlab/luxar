@@ -645,6 +645,19 @@ def _volume_refine_level(
 # ─────────────────────────────────────────────────────────────────────
 
 
+def _resolve_refit_image_min(
+    data: GSplatData, image_min: Optional[float], verbose: bool
+) -> Optional[float]:
+    from luxar.gsplats.fit_basis import MISSING_BASIS_HINT, fit_image_min
+
+    resolved = fit_image_min(
+        {"image_min": image_min} if image_min is not None else data.stats
+    )
+    if resolved is None and verbose:
+        aprint(f"refine=volume: {MISSING_BASIS_HINT}")
+    return resolved
+
+
 def make_substitutive_lod(
     data: GSplatData,
     *,
@@ -903,19 +916,11 @@ def make_substitutive_lod(
         eff_refine_iters = (
             int(refine_iters) if refine_iters is not None else VolumeRefitConfig().iters
         )
-        from luxar.gsplats.fit_basis import MISSING_BASIS_HINT, fit_image_min
-
         # The ladder's basis comes from the INPUT fit, which is the only thing
         # that knows what background was already removed. Without it the inner
         # re-fit re-estimates one from the raw volume and the refined level can
         # end up on a different basis from its siblings (#1177).
-        refit_image_min = fit_image_min(
-            {"image_min": image_min}
-            if image_min is not None
-            else getattr(data, "stats", None)
-        )
-        if refit_image_min is None and verbose:
-            aprint(f"refine=volume: {MISSING_BASIS_HINT}")
+        refit_image_min = _resolve_refit_image_min(data, image_min, verbose)
         volume_cfg = replace(
             VolumeRefitConfig(),
             iters=eff_refine_iters,

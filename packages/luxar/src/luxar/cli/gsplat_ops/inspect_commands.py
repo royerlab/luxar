@@ -673,6 +673,37 @@ def _print_quality_comparison(
     aprint("=" * 50)
 
 
+def _validate_image_min_override(image_min: Optional[float]) -> None:
+    if image_min is not None and (not math.isfinite(image_min) or image_min < 0.0):
+        raise typer.BadParameter(
+            "must be a finite, non-negative level", param_hint="--image-min"
+        )
+
+
+def _reference_on_dataset_basis(
+    reference: "np.ndarray", stats: Any, image_min: Optional[float]
+) -> "np.ndarray":
+    from luxar.gsplats.fit_basis import (
+        MISSING_BASIS_HINT,
+        fit_image_min,
+        reference_on_fit_basis,
+    )
+
+    resolved_min = float(image_min) if image_min is not None else fit_image_min(stats)
+    if resolved_min is None:
+        aprint(f"WARNING: {MISSING_BASIS_HINT}")
+    elif resolved_min == 0.0:
+        aprint("Basis: fit removed no background (image_min=0)")
+    else:
+        source = "--image-min" if image_min is not None else "dataset"
+        reference = reference_on_fit_basis(reference, resolved_min)
+        aprint(
+            f"Basis: reference shifted by image_min={resolved_min:.6g} "
+            f"(from {source}); scores are background-relative, matching the render"
+        )
+    return reference
+
+
 def compare_quality(
     gsplats_path: Path = typer.Argument(
         ..., exists=True, help="Path to .gsplats.zarr dataset (or .zip/.tar.gz)"
@@ -732,10 +763,7 @@ def compare_quality(
         luxar gsplat compare fitted.gsplats.zarr original.zarr --output-json metrics.json
         luxar gsplat compare fitted.gsplats.zarr original.zarr -j metrics.json -q
     """
-    if image_min is not None and (not math.isfinite(image_min) or image_min < 0.0):
-        raise typer.BadParameter(
-            "must be a finite, non-negative level", param_hint="--image-min"
-        )
+    _validate_image_min_override(image_min)
 
     try:
         import json
@@ -744,11 +772,6 @@ def compare_quality(
         import torch
 
         from luxar.cli.gsplat_config import load_volume, parse_shape
-        from luxar.gsplats.fit_basis import (
-            MISSING_BASIS_HINT,
-            fit_image_min,
-            reference_on_fit_basis,
-        )
         from luxar.gsplats.gsplat_data import GSplatData
         from luxar.gsplats.metrics import compute_quality_metrics
         from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
@@ -780,23 +803,7 @@ def compare_quality(
                 # Put the reference on the render's basis before anything scores
                 # it. An explicit --image-min wins over the stored level so a
                 # pre-provenance store is still comparable.
-                resolved_min = (
-                    float(image_min)
-                    if image_min is not None
-                    else fit_image_min(data.stats)
-                )
-                if resolved_min is None:
-                    aprint(f"WARNING: {MISSING_BASIS_HINT}")
-                elif resolved_min == 0.0:
-                    aprint("Basis: fit removed no background (image_min=0)")
-                else:
-                    source = "--image-min" if image_min is not None else "dataset"
-                    ref_np = reference_on_fit_basis(ref_np, resolved_min)
-                    aprint(
-                        f"Basis: reference shifted by image_min="
-                        f"{resolved_min:.6g} (from {source}); scores are "
-                        f"background-relative, matching the render"
-                    )
+                ref_np = _reference_on_dataset_basis(ref_np, data.stats, image_min)
 
             # Determine rendering shape
             if shape is not None:
