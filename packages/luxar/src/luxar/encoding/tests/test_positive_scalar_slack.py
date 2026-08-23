@@ -7,6 +7,27 @@ from luxar._zarr_compat import memory_group
 from luxar.encoding import ArrayDecoder, ArrayEncoder, EncodingMode, SemanticType
 
 
+def _viewer_linear_decode(codes: np.ndarray, metadata: dict) -> np.ndarray:
+    levels = (1 << metadata["bits"]) - 1
+    lo = np.float32(metadata["min"])
+    hi = np.float32(metadata["max"])
+    scale = np.float32(np.float32(hi - lo) / np.float32(levels))
+    return np.float32(lo + np.float32(np.asarray(codes, dtype=np.float32) * scale))
+
+
+def _viewer_geolog_decode(codes: np.ndarray, metadata: dict) -> np.ndarray:
+    levels = (1 << metadata["bits"]) - 1
+    lo = float(np.float32(metadata["min_log"]))
+    hi = float(np.float32(metadata["max_log"]))
+    scale = (hi - lo) / (levels - 1)
+    codes = np.asarray(codes)
+    decoded = np.zeros(codes.shape, dtype=np.float32)
+    nonzero = codes > 0
+    exponent = lo + (codes[nonzero].astype(np.float64) - 1.0) * scale
+    decoded[nonzero] = np.asarray(np.exp(exponent), dtype=np.float32)
+    return decoded
+
+
 @pytest.mark.parametrize(
     ("name", "data", "mode", "encoding_type", "expected_encoding"),
     [
@@ -132,12 +153,187 @@ def test_positive_scalar_slack_bounds_viewer_float32_decode() -> None:
     )
     encoded = group["s"]
     metadata = encoded.attrs["encoding"]
-    lo = np.float32(metadata["min"])
-    hi = np.float32(metadata["max"])
-    scale = np.float32(np.float32(hi - lo) / np.float32(255))
-    decoded = np.float32(lo + np.float32(np.asarray(encoded[:]) * scale))
+    decoded = _viewer_linear_decode(np.asarray(encoded[:]), metadata)
     upward = decoded.astype(np.float64) - data.astype(np.float64)
     assert float(upward.max()) > 1.0
+    assert float(upward.max()) <= slack
+
+
+def test_positive_scalar_slack_bounds_staged_viewer_float32_decode() -> None:
+    data = np.geomspace(
+        56.03468458866481,
+        17172.385826620357,
+        19826,
+        dtype=np.float64,
+    )
+    encoder = ArrayEncoder()
+    slack = encoder.positive_scalar_round_trip_slack(
+        data, EncodingMode.AUTO, allow_lut=False
+    )
+    assert slack is not None
+
+    group = memory_group()
+    encoder.encode(
+        data,
+        group,
+        "s",
+        SemanticType.POSITIVE_SCALAR,
+        mode=EncodingMode.AUTO,
+        allow_lut=False,
+        deduplicate=False,
+    )
+    encoded = group["s"]
+    metadata = encoded.attrs["encoding"]
+    assert metadata["name"] == "bounded_scalar_uint16"
+    decoded = _viewer_linear_decode(np.asarray(encoded[:]), metadata)
+    upward = decoded.astype(np.float64) - data
+    assert float(upward.max()) > 0.13
+    assert float(upward.max()) <= slack
+    assert slack <= 2 * float(upward.max())
+
+
+@pytest.mark.parametrize(
+    ("lo", "hi", "levels", "code", "fill", "expected_encoding"),
+    [
+        (
+            0.002945750926925187,
+            0.5193778596167954,
+            255,
+            252,
+            500,
+            "bounded_scalar_uint8",
+        ),
+        (
+            3.4272668991807e-05,
+            1.0437129191726766,
+            65535,
+            65532,
+            2000,
+            "bounded_scalar_uint16",
+        ),
+    ],
+)
+def test_positive_scalar_slack_bounds_linear_viewer_rounding_corner(
+    lo: float,
+    hi: float,
+    levels: int,
+    code: int,
+    fill: int,
+    expected_encoding: str,
+) -> None:
+    quantum = (hi - lo) / levels
+    value = np.nextafter(lo + (code - 0.5) * quantum, np.inf)
+    data = np.array([lo, hi, value, *np.linspace(lo, hi, fill)], dtype=np.float64)
+    encoder = ArrayEncoder()
+    slack = encoder.positive_scalar_round_trip_slack(
+        data, EncodingMode.AUTO, allow_lut=False
+    )
+    assert slack is not None
+
+    group = memory_group()
+    encoder.encode(
+        data,
+        group,
+        "s",
+        SemanticType.POSITIVE_SCALAR,
+        mode=EncodingMode.AUTO,
+        allow_lut=False,
+        deduplicate=False,
+    )
+    encoded = group["s"]
+    metadata = encoded.attrs["encoding"]
+    assert metadata["name"] == expected_encoding
+    decoded = _viewer_linear_decode(np.asarray(encoded[:]), metadata)
+    upward = decoded.astype(np.float64) - data
+    assert float(upward.max()) > slack - 0.01 * quantum
+    assert float(upward.max()) <= slack
+
+
+@pytest.mark.parametrize(("bits", "minimum_ratio"), [(8, 1.01), (16, 257.0)])
+def test_linear_viewer_affine_bound_over_code_space(
+    bits: int, minimum_ratio: float
+) -> None:
+    rng = np.random.default_rng(1923 + bits)
+    levels = (1 << bits) - 1
+    codes = np.arange(levels + 1, dtype=np.float32)
+    eps32 = float(np.finfo(np.float32).eps)
+
+    for _ in range(256):
+        hi = 10.0 ** rng.uniform(-12.0, 12.0)
+        ratio = 10.0 ** rng.uniform(np.log10(minimum_ratio), np.log10(levels))
+        lo = hi / ratio
+        metadata = {"bits": bits, "min": lo, "max": hi}
+        decoded = _viewer_linear_decode(codes, metadata).astype(np.float64)
+        exact = lo + codes.astype(np.float64) * ((hi - lo) / levels)
+        allowance = hi * eps32 + 1.5 * (hi - lo) * eps32
+        assert float(np.max(decoded - exact)) <= allowance
+
+
+@pytest.mark.parametrize(
+    ("lo", "hi", "minimum_upward"),
+    [(1e5, 1.05e5, 0.08), (1000.0, 1000.5, 0.0001)],
+)
+def test_positive_scalar_slack_bounds_geolog_viewer_anchor_rounding(
+    lo: float, hi: float, minimum_upward: float
+) -> None:
+    data = np.geomspace(lo, hi, 2000, dtype=np.float64)
+    encoder = ArrayEncoder()
+    slack = encoder.positive_scalar_round_trip_slack(
+        data,
+        EncodingMode.AUTO,
+        positive_scalar_encoding="log",
+        allow_lut=False,
+    )
+    assert slack is not None
+
+    group = memory_group()
+    encoder.encode(
+        data,
+        group,
+        "s",
+        SemanticType.POSITIVE_SCALAR,
+        mode=EncodingMode.AUTO,
+        positive_scalar_encoding="log",
+        allow_lut=False,
+        deduplicate=False,
+    )
+    encoded = group["s"]
+    metadata = encoded.attrs["encoding"]
+    assert metadata["name"] == "geolog_scalar_uint16"
+    decoded = _viewer_geolog_decode(np.asarray(encoded[:]), metadata)
+    upward = decoded.astype(np.float64) - data
+    assert float(upward.max()) > minimum_upward
+    assert float(upward.max()) <= slack
+
+
+def test_positive_scalar_slack_bounds_degenerate_geolog_viewer_anchor() -> None:
+    data = np.array([0.0] * 500 + [123456.0] * 500, dtype=np.float64)
+    encoder = ArrayEncoder()
+    slack = encoder.positive_scalar_round_trip_slack(
+        data,
+        EncodingMode.AUTO,
+        positive_scalar_encoding="log",
+        allow_lut=False,
+    )
+    assert slack is not None
+
+    group = memory_group()
+    encoder.encode(
+        data,
+        group,
+        "s",
+        SemanticType.POSITIVE_SCALAR,
+        mode=EncodingMode.AUTO,
+        positive_scalar_encoding="log",
+        allow_lut=False,
+        deduplicate=False,
+    )
+    encoded = group["s"]
+    metadata = encoded.attrs["encoding"]
+    assert metadata["name"] == "geolog_scalar_uint16"
+    decoded = _viewer_geolog_decode(np.asarray(encoded[:]), metadata)
+    upward = decoded.astype(np.float64) - data
+    assert float(upward.max()) > 0.0
     assert float(upward.max()) <= slack
 
 

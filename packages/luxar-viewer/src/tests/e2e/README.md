@@ -469,7 +469,7 @@ post-processing regression check.
 1. **Import from `./fixtures`**, never `@playwright/test` directly.
 2. Use the `?src=<dataset>&debug` URL form (not `?data=`) so
    `window.__luxarDebug` is exposed.
-3. Wait for `waitForLuxarReady(page)` before reading state.
+3. Wait for `waitForLuxarReady(page)` before reading state or dispatching keyboard/mouse input.
 4. Prefer 3D datasets for general specs — 4D/nD slicing may show 0
    points at arbitrary slice positions. Specs that test nD behavior
    should drive to a slice known to contain geometry.

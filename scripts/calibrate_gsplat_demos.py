@@ -204,21 +204,21 @@ def _load_celegans() -> list[tuple[str, np.ndarray]]:
 
 
 def _load_zebrafish() -> list[tuple[str, np.ndarray]]:
-    """3 distributed timepoints from the LSM timelapse."""
+    """3 distributed timepoints, read one at a time from the LSM.
+
+    The demo no longer materialises a list of volumes — it opens the LSM lazily
+    and fits frame by frame, because the movie is 1.7 GB of voxels. Slice the
+    same lazy view here rather than asking it for a list it stopped building.
+    """
     mod = _import_demo("demo_gsplats_4d_zebrafish_timelapse")
-    result = mod.load_zebrafish_volumes()
-    if isinstance(result, tuple) and len(result) >= 1:
-        volumes = result[0]
-    else:
-        volumes = result
-    n = len(volumes)
+    array = mod.open_lsm()
+    n = int(array.shape[0])
     if n == 0:
         raise RuntimeError("zebrafish: no timepoints returned")
-    if n >= 3:
-        picks = [0, n // 2, n - 1]
-    else:
-        picks = list(range(n))
-    return [(f"t{i:04d}", volumes[i]) for i in picks]
+    picks = [0, n // 2, n - 1] if n >= 3 else list(range(n))
+    return [
+        (f"t{i:04d}", np.asarray(array[i]).astype(np.float32) / 255.0) for i in picks
+    ]
 
 
 def _load_cmu1_pathology_tile() -> list[tuple[str, np.ndarray]]:
