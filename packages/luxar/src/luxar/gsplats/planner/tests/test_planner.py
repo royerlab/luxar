@@ -221,6 +221,47 @@ class TestFitPlanned:
         assert c[:, 0].min() >= 0 and c[:, 0].max() < 64
         assert c[:, 2].min() >= 0 and c[:, 2].max() < 64
 
+    @pytest.mark.parametrize("partition", [False, True])
+    def test_scoring_receives_the_merged_box_basis(self, monkeypatch, partition):
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        fit_planned_module = importlib.import_module(
+            "luxar.gsplats.planner.fit_planned"
+        )
+        captured = []
+
+        def fake_fit_one_box(volume, box, pad, cap, **kwargs):
+            center = np.array(
+                [[(box.box[i] + box.box[i + 1]) / 2 for i in (0, 2, 4)]],
+                np.float32,
+            )
+            return GSplatData(
+                centers=center,
+                amplitudes=np.ones(1, np.float32),
+                cholesky_factors=np.array([[1, 0, 1, 0, 0, 1]], np.float32),
+                stats={
+                    "floor": 500.0,
+                    "image_min": 500.0,
+                    "image_max": 501.0,
+                    "intensity_range": 1.0,
+                },
+            )
+
+        def capture_score(*args, image_min, **kwargs):
+            captured.append(image_min)
+
+        monkeypatch.setattr(fit_planned_module, "_fit_one_box", fake_fit_one_box)
+        monkeypatch.setattr(fit_planned_module, "_score_planned_merge", capture_score)
+        plan = _toy_plan(n_boxes=2, budget=5)
+        fit_planned_module.fit_planned(
+            np.full(plan.volume_shape, 500.0, np.float32),
+            plan,
+            partition=partition,
+            verbose=False,
+        )
+
+        assert captured == [500.0]
+
 
 class TestPlanCliResolveDensity:
     def test_explicit_flags_build_density(self):
@@ -1389,6 +1430,27 @@ class TestFitPlannedParallel:
         notice = capsys.readouterr().out
         assert "records no normalization basis" in notice
         assert "computed against the RAW volume" in notice
+
+    @pytest.mark.parametrize("partition", [False, True])
+    def test_quality_is_independent_of_the_removed_pedestal(self, tmp_path, partition):
+        plan = _toy_plan(n_boxes=2)
+        signal = _corner_blobs(tuple(plan.volume_shape), n=3, corner=12)
+        psnr = []
+        for pedestal in (0.0, 500.0):
+            result = fit_planned_parallel(
+                plan,
+                jobs=2,
+                tmp_dir=tmp_path / f"boxes-{pedestal:g}",
+                worker_cmd_builder=_fake_box_builder(5, image_min=pedestal),
+                volume=signal + pedestal,
+                device="cpu",
+                partition=partition,
+                verbose=False,
+            )
+            stats = result.meta["fit_stats"] if partition else result.stats
+            psnr.append(stats["psnr_db"])
+
+        assert psnr[1] == pytest.approx(psnr[0], abs=0.05)
 
 
 # ── The fit's truncation radius survives the planned path (#1637) ──
