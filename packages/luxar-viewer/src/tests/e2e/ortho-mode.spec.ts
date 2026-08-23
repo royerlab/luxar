@@ -22,6 +22,8 @@ import {
   focusCanvas,
   getWebGLErrors,
   assertNoConsoleErrors,
+  placeCameraAt,
+  getCameraPivot,
 } from './helpers';
 
 const DATASET = 'http://localhost:9000/datasets/examples/scene_dimensions_example.luxar.zarr';
@@ -78,24 +80,25 @@ async function wheelAtCanvasCenter(page: Page, deltaY: number, count = 1): Promi
  * is an exact front view (center + (0,0,D), up +Y, default FOV), which the
  * OLD front-view ortho reset reproduces — so before/after would match even
  * against the pre-fix code. An off-axis pose + off-default FOV breaks that.
+ *
+ * The placement itself goes through the shared `placeCameraAt` helper (#1930)
+ * rather than a hand-rolled `position.set` + `reinitialize()` + `update()`, so
+ * there is exactly ONE implementation of that sequence to keep correct.
  */
 async function putCameraOffAxis(page: Page): Promise<void> {
+  // Content centre = the current pivot; the pose is expressed relative to it.
+  const c = await getCameraPivot(page);
+  // Distinct offsets on all three axes → genuinely off-axis; non-default up.
+  const placed = await placeCameraAt(
+    page,
+    { x: c.x + 37, y: c.y + 29, z: c.z + 43 },
+    { target: c, up: { x: 0.1, y: 0.95, z: 0.2 } }
+  );
+  expect(placed, 'the off-axis camera placement did not run').not.toBeNull();
+  expect(placed!.viaOrbitControls, 'orbit controls did not re-derive the off-axis pose').toBe(true);
+  // Nudge FOV off the default so a FOV-restore regression is observable.
   await page.evaluate(() => {
     const debug = (window as any).__luxarDebug;
-    const cam = debug.camera;
-    const orbit = debug.controls.getControls(); // active LuxarOrbitControls
-    const c = orbit.target; // content center = current pivot
-    const cx = c.x;
-    const cy = c.y;
-    const cz = c.z;
-    // Distinct offsets on all three axes → genuinely off-axis; non-default up.
-    cam.position.set(cx + 37, cy + 29, cz + 43);
-    cam.up.set(0.1, 0.95, 0.2);
-    cam.lookAt(cx, cy, cz);
-    cam.updateMatrixWorld();
-    orbit.reinitialize();
-    orbit.update();
-    // Nudge FOV off the default so a FOV-restore regression is observable.
     debug.app.components.sceneManager.updateFOV(40);
   });
   await waitForNextRender(page);
