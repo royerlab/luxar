@@ -43,7 +43,7 @@ PARTICLE IDENTIFICATION BY STOPPING LOCATION
 Different particles interact differently with matter:
 
 1. ELECTRONS/POSITRONS (e⁻/e⁺):
-   - Light (0.511 MeV/c²), easily deflected
+   - Light (0.511 MeV/c²)
    - Create electromagnetic showers via bremsstrahlung
    - Completely absorbed in EM calorimeter (~20 radiation lengths)
    - Track curvature is determined by transverse momentum p_T, not mass
@@ -53,7 +53,7 @@ Different particles interact differently with matter:
    - Convert to e⁺e⁻ pairs in EM calorimeter
    - Deposit all energy in EM calorimeter
 
-3. HADRONS (π±, K⁺, p):
+3. HADRONS (π±, K±, p):
    - Made of quarks, interact via strong force
    - Penetrate EM calorimeter, stop in hadronic calorimeter
    - Create hadronic showers (nuclear interactions)

@@ -43,7 +43,7 @@ PARTICLE IDENTIFICATION BY STOPPING LOCATION
 Different particles interact differently with matter:
 
 1. ELECTRONS/POSITRONS (e⁻/e⁺):
-   - Light (0.511 MeV/c²), easily deflected
+   - Light (0.511 MeV/c²)
    - Create electromagnetic showers via bremsstrahlung
    - Completely absorbed in EM calorimeter (~20 radiation lengths)
    - Track curvature is determined by transverse momentum p_T, not mass
@@ -53,7 +53,7 @@ Different particles interact differently with matter:
    - Convert to e⁺e⁻ pairs in EM calorimeter
    - Deposit all energy in EM calorimeter
 
-3. HADRONS (π±, K⁺, p):
+3. HADRONS (π±, K±, p):
    - Made of quarks, interact via strong force
    - Penetrate EM calorimeter, stop in hadronic calorimeter
    - Create hadronic showers (nuclear interactions)
@@ -295,8 +295,6 @@ PARTICLE_LEGEND_HTML = (
 # 1. Higher p_T → larger radius → straighter track
 # 2. Positive charge → curves one way, negative → opposite
 # 3. Mass doesn't directly affect radius (only through momentum)
-# 4. Electrons curve tightly because they typically have low p_T
-# 5. Muons curve gently because they typically have high p_T
 #
 # The helix pitch (z-advance per revolution) depends on p_z/p_T ratio.
 
@@ -507,7 +505,7 @@ def generate_straight_track(
 #
 # 3. PARTICLE COMPOSITION (typical jet):
 #    - ~60% pions (π±, π⁰) - lightest mesons
-#    - ~25% kaons (K⁺) - contain a strange quark
+#    - ~25% kaons (K±, K⁰) - contain a strange quark
 #    - ~15% protons/neutrons - baryons
 #    - Plus photons from π⁰ → γγ decay
 #
@@ -1267,7 +1265,7 @@ def main() -> None:
     aprint("    - Muon chambers: only muons reach here")
     aprint("")
     aprint("  Visualization:")
-    aprint("    - Lines: particle trajectories with energy-dependent width")
+    aprint("    - Lines: particle trajectories with p_T-dependent width")
     aprint("    - Points: calorimeter energy deposits (shower clusters)")
     aprint("    - Colors: particle type identification")
     aprint("")
