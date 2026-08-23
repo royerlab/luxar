@@ -24,6 +24,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mocks = vi.hoisted(() => ({
   clearError: vi.fn(),
   showError: vi.fn(),
+  showToast: vi.fn(),
   replaceBrowserDataSourceUrl: vi.fn(),
   DatasetBrowserCtor: vi.fn(),
   logError: vi.fn(),
@@ -35,6 +36,9 @@ vi.mock('../../../../../ui/dataset-browser', () => ({
 vi.mock('../../../../../ui/error-overlay', () => ({
   clearError: mocks.clearError,
   showError: mocks.showError,
+}));
+vi.mock('../../../../../ui/toast', () => ({
+  showToast: mocks.showToast,
 }));
 vi.mock('../../../../../config/url-params', () => ({
   replaceBrowserDataSourceUrl: mocks.replaceBrowserDataSourceUrl,
@@ -53,13 +57,14 @@ import { showDatasetBrowser } from '../../../../../core/app/dataset/show-browser
 interface CapturedOpts {
   container: HTMLElement;
   currentSrc: string | undefined;
-  onDatasetSelect: (url: string) => Promise<void>;
+  onDatasetSelect: (url: string) => false | Promise<void>;
   onClose: () => void;
 }
 
 beforeEach(() => {
   mocks.clearError.mockReset();
   mocks.showError.mockReset();
+  mocks.showToast.mockReset();
   mocks.replaceBrowserDataSourceUrl.mockReset();
   mocks.DatasetBrowserCtor.mockReset();
   mocks.logError.mockReset();
@@ -84,6 +89,7 @@ function makePorts() {
     updateBrowserUrl: true,
     inputHandler: inputHandler as unknown as InputHandler & MockInputHandler,
     onSrcChange: vi.fn(),
+    isInitializing: vi.fn().mockReturnValue(false),
     isSwitchInFlight: vi.fn().mockReturnValue(false),
     loadDataset: vi.fn().mockResolvedValue(undefined),
     onClose: vi.fn(),
@@ -193,6 +199,24 @@ describe('showDatasetBrowser', () => {
       expect(ports.loadDataset).toHaveBeenCalledWith('http://example.com/stale.zarr');
     });
 
+    it('keeps the browser open and shows one neutral hint while the app is initializing', () => {
+      const ports = makePorts();
+      ports.isInitializing.mockReturnValue(true);
+      showDatasetBrowser(ports);
+      const opts = mocks.DatasetBrowserCtor.mock.calls[0][0] as CapturedOpts;
+
+      expect(opts.onDatasetSelect('http://example.com/stale.zarr')).toBe(false);
+
+      expect(mocks.showToast).toHaveBeenCalledExactlyOnceWith(
+        'Luxar is still starting up; try again in a moment.'
+      );
+      expect(mocks.replaceBrowserDataSourceUrl).not.toHaveBeenCalled();
+      expect(ports.onSrcChange).not.toHaveBeenCalled();
+      expect(ports.loadDataset).not.toHaveBeenCalled();
+      expect(mocks.showError).not.toHaveBeenCalled();
+      expect(mocks.logError).not.toHaveBeenCalled();
+    });
+
     it('calls onSrcChange BEFORE loadDataset (so a follow-on browser open lands in the right dir)', async () => {
       const ports = makePorts();
       const order: string[] = [];
@@ -209,7 +233,7 @@ describe('showDatasetBrowser', () => {
     });
 
     // [core OOS] Pre-fix, loadDataset rejections became unhandled promise
-    // rejections (DatasetBrowser's onDatasetSelect signature is
+    // rejections (the normal DatasetBrowser selection path returns
     // `Promise<void>` and the modal doesn't surface its own errors).
     // Now we wrap the call: log + show the failure in the user-facing
     // overlay, and re-throw so awaiting callers still see it.
