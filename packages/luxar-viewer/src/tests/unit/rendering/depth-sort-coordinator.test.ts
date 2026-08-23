@@ -1049,6 +1049,38 @@ describe('depth-sort coordinator', () => {
     expect(ranks).toEqual([1, 2, 3, 4]);
   });
 
+  it('a switch into a sorted mode keeps its rank while the commit stamp is invalidated', async () => {
+    const coord = await loadCoordinator();
+    const requestReprocess = vi.fn();
+    coord.configureDepthSort({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      requestReprocess,
+      isLoadInProgress: () => false,
+    });
+
+    const switched = makeGSplatsMesh(2, 'additive');
+    switched.geometry.boundingSphere!.center.set(0, 0, -30);
+    const stable = makeGSplatsMesh(2, 'normal');
+    stable.geometry.boundingSphere!.center.set(0, 0, -10);
+    coord.noteDepthSortCommit(switched, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(stable, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+
+    // LayersPanel restamps the material before notifying the coordinator.
+    // The invalidated commit stamp forces a reprocess, but the existing
+    // geometry remains visible and must keep its cross-mesh rank meanwhile.
+    (switched.material as THREE.Material).userData.blendingMode = 'normal';
+    coord.noteDepthSortBlendingModeSwitch(switched, 'normal', 'additive');
+    expect(switched.userData.committedData).toBeUndefined();
+    expect(requestReprocess).toHaveBeenCalledTimes(1);
+
+    coord.evaluateDepthSortPerFrame();
+
+    expect(switched.renderOrder).toBe(1);
+    expect(stable.renderOrder).toBe(2);
+  });
+
   it('keeps per-node state independent across two nodes sharing the worker', async () => {
     // Two order-dependent nodes → two independent in-flight sorts on
     // the SAME worker; resolving one must not touch the other, and
