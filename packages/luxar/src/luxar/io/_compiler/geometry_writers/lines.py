@@ -568,8 +568,9 @@ def write_lines(
     group.attrs["type"] = "lines"
     group.attrs["n_vertices"] = n_vertices
     group.attrs["n_segments"] = n_segments
-    if not skip_element_cap_warning:
-        warn_if_over_element_cap("lines", n_segments, group.name)
+    warn_if_over_element_cap(
+        "lines", n_segments, group.name, enabled=not skip_element_cap_warning
+    )
     group.attrs["ndim"] = n_dims
     group.attrs["original_line_type"] = line_type
     group.attrs["has_colors"] = metadata["has_colors"]

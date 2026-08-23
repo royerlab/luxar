@@ -354,8 +354,9 @@ def write_points(
     group.attrs.update(attrs)
     group.attrs["type"] = "points"
     group.attrs["n_points"] = n_points
-    if not skip_element_cap_warning:
-        warn_if_over_element_cap("points", n_points, group.name)
+    warn_if_over_element_cap(
+        "points", n_points, group.name, enabled=not skip_element_cap_warning
+    )
     group.attrs["ndim"] = n_dims
     # Presence flags mirror the Lines writer (has_colors/has_sharpness) so every
     # geometry type stamps the same attrs the viewer can rely on.

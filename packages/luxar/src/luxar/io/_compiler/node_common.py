@@ -515,7 +515,13 @@ def apply_default_render_attrs(attrs: Dict[str, Any]) -> None:
             attrs[key] = WRITER_STAMPED_APPEARANCE_DEFAULTS[key]
 
 
-def warn_if_over_element_cap(geometry_type: str, count: int, node_path: str) -> bool:
+def warn_if_over_element_cap(
+    geometry_type: str,
+    count: int,
+    node_path: str,
+    *,
+    enabled: bool = True,
+) -> bool:
     """Warn when a node holds more elements than one node can render (#1957).
 
     The viewer packs per-element render data into an element texture and
@@ -542,11 +548,13 @@ def warn_if_over_element_cap(geometry_type: str, count: int, node_path: str) -> 
         count: Elements in this node — segments for lines, points for points,
             splats for gsplats.
         node_path: The node's path, for the message.
+        enabled: False to suppress a redundant child warning when its parent
+            checks the aggregate count.
 
     Returns:
         True if a warning was emitted.
     """
-    if geometry_type not in ELEMENT_TEXELS_PER_ELEMENT:
+    if not enabled or geometry_type not in ELEMENT_TEXELS_PER_ELEMENT:
         return False
     cap = max_elements_per_node(geometry_type)
     if count <= cap:
