@@ -1691,16 +1691,6 @@ class TestMergeOrchestrator:
         root = zarr.open_group(str(final), mode="r")
         assert "pipeline" in root, "merged partition is missing the pipeline/ group"
         pipe = dict(root["pipeline"].attrs)
-        assert pipe["recipe"] == "levels"  # the recipe (build instruction)
-        assert pipe["lod_kind"] == "substitutive"  # the reduction MECHANISM
-        assert pipe["per_part"] is True
-        assert pipe["compression_factor"] == 4  # RecipeParams defaults
-        assert pipe["levels"] == 3
-        assert pipe["conserve_mass"] is True
-        assert pipe["refine"] == "none"
-        # None records the per-part default (spatial dims; time axis = barrier).
-        assert pipe["coarsen_dims"] is None
-        pipe = dict(root["pipeline"].attrs)
         assert pipe["recipe"] == "stream"  # the recipe (build instruction)
         assert pipe["lod_kind"] == "additive"  # the reduction MECHANISM, not the recipe
         assert pipe["per_part"] is True
@@ -1743,6 +1733,16 @@ class TestMergeOrchestrator:
 
         root = zarr.open_group(str(final), mode="r")
         assert "pipeline" in root, "merged partition is missing the pipeline/ group"
+        pipe = dict(root["pipeline"].attrs)
+        assert pipe["recipe"] == "levels"  # the recipe (build instruction)
+        assert pipe["lod_kind"] == "substitutive"  # the reduction MECHANISM
+        assert pipe["per_part"] is True
+        assert pipe["compression_factor"] == 4  # RecipeParams defaults
+        assert pipe["levels"] == 3
+        assert pipe["conserve_mass"] is True
+        assert pipe["refine"] == "none"
+        # None records the per-part default (spatial dims; time axis = barrier).
+        assert pipe["coarsen_dims"] is None
 
     def test_merge_recipe_levels_uses_manifest_floor_basis(
         self, tmp_path: Path, monkeypatch
