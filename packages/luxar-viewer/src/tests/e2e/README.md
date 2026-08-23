@@ -313,7 +313,7 @@ silently inert (#1930), so use these instead of hand-rolling the sequence, and
 | Helper                                                                  | Use when                                                                                                                                                                                                                                                                                                                 |
 | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `placeCameraAt(page, position, { target?, up? })`                       | Move the camera and make it stick (pivot defaults to the active controls' target). Returns the POST-clamp position/distance plus `viaOrbitControls`, so a spec can PROVE the camera moved rather than assuming it did. `null` means the debug camera was missing.                                                        |
-| `getCameraPivot(page)`                                                  | Read the active controls' pivot, to express a pose relative to the content centre before placing.                                                                                                                                                                                                                        |
+| `getCameraPivot(page)`                                                  | Read the active controls' pivot, to express a pose relative to the content centre before placing. REJECTS when there is no pivot (no orbit target, no `getFocusTarget()`) instead of answering with the world origin — that silent fallback is half of #1930.                                                            |
 | `withOrbitDistanceLimits(page, limits, body)`                           | Rarely. Runs `body` with the orbit distance clamp widened, restoring the previous limits in a `finally`, and THROWS if the widening could not be applied. The window must span the placement AND the sampling — restoring early lets the next frame pull the camera back.                                                |
 | `UNCLAMPED_ORBIT_DISTANCE_LIMITS`                                       | "Wherever I put it, leave it" limits for the above.                                                                                                                                                                                                                                                                      |
 | `InPageCameraApi`, `Vec3Like`, `CameraPlacement`, `OrbitDistanceLimits` | Types. `InPageCameraApi` types `window.__luxarE2ECamera`, the in-page object the helpers install — a spec that places the camera many times inside ONE `page.evaluate` (the lod-group sweep) drives that object directly, so `placeCameraAt`, that sweep and `ortho-mode.spec.ts` all share one definition of the idiom. |
@@ -333,17 +333,29 @@ can outrun data loading. An LOD registry requests a level's chunks only when tha
 level is first needed and keeps the currently resident level on screen until the
 replacement has arrived, so a sweep that crosses a boundary faster than the fetch
 completes skips that band without any error. Warm the residency up first — coarse
-passes over the same range until every level has been observed visible at least
-once — rather than sleeping for a guessed interval, and bound the warm-up so a
-page that never settles fails loudly instead of hanging (`lod-group.spec.ts`'s
-volumetric cross-fade sweep is the worked example).
+passes over the same range, repeated until every level has been observed visible
+at least once — rather than one guessed sleep up front. The waiting still happens
+(a ≤500 ms backoff between passes, to let in-flight fetches land), but it sits
+INSIDE a loop whose exit is the condition, so a fast page pays one pass and a slow
+one keeps going. Bound the warm-up so a page that never settles fails loudly
+instead of hanging (`lod-group.spec.ts`'s volumetric cross-fade sweep is the
+worked example).
 
 Bounded warm-ups and in-page deadlines are **fail-open**, so let the strength of
-the assertion follow the evidence: that sweep makes its strict per-boundary claim
-only when the warm-up reached residency AND the sweep was not truncated, and
-otherwise falls back to "at least one genuine cross-fade" while saying loudly, in
-the failure text and a `degraded` annotation, that this run could not check every
-boundary. Give any test with in-page deadlines its own `test.setTimeout` that
+the assertion follow the evidence — but only where the evidence really is about
+the clock. That sweep makes its strict per-boundary claim only when the warm-up
+reached residency AND the sweep was not truncated, and otherwise falls back to
+"at least one genuine cross-fade" while saying loudly, in the failure text and a
+`degraded` annotation, that this run could not check every boundary. Distinguish
+the bound that was hit before you degrade on it: a warm-up that exhausted its
+wall-clock budget is a loaded-runner race, but one that exhausted its PASS
+allowance with budget to spare ran every pass on a healthy render loop and still
+never saw a level — a product signal, which that sweep fails on outright rather
+than downgrading. Size an in-page deadline from the budget you actually have, too
+(that sweep's is 90 s inside a 150 s test), or the "exceptional" degraded path
+becomes the normal CI outcome and the strict branch is never exercised.
+
+Give any test with in-page deadlines its own `test.setTimeout` that
 covers their sum with headroom — being killed by the suite-wide budget
 mid-`page.evaluate` throws away the attachment and the annotation, which is the
 least diagnosable way for a diagnostic test to fail.

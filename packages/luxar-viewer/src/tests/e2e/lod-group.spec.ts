@@ -362,6 +362,15 @@ const VOLUMETRIC_FIXTURE =
   'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_lod_group_volumetric.luxar.zarr';
 
 /**
+ * The lod_group THREE node's name — the node path (`load-lod-group-node.ts`
+ * sets `group.name = node.path`), whose children are the `/multires/child_<i>`
+ * meshes this spec probes. Its `children.length` counts levels the name probe
+ * cannot see, which is what makes the contiguity check able to catch a missing
+ * TAIL level as well as a gap.
+ */
+const LOD_GROUP_NAME = '/multires';
+
+/**
  * Steps in the cross-fade distance sweep (inclusive, so 61 samples over the
  * 0.15× → ~15× span). Each step multiplies the distance by 10^(1/30) ≈ 1.08, so
  * the coverage metric moves ~8% per step — several samples inside a
@@ -377,21 +386,62 @@ const WARMUP_STRIDE = 4;
 
 /**
  * Bounds on the residency warm-up: at most this many coarse passes, and at most
- * {@link WARMUP_BUDGET_MS} of wall clock, whichever comes first. Both are
- * fail-open — if residency never settles the measuring sweep runs anyway and the
- * per-boundary assertion reports what was actually observed, because a silently
- * skipped band is exactly what #1930 is about.
+ * {@link WARMUP_BUDGET_MS} of wall clock, whichever comes first. The two exits
+ * are NOT equivalent and the test does not treat them as such — see
+ * {@link WARMUP_CLOCK_SLACK_MS}.
  */
 const WARMUP_MAX_PASSES = 6;
 
 /**
- * Wall-clock budget for the whole warm-up. Worst case is this plus the 20 s
- * sweep deadline, which is why the test raises its own timeout
+ * Wall-clock budget for the whole warm-up. Worst case is this plus
+ * {@link SWEEP_DEADLINE_MS}, which is why the test raises its own timeout
  * (`test.setTimeout`) rather than relying on the suite-wide 60 s one. Observed
  * cost is ~3–5 s (the fixture's levels land within ~4 s of first being
  * requested).
  */
 const WARMUP_BUDGET_MS = 12000;
+
+/**
+ * How much of {@link WARMUP_BUDGET_MS} may be left UNSPENT before an incomplete
+ * warm-up stops counting as a wall-clock race.
+ *
+ * The warm-up has two exits and only one of them is a clock story. Running out
+ * of {@link WARMUP_BUDGET_MS} means the page was too slow to finish the passes —
+ * a loaded-runner race, so the test degrades. Exhausting
+ * {@link WARMUP_MAX_PASSES} with budget to spare means every pass RAN, the render
+ * loop was healthy, and a level still never became visible: that is a product
+ * signal (level selection, `isReady`, the visibility gate), and degrading on it
+ * would swallow exactly the class of defect this test exists to catch — the
+ * 1↔2 band silently absent.
+ *
+ * The margin is one pass's worth of clock, rounded UP: a warm-up pass is 16
+ * poses at ~2 paced frames plus a ≤500 ms backoff — ~1–2 s measured — and the
+ * loop only starts another pass if the deadline has not passed, so anything less
+ * than a pass left over is a clock story either way. 3 s rather than 2 s because
+ * the asymmetry is deliberate: a wrongly-degraded run loses assertion strength
+ * and says so in an annotation, while a wrongly-failed one is a red CI on a
+ * healthy product. Above the margin, the loop stopped because it ran out of
+ * PASSES, not time.
+ */
+const WARMUP_CLOCK_SLACK_MS = 3000;
+
+/**
+ * Hard cap on the measuring sweep, in wall clock.
+ *
+ * Blowing it sets `truncated`, which downgrades the headline assertion — so it
+ * must be genuinely exceptional rather than a routine CI outcome, and it is
+ * sized from the budget that is actually available instead of from a round
+ * number. `test.setTimeout` is 150 s; the `beforeEach` readiness wait can take
+ * 15 s and the warm-up {@link WARMUP_BUDGET_MS} 12 s, and the park, the
+ * blend-state read, the attachment and the assertions cost a few more seconds —
+ * leaving ~115 s. 90 s uses most of that and still keeps ~25 s of margin, and a
+ * healthy run spends ~2 s here, so the cap costs nothing when nothing is wrong.
+ * (The previous 20 s was BELOW the plausible cost of 61 steps × 2 paced frames
+ * on a single-worker software-rendering runner whose dataset server is a
+ * GIL-bound `python -m http.server` — i.e. the strict branch risked never being
+ * exercised in CI while the test stayed green.)
+ */
+const SWEEP_DEADLINE_MS = 90000;
 
 test.describe('lod_group node — volumetric blendable', () => {
   test.beforeEach(async ({ page }) => {
@@ -415,7 +465,7 @@ test.describe('lod_group node — volumetric blendable', () => {
     );
   });
 
-  test('camera driven into a boundary band cross-fades two adjacent volumetric levels, in the volumetric blend state', async ({
+  test('camera swept across every boundary cross-fades each adjacent pair of volumetric levels, in the volumetric blend state', async ({
     page,
   }) => {
     // The suite-wide 60 s budget (playwright.config.ts) does not cover this
@@ -424,9 +474,10 @@ test.describe('lod_group node — volumetric blendable', () => {
     // "Test timeout … exceeded", losing the trace attachment, the warm-up line
     // and the annotation — in the one test whose entire purpose is
     // diagnosability. The worst case is the 15 s readiness wait in `beforeEach`
-    // + the 12 s warm-up budget + the 20 s sweep deadline + the park and two
-    // more evaluates; 150 s covers that with room, and a healthy run still
-    // finishes in a few seconds, so this costs nothing when nothing is wrong.
+    // + the 12 s warm-up budget + the 90 s sweep deadline
+    // ({@link SWEEP_DEADLINE_MS}) + the park and two more evaluates; 150 s
+    // covers that with ~25 s of margin, and a healthy run still finishes in a
+    // few seconds, so this costs nothing when nothing is wrong.
     test.setTimeout(150_000);
 
     // This test must FAIL against the pre-change hard swap, so it is not
@@ -469,9 +520,15 @@ test.describe('lod_group node — volumetric blendable', () => {
       async () => {
         const sweep = await page.evaluate(
           async (cfg) => {
-            const { steps, warmupStride, warmupMaxPasses, warmupBudgetMs } = cfg;
+            const { steps, warmupStride, warmupMaxPasses, warmupBudgetMs, sweepDeadlineMs } = cfg;
+            const lodGroupName = cfg.lodGroupName;
             type Mat = { uniforms?: { uOpacity?: { value: number } } };
-            type Obj = { name?: string; visible?: boolean; material?: Mat };
+            type Obj = {
+              name?: string;
+              visible?: boolean;
+              material?: Mat;
+              children?: unknown[];
+            };
             type Level = { idx: number; opacity: number };
             const w = window as Window &
               typeof globalThis & {
@@ -519,6 +576,20 @@ test.describe('lod_group node — volumetric blendable', () => {
                 }
               });
               return found.sort((a, b) => a - b);
+            };
+            // How many children the lod_group THREE node actually holds —
+            // including any attached as an anonymous placeholder `THREE.Group`
+            // (a nested kind=lod / kind=partition child, `load-lod-group-node.ts`),
+            // which `levelIndices()` above cannot see because it matches on the
+            // `/multires/child_<i>` name. `null` when the group node itself was
+            // not found under that name.
+            const publishedChildren = (): number | null => {
+              let n: number | null = null;
+              debug.scene!.traverse((node) => {
+                const o = node as unknown as Obj;
+                if (o.name === lodGroupName) n = o.children?.length ?? 0;
+              });
+              return n;
             };
             // The LOD registry re-selects and re-writes the fade opacity during the
             // frame's update, so sample only after the renderer's frame counter has
@@ -601,16 +672,31 @@ test.describe('lod_group node — volumetric blendable', () => {
                 await pumpFor(Math.min(500, Math.max(0, warmupDeadline - performance.now())));
               }
             }
+            // `budgetMs` and `maxPasses` ride along so the caller can tell the
+            // two exits apart (out of CLOCK vs out of PASSES) without
+            // re-deriving the config it passed in.
             const warmup = {
               passes: warmupPasses,
+              maxPasses: warmupMaxPasses,
               elapsedMs: performance.now() - warmupStart,
+              budgetMs: warmupBudgetMs,
               resident: residentSeen.slice().sort((a, b) => a - b),
               complete: allResident(),
             };
 
             // --- Measuring sweep ---------------------------------------------
             const trace: { k: number; distance: number; levels: Level[] }[] = [];
-            const blends: { distanceScale: number; levels: Level[]; sum: number }[] = [];
+            const blends: {
+              distanceScale: number;
+              distance: number;
+              levels: Level[];
+              sum: number;
+            }[] = [];
+            // Every placement must be re-derived by ORBIT controls, or the
+            // reported distances are just the request echoed back and prove
+            // nothing about the camera having moved (`CameraPlacement`'s own
+            // JSDoc: assert this whenever that is the point).
+            let viaOrbitControls = true;
             // A healthy run spends ~2 frames (~33 ms) per step; the global deadline
             // only binds when the loop is stalling, and keeps a fully starved page
             // inside the test budget instead of 61 × 500 ms of waiting. It is a
@@ -619,7 +705,7 @@ test.describe('lod_group node — volumetric blendable', () => {
             // step for samples nobody will trust anyway — a spent budget used to
             // still cost ~61 forced frames, which is how a slow page turned a
             // diagnostic into a bare "Test timeout … exceeded" with no attachment.
-            const sweepDeadline = performance.now() + 20000;
+            const sweepDeadline = performance.now() + sweepDeadlineMs;
             let truncatedAt: number | null = null;
             for (let i = 0; i <= steps; i++) {
               if (performance.now() >= sweepDeadline) {
@@ -628,9 +714,11 @@ test.describe('lod_group node — volumetric blendable', () => {
               }
               const k = kAt(i);
               const placed = placeAtK(k);
+              if (!placed || !placed.viaOrbitControls) viaOrbitControls = false;
               await awaitFrames(2, Math.min(500, Math.max(0, sweepDeadline - performance.now())));
               const levels = sample();
-              trace.push({ k, distance: placed ? placed.distance : NaN, levels });
+              const distance = placed ? placed.distance : NaN;
+              trace.push({ k, distance, levels });
               if (
                 levels.length === 2 &&
                 levels[1].idx === levels[0].idx + 1 &&
@@ -638,6 +726,7 @@ test.describe('lod_group node — volumetric blendable', () => {
               ) {
                 blends.push({
                   distanceScale: k,
+                  distance,
                   levels,
                   sum: levels[0].opacity + levels[1].opacity,
                 });
@@ -660,6 +749,8 @@ test.describe('lod_group node — volumetric blendable', () => {
               blends,
               trace,
               levels: allLevels,
+              publishedChildren: publishedChildren(),
+              viaOrbitControls,
               warmup,
               truncated: truncatedAt !== null,
               stepsRun: truncatedAt ?? steps + 1,
@@ -671,15 +762,21 @@ test.describe('lod_group node — volumetric blendable', () => {
             warmupStride: WARMUP_STRIDE,
             warmupMaxPasses: WARMUP_MAX_PASSES,
             warmupBudgetMs: WARMUP_BUDGET_MS,
+            sweepDeadlineMs: SWEEP_DEADLINE_MS,
+            lodGroupName: LOD_GROUP_NAME,
           }
         );
 
         // Every VISIBLE child renders in the pinned volumetric blend state
         // (One/OneMinusSrcAlpha premultiplied emission–absorption, depthWrite
         // unconditionally false) with its authored κ — the fade drives opacity
-        // only, never the mode. Read INSIDE the widened-limits window: restoring
-        // the scene-derived clamp first would let the next frame pull the camera
-        // off the blend pose (`runUpdateStep` step 6 re-clamps every frame).
+        // only, never the mode. Read INSIDE the widened-limits window for the
+        // same reason the wrapper is here at all — defensively, and so the whole
+        // sweep-then-sample sequence runs under ONE clamp regime. As written the
+        // real clamp cannot fire (it is `[D/1000, D×10000]` and the park pose is
+        // decades inside it), so restoring it first would not move the camera;
+        // but the sweep's range is a knob, and a widened `kAt` would make the
+        // placement and the sampling disagree if only one of them were covered.
         const states = await page.evaluate(() => {
           const debug = (
             window as Window & typeof globalThis & { __luxarDebug?: { scene?: unknown } }
@@ -737,32 +834,49 @@ test.describe('lod_group node — volumetric blendable', () => {
       sweep,
       'the in-page sweep could not run: no debug scene/camera, or the camera-placement helper was not installed'
     ).not.toBeNull();
-    const { blends, trace, levels, warmup, truncated, stepsRun, stepsPlanned } = sweep!;
+    const {
+      blends,
+      trace,
+      levels,
+      publishedChildren,
+      viaOrbitControls,
+      warmup,
+      truncated,
+      stepsRun,
+      stepsPlanned,
+    } = sweep!;
 
     // The full per-step record goes to the report as an attachment rather than
     // to stdout, so a passing run stays quiet but a future failure can tell
     // "the band exists but is narrow" from "the opacities are only ever 0/1".
     await test.info().attach('lod-volumetric-sweep.json', {
-      body: JSON.stringify({ levels, warmup, truncated, stepsRun, stepsPlanned, trace }, null, 2),
+      body: JSON.stringify(
+        {
+          levels,
+          publishedChildren,
+          viaOrbitControls,
+          warmup,
+          truncated,
+          stepsRun,
+          stepsPlanned,
+          trace,
+        },
+        null,
+        2
+      ),
       contentType: 'application/json',
     });
-    // Whether this run is allowed to make the STRICT per-boundary claim. Both
-    // degradations are wall-clock races on a loaded runner, not product bugs:
-    // an incomplete warm-up means a band can have been skipped by the loader,
-    // and a truncated sweep means part of the distance range was never visited.
-    const conclusive = warmup.complete && !truncated;
     const warmupText =
-      `residency warm-up: ${warmup.passes} pass(es), ${warmup.elapsedMs.toFixed(0)} ms, ` +
+      `residency warm-up: ${warmup.passes}/${warmup.maxPasses} pass(es), ` +
+      `${warmup.elapsedMs.toFixed(0)} ms of ${warmup.budgetMs} ms, ` +
       `levels seen resident [${warmup.resident.join(', ')}] of [${levels.join(', ')}]` +
       (warmup.complete ? '' : ' — INCOMPLETE, so a band may have been skipped by the loader');
     const sweepText =
       `sweep: ${stepsRun}/${stepsPlanned} steps` +
-      (truncated ? ' — TRUNCATED on the 20 s in-page deadline, range not fully visited' : '');
-    if (!conclusive) {
-      test
-        .info()
-        .annotations.push({ type: 'degraded', description: `${warmupText}; ${sweepText}` });
-    }
+      (truncated
+        ? ` — TRUNCATED on the ${(SWEEP_DEADLINE_MS / 1000).toFixed(0)} s in-page deadline, ` +
+          'range not fully visited'
+        : '');
     const traceText = trace
       .map(
         (s) =>
@@ -778,10 +892,47 @@ test.describe('lod_group node — volumetric blendable', () => {
     // never got to.
     const report = `${warmupText}\n${sweepText}\n${traceText}`;
 
+    // An incomplete warm-up is only an excuse when it ran out of CLOCK. If it
+    // exhausted its PASS allowance with budget to spare, every pass ran, the
+    // render loop was healthy, and a level still never became visible — a
+    // product signal (level selection / `isReady` / the visibility gate), and
+    // degrading here would swallow the very defect this test was written for.
+    // See WARMUP_CLOCK_SLACK_MS for why one pass's worth of clock is the margin.
+    const warmupClockSpent = warmup.budgetMs - warmup.elapsedMs <= WARMUP_CLOCK_SLACK_MS;
+    expect(
+      warmup.complete || warmupClockSpent,
+      'a level was never displayed even though the residency warm-up had time left: it stopped ' +
+        `after ${warmup.passes}/${warmup.maxPasses} passes having spent ` +
+        `${warmup.elapsedMs.toFixed(0)} ms of its ${warmup.budgetMs} ms budget, so this is NOT a ` +
+        'loader race on a slow runner — level(s) ' +
+        `[${levels.filter((l) => !warmup.resident.includes(l)).join(', ')}] never became ` +
+        `visible at any pose in the sweep range:\n${report}`
+    ).toBe(true);
+    // Whether this run is allowed to make the STRICT per-boundary claim. Both
+    // remaining degradations are wall-clock races on a loaded runner, not
+    // product bugs: a warm-up that ran out of budget means a band can have been
+    // skipped by the loader, and a truncated sweep means part of the distance
+    // range was never visited. (The third possibility — an incomplete warm-up
+    // with budget left — was just rejected outright above.)
+    const conclusive = warmup.complete && !truncated;
+    if (!conclusive) {
+      test
+        .info()
+        .annotations.push({ type: 'degraded', description: `${warmupText}; ${sweepText}` });
+    }
+
     // THE inertness guard (#1930): the sweep is only evidence about cross-fading
     // if the camera actually moved. Distances are measured AFTER the controls
     // re-applied their state, so this also catches a distance clamp silently
-    // pinning every step to the same pose.
+    // pinning every step to the same pose. `viaOrbitControls` is the other half:
+    // without an orbit controller re-deriving each write, those distances are
+    // just the request echoed back and prove nothing (`CameraPlacement`'s JSDoc).
+    expect(
+      viaOrbitControls,
+      'every placement in the sweep must have been re-derived by orbit controls; without that ' +
+        "the reported distances are the requested ones echoed back, not the controls' own " +
+        `post-clamp answer:\n${report}`
+    ).toBe(true);
     expect(
       trace.every((s) => Number.isFinite(s.distance) && s.distance > 0),
       `every sweep step must report a finite positive camera distance:\n${report}`
@@ -812,6 +963,60 @@ test.describe('lod_group node — volumetric blendable', () => {
       expect(b.sum).toBeCloseTo(1, 5);
     }
 
+    // ...and each band is a DISSOLVE, in the right direction. Everything above
+    // is satisfied by a static 50/50 split and by an INVERTED mapping (the
+    // coarse level wearing the fine level's weight), which are the two mutants
+    // that survive it: neither changes adjacency, strict partiality or the sum.
+    // The registry's contract is that the finer level fades OUT as the camera
+    // retreats, so within a band the higher-index child's opacity must be
+    // non-increasing in distance (lod children are authored coarse → fine, which
+    // this fixture's 0 / 0.5 / 1.0 ladder follows: child_2 is the finest) and
+    // must actually MOVE rather than sit on a constant.
+    const FADE_MONOTONIC_EPS = 0.02; // float noise on a weight in [0, 1]
+    const FADE_MIN_SPREAD = 0.1; // a real dissolve crosses far more than this
+    const FADE_MIN_SAMPLES = 3; // below this, "it varied" is not yet evidence
+    // Consecutive blend samples sharing the same adjacent pair = one traversal
+    // of one band (the sweep visits distances in increasing order, so these are
+    // already ordered by distance).
+    type Blend = (typeof blends)[number];
+    const bands: Blend[][] = [];
+    for (const b of blends) {
+      const current = bands[bands.length - 1];
+      const previous = current?.[current.length - 1];
+      if (current && previous && previous.levels[0].idx === b.levels[0].idx) current.push(b);
+      else bands.push([b]);
+    }
+    for (const band of bands) {
+      const [lo, hi] = [band[0].levels[0].idx, band[0].levels[1].idx];
+      const bandText = band
+        .map(
+          (s) =>
+            `  d=${s.distance.toFixed(4)} ` +
+            s.levels.map((l) => `${l.idx}:${l.opacity.toFixed(3)}`).join(' ')
+        )
+        .join('\n');
+      const fine = band.map((s) => s.levels[1].opacity);
+      for (let i = 1; i < fine.length; i++) {
+        expect(
+          fine[i],
+          `in the ${lo}↔${hi} band the finer level (${hi}) must fade OUT as the camera retreats, ` +
+            `but its opacity rose from ${fine[i - 1].toFixed(3)} to ${fine[i].toFixed(3)} between ` +
+            `d=${band[i - 1].distance.toFixed(4)} and d=${band[i].distance.toFixed(4)} — an ` +
+            `inverted dissolve hands each level its partner's weight:\n${bandText}\n\n${report}`
+        ).toBeLessThanOrEqual(fine[i - 1] + FADE_MONOTONIC_EPS);
+      }
+      if (band.length >= FADE_MIN_SAMPLES) {
+        const fineSpread = Math.max(...fine) - Math.min(...fine);
+        expect(
+          fineSpread,
+          `the ${lo}↔${hi} band was sampled ${band.length} times but level ${hi}'s opacity barely ` +
+            `moved (spread ${fineSpread.toFixed(3)}); the blend weight must VARY with distance — ` +
+            'a constant split is a pop at each band edge, which is what the cross-fade ' +
+            `exists to prevent:\n${bandText}\n\n${report}`
+        ).toBeGreaterThan(FADE_MIN_SPREAD);
+      }
+    }
+
     expect(
       levels.length,
       `the fixture must publish at least two LOD levels:\n${report}`
@@ -829,6 +1034,20 @@ test.describe('lod_group node — volumetric blendable', () => {
         'not visible to this probe (a nested lod/partition child is an anonymous Group ' +
         `until first activation), which would silently weaken the per-boundary check:\n${report}`
     ).toEqual(levels.map((_, i) => i));
+    // Contiguity alone cannot catch a missing TAIL — `[0, 1]` is contiguous, and
+    // the finest level is the natural place for a nested lod/partition child, so
+    // exactly the case the message above describes would slip through. Compare
+    // against the lod group's own `children.length`, which counts the anonymous
+    // placeholder Groups the name probe cannot see. `null` = the group node was
+    // not found by name, which the level names already contradict, so fail too.
+    expect(
+      publishedChildren,
+      `the probe saw ${levels.length} named lod level(s) but ${LOD_GROUP_NAME} holds ` +
+        `${publishedChildren ?? 'an unknown number of'} children: a level invisible to the ` +
+        `\`${LOD_GROUP_NAME}/child_<i>\` name match (a nested lod/partition child is an ` +
+        'anonymous Group until first activation) would silently drop the last boundary pair ' +
+        `from the per-boundary check:\n${report}`
+    ).toBe(levels.length);
     // Pairs come from CONSECUTIVE OBSERVED entries rather than from `i, i+1`, so
     // the contract follows what the scene actually published.
     const boundaries: [number, number][] = levels

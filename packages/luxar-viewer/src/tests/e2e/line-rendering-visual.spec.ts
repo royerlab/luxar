@@ -18,7 +18,6 @@ import {
   assertNoShaderErrors,
   samplePixelsAt,
   placeCameraAt,
-  type SampledPixel,
 } from './helpers';
 
 const FIXTURES_BASE = 'http://localhost:9000/packages/luxar-viewer/tests/fixtures';
@@ -85,34 +84,40 @@ test.describe('Lines visual correctness', () => {
     await assertNoShaderErrors(page);
 
     // Sample 4 corners of the canvas. The failure mode this guards is one
-    // near-camera segment painting the ENTIRE viewport, and its signature is
-    // that all four corners are painted with essentially the SAME colour.
+    // near-camera segment painting the ENTIRE viewport, so assert what that
+    // artefact DESTROYS: with the camera on the zigzag's near tip, the line
+    // occupies part of the frame and at least one corner must still read as
+    // background. A screen-filling segment leaves none.
     //
-    // Not "all four saturated": the fixture's vertices carry a red→blue
-    // gradient (`generate_test_data.py`), so `r>240 && g>240 && b>240` cannot
-    // be true of a line fragment no matter how badly the shader misbehaves —
-    // the old assertion could not fail. The "all painted" precondition keeps
-    // the check off a legitimately dark frame, where four near-identical BLACK
-    // corners are the correct answer rather than an artefact.
-    const samples = await samplePixelsAt(page, 'canvas', [
+    // Deliberately not a colour-uniformity test. "All four saturated"
+    // (`r>240 && g>240 && b>240`) was unfalsifiable — the fixture's vertices
+    // carry a red→blue gradient with g == 0 everywhere (`generate_test_data.py`)
+    // — and "all four within N of each other" is no better: adjacent vertices
+    // differ by 1/9 in R and B, ~28/255 across a single segment, so an artefact
+    // that keeps any of the line's own interpolation is wider than any threshold
+    // tight enough to mean something. "A corner is still background" needs no
+    // threshold derivation, and is falsifiable by construction: it fails the
+    // moment the frame is fully painted.
+    const CORNERS: Array<[number, number]> = [
       [0.05, 0.05],
       [0.95, 0.05],
       [0.05, 0.95],
       [0.95, 0.95],
-    ]);
-    const spread = (get: (p: SampledPixel) => number): number =>
-      Math.max(...samples.map(get)) - Math.min(...samples.map(get));
-    const maxSpread = Math.max(
-      spread((p) => p.r),
-      spread((p) => p.g),
-      spread((p) => p.b)
+    ];
+    const samples = await samplePixelsAt(page, 'canvas', CORNERS);
+    // Printed on every run, pass or fail: this predicate is only meaningful if
+    // the healthy frame really does leave a corner dark, and that claim should
+    // be checkable from the run log rather than taken on trust.
+    console.log(
+      `[near-camera line] corner samples ${JSON.stringify(CORNERS)} → ${JSON.stringify(samples)}`
     );
-    const allPainted = samples.every((p) => p.r + p.g + p.b > 30);
+    const BACKGROUND_SUM = 30; // r+g+b at/below this is "unpainted" (near-black)
+    const painted = samples.filter((p) => p.r + p.g + p.b > BACKGROUND_SUM);
     expect(
-      allPainted && maxSpread <= 8,
-      'every canvas corner is painted in the same colour ' +
-        `(max per-channel spread ${maxSpread}/255), which is what a single near-camera ` +
-        `segment covering the whole viewport looks like: ${JSON.stringify(samples)}`
-    ).toBe(false);
+      painted.length,
+      'every canvas corner is painted, i.e. the frame has no background left — which is what a ' +
+        'single near-camera segment covering the whole viewport looks like ' +
+        `(corner r+g+b must fall to ≤ ${BACKGROUND_SUM} somewhere): ${JSON.stringify(samples)}`
+    ).toBeLessThan(CORNERS.length);
   });
 });

@@ -2157,6 +2157,11 @@ export const UNCLAMPED_ORBIT_DISTANCE_LIMITS: OrbitDistanceLimits = {
  * from inside ONE `page.evaluate` all describe the same shape.
  */
 export interface InPageCameraApi {
+  /**
+   * The active controls' pivot. THROWS when there is none (no orbit-like
+   * target and no `getFocusTarget()`) rather than answering with the world
+   * origin — see {@link getCameraPivot}.
+   */
   pivot(): Vec3Like;
   place(position: Vec3Like, target?: Vec3Like | null, up?: Vec3Like | null): CameraPlacement | null;
   /**
@@ -2186,8 +2191,8 @@ export interface InPageCameraApi {
  *    `LuxarOrbitControls`.** It has no `target` field, so the common
  *    `debug.controls.target ?? {x:0,y:0,z:0}` reads `undefined` and quietly
  *    falls back to the world origin instead of the real pivot. The pivot comes
- *    from `getControls().target` (falling back to `getFocusTarget()`, then the
- *    origin).
+ *    from `getControls().target`, falling back to `getFocusTarget()` and then
+ *    THROWING — never to the origin, which is the silent answer that hid #1930.
  * 2. **`update()` overwrites `camera.position`.** `runUpdateStep` step 8 calls
  *    `applyToCamera(camera, target, orientation, distance)` unconditionally, so
  *    the controls' own state — not the camera transform — is authoritative. An
@@ -2235,12 +2240,20 @@ async function installCameraPlacement(page: Page): Promise<void> {
       return c && c.target && typeof c.reinitialize === 'function' ? c : null;
     };
 
+    // THROWS rather than falling back to the world origin. A silent
+    // origin fallback is exactly what made the #1930 sweep inert-looking
+    // ("the pivot is (0,0,0)" is indistinguishable from "there is no pivot"),
+    // so an unusable pivot is reported instead of quietly substituted.
     const pivot = (): Vec3 => {
       const t = orbit()?.target;
       if (t) return { x: t.x, y: t.y, z: t.z };
       const f = w.__luxarDebug?.controls?.getFocusTarget?.();
       if (f) return { x: f.x, y: f.y, z: f.z };
-      return { x: 0, y: 0, z: 0 };
+      throw new Error(
+        '__luxarE2ECamera.pivot(): no orbit-like controls target and no getFocusTarget() on ' +
+          '__luxarDebug.controls, so there is no pivot to aim at. Pass an explicit target, or ' +
+          'wait for the controls to initialize — do NOT read this as the world origin (#1930).'
+      );
     };
 
     const api = {
@@ -2296,8 +2309,12 @@ async function installCameraPlacement(page: Page): Promise<void> {
 
 /**
  * The active controls' pivot — `getControls().target`, falling back to
- * `getFocusTarget()` and then the world origin. Use it to express a pose
- * RELATIVE to the content centre before handing it to {@link placeCameraAt}.
+ * `getFocusTarget()`. Use it to express a pose RELATIVE to the content centre
+ * before handing it to {@link placeCameraAt}.
+ *
+ * REJECTS when neither is available. The world origin is deliberately NOT a
+ * fallback: it is a plausible-looking wrong answer that reads as a real pivot,
+ * which is half of how #1930 stayed hidden.
  */
 export async function getCameraPivot(page: Page): Promise<Vec3Like> {
   await installCameraPlacement(page);
