@@ -397,11 +397,20 @@ export class PickingSystem {
     this.scheduler.markDirty();
   }
 
-  /** Update camera reference (e.g., after perspective ↔ orthographic swap). */
+  /**
+   * Update camera reference (e.g., after perspective ↔ orthographic swap).
+   *
+   * Routed through {@link markDirty} rather than setting `_dirty` directly:
+   * swapping the camera reprojects every element on screen, so besides
+   * re-rendering the pick buffer it must also advance the generation counter
+   * and fade the now-stale tooltip. Setting `_dirty` alone left an
+   * already-delivered `PickResult` looking valid — the same family of bug as
+   * an FOV edit (#1916) — so a click after an ortho toggle with a stationary
+   * cursor acted on whatever used to be under it (#1917).
+   */
   setCamera(camera: THREE.Camera): void {
     this.camera = camera;
-    this._dirty = true; // Must re-render pick buffer with new projection
-    this.scheduler.markDirty();
+    this.markDirty();
   }
 
   /** Set post-processing reference for lens distortion correction. */

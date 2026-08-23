@@ -112,7 +112,14 @@ export interface SelectionPayload {
  * so all of that type's caveats about `elementIndex` apply here unchanged.
  */
 export interface ElementPointerPayload extends SelectionPayload {
-  /** Which pointer button: 0 = primary, 2 = secondary. */
+  /**
+   * Which pointer button: 0 = primary, 2 = secondary.
+   *
+   * Reports the raw DOM value, so a macOS Ctrl+primary-click — the
+   * platform's secondary gesture — arrives as `0` on an
+   * `element-contextmenu` event. Switch on the event NAME, not on this,
+   * to tell the two gestures apart.
+   */
   button: number;
   /** Viewport coordinates of the gesture, in CSS pixels. */
   x: number;
@@ -144,10 +151,11 @@ export interface ElementPointerPayload extends SelectionPayload {
  *   `selection`, these are gesture-driven. They fire ALONGSIDE the built-in
  *   behaviour rather than instead of it: a host that wants exclusive control
  *   should also pass `allowLinks: false` (or load with `?no-links`), which
- *   suppresses navigation while still delivering the events. Note these do
- *   NOT provision picking on their own — a scene with no labels and no
- *   interaction templates needs a `selection` listener at load time to turn
- *   picking on at all.
+ *   suppresses navigation while still delivering the events. Like `selection`,
+ *   a listener present at dataset-load time provisions the picking pipeline,
+ *   so subscribe BEFORE `init()` / `switchDataset()` — on a scene with no
+ *   labels and no interaction templates, subscribing afterwards leaves picking
+ *   switched off and the event never fires.
  */
 export interface LuxarEmbedderEventMap {
   'dataset-loaded': { src: string };

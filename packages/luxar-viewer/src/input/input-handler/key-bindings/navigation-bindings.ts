@@ -11,7 +11,7 @@ import { isFocusOnSceneCanvas } from '../commands/focus-utils';
 import type { KeyBindingsDeps } from './register-all';
 
 export function registerNavigationBindings(deps: KeyBindingsDeps): void {
-  const { contextManager, debugConsole, panels, commands } = deps;
+  const { contextManager, debugConsole, panels, commands, sceneManager } = deps;
 
   // Dimension navigation
   contextManager.registerBinding(InputContext.NAVIGATION, {
@@ -77,8 +77,20 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
   // Dispatches a window event rather than calling a command, because the
   // listener is rebuilt on every dataset load while this binding lives for the
   // app's lifetime. Same decoupling as `open-dataset-browser` above.
+  //
+  // Gated on focus being on the scene itself. The layers panel handles these
+  // same two keys on its own row listener and calls `preventDefault()` but NOT
+  // `stopPropagation()`, so the event still bubbles to the window-level
+  // handler — and `openContextMenu` is module-global, so without this guard a
+  // Shift+F10 on a focused layer row would CLOSE the layer menu and open the
+  // canvas one instead. (Reaching the panel by mouse hides the bug: leaving
+  // the canvas fires `mouseleave`, which invalidates the cached pick. Reaching
+  // it by Tab does not.) Same guard the other scene-scoped global keys use.
   const openElementMenu = (): void => {
-    if (!isFocusOnSceneCanvas(document.activeElement, deps.sceneManager.renderer.domElement)) {
+    // Optional-chained: `renderer` is definitely-assigned in production but a
+    // stubbed SceneManager in tests need not carry one, and a missing canvas
+    // should disable the shortcut rather than throw inside a key handler.
+    if (!isFocusOnSceneCanvas(document.activeElement, sceneManager.renderer?.domElement ?? null)) {
       return;
     }
     window.dispatchEvent(new CustomEvent('luxar-open-element-menu'));

@@ -224,29 +224,24 @@ describe('click vs camera gesture', () => {
     expect(h.openUrl).toHaveBeenCalledOnce();
   });
 
-  it('a right-drag opens no menu', () => {
-    const h = setup({}, LINKED);
-    gesture(h.canvas, { x: 100, y: 80, button: 2, by: 25 });
-    expect(h.openMenu).not.toHaveBeenCalled();
-  });
-
-  it('a second pointer (pinch) suppresses the gesture entirely', () => {
+  /**
+   * The discriminating case for the gesture threshold, found by mutation
+   * testing: deleting the threshold left every existing test green.
+   *
+   * The cache carries its own 4 px slop, so a drag that ENDS far from the pick
+   * is rejected by the cache regardless. The two guards only diverge when the
+   * press starts far away and the release lands exactly ON the element — a
+   * camera drag that happens to finish over a link. Only the gesture threshold
+   * catches that one.
+   */
+  it('a drag that STARTS far away and ends on the element opens nothing', () => {
     const h = setup({}, LINKED);
     h.canvas.dispatchEvent(
       new PointerEvent('pointerdown', {
         pointerId: 1,
         button: 0,
-        clientX: 100,
-        clientY: 80,
-        bubbles: true,
-      })
-    );
-    h.canvas.dispatchEvent(
-      new PointerEvent('pointerdown', {
-        pointerId: 2,
-        button: 0,
-        clientX: 300,
-        clientY: 200,
+        clientX: 400,
+        clientY: 300,
         bubbles: true,
       })
     );
@@ -254,12 +249,77 @@ describe('click vs camera gesture', () => {
       new PointerEvent('pointerup', {
         pointerId: 1,
         button: 0,
-        clientX: 100,
+        clientX: 100, // exactly where the pick was taken
         clientY: 80,
         bubbles: true,
       })
     );
     expect(h.openUrl).not.toHaveBeenCalled();
+  });
+
+  it('a right-drag opens no menu', () => {
+    const h = setup({}, LINKED);
+    gesture(h.canvas, { x: 100, y: 80, button: 2, by: 25 });
+    expect(h.openMenu).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A pinch must be rejected on BOTH release orders, and the second one is the
+   * dangerous case. Releasing the first of two fingers leaves one pointer down
+   * and bails on `down.size > 0`; releasing the LAST one leaves the map empty,
+   * which is indistinguishable from a single click unless the gesture is
+   * latched as multi-touch. Testing only the first order (as this file
+   * originally did) passes against an implementation where every pinch ends by
+   * opening a link.
+   */
+  describe('a pinch never becomes a click', () => {
+    const send = (canvas: HTMLElement, type: string, pointerId: number, x: number, y: number) =>
+      canvas.dispatchEvent(
+        new PointerEvent(type, { pointerId, button: 0, clientX: x, clientY: y, bubbles: true })
+      );
+
+    it('when the first finger is released first', () => {
+      const h = setup({}, LINKED);
+      send(h.canvas, 'pointerdown', 1, 100, 80);
+      send(h.canvas, 'pointerdown', 2, 300, 200);
+      send(h.canvas, 'pointerup', 1, 100, 80);
+      send(h.canvas, 'pointerup', 2, 300, 200);
+      expect(h.openUrl).not.toHaveBeenCalled();
+    });
+
+    it('when the second finger is released first, leaving the first alone on release', () => {
+      const h = setup({}, LINKED);
+      send(h.canvas, 'pointerdown', 1, 100, 80);
+      send(h.canvas, 'pointerdown', 2, 300, 200);
+      send(h.canvas, 'pointerup', 2, 300, 200);
+      send(h.canvas, 'pointerup', 1, 100, 80); // lands exactly on the element
+      expect(h.openUrl).not.toHaveBeenCalled();
+    });
+
+    it('but a genuine click AFTER a pinch still works', () => {
+      // The latch must clear once the canvas is idle, or the first pinch would
+      // disable clicking for the rest of the session.
+      const h = setup({}, LINKED);
+      send(h.canvas, 'pointerdown', 1, 100, 80);
+      send(h.canvas, 'pointerdown', 2, 300, 200);
+      send(h.canvas, 'pointerup', 2, 300, 200);
+      send(h.canvas, 'pointerup', 1, 100, 80);
+      expect(h.openUrl).not.toHaveBeenCalled();
+
+      gesture(h.canvas, { x: 100, y: 80 });
+      expect(h.openUrl).toHaveBeenCalledOnce();
+    });
+
+    it('and a pointercancel mid-pinch still clears the latch', () => {
+      const h = setup({}, LINKED);
+      send(h.canvas, 'pointerdown', 1, 100, 80);
+      send(h.canvas, 'pointerdown', 2, 300, 200);
+      send(h.canvas, 'pointercancel', 1, 100, 80);
+      send(h.canvas, 'pointercancel', 2, 300, 200);
+
+      gesture(h.canvas, { x: 100, y: 80 });
+      expect(h.openUrl).toHaveBeenCalledOnce();
+    });
   });
 
   it('ignores the middle button', () => {
@@ -420,6 +480,14 @@ describe('allowLinks: false — the embedder kill switch', () => {
     const h = setup({ allowLinks: false }, LINKED);
     gesture(h.canvas, { x: 100, y: 80 });
     expect(h.onElementClick).toHaveBeenCalledWith(expect.objectContaining({ link: null }));
+  });
+
+  it('drops the link items from the KEYBOARD menu too', () => {
+    // Previously its own copy of the gate, on a path with no pointer
+    // feedback — the likeliest place for the rule to drift unnoticed.
+    const h = setup({ allowLinks: false }, LINKED);
+    window.dispatchEvent(new CustomEvent(OPEN_ELEMENT_MENU_EVENT));
+    expect(h.menuItems().map((i) => i.label)).toEqual(['Copy "P04637"']);
   });
 
   it('leaves the cursor alone', () => {

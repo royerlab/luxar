@@ -147,6 +147,24 @@ describe('substituteHoverTemplate — empty-substitution reporting', () => {
     expect(hadEmptySubstitution).toBe(false);
   });
 
+  it.each([
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+    ['-1', -1],
+    ['a fraction', 1.5],
+  ])('flags a corrupt element index (%s) instead of stringifying it', (_name, elementIndex) => {
+    // An index is a non-negative integer by construction; anything else did
+    // not survive the pick pipeline. Stringifying it would render "NaN" in a
+    // tooltip and — far worse — navigate a `link` to https://site/NaN.
+    const { text, hadEmptySubstitution } = substituteHoverTemplate(
+      '{hover_index}',
+      { ...VALUES, elementIndex },
+      'url'
+    );
+    expect(text).toBe('');
+    expect(hadEmptySubstitution).toBe(true);
+  });
+
   it('flags an empty node name', () => {
     const { hadEmptySubstitution } = substituteHoverTemplate(
       '{hover_node}',

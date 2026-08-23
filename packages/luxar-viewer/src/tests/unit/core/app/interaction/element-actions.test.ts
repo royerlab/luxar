@@ -87,6 +87,21 @@ describe('buildElementUrl — relative templates', () => {
     }
   );
 
+  it.each([
+    'https://good.example@evil.example/',
+    'https://user:pass@evil.example/',
+    'https://:pass@evil.example/',
+  ])('rejects embedded credentials in %s', (template) => {
+    // Navigates to evil.example while READING as good.example — including in
+    // the `Copy link address` menu item, the one place a user might vet the
+    // destination. Nothing legitimate needs userinfo in a scene link.
+    expect(buildElementUrl(template, VALUES)).toBeNull();
+  });
+
+  it('explains a credential-bearing template at load time', () => {
+    expect(explainLinkRejection('https://good.example@evil.example/')).toMatch(/credentials/);
+  });
+
   /**
    * Documents a deliberate divergence from the Python writer's check.
    *

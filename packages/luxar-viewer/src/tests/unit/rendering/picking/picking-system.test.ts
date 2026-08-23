@@ -1360,6 +1360,48 @@ describe('PickingSystem — pickGeneration / visibleSignature', () => {
     expect(system.pickGeneration).toBe(before);
   });
 
+  /**
+   * A perspective↔ortho swap reprojects every element on screen. Before
+   * #1917 `setCamera` set `_dirty` directly and advanced NEITHER counter, so a
+   * cached pick survived it: hover an element, press the ortho toggle (no
+   * mouse movement, so no `mousemove` to bump the generation), click, and the
+   * click acted on whatever used to be under the cursor. Same family as the
+   * FOV gap in #1916.
+   */
+  it('setCamera advances the generation — a projection swap invalidates a cached pick', () => {
+    const before = system.pickGeneration;
+    system.setCamera(new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100));
+    expect(system.pickGeneration).toBeGreaterThan(before);
+  });
+
+  it('clearRegistrationsForRebuild changes the visible signature', () => {
+    // Context restore empties the node map without touching the generation;
+    // the signature is what catches it.
+    const mainNode = new THREE.Object3D();
+    const pickMesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+    system.registerNode(mainNode, pickMesh, system.allocatePickId());
+
+    const before = system.visibleSignature;
+    system.clearRegistrationsForRebuild();
+    expect(system.visibleSignature).not.toBe(before);
+  });
+
+  it('invalidateCanvasRect does NOT invalidate — a page scroll is not a view change', () => {
+    // Scrolling moves the canvas within the page but not content within the
+    // canvas, and both the cached pick and the click convert to canvas-local
+    // coordinates, so they shift together. Invalidating here would drop a
+    // perfectly good pick on every scroll event.
+    const mainNode = new THREE.Object3D();
+    const pickMesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+    system.registerNode(mainNode, pickMesh, system.allocatePickId());
+
+    const g = system.pickGeneration;
+    const s = system.visibleSignature;
+    system.invalidateCanvasRect();
+    expect(system.pickGeneration).toBe(g);
+    expect(system.visibleSignature).toBe(s);
+  });
+
   it('visibleSignature changes when a registered node is hidden', () => {
     // The signal `pickGeneration` cannot carry: hiding a layer from the panel
     // does not dirty the buffer (`applyVisibility` only requests a render).

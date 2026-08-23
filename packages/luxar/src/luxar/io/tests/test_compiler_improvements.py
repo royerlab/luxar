@@ -2294,6 +2294,26 @@ class TestInteractionTemplateAttrs:
             root = zarr.open_group(str(zarr_path), mode="r")
             assert "pts" not in root
 
+    @pytest.mark.parametrize(
+        "bad_link",
+        [
+            "https://good.example@evil.example/",
+            "https://user:pass@evil.example/",
+            "https://:pass@evil.example/",
+        ],
+    )
+    def test_embedded_credentials_rejected(self, bad_link: str) -> None:
+        """`https://good.example@evil.example/` navigates to evil.example while
+        READING as good.example — including in the viewer's own
+        'Copy link address'. Nothing legitimate needs userinfo in a scene link."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            with pytest.raises(ValueError, match="credentials"):
+                scene.add_points("pts", self.POS, link=bad_link)
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert "pts" not in root
+
     def test_hostless_link_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             _, compiler, scene = self._scene(tmpdir)
@@ -2375,6 +2395,85 @@ class TestInteractionTemplateAttrs:
             with pytest.raises(ValueError, match="Did you mean 'link'"):
                 scene.add_points("pts", self.POS, lnk="https://example.org/")
             compiler.finalize()
+
+    def test_templates_accepted_on_mesh(self) -> None:
+        """Mesh runs the same gate but through MESH_RESERVED_ATTRS and its own
+        mesh-only appearance guard, so it needs its own coverage — the other
+        three passing says nothing about it."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            verts = np.array(
+                [[0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0]], dtype=np.float32
+            )
+            faces = np.array([[0, 1, 2], [1, 3, 2]], dtype=np.uint32)
+            scene.add_mesh(
+                "surf",
+                vertices=verts,
+                faces=faces,
+                labels=["a", "b", "c", "d"],
+                link="https://example.org/{hover_label}",
+                copy="{hover_label}",
+                link_target="_self",
+            )
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert root["surf"].attrs["link"] == "https://example.org/{hover_label}"
+            assert root["surf"].attrs["copy"] == "{hover_label}"
+            assert root["surf"].attrs["link_target"] == "_self"
+
+    def test_templates_rejected_on_mesh_too(self) -> None:
+        """The gate must be as strict on mesh as everywhere else."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            verts = np.array(
+                [[0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0]], dtype=np.float32
+            )
+            faces = np.array([[0, 1, 2], [1, 3, 2]], dtype=np.uint32)
+            with pytest.raises(ValueError, match="scheme"):
+                scene.add_mesh(
+                    "surf", vertices=verts, faces=faces, link="javascript:alert(1)"
+                )
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert "surf" not in root
+
+    def test_templates_on_a_partitioned_layer_reach_every_leaf(self) -> None:
+        """`link` is not a COMPOSITING attr, so the adders route it to each
+        `part_<i>` leaf rather than to the wrapper. That is what the viewer
+        relies on: a pick hits a leaf. If this ever flips to wrapper-only, the
+        viewer's ancestor walk still saves it — but the placement is worth
+        pinning, because only one of the two is O(1) at click time."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            n = 200
+            rng = np.random.RandomState(1)
+            pos = (rng.rand(n, 3) * 10).astype(np.float32)
+            scene.add_points(
+                "tiled",
+                pos,
+                labels=[f"p{i}" for i in range(n)],
+                link="https://example.org/{hover_label}",
+                partition={"max_elements": 50},
+            )
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            wrapper = root["tiled"]
+            parts = [k for k in wrapper.keys() if k.startswith("part_")]
+            assert len(parts) > 1, f"expected a real partition, got {parts}"
+            for part in parts:
+                assert (
+                    wrapper[part].attrs["link"] == "https://example.org/{hover_label}"
+                ), f"leaf {part} did not receive the link template"
+
+    def test_templates_on_a_group_node(self) -> None:
+        """Groups go through `write_group`, a different gate call with no
+        reserved set. An author labelling a whole group is plausible."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            scene.add_group("grp", link="https://example.org/g")
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert root["grp"].attrs["link"] == "https://example.org/g"
 
     def test_templates_accepted_on_every_geometry_type(self) -> None:
         """All four leaf adders run the same gate, so all four must accept."""

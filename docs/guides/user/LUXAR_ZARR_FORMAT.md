@@ -1480,8 +1480,9 @@ labels.
 Both the Python writer and the viewer validate a `link`: the scheme must be
 `http` or `https` (an allowlist — the viewer *navigates* to this value, and
 `.zattrs` is untrusted input), the URL must be absolute (a relative one would
-resolve against whatever origin the viewer is served from), and it is length-
-capped. `link_target` is restricted to the two keywords that imply `noopener`;
+resolve against whatever origin the viewer is served from), it must not embed
+credentials (`https://good.example@evil.example/` reads as one host and goes to
+another, including in `Copy link address`), and it is length-capped. `link_target` is restricted to the two keywords that imply `noopener`;
 any other value would be a *named* browsing context, which the browser opens
 with a live `window.opener` the destination could use to navigate the viewer
 tab. Links open with `noopener,noreferrer`.

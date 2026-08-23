@@ -682,6 +682,18 @@ def validate_link(value: Any) -> str:
         # author. Do not "align" this by dropping the check.
         raise ValueError(f"link has no host: {value!r}")
 
+    # Refuse embedded credentials. `https://good.example@evil.example/`
+    # navigates to evil.example while reading as good.example — including in
+    # the viewer's own "Copy link address", which is the one place a user might
+    # vet the destination before following it. Nothing legitimate needs
+    # userinfo in a scene link, and credentials inside a shareable scene file
+    # would be a mistake in their own right.
+    if parts.username or parts.password:
+        raise ValueError(
+            f"link must not embed credentials (user:pass@host): {value!r}. "
+            f"They disguise the real destination from anyone reading the URL."
+        )
+
     return value
 
 

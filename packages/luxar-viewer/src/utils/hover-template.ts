@@ -116,10 +116,23 @@ export function substituteHoverTemplate(
         raw = values.nodeName;
         break;
       case 'hover_index':
-        // Always non-empty for a real pick. Not treated as suppressible: a
-        // valid index of 0 stringifies to "0", which is falsy in JS and would
-        // otherwise kill every link on the first element of a layer.
-        raw = String(values.elementIndex);
+        // An element index is a non-negative integer by construction. Anything
+        // else means the value did not survive the pick pipeline intact —
+        // `voteWinner` builds it as `round(a) * 65536 + round(g)` from two
+        // float32 channels, and `resolveOnDiskElementId` passes a non-integer
+        // slot straight through — so treat it as missing rather than
+        // stringifying it. Without this, `NaN` renders as the text "NaN", and
+        // more importantly a `link` template would navigate to
+        // `https://site/NaN`: a real request to a wrong page. Suppressing is
+        // the same choice made for an absent label.
+        //
+        // Note 0 must NOT be caught here: it is a perfectly good index, and it
+        // is falsy in JS, so a truthiness test would kill every link on the
+        // first element of every layer.
+        raw =
+          Number.isInteger(values.elementIndex) && values.elementIndex >= 0
+            ? String(values.elementIndex)
+            : '';
         break;
       default:
         return _match as string;

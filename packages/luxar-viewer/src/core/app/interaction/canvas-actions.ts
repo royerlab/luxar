@@ -40,6 +40,7 @@ import { openContextMenu, type ContextMenuItem } from '../../../ui/overlay-widge
 import { showToast } from '../../../ui/toast';
 import {
   CLICK_SLOP_PX,
+  type CachedPick,
   type PickedElementCache,
   type PickGenerationPort,
 } from './picked-element-cache';
@@ -64,7 +65,14 @@ export interface ElementPointerPayload {
   elementIndex: number;
   /** Scene node `elementIndex` is local to. */
   hitNodeName: string;
-  /** Which pointer button: 0 = primary, 2 = secondary. */
+  /**
+   * Which pointer button: 0 = primary, 2 = secondary.
+   *
+   * Reports the raw DOM value, so a macOS Ctrl+primary-click — the
+   * platform's secondary gesture — arrives as `0` on an
+   * `element-contextmenu` event. Switch on the event NAME, not on this,
+   * to tell the two gestures apart.
+   */
   button: number;
   /** Viewport coordinates of the gesture, in CSS pixels. */
   x: number;
@@ -118,7 +126,16 @@ function elide(text: string): string {
   return oneLine.length <= MENU_LABEL_MAX ? oneLine : `${oneLine.slice(0, MENU_LABEL_MAX - 1)}…`;
 }
 
-/** Default opener. `noopener,noreferrer` on every call — see the target rules. */
+/**
+ * Default opener. `noopener,noreferrer` on every call — see the target rules.
+ *
+ * The return value is deliberately discarded. It is tempting to treat a `null`
+ * return as "popup blocked" and surface a toast, but `window.open` returns
+ * `null` whenever `noopener` is set, blocked or not — so that check would fire
+ * on every successful click instead. There is no way to detect blocking here;
+ * the defence against it is upstream, in keeping the click path synchronous so
+ * the user activation is never spent.
+ */
 function defaultOpenUrl(url: string, target: string): void {
   window.open(url, target, 'noopener,noreferrer');
 }
@@ -151,29 +168,48 @@ function copyWithFeedback(ports: CanvasActionsPorts, text: string, what: string)
 export function installCanvasActions(ports: CanvasActionsPorts): CanvasActionsHandle {
   const { canvas, events, cache, picking } = ports;
 
-  /** Pointers currently down, so a pinch is never mistaken for a click. */
+  /** Pointers currently down. */
   const down = new Map<number, { button: number; x: number; y: number }>();
+  /**
+   * Whether the gesture in progress has EVER had more than one pointer down.
+   *
+   * Checking `down.size` at release time is not enough, and the failure is
+   * asymmetric enough to be easy to miss: releasing the first of two fingers
+   * leaves `down.size === 1` and correctly bails, but releasing the *last* one
+   * leaves `down.size === 0`, which looks exactly like a single click. Every
+   * pinch would therefore end by opening a link. This latches on the second
+   * concurrent pointerdown and only clears once the canvas has no pointers at
+   * all, so both release orders are rejected.
+   */
+  let multiTouch = false;
 
   /**
-   * Resolve what the currently-valid pick offers, honouring `allowLinks`.
-   * Returns null when there is no valid pick at `(x, y)`.
+   * Resolve what a pick offers, with the `allowLinks` gate applied.
+   *
+   * THE single place that gate is enforced. Three call paths can surface a URL
+   * — left-click, the pointer menu, the keyboard menu — plus the cursor
+   * affordance, and `allowLinks: false` is a security control an embedder
+   * relies on. Applying it per call site would mean stating the rule four
+   * times, which is precisely where a later edit drifts and quietly reopens
+   * navigation on one path.
    */
-  const actionsAt = (
-    x: number,
-    y: number
-  ): (ResolvedElementActions & { pick: NonNullable<ReturnType<typeof cache.read>> }) | null => {
-    const pick = cache.read(picking, x, y);
-    if (!pick) return null;
+  const resolveFor = (pick: CachedPick): ResolvedElementActions => {
     const resolved = resolveElementActions(pick.mainNode, {
       label: pick.label,
       nodeName: pick.nodeName,
       elementIndex: pick.elementIndex,
     });
-    return {
-      ...resolved,
-      url: ports.allowLinks ? resolved.url : null,
-      pick,
-    };
+    return { ...resolved, url: ports.allowLinks ? resolved.url : null };
+  };
+
+  /** As {@link resolveFor}, for the valid pick at `(x, y)` — null if there is none. */
+  const actionsAt = (
+    x: number,
+    y: number
+  ): (ResolvedElementActions & { pick: CachedPick }) | null => {
+    const pick = cache.read(picking, x, y);
+    if (!pick) return null;
+    return { ...resolveFor(pick), pick };
   };
 
   const payloadFor = (
@@ -245,22 +281,33 @@ export function installCanvasActions(ports: CanvasActionsPorts): CanvasActionsHa
   events.on(canvas, 'pointerdown', (e) => {
     const ev = e as PointerEvent;
     down.set(ev.pointerId, { button: ev.button, x: ev.clientX, y: ev.clientY });
+    if (down.size > 1) multiTouch = true;
   });
 
-  const forgetPointer = (e: Event): void => {
-    down.delete((e as PointerEvent).pointerId);
+  /** Drop a pointer, clearing the multi-touch latch once the canvas is idle. */
+  const forgetPointer = (id: number): void => {
+    down.delete(id);
+    if (down.size === 0) multiTouch = false;
   };
-  events.on(canvas, 'pointercancel', forgetPointer);
-  events.on(canvas, 'pointerleave', forgetPointer);
+  const onPointerGone = (e: Event): void => forgetPointer((e as PointerEvent).pointerId);
+  events.on(canvas, 'pointercancel', onPointerGone);
+  events.on(canvas, 'pointerleave', onPointerGone);
 
   events.on(canvas, 'pointerup', (e) => {
     const ev = e as PointerEvent;
     const start = down.get(ev.pointerId);
-    down.delete(ev.pointerId);
+    // Read the latch BEFORE releasing this pointer: releasing the last finger
+    // of a pinch clears it, and we still need to know this gesture was one.
+    const wasMultiTouch = multiTouch;
+    forgetPointer(ev.pointerId);
     if (!start) return;
-    // Another pointer is still down — this is part of a pinch, not a click.
-    if (down.size > 0) return;
+    // Any pointer still down, or any second pointer at any point during this
+    // gesture — a pinch, not a click. The latch is what makes the second half
+    // true: `down.size > 0` alone rejects releasing the FIRST of two fingers
+    // but not the last, which leaves the map empty and reads as a single click.
+    if (down.size > 0 || wasMultiTouch) return;
     if (start.button !== ev.button) return;
+    if (ev.button !== 0 && ev.button !== 2) return;
 
     const dx = ev.clientX - start.x;
     const dy = ev.clientY - start.y;
@@ -269,7 +316,6 @@ export function installCanvasActions(ports: CanvasActionsPorts): CanvasActionsHa
     // macOS secondary click is Ctrl + primary button, and fires with
     // `button === 0`. Treat it as the menu gesture, matching every native app.
     const isSecondary = ev.button === 2 || (ev.button === 0 && ev.ctrlKey && isMacPlatform());
-    if (ev.button !== 0 && ev.button !== 2) return;
 
     const { x, y } = toCanvas(ev);
     const resolved = actionsAt(x, y);
@@ -299,37 +345,28 @@ export function installCanvasActions(ports: CanvasActionsPorts): CanvasActionsHa
     // the proximity check — `peek` still enforces that the pick is current.
     const pick = cache.peek(picking);
     if (!pick) return;
-    const resolved = resolveElementActions(pick.mainNode, {
-      label: pick.label,
-      nodeName: pick.nodeName,
-      elementIndex: pick.elementIndex,
-    });
     const rect = canvas.getBoundingClientRect();
-    openMenuFor(
-      { ...resolved, url: ports.allowLinks ? resolved.url : null },
-      pick,
-      rect.left + pick.screenX,
-      rect.top + pick.screenY
-    );
+    openMenuFor(resolveFor(pick), pick, rect.left + pick.screenX, rect.top + pick.screenY);
   });
 
   // --- cursor affordance ----------------------------------------------------
 
   const refreshCursor = (): void => {
-    if (!ports.allowLinks) return;
     const pick = cache.peek(picking);
-    let linked = false;
-    if (pick) {
-      const { url } = resolveElementActions(pick.mainNode, {
-        label: pick.label,
-        nodeName: pick.nodeName,
-        elementIndex: pick.elementIndex,
-      });
-      linked = url !== null;
-    }
+    // `resolveFor` already nulls the url when links are disabled, so the
+    // affordance follows the gate without restating it.
+    const linked = pick !== null && resolveFor(pick).url !== null;
     // Only ever write our own two values. Nothing else in the viewer sets a
     // canvas cursor today, and clearing to '' restores whatever CSS says.
-    canvas.style.cursor = linked ? 'pointer' : '';
+    //
+    // Write only on an actual change. This runs on every settled pick AND
+    // every clear — and clears come from `onPickResult(null)`, which fires on
+    // each mousemove and on each `markDirty`, i.e. once per frame for the
+    // whole of a camera drag. The compute is irrelevant (measured 0.15 us
+    // cleared / 0.60 us linked per call), but an unconditional assignment is
+    // a style invalidation per frame for no reason.
+    const next = linked ? 'pointer' : '';
+    if (canvas.style.cursor !== next) canvas.style.cursor = next;
   };
 
   // Leave no cursor behind when the session is torn down mid-hover.

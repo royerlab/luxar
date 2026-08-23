@@ -620,3 +620,171 @@ describe('initPicking', () => {
     });
   });
 });
+
+/**
+ * Interaction-template provisioning and validation (issue #1917).
+ *
+ * A layer can carry a click action WITHOUT labels — a link built from
+ * `{hover_index}` is perfectly usable — and such a scene auto-injects no hover
+ * overlay either. If `link`/`copy` did not count as a picking consumer, that
+ * layer would never pick and the link would silently never fire.
+ */
+describe('initPicking — interaction templates', () => {
+  /** LuxarScene root whose single child carries the given attrs. */
+  function rootWithAttrs(attrs: Record<string, unknown>, name = '/linked'): THREE.Group {
+    const root = new THREE.Group();
+    root.name = 'LuxarScene';
+    const child = new THREE.Group();
+    child.name = name;
+    child.userData = { attrs };
+    root.add(child);
+    return root;
+  }
+
+  it('provisions picking for a LABEL-LESS scene that declares a link', async () => {
+    (getSceneLoader as unknown as ReturnType<typeof vi.fn>).mockReturnValue(
+      makeSceneLoader({ hasStore: true })
+    );
+    const scene = new THREE.Scene();
+    scene.add(rootWithAttrs({ link: 'https://example.org/{hover_index}' }));
+
+    const result = await initPicking({
+      sceneManager: makeSceneManager(scene) as never,
+      pickingEvents: new EventGroup(),
+      previous: makePreviousEmpty(),
+      getOverlayManager: () => undefined,
+    });
+
+    expect(result.pickingSystem).toBeDefined();
+    // No labels declared, so no tooltip loaders are built.
+    expect(result.labelLoader).toBeUndefined();
+  });
+
+  it('provisions picking for a scene that declares only `copy`', async () => {
+    (getSceneLoader as unknown as ReturnType<typeof vi.fn>).mockReturnValue(
+      makeSceneLoader({ hasStore: true })
+    );
+    const scene = new THREE.Scene();
+    scene.add(rootWithAttrs({ copy: 'element {hover_index}' }));
+
+    const result = await initPicking({
+      sceneManager: makeSceneManager(scene) as never,
+      pickingEvents: new EventGroup(),
+      previous: makePreviousEmpty(),
+      getOverlayManager: () => undefined,
+    });
+
+    expect(result.pickingSystem).toBeDefined();
+  });
+
+  it('shouldPick stays true for a link-only scene with no visible hover overlay', async () => {
+    // The disjunction must include the interaction term. With only the overlay
+    // and selection terms, a link-only scene would provision picking and then
+    // never actually pick.
+    (getSceneLoader as unknown as ReturnType<typeof vi.fn>).mockReturnValue(
+      makeSceneLoader({ hasStore: true })
+    );
+    const scene = new THREE.Scene();
+    scene.add(rootWithAttrs({ link: 'https://example.org/{hover_index}' }));
+
+    const { pickingSystem } = await initPicking({
+      sceneManager: makeSceneManager(scene) as never,
+      pickingEvents: new EventGroup(),
+      previous: makePreviousEmpty(),
+      getOverlayManager: () => ({ hasVisibleHoverOverlay: () => false }) as never,
+      hasSelectionConsumer: () => false,
+    });
+
+    const predicate = (pickingSystem?.setShouldPick as unknown as ReturnType<typeof vi.fn>).mock
+      .calls[0][0] as () => boolean;
+    expect(predicate()).toBe(true);
+  });
+
+  it('provisions picking for an element-click listener alone, with no labels', async () => {
+    // A host driving its own click behaviour subscribes to `element-click` and
+    // nothing else. Without this the viewer never picks, so the event never
+    // fires, with nothing to indicate why.
+    (getSceneLoader as unknown as ReturnType<typeof vi.fn>).mockReturnValue(
+      makeSceneLoader({ hasStore: true })
+    );
+    const scene = new THREE.Scene();
+    scene.add(rootWithAttrs({})); // no labels, no templates
+
+    const { pickingSystem } = await initPicking({
+      sceneManager: makeSceneManager(scene) as never,
+      pickingEvents: new EventGroup(),
+      previous: makePreviousEmpty(),
+      getOverlayManager: () => undefined,
+      hasSelectionConsumer: () => false,
+      hasElementActionConsumer: () => true,
+    });
+
+    expect(pickingSystem).toBeDefined();
+    const predicate = (pickingSystem?.setShouldPick as unknown as ReturnType<typeof vi.fn>).mock
+      .calls[0][0] as () => boolean;
+    expect(predicate()).toBe(true);
+  });
+
+  it('still skips picking when nothing at all consumes it', async () => {
+    (getSceneLoader as unknown as ReturnType<typeof vi.fn>).mockReturnValue(
+      makeSceneLoader({ hasStore: true })
+    );
+    const scene = new THREE.Scene();
+    scene.add(rootWithAttrs({}));
+
+    const result = await initPicking({
+      sceneManager: makeSceneManager(scene) as never,
+      pickingEvents: new EventGroup(),
+      previous: makePreviousEmpty(),
+      getOverlayManager: () => undefined,
+      hasSelectionConsumer: () => false,
+      hasElementActionConsumer: () => false,
+    });
+
+    expect(result.pickingSystem).toBeUndefined();
+  });
+
+  it('warns once, naming the layer, for a link template that can never resolve', async () => {
+    // The only other symptom of a typo'd template is a click that does nothing.
+    const warn = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    (getSceneLoader as unknown as ReturnType<typeof vi.fn>).mockReturnValue(
+      makeSceneLoader({ hasStore: true })
+    );
+    const scene = new THREE.Scene();
+    scene.add(rootWithAttrs({ link: 'javascript:alert(1)' }, '/hostile'));
+
+    await initPicking({
+      sceneManager: makeSceneManager(scene) as never,
+      pickingEvents: new EventGroup(),
+      previous: makePreviousEmpty(),
+      getOverlayManager: () => undefined,
+    });
+
+    const messages = warn.mock.calls.map((c) => String(c[1]));
+    const hit = messages.filter((m) => m.includes('/hostile') && m.includes('scheme'));
+    expect(hit).toHaveLength(1);
+    warn.mockRestore();
+  });
+
+  it('does NOT warn for a template that only fails per-element', async () => {
+    // An unlabelled element is normal (and is the rule at coarse substitutive
+    // LOD); warning about it at load would blame a template that is fine.
+    const warn = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    (getSceneLoader as unknown as ReturnType<typeof vi.fn>).mockReturnValue(
+      makeSceneLoader({ hasStore: true })
+    );
+    const scene = new THREE.Scene();
+    scene.add(rootWithAttrs({ link: 'https://example.org/{hover_label}' }));
+
+    await initPicking({
+      sceneManager: makeSceneManager(scene) as never,
+      pickingEvents: new EventGroup(),
+      previous: makePreviousEmpty(),
+      getOverlayManager: () => undefined,
+    });
+
+    const messages = warn.mock.calls.map((c) => String(c[1]));
+    expect(messages.filter((m) => m.includes('unusable link'))).toHaveLength(0);
+    warn.mockRestore();
+  });
+});

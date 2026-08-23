@@ -32,6 +32,15 @@
  * 4. Length is capped, so a hostile store cannot push an unbounded string at
  *    the browser after per-element substitution.
  *
+ * One bounded gap is accepted knowingly, because closing it costs more than it
+ * buys: `.` and `..` are *unreserved* characters, so `encodeURIComponent`
+ * leaves them intact and the URL parser then normalizes them away — a label of
+ * exactly `".."` turns `https://site/entry/{hover_label}` into `https://site/`.
+ * That is a wrong destination, not a boundary crossing: the origin is fixed by
+ * the template, a label is a single path segment (its slashes ARE encoded), so
+ * the worst reachable outcome is the origin root. Escaping is therefore about
+ * structure, not about pinning the exact path.
+ *
  * @module core/app/interaction/element-actions
  */
 
@@ -140,6 +149,13 @@ export function buildElementUrl(template: string, values: HoverTemplateValues): 
   // A URL like `https:///x` parses with an empty host and would navigate
   // somewhere unintended.
   if (!parsed.host) return null;
+  // Refuse embedded credentials. `https://good.example@evil.example/` navigates
+  // to evil.example while reading as good.example — including in the
+  // `Copy link address` menu item, which is the one place a user might vet the
+  // destination before following it. Nothing legitimate needs userinfo here
+  // (credentials in a shareable scene file would be a mistake of its own), so
+  // the deception vector is worth more than the capability.
+  if (parsed.username !== '' || parsed.password !== '') return null;
 
   // Return the parsed form: it is normalized, and re-serializing what the
   // parser accepted removes any discrepancy between what was validated and
@@ -175,6 +191,9 @@ export function explainLinkRejection(template: string): string | null {
     return `link scheme "${parsed.protocol}" is not allowed (only http and https)`;
   }
   if (!parsed.host) return 'link has no host';
+  if (parsed.username !== '' || parsed.password !== '') {
+    return 'link embeds credentials (user:pass@host), which disguise the real destination';
+  }
   return null;
 }
 

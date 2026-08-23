@@ -6,8 +6,8 @@ import { PickingSystem } from '../../../rendering/picking/picking-system';
 import { LabelLoader, ImageLabelLoader } from '../../../data/loaders';
 import { buildPickResultHandler } from './pick-result-handler';
 import { PickedElementCache } from '../interaction/picked-element-cache';
-import { installCanvasActions, type ElementPointerPayload } from '../interaction/canvas-actions';
 import { explainLinkRejection } from '../interaction/element-actions';
+import { installCanvasActions, type ElementPointerPayload } from '../interaction/canvas-actions';
 import type { SceneManager } from '../../../scene/scene-manager';
 import type { OverlayManager } from '../../../ui/overlay-manager';
 import type { EventGroup } from '../../../utils/cross-layer/event-group';
@@ -39,6 +39,18 @@ export interface InitPickingPorts {
    * only run while someone consumes them.
    */
   hasSelectionConsumer?: () => boolean;
+  /**
+   * Whether an embedder `element-click` / `element-contextmenu` listener
+   * currently exists (issue #1917).
+   *
+   * Separate from {@link hasSelectionConsumer} because the two answer
+   * different questions and are read at different times, but they are OR'd
+   * for both provisioning and gating: a host that subscribes ONLY to
+   * `element-click`, on a scene with no labels and no interaction templates,
+   * would otherwise get a viewer that never picks and therefore an event that
+   * never fires — with nothing to indicate why.
+   */
+  hasElementActionConsumer?: () => boolean;
   /**
    * Whether a picked element's `link` may be opened (issue #1917). False
    * suppresses navigation, the two link menu items and the pointer cursor,
@@ -140,6 +152,13 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
     if (typeof attrs?.link === 'string' || typeof attrs?.copy === 'string') {
       hasAnyInteraction = true;
     }
+    // Report a `link` that can never resolve, ONCE per node at load, naming the
+    // layer. Without this the only symptom of a typo'd template is a click that
+    // does nothing — no error, nothing in the file, nothing in the console.
+    // Deliberately only element-INDEPENDENT faults (bad scheme, relative URL,
+    // over-length): a per-element miss such as an unlabelled element is normal
+    // and must not log per hover. The Python writer refuses these at authoring
+    // time, so reaching here means a hand-edited or third-party store.
     if (typeof attrs?.link === 'string') {
       const rejection = explainLinkRejection(attrs.link);
       if (rejection) {
@@ -151,7 +170,8 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
   // template, OR an embedder `selection` listener exists at load time. Without
   // any of those there is no consumer, so skip the pick-mesh/GPU overhead
   // entirely (keeps the bench-only synthetic scenes free of picking cost).
-  const wantsSelection = ports.hasSelectionConsumer?.() ?? false;
+  const wantsSelection =
+    (ports.hasSelectionConsumer?.() ?? false) || (ports.hasElementActionConsumer?.() ?? false);
   if (!hasAnyLabels && !hasAnyImageLabels && !hasAnyInteraction && !wantsSelection) {
     return { pickingSystem: undefined, labelLoader: undefined, imageLabelLoader: undefined };
   }
@@ -229,7 +249,8 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
     () =>
       (ports.getOverlayManager()?.hasVisibleHoverOverlay() ?? false) ||
       hasAnyInteraction ||
-      (ports.hasSelectionConsumer?.() ?? false)
+      (ports.hasSelectionConsumer?.() ?? false) ||
+      (ports.hasElementActionConsumer?.() ?? false)
   );
 
   // DOM events go through EventGroup.on(); Three.js EventDispatcher events

@@ -133,6 +133,11 @@ embedder events still fire, with `link: null`, so a host can implement its own
 behaviour instead. This is what an embedder showing scenes it did not author
 needs in order to guarantee that no navigation can originate in data.
 
+Like `selection`, an `element-click` / `element-contextmenu` listener present
+at dataset-load time provisions the picking pipeline — so a host can drive its
+own behaviour on a scene that declares neither labels nor templates, as long as
+it subscribes before `init()` / `switchDataset()`.
+
 ## See Also
 
 - [`../picking/README.md`](../picking/README.md) — the hover pipeline this builds on
