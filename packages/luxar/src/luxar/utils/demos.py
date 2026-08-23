@@ -348,10 +348,10 @@ def scene_is_current(
         return False
     if recompute:
         return False
-    if keep_stale:
-        return True
     if not is_consolidated(output_path):
         return False
+    if keep_stale:
+        return True
     if not fingerprint:
         # Unreadable source: no basis to call it stale, and rebuilding a large
         # scene on a bad guess is worse than serving the one on disk.

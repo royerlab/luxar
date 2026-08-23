@@ -102,6 +102,12 @@ def test_keep_stale_reuses_a_scene_from_an_older_builder(tmp_path: Path) -> None
     assert scene_is_current(scene, "def456", keep_stale=True) is True
 
 
+def test_keep_stale_does_not_reuse_an_unfinished_scene(tmp_path: Path) -> None:
+    """The escape hatch accepts old output, never a partial interrupted write."""
+    scene = _write_scene(tmp_path / "s.luxar.zarr", "abc123", finished=False)
+    assert scene_is_current(scene, "def456", keep_stale=True) is False
+
+
 def test_recompute_beats_keep_stale(tmp_path: Path) -> None:
     """An explicit rebuild request wins over an explicit reuse request."""
     scene = _write_scene(tmp_path / "s.luxar.zarr", "abc123")
