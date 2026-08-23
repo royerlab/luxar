@@ -40,6 +40,7 @@ from ..node_common import (
     validate_node_path,
     validate_render_attrs,
     validate_scalars_preflight,
+    warn_if_over_element_cap,
 )
 from ..spatial_ordering.points import (
     build_points_ordering,
@@ -349,6 +350,7 @@ def write_points(
     group.attrs.update(attrs)
     group.attrs["type"] = "points"
     group.attrs["n_points"] = n_points
+    warn_if_over_element_cap("points", n_points, group.name)
     group.attrs["ndim"] = n_dims
     # Presence flags mirror the Lines writer (has_colors/has_sharpness) so every
     # geometry type stamps the same attrs the viewer can rely on.

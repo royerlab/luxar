@@ -8,10 +8,14 @@ texture), so those are pinned here. No network and no IO.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
+from luxar.demos import demo_ocean_currents_earth
 from luxar.demos.demo_ocean_currents_earth import (
+    LINE_OPACITY,
     MAX_GLOBE_POINTS_PER_NODE,
     MAX_LINE_VERTICES_PER_NODE,
     N_GLOBE,
@@ -27,6 +31,10 @@ from luxar.demos.demo_ocean_currents_earth import (
     polyline_segment_indices,
     sample_equirect,
     seed_ocean_points,
+)
+from luxar.typing_utils.constants import (
+    MAX_POINTS_PER_POINTS_NODE,
+    MAX_SEGMENTS_PER_LINES_NODE,
 )
 
 
@@ -121,12 +129,22 @@ def test_globe_camera_looks_at_the_requested_point() -> None:
     cam = globe_camera(-84.0, 25.0)
     surface = lonlat_to_xyz(np.array([-84.0]), np.array([25.0]), np.zeros(1))[0]
     pos = np.array(cam.position)
-    target = np.array(cam.target)
-    # camera is outside the globe, target inside, both on the surface normal
+    # The camera sits outside the globe, on the requested point's surface normal.
     assert np.linalg.norm(pos) > RADIUS
-    assert np.linalg.norm(target) < RADIUS
     unit_surface = surface / np.linalg.norm(surface)
     assert np.allclose(pos / np.linalg.norm(pos), unit_surface, atol=1e-6)
+
+
+def test_globe_camera_targets_the_centre_of_the_earth() -> None:
+    """The opening target is the origin, so the globe starts centred.
+
+    The scene is a sphere centred on the origin. Targeting a point just under
+    the near surface (``normal * RADIUS * 0.9``) framed it off-centre and put
+    the orbit pivot on the near face, so the first drag swung the planet about
+    a surface point instead of its axis.
+    """
+    for lon, lat in ((-84.0, 25.0), (0.0, 0.0), (140.0, -60.0)):
+        assert globe_camera(lon, lat).target == (0.0, 0.0, 0.0)
 
 
 # ---------------------------------------------------------------------- texture
@@ -335,7 +353,8 @@ def test_per_node_budget_stays_under_the_segment_texture_bound() -> None:
     fewer) must sit under that floor. And the demo's total vertex count has to
     exceed the budget, or partitioning would never engage.
     """
-    assert MAX_LINE_VERTICES_PER_NODE <= 682 * 4096  # 2,793,472 segment floor
+    assert MAX_LINE_VERTICES_PER_NODE <= MAX_SEGMENTS_PER_LINES_NODE  # 2,793,472
+    assert MAX_SEGMENTS_PER_LINES_NODE == 682 * 4096  # the derivation above
     assert N_SEEDS * (N_STEPS + 1) > MAX_LINE_VERTICES_PER_NODE  # partitioning engages
 
 
@@ -350,8 +369,42 @@ def test_per_node_globe_budget_stays_under_the_point_texture_bound() -> None:
     must sit under the floor, and the total must exceed the budget or
     partitioning would never engage.
     """
-    assert MAX_GLOBE_POINTS_PER_NODE <= 1365 * 4096  # 5,591,040 point floor
+    assert MAX_GLOBE_POINTS_PER_NODE <= MAX_POINTS_PER_POINTS_NODE  # 5,591,040
+    assert MAX_POINTS_PER_POINTS_NODE == 1365 * 4096  # the derivation above
     assert N_GLOBE > MAX_GLOBE_POINTS_PER_NODE  # partitioning engages
+
+
+def test_both_geometry_nodes_are_actually_partitioned() -> None:
+    """`partition=` must reach `add_lines`/`add_points`, not just be budgeted.
+
+    The budget constants above only prove the NUMBERS are right. #1957 was a
+    scene built before `partition=` was passed at all: the ribbons overflowed a
+    single node, the viewer clamped the tail, and because segments are stored in
+    Hilbert order the loss was one contiguous lobe — a clean-edged wedge with
+    the North Atlantic missing. Nothing failed, so pin the call itself.
+    """
+    source = Path(demo_ocean_currents_earth.__file__).read_text()
+    lines_call = source.split("scene.add_lines(")[1].split("scene.add_text(")[0]
+    points_call = source.split("scene.add_points(")[1].split("scene.add_lines(")[0]
+    assert "partition=dict(max_elements=MAX_LINE_VERTICES_PER_NODE)" in lines_call
+    assert "partition=dict(max_elements=MAX_GLOBE_POINTS_PER_NODE)" in points_call
+
+
+def test_layer_appearance_matches_the_authored_intent() -> None:
+    """The globe is an OPAQUE backdrop; the ribbons are translucent over it.
+
+    `opaque` is the only mode that leaves the viewer's sorted transparent set
+    and the only one that unconditionally depth-writes, so it is the only one
+    that reliably composites *under* the ribbons in front of it. The ribbons
+    stay `normal` (additive ignores depth, so far-side currents would bleed
+    across the continents) at the tuned opacity.
+    """
+    source = Path(demo_ocean_currents_earth.__file__).read_text()
+    points_call = source.split("scene.add_points(")[1].split("scene.add_lines(")[0]
+    lines_call = source.split("scene.add_lines(")[1].split("scene.add_text(")[0]
+    assert 'blending_mode="opaque"' in points_call
+    assert 'blending_mode="normal"' in lines_call
+    assert LINE_OPACITY == pytest.approx(0.77)
 
 
 # --------------------------------------------------------------------- seeding

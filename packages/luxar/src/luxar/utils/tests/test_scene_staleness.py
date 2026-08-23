@@ -1,0 +1,121 @@
+"""Tests for the demo scene-staleness fingerprint (issue #1957).
+
+Demos cache their built ``.luxar.zarr`` and used to reuse it whenever the path
+merely EXISTED. That let a scene written by an older version of a demo be served
+forever: #1957 was reported against an ocean-currents scene whose missing
+streamlines had been fixed three weeks earlier, because nothing ever rebuilt the
+stale store on disk.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from luxar._zarr_compat import open_group
+from luxar.utils.demos import (
+    BUILDER_FINGERPRINT_ATTR,
+    demo_source_fingerprint,
+    parse_demo_flags,
+    scene_is_current,
+)
+
+
+def _write_scene(path: Path, fingerprint: str | None) -> Path:
+    """Create a minimal zarr group, optionally stamped with ``fingerprint``."""
+    group = open_group(path, mode="w")
+    group.attrs["type"] = "scene"
+    if fingerprint is not None:
+        group.attrs[BUILDER_FINGERPRINT_ATTR] = fingerprint
+    return path
+
+
+# ------------------------------------------------------------------ fingerprint
+
+
+def test_fingerprint_is_stable_for_unchanged_source(tmp_path: Path) -> None:
+    source = tmp_path / "demo_thing.py"
+    source.write_text("X = 1\n")
+    assert demo_source_fingerprint(source) == demo_source_fingerprint(source)
+
+
+def test_fingerprint_changes_when_the_source_changes(tmp_path: Path) -> None:
+    """Any edit that could change the output must change the fingerprint.
+
+    Including a one-character constant tweak — LINE_OPACITY 0.95 -> 0.77 is
+    exactly the kind of change that must reach a user with a cached scene.
+    """
+    source = tmp_path / "demo_thing.py"
+    source.write_text("LINE_OPACITY = 0.95\n")
+    before = demo_source_fingerprint(source)
+    source.write_text("LINE_OPACITY = 0.77\n")
+    assert demo_source_fingerprint(source) != before
+
+
+def test_fingerprint_of_an_unreadable_source_is_empty(tmp_path: Path) -> None:
+    assert demo_source_fingerprint(tmp_path / "nope.py") == ""
+
+
+# ------------------------------------------------------------------- staleness
+
+
+def test_missing_scene_is_not_current(tmp_path: Path) -> None:
+    assert scene_is_current(tmp_path / "absent.luxar.zarr", "abc123") is False
+
+
+def test_matching_fingerprint_is_current(tmp_path: Path) -> None:
+    scene = _write_scene(tmp_path / "s.luxar.zarr", "abc123")
+    assert scene_is_current(scene, "abc123") is True
+
+
+def test_differing_fingerprint_is_stale(tmp_path: Path) -> None:
+    scene = _write_scene(tmp_path / "s.luxar.zarr", "abc123")
+    assert scene_is_current(scene, "def456") is False
+
+
+def test_unstamped_legacy_scene_is_stale(tmp_path: Path) -> None:
+    """A scene from before fingerprinting rebuilds ONCE, then stamps itself.
+
+    This is the #1957 case exactly: the store on disk carried no fingerprint
+    because the builder that wrote it predated the mechanism.
+    """
+    scene = _write_scene(tmp_path / "s.luxar.zarr", None)
+    assert scene_is_current(scene, "abc123") is False
+
+
+def test_recompute_forces_a_rebuild_even_when_current(tmp_path: Path) -> None:
+    scene = _write_scene(tmp_path / "s.luxar.zarr", "abc123")
+    assert scene_is_current(scene, "abc123", recompute=True) is False
+
+
+def test_keep_stale_reuses_a_scene_from_an_older_builder(tmp_path: Path) -> None:
+    """The escape hatch: reuse an expensive scene the caller knows is fine."""
+    scene = _write_scene(tmp_path / "s.luxar.zarr", "abc123")
+    assert scene_is_current(scene, "def456", keep_stale=True) is True
+
+
+def test_recompute_beats_keep_stale(tmp_path: Path) -> None:
+    """An explicit rebuild request wins over an explicit reuse request."""
+    scene = _write_scene(tmp_path / "s.luxar.zarr", "abc123")
+    assert scene_is_current(scene, "abc123", recompute=True, keep_stale=True) is False
+
+
+def test_unreadable_source_reuses_rather_than_rebuilding(tmp_path: Path) -> None:
+    """An empty fingerprint is no evidence of staleness.
+
+    Rebuilding a large scene on a bad guess is worse than serving the one on
+    disk, so the check degrades to a plain existence test.
+    """
+    scene = _write_scene(tmp_path / "s.luxar.zarr", "abc123")
+    assert scene_is_current(scene, "") is True
+
+
+# ------------------------------------------------------------------------ flag
+
+
+def test_keep_stale_flag_is_parsed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("sys.argv", ["demo.py", "--keep-stale"])
+    assert parse_demo_flags()["keep_stale"] is True
+    monkeypatch.setattr("sys.argv", ["demo.py"])
+    assert parse_demo_flags()["keep_stale"] is False

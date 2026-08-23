@@ -349,6 +349,7 @@ from luxar.core.viewer_config import (
 from luxar.demos import (
     cache_computed,
     cached_download,
+    demo_source_fingerprint,
     launch_viewer,
     parse_demo_flags,
     parse_int_arg,
@@ -712,6 +713,10 @@ FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
 RECOMPUTE = FLAGS["recompute"]
+
+#: Identifies the builder that wrote a scene; folded into the build marker
+#: so a source change invalidates it just as a flag change does (#1957).
+FINGERPRINT: Final = demo_source_fingerprint(__file__)
 N_POINTS = parse_int_arg("n-points", DEFAULT_N_POINTS)
 N_PARTS = parse_int_arg("n-parts", 0)  # 0 -> derived from N_POINTS
 
@@ -2907,6 +2912,11 @@ def _build_params() -> Dict[str, Any]:
         "tile_points": TARGET_TILE_POINTS,
         "marginal_cap": MARGINAL_CELL_CAP,
         "joint_cap": JOINT_CELL_CAP,
+        # The marker already catches a FLAG change (--n-points and friends);
+        # this catches a SOURCE change, which is the other way a scene on disk
+        # goes stale. #1957 was reported against a scene whose bug had been
+        # fixed weeks earlier, because nothing noticed the builder had moved on.
+        "builder": FINGERPRINT,
         "version": 1,
     }
 

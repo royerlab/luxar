@@ -73,7 +73,13 @@ from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
-from luxar.demos import launch_viewer, parse_demo_flags
+from luxar.demos import (
+    BUILDER_FINGERPRINT_ATTR,
+    demo_source_fingerprint,
+    launch_viewer,
+    parse_demo_flags,
+    scene_is_current,
+)
 from luxar.encoding import EncodingMode
 from luxar.utils.paths import get_demos_output_dir
 
@@ -106,6 +112,11 @@ FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
 RECOMPUTE = FLAGS["recompute"]
+KEEP_STALE = FLAGS["keep_stale"]
+
+#: Identifies the builder that wrote a scene, so a scene left on disk by an
+#: OLDER version of this file is rebuilt instead of served forever (#1957).
+FINGERPRINT = demo_source_fingerprint(__file__)
 
 Arbol.max_depth = 5
 
@@ -367,6 +378,7 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
                 citation=DEMO_META["citation"],
             )
             scene.attrs["title"] = "Rivers of Earth — global topography + HydroRIVERS"
+            scene.attrs[BUILDER_FINGERPRINT_ATTR] = FINGERPRINT
             scene.add_points(
                 "terrain",
                 positions=gpos,
@@ -424,7 +436,9 @@ def load_or_build_scene(output_path: Path) -> Path:
     the expensive source downloads + parsed polylines are cached under
     ``CACHE_DIR`` so a rebuild / ``--recompute`` never re-fetches the ~1 GB.
     """
-    if output_path.exists() and not RECOMPUTE:
+    if scene_is_current(
+        output_path, FINGERPRINT, recompute=RECOMPUTE, keep_stale=KEEP_STALE
+    ):
         aprint(f"Using existing scene: {output_path}")
         return output_path
 

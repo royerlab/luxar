@@ -42,6 +42,7 @@ from ..node_common import (
     validate_node_path,
     validate_render_attrs,
     validate_scalars_preflight,
+    warn_if_over_element_cap,
 )
 from ..spatial_ordering.lines import build_lines_ordering, write_lines_ordering_to_zarr
 
@@ -561,6 +562,7 @@ def write_lines(
     group.attrs["type"] = "lines"
     group.attrs["n_vertices"] = n_vertices
     group.attrs["n_segments"] = n_segments
+    warn_if_over_element_cap("lines", n_segments, group.name)
     group.attrs["ndim"] = n_dims
     group.attrs["original_line_type"] = line_type
     group.attrs["has_colors"] = metadata["has_colors"]
