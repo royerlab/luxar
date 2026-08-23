@@ -92,6 +92,53 @@ FLOOR (why this demo turns off a default the house rule says to keep):
     the energy column: global PSNR barely moves at frame 0 and hides how much
     was being deleted.
 
+DENOISING (measured 2026-08-23; why h is pinned and not calibrated):
+    The shot noise here is not a nuisance at the margin. Counting connected
+    components of the non-zero voxels, at t=0 there are 16,200 ISOLATED single
+    voxels against 6,503 in components big enough to be cells, and they carry
+    **32% of the frame's total energy**. An undenoised fit spends its budget
+    accordingly: it reproduced 67% of that noise energy.
+
+    So each timepoint is non-local-means filtered before it is fitted. Every arm
+    below is scored against the RAW frame, split into the two things that matter
+    — fidelity INSIDE real cells (what filtering risks) and how much of the
+    shot-noise energy the fit still reproduces (what filtering buys). Scoring a
+    denoised fit by plain PSNR against the raw frame would mark it down for not
+    reproducing the noise it was asked to remove, which is why neither column is
+    a plain PSNR.
+
+    |  h   | t=0 cell / noise | t=75 cell / noise | t=150 cell / noise |
+    |------|------------------|-------------------|--------------------|
+    | none | 19.16 / 0.667    | 21.42 / 0.620     | 18.57 / 0.236      |
+    | 0.02 | 19.93 / 0.377    | 22.30 / 0.463     | 18.67 / 0.228      |
+    | 0.05 | 19.47 / 0.021    | 21.32 / 0.053     | 19.07 / 0.036      |
+    | 0.08 | 19.52 / 0.010    | 19.04 / 0.016     | 18.68 / 0.020      |
+    | 0.12 | 17.85 / 0.010    | 16.08 / 0.017     | 17.22 / 0.024      |
+    | 0.20 | 14.13 / 0.011    | 12.85 / 0.029     | 13.35 / 0.042      |
+
+    0.05 is the knee: cell fidelity is break-even to +0.5 dB against no filtering
+    at all, while the noise the fit reproduces collapses by 12-30x. By 0.08 the
+    filter has reached the cells at the later timepoints (-2.4 dB at t=75), and
+    0.12 and 0.20 erode them visibly.
+
+    ``h`` is PINNED, not calibrated at runtime, and that is deliberate. The
+    library's Noise2Self routine (``calibrate_nlm_h``) answers 0.055 to 0.225 on
+    this stack depending on which slice it is pointed at — 4x, from one
+    estimator on one dataset — and every one of those sits at or past the knee
+    above. It is defeated by the same sparsity that inverts the ``auto``
+    background floor: on a volume that is 98.7% exact zeros, a held-out voxel is
+    best predicted by predicting zero, so more smoothing always wins its
+    cross-validation. Two practical notes for anyone re-running it: its default
+    ``h_range`` stops at 0.08, BELOW the optimum it would otherwise report here,
+    so a default call returns a pinned ceiling; and it defaults to the CENTRAL
+    z-slice, which on this stack is nearly empty at early timepoints.
+
+    Cost: the fit budget is unchanged. Re-derived on denoised data, the plateau
+    is still 32,000 seeds (64,000 scores WORSE at t=0: 19.27 against 19.70), but
+    the same budget now delivers more splats — nothing is being wasted on spikes,
+    so the amplitude spreads across the cells and the 0.9999 retention keeps
+    more of it.
+
 USAGE:
     python demo_gsplats_4d_zebrafish_timelapse.py [--recompute] [--no-serve]
         [--serve-only] [--max-timepoints=N]
@@ -222,6 +269,23 @@ SEEDS = 32_000
 N_ITERS = 5_000
 EARLY_STOP_PATIENCE = 500
 CULL_RETENTION = 0.9999
+
+#: NLM denoising strength, applied to each timepoint BEFORE it is fitted.
+#:
+#: This stack's shot noise is not a nuisance at the margin, it is a third of the
+#: signal: at t=0, 16,200 of its non-zero voxels are isolated single voxels
+#: against 6,503 in real cells, carrying 32% of the frame's total energy. An
+#: undenoised fit spends its budget accordingly — it reproduced 67% of that
+#: noise energy, splat by splat.
+#:
+#: 0.05 is MEASURED, not calibrated. See the module docstring's DENOISING
+#: section: Noise2Self (the library's own ``calibrate_nlm_h``) answers 0.055 to
+#: 0.225 here depending on which slice it is pointed at, and every one of those
+#: is at or past the point where the filter starts eating cells. It is gamed by
+#: the same sparsity that inverts the ``auto`` floor — on a volume that is 98.7%
+#: exact zeros, a held-out voxel is best predicted by predicting zero, so more
+#: smoothing always wins its cross-validation.
+DENOISE_H = 0.05
 
 #: NO background floor, stated rather than defaulted. The house rule is to stay
 #: on ``auto`` unless you have measured otherwise; this is a dataset where
@@ -408,8 +472,23 @@ def select_timepoints(n_total: int, limit: Optional[int]) -> list[int]:
 def _fit_cache_path(frame: int) -> Path:
     return FITS_DIR / (
         f"f{frame:04d}_k{SEEDS}_i{N_ITERS}_p{EARLY_STOP_PATIENCE}"
-        f"_c{CULL_RETENTION}_{FLOOR}.gsplats.zarr.zip"
+        f"_c{CULL_RETENTION}_{FLOOR}_dn{DENOISE_H}.gsplats.zarr.zip"
     )
+
+
+def denoise(volume: np.ndarray) -> np.ndarray:
+    """Non-local-means the frame before it is fitted, at the measured strength.
+
+    Runs on the GPU when the NLM CUDA extension is built (``make build-nlm-cuda``)
+    and falls back to a much slower PyTorch path when it is not — over 151
+    timepoints that difference is hours, so the warning the library prints is
+    worth acting on before a refit.
+    """
+    if not DENOISE_H:
+        return volume
+    from luxar.gsplats.preprocessing.denoise_pipeline import denoise_volume_array
+
+    return denoise_volume_array(volume, h=DENOISE_H, device=DEVICE or "auto")
 
 
 def fit_timepoint(volume: np.ndarray, frame: int, acquisition: tuple):
@@ -482,13 +561,17 @@ def fit_all_timepoints(array, frames: list[int]) -> list[GSplatData]:
         if np.issubdtype(array.dtype, np.integer)
         else 1.0
     )
+    global DEVICE
+    if DEVICE is None:
+        DEVICE = detect_device()  # denoising runs before the first fit sets it
     fits: list[GSplatData] = []
     with asection(
-        f"Fitting {len(frames)} timepoints (seeds={SEEDS:,}, {N_ITERS} iters)"
+        f"Fitting {len(frames)} timepoints (seeds={SEEDS:,}, {N_ITERS} iters, "
+        f"NLM h={DENOISE_H})"
     ):
         for i, frame in enumerate(frames):
             volume = np.asarray(array[frame]).astype(np.float32) / scale
-            fits.append(fit_timepoint(volume, frame, acquisition))
+            fits.append(fit_timepoint(denoise(volume), frame, acquisition))
             if (i + 1) % 10 == 0 or i == len(frames) - 1:
                 aprint(
                     f"  {i + 1}/{len(frames)} — frame {frame}: "
@@ -501,11 +584,18 @@ def fit_all_timepoints(array, frames: list[int]) -> list[GSplatData]:
 def report_fit_quality(fits: list[GSplatData]) -> None:
     """Print what the fits actually achieved, from their own stamps.
 
-    Each fit scores itself against the raw frame it was handed, so this costs
-    nothing to print and is the number the archive should be judged by. Both
-    columns are reported: on a volume this sparse, global PSNR is mostly the
-    reward for predicting empty space correctly, and the foreground figure is
-    the one that moves when the fit gets better or worse.
+    Each fit scores itself against the array it was handed, which since the
+    denoising step is the DENOISED frame — not the acquisition. So these say how
+    faithfully the fit represents what it was asked to fit, and are NOT
+    comparable to the pre-denoising archive's numbers or quotable as fidelity to
+    the microscope. The honest raw-referenced measurement is the cell-PSNR column
+    of the docstring's DENOISING table, taken against the unfiltered frames.
+    Labelled accordingly, because an unlabelled PSNR here would end up on a
+    Zenodo record meaning something it does not.
+
+    Both columns are reported: on a volume this sparse, global PSNR is mostly
+    the reward for predicting empty space correctly, and the foreground figure
+    is the one that moves when the fit gets better or worse.
     """
 
     def column(key: str) -> Optional[np.ndarray]:
@@ -518,6 +608,7 @@ def report_fit_quality(fits: list[GSplatData]) -> None:
         f"Splats per timepoint: median {int(np.median(counts)):,}, "
         f"range {counts.min():,}-{counts.max():,}, total {counts.sum():,}"
     )
+    vs = "vs the denoised input" if DENOISE_H else "vs the raw frame"
     for label, key in (("global", "psnr_db"), ("foreground", "foreground_psnr_db")):
         col = column(key)
         if col is None:
@@ -526,8 +617,8 @@ def report_fit_quality(fits: list[GSplatData]) -> None:
             aprint(f"{label.capitalize()} PSNR: not stamped on these fits")
         else:
             aprint(
-                f"{label.capitalize()} PSNR: median {np.median(col):.2f} dB, "
-                f"range {col.min():.2f}-{col.max():.2f} dB"
+                f"{label.capitalize()} PSNR ({vs}): median {np.median(col):.2f} "
+                f"dB, range {col.min():.2f}-{col.max():.2f} dB"
             )
 
 
