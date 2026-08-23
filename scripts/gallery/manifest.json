@@ -460,11 +460,7 @@
       "category": "microscopy",
       "script": "demo_gsplats_3d_kidney_multichannel_toggles.py",
       "dataset": "datasets/demos/gsplats_6d_kidney_multichannel_toggles.luxar.zarr",
-      "citation": "G. Buckley 2018 (scikit-image kidney)",
-      "dimensionNav": {
-        "key": "1",
-        "steps": 1
-      }
+      "citation": "G. Buckley 2018 (scikit-image kidney)"
     },
     {
       "id": "gsplats_3d_opencell_map4",
