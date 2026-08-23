@@ -1255,8 +1255,13 @@ def _parse_pca_dim(raw: str) -> int:
     data has features, so a larger value fails inside the fit — after a full
     streaming pass has already been paid for.
     """
-    value = _positive("--pca-dim", raw)
-    if value > EMBEDDING_DIM:
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ValueError(f"--pca-dim needs an integer, got {raw!r}") from None
+    if not 1 <= value <= EMBEDDING_DIM:
+        # One message for both bounds: either way the useful thing to tell the
+        # user is the range, not which end they missed.
         raise ValueError(
             f"--pca-dim must be between 1 and {EMBEDDING_DIM}, got {value}"
         )

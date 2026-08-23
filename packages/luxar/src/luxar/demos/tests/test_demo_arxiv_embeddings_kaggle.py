@@ -190,35 +190,6 @@ class TestSelectSampleIsRandomNotAPrefix:
         assert len(deciles) == 10
 
 
-class TestParseArgs:
-    def test_default_processes_the_whole_corpus(self) -> None:
-        assert demo.parse_args([]) == (None, 128, "auto", 0)
-
-    def test_all_options_are_parsed(self) -> None:
-        assert demo.parse_args(
-            ["--sample=250000", "--pca-dim=64", "--device=gpu", "--seed=7"]
-        ) == (250_000, 64, "gpu", 7)
-        assert demo.parse_args(["--sample=all"]) == (None, 128, "auto", 0)
-
-    def test_invalid_device_is_rejected_before_data_loading(self) -> None:
-        with pytest.raises(ValueError, match="device must be one of"):
-            demo.parse_args(["--device=tpu"])
-
-    @pytest.mark.parametrize("sample", [0, -5])
-    def test_non_positive_sample_is_rejected_before_data_loading(
-        self, sample: int
-    ) -> None:
-        with pytest.raises(ValueError, match="sample must be positive"):
-            demo.parse_args([f"--sample={sample}"])
-
-    @pytest.mark.parametrize("pca_dim", [0, demo.EMBEDDING_DIM + 1])
-    def test_pca_dim_outside_embedding_width_is_rejected_before_data_loading(
-        self, pca_dim: int
-    ) -> None:
-        with pytest.raises(ValueError, match="pca-dim must be between"):
-            demo.parse_args([f"--pca-dim={pca_dim}"])
-
-
 class TestResolvePaperMetadata:
     """arXiv rows come from Cornell; preprint-server rows describe themselves."""
 
@@ -667,6 +638,18 @@ class TestParseArgs:
     def test_unusable_values_raise_here(self, arg) -> None:
         with pytest.raises(ValueError):
             demo.parse_args([arg])
+
+    @pytest.mark.parametrize("pca_dim", [0, demo.EMBEDDING_DIM + 1])
+    def test_pca_dim_outside_the_embedding_width_is_rejected(self, pca_dim) -> None:
+        """PCA cannot yield more components than the data has features, and the
+        fit that would discover this sits behind a full streaming pass."""
+        with pytest.raises(ValueError, match="pca-dim must be between"):
+            demo.parse_args([f"--pca-dim={pca_dim}"])
+
+    def test_all_options_together_are_parsed(self) -> None:
+        assert demo.parse_args(
+            ["--sample=250000", "--pca-dim=64", "--device=gpu", "--seed=7"]
+        ) == (250_000, 64, "gpu", 7)
 
     def test_unknown_flags_are_ignored(self) -> None:
         """`luxar demo run` forwards its own flags (e.g. --no-serve)."""

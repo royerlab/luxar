@@ -652,6 +652,11 @@ class TestNoRuntimePipInstall:
 #: pinned + tabled or justified here, so an unpinned dependency cannot ship by
 #: accident (see the blind spot noted on TestNoUnpinnedThirdPartyImports).
 UNLISTED_IMPORTS_OK = {
+    # Pure accelerator, deliberately NOT routed through `require_module`: absence
+    # is a silent fall-back to `umap-learn`. Tabling it would be worse than
+    # leaving it out — RAPIDS ships CUDA-only wheels with no macOS build, so
+    # `deps` would show a permanently unmet row and `deps --install` would offer
+    # an install that cannot succeed on most machines.
     "cuml": "soft optional GPU UMAP; no CPU-only wheel, absence falls back to umap-learn",
     # Soft optional: the demo prints a warning and returns, so it runs fine
     # without napari. Pinned only in the heavyweight `tracksdata` extra
@@ -661,15 +666,6 @@ UNLISTED_IMPORTS_OK = {
     # A hard dependency of `requests`, which is a CORE dependency, so it is
     # always importable. Nothing to advertise.
     "urllib3": "transitive of requests (a core dependency) — always present",
-    # Pure accelerator, deliberately NOT routed through `require_module`: cuML
-    # only makes the arXiv demo's UMAP faster (56 s vs hours on the full
-    # corpus) and its absence is a silent fall-back to `umap-learn`. Tabling it
-    # would be worse than leaving it out — RAPIDS ships CUDA-only wheels with
-    # no macOS build, so `deps` would report a permanently unmet row and
-    # `deps --install` would offer an install that cannot succeed on most
-    # machines.
-    "cuml": "optional GPU accelerator — silent fall-back to umap-learn; "
-    "RAPIDS has no portable wheel to advertise",
 }
 
 
