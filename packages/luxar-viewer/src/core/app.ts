@@ -274,9 +274,7 @@ export class LuxarApp {
       this.setupEmbedderHooks(options.canvas);
 
       this.isInitialized = true;
-      this.isInitializing = false;
     } catch (error) {
-      this.isInitializing = false;
       log.error(Modules.APP, `Failed to initialize Luxar app: ${getErrorMessage(error)}`, error);
       // Tear down whatever partial state was constructed before the throw.
       // The pipeline writes each subsystem into `partial` as it builds
@@ -288,6 +286,8 @@ export class LuxarApp {
       assignFromPartial();
       this.dispose();
       throw error;
+    } finally {
+      this.isInitializing = false;
     }
   }
 
@@ -314,8 +314,8 @@ export class LuxarApp {
       onSrcChange: (src) => {
         this.options = { ...this.options, src };
       },
-      // Lets the selection handler skip its URL/src side effects when the
-      // guarded switch below is going to reject the selection anyway.
+      // Lets the selection handler refuse startup-time choices before any
+      // side effects or guarded switch dispatch.
       isInitializing: () => this.isInitializing,
       isSwitchInFlight: () => this.switchInFlight !== undefined,
       // Browser selections must share the same in-flight guard as the public
@@ -741,9 +741,7 @@ export class LuxarApp {
   switchDataset(src: string): Promise<void> {
     if (!this.isInitialized) {
       if (this.isInitializing) {
-        throw new Error(
-          'Luxar is still initializing. Try again after the initial dataset finishes loading.'
-        );
+        throw new Error('Luxar is still starting up; try again in a moment.');
       }
       throw new Error('LuxarApp.switchDataset called before init()');
     }
@@ -909,6 +907,7 @@ export class LuxarApp {
     // sees the correct state from the first instant of teardown, even if
     // teardown throws partway through.
     this.isInitialized = false;
+    this.isInitializing = false;
 
     // Hand the page its own <title> back. The viewer overwrites document.title
     // with the scene's name, which is a mutation of a host-page global: an

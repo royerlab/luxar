@@ -573,6 +573,26 @@ describe('DatasetBrowser', () => {
       expect(onClose).toHaveBeenCalled();
     });
 
+    it('keeps the browser open when selection is synchronously refused', async () => {
+      const entries: DirectoryEntry[] = [
+        { name: 'sample.zarr', path: 'sample.zarr', type: 'zarr' },
+      ];
+      navigateMock.mockResolvedValueOnce(defaultNavigateResult({ entries }));
+      onDatasetSelect.mockReturnValue(false);
+
+      new DatasetBrowser({ container, onDatasetSelect, onClose });
+      await vi.waitFor(() => {
+        expect(container.querySelector('.luxar-dataset-browser__file-item')).not.toBeNull();
+      });
+
+      const item = container.querySelector('.luxar-dataset-browser__file-item') as HTMLElement;
+      item.click();
+
+      expect(onDatasetSelect).toHaveBeenCalledWith('http://example.com/sample.zarr');
+      expect(container.querySelector('#luxar-dataset-browser')).not.toBeNull();
+      expect(onClose).not.toHaveBeenCalled();
+    });
+
     it('navigates into a directory entry on click', async () => {
       const entries: DirectoryEntry[] = [{ name: 'sub', path: 'sub', type: 'directory' }];
       navigateMock.mockResolvedValueOnce(defaultNavigateResult({ entries }));

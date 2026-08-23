@@ -22,9 +22,10 @@ import { showToast } from './toast';
  * doesn't surface as an unhandled rejection when the browser closes
  * synchronously after firing it.
  */
-function safeFireSelect(cb: (url: string) => void | Promise<void>, url: string): void {
+function safeFireSelect(cb: (url: string) => void | false | Promise<void>, url: string): boolean {
   try {
     const result = cb(url);
+    if (result === false) return false;
     if (result && typeof (result as Promise<void>).then === 'function') {
       (result as Promise<void>).catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
@@ -32,10 +33,12 @@ function safeFireSelect(cb: (url: string) => void | Promise<void>, url: string):
         showToast(`Failed to load dataset: ${msg}`);
       });
     }
+    return true;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log.warning(Modules.UI, `Dataset selection threw: ${msg}`);
     showToast(`Failed to load dataset: ${msg}`);
+    return true;
   }
 }
 
@@ -52,9 +55,11 @@ export interface DatasetBrowserConfig {
    * just the path). May be sync or async; the browser does NOT wait for
    * the returned Promise — it fires the callback, attaches a `.catch`
    * (so an async load failure is logged + toasted rather than becoming an
-   * unhandled rejection), and closes immediately.
+   * unhandled rejection), and closes immediately. Return `false`
+   * synchronously to keep the browser open without treating the selection
+   * as a failure.
    */
-  onDatasetSelect: (fullUrl: string) => void | Promise<void>;
+  onDatasetSelect: (fullUrl: string) => void | false | Promise<void>;
   onClose?: () => void;
   /** Currently loaded dataset URL, used to determine the initial directory. */
   currentSrc?: string;
@@ -79,7 +84,7 @@ export class DatasetBrowser {
   private panel: HTMLElement;
   private scrim: HTMLElement;
   private navigator: DirectoryNavigator;
-  private onDatasetSelect: (fullUrl: string) => void | Promise<void>;
+  private onDatasetSelect: (fullUrl: string) => void | false | Promise<void>;
   private onClose?: () => void;
   private currentDataset?: string;
 
@@ -369,8 +374,9 @@ export class DatasetBrowser {
         result.currentPath.includes('.zarr')
       ) {
         // Pass full URL to preserve directory context
-        safeFireSelect(this.onDatasetSelect, this.navigator.getFullUrl(result.currentPath));
-        this.close();
+        if (safeFireSelect(this.onDatasetSelect, this.navigator.getFullUrl(result.currentPath))) {
+          this.close();
+        }
         return;
       }
 
@@ -542,8 +548,7 @@ export class DatasetBrowser {
     const endsWithZarr = path.replace(/\/+$/, '').endsWith('.zarr');
     if (isFullUrl || endsWithZarr) {
       const fullUrl = isFullUrl ? path : this.navigator.getFullUrl(path);
-      safeFireSelect(this.onDatasetSelect, fullUrl);
-      this.close();
+      if (safeFireSelect(this.onDatasetSelect, fullUrl)) this.close();
       return;
     }
     this.navigate(path);
@@ -753,8 +758,9 @@ export class DatasetBrowser {
       const activate = (): void => {
         if (entry.type === 'zarr') {
           // Pass full URL to preserve directory context
-          safeFireSelect(this.onDatasetSelect, this.navigator.getFullUrl(entry.path));
-          this.close();
+          if (safeFireSelect(this.onDatasetSelect, this.navigator.getFullUrl(entry.path))) {
+            this.close();
+          }
         } else if (entry.type === 'directory') {
           this.navigate(entry.path);
         }
@@ -831,8 +837,7 @@ export class DatasetBrowser {
         // If it's already a full URL, use it directly; otherwise use navigator's base URL
         const isFullUrl = path.startsWith('http://') || path.startsWith('https://');
         const fullUrl = isFullUrl ? path : this.navigator.getFullUrl(path);
-        safeFireSelect(this.onDatasetSelect, fullUrl);
-        this.close();
+        if (safeFireSelect(this.onDatasetSelect, fullUrl)) this.close();
       }
     };
 

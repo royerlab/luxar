@@ -24,6 +24,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mocks = vi.hoisted(() => ({
   clearError: vi.fn(),
   showError: vi.fn(),
+  showToast: vi.fn(),
   replaceBrowserDataSourceUrl: vi.fn(),
   DatasetBrowserCtor: vi.fn(),
   logError: vi.fn(),
@@ -35,6 +36,9 @@ vi.mock('../../../../../ui/dataset-browser', () => ({
 vi.mock('../../../../../ui/error-overlay', () => ({
   clearError: mocks.clearError,
   showError: mocks.showError,
+}));
+vi.mock('../../../../../ui/toast', () => ({
+  showToast: mocks.showToast,
 }));
 vi.mock('../../../../../config/url-params', () => ({
   replaceBrowserDataSourceUrl: mocks.replaceBrowserDataSourceUrl,
@@ -53,13 +57,14 @@ import { showDatasetBrowser } from '../../../../../core/app/dataset/show-browser
 interface CapturedOpts {
   container: HTMLElement;
   currentSrc: string | undefined;
-  onDatasetSelect: (url: string) => Promise<void>;
+  onDatasetSelect: (url: string) => false | Promise<void>;
   onClose: () => void;
 }
 
 beforeEach(() => {
   mocks.clearError.mockReset();
   mocks.showError.mockReset();
+  mocks.showToast.mockReset();
   mocks.replaceBrowserDataSourceUrl.mockReset();
   mocks.DatasetBrowserCtor.mockReset();
   mocks.logError.mockReset();
@@ -194,20 +199,22 @@ describe('showDatasetBrowser', () => {
       expect(ports.loadDataset).toHaveBeenCalledWith('http://example.com/stale.zarr');
     });
 
-    it('skips the URL/src side effects while the app is initializing', async () => {
+    it('keeps the browser open and shows one neutral hint while the app is initializing', () => {
       const ports = makePorts();
       ports.isInitializing.mockReturnValue(true);
-      ports.loadDataset.mockRejectedValue(new Error('Luxar is still initializing'));
       showDatasetBrowser(ports);
       const opts = mocks.DatasetBrowserCtor.mock.calls[0][0] as CapturedOpts;
 
-      await expect(opts.onDatasetSelect('http://example.com/stale.zarr')).rejects.toThrow(
-        /still initializing/
-      );
+      expect(opts.onDatasetSelect('http://example.com/stale.zarr')).toBe(false);
 
+      expect(mocks.showToast).toHaveBeenCalledExactlyOnceWith(
+        'Luxar is still starting up; try again in a moment.'
+      );
       expect(mocks.replaceBrowserDataSourceUrl).not.toHaveBeenCalled();
       expect(ports.onSrcChange).not.toHaveBeenCalled();
-      expect(ports.loadDataset).toHaveBeenCalledWith('http://example.com/stale.zarr');
+      expect(ports.loadDataset).not.toHaveBeenCalled();
+      expect(mocks.showError).not.toHaveBeenCalled();
+      expect(mocks.logError).not.toHaveBeenCalled();
     });
 
     it('calls onSrcChange BEFORE loadDataset (so a follow-on browser open lands in the right dir)', async () => {

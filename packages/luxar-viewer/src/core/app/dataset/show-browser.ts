@@ -1,5 +1,6 @@
 import { DatasetBrowser } from '../../../ui/dataset-browser';
 import { clearError, showError } from '../../../ui/error-overlay';
+import { showToast } from '../../../ui/toast';
 import { replaceBrowserDataSourceUrl } from '../../../config/url-params';
 import { log, Modules } from '../../../utils/log';
 import { getViewerContainer } from '../../../utils/viewer-container';
@@ -20,14 +21,16 @@ export interface ShowDatasetBrowserPorts {
   updateBrowserUrl: boolean;
   inputHandler: InputHandler;
   onSrcChange: (src: string) => void;
-  /** True while the app is still completing its initial dataset load and wiring. */
+  /**
+   * True while the app is still completing its initial routing and wiring.
+   * Selections are refused before side effects or load dispatch in this state.
+   */
   isInitializing: () => boolean;
   /**
-   * True while a guarded dataset switch is already in flight. Consulted with
-   * `isInitializing` BEFORE the selection side effects (host-URL replacement,
-   * onSrcChange): a selection that cannot start is rejected by `loadDataset`
-   * below and must not leave the host URL or src snapshot pointing at a
-   * dataset that never loaded.
+   * True while a guarded dataset switch is already in flight. Consulted before
+   * the selection side effects (host-URL replacement, onSrcChange): the
+   * dispatch below will reject, and the host URL or src snapshot must not end
+   * up pointing at a dataset that never loaded.
    */
   isSwitchInFlight: () => boolean;
   loadDataset: (src: string) => Promise<void>;
@@ -41,16 +44,21 @@ export function showDatasetBrowser(ports: ShowDatasetBrowserPorts): DatasetBrows
   const browser = new DatasetBrowser({
     container: getViewerContainer(),
     currentSrc: ports.currentSrc,
-    onDatasetSelect: async (fullUrl: string) => {
+    onDatasetSelect: (fullUrl: string) => {
       // The browser now passes full URLs directly, preserving directory context
       // Strip any trailing slashes to ensure consistent URL format
       const cleanUrl = fullUrl.replace(/\/+$/, '');
 
+      if (ports.isInitializing()) {
+        showToast('Luxar is still starting up; try again in a moment.');
+        return false;
+      }
+
       // Selection side effects run only when the guarded switch can actually
-      // start. During initialization, or if another switch is already in
-      // flight, `loadDataset` below rejects — running these first would leave
+      // start. If another switch is already in flight, `loadDataset` below
+      // rejects — running these first would leave
       // the host URL and src snapshot pointing at a dataset that never loaded.
-      if (!ports.isInitializing() && !ports.isSwitchInFlight()) {
+      if (!ports.isSwitchInFlight()) {
         // Reflect the chosen dataset in the URL bar only for callers that opt in.
         // The standalone bootstrap opts in; programmatic/embedded usage defaults
         // to no host-page URL mutation.
@@ -71,14 +79,12 @@ export function showDatasetBrowser(ports: ShowDatasetBrowserPorts): DatasetBrows
       // log + show the failure in the user-facing error overlay before
       // re-throwing so any awaiting caller still observes the
       // rejection.
-      try {
-        await ports.loadDataset(cleanUrl);
-      } catch (error) {
+      return ports.loadDataset(cleanUrl).catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
         log.error(Modules.LUXAR, `loadDataset failed for ${cleanUrl}: ${message}`, error);
         showError(`Failed to load dataset: ${message}`);
         throw error;
-      }
+      });
     },
     onClose: () => {
       ports.onClose();
