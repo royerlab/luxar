@@ -408,6 +408,30 @@ class TestWarnIfSceneIsStale:
 
         assert "in one rung" not in capsys.readouterr().out
 
+    def test_silent_for_partitioned_finest_level(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        import zarr
+
+        scene = tmp_path / "desi.luxar.zarr"
+        root = zarr.open(str(scene), mode="w")
+        increments = [900_000, 900_000, 900_000, 900_000, 900_000, 375_978]
+        for layer_name in ("By tracer type", "By redshift"):
+            finest = root.create_group(layer_name).create_group("child_2")
+            finest.attrs["kind"] = "partition"
+            for part_index in range(2):
+                part = finest.create_group(f"part_{part_index}")
+                part.attrs["n_additive_sublods"] = len(increments)
+                part.attrs["n_points"] = sum(increments)
+                for rung_index, count in enumerate(increments):
+                    part.create_group(f"additive_{rung_index}").attrs["n_points"] = (
+                        count
+                    )
+
+        _demo.warn_if_scene_is_stale(scene)
+
+        assert "⚠" not in capsys.readouterr().out
+
     def test_warns_when_a_bounded_ladder_contains_only_the_old_sample(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:

@@ -641,6 +641,29 @@ def warn_if_scene_is_stale(scene_path: Path) -> None:
         aprint(f"  ⚠ Could not inspect {scene_path} for a streaming ladder: {exc}")
         return
 
+    def streaming_stats(finest) -> tuple[int, int, list[int]]:
+        nodes = [finest]
+        if finest.attrs.get("kind") == "partition":
+            part_names = sorted(
+                (key for key in finest.group_keys() if key.startswith("part_")),
+                key=lambda key: int(key.split("_", 1)[1]),
+            )
+            nodes = [finest[name] for name in part_names]
+
+        sublod_counts = []
+        n_points = 0
+        increments = []
+        for node in nodes:
+            n_sublods = int(node.attrs.get("n_additive_sublods", 1))
+            sublod_counts.append(n_sublods)
+            n_points += int(node.attrs.get("n_points", 0))
+            increments.extend(
+                int(node[f"additive_{index}"].attrs.get("n_points", 0) or 0)
+                for index in range(n_sublods)
+                if f"additive_{index}" in node
+            )
+        return min(sublod_counts, default=1), n_points, increments
+
     for layer_name in ("By tracer type", "By redshift"):
         try:
             layer = root[layer_name]
@@ -656,8 +679,7 @@ def warn_if_scene_is_stale(scene_path: Path) -> None:
             # build time — see substitutive_lod_or_flat), so the layer IS the
             # finest level and still carries its own streaming ladder.
             finest = layer[child_names[-1]] if child_names else layer
-            n_sublods = int(finest.attrs.get("n_additive_sublods", 1))
-            n_points = int(finest.attrs.get("n_points", 0))
+            n_sublods, n_points, increments = streaming_stats(finest)
         except Exception as exc:
             aprint(
                 f"  ⚠ Could not inspect {scene_path} [{layer_name}] for a "
@@ -693,13 +715,6 @@ def warn_if_scene_is_stale(scene_path: Path) -> None:
         # carry five rungs and still hand the main thread millions of points at
         # once. Checking the total instead is what let the 1.25M cap look like a
         # fix (#1812) while the shape stayed broken.
-        try:
-            increments = [
-                int(finest[f"additive_{i}"].attrs.get("n_points", 0) or 0)
-                for i in range(n_sublods)
-            ]
-        except KeyError:
-            increments = []
         biggest = max(increments, default=0)
         if biggest > SCENE_MAX_COMMIT:
             aprint(
