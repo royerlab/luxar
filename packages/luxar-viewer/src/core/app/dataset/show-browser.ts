@@ -71,9 +71,9 @@ export function showDatasetBrowser(ports: ShowDatasetBrowserPorts): DatasetBrows
         ports.onSrcChange(cleanUrl);
       }
 
-      // [core OOS] Wrap `loadDataset` in try/catch. The DatasetBrowser
-      // modal's `onDatasetSelect` contract is `Promise<void>` — the
-      // modal doesn't surface rejections to the user, so without this
+      // [core OOS] Wrap `loadDataset` in a rejection handler. The normal
+      // DatasetBrowser selection path returns `Promise<void>`, and the modal
+      // doesn't surface rejections to the user, so without this
       // wrapper a load failure (bad URL, transient network, malformed
       // zarr) became an unhandled promise rejection silently. Now we
       // log + show the failure in the user-facing error overlay before

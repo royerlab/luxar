@@ -200,7 +200,6 @@ export class LuxarApp {
     // works even if the same instance was already initialized and
     // disposed.
     this.isDisposed = false;
-    this.isInitializing = true;
     this.options = options;
 
     applyModuleOverrides(options);
@@ -228,6 +227,7 @@ export class LuxarApp {
       if (partial.controlRail) this.controlRail = partial.controlRail;
     };
 
+    this.isInitializing = true;
     try {
       const result = await runInitPipeline(
         {
@@ -303,7 +303,7 @@ export class LuxarApp {
    */
   private showDatasetBrowser(): void {
     // Do not reopen the browser while a selected dataset is still switching.
-    // The modal closes immediately after a selection, so without this guard
+    // The modal closes immediately after an accepted selection, so without this guard
     // the O shortcut / dataset rail item could open a second modal and offer
     // another overlapping full teardown+reload.
     if (this.datasetBrowser || this.switchInFlight) return;

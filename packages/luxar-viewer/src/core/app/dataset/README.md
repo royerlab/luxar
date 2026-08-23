@@ -46,7 +46,9 @@ LuxarApp.init(src)
   │
   ├─ true  → showDatasetBrowser({ ports })
   │            │
-  │            └─ onDatasetSelect(url) → switchDataset(url) → loadDataset(url, ports)
+  │            └─ onDatasetSelect(url)
+  │                 ├─ initializing → retry hint; keep modal open
+  │                 └─ ready → switchDataset(url) → loadDataset(url, ports)
   │
   └─ false → loadDataset(src, ports)
 

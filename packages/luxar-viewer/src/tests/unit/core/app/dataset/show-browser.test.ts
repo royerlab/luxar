@@ -233,7 +233,7 @@ describe('showDatasetBrowser', () => {
     });
 
     // [core OOS] Pre-fix, loadDataset rejections became unhandled promise
-    // rejections (DatasetBrowser's onDatasetSelect signature is
+    // rejections (the normal DatasetBrowser selection path returns
     // `Promise<void>` and the modal doesn't surface its own errors).
     // Now we wrap the call: log + show the failure in the user-facing
     // overlay, and re-throw so awaiting callers still see it.
