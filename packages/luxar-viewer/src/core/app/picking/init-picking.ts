@@ -186,10 +186,11 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
       log.warning(Modules.APP, `Invalid link template on node "${nodeName}": ${rejection}`);
     }
   }
-  // Provision picking when the scene declares labels, declares an interaction
-  // template, OR an embedder `selection` listener exists at load time. Without
-  // any of those there is no consumer, so skip the pick-mesh/GPU overhead
-  // entirely (keeps the bench-only synthetic scenes free of picking cost).
+  // Provision picking when the scene declares a per-element string/image
+  // channel, declares an interaction template, or an embedder selection /
+  // element-action listener exists at load time. Without any of those there is
+  // no consumer, so skip the pick-mesh/GPU overhead entirely (keeps the
+  // bench-only synthetic scenes free of picking cost).
   const wantsSelection =
     (ports.hasSelectionConsumer?.() ?? false) || (ports.hasElementActionConsumer?.() ?? false);
   if (!hasAnyLabels && !hasAnyImageLabels && !hasAnyKeys && !hasAnyInteraction && !wantsSelection) {
@@ -212,9 +213,10 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
     };
   }
 
-  // Create label loaders from the scene loader's zarr store. The loaders
-  // (tooltip content) need the store; selection events do not — so a
-  // missing store only aborts when labels were the sole reason to pick.
+  // Create content loaders from the scene loader's zarr store. Declared
+  // string/image channels and interaction templates need the store; embedder
+  // selection / element-action consumers do not, so consumer-only picking can
+  // proceed without one.
   const store = sceneLoader.zarrStore;
   let labelLoader: LabelLoader | undefined;
   let imageLabelLoader: ImageLabelLoader | undefined;
@@ -237,8 +239,8 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
   }
 
   // Create picking system with result callback. The handler closure
-  // lives in `pick-result-handler.ts` so its branch logic (null /
-  // label-only / image-only / both / neither / fetch reject /
+  // lives in `pick-result-handler.ts` so its branch logic (null / any
+  // combination of label/key/image content / no content / fetch reject /
   // missing loaders) can be unit-tested with stub ports.
   // Retains the settled pick so a click can act on it without a fresh
   // (asynchronous, user-activation-spending) GPU readback. Session-scoped:

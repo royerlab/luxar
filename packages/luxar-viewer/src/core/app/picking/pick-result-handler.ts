@@ -3,12 +3,12 @@
  *
  * Builds the async callback handed to `new PickingSystem(...)` in
  * `core/app.ts::initPicking`. The handler maps a `PickResult | null`
- * to a label + image-URL lookup and forwards the composed payload to
+ * to label + key + image-URL lookups and forwards the composed payload to
  * `OverlayManager.updateHoverContent`.
  *
  * Extracted from `core/app.ts` so the branch logic (null result,
- * label-only, image-only, both, neither, fetch failure, missing
- * loaders) can be unit-tested with stub ports instead of a real
+ * any combination of label/key/image content, no content, fetch failure,
+ * or missing loaders) can be unit-tested with stub ports instead of a real
  * `PickingSystem` + zarr-backed loaders.
  *
  * @module core/app/picking/pick-result-handler
@@ -125,21 +125,21 @@ export interface PickResultHandlerPorts {
  *   the selection's `nodeName` and the overlay's title — is the
  *   outermost `kind=partition` wrapper when the hit sits under one,
  *   mirroring how the layers panel treats a partition wrapper as the
- *   user-facing layer. The **queried** path — what the label / image
+ *   user-facing layer. The **queried** path — what the label / key / image
  *   loaders are handed — is the hit leaf *scene node*,
  *   `result.mainNode.name`, which is the CSR owner for a flat node and
  *   for a `part_<i>` of a partition. Using the wrapper for the lookup
- *   fails twice over: it is a bare group with no `label_offsets` /
- *   `label_bytes` (the CSR is written per `part_<i>`), and
+ *   fails twice over: it is a bare group with no label/key CSR arrays
+ *   (they are written per `part_<i>`), and
  *   `result.elementId` is an index in the leaf's own element space,
  *   meaningless against a whole-node array. Before the split, every
  *   hover on a partitioned layer resolved to an empty tooltip, silently
  *   — `LabelLoader` demotes the missing array to an info log and caches
- *   `[]`. Of the two queries only `getLabel` is reachable under a
- *   partition today (all four adders refuse `image_labels` alongside
- *   `partition=`, so no `part_<i>` ever owns an image CSR);
- *   `getImageUrl` moves with it for consistency, not because it is
- *   broken today.
+ *   `[]`. Of the three lookups only the label/key `getLabel` calls are
+ *   reachable under a partition today (all four adders refuse
+ *   `image_labels` alongside `partition=`, so no `part_<i>` ever owns an
+ *   image CSR); `getImageUrl` moves with them for consistency, not because
+ *   it is broken today.
  *
  *   The selection event carries both paths so the split is resolvable
  *   from outside: `nodeName` is `reportPath` (display) and
