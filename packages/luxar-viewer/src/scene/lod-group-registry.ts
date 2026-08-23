@@ -1730,8 +1730,7 @@ export class LODGroupRegistry {
     const prev = entry.children[prevIdx];
     if (!prev || !isReady(prev)) return undefined;
 
-    // Compare committed counts. An unknown count on either side means there is
-    // no evidence the fallback is severe, so decline the hold.
+    // Compare committed counts.
     const prevCount = this.childFreshAndCount(prev, version).count;
     const fallback = entry.children[fallbackIdx];
     const fallbackCount = fallback ? this.childFreshAndCount(fallback, version).count : null;

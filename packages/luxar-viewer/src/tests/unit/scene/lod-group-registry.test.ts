@@ -3871,6 +3871,22 @@ describe('LODGroupRegistry — stale-hold over a far coarser fallback', () => {
     expect(coarse.object.visible).toBe(false);
   });
 
+  it('shows the fresh fallback when the remembered level is no longer ready', () => {
+    // A held level can be evicted while it is remembered but off-screen. Its
+    // commit stamps survive release, so readiness — not the count ratio — must
+    // prevent the registry from selecting geometry that cannot be drawn.
+    const { reg, coarse, fine, state } = makeScrubRig(100, 1000);
+    fine.ready = false;
+    state.version = 2;
+    recommit(coarse, 2, 100);
+
+    reg.evaluatePerFrame();
+
+    expect(reg.get('/g')!.displayedChildIndex).toBe(0);
+    expect(coarse.object.visible).toBe(true);
+    expect(fine.object.visible).toBe(false);
+  });
+
   it('takes the fresh fallback immediately when it is comparably good', () => {
     // Freshness normally wins: only a SEVERE downgrade justifies showing the
     // wrong slice. At 60% of the fine level the fallback is taken at once.
