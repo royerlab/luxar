@@ -689,24 +689,6 @@ def _reference_on_dataset_basis(
         reference_on_fit_basis,
     )
 
-    # Hold the OVERRIDE to the same standard as a stored level. `fit_image_min`
-    # refuses a negative or non-finite one, so a hand-typed value reaching the
-    # shift unchecked is the only way in — and a negative level shifts the
-    # reference UPWARD, which is not a background at all, scoring against the
-    # wrong thing silently. Typing `-50` for `50` is the obvious way to get there.
-    #
-    # Spelled as a chained comparison rather than `math.isfinite` because
-    # `compare_quality` imports `math` locally further down, which shadows a
-    # module-level import and leaves any earlier reference unbound (ruff F823).
-    # This covers all three rejects: negative fails the lower bound, NaN fails
-    # every comparison, and +inf fails the upper one.
-    if image_min is not None and not 0.0 <= image_min < float("inf"):
-        aprint(
-            f"❌ --image-min must be a finite level >= 0, got {image_min}. It is "
-            f"the background the fit SUBTRACTED, so a negative value would shift "
-            f"the reference the wrong way."
-        )
-        raise typer.Exit(1)
     resolved_min = float(image_min) if image_min is not None else fit_image_min(stats)
     if resolved_min is None:
         aprint(f"WARNING: {MISSING_BASIS_HINT}")

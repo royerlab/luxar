@@ -68,11 +68,15 @@ def test_a_nonsensical_override_is_refused(fitted_store_and_reference, bad) -> N
     score against the wrong thing silently — and typing `-50` for `50` is the
     obvious way to get there. Validated to the same standard as a stored level,
     which `fit_image_min` already refuses.
+
+    Rejected as a `typer.BadParameter`, so this is a usage error (exit 2) rather
+    than a runtime failure — the value is wrong on the command line, before any
+    volume is read.
     """
     store, ref = fitted_store_and_reference
     result = _run(str(store), str(ref), "--image-min", bad)
-    assert result.exit_code == 1, result.output
-    assert "--image-min must be" in result.output
+    assert result.exit_code == 2, result.output
+    assert "finite, non-negative level" in result.output
 
 
 def test_a_store_with_no_basis_warns_rather_than_pretending(tmp_path) -> None:
