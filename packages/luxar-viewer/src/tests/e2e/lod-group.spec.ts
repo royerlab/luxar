@@ -604,7 +604,10 @@ test.describe('lod_group node — volumetric blendable', () => {
                 await new Promise((r) => requestAnimationFrame(() => r(null)));
                 ticks++;
                 if (f0 == null) {
-                  if (ticks >= n) return true; // no counter: fall back to rAF ticks
+                  // Still yield the requested rAF ticks, but do not call the
+                  // resulting sample fresh: without a renderer counter there is
+                  // no evidence that the LOD registry's update actually ran.
+                  if (ticks >= n) return false;
                 } else {
                   const f = frameNo();
                   if (f != null && f >= f0 + n) return true;
@@ -973,13 +976,12 @@ test.describe('lod_group node — volumetric blendable', () => {
     // must actually MOVE rather than sit on a constant.
     const FADE_MONOTONIC_EPS = 0.02; // float noise on a weight in [0, 1]
     const FADE_MIN_SPREAD = 0.1; // a real dissolve crosses far more than this
-    const FADE_MIN_SAMPLES = 3; // below this, "it varied" is not yet evidence
+    const FADE_MIN_SAMPLES = 3; // fewer confirmed-fresh samples are not evidence
     // Consecutive blend samples sharing the same adjacent pair = one traversal
     // of one band (the sweep visits distances in increasing order, so these are
     // already ordered by distance).
     type Blend = (typeof blends)[number];
     const bands: Blend[][] = [];
-    const spreadDegradations: string[] = [];
     for (const b of blends) {
       const current = bands[bands.length - 1];
       const previous = current?.[current.length - 1];
@@ -1018,17 +1020,13 @@ test.describe('lod_group node — volumetric blendable', () => {
             `exists to prevent:\n${bandText}\n\n${report}`
         ).toBeGreaterThan(FADE_MIN_SPREAD);
       } else {
-        spreadDegradations.push(
-          `${lo}↔${hi} spread check skipped: ${freshBand.length}/${band.length} samples were ` +
-            `confirmed fresh; need ${FADE_MIN_SAMPLES}`
-        );
+        test.info().annotations.push({
+          type: 'degraded',
+          description:
+            `${lo}↔${hi} spread check skipped: ${freshBand.length}/${band.length} samples were ` +
+            `confirmed fresh; need ${FADE_MIN_SAMPLES}`,
+        });
       }
-    }
-    if (spreadDegradations.length) {
-      test.info().annotations.push({
-        type: 'degraded',
-        description: spreadDegradations.join('; '),
-      });
     }
 
     expect(
