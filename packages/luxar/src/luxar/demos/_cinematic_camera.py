@@ -15,8 +15,8 @@ AUTO-FRAMED scenes need no demo-side correction: the viewer resolves the
 scene's FOV before automatic framing, so the fitted subject occupancy already
 matches the 63° lens. These helpers are for authored positions, which suppress
 automatic framing entirely; a distance tuned for 47° must still be recomposed
-for 63°. A returning visitor's stored FOV takes precedence over the
-scene-authored value by design.
+for 63°. A returning visitor's stored FOV takes precedence only for auto-framed
+scenes; an authored position is restored with the scene FOV it was composed for.
 
 Two ways to compose for the wider lens, and a demo should use whichever it
 already thinks in:

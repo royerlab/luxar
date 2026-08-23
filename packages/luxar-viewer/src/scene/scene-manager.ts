@@ -94,7 +94,7 @@ const FOV_APPLY_DEADBAND_DEG = 0.5;
 
 /** Caller-resolved scene-load decisions that affect initial camera setup. */
 export interface SceneLoadOptions {
-  /** Apply scene-authored FOV before framing when localStorage does not take precedence. */
+  /** Apply scene FOV before auto-framing; authored positions carry it regardless. */
   applyViewerConfigFov?: boolean;
 }
 
@@ -119,6 +119,7 @@ export interface SceneLoadOptions {
  * - Automatic canvas resizing for responsive design
  */
 export class SceneManager extends THREE.EventDispatcher<{
+  /** The view moved or its projection changed; redraw and invalidate picking. */
   change: {};
   'camera-changed': {};
   /**
@@ -295,6 +296,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     this.camera.fov = fov;
     this.camera.updateProjectionMatrix();
     this.updateMaterialsForCurrentCamera();
+    this.dispatchEvent({ type: 'change' });
     return true;
   }
 
@@ -714,10 +716,11 @@ export class SceneManager extends THREE.EventDispatcher<{
    * LuxarApp (originally derived from `?no-cache`/`?cache-debug`/etc URL
    * parameters in main.ts).
    * `options.applyViewerConfigFov` is the caller's localStorage-precedence
-   * decision, not a feature switch: returning visitors keep their stored FOV
-   * even when an authored pose was composed for a different lens. Under an
-   * orthographic camera it only stashes the next perspective FOV; framing uses
-   * camera zoom, and the later projection swap preserves that frustum.
+   * decision, not a feature switch. Returning visitors keep their stored FOV
+   * for auto-framed scenes; an authored position instead carries the resolved
+   * scene FOV with it as one framing contract. Under an orthographic camera the
+   * FOV only stashes the next perspective value; framing uses camera zoom, and
+   * the later projection swap preserves that frustum.
    */
   async loadSceneData(
     src: string,
@@ -779,13 +782,18 @@ export class SceneManager extends THREE.EventDispatcher<{
       // The helper returns whether an explicit camera position was applied;
       // also extract once more to detect author-set target/targetNode.
       const viewerConfig = root.userData?.viewerConfig as ZarrViewerConfig | undefined;
-      if (options.applyViewerConfigFov && viewerConfig) {
+      const { positionApplied, appliedUp } = this.applyZarrViewerConfig(root);
+      if ((options.applyViewerConfigFov || positionApplied) && viewerConfig) {
         const fovOverride = extractRenderingOverrides(viewerConfig).fov;
-        if (fovOverride !== undefined) {
+        const validFovOverride =
+          fovOverride !== undefined &&
+          Number.isFinite(fovOverride) &&
+          fovOverride >= config.camera.fovMin &&
+          fovOverride <= config.camera.fovMax;
+        if (fovOverride !== undefined && (options.applyViewerConfigFov || validFovOverride)) {
           this.setFov(fovOverride);
         }
       }
-      const { positionApplied, appliedUp } = this.applyZarrViewerConfig(root);
       // The scene up governs every camera fit/reset (Home/F, center-on-
       // origin, this auto-frame): world +Y unless the author set one.
       this.sceneUp.copy(appliedUp ?? DEFAULT_SCENE_UP);
@@ -1123,12 +1131,16 @@ export class SceneManager extends THREE.EventDispatcher<{
       );
       return true;
     }
-    return adjustFOV(this.makeCameraMaterialsCtx(), deltaY);
+    const applied = adjustFOV(this.makeCameraMaterialsCtx(), deltaY);
+    if (applied) this.dispatchEvent({ type: 'change' });
+    return applied;
   }
 
   /** Update camera clipping planes with validation. */
   updateClippingPlanes(near: number, far: number): void {
-    applyClippingPlanes(this.camera, near, far);
+    if (applyClippingPlanes(this.camera, near, far)) {
+      this.dispatchEvent({ type: 'change' });
+    }
   }
 
   /**
@@ -1137,7 +1149,9 @@ export class SceneManager extends THREE.EventDispatcher<{
    * the scale-aware controls.
    */
   autoAdjustClippingPlanes(): { near: number; far: number } {
-    return autoAdjustFromBounds(this.makeClippingCtx());
+    const { near, far, applied } = autoAdjustFromBounds(this.makeClippingCtx());
+    if (applied) this.dispatchEvent({ type: 'change' });
+    return { near, far };
   }
 
   /**

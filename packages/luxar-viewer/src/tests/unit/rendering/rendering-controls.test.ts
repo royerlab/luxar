@@ -795,6 +795,20 @@ describe('RenderingControls', () => {
   });
 
   describe('SyncCurrentState Completeness', () => {
+    it('refreshes the FOV widgets after syncing live camera state', () => {
+      const controls = renderingControls as any;
+      mockCamera.fov = 63;
+      controls.controllers.fov.updateDisplay.mockClear();
+      controls.controllers.fovPreset.updateDisplay.mockClear();
+
+      controls.syncCameraFovState();
+
+      expect(controls.settings.fov).toBe(63);
+      expect(controls.settings.fovPreset).toBe('35mm');
+      expect(controls.controllers.fov.updateDisplay).toHaveBeenCalledOnce();
+      expect(controls.controllers.fovPreset.updateDisplay).toHaveBeenCalledOnce();
+    });
+
     it('should sync all external-changeable settings from managers', () => {
       const controls = renderingControls as any;
 

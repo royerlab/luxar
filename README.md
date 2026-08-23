@@ -89,7 +89,7 @@ is the slow exception).
 git clone https://github.com/royerlab/luxar.git
 cd luxar
 make setup-dev          # Auto-installs Node.js, pnpm, Hatch (no sudo)
-luxar demo              # Browse the 86 bundled demos
+luxar demo              # Browse the 85 bundled demos
 luxar demo run lorenz   # Run one — generates the data and opens the viewer
 ```
 
@@ -103,20 +103,20 @@ That last command generates a Lorenz attractor and opens the viewer:
 geometry, what it needs, and whether you have already built it:
 
 ```
-🎬 86 Luxar demos  ·  75 built  ·  8 cached  ·  3 not generated yet
+🎬 85 Luxar demos  ·  74 built  ·  8 cached  ·  3 not generated yet
 
  ASTRONOMY ───────────────────────────────────────────────────────────── 6 demos
- ✓  3  asteroids_solar_system                  points+lines  300 MB
- ✓ 12  cosmicflows_laniakea                    points+lines  25 MB
- • 15  desi_galaxies                           points        73 MB git-lfs
+ ✓  2  asteroids_solar_system                  points+lines  300 MB
+ ✓ 11  cosmicflows_laniakea                    points+lines  25 MB
+ • 14  desi_galaxies                           points        73 MB git-lfs
 
  MEDICAL ─────────────────────────────────────────────────────────────── 4 demos
- ✓ 17  dmri_tractography                       lines         588 MB
- • 25  gsplats_2d_cmu1_pathology               gsplats       150 MB GPU? git-lfs
+ ✓ 16  dmri_tractography                       lines         588 MB
+ • 24  gsplats_2d_cmu1_pathology               gsplats       150 MB GPU? git-lfs
 
  SYNTHETIC ──────────────────────────────────────────────────────────── 19 demos
- ✓ 10  cloud                                   points
-   11  collision                               points
+ ✓  9  cloud                                   points
+   10  collision                               points
  ...
 
  ✓ built   • inputs cached   (blank) not generated yet
@@ -292,12 +292,13 @@ stream:
 
 | Dataset | Source volume | Fitted representation |
 |---------|---------------|-----------------------|
-| **Tribolium embryo** — light-sheet, 1 timepoint | 965 × 1871 × 991 = 1.8 G voxels (3.3 GB as TIFF) | 256K splats · **2.6 MB** |
+| **Tribolium embryo** — light-sheet, 1 timepoint | 965 × 1871 × 991 = 1.8 G voxels (3.3 GB as TIFF) | 296,559 splats · **2.0 MB** |
 | **C. elegans embryo** — confocal, 400 timepoints | 400 × 41 × 512 × 512 = 4.3 G voxels | 5.5M splats · **72 MB** (180 KB per timepoint) |
 
-Both are the cached fits bundled with this repository under
-`packages/luxar/src/luxar/demos/data/`, fitted at full source resolution — the
-single-file Tribolium fit works out to about 10 bytes per splat on disk. They then
+The *C. elegans* fit is bundled under `packages/luxar/src/luxar/demos/data/`;
+the Tribolium fit is produced locally because its source is not redistributable.
+Both use full source resolution, and the single-file Tribolium fit works out to
+about 7 bytes per splat on disk. They then
 render in any WebGL2 desktop browser: no 3D textures, no ray-marching, and no CUDA
 on the viewing machine.
 

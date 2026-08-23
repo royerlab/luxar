@@ -652,6 +652,12 @@ class TestNoRuntimePipInstall:
 #: pinned + tabled or justified here, so an unpinned dependency cannot ship by
 #: accident (see the blind spot noted on TestNoUnpinnedThirdPartyImports).
 UNLISTED_IMPORTS_OK = {
+    # Pure accelerator, deliberately NOT routed through `require_module`: absence
+    # is a silent fall-back to `umap-learn`. Tabling it would be worse than
+    # leaving it out — RAPIDS ships CUDA-only wheels with no macOS build, so
+    # `deps` would show a permanently unmet row and `deps --install` would offer
+    # an install that cannot succeed on most machines.
+    "cuml": "soft optional GPU UMAP; no CPU-only wheel, absence falls back to umap-learn",
     # Soft optional: the demo prints a warning and returns, so it runs fine
     # without napari. Pinned only in the heavyweight `tracksdata` extra
     # (napari + PyQt6); tabling it would make `deps --install` pull all of that

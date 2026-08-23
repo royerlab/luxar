@@ -68,11 +68,17 @@ export async function loadDataset(src: string, ports: LoadDatasetPorts): Promise
   });
 
   // Pass zarr viewer_config to rendering controls (available after scene loads).
-  // If no localStorage settings exist for this scene, apply zarr defaults.
+  // If no localStorage settings exist for this scene, apply zarr defaults. An
+  // authored camera position already carried its resolved FOV during loading.
   const viewerConfig = ports.sceneManager.getSceneViewerConfig();
   ports.renderingControls.setZarrViewerConfig(viewerConfig);
   if (applyViewerConfigDefaults && viewerConfig) {
     ports.renderingControls.applyZarrDefaults();
+  } else if (!applyViewerConfigDefaults) {
+    // The scene may have replaced the stored FOV to keep an authored position
+    // paired with its lens. Keep panel state and Ctrl+Shift+S export aligned
+    // with the live camera before any later settings application can reuse it.
+    ports.renderingControls.syncCameraFovState();
   }
 
   // Update fly speed slider range and value based on scene scale

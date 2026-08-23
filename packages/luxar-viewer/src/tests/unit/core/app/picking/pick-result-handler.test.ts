@@ -49,7 +49,7 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
 function makeResult(nodeName: string, elementId: number): PickResult {
   const mainNode = new THREE.Object3D();
   mainNode.name = nodeName;
-  return { nodeId: 1, elementId, brightness: 1.0, mainNode };
+  return { nodeId: 1, elementId, brightness: 1.0, mainNode, screenX: 0, screenY: 0 };
 }
 
 describe('buildPickResultHandler', () => {
@@ -240,7 +240,14 @@ describe('buildPickResultHandler', () => {
       overlayManager: { updateHoverContent: s.updateHoverContent },
     });
 
-    await handle({ nodeId: 1, elementId: 42, brightness: 1.0, mainNode: part });
+    await handle({
+      nodeId: 1,
+      elementId: 42,
+      brightness: 1.0,
+      mainNode: part,
+      screenX: 0,
+      screenY: 0,
+    });
     expect(s.getLabel).toHaveBeenCalledWith('/Splat/part_3', 42);
     expect(s.updateHoverContent).toHaveBeenCalledExactlyOnceWith({
       label: 'Cell 42',
@@ -275,7 +282,14 @@ describe('buildPickResultHandler', () => {
       overlayManager: { updateHoverContent: s.updateHoverContent },
     });
 
-    await handle({ nodeId: 1, elementId: 42, brightness: 1.0, mainNode: part });
+    await handle({
+      nodeId: 1,
+      elementId: 42,
+      brightness: 1.0,
+      mainNode: part,
+      screenX: 0,
+      screenY: 0,
+    });
 
     expect(s.getImageUrl).toHaveBeenCalledWith('/Splat/part_3', 42);
     expect(s.updateHoverContent).toHaveBeenCalledExactlyOnceWith({
@@ -305,7 +319,14 @@ describe('buildPickResultHandler', () => {
       overlayManager: { updateHoverContent: s.updateHoverContent },
     });
 
-    await handle({ nodeId: 1, elementId: 42, brightness: 1.0, mainNode: leaf });
+    await handle({
+      nodeId: 1,
+      elementId: 42,
+      brightness: 1.0,
+      mainNode: leaf,
+      screenX: 0,
+      screenY: 0,
+    });
     // Queried on the innermost leaf (the only node that owns a label CSR)...
     expect(s.getLabel).toHaveBeenCalledWith('/Outer/part_1/part_0', 42);
     // ...reported as the outermost wrapper.
@@ -332,7 +353,14 @@ describe('buildPickResultHandler', () => {
       overlayManager: { updateHoverContent: s.updateHoverContent },
     });
 
-    await handle({ nodeId: 1, elementId: 7, brightness: 1.0, mainNode: leaf });
+    await handle({
+      nodeId: 1,
+      elementId: 7,
+      brightness: 1.0,
+      mainNode: leaf,
+      screenX: 0,
+      screenY: 0,
+    });
     expect(s.getLabel).toHaveBeenCalledWith('/Plain/leaf', 7);
   });
 
@@ -450,7 +478,14 @@ describe('buildPickResultHandler', () => {
         onSelection,
       });
 
-      await handle({ nodeId: 1, elementId: 42, brightness: 1.0, mainNode: part });
+      await handle({
+        nodeId: 1,
+        elementId: 42,
+        brightness: 1.0,
+        mainNode: part,
+        screenX: 0,
+        screenY: 0,
+      });
 
       // The reported/queried split (#1415) is visible in the payload itself:
       // `nodeName` is the user-facing layer, `hitNodeName` is the leaf that
@@ -489,7 +524,14 @@ describe('buildPickResultHandler', () => {
         onSelection,
       });
 
-      await handle({ nodeId: 1, elementId: 42, brightness: 1.0, mainNode: leaf });
+      await handle({
+        nodeId: 1,
+        elementId: 42,
+        brightness: 1.0,
+        mainNode: leaf,
+        screenX: 0,
+        screenY: 0,
+      });
 
       expect(onSelection).toHaveBeenCalledExactlyOnceWith({
         nodeName: '/Outer',
@@ -516,7 +558,14 @@ describe('buildPickResultHandler', () => {
         onSelection,
       });
 
-      await handle({ nodeId: 1, elementId: 7, brightness: 1.0, mainNode: leaf });
+      await handle({
+        nodeId: 1,
+        elementId: 7,
+        brightness: 1.0,
+        mainNode: leaf,
+        screenX: 0,
+        screenY: 0,
+      });
 
       const sel = onSelection.mock.calls[0][0] as { nodeName: string; hitNodeName: string };
       expect(sel.hitNodeName).toBe('/Plain/leaf');

@@ -106,6 +106,7 @@ __all__ = [
     "is_consolidated",
     "is_missing_error",
     "is_zarr_path",
+    "list_raw_keys",
     "memory_group",
     "open_group",
     "open_store",

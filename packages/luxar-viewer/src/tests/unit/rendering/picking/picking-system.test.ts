@@ -1211,7 +1211,14 @@ describe('PickingSystem — stale readback ordering', () => {
     system.registerNode(mainNode, pickNode, id);
 
     const gate = deferred<PickResult | null>();
-    const fakeResult: PickResult = { nodeId: id, elementId: 7, brightness: 1, mainNode };
+    const fakeResult: PickResult = {
+      nodeId: id,
+      elementId: 7,
+      brightness: 1,
+      mainNode,
+      screenX: 0,
+      screenY: 0,
+    };
     (system as unknown as { readbackAndVote: () => Promise<PickResult | null> }).readbackAndVote =
       () => gate.promise;
 
@@ -1304,5 +1311,109 @@ describe('PickingSystem — element-ID remap (issue #1421)', () => {
     // Slot 1 of a node whose visible buffer starts at on-disk 2048.
     const result = await pickSlot(1, new Uint32Array([2048, 2049, 4096]));
     expect(result?.elementId).toBe(2049);
+  });
+});
+
+/**
+ * The generation counter click-to-act depends on (issue #1917).
+ *
+ * `PickedElementCache` treats `pickGeneration` as "everything that can make an
+ * already-delivered PickResult stop describing reality". These tests pin both
+ * halves of that contract against the real system: what MUST advance it, and
+ * — just as load-bearing — what must NOT.
+ */
+describe('PickingSystem — pickGeneration / visibleSignature', () => {
+  let system: PickingSystem;
+
+  beforeEach(() => {
+    system = new PickingSystem(makeStubRenderer(), makeStubCapabilities(), makeCamera(), vi.fn());
+  });
+
+  it('markDirty advances the generation', () => {
+    const before = system.pickGeneration;
+    system.markDirty();
+    expect(system.pickGeneration).toBeGreaterThan(before);
+  });
+
+  it('onMouseLeave advances the generation', () => {
+    const before = system.pickGeneration;
+    system.onMouseLeave();
+    expect(system.pickGeneration).toBeGreaterThan(before);
+  });
+
+  it('dispose advances the generation', () => {
+    const before = system.pickGeneration;
+    system.dispose();
+    expect(system.pickGeneration).toBeGreaterThan(before);
+  });
+
+  /**
+   * THE load-bearing negative. An ordinary click is pointerdown → controls
+   * `start` → suppress(true) → pointerup → suppress(false). If suppression
+   * advanced the generation, the cached pick would be invalid by the time the
+   * click resolved and EVERY click would silently refuse itself.
+   */
+  it('suppress does NOT advance the generation — an ordinary click depends on this', () => {
+    const before = system.pickGeneration;
+    system.suppress(true);
+    system.suppress(false);
+    expect(system.pickGeneration).toBe(before);
+  });
+
+  /**
+   * A perspective↔ortho swap reprojects every element on screen. Before
+   * #1917 `setCamera` set `_dirty` directly and advanced NEITHER counter, so a
+   * cached pick survived it: hover an element, press the ortho toggle (no
+   * mouse movement, so no `mousemove` to bump the generation), click, and the
+   * click acted on whatever used to be under the cursor. Same family as the
+   * FOV gap in #1916.
+   */
+  it('setCamera advances the generation — a projection swap invalidates a cached pick', () => {
+    const before = system.pickGeneration;
+    system.setCamera(new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100));
+    expect(system.pickGeneration).toBeGreaterThan(before);
+  });
+
+  it('clearRegistrationsForRebuild changes the visible signature', () => {
+    // Context restore empties the node map without touching the generation;
+    // the signature is what catches it.
+    const mainNode = new THREE.Object3D();
+    const pickMesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+    system.registerNode(mainNode, pickMesh, system.allocatePickId());
+
+    const before = system.visibleSignature;
+    system.clearRegistrationsForRebuild();
+    expect(system.visibleSignature).not.toBe(before);
+  });
+
+  it('invalidateCanvasRect does NOT invalidate — a page scroll is not a view change', () => {
+    // Scrolling moves the canvas within the page but not content within the
+    // canvas, and both the cached pick and the click convert to canvas-local
+    // coordinates, so they shift together. Invalidating here would drop a
+    // perfectly good pick on every scroll event.
+    const mainNode = new THREE.Object3D();
+    const pickMesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+    system.registerNode(mainNode, pickMesh, system.allocatePickId());
+
+    const g = system.pickGeneration;
+    const s = system.visibleSignature;
+    system.invalidateCanvasRect();
+    expect(system.pickGeneration).toBe(g);
+    expect(system.visibleSignature).toBe(s);
+  });
+
+  it('visibleSignature changes when a registered node is hidden', () => {
+    // The signal `pickGeneration` cannot carry: hiding a layer from the panel
+    // does not dirty the buffer (`applyVisibility` only requests a render).
+    const mainNode = new THREE.Object3D();
+    const pickMesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+    system.registerNode(mainNode, pickMesh, system.allocatePickId());
+
+    const before = system.visibleSignature;
+    mainNode.visible = false;
+    expect(system.visibleSignature).not.toBe(before);
+
+    mainNode.visible = true;
+    expect(system.visibleSignature).toBe(before);
   });
 });

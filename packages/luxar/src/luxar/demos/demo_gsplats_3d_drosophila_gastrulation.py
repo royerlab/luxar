@@ -204,7 +204,17 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                     # dataset — `volumetric` needs absorption >= 12 before the
                     # far side stops bleeding through, by which point the whole
                     # object is nearly black. Alpha-over keeps the surface nuclei
-                    # crisp. (Same conclusion the Tribolium demo reached.)
+                    # crisp.
+                    #
+                    # The Tribolium demo used to cite the same conclusion; it no
+                    # longer applies there and the two have diverged. Strong
+                    # absorption coupled with low opacity made `volumetric` work
+                    # on that stack while its specimen-wide ~675-count haze was
+                    # still in the data. The haze has since been subtracted at
+                    # fit time. THIS dataset is a different shape — a bright yolk
+                    # inside the shell, which is signal, not background — so the
+                    # absorption measurement above still stands and this stays
+                    # alpha-over.
                     blending_mode="normal",
                     colormap="magma",
                     # `intensity` is a WINDOW whose top clips: measured here,
