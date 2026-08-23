@@ -30,7 +30,8 @@ def load_gsplats(
     ``kind=lod`` group whose children are all leaves (the substitutive × additive
     matrix). A genuinely nested tree (a ``kind=partition`` root, or a lod group
     with non-leaf children) has no flat ``GSplatData`` equivalent and raises
-    ``ValueError``; consume those via the node tree directly (``read_gsplat_node``).
+    ``ValueError``; use ``load_default_gsplats`` to materialize the default-rendered
+    selection, or consume the node tree directly with ``load_gsplat_node``.
 
     Args:
         path: Path to .gsplats.zarr directory or compressed archive

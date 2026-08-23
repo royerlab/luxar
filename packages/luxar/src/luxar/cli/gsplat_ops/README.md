@@ -24,6 +24,7 @@ importers name the owning module directly, never a re-export root.
 - `recipe_shared.py` — `--recipe` names/methods/validators shared by the CLI and `cli/lod.py`
 - `planner.py` — content-plan resolution + `run_content_fit`
 - `encoding.py` — `_resolve_encoding_mode` shared by the transform, scene and interchange commands
+- `loading.py` — shared matrix-only loading policy and flatten-first guidance
 
 ### `fitting/` — `fit` / `cal` / `render` / `denoise`
 

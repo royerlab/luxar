@@ -123,32 +123,46 @@ def run_render_to_file(
         import numpy as np
 
         from luxar.cli.gsplat_config import parse_shape
-        from luxar.gsplats.io.load_gsplats import load_default_gsplats
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.tree import center_bounds, iter_default_leaves, total_splats
 
         with asection(f"Rendering: {input_path.name}"):
             with asection("Loading gsplat dataset"):
-                data = load_default_gsplats(input_path, include_stats=False)
-                ndim = data.ndim
-                aprint(f"Loaded {data.n_splats:,} splats ({ndim}D)")
+                node, _ = load_gsplat_node(input_path, include_stats=False)
+                leaves = iter_default_leaves(node)
+                first_leaf = next(leaves, None)
+                if first_leaf is None:
+                    raise ValueError("GSplat tree has no default-rendered leaves")
+                first_data = GSplatData.from_tree(first_leaf)
+                ndim = first_data.ndim
+                n_splats = sum(
+                    total_splats(leaf) for leaf in iter_default_leaves(node)
+                )
+                aprint(f"Loaded {n_splats:,} splats ({ndim}D)")
 
             # Resolve truncation radius from dataset if not explicitly set
             if truncate is None:
-                truncate = data.truncation_radius
+                truncate = first_data.truncation_radius
 
             if shape is not None:
                 output_shape = parse_shape(shape)
             else:
-                mins = data.centers.min(axis=0)
-                maxs = data.centers.max(axis=0)
+                bounds = center_bounds(node)
+                if bounds is None:
+                    raise ValueError("GSplat tree has no splat centers")
+                mins, maxs = bounds
                 output_shape = tuple(int(maxs[i] - mins[i]) + 1 for i in range(ndim))
                 aprint(f"Auto shape from bounding box: {output_shape}")
 
             with asection(f"Rendering to {output_shape}"):
-                volume = data.render_to_volume(
-                    shape=output_shape,
-                    device=device,
-                    truncate=truncate,
-                )
+                volume = np.zeros(output_shape, dtype=np.float32)
+                for leaf in iter_default_leaves(node):
+                    volume += GSplatData.from_tree(leaf).render_to_volume(
+                        shape=output_shape,
+                        device=device,
+                        truncate=truncate,
+                    )
                 aprint(
                     f"Rendered: {volume.shape}, "
                     f"range [{volume.min():.4f}, {volume.max():.4f}]"
