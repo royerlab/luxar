@@ -568,9 +568,8 @@ describe('initPicking', () => {
       // core.md W10 strengthening: previously `>=4`. Pin to EXACTLY 4 so
       // a regression that double-registered a cleanup (or added a 5th
       // listener without considering teardown) gets flagged. The four
-      // are: controls.removeEventListener('change' | 'start' | 'end')
-      // and sceneManager.removeEventListener('camera-changed') — see
-      // core/app/picking/init-picking.ts lines 144, 161, 162, 169.
+      // are: controls.removeEventListener('start' | 'end') and
+      // sceneManager.removeEventListener('change' | 'camera-changed').
       expect(addSpy.mock.calls.length).toBe(4);
       // Each registered cleanup is a function (not a value / object).
       for (const call of addSpy.mock.calls) {
@@ -579,10 +578,23 @@ describe('initPicking', () => {
 
       // Direct addEventListener on controls + sceneManager (Three.js
       // EventDispatcher doesn't satisfy the EventTarget type).
-      expect(sm.controls.addEventListener).toHaveBeenCalledWith('change', expect.any(Function));
       expect(sm.controls.addEventListener).toHaveBeenCalledWith('start', expect.any(Function));
       expect(sm.controls.addEventListener).toHaveBeenCalledWith('end', expect.any(Function));
+      expect(sm.addEventListener).toHaveBeenCalledWith('change', expect.any(Function));
       expect(sm.addEventListener).toHaveBeenCalledWith('camera-changed', expect.any(Function));
+
+      const dirtyHandler = sm.addEventListener.mock.calls.find(([type]) => type === 'change')?.[1];
+      expect(dirtyHandler).toBeTypeOf('function');
+      dirtyHandler();
+      const pickingSystem = vi.mocked(PickingSystem).mock.results.at(-1)?.value;
+      expect(pickingSystem.markDirty).toHaveBeenCalledTimes(1);
+
+      events.dispose();
+      expect(sm.removeEventListener).toHaveBeenCalledWith('change', dirtyHandler);
+      expect(sm.controls.removeEventListener).not.toHaveBeenCalledWith(
+        'change',
+        expect.any(Function)
+      );
     });
   });
 });

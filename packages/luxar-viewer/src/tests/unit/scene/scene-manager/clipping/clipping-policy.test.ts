@@ -27,6 +27,7 @@ import {
   minNearForRadius,
   SPHERE_SAFETY_EXPANSION,
 } from '../../../../../scene/scene-manager/clipping/bounds-math';
+import { log } from '../../../../../utils/log';
 
 function makeCamera(
   position = new THREE.Vector3(0, 0, 100),
@@ -71,7 +72,7 @@ describe('applyClippingPlanes', () => {
     const camera = makeCamera();
     const updateSpy = vi.spyOn(camera, 'updateProjectionMatrix');
 
-    applyClippingPlanes(camera, 0.5, 500);
+    expect(applyClippingPlanes(camera, 0.5, 500)).toBe(true);
 
     expect(camera.near).toBe(0.5);
     expect(camera.far).toBe(500);
@@ -80,14 +81,14 @@ describe('applyClippingPlanes', () => {
 
   it('rejects near >= far without mutating the camera', () => {
     const camera = makeCamera(new THREE.Vector3(), 1, 1000);
-    applyClippingPlanes(camera, 1000, 1000);
+    expect(applyClippingPlanes(camera, 1000, 1000)).toBe(false);
     expect(camera.near).toBe(1);
     expect(camera.far).toBe(1000);
   });
 
   it('still applies values when far/near > 10000 (warning logged but not rejected)', () => {
     const camera = makeCamera(new THREE.Vector3(), 1, 1000);
-    applyClippingPlanes(camera, 0.001, 100);
+    expect(applyClippingPlanes(camera, 0.001, 100)).toBe(true);
     expect(camera.near).toBe(0.001);
     expect(camera.far).toBe(100);
   });
@@ -111,7 +112,7 @@ describe('applyClippingPlanes', () => {
   ])('refuses invalid planes (%s) without mutating the camera', (_label, near, far) => {
     const camera = makeCamera(new THREE.Vector3(), 1, 1000);
     const updateSpy = vi.spyOn(camera, 'updateProjectionMatrix');
-    applyClippingPlanes(camera, near, far);
+    expect(applyClippingPlanes(camera, near, far)).toBe(false);
     expect(camera.near).toBe(1);
     expect(camera.far).toBe(1000);
     expect(updateSpy).not.toHaveBeenCalled();
@@ -188,8 +189,14 @@ describe('autoAdjustFromBounds — metadata path', () => {
       max: { x: 5, y: 5, z: 5 },
     };
     const { ctx, setSceneScale } = makeCtx({ metadataBounds });
-    autoAdjustFromBounds(ctx);
+    const successSpy = vi.spyOn(log, 'success').mockImplementation(() => {});
+
+    const result = autoAdjustFromBounds(ctx);
+
+    expect(result.applied).toBe(false);
     expect(setSceneScale).not.toHaveBeenCalled();
+    expect(successSpy).not.toHaveBeenCalled();
+    successSpy.mockRestore();
   });
 });
 
