@@ -652,6 +652,7 @@ class TestNoRuntimePipInstall:
 #: pinned + tabled or justified here, so an unpinned dependency cannot ship by
 #: accident (see the blind spot noted on TestNoUnpinnedThirdPartyImports).
 UNLISTED_IMPORTS_OK = {
+    "cuml": "soft optional GPU UMAP; no CPU-only wheel, absence falls back to umap-learn",
     # Soft optional: the demo prints a warning and returns, so it runs fine
     # without napari. Pinned only in the heavyweight `tracksdata` extra
     # (napari + PyQt6); tabling it would make `deps --install` pull all of that
