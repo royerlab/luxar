@@ -306,27 +306,47 @@ exports group into the categories below.
 Writing `camera.position` from a spec does **not** move the camera: the active
 controls own target / orientation / distance, and `runUpdateStep` step 8
 re-applies them to the camera every frame. A placement only sticks if the
-controls `reinitialize()` from it first, and only stays put if the wanted
-distance is inside the scene-derived `[minDistance, maxDistance]` clamp that
-step 6 re-imposes on every frame. Both traps made three specs silently inert
-(#1930) — use these instead of hand-rolling the sequence.
+controls `reinitialize()` from it first — that one trap made three specs
+silently inert (#1930), so use these instead of hand-rolling the sequence, and
+**assert the returned placement** rather than discarding it.
 
-| Helper                                                                  | Use when                                                                                                                                                                                                                                                                |
-| ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `placeCameraAt(page, position, { target? })`                            | Move the camera and make it stick (pivot defaults to the active controls' target). Returns the POST-clamp position and distance, so a spec can assert the camera really moved rather than assuming it did.                                                              |
-| `withOrbitDistanceLimits(page, limits, body)`                           | Run `body` with the orbit distance clamp widened, restoring the previous limits afterwards (try/finally). The window must span the placement AND the sampling — restoring early lets the next frame pull the camera back.                                               |
-| `UNCLAMPED_ORBIT_DISTANCE_LIMITS`                                       | "Wherever I put it, leave it" limits for the above.                                                                                                                                                                                                                     |
-| `InPageCameraApi`, `Vec3Like`, `CameraPlacement`, `OrbitDistanceLimits` | Types. `InPageCameraApi` types `window.__luxarE2ECamera`, the in-page object the helpers install — a spec that places the camera many times inside ONE `page.evaluate` (the lod-group sweep) drives that object directly, so there is only one definition of the idiom. |
+| Helper                                                                  | Use when                                                                                                                                                                                                                                                                                                                 |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `placeCameraAt(page, position, { target?, up? })`                       | Move the camera and make it stick (pivot defaults to the active controls' target). Returns the POST-clamp position/distance plus `viaOrbitControls`, so a spec can PROVE the camera moved rather than assuming it did. `null` means the debug camera was missing.                                                        |
+| `getCameraPivot(page)`                                                  | Read the active controls' pivot, to express a pose relative to the content centre before placing.                                                                                                                                                                                                                        |
+| `withOrbitDistanceLimits(page, limits, body)`                           | Rarely. Runs `body` with the orbit distance clamp widened, restoring the previous limits in a `finally`, and THROWS if the widening could not be applied. The window must span the placement AND the sampling — restoring early lets the next frame pull the camera back.                                                |
+| `UNCLAMPED_ORBIT_DISTANCE_LIMITS`                                       | "Wherever I put it, leave it" limits for the above.                                                                                                                                                                                                                                                                      |
+| `InPageCameraApi`, `Vec3Like`, `CameraPlacement`, `OrbitDistanceLimits` | Types. `InPageCameraApi` types `window.__luxarE2ECamera`, the in-page object the helpers install — a spec that places the camera many times inside ONE `page.evaluate` (the lod-group sweep) drives that object directly, so `placeCameraAt`, that sweep and `ortho-mode.spec.ts` all share one definition of the idiom. |
 
-A camera **sweep** has a second trap on top of the two above: it can outrun data
-loading. An LOD registry requests a level's chunks only when that level is first
-needed and keeps the currently resident level on screen until the replacement has
-arrived, so a sweep that crosses a boundary faster than the fetch completes skips
-that band without any error. Warm the residency up first — coarse passes over the
-same range until every level has been observed visible at least once — rather
-than sleeping for a guessed interval, and bound the warm-up so a page that never
-settles fails loudly instead of hanging (`lod-group.spec.ts`'s volumetric
-cross-fade sweep is the worked example).
+The distance clamp is **not** a second trap, despite how often it gets blamed
+for one. After auto-framing it is `[D / ZOOM_IN_FACTOR, D * ZOOM_OUT_FACTOR]` =
+`[D / 1000, D × 10000]` around the framing distance `D` (`camera-framing.ts`;
+before framing, `deriveScaleLimits` applies the same 1/1000 … 10000 factors to
+the scene diagonal). Measured on `test_lines`: `D = 13.799`, so
+`minDistance = 0.0138` and `maxDistance = 137990`. Ordinary placements —
+"right up against the geometry", "two decades back" — are nowhere near that, so
+reach for `withOrbitDistanceLimits` only when the arithmetic says you are
+outside it, and check that arithmetic before adding it.
+
+A camera **sweep** has a real second trap on top of the `reinitialize()` one: it
+can outrun data loading. An LOD registry requests a level's chunks only when that
+level is first needed and keeps the currently resident level on screen until the
+replacement has arrived, so a sweep that crosses a boundary faster than the fetch
+completes skips that band without any error. Warm the residency up first — coarse
+passes over the same range until every level has been observed visible at least
+once — rather than sleeping for a guessed interval, and bound the warm-up so a
+page that never settles fails loudly instead of hanging (`lod-group.spec.ts`'s
+volumetric cross-fade sweep is the worked example).
+
+Bounded warm-ups and in-page deadlines are **fail-open**, so let the strength of
+the assertion follow the evidence: that sweep makes its strict per-boundary claim
+only when the warm-up reached residency AND the sweep was not truncated, and
+otherwise falls back to "at least one genuine cross-fade" while saying loudly, in
+the failure text and a `degraded` annotation, that this run could not check every
+boundary. Give any test with in-page deadlines its own `test.setTimeout` that
+covers their sum with headroom — being killed by the suite-wide budget
+mid-`page.evaluate` throws away the attachment and the annotation, which is the
+least diagnosable way for a diagnostic test to fail.
 
 ### Pattern for a new helper
 

@@ -2105,6 +2105,19 @@ export interface CameraPlacement extends Vec3Like {
    * on this when a test needs proof that the camera really moved.
    */
   distance: number;
+  /**
+   * True when ORBIT-LIKE controls were active and re-derived their state from
+   * the write (`reinitialize()` + `update()`), so `x`/`y`/`z`/`distance` above
+   * are the controls' own post-clamp answer.
+   *
+   * False means the active controls are not orbit-like (`LuxarFlyControls`,
+   * which owns no target/distance and treats `camera.position` as
+   * authoritative): the write is CORRECT there and does stick, but nothing
+   * re-derived or clamped it, so the reported values are simply what was asked
+   * for and are no evidence at all that any controller agreed. Assert this flag
+   * whenever the point of the placement is "prove the camera moved".
+   */
+  viaOrbitControls: boolean;
 }
 
 /** The active orbit controls' distance clamp, `[min, max]`. */
@@ -2116,12 +2129,21 @@ export interface OrbitDistanceLimits {
 /**
  * Effectively-no-clamp orbit distance limits for {@link withOrbitDistanceLimits}.
  *
- * `ControlsManager` derives `minDistance`/`maxDistance` from the scene diagonal
- * (`setSceneScale`) and then from the auto-frame fit (`setDistanceLimits`), so a
- * test that wants the camera much closer than the framing distance — or a couple
- * of decades further out — is silently clamped back by `runUpdateStep` step 6 on
- * the very next frame. `min` is a small POSITIVE number rather than 0 because
- * `initializeFromCamera` treats a non-positive floor as "use 0.001".
+ * `min` is a small POSITIVE number rather than 0 because `initializeFromCamera`
+ * treats a non-positive floor as "use 0.001".
+ *
+ * How wide the real clamp is, measured — because it is much wider than it
+ * sounds and it is easy to blame it for an inert camera it had nothing to do
+ * with. After auto-framing, `camera-framing.ts:256` sets
+ * `[D / ZOOM_IN_FACTOR, D * ZOOM_OUT_FACTOR]` = `[D / 1000, D × 10000]` around
+ * the framing distance `D` (before auto-framing, `deriveScaleLimits` uses
+ * `config.controls.scaleMultipliers` off the scene diagonal). On the
+ * `test_lines` fixture that is `minDistance = 0.0138`, `maxDistance = 137990`
+ * for `D = 13.799`. So a test only needs this at all if it wants the camera
+ * inside `D/1000` or beyond `10000·D` — two-plus decades out from anything a
+ * "look at it from close up" or "back right off" placement asks for. Reach for
+ * it deliberately, not as a reflex: the trap that actually makes placements
+ * inert is the missing `reinitialize()` ({@link placeCameraAt}), not this.
  */
 export const UNCLAMPED_ORBIT_DISTANCE_LIMITS: OrbitDistanceLimits = {
   min: 1e-9,
@@ -2136,7 +2158,13 @@ export const UNCLAMPED_ORBIT_DISTANCE_LIMITS: OrbitDistanceLimits = {
  */
 export interface InPageCameraApi {
   pivot(): Vec3Like;
-  place(position: Vec3Like, target?: Vec3Like | null): CameraPlacement | null;
+  place(position: Vec3Like, target?: Vec3Like | null, up?: Vec3Like | null): CameraPlacement | null;
+  /**
+   * Widen/restore the active orbit controls' distance clamp. Returns the
+   * PREVIOUS limits, or `null` when nothing was changed because the active
+   * controls are not orbit-like (or their limits are not numeric) — the caller
+   * must not read `null` as "applied".
+   */
   setDistanceLimits(min: number, max: number): OrbitDistanceLimits | null;
 }
 
@@ -2165,8 +2193,7 @@ export interface InPageCameraApi {
  *    the controls' own state — not the camera transform — is authoritative. An
  *    externally written position is discarded on the very next frame unless
  *    `reinitialize()` re-derives orientation + distance from it first (see
- *    `ControlsManager.reinitialize`'s doc). This is the same sequence
- *    `putCameraOffAxis` in `ortho-mode.spec.ts` uses.
+ *    `ControlsManager.reinitialize`'s doc).
  */
 async function installCameraPlacement(page: Page): Promise<void> {
   await page.evaluate(() => {
@@ -2187,6 +2214,7 @@ async function installCameraPlacement(page: Page): Promise<void> {
       __luxarDebug?: {
         camera?: {
           position: Vec3 & { set: (x: number, y: number, z: number) => void };
+          up: Vec3 & { set: (x: number, y: number, z: number) => void };
           lookAt: (x: number, y: number, z: number) => void;
           updateMatrixWorld: (force?: boolean) => void;
         };
@@ -2227,10 +2255,12 @@ async function installCameraPlacement(page: Page): Promise<void> {
         o.maxDistance = max;
         return previous;
       },
-      place(position: Vec3, target?: Vec3 | null) {
+      place(position: Vec3, target?: Vec3 | null, up?: Vec3 | null) {
         const cam = w.__luxarDebug?.camera;
         if (!cam) return null;
         const t = target ?? pivot();
+        // `up` BEFORE `lookAt`: the orientation is derived from it.
+        if (up) cam.up.set(up.x, up.y, up.z);
         cam.position.set(position.x, position.y, position.z);
         cam.lookAt(t.x, t.y, t.z);
         cam.updateMatrixWorld(true);
@@ -2251,6 +2281,12 @@ async function installCameraPlacement(page: Page): Promise<void> {
           z: p.z,
           target: t,
           distance: Math.sqrt(dx * dx + dy * dy + dz * dz),
+          // Non-orbit (fly) controls take `camera.position` as authoritative, so
+          // the bare write above is right for them — but then nothing re-derived
+          // or clamped anything and the numbers returned are just the request
+          // echoed back. Say which of the two happened rather than letting the
+          // caller assume.
+          viaOrbitControls: o !== null,
         };
       },
     };
@@ -2259,26 +2295,44 @@ async function installCameraPlacement(page: Page): Promise<void> {
 }
 
 /**
+ * The active controls' pivot — `getControls().target`, falling back to
+ * `getFocusTarget()` and then the world origin. Use it to express a pose
+ * RELATIVE to the content centre before handing it to {@link placeCameraAt}.
+ */
+export async function getCameraPivot(page: Page): Promise<Vec3Like> {
+  await installCameraPlacement(page);
+  return await page.evaluate(() =>
+    (window as unknown as { __luxarE2ECamera: InPageCameraApi }).__luxarE2ECamera.pivot()
+  );
+}
+
+/**
  * Move the camera to `position` and make the move STICK, then wait for a frame.
  *
  * Aims at `options.target` when given, else at the current pivot
  * (`getControls().target`, NOT the always-`undefined`
- * `__luxarDebug.controls.target`). Returns where the camera actually ended up
- * (`null` if the debug interface has no camera) —
- * `distance` is post-clamp, so a test can assert the camera really moved rather
- * than assuming it did. Wrap in {@link withOrbitDistanceLimits} when the wanted
- * distance is outside the scene-derived `[minDistance, maxDistance]` window.
+ * `__luxarDebug.controls.target`); `options.up` sets `camera.up` before the
+ * `lookAt`, for a pose that must not be the default +Y-up one.
+ *
+ * Returns where the camera actually ended up (`null` if the debug interface has
+ * no camera). `distance` is post-clamp and `viaOrbitControls` says whether any
+ * controller re-derived the write at all, so a test can PROVE the camera moved
+ * rather than assuming it did — assert on both. Wrap in
+ * {@link withOrbitDistanceLimits} only for a distance outside
+ * `[D/1000, D×10000]` around the framing distance (see
+ * {@link UNCLAMPED_ORBIT_DISTANCE_LIMITS}); ordinary placements are nowhere
+ * near it.
  */
 export async function placeCameraAt(
   page: Page,
   position: Vec3Like,
-  options: { target?: Vec3Like } = {}
+  options: { target?: Vec3Like; up?: Vec3Like } = {}
 ): Promise<CameraPlacement | null> {
   await installCameraPlacement(page);
   const placement = await page.evaluate(
-    ({ p, t }) =>
-      (window as unknown as { __luxarE2ECamera: InPageCameraApi }).__luxarE2ECamera.place(p, t),
-    { p: position, t: options.target ?? null }
+    ({ p, t, u }) =>
+      (window as unknown as { __luxarE2ECamera: InPageCameraApi }).__luxarE2ECamera.place(p, t, u),
+    { p: position, t: options.target ?? null, u: options.up ?? null }
   );
   await waitForNextRender(page);
   return placement;
@@ -2294,6 +2348,14 @@ export async function placeCameraAt(
  * too early lets the next frame fling the camera back to the framing distance.
  *
  * Pass {@link UNCLAMPED_ORBIT_DISTANCE_LIMITS} for "wherever I put it, leave it".
+ * DEFENSIVE: the real window is `[D/1000, D×10000]` around the framing distance,
+ * so most placements are decades inside it — see
+ * {@link UNCLAMPED_ORBIT_DISTANCE_LIMITS} for the measured numbers.
+ *
+ * THROWS when the widening could not be applied (the active controls are not
+ * orbit-like, or their limits are not numeric). Swallowing that would run `body`
+ * under the ORIGINAL clamp while the caller believed it was widened — the same
+ * class of silent inertness as #1930.
  */
 export async function withOrbitDistanceLimits<T>(
   page: Page,
@@ -2308,23 +2370,29 @@ export async function withOrbitDistanceLimits<T>(
       ).__luxarE2ECamera.setDistanceLimits(l.min, l.max),
     limits
   );
+  if (!previous) {
+    throw new Error(
+      'withOrbitDistanceLimits: the orbit distance clamp was NOT widened — the active ' +
+        'controls are not orbit-like (LuxarFlyControls has no minDistance/maxDistance), ' +
+        'so the body would have run under the original clamp. Switch to orbit controls ' +
+        'first, or drop the wrapper.'
+    );
+  }
   try {
     return await body();
   } finally {
-    if (previous) {
-      // A restore failure is inconsequential (the test is over either way), but
-      // letting it throw out of `finally` would REPLACE the real failure — e.g.
-      // when `body` failed because the page crashed and the page is now gone.
-      await page
-        .evaluate(
-          (l) =>
-            (
-              window as unknown as { __luxarE2ECamera: InPageCameraApi }
-            ).__luxarE2ECamera.setDistanceLimits(l.min, l.max),
-          previous
-        )
-        .catch(() => {});
-    }
+    // A restore failure is inconsequential (the test is over either way), but
+    // letting it throw out of `finally` would REPLACE the real failure — e.g.
+    // when `body` failed because the page crashed and the page is now gone.
+    await page
+      .evaluate(
+        (l) =>
+          (
+            window as unknown as { __luxarE2ECamera: InPageCameraApi }
+          ).__luxarE2ECamera.setDistanceLimits(l.min, l.max),
+        previous
+      )
+      .catch(() => {});
   }
 }
 

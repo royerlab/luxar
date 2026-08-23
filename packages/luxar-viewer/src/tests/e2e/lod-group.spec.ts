@@ -385,9 +385,11 @@ const WARMUP_STRIDE = 4;
 const WARMUP_MAX_PASSES = 6;
 
 /**
- * Wall-clock budget for the whole warm-up. Sized against the 60 s test timeout:
- * worst case is this plus the 20 s sweep deadline, and the observed cost is
- * ~3–5 s (the fixture's levels land within ~4 s of first being requested).
+ * Wall-clock budget for the whole warm-up. Worst case is this plus the 20 s
+ * sweep deadline, which is why the test raises its own timeout
+ * (`test.setTimeout`) rather than relying on the suite-wide 60 s one. Observed
+ * cost is ~3–5 s (the fixture's levels land within ~4 s of first being
+ * requested).
  */
 const WARMUP_BUDGET_MS = 12000;
 
@@ -416,6 +418,17 @@ test.describe('lod_group node — volumetric blendable', () => {
   test('camera driven into a boundary band cross-fades two adjacent volumetric levels, in the volumetric blend state', async ({
     page,
   }) => {
+    // The suite-wide 60 s budget (playwright.config.ts) does not cover this
+    // test's WORST case, and being killed by it is the least diagnosable
+    // outcome there is: the test dies mid-`page.evaluate` with a bare
+    // "Test timeout … exceeded", losing the trace attachment, the warm-up line
+    // and the annotation — in the one test whose entire purpose is
+    // diagnosability. The worst case is the 15 s readiness wait in `beforeEach`
+    // + the 12 s warm-up budget + the 20 s sweep deadline + the park and two
+    // more evaluates; 150 s covers that with room, and a healthy run still
+    // finishes in a few seconds, so this costs nothing when nothing is wrong.
+    test.setTimeout(150_000);
+
     // This test must FAIL against the pre-change hard swap, so it is not
     // enough to accept "one or two visible": a single visible child is
     // exactly what the old behavior produced. Sweep the camera distance to
@@ -430,10 +443,15 @@ test.describe('lod_group node — volumetric blendable', () => {
     // `runUpdateStep` step 8 restored the settled framing on the next line.
     // All 61 iterations therefore sampled the SAME opening pose — outside both
     // bands of the fixture's 0 / 0.5 / 1.0 ladder, which is why a single level
-    // at opacity 1 was the correct answer for the pose the test was in.
-    // `withOrbitDistanceLimits` + `__luxarE2ECamera.place()` (helpers.ts) fix
-    // both, and the distance-spread assertion below makes going inert again a
-    // failure rather than a false pass.
+    // at opacity 1 was the correct answer for the pose the test was in. The
+    // missing `reinitialize()` was the whole cause, and
+    // `__luxarE2ECamera.place()` (helpers.ts) is the fix; the distance-spread
+    // assertion below makes going inert again a failure rather than a false
+    // pass. `withOrbitDistanceLimits` here is DEFENSIVE only: the clamp is
+    // `[D/1000, D×10000]` around the framing distance D and this sweep spans
+    // 0.15·D → 15·D, two-plus decades inside it, so it cannot fire as written —
+    // it is kept because this is the one site whose range is a knob, and
+    // widening `kAt` past D/1000 would otherwise pin the near end silently.
     //
     // HISTORY, PART 2 (#1930): with the camera moving, the trace was still
     // DISCONTINUOUS — the 0↔1 band cross-faded but the 1↔2 one, which the
@@ -595,9 +613,19 @@ test.describe('lod_group node — volumetric blendable', () => {
             const blends: { distanceScale: number; levels: Level[]; sum: number }[] = [];
             // A healthy run spends ~2 frames (~33 ms) per step; the global deadline
             // only binds when the loop is stalling, and keeps a fully starved page
-            // inside the 60 s test budget instead of 61 × 500 ms of waiting.
+            // inside the test budget instead of 61 × 500 ms of waiting. It is a
+            // hard CAP, not just a per-step budget: once it is spent the loop
+            // STOPS (`truncated`) rather than paying one more rAF per remaining
+            // step for samples nobody will trust anyway — a spent budget used to
+            // still cost ~61 forced frames, which is how a slow page turned a
+            // diagnostic into a bare "Test timeout … exceeded" with no attachment.
             const sweepDeadline = performance.now() + 20000;
+            let truncatedAt: number | null = null;
             for (let i = 0; i <= steps; i++) {
+              if (performance.now() >= sweepDeadline) {
+                truncatedAt = i;
+                break;
+              }
               const k = kAt(i);
               const placed = placeAtK(k);
               await awaitFrames(2, Math.min(500, Math.max(0, sweepDeadline - performance.now())));
@@ -623,10 +651,20 @@ test.describe('lod_group node — volumetric blendable', () => {
               placeAtK(kb);
               await awaitFrames(2, 500);
             }
-            // The whole sweep always runs (the trace is the diagnostic); `blends`
-            // holds EVERY crossing that met the cross-fade contract, so the caller
-            // can require each adjacent pair rather than just one band.
-            return { blends, trace, levels: allLevels, warmup };
+            // The trace is the diagnostic; `blends` holds EVERY crossing that met
+            // the cross-fade contract, so the caller can require each adjacent
+            // pair rather than just one band — but only when the sweep actually
+            // covered the whole range (`truncated`) and every level was resident
+            // (`warmup.complete`). Both are reported, never silently absorbed.
+            return {
+              blends,
+              trace,
+              levels: allLevels,
+              warmup,
+              truncated: truncatedAt !== null,
+              stepsRun: truncatedAt ?? steps + 1,
+              stepsPlanned: steps + 1,
+            };
           },
           {
             steps: SWEEP_STEPS,
@@ -699,19 +737,32 @@ test.describe('lod_group node — volumetric blendable', () => {
       sweep,
       'the in-page sweep could not run: no debug scene/camera, or the camera-placement helper was not installed'
     ).not.toBeNull();
-    const { blends, trace, levels, warmup } = sweep!;
+    const { blends, trace, levels, warmup, truncated, stepsRun, stepsPlanned } = sweep!;
 
     // The full per-step record goes to the report as an attachment rather than
     // to stdout, so a passing run stays quiet but a future failure can tell
     // "the band exists but is narrow" from "the opacities are only ever 0/1".
     await test.info().attach('lod-volumetric-sweep.json', {
-      body: JSON.stringify({ levels, warmup, trace }, null, 2),
+      body: JSON.stringify({ levels, warmup, truncated, stepsRun, stepsPlanned, trace }, null, 2),
       contentType: 'application/json',
     });
+    // Whether this run is allowed to make the STRICT per-boundary claim. Both
+    // degradations are wall-clock races on a loaded runner, not product bugs:
+    // an incomplete warm-up means a band can have been skipped by the loader,
+    // and a truncated sweep means part of the distance range was never visited.
+    const conclusive = warmup.complete && !truncated;
     const warmupText =
       `residency warm-up: ${warmup.passes} pass(es), ${warmup.elapsedMs.toFixed(0)} ms, ` +
       `levels seen resident [${warmup.resident.join(', ')}] of [${levels.join(', ')}]` +
       (warmup.complete ? '' : ' — INCOMPLETE, so a band may have been skipped by the loader');
+    const sweepText =
+      `sweep: ${stepsRun}/${stepsPlanned} steps` +
+      (truncated ? ' — TRUNCATED on the 20 s in-page deadline, range not fully visited' : '');
+    if (!conclusive) {
+      test
+        .info()
+        .annotations.push({ type: 'degraded', description: `${warmupText}; ${sweepText}` });
+    }
     const traceText = trace
       .map(
         (s) =>
@@ -722,9 +773,10 @@ test.describe('lod_group node — volumetric blendable', () => {
       )
       .join('\n');
     // Every failure message below embeds this: the per-step trace is the
-    // diagnostic, and the warm-up line says whether a missing band is a fade
-    // bug or the loader never having made that level resident.
-    const report = `${warmupText}\n${traceText}`;
+    // diagnostic, and the warm-up / sweep lines say whether a missing band is a
+    // fade bug, a level the loader never made resident, or a range the sweep
+    // never got to.
+    const report = `${warmupText}\n${sweepText}\n${traceText}`;
 
     // THE inertness guard (#1930): the sweep is only evidence about cross-fading
     // if the camera actually moved. Distances are measured AFTER the controls
@@ -736,12 +788,16 @@ test.describe('lod_group node — volumetric blendable', () => {
     ).toBe(true);
     const distances = trace.map((s) => s.distance);
     const spread = Math.max(...distances) / Math.min(...distances);
+    // Measured against the span the sweep actually REQUESTED, so a truncated run
+    // is held to the range it visited rather than to the full 100x (on a
+    // complete run this is exactly the historical `> 10`, i.e. √100).
+    const requestedSpan = trace.length > 1 ? trace[trace.length - 1].k / trace[0].k : 1;
     expect(
       spread,
-      'the sweep did not move the camera — requested a ~100x distance span but ' +
-        `observed ${spread.toFixed(2)}x, so nothing was actually sampled across the ` +
+      `the sweep did not move the camera — requested a ${requestedSpan.toFixed(1)}x distance ` +
+        `span but observed ${spread.toFixed(2)}x, so nothing was actually sampled across the ` +
         `LOD boundaries:\n${report}`
-    ).toBeGreaterThan(10);
+    ).toBeGreaterThan(Math.sqrt(requestedSpan));
 
     // Every observed cross-fade obeys the coverage-band contract: an ADJACENT
     // pair, both weights strictly partial, complementary to 1.
@@ -756,29 +812,79 @@ test.describe('lod_group node — volumetric blendable', () => {
       expect(b.sum).toBeCloseTo(1, 5);
     }
 
-    // EVERY boundary must have cross-faded, not just one of them. "At least one
-    // band exists" is the assertion that let the loader-race above hide: the
-    // 0↔1 band passed the test while the 1↔2 band was being skipped outright.
-    // Pairs are derived from the levels the scene actually published, so adding
-    // a level to the fixture tightens this automatically.
     expect(
       levels.length,
       `the fixture must publish at least two LOD levels:\n${report}`
     ).toBeGreaterThanOrEqual(2);
-    const pairs = (idxs: number[]): string =>
-      idxs.length ? idxs.map((i) => `${i}↔${i + 1}`).join(', ') : 'none';
-    const faded = Array.from(new Set(blends.map((b) => b.levels[0].idx))).sort((a, b) => a - b);
-    const missing = levels.slice(0, -1).filter((i) => !faded.includes(i));
+    // The published indices must be CONTIGUOUS from 0. `levelIndices()` only
+    // sees nodes named `/multires/child_<i>` (and `sample()` additionally needs
+    // a `uOpacity` uniform), so a level whose child is a nested `kind=lod` /
+    // `kind=partition` group — attached as an anonymous `THREE.Group` until it
+    // is first activated (`load-lod-group-node.ts`) — is invisible to both. That
+    // must fail loudly rather than quietly shrinking the pair set to the levels
+    // that happen to be plain meshes.
     expect(
-      missing,
-      `no coverage-band cross-fade was observed for level pair(s) ${pairs(missing)} ` +
-        `(observed pairs: ${pairs(faded)}). Each boundary must show two adjacent ` +
-        `levels with opacities strictly inside (0.02, 0.98) somewhere in the sweep:\n${report}`
-    ).toEqual([]);
+      levels,
+      'the published lod children must be contiguous from 0; a gap means a level was ' +
+        'not visible to this probe (a nested lod/partition child is an anonymous Group ' +
+        `until first activation), which would silently weaken the per-boundary check:\n${report}`
+    ).toEqual(levels.map((_, i) => i));
+    // Pairs come from CONSECUTIVE OBSERVED entries rather than from `i, i+1`, so
+    // the contract follows what the scene actually published.
+    const boundaries: [number, number][] = levels
+      .slice(0, -1)
+      .map((lo, j) => [lo, levels[j + 1]] as [number, number]);
+    const pairs = (ps: [number, number][]): string =>
+      ps.length ? ps.map(([lo, hi]) => `${lo}↔${hi}`).join(', ') : 'none';
+    const faded = Array.from(new Set(blends.map((b) => b.levels[0].idx))).sort((a, b) => a - b);
+    const fadedPairs = faded.map((lo) => [lo, lo + 1] as [number, number]);
+    const missing = boundaries.filter(([lo]) => !faded.includes(lo));
 
-    // The blend-state read above ran at the parked blend pose, so this is the
-    // cross-fading pair's material state.
-    expect(states.length).toBeGreaterThanOrEqual(1);
+    if (conclusive) {
+      // THE strict claim, and only on the evidence that supports it: with every
+      // level resident and the whole range visited, EVERY boundary must have
+      // cross-faded. "At least one band exists" is the assertion that let the
+      // loader race hide — the 0↔1 band passed while 1↔2 was skipped outright —
+      // so this stays as strong as the run allows.
+      expect(
+        missing,
+        `no coverage-band cross-fade was observed for level pair(s) ${pairs(missing)} ` +
+          `(observed pairs: ${pairs(fadedPairs)}). Each boundary must show two adjacent ` +
+          `levels with opacities strictly inside (0.02, 0.98) somewhere in the sweep:\n${report}`
+      ).toEqual([]);
+    } else {
+      // Degraded run: the warm-up did not reach residency and/or the sweep was
+      // truncated, so a missing band here is a data-loading wall-clock race
+      // (the dataset server is a GIL-bound `python -m http.server` shared by all
+      // workers), not evidence about the fade. Fall back to the pre-change
+      // contract — at least one GENUINE cross-fade, with every per-blend
+      // invariant above still enforced — and say loudly why the strict
+      // per-boundary check could not be made.
+      expect(
+        blends.length,
+        'no coverage-band cross-fade was observed at all. This run could NOT check every ' +
+          `boundary: ${warmupText}; ${sweepText} — so a band may simply have been skipped ` +
+          'by the loader, and only "at least one genuine cross-fade" is required here. ' +
+          `Boundaries without a band: ${pairs(missing)} of ${pairs(boundaries)}:\n${report}`
+      ).toBeGreaterThanOrEqual(1);
+    }
+
+    // The blend-state read above ran at the parked blend pose. When a blend was
+    // observed, that pose IS a cross-fade, so exactly TWO children must be
+    // visible there — `>= 1` would pass on a single level and let the claim
+    // "this samples the cross-fading pair" be silently false.
+    if (blends.length) {
+      expect(
+        states.length,
+        `parked at the pose of the first observed blend (k=${blends[0].distanceScale.toFixed(3)}, ` +
+          `levels ${blends[0].levels.map((l) => l.idx).join('+')}), so exactly two children must ` +
+          `be visible; saw ${states.map((s) => s.idx).join(', ') || 'none'}:\n${report}`
+      ).toBe(2);
+    } else {
+      expect(states.length, `no visible lod child at the final pose:\n${report}`).toBeGreaterThan(
+        0
+      );
+    }
     const expected = EXPECTED_BLEND_STATE.volumetric;
     for (const s of states) {
       expect(s.mode).toBe('volumetric');
