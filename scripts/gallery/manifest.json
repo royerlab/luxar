@@ -26,7 +26,9 @@
       "geometry": "points",
       "category": "synthetic",
       "script": "demo_mandelbulb.py",
-      "dataset": "datasets/demos/mandelbulb.luxar.zarr"
+      "dataset": "datasets/demos/mandelbulb.luxar.zarr",
+      "fillTarget": 0.75,
+      "note": "fillTarget:0.75 keeps the shaded surface inside the frame throughout the cinematic rock; 0.95 lit 89.6% of the perimeter and 0.85 still lit 29.9% despite their coverage targets being met"
     },
     {
       "id": "rainbow_sphere",
