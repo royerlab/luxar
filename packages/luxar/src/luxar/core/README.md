@@ -692,7 +692,7 @@ Utilities for creating and manipulating 4x4 transformation matrices.
 - `from_list(values)` - Convert from storage format (column-major from THREE.js)
 - `prepare_transform_for_zarr(transform)` - Convert any format to zarr-compatible list
 - `read_transform_from_zarr(transform_list)` - Read transform from zarr attributes
-- `transform_bounding_box(matrix, lo, hi)` - Transform all 8 corners of an AABB and return the enclosing axis-aligned box (correct under rotation/shear; mirrors the viewer's `transformBoundingBox`)
+- `transform_bounding_box(matrix, lo, hi)` - Transform all 8 corners of an AABB and return the enclosing axis-aligned box, omitting corners with `|w| < 1e-12` and falling back to the input box if all are omitted (correct under rotation/shear; mirrors the viewer's `transformBoundingBox`)
 
 (`identity`, `translate`, `scale`, `rotate*`, `compose`, `inverse`, `look_at`,
 `to_list`, `from_list`, and the aliases are re-exported from `luxar.core`;
