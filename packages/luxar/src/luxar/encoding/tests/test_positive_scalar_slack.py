@@ -306,6 +306,37 @@ def test_positive_scalar_slack_bounds_geolog_viewer_anchor_rounding(
     assert float(upward.max()) <= slack
 
 
+def test_positive_scalar_slack_bounds_degenerate_geolog_viewer_anchor() -> None:
+    data = np.array([0.0] * 500 + [123456.0] * 500, dtype=np.float64)
+    encoder = ArrayEncoder()
+    slack = encoder.positive_scalar_round_trip_slack(
+        data,
+        EncodingMode.AUTO,
+        positive_scalar_encoding="log",
+        allow_lut=False,
+    )
+    assert slack is not None
+
+    group = memory_group()
+    encoder.encode(
+        data,
+        group,
+        "s",
+        SemanticType.POSITIVE_SCALAR,
+        mode=EncodingMode.AUTO,
+        positive_scalar_encoding="log",
+        allow_lut=False,
+        deduplicate=False,
+    )
+    encoded = group["s"]
+    metadata = encoded.attrs["encoding"]
+    assert metadata["name"] == "geolog_scalar_uint16"
+    decoded = _viewer_geolog_decode(np.asarray(encoded[:]), metadata)
+    upward = decoded.astype(np.float64) - data
+    assert float(upward.max()) > 0.0
+    assert float(upward.max()) <= slack
+
+
 def test_positive_scalar_slack_covers_the_authored_dtype_cast() -> None:
     data = np.linspace(31.111, 40.0, 20_000).astype(np.float16)
     encoder = ArrayEncoder()

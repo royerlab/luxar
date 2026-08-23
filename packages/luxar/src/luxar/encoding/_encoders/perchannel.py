@@ -440,8 +440,6 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             nonzero = arr[arr > 0].astype(np.float64, copy=False)
             min_log = float(np.log(nonzero.min()))
             max_log = float(np.log(nonzero.max()))
-            if max_log == min_log:
-                return None
             quant_bits = 16 if mode == EncodingMode.AUTO else 8
             intervals = (1 << quant_bits) - 2
             # The grid is anchored at max_log, so no code decodes above max_val.
