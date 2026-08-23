@@ -169,7 +169,7 @@ from luxar.demos.demo_particle_collision import (
 )
 from luxar.utils.paths import get_demos_output_dir
 
-ANIMATED_TRACK_PATH_STEP = 0.01
+ANIMATED_TRACK_TRANSVERSE_STEP = 0.01
 
 
 def generate_helix_track_with_times(
@@ -187,6 +187,7 @@ def generate_helix_track_with_times(
     - Radius of curvature: r = p_T / (|q| × B)
       → Higher momentum = larger radius = STRAIGHTER track
       → This is how we MEASURE momentum in real detectors!
+      → The shared helper applies one named radial visualization scale
 
     - Sign of charge determines direction of curvature
       → Positive particles curve clockwise (from above)
@@ -225,7 +226,7 @@ def generate_helix_track_with_times(
         max_radius=max_radius,
         max_z=DETECTOR_LENGTH,
         n_points=n_points,
-        path_step=ANIMATED_TRACK_PATH_STEP,
+        transverse_step=ANIMATED_TRACK_TRANSVERSE_STEP,
         shower_radius=shower_radius,
     )
     if len(points) < 2:

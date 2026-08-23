@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 HELIX_RADIUS_VISUAL_SCALE = 2.0
+MAX_AZIMUTH_SAMPLE_STEP = 0.05
 
 
 def generate_helix_points(
@@ -14,16 +15,18 @@ def generate_helix_points(
     max_radius: float,
     max_z: float,
     n_points: int,
-    path_step: float,
+    transverse_step: float,
     shower_radius: float | None = None,
 ) -> np.ndarray:
     """Generate a charged-particle helix through a uniform axial field.
 
-    ``path_step`` advances along the particle's momentum direction. The
-    transverse and longitudinal increments therefore retain the physical
-    ``p_z / p_T`` pitch ratio. ``HELIX_RADIUS_VISUAL_SCALE`` is the only
-    deliberate geometric distortion: it opens the transverse curvature for
-    readability without changing the track tangent or pitch.
+    ``transverse_step`` advances along the projected path in the x-y plane;
+    z advances by the matching ``p_z / p_T`` ratio. The requested step is
+    reduced for tight helices so soft tracks remain smooth.
+
+    ``HELIX_RADIUS_VISUAL_SCALE`` is the only deliberate geometric distortion:
+    it opens the transverse curvature for readability without changing the
+    track tangent or pitch.
     """
     if charge == 0:
         raise ValueError("helix generation requires a charged particle")
@@ -31,8 +34,8 @@ def generate_helix_points(
         raise ValueError("helix generation requires a non-zero magnetic field")
     if n_points < 1:
         return np.empty((0, 3), dtype=np.float32)
-    if path_step <= 0:
-        raise ValueError("path_step must be positive")
+    if transverse_step <= 0:
+        raise ValueError("transverse_step must be positive")
 
     origin = np.asarray(origin, dtype=np.float64)
     momentum = np.asarray(momentum, dtype=np.float64)
@@ -42,28 +45,29 @@ def generate_helix_points(
 
     px, py, pz = momentum
     transverse_momentum = float(np.hypot(px, py))
-    longitudinal_rate = pz / momentum_magnitude
-
     if transverse_momentum > 0:
         initial_azimuth = float(np.arctan2(py, px))
-        transverse_rate = transverse_momentum / momentum_magnitude
         radius = (
             HELIX_RADIUS_VISUAL_SCALE
             * transverse_momentum
             / abs(charge * magnetic_field)
         )
         turn_sign = -float(np.sign(charge * magnetic_field))
+        sample_step = min(transverse_step, radius * MAX_AZIMUTH_SAMPLE_STEP)
+        longitudinal_rate = pz / transverse_momentum
+    else:
+        sample_step = transverse_step
+        longitudinal_rate = float(np.sign(pz))
 
     points: list[np.ndarray] = []
     for point_index in range(n_points):
-        path_distance = point_index * path_step
-        z = origin[2] + longitudinal_rate * path_distance
+        sampled_distance = point_index * sample_step
+        z = origin[2] + longitudinal_rate * sampled_distance
 
         if transverse_momentum == 0:
             x, y = origin[:2]
         else:
-            transverse_distance = transverse_rate * path_distance
-            azimuth = initial_azimuth + turn_sign * transverse_distance / radius
+            azimuth = initial_azimuth + turn_sign * sampled_distance / radius
             x = origin[0] + radius / turn_sign * (
                 np.sin(azimuth) - np.sin(initial_azimuth)
             )

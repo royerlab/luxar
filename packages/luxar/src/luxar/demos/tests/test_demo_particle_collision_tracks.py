@@ -11,13 +11,13 @@ from luxar.demos.demo_particle_collision_animated import (
 TrackGenerator = Callable[[Particle, np.random.Generator, int], tuple[np.ndarray, ...]]
 
 
-def _particle(*, charge: int, pt: float, pz: float = 0.0) -> Particle:
+def _particle(*, charge: int, px: float, py: float = 0.0, pz: float = 0.0) -> Particle:
     particle_type = "muon_plus" if charge > 0 else "muon_minus"
     return Particle(
         particle_type=particle_type,
-        energy=float(np.hypot(pt, pz)),
-        px=pt,
-        py=0.0,
+        energy=float(np.linalg.norm([px, py, pz])),
+        px=px,
+        py=py,
         pz=pz,
         origin=np.zeros(3),
     )
@@ -37,14 +37,18 @@ def _track_points(
     "generator", [generate_helix_track, generate_helix_track_with_times]
 )
 @pytest.mark.parametrize("charge", [-1, 1])
+@pytest.mark.parametrize("momentum", [(3.0, 0.0, 0.0), (3.0, 4.0, -2.0)])
 def test_charged_track_starts_along_momentum(
-    generator: TrackGenerator, charge: int
+    generator: TrackGenerator, charge: int, momentum: tuple[float, float, float]
 ) -> None:
-    points = _track_points(generator, _particle(charge=charge, pt=3.0))
+    particle = _particle(charge=charge, px=momentum[0], py=momentum[1], pz=momentum[2])
+    points = _track_points(generator, particle)
 
     first_step = points[1] - points[0]
+    measured_direction = first_step / np.linalg.norm(first_step)
+    momentum_direction = np.array(momentum) / np.linalg.norm(momentum)
 
-    assert first_step[0] / np.linalg.norm(first_step) > 0.999
+    assert np.dot(measured_direction, momentum_direction) > 0.999
 
 
 @pytest.mark.parametrize(
@@ -54,7 +58,7 @@ def test_charged_track_starts_along_momentum(
 def test_charge_controls_transverse_turn_sense(
     generator: TrackGenerator, charge: int
 ) -> None:
-    points = _track_points(generator, _particle(charge=charge, pt=3.0))
+    points = _track_points(generator, _particle(charge=charge, px=3.0))
     first_step = points[1, :2] - points[0, :2]
     second_step = points[2, :2] - points[1, :2]
 
@@ -71,12 +75,32 @@ def test_helix_pitch_follows_longitudinal_to_transverse_momentum_ratio(
     generator: TrackGenerator, pt: float
 ) -> None:
     pz = 5.0
-    points = _track_points(generator, _particle(charge=1, pt=pt, pz=pz))
+    points = _track_points(generator, _particle(charge=1, px=pt, pz=pz))
     first_step = points[1] - points[0]
 
     measured_ratio = first_step[2] / np.linalg.norm(first_step[:2])
 
     assert measured_ratio == pytest.approx(pz / pt, rel=1e-3)
+
+
+@pytest.mark.parametrize(
+    "generator", [generate_helix_track, generate_helix_track_with_times]
+)
+@pytest.mark.parametrize("pt", [0.05, 3.0, 10.0])
+def test_rendered_curvature_keeps_the_documented_radius_scale(
+    generator: TrackGenerator, pt: float
+) -> None:
+    points = _track_points(generator, _particle(charge=1, px=pt))
+    first_step = points[1, :2] - points[0, :2]
+    second_step = points[2, :2] - points[1, :2]
+    turn_angle = np.arctan2(
+        first_step[0] * second_step[1] - first_step[1] * second_step[0],
+        np.dot(first_step, second_step),
+    )
+    chord_length = np.linalg.norm(first_step)
+    measured_radius = chord_length / (2 * np.sin(abs(turn_angle) / 2))
+
+    assert measured_radius == pytest.approx(pt, rel=1e-3)
 
 
 @pytest.mark.parametrize(

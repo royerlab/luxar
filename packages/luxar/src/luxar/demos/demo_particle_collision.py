@@ -164,7 +164,7 @@ DETECTOR_LENGTH = 25.0  # Half-length in z (beam direction)
 # Real ATLAS: 2 Tesla solenoid in inner detector
 # Real CMS: 3.8 Tesla (strongest at any collider)
 B_FIELD = 2.0  # Tesla (affects curvature via r = p_T / (q*B))
-TRACK_PATH_STEP = 0.1  # Detector-space distance between rendered track samples
+TRACK_TRANSVERSE_STEP = 0.1
 
 # =============================================================================
 # Particle Properties (from Particle Data Group - PDG 2024)
@@ -346,6 +346,7 @@ def generate_helix_track(
     - Radius of curvature: r = p_T / (|q| × B)
       → Higher momentum = larger radius = STRAIGHTER track
       → This is how we MEASURE momentum in real detectors!
+      → The shared helper applies one named radial visualization scale
 
     - Sign of charge determines direction of curvature
       → Positive particles curve clockwise (from above)
@@ -383,7 +384,7 @@ def generate_helix_track(
         max_radius=max_radius,
         max_z=DETECTOR_LENGTH,
         n_points=n_points,
-        path_step=TRACK_PATH_STEP,
+        transverse_step=TRACK_TRANSVERSE_STEP,
         shower_radius=shower_radius,
     )
     if len(points) < 2:
