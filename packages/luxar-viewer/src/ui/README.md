@@ -108,8 +108,9 @@ ui/
 ├── overlay-widgets/                    # Shared base for scale-bar / colormap-legend
 │   ├── ui-component.ts
 │   └── context-menu.ts                 # Shared right-click menu (openContextMenu; full menu ARIA)
-├── help-overlay/                       # Help overlay's private helper
-│   └── focus-trap.ts                   # Tab/Shift+Tab focus trap (also used by error-overlay)
+├── help-overlay/                       # Shared modal-panel helpers (folder name predates the sharing)
+│   ├── focus-trap.ts                   # Tab/Shift+Tab focus trap (also used by error-overlay, dataset-browser)
+│   └── type-to-filter.ts               # Container focus + first-keystroke filtering (help-overlay, dataset-browser)
 ├── control-rail/                       # Control rail's private helpers (orchestrator: ../control-rail.ts)
 │   ├── rail-overlay.ts (flyout + popover lifecycle),
 │   │ icons.ts (RAIL_ICONS), dom-helpers.ts, types.ts
@@ -394,6 +395,12 @@ File browser for navigating and loading Zarr datasets from servers.
 - Search and filter capabilities
 - Recent datasets history
 
+Initial focus is on the panel container, not the search field, so the `O`
+shortcut still toggles the browser shut — see the type-to-filter note under
+[Helper Overlays](#7-helper-overlays) (issue #1922). Typing still narrows the
+listing from the first keystroke, and `ArrowDown` moves from the filter into
+the list.
+
 **Interface:**
 
 ```typescript
@@ -628,6 +635,15 @@ and the focus-trap release are all tracked and cancelled by `hideHelpOverlay()`;
 the delayed callback also verifies that it still belongs to the currently mounted
 overlay before attaching. Rapid `H` toggles therefore cannot arm stale handlers
 that close or retain a subsequently opened panel.
+
+Initial focus goes to the overlay **container**, not its filter field. A focused
+text input trips `InputHandler`'s typing guard, which drops every key but
+`Escape` — that made `H` one-way (it opened the overlay but the second `H` was
+swallowed as typing, issue #1922). `help-overlay/type-to-filter.ts` restores
+type-to-filter by forwarding the first printable keystroke into the filter, and
+the dataset browser (`O`) uses the same mechanism. The panel's own toggle key is
+passed through to the global binding, so it cannot be the first character of a
+filter query.
 
 ### 8. Recording Panel
 
@@ -1228,9 +1244,11 @@ of the same name at this folder's root (plus the folder-module
   (`GUI`, `Folder`, `Controller`, per-type controllers, DOM plumbing,
   formatting); `gui.ts` re-exports only the default `GUI` and `Controller`,
   with the rest imported directly from leaf modules under `ui/gui/`.
-- [`help-overlay/`](./help-overlay/README.md) — Shared `focus-trap.ts`
-  (Tab/Shift+Tab focus cycling) used by `help-overlay.ts` and
-  `error-overlay.ts`.
+- [`help-overlay/`](./help-overlay/README.md) — Shared modal-panel
+  helpers: `focus-trap.ts` (Tab/Shift+Tab focus cycling) used by
+  `help-overlay.ts`, `error-overlay.ts` and `dataset-browser.ts`, and
+  `type-to-filter.ts` (container focus + first-keystroke filtering) used
+  by the two filtered panels.
 - [`layers/`](./layers/README.md) — Layers panel implementation
   (`LayersPanel`, `LayerStateManager`, range/labeled sliders); `layers.ts`
   re-exports only `LayersPanel`, with the rest imported directly from leaf

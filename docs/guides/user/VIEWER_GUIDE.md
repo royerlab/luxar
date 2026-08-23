@@ -135,7 +135,7 @@ Orthographic projection for 2D viewing. The camera looks straight down one axis.
 |-----|--------|
 | H | Toggle help overlay |
 | N | Toggle dimension sliders (for nD datasets) |
-| O | Open dataset browser |
+| O | Toggle dataset browser |
 | P | Toggle performance stats (FPS, frame time) |
 | R | Toggle rendering controls panel |
 | B | Toggle scale bar |
@@ -144,6 +144,12 @@ Orthographic projection for 2D viewing. The camera looks straight down one axis.
 | U | Toggle overlays |
 | T | Toggle recording panel |
 | Escape | Close all open panels |
+
+The help overlay (`H`) and the dataset browser (`O`) both carry a filter field,
+and just typing narrows the list — no click needed. Their own toggle key is the
+one exception: pressing `H` in the help overlay (or `O` in the dataset browser)
+closes the panel rather than typing that letter, so start such a query with any
+other character. Matching is case-insensitive.
 
 ### Camera and View
 

@@ -10,6 +10,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { DirectoryEntry } from '../../../data';
 import { DatasetBrowser } from '../../../ui/dataset-browser';
+import { isTypingInInput } from '../../../input/input-handler/commands/focus-utils';
 
 const navigateMock = vi.fn();
 const getFullUrlMock = vi.fn();
@@ -523,8 +524,9 @@ describe('DatasetBrowser', () => {
     });
 
     it('the async first listing does not steal focus the user already placed', async () => {
-      // Slow listing: the user focuses the close button while it loads; the
-      // one-shot filter auto-focus must yield instead of yanking focus away.
+      // Slow listing: the user focuses the close button while it loads. The
+      // arriving listing must not yank focus away (it no longer autofocuses
+      // the filter at all — see the type-to-filter suite below, #1922).
       let resolveNavigate: (v: unknown) => void = () => {};
       navigateMock.mockReturnValueOnce(new Promise((res) => (resolveNavigate = res)));
 
@@ -1123,6 +1125,143 @@ describe('DatasetBrowser', () => {
     });
   });
 
+  describe('initial focus and type-to-filter (#1922)', () => {
+    const ENTRIES: DirectoryEntry[] = [
+      { name: 'alpha.zarr', path: 'alpha.zarr', type: 'zarr' },
+      { name: 'beta.zarr', path: 'beta.zarr', type: 'zarr' },
+      { name: 'omega_dir', path: 'omega_dir', type: 'directory' },
+    ];
+
+    /** Construct a browser whose first listing has renderable entries. */
+    async function openWithListing(): Promise<HTMLElement> {
+      navigateMock.mockReset();
+      navigateMock.mockResolvedValue(defaultNavigateResult({ entries: ENTRIES, strategy: 'html' }));
+      new DatasetBrowser({ container, onDatasetSelect, onClose });
+      await vi.waitFor(() => {
+        expect(container.querySelectorAll('.luxar-dataset-browser__file-item').length).toBe(3);
+      });
+      return container.querySelector('#luxar-dataset-browser') as HTMLElement;
+    }
+
+    const searchInput = (): HTMLInputElement =>
+      container.querySelector('#luxar-dataset-browser-search') as HTMLInputElement;
+    const renderedNames = (): string[] =>
+      Array.from(container.querySelectorAll<HTMLElement>('.luxar-dataset-browser__file-name')).map(
+        (el) => el.textContent ?? ''
+      );
+
+    function press(init: KeyboardEventInit & { key: string }): KeyboardEvent {
+      const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init });
+      (document.activeElement ?? document.body).dispatchEvent(event);
+      return event;
+    }
+
+    it('parks focus on the panel, never on the search field', async () => {
+      const panel = await openWithListing();
+
+      // Focus is on the panel container — NOT a typing surface, which is what
+      // keeps `O` a working toggle (InputHandler drops non-Escape keys while
+      // `isTypingInInput(document.activeElement)` is true).
+      expect(document.activeElement).toBe(panel);
+      expect(isTypingInInput(document.activeElement)).toBe(false);
+      expect(panel.getAttribute('tabindex')).toBe('-1');
+    });
+
+    it('the first printable keystroke lands in the search field and filters', async () => {
+      await openWithListing();
+
+      const event = press({ key: 'b' });
+
+      expect(document.activeElement).toBe(searchInput());
+      expect(searchInput().value).toBe('b');
+      // The search field's own `oninput` ran — the listing is really narrowed.
+      expect(renderedNames()).toEqual(['beta.zarr']);
+      expect(event.defaultPrevented).toBe(true);
+    });
+
+    it('leaves `O` to the global binding so the browser stays a toggle', async () => {
+      const seen: string[] = [];
+      const listener = (e: KeyboardEvent) => seen.push(e.key);
+      document.addEventListener('keydown', listener);
+      try {
+        const panel = await openWithListing();
+
+        const event = press({ key: 'o' });
+
+        expect(seen).toEqual(['o']);
+        expect(event.defaultPrevented).toBe(false);
+        expect(searchInput().value).toBe('');
+        expect(document.activeElement).toBe(panel);
+        // Sanity: the listing is untouched, so `o` really did nothing local.
+        expect(renderedNames()).toEqual(['alpha.zarr', 'beta.zarr', 'omega_dir']);
+      } finally {
+        document.removeEventListener('keydown', listener);
+      }
+    });
+
+    it('passes keys through while the search bar is hidden (nothing to filter)', async () => {
+      // Empty directory → `setSearchVisible(false)`; there is no filter to
+      // forward into, so the key keeps its normal global meaning.
+      navigateMock.mockReset();
+      navigateMock.mockResolvedValue(defaultNavigateResult({ entries: [] }));
+      new DatasetBrowser({ container, onDatasetSelect, onClose });
+      await vi.waitFor(() => {
+        expect(container.querySelector('.luxar-dataset-browser__empty')).not.toBeNull();
+      });
+
+      const event = press({ key: 'b' });
+
+      expect(event.defaultPrevented).toBe(false);
+      expect(searchInput().value).toBe('');
+    });
+
+    it('close() releases the forwarder', async () => {
+      navigateMock.mockReset();
+      navigateMock.mockResolvedValue(defaultNavigateResult({ entries: ENTRIES, strategy: 'html' }));
+      const browser = new DatasetBrowser({ container, onDatasetSelect, onClose });
+      await vi.waitFor(() => {
+        expect(container.querySelectorAll('.luxar-dataset-browser__file-item').length).toBe(3);
+      });
+      const panel = container.querySelector('#luxar-dataset-browser') as HTMLElement;
+      const search = searchInput();
+
+      browser.close();
+
+      const event = new KeyboardEvent('keydown', { key: 'b', bubbles: true, cancelable: true });
+      panel.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+      expect(search.value).toBe('');
+    });
+
+    it('hide() releases the forwarder and show() re-arms it', async () => {
+      navigateMock.mockReset();
+      navigateMock.mockResolvedValue(defaultNavigateResult({ entries: ENTRIES, strategy: 'html' }));
+      const browser = new DatasetBrowser({ container, onDatasetSelect, onClose });
+      await vi.waitFor(() => {
+        expect(container.querySelectorAll('.luxar-dataset-browser__file-item').length).toBe(3);
+      });
+      const panel = container.querySelector('#luxar-dataset-browser') as HTMLElement;
+
+      browser.hide();
+      const whileHidden = new KeyboardEvent('keydown', {
+        key: 'b',
+        bubbles: true,
+        cancelable: true,
+      });
+      panel.dispatchEvent(whileHidden);
+      expect(whileHidden.defaultPrevented).toBe(false);
+      expect(searchInput().value).toBe('');
+
+      browser.show();
+      // Re-shown: focus is back on the panel and typing filters again.
+      expect(document.activeElement).toBe(panel);
+      press({ key: 'b' });
+      expect(searchInput().value).toBe('b');
+      expect(renderedNames()).toEqual(['beta.zarr']);
+      browser.close();
+    });
+  });
+
   describe('modal focus trap', () => {
     it('Tab on the last focusable wraps to the first (and Shift+Tab back)', async () => {
       // vi.clearAllMocks() does NOT drop queued mockResolvedValueOnce values
@@ -1152,6 +1291,44 @@ describe('DatasetBrowser', () => {
       panel.dispatchEvent(
         new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true })
       );
+      expect(document.activeElement).toBe(last);
+    });
+
+    it('Tab from the panel container itself enters the trap instead of escaping', async () => {
+      // The panel is `tabindex="-1"` and holds initial focus (#1922), so it is
+      // NOT in the trap's focusable list. Without explicit steering the
+      // browser default would walk Shift+Tab out of the modal.
+      navigateMock.mockReset();
+      navigateMock.mockResolvedValueOnce(
+        defaultNavigateResult({ entries: [{ name: 'a.zarr', path: 'a.zarr', type: 'zarr' }] })
+      );
+      new DatasetBrowser({ container, onDatasetSelect, onClose });
+      await vi.waitFor(() => {
+        expect(container.querySelector('.luxar-dataset-browser__file-item')).not.toBeNull();
+      });
+
+      const panel = container.querySelector('#luxar-dataset-browser') as HTMLElement;
+      const focusables = panel.querySelectorAll<HTMLElement>(
+        'a[href], button, textarea, input, select, [tabindex]:not([tabindex="-1"])'
+      );
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      expect(document.activeElement).toBe(panel);
+
+      const forward = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+      panel.dispatchEvent(forward);
+      expect(forward.defaultPrevented).toBe(true);
+      expect(document.activeElement).toBe(first);
+
+      panel.focus();
+      const back = new KeyboardEvent('keydown', {
+        key: 'Tab',
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
+      panel.dispatchEvent(back);
+      expect(back.defaultPrevented).toBe(true);
       expect(document.activeElement).toBe(last);
     });
 

@@ -4,6 +4,7 @@
 // helpers (`ui/error-overlay`) live in `error-overlay.test.ts`.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { showHelpOverlay, hideHelpOverlay } from '../../../ui/help-overlay';
+import { isTypingInInput } from '../../../input/input-handler/commands/focus-utils';
 
 // Mock DOM environment
 beforeEach(() => {
@@ -22,6 +23,18 @@ afterEach(() => {
 
   document.body.innerHTML = '';
 });
+
+/**
+ * jsdom queues a 0 ms `selectionchange` timer on every `focus()` call
+ * (`Selection-impl._associateRange`), and the overlay focuses its container on
+ * open (#1922). Drain that environment tick so `getTimerCount()` reflects only
+ * the overlay's OWN timers — the click-listener timer runs at
+ * `helpClickDelayMs` (100 ms) and therefore still shows up here if a
+ * regression stopped cancelling it.
+ */
+function drainSelectionChangeTicks(): void {
+  vi.advanceTimersByTime(0);
+}
 
 describe('showHelpOverlay - Memory Leak Prevention', () => {
   it('should not create multiple overlays when called repeatedly', () => {
@@ -57,6 +70,7 @@ describe('showHelpOverlay - Memory Leak Prevention', () => {
     showHelpOverlay();
     hideHelpOverlay();
 
+    drainSelectionChangeTicks();
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -67,6 +81,7 @@ describe('showHelpOverlay - Memory Leak Prevention', () => {
     closeBtn.click();
 
     expect(document.getElementById('luxar-help-overlay')).toBeNull();
+    drainSelectionChangeTicks();
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -165,6 +180,103 @@ describe('showHelpOverlay - Memory Leak Prevention', () => {
     expect(text).toContain('Open the hovered element link');
     expect(text).toContain('Actions for the hovered element');
     expect(text).toContain('Context menu for the hovered element');
+  });
+});
+
+describe('showHelpOverlay - initial focus and type-to-filter (#1922)', () => {
+  const overlayEl = (): HTMLElement => document.getElementById('luxar-help-overlay') as HTMLElement;
+  const filterEl = (): HTMLInputElement =>
+    overlayEl().querySelector('.luxar-panel-filter__input') as HTMLInputElement;
+  const visibleRowText = (): string[] =>
+    Array.from(overlayEl().querySelectorAll<HTMLElement>('.luxar-help-overlay__row'))
+      .filter((row) => row.style.display !== 'none')
+      .map((row) => (row.textContent ?? '').toLowerCase());
+
+  function pressOnOverlay(init: KeyboardEventInit & { key: string }): KeyboardEvent {
+    const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init });
+    (document.activeElement ?? overlayEl()).dispatchEvent(event);
+    return event;
+  }
+
+  it('parks focus on the overlay container, never on the filter field', () => {
+    showHelpOverlay();
+    // Run out every pending timer: a focus timer (the old autofocus, or the
+    // focus trap's own first-focusable one) would move focus here.
+    vi.advanceTimersByTime(200);
+
+    expect(document.activeElement).toBe(overlayEl());
+    // The exact predicate `InputHandler.onKeyDown` guards on. If this were
+    // true, the second `H` would be swallowed as typing and the overlay
+    // could not be closed from the keyboard.
+    expect(isTypingInInput(document.activeElement)).toBe(false);
+  });
+
+  it('the first printable keystroke lands in the filter and narrows the list', () => {
+    showHelpOverlay();
+    const rowsBefore = visibleRowText().length;
+    expect(rowsBefore).toBeGreaterThan(1);
+
+    const event = pressOnOverlay({ key: 'r' });
+
+    expect(document.activeElement).toBe(filterEl());
+    expect(filterEl().value).toBe('r');
+    // The filter's own `input` handler ran — rows are actually narrowed, and
+    // every survivor matches. Asserting the rendered result (not just focus)
+    // is what pins the dispatched `input` event.
+    const rows = visibleRowText();
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.length).toBeLessThan(rowsBefore);
+    expect(rows.every((text) => text.includes('r'))).toBe(true);
+    // Not double-inserted, and not leaked to the global bindings.
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('leaves `H` to the global binding so the overlay stays a toggle', () => {
+    const seen: string[] = [];
+    const listener = (e: KeyboardEvent) => seen.push(e.key);
+    document.addEventListener('keydown', listener);
+    try {
+      showHelpOverlay();
+
+      const event = pressOnOverlay({ key: 'h' });
+
+      // `H` must reach the document-level handler (which toggles the panel
+      // shut) rather than being consumed as the first filter character.
+      expect(seen).toEqual(['h']);
+      expect(event.defaultPrevented).toBe(false);
+      expect(filterEl().value).toBe('');
+      expect(document.activeElement).toBe(overlayEl());
+    } finally {
+      document.removeEventListener('keydown', listener);
+    }
+  });
+
+  it('hideHelpOverlay releases the type-to-filter listener', () => {
+    showHelpOverlay();
+    const overlay = overlayEl();
+    const filter = filterEl();
+
+    hideHelpOverlay();
+
+    // The detached container must no longer forward keystrokes.
+    const event = new KeyboardEvent('keydown', { key: 'r', bubbles: true, cancelable: true });
+    overlay.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+    expect(filter.value).toBe('');
+  });
+
+  it('a re-opened overlay starts type-to-filter fresh', () => {
+    showHelpOverlay();
+    pressOnOverlay({ key: 'r' });
+    expect(filterEl().value).toBe('r');
+
+    hideHelpOverlay();
+    showHelpOverlay();
+
+    expect(document.activeElement).toBe(overlayEl());
+    expect(filterEl().value).toBe('');
+    pressOnOverlay({ key: 'z' });
+    expect(filterEl().value).toBe('z');
   });
 });
 

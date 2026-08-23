@@ -10,13 +10,20 @@
  * Dismissible by clicking outside, pressing Escape, or via the close
  * button. Traps focus inside the panel while it is open.
  *
+ * Initial focus goes to the overlay CONTAINER, not the filter field: a
+ * focused text input trips `InputHandler`'s typing guard, which would swallow
+ * the second `H` and make the "toggle" one-way (issue #1922). Type-to-filter
+ * still starts on the first printable keystroke via `installTypeToFilter`.
+ *
  * Module-level handles for the delayed click-listener registration, the
- * listener itself, and the focus-trap release live here so hideHelpOverlay()
- * can tear them down even when it's called from outside (e.g. by ui-cleanup).
+ * listener itself, the focus-trap release and the type-to-filter release live
+ * here so hideHelpOverlay() can tear them down even when it's called from
+ * outside (e.g. by ui-cleanup).
  */
 
 import { config } from '../config';
 import { trapFocus } from './help-overlay/focus-trap';
+import { installTypeToFilter } from './help-overlay/type-to-filter';
 import { getViewerContainer } from '../utils/viewer-container';
 import { RAIL_ICONS } from './control-rail/icons';
 
@@ -24,8 +31,8 @@ const UI_CONFIG = config.ui;
 
 let activeHelpClickHandler: ((event: MouseEvent) => void) | null = null;
 let activeHelpClickTimer: ReturnType<typeof setTimeout> | null = null;
-let activeHelpFilterFocusTimer: ReturnType<typeof setTimeout> | null = null;
 let activeHelpFocusTrapRelease: (() => void) | null = null;
+let activeHelpTypeToFilterRelease: (() => void) | null = null;
 
 /** One shortcut row: chip text(s) + what they do. */
 interface HelpEntry {
@@ -63,7 +70,7 @@ const HELP_SECTIONS: HelpSection[] = [
       { keys: ['Space'], label: 'Toggle fullscreen' },
       { keys: ['F'], label: 'Fit scene (recenter camera)' },
       { keys: ['V'], label: 'View mode: orbit / fly / ortho' },
-      { keys: ['O'], label: 'Open dataset browser' },
+      { keys: ['O'], label: 'Toggle dataset browser' },
       { keys: ['H'], label: 'Toggle this help' },
       { keys: ['Esc'], label: 'Exit fullscreen / close panels' },
     ],
@@ -346,15 +353,18 @@ export function showHelpOverlay() {
 
   getViewerContainer().appendChild(helpDiv);
 
-  // Trap focus within the help overlay
-  activeHelpFocusTrapRelease = trapFocus(helpDiv);
-  // Hand initial focus to the filter (registered after the trap's own 0ms
-  // first-focusable timer, so this one wins). Tracked so hideHelpOverlay can
-  // cancel it — an untracked pending timer is the G17 leak class.
-  activeHelpFilterFocusTimer = setTimeout(() => {
-    activeHelpFilterFocusTimer = null;
-    filterInput.focus();
-  }, 0);
+  // Trap focus within the help overlay. `autoFocusFirst: false` because
+  // installTypeToFilter below parks focus on the panel container instead —
+  // leaving the trap's own 0ms timer armed would fight it (and land focus on
+  // the close button).
+  activeHelpFocusTrapRelease = trapFocus(helpDiv, { autoFocusFirst: false });
+  // Container focus + first-printable-key forwarding into the filter. No
+  // text field holds focus, so a second `H` survives InputHandler's typing
+  // guard and closes the overlay; `H` itself is passed through for exactly
+  // that reason and so cannot be the first character of a filter query.
+  activeHelpTypeToFilterRelease = installTypeToFilter(helpDiv, () => filterInput, {
+    passthroughKeys: [config.input.keyboard.shortcuts.toggleHelp],
+  });
 
   // Add global click listener after a short delay to prevent immediate closure.
   // Capture the timer identity so an obsolete callback cannot clear or attach
@@ -376,18 +386,22 @@ export function showHelpOverlay() {
 /**
  * Dismiss the help overlay opened by {@link showHelpOverlay}.
  *
- * Cancels the pending click-outside timer, releases the focus trap, and removes
- * the overlay element, restoring focus to where it was before the overlay
- * opened. A no-op when no overlay is present.
+ * Cancels the pending click-outside timer, releases the type-to-filter
+ * forwarder and the focus trap, and removes the overlay element, restoring
+ * focus to where it was before the overlay opened. A no-op when no overlay is
+ * present.
  */
 export function hideHelpOverlay() {
   if (activeHelpClickTimer !== null) {
     clearTimeout(activeHelpClickTimer);
     activeHelpClickTimer = null;
   }
-  if (activeHelpFilterFocusTimer !== null) {
-    clearTimeout(activeHelpFilterFocusTimer);
-    activeHelpFilterFocusTimer = null;
+  // Release the type-to-filter forwarder before the trap: the trap's cleanup
+  // restores focus to the pre-open element, and the forwarder must not be
+  // listening on a detached container afterwards.
+  if (activeHelpTypeToFilterRelease) {
+    activeHelpTypeToFilterRelease();
+    activeHelpTypeToFilterRelease = null;
   }
 
   // Release focus trap before removing element

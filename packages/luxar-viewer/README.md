@@ -252,7 +252,7 @@ Luxar Viewer supports three navigation modes:
 | **R**      | Toggle advanced rendering controls panel |
 | **P**      | Toggle performance statistics            |
 | **N**      | Toggle nD dimension panel                |
-| **O**      | Open dataset browser                     |
+| **O**      | Toggle dataset browser                   |
 | **Ctrl+L** | Toggle debug console                     |
 | **Esc**    | Exit fullscreen / Close panels           |
 
