@@ -108,7 +108,11 @@ async function setOpaqueVisible(page: Page, nodeType: 'points' | 'lines', visibl
 async function overlapOpaqueInFrontOfLuminous(
   page: Page,
   nodeType: 'points' | 'lines'
-): Promise<number> {
+): Promise<{
+  opaqueCameraDistance: number;
+  luminousCameraDistance: number;
+  projectedBoundsIntersect: boolean;
+} | null> {
   return page.evaluate((type) => {
     const debug = (window as any).__luxarDebug;
     let opaque: any;
@@ -120,22 +124,77 @@ async function overlapOpaqueInFrontOfLuminous(
       if (mode === 'opaque') opaque = object;
       if (mode === 'luminous') luminous = object;
     });
-    if (!opaque || !luminous) return 0;
+    if (!opaque || !luminous) return null;
 
     const worldCenter = (object: any) => {
       object.geometry.computeBoundingBox();
       const center = object.geometry.boundingBox.getCenter(object.position.clone());
       return object.localToWorld(center);
     };
+    const worldRadius = (object: any) => {
+      object.geometry.computeBoundingSphere();
+      const scale = object.getWorldScale(object.position.clone());
+      return (
+        object.geometry.boundingSphere.radius *
+        Math.max(Math.abs(scale.x), Math.abs(scale.y), Math.abs(scale.z))
+      );
+    };
+    const projectedBounds = (object: any) => {
+      const center = worldCenter(object);
+      const radius = worldRadius(object);
+      const projectedCenter = center.clone().project(debug.camera);
+      const cameraRight = center
+        .clone()
+        .setFromMatrixColumn(debug.camera.matrixWorld, 0)
+        .normalize()
+        .multiplyScalar(radius);
+      const cameraUp = center
+        .clone()
+        .setFromMatrixColumn(debug.camera.matrixWorld, 1)
+        .normalize()
+        .multiplyScalar(radius);
+      const projectedRight = center.clone().add(cameraRight).project(debug.camera);
+      const projectedUp = center.clone().add(cameraUp).project(debug.camera);
+      const radiusX = Math.abs(projectedRight.x - projectedCenter.x);
+      const radiusY = Math.abs(projectedUp.y - projectedCenter.y);
+      return {
+        minX: projectedCenter.x - radiusX,
+        maxX: projectedCenter.x + radiusX,
+        minY: projectedCenter.y - radiusY,
+        maxY: projectedCenter.y + radiusY,
+      };
+    };
     debug.scene.updateMatrixWorld(true);
-    opaque.position.add(worldCenter(luminous).sub(worldCenter(opaque)));
+    const opaqueCenterInParent = opaque.parent.worldToLocal(worldCenter(opaque).clone());
+    const luminousCenterInParent = opaque.parent.worldToLocal(worldCenter(luminous).clone());
+    opaque.position.add(luminousCenterInParent.sub(opaqueCenterInParent));
 
     debug.scene.updateMatrixWorld(true);
     const cameraPosition = debug.camera.getWorldPosition(opaque.position.clone());
-    opaque.position.add(cameraPosition.sub(worldCenter(opaque)).normalize().multiplyScalar(1));
+    const alignedOpaqueCenter = worldCenter(opaque);
+    const nudgeDistance = Math.min(worldRadius(opaque), worldRadius(luminous));
+    const targetWorldCenter = alignedOpaqueCenter
+      .clone()
+      .add(cameraPosition.sub(alignedOpaqueCenter).normalize().multiplyScalar(nudgeDistance));
+    const alignedCenterInParent = opaque.parent.worldToLocal(alignedOpaqueCenter.clone());
+    const targetCenterInParent = opaque.parent.worldToLocal(targetWorldCenter);
+    opaque.position.add(targetCenterInParent.sub(alignedCenterInParent));
+
     debug.scene.updateMatrixWorld(true);
+    const opaqueCenter = worldCenter(opaque);
+    const luminousCenter = worldCenter(luminous);
+    const opaqueBounds = projectedBounds(opaque);
+    const luminousBounds = projectedBounds(luminous);
     debug.renderOnce?.();
-    return 1;
+    return {
+      opaqueCameraDistance: cameraPosition.distanceTo(opaqueCenter),
+      luminousCameraDistance: cameraPosition.distanceTo(luminousCenter),
+      projectedBoundsIntersect:
+        opaqueBounds.maxX >= luminousBounds.minX &&
+        luminousBounds.maxX >= opaqueBounds.minX &&
+        opaqueBounds.maxY >= luminousBounds.minY &&
+        luminousBounds.maxY >= opaqueBounds.minY,
+    };
   }, nodeType);
 }
 
@@ -196,7 +255,17 @@ for (const [nodeType, fixture] of [
       { timeout: 60000 }
     );
 
-    expect(await overlapOpaqueInFrontOfLuminous(page, nodeType)).toBe(1);
+    const overlap = await overlapOpaqueInFrontOfLuminous(page, nodeType);
+    expect(overlap, `${nodeType}: opaque and luminous fixtures must both exist`).not.toBeNull();
+    if (!overlap) throw new Error(`${nodeType}: overlap setup failed`);
+    expect(
+      overlap.opaqueCameraDistance,
+      `${nodeType}: opaque geometry must be closer to the camera than luminous geometry`
+    ).toBeLessThan(overlap.luminousCameraDistance);
+    expect(
+      overlap.projectedBoundsIntersect,
+      `${nodeType}: opaque and luminous projected bounds must overlap`
+    ).toBe(true);
     expect(await setOpaqueVisible(page, nodeType, false)).toBeGreaterThan(0);
     await waitForNextRender(page, 2);
     const luminousOnly = await meanCanvasLinearLuminance(page);
