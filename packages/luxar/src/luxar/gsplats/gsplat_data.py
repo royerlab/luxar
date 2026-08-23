@@ -23,6 +23,9 @@ from luxar.gsplats._data.filtering import FilteringMixin
 from luxar.gsplats._data.filtering import (
     drop_content_scoped_stats as drop_content_scoped_stats,
 )
+from luxar.gsplats._data.filtering import (
+    stats_after_structure_change as stats_after_structure_change,
+)
 from luxar.gsplats._data.intensity import IntensityMixin
 from luxar.gsplats._data.intensity import amplitudes_changed as amplitudes_changed
 from luxar.gsplats._data.io_adapter import IOAdapterMixin

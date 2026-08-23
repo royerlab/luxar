@@ -807,9 +807,9 @@ would put a bare `NaN` / `Infinity` token in the metadata document — not JSON,
 and fatal to a strict reader for the whole store rather than for that one key.
 `foreground_fraction` is still present in that case, so the artifact says why.
 
-**What survives a rewrite.** Inherited `fitting/` stamps fall into two
-categories, invalidated along two independent axes, and a tool that rewrites a
-store must apply both rules:
+**What survives a rewrite.** Inherited `fitting/` and `pipeline/` stamps fall
+into three categories, invalidated along three independent axes, and a tool that
+rewrites a store must apply all three rules:
 
 * **Content-scoped** — every number MEASURED against the source volume: the
   scores above, `final_loss` / `final_rel_l2` / `final_max_abs_error`, the
@@ -883,11 +883,47 @@ store must apply both rules:
   excluded splats, because that is what makes the compression ratio quote a
   volume the artifact no longer represents. `source_dtype` is exempt: a crop
   cannot change the element type. A non-spatial cull keeps this whole block.
+* **Structure-scoped** — the artifact's own **topology** record in `pipeline/`:
+  `lod_kind`, `recipe`, `compression_factor`, `method`, `n_substitutive_levels`,
+  `coverage_inflation`, `conserve_mass`, `refine`, `refine_iters`, the additive
+  ladder summary (`lod_method`, `lod_n_lods`, `lod_breakpoints_kind`,
+  `lod_cutpoints`, `lod_substitutive_level`) and the `batch-fit merge` per-part
+  knobs (`per_part`, `n_lods`, `breakpoints`, `levels`, `additive_ladders`).
+  Dropped only by a rewrite that changes the **structure kind**. The test for a
+  new command is one question — *can this command's output have a different
+  structure kind than its input?* — and if the answer is yes it must scrub, even
+  when a particular run happens to preserve the kind. Four commands qualify
+  today: `flatten` (one flat leaf), `partition` (a `kind=partition` of bare
+  leaves), `decimate` (one flat leaf whenever it actually reduces; its
+  `target >= n_splats` early return hands the input straight back, which
+  correctly republishes the record because nothing changed) and `lod`, whose
+  every `--recipe` starts from `data.flattened()` — so no `lod` output preserves
+  its input's shape, and a laddered or substitutive store is a legal input (the
+  gate is matrix-shaped-ness, so a partition and a lod group with non-leaf
+  children are both refused). `lod` is also the one of the four that publishes
+  a topology record of its own, and it publishes **only** what its own builder
+  stamped: `recipe` alone for `flat` / `tiles` / `overview` / `adaptive`, plus the
+  additive ladder summary for `stream`, plus the substitutive block as well for
+  `levels`. Nothing positive is invented to fill the gap — an absent `lod_kind`
+  is the format's "this artifact does not know", and the alternative (stamping
+  `lod_kind: additive` on a `stream` output) would be a new claim rather than a
+  scrub. Content-changing but structure-**preserving** ops keep the block and
+  *re-stamp* the counts that moved instead: a `cull` of a substitutive pyramid is
+  still that pyramid, with refreshed `lod_n_lods` / `lod_cutpoints`.
 
-Neither category subsumes the other, which is why one predicate cannot serve
-both: an amplitude-threshold cull loses the scores and keeps the grid, a
-whole-volume bbox that excluded nothing keeps both, and a real crop loses both.
-Descriptive counters are never dropped by either rule — `iterations`,
+  Two things in `pipeline/` are **exempt**, which is why this is a deny-list of
+  key names rather than "drop the group". The normalization block (`floor`,
+  `image_min`, `image_max`, `intensity_range`) describes the *input volume's*
+  intensity scale, which regrouping splats cannot change. And `coarsen_dims` is
+  read back by the writer — `write_gsplats_tree` derives the chunk-ordering
+  barrier axes from its complement — so dropping it would silently change the
+  output's chunk layout, not just its metadata.
+
+No category subsumes another, which is why one predicate cannot serve them: an
+amplitude-threshold cull loses the scores and keeps the grid and the topology, a
+whole-volume bbox that excluded nothing keeps all three, a real crop loses the
+scores and the grid but keeps the topology, and `flatten` loses only the
+topology. Descriptive counters are never dropped by any rule — `iterations`,
 `best_iteration`, `converged`, `time_seconds`, `fitter_name` and `filtered` /
 `filter_criteria` describe the run or the edit, both of which happened.
 

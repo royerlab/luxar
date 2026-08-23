@@ -890,6 +890,57 @@ describe('SceneManager', () => {
       expect(sceneManager.currentFov).toBe(47);
     });
 
+    it('applies the resolved FOV with an authored position despite stored settings', async () => {
+      const spies = installSpies({
+        positionApplied: true,
+        viewerConfig: {
+          cinematic_mode: true,
+          camera: { position: [10, 20, 30] },
+        },
+      });
+
+      await sceneManager.loadSceneData('http://example.com/data.zarr', undefined, {
+        applyViewerConfigFov: false,
+      });
+
+      expect(spies.autoFrameCamera).not.toHaveBeenCalled();
+      expect(sceneManager.currentFov).toBe(63);
+    });
+
+    it('keeps the stored FOV when an authored position was not actually applied', async () => {
+      const spies = installSpies({
+        positionApplied: false,
+        viewerConfig: {
+          cinematic_mode: true,
+          camera: { position: [10, 20, 30] },
+        },
+      });
+
+      await sceneManager.loadSceneData('http://example.com/data.zarr', undefined, {
+        applyViewerConfigFov: false,
+      });
+
+      expect(spies.autoFrameCamera).toHaveBeenCalledOnce();
+      expect(sceneManager.currentFov).toBe(47);
+    });
+
+    it('keeps the stored FOV when an authored-position FOV is invalid', async () => {
+      (sceneManager.camera as THREE.PerspectiveCamera).fov = 80;
+      const spies = installSpies({
+        positionApplied: true,
+        viewerConfig: {
+          camera: { position: [10, 20, 30], fov: 8 },
+        },
+      });
+
+      await sceneManager.loadSceneData('http://example.com/data.zarr', undefined, {
+        applyViewerConfigFov: false,
+      });
+
+      expect(spies.autoFrameCamera).not.toHaveBeenCalled();
+      expect(sceneManager.currentFov).toBe(80);
+    });
+
     it.each([
       { name: 'planar bounds', min: [-1, -1, 0], max: [1, 1, 0], nearestDepth: 0 },
       { name: '3D bounds', min: [-1, -1, -1], max: [1, 1, 1], nearestDepth: 1 },

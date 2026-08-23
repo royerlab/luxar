@@ -751,3 +751,74 @@ class TestTransformBoundingBox:
         lo, hi = transform_bounding_box(m, lo_in, hi_in)
         assert lo.tolist() == pytest.approx(pts.min(axis=0).tolist())
         assert hi.tolist() == pytest.approx(pts.max(axis=0).tolist())
+
+    def test_drops_corners_with_degenerate_homogeneous_w(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        matrix = np.array(
+            [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [1.0, 0.0, 0.0, 5e-13],
+            ]
+        )
+
+        lo, hi = transform_bounding_box(matrix, [0, 0, 0], [1, 1, 1])
+
+        assert lo.tolist() == pytest.approx([1, 0, 0])
+        assert hi.tolist() == pytest.approx([1, 1, 1])
+        assert (
+            "transform_bounding_box: skipped 4/8 corner(s) with |w| < 1e-12"
+            in capsys.readouterr().out
+        )
+
+    def test_keeps_corners_at_homogeneous_w_threshold(self) -> None:
+        matrix = np.array(
+            [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1e-12],
+            ]
+        )
+
+        lo, hi = transform_bounding_box(matrix, [0, 0, 0], [1, 1, 1])
+
+        assert lo.tolist() == [0, 0, 0]
+        assert hi.tolist() == pytest.approx([1e12, 1e12, 1e12])
+
+    def test_keeps_corners_with_negative_homogeneous_w(self) -> None:
+        matrix = np.diag([1.0, 1.0, 1.0, -1.0])
+
+        lo, hi = transform_bounding_box(matrix, [0, 0, 0], [1, 1, 1])
+
+        assert lo.tolist() == [-1, -1, -1]
+        assert hi.tolist() == [0, 0, 0]
+
+    def test_all_degenerate_corners_fall_back_to_input_box(self, capsys) -> None:
+        matrix = np.array(
+            [
+                [1.0, 0.0, 0.0, 10.0],
+                [0.0, 1.0, 0.0, 20.0],
+                [0.0, 0.0, 1.0, 30.0],
+                [0.0, 0.0, 0.0, 0.0],
+            ]
+        )
+        lo_input = np.array([-1, -2, -3, 7], dtype=np.float64)
+        hi_input = np.array([4, 5, 6, 9], dtype=np.float64)
+
+        lo, hi = transform_bounding_box(matrix, lo_input, hi_input)
+
+        assert lo.tolist() == [-1, -2, -3]
+        assert hi.tolist() == [4, 5, 6]
+        assert lo.shape == (3,)
+        assert hi.shape == (3,)
+        lo[0] = 100
+        hi[0] = 100
+        assert lo_input.tolist() == [-1, -2, -3, 7]
+        assert hi_input.tolist() == [4, 5, 6, 9]
+        assert (
+            "transform_bounding_box: skipped 8/8 corner(s) with |w| < 1e-12"
+            in capsys.readouterr().out
+        )

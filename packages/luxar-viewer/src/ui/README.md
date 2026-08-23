@@ -1100,6 +1100,7 @@ emitter, so there is no `on()` / `setDimensions()` / `setValue()` API.
 | `setSceneId(url, name?)`             | Set scene ID for settings persistence               |
 | `setZarrViewerConfig(config)`        | Apply viewer config defaults from zarr metadata     |
 | `syncCurrentState()`                 | Sync UI controls with current post-processing state |
+| `syncCameraFovState()`               | Sync live camera FOV/preset state and controls      |
 | `updateSceneScale()`                 | Update scale-dependent controls after scene load    |
 | `toggleCinematicMode()`              | Toggle cinematic mode (bloom + ACES + vignette)     |
 | `dispose()`                          | Clean up resources and event listeners              |

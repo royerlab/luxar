@@ -171,6 +171,11 @@ def load_base_splats() -> GSplatData:
         recompute=RECOMPUTE,
     )
     if precomputed is not None:
+        from luxar.demos.demo_gsplats_3d_tribolium_embryo import (
+            warn_if_cached_tribolium_fit_predates_floor,
+        )
+
+        warn_if_cached_tribolium_fit_predates_floor()
         return precomputed[0]
 
     # --recompute path: re-fit from the raw volume via the base Tribolium demo.
