@@ -96,6 +96,26 @@ def test_an_unknown_basis_leaves_behaviour_unchanged(monkeypatch) -> None:
     np.testing.assert_array_equal(captured["volume"], raw)
 
 
+def test_a_recorded_zero_basis_disables_the_inner_floor(monkeypatch) -> None:
+    """Zero means nothing was removed, not that the fit omitted the basis."""
+    captured: dict = {}
+
+    def fake_fit(volume, **kwargs):
+        captured["volume"] = np.asarray(volume).copy()
+        captured["floor"] = kwargs.get("floor")
+        return _seed()
+
+    monkeypatch.setattr("luxar.gsplats.fit_gsplats.fit_gaussian_splats", fake_fit)
+    raw = _volume(0.0)
+    cfg = vr.VolumeRefitConfig(
+        image_min=0.0, iters=1, never_worse=False, conserve_mass=False
+    )
+    vr.volume_refine_splats(_seed(), raw, config=cfg, device="cpu")
+
+    assert captured["floor"] == "none"
+    np.testing.assert_array_equal(captured["volume"], raw)
+
+
 def test_per_part_levels_forward_the_owning_fits_basis(monkeypatch) -> None:
     """A bare part tree has no top-level stats, so its owner must carry them."""
     captured = []

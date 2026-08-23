@@ -280,7 +280,7 @@ def fit_planned_parallel(
         p = box_paths[i]
         if p.exists():
             try:
-                gd = GSplatData.load(p)
+                gd = GSplatData.load(p, include_stats=True)
             except Exception as exc:  # present but unreadable/partial store
                 corrupt.append((i, repr(exc)))
                 continue
@@ -341,11 +341,8 @@ def fit_planned_parallel(
                 # Wall clock, as the uniform tiled merge stamps it
                 # (`merge_tile_results`): one key must not mean "summed fit time"
                 # here and "elapsed" there — and concurrent boxes make a sum
-                # exceed the run. Here it is the SOLE writer rather than an
-                # overwrite, unlike the sequential twin: a reloaded box brings
-                # back its leaf `lod_stats` but not its top-level `stats` (that
-                # needs `include_stats=True`), so `concatenate` sees no box
-                # times to sum in the first place.
+                # exceed the run. This overwrites the box-time sum produced by
+                # `concatenate`, matching the sequential twin.
                 "time_seconds": float(elapsed),
             }
         )

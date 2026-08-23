@@ -244,7 +244,7 @@ def volume_refine_splats(
     # re-estimating a second (different) background on top of that. When the
     # store recorded no level, behaviour is unchanged from before — `auto` still
     # runs — because guessing here would be worse than the status quo.
-    if config.image_min is not None and config.image_min > 0.0:
+    if config.image_min is not None:
         volume = reference_on_fit_basis(volume, config.image_min)
         inner_floor: "str | float" = "none"
     else:

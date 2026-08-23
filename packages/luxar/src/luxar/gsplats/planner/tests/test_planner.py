@@ -344,7 +344,11 @@ def _toy_plan(n_boxes: int = 3, budget: int = 100, width: int = 16) -> FitPlan:
 _FAKE_BOX_TIME_SECONDS = 1000.0
 
 
-def _fake_box_builder(n_per_box: int = 5, truncation_radius: float | None = None):
+def _fake_box_builder(
+    n_per_box: int = 5,
+    truncation_radius: float | None = None,
+    image_min: float | None = None,
+):
     """Worker builder writing ``n_per_box`` deterministic splats — no torch/GPU.
 
     ``truncation_radius`` stands in for a box worker whose fit config asked for a
@@ -357,6 +361,9 @@ def _fake_box_builder(n_per_box: int = 5, truncation_radius: float | None = None
         if truncation_radius is None
         else f", truncation_radius={truncation_radius!r}"
     )
+    stats = {"time_seconds": _FAKE_BOX_TIME_SECONDS}
+    if image_min is not None:
+        stats["image_min"] = image_min
 
     def builder(i: int, out_path: Path) -> list[str]:
         script = textwrap.dedent(
@@ -370,7 +377,7 @@ def _fake_box_builder(n_per_box: int = 5, truncation_radius: float | None = None
             chol = np.tile(np.array([1, 0, 1, 0, 0, 1], np.float32), (k, 1))
             GSplatData(centers=centers, amplitudes=amps,
                        cholesky_factors=chol{radius},
-                       stats={{"time_seconds": {_FAKE_BOX_TIME_SECONDS!r}}},
+                       stats={stats!r},
                        ).save(r"{out_path}")
             """
         )
@@ -1776,6 +1783,41 @@ class TestPlannedFitTruncationRadius:
             merged.stats["elapsed_seconds"]
         )
         assert merged.stats["time_seconds"] < 60.0
+
+    def test_parallel_flat_merge_keeps_the_box_basis(self, tmp_path):
+        merged = fit_planned_parallel(
+            _toy_plan(n_boxes=2),
+            jobs=2,
+            tmp_dir=tmp_path / "boxes",
+            worker_cmd_builder=_fake_box_builder(5, image_min=500.0),
+            verbose=False,
+        )
+
+        assert merged.stats["image_min"] == pytest.approx(500.0)
+
+    def test_parallel_partition_recipe_keeps_the_box_basis(self, tmp_path, monkeypatch):
+        import luxar.gsplats.lod.recipes as recipes
+        from luxar.gsplats.lod.recipes import RecipeParams
+
+        captured = []
+
+        def fake_build(part, recipe, params, *, cell=None):
+            captured.append(params.image_min)
+            return part
+
+        monkeypatch.setattr(recipes, "build_part_lod", fake_build)
+        fit_planned_parallel(
+            _toy_plan(n_boxes=2),
+            jobs=2,
+            tmp_dir=tmp_path / "boxes",
+            worker_cmd_builder=_fake_box_builder(5, image_min=500.0),
+            partition=True,
+            recipe="levels",
+            recipe_params=RecipeParams(),
+            verbose=False,
+        )
+
+        assert captured == [500.0, 500.0]
 
     def test_parallel_partition_parts_keep_the_box_stats_and_radius(self, tmp_path):
         """``fit -j N`` (the default partition): each part carries its own box.

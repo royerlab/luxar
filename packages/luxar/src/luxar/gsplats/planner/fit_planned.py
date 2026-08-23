@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any, Callable, Optional, Tuple
 
 import numpy as np
 
+from luxar.gsplats.fit_basis import fit_image_min
 from luxar.gsplats.merged_quality import (
     announce_unscored_merge,
     announce_unscored_partition_merge,
@@ -93,6 +94,7 @@ def _score_planned_flat_merge(
         grid_scale=None,
         device=device,
         verbose=verbose,
+        image_min=fit_image_min(merged.stats),
     )
 
 
