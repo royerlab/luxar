@@ -55,6 +55,7 @@ vi.mock('../../../ui/scale-bar');
 vi.mock('../../../ui/dataset-browser');
 vi.mock('../../../ui/ui-cleanup');
 vi.mock('../../../ui/error-overlay');
+vi.mock('../../../ui/toast');
 vi.mock('../../../ui/help-overlay');
 vi.mock('../../../ui/layers');
 // scene-dims-manager is unmocked: it's a pure JS singleton (no DOM
@@ -140,6 +141,7 @@ import { RenderingControls } from '../../../ui/rendering-controls';
 import { DatasetBrowser } from '../../../ui/dataset-browser';
 import { cleanupUI as mockCleanupUI } from '../../../ui/ui-cleanup';
 import { clearError as mockClearError } from '../../../ui/error-overlay';
+import { showToast as mockShowToast } from '../../../ui/toast';
 
 // Import LuxarApp after all mocks are set up
 import { LuxarApp } from '../../../core/app';
@@ -1003,6 +1005,81 @@ describe('LuxarApp', () => {
         'open-dataset-browser',
         expect.any(Function)
       );
+    });
+
+    it('opens during the initial load but refuses selection without changing the source', async () => {
+      mockFetch.mockResolvedValue({ ok: true });
+      let releaseInitialLoad!: () => void;
+      mockSceneManager.loadSceneData.mockImplementationOnce(
+        () => new Promise<void>((resolve) => (releaseInitialLoad = resolve))
+      );
+
+      const initPromise = app.init({
+        canvas: mockCanvas,
+        src: 'http://example.com/initial.zarr',
+        updateBrowserUrl: true,
+      });
+      await vi.waitFor(() => expect(mockSceneManager.loadSceneData).toHaveBeenCalledTimes(1));
+
+      try {
+        const openBrowser = mockAddEventListener.mock.calls.find(
+          (call) => call[0] === 'open-dataset-browser'
+        )?.[1] as (() => void) | undefined;
+        expect(openBrowser).toBeDefined();
+
+        openBrowser!();
+        const browserCall = (DatasetBrowser as any).mock.calls.at(-1);
+        expect(browserCall).toBeDefined();
+        const onSelect = browserCall[0].onDatasetSelect as (url: string) => false | Promise<void>;
+
+        expect(onSelect('http://example.com/replacement.zarr')).toBe(false);
+        expect(mockShowToast).toHaveBeenCalledExactlyOnceWith(
+          'Luxar is still starting up; try again in a moment.'
+        );
+        expect((app as any).options.src).toBe('http://example.com/initial.zarr');
+        expect(mockReplaceState).not.toHaveBeenCalled();
+        expect(mockSceneManager.loadSceneData).toHaveBeenCalledTimes(1);
+      } finally {
+        releaseInitialLoad();
+        await initPromise;
+      }
+    });
+
+    it('removes the early browser listener and clears initializing state when init fails', async () => {
+      mockFetch.mockResolvedValue({ ok: true });
+      mockSceneManager.loadSceneData.mockRejectedValueOnce(new Error('initial load failed'));
+
+      await expect(
+        app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' })
+      ).rejects.toThrow('initial load failed');
+
+      const browserRegistration = mockAddEventListener.mock.calls.find(
+        (call) => call[0] === 'open-dataset-browser'
+      );
+      expect(browserRegistration).toBeDefined();
+      expect(mockRemoveEventListener).toHaveBeenCalledWith(
+        'open-dataset-browser',
+        browserRegistration![1]
+      );
+      expect(() => app.switchDataset('http://example.com/retry.zarr')).toThrow(/before init/);
+    });
+
+    it('clears initializing state immediately when disposed during init', async () => {
+      mockFetch.mockResolvedValue({ ok: true });
+      let releaseInitialLoad!: () => void;
+      mockSceneManager.loadSceneData.mockImplementationOnce(
+        () => new Promise<void>((resolve) => (releaseInitialLoad = resolve))
+      );
+
+      const initPromise = app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
+      await vi.waitFor(() => expect(mockSceneManager.loadSceneData).toHaveBeenCalledTimes(1));
+
+      app.dispose();
+      expect(() => app.switchDataset('http://example.com/retry.zarr')).toThrow(/before init/);
+
+      releaseInitialLoad();
+      await initPromise;
+      app.dispose();
     });
 
     it('does not call history.replaceState when updateBrowserUrl is false', async () => {
