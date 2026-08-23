@@ -24,8 +24,10 @@
  * divergence of known MAGNITUDE and known DIRECTION on the crop PEAK — effect C
  * alone for max/normal (the lifted gsplat is brighter), C compounded with #1993
  * for opaque, where the points lose all their alpha-carried photometry and the
- * gsplat therefore comes out dimmer. Either way it flags loudly the day the
- * underlying defect lands and the divergence moves.
+ * gsplat therefore comes out dimmer. Direction, floor AND ceiling bracket that
+ * divergence from every side, so whichever of the two open defects lands first
+ * the assertion goes red and names what moved — see the DELETE-WHEN-IT-LANDS
+ * note, which enumerates the three landings and the check that catches each.
  */
 
 import { test, expect, type Page } from '@playwright/test';
@@ -76,12 +78,27 @@ const PEAK_MODES = ['max', 'normal', 'opaque'] as const;
 const PEAK_DIVERGENCE_FLOOR = 3;
 
 /**
+ * Upper bound on that same magnitude, because a floor alone is one-sided.
+ *
+ * Effect C landing on its own would leave `opaque` carrying #1993's 1/uOpacity
+ * and nothing else: ratio 1 × 0.003, still 'dimmer', still miles over the
+ * floor — a 10.8× → 333× move in the exact quantity this test exists to pin,
+ * passing silently. The ceiling is what fails on that.
+ *
+ * The largest magnitude measured anywhere is 30.7× (`max` at r=0.02), so 100
+ * keeps ~3.3× of headroom over today's worst case while sitting well below the
+ * 333× it has to catch.
+ */
+const PEAK_DIVERGENCE_CEILING = 100;
+
+/**
  * Which way each peak mode diverges. This is NOT the sign the old assertion
  * assumed (it tested `> 1 + PARITY_TOLERANCE` for all three):
  *
- *   max, normal  effect C alone. The gsplat peak branch renders the raw
- *                a_lift = opacity/(uRIF·σ) unmodified, so the lifted twin is
- *                genuinely BRIGHTER, by 1/(uRIF·σ).
+ *   max, normal  effect C alone. The gsplat peak branch renders
+ *                a_lift = opacity/(uRIF·σ) without the sum branch's
+ *                `rayIntegrationBoost · dilationCompensation`, so the lifted
+ *                twin is genuinely BRIGHTER, by 1/(uRIF·σ).
  *   opaque       effect C multiplied by #1993 on the POINTS side: three.js
  *                disables blending outright for `NormalBlending` +
  *                `transparent: false`, so the emitted alpha never reaches the
@@ -114,14 +131,39 @@ function toLinear(v: number): number {
 }
 
 /**
- * A crop pixel counts as COVERED above one sRGB code point (≈3.0e-4 linear).
+ * A crop pixel counts as COVERED above ≈3.0e-4 — the LUMINANCE of a NEUTRAL
+ * pixel one sRGB code point above black.
  *
- * That is the smallest value an 8-bit screenshot can encode above black, so the
- * predicate reads as "this pixel is not background" and says nothing about how
- * bright the cell is — which is the point: it separates the geometric question
- * (how much of the crop did this family fill?) from the photometric one.
+ * It is a per-channel linear value compared against a Rec.709 luminance, so it
+ * is only "the smallest thing an 8-bit screenshot can encode" for grey: a
+ * red-only pixel needs code point ≥ 5 and a blue-only one ≥ 14 to clear it.
+ * This fixture is white-on-black, so neutral is the right calibration. The
+ * predicate then reads as "this pixel is not background" and says nothing about
+ * how bright the cell is — which is the point: it separates the geometric
+ * question (how much of the crop did this family fill?) from the photometric
+ * one.
  */
 const COVERAGE_FLOOR = toLinear(1);
+
+/**
+ * How long the canvas gets to become screenshot-ready, for ONE measurement.
+ *
+ * The global `actionTimeout` is 10 s, and the first measurement after a
+ * blending-mode switch follows a program recompile / TSL rebuild across all
+ * eight nodes. On a loaded machine Playwright's in-page polling starves for
+ * longer than that while the renderer holds the main thread — the element is
+ * visible by every CSS measure the whole time.
+ *
+ * `cellLuminances` passes this to BOTH of its waits, and the SCREENSHOT is the
+ * stricter one: `locator.screenshot()` is an action, so it runs its own
+ * actionability check — Visible AND Stable, i.e. two consecutive animation
+ * frames with an unchanged box — on `actionTimeout`. Budgeting only the
+ * `waitFor` buys nothing, because that one clears on the first scheduling gap
+ * and the screenshot then burns its un-raised 10 s waiting for two clean
+ * frames: the same false failure, which has nothing to do with what this spec
+ * measures.
+ */
+const CANVAS_READY_TIMEOUT = 30000;
 
 /**
  * What one cell crop reports.
@@ -229,15 +271,10 @@ async function cellLuminances(page: Page, centres: Cell[]): Promise<Map<string, 
   // accident — if the control rail ever moved ahead of `#app` this spec would
   // silently screenshot the hidden one.
   const canvas = page.locator('canvas#app');
-  // The global `actionTimeout` is 10 s, and this is the first thing measured
-  // after a blending-mode switch that can recompile the programs / rebuild the
-  // TSL graph for all eight nodes. On a loaded machine Playwright's in-page
-  // visibility poll starves for longer than that while the renderer holds the
-  // main thread — the element is visible by every CSS measure the whole time.
-  // The generous timeout only guards against that false failure, which has
-  // nothing to do with what this spec measures.
-  await canvas.waitFor({ state: 'visible', timeout: 30000 });
-  const png = await canvas.screenshot({ animations: 'disabled' });
+  // Both of these need the budget, and the screenshot — Visible AND Stable —
+  // is the stricter of the two; see CANVAS_READY_TIMEOUT.
+  await canvas.waitFor({ state: 'visible', timeout: CANVAS_READY_TIMEOUT });
+  const png = await canvas.screenshot({ animations: 'disabled', timeout: CANVAS_READY_TIMEOUT });
   const dataUrl = `data:image/png;base64,${png.toString('base64')}`;
 
   const measured = await page.evaluate(
@@ -305,20 +342,31 @@ interface ParityRow {
   peakRatio: number;
 }
 
-/** Per-radius gsplat-vs-points measurement for whatever mode is active. */
+/**
+ * Per-radius gsplat-vs-points measurement for whatever mode is active.
+ *
+ * Pure measurement, no assertions: the caller logs the table BEFORE calling
+ * `expectPointsRendered`, so a dead cell still gets diagnosed against the rows
+ * that were measured either side of it rather than throwing mid-build and
+ * printing nothing.
+ */
 async function parityMetrics(page: Page, centres: Cell[]): Promise<ParityRow[]> {
   const lum = await cellLuminances(page, centres);
   return RADII.map((radius, i) => {
     const pts = lum.get(`pts_r${i}`)!;
     const gsp = lum.get(`gsp_r${i}`)!;
-    expect(pts.mean, `points cell r=${radius} must render something`).toBeGreaterThan(1e-6);
     return { radius, pts, gsp, meanRatio: gsp.mean / pts.mean, peakRatio: gsp.peak / pts.peak };
   });
 }
 
-/** gsplat/points MEAN brightness ratio per radius — what the assertions use. */
-async function parityRatios(page: Page, centres: Cell[]): Promise<number[]> {
-  return (await parityMetrics(page, centres)).map((row) => row.meanRatio);
+/**
+ * The precondition every assertion below rests on: both ratios divide by the
+ * points side, so a points cell that rendered nothing poisons the row.
+ */
+function expectPointsRendered(rows: ParityRow[]): void {
+  for (const row of rows) {
+    expect(row.pts.mean, `points cell r=${row.radius} must render something`).toBeGreaterThan(1e-6);
+  }
 }
 
 /**
@@ -362,6 +410,26 @@ function expectParity(ratios: number[], mode: string, band = PARITY_TOLERANCE): 
 }
 
 test.describe('Lifted-gsplat / Points parity', () => {
+  /**
+   * The config's 60 s per-test default does not fit this fixture, and
+   * `beforeEach` runs inside it. Setup alone is up to two 60 s
+   * `waitForFunction` budgets (the debug handle, then eight committed leaves)
+   * plus the 3 s settle plus `openBlendControl`'s three retries (~5 s) = 128 s.
+   * The κ test then measures TWICE, and each `cellLuminances` can spend
+   * CANVAS_READY_TIMEOUT on the visibility wait and CANVAS_READY_TIMEOUT again
+   * on the screenshot: 2 × (30 + 30 + 1.2 s settle) = 122.4 s, after a 1.5 s
+   * mode switch. Worst case ≈ 252 s.
+   *
+   * Not a theoretical wall: on a loaded box (1-minute load average 47 on 16
+   * cores) the scene load took ~45 s and the κ test 56.6 s of the 60 s default
+   * — so the default is tight even on a good day, and in the pathological case
+   * CANVAS_READY_TIMEOUT exists for it dies on a bare `Test timeout of 60000ms
+   * exceeded` instead of the actionable locator message. 300 s covers the
+   * arithmetic with ~19% of headroom and matches frame-pacing.spec.ts, the
+   * in-tree `describe.configure` precedent at this value.
+   */
+  test.describe.configure({ timeout: 300000 });
+
   test.beforeEach(async ({ page }) => {
     // ?dpr=1 pins the pixel ratio so the crops land on the same geometry.
     // `&no-opfs` on every load: this spec never asserts the L2 OPFS tier, and
@@ -402,6 +470,7 @@ test.describe('Lifted-gsplat / Points parity', () => {
       await setBlendingMode(page, mode);
       const rows = await parityMetrics(page, centres);
       logMetricsTable(mode, rows);
+      expectPointsRendered(rows);
       expectParity(
         rows.map((row) => row.meanRatio),
         mode
@@ -415,10 +484,12 @@ test.describe('Lifted-gsplat / Points parity', () => {
       await setBlendingMode(page, mode);
       const rows = await parityMetrics(page, centres);
       logMetricsTable(mode, rows);
+      expectPointsRendered(rows);
       const direction = PEAK_DIVERGENCE_DIRECTION[mode];
       // Asserted on the PEAK, not on the crop mean, because the peak is the
       // quantity peak projection actually calibrates: the gsplat peak branch
-      // renders a_lift = opacity/(uRIF·σ) unmodified, and under `max` — whose
+      // renders a_lift = opacity/(uRIF·σ) unboosted — without the sum branch's
+      // `rayIntegrationBoost · dilationCompensation` — and under `max` — whose
       // points peak is a flat authored opacity at every radius — the measured
       // ratio reproduces the analytic 1/(uRIF·σ) to ~1% (30.8 / 12.3 / 4.11 /
       // 1.54 predicted vs 30.66 / 12.15 / 4.05 / 1.57 measured). The mean cannot
@@ -437,26 +508,35 @@ test.describe('Lifted-gsplat / Points parity', () => {
       // We assert the divergence is PRESENT rather than marking the whole test
       // `test.fail()`: an unconditional test.fail() silently accepts a blank
       // render, a shader-compile error, or a no-op mode switch — all of which
-      // would leave the ratio ≈ 1 — as the "expected" failure. `parityMetrics`
-      // already fails loudly if the points family renders nothing.
+      // would leave the ratio ≈ 1 — as the "expected" failure.
+      // `expectPointsRendered` above already fails loudly if the points family
+      // renders nothing.
       //
-      // DELETE THIS WHEN IT LANDS — but not all of it at once. For `max` and
-      // `normal` the divergence is effect C alone and collapses to ≈ 1 the day C
-      // lands: delete the assertion then and fold those two modes into the
-      // SUM_MODES loop. `opaque` needs BOTH C and #1993 fixed before it can
-      // reach parity — with C alone the points are still missing their opacity
-      // factor, so `opaque` keeps diverging and FLIPS to 'brighter'. The
-      // direction lookup is what makes that flip fail loudly instead of quietly
-      // passing a magnitude-only check.
+      // DELETE THIS WHEN IT LANDS — but not all of it at once. Three landings
+      // are possible and a different check catches each; `opaque`'s ratio is
+      // effect C times #1993's uOpacity = 0.003, so run that product forward:
+      //   C alone      max/normal collapse to ≈ 1 and fail on DIRECTION (and on
+      //                the floor). `opaque` keeps #1993 alone — 1 × 0.003, so
+      //                still 'dimmer' and still far over the floor — and its
+      //                magnitude jumps 10.8× → 333×, which fails on the
+      //                CEILING. Fold max/normal into the SUM_MODES loop.
+      //   #1993 alone  `opaque` recovers its 1/0.003 and flips to 'brighter' at
+      //                ≈ 30.7×, failing on DIRECTION. max/normal unchanged.
+      //   both         all three reach parity and fail on direction and floor:
+      //                delete these assertions and fold every peak mode into
+      //                the SUM_MODES loop.
       for (const i of [0, 1]) {
         const ratio = rows[i].peakRatio;
         // A gsplat cell that rendered NOTHING would sail through a `dimmer`
         // magnitude check (1/0 → ∞), so require it on screen first —
-        // `parityMetrics` only vouches for the points side.
+        // `expectPointsRendered` only vouches for the points side. The bar is
+        // COVERAGE_FLOOR, the file's own "this pixel is not background": a
+        // nominal 1e-6 is ~300× weaker and one stray code-1 pixel bleeding in
+        // from a neighbouring cell (luminance 2.2e-5) would clear it.
         expect(
           rows[i].gsp.peak,
           `r=${RADII[i]} in ${mode}: gsplat cell must render something`
-        ).toBeGreaterThan(1e-6);
+        ).toBeGreaterThan(COVERAGE_FLOOR);
         expect(
           ratio > 1 ? 'brighter' : 'dimmer',
           `r=${RADII[i]} in ${mode}: peak ratio ${ratio.toFixed(3)} — the lifted gsplat is ` +
@@ -469,6 +549,12 @@ test.describe('Lifted-gsplat / Points parity', () => {
             `${magnitude.toFixed(2)}× from parity — the smallest divergence ever measured ` +
             'at these radii is 7.8×'
         ).toBeGreaterThan(PEAK_DIVERGENCE_FLOOR);
+        expect(
+          magnitude,
+          `r=${RADII[i]} in ${mode}: peak ratio ${ratio.toFixed(3)} is ` +
+            `${magnitude.toFixed(2)}× from parity — larger than the 30.7× worst case ever ` +
+            'measured, so the divergence has MOVED (effect C landing alone puts `opaque` at 333×)'
+        ).toBeLessThan(PEAK_DIVERGENCE_CEILING);
       }
     });
   }
@@ -495,10 +581,17 @@ test.describe('Lifted-gsplat / Points parity', () => {
       expect(applied, 'κ must reach all eight probe materials').toBe(8);
       await page.waitForTimeout(1200);
 
+      // Full decomposition here too: this is the test that measures twice, runs
+      // at the widened band, and has historically flaked on a partially loaded
+      // scene — so it is the one whose failures most need mean/peak/covered
+      // side by side.
+      const rows = await parityMetrics(page, centres);
+      logMetricsTable(`volumetric κ=${kappa}`, rows);
+      expectPointsRendered(rows);
       // Wider band: at high κ both rows are deep into the saturating part of
       // 1 − e^(−τ), where a small τ difference shows up amplified.
       expectParity(
-        await parityRatios(page, centres),
+        rows.map((row) => row.meanRatio),
         `volumetric κ=${kappa}`,
         2 * PARITY_TOLERANCE
       );

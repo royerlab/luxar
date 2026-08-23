@@ -2340,10 +2340,13 @@ def generate_lift_parity_test() -> None:
     compare brightness directly. Everything sits under ONE ``layer=True`` group
     so a single Blend control drives all eight nodes.
 
-    Three distinct defects have been measured with this shape (see
-    VOLUMETRIC_BLENDING_SPEC.md, 2026-08-02): the tau chord factor (volumetric),
-    uncompensated 2D dilation (every sum mode, including additive), and the
-    peak-vs-sum lift calibration (max/normal/opaque, still open).
+    Four distinct defects have been measured with this shape. Three come from
+    VOLUMETRIC_BLENDING_SPEC.md (2026-08-02): the tau chord factor (volumetric,
+    fixed), uncompensated 2D dilation (every sum mode, including additive,
+    fixed), and the peak-vs-sum lift calibration (max/normal/opaque, still
+    open). The fourth is issue #1993 — ``opaque`` drops the points' alpha, and
+    with it all their alpha-carried photometry, so the lifted twin reads dimmer
+    there instead of brighter (still open).
     """
     from luxar.gsplats.lift import lift_points_to_gsplats
 
