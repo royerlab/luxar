@@ -17,6 +17,7 @@ import numpy as np
 import pytest
 
 from luxar._zarr_compat import consolidate, create_array, open_group
+from luxar.typing_utils.constants import MAX_POINTS_PER_POINTS_NODE
 
 _DEMO_PATH = Path(__file__).resolve().parents[1] / "demo_desi_galaxies.py"
 
@@ -41,6 +42,10 @@ dequantize_positions = _demo.dequantize_positions
 save_derived = _demo.save_derived
 load_derived = _demo.load_derived
 sample_scene_catalog = _demo.sample_scene_catalog
+
+
+def test_per_node_budget_stays_under_the_point_texture_bound() -> None:
+    assert _demo.SCENE_MAX_POINTS_PER_NODE <= MAX_POINTS_PER_POINTS_NODE
 
 
 class TestRadecToXyz:
@@ -415,11 +420,11 @@ class TestWarnIfSceneIsStale:
 
         scene = tmp_path / "desi.luxar.zarr"
         root = zarr.open(str(scene), mode="w")
-        increments = [900_000, 900_000, 900_000, 900_000, 900_000, 375_978]
+        increments = [900_000, 900_000, 637_989]
         for layer_name in ("By tracer type", "By redshift"):
             finest = root.create_group(layer_name).create_group("child_2")
             finest.attrs["kind"] = "partition"
-            for part_index in range(2):
+            for part_index in range(4):
                 part = finest.create_group(f"part_{part_index}")
                 part.attrs["n_additive_sublods"] = len(increments)
                 part.attrs["n_points"] = sum(increments)
@@ -431,6 +436,57 @@ class TestWarnIfSceneIsStale:
         _demo.warn_if_scene_is_stale(scene)
 
         assert "⚠" not in capsys.readouterr().out
+
+    def test_warns_when_partitioned_rung_commits_too_much(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        import zarr
+
+        scene = tmp_path / "desi.luxar.zarr"
+        root = zarr.open(str(scene), mode="w")
+        for layer_name in ("By tracer type", "By redshift"):
+            finest = root.create_group(layer_name).create_group("child_2")
+            finest.attrs["kind"] = "partition"
+            part = finest.create_group("part_0")
+            increments = [1_000_000, 3_875_978]
+            part.attrs["n_additive_sublods"] = len(increments)
+            part.attrs["n_points"] = sum(increments)
+            for rung_index, count in enumerate(increments):
+                part.create_group(f"additive_{rung_index}").attrs["n_points"] = count
+
+        _demo.warn_if_scene_is_stale(scene)
+
+        out = capsys.readouterr().out
+        assert out.count("commits 3,875,978 points in one rung") == 2
+        assert "'By tracer type' finest level commits" in out
+        assert "'By redshift' finest level commits" in out
+
+    def test_warns_when_one_partition_leaf_exceeds_the_node_capacity(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        import zarr
+
+        scene = tmp_path / "desi.luxar.zarr"
+        root = zarr.open(str(scene), mode="w")
+        for layer_name in ("By tracer type", "By redshift"):
+            finest = root.create_group(layer_name).create_group("child_2")
+            finest.attrs["kind"] = "partition"
+            for part_index, n_points in enumerate((4_875_978, 4_875_977)):
+                part = finest.create_group(f"part_{part_index}")
+                increments = [900_000, 900_000, 900_000, 900_000, 900_000]
+                increments.append(n_points - sum(increments))
+                part.attrs["n_additive_sublods"] = len(increments)
+                part.attrs["n_points"] = n_points
+                for rung_index, count in enumerate(increments):
+                    part.create_group(f"additive_{rung_index}").attrs[
+                        "n_points"
+                    ] = count
+
+        _demo.warn_if_scene_is_stale(scene)
+
+        out = capsys.readouterr().out
+        assert out.count("single node contains 4,875,978 points") == 2
+        assert "rm -rf" in out
 
     def test_warns_when_a_bounded_ladder_contains_only_the_old_sample(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -626,6 +682,11 @@ class TestSceneRowBudget:
                     for child_name in child_names
                 ]
                 assert layer_attrs["selector"] == "screen-area"
+                assert [attrs["coverage_fraction"] for attrs in child_attrs] == [
+                    0.0,
+                    0.5,
+                    1.0,
+                ]
 
                 # The finest child partitions the WHOLE catalog under the
                 # conservative per-node Points capacity: no row cap, and no

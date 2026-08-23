@@ -641,7 +641,7 @@ def warn_if_scene_is_stale(scene_path: Path) -> None:
         aprint(f"  ⚠ Could not inspect {scene_path} for a streaming ladder: {exc}")
         return
 
-    def streaming_stats(finest) -> tuple[int, int, list[int]]:
+    def streaming_stats(finest) -> tuple[int, int, int, list[int]]:
         nodes = [finest]
         if finest.attrs.get("kind") == "partition":
             part_names = sorted(
@@ -652,17 +652,20 @@ def warn_if_scene_is_stale(scene_path: Path) -> None:
 
         sublod_counts = []
         n_points = 0
+        max_node_points = 0
         increments = []
         for node in nodes:
             n_sublods = int(node.attrs.get("n_additive_sublods", 1))
             sublod_counts.append(n_sublods)
-            n_points += int(node.attrs.get("n_points", 0))
+            node_points = int(node.attrs.get("n_points", 0))
+            n_points += node_points
+            max_node_points = max(max_node_points, node_points)
             increments.extend(
                 int(node[f"additive_{index}"].attrs.get("n_points", 0) or 0)
                 for index in range(n_sublods)
                 if f"additive_{index}" in node
             )
-        return min(sublod_counts, default=1), n_points, increments
+        return min(sublod_counts, default=1), n_points, max_node_points, increments
 
     for layer_name in ("By tracer type", "By redshift"):
         try:
@@ -679,7 +682,7 @@ def warn_if_scene_is_stale(scene_path: Path) -> None:
             # build time — see substitutive_lod_or_flat), so the layer IS the
             # finest level and still carries its own streaming ladder.
             finest = layer[child_names[-1]] if child_names else layer
-            n_sublods, n_points, increments = streaming_stats(finest)
+            n_sublods, n_points, max_node_points, increments = streaming_stats(finest)
         except Exception as exc:
             aprint(
                 f"  ⚠ Could not inspect {scene_path} [{layer_name}] for a "
@@ -710,6 +713,18 @@ def warn_if_scene_is_stale(scene_path: Path) -> None:
                 f"      rm -rf {scene_path}"
             )
 
+        if max_node_points > SCENE_MAX_POINTS_PER_NODE:
+            aprint(
+                f"  ⚠ This scene's '{layer_name}' finest level's largest single "
+                f"node contains {max_node_points:,} points, above the current "
+                f"{SCENE_MAX_POINTS_PER_NODE:,}-point ceiling, so a 4096-class "
+                "GPU will silently drop its tail. Rebuild it with:\n"
+                "      luxar demo run desi_galaxies -- --recompute\n"
+                "    or delete the scene and re-run to unpack a current shipped "
+                "asset:\n"
+                f"      rm -rf {scene_path}"
+            )
+
         # The size that matters is the biggest SINGLE commit, not the level
         # total: a geometric ladder's last increment is n/2, so an old scene can
         # carry five rungs and still hand the main thread millions of points at
@@ -721,7 +736,7 @@ def warn_if_scene_is_stale(scene_path: Path) -> None:
                 f"  ⚠ This scene's '{layer_name}' finest level commits "
                 f"{biggest:,} points in one rung, above the current "
                 f"{SCENE_MAX_COMMIT:,}-point ceiling — it was built with the old "
-                f"geometric ladder ({n_points:,} points over {n_sublods} rungs) "
+                f"geometric ladder ({n_points:,} points, {n_sublods} rungs per part) "
                 "and will stall the main thread on that rung. Rebuild it with:\n"
                 "      luxar demo run desi_galaxies -- --recompute\n"
                 "    or delete the scene and re-run to unpack a current shipped "
