@@ -166,7 +166,7 @@ scene.luxar.zarr/
     └── <overlay_name>/     # Individual overlay
         ├── .zattrs         # Overlay metadata (type, position, style, visible_range, hover)
         ├── .zgroup
-        └── image.png       # Raw image payload (exact name; metadata-name collisions hash as absent)
+        └── image.png       # Raw image file (image overlays only; exact name; bytes folded into content_hash at compile time)
 ```
 
 ### Compression & the `luxar_delta_v1` filter

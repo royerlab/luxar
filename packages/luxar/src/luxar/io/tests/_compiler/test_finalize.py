@@ -326,6 +326,7 @@ def test_case_shifted_metadata_payload_does_not_fall_back_when_listing_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A store without listing support must not fall back to the unsafe read."""
+
     class NoListingStore(MemoryStore):
         @property
         def supports_listing(self) -> bool:
@@ -341,6 +342,30 @@ def test_case_shifted_metadata_payload_does_not_fall_back_when_listing_fails(
     payload = default_buffer_prototype().buffer.from_bytes(_TINY_PNG)
     sync((logo.store_path / "Zarr.json").set(payload))
     assert hashing.read_raw_bytes(logo, "Zarr.json") == _TINY_PNG
+
+    def _must_not_read(_group: zarr.Group, _key: str) -> bytes | None:
+        raise AssertionError("case-shifted metadata name reached raw lookup")
+
+    monkeypatch.setattr(hashing, "read_raw_bytes", _must_not_read)
+
+    terms = b"".join(_payload_terms(logo, dict(logo.attrs)))
+    assert b"unreadable:" in terms
+
+
+def test_case_shifted_metadata_payload_handles_listing_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failing supported listing must not abort or fall back to a raw read."""
+
+    class FailingListingStore(MemoryStore):
+        async def list_dir(self, prefix: str) -> AsyncIterator[str]:
+            if False:
+                yield prefix
+            raise OSError("listing failed")
+
+    root = zarr.group(store=FailingListingStore(), zarr_format=3)
+    logo = root.create_group("overlays").create_group("logo")
+    logo.attrs["image_file"] = "Zarr.json"
 
     def _must_not_read(_group: zarr.Group, _key: str) -> bytes | None:
         raise AssertionError("case-shifted metadata name reached raw lookup")

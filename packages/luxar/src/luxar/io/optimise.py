@@ -768,11 +768,11 @@ def _copy_payload_files(source: zarr.Group, dest: zarr.Group) -> None:
     The hasher's name gate remains exact: a case-shifted collision reaches a
     listing probe, and a genuinely held key contributes its bytes. The copy is
     stricter because it must be portable: a name colliding case-insensitively
-    with a zarr metadata document
-    (:data:`_ZARR_METADATA_DOCS_LOWERCASED`) is decided by whether the SOURCE really
-    holds a key spelled EXACTLY that, not by the name alone. On a case-SENSITIVE
-    filesystem a file called ``Zarr.json`` is an ordinary distinct file: skipping
-    it would produce exactly the state this function exists to prevent — an
+    with a zarr metadata document (:data:`_ZARR_METADATA_DOCS_LOWERCASED`) is
+    decided by whether the SOURCE really holds a key spelled EXACTLY that, not
+    by the name alone. On a case-SENSITIVE filesystem a file called
+    ``Zarr.json`` is an ordinary distinct file: skipping it would produce
+    exactly the state this function exists to prevent — an
     ``image_file`` attr naming a file the output does not hold — and do it under
     an exit code of 0. So a name that really is there REFUSES the re-chunk,
     because the copy cannot write it faithfully: on the macOS or Windows machine
