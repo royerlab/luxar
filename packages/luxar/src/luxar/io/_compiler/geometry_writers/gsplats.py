@@ -115,7 +115,7 @@ def write_gsplats(
         if labels is not None:
             validate_labels_for_writing(labels, n_splats)
         if keys is not None:
-            validate_labels_for_writing(keys, n_splats, context="keys")
+            validate_labels_for_writing(keys, n_splats, context="keys", noun="Keys")
 
     # 0e. Image labels: length (dense) / index bounds (sparse dict) — see
     # validate_image_labels_for_writing for why this moved out of the CSR

@@ -121,7 +121,7 @@ def validate_node_name(name: Any, context: str = "node name") -> str:
 
 
 def validate_labels_for_writing(
-    labels: Any, n_elements: int, context: str = "labels"
+    labels: Any, n_elements: int, context: str = "labels", noun: str = "Labels"
 ) -> None:
     """Validate per-element string labels BEFORE any zarr write.
 
@@ -134,6 +134,9 @@ def validate_labels_for_writing(
             ``str`` entries; ``None`` entries are allowed (null label).
         n_elements: Expected number of elements.
         context: Context for error messages.
+        noun: Capitalised channel name used in the length message. The ``keys``
+            channel shares this validator, and reporting its mismatch as
+            "Labels length" sent the author looking at the wrong argument.
 
     Raises:
         ValidationError: If labels are not a sequence of str/None with one
@@ -151,9 +154,10 @@ def validate_labels_for_writing(
 
     if len(labels) != n_elements:
         raise ValidationError(
-            f"{context}: Labels length ({len(labels)}) must match element "
+            f"{context}: {noun} length ({len(labels)}) must match element "
             f"count ({n_elements})",
-            f"Provide exactly {n_elements} labels (use '' or None for no label)",
+            f"Provide exactly {n_elements} {noun.lower()} "
+            "(use '' or None for no entry)",
         )
 
     for i, label in enumerate(labels):

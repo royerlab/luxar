@@ -549,7 +549,7 @@ def _maybe_add_mesh_additive_lod(
     is the sibling adders' behaviour for the same input:
 
     * nothing was requested (``None`` / ``False``);
-    * the mesh carries ``labels`` or ``image_labels`` (see the warning below);
+    * the mesh carries ``labels``, ``image_labels`` or ``keys`` (see the warning below);
     * the ladder came out with one level or none, which is a ladder in name only.
     """
     if not _requested(additive_lod):
@@ -560,7 +560,7 @@ def _maybe_add_mesh_additive_lod(
     from ..lod.mesh import make_additive_lod_mesh, resolve_additive_axis_mesh
     from ..lod.reveal import resolve_reveal_spatial_dims
 
-    if labels is not None or image_labels is not None:
+    if labels is not None or image_labels is not None or keys is not None:
         # PRECEDENT: ``adders/points.py``'s image_labels guard, which resolves the
         # spec, discards it and warns. Refuse the LADDER, not the labels: fall
         # through to the single-leaf write, which forwards both channels. This
@@ -568,12 +568,15 @@ def _maybe_add_mesh_additive_lod(
         # ``None``/``False``), so the caller asked for something that cannot be
         # honoured and must be told.
         #
-        # Mesh degrades for BOTH channels where Points degrades only for
-        # ``image_labels``, and the extra one is structural rather than a missing
-        # writer feature: a Points ladder writes one union CSR over the
+        # Mesh degrades for ALL THREE per-element channels where Points degrades
+        # only for ``image_labels``, and the extra ones are structural rather than
+        # a missing writer feature: a Points ladder writes one union CSR over the
         # concatenated levels, but a mesh level RE-INDEXES its own vertices, so a
         # source vertex on a shell boundary occupies a slot in several levels and
-        # the union index space is ill-defined. See ``write_mesh_multi_lod``, which
+        # the union index space is ill-defined. ``keys`` is in the list for
+        # exactly the reason ``labels`` is — same CSR, same undefined index space
+        # — and omitting it did not produce a ladder with keys, it produced a
+        # ladder that dropped them without a word (#1917). See ``write_mesh_multi_lod``, which
         # refuses a labelled level outright rather than pairing text with the
         # wrong vertices.
         #
@@ -582,7 +585,11 @@ def _maybe_add_mesh_additive_lod(
         resolve_additive_axis_mesh(additive_lod)
         channels = " and ".join(
             n
-            for n, v in (("labels", labels), ("image_labels", image_labels))
+            for n, v in (
+                ("labels", labels),
+                ("image_labels", image_labels),
+                ("keys", keys),
+            )
             if v is not None
         )
         warnings.warn(

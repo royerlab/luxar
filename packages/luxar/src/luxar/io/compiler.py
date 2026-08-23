@@ -1190,8 +1190,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         single source vertex on a shell boundary maps to a slot in several levels
         (and a vertex no level's faces reference maps to none): the union index
         space is ill-defined, and any CSR written over it would pair labels with
-        the wrong vertices. So the parent carries no ``has_labels`` and a level
-        carrying ``labels`` is refused outright rather than silently dropped.
+        the wrong vertices. So the parent carries no ``has_labels`` / ``has_keys``
+        and a level carrying either is refused outright rather than silently
+        dropped.
 
         Args:
             path: Path for the mesh node within the store.
@@ -1209,7 +1210,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         Raises:
             ValueError: If ``levels`` is empty, an attr is invalid, or any level
-                carries ``labels``.
+                carries ``labels`` or ``keys``.
         """
         self._check_not_finalized("write_mesh_multi_lod")
 
@@ -1229,19 +1230,25 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # for the same reason the sibling writers resolve their label situation
         # there: the gate is pure, and a rejected ladder must not leave an empty
         # node behind. See the docstring for why a union CSR is impossible here.
-        labelled = [i for i, lvl in enumerate(levels) if lvl.get("labels") is not None]
-        if labelled:
-            raise ValueError(
-                f"write_mesh_multi_lod: level(s) {labelled} carry 'labels', which a "
-                "mesh reveal ladder cannot store. The sibling ladders put one union "
-                "label CSR on the parent spanning the levels, but each mesh level "
-                "re-indexes its own vertices — one source vertex maps to a slot in "
-                "several levels — so that union index space is ill-defined and a CSR "
-                "over it would pair labels with the wrong vertices. Use "
-                "substitutive_lod= (whose finest child is the original surface and "
-                "carries the labels) or partition= (which splits the CSR per part), "
-                "or write a plain leaf."
-            )
+        # Both per-element string channels, for the same structural reason: the
+        # refusal is about the union INDEX SPACE, not about what the strings
+        # mean, so `keys` cannot be stored here any more than `labels` can.
+        for channel in ("labels", "keys"):
+            offending = [
+                i for i, lvl in enumerate(levels) if lvl.get(channel) is not None
+            ]
+            if offending:
+                raise ValueError(
+                    f"write_mesh_multi_lod: level(s) {offending} carry '{channel}', "
+                    "which a mesh reveal ladder cannot store. The sibling ladders put "
+                    f"one union {channel} CSR on the parent spanning the levels, but "
+                    "each mesh level re-indexes its own vertices — one source vertex "
+                    "maps to a slot in several levels — so that union index space is "
+                    "ill-defined and a CSR over it would pair strings with the wrong "
+                    "vertices. Use substitutive_lod= (whose finest child is the "
+                    "original surface and carries the channel) or partition= (which "
+                    "splits the CSR per part), or write a plain leaf."
+                )
 
         # Validate every path segment (rejects empty/dot-prefixed names — the
         # F1/F5 chokepoint) + strip the leading slash.

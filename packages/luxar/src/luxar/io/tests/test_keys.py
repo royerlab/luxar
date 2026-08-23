@@ -249,3 +249,360 @@ class TestKeysUnderDecomposition:
         ]
         with pytest.raises(ValueError, match="keys"):
             validate_ladder_labels(levels, "positions", channel="keys")
+
+
+class TestKeysOnLabelRefusingPaths:
+    """Paths that refuse ``labels`` must refuse ``keys`` on the same terms.
+
+    A mesh reveal ladder cannot store either channel — each level re-indexes its
+    own vertices, so the union index space a CSR would need is ill-defined. The
+    guard originally named only ``labels`` and ``image_labels``, which did not
+    produce a ladder carrying keys: it produced a ladder that DROPPED them, with
+    no warning and no attr on disk to notice afterwards.
+    """
+
+    VERTS = np.array(
+        [[0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0], [2, 0, 0], [2, 1, 0]],
+        dtype=np.float32,
+    )
+    FACES = np.array([[0, 1, 2], [1, 3, 2], [1, 4, 3], [4, 5, 3]], dtype=np.uint32)
+    KEYS = [f"v{i}" for i in range(6)]
+
+    def test_mesh_reveal_ladder_degrades_rather_than_dropping_keys(
+        self, tmp_path: Path
+    ) -> None:
+        path = str(tmp_path / "m.luxar.zarr")
+        with pytest.warns(UserWarning, match="reveal ladder cannot be honoured"):
+            with LuxarZarrCompiler(path) as compiler:
+                scene = compiler.create_scene(dimensions=_make_3d_dims())
+                scene.add_mesh(
+                    "surf",
+                    vertices=self.VERTS,
+                    faces=self.FACES,
+                    keys=self.KEYS,
+                    additive_lod={"method": "radial"},
+                )
+
+        root = zarr.open_group(path, mode="r")
+        node = root["surf"]
+        # Degraded to a single leaf that KEEPS the keys...
+        assert node.attrs["has_keys"] is True
+        assert _decode(path, "surf") == self.KEYS
+        # ...rather than a ladder that silently discarded them.
+        assert not [k for k in node.keys() if k.startswith("additive_")]
+
+    def test_the_warning_names_keys(self, tmp_path: Path) -> None:
+        """The author asked for something unhonourable and must be told which
+        channel caused it — "labels is set" when only keys were passed would
+        send them looking in the wrong place."""
+        path = str(tmp_path / "m.luxar.zarr")
+        with pytest.warns(UserWarning, match=r"\(keys is set\)"):
+            with LuxarZarrCompiler(path) as compiler:
+                scene = compiler.create_scene(dimensions=_make_3d_dims())
+                scene.add_mesh(
+                    "surf",
+                    vertices=self.VERTS,
+                    faces=self.FACES,
+                    keys=self.KEYS,
+                    additive_lod={"method": "radial"},
+                )
+
+    def test_write_mesh_multi_lod_refuses_keyed_levels(self, tmp_path: Path) -> None:
+        """Defence in depth one layer down: the writer is a public method, so it
+        refuses a keyed level directly rather than relying on the adder guard."""
+        path = str(tmp_path / "m.luxar.zarr")
+        with LuxarZarrCompiler(path) as compiler:
+            compiler.create_scene(dimensions=_make_3d_dims())
+            with pytest.raises(ValueError, match="carry 'keys'"):
+                compiler.write_mesh_multi_lod(
+                    "surf",
+                    [
+                        {
+                            "vertices": self.VERTS,
+                            "faces": self.FACES,
+                            "keys": self.KEYS,
+                        }
+                    ],
+                )
+
+    def test_mesh_substitutive_lod_puts_keys_exactly_where_labels_go(
+        self, tmp_path: Path
+    ) -> None:
+        """The escape hatch the refusal message recommends must actually work.
+
+        Asserted as CO-LOCATION rather than against a fixed tree shape: a small
+        mesh degenerates to a flat leaf (no ladder to decimate into), so pinning
+        "the finest child" would test the fixture size, not the contract. What
+        must hold either way is that keys land wherever labels land — that is
+        the whole design, and the only thing a reader of the refusal message
+        needs to be true.
+        """
+        path = str(tmp_path / "m.luxar.zarr")
+        labels = [f"L{i}" for i in range(len(self.KEYS))]
+        with LuxarZarrCompiler(path) as compiler:
+            scene = compiler.create_scene(dimensions=_make_3d_dims())
+            scene.add_mesh(
+                "surf",
+                vertices=self.VERTS,
+                faces=self.FACES,
+                labels=labels,
+                keys=self.KEYS,
+                substitutive_lod={"levels": 2},
+            )
+
+        root = zarr.open_group(path, mode="r")
+
+        def carriers(group, prefix=""):
+            """Every node declaring each channel, by path."""
+            found = {"labels": [], "keys": []}
+            for name in group.keys():
+                child = group[name]
+                if not hasattr(child, "keys"):
+                    continue
+                attrs = dict(child.attrs)
+                node = f"{prefix}/{name}" if prefix else name
+                if attrs.get("has_labels"):
+                    found["labels"].append(node)
+                if attrs.get("has_keys"):
+                    found["keys"].append(node)
+                sub = carriers(child, node)
+                found["labels"] += sub["labels"]
+                found["keys"] += sub["keys"]
+            return found
+
+        got = carriers(root["surf"], "surf")
+        # `surf` itself may be the carrier when the ladder degenerates.
+        if dict(root["surf"].attrs).get("has_labels"):
+            got["labels"].append("surf")
+        if dict(root["surf"].attrs).get("has_keys"):
+            got["keys"].append("surf")
+
+        assert got["labels"], "labels vanished — the escape hatch does not work"
+        assert sorted(got["keys"]) == sorted(got["labels"]), (
+            f"keys and labels diverged: keys on {sorted(got['keys'])}, "
+            f"labels on {sorted(got['labels'])}"
+        )
+        for node in got["keys"]:
+            assert _decode(path, node) == self.KEYS
+
+
+class TestKeysFailFastGate:
+    """A bad ``keys`` must be refused BEFORE anything reaches the store.
+
+    Every flat writer opens with a gate that validates each per-element channel
+    against the element count, precisely so a length mismatch cannot leave a
+    half-written node behind. ``keys`` was validated by those gate *validators*
+    but never passed to them from the writers, so the check only fired later, at
+    CSR-write time — after the node's other arrays were already on disk. The
+    public ``compiler.write_*`` methods reach the writer directly, bypassing the
+    adders (which did pass ``keys`` to their pre-split gate), so that path left a
+    partial node where the same call with ``labels`` left nothing.
+    """
+
+    POSITIONS = np.arange(15, dtype=np.float32).reshape(5, 3)
+    VERTS = np.array(
+        [[0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0], [2, 0, 0], [2, 1, 0]],
+        dtype=np.float32,
+    )
+    FACES = np.array([[0, 1, 2], [1, 3, 2], [1, 4, 3], [4, 5, 3]], dtype=np.uint32)
+    LINE_VERTS = np.arange(18, dtype=np.float32).reshape(6, 3)
+    LINE_WIDTHS = np.ones(6, dtype=np.float32)
+    CHOLESKY = np.tile(np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (5, 1))
+    AMPLITUDES = np.ones((5, 1), dtype=np.float32)
+
+    @pytest.mark.parametrize(
+        ("method", "kwargs"),
+        [
+            ("write_points", {"positions": POSITIONS}),
+            ("write_mesh", {"vertices": VERTS, "faces": FACES}),
+            ("write_lines", {"vertices": LINE_VERTS, "widths": LINE_WIDTHS}),
+            (
+                "write_gsplats",
+                {
+                    "centers": POSITIONS,
+                    "amplitudes": AMPLITUDES,
+                    "cholesky_factors": CHOLESKY,
+                },
+            ),
+        ],
+    )
+    def test_wrong_length_keys_leaves_no_node(
+        self, tmp_path: Path, method: str, kwargs: dict
+    ) -> None:
+        path = str(tmp_path / f"{method}.luxar.zarr")
+        with LuxarZarrCompiler(path) as compiler:
+            compiler.create_scene(dimensions=_make_3d_dims())
+            with pytest.raises(Exception, match="Keys length"):
+                getattr(compiler, method)("n", keys=["only", "two"], **kwargs)
+
+        root = zarr.open_group(path, mode="r")
+        assert "n" not in list(root.keys()), (
+            "a rejected write left a partial node behind"
+        )
+
+    def test_the_message_names_keys_not_labels(self, tmp_path: Path) -> None:
+        """``keys`` shares the labels validator, which reported a bad keys
+        length as "Labels length" — pointing the author at the wrong argument.
+        """
+        path = str(tmp_path / "s.luxar.zarr")
+        with LuxarZarrCompiler(path) as compiler:
+            compiler.create_scene(dimensions=_make_3d_dims())
+            with pytest.raises(Exception) as excinfo:
+                compiler.write_points("n", positions=self.POSITIONS, keys=["a"])
+        message = str(excinfo.value)
+        assert "Keys length" in message
+        assert "Labels length" not in message
+
+
+class TestKeysOnlyMultiLodLadder:
+    """``write_*_multi_lod`` with keys and NO labels on any level.
+
+    The union CSR on the ladder parent is written in the order the levels were
+    actually stored, so each level write is asked to hand back its spatial
+    permutation. Whether to ask was decided by "is the ladder labelled?", so a
+    keys-only ladder collected no permutations and fell back to SOURCE order —
+    every key then paired with a different point, silently, at full length and
+    with ``has_keys`` set.
+
+    Two things make this easy to under-test, and both are deliberate here:
+
+    * The adder-level ``additive_lod=`` / ``substitutive_lod=`` paths never
+      reach this code, so tests using those (this file has both) leave it
+      uncovered.
+    * A ``sorted()`` comparison passes under the bug, because the wrong order
+      is a permutation of the right one. The assertion must be order-sensitive.
+
+    Enough points per level that the spatial permutation is not the identity —
+    otherwise source order and stored order coincide and the test proves
+    nothing. ``test_the_permutation_is_not_the_identity`` pins that.
+    """
+
+    COUNTS = (800, 1200)
+
+    @classmethod
+    def _levels(cls, *, with_labels: bool):
+        rng = np.random.default_rng(3)
+        out, base = [], 0
+        for n in cls.COUNTS:
+            level = {
+                "positions": rng.random((n, 3)).astype(np.float32),
+                "keys": [f"k{base + i}" for i in range(n)],
+            }
+            if with_labels:
+                level["labels"] = [f"L{base + i}" for i in range(n)]
+            out.append(level)
+            base += n
+        return out
+
+    @classmethod
+    def _source_keys(cls):
+        return [f"k{i}" for i in range(sum(cls.COUNTS))]
+
+    @staticmethod
+    def _build(tmp_path: Path, name: str, levels) -> str:
+        path = str(tmp_path / f"{name}.luxar.zarr")
+        with LuxarZarrCompiler(path) as compiler:
+            compiler.create_scene(dimensions=_make_3d_dims())
+            compiler.write_points_multi_lod("pts", levels)
+        return path
+
+    def test_keys_only_ladder_matches_the_labelled_ladder_slot_for_slot(
+        self, tmp_path: Path
+    ) -> None:
+        """The reference build carries both channels, so ``labelled`` is true
+        and its ordering is the one the labels path has always produced. A
+        keys-only ladder over identical positions must reproduce it exactly."""
+        keys_only = self._build(tmp_path, "keys", self._levels(with_labels=False))
+        reference = self._build(tmp_path, "both", self._levels(with_labels=True))
+
+        assert zarr.open_group(keys_only, mode="r")["pts"].attrs["has_keys"] is True
+        assert not zarr.open_group(keys_only, mode="r")["pts"].attrs.get("has_labels")
+
+        got = _decode(keys_only, "pts")
+        want = _decode(reference, "pts")
+        assert got == want, "keys-only ladder stored its keys in a different order"
+
+    def test_the_labelled_reference_pairs_keys_with_labels(
+        self, tmp_path: Path
+    ) -> None:
+        """Anchors the reference: keys[j] must be the twin of labels[j], so
+        "matches the reference" in the test above means "correctly paired"."""
+        reference = self._build(tmp_path, "both", self._levels(with_labels=True))
+        keys = _decode(reference, "pts")
+        labels = _decode(reference, "pts", prefix="label")
+        assert len(keys) == sum(self.COUNTS)
+        assert all(k == "k" + lab[1:] for k, lab in zip(keys, labels))
+
+    def test_the_permutation_is_not_the_identity(self, tmp_path: Path) -> None:
+        """Guards the two tests above from going vacuous. If the ladder ever
+        stopped reordering, stored order would equal source order and a
+        permutation bug would become undetectable by them."""
+        path = self._build(tmp_path, "both", self._levels(with_labels=True))
+        stored = _decode(path, "pts")
+        assert sorted(stored) == sorted(self._source_keys()), "content changed"
+        assert stored != self._source_keys(), (
+            "the ladder no longer reorders, so the ordering tests above can no "
+            "longer detect a mis-paired keys CSR"
+        )
+
+
+class TestKeysOnlyLadder:
+    """A reveal ladder carrying ``keys`` and NO ``labels`` must still work.
+
+    The ladder writers collect each level's spatial permutation only when the
+    node is going to need one for a union CSR, and that decision was originally
+    "is this node labelled?". A keys-only node needs the permutations just as
+    much, and without them the union write failed with "level_sort_orders has
+    0". Every other keys test in this file also passes ``labels``, so the
+    label-free ladder was covered by nothing — a mutation reverting the
+    condition to ``labelled`` alone survived the whole suite.
+    """
+
+    N = 600
+
+    @staticmethod
+    def _positions(n: int) -> "np.ndarray":
+        rng = np.random.default_rng(11)
+        return rng.random((n, 3)).astype(np.float32)
+
+    def test_additive_ladder_with_keys_and_no_labels(self, tmp_path: Path) -> None:
+        path = str(tmp_path / "s.luxar.zarr")
+        keys = [f"k{i}" for i in range(self.N)]
+        with LuxarZarrCompiler(path) as compiler:
+            scene = compiler.create_scene(dimensions=_make_3d_dims())
+            scene.add_points(
+                "pts",
+                positions=self._positions(self.N),
+                keys=keys,
+                additive_lod={"method": "random"},
+            )
+
+        root = zarr.open_group(path, mode="r")
+        parent = root["pts"]
+        assert parent.attrs["has_keys"] is True
+        assert not parent.attrs.get("has_labels"), "no labels were requested"
+        # The union CSR spans the whole source, in the ladder's own order.
+        assert sorted(_decode(path, "pts")) == sorted(keys)
+
+    def test_substitutive_ladder_with_keys_and_no_labels(self, tmp_path: Path) -> None:
+        path = str(tmp_path / "s.luxar.zarr")
+        keys = [f"k{i}" for i in range(self.N)]
+        with LuxarZarrCompiler(path) as compiler:
+            scene = compiler.create_scene(dimensions=_make_3d_dims())
+            scene.add_points(
+                "pts",
+                positions=self._positions(self.N),
+                keys=keys,
+                substitutive_lod={"levels": 2},
+            )
+
+        root = zarr.open_group(path, mode="r")
+        keyed = [
+            name
+            for name in root["pts"].keys()
+            if hasattr(root["pts"][name], "attrs")
+            and dict(root["pts"][name].attrs).get("has_keys")
+        ]
+        assert keyed, "the finest child lost its keys when no labels were present"
+        for name in keyed:
+            assert sorted(_decode(path, f"pts/{name}")) == sorted(keys)

@@ -127,7 +127,7 @@ def validate_points_channels(
     # UTF-8-encodes each entry, so a non-str or a length mismatch must be
     # caught BEFORE any array reaches disk (#1917).
     if keys is not None:
-        validate_labels_for_writing(keys, n_points, context="keys")
+        validate_labels_for_writing(keys, n_points, context="keys", noun="Keys")
     # 0f. Image labels: length (dense) / index bounds (sparse dict) — see
     # validate_image_labels_for_writing for why this moved out of the CSR
     # writer itself.
@@ -208,6 +208,7 @@ def write_points(
         scalars=scalars,
         labels=labels,
         image_labels=image_labels,
+        keys=keys,
     )
     # 0g. Transform / nd_transform normalization is pure attr processing
     # (reads only the scene dimensions), so run it in the gate too — a bad

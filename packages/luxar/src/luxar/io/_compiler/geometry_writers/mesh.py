@@ -222,7 +222,7 @@ def validate_mesh_arrays(
     # UTF-8-encodes each entry, so a non-str or a length mismatch must be
     # caught BEFORE any array reaches disk (#1917).
     if keys is not None:
-        validate_labels_for_writing(keys, n_vertices, context="keys")
+        validate_labels_for_writing(keys, n_vertices, context="keys", noun="Keys")
     if image_labels is not None:
         validate_image_labels_for_writing(image_labels, n_vertices)
     return n_vertices, n_dims
@@ -292,6 +292,7 @@ def write_mesh(
         double_sided=double_sided,
         labels=labels,
         image_labels=image_labels,
+        keys=keys,
     )
     # 0i. Transform / nd_transform normalization is pure attr processing, so it
     # belongs in the gate too — and prepare_transform_attrs is NOT idempotent
