@@ -773,7 +773,10 @@ def compare_quality(
 
     Renders the gsplats back to a volume and computes PSNR, SSIM, MSE,
     relative L2 error, and maximum absolute error.  All heavy computation
-    runs on GPU when available.
+    runs on GPU when available. Partition and nested stores are scored over
+    their default-rendered selection: all parts and each LOD group's finest
+    level. The compression ratio covers the whole store, including coarse
+    levels that are not scored.
 
     Examples:
         luxar gsplat compare fitted.gsplats.zarr original.tiff

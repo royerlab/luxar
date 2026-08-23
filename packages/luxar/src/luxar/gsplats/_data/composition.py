@@ -31,9 +31,10 @@ class CompositionMixin(_GSplatDataOps):
     ) -> "GSplatData":
         """Materialize the tree selection rendered by default.
 
-        Matrix-shaped nodes are preserved verbatim. Nested trees become one
-        flat dataset containing every partition part and only each LOD group's
-        default (finest) child.
+        Matrix-shaped nodes are preserved verbatim, including their additive
+        and substitutive ladders. Nested trees become one flat dataset containing
+        every partition part and only each LOD group's default (finest) child.
+        Call ``flattened()`` on the result when the caller requires one rung.
         """
         from luxar.gsplats.tree import is_matrix_shaped, iter_default_leaves
 

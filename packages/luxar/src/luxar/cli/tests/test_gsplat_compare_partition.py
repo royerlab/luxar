@@ -70,6 +70,7 @@ def test_partition_metrics_match_the_same_flat_splats(tmp_path: Path) -> None:
 
     flat_payload = json.loads(flat_json.read_text())
     partition_payload = json.loads(partition_json.read_text())
+    assert partition_payload["n_splats"] == flat_payload["n_splats"] == 40
     metadata_keys = {
         "gsplats",
         "reference",

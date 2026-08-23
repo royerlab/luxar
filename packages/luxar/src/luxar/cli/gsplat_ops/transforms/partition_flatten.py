@@ -132,13 +132,13 @@ def run_flatten_dataset(
                 node, stats = load_gsplat_node(input_path, include_stats=True)
 
             n_leaves = sum(1 for _ in iter_default_leaves(node))
-            flat = GSplatData.from_default_selection(node)
-            # concatenate() builds a fresh stats dict from the first input; keep
-            # the root-level provenance/fitting stats from the source tree — minus
-            # its TOPOLOGY record, which this command has just invalidated: the
-            # output is one flat leaf, so an inherited `lod_kind: substitutive` /
-            # `n_substitutive_levels: 4` / `lod_cutpoints: [...]` describes a tree
-            # that no longer exists (#1600).
+            flat = GSplatData.from_default_selection(node).flattened()
+            # The default-selection factory may preserve a matrix-shaped input's
+            # stats; keep the root-level provenance/fitting stats from the source
+            # tree — minus its TOPOLOGY record, which this command has just
+            # invalidated: the output is one flat leaf, so an inherited
+            # `lod_kind: substitutive` / `n_substitutive_levels: 4` /
+            # `lod_cutpoints: [...]` describes a tree that no longer exists (#1600).
             if stats:
                 flat = GSplatData.from_additive_sublods(
                     list(flat.additive_sublods),
