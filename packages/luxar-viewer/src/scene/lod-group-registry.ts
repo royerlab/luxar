@@ -485,7 +485,7 @@ export interface LODGroupEntry {
    * the gate memory would let a mere look-away-and-back clobber a held finer
    * level and re-pop it to chunk-1 on return. Written by ``evaluateEntry``
    * only on frames where the group is on screen. ``undefined`` before the
-   * first on-screen evaluation ⇒ the gate has no prior level to hold.
+   * first on-screen evaluation ⇒ neither hold policy has a prior level.
    */
   heldDisplayChildIndex?: number;
   /**
