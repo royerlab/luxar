@@ -2,6 +2,16 @@
 
 Guidance for Claude Code when working with this repository.
 
+## Issue / PR Coordination
+
+Before starting work for a numbered issue, run
+`hatch run python scripts/check_open_issue_pr.py <issue-number>`. Exit status 1
+means an open PR already declares that it closes the issue; continue or
+coordinate on that PR instead of opening another. Before closing a duplicate
+PR, use the script's `--exclude-pr ... --compare-pr ...` mode, inspect shared
+paths for unique hunks, transfer every duplicate-only change, and carry any
+materially different review conclusion onto the surviving PR.
+
 **Luxar** is a high-performance system for compiling and visualizing arbitrary-sized nD scientific scenes. It renders four first-class geometry types — **Points**, **Lines**, **Gaussian Splats**, and **Mesh** (triangle surfaces). Mesh is the newest and the only *shaded* one — the other three are purely emissive — via a light-free view-anchored offset key, and it is now feature-complete at the UI level: picking (at VERTEX granularity, keyed on `gl_VertexID` rather than an element-texture texel), the Layers-panel appearance controls, monitor/stats/debug counts. The docs pass is done and real WebGPU is verified pixel-equivalent to WebGL (see `docs/specs/MESH_NODE_SPEC.md` §11 and the CHANGELOG A/B notes). The contract still names the writable and drawable sets separately — `geometry_types` and `loader_types` — because a type becomes authorable before it becomes drawable; they simply agree on all four today.
 
 ## Quick Reference
