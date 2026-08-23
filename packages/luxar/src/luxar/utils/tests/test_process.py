@@ -108,9 +108,7 @@ def test_finally_teardown_runs_on_keyboard_interrupt(monkeypatch) -> None:
 
 def test_non_isolate_uses_pid_signals_not_killpg(monkeypatch) -> None:
     recorded: list[int] = []
-    monkeypatch.setattr(
-        process.os, "killpg", lambda *a, **k: recorded.append(-1)
-    )
+    monkeypatch.setattr(process.os, "killpg", lambda *a, **k: recorded.append(-1))
     proc = _FakeProc(alive=True)
     _teardown(proc, pgid=None, interrupt_timeout=0.02, term_timeout=0.02)
 
@@ -214,9 +212,10 @@ def test_external_sigterm_reaps_grandchild() -> None:
     # Grandchild must be gone (teardown escalated to it).
     dead_deadline = time.monotonic() + 3.0
     while time.monotonic() < dead_deadline:
-        alive = subprocess.run(
-            ["kill", "-0", grandchild], capture_output=True
-        ).returncode == 0
+        alive = (
+            subprocess.run(["kill", "-0", grandchild], capture_output=True).returncode
+            == 0
+        )
         if not alive:
             break
         time.sleep(0.05)
@@ -236,9 +235,7 @@ def test_sigkill_reaches_signal_ignoring_child() -> None:
         "signal.signal(signal.SIGTERM, signal.SIG_IGN);"
         "time.sleep(30)"
     )
-    proc = subprocess.Popen(
-        [sys.executable, "-c", stubborn], start_new_session=True
-    )
+    proc = subprocess.Popen([sys.executable, "-c", stubborn], start_new_session=True)
     try:
         _teardown(proc, pgid=proc.pid, interrupt_timeout=0.2, term_timeout=0.2)
         deadline = time.monotonic() + 3.0
@@ -267,9 +264,53 @@ def test_proc_table_lists_this_process() -> None:
     assert "python" in command.lower()
 
 
+def test_proc_table_falls_back_to_ps_without_proc(monkeypatch) -> None:
+    class Result:
+        stdout = """\
+  101   101 S+   python -m luxar
+  202   101 Z+   [python]
+  303   303 R
+bad row
+"""
+
+    def no_proc(_path: str) -> list[str]:
+        raise OSError
+
+    def ps_run(args, **kwargs):  # type: ignore[no-untyped-def]
+        assert args == ["ps", "-axww", "-o", "pid=,pgid=,state=,command="]
+        assert kwargs == {
+            "capture_output": True,
+            "text": True,
+            "timeout": 5.0,
+            "check": True,
+        }
+        return Result()
+
+    monkeypatch.setattr(process.os, "listdir", no_proc)
+    monkeypatch.setattr(process.subprocess, "run", ps_run)
+
+    assert process.proc_table() == [
+        (101, 101, "S", "python -m luxar"),
+        (202, 101, "Z", "[python]"),
+        (303, 303, "R", ""),
+    ]
+
+
+def test_proc_table_is_unknown_when_proc_and_ps_are_unavailable(monkeypatch) -> None:
+    def unavailable(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise OSError
+
+    monkeypatch.setattr(process.os, "listdir", unavailable)
+    monkeypatch.setattr(process.subprocess, "run", unavailable)
+
+    assert process.proc_table() == []
+
+
 @posix_only
-@linux_only
-def test_teardown_does_not_wait_out_an_unreaped_zombie() -> None:
+@pytest.mark.parametrize("force_ps", [False, True], ids=["native", "ps-fallback"])
+def test_teardown_does_not_wait_out_an_unreaped_zombie(
+    monkeypatch, force_ps: bool
+) -> None:
     """A dead-but-unreaped child must not hold the escalation ladder open.
 
     `killpg(pgid, 0)` still succeeds for a zombie, so without looking at the
@@ -283,6 +324,12 @@ def test_teardown_does_not_wait_out_an_unreaped_zombie() -> None:
     )
     try:
         os.killpg(proc.pid, signal.SIGKILL)
+        if force_ps:
+
+            def no_proc(_path: str) -> list[str]:
+                raise OSError
+
+            monkeypatch.setattr(process.os, "listdir", no_proc)
         # Wait for the corpse to appear — Popen has not reaped it, so the
         # group still answers killpg(0) with a zombie in it.
         deadline = time.monotonic() + 5.0

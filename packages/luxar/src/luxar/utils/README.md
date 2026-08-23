@@ -240,8 +240,8 @@ SIGTERM/SIGHUP) never orphans a `luxar serve` on its port.
   provably finished — an unreaped zombie counts as gone, `EPERM` (someone
   else's group) never does
 - `can_kill_process_groups()`: Whether POSIX process-group signalling exists
-- `proc_table()`: Best-effort `(pid, pgid, state, command)` rows from `/proc`
-  — a `ps`-free process table (empty, meaning *unknown*, off Linux)
+- `proc_table()`: Best-effort `(pid, pgid, state, command)` rows from `/proc`,
+  with a `ps` fallback on POSIX systems such as macOS (empty means *unknown*)
 
 ### `demo_runs.py`
 Discovery + kill engine behind `luxar demo stop` (stdlib-only): find every
