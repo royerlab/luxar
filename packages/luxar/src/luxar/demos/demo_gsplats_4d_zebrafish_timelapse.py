@@ -14,7 +14,7 @@ whole point of the recording is impossible to read.
 
 WHAT MAKES THIS A 4D NODE (and not 64 nodes in a trench coat):
     Every timepoint is still fitted on its own — that is what keeps each fit
-    small, cacheable and independently resumable — but the fits are then
+    small and separately cacheable — but the fits are then
     ``combine_as_new_dimension``-stacked into ONE 4D ``GSplatData`` whose fourth
     centre column is time (sigma = 0: a splat is instantaneous and must not
     smear across frames). That single node then gets a substitutive LOD ladder
@@ -97,6 +97,10 @@ USAGE:
         [--serve-only] [--max-timepoints=N]
 
     --recompute:        Download the LSM and refit from scratch (needs a GPU).
+                        It bypasses the per-timepoint cache too, as the name
+                        says — so an interrupted refit of all 151 frames does
+                        NOT resume, it starts over. Drop the flag to have the
+                        cache honoured once the hosted archive is in place.
     --no-serve:         Build the scene without launching the viewer.
     --serve-only:       Serve an already-built scene.
     --max-timepoints=N: Fit only N evenly spaced timepoints (refit path only).
