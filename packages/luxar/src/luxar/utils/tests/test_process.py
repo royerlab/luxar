@@ -258,7 +258,12 @@ linux_only = pytest.mark.skipif(not _HAS_PROC, reason="requires /proc (Linux)")
 
 
 @linux_only
-def test_proc_table_lists_this_process() -> None:
+def test_proc_table_lists_this_process(monkeypatch) -> None:
+    monkeypatch.setattr(
+        process.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("no subprocess on the /proc path"),
+    )
     rows = process.proc_table()
     mine = [row for row in rows if row[0] == os.getpid()]
     assert len(mine) == 1

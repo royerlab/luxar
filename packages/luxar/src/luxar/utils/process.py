@@ -150,6 +150,33 @@ def _exit_code(returncode: Optional[int]) -> int:
 _SIGKILL = getattr(signal, "SIGKILL", signal.SIGTERM)
 
 
+def _ps_proc_table() -> list[tuple[int, int, str, str]]:
+    """Best-effort process-table rows from ``ps`` on POSIX systems."""
+    rows: list[tuple[int, int, str, str]] = []
+    if os.name != "posix":
+        return rows
+    try:
+        out = subprocess.run(  # nosec B603, B607  # fixed argv, no user input
+            ["ps", "-axww", "-o", "pid=,pgid=,state=,command="],
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+            check=True,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return rows
+    for line in out.splitlines():
+        parts = line.split(None, 3)
+        if len(parts) < 3 or not parts[2]:
+            continue
+        try:
+            command = parts[3] if len(parts) == 4 else ""
+            rows.append((int(parts[0]), int(parts[1]), parts[2][0], command))
+        except ValueError:
+            continue
+    return rows
+
+
 def proc_table() -> list[tuple[int, int, str, str]]:
     """Best-effort ``(pid, pgid, state, command)`` process-table rows.
 
@@ -163,28 +190,7 @@ def proc_table() -> list[tuple[int, int, str, str]]:
     try:
         names = os.listdir("/proc")
     except OSError:
-        if os.name != "posix":
-            return rows
-        try:
-            out = subprocess.run(  # nosec B603, B607  # fixed argv, no user input
-                ["ps", "-axww", "-o", "pid=,pgid=,state=,command="],
-                capture_output=True,
-                text=True,
-                timeout=5.0,
-                check=True,
-            ).stdout
-        except (OSError, subprocess.SubprocessError):
-            return rows
-        for line in out.splitlines():
-            parts = line.split(None, 3)
-            if len(parts) < 3 or not parts[2]:
-                continue
-            try:
-                command = parts[3] if len(parts) == 4 else ""
-                rows.append((int(parts[0]), int(parts[1]), parts[2][0], command))
-            except ValueError:
-                continue
-        return rows
+        return _ps_proc_table()
     for name in names:
         if not name.isdigit():
             continue
