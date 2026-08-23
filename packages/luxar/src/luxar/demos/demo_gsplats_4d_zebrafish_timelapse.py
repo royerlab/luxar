@@ -736,9 +736,14 @@ def create_luxar_scene(stacked: GSplatData, output_path: Path) -> Path:
             ]
         )
 
-        with LuxarZarrCompiler(
-            output_path, encoding_mode=EncodingMode.PRECISION
-        ) as compiler:
+        # AUTO, the house default, rather than the PRECISION this demo used to
+        # ask for. PRECISION stores every channel as float32, which on a 4D node
+        # of this size is ~60 bytes a splat before compression — a scene the
+        # viewer has to stream. AUTO picks per-axis fixed point instead, and the
+        # margins here are wide: 859 um of extent across uint16 is a 0.013 um
+        # step against a 1.68 um voxel, and the time axis is on an exact grid,
+        # which the encoder snaps to rather than quantizes.
+        with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
                 dimensions=dims,
                 citation=DEMO_META["citation"],
