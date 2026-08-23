@@ -136,6 +136,7 @@ from arbol import aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import add_demo_caption, launch_viewer
+from luxar.demos._particle_collision_tracks import generate_helix_points
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -163,6 +164,7 @@ DETECTOR_LENGTH = 25.0  # Half-length in z (beam direction)
 # Real ATLAS: 2 Tesla solenoid in inner detector
 # Real CMS: 3.8 Tesla (strongest at any collider)
 B_FIELD = 2.0  # Tesla (affects curvature via r = p_T / (q*B))
+TRACK_PATH_STEP = 0.1  # Detector-space distance between rendered track samples
 
 # =============================================================================
 # Particle Properties (from Particle Data Group - PDG 2024)
@@ -371,98 +373,21 @@ def generate_helix_track(
         # They are only "seen" when they deposit energy in calorimeters
         return generate_straight_track(particle, rng, n_points)
 
-    # =========================================================================
-    # HELIX PARAMETER CALCULATION
-    # =========================================================================
-
-    pt = particle.pt  # Transverse momentum (perpendicular to B-field)
-    pz = particle.pz  # Longitudinal momentum (along beam/B-field direction)
-
-    # RADIUS OF CURVATURE: r = p_T / (|q| × B)
-    # -----------------------------------------
-    # This is THE fundamental equation of charged particle tracking!
-    # - Real detectors use r to MEASURE p_T (momentum spectroscopy)
-    # - Factor of 2.0 is a visualization scaling factor
-    # - In real units: r[m] = p_T[GeV/c] / (0.3 × |q| × B[T])
-    #   where 0.3 comes from unit conversion (c in appropriate units)
-    radius = pt / (abs(particle.charge) * B_FIELD) * 2.0
-
-    # Minimum radius to prevent visual artifacts for very soft particles
-    radius = max(radius, 0.3)
-
-    # ANGULAR VELOCITY: ω = q × B / p_T
-    # ---------------------------------
-    # This determines how quickly the particle spirals.
-    # The sign of charge determines the direction of rotation:
-    # - Positive charge → clockwise rotation (from +z looking down)
-    # - Negative charge → counter-clockwise rotation
-    omega = particle.charge * B_FIELD / pt if pt > 0.1 else 0.01
-
-    # Initial azimuthal angle (direction particle is heading in x-y plane)
-    phi0 = np.arctan2(particle.py, particle.px)
-
-    # CENTER OF HELIX CIRCLE
-    # ----------------------
-    # The particle doesn't spiral around the collision point!
-    # It spirals around a point offset perpendicular to its initial direction.
-    # The offset direction depends on charge sign.
-    cx = particle.origin[0] - radius * np.sin(phi0) * np.sign(particle.charge)
-    cy = particle.origin[1] + radius * np.cos(phi0) * np.sign(particle.charge)
-
-    # DETECTOR BOUNDARIES
-    # -------------------
-    # Track terminates when particle:
-    # 1. Exits radially (absorbed in calorimeter or escapes)
-    # 2. Exits longitudinally (beyond detector endcap)
     max_radius = particle.stops_at if particle.stops_at else MUON_OUTER
-    max_z = DETECTOR_LENGTH
-
-    # =========================================================================
-    # HELIX POINT GENERATION
-    # =========================================================================
-
-    points = []
-    t = 0  # Parametric time along helix
-    dt = 0.05  # Step size (smaller = smoother curves)
-
-    while len(points) < n_points:
-        # HELIX PARAMETRIC EQUATIONS
-        # --------------------------
-        # x(t) = cx + r × sin(φ₀ + ω×t)
-        # y(t) = cy - r × cos(φ₀ + ω×t)
-        # z(t) = z₀ + v_z × t
-        #
-        # The x-y motion is circular, z advances linearly → HELIX
-        phi = phi0 + omega * t * np.sign(particle.charge)
-        x = cx + radius * np.sin(phi) * np.sign(particle.charge)
-        y = cy - radius * np.cos(phi) * np.sign(particle.charge)
-        z = particle.origin[2] + pz * t * 0.3  # Scale z velocity for visualization
-
-        # Check if particle has exited detector volume
-        r = np.sqrt(x**2 + y**2)
-        if r > max_radius or abs(z) > max_z:
-            break
-
-        points.append([x, y, z])
-        t += dt
-
-        # ELECTROMAGNETIC SHOWER SIMULATION
-        # ----------------------------------
-        # Electrons/positrons undergo bremsstrahlung (emit photons when
-        # deflected by nuclei). This triggers an electromagnetic cascade:
-        # e → γ + e → e⁺e⁻ + e → many particles
-        # The shower develops rapidly once inside the EM calorimeter.
-        if r > ECAL_INNER and particle.stops_at == ECAL_OUTER:
-            # Track ends as particle showers
-            break
-
+    shower_radius = ECAL_INNER if particle.stops_at == ECAL_OUTER else None
+    points = generate_helix_points(
+        origin=particle.origin,
+        momentum=np.array([particle.px, particle.py, particle.pz]),
+        charge=particle.charge,
+        magnetic_field=B_FIELD,
+        max_radius=max_radius,
+        max_z=DETECTOR_LENGTH,
+        n_points=n_points,
+        path_step=TRACK_PATH_STEP,
+        shower_radius=shower_radius,
+    )
     if len(points) < 2:
-        points = [
-            particle.origin.tolist(),
-            (particle.origin + [0.1, 0.1, 0.1]).tolist(),
-        ]
-
-    points = np.array(points, dtype=np.float32)
+        return np.empty((0, 3)), np.empty(0), np.empty((0, 3))
 
     # Per-VERTEX arrays — the track is one continuous curve, so it is
     # authored as unique vertices + an explicit edge list (line_type=

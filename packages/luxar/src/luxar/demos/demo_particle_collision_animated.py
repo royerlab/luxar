@@ -148,6 +148,7 @@ from arbol import aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import add_demo_caption, launch_viewer
+from luxar.demos._particle_collision_tracks import generate_helix_points
 
 # Reuse the shared physics constants + event generator from the static particle
 # collision demo (now a normal sibling import; see the retired sys.modules alias).
@@ -167,6 +168,8 @@ from luxar.demos.demo_particle_collision import (
     generate_collision_event,
 )
 from luxar.utils.paths import get_demos_output_dir
+
+ANIMATED_TRACK_PATH_STEP = 0.01
 
 
 def generate_helix_track_with_times(
@@ -212,111 +215,29 @@ def generate_helix_track_with_times(
         # They are only "seen" when they deposit energy in calorimeters
         return generate_straight_track_with_times(particle, rng, n_points)
 
-    # =========================================================================
-    # HELIX PARAMETER CALCULATION
-    # =========================================================================
-
-    pt = particle.pt  # Transverse momentum (perpendicular to B-field)
-    pz = particle.pz  # Longitudinal momentum (along beam/B-field direction)
-
-    # RADIUS OF CURVATURE: r = p_T / (|q| × B)
-    # -----------------------------------------
-    # This is THE fundamental equation of charged particle tracking!
-    # - Real detectors use r to MEASURE p_T (momentum spectroscopy)
-    # - Factor of 2.0 is a visualization scaling factor
-    # - In real units: r[m] = p_T[GeV/c] / (0.3 × |q| × B[T])
-    #   where 0.3 comes from unit conversion (c in appropriate units)
-    radius = pt / (abs(particle.charge) * B_FIELD) * 2.0
-
-    # Minimum radius to prevent visual artifacts for very soft particles
-    radius = max(radius, 0.3)
-
-    # ANGULAR VELOCITY: ω = q × B / p_T
-    # ---------------------------------
-    # This determines how quickly the particle spirals.
-    # The sign of charge determines the direction of rotation:
-    # - Positive charge → clockwise rotation (from +z looking down)
-    # - Negative charge → counter-clockwise rotation
-    omega = particle.charge * B_FIELD / pt if pt > 0.1 else 0.01
-
-    # Initial azimuthal angle (direction particle is heading in x-y plane)
-    phi0 = np.arctan2(particle.py, particle.px)
-
-    # CENTER OF HELIX CIRCLE
-    # ----------------------
-    # The particle doesn't spiral around the collision point!
-    # It spirals around a point offset perpendicular to its initial direction.
-    # The offset direction depends on charge sign.
-    cx = particle.origin[0] - radius * np.sin(phi0) * np.sign(particle.charge)
-    cy = particle.origin[1] + radius * np.cos(phi0) * np.sign(particle.charge)
-
-    # DETECTOR BOUNDARIES
-    # -------------------
-    # Track terminates when particle:
-    # 1. Exits radially (absorbed in calorimeter or escapes)
-    # 2. Exits longitudinally (beyond detector endcap)
     max_radius = particle.stops_at if particle.stops_at else MUON_OUTER
-    max_z = DETECTOR_LENGTH
-
-    # =========================================================================
-    # HELIX POINT GENERATION WITH ARC LENGTH TRACKING
-    # =========================================================================
-
-    points = []
-    arc_lengths = []  # Track cumulative arc length for birth time calculation
-    t = 0  # Parametric time along helix
-    dt = 0.005  # Step size (smaller = smoother curves, needed for animation)
-    total_arc = 0.0
-    prev_point = None
-
-    while len(points) < n_points:
-        # HELIX PARAMETRIC EQUATIONS
-        # --------------------------
-        # x(t) = cx + r × sin(φ₀ + ω×t)
-        # y(t) = cy - r × cos(φ₀ + ω×t)
-        # z(t) = z₀ + v_z × t
-        #
-        # The x-y motion is circular, z advances linearly → HELIX
-        phi = phi0 + omega * t * np.sign(particle.charge)
-        x = cx + radius * np.sin(phi) * np.sign(particle.charge)
-        y = cy - radius * np.cos(phi) * np.sign(particle.charge)
-        z = particle.origin[2] + pz * t * 0.3  # Scale z velocity for visualization
-
-        # Check if particle has exited detector volume
-        r = np.sqrt(x**2 + y**2)
-        if r > max_radius or abs(z) > max_z:
-            break
-
-        point = np.array([x, y, z])
-
-        # Track arc length for birth time calculation
-        if prev_point is not None:
-            total_arc += np.linalg.norm(point - prev_point)
-
-        points.append(point)
-        arc_lengths.append(total_arc)
-        prev_point = point
-        t += dt
-
-        # ELECTROMAGNETIC SHOWER SIMULATION
-        # ----------------------------------
-        # Electrons/positrons undergo bremsstrahlung (emit photons when
-        # deflected by nuclei). This triggers an electromagnetic cascade:
-        # e → γ + e → e⁺e⁻ + e → many particles
-        # The shower develops rapidly once inside the EM calorimeter.
-        if r > ECAL_INNER and particle.stops_at == ECAL_OUTER:
-            # Track ends as particle showers
-            break
-
+    shower_radius = ECAL_INNER if particle.stops_at == ECAL_OUTER else None
+    points = generate_helix_points(
+        origin=particle.origin,
+        momentum=np.array([particle.px, particle.py, particle.pz]),
+        charge=particle.charge,
+        magnetic_field=B_FIELD,
+        max_radius=max_radius,
+        max_z=DETECTOR_LENGTH,
+        n_points=n_points,
+        path_step=ANIMATED_TRACK_PATH_STEP,
+        shower_radius=shower_radius,
+    )
     if len(points) < 2:
-        points = [
-            particle.origin.tolist(),
-            (particle.origin + [0.1, 0.1, 0.1]).tolist(),
-        ]
-        arc_lengths = [0.0, 0.1]
+        return (
+            np.empty((0, 3)),
+            np.empty(0),
+            np.empty((0, 3)),
+            np.empty(0),
+        )
 
-    points = np.array(points, dtype=np.float32)
-    arc_lengths = np.array(arc_lengths, dtype=np.float32)
+    segment_lengths = np.linalg.norm(np.diff(points, axis=0), axis=1)
+    arc_lengths = np.concatenate(([0.0], np.cumsum(segment_lengths))).astype(np.float32)
 
     # Normalize arc lengths to [0, 1] for birth times
     # birth_time = 0 at collision vertex, = 1 at track end
