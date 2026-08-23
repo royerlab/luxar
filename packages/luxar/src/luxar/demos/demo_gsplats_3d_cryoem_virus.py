@@ -243,7 +243,14 @@ def fit_map(volume: np.ndarray, acquisition=None) -> GSplatData:
             compress="zip",
             zip_deflate=True,
         )
-        return result
+        # Return what was STORED, not the in-memory fit: `result` is the FLAT
+        # pre-LOD fit, so a `--recompute` run built a flat scene while the warm
+        # branch below — which loads LOCAL_FIT back — got the four substitutive
+        # levels the archive carries. Re-reading also picks up the lossy MEMORY
+        # encoding, so cold and warm runs agree on bytes as well as topology
+        # (same reasoning as demo_gsplats_4d_nexrad_supercell).
+        stored = load_local_fit_gsplats_at([LOCAL_FIT], label=DEMO_NAME)
+        return result if stored is None else stored[0]
 
 
 def load_or_build_gsplats() -> GSplatData:
