@@ -228,7 +228,7 @@ test.describe('WASM Integration E2E', () => {
     await waitForNextRender(page);
 
     // Navigate to trigger spatial query on nD dataset (exercises WASM or TS code path)
-    await page.keyboard.press('4'); // Select dimension 4
+    await page.keyboard.press('1'); // Select the first non-displayed dimension
     await page.keyboard.press(']'); // Navigate forward
     await waitForNextRender(page);
 
@@ -338,7 +338,6 @@ test.describe('Worker + WASM Combined Performance', () => {
     // Measure query time with navigation
     const startTime = Date.now();
 
-    await page.keyboard.press('4');
     await page.keyboard.press('[');
     // Let the worker query + projection round-trip complete; this is
     // the actual "query complete" signal rather than a fixed sleep.

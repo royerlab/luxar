@@ -33,6 +33,8 @@ import type { SceneManager } from '../../../scene/scene-manager';
 import type { AnimationController } from '../../../scene/animation/animation-controller';
 import type { PerformanceMonitor } from '../../../ui/performance-monitor';
 import type { DebugConsole } from '../../../ui/debug-console';
+import type { SimpleDims } from '../../../types/dims';
+import { clearNotifierBackend, setNotifierBackend } from '../../../utils/cross-layer/notifier';
 
 // AUDIT NOTE (input.md W2): the four `make*Stub` factories below
 // replace first-party internal modules (SceneManager,
@@ -127,6 +129,140 @@ describe('InputHandler — construction', () => {
           factory
         )
     ).not.toThrow();
+  });
+});
+
+describe('InputHandler — dimension selection feedback', () => {
+  function makeHandler(): InputHandler {
+    return new InputHandler(
+      makeSceneManagerStub(),
+      makeAnimationControllerStub(),
+      makePerformanceMonitorStub(),
+      makeDebugConsoleStub()
+    );
+  }
+
+  const dims: SimpleDims = {
+    ndim: 5,
+    displayed: [0, 1, 2],
+    currentStep: [0, 0, 0, 7, 0],
+    metadata: [
+      { name: 'X', unit: '', scale: 1, discrete: false, step: 1 },
+      { name: 'Y', unit: '', scale: 1, discrete: false, step: 1 },
+      { name: 'Z', unit: '', scale: 1, discrete: false, step: 1 },
+      { name: 'Frame', unit: '', scale: 1, discrete: true, step: 1 },
+      {
+        name: 'Channel',
+        unit: '',
+        scale: 1,
+        discrete: true,
+        step: 1,
+        categories: ['RED', 'GREEN', 'BLUE'],
+      },
+    ],
+  };
+
+  it('updates the slider panel when a valid navigable dimension is selected', () => {
+    const managerState = sceneDimsManager as unknown as { dims: SimpleDims | null };
+    const previousDims = managerState.dims;
+    managerState.dims = dims;
+    const setSelectedDimension = vi.fn();
+    const handler = makeHandler();
+    (handler as unknown as { dimensionSliders: unknown }).dimensionSliders = {
+      setSelectedDimension,
+      dispose: vi.fn(),
+    };
+
+    try {
+      (handler as unknown as { selectDimension(index: number): void }).selectDimension(1);
+
+      expect((handler as unknown as { selectedDimension: number }).selectedDimension).toBe(1);
+      expect(setSelectedDimension).toHaveBeenCalledWith(1);
+    } finally {
+      handler.dispose();
+      managerState.dims = previousDims;
+    }
+  });
+
+  it('toasts when keyboard navigation is already at a non-cyclic bound', () => {
+    const managerState = sceneDimsManager as unknown as {
+      dims: SimpleDims | null;
+      dimensionRanges: Array<[number, number]> | null;
+    };
+    const previousDims = managerState.dims;
+    const previousRanges = managerState.dimensionRanges;
+    managerState.dims = { ...dims, currentStep: [0, 0, 0, 15, 0] };
+    managerState.dimensionRanges = [
+      [0, 0],
+      [0, 0],
+      [0, 0],
+      [0, 15],
+      [0, 2],
+    ];
+    const showToast = vi.fn();
+    setNotifierBackend({
+      showError: vi.fn(),
+      showToast,
+      showHelpOverlay: vi.fn(),
+      hideHelpOverlay: vi.fn(),
+      showLoadingIndicator: vi.fn(),
+      hideLoadingIndicator: vi.fn(),
+      clearError: vi.fn(),
+    });
+    const handler = makeHandler();
+
+    try {
+      (
+        handler as unknown as { handleDimensionNavigation(direction: -1 | 1): void }
+      ).handleDimensionNavigation(1);
+      expect(showToast).toHaveBeenCalledWith('Frame is already at its maximum (15).', 2000);
+    } finally {
+      clearNotifierBackend();
+      handler.dispose();
+      managerState.dims = previousDims;
+      managerState.dimensionRanges = previousRanges;
+    }
+  });
+
+  it('uses the category label when a categorical dimension is already at its bound', () => {
+    const managerState = sceneDimsManager as unknown as {
+      dims: SimpleDims | null;
+      dimensionRanges: Array<[number, number]> | null;
+    };
+    const previousDims = managerState.dims;
+    const previousRanges = managerState.dimensionRanges;
+    managerState.dims = { ...dims, currentStep: [0, 0, 0, 7, 2] };
+    managerState.dimensionRanges = [
+      [0, 0],
+      [0, 0],
+      [0, 0],
+      [0, 15],
+      [0, 2],
+    ];
+    const showToast = vi.fn();
+    setNotifierBackend({
+      showError: vi.fn(),
+      showToast,
+      showHelpOverlay: vi.fn(),
+      hideHelpOverlay: vi.fn(),
+      showLoadingIndicator: vi.fn(),
+      hideLoadingIndicator: vi.fn(),
+      clearError: vi.fn(),
+    });
+    const handler = makeHandler();
+    (handler as unknown as { selectedDimension: number }).selectedDimension = 1;
+
+    try {
+      (
+        handler as unknown as { handleDimensionNavigation(direction: -1 | 1): void }
+      ).handleDimensionNavigation(1);
+      expect(showToast).toHaveBeenCalledWith('Channel is already at its maximum (BLUE).', 2000);
+    } finally {
+      clearNotifierBackend();
+      handler.dispose();
+      managerState.dims = previousDims;
+      managerState.dimensionRanges = previousRanges;
+    }
   });
 });
 

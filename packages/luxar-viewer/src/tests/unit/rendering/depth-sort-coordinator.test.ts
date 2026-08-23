@@ -982,9 +982,103 @@ describe('depth-sort coordinator', () => {
 
     coord.evaluateDepthSortPerFrame();
 
-    expect(far.renderOrder).toBe(0);
-    expect(near.renderOrder).toBe(1);
+    expect(far.renderOrder).toBe(1);
+    expect(near.renderOrder).toBe(2);
     expect(mockApi.sort).not.toHaveBeenCalled(); // worker path stays inert
+  });
+
+  it('keeps partition renderOrder a permutation while a load sweep is in progress', async () => {
+    const bspTree = {
+      axis: 0,
+      split: 0,
+      left: { axis: 0, split: -50, left: { part: 0 }, right: { part: 1 } },
+      right: { axis: 0, split: 50, left: { part: 2 }, right: { part: 3 } },
+    };
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({
+      getCamera: () => cameraAt(1000, 0, 0),
+      requestRender: vi.fn(),
+      isLoadInProgress: () => true,
+    });
+
+    const parts = [0, 1, 2, 3].map(() => makeGSplatsMesh(2, 'normal'));
+    makePartitionWrapper(bspTree, parts);
+    // The last part is still the empty, never-committed placeholder and is
+    // therefore not tracked by the coordinator yet.
+    for (const part of parts.slice(0, 3)) {
+      coord.noteDepthSortCommit(part, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    }
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    const ranks = parts.map((part) => part.renderOrder);
+    expect(new Set(ranks).size).toBe(parts.length);
+    expect(ranks).toEqual([1, 2, 3, 0]);
+  });
+
+  it('keeps the BSP rank of a stamp-less tracked part during a load sweep', async () => {
+    const bspTree = {
+      axis: 0,
+      split: 0,
+      left: { axis: 0, split: -50, left: { part: 0 }, right: { part: 1 } },
+      right: { axis: 0, split: 50, left: { part: 2 }, right: { part: 3 } },
+    };
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({
+      getCamera: () => cameraAt(1000, 0, 0),
+      requestRender: vi.fn(),
+      isLoadInProgress: () => true,
+    });
+
+    const parts = [0, 1, 2, 3].map(() => makeGSplatsMesh(2, 'normal'));
+    makePartitionWrapper(bspTree, parts);
+    for (const part of parts) {
+      coord.noteDepthSortCommit(part, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    }
+    await flush();
+    // Remove the FAR part's stamp. Merely assigning unranked parts after all
+    // ranked parts would preserve uniqueness but produce the wrong BSP order;
+    // the stored BSP tree still has enough information for the exact order.
+    delete parts[0].userData.committedData;
+
+    coord.evaluateDepthSortPerFrame();
+
+    const ranks = parts.map((part) => part.renderOrder);
+    expect(new Set(ranks).size).toBe(parts.length);
+    expect(ranks).toEqual([1, 2, 3, 4]);
+  });
+
+  it('a switch into a sorted mode keeps its rank while the commit stamp is invalidated', async () => {
+    const coord = await loadCoordinator();
+    const requestReprocess = vi.fn();
+    coord.configureDepthSort({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      requestReprocess,
+      isLoadInProgress: () => false,
+    });
+
+    const switched = makeGSplatsMesh(2, 'additive');
+    switched.geometry.boundingSphere!.center.set(0, 0, -30);
+    const stable = makeGSplatsMesh(2, 'normal');
+    stable.geometry.boundingSphere!.center.set(0, 0, -10);
+    coord.noteDepthSortCommit(switched, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(stable, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+
+    // LayersPanel restamps the material before notifying the coordinator.
+    // The invalidated commit stamp forces a reprocess, but the existing
+    // geometry remains visible and must keep its cross-mesh rank meanwhile.
+    (switched.material as THREE.Material).userData.blendingMode = 'normal';
+    coord.noteDepthSortBlendingModeSwitch(switched, 'normal', 'additive');
+    expect(switched.userData.committedData).toBeUndefined();
+    expect(requestReprocess).toHaveBeenCalledTimes(1);
+
+    coord.evaluateDepthSortPerFrame();
+
+    expect(switched.renderOrder).toBe(1);
+    expect(stable.renderOrder).toBe(2);
   });
 
   it('keeps per-node state independent across two nodes sharing the worker', async () => {
@@ -1028,7 +1122,8 @@ describe('depth-sort coordinator', () => {
     // Partition parts share the world origin (splat centers baked in), so
     // THREE's per-object transparent sort gives every part the SAME key and
     // draws them in creation order. With a stored bspTree the coordinator
-    // instead assigns each part its EXACT painter's-order rank (0 = farthest).
+    // instead assigns each part its exact painter's order (the BSP's internal
+    // rank 0 becomes the first live renderOrder rank, 1).
     // Tree: three splits on x (axis 0) → 4 leaf cells left→right along x.
     const bspTree = {
       axis: 0,
@@ -1048,9 +1143,9 @@ describe('depth-sort coordinator', () => {
 
     coord.evaluateDepthSortPerFrame();
 
-    // renderOrder == painter's rank; THREE draws transparent objects by
-    // renderOrder ASCENDING, so rank 0 (x<-50, farthest) draws first.
-    expect(parts.map((m) => m.renderOrder)).toEqual([0, 1, 2, 3]);
+    // THREE draws transparent objects by renderOrder ASCENDING, so the
+    // farthest part (x<-50) receives the first reserved live rank.
+    expect(parts.map((m) => m.renderOrder)).toEqual([1, 2, 3, 4]);
   });
 
   it('a tree that names only SOME parts falls the whole group back to depth order', async () => {
@@ -1081,7 +1176,7 @@ describe('depth-sort coordinator', () => {
     coord.evaluateDepthSortPerFrame();
 
     // Farthest (part 3) draws first.
-    expect(parts.map((m) => m.renderOrder)).toEqual([3, 2, 1, 0]);
+    expect(parts.map((m) => m.renderOrder)).toEqual([4, 3, 2, 1]);
   });
 
   it('maps BSP split axes through displayDims, not straight to x/y/z', async () => {
@@ -1114,11 +1209,11 @@ describe('depth-sort coordinator', () => {
     };
 
     // Column 0 displayed as z → split read on z (eye at -1000) → parts flipped.
-    expect(await orderFor([3, 1, 0])).toEqual([1, 0]);
+    expect(await orderFor([3, 1, 0])).toEqual([2, 1]);
     // Same tree, same camera, but column 0 displayed as x → eye.x == 0 → the
     // other branch. Different answer from the SAME tree is the whole point:
     // the mapping is consulted, not assumed.
-    expect(await orderFor([0, 1, 2])).toEqual([0, 1]);
+    expect(await orderFor([0, 1, 2])).toEqual([1, 2]);
   });
 
   it('falls back to the centroid heuristic when a split axis is not displayed', async () => {
@@ -1188,7 +1283,7 @@ describe('depth-sort coordinator', () => {
 
     const wrappedOrder = await run(true);
     expect(wrappedOrder).toEqual(await run(false));
-    expect(wrappedOrder).toEqual([2, 0, 1]);
+    expect(wrappedOrder).toEqual([3, 1, 2]);
   });
 
   it('orders BSP-partition parts correctly with the camera INSIDE the volume (centroid fails here)', async () => {
@@ -1217,15 +1312,15 @@ describe('depth-sort coordinator', () => {
 
     coord.evaluateDepthSortPerFrame();
 
-    // ranks: part0→0, part1→1, part3→2, part2→3.
-    expect(parts.map((m) => m.renderOrder)).toEqual([0, 1, 3, 2]);
+    // ranks: part0→1, part1→2, part3→3, part2→4.
+    expect(parts.map((m) => m.renderOrder)).toEqual([1, 2, 4, 3]);
   });
 
   it('falls back to content-centroid view depth when a mesh has no BSP tree (single leaf / legacy)', async () => {
     // Leaf meshes without a partition wrapper: each is its own order group,
     // and groups sort by their bounding-sphere-center view-space z (camera
     // at the origin looking −z, so view ≈ identity and view-z ≈ center.z).
-    // renderOrder is the GLOBAL sequential rank (0 = farthest), not the raw
+    // renderOrder is the GLOBAL sequential rank (1 = farthest), not the raw
     // z — all normal-mode gsplat meshes share one comparable integer scale.
     const coord = await loadCoordinator();
     coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
@@ -1244,9 +1339,9 @@ describe('depth-sort coordinator', () => {
 
     coord.evaluateDepthSortPerFrame();
 
-    expect(far.renderOrder).toBe(0);
-    expect(mid.renderOrder).toBe(1);
-    expect(near.renderOrder).toBe(2);
+    expect(far.renderOrder).toBe(1);
+    expect(mid.renderOrder).toBe(2);
+    expect(near.renderOrder).toBe(3);
   });
 
   it('a node whose bounds contain another node draws FIRST even when its centroid is nearer', async () => {
@@ -1275,8 +1370,8 @@ describe('depth-sort coordinator', () => {
 
     coord.evaluateDepthSortPerFrame();
 
-    expect(cloud.renderOrder).toBe(0);
-    expect(marker.renderOrder).toBe(1);
+    expect(cloud.renderOrder).toBe(1);
+    expect(marker.renderOrder).toBe(2);
   });
 
   it('nested containment orders container → inner container → innermost', async () => {
@@ -1303,9 +1398,9 @@ describe('depth-sort coordinator', () => {
 
     coord.evaluateDepthSortPerFrame();
 
-    expect(a.renderOrder).toBe(0);
-    expect(b.renderOrder).toBe(1);
-    expect(c.renderOrder).toBe(2);
+    expect(a.renderOrder).toBe(1);
+    expect(b.renderOrder).toBe(2);
+    expect(c.renderOrder).toBe(3);
   });
 
   it('containment leaves DISJOINT nodes on plain farthest-first depth order', async () => {
@@ -1332,9 +1427,9 @@ describe('depth-sort coordinator', () => {
 
     coord.evaluateDepthSortPerFrame();
 
-    expect(farAway.renderOrder).toBe(0);
-    expect(cloud.renderOrder).toBe(1);
-    expect(marker.renderOrder).toBe(2);
+    expect(farAway.renderOrder).toBe(1);
+    expect(cloud.renderOrder).toBe(2);
+    expect(marker.renderOrder).toBe(3);
   });
 
   it('partially overlapping spheres do not form a containment edge', async () => {
@@ -1356,8 +1451,8 @@ describe('depth-sort coordinator', () => {
 
     coord.evaluateDepthSortPerFrame();
 
-    expect(overlap.renderOrder).toBe(0);
-    expect(outer.renderOrder).toBe(1);
+    expect(overlap.renderOrder).toBe(1);
+    expect(outer.renderOrder).toBe(2);
   });
 
   it('applies containment only inside the documented grazing epsilon band', async () => {
@@ -1385,9 +1480,9 @@ describe('depth-sort coordinator', () => {
 
     // The outside sphere remains the farthest ready group. The container
     // then draws before only the epsilon-contained sphere.
-    expect(justOutside.renderOrder).toBe(0);
-    expect(outer.renderOrder).toBe(1);
-    expect(justInside.renderOrder).toBe(2);
+    expect(justOutside.renderOrder).toBe(1);
+    expect(outer.renderOrder).toBe(2);
+    expect(justInside.renderOrder).toBe(3);
   });
 
   it('scales containment radii under a non-identity mesh transform', async () => {
@@ -1411,8 +1506,8 @@ describe('depth-sort coordinator', () => {
 
     coord.evaluateDepthSortPerFrame();
 
-    expect(transformedOuter.renderOrder).toBe(0);
-    expect(marker.renderOrder).toBe(1);
+    expect(transformedOuter.renderOrder).toBe(1);
+    expect(marker.renderOrder).toBe(2);
   });
 
   it('excludes a zero-radius inner group from containment edges', async () => {
@@ -1432,8 +1527,8 @@ describe('depth-sort coordinator', () => {
 
     coord.evaluateDepthSortPerFrame();
 
-    expect(zeroRadius.renderOrder).toBe(0);
-    expect(outer.renderOrder).toBe(1);
+    expect(zeroRadius.renderOrder).toBe(1);
+    expect(outer.renderOrder).toBe(2);
   });
 
   it('treats a non-finite transformed radius as unusable', async () => {
@@ -1460,8 +1555,8 @@ describe('depth-sort coordinator', () => {
 
     // Infinity must become the radius=-1 sentinel instead of a container
     // that captures every finite group.
-    expect(marker.renderOrder).toBe(0);
-    expect(outer.renderOrder).toBe(1);
+    expect(marker.renderOrder).toBe(1);
+    expect(outer.renderOrder).toBe(2);
   });
 
   it('keeps the farthest-ready tie-break across independent containers', async () => {
@@ -1490,10 +1585,10 @@ describe('depth-sort coordinator', () => {
 
     coord.evaluateDepthSortPerFrame();
 
-    expect(farContainer.renderOrder).toBe(0);
-    expect(farChild.renderOrder).toBe(1);
-    expect(nearContainer.renderOrder).toBe(2);
-    expect(nearChild.renderOrder).toBe(3);
+    expect(farContainer.renderOrder).toBe(1);
+    expect(farChild.renderOrder).toBe(2);
+    expect(nearContainer.renderOrder).toBe(3);
+    expect(nearChild.renderOrder).toBe(4);
   });
 
   it('identical bounding spheres produce no containment edge (no self-lock, stable depth order)', async () => {
@@ -1517,8 +1612,8 @@ describe('depth-sort coordinator', () => {
     coord.evaluateDepthSortPerFrame();
 
     // Tie → stable sort keeps insertion order; both got exactly one rank.
-    expect(chanA.renderOrder).toBe(0);
-    expect(chanB.renderOrder).toBe(1);
+    expect(chanA.renderOrder).toBe(1);
+    expect(chanB.renderOrder).toBe(2);
   });
 
   it('two co-located volumetric LOD siblings (near-identical bounds, mid cross-fade) each get a rank', async () => {
@@ -1551,8 +1646,8 @@ describe('depth-sort coordinator', () => {
     coord.evaluateDepthSortPerFrame();
 
     // Containment edge (coarse ⊃ fine): container draws first.
-    expect(coarse.renderOrder).toBe(0);
-    expect(fine.renderOrder).toBe(1);
+    expect(coarse.renderOrder).toBe(1);
+    expect(fine.renderOrder).toBe(2);
   });
 
   it('a partition wrapper whose AGGREGATE bounds contain a leaf draws all its parts first', async () => {
@@ -1585,9 +1680,9 @@ describe('depth-sort coordinator', () => {
 
     // Camera at the origin sits on the split's high side → left subtree
     // (part 0) is the far side and draws first; marker draws last.
-    expect(parts[0].renderOrder).toBe(0);
-    expect(parts[1].renderOrder).toBe(1);
-    expect(marker.renderOrder).toBe(2);
+    expect(parts[0].renderOrder).toBe(1);
+    expect(parts[1].renderOrder).toBe(2);
+    expect(marker.renderOrder).toBe(3);
   });
 
   it('a loose-bound false positive: spread-out tiles do NOT hoist a disjoint neighbour', async () => {
@@ -1633,8 +1728,8 @@ describe('depth-sort coordinator', () => {
     // Tight bound: no edge → depth order. The farther globe draws first; all
     // tiles follow. Under the old loose bound the globe would be hoisted to
     // LAST (rank 5), inverting the backdrop behind its neighbour.
-    expect(globe.renderOrder).toBe(0);
-    expect(Math.min(...tiles.map((t) => t.renderOrder))).toBeGreaterThan(0);
+    expect(globe.renderOrder).toBe(1);
+    expect(Math.min(...tiles.map((t) => t.renderOrder))).toBeGreaterThan(1);
   });
 
   it('a genuine containment inside one union member still hoists the partition first', async () => {
@@ -1711,8 +1806,8 @@ describe('depth-sort coordinator', () => {
 
     // No false edge → depth order: the farther neighbour draws first. Under a
     // raw Ritter bound it would be swallowed and hoisted to last.
-    expect(neighbour.renderOrder).toBe(0);
-    expect(Math.min(...tiles.map((t) => t.renderOrder))).toBeGreaterThan(0);
+    expect(neighbour.renderOrder).toBe(1);
+    expect(Math.min(...tiles.map((t) => t.renderOrder))).toBeGreaterThan(1);
   });
 
   it('an asymmetric layout does not hoist an off-center neighbour only the Ritter sphere covers', async () => {
@@ -1753,8 +1848,8 @@ describe('depth-sort coordinator', () => {
     coord.evaluateDepthSortPerFrame();
 
     // No new false edge relative to the legacy bound → depth order survives.
-    expect(neighbour.renderOrder).toBe(0);
-    expect(Math.min(...tiles.map((t) => t.renderOrder))).toBeGreaterThan(0);
+    expect(neighbour.renderOrder).toBe(1);
+    expect(Math.min(...tiles.map((t) => t.renderOrder))).toBeGreaterThan(1);
   });
 
   it('meshes without usable depth (no bounds / non-finite center) rank at view-z 0, no NaN poisoning', async () => {
@@ -1783,9 +1878,9 @@ describe('depth-sort coordinator', () => {
     // The finite far mesh (view-z -30) ranks first; the two degenerate
     // meshes tie at view-z 0 and take the remaining ranks in insertion
     // order — every mesh got exactly one integer rank (no NaN fallout).
-    expect(farMesh.renderOrder).toBe(0);
-    expect(boundless.renderOrder).toBe(1);
-    expect(nanCenter.renderOrder).toBe(2);
+    expect(farMesh.renderOrder).toBe(1);
+    expect(boundless.renderOrder).toBe(2);
+    expect(nanCenter.renderOrder).toBe(3);
   });
 
   it('two BSP wrappers land on ONE global scale: the far wrapper draws entirely first', async () => {
@@ -1821,11 +1916,11 @@ describe('depth-sort coordinator', () => {
 
     coord.evaluateDepthSortPerFrame();
 
-    // Far wrapper (mean z −100) ranks 0..1, near wrapper (mean z −20)
-    // ranks 2..3; each wrapper internally keeps its BSP traversal order
+    // Far wrapper (mean z −100) ranks 1..2, near wrapper (mean z −20)
+    // ranks 3..4; each wrapper internally keeps its BSP traversal order
     // (eye x=0 is not < split 0 → left leaf drawn first).
-    expect(farParts.map((m) => m.renderOrder)).toEqual([0, 1]);
-    expect(nearParts.map((m) => m.renderOrder)).toEqual([2, 3]);
+    expect(farParts.map((m) => m.renderOrder)).toEqual([1, 2]);
+    expect(nearParts.map((m) => m.renderOrder)).toEqual([3, 4]);
   });
 
   it('a partition and single leaves share the global scale by depth', async () => {
@@ -1859,9 +1954,9 @@ describe('depth-sort coordinator', () => {
     coord.evaluateDepthSortPerFrame();
 
     // behind leaf → wrapper parts (BSP order) → front leaf.
-    expect(behindLeaf.renderOrder).toBe(0);
-    expect(parts.map((m) => m.renderOrder)).toEqual([1, 2]);
-    expect(frontLeaf.renderOrder).toBe(3);
+    expect(behindLeaf.renderOrder).toBe(1);
+    expect(parts.map((m) => m.renderOrder)).toEqual([2, 3]);
+    expect(frontLeaf.renderOrder).toBe(4);
   });
 
   it('camera inside wrapper A: wrapper B behind still draws first, A keeps exact interior BSP order', async () => {
@@ -1893,18 +1988,18 @@ describe('depth-sort coordinator', () => {
 
     coord.evaluateDepthSortPerFrame();
 
-    // B (mean view-z −50) is globally farther than A (mean 0) → ranks 0..1.
-    expect(partsB.map((m) => m.renderOrder)).toEqual([0, 1]);
+    // B (mean view-z −50) is globally farther than A (mean 0) → ranks 1..2.
+    expect(partsB.map((m) => m.renderOrder)).toEqual([1, 2]);
     // A keeps the exact interior FKN order (eye x=25): part0, part1, part3, part2.
-    expect(partsA.map((m) => m.renderOrder)).toEqual([2, 3, 5, 4]);
+    expect(partsA.map((m) => m.renderOrder)).toEqual([3, 4, 6, 5]);
   });
 
   it('clears renderOrder to 0 when a mesh is no longer order-dependent (additive)', async () => {
     const coord = await loadCoordinator();
     coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
 
-    // Two leaves so the NEARER one carries a nonzero global rank — a
-    // single mesh would rank 0 and be indistinguishable from "cleared".
+    // Two leaves so the NEARER one carries a later live rank; switching it to
+    // additive must still clear that rank back to the reserved default 0.
     const far = makeGSplatsMesh(2, 'normal');
     far.geometry.boundingSphere!.center.set(0, 0, -30);
     const near = makeGSplatsMesh(2, 'normal');
@@ -1913,7 +2008,7 @@ describe('depth-sort coordinator', () => {
     coord.noteDepthSortCommit(near, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     await flush();
     coord.evaluateDepthSortPerFrame();
-    expect(near.renderOrder).toBe(1); // biased while normal
+    expect(near.renderOrder).toBe(2); // biased while normal
 
     // Switch to a commutative mode — renderOrder bias must be cleared so it
     // doesn't strand a stale ordering (additive is order-independent).
@@ -2659,9 +2754,9 @@ describe('depth-sort coordinator — points integration', () => {
 
     coord.evaluateDepthSortPerFrame();
 
-    expect(farPoints.renderOrder).toBe(0);
-    expect(midPoints.renderOrder).toBe(1);
-    expect(nearGSplats.renderOrder).toBe(2);
+    expect(farPoints.renderOrder).toBe(1);
+    expect(midPoints.renderOrder).toBe(2);
+    expect(nearGSplats.renderOrder).toBe(3);
   });
 
   it('camera motion past the angle threshold re-sorts a points node (Phase 3 scheduler)', async () => {

@@ -222,6 +222,7 @@ export function initDimensionSliders(ctx: DimNavSetupCtx): void {
       dimensionRanges,
       dimensionNames,
       dimensionUnits,
+      selectedDimension: ctx.getSelectedDimension(),
     });
     ctx.setDimensionSliders(sliders);
     ctx.panelCoordinator.setDimensionSliders(sliders);

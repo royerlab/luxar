@@ -13,6 +13,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from luxar._zarr_compat import consolidate, open_group
 from luxar.conftest import find_repo_relative_file, read_ts_number_const
 from luxar.core.group.lod.group import MAX_COVERAGE_FRACTION
 from luxar.core.group.partition import serialized_bsp_tree_separates
@@ -53,6 +54,40 @@ from luxar.demos.demo_biodiversity_planetary_scale import (
     taxon_slot,
     tile_count_for,
 )
+
+
+def test_keep_stale_reuses_an_existing_scene_with_a_mismatched_marker(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    output_path = tmp_path / "biodiversity.luxar.zarr"
+    group = open_group(output_path, mode="w")
+    consolidate(group)
+    monkeypatch.setattr(demo_module, "RECOMPUTE", False)
+    monkeypatch.setattr(demo_module, "KEEP_STALE", True)
+    monkeypatch.setattr(demo_module, "scene_marker_matches", lambda _path: False)
+
+    assert demo_module.load_or_build_scene(output_path) == output_path
+
+
+def test_keep_stale_rebuilds_an_unfinished_scene(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    output_path = tmp_path / "biodiversity.luxar.zarr"
+    open_group(output_path, mode="w")
+    monkeypatch.setattr(demo_module, "RECOMPUTE", False)
+    monkeypatch.setattr(demo_module, "KEEP_STALE", True)
+    monkeypatch.setattr(demo_module, "scene_marker_matches", lambda _path: False)
+    monkeypatch.setattr(
+        demo_module,
+        "load_gbif",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("rebuild reached")
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="rebuild reached"):
+        demo_module.load_or_build_scene(output_path)
+
 
 # ---------------------------------------------------------------------------
 # lonlat_to_xyz

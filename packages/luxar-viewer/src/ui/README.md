@@ -1074,13 +1074,15 @@ Override default styles:
 ### DimensionSliders
 
 Constructed with `SliderConfig` (`container`, `dims`, `dimensionRanges`,
-`dimensionNames`, optional `dimensionUnits`). Slider movements propagate
-through `sceneDimsManager.setDimensionValue()` rather than a local event
-emitter, so there is no `on()` / `setDimensions()` / `setValue()` API.
+`dimensionNames`, optional `dimensionUnits`, optional `selectedDimension`).
+Slider movements propagate through `sceneDimsManager.setDimensionValue()`
+rather than a local event emitter, so there is no `on()` / `setDimensions()` /
+`setValue()` API.
 
 | Method                         | Description                                   |
 | ------------------------------ | --------------------------------------------- |
 | `setAnimationManager(manager)` | Connect animation manager and build controls  |
+| `setSelectedDimension(slot)`   | Set the dimension the `[` / `]` keys target   |
 | `toggle()`                     | Toggle slider panel visibility                |
 | `setVisible(visible)`          | Explicitly show/hide the panel                |
 | `hide()`                       | Hide the panel                                |

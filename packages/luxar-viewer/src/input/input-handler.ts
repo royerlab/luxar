@@ -15,7 +15,7 @@
  *
  * Key interaction patterns:
  * - [ ] keys navigate through dimensions with adaptive step sizes
- * - Number keys (1-9) select which dimension to control
+ * - Number keys (1-9) select which non-displayed dimension to control
  * - Space bar toggles fullscreen mode
  * - Ctrl+wheel adjusts field of view, Shift+wheel rolls the view axis
  * - P key toggles performance statistics
@@ -52,6 +52,7 @@ import {
   computeDimensionStep,
   resolveSelectedDimension,
 } from './input-handler/dimension-navigation/compute-step';
+import { describeNavigableKeys } from './input-handler/dimension-navigation/selection';
 import { PanelCoordinator } from './input-handler/commands/panel-coordinator';
 import { WindowEventHandler } from './input-handler/window-events/window-event-handler';
 import { registerAllKeyBindings } from './input-handler/key-bindings/register-all';
@@ -379,7 +380,7 @@ export class InputHandler {
    * inputHandler.initDimensionSliders();
    *
    * // Now users can:
-   * // - Press 1-9 to select dimension
+   * // - Press 1-9 to select a non-displayed dimension
    * // - Press [ ] to navigate selected dimension
    * // - Use sliders to navigate visually
    * ```
@@ -858,17 +859,35 @@ export class InputHandler {
    * @private
    */
   private handleDimensionNavigation(direction: -1 | 1): void {
+    const dims = sceneDimsManager.getDims();
+    const ranges = sceneDimsManager.getDimensionRanges();
     const step = computeDimensionStep(
       direction,
       this.selectedDimension,
-      sceneDimsManager.getDims(),
-      sceneDimsManager.getDimensionRanges(),
+      dims,
+      ranges,
       // The animation menu's per-dimension Step override also drives [ / ]
       // (user decision: one quantum for animation + keyboard; the slider
       // wheel/drag deliberately stay on the dimension's own base step).
       (d) => this.animationManager?.getStepSize(d) ?? null
     );
-    if (!step || !step.changed) return;
+    if (!step) return;
+    if (!step.changed) {
+      const range = ranges?.[step.targetDim];
+      const bound = range?.[direction > 0 ? 1 : 0];
+      const current = dims?.currentStep[step.targetDim];
+      const isCyclic = dims?.metadata?.[step.targetDim]?.cyclic || false;
+      if (!isCyclic && bound !== undefined && current === bound) {
+        const name =
+          sceneDimsManager.getDimensionNames()[step.targetDim] || `Dim ${step.targetDim}`;
+        const categories = dims?.metadata?.[step.targetDim]?.categories;
+        const category = categories?.[Math.round(bound)];
+        const boundLabel = category !== undefined ? category : bound;
+        const edge = direction > 0 ? 'maximum' : 'minimum';
+        notifier.toast(`${name} is already at its ${edge} (${boundLabel}).`);
+      }
+      return;
+    }
 
     sceneDimsManager.setDimensionValue(step.targetDim, step.newValue);
     this.animationController.startAnimation();
@@ -881,18 +900,22 @@ export class InputHandler {
    * switch between controlling different non-displayed dimensions with
    * the [ and ] navigation keys.
    *
-   * @param index - Zero-based dimension index to select
+   * @param index - Zero-based position in the non-displayed dimension list
    * @private
    */
   private selectDimension(index: number): void {
-    const result = resolveSelectedDimension(index, sceneDimsManager.getDims());
+    const dims = sceneDimsManager.getDims();
+    const result = resolveSelectedDimension(index, dims);
     if (result.selectedDimension !== null) {
       this.selectedDimension = result.selectedDimension;
+      this.dimensionSliders?.setSelectedDimension(result.selectedDimension);
     } else if ('navigableCount' in result) {
+      const message = describeNavigableKeys(index, dims, sceneDimsManager.getDimensionNames());
       log.info(
         Modules.INPUT,
         `Dimension ${index + 1} not available (only ${result.navigableCount} non-displayed dimensions)`
       );
+      notifier.toast(message);
     }
   }
 

@@ -88,6 +88,7 @@ from ._compiler.labels.text_labels import (
 from ._compiler.node_common import prepare_transform_attrs as _prepare_transform_attrs
 from ._compiler.node_common import validate_node_path as _validate_node_path
 from ._compiler.node_common import validate_render_attrs as _validate_render_attrs
+from ._compiler.node_common import warn_if_over_element_cap
 
 # Ordering functions will be imported locally where needed to avoid circular imports
 
@@ -943,6 +944,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 # `record_forwarded_sort_order` treats False exactly as absent,
                 # and a `dict[str, bool]` unpack is checked against every typed
                 # parameter it could bind to — which now includes `keys`.
+                _skip_element_cap_warning=True,
                 _return_sort_order=labelled or keyed,
             )
             # POP, not read: the permutation is only needed to build the union
@@ -962,6 +964,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         group.attrs["n_points"] = n_points_total
         group.attrs["n_additive_sublods"] = n_levels
         group.attrs["position_bounds"] = global_bounds
+        warn_if_over_element_cap("points", n_points_total, group.name)
         if extend_to_all:
             group.attrs["extend_to_all"] = extend_to_all
 
@@ -1096,6 +1099,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 # `record_forwarded_sort_order` treats False exactly as absent,
                 # and a `dict[str, bool]` unpack is checked against every typed
                 # parameter it could bind to — which now includes `keys`.
+                _skip_element_cap_warning=True,
                 _return_sort_order=labelled or keyed,
             )
             # POP, not read: the permutation is only needed to build the union
@@ -1121,6 +1125,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         group.attrs["n_segments"] = n_segments_total
         group.attrs["n_additive_sublods"] = n_levels
         group.attrs["position_bounds"] = global_bounds
+        warn_if_over_element_cap("lines", n_segments_total, group.name)
         if extend_to_all:
             group.attrs["extend_to_all"] = extend_to_all
 

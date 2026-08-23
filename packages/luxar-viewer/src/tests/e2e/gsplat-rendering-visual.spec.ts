@@ -19,6 +19,7 @@ import {
   waitForRenderStable,
   assertNoShaderErrors,
   getElementPixelStats,
+  placeCameraAt,
 } from './helpers';
 
 const FIXTURES_BASE = 'http://localhost:9000/packages/luxar-viewer/tests/fixtures';
@@ -57,19 +58,28 @@ test.describe('GSplats visual correctness', () => {
     await waitForLuxarReady(page);
     await waitForRenderStable(page);
 
+    // `placeCameraAt` rather than a raw `camera.position.set` + `controls.update()`:
+    // the controls' own target/orientation/distance are authoritative, so an
+    // externally written position is overwritten by the next `update()` unless
+    // `reinitialize()` re-derives from it first (#1930). Without it these four
+    // "rotations" all rendered the same settled opening pose.
+    //
+    // The returned placement is CHECKED, not discarded: it is the only thing
+    // standing between this test and going silently inert again. `null` means
+    // the debug camera was missing, `viaOrbitControls === false` means nothing
+    // re-derived the write, and the coordinates prove the camera is where this
+    // loop asked rather than back at the framing pose.
     const angles = [0, Math.PI / 6, Math.PI / 3, Math.PI / 2];
+    const r = 5;
     for (const a of angles) {
-      await page.evaluate((angle) => {
-        const debug = (window as any).__luxarDebug;
-        if (debug?.camera) {
-          const r = 5;
-          debug.camera.position.set(r * Math.sin(angle), 0, r * Math.cos(angle));
-          debug.camera.lookAt(0, 0, 0);
-          debug.camera.updateMatrixWorld(true);
-          if (debug.controls?.update) debug.controls.update();
-        }
-        if (typeof debug?.renderOnce === 'function') debug.renderOnce();
-      }, a);
+      const want = { x: r * Math.sin(a), y: 0, z: r * Math.cos(a) };
+      const placed = await placeCameraAt(page, want, { target: { x: 0, y: 0, z: 0 } });
+      expect(placed, `the camera placement at angle ${a} did not run`).not.toBeNull();
+      expect(placed!.viaOrbitControls, `angle ${a}: orbit controls did not re-derive`).toBe(true);
+      expect(placed!.x, `angle ${a}: camera x`).toBeCloseTo(want.x, 3);
+      expect(placed!.y, `angle ${a}: camera y`).toBeCloseTo(want.y, 3);
+      expect(placed!.z, `angle ${a}: camera z`).toBeCloseTo(want.z, 3);
+      expect(placed!.distance, `angle ${a}: camera distance from the pivot`).toBeCloseTo(r, 3);
       await waitForRenderStable(page);
       await assertNoShaderErrors(page);
     }

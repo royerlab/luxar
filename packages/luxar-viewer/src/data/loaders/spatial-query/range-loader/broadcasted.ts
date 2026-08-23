@@ -33,6 +33,8 @@ export async function loadBroadcasted(
 
   const fullData = await readArray(array, undefined, abortOptions(ctx.signal));
   const broadcastValue = fullData.data as Float32Array | Uint8Array | Uint16Array;
+  // Changing this cast requires re-deriving the writer's
+  // positive_scalar_round_trip_slack chunk-bound allowance.
   const valueAsFloat32 =
     broadcastValue instanceof Float32Array ? broadcastValue : new Float32Array(broadcastValue);
 

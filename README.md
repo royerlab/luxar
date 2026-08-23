@@ -554,7 +554,7 @@ Points in nD space are treated as **hyperspheres**. When viewing a 3D slice:
 
 | Key | Action |
 |-----|--------|
-| `1-9` | Select dimension to navigate |
+| `1-9` | Select a non-displayed dimension to navigate |
 | `[` / `]` | Step backward/forward in selected dimension |
 | `N` | Toggle dimension panel |
 
