@@ -83,6 +83,20 @@ export interface PickResult {
   brightness: number;
   /** Reference to the main scene object */
   mainNode: THREE.Object3D;
+  /**
+   * Canvas-local cursor position this pick was taken at, in CSS pixels —
+   * the untransformed `(screenX, screenY)` handed to `performPick`, NOT the
+   * lens-corrected or pick-buffer-scaled coordinate used for the readback.
+   *
+   * Carried so a consumer holding onto a pick can check the cursor is still
+   * where the pick happened (issue #1917: a click acts on the settled hover
+   * pick). Strictly this is belt-and-braces — any real mouse movement fires
+   * `mousemove`, which bumps the generation counter and invalidates such a
+   * cache anyway — but it keeps the staleness check self-contained instead of
+   * resting on that invariant holding somewhere else forever.
+   */
+  screenX: number;
+  screenY: number;
 }
 
 /** Size of the pick buffer in pixels (5x5 = 25 pixels). */
@@ -383,16 +397,63 @@ export class PickingSystem {
     this.scheduler.markDirty();
   }
 
-  /** Update camera reference (e.g., after perspective ↔ orthographic swap). */
+  /**
+   * Update camera reference (e.g., after perspective ↔ orthographic swap).
+   *
+   * Routed through {@link markDirty} rather than setting `_dirty` directly:
+   * swapping the camera reprojects every element on screen, so besides
+   * re-rendering the pick buffer it must also advance the generation counter
+   * and fade the now-stale tooltip. Setting `_dirty` alone left an
+   * already-delivered `PickResult` looking valid — the same family of bug as
+   * an FOV edit (#1916) — so a click after an ortho toggle with a stationary
+   * cursor acted on whatever used to be under it (#1917).
+   */
   setCamera(camera: THREE.Camera): void {
     this.camera = camera;
-    this._dirty = true; // Must re-render pick buffer with new projection
-    this.scheduler.markDirty();
+    this.markDirty();
   }
 
   /** Set post-processing reference for lens distortion correction. */
   setPostProcessing(pp: PostProcessingManager | null): void {
     this.postProcessing = pp;
+  }
+
+  /**
+   * Monotonic generation counter for pick validity (issue #1917).
+   *
+   * Advances on EVERY event that can make an already-delivered `PickResult`
+   * no longer describe what is under the cursor: `markDirty()` (camera move
+   * via the controls' `change`, window resize, perspective ↔ ortho swap,
+   * a FOV edit via `projection-changed`, the layers-panel invalidator),
+   * `onMouseMove()`, `onMouseLeave()`, `dispose()`, and the start of each
+   * `performPick`. A consumer that caches a result alongside this value can
+   * tell, in O(1) and synchronously, whether the cache still describes
+   * reality — which is what makes click-to-act possible without a fresh GPU
+   * readback (and therefore without spending the browser's transient user
+   * activation on an `await`).
+   *
+   * Deliberately NOT advanced by {@link suppress}: pointerdown → controls
+   * `start` → `suppress(true)` is the FIRST half of an ordinary click, so
+   * treating it as invalidating would make every click refuse itself.
+   */
+  get pickGeneration(): number {
+    return this._pickSeq;
+  }
+
+  /**
+   * Order-stable signature of the effectively-visible registered set, right
+   * now (issue #1917).
+   *
+   * Companion to {@link pickGeneration}, and not redundant with it: hiding or
+   * showing a layer from the layers panel changes what is pickable WITHOUT
+   * dirtying the buffer — `applyVisibility` in `ui/layers/layer-apply.ts`
+   * deliberately only calls `requestRender()`. `performPick` already
+   * recomputes and compares this before trusting its cached buffer (see
+   * {@link _lastVisibleSig}); exposing it lets a cached-result consumer make
+   * the same check.
+   */
+  get visibleSignature(): number {
+    return this.computeVisibleSig();
   }
 
   /**
@@ -619,7 +680,7 @@ export class PickingSystem {
     // available on both WebGLRenderer and WebGPURenderer in r185 —
     // a uniform API that works on both backends. See
     // PICKING_DESIGN.md for the 1-frame-latency rationale.
-    const result = await this.readbackAndVote();
+    const result = await this.readbackAndVote(screenX, screenY);
     // Drop the result if a newer pick/move/dirty/leave superseded us while
     // the readback was in flight — emitting it would clobber fresher state
     // with a stale tooltip.
@@ -771,7 +832,7 @@ export class PickingSystem {
    * WebGLRenderer and WebGPURenderer in r185. The 1-frame latency
    * on hover is documented in `PICKING_DESIGN.md`.
    */
-  private async readbackAndVote(): Promise<PickResult | null> {
+  private async readbackAndVote(screenX: number, screenY: number): Promise<PickResult | null> {
     // Unified readback. The primitive hides backend signature dispatch,
     // WebGPU row-padding compaction, and Y-orientation flipping —
     // accepting `(x, y)` in canonical **top-down** pick-buffer space and
@@ -803,6 +864,8 @@ export class PickingSystem {
       elementId: resolveOnDiskElementId(nodeEntry.main, winner.elementId),
       brightness: winner.weight,
       mainNode: nodeEntry.main,
+      screenX,
+      screenY,
     };
   }
 }

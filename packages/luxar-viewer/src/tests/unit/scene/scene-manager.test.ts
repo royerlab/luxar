@@ -683,6 +683,106 @@ describe('SceneManager', () => {
     });
   });
 
+  describe('FOV projection invalidation', () => {
+    beforeEach(async () => {
+      await sceneManager.init({ canvas: mockCanvas as any });
+    });
+
+    it('forwards controls changes through the scene change event', () => {
+      const controlsHandler = vi
+        .mocked(sceneManager.controls.addEventListener)
+        .mock.calls.find(([type]) => type === 'change')?.[1];
+      const listener = vi.fn();
+      sceneManager.addEventListener('change', listener);
+
+      expect(controlsHandler).toBeDefined();
+      controlsHandler?.({ type: 'change', target: sceneManager.controls });
+
+      expect(listener).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      [
+        'relative changes used by the FOV slider and modifier-wheel',
+        () => sceneManager.updateFOV(10),
+      ],
+      ['absolute changes used by rendering-settings applies', () => sceneManager.setFov(63)],
+    ])('dispatches scene change after %s', (_name, applyFov) => {
+      const listener = vi.fn();
+      sceneManager.addEventListener('change', listener);
+
+      expect(applyFov()).toBe(true);
+
+      expect(listener).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ['relative update', () => sceneManager.updateFOV(10)],
+      ['absolute update', () => sceneManager.setFov(63)],
+    ])(
+      'does not dispatch scene change when an orthographic %s only updates the stash',
+      (_name, applyFov) => {
+        sceneManager.setControlType('ortho');
+        const listener = vi.fn();
+        sceneManager.addEventListener('change', listener);
+
+        expect(applyFov()).toBe(true);
+
+        expect(listener).not.toHaveBeenCalled();
+      }
+    );
+  });
+
+  describe('clipping projection invalidation', () => {
+    beforeEach(async () => {
+      await sceneManager.init({ canvas: mockCanvas as any });
+    });
+
+    it('dispatches scene change after valid manual clipping planes are applied', () => {
+      const listener = vi.fn();
+      sceneManager.addEventListener('change', listener);
+
+      sceneManager.updateClippingPlanes(0.5, 500);
+
+      expect(sceneManager.camera.near).toBe(0.5);
+      expect(sceneManager.camera.far).toBe(500);
+      expect(listener).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not dispatch scene change when manual clipping planes are rejected', () => {
+      const listener = vi.fn();
+      sceneManager.addEventListener('change', listener);
+
+      sceneManager.updateClippingPlanes(500, 0.5);
+
+      expect(listener).not.toHaveBeenCalled();
+    });
+
+    it('dispatches scene change after automatic clipping planes are applied', () => {
+      const group = new THREE.Group();
+      group.userData.positionBounds = {
+        min: [-5, -5, -5],
+        max: [5, 5, 5],
+      };
+      sceneManager.scene.add(group);
+      const listener = vi.fn();
+      sceneManager.addEventListener('change', listener);
+
+      sceneManager.autoAdjustClippingPlanes();
+
+      expect(listener).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not dispatch scene change when automatic clipping has no bounds to apply', () => {
+      const listener = vi.fn();
+      sceneManager.addEventListener('change', listener);
+
+      sceneManager.autoAdjustClippingPlanes();
+
+      expect(listener).not.toHaveBeenCalled();
+    });
+  });
+
   describe('loadSceneData orchestration', () => {
     // Pin the 7-step call chain and the positionApplied conditional. These
     // tests complement the basic smoke tests in `scene loading` — they spy
@@ -818,6 +918,22 @@ describe('SceneManager', () => {
 
       expect(fovAtFrame).toBe(63);
       expect(sceneManager.currentFov).toBe(63);
+    });
+
+    it('applies an authored FOV preset before auto-framing on a first visit', async () => {
+      const spies = installSpies({
+        viewerConfig: { camera: { fov_preset: '85mm Portrait' } },
+      });
+      let fovAtFrame = 0;
+      spies.autoFrameCamera.mockImplementation(() => {
+        fovAtFrame = sceneManager.currentFov;
+      });
+
+      await sceneManager.loadSceneData('http://example.com/data.zarr', undefined, {
+        applyViewerConfigFov: true,
+      });
+
+      expect(fovAtFrame).toBe(29);
     });
 
     it('uses an authored FOV instead of the cinematic preset when framing', async () => {

@@ -14,6 +14,11 @@ picking/
 └── pick-result-handler.ts   # buildPickResultHandler(ports) — PickResult → hover payload
 ```
 
+The click/context-menu half of the same session lives one folder over, in
+[`../interaction/`](../interaction) — `initPicking` constructs it and registers
+its listeners through the same `EventGroup`, so one `pickingEvents.dispose()`
+still tears the whole session down.
+
 ## `init-picking.ts`
 
 `initPicking({ sceneManager, pickingEvents, previous, getOverlayManager, onSelection?, hasSelectionConsumer? })` returns `{ pickingSystem, labelLoader, imageLabelLoader }` (all `undefined` when picking is intentionally inactive). The flow:
@@ -27,16 +32,16 @@ picking/
 7. **Pick gating** — `pickingSystem.setShouldPick(() => (getOverlayManager()?.hasVisibleHoverOverlay() ?? false) || (hasSelectionConsumer?.() ?? false))` — a disjunction: picks run while there is a visible hover overlay (tooltips) **or** a live embedder `selection` listener, so a label-less scene (which auto-injects no hover overlay) still picks for selection. Both sides are read LIVE, so unsubscribing stops the pick renders without re-initialising the pipeline. No consumer, no work.
 8. **Event wiring** — all listeners are registered through the shared `EventGroup` so a single `pickingEvents.dispose()` removes them:
 
-| Source                                    | Event                       | Action                                                                                                                                                                    |
-| ----------------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `renderer.domElement`                     | `mousemove` (passive)       | `pickingSystem.onMouseMove(e)`                                                                                                                                            |
-| `renderer.domElement`                     | `mouseleave` (passive)      | `pickingSystem.onMouseLeave()` — drops pending cursor                                                                                                                     |
-| `sceneManager.controls` (EventDispatcher) | `change`                    | `pickingSystem.markDirty()`                                                                                                                                               |
-| `sceneManager.controls`                   | `start`                     | `pickingSystem.suppress(true)` + `overlayManager.updateHoverContent(null)`                                                                                                |
-| `sceneManager.controls`                   | `end`                       | `pickingSystem.suppress(false)` — camera-settle re-pick re-arms naturally                                                                                                 |
-| `window`                                  | `resize`                    | `pickingSystem.markDirty()`                                                                                                                                               |
-| `window`                                  | `scroll` (capture, passive) | `pickingSystem.invalidateCanvasRect()` — page scroll moves the canvas on screen without changing the view, so bust just the cached rect (cheap) rather than `markDirty()` |
-| `sceneManager` (EventDispatcher)          | `camera-changed`            | `pickingSystem.setCamera(...)` for perspective ↔ ortho swaps                                                                                                              |
+| Source                           | Event                       | Action                                                                                                                                                                                                                                                                                                                                                   |
+| -------------------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `renderer.domElement`            | `mousemove` (passive)       | `pickingSystem.onMouseMove(e)`                                                                                                                                                                                                                                                                                                                           |
+| `renderer.domElement`            | `mouseleave` (passive)      | `pickingSystem.onMouseLeave()` — drops pending cursor                                                                                                                                                                                                                                                                                                    |
+| `sceneManager` (EventDispatcher) | `change`                    | `pickingSystem.markDirty()` after camera pose or projection changes; FOV and static near/far updates both change a fresh pick render and must dispatch this event. The per-frame dynamic near/far path deliberately stays silent because its triggering camera/geometry change already dirties picking, and dispatching every frame would keep rAF awake |
+| `sceneManager.controls`          | `start`                     | `pickingSystem.suppress(true)` + `overlayManager.updateHoverContent(null)`                                                                                                                                                                                                                                                                               |
+| `sceneManager.controls`          | `end`                       | `pickingSystem.suppress(false)` — camera-settle re-pick re-arms naturally                                                                                                                                                                                                                                                                                |
+| `window`                         | `resize`                    | `pickingSystem.markDirty()`                                                                                                                                                                                                                                                                                                                              |
+| `window`                         | `scroll` (capture, passive) | `pickingSystem.invalidateCanvasRect()` — page scroll moves the canvas on screen without changing the view, so bust just the cached rect (cheap) rather than `markDirty()`                                                                                                                                                                                |
+| `sceneManager` (EventDispatcher) | `camera-changed`            | `pickingSystem.setCamera(...)` for perspective ↔ ortho swaps                                                                                                                                                                                                                                                                                             |
 
 Three.js EventDispatcher sources are registered via `pickingEvents.add(() => …removeEventListener)` since their signatures don't match `EventTarget`.
 
@@ -68,11 +73,47 @@ One narrowed caveat on the element id remains, plus a partial one on ladders —
 
 Ports are narrow structural interfaces (just `getLabel` / `getImageUrl` / `updateHoverContent`) so tests can stub with plain `vi.fn()`s.
 
+## Click actions on the picked element (#1917)
+
+Hovering names an element; clicking it can also _do_ something. The wiring for
+that is `initPicking`'s third responsibility, and it is deliberately built on
+the hover pick rather than on a pick of its own:
+
+- **`../interaction/picked-element-cache.ts`** — retains the settled pick,
+  stamped with `pickingSystem.pickGeneration` + `visibleSignature`, and refuses
+  to hand it back once either has moved (or the cursor has left a 4 px radius).
+  Fed by the handler's `onPicked` port, which fires on exactly the same terms
+  as `onSelection` — what is picked, not what has a tooltip.
+- **`../interaction/element-actions.ts`** — pure resolution of the node's
+  `link` / `copy` / `link_target` attrs into a safe URL and a copy string.
+- **`../interaction/canvas-actions.ts`** — the DOM half: `pointerdown` /
+  `pointerup` / `contextmenu` on the canvas, the shared `openContextMenu`, the
+  clipboard, the pointer cursor.
+
+Why a cache and not a fresh pick on click: there is no synchronous
+"pick at (x, y)", and an `await` on a GPU readback risks spending the browser's
+transient user activation, which turns "open the link" into "popup blocked".
+Acting on the pick the tooltip is already showing is both synchronous and more
+honest about what the user chose.
+
+`PickingSystem.suppress()` deliberately does NOT advance `pickGeneration`,
+because pointerdown → controls `start` → `suppress(true)` is the first half of
+an ordinary click; if it did, every click would refuse itself. Tests pin both
+that and the positive invalidators.
+
+Provisioning note: a node declaring `link` / `copy` counts as a picking
+consumer in its own right, both in the early-return gate and in `shouldPick`.
+Without that, a layer with a link but no labels (a link built from
+`{hover_index}` is perfectly usable) would never pick, and the link would
+silently never fire.
+
 ## See Also
 
 - [`../README.md`](../README.md) — `LuxarApp`'s private support tree (this folder lives under `core/app/`)
 - [`../../../rendering/picking/README.md`](../../../rendering/picking/README.md) — the GPU picking subsystem this folder wires up
 - [`../../../rendering/picking/picking-system/README.md`](../../../rendering/picking/picking-system/README.md) — pure helpers (ray-AABB, vote, settle, lens-distortion) behind `PickingSystem`
+- [`../interaction/`](../interaction) — the click / context-menu half of a picking session
 - `../../../ui/overlay-manager.ts` — `updateHoverContent` + `hasVisibleHoverOverlay` consumers
+- `../../../utils/hover-template.ts` — the `{hover_*}` vocabulary, shared by the tooltip, `link` and `copy`
 - `../../../data/loaders/picking/label-loader.ts` / `picking/image-label-loader.ts` — zarr-backed label fetchers
 - `../../../utils/cross-layer/event-group.ts` — `EventGroup` used for bulk listener teardown

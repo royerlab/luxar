@@ -861,6 +861,18 @@ def create_luxar_scene(fit: GSplatData, labels: np.ndarray, output_path: Path) -
                     cholesky_factors=chol[mask],
                     colors=colors[mask].astype(np.float32),
                     labels=[name_lut[int(lid)] for lid in lids],
+                    # Left-click an organ to look it up; right-click to copy
+                    # its name. The labels here are already bare anatomy
+                    # names ("Liver", "Kidney right"), so `{hover_label}` is
+                    # the whole key and no separate id channel is needed.
+                    # `organ_label_text` returns "" for an unrecognised class
+                    # id, and an empty substitution suppresses the link rather
+                    # than opening a search for nothing.
+                    link=(
+                        "https://en.wikipedia.org/wiki/"
+                        "Special:Search?search={hover_label}"
+                    ),
+                    copy="{hover_label}",
                     opacity=float(opacity),
                     absorption=1.0,
                     blending_mode="volumetric",

@@ -119,6 +119,7 @@ export interface SceneLoadOptions {
  * - Automatic canvas resizing for responsive design
  */
 export class SceneManager extends THREE.EventDispatcher<{
+  /** The view moved or its projection changed; redraw and invalidate picking. */
   change: {};
   'camera-changed': {};
   /**
@@ -295,6 +296,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     this.camera.fov = fov;
     this.camera.updateProjectionMatrix();
     this.updateMaterialsForCurrentCamera();
+    this.dispatchEvent({ type: 'change' });
     return true;
   }
 
@@ -1129,12 +1131,16 @@ export class SceneManager extends THREE.EventDispatcher<{
       );
       return true;
     }
-    return adjustFOV(this.makeCameraMaterialsCtx(), deltaY);
+    const applied = adjustFOV(this.makeCameraMaterialsCtx(), deltaY);
+    if (applied) this.dispatchEvent({ type: 'change' });
+    return applied;
   }
 
   /** Update camera clipping planes with validation. */
   updateClippingPlanes(near: number, far: number): void {
-    applyClippingPlanes(this.camera, near, far);
+    if (applyClippingPlanes(this.camera, near, far)) {
+      this.dispatchEvent({ type: 'change' });
+    }
   }
 
   /**
@@ -1143,7 +1149,9 @@ export class SceneManager extends THREE.EventDispatcher<{
    * the scale-aware controls.
    */
   autoAdjustClippingPlanes(): { near: number; far: number } {
-    return autoAdjustFromBounds(this.makeClippingCtx());
+    const { near, far, applied } = autoAdjustFromBounds(this.makeClippingCtx());
+    if (applied) this.dispatchEvent({ type: 'change' });
+    return { near, far };
   }
 
   /**

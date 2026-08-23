@@ -9,6 +9,7 @@ import zarr
 
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar.core.transforms import prepare_transform_for_zarr, translate
+from luxar.typing_utils.constants import MAX_COPY_CHARS, MAX_LINK_CHARS
 from luxar.validation.base import ValidationError, validate_zarr_attributes
 
 
@@ -2212,3 +2213,298 @@ class TestUnknownRenderAttrRejected:
             assert "scene_dimensions" in root.attrs
             assert "pts" in root
             assert "overlays" in root
+
+
+class TestInteractionTemplateAttrs:
+    """``link`` / ``copy`` / ``link_target`` node attrs (issue #1917).
+
+    These are plain node attrs — they ride ``**attrs`` and need no adder
+    signature — so the ONLY thing standing between an authoring mistake and a
+    click that silently does nothing is the shared attr gate. Every rejection
+    below therefore also asserts that no node leaked onto disk.
+    """
+
+    @staticmethod
+    def _scene(tmpdir: str):
+        zarr_path = Path(tmpdir) / "test.luxar.zarr"
+        compiler = LuxarZarrCompiler(zarr_path)
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        return zarr_path, compiler, scene
+
+    POS = np.random.RandomState(0).rand(50, 3).astype(np.float32) * 10
+
+    def test_templates_round_trip_onto_the_node(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            scene.add_points(
+                "pts",
+                self.POS,
+                labels=[f"L{i}" for i in range(len(self.POS))],
+                link="https://example.org/x/{hover_label}",
+                copy="{hover_label}",
+                link_target="_self",
+            )
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert root["pts"].attrs["link"] == "https://example.org/x/{hover_label}"
+            assert root["pts"].attrs["copy"] == "{hover_label}"
+            assert root["pts"].attrs["link_target"] == "_self"
+
+    def test_link_without_copy_or_target_is_fine(self) -> None:
+        """Each template is independent; only `link_target` needs a companion."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            scene.add_points("pts", self.POS, link="https://example.org/{hover_index}")
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert "link" in root["pts"].attrs
+            assert "link_target" not in root["pts"].attrs
+
+    @pytest.mark.parametrize(
+        "bad_link",
+        [
+            "javascript:alert(1)",
+            "data:text/html,<script>alert(1)</script>",
+            "blob:https://example.org/abc",
+            "file:///etc/passwd",
+            "vbscript:msgbox(1)",
+        ],
+    )
+    def test_non_http_schemes_rejected_before_write(self, bad_link: str) -> None:
+        """`.zattrs` is untrusted and the viewer NAVIGATES to this value, so the
+        check is an allowlist. Each of these would otherwise be a live XSS or
+        local-file vector wired to an ordinary-looking left-click."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            with pytest.raises(ValueError, match="scheme"):
+                scene.add_points("pts", self.POS, link=bad_link)
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert "pts" not in root
+
+    def test_relative_link_rejected_before_write(self) -> None:
+        """A relative template resolves against whatever origin the VIEWER is
+        served from, so a third-party store could aim a click at the embedder's
+        own site."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            with pytest.raises(ValueError, match="absolute"):
+                scene.add_points("pts", self.POS, link="/admin/{hover_label}")
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert "pts" not in root
+
+    @pytest.mark.parametrize(
+        "bad_link",
+        [
+            "https://good.example@evil.example/",
+            "https://user:pass@evil.example/",
+            "https://:pass@evil.example/",
+        ],
+    )
+    def test_embedded_credentials_rejected(self, bad_link: str) -> None:
+        """`https://good.example@evil.example/` navigates to evil.example while
+        READING as good.example — including in the viewer's own
+        'Copy link address'. Nothing legitimate needs userinfo in a scene link."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            with pytest.raises(ValueError, match="credentials"):
+                scene.add_points("pts", self.POS, link=bad_link)
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert "pts" not in root
+
+    def test_hostless_link_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _, compiler, scene = self._scene(tmpdir)
+            with pytest.raises(ValueError, match="no host"):
+                scene.add_points("pts", self.POS, link="https:///nowhere")
+            compiler.finalize()
+
+    def test_placeholders_do_not_break_url_parsing(self) -> None:
+        """The template is validated with `{...}` runs still in place — the
+        point of validating at write time. A parser that choked on them would
+        make the whole gate unusable."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            scene.add_points(
+                "pts",
+                self.POS,
+                link="https://ex.org/{hover_node}/{hover_index}?q={hover_label}#f",
+            )
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert "link" in root["pts"].attrs
+
+    @pytest.mark.parametrize(
+        "bad_target", ["_parent", "_top", "_blank ", "myframe", ""]
+    )
+    def test_bad_link_target_rejected(self, bad_target: str) -> None:
+        """Only the two keywords that imply `noopener`. A near-miss like
+        `"_blank "` is a NAMED target, which the browser opens with a live
+        `window.opener` (reverse tabnabbing)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            with pytest.raises(ValueError, match="link_target"):
+                scene.add_points(
+                    "pts", self.POS, link="https://example.org/", link_target=bad_target
+                )
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert "pts" not in root
+
+    def test_link_target_without_link_rejected(self) -> None:
+        """Inert on its own, and far more often the typo `link_taget=` than a
+        deliberate choice."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            with pytest.raises(ValueError, match="without link"):
+                scene.add_points("pts", self.POS, link_target="_blank")
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert "pts" not in root
+
+    def test_non_string_templates_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _, compiler, scene = self._scene(tmpdir)
+            # The adder rewraps the validator's TypeError as a ValueError
+            # ("Could not add points 'pts': ..."), so match the message rather
+            # than the class.
+            with pytest.raises((TypeError, ValueError), match="link must be a string"):
+                scene.add_points("pts", self.POS, link=42)
+            with pytest.raises((TypeError, ValueError), match="copy must be a string"):
+                scene.add_points("pts2", self.POS, copy=["a"])
+            compiler.finalize()
+
+    def test_oversized_templates_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _, compiler, scene = self._scene(tmpdir)
+            with pytest.raises(ValueError, match="exceeding"):
+                scene.add_points(
+                    "pts", self.POS, link="https://e.org/" + "x" * MAX_LINK_CHARS
+                )
+            with pytest.raises(ValueError, match="exceeding"):
+                scene.add_points("pts2", self.POS, copy="y" * (MAX_COPY_CHARS + 1))
+            compiler.finalize()
+
+    def test_typo_of_link_gets_a_hint(self) -> None:
+        """The attrs are in KNOWN_RENDER_ATTRS rather than the silent
+        `_ALLOWED_NODE_ATTRS`, so a near-miss is advertised."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _, compiler, scene = self._scene(tmpdir)
+            with pytest.raises(ValueError, match="Did you mean 'link'"):
+                scene.add_points("pts", self.POS, lnk="https://example.org/")
+            compiler.finalize()
+
+    def test_templates_accepted_on_mesh(self) -> None:
+        """Mesh runs the same gate but through MESH_RESERVED_ATTRS and its own
+        mesh-only appearance guard, so it needs its own coverage — the other
+        three passing says nothing about it."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            verts = np.array(
+                [[0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0]], dtype=np.float32
+            )
+            faces = np.array([[0, 1, 2], [1, 3, 2]], dtype=np.uint32)
+            scene.add_mesh(
+                "surf",
+                vertices=verts,
+                faces=faces,
+                labels=["a", "b", "c", "d"],
+                link="https://example.org/{hover_label}",
+                copy="{hover_label}",
+                link_target="_self",
+            )
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert root["surf"].attrs["link"] == "https://example.org/{hover_label}"
+            assert root["surf"].attrs["copy"] == "{hover_label}"
+            assert root["surf"].attrs["link_target"] == "_self"
+
+    def test_templates_rejected_on_mesh_too(self) -> None:
+        """The gate must be as strict on mesh as everywhere else."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            verts = np.array(
+                [[0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0]], dtype=np.float32
+            )
+            faces = np.array([[0, 1, 2], [1, 3, 2]], dtype=np.uint32)
+            with pytest.raises(ValueError, match="scheme"):
+                scene.add_mesh(
+                    "surf", vertices=verts, faces=faces, link="javascript:alert(1)"
+                )
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert "surf" not in root
+
+    def test_templates_on_a_partitioned_layer_reach_every_leaf(self) -> None:
+        """`link` is not a COMPOSITING attr, so the adders route it to each
+        `part_<i>` leaf rather than to the wrapper. That is what the viewer
+        relies on: a pick hits a leaf. If this ever flips to wrapper-only, the
+        viewer's ancestor walk still saves it — but the placement is worth
+        pinning, because only one of the two is O(1) at click time."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            n = 200
+            rng = np.random.RandomState(1)
+            pos = (rng.rand(n, 3) * 10).astype(np.float32)
+            scene.add_points(
+                "tiled",
+                pos,
+                labels=[f"p{i}" for i in range(n)],
+                link="https://example.org/{hover_label}",
+                partition={"max_elements": 50},
+            )
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            wrapper = root["tiled"]
+            parts = [k for k in wrapper.keys() if k.startswith("part_")]
+            assert len(parts) > 1, f"expected a real partition, got {parts}"
+            for part in parts:
+                assert (
+                    wrapper[part].attrs["link"] == "https://example.org/{hover_label}"
+                ), f"leaf {part} did not receive the link template"
+
+    def test_templates_on_a_group_node(self) -> None:
+        """Groups go through `write_group`, a different gate call with no
+        reserved set. An author labelling a whole group is plausible."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            scene.add_group("grp", link="https://example.org/g")
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert root["grp"].attrs["link"] == "https://example.org/g"
+
+    def test_templates_accepted_on_every_geometry_type(self) -> None:
+        """All four leaf adders run the same gate, so all four must accept."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            link = "https://example.org/{hover_label}"
+            scene.add_points("pts", self.POS, link=link)
+            scene.add_lines(
+                "lns",
+                np.array(
+                    [[0, 0, 0], [1, 1, 1], [2, 2, 2], [3, 3, 3]], dtype=np.float32
+                ),
+                widths=np.full(4, 0.1, dtype=np.float32),
+                link=link,
+            )
+            scene.add_gsplats(
+                "gs",
+                centers=self.POS[:5],
+                amplitudes=np.ones(5, dtype=np.float32),
+                cholesky_factors=np.tile(
+                    np.array([1.0, 0.0, 1.0, 0.0, 0.0, 1.0], dtype=np.float32), (5, 1)
+                ),
+                link=link,
+            )
+            scene.add_mesh(
+                "mesh",
+                np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float32),
+                np.array([[0, 1, 2]], dtype=np.uint32),
+                link=link,
+            )
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            for name in ("pts", "lns", "gs", "mesh"):
+                assert root[name].attrs["link"] == link
