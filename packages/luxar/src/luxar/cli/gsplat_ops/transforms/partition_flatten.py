@@ -138,10 +138,11 @@ def run_flatten_dataset(
                 aprint("❌ Error: input tree has no leaves")
                 raise typer.Exit(1)
 
-            flat = GSplatData.from_default_selection(
-                node,
+            flat = GSplatData.from_default_selection(node).flattened()
+            flat = GSplatData.from_additive_sublods(
+                list(flat.additive_sublods),
                 stats=stats_after_structure_change(stats),
-            ).flattened()
+            )
             aprint(
                 f"Flattened {len(leaves)} leaf/leaves → {flat.n_splats:,} splats "
                 f"({flat.ndim}D, single matrix-shaped leaf)"

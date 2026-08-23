@@ -42,7 +42,11 @@ def _write_inputs(tmp_path: Path) -> tuple[Path, Path, Path]:
     write_gsplats_tree(
         partition_path,
         data.to_spatial_partition(max_elements=n_splats // 2),
-        fitting_info={"image_min": 600.0},
+        fitting_info={
+            "image_min": 600.0,
+            "psnr_db": 33.3,
+            "fitter_name": "test-fitter",
+        },
     )
     data.save(flat_path)
     np.save(target_path, np.zeros((12, 12, 12), dtype=np.float32))
@@ -180,6 +184,29 @@ def test_default_partition_load_retains_requested_root_stats(tmp_path: Path) -> 
     assert data.n_substitutive == 1
     assert data.n_additive_sublods == 1
     assert data.stats["image_min"] == 600.0
+
+
+def test_flatten_keeps_root_stats_out_of_leaf_lod_stats(tmp_path: Path) -> None:
+    import zarr
+
+    partition_path, _, _ = _write_inputs(tmp_path)
+    output_path = tmp_path / "flattened.gsplats.zarr"
+    source = zarr.open_group(str(partition_path), mode="r")
+    source_timestamp = source.attrs["timestamp"]
+
+    result = CliRunner().invoke(
+        app,
+        ["gsplat", "flatten", str(partition_path), str(output_path)],
+    )
+
+    assert result.exit_code == 0, result.output
+    output = zarr.open_group(str(output_path), mode="r")
+    lod_stats = dict(output.attrs.get("lod_stats", {}))
+    assert source_timestamp not in lod_stats.values()
+    assert "timestamp" not in lod_stats
+    assert output["fitting"].attrs["psnr_db"] == 33.3
+    assert output["fitting"].attrs["fitter_name"] == "test-fitter"
+    assert output["pipeline"].attrs["image_min"] == 600.0
 
 
 @pytest.mark.parametrize(
