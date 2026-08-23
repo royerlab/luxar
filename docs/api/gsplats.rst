@@ -169,6 +169,8 @@ Save and load Gaussian splat results.
 
 .. autofunction:: luxar.gsplats.io.load_gsplats
 
+.. autofunction:: luxar.gsplats.io.load_default_gsplats
+
 Utilities
 ---------
 

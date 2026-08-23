@@ -350,7 +350,8 @@ luxar gsplat filter input.gsplats.zarr out.gsplats.zarr --soft-highpass p90     
 
 #### `luxar gsplat partition`
 Partition a dataset into a single `kind=partition` file via spatial BSP
-(`--rule median|midpoint|sah`).
+(`--rule median|midpoint|sah`). The input must be flat (matrix-shaped); flatten
+partition or nested-tree inputs first with `luxar gsplat flatten`.
 ```bash
 luxar gsplat partition input.gsplats.zarr part.gsplats.zarr --parts 4
 luxar gsplat partition input.gsplats.zarr part.gsplats.zarr --max-elements 100000
@@ -507,7 +508,10 @@ luxar gsplat denoise data.zarr.zip out.zarr --channel 0 --timepoint 5 --denoise-
 **Options**: `--h` (manual NLM h value), `--patch-size` (default 3), `--search-distance` (default 5), `--backend` (auto/cuda/pytorch/skimage), `--device/-d` (auto/cpu/cuda/mps), `--denoise-2d` (slice-by-slice), `--channel`, `--timepoint`, `--array-key`.
 
 #### `luxar gsplat napari`
-Open a Gaussian splat dataset in napari for visual inspection. Renders the splats back to a volume and displays them alongside splat center points. Requires `napari` to be installed (`pip install napari[all]`).
+Open a Gaussian splat dataset in napari for visual inspection. Partition and
+nested trees use their default-selected leaves. Renders the splats back to a
+volume and displays them alongside splat center points. Requires `napari` to be
+installed (`pip install napari[all]`).
 ```bash
 luxar gsplat napari splats.gsplats.zarr
 ```

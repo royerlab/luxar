@@ -484,7 +484,8 @@ luxar gsplat convert splats.gsplats.zarr scene.luxar.zarr --colormap plasma --to
 # back into [0, 1] with --intensity/exposure and use `None`, or accept ACES's
 # filmic rolloff. Decide with an actual render, not from first principles.
 
-# Render gsplats back to a background-relative volume
+# Render gsplats back to a background-relative volume. Partition and nested
+# trees render their default-selected leaves without first flattening the store.
 luxar gsplat render splats.gsplats.zarr rendered.npy --shape 128,128,128
 
 # Compare reconstruction quality against original (PSNR, SSIM, MSE)
@@ -720,7 +721,8 @@ luxar gsplat migrate-format old_pyr/ v3.gsplats.zarr                          # 
 luxar gsplat reencode fit.gsplats.zarr fit_u8.gsplats.zarr -e memory      # uint8 (smallest, ~93 dB)
 luxar gsplat reencode fit.gsplats.zarr fit_f32.gsplats.zarr -e precision  # float32 (exact/archival)
 
-# Partition into a single kind=partition file via spatial BSP (--indices removed)
+# Partition a flat (matrix-shaped) store into one kind=partition file via spatial
+# BSP (--indices removed). A partition/nested input must be `flatten`ed first.
 luxar gsplat partition splats.gsplats.zarr part.gsplats.zarr --parts 4               # target part count
 luxar gsplat partition splats.gsplats.zarr part.gsplats.zarr --max-elements 100000   # per-part cap
 luxar gsplat partition splats.gsplats.zarr part.gsplats.zarr --parts 4 --rule sah    # median|midpoint|sah
@@ -749,7 +751,8 @@ luxar gsplat denoise volume.zarr denoised.zarr
 luxar gsplat denoise volume.zarr denoised.npy --h 0.03
 luxar gsplat denoise data.zarr.zip out.zarr --channel 0 --timepoint 5 --denoise-2d
 
-# Open gsplat dataset in napari for visual inspection
+# Open a gsplat dataset in napari. Partition/nested trees use their
+# default-selected leaves.
 luxar gsplat napari splats.gsplats.zarr
 
 # Retrofit Q·e quality stamps onto an EXISTING .gsplats.zarr, in place (no

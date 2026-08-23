@@ -49,10 +49,8 @@ def _write_inputs(tmp_path: Path) -> tuple[Path, Path, Path]:
     return partition_path, flat_path, target_path
 
 
-def test_render_partition_matches_sum_of_default_leaves(tmp_path: Path) -> None:
-    from luxar.gsplats.gsplat_data import GSplatData
-    from luxar.gsplats.io.load_gsplats import load_gsplat_node
-    from luxar.gsplats.tree import iter_default_leaves
+def test_render_partition_matches_flat_default_selection(tmp_path: Path) -> None:
+    from luxar.gsplats.io import load_default_gsplats
 
     partition_path, _, _ = _write_inputs(tmp_path)
     output_path = tmp_path / "render.npy"
@@ -75,20 +73,94 @@ def test_render_partition_matches_sum_of_default_leaves(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     actual = np.load(output_path)
-    node, _ = load_gsplat_node(partition_path)
-    expected = sum(
-        (
-            GSplatData.from_tree(leaf).render_to_volume(
-                shape=(12, 12, 12),
-                device="cpu",
-                truncate=3,
-            )
-            for leaf in iter_default_leaves(node)
-        ),
-        np.zeros((12, 12, 12), dtype=np.float32),
+    expected = load_default_gsplats(partition_path).render_to_volume(
+        shape=(12, 12, 12),
+        device="cpu",
+        truncate=3,
     )
     np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-6)
     assert "Loaded 6 splats (3D)" in result.output
+
+
+def test_render_flat_does_not_allocate_accumulator(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, flat_path, _ = _write_inputs(tmp_path)
+    output_path = tmp_path / "render-flat.npy"
+    original_zeros = np.zeros
+
+    def reject_output_accumulator(
+        shape: tuple[int, ...], *args: object, **kwargs: object
+    ) -> np.ndarray:
+        dtype = kwargs.get("dtype", args[0] if args else float)
+        if tuple(shape) == (12, 12, 12) and np.dtype(dtype) == np.dtype(np.float32):
+            raise AssertionError("flat render allocated an output accumulator")
+        return original_zeros(shape, *args, **kwargs)
+
+    monkeypatch.setattr(np, "zeros", reject_output_accumulator)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "gsplat",
+            "render",
+            str(flat_path),
+            str(output_path),
+            "--shape",
+            "12,12,12",
+            "--device",
+            "cpu",
+            "--truncate",
+            "3",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert np.load(output_path).shape == (12, 12, 12)
+
+
+def test_render_auto_shape_uses_default_level_bounds(tmp_path: Path) -> None:
+    from luxar.gsplats.gsplat_data import GSplatData, SubstitutiveLevel
+
+    def make_data(centers: np.ndarray) -> GSplatData:
+        n_splats = len(centers)
+        cholesky = np.zeros((n_splats, 6), dtype=np.float32)
+        cholesky[:, [0, 2, 5]] = 0.5
+        return GSplatData(
+            centers=centers,
+            amplitudes=np.ones(n_splats, dtype=np.float32),
+            cholesky_factors=cholesky,
+        )
+
+    fine = make_data(np.array([[0, 0, 0], [3, 3, 3], [6, 6, 6]], dtype=np.float32))
+    coarse = make_data(np.array([[18, 18, 18]], dtype=np.float32))
+    levels = GSplatData.from_substitutive_levels(
+        [
+            SubstitutiveLevel(additive_sublods=fine.additive_sublods, level_index=0),
+            SubstitutiveLevel(additive_sublods=coarse.additive_sublods, level_index=1),
+        ]
+    )
+    input_path = tmp_path / "levels.gsplats.zarr"
+    output_path = tmp_path / "render-levels.npy"
+    levels.save(input_path)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "gsplat",
+            "render",
+            str(input_path),
+            str(output_path),
+            "--device",
+            "cpu",
+            "--truncate",
+            "3",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert np.load(output_path).shape == (7, 7, 7)
+    assert "Auto shape from bounding box: (7, 7, 7)" in result.output
 
 
 def test_default_partition_load_retains_requested_root_stats(tmp_path: Path) -> None:
