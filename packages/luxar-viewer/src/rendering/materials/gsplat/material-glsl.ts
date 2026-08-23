@@ -516,7 +516,7 @@ export class GSplatMaterial
       cov2DDilation: this.uniforms.uCov2DDilation.value,
     });
 
-    // Copy blend equation settings for custom blending (max/normal —
+    // Copy blend equation settings for custom blending (max/normal/opaque —
     // additive/luminous use plain AdditiveBlending since the unification)
     if (this.blending === THREE.CustomBlending) {
       cloned.blendEquation = this.blendEquation;

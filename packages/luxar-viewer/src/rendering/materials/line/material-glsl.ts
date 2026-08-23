@@ -469,7 +469,7 @@ export class LineMaterial
       primitive: this.userData.linePrimitive as LinePrimitive | undefined,
     });
 
-    // Copy blend equation settings for custom blending (max mode)
+    // Copy blend equation settings for custom blending (max/opaque modes)
     if (this.blending === THREE.CustomBlending) {
       cloned.blendEquation = this.blendEquation;
       cloned.blendSrc = this.blendSrc;

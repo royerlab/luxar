@@ -564,7 +564,7 @@ export class PointTSLMaterial
     // Mirrors Line/GSplat clone: the constructor's
     // `applyBlendingMode` (driven by `blendingMode`) sets the TSL
     // graph + framebuffer state correctly. Copy custom blend
-    // factors verbatim for max mode so any post-construction
+    // factors verbatim for max/opaque modes so any post-construction
     // overrides on the source carry through.
     if (this.blending === THREE.CustomBlending) {
       cloned.blendEquation = this.blendEquation;

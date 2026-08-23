@@ -301,9 +301,10 @@ The clone path:
 2. Copies the runtime-only camera uniforms (`pointSizeFactor`, `maxPointSize`,
    `uInvGamma`, `radiusScale`) verbatim so the clone starts at
    the current camera frame, not the default.
-3. For `THREE.CustomBlending` (`max` mode), copies `blendEquation/Src/Dst` from
-   the source — the constructor would set canonical defaults, but if the source
-   had any post-construction overrides, copy carries them through.
+3. For `THREE.CustomBlending` (`max` or `opaque` mode), copies
+   `blendEquation/Src/Dst` from the source — the constructor would set canonical
+   defaults, but if the source had any post-construction overrides, copy carries
+   them through.
 
 Disposal is inherited from the base material class; `MaterialManager`
 subscribes to the synchronous `dispose` event and cleans up its registry +

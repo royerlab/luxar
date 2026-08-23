@@ -496,7 +496,7 @@ export class PointMaterial
       scalarRange: this.userData.scalarRange ?? undefined,
     });
 
-    // Copy custom blend factors for max mode (the constructor's
+    // Copy custom blend factors for max/opaque modes (the constructor's
     // applyBlendingMode already set them, but copy verbatim so any
     // post-construction overrides on the source carry through).
     if (this.blending === THREE.CustomBlending) {
