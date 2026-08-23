@@ -176,7 +176,9 @@ async function overlapOpaqueInFrontOfLuminous(
     const nudgeDistance = Math.min(worldRadius(opaque), worldRadius(luminous));
     const targetWorldCenter = alignedOpaqueCenter
       .clone()
-      .add(cameraPosition.sub(alignedOpaqueCenter).normalize().multiplyScalar(nudgeDistance));
+      .add(
+        cameraPosition.clone().sub(alignedOpaqueCenter).normalize().multiplyScalar(nudgeDistance)
+      );
     const alignedCenterInParent = opaque.parent.worldToLocal(alignedOpaqueCenter.clone());
     const targetCenterInParent = opaque.parent.worldToLocal(targetWorldCenter);
     opaque.position.add(targetCenterInParent.sub(alignedCenterInParent));
