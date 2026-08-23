@@ -32,8 +32,8 @@ streamed out of the ZIP in blocks (measured 204 MiB/s, ~3 min for the whole
 thing) and projected on the fly through a PCA basis down to `--pca-dim`
 (default 128, capturing ~58% of the variance) fitted on a 300k-row uniform
 subsample. Only that `(N, 128) float32` matrix — 1.6 GB — is cached and handed
-to UMAP. Re-running UMAP at other settings costs nothing: the PCA cache is keyed
-on `--pca-dim` alone and the 30 GB ZIP is not touched again.
+to UMAP. The PCA cache is keyed on `--pca-dim` alone, so the 3072-D vectors are
+not re-read; `papers.csv` still comes from the ZIP, so keep the archive.
 
 DOWNLOAD & CACHING
 ==================
@@ -456,8 +456,8 @@ def build_pca_matrix(
 
     The raw matrix is never materialized — at full scale it is 40 GB — and peak
     RSS is bounded by the fit subsample (3.7 GB). The result is cached under
-    ``cache_dir`` keyed on ``pca_dim`` only, so re-running UMAP at other settings
-    never re-reads the 30 GB ZIP.
+    ``cache_dir`` keyed on ``pca_dim`` only, so later projections do not re-read
+    the 3072-D vectors. The caller still reads ``papers.csv`` from the ZIP.
 
     Args:
         zip_path: The embeddings ZIP.
