@@ -585,8 +585,8 @@ class TestTheFitCacheKeyMovesWithEveryKnob:
             if isinstance(call, ast.Call)
             and isinstance(call.func, ast.Name)
             and call.func.id in call_names
-            for kw in call.keywords
-            for node in ast.walk(kw.value)
+            for value in [*call.args, *(kw.value for kw in call.keywords)]
+            for node in ast.walk(value)
             if isinstance(node, ast.Name) and node.id.isupper()
         }
         assert found == call_names, "could not find every guarded call"
