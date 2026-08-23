@@ -951,8 +951,14 @@ rewrites a store must apply all three rules:
   That complement is taken **only from a list**. A written `null` and an absent
   key are indistinguishable to the reader (`_barrier_from_coarsen_dims`), so both
   mean *no provenance* and fall through to `detect_barrier_dims` auto-detection —
-  which is not "no barrier": on an integer-gridded stacked axis it flags that
-  axis. "Coarsen everything" therefore has an explicit spelling and a
+  a *guess* about the stored coordinates, not "no barrier". It re-imposes a
+  barrier on an axis a reduction just blended exactly when the reduction leaves
+  that axis' grid **intact** (timepoints far enough apart that no cluster spans
+  two of them, so the coordinates stay integral); where the reduction averages
+  the grid away, auto-detection finds nothing and is merely redundant. Which of
+  the two you get is a property of the data, not of the metadata, so the
+  explicit spelling is the honest one either way.
+  "Coarsen everything" therefore has an explicit spelling and a
   non-spelling: `[0, …, d-1]`, whose complement is the empty list (a real,
   authoritative *no barrier*), versus `null`, which asserts nothing and lands on
   the heuristic. Producers do not yet agree on this: `decimate`'s `merge`
@@ -972,7 +978,8 @@ rewrites a store must apply all three rules:
   no axis and every survivor is one of the input's splats at its own coordinates,
   so the inherited value — and the layout derived from it — stays true.
   `--coarsen-dims` is a merge-only knob, never published by a prefix, and
-  `decimate` says on the console when a run resolved to `prefix` and dropped it
+  `decimate` warns (a `UserWarning`, displayed as an arbol line under the CLI)
+  when a run resolved to `prefix` and dropped it
   (with `method="auto"` the family flips at the 50 %-kept crossover, taking the
   output's chunk layout with it). The request is range-validated for both
   families before the family is chosen, so the same argument cannot be a hard

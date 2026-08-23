@@ -46,9 +46,16 @@ it resolved, always as an EXPLICIT sorted list: the requested dims for a proper
 subset, and the full `[0, …, d-1]` for coarsen-everything (the default, and what
 a request naming every dim normalises to). Spelling that case `None` would not
 do — `_barrier_from_coarsen_dims` cannot tell a written null from an absent key,
-so both read as "no provenance" and land back on `detect_barrier_dims`, which on
-an integer-gridded stacked axis re-imposes the very barrier the merge blended
-over. `make_substitutive_lod` still writes `None` there and carries the same
+so both read as "no provenance" and land back on `detect_barrier_dims`, which is
+a guess about the result's coordinates rather than a "no barrier". What the
+guess costs was measured, not assumed: it re-imposes the very barrier the merge
+blended over exactly when the reduction leaves the stacked axis' grid INTACT —
+timepoints far enough apart that no cluster ever spans two of them — and is
+merely redundant when it does not, because a fine integer grid gets averaged
+away by the merge and auto-detection then finds nothing on the result. The
+explicit list asserts the empty complement on either grid, which is why it is
+the honest spelling regardless of which case the data happens to be in.
+`make_substitutive_lod` still writes `None` there and carries the same
 latent fallback; it is left alone on purpose, because changing it would move the
 chunk layout of every `lod --recipe levels` build, and the divergence is recorded
 on #1600 instead.
@@ -56,7 +63,10 @@ on #1600 instead.
 The `prefix` family stamps nothing and keeps the inherited value: it merges no
 axis, every survivor is one of the input's splats at its own coordinates, so
 whichever axes were hard barriers still are — `--coarsen-dims` is a merge-only
-knob and publishing it there would be the lie. It now says so on the console
+knob and publishing it there would be the lie. It now says so — a `UserWarning`,
+the same house convention `GSplatData.filter` uses for "your argument had a
+surprising effect", so a programmatic `verbose=False` call is not written to
+stdout unbidden and the CLI still displays it through `install_arbol_warnings` —
 rather than dropping the argument silently, which mattered most under the default
 `method="auto"`: the family (and with it whether `--coarsen-dims` is honoured at
 all, and therefore the output's chunk layout) flips at the 50 %-kept crossover,
@@ -69,4 +79,8 @@ untouched, as before: nothing changed, so nothing is re-stamped.
 One generic post-condition now backs the whole re-ladder rule at the command
 level: for every rewriting `gsplat` command — enumerated from the registry, not
 from a hand-written list — a published `lod_n_lods` / `lod_cutpoints` / `n_lods`
-must match the ladder actually on disk, or be absent.
+must match the ladder actually on disk, or be absent. A `kind=partition` root
+under `per_part: True` is checked against EVERY leaf rather than rejected
+outright: that shape is exactly what `batch-fit merge --recipe stream --n-lods 6`
+writes on purpose and it can be perfectly honest, so a blanket rejection would
+have gone red on correct output the moment a row reached it.

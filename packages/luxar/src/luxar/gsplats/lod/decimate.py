@@ -43,6 +43,7 @@ Quality falls smoothly (~3-4 dB per halving) with no knee, so there is no single
 
 from __future__ import annotations
 
+import warnings
 from typing import Literal, Optional, Sequence, Union
 
 import numpy as np
@@ -108,9 +109,18 @@ def resolved_merge_coarsen_dims(
     disk: :func:`~luxar.gsplats.io.save_gsplats._barrier_from_coarsen_dims`
     cannot tell a written ``null`` from an absent key, so both read as "no
     provenance" and fall through to ``detect_barrier_dims`` auto-detection —
-    which on an integer-gridded stacked axis re-imposes exactly the barrier this
-    merge blended over. ``[0, …, d-1]`` instead yields the explicit empty
-    complement, i.e. the no-barrier layout the reduction actually earned.
+    a GUESS about the result's coordinates, not "no barrier".
+
+    What that guess costs depends on the data, and it was measured rather than
+    asserted (#1600 review). Auto-detection re-imposes the very barrier this
+    merge blended over exactly when the reduction leaves the stacked axis' grid
+    INTACT: on 200 4D splats over three timepoints spaced 1000 apart against a
+    spatial extent of 100, no cluster ever spans two timepoints, the coordinates
+    stay integral, and the fallback hands back ``[3]``. On a fine grid (step 1)
+    the merge averages those coordinates away, the axis stops looking integral,
+    and the fallback finds nothing — there it is merely redundant. ``[0, …,
+    d-1]`` asserts the empty complement outright on either grid, i.e. the
+    no-barrier layout the reduction actually earned.
 
     KNOWN DIVERGENCE from :func:`~luxar.gsplats.lod.substitutive
     .make_substitutive_lod`, the sibling producer of the same operator: it
@@ -143,8 +153,6 @@ def _validate_coarsen_dims(
     """
     if coarsen_dims is None:
         return
-    import warnings
-
     from luxar.gsplats.lod.substitutive import _normalise_coarsen_dims
 
     with warnings.catch_warnings():
@@ -193,9 +201,11 @@ def decimate(
         coarsen_dims: Center-column indices merging may combine over; the rest
             are hard barriers (merge only). Default: all dims. A ``merge``
             stamps the RESOLVED set on the result (the writer turns it into the
-            chunk-ordering barrier); a ``prefix`` ignores the argument (saying
-            so on the console) and keeps the input's stamp, having coarsened
-            nothing. The request is range-validated for BOTH families, before
+            chunk-ordering barrier); a ``prefix`` ignores the argument (a
+            ``UserWarning``, so the notice survives ``verbose=False``) and keeps
+            the input's stamp, having coarsened nothing. Under the ``luxar`` CLI
+            that warning renders as an arbol line like any other output.
+            The request is range-validated for BOTH families, before
             the family is chosen — under ``method="auto"`` which one runs
             depends on the kept fraction, and an argument may not be a hard
             error on one path and silently accepted on the other.
@@ -233,6 +243,14 @@ def decimate(
         # request honoured at -f 0.4 is silently dropped at -f 0.5, taking the
         # output's chunk layout with it. Say so rather than letting the caller
         # infer it from the stamp (#1600 review).
+        #
+        # A WARNING, not an `aprint`: this is a library function, and "your
+        # argument had a surprising effect" is what `GSplatData.filter` already
+        # warns for (`_data/filtering.py`). Every other line this function
+        # writes is gated on `verbose`, so an unconditional print would put a
+        # programmatic `decimate(..., verbose=False)` on stdout unbidden. The
+        # CLI still shows it: `luxar`'s root callback installs
+        # `install_arbol_warnings`, which renders warnings as arbol lines.
         why = (
             f" (method='auto' resolved to prefix: the request keeps "
             f"{100.0 * n_target / n_in:.1f}% of the input, at or above the "
@@ -241,12 +259,14 @@ def decimate(
             if method == "auto"
             else ""
         )
-        aprint(
-            f"⚠ coarsen_dims={sorted({int(d) for d in coarsen_dims})} is IGNORED "
+        warnings.warn(
+            f"coarsen_dims={sorted({int(d) for d in coarsen_dims})} is IGNORED "
             f"by the 'prefix' family{why}: a prefix keeps whole input splats at "
             "their own coordinates and merges no axis, so it coarsens nothing "
             "and the input's own coarsen_dims stamp (and the chunk-ordering "
-            "barrier derived from it) stays true of the survivors"
+            "barrier derived from it) stays true of the survivors",
+            UserWarning,
+            stacklevel=2,
         )
 
     with (
@@ -324,7 +344,10 @@ def decimate(
             #
             # Always the EXPLICIT dim list, coarsen-everything included — a
             # written `null` is indistinguishable from an absent key to the
-            # writer and lands back on auto-detect. That diverges from
+            # writer and lands back on auto-detect, which re-imposes a barrier
+            # on a blended axis whenever the reduction left that axis' grid
+            # intact (and is redundant when it did not — measured both ways in
+            # `resolved_merge_coarsen_dims`). That diverges from
             # `make_substitutive_lod`, which still spells that case `None`; see
             # `resolved_merge_coarsen_dims` for why it is not changed here.
             out.stats["coarsen_dims"] = resolved_merge_coarsen_dims(

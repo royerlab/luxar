@@ -243,7 +243,7 @@ def test_an_in_range_coarsen_dims_request_is_accepted_by_both_families() -> None
         assert decimate(data, target=50, method=method, coarsen_dims=[0, 1, 2])
 
 
-def test_a_prefix_says_it_is_ignoring_coarsen_dims(capsys) -> None:
+def test_a_prefix_says_it_is_ignoring_coarsen_dims(recwarn) -> None:
     """The family decides whether the knob means anything — silently, before.
 
     With the default ``method="auto"`` the family (and therefore whether
@@ -252,18 +252,35 @@ def test_a_prefix_says_it_is_ignoring_coarsen_dims(capsys) -> None:
     """
     data = _cloud4d(400)
     decimate(data, target=0.4, coarsen_dims=[0, 1, 2])  # -> merge, honoured
-    assert "IGNORED" not in capsys.readouterr().out
+    assert not [w for w in recwarn.list if "IGNORED" in str(w.message)]
 
-    decimate(data, target=0.5, coarsen_dims=[0, 1, 2])  # -> prefix, ignored
-    message = capsys.readouterr().out
-    assert "coarsen_dims=[0, 1, 2] is IGNORED" in message
+    with pytest.warns(UserWarning, match=r"coarsen_dims=\[0, 1, 2\] is IGNORED") as rec:
+        decimate(data, target=0.5, coarsen_dims=[0, 1, 2])  # -> prefix, ignored
+    message = str(rec[0].message)
     assert "'prefix' family" in message
     # ...and it says WHY this run became a prefix, since nothing was asked for.
     assert "method='auto' resolved to prefix" in message
 
     # An EXPLICIT prefix still says the knob was dropped, without the crossover
     # explanation (nothing resolved — the caller named the family).
-    decimate(data, target=0.4, method="prefix", coarsen_dims=[0, 1, 2])
-    explicit = capsys.readouterr().out
-    assert "coarsen_dims=[0, 1, 2] is IGNORED" in explicit
-    assert "resolved to prefix" not in explicit
+    with pytest.warns(UserWarning, match=r"coarsen_dims=\[0, 1, 2\] is IGNORED") as rec:
+        decimate(data, target=0.4, method="prefix", coarsen_dims=[0, 1, 2])
+    assert "resolved to prefix" not in str(rec[0].message)
+
+
+def test_the_ignored_coarsen_dims_notice_is_a_warning_not_a_print(capsys) -> None:
+    """A library function does not write to stdout behind ``verbose=False``.
+
+    Every other line ``decimate`` emits is gated on ``verbose``; this one was an
+    unconditional ``aprint``, so a programmatic
+    ``decimate(..., verbose=False, coarsen_dims=[...])`` printed unbidden. The
+    house convention for "your argument had a surprising effect" is
+    ``warnings.warn`` (``GSplatData.filter``'s pyramid notice), which a caller
+    can filter, record, or turn into an error — and which the CLI still shows
+    (:func:`test_the_ignored_coarsen_dims_notice_reaches_a_cli_user`).
+    """
+    data = _cloud4d(400)
+    with pytest.warns(UserWarning, match="is IGNORED"):
+        decimate(data, target=0.5, coarsen_dims=[0, 1, 2], verbose=False)
+    captured = capsys.readouterr()
+    assert "IGNORED" not in captured.out and "IGNORED" not in captured.err

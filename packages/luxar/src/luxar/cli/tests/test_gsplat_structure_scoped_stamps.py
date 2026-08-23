@@ -716,6 +716,11 @@ def _assert_published_ladder_matches_disk(path: Path) -> None:
         return  # absent is always honest — nothing is claimed
 
     node, _ = load_gsplat_node(path, include_stats=True)
+    if pipeline.get("per_part") is True:
+        # The one shape where a root count over MANY ladders is legitimate, so
+        # it gets its own rule rather than the raise below.
+        _assert_per_part_ladder_matches_disk(path, node, published)
+        return
     if isinstance(node, GSplatLeaf):
         levels: List[Any] = [node]
     elif isinstance(node, GSplatLodGroup) and all(
@@ -728,8 +733,9 @@ def _assert_published_ladder_matches_disk(path: Path) -> None:
         raise AssertionError(
             f"{path.name} publishes a root ladder summary {sorted(published)} on "
             "a shape that HAS no single ladder (a partition, or a lod group "
-            "whose summary child is a subtree) — the number is true of at most "
-            "one part, so the block must be dropped instead"
+            "whose summary child is a subtree) without the `per_part` stamp that "
+            "would make it a claim about every part — the number is true of at "
+            "most one part, so the block must be dropped instead"
         )
 
     index = int(pipeline.get("lod_substitutive_level") or 0)
@@ -754,6 +760,118 @@ def _assert_published_ladder_matches_disk(path: Path) -> None:
             f"{path.name} advertises cutpoints {list(published['lod_cutpoints'])}; "
             f"the ladder on disk cuts at {cutpoints}"
         )
+
+
+def _assert_per_part_ladder_matches_disk(
+    path: Path, node: Any, published: Dict[str, Any]
+) -> None:
+    """A ``per_part`` count is honest iff EVERY leaf's ladder agrees with it.
+
+    ``batch-fit merge --recipe stream --n-lods 6`` stamps ``n_lods`` on a
+    ``kind=partition`` ROOT under ``per_part: True`` on purpose
+    (``_recipe_pipeline_info``), and one recipe built every part, so the number
+    can be true of all of them at once. Sending that store to the
+    single-summary-leaf rule above would make the guard raise on CORRECT output
+    — the worst failure mode a guard has, because the reflex is then to "fix"
+    the producer (#1600 review). Today no row reaches here (every fixture is a
+    flat leaf and ``batch-fit merge`` is not a rewriter), which is exactly why
+    the branch carries its own honest/dishonest pair of tests.
+
+    A rung COUNT can hold across parts; a cutpoint LIST generally cannot, since
+    the parts hold different splat counts — so it is checked the same way and
+    simply fails for a producer that publishes one.
+    """
+    from luxar.gsplats.tree import GSplatLeaf, iter_leaves
+
+    leaves = [lf for lf in iter_leaves(node) if isinstance(lf, GSplatLeaf)]
+    assert leaves, (
+        f"{path.name} publishes a per-part ladder summary {sorted(published)} "
+        "over a store with no leaves at all"
+    )
+    counts = sorted({len(lf.additive_sublods) for lf in leaves})
+    for key in ("n_lods", "lod_n_lods"):
+        if key in published:
+            assert counts == [int(published[key])], (
+                f"{path.name} advertises {published[key]} rungs per part "
+                f"({key}, per_part: True); the {len(leaves)} leaves on disk "
+                f"carry {counts}"
+            )
+    if "lod_cutpoints" in published:
+        cuts = sorted(
+            {
+                tuple(
+                    int(v)
+                    for v in np.cumsum([int(s.n_splats) for s in lf.additive_sublods])
+                )
+                for lf in leaves
+            }
+        )
+        assert cuts == [tuple(int(v) for v in published["lod_cutpoints"])], (
+            f"{path.name} advertises cutpoints "
+            f"{list(published['lod_cutpoints'])} per part; the leaves on disk "
+            f"cut at {cuts}"
+        )
+
+
+def _per_part_partition(tmp_path: Path, name: str, rungs: Sequence[int]) -> Path:
+    """A ``kind=partition`` whose parts carry ``rungs[i]`` rungs, root ``n_lods=6``.
+
+    The shape ``batch-fit merge --recipe stream --n-lods 6`` writes: the root
+    block comes from ``_recipe_pipeline_info`` itself rather than a hand-written
+    dict, so the honest case below is the producer's own output.
+    """
+    from dataclasses import replace
+
+    from luxar.gsplats.batch.merge_orchestrator import _recipe_pipeline_info
+    from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+    from luxar.gsplats.lod.additive import make_additive_lod
+    from luxar.gsplats.lod.recipes import RecipeParams
+    from luxar.gsplats.tree import GSplatPartition
+
+    pipeline = _recipe_pipeline_info("stream", RecipeParams(n_lods=6))
+    assert pipeline and pipeline["per_part"] is True and pipeline["n_lods"] == 6
+
+    parts = _data(200, stats={}).to_spatial_partition(max_elements=80)
+    assert isinstance(parts, GSplatPartition) and len(parts.children) == len(rungs)
+    laddered = replace(
+        parts,
+        children=[
+            make_additive_lod(GSplatData.from_tree(child), n_lods=n).tree
+            for child, n in zip(parts.children, rungs)
+        ],
+    )
+    out = tmp_path / name
+    write_gsplats_tree(out, laddered, pipeline_info=dict(pipeline))
+    return out
+
+
+def test_the_ladder_guard_accepts_an_honest_per_part_partition(tmp_path: Path) -> None:
+    """A root ``n_lods`` over parts that ALL have that many rungs is honest.
+
+    The guard used to raise for any rung count on a partition, which is exactly
+    what ``batch-fit merge --recipe stream --n-lods 6`` writes on purpose. It is
+    unreachable from the rows today only because the fixture is a flat leaf, so
+    widening either side would have turned correct output red (#1600 review).
+    """
+    honest = _per_part_partition(tmp_path, "honest.gsplats.zarr", [6, 6, 6, 6])
+    assert _pipeline_attrs(honest)["n_lods"] == 6
+    _assert_published_ladder_matches_disk(honest)  # must not raise
+
+
+@pytest.mark.parametrize(
+    "rungs", [[6, 6, 6, 2], [2, 2, 2, 2]], ids=["one-part-differs", "all-parts-differ"]
+)
+def test_the_ladder_guard_still_catches_a_dishonest_per_part_partition(
+    tmp_path: Path, rungs: List[int]
+) -> None:
+    """...and ``per_part`` is a claim about EVERY part, not an exemption.
+
+    Widening the guard must not turn it off: a root count no part has, and a
+    root count only some parts have, both still fail.
+    """
+    bad = _per_part_partition(tmp_path, "dishonest.gsplats.zarr", rungs)
+    with pytest.raises(AssertionError, match="rungs per part"):
+        _assert_published_ladder_matches_disk(bad)
 
 
 #: Every rewriting command, with the argv that drives it — imported rather than
@@ -835,12 +953,22 @@ def test_the_ladder_post_condition_covers_every_rewriter() -> None:
 #: re-stamp is visible BOTH in the key and in the layout.
 #:
 #: ``time_step`` picks the stacked axis's grid, and it is load-bearing per row:
-#: the expected barrier must be one ``detect_barrier_dims`` CANNOT produce on
-#: its own for that grid, or the row passes on the fallback rather than on the
-#: stamp. A half-integer grid is invisible to auto-detect (it finds nothing), an
-#: integer one is exactly what it flags — so the coarsen-EVERYTHING rows, whose
-#: expected barrier is the empty one, must sit on the integer grid where the
-#: fallback would loudly disagree. :func:`test_decimate_stamps_the_coarsen_dims_it_used`
+#: the expected barrier must be one the writer's auto-detect fallback CANNOT
+#: produce on THIS ROW'S OUTPUT, or the row passes on the fallback rather than on
+#: the stamp. A half-integer grid is invisible to auto-detect (it finds nothing),
+#: which serves the rows whose expected barrier is non-empty.
+#:
+#: The coarsen-EVERYTHING rows need the opposite — a grid where the fallback
+#: would loudly disagree with the empty barrier — and a FINE integer grid does
+#: not give it, which is what the first version of these rows got wrong. Merging
+#: over the stacked axis averages neighbouring timepoints together, the
+#: coordinates stop being integral, and ``detect_barrier_dims`` finds nothing on
+#: the RESULT: measured at ``time_step=1.0``, the explicit stamp and the ``None``
+#: spelling both write ``[[]]``, so the layout assertion held under the very
+#: defect it exists to catch. Widely-separated timepoints (1000 apart against a
+#: spatial extent of 100) are never clustered together, so the grid survives the
+#: merge and the fallback re-imposes ``[3]``.
+#: :func:`test_decimate_stamps_the_coarsen_dims_it_used`
 #: measures that control per row rather than trusting this comment.
 _DECIMATE_COARSEN: List[tuple[str, Sequence[str], float, Any, List[int]]] = [
     # The request the merge was given, and the barrier IT implies.
@@ -855,14 +983,14 @@ _DECIMATE_COARSEN: List[tuple[str, Sequence[str], float, Any, List[int]]] = [
     # the inherited one must not be re-imposed on splats it just blended. The
     # stamp is the EXPLICIT all-dims list: a written `null` is indistinguishable
     # from an absent key to `_barrier_from_coarsen_dims`, which falls through to
-    # auto-detect and (on this integer grid) hands back the barrier [3] the
-    # merge just blended over.
-    ("merge-coarsens-everything", ("-m", "merge"), 1.0, [0, 1, 2, 3], []),
+    # auto-detect and (on this widely-spaced grid, which the merge leaves
+    # intact) hands back the barrier [3] the merge just blended over.
+    ("merge-coarsens-everything", ("-m", "merge"), 1000.0, [0, 1, 2, 3], []),
     # The same reduction spelled out explicitly must publish the same stamp.
     (
         "merge-all-dims-spelled-out",
         ("-m", "merge", "--coarsen-dims", "0,1,2,3"),
-        1.0,
+        1000.0,
         [0, 1, 2, 3],
         [],
     ),
@@ -918,31 +1046,40 @@ def test_decimate_stamps_the_coarsen_dims_it_used(
     )
 
     # The control that makes the row mean something: with NO `coarsen_dims`
-    # provenance the same store gets a DIFFERENT barrier, so the assertion above
+    # provenance THIS OUTPUT gets a DIFFERENT barrier, so the assertion above
     # cannot be satisfied by the auto-detect fallback. This is what the
     # coarsen-everything rows need most — spelling their stamp `None` would
     # write a null the writer reads as "no provenance", landing right here.
-    auto = _auto_detected_barriers(tmp_path, time_step)
+    auto = _auto_detected_barriers(out, tmp_path)
     assert auto and all(b != barrier for b in auto), (
-        f"auto-detection produces {auto} on this grid, which the expected "
+        f"auto-detection produces {auto} on this result, which the expected "
         f"barrier {barrier} cannot be distinguished from — the row would pass "
         "on the fallback rather than on the stamp"
     )
 
 
-def _auto_detected_barriers(tmp_path: Path, time_step: float) -> List[List[int]]:
-    """What ``detect_barrier_dims`` alone makes of this grid.
+def _auto_detected_barriers(out: Path, tmp_path: Path) -> List[List[int]]:
+    """What the writer's fallback would place on THIS REDUCTION'S OUTPUT.
 
-    A store saved with NO ``coarsen_dims`` stamp, so ``_barrier_from_coarsen_dims``
-    returns ``None`` and the writer falls back to per-leaf auto-detection — the
-    exact path a null-or-absent stamp lands on.
+    Measured by re-saving the output with its ``coarsen_dims`` stamp removed, so
+    ``_barrier_from_coarsen_dims`` returns ``None`` and the writer falls back to
+    per-leaf auto-detection — the exact path a null-or-absent stamp lands on.
+
+    The OUTPUT, not the input fixture, because that is the splat set the
+    fallback would auto-detect from and a ``merge`` rewrites the very
+    coordinates it coarsened over. Measuring the input answers a different
+    question, and the two disagree exactly where it matters: on a fine integer
+    grid auto-detection says ``[3]`` of the input fixture and ``[]`` of the
+    coarsen-everything result, so a control taken on the input passed while the
+    pre-fix ``None`` spelling wrote the same layout the row expects (#1600
+    review).
     """
-    bare = tmp_path / f"autodetect_{time_step}.gsplats.zarr"
-    if not bare.exists():
-        _data(200, stats=dict(_TOPOLOGY), time_step=time_step).save(
-            bare, include_fitting_info=True
-        )
-    return _ordering_barriers(bare)
+    node, stats = load_gsplat_node(out, include_stats=True)
+    bare = dict(stats or {})
+    bare.pop("coarsen_dims", None)
+    probe = tmp_path / "autodetect.gsplats.zarr"
+    GSplatData.from_tree(node, stats=bare).save(probe, include_fitting_info=True)
+    return _ordering_barriers(probe)
 
 
 #: Recipes run to MEASURE what the builders stamp. ``levels`` exercises the
