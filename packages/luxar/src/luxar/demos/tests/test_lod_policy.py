@@ -70,20 +70,7 @@ _CHOOSES_OUTSIDE_THE_POLICY = {
 #: These keep whatever topology their fitter happens to produce — which is the
 #: defect the policy exists to remove, not a configuration. Every one of them is
 #: cache-only or local-compute, which is why they are not urgent.
-_NOT_YET_ROUTED = {
-    "demo_gsplats_3d_acto3d_heart.py",
-    "demo_gsplats_3d_cells3d_multichannel.py",
-    "demo_gsplats_3d_flylight_mcfo_neurons.py",
-    "demo_gsplats_3d_kidney_multichannel_layers.py",
-    "demo_gsplats_3d_kidney_multichannel_toggles.py",
-    "demo_gsplats_3d_opencell_map4.py",
-    "demo_gsplats_3d_organoid_dapi_nuclei.py",
-    "demo_gsplats_3d_organoid_multichannel.py",
-    "demo_gsplats_3d_tng_cosmic_web.py",
-    "demo_gsplats_3d_tribolium_embryo.py",
-    "demo_gsplats_4d_celegans_tracking.py",
-    "demo_gsplats_4d_zebrafish_timelapse.py",
-}
+_NOT_YET_ROUTED: set[str] = set()
 
 
 def _demo_sources() -> dict[str, str]:

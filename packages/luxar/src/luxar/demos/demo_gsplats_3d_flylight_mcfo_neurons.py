@@ -322,6 +322,7 @@ from luxar.demos import (
     warn_if_no_cuda_gpu,
 )
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
+from luxar.demos._lod_policy import save_with_lod
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.paths import get_demos_output_dir
@@ -1190,14 +1191,16 @@ def fit_volume(
     aprint(f"  Fitted {len(result.amplitudes):,} splats (from {seeds:,} seeds)")
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    result.save(
+    save_with_lod(
+        result,
         cache_file,
+        recipe="stream",
         encoding_mode=EncodingMode.MEMORY,
         include_fitting_info=True,
         compress="zip",
         zip_deflate=True,
     )
-    return result
+    return GSplatData.load(cache_file, include_stats=False)
 
 
 def splat_colors(centers, channels, voxel_size=VOXEL_SIZE_ZYX):
