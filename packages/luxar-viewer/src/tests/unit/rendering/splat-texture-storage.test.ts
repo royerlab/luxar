@@ -819,7 +819,7 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
     expect(Array.from(reset.subarray(0, 4))).toEqual([0, 1, 2, 3]);
   });
 
-  it('fromInstance append: writes only the suffix texels, extends aSortedIndex, keeps the prefix permutation', () => {
+  it('fromInstance append: writes only suffix texels but resets the full ordering to identity', () => {
     const geom = pool.acquireGSplatsGeometry('node', 16);
     const src6 = makeSource(6);
     const packed = (s: SplatTexelSource, count: number) => ({
@@ -842,9 +842,12 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
     expect(texels[0]).toBe(sentinel); // prefix texels untouched
     // Suffix splat 5 center.x written.
     expect(texels[5 * SPLAT_FLOATS_PER_SPLAT]).toBe(src6.centers[15]);
-    // Prefix permutation preserved; suffix gets identity.
+    // The enlarged draw must use one coherent fallback permutation while the
+    // commit-triggered worker sort is pending. Keeping the old sorted prefix
+    // followed by the new storage-order suffix renders two independently
+    // ordered populations and produces a detached alpha-over ghost mid-load.
     const ordering = getActiveSortedIndexAttribute(geom)!.array as Uint32Array;
-    expect(Array.from(ordering.subarray(0, 6))).toEqual([3, 2, 1, 0, 4, 5]);
+    expect(Array.from(ordering.subarray(0, 6))).toEqual([0, 1, 2, 3, 4, 5]);
   });
 });
 

@@ -19,11 +19,7 @@ import {
   stampGSplatPresenceFlags,
   writeSplatTexels,
 } from '../gsplat-geometry';
-import {
-  cancelSortedIndexOrderingApply,
-  writeSortedIndexIdentity,
-  writeSortedIndexIdentityRange,
-} from '../element-storage';
+import { cancelSortedIndexOrderingApply, writeSortedIndexIdentity } from '../element-storage';
 import { clampSplatCapacity } from '../element-texture-layout';
 import type { GSplatsProjectionBounds } from '../../types/gsplats';
 import type { PooledBuffer } from './pool-stats';
@@ -327,11 +323,11 @@ export class GSplatsBufferAdapter {
     // see stampGSplatPresenceFlags (refresh on every update: pool tenants).
     stampGSplatPresenceFlags(geometry, { colorComponents: data.colorComponents });
     if (fromSplat > 0) {
-      // Append: keep the prefix's existing permutation and give the appended
-      // splats identity ordering until the re-sort lands (append and
-      // preserveOrdering are mutually exclusive — append needs count > prev,
-      // preserveOrdering needs count === prev).
-      writeSortedIndexIdentityRange(geometry, fromSplat, count);
+      // Keep the expensive texture upload suffix-only, but reset the enlarged
+      // draw to one coherent fallback permutation. Retaining the old sorted
+      // prefix and appending a storage-order suffix makes alpha-over render two
+      // independently ordered populations until the fresh worker sort lands.
+      writeSortedIndexIdentity(geometry, count);
     } else if (!options?.preserveOrdering) {
       // `preserveOrdering` (commit path decides — see
       // commit-gsplats-geometry.ts): keep the node's existing depth-sort
