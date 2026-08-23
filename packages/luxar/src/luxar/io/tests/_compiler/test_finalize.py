@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
@@ -11,9 +12,11 @@ import pytest
 import zarr
 from zarr.core.buffer import default_buffer_prototype
 from zarr.core.sync import sync
+from zarr.storage import MemoryStore
 
 from luxar._zarr_compat import create_array
 from luxar.core.group.lod.group import MAX_COVERAGE_FRACTION
+from luxar.io._compiler.finalize import hashing
 from luxar.io._compiler.finalize.hashing import (
     _payload_terms,
     _storage_identity,
@@ -271,6 +274,108 @@ def test_compute_content_hashes_absent_payload_differs_from_empty(
     assert h_absent != h_empty
 
 
+def test_case_shifted_metadata_payload_uses_case_exact_presence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dangling ``Zarr.json`` must stay absent even when the store lookup
+    case-folds it onto the group's own ``zarr.json`` metadata document."""
+    root = _overlay_image_store(
+        tmp_path / "scene", None, filename="Zarr.json", zarr_format=3
+    )
+    expected = compute_content_hashes(root)
+    logo = root["overlays/logo"]
+
+    original_read = hashing.read_raw_bytes
+    folded_reads = 0
+
+    def _case_folding_read(group: zarr.Group, key: str) -> bytes | None:
+        nonlocal folded_reads
+        if group.path == logo.path and key == "Zarr.json":
+            folded_reads += 1
+            return original_read(group, "zarr.json")
+        return original_read(group, key)
+
+    monkeypatch.setattr(hashing, "read_raw_bytes", _case_folding_read)
+
+    assert compute_content_hashes(root) == expected
+    assert compute_content_hashes(root) == expected
+    assert folded_reads == 0
+
+
+@pytest.mark.filterwarnings(
+    "ignore:Object at Zarr.json is not recognized.*:zarr.errors.ZarrUserWarning"
+)
+def test_case_shifted_metadata_payload_is_hashed_when_present_exactly() -> None:
+    """A real case-shifted payload remains valid on stores that can hold it."""
+    root = zarr.group(zarr_format=3)  # MemoryStore is case-sensitive everywhere.
+    logo = root.create_group("overlays").create_group("logo")
+    logo.attrs["image_file"] = "Zarr.json"
+
+    def _write(payload: bytes) -> None:
+        buffer = default_buffer_prototype().buffer.from_bytes(payload)
+        sync((logo.store_path / "Zarr.json").set(buffer))
+
+    _write(_TINY_PNG)
+    h_before = compute_content_hashes(root)
+    assert compute_content_hashes(root) == h_before
+    _write(_TINY_PNG[:-1] + b"\x83")
+    assert compute_content_hashes(root) != h_before
+
+
+def test_case_shifted_metadata_payload_does_not_fall_back_when_listing_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A store without listing support must not fall back to the unsafe read."""
+
+    class NoListingStore(MemoryStore):
+        @property
+        def supports_listing(self) -> bool:
+            return False
+
+        async def list_dir(self, prefix: str) -> AsyncIterator[str]:
+            if False:
+                yield prefix
+
+    root = zarr.group(store=NoListingStore(), zarr_format=3)
+    logo = root.create_group("overlays").create_group("logo")
+    logo.attrs["image_file"] = "Zarr.json"
+    payload = default_buffer_prototype().buffer.from_bytes(_TINY_PNG)
+    sync((logo.store_path / "Zarr.json").set(payload))
+    assert hashing.read_raw_bytes(logo, "Zarr.json") == _TINY_PNG
+
+    def _must_not_read(_group: zarr.Group, _key: str) -> bytes | None:
+        raise AssertionError("case-shifted metadata name reached raw lookup")
+
+    monkeypatch.setattr(hashing, "read_raw_bytes", _must_not_read)
+
+    terms = b"".join(_payload_terms(logo, dict(logo.attrs)))
+    assert b"unreadable:" in terms
+
+
+def test_case_shifted_metadata_payload_handles_listing_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failing supported listing must not abort or fall back to a raw read."""
+
+    class FailingListingStore(MemoryStore):
+        async def list_dir(self, prefix: str) -> AsyncIterator[str]:
+            if False:
+                yield prefix
+            raise OSError("listing failed")
+
+    root = zarr.group(store=FailingListingStore(), zarr_format=3)
+    logo = root.create_group("overlays").create_group("logo")
+    logo.attrs["image_file"] = "Zarr.json"
+
+    def _must_not_read(_group: zarr.Group, _key: str) -> bytes | None:
+        raise AssertionError("case-shifted metadata name reached raw lookup")
+
+    monkeypatch.setattr(hashing, "read_raw_bytes", _must_not_read)
+
+    terms = b"".join(_payload_terms(logo, dict(logo.attrs)))
+    assert b"unreadable:" in terms
+
+
 def test_compute_content_hashes_payload_free_digest_is_unchanged() -> None:
     """A tree with no payload attrs must hash byte-identically to what the
     pre-payload implementation produced — the payload step only ever adds terms
@@ -347,6 +452,10 @@ def test_payload_terms_are_prefix_free(tmp_path: Path) -> None:
         # the walk really does meet such a name; encoding it must not raise, and
         # the store's own UnicodeEncodeError is a ValueError.
         ("im\ud800age.png", 3, b"unreadable:"),
+        # Absent by the case-exact listing: these names would otherwise resolve
+        # onto zarr's own metadata document on a case-insensitive filesystem.
+        ("Zarr.json", 3, b"absent:"),
+        (".ZAttrs", 2, b"absent:"),
     ],
 )
 def test_compute_content_hashes_tolerates_unreadable_payload_names(
@@ -356,10 +465,11 @@ def test_compute_content_hashes_tolerates_unreadable_payload_names(
 
     Pins only what the payload step owns: no raise (one escaping would reach
     ``finalize()``, which stamps the store ``incomplete``), a convergent digest,
-    and which of the two sentinels was folded — ``unsafe:`` for a name refused
-    semantically, ``unreadable:`` for the store's own verdict. That a change to
-    the *name* moves the hash comes from step 2, which hashes the attrs JSON, not
-    from here — do not read this test as covering it.
+    and which of the three sentinels was folded — ``unsafe:`` for a name refused
+    semantically, ``unreadable:`` for the store's own verdict, or ``absent:``
+    when the case-exact listing does not contain a metadata-colliding name. That
+    a change to the *name* moves the hash comes from step 2, which hashes the
+    attrs JSON, not from here — do not read this test as covering it.
     """
     root = _overlay_image_store(
         tmp_path / "scene", None, filename=filename, zarr_format=zarr_format
