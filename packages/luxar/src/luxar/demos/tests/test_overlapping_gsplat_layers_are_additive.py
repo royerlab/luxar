@@ -40,12 +40,15 @@ DEPTH_SORTED_MODES = ("normal", "volumetric")
 
 # Demos authoring >=2 co-visible, spatially overlapping gsplat layers.
 OVERLAPPING_LAYER_DEMOS = (
+    "demo_gsplats_2d_cmu1_pathology.py",
+    "demo_gsplats_2d_codex_pancreas.py",
     "demo_gsplats_3d_acto3d_heart.py",
     "demo_gsplats_3d_cells3d_multichannel.py",
     "demo_gsplats_3d_ct_totalsegmentator.py",
     "demo_gsplats_3d_kidney_multichannel_layers.py",
     "demo_gsplats_3d_kidney_multichannel_toggles.py",
     "demo_gsplats_3d_opencell_map4.py",
+    "demo_gsplats_3d_organoid_multichannel.py",
     "demo_gsplats_4d_neuromast_2ch.py",
 )
 
