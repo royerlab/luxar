@@ -180,6 +180,28 @@ N_ITERS = 5_000
 EARLY_STOP_PATIENCE = 500
 CULL_RETENTION = 0.9999
 
+#: NO background floor, stated rather than defaulted — the house rule is to stay
+#: on ``auto`` unless you have measured otherwise, and this is a dataset where
+#: measuring says otherwise.
+#:
+#: ``auto`` estimates the histogram mode of the NON-ZERO voxels, capped at their
+#: median. That is the right instinct on a stack with a camera pedestal, where
+#: the non-zero population is background. Here 98.7-99.8% of voxels are exactly
+#: zero, so the non-zero population IS the specimen, and its mode is the dim
+#: halo around each labelled cell: at t=0 the level lands at 26/255, the median
+#: of every non-zero voxel in the frame. Measured at 32k seeds on frame 0,
+#: scored against the unfloored data:
+#:
+#:     floor    splats   global   foreground   image energy reproduced
+#:     auto     6,114    46.37    16.28 dB     73.4%
+#:     none     6,924    48.18    19.31 dB     100.7%
+#:
+#: So the floor was not removing a pedestal, it was deleting a quarter of the
+#: signal — +3.0 dB of foreground for turning it off. This is the failure mode
+#: the CLI guide warns about for a `pNN` floor ("lands wherever the sparsity puts
+#: it"), reached here by `auto` on a volume sparse enough that the two coincide.
+FLOOR = "none"
+
 #: Substitutive LOD: three coarse levels, each 4x lighter than the last, every
 #: level carrying its own progressive ladder. Coarsening is restricted to the
 #: three SPATIAL centre columns — time (column 3) is a hard barrier, because
@@ -334,7 +356,7 @@ def select_timepoints(n_total: int, limit: Optional[int]) -> list[int]:
 # Fitting
 # =============================================================================
 def _fit_cache_path(frame: int) -> Path:
-    return FITS_DIR / f"f{frame:04d}_k{SEEDS}_i{N_ITERS}.gsplats.zarr.zip"
+    return FITS_DIR / f"f{frame:04d}_k{SEEDS}_i{N_ITERS}_{FLOOR}.gsplats.zarr.zip"
 
 
 def fit_timepoint(volume: np.ndarray, frame: int, acquisition: tuple):
@@ -367,6 +389,7 @@ def fit_timepoint(volume: np.ndarray, frame: int, acquisition: tuple):
         n_iters=N_ITERS,
         early_stop_patience=EARLY_STOP_PATIENCE,
         cull_retention=CULL_RETENTION,
+        floor=FLOOR,
         # Fit on the VOXEL grid, and apply the microns afterwards (see
         # `to_microns`). Handing the fitter `voxel_size` instead puts the
         # optimizer in physical space, which costs the same wall clock (A/B at
