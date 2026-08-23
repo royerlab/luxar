@@ -212,6 +212,30 @@ def test_positive_scalar_broadcast_slack_bounds_viewer_cast(dtype) -> None:
         assert slack is not None and upward <= slack
 
 
+def test_positive_scalar_broadcast_slack_adds_tolerance_displacement() -> None:
+    data = np.full(4001, 0.1, dtype=np.float64)
+    data[-1] = np.nextafter(data[0], 0.0)
+    encoder = ArrayEncoder(broadcast_atol=1e-12)
+    slack = encoder.positive_scalar_round_trip_slack(data, EncodingMode.AUTO)
+
+    group = memory_group()
+    encoder.encode(
+        data,
+        group,
+        "s",
+        SemanticType.POSITIVE_SCALAR,
+        mode=EncodingMode.AUTO,
+        deduplicate=False,
+    )
+    encoded = group["s"]
+    assert encoded.attrs["encoding"]["name"] == "broadcasted"
+    upward = float(np.float32(np.asarray(encoded[:])[0])) - float(data.min())
+    viewer_only = float(np.float32(data[0])) - float(data[0])
+
+    assert upward > viewer_only > 0.0
+    assert slack is not None and upward <= slack
+
+
 @pytest.mark.parametrize(
     "data",
     [
