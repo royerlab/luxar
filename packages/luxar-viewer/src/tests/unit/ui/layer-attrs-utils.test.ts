@@ -70,9 +70,11 @@ describe('getBlendingState', () => {
     expect(s.transparent).toBe(true);
   });
 
-  it('opaque: NormalBlending with depthWrite enabled, transparency disabled', () => {
+  it('opaque: explicit alpha-over with depthWrite enabled, transparency disabled', () => {
     const s = getBlendingState('opaque');
-    expect(s.blending).toBe(THREE.NormalBlending);
+    expect(s.blending).toBe(THREE.CustomBlending);
+    expect(s.blendSrc).toBe(THREE.SrcAlphaFactor);
+    expect(s.blendDst).toBe(THREE.OneMinusSrcAlphaFactor);
     expect(s.depthTest).toBe(true);
     expect(s.depthWrite).toBe(true);
     expect(s.transparent).toBe(false);
