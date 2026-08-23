@@ -747,7 +747,7 @@ def main():
             aprint(f"No scene found at {output_path}. Run without --serve-only first.")
         return
 
-    # Try loading precomputed data (from Git LFS / local cache)
+    # Try loading the local cache; a cold cache re-fits from the raw source.
     precomputed = load_precomputed_gsplats(
         "gsplats_tribolium",
         ["tribolium.gsplats.zarr.zip"],

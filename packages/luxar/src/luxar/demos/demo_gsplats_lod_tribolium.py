@@ -37,7 +37,7 @@ microscopy dataset, which is where adaptive detail actually earns its keep:
   highest quality.
 
 Pipeline:
-1. **Load** precomputed ~300K-splat Tribolium fit (Git LFS / local cache)
+1. **Load** the locally cached ~300K-splat Tribolium fit (cold cache re-fits)
 2. **Center + scale** intensity (so every synthesized level is consistent)
 3. **Build** a substitutive ladder with ``make_substitutive_lod``.
    The number of ÷4 levels needed scales as log_4(N): the precomputed
@@ -69,10 +69,11 @@ Options:
     --factor=K:    Per-level compression factor (default: 4)
     --method=NAME: auto (default) | kmeans_lloyd | greedy_lloyd | kmeans | greedy
 
-By default the base splats are loaded from package data (Git LFS).  Use
---recompute to re-fit from scratch (requires network + GPU).  The substitutive
-ladder is always built fresh from the base splats (that is the point of the
-demo); use --serve-only to reopen the last generated scene without rebuilding.
+By default the base splats are loaded from the local cache under
+~/.cache/luxar/gsplats_tribolium. A cold cache or --recompute re-fits from the
+raw source (requires network + GPU). The substitutive ladder is always built
+fresh from the base splats (that is the point of the demo); use --serve-only to
+reopen the last generated scene without rebuilding.
 
 Output:
     - Scene saved to:  datasets/demos/gsplats_lod_tribolium.luxar.zarr

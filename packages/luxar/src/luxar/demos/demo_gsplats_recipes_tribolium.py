@@ -55,7 +55,7 @@ recipe identity) — so what renders is byte-for-byte the topology the CLI build
 only recoloured.
 
 Pipeline:
-1. **Load** the precomputed ~300K-splat Tribolium fit (Git LFS / local cache)
+1. **Load** the locally cached ~300K-splat Tribolium fit (cold cache re-fits)
 2. **Center** it so all six columns sit at the origin before placement
 3. **Build** each recipe with ``build_recipe`` (the engine behind the CLI) and
    write each to a ``.gsplats.zarr`` — exactly what ``lod --recipe`` does
