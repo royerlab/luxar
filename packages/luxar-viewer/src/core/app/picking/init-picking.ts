@@ -213,10 +213,10 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
     };
   }
 
-  // Create content loaders from the scene loader's zarr store. Declared
-  // string/image channels and interaction templates need the store; embedder
-  // selection / element-action consumers do not, so consumer-only picking can
-  // proceed without one.
+  // Create content loaders from the scene loader's zarr store. The current
+  // missing-store gate aborts when declared channels / interaction templates
+  // are the only reasons to pick; embedder selection / element-action consumers
+  // keep consumer-backed picking active without one.
   const store = sceneLoader.zarrStore;
   let labelLoader: LabelLoader | undefined;
   let imageLabelLoader: ImageLabelLoader | undefined;
