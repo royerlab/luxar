@@ -627,10 +627,10 @@ Controls:
                         # ["x", "y"] was the identity anyway, the scene
                         # declaring x then y in exactly that column order.
                         opacity=1.0,
-                        # Stays additive while the other bioimaging gsplat
-                        # demos are volumetric: this fit is strictly 2D, so
-                        # there is no depth structure for volumetric to
-                        # resolve. Viewed face-on (the default under this
+                        # Additive fits both the overlapping-layer rule and
+                        # this demo's strictly 2D reconstruction: there is no
+                        # depth structure for volumetric to resolve. Viewed
+                        # face-on (the default under this
                         # demo's control_type="ortho") every splat shares one
                         # view-depth plane and the depth sorter takes its
                         # identity-ordering branch, so volumetric would just

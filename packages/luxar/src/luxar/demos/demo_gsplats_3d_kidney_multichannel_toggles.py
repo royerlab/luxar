@@ -540,8 +540,9 @@ Navigation:
                         fill_sigma={own_dim: 0},
                         extend_to_all=other_dims,
                         opacity=1.0,
-                        absorption=1.0,
-                        blending_mode="volumetric",
+                        # One global order slot per node cannot interleave these
+                        # co-located volumes; additive is order-independent.
+                        blending_mode="additive",
                         layer=True,
                     )
                     aprint(
