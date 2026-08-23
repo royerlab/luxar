@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Guard issue work against an already-open pull request.
 
-The private ownership ledger is intentionally not the source of truth here: a
-pull request can exist before its creator records it, and another worker may be
-running from a different host. GitHub's open pull requests are the durable,
-repository-wide view.
+A local branch list is intentionally not the source of truth here: a pull
+request may have been created from another checkout or host. GitHub's open pull
+requests are the durable, repository-wide view.
 
 Usage::
 

@@ -192,8 +192,8 @@ hatch run python scripts/check_open_issue_pr.py <issue-number>
 
 Exit status 1 means the issue already has an open PR. Continue that work or
 coordinate on the existing PR instead of opening another one. This check uses
-GitHub's closing-issue references, not a local branch list or private ledger, so
-it also sees work created from another checkout or host.
+GitHub's closing-issue references, not a local branch list, so it also sees work
+created from another checkout or host.
 
 If duplicate PRs still exist, do not select or close one by age alone. Choose
 the survivor by completeness and discussion quality, then inventory both
