@@ -42,8 +42,8 @@ def fit_image_min(stats: Optional[Mapping[str, Any]]) -> Optional[float]:
     level normalization actually subtracted — the two coincide when a floor is
     active and diverge when it is not (``image_min`` is then the data minimum, or
     a percentile endpoint). ``image_min`` is always the right quantity for
-    reversing the shift; ``floor`` is the fallback only because some older
-    stores recorded it alone.
+    reversing the shift; ``floor`` is a defensive fallback for incomplete or
+    externally-authored metadata.
 
     Returns ``None`` rather than ``0.0`` for "not recorded", so callers can tell
     "this fit removed nothing" apart from "this fit did not say", and warn about

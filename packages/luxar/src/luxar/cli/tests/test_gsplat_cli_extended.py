@@ -726,6 +726,44 @@ class TestCullCommand:
         assert result.exit_code == 0, f"cull failed: {result.stdout}"
         assert out.exists()
 
+    def test_cull_target_is_shifted_to_the_stored_fit_basis(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path, monkeypatch
+    ) -> None:
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        data = GSplatData.load(sample_gsplats)
+        data.stats["image_min"] = 2.0
+        based = tmp_path / "based.gsplats.zarr"
+        data.save(based)
+        target = tmp_path / "target.npy"
+        np.save(target, np.full((16, 16, 16), 2.0, np.float32))
+        captured = {}
+
+        def fake_cull(self, *, target=None, **kwargs):
+            captured["target"] = np.asarray(target).copy()
+            return self
+
+        monkeypatch.setattr(GSplatData, "cull", fake_cull)
+        out = tmp_path / "culled.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "cull",
+                str(based),
+                str(out),
+                "--method",
+                "error_budget",
+                "--target",
+                str(target),
+                "--device",
+                "cpu",
+            ],
+        )
+
+        assert result.exit_code == 0, result.stdout
+        assert np.count_nonzero(captured["target"]) == 0
+
 
 class TestConvertCommand:
     def test_convert_basic(
@@ -2081,6 +2119,87 @@ class TestSliceCommand:
 
 
 class TestCompareCommand:
+    @pytest.mark.parametrize("value", ["-5", "nan", "inf"])
+    def test_compare_rejects_invalid_image_min(
+        self,
+        runner: CliRunner,
+        sample_gsplats: Path,
+        small_volume_npy: Path,
+        value: str,
+    ) -> None:
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "compare",
+                str(sample_gsplats),
+                str(small_volume_npy),
+                "--image-min",
+                value,
+            ],
+        )
+        assert result.exit_code != 0
+        assert "finite, non-negative" in _plain(result.stderr)
+
+    def test_compare_stored_basis_matches_a_pre_shifted_reference(
+        self,
+        runner: CliRunner,
+        sample_gsplats: Path,
+        small_volume_npy: Path,
+        tmp_path: Path,
+    ) -> None:
+        import json
+
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        level = 0.25
+        data = GSplatData.load(sample_gsplats)
+        data.stats["image_min"] = level
+        based = tmp_path / "based.gsplats.zarr"
+        data.save(based)
+
+        raw_json = tmp_path / "raw.json"
+        raw = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "compare",
+                str(based),
+                str(small_volume_npy),
+                "--device",
+                "cpu",
+                "--output-json",
+                str(raw_json),
+            ],
+        )
+        assert raw.exit_code == 0, raw.stdout
+        assert "from dataset" in raw.stdout
+
+        shifted_path = tmp_path / "shifted.npy"
+        shifted = np.clip(np.load(small_volume_npy) - level, 0.0, None)
+        np.save(shifted_path, shifted)
+        shifted_json = tmp_path / "shifted.json"
+        control = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "compare",
+                str(based),
+                str(shifted_path),
+                "--image-min",
+                "0",
+                "--device",
+                "cpu",
+                "--output-json",
+                str(shifted_json),
+            ],
+        )
+        assert control.exit_code == 0, control.stdout
+
+        raw_metrics = json.loads(raw_json.read_text())
+        shifted_metrics = json.loads(shifted_json.read_text())
+        for key in ("mse", "psnr_db", "ssim", "rel_l2", "max_abs_error"):
+            assert raw_metrics[key] == pytest.approx(shifted_metrics[key])
     def test_compare_accepts_auto_device(
         self,
         runner: CliRunner,

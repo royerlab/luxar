@@ -6,6 +6,7 @@ the shared ``app_gsplat`` Typer.
 
 from __future__ import annotations
 
+import math
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
@@ -731,6 +732,11 @@ def compare_quality(
         luxar gsplat compare fitted.gsplats.zarr original.zarr --output-json metrics.json
         luxar gsplat compare fitted.gsplats.zarr original.zarr -j metrics.json -q
     """
+    if image_min is not None and (not math.isfinite(image_min) or image_min < 0.0):
+        raise typer.BadParameter(
+            "must be a finite, non-negative level", param_hint="--image-min"
+        )
+
     try:
         import json
 
@@ -865,8 +871,6 @@ def compare_quality(
 
         # JSON output
         if output_json is not None:
-            import math
-
             # Replace non-finite floats (inf/nan) with None for valid JSON
             safe_metrics = {
                 k: (v if isinstance(v, (int, str)) or math.isfinite(v) else None)
