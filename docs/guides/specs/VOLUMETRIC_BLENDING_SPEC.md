@@ -878,8 +878,8 @@ Invariant and behavior tests:
   PEAK ratio over the four radii: `max` 30.66/12.15/4.05/1.57 and `normal`
   29.73/7.81/1.835/1.028, both BRIGHTER, with `normal` understating the
   divergence because its gsplat peak is already saturating near 1.0 (0.91/0.86
-  at the two asserted radii). `opaque` is
-  that same factor multiplied by the point `uOpacity` and points the OTHER way
+  at the two asserted radii). `opaque` is that same factor multiplied by the
+  point `uOpacity` and points the OTHER way
   — 0.093/0.037/0.012/0.005, i.e. DIMMER — because of a second, independent
   defect (#1993, §1.1).
 - **2026-07-24 (later)** — Phase 4 (lines) implemented — the plan is

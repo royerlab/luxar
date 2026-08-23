@@ -85,7 +85,7 @@ const PEAK_MODES = ['max', 'normal', 'opaque'] as const;
  * comment invites tuning it), to the radii or blob geometry, to the pinned
  * camera, or to the viewport. Only `max` (analytic, 1/(uRIF·σ)) and `opaque`
  * (`max` × uOpacity) can be re-derived on paper; `normal`'s 29.7 / 7.8 is pure
- * measurement, because both families are over-composited and clipping there.
+ * measurement, because both families are over-composited and saturating there.
  * Raising the opacity from 0.003 to 0.01 turns four of these six cells red with
  * a message blaming a shader regression that did not happen.
  */
