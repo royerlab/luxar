@@ -240,7 +240,7 @@ def test_an_in_range_coarsen_dims_request_is_accepted_by_both_families() -> None
     """The validator must not start rejecting the requests that are fine."""
     data = _cloud4d()
     for method in ("merge", "prefix"):
-        assert decimate(data, target=50, method=method, coarsen_dims=[0, 1, 2])
+        assert decimate(data, target=50, method=method, coarsen_dims=[0, 1, 2]).n_splats == 50
 
 
 def test_a_prefix_says_it_is_ignoring_coarsen_dims(recwarn) -> None:
