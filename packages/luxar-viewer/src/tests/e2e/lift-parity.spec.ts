@@ -605,7 +605,9 @@ test.describe('Lifted-gsplat / Points parity', () => {
       //                on the band (it is expected at 10.8× / 27.0×). Change
       //                `PEAK_DIVERGENCE_EXPECTED.opaque` to [30.7, 12.2] and
       //                `PEAK_DIVERGENCE_DIRECTION.opaque` to 'brighter' in the
-      //                same landing. max/normal unchanged.
+      //                same landing, and remove the now-stale #1993 paragraph
+      //                below the mode taxonomy in VOLUMETRIC_BLENDING_SPEC.md.
+      //                max/normal unchanged.
       //   both         all three reach parity and fail on the BAND at every
       //                cell. Direction is NOT what catches this one: at true
       //                parity the ratio straddles 1, so `ratio > 1` is a coin
