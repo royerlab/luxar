@@ -318,6 +318,16 @@ step 6 re-imposes on every frame. Both traps made three specs silently inert
 | `UNCLAMPED_ORBIT_DISTANCE_LIMITS`                                       | "Wherever I put it, leave it" limits for the above.                                                                                                                                                                                                                     |
 | `InPageCameraApi`, `Vec3Like`, `CameraPlacement`, `OrbitDistanceLimits` | Types. `InPageCameraApi` types `window.__luxarE2ECamera`, the in-page object the helpers install — a spec that places the camera many times inside ONE `page.evaluate` (the lod-group sweep) drives that object directly, so there is only one definition of the idiom. |
 
+A camera **sweep** has a second trap on top of the two above: it can outrun data
+loading. An LOD registry requests a level's chunks only when that level is first
+needed and keeps the currently resident level on screen until the replacement has
+arrived, so a sweep that crosses a boundary faster than the fetch completes skips
+that band without any error. Warm the residency up first — coarse passes over the
+same range until every level has been observed visible at least once — rather
+than sleeping for a guessed interval, and bound the warm-up so a page that never
+settles fails loudly instead of hanging (`lod-group.spec.ts`'s volumetric
+cross-fade sweep is the worked example).
+
 ### Pattern for a new helper
 
 Helpers follow a few conventions worth matching:
