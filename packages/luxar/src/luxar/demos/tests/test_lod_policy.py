@@ -51,7 +51,7 @@ _NO_CACHED_ARTIFACT = {
 #: letting :func:`save_with_lod` make the choice. That is still a deliberate,
 #: reviewable decision — the helper simply is not the one carrying it out. A demo
 #: that keeps whatever topology its fitter happened to produce has made no choice
-#: at all and belongs in ``_NOT_YET_ROUTED`` below, not here.
+#: at all and must route its cache write through :func:`save_with_lod` instead.
 #:
 #: This excuses a member from the *choosing* gate only. The topology it names is
 #: still put through the two round-trip gates (see :func:`_chosen_recipes`), since
@@ -231,7 +231,10 @@ def test_every_fitting_demo_chooses_a_topology_or_is_listed() -> None:
 
 def test_the_pending_list_stays_empty() -> None:
     """The former backlog stays empty now that every fitting demo has a policy."""
-    assert not _NOT_YET_ROUTED
+    assert not _NOT_YET_ROUTED, (
+        "route the demo through save_with_lod or take an explicit exemption — "
+        "_NOT_YET_ROUTED is closed"
+    )
     fitting = _fitting_demos()
     for name in sorted(_NO_CACHED_ARTIFACT):
         assert name in fitting, f"{name} no longer fits — drop the exemption"
