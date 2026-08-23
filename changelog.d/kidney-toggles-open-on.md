@@ -11,3 +11,7 @@ default for camera-controlled dimensions, so only the toggles move.
 The scene also opens auto-rotating. The three stains overlap heavily in
 projection, and the parallax of a slow orbit is what separates them into one 3D
 structure on first sight.
+
+The gallery manifest no longer steps the nuclei dimension before capture;
+regenerate an existing kidney gallery dataset with `--force` so it contains the
+scene-authored opening state.
