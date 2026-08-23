@@ -517,6 +517,24 @@ def _with_refit_source(
     return dataclasses.replace(recipe_params, volume=volume, volume_axes=axes)
 
 
+def _default_part_coarsen_dims(ndim: int, n_timepoints: int) -> Tuple[int, ...]:
+    """The dims a per-part ``levels`` recipe coarsens when none were requested.
+
+    The spatial dims alone: when timepoints were stacked (``n_timepoints > 1``)
+    the new axis is appended LAST (:meth:`GSplatData.embed_dimension`), so
+    coarsening must not merge across it — it stays a hard barrier. With a single
+    timepoint there is no such axis and the answer is every dim, which is the
+    same reduction ``coarsen_dims=None`` performs.
+
+    Spelled as a function because two sites need the SAME answer and they see
+    the part from different distances: :func:`_finalize_part_node` reads
+    ``part.ndim`` off the assembled tile it is about to reduce, while
+    :func:`_recipe_pipeline_info` stamps the record before any tile is built and
+    has to take the width from the manifest.
+    """
+    return tuple(range(ndim - (1 if n_timepoints > 1 else 0)))
+
+
 def _finalize_part_node(
     part: "GSplatData",
     recipe: Optional[str],
@@ -531,10 +549,8 @@ def _finalize_part_node(
     tile-region (so the part becomes a leaf-with-ladder or a substitutive lod
     group), giving a ``kind=partition`` whose every child carries its own LOD.
 
-    ``coarsen_dims`` (``substitutive`` only) defaults per part to the spatial
-    dims alone: when timepoints were stacked (``n_timepoints > 1``) the new axis is
-    appended LAST (:meth:`GSplatData.embed_dimension`), so coarsening must not
-    merge across it — it stays a hard barrier. An explicit ``coarsen_dims`` on
+    ``coarsen_dims`` (``substitutive`` only) defaults per part to
+    :func:`_default_part_coarsen_dims`. An explicit ``coarsen_dims`` on
     ``recipe_params`` is honoured as-is.
     """
     if recipe is None:
@@ -549,10 +565,9 @@ def _finalize_part_node(
     if params.image_min is None:
         params = dataclasses.replace(params, image_min=fit_image_min(part.stats))
     if recipe == "levels" and params.coarsen_dims is None:
-        # Stacked-timepoint axis (the last column) is a barrier; coarsen the rest.
-        n_spatial = part.ndim - (1 if n_timepoints > 1 else 0)
-        if n_spatial < part.ndim:
-            params = dataclasses.replace(params, coarsen_dims=tuple(range(n_spatial)))
+        params = dataclasses.replace(
+            params, coarsen_dims=_default_part_coarsen_dims(part.ndim, n_timepoints)
+        )
     # build_part_lod clamps LOD depth to the part's splat count (small tiles never
     # synthesise degenerate levels) — the exact per-part logic of tiles/adaptive.
     return build_part_lod(part.tree, recipe, params, cell=cell)
@@ -586,19 +601,44 @@ def _effective_refine_iters(
     return None
 
 
+def _stamped_coarsen_dims(
+    requested: "Optional[Sequence[int]]",
+    default: "Optional[Sequence[int]]",
+) -> Optional[List[int]]:
+    """The ``coarsen_dims`` value the merged store publishes.
+
+    An explicit request wins; otherwise the per-part default the caller
+    resolved, and only if it could not be resolved does this fall back to
+    ``None`` (no provenance). Never invents a width: a wrong explicit list is
+    worse than an absent one, because the writer would act on it.
+    """
+    dims = requested if requested is not None else default
+    return None if dims is None else sorted({int(d) for d in dims})
+
+
 def _recipe_pipeline_info(
     recipe: Optional[str],
     recipe_params: "Optional[RecipeParams]",
+    default_coarsen_dims: "Optional[Sequence[int]]" = None,
 ) -> Optional[Dict[str, Any]]:
     """Reduction/topology provenance for the merged store's ``pipeline/`` group.
 
     Mirrors the stats ``gsplat lod`` persists for the same reduction (the
     substitutive builder's out_stats keys / the additive-ladder knobs), plus
     ``per_part=True`` because the merge applies the recipe to each streamed
-    tile-part rather than to the whole dataset. ``coarsen_dims=None`` records
-    the per-part default (spatial dims only; the stacked-timepoint axis stays a
-    hard barrier — see :func:`_finalize_part_node`). ``recipe=None`` → ``None``
+    tile-part rather than to the whole dataset. ``recipe=None`` → ``None``
     (bare-leaf parts write no ``pipeline/`` group, matching a plain fit).
+
+    ``default_coarsen_dims`` is what the parts will coarsen over when
+    ``recipe_params`` names no dims — :func:`_default_part_coarsen_dims` of the
+    merged part width, which only the caller can compute (this runs before the
+    first tile is assembled). Passing it makes the record EXPLICIT, which is the
+    difference between a barrier and a guess: the writer derives the
+    chunk-ordering barrier from this key's complement and reads a written
+    ``null`` exactly as it reads an absent key, i.e. as no provenance at all
+    (#1600). Left out — the caller could not establish a trustworthy width — the
+    stamp stays ``None`` and the writer falls back to per-part auto-detection,
+    which is the historical behaviour rather than a claim.
     """
     if recipe is None:
         return None
@@ -641,10 +681,8 @@ def _recipe_pipeline_info(
                 "refine_iters": _effective_refine_iters(
                     str(params.refine), params.refine_iters
                 ),
-                "coarsen_dims": (
-                    list(params.coarsen_dims)
-                    if params.coarsen_dims is not None
-                    else None
+                "coarsen_dims": _stamped_coarsen_dims(
+                    params.coarsen_dims, default_coarsen_dims
                 ),
                 "additive_ladders": bool(params.additive_ladders),
             }
@@ -679,10 +717,33 @@ def _batch_floor_stats(manifest: BatchManifest) -> Dict[str, Any]:
     return {}
 
 
+def _manifest_part_coarsen_dims(
+    manifest: BatchManifest,
+) -> "Optional[Tuple[int, ...]]":
+    """:func:`_default_part_coarsen_dims` for this batch's parts, or ``None``.
+
+    Every part comes out of :func:`_build_part_for_tile` the same width — the
+    fitted tile's dims, plus ONE if the timepoints were stacked — so the
+    manifest settles it before a single tile is read. ``spatial_shape`` is the
+    fitted tile's dim count; the explicit-``barrier_dims`` branch below already
+    treats ``len(spatial_shape)`` as the stacked axis's index, which is the same
+    assumption stated once here.
+
+    ``()`` (a manifest predating the field, or one that never recorded it) is
+    the one honest ``None``: guessing a width would publish a barrier over
+    columns that may not exist.
+    """
+    if not manifest.spatial_shape:
+        return None
+    ndim = len(manifest.spatial_shape) + (1 if manifest.n_timepoints > 1 else 0)
+    return _default_part_coarsen_dims(ndim, manifest.n_timepoints)
+
+
 def _pipeline_info_with_floor(
     recipe: Optional[str],
     recipe_params: "Optional[RecipeParams]",
     floor_stats: Dict[str, Any],
+    default_coarsen_dims: "Optional[Sequence[int]]" = None,
 ) -> Optional[Dict[str, Any]]:
     """:func:`_recipe_pipeline_info` plus the batch's floor block (#1175).
 
@@ -690,7 +751,10 @@ def _pipeline_info_with_floor(
     already carries the recipe's reduction provenance and the floor block into
     the same ``pipeline/`` group, and either can be empty.
     """
-    merged = {**(_recipe_pipeline_info(recipe, recipe_params) or {}), **floor_stats}
+    merged = {
+        **(_recipe_pipeline_info(recipe, recipe_params, default_coarsen_dims) or {}),
+        **floor_stats,
+    }
     return merged or None
 
 
@@ -843,7 +907,9 @@ def _merge_partition(
     # only chance to record it, since neither branch below has a root node whose
     # `meta` the tree writer could promote.
     floor_stats = _batch_floor_stats(manifest)
-    pipeline_info = _pipeline_info_with_floor(recipe, recipe_params, floor_stats)
+    pipeline_info = _pipeline_info_with_floor(
+        recipe, recipe_params, floor_stats, _manifest_part_coarsen_dims(manifest)
+    )
 
     # Authoritative ordering barrier: when timepoints are stacked (n_timepoints
     # > 1) the merge appends them as the LAST axis (see _finalize_part_node /

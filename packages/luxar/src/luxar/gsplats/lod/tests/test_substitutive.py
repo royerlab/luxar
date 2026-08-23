@@ -27,6 +27,7 @@ from luxar.gsplats.lod import make_substitutive_lod
 from luxar.gsplats.lod._kernels import bin_squared_norm_torch
 from luxar.gsplats.lod._substitutive.greedy import _merge_two_clusters
 from luxar.gsplats.lod._substitutive.warm_start import _morton_partition
+from luxar.gsplats.lod.substitutive import resolved_merge_coarsen_dims
 from luxar.gsplats.utils.trils import pack_tril, unpack_tril
 
 # ─────────────────────────────────────────────────────────────────────
@@ -672,8 +673,11 @@ class TestApiContract:
             rs["iters_run"]
             == out.substitutive_levels[1].stats["refine_stats"]["iters_run"]
         )
-        # coarsen_dims=None must round-trip AS None (not "None"/dropped).
-        assert back.stats["coarsen_dims"] is None
+        # coarsen_dims=None is published as the EXPLICIT all-dims list and must
+        # round-trip as that list (not "None"/dropped). It used to round-trip as
+        # a literal null, which the writer reads exactly as it reads an absent
+        # key — see `resolved_merge_coarsen_dims` (#1600).
+        assert back.stats["coarsen_dims"] == [0, 1, 2]
 
     def test_plain_fit_writes_no_pipeline_group(self, tmp_path):
         """A plain fit (no reduction/topology stats, just fit-runtime scratch
@@ -1956,6 +1960,62 @@ class TestCoarsenDims:
             make_substitutive_lod(data, levels=1, device="cpu", coarsen_dims=[])
         with pytest.raises(ValueError):
             make_substitutive_lod(data, levels=1, device="cpu", coarsen_dims=[7])
+
+    @pytest.mark.parametrize(
+        ("request_dims", "expected"),
+        [
+            # A proper subset is published as asked (barrier = [0]).
+            ([1, 2, 3], [1, 2, 3]),
+            # The default coarsens every dim, so the stamp names every dim.
+            # NOT `None`: `_barrier_from_coarsen_dims` cannot tell a written
+            # null from an absent key, so that spelling reads as "no
+            # provenance" and the writer auto-detects a barrier instead of
+            # honouring the empty complement this reduction earned (#1600).
+            (None, [0, 1, 2, 3]),
+            # The same reduction spelled out — `_normalise_coarsen_dims`
+            # collapses it to the same `None` internally — must publish the
+            # same stamp. This is the second spelling of the same bug.
+            ([0, 1, 2, 3], [0, 1, 2, 3]),
+            # Order and duplicates in the request do not reach the stamp.
+            ([3, 1, 1, 2], [1, 2, 3]),
+        ],
+        ids=["subset", "default", "all-dims-spelled-out", "unsorted-request"],
+    )
+    def test_the_stamp_names_the_dims_the_reduction_coarsened(
+        self, request_dims, expected
+    ):
+        """``coarsen_dims`` is read back by the writer, so it must be explicit.
+
+        The value half of the claim; the LAYOUT it produces is measured in
+        ``cli/tests/test_gsplat_structure_scoped_stamps.py``
+        (``test_a_levels_build_stamps_the_coarsen_dims_it_used``).
+        """
+        data = _stacked_categorical(n_per=300, n_groups=3)
+        out = make_substitutive_lod(
+            data,
+            compression_factor=4,
+            levels=2,
+            device="cpu",
+            coarsen_dims=request_dims,
+        )
+        assert out.stats["coarsen_dims"] == expected
+
+    def test_the_stamp_is_resolved_by_the_shared_helper(self):
+        """One resolution for every producer of this key, not three copies.
+
+        ``decimate``'s ``merge`` family and the ``batch-fit merge`` per-part
+        record publish the same stamp for the same choice, and the way they are
+        kept from drifting is that all three call
+        :func:`resolved_merge_coarsen_dims`. Pinned so a future edit that
+        inlines the rule here goes red instead of quietly reopening #1600.
+        """
+        from luxar.gsplats.lod.decimate import (
+            resolved_merge_coarsen_dims as from_decimate,
+        )
+
+        assert from_decimate is resolved_merge_coarsen_dims
+        assert resolved_merge_coarsen_dims(None, 4) == [0, 1, 2, 3]
+        assert resolved_merge_coarsen_dims((3, 1, 1), 4) == [1, 3]
 
     def test_single_barrier_value_is_noop(self):
         # All splats share barrier value 0 → one group → identical to all-dims.

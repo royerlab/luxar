@@ -969,18 +969,30 @@ rewrites a store must apply all three rules:
   barrier on an axis a reduction just blended exactly when the reduction leaves
   that axis' grid **intact** (timepoints far enough apart that no cluster spans
   two of them, so the coordinates stay integral); where the reduction averages
-  the grid away, auto-detection finds nothing and is merely redundant. Which of
-  the two you get is a property of the data, not of the metadata, so the
-  explicit spelling is the honest one either way.
+  the grid away, auto-detection finds nothing on the levels it merged but still
+  finds the axis on a level it left alone, so a ladder comes out with a per-level
+  *mixture* of layouts. Which of the two you get is a property of the data, not
+  of the metadata, so the explicit spelling is the honest one either way.
   "Coarsen everything" therefore has an explicit spelling and a
   non-spelling: `[0, …, d-1]`, whose complement is the empty list (a real,
   authoritative *no barrier*), versus `null`, which asserts nothing and lands on
-  the heuristic. Producers do not yet agree on this: `decimate`'s `merge`
-  family writes the explicit list, while `make_substitutive_lod` (and so every
-  `lod --recipe levels` build) still writes `null` and carries the same latent
-  fallback. That divergence is deliberate for now — changing the substitutive
-  builder would move the chunk layout of every existing `levels` pipeline — and
-  is recorded on #1600.
+  the heuristic. **Every producer writes the explicit list**, resolved through
+  one shared function (`resolved_merge_coarsen_dims`): `decimate`'s `merge`
+  family, `make_substitutive_lod` (and so every `lod --recipe levels` build),
+  and the `batch-fit merge` per-part record. The one remaining `null` is a
+  `batch-fit merge` whose manifest never recorded a `spatial_shape`: the merge
+  cannot establish the part width there and declines to invent one, since a
+  wrong explicit list is worse than an absent one — the writer acts on it.
+  Otherwise `null` appears only in stores written before this was settled
+  (#1600); it still reads correctly — as no provenance — and nothing rewrites
+  those stores in place.
+
+  Newly built `levels` pipelines that coarsen every dimension consequently get a
+  **different chunk layout** from the ones built before: the stacked axis loses
+  the barrier auto-detection used to re-impose on it, so chunks are ordered
+  purely spatially and no longer group by timepoint. That is the layout the
+  reduction earned — it blended that axis — but a store rebuilt at a *new*
+  `content_hash` cannot be served under the old URL to a warm viewer cache.
 
   Exempt from the scrub is not exempt from being TRUE. A rewrite that coarsens
   over its own choice of axes owes the output a fresh `coarsen_dims`, because the
@@ -1092,7 +1104,7 @@ substitutive/pyramid/recipe build round-trips its parameters:
   "coverage_inflation": 3.0,
   "refine": "l2",
   "refine_iters": 120,
-  "coarsen_dims": null,
+  "coarsen_dims": [0, 1, 2],
   "n_substitutive_levels": 4,
   "image_min": 110.0,
   "image_max": 4095.0,

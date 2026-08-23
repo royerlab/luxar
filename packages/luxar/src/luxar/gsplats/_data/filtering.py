@@ -264,9 +264,12 @@ _STRUCTURE_SCOPED_STATS_KEYS = (
 #:   the key here would neither produce one nor leave the chunks where they were.
 #:   ``decimate`` is the case that had to learn this: its ``merge`` family now
 #:   re-stamps the dims it resolved — see
-#:   :func:`~luxar.gsplats.lod.decimate.resolved_merge_coarsen_dims`, called
+#:   :func:`~luxar.gsplats.lod.substitutive.resolved_merge_coarsen_dims`, called
 #:   right after this scrub — while its ``prefix`` family keeps the inherited
-#:   value because it blends no axis.
+#:   value because it blends no axis. That resolution is SHARED with
+#:   ``make_substitutive_lod`` (and the ``batch-fit merge`` per-part record), so
+#:   every producer of this key spells coarsen-everything the same explicit way
+#:   rather than as a ``null`` the writer reads as no provenance at all.
 #: * The :data:`~luxar.gsplats.io.save_gsplats.NORMALIZATION_STATS_KEYS` block
 #:   (``floor`` / ``image_min`` / ``image_max`` / ``intensity_range``) describes
 #:   the INPUT VOLUME's intensity scale. Regrouping splats cannot change what

@@ -1741,8 +1741,52 @@ class TestMergeOrchestrator:
         assert pipe["levels"] == 3
         assert pipe["conserve_mass"] is True
         assert pipe["refine"] == "none"
-        # None records the per-part default (spatial dims; time axis = barrier).
+        # This manifest records no `spatial_shape`, so the merge cannot
+        # establish the part width and refuses to invent one: the stamp stays
+        # `None` (no provenance) rather than naming columns that may not exist.
+        # A manifest that DOES record it publishes the explicit list — see
+        # `test_merge_recipe_levels_stamps_the_part_coarsen_dims`.
         assert pipe["coarsen_dims"] is None
+
+    @pytest.mark.parametrize(
+        ("n_t", "expected"),
+        [
+            # Single timepoint: the parts are 3D and the reduction coarsens all
+            # three, so the complement is empty — a real "no barrier".
+            (1, [0, 1, 2]),
+            # Stacked timepoints: the merge appends the time axis LAST and
+            # `_finalize_part_node` keeps it out of the coarsening, so the stamp
+            # names the spatial dims only and the complement is [3].
+            (2, [0, 1, 2]),
+        ],
+        ids=["single-timepoint", "stacked-timepoints"],
+    )
+    def test_merge_recipe_levels_stamps_the_part_coarsen_dims(
+        self, tmp_path: Path, n_t: int, expected: "list[int]"
+    ) -> None:
+        """The per-part default is PUBLISHED, not left to the writer to guess.
+
+        ``coarsen_dims: null`` is indistinguishable from an absent key to
+        ``_barrier_from_coarsen_dims``, so the merge's own choice used to be
+        withheld from the store and re-derived by auto-detection (#1600). The
+        width comes from ``manifest.spatial_shape`` — the same field the
+        explicit stacked-time ``barrier_dims`` is already taken from — so the
+        record is available before the first tile is assembled.
+        """
+        import zarr
+
+        from luxar.gsplats.batch.manifest import BatchManifest
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+
+        out_dir = tmp_path / "batch"
+        self._write_tiles(out_dir / "tiles", n_t=n_t, n_c=1, n_k=2)
+        manifest = BatchManifest(
+            n_timepoints=n_t, n_channels=1, n_tiles=2, spatial_shape=(50, 50, 50)
+        )
+        final = merge_batch_results(manifest, out_dir, verbose=False, recipe="levels")
+
+        pipe = dict(zarr.open_group(str(final), mode="r")["pipeline"].attrs)
+        assert list(pipe["coarsen_dims"]) == expected
 
     def test_merge_recipe_levels_uses_manifest_floor_basis(
         self, tmp_path: Path, monkeypatch

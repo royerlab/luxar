@@ -3346,14 +3346,18 @@ class TestBarrierAwareOrdering:
             assert list(root.attrs["slice_dims"]) == [3]
 
     def test_explicit_full_coarsen_list_yields_no_barrier(self) -> None:
-        """A DIRECT caller passing an explicit full coarsen_dims list (barrier =
-        empty complement) → pure spatial, NOT auto-detected [3].
+        """A caller passing an explicit full coarsen_dims list (barrier = empty
+        complement) → pure spatial, NOT auto-detected [3].
 
-        NOTE: this is the direct-caller contract for _barrier_from_coarsen_dims's
-        empty-complement branch. The LOD reducer itself never persists a full
-        list — _normalise_coarsen_dims collapses coarsen-all to `coarsen_dims=
-        None`, which is indistinguishable from 'no provenance' and correctly
-        falls through to auto-detect (a degenerate, rarely-used config)."""
+        NOTE: this is _barrier_from_coarsen_dims's empty-complement branch, and
+        since #1600 it is on the ORDINARY path rather than a direct-caller
+        curiosity: `_normalise_coarsen_dims` still collapses coarsen-all to an
+        internal `None`, but every producer of the stamp (make_substitutive_lod,
+        decimate's merge family, the batch-fit merge per-part record) now
+        resolves that back to the full list through
+        `resolved_merge_coarsen_dims` before writing it. The `None` spelling is
+        indistinguishable from 'no provenance' and would land on auto-detect,
+        re-imposing the barrier the reduction just blended away."""
         from luxar.gsplats.io.save_gsplats import write_gsplats_tree
         from luxar.gsplats.tree import GSplatLeaf
 

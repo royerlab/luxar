@@ -425,10 +425,13 @@ def test_every_gsplat_command_is_classified() -> None:
 
 #: The rows whose ``coarsen_dims`` provenance is untouched by the command, so the
 #: written ordering barrier is a clean read of the exempted key. ``lod`` is left
-#: out: its substitutive builder RE-STAMPS ``coarsen_dims`` from ``--coarsen-dims``
-#: (to ``None`` when the flag is absent), which is a claim about what that builder
-#: stamps rather than about this scrub. ``decimate`` is out for the same reason
-#: since #1600 — its ``merge`` family re-stamps the dims it resolved, and
+#: out: its substitutive builder RE-STAMPS ``coarsen_dims`` from
+#: ``--coarsen-dims`` (to the full ``[0, …, d-1]`` list when the flag is absent,
+#: since that is the reduction it then performs), which is a claim about what
+#: that builder stamps rather than about this scrub —
+#: :func:`test_a_levels_build_stamps_the_coarsen_dims_it_used` measures it.
+#: ``decimate`` is out for the same reason since #1600 — its ``merge`` family
+#: re-stamps the dims it resolved, and
 #: :func:`test_decimate_stamps_the_coarsen_dims_it_used` measures that barrier
 #: (including the case where the INHERITED one must not be re-imposed).
 _BARRIER_ROWS = [
@@ -1131,6 +1134,138 @@ def _auto_detected_barriers(out: Path, tmp_path: Path) -> List[List[int]]:
     probe = tmp_path / "autodetect.gsplats.zarr"
     GSplatData.from_tree(node, stats=bare).save(probe, include_fitting_info=True)
     return _ordering_barriers(probe)
+
+
+#: ``(id, argv tail, time_step, stamp, barrier)`` for ``lod --recipe levels``'s
+#: ``coarsen_dims`` — the substitutive builder's half of the same claim
+#: :data:`_DECIMATE_COARSEN` makes for ``decimate``'s ``merge`` family, and the
+#: reason the two tables look alike: both producers now resolve the stamp through
+#: one shared :func:`~luxar.gsplats.lod.substitutive.resolved_merge_coarsen_dims`,
+#: so a divergence between them is a test failure rather than a format quirk.
+#:
+#: ``time_step`` is load-bearing exactly as it is over there: the expected barrier
+#: must be one the writer's auto-detect fallback CANNOT produce on THIS ROW'S
+#: OUTPUT. Widely-separated timepoints (1000 apart against a spatial extent of
+#: 100) are never clustered together, so the stacked axis' integer grid survives
+#: the merge and the fallback re-imposes ``[3]`` — which is precisely the barrier
+#: the coarsen-everything rows blended away. Measured on this fixture, the two
+#: coarsen-everything rows came out of the pre-fix ``None`` stamp with a MIXTURE
+#: of ``[]`` and ``[3]`` over the store's 12 splat-holding groups, and come out
+#: of the explicit stamp uniformly ``[]``. A half-integer grid is invisible to
+#: auto-detect and serves the row whose expected barrier is non-empty.
+_LEVELS_COARSEN: List[tuple[str, Sequence[str], float, Any, List[int]]] = [
+    # No flag: the reduction blends over every axis, so no axis is a barrier.
+    ("levels-coarsens-everything", (), 1000.0, [0, 1, 2, 3], []),
+    # The same reduction spelled out. `_normalise_coarsen_dims` collapses a
+    # request naming every dim to the same internal `None`, so this is the
+    # second spelling of the same bug and must publish the same stamp.
+    (
+        "levels-all-dims-spelled-out",
+        ("--coarsen-dims", "0,1,2,3"),
+        1000.0,
+        [0, 1, 2, 3],
+        [],
+    ),
+    # A proper subset was always stamped honestly; the row is the control that
+    # the change did not disturb it.
+    ("levels-honours-the-request", ("--coarsen-dims", "0,1,2"), 0.5, [0, 1, 2], [3]),
+]
+
+
+@pytest.mark.parametrize(
+    ("tail", "time_step", "stamp", "barrier"),
+    [(tail, step, stamp, bar) for _, tail, step, stamp, bar in _LEVELS_COARSEN],
+    ids=[row[0] for row in _LEVELS_COARSEN],
+)
+def test_a_levels_build_stamps_the_coarsen_dims_it_used(
+    tmp_path: Path,
+    tail: Sequence[str],
+    time_step: float,
+    stamp: Any,
+    barrier: List[int],
+) -> None:
+    """``lod --recipe levels`` owes its output the barrier it actually earned.
+
+    The substitutive builder used to publish a literal ``null`` whenever it
+    coarsened every dimension, and the writer cannot tell that from an absent
+    key: both mean "no provenance" and fall through to ``detect_barrier_dims``.
+    On data whose stacked axis the merge leaves gridded, that guess re-imposes
+    the very barrier every level was just blended over (#1600). Asserted on the
+    LAYOUT as well as the key — the key alone would not show that a stamp is
+    load-bearing.
+    """
+    src = tmp_path / "flat.gsplats.zarr"
+    _data(200, stats=dict(_DESCRIPTIVE), time_step=time_step).save(
+        src, include_fitting_info=True
+    )
+    out = tmp_path / "out.gsplats.zarr"
+    _run(
+        ("lod", "{in}", "{out}", "--recipe", "levels", "-K", "4", "-L", "2", *tail),
+        src,
+        out,
+    )
+
+    got = _pipeline_attrs(out).get("coarsen_dims")
+    assert (list(got) if isinstance(got, list) else got) == stamp
+    barriers = _ordering_barriers(out)
+    assert barriers, "no ordering attrs written at all"
+    assert all(b == barrier for b in barriers), (
+        f"the written ordering barrier {barriers} does not follow the stamp"
+    )
+
+    # The control that makes the row mean something: strip the stamp and the
+    # SAME store gets a different LAYOUT, so the assertion above cannot be
+    # satisfied by the fallback it exists to displace. Compared as the set of
+    # layouts rather than per group: a `levels` build has one group per level
+    # plus its ladder rungs, and auto-detection answers them INDEPENDENTLY — it
+    # keeps the barrier on whichever ones the merge left gridded — so the honest
+    # claim is that the fallback does not produce the stamped layout throughout.
+    auto = _auto_detected_barriers(out, tmp_path)
+    assert auto and set(map(tuple, auto)) != {tuple(barrier)}, (
+        f"auto-detection produces {auto} on this result, which the expected "
+        f"barrier {barrier} cannot be distinguished from — the row would pass "
+        "on the fallback rather than on the stamp"
+    )
+
+
+def test_a_levels_build_on_a_fine_grid_gets_one_layout_for_the_whole_ladder(
+    tmp_path: Path,
+) -> None:
+    """The other grid, where the fallback is not wrong so much as INCONSISTENT.
+
+    A step-1 stacked axis is the case the coarsen-everything rows above cannot
+    use: merging averages neighbouring timepoints together, the coordinates stop
+    being integral, and ``detect_barrier_dims`` finds nothing — on the levels it
+    merged. The FINEST level of a substitutive ladder is the input unreduced, so
+    its grid survives and the fallback still barriers it. Measured pre-fix
+    directly on the three substitutive levels, coarsest→finest: ``[[], [], [3]]``
+    — one ladder, two layouts, chosen per group by a heuristic (the ladder rungs
+    this store also carries split the same way). The stamp settles all of them.
+
+    Also the guard against "fix the loud grid only": a change that special-cased
+    the widely-spaced case would leave this ladder split.
+    """
+    src = tmp_path / "flat.gsplats.zarr"
+    _data(200, stats=dict(_DESCRIPTIVE), time_step=1.0).save(
+        src, include_fitting_info=True
+    )
+    out = tmp_path / "out.gsplats.zarr"
+    _run(("lod", "{in}", "{out}", "--recipe", "levels", "-K", "4", "-L", "2"), src, out)
+
+    assert _pipeline_attrs(out).get("coarsen_dims") == [0, 1, 2, 3]
+    barriers = _ordering_barriers(out)
+    assert len(barriers) >= 3, f"expected one barrier per level, got {barriers}"
+    assert all(b == [] for b in barriers), (
+        f"the ladder did not get one layout: {barriers}"
+    )
+    # The control: without the stamp the levels disagree with each other, which
+    # is the defect this row is about (a uniform fallback would make the
+    # assertion above pass for the wrong reason).
+    auto = _auto_detected_barriers(out, tmp_path)
+    assert len(set(map(tuple, auto))) > 1, (
+        f"auto-detection is uniform ({auto}) on this fixture, so the row proves "
+        "nothing about the ladder being split"
+    )
 
 
 #: Recipes run to MEASURE what the builders stamp. ``levels`` exercises the
