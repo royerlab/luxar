@@ -4,7 +4,8 @@
 This demo demonstrates:
 - Volumetric representation of the famous Mandelbulb 3D fractal
 - Distance estimation for surface detection
-- Iteration-based coloring for visual depth
+- Orbit-trap coloring for visual structure
+- Distance-field ambient occlusion and baked key lighting
 - Adaptive point sizing based on detail level
 - Complete workflow: generate → serve → view → cleanup
 
@@ -35,7 +36,7 @@ Controls:
 DEMO_META = {
     "key": "mandelbulb",
     "title": "Mandelbulb Fractal",
-    "description": "Volumetric Mandelbulb 3D fractal via distance estimation, iteration-colored surface points.",
+    "description": "Volumetric Mandelbulb with orbit-trap colors and distance-field shading.",
     "category": "synthetic",
     "geometry": "points",
     "requirements": {
@@ -58,6 +59,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.colormaps import scalars_to_colors
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import add_demo_caption, launch_viewer
 from luxar.utils.paths import get_demos_output_dir
@@ -86,6 +88,44 @@ def mandelbulb_distance_estimate(
         - distances: Estimated distance to fractal surface (lower = closer)
         - iterations: Number of iterations before escape (higher = deeper in set)
     """
+    distances, iterations, _ = _mandelbulb_distance_core(
+        points,
+        power=power,
+        max_iterations=max_iterations,
+        bailout=bailout,
+        track_orbit_trap=False,
+    )
+    return distances, iterations
+
+
+def _mandelbulb_distance_and_orbit_trap(
+    points: np.ndarray,
+    power: int = 8,
+    max_iterations: int = 128,
+    bailout: float = 2.0,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Compute distance, escape iterations, and a plane orbit trap."""
+    distances, iterations, orbit_trap = _mandelbulb_distance_core(
+        points,
+        power=power,
+        max_iterations=max_iterations,
+        bailout=bailout,
+        track_orbit_trap=True,
+    )
+    if orbit_trap is None:
+        raise RuntimeError("Orbit trap tracking unexpectedly disabled")
+    return distances, iterations, orbit_trap
+
+
+def _mandelbulb_distance_core(
+    points: np.ndarray,
+    power: int,
+    max_iterations: int,
+    bailout: float,
+    *,
+    track_orbit_trap: bool,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
+    """Run the Mandelbulb escape loop with optional orbit-trap tracking."""
     n_points = points.shape[0]
 
     # Initialize
@@ -95,6 +135,7 @@ def mandelbulb_distance_estimate(
 
     iterations = np.zeros(n_points, dtype=np.int32)
     escaped = np.zeros(n_points, dtype=bool)
+    orbit_trap = np.abs(z[:, 0]).copy() if track_orbit_trap else None
 
     for i in range(max_iterations):
         # Only iterate points that haven't escaped
@@ -136,6 +177,13 @@ def mandelbulb_distance_estimate(
         z[active] = z_active_new
         dr[active] = dr_active
         r[active] = np.sqrt(np.sum(z_active_new**2, axis=1))
+        if orbit_trap is not None:
+            # A plane orbit trap records the closest approach of each orbit to
+            # x=0. Unlike escape iterations, it varies across nearby surface
+            # points and exposes the Mandelbulb's internal folds.
+            orbit_trap[active] = np.minimum(
+                orbit_trap[active], np.abs(z_active_new[:, 0])
+            )
 
         # Check for escape
         newly_escaped = (r > bailout) & active
@@ -147,7 +195,120 @@ def mandelbulb_distance_estimate(
     dr_clamped = np.maximum(dr, 1e-6)
     distances = 0.5 * r * np.log(np.maximum(r, 1e-6)) / dr_clamped
 
-    return distances, iterations
+    return distances, iterations, orbit_trap
+
+
+def _equalize_orbit_trap(orbit_trap: np.ndarray) -> np.ndarray:
+    """Map an orbit trap to a tie-preserving empirical CDF in [0, 1]."""
+    if orbit_trap.size == 0:
+        return np.empty(0, dtype=np.float32)
+
+    _, inverse, counts = np.unique(orbit_trap, return_inverse=True, return_counts=True)
+    cumulative = np.cumsum(counts)
+    quantiles = (cumulative - 0.5 * counts) / orbit_trap.size
+    return quantiles[inverse].astype(np.float32)
+
+
+def _mandelbulb_surface_normals(
+    positions: np.ndarray,
+    *,
+    power: int,
+    epsilon: float,
+) -> np.ndarray:
+    """Estimate outward normals from central differences of the DE field."""
+    gradients = np.empty_like(positions, dtype=np.float64)
+    for axis in range(3):
+        offset = np.zeros(3)
+        offset[axis] = epsilon
+        distance_plus, _ = mandelbulb_distance_estimate(positions + offset, power=power)
+        distance_minus, _ = mandelbulb_distance_estimate(
+            positions - offset, power=power
+        )
+        gradients[:, axis] = distance_plus - distance_minus
+
+    lengths = np.linalg.norm(gradients, axis=1)
+    normals = np.zeros_like(gradients)
+    valid = lengths > 1e-12
+    normals[valid] = gradients[valid] / lengths[valid, None]
+
+    if np.any(~valid):
+        invalid_indices = np.flatnonzero(~valid)
+        radial = positions[~valid]
+        radial_lengths = np.linalg.norm(radial, axis=1)
+        radial_valid = radial_lengths > 1e-12
+        normals[invalid_indices[radial_valid]] = (
+            radial[radial_valid] / radial_lengths[radial_valid, None]
+        )
+
+    return normals
+
+
+def _mandelbulb_ambient_occlusion(
+    positions: np.ndarray,
+    surface_distances: np.ndarray,
+    normals: np.ndarray,
+    *,
+    power: int,
+    step: float,
+) -> np.ndarray:
+    """Bake directional distance-field AO along each outward normal."""
+    occlusion = np.zeros(len(positions), dtype=np.float64)
+    total_weight = 0.0
+    for index in range(5):
+        distance_along_normal = step * 2**index
+        sample_positions = positions + normals * distance_along_normal
+        sampled_distances, _ = mandelbulb_distance_estimate(
+            sample_positions, power=power
+        )
+        expected_distances = surface_distances + distance_along_normal
+        deficit = np.clip(
+            (expected_distances - sampled_distances) / distance_along_normal,
+            0.0,
+            1.0,
+        )
+        weight = 0.5**index
+        occlusion += deficit * weight
+        total_weight += weight
+
+    return np.clip(1.0 - 0.85 * occlusion / total_weight, 0.15, 1.0)
+
+
+def _mandelbulb_surface_appearance(
+    positions: np.ndarray,
+    surface_distances: np.ndarray,
+    orbit_trap: np.ndarray,
+    *,
+    power: int = 8,
+    max_distance: float = 0.01,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Create orbit-trap colours with baked key light and distance-field AO."""
+    if len(positions) == 0:
+        empty_colors = np.empty((0, 3), dtype=np.float32)
+        empty_scalars = np.empty(0, dtype=np.float32)
+        return empty_colors, empty_scalars, empty_scalars
+
+    trap_quantiles = _equalize_orbit_trap(orbit_trap)
+    base_colors = scalars_to_colors(trap_quantiles, "magma", vmin=0.0, vmax=1.0)
+
+    normals = _mandelbulb_surface_normals(
+        positions,
+        power=power,
+        epsilon=max_distance * 0.5,
+    )
+    ambient_occlusion = _mandelbulb_ambient_occlusion(
+        positions,
+        surface_distances,
+        normals,
+        power=power,
+        step=max_distance,
+    )
+
+    key_direction = np.array([-0.45, -0.35, 0.82])
+    key_direction /= np.linalg.norm(key_direction)
+    lambert = np.clip(normals @ key_direction, 0.0, 1.0)
+    lighting = (0.32 + 0.68 * lambert) * ambient_occlusion
+    colors = np.clip(base_colors * lighting[:, None], 0.0, 1.0).astype(np.float32)
+    return colors, lighting.astype(np.float32), ambient_occlusion.astype(np.float32)
 
 
 def generate_mandelbulb_volumetric(
@@ -199,7 +360,7 @@ def generate_mandelbulb_volumetric(
 
         # Compute Mandelbulb distance for all points
         aprint(f"Computing Mandelbulb iterations (power={power})...")
-        distances, iterations = mandelbulb_distance_estimate(
+        distances, _, orbit_trap = _mandelbulb_distance_and_orbit_trap(
             sample_points,
             power=power,
         )
@@ -212,7 +373,7 @@ def generate_mandelbulb_volumetric(
 
         positions = sample_points[near_surface].astype(np.float32)
         surface_distances = distances[near_surface]
-        surface_iterations = iterations[near_surface]
+        surface_orbit_trap = orbit_trap[near_surface]
 
         aprint(f"✓ Found {len(positions):,} points near fractal surface")
         aprint(f"  Surface density: {len(positions) / resolution**3 * 100:.2f}%")
@@ -221,22 +382,19 @@ def generate_mandelbulb_volumetric(
             aprint("⚠️  No points found! Try increasing max_distance or resolution")
             return 0
 
-        # Generate colors based on iteration count (rainbow gradient)
-        aprint("Generating colors from iteration count...")
-
-        # Normalize iterations to [0, 1]
-        iter_normalized = surface_iterations / surface_iterations.max()
-
-        # Create rainbow using HSV-like approach
-        hue = iter_normalized  # Hue varies with iteration
-
-        # Convert hue to RGB (simplified HSV to RGB)
-        colors = np.zeros((len(positions), 3), dtype=np.float32)
-        colors[:, 0] = np.abs(np.sin(2 * np.pi * hue))  # Red
-        colors[:, 1] = np.abs(np.sin(2 * np.pi * hue + 2 * np.pi / 3))  # Green
-        colors[:, 2] = np.abs(np.sin(2 * np.pi * hue + 4 * np.pi / 3))  # Blue
-
-        aprint("✓ Generated rainbow gradient based on fractal depth")
+        aprint("Generating orbit-trap colors and distance-field shading...")
+        colors, lighting, ambient_occlusion = _mandelbulb_surface_appearance(
+            positions,
+            surface_distances,
+            surface_orbit_trap,
+            power=power,
+            max_distance=max_distance,
+        )
+        aprint("✓ Applied magma orbit-trap palette with baked key light and DE AO")
+        aprint(
+            f"  Lighting range: [{lighting.min():.3f}, {lighting.max():.3f}], "
+            f"AO range: [{ambient_occlusion.min():.3f}, {ambient_occlusion.max():.3f}]"
+        )
 
         # Generate radii based on distance (closer to surface = smaller points)
         aprint("Calculating adaptive point sizes...")
@@ -312,13 +470,14 @@ def generate_mandelbulb_volumetric(
                 # bigger point absorbed proportionally more. 0.04 is the value
                 # that actually reads right.
                 absorption=0.04,
-                # Display range 0 – 36.803 in the panel. The window maps to the
+                # The darker baked lighting needs a tighter display range than
+                # the old unshaded palette. The window maps to the
                 # shader uniforms as intensity = 1/(max-min), offset =
                 # -min/(max-min) (rendering/display-range.ts::computeUniforms),
                 # so a min of 0 leaves offset at its identity and the max is
-                # simply 1/intensity. Written as the reciprocal to keep the
-                # panel number legible.
-                intensity=1.0 / 36.803,
+                # simply 1/intensity. A max of 14 restores the average emitted
+                # radiance while preserving the new shadow range.
+                intensity=1.0 / 14.0,
                 # Expose the node in the viewer's Layers panel so the
                 # appearance above is live-tunable — in volumetric mode the
                 # panel shows the Absorption (kappa) slider alongside opacity /
@@ -372,7 +531,7 @@ def main() -> None:
     aprint("  2. For each point, iterate the Mandelbulb formula")
     aprint("  3. Estimate distance to fractal surface")
     aprint("  4. Keep points near the surface")
-    aprint("  5. Color by iteration depth (rainbow gradient)")
+    aprint("  5. Color by orbit traps and bake distance-field shading")
     aprint("")
 
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
@@ -407,7 +566,7 @@ def main() -> None:
         aprint("Once the viewer opens:")
         aprint("  • Use mouse to rotate and explore the fractal")
         aprint("  • Zoom in to see fine details and tendrils")
-        aprint("  • Colors show iteration depth (structure complexity)")
+        aprint("  • Orbit-trap colors reveal the fractal's internal structure")
         aprint("  • The fractal has infinite detail at all scales!")
         aprint("")
         aprint("Try different powers:")
