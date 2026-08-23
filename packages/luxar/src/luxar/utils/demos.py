@@ -15,7 +15,7 @@ import zipfile
 import zlib
 from contextlib import nullcontext
 from pathlib import Path, PurePosixPath
-from typing import Any, Callable, NamedTuple, Optional, Union, overload
+from typing import Any, Callable, NamedTuple, Optional, Sequence, Union, overload
 
 import numpy as np
 from arbol import aprint, asection
@@ -586,11 +586,13 @@ class StackedColorings(NamedTuple):
     colors: np.ndarray  # (N*K, 3) float32
     labels: Optional[list[str]]  # (N*K,) hover labels, or None if any view lacks them
     categories: list[str]  # K coloring category names (for the `coloring` Dimension)
+    keys: Optional[list[str]] = None  # (N*K,) machine-readable keys, or None
 
 
 def stack_colorings(
     coords: np.ndarray,
     colorings: list[dict],
+    keys: Optional[Sequence[str]] = None,
 ) -> StackedColorings:
     """Replicate a point cloud once per coloring scheme along a categorical axis.
 
@@ -611,6 +613,13 @@ def stack_colorings(
             - ``"labels"`` (optional): ``(N,)`` per-point hover strings for this
               scheme. If ANY coloring omits labels, the combined ``labels`` is
               ``None`` (hover disabled) rather than misaligned.
+
+        keys: optional ``(N,)`` machine-readable per-point strings for `link` /
+            `copy` templates to substitute as ``{hover_key}`` (#1917). Passed
+            once for the whole cloud rather than per coloring, because a point's
+            IDENTITY does not change with the colour scheme — only its label
+            does. Tiled K times here so it stays aligned with the stacked
+            positions, which is the alignment this helper exists to own.
 
     Returns:
         A :class:`StackedColorings`. ``positions`` has shape ``(N*K, D+1)`` with
@@ -656,7 +665,14 @@ def stack_colorings(
     labels: Optional[list[str]] = None
     if have_labels:
         labels = [x for block in label_blocks for x in block]
-    return StackedColorings(positions, colors, labels, categories)
+
+    stacked_keys: Optional[list[str]] = None
+    if keys is not None:
+        if len(keys) != n:
+            raise ValueError(f"keys has {len(keys)} entries != {n} points")
+        stacked_keys = [str(x) for x in keys] * len(colorings)
+
+    return StackedColorings(positions, colors, labels, categories, stacked_keys)
 
 
 # |center| at or above this has no int64 voxel index (the cast would overflow),

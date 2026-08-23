@@ -1124,6 +1124,12 @@ def download_earthquake_data(
                         "magnitude": props["mag"],
                         "time": props["time"],  # Unix timestamp (ms)
                         "place": props["place"],
+                        # USGS event id ("us7000abcd"), which addresses the
+                        # event page carrying the shakemap, tectonic summary
+                        # and felt reports. On the FEATURE, not in
+                        # `properties` — easy to miss, and absent from every
+                        # older cached response, hence the .get().
+                        "id": feature.get("id", ""),
                     }
                 )
 
@@ -1364,12 +1370,24 @@ def generate_earthquake_scene(
             if len(line_verts) > 0:
                 # Hover labels: "M5.3 — 50 km W of Port Vila, Vanuatu"
                 # Two vertices per earthquake (segment base + tip), same label for both
+                #
+                # Click a spike to open its USGS event page, right-click to copy
+                # the event id (#1917). The id is nowhere in the label — the
+                # label is the human summary — so the URL needs `keys=`, which
+                # is per VERTEX here exactly as the labels are.
+                #
+                # An event with no id gets an empty key rather than a broken
+                # URL: the viewer suppresses a link whose template has an empty
+                # substitution, so that spike is simply not clickable.
                 eq_labels = []
+                eq_keys = []
                 for eq in earthquakes:
                     mag = eq["magnitude"]
                     place = eq.get("place", "Unknown location") or "Unknown location"
                     label = f"M{mag:.1f} — {place}"
                     eq_labels.extend([label, label])  # base vertex + tip vertex
+                    event_id = str(eq.get("id", "") or "")
+                    eq_keys.extend([event_id, event_id])
 
                 scene.add_lines(
                     "Earthquakes",
@@ -1381,6 +1399,9 @@ def generate_earthquake_scene(
                     blending_mode="luminous",
                     layer=True,
                     labels=eq_labels,
+                    keys=eq_keys,
+                    link="https://earthquake.usgs.gov/earthquakes/eventpage/{hover_key}",
+                    copy="{hover_key}",
                 )
 
             # Overlay annotations

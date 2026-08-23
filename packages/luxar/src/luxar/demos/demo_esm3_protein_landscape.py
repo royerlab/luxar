@@ -693,6 +693,11 @@ def generate_esm3_landscape(
             protein_names = list(meta["names"])
             organism_names = list(meta["organisms"])
             kingdoms = list(meta["kingdoms"])
+            # Absent from caches written before accessions were persisted, and
+            # this cache is expensive to rebuild (a 90 MB download plus an ESM
+            # pass), so a missing key degrades to "no links" rather than
+            # forcing a regeneration.
+            accessions = list(meta["accessions"]) if "accessions" in meta.files else []
             n = len(positions)
             aprint(f"✓ Loaded {n:,} proteins from cache")
     else:
@@ -738,6 +743,11 @@ def generate_esm3_landscape(
             names=np.array(protein_names, dtype=object),
             organisms=np.array(organism_names, dtype=object),
             kingdoms=np.array(kingdoms, dtype=object),
+            # The Swiss-Prot accession, for the UniProt link (#1917). Parsed
+            # all along and then thrown away; the visible label is
+            # "<protein name> — <organism> (<kingdom>)", which no URL can be
+            # built from.
+            accessions=np.array(accessions, dtype=object),
         )
 
         # --- Step 3: Compute ESM embeddings ---
@@ -789,12 +799,36 @@ def generate_esm3_landscape(
         domain_labels = [
             f"{protein_names[i]} — {organism_names[i]} ({domains[i]})" for i in range(n)
         ]
+        # Click a protein to open its Swiss-Prot entry, right-click to copy the
+        # accession (#1917). Neither hover label contains it — both are
+        # "<protein name> — <organism> (<category>)" — so the URL comes from
+        # `keys=`, passed once for the whole cloud because a protein's accession
+        # does not change with the colour scheme, only its label does.
+        #
+        # Empty when the cached metadata predates accessions being stored (the
+        # cache costs a 90 MB download plus a full ESM pass to rebuild, so it is
+        # honoured rather than invalidated); the demo then simply ships without
+        # links.
+        have_accessions = len(accessions) == n
+        if not have_accessions:
+            aprint("  ⓘ Cached metadata has no accessions — skipping UniProt links")
+
         stacked = stack_colorings(
             positions,
             [
                 {"label": "Taxon", "colors": taxon_colors, "labels": taxon_labels},
                 {"label": "Domain", "colors": domain_colors, "labels": domain_labels},
             ],
+            keys=list(accessions) if have_accessions else None,
+        )
+        link_attrs = (
+            {
+                "keys": stacked.keys,
+                "link": "https://www.uniprot.org/uniprotkb/{hover_key}/entry",
+                "copy": "{hover_key}",
+            }
+            if stacked.keys is not None
+            else {}
         )
         radii = np.full(len(stacked.positions), 0.012, dtype=np.float32)
 
@@ -851,6 +885,7 @@ def generate_esm3_landscape(
                 opacity=0.9,
                 intensity=0.12,
                 labels=stacked.labels,
+                **link_attrs,
                 layer=True,
                 substitutive_lod=substitutive_lod_or_flat(
                     dict(compression_factor=8, levels=3, device="auto")
