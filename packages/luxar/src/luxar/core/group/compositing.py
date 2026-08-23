@@ -731,6 +731,7 @@ def validate_points_channels_before_split(
     scalars: Any = None,
     labels: Any = None,
     image_labels: Any = None,
+    keys: Any = None,
 ) -> None:
     """Run the flat Points write gate over every per-point channel, pre-split.
 
@@ -821,6 +822,7 @@ def validate_points_channels_before_split(
         sharpness=sharpness,
         scalars=scalars,
         labels=labels,
+        keys=keys,
         image_labels=image_labels,
     )
 
@@ -834,6 +836,7 @@ def validate_lines_channels_before_split(
     scalars: Any = None,
     labels: Any = None,
     image_labels: Any = None,
+    keys: Any = None,
 ) -> None:
     """Run the flat Lines write gate over every per-vertex channel, pre-split.
 
@@ -874,6 +877,7 @@ def validate_lines_channels_before_split(
         sharpness=sharpness,
         scalars=scalars,
         labels=labels,
+        keys=keys,
         image_labels=image_labels,
     )
 

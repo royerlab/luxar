@@ -56,6 +56,7 @@ def validate_points_channels(
     scalars: Any = None,
     labels: Any = None,
     image_labels: Any = None,
+    keys: Any = None,
 ) -> None:
     """Validate every per-point channel against ``n_points``. Pure — no I/O.
 
@@ -122,6 +123,11 @@ def validate_points_channels(
     # were written).
     if labels is not None:
         validate_labels_for_writing(labels, n_points)
+    # Keys ride the same pre-flight as labels: the CSR serializer
+    # UTF-8-encodes each entry, so a non-str or a length mismatch must be
+    # caught BEFORE any array reaches disk (#1917).
+    if keys is not None:
+        validate_labels_for_writing(keys, n_points, context="keys")
     # 0f. Image labels: length (dense) / index bounds (sparse dict) — see
     # validate_image_labels_for_writing for why this moved out of the CSR
     # writer itself.
@@ -139,6 +145,7 @@ def write_points(
     scalars: Optional[Union[NDArray[np.float32], float]] = None,
     labels: Optional["Sequence[str]"] = None,
     image_labels: Optional[Any] = None,
+    keys: Optional["Sequence[str]"] = None,
     **attrs: Any,
 ) -> PointsMetadata:
     """Write points data progressively to Zarr (see ``write_points`` docstring).
@@ -396,6 +403,16 @@ def write_points(
         sort_order = ordering_data["sort_order"] if ordering_data is not None else None
         write_labels_csr(group, labels, n_points, ctx.compressor, sort_order)
         metadata["has_labels"] = True
+
+    # Per-element machine-readable keys (issue #1917). Same CSR encoding and
+    # the same spatial permutation as labels — a key must stay paired with
+    # its element — so it reuses the serializer with a different channel.
+    if keys is not None:
+        sort_order = ordering_data["sort_order"] if ordering_data is not None else None
+        write_labels_csr(
+            group, keys, n_points, ctx.compressor, sort_order, channel="keys"
+        )
+        metadata["has_keys"] = True
 
     # 12. Write image labels if provided (CSR-style, no compression on blobs)
     if image_labels is not None:

@@ -86,6 +86,7 @@ class ZarrWriterProtocol(Protocol):
         scalars: Optional[Union[ScalarArray, float]] = None,
         labels: Optional[Sequence[str]] = None,
         image_labels: Optional[Any] = None,
+        keys: Optional[Sequence[str]] = None,
         **attrs: Any,
     ) -> PointsMetadata:
         """Write points data immediately to Zarr.
@@ -139,6 +140,7 @@ class ZarrWriterProtocol(Protocol):
         line_type: str = "polyline",
         labels: Optional[Sequence[str]] = None,
         image_labels: Optional[Any] = None,
+        keys: Optional[Sequence[str]] = None,
         **attrs: Any,
     ) -> LinesMetadata:
         """Write lines data immediately to Zarr.
@@ -180,6 +182,7 @@ class ZarrWriterProtocol(Protocol):
         double_sided: bool = True,
         labels: Optional[Sequence[str]] = None,
         image_labels: Optional[Any] = None,
+        keys: Optional[Sequence[str]] = None,
         **attrs: Any,
     ) -> MeshMetadata:
         """Write a triangle mesh immediately to Zarr.
@@ -222,6 +225,7 @@ class ZarrWriterProtocol(Protocol):
         colors: Optional[Union[ColorArray, tuple, list]] = None,
         labels: Optional[Sequence[str]] = None,
         image_labels: Optional[Any] = None,
+        keys: Optional[Sequence[str]] = None,
         **attrs: Any,
     ) -> GSplatsMetadata:
         """Write Gaussian splats data immediately to Zarr.

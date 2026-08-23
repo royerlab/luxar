@@ -109,6 +109,7 @@ def add_lines_impl(
     scalars: Any = None,
     labels: Optional[Union[List[str], Sequence[str]]] = None,
     image_labels: Optional[Any] = None,
+    keys: Optional[Union[List[str], Sequence[str]]] = None,
     indices: Optional[np.ndarray] = None,
     line_type: str = "polyline",
     parent: Optional["Node"] = None,
@@ -266,6 +267,7 @@ def add_lines_impl(
                     sharpness=sharpness,
                     scalars=scalars,
                     labels=labels,
+                    keys=keys,
                     image_labels=image_labels,
                     indices=indices,
                     line_type=line_type,
@@ -353,6 +355,7 @@ def add_lines_impl(
                     sharpness=sharpness,
                     scalars=scalars,
                     labels=labels,
+                    keys=keys,
                     indices=indices,
                     line_type=line_type,
                     parent=parent,
@@ -451,6 +454,7 @@ def add_lines_impl(
                         sharpness=sharpness,
                         scalars=scalars,
                         labels=labels,
+                        keys=keys,
                         parent=parent,
                         extend_to_all=extend_to_all,
                         method=additive_spec["method"],
@@ -487,6 +491,7 @@ def add_lines_impl(
             indices=indices,
             line_type=line_type,
             labels=labels,
+            keys=keys,
             image_labels=image_labels,
             **attrs,
         )
@@ -610,6 +615,7 @@ def add_lines_partition_wrapper_impl(
     sharpness: Any,
     scalars: Any,
     labels: Any,
+    keys: Any = None,
     indices: Optional[np.ndarray],
     line_type: str,
     parent: Optional["Node"],
@@ -648,6 +654,7 @@ def add_lines_partition_wrapper_impl(
         sharpness=sharpness,
         scalars=scalars,
         labels=labels,
+        keys=keys,
     )
 
     # A uniform RGB(A) list/tuple is the one leaf parameter whose OWN length can
@@ -805,6 +812,7 @@ def add_lines_multi_lod_wrapper_impl(
     sharpness: Any,
     scalars: Any,
     labels: Any,
+    keys: Any = None,
     parent: Optional["Node"],
     extend_to_all: Optional[Union[List[str], str]],
     method: str,
@@ -839,6 +847,7 @@ def add_lines_multi_lod_wrapper_impl(
         sharpness=sharpness,
         scalars=scalars,
         labels=labels,
+        keys=keys,
     )
     uniform_color = is_broadcast_color(colors)
 
@@ -992,6 +1001,7 @@ def add_lines_substitutive_lod_wrapper_impl(
     sharpness: Any,
     scalars: Any,
     labels: Any,
+    keys: Any = None,
     image_labels: Any,
     indices: Optional[np.ndarray],
     line_type: str,
@@ -1028,6 +1038,7 @@ def add_lines_substitutive_lod_wrapper_impl(
         sharpness=sharpness,
         scalars=scalars,
         labels=labels,
+        keys=keys,
         image_labels=image_labels,
     )
 
@@ -1160,6 +1171,7 @@ def add_lines_substitutive_lod_wrapper_impl(
             sharpness=sharpness,
             scalars=scalars,
             labels=labels,
+            keys=keys,
             image_labels=image_labels,
             indices=indices,
             line_type=line_type,
@@ -1247,6 +1259,7 @@ def add_lines_substitutive_lod_wrapper_impl(
         sharpness=sharpness,
         scalars=scalars,
         labels=labels,
+        keys=keys,
         image_labels=image_labels,
         indices=indices,
         line_type=line_type,

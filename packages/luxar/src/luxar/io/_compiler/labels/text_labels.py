@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Mapping, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Final, Mapping, Optional, Sequence
 
 import numpy as np
 import zarr
@@ -16,16 +16,32 @@ if TYPE_CHECKING:
     from ....encoding.compression import CompressorLike
 
 
+#: The two per-element string channels, and the on-disk names each uses.
+#:
+#: ``labels`` is the human-readable string a hover tooltip shows; ``keys`` is
+#: the machine-readable one a ``link`` / ``copy`` template substitutes
+#: (issue #1917). They are the SAME structure — a CSR pair plus a boolean attr
+#: — so they share one serializer rather than growing a near-copy of it, and a
+#: future third channel is a table row rather than another 80 lines.
+STRING_CHANNELS: Final[dict[str, tuple[str, str, str]]] = {
+    #  channel  -> (offsets array, bytes array, presence attr)
+    "labels": ("label_offsets", "label_bytes", "has_labels"),
+    "keys": ("key_offsets", "key_bytes", "has_keys"),
+}
+
+
 def write_labels_csr(
     group: zarr.Group,
     labels: Sequence[str],
     n_elements: int,
     compressor: "CompressorLike",
     sort_order: Optional[np.ndarray] = None,
+    channel: str = "labels",
 ) -> None:
-    """Write per-element string labels using CSR-style encoding.
+    """Write a per-element string channel using CSR-style encoding.
 
-    Stores two zarr arrays:
+    Stores two zarr arrays, named per {@link STRING_CHANNELS}. For the default
+    ``labels`` channel:
     - ``label_offsets``: uint64 of shape (N+1,) — byte offset of each label
     - ``label_bytes``: uint8 — concatenated UTF-8 encoded label strings
 
@@ -41,10 +57,16 @@ def write_labels_csr(
             For points: ``ordering_data["sort_order"]``
             For lines: ``ordering_data["vertex_sort_indices"]``
             For gsplats: ``ordering_data["sort_order"]``
+        channel: Which string channel to write — ``"labels"`` (default) or
+            ``"keys"``. Selects the array names and the presence attr; the
+            encoding, the spatial reordering and the empty-string convention
+            are identical for both.
     """
+    offsets_name, bytes_name, presence_attr = STRING_CHANNELS[channel]
     if len(labels) != n_elements:
         raise ValueError(
-            f"Labels length ({len(labels)}) must match element count ({n_elements})"
+            f"{channel.capitalize()} length ({len(labels)}) must match "
+            f"element count ({n_elements})"
         )
 
     # Apply spatial reordering if present
@@ -73,7 +95,7 @@ def write_labels_csr(
     # Write to zarr
     create_array(
         group,
-        "label_offsets",
+        offsets_name,
         data=offsets,
         chunks=(min(n_elements + 1, 65536),),
         compressor=resolve_compressor(compressor, offsets.dtype),
@@ -81,22 +103,24 @@ def write_labels_csr(
     )
     create_array(
         group,
-        "label_bytes",
+        bytes_name,
         data=label_bytes,
         chunks=(min(total_bytes, 65536) if total_bytes > 0 else 1,),
         compressor=resolve_compressor(compressor, label_bytes.dtype),
         overwrite=True,
     )
-    group.attrs["has_labels"] = True
+    group.attrs[presence_attr] = True
     n_nonempty = sum(1 for lbl in ordered_labels if lbl)
     aprint(
-        f"  ✓ Wrote labels ({n_nonempty}/{n_elements} non-empty, {total_bytes:,} bytes)"
+        f"  ✓ Wrote {channel} ({n_nonempty}/{n_elements} non-empty, "
+        f"{total_bytes:,} bytes)"
     )
 
 
 def validate_ladder_labels(
     levels: Sequence[Mapping[str, Any]],
     positions_key: str,
+    channel: str = "labels",
 ) -> bool:
     """Pre-write gate for an additive ladder's labels; returns whether it is labelled.
 
@@ -122,6 +146,10 @@ def validate_ladder_labels(
         levels: The per-level dicts handed to a multi-LOD writer.
         positions_key: The key holding each level's ``(N, D)`` element array —
             ``"positions"`` for Points, ``"vertices"`` for Lines.
+        channel: Which per-element string channel to gate — ``"labels"``
+            (default) or ``"keys"``. Both obey the same all-or-nothing and
+            per-level-length rules; only the dict key read and the wording of
+            the errors differ.
 
     Returns:
         ``True`` when the ladder carries labels (so the caller should build the
@@ -133,14 +161,14 @@ def validate_ladder_labels(
     """
     from ....validation.base import validate_labels_for_writing
 
-    labelled_flags = [lvl.get("labels") is not None for lvl in levels]
+    labelled_flags = [lvl.get(channel) is not None for lvl in levels]
     if not any(labelled_flags):
         return False
     if not all(labelled_flags):
         missing = labelled_flags.index(False)
         raise ValueError(
-            f"labels must be provided for every additive LOD level or for none; "
-            f"level {missing} (additive_{missing}) has no labels"
+            f"{channel} must be provided for every additive LOD level or for "
+            f"none; level {missing} (additive_{missing}) has no {channel}"
         )
     level_shapes = [np.shape(lvl[positions_key]) for lvl in levels]
     if any(len(shape) != 2 for shape in level_shapes):
@@ -151,7 +179,7 @@ def validate_ladder_labels(
         # same error the caller would see with no labels at all.
         return True
     for lvl, shape in zip(levels, level_shapes):
-        validate_labels_for_writing(lvl["labels"], int(shape[0]))
+        validate_labels_for_writing(lvl[channel], int(shape[0]))
     return True
 
 
@@ -161,6 +189,7 @@ def write_ladder_union_labels_csr(
     level_sort_orders: Sequence[Optional[np.ndarray]],
     n_elements: int,
     compressor: "CompressorLike",
+    channel: str = "labels",
 ) -> None:
     """Write ONE label CSR spanning an additive ladder's levels, on the parent.
 
@@ -238,4 +267,4 @@ def write_ladder_union_labels_csr(
             union.extend(labels[i] for i in sort_order)
 
     # The union is already in final (committed) order — no further permutation.
-    write_labels_csr(group, union, n_elements, compressor, None)
+    write_labels_csr(group, union, n_elements, compressor, None, channel=channel)

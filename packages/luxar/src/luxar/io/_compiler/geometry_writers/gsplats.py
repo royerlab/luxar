@@ -62,6 +62,7 @@ def write_gsplats(
     colors: Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]] = None,
     labels: Optional["Sequence[str]"] = None,
     image_labels: Optional[Any] = None,
+    keys: Optional["Sequence[str]"] = None,
     **attrs: Any,
 ) -> dict[str, Any]:
     """Write Gaussian splats data to Zarr (single-LOD, flat layout).
@@ -108,6 +109,11 @@ def write_gsplats(
         from ....validation.base import validate_labels_for_writing
 
         validate_labels_for_writing(labels, n_splats)
+    # Keys ride the same pre-flight as labels: the CSR serializer
+    # UTF-8-encodes each entry, so a non-str or a length mismatch must be
+    # caught BEFORE any array reaches disk (#1917).
+    if keys is not None:
+        validate_labels_for_writing(keys, n_splats, context="keys")
 
     # 0e. Image labels: length (dense) / index bounds (sparse dict) — see
     # validate_image_labels_for_writing for why this moved out of the CSR
@@ -192,6 +198,16 @@ def write_gsplats(
         sort_order = ordering_data["sort_order"] if ordering_data is not None else None
         write_labels_csr(group, labels, n_splats, ctx.compressor, sort_order)
         metadata["has_labels"] = True
+
+    # Per-element machine-readable keys (issue #1917). Same CSR encoding and
+    # the same spatial permutation as labels — a key must stay paired with
+    # its element — so it reuses the serializer with a different channel.
+    if keys is not None:
+        sort_order = ordering_data["sort_order"] if ordering_data is not None else None
+        write_labels_csr(
+            group, keys, n_splats, ctx.compressor, sort_order, channel="keys"
+        )
+        metadata["has_keys"] = True
 
     # Write image labels if provided (CSR-style, no compression on blobs)
     if image_labels is not None:
