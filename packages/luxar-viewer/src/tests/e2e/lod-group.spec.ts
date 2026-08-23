@@ -1092,14 +1092,16 @@ test.describe('lod_group node — volumetric blendable', () => {
       // nearly as strong as the strict claim and cannot go red on a healthy
       // product, because a level that never arrived can never fade.
       //
-      // Why it is well founded rather than a convenient weakening: a level in the
-      // MIDDLE of the ladder that never displays takes both of its boundaries out
-      // of `observablePairs`, but it also takes every level's chance to cross-fade
-      // with it — and if such a level were missing for a PRODUCT reason while its
-      // neighbours were fine, the neighbours' own pairs (which stay in the
-      // contract whenever they are resident) still have to fade. Only a
-      // never-displayed END level narrows the contract by one pair, and that
-      // narrowing is reported (annotation + `warmupText`), never silent.
+      // Why it is well founded rather than a convenient weakening: a level that
+      // never displays takes its own boundaries out of `observablePairs`, but
+      // every OTHER adjacent pair stays in the contract and still has to fade.
+      // A never-displayed END level costs one pair; a MIDDLE one costs two, so
+      // on this fixture's three-level ladder a missing level 1 empties
+      // `observablePairs` altogether and the run drops to the floor branch
+      // below — a real contract collapse, not a narrowing. From four levels up
+      // the untouched pairs keep carrying the claim. Either way the run has
+      // spent its full warm-up clock, and every narrowing is reported
+      // (annotation + `warmupText`, naming the levels never seen), never silent.
       expect(
         missingObservable,
         `no coverage-band cross-fade was observed for level pair(s) ${pairs(missingObservable)} ` +

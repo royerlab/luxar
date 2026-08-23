@@ -354,7 +354,9 @@ but **narrow the contract rather than dropping it**. That sweep makes its strict
 every-boundary claim when the warm-up reached residency AND the sweep was not
 truncated; when the warm-up came up short it still requires a genuine cross-fade
 for every adjacent pair among the levels that DID become resident (a level that
-never arrived cannot fade, but its neighbours' pairs still have to), and only a
+never arrived cannot fade, but every pair not touching it still has to — on a
+three-level ladder a missing middle level leaves no pair at all, and the run
+says so), and only a
 truncated sweep — which never visited part of the range, so no subset of pairs is
 implied — falls all the way back to "at least one genuine cross-fade". Every
 narrowing is stated in the failure text and in a `degraded` annotation, naming
