@@ -597,6 +597,54 @@ def test_lut_encoded_points_bounds_get_no_slack(tmp_path: Path) -> None:
             assert bounds[k, d, 1] == hi32
 
 
+@pytest.mark.parametrize(
+    "radii",
+    [
+        np.full(600, 0.1, dtype=np.float64),
+        0.1,
+        np.array([0.1], dtype=np.float64),
+    ],
+    ids=["uniform-array", "scalar", "shape-one"],
+)
+def test_stored_points_bounds_contain_viewer_cast_radii(
+    tmp_path: Path, radii: np.ndarray | float
+) -> None:
+    """A viewer-narrowed broadcast radius stays inside its stored bound."""
+    position_max = 4.500224895309657e-05
+    palette = np.array([0.0, position_max / 2.0, position_max], dtype=np.float32)
+    positions = np.resize(palette, (600, 3))
+    dims = Dimensions(
+        [
+            Dimension("x", unit="um", display=True),
+            Dimension("y", unit="um", display=True),
+            Dimension("z", unit="um", display=True),
+        ]
+    )
+
+    out = tmp_path / "float64_radius.luxar.zarr"
+    with LuxarZarrCompiler(out, enable_spatial_index=True) as compiler:
+        scene = compiler.create_scene(dimensions=dims)
+        scene.add_points("pts", positions, radii=radii)
+
+    node = zarr.open_group(out, mode="r")["pts"]
+    assert node["positions"].attrs["encoding"]["name"] == "lut_uint8"
+    assert node["radii"].attrs["encoding"]["name"] == "broadcasted"
+
+    decoded_positions = np.asarray(_decode(node, "positions"), dtype=np.float32)
+    decoded_radius = float(np.float32(np.asarray(node["radii"][:]).flat[0]))
+    bounds = np.asarray(node["chunk_bounds"][:], dtype=np.float64)
+    assert bounds.shape == (1, 3, 2)
+
+    needed_lo = decoded_positions.min(axis=0).astype(np.float64) - decoded_radius
+    needed_hi = decoded_positions.max(axis=0).astype(np.float64) + decoded_radius
+    assert bool((needed_lo >= bounds[0, :, 0]).all())
+    assert bool((needed_hi <= bounds[0, :, 1]).all())
+
+    authored_radius = float(np.asarray(radii).reshape(-1)[0])
+    legacy_hi = float(_store_outward_f32(0.0, position_max + authored_radius)[1])
+    assert float(needed_hi.max()) > legacy_hi
+
+
 def test_ordering_without_a_dataset_ctx_gets_authored_bounds(tmp_path: Path) -> None:
     """A DIRECT caller of the glue (ordering ENABLED, ``dataset_ctx=None``).
 

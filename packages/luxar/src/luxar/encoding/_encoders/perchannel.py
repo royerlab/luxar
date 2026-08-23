@@ -30,6 +30,31 @@ COORDINATE_LEVELS = float(2**_COORD_BITS - 1)
 _SCALAR_LUT_PROBE_VALUES = 1024
 
 
+def _float32_cast_slack(
+    arr: np.ndarray, *, check_values: bool = False
+) -> Optional[float]:
+    """Return an upward pad for the viewer's float32 cast.
+
+    ``check_values`` measures exact stored broadcast/LUT values, falling back
+    to the conservative dtype-level bound above the float32 range; otherwise
+    that bound covers the precision-mode float32 store.
+    """
+    if np.can_cast(arr.dtype, np.float32, casting="safe"):
+        return None
+    if check_values:
+        values = arr.astype(np.float64, copy=False)
+        with np.errstate(over="ignore"):
+            upward = np.asarray(arr, dtype=np.float32).astype(np.float64) - values
+        max_upward = max(0.0, float(np.max(upward)))
+        if np.isfinite(max_upward):
+            return max_upward or None
+    max_val = float(np.max(arr))
+    return max(
+        max_val * float(np.finfo(np.float32).eps),
+        float(np.finfo(np.float32).smallest_subnormal),
+    )
+
+
 def gridded_axis_step(
     col: np.ndarray, lo: float, extent: float, levels: float
 ) -> Optional[tuple[float, int]]:
@@ -329,7 +354,9 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             and max_axis_distinct <= LUT_SCALAR_MAX_DISTINCT
             and self.encodes_as_lut(data, SemanticType.COORDINATE)
         ):
-            return None  # a LUT stores the values verbatim
+            # A coordinate LUT's float32 viewer cast is the same rounding map
+            # applied by the outward-f32 bound store, so it cannot cross that bound.
+            return None
         return slack
 
     def positive_scalar_round_trip_slack(
@@ -342,13 +369,14 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
     ) -> Optional[float]:
         """How far can encoding ``data`` as POSITIVE_SCALAR enlarge a value?
 
-        Returns ``None`` when the write is exact, otherwise one conservative
-        float64 pad for the whole array. The chunk-bounds writers add it to a
-        point radius or line width on spatial dimensions only, so a decoded
-        footprint cannot escape a bound built from the authored scalar.
+        Returns ``None`` when the write and viewer decode are exact, otherwise
+        one conservative float64 pad for the whole array. The chunk-bounds
+        writers add it to a point radius or line width on spatial dimensions
+        only, so a decoded footprint cannot escape a bound built from the
+        authored scalar.
 
-        The exits mirror :meth:`_encode_positive_scalar` plus the exact
-        broadcast/LUT paths that precede it in :meth:`ArrayEncoder.encode`.
+        The exits mirror :meth:`_encode_positive_scalar` plus the broadcast/LUT
+        paths that precede it in :meth:`ArrayEncoder.encode`.
         The answer is valid only when the matching write has deduplication
         disabled, so it cannot resolve to an ``array_ref`` with another
         array's encoding parameters.
@@ -361,6 +389,8 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         Linear quantization uses half a grid quantum; geometric-log encoding
         uses the corresponding half-step at the array maximum, capped at the
         maximum because its grid is anchored there and cannot decode above it.
+        Broadcast and LUT values are checked directly for upward float32 cast
+        displacement. PRECISION uses a conservative authored-dtype cast term.
         The Python reader's final cast is covered by ``max_val`` times the
         wider epsilon of float32 and the authored dtype, floored at one
         subnormal quantum of either dtype. The viewer additionally needs
@@ -375,8 +405,8 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             allow_lut: Whether the matching write permits exact LUT storage.
 
         Returns:
-            ``None`` when the matching write is exact, otherwise one
-            conservative array-wide outward pad.
+            ``None`` when the matching write and viewer decode are exact,
+            otherwise one conservative array-wide outward pad.
         """
         arr = np.asarray(data)
         if arr.size == 0 or not np.all(np.isfinite(arr)) or np.any(arr < 0):
@@ -394,16 +424,13 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         if self._is_uniform(arr):
             first = float(arr.flat[0])
             displacement = max(0.0, first - float(np.min(arr)))
-            return displacement or None
+            viewer_cast_slack = _float32_cast_slack(
+                np.asarray([first]), check_values=True
+            )
+            return displacement + (viewer_cast_slack or 0.0) or None
 
         if mode == EncodingMode.PRECISION:
-            if arr.dtype == np.dtype(np.float32):
-                return None
-            max_val = float(np.max(arr))
-            return max(
-                max_val * float(np.finfo(np.float32).eps),
-                float(np.finfo(np.float32).smallest_subnormal),
-            )
+            return _float32_cast_slack(arr)
 
         # A scalar LUT has at most 256 values. A small prefix with more
         # distinct values proves the full array cannot take that exit and
@@ -415,7 +442,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             and np.unique(prefix).size <= LUT_SCALAR_MAX_DISTINCT
             and self.encodes_as_lut(arr, SemanticType.POSITIVE_SCALAR)
         ):
-            return None
+            return _float32_cast_slack(np.unique(arr), check_values=True)
 
         return self._positive_scalar_quantization_slack(
             arr, mode, positive_scalar_encoding
