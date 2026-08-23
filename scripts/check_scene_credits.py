@@ -20,8 +20,8 @@ it, so "the credit is in the source" is not sufficient.
 Deliberately NOT a source check duplicated at another layer: it reads the root
 attributes of stores on disk and compares them with the registry. Both zarr
 layouts are handled, because naming one metadata document blindly is its own
-recurring bug — format 2 keeps ``.zmetadata``/``.zattrs`` and has no
-``zarr.json``, format 3 nests attributes inside ``zarr.json``.
+recurring bug — format 2 keeps root attributes in ``.zattrs`` and has no
+``zarr.json``, while format 3 nests attributes inside ``zarr.json``.
 
 Usage::
 
@@ -61,7 +61,7 @@ def compare(store: Path, declared: Optional[dict]) -> Optional[str]:
     """
     attrs = read_node_attrs(store)
     if attrs is None:
-        return "no readable root metadata (neither zarr.json nor .zmetadata/.zattrs)"
+        return "no readable root metadata (neither zarr.json nor .zattrs)"
     carried = attrs.get("citation")
     if carried is not None and not isinstance(carried, Mapping):
         return f"has a malformed citation record (expected a mapping): {carried!r}"
