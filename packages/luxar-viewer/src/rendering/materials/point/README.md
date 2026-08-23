@@ -164,8 +164,10 @@ The fragment shader runs in this order:
    `adjusted = vColor * uIntensity + uOffset` (clamped non-negative),
    then `finalColor = pow(adjusted, vec3(uInvGamma))`. Pre-computed `uInvGamma`
    moves the division out of the per-fragment path. A second discard culls
-   sub-1e-4 fragments to skip cost on offset-zeroed pixels. GOG is **per-node**;
-   global EOG (exposure) lives in the mega-shader post-processing pass.
+   sub-1e-4 RGB fragments in non-opaque modes and sub-1e-4 alpha-weighted RGB
+   contributions in `opaque`, where an undiscarded fragment writes depth. GOG
+   is **per-node**; global EOG (exposure) lives in the mega-shader
+   post-processing pass.
    The `LUXAR_GAMMA_ONE` define (set by `updateGamma` when `gamma == 1.0 ±
 1e-4`, the default) skips this `pow()` — `pow(x, 1) == x` — and also the
    pre-LUT value `pow()` in colormap mode. The `LUXAR_NO_GOG` define (set by
@@ -211,8 +213,12 @@ from `LayersPanel`). The method:
   bright RGB → max captures a flat coloured disk instead of the intended soft
   contribution. The define toggles a shader recompile and forces the
   premultiplied output.
-- Idempotent: identical state is a no-op via `userData.blendingMode` /
-  `defines.LUXAR_MAX_RGB_CONTRIBUTION` early exits.
+- Adds/removes the `LUXAR_OPAQUE_RGB_CONTRIBUTION` shader define. In `opaque`
+  mode, Points retain fragment alpha while writing depth, so the define discards
+  contributions below 1e-4 before an invisible sprite fringe can occlude later
+  geometry.
+- Idempotent: identical state is a no-op via early exits keyed by
+  `userData.blendingMode` and the mode-controlled defines.
 
 This is why the constructor's blending-mode wiring isn't done inline — the
 LayersPanel runtime-transition path needs the exact same code, and a previous

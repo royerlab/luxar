@@ -181,7 +181,7 @@ smoke/ink-like medium (large κ). Together with `max` (MIP) and `normal`/`opaque
 | `max` | — (MaxEquation) | peak value | peak | yes | no | never |
 | **`volumetric`** | **physics: 1 − e^(−τ), τ = κ·∫ρ** | **ray integral × screening** | **sum** | **no** | **yes** | **never** |
 | `normal` | clamped coverage: min(intensity·opacity, 1) | peak value | peak | no | yes | gsplats & points never; lines at opacity ≥ 0.99 |
-| `opaque` | Points/Lines: intensity·opacity; GSplats/Mesh: 1 (overwrite identity) | peak value | peak | no (depth-tested) | no (z-buffer) | always |
+| `opaque` | Points/Lines: intensity·opacity; GSplats/Mesh: 1 (overwrite identity) | peak value | peak | no (depth-tested) | no (z-buffer; Point/Line α < 1 remains intra-draw order-dependent) | always |
 
 `volumetric` deliberately breaks the previous alignment *sum-projection ⇒
 commutative ⇒ unsorted*: it is emissive for the projection taxonomy

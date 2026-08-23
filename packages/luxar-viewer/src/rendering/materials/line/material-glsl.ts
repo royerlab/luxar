@@ -150,8 +150,7 @@ export class LineMaterial
     const primitive = resolveLinePrimitive(materialConfig.primitive);
     const isCapsulePrimitive = primitive === 'capsule';
 
-    // Determine THREE.js blending mode
-    // 'additive' and 'luminous' both use AdditiveBlending - only depthTest differs
+    // Seed from the shared state so construction agrees with applyBlendingMode.
     const blending = getCompleteBlendingState(blendingMode).blending;
 
     super({

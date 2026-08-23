@@ -274,9 +274,11 @@ export function getCompleteBlendingState(
     // Opaque-list alpha-over with depth writes. This must be
     // CustomBlending: THREE.WebGLRenderer special-cases
     // NormalBlending + transparent=false to NoBlending, which would
-    // discard the fragment alpha carried by Points and Lines. The
-    // opaque list sorts front-to-back, so opacity reveals the clear
-    // colour rather than geometry behind; Point/Line shaders discard
+    // discard the fragment alpha carried by Points and Lines. THREE
+    // sorts opaque objects front-to-back, so across objects opacity
+    // reveals the clear colour rather than geometry behind. Primitives
+    // within one Point/Line draw remain in storage order, so overlapping
+    // alpha < 1 fragments are order-dependent. Point/Line shaders discard
     // negligible contributions before writing depth. Mesh emits alpha
     // 1.0, making this blend an identity there, but still pays the ROP
     // cost of enabling blending for its default mode.
