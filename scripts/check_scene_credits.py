@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -44,6 +45,8 @@ sys.path.insert(0, str(_REPO_ROOT / "packages" / "luxar" / "src"))
 
 from luxar._zarr_compat import read_node_attrs  # noqa: E402
 from luxar.demos.registry import iter_demos  # noqa: E402
+
+_ATTRIBUTION_FIELDS = ("short", "doi", "license")
 
 
 def compare(store: Path, declared: Optional[dict]) -> Optional[str]:
@@ -56,14 +59,16 @@ def compare(store: Path, declared: Optional[dict]) -> Optional[str]:
     if attrs is None:
         return "no readable root metadata (neither zarr.json nor .zmetadata/.zattrs)"
     carried = attrs.get("citation")
-    want = declared["short"] if declared else None
-    if want is None:
-        if carried:
+    if carried is not None and not isinstance(carried, Mapping):
+        return f"has a malformed citation record (expected a mapping): {carried!r}"
+    if declared is None:
+        if carried is not None:
             return (
                 "carries a citation its demo does not declare: "
                 f"{carried.get('short')!r}"
             )
         return None
+    want = declared["short"]
     if not carried:
         return f"declares {want!r} but the store carries no citation"
     if not carried.get("short"):
@@ -71,8 +76,12 @@ def compare(store: Path, declared: Optional[dict]) -> Optional[str]:
         # has one -- but a hand-edited or foreign store may not, and the generic
         # comparison below would report the confusing "carries None".
         return f"declares {want!r} but the store's citation has no 'short': {carried!r}"
-    if carried.get("short") != want:
-        return f"carries {carried.get('short')!r} but the demo declares {want!r}"
+    for field in _ATTRIBUTION_FIELDS:
+        if carried.get(field) != declared.get(field):
+            return (
+                f"citation field {field!r} is {carried.get(field)!r} "
+                f"but the demo declares {declared.get(field)!r}"
+            )
     return None
 
 

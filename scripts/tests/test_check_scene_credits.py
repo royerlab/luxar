@@ -29,6 +29,7 @@ from check_scene_credits import compare, main  # noqa: E402
 CITED = {
     "short": "Tully et al. 2023 (Cosmicflows-4)",
     "doi": "10.3847/1538-4357/ac94d8",
+    "license": "CC BY 4.0",
 }
 
 
@@ -69,6 +70,38 @@ def test_superseded_credit_is_caught(tmp_path: Path) -> None:
     problem = compare(store, CITED)
     assert problem is not None
     assert "Tully et al. 2014" in problem and "Cosmicflows-4" in problem
+
+
+@pytest.mark.parametrize("field", ["doi", "license"])
+def test_attribution_field_drift_is_caught(tmp_path: Path, field: str) -> None:
+    carried = {**CITED, field: "wrong"}
+    store = _v3_store(tmp_path, "drift", {"citation": carried})
+    problem = compare(store, CITED)
+    assert problem is not None
+    assert field in problem and "wrong" in problem and str(CITED[field]) in problem
+
+
+def test_presentational_reference_drift_is_ignored(tmp_path: Path) -> None:
+    declared = {**CITED, "ref": "caption-only reference"}
+    store = _v3_store(tmp_path, "reference", {"citation": CITED})
+    assert compare(store, declared) is None
+
+
+@pytest.mark.parametrize("carried", ["Someone 2020", ["Someone 2020"]])
+@pytest.mark.parametrize("declared", [CITED, None])
+def test_non_mapping_citation_is_reported(
+    tmp_path: Path, carried: object, declared: dict | None
+) -> None:
+    store = _v3_store(tmp_path, "malformed", {"citation": carried})
+    problem = compare(store, declared)
+    assert problem is not None
+    assert "malformed citation record" in problem and repr(carried) in problem
+
+
+def test_citation_without_short_is_reported(tmp_path: Path) -> None:
+    store = _v3_store(tmp_path, "malformed", {"citation": {"doi": CITED["doi"]}})
+    problem = compare(store, CITED)
+    assert problem is not None and "has no 'short'" in problem
 
 
 def test_procedural_store_without_a_citation_is_clean(tmp_path: Path) -> None:
