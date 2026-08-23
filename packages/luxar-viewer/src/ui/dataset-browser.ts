@@ -217,11 +217,10 @@ export class DatasetBrowser {
    * (loading, error, empty directory, manual-entry fallback), and the
    * keystroke is then contained by the modal. The manual-entry `#manual-path`
    * field is deliberately NOT a resolver target — it is a URL entry field,
-   * not a filter, and routing type-to-filter into it would mean a path
-   * beginning with the panel's own passthrough key (`output/scan.zarr`)
-   * closed the browser instead of typing. The user clicks or Tabs into that
-   * field, which is a deliberate act, and from there the ordinary typing
-   * guard applies exactly as it does for every other text field in the app.
+   * not a filter, so stray keystrokes should not be routed into it. The user
+   * clicks or Tabs into that field, which is a deliberate act, and from there
+   * the ordinary typing guard applies exactly as it does for every other text
+   * field in the app.
    *
    * `passthroughKeys` lists every shortcut this panel advertises while it is
    * open: `O` (its own toggle) and `H` (the `H Help` chip in the welcome
@@ -903,9 +902,8 @@ export class DatasetBrowser {
     // host that serves an `index.html` instead of a listing). Focus stays on
     // the panel container; the user clicks or Tabs into this field to type a
     // path, and from then on it behaves like every other text field in the
-    // app. It is NOT wired into type-to-filter: this is a URL, not a filter
-    // query, so forwarding into it would route `o` (the browser's own
-    // passthrough key) to the global binding and close the panel mid-path.
+    // app. It is NOT wired into type-to-filter either: this is a URL, not a
+    // filter query, so stray keystrokes should not be routed into it.
   }
 
   /**

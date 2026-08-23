@@ -1294,11 +1294,11 @@ describe('DatasetBrowser', () => {
       it('does NOT route type-to-filter into the manual path field', async () => {
         const panel = await openManualEntry();
 
-        // `#manual-path` is a URL entry field, not a filter. Wiring it into
-        // the type-to-filter forwarder meant a path starting with the panel's
-        // own passthrough key (`output/scan.zarr`) closed the browser on its
-        // first character. The keystroke is contained by the modal instead;
-        // the user clicks or Tabs into the field to type a path.
+        // `#manual-path` is a URL entry field, not a filter, so stray
+        // keystrokes must not be routed into it: a printable key pressed at
+        // the container types nothing and leaves focus where it was (the
+        // modal contains it instead). The user clicks or Tabs into the field
+        // deliberately, and from there the ordinary typing guard applies.
         const event = press({ key: 'd' });
 
         expect(document.activeElement).toBe(panel);
@@ -1332,8 +1332,9 @@ describe('DatasetBrowser', () => {
           await openManualEntry();
           manualInput().focus();
 
-          // The browser types this one; it must NOT also reach the `O`
-          // binding and close the panel mid-path (that was the regression).
+          // The browser types this one; the passthrough exemption is gated on
+          // `event.target === container`, so with focus in the field `o` must
+          // NOT also reach the `O` binding and close the panel mid-path.
           const typed = press({ key: 'o' });
           expect(seen).toEqual([]);
           expect(typed.defaultPrevented).toBe(false);

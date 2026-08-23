@@ -374,6 +374,10 @@ describe('installTypeToFilter', () => {
       expect(document.activeElement).toBe(harness.input);
       expect(event.defaultPrevented).toBe(false);
       expect(harness.input.value).toBe('');
+      // Not prevented, but still CONTAINED: a composition keystroke is aimed
+      // at the panel, so it must not also reach the global bindings behind
+      // the modal.
+      expect(harness.escaped).toEqual([]);
     }
   );
 
@@ -387,6 +391,7 @@ describe('installTypeToFilter', () => {
     expect(event.defaultPrevented).toBe(false);
     expect(document.activeElement).toBe(harness.input);
     expect(harness.input.value).toBe('x');
+    expect(harness.escaped).toEqual([]);
   });
 
   it('contains the key when the filter is unavailable', () => {

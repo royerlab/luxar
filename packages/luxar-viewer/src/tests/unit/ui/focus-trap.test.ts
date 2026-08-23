@@ -256,6 +256,42 @@ describe('trapFocus', () => {
       expect(document.activeElement).toBe(panel.outside);
     });
 
+    it('leaves focus alone when it has already moved outside the container', () => {
+      // Modals stack. The rail button opens the help overlay (trap A records
+      // it), then the rail's dataset button opens the browser ON TOP; pressing
+      // the browser's declared `h` passthrough closes the HELP overlay, so
+      // trap A releases while focus lives in the browser's panel. An
+      // unconditional restore would yank focus to the rail button — outside
+      // the still-open `aria-modal` dialog — and hand the scene its global
+      // shortcuts back, the exact invariant #1922 establishes.
+      panel.outside.focus();
+      const releaseNow = trapFocus(panel.container, { autoFocusFirst: false });
+
+      const otherModal = document.createElement('div');
+      otherModal.tabIndex = -1;
+      document.body.appendChild(otherModal);
+      otherModal.focus();
+      expect(document.activeElement).toBe(otherModal);
+
+      releaseNow();
+
+      expect(document.activeElement).toBe(otherModal);
+      expect(document.activeElement).not.toBe(panel.outside);
+    });
+
+    it('restores when focus is on the container itself, not just a descendant', () => {
+      // `contains()` must be inclusive: the filtered panels park focus on the
+      // `tabindex="-1"` container, so an exclusive descendant test would skip
+      // restoration for exactly the panels this change introduced.
+      panel.outside.focus();
+
+      const releaseNow = trapFocus(panel.container, { autoFocusFirst: false });
+      panel.container.focus();
+      releaseNow();
+
+      expect(document.activeElement).toBe(panel.outside);
+    });
+
     it('removes the Tab listener', () => {
       const releaseNow = trapFocus(panel.container, { autoFocusFirst: false });
       releaseNow();

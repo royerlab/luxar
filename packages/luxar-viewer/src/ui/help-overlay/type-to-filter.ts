@@ -33,10 +33,12 @@
  *
  * - `Escape` — panel dismissal goes through the global handler.
  * - `Tab` — must reach the focus trap.
- * - `passthroughKeys` — the keys the panel itself advertises (its own toggle
- *   key, plus any shortcut chip it renders). Gated on
- *   `event.target === container` so that typing one of them into the panel's
- *   own filter/path field cannot close the panel.
+ * - `passthroughKeys` — the keys the panel offers as a LIVE AFFORDANCE (its
+ *   own toggle key, plus any chip the user is meant to press right there).
+ *   NOT every `<kbd>` on screen: see {@link TypeToFilterOptions.passthroughKeys}
+ *   for why the help overlay's reference table is a catalogue, not a set of
+ *   affordances. Gated on `event.target === container` so that typing one of
+ *   them into the panel's own filter/path field cannot close the panel.
  *
  * Containment deliberately does NOT depend on the event target: a key
  * bubbling up from a listing row, the filter, or a breadcrumb is contained
@@ -59,8 +61,8 @@
  * the panel — which is the bug this module exists to fix. The panel's own
  * toggle key is therefore listed in `passthroughKeys` and is *not* captured
  * as the first keystroke; it propagates to the global binding and toggles the
- * panel shut. Every other printable character starts filtering (whenever a
- * filter is mounted), and once the filter has focus the toggle key types
+ * panel shut. Every other printable character except `Space` starts filtering
+ * (whenever a filter is mounted), and once the filter has focus the toggle key types
  * normally like any other letter — the forwarder only ever looks at keys that
  * arrive while focus is NOT on a typing surface, and the passthrough
  * exemption only applies while focus is on the container. Filtering is
@@ -80,11 +82,19 @@ const ALWAYS_GLOBAL_KEYS: ReadonlySet<string> = new Set(['Escape', 'Tab']);
 export interface TypeToFilterOptions {
   /**
    * Keys that must reach the global bindings instead of starting
-   * type-to-filter: everything this panel *advertises* while it is open — its
-   * own toggle key (`h`, `o`) plus any other shortcut chip it renders (the
-   * dataset browser's welcome banner shows an `H Help` chip, so it declares
-   * both `o` and `h`). Anything not listed here is contained by the modal, so
-   * a chip the panel draws but does not declare would be dead.
+   * type-to-filter: everything this panel offers as a LIVE AFFORDANCE while
+   * it is open — its own toggle key (`h`, `o`) plus any other shortcut chip
+   * the user is meant to press right there (the dataset browser's welcome
+   * banner shows an `H Help` chip, so it declares both `o` and `h`). Anything
+   * not listed here is contained by the modal, so an affordance the panel
+   * draws but does not declare would be dead.
+   *
+   * This is not "every `<kbd>` the panel renders". The help overlay's
+   * reference table lists `O`, `V`, `F`, `B`, `1`–`9` and the rest as a
+   * CATALOGUE of what those keys do when the panel is closed, and declares
+   * only `h`; those chips are correctly inert while the overlay is open, as
+   * they already were when its autofocused filter fed them to the typing
+   * guard.
    *
    * Matched case-insensitively so a CapsLock'd `H` still toggles, but only
    * while Shift is NOT held: the global lookup spells a shifted key
@@ -137,7 +147,9 @@ export interface TypeToFilterOptions {
  *   and every dead key,
  * - `Space`: it scrolls a `tabindex="-1"` container in some browsers, and a
  *   leading space is meaningless to a substring filter. Once the filter has
- *   focus Space types normally, since the forwarder no longer sees the event.
+ *   focus Space types normally: the forwarder still sees the event bubble up
+ *   (and contains it), but it never forwards or `preventDefault`s a Space, so
+ *   the input's own default insertion stands.
  * - keys already handled by an inner listener (`defaultPrevented`),
  * - keys typed while focus is already on a typing surface, so a character is
  *   never handled twice,
@@ -151,10 +163,12 @@ export interface TypeToFilterOptions {
  *
  * A keystroke that opens an IME composition (`isComposing`, or the legacy
  * `keyCode === 229` Safari/Chromium spelling) is a special case: the filter is
- * focused but the event is NOT `preventDefault`ed, so the composition
- * retargets to the input and its committed text lands there. Composing
- * against the non-editable container would drop the first character outright,
- * which is every CJK/IME and European dead-key layout.
+ * focused (unless focus is already on a typing surface) but the event is NOT
+ * `preventDefault`ed, so the composition retargets to the input and its
+ * committed text lands there. Composing against the non-editable container
+ * would drop the first character outright, which is every CJK/IME and European
+ * dead-key layout. It is still `stopPropagation`ed like every other contained
+ * key — the composition is aimed at the panel, not at the scene behind it.
  *
  * Everything that is neither forwarded nor an exception is still contained —
  * see "Modal containment" in the module header.

@@ -3,7 +3,9 @@
  *
  * Keeps Tab/Shift+Tab cycling within the container's focusable elements
  * so focus can't escape to the background while a modal is open. The
- * cleanup function restores focus to the previously-focused element.
+ * cleanup function restores focus to the previously-focused element —
+ * but only if focus is still inside the container it is releasing, so
+ * closing one modal cannot pull focus out of another that opened on top.
  *
  * Shared by error-overlay, help-overlay and dataset-browser.
  */
@@ -112,6 +114,16 @@ export function trapFocus(container: HTMLElement, options: TrapFocusOptions = {}
       focusTimerId = null;
     }
     container.removeEventListener('keydown', handleKeyDown);
-    if (previouslyFocused) previouslyFocused.focus();
+    // Only restore if focus is still INSIDE the container being released.
+    // Modals stack: opening the dataset browser over the help overlay and then
+    // pressing `h` (a declared passthrough on the browser) closes the HELP
+    // overlay, and an unconditional restore would yank focus to whatever the
+    // help overlay recorded on entry — the rail button — i.e. straight out of
+    // the still-open browser dialog. Focus would then sit outside an
+    // `aria-modal` panel and global shortcuts would reach the scene again,
+    // which is the exact invariant issue #1922 exists to establish.
+    if (previouslyFocused && container.contains(document.activeElement)) {
+      previouslyFocused.focus();
+    }
   };
 }

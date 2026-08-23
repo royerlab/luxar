@@ -46,8 +46,13 @@ release();
   and the trap's timer would otherwise fire later and win.
 - Returns a cleanup function that cancels any still-pending focus timer,
   removes the listener, and restores focus to the previously-focused
-  element. Cancelling the timer prevents a leaked tick when the trap is
-  released before the next event loop turn (audit G17).
+  element — but only when focus is still inside the container being
+  released. Modals stack: closing the help overlay while the dataset
+  browser sits on top of it must not yank focus back to the rail button
+  the help overlay recorded on entry, which would land it outside the
+  still-open `aria-modal` dialog and hand the scene its shortcuts back.
+  Cancelling the timer prevents a leaked tick when the trap is released
+  before the next event loop turn (audit G17).
 
 The trap is a no-op when the container has no focusable children
 (neither the initial focus call nor the Tab interception fire), so
@@ -60,7 +65,7 @@ import { installTypeToFilter } from './help-overlay/type-to-filter';
 
 const release = trapFocus(panel, { autoFocusFirst: false });
 const releaseFilter = installTypeToFilter(panel, () => filterInput, {
-  // Every shortcut this panel advertises while open — see passthroughKeys below.
+  // Every LIVE shortcut affordance this panel offers — see passthroughKeys below.
   passthroughKeys: [config.input.keyboard.shortcuts.toggleHelp],
 });
 ```
@@ -94,7 +99,8 @@ mechanism level so both filtered panels behave identically:
   an IME composition (`isComposing`, or the legacy `keyCode === 229`), so
   the composition retargets to the input; composing against the
   non-editable container would drop the first character outright, which is
-  every CJK/IME and European dead-key layout.
+  every CJK/IME and European dead-key layout. Such a keystroke is still
+  `stopPropagation`ed — it was aimed at the panel, not at the scene.
 - Steers `ArrowDown` into the panel's list when `resolveFirstItem` supplies
   one (the dataset browser's first listing row) and focus is still on the
   container — with focus parked there, the search field's own `ArrowDown`
@@ -126,14 +132,23 @@ nothing is unreachable. Matching is case-insensitive but Shift-sensitive:
 CapsLock (`H` with `shiftKey === false`) still toggles, because the global
 lookup lowercases the key.
 
-`passthroughKeys` is the panel's whole **advertised** key surface, not just
-its toggle: containment silences everything else, so a shortcut chip the
-panel renders (the dataset browser's banner shows `H Help`) must be listed
-or it is dead. The dataset browser therefore declares `o` and `h`; the help
-overlay declares `h`. The exemption is gated on `event.target === container`
-— once focus has moved into a field or a row those keys are ordinary
-characters again, so typing a path beginning with `o` into the dataset
-browser cannot close it.
+`passthroughKeys` is the panel's whole **live-affordance** key surface, not
+just its toggle: containment silences everything else, so a shortcut chip the
+panel offers as something to press right now (the dataset browser's welcome
+banner shows an `H Help` chip) must be listed or it is dead. The dataset
+browser therefore declares `o` and `h`; the help overlay declares `h`.
+
+This is not "every `<kbd>` on screen". The help overlay's reference table
+renders chips for `O`, `V`, `F`, `R`, `L`, `N`, `M`, `P`, `T`, `G`, `B`, `J`,
+`U`, `C`, `1`–`9`, `[`/`]` and `Home`/`End` and declares none of them: that
+table is a **catalogue** of what those keys do when the panel is closed, not a
+set of buttons. They are correctly inert while the overlay is open — and were
+inert before this change too, when the autofocused filter handed them to
+`InputHandler`'s typing guard.
+
+The exemption is gated on `event.target === container` — once focus has moved
+into a field or a row those keys are ordinary characters again, so typing a
+path beginning with `o` into the dataset browser cannot close it.
 
 ## Why it lives here
 

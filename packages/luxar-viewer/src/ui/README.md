@@ -409,10 +409,9 @@ The panel declares `O` and `H` as passthrough keys: `O` is its own toggle, and
 `H` is the shortcut its welcome banner advertises with an `H Help` chip — modal
 containment would otherwise make that chip dead. The manual-entry
 `#manual-path` field is deliberately NOT wired into type-to-filter: it takes a
-URL, not a filter query, so forwarding into it would route the `o` of
-`output/scan.zarr` to the global binding and close the panel mid-path. Click or
-Tab into it to type; from there the ordinary typing guard applies, and `Escape`
-still closes the panel.
+URL, not a filter query, so stray keystrokes should not be routed into it. Click
+or Tab into it to type, which is a deliberate act; from there the ordinary
+typing guard applies, and `Escape` still closes the panel.
 
 **Interface:**
 
