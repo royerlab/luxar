@@ -102,8 +102,9 @@ a literal `cinematic_mode=True`.
 
 The preset also expands the field of view from 47° to 63°. The viewer resolves
 that FOV before automatic framing, so an auto-framed scene keeps the fitted
-subject occupancy intended for the lens. A returning visitor's stored FOV still
-takes precedence over the scene-authored value by design.
+subject occupancy intended for the lens. A returning visitor's stored FOV takes
+precedence only for auto-framed scenes; an authored position is restored with
+the scene FOV it was composed for.
 
 An authored camera position is a stronger contract, because its distance was
 composed for one FOV. Every authored pose **composes for 63°** through

@@ -44,6 +44,8 @@ class CameraConfig:
 
     All fields are optional — unset fields use the viewer's built-in defaults.
     Camera config is applied on every scene load (not persisted in localStorage).
+    An authored position is restored with its resolved scene FOV even when the
+    visitor has stored rendering settings.
 
     Attributes:
         position: Camera position in world coordinates (x, y, z).
@@ -316,7 +318,8 @@ class ViewerConfig:
     Unset fields use the viewer's built-in defaults.
 
     Priority chain (highest to lowest):
-        1. localStorage per-scene user overrides
+        1. localStorage per-scene user overrides, except an authored camera
+           position is restored with its resolved scene FOV
         2. zarr viewer_config (this object)
         3. Viewer application built-in defaults
 

@@ -31,6 +31,14 @@ export interface SyncCurrentStateContext {
   updateNavigationControls: (controlType: 'orbit' | 'fly' | 'ortho') => void;
 }
 
+export function syncCameraFovState(settings: RenderingSettings, sceneManager: SceneManager): void {
+  settings.fov = sceneManager.currentFov;
+  const currentPreset = Object.entries(config.camera.fovPresets).find(
+    ([, fovValue]) => fovValue > 0 && Math.abs(fovValue - settings.fov) < 0.5
+  );
+  settings.fovPreset = (currentPreset ? currentPreset[0] : 'Custom') as typeof settings.fovPreset;
+}
+
 export function syncCurrentState(context: SyncCurrentStateContext): void {
   const {
     gui,
@@ -43,15 +51,9 @@ export function syncCurrentState(context: SyncCurrentStateContext): void {
   } = context;
 
   // Camera settings.
-  settings.fov = sceneManager.currentFov;
+  syncCameraFovState(settings, sceneManager);
   settings.near = sceneManager.camera.near;
   settings.far = sceneManager.camera.far;
-
-  // FOV preset: snap to a known label if the FOV matches one, else 'Custom'.
-  const currentPreset = Object.entries(config.camera.fovPresets).find(
-    ([, fovValue]) => fovValue > 0 && Math.abs(fovValue - settings.fov) < 0.5
-  );
-  settings.fovPreset = (currentPreset ? currentPreset[0] : 'Custom') as typeof settings.fovPreset;
 
   // Control type + active controls instance.
   const currentControlType = sceneManager.controls.getControlType();
