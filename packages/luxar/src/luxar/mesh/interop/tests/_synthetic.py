@@ -705,13 +705,22 @@ _VTP_TYPES = {
     "Float64": "f8",
 }
 
-#: The tetrahedron's four faces as TWO triangle strips, each four vertices long.
+#: The tetrahedron's four faces as TWO triangle strips: one of FIVE vertices, one of three.
 #:
-#: Both rely on the alternate-winding flip (`i, i+1, i+2` then `i+1, i, i+2`): drop it
-#: and the second triangle of each strip comes out reversed. The vertex SETS are
-#: unchanged either way, which is exactly why the strip test has to assert on signed
-#: volume rather than on the face set.
-_VTP_STRIPS = [[0, 2, 1, 3], [2, 0, 3, 1]]
+#: The five-vertex strip is load-bearing twice over.
+#:
+#: It pins the alternate-winding flip (`i, i+1, i+2` then `i+1, i, i+2`): drop it and the
+#: strip's even-numbered triangles come out reversed. The vertex SETS are unchanged by a
+#: flip, which is why the strip test also asserts on signed volume.
+#:
+#: And it pins strip triangulation against FAN triangulation, which the two four-vertex
+#: strips this used to be could not: `[a,b,c,d]` yields `{a,b,c},{b,c,d}` as a strip and
+#: `{a,b,c},{a,c,d}` as a fan, and for that particular pair of strips over a tetrahedron
+#: the two happened to produce the identical ORIENTED triangle multiset — so feeding the
+#: strips to the polygon fan (the exact error the module documents) changed nothing the
+#: test looked at. `[0,2,1,3,0]` triangulates to `{0,2,1},{1,2,3},{1,3,0}` as a strip but
+#: to `{0,2,1},{0,1,3}` plus a degenerate `{0,3,0}` as a fan, so the face SET differs.
+_VTP_STRIPS = [[0, 2, 1, 3, 0], [0, 3, 2]]
 
 
 class _VtpWriter:
@@ -808,6 +817,10 @@ def _vtp_document(
     compressor: str | None,
     extra_pieces: list[tuple[str, str]] | None = None,
     xmlns: str | None = None,
+    root_decls: str = "",
+    root_prefix: str = "",
+    piece_decls: str = "",
+    piece_prefix: str = "",
 ) -> None:
     """Wrap the ``<Piece>``s in a ``<VTKFile>`` and write it, appended section and all.
 
@@ -815,6 +828,12 @@ def _vtp_document(
     multi-``<Piece>`` PolyData, which is what the reader's index rebase and its
     all-or-nothing attribute stacking exist for. ``xmlns`` puts every element into a
     DEFAULT namespace, which is legal VTK XML and makes every parsed tag Clark-notated.
+
+    ``root_decls`` / ``piece_decls`` spell arbitrary extra namespace declarations on the
+    ``<VTKFile>`` and ``<Piece>`` tags (verbatim, so their ORDER is the caller's), and
+    ``root_prefix`` / ``piece_prefix`` (``"vtk:"``) prefix those two tags. Together they
+    reach the cases where the uri → prefix relation is not injective: two prefixes bound
+    to one URI, in either order, at either level. All are well-formed XML.
     """
     order = "BigEndian" if writer.order == ">" else "LittleEndian"
     root = [
@@ -823,17 +842,21 @@ def _vtp_document(
         f'byte_order="{order}"',
         f'header_type="{writer.header_type}"',
     ]
+    if root_decls:
+        root.insert(0, root_decls)
     if xmlns is not None:
         root.insert(0, f'xmlns="{xmlns}"')
     if compressor is not None:
         root.append(f'compressor="{compressor}"')
     pieces = [(piece_attrs, piece_body)] + list(extra_pieces or [])
+    piece_open = f"{piece_prefix}Piece" + (f" {piece_decls}" if piece_decls else "")
     piece_text = "".join(
-        f"<Piece {attrs}>\n{body}\n</Piece>\n" for attrs, body in pieces
+        f"<{piece_open} {attrs}>\n{body}\n</{piece_prefix}Piece>\n"
+        for attrs, body in pieces
     )
     text = (
         '<?xml version="1.0"?>\n'
-        f"<VTKFile {' '.join(root)}>\n"
+        f"<{root_prefix}VTKFile {' '.join(root)}>\n"
         f"<{root_type}>\n"
         f"{piece_text}"
         f"</{root_type}>\n"
@@ -844,7 +867,7 @@ def _vtp_document(
         out += f'<AppendedData encoding="{encoding}">\n_'.encode("ascii")
         out += writer.tail
         out += b"\n</AppendedData>\n"
-    out += b"</VTKFile>\n"
+    out += f"</{root_prefix}VTKFile>\n".encode("ascii")
     path.write_bytes(bytes(out))
 
 
@@ -866,6 +889,10 @@ def write_vtp(
     colors_name: str = "colors",
     empty_polys: bool = False,
     xmlns: str | None = None,
+    root_decls: str = "",
+    root_prefix: str = "",
+    piece_decls: str = "",
+    piece_prefix: str = "",
 ) -> None:
     """The tetrahedron as a VTK XML PolyData file, in any arm of the encoding matrix.
 
@@ -965,6 +992,10 @@ def write_vtp(
         if compressor is not None
         else ("vtkZLibDataCompressor" if compressed else None),
         xmlns=xmlns,
+        root_decls=root_decls,
+        root_prefix=root_prefix,
+        piece_decls=piece_decls,
+        piece_prefix=piece_prefix,
     )
 
 

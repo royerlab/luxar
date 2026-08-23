@@ -8,9 +8,9 @@ the rest of :mod:`luxar.mesh.interop`.
 **Trap 1 — ``<AppendedData encoding="raw">`` makes the document invalid XML.** The bytes
 after the ``_`` marker are arbitrary binary: they contain ``<``, ``&`` and sequences that
 are not UTF-8, so ``ElementTree`` refuses the *whole* file, header included. The stream is
-therefore split on the literal ``<AppendedData`` first; only the leading portion is
-parsed (with a synthesised close for every element still open at the cut), and each
-appended ``DataArray`` is indexed into the tail by its own ``offset=``.
+therefore split on the literal ``<AppendedData`` first; only the leading portion is fed to
+a pull parser, which hands back a usable tree even though the closing tags never arrive,
+and each appended ``DataArray`` is indexed into the tail by its own ``offset=``.
 
 **Trap 2 — a compressed base64 block is TWO concatenated base64 streams.** VTK encodes
 the block header (``nblocks``, block size, last partial block size, then one compressed
@@ -96,15 +96,23 @@ _COLOR_NAMES = frozenset(
     {"colors", "colours", "color", "colour", "rgb", "rgba", "vertexcolors"}
 )
 
-_VTKFILE_TAG = re.compile(rb"<VTKFile\b[^>]*>", re.S)
+#: The optional `ns:` allows a PREFIXED root — `<vtk:VTKFile xmlns:vtk="…">` is legal and
+#: `read_vtp` reads it (every tag is matched by local name), so a sniffer that missed it
+#: would refuse a file the reader can decode.
+_VTKFILE_TAG = re.compile(rb"<(?:[\w.-]+:)?VTKFile\b[^>]*>", re.S)
 #: Both anchored with a LEFT word boundary. XML attribute order is not semantic, and
 #: canonicalization (C14N, lxml) sorts alphabetically — which puts `header_type=` ahead
 #: of `type=`. Unanchored, the first match in
 #: `<VTKFile byte_order="…" header_type="UInt32" type="PolyData" …>` is the header
 #: width, and a perfectly valid file is refused as "type is 'UInt32'". `_` and `t` are
 #: both word characters, so `\b` cannot match inside `header_type`.
-_TYPE_ATTR = re.compile(rb'\btype\s*=\s*"([^"]*)"')
-_ENCODING_ATTR = re.compile(r'\bencoding\s*=\s*"([^"]*)"')
+#:
+#: Both quote characters, because `AttValue ::= '"' … '"' | "'" … "'"` — a single-quoted
+#: `type='PolyData'` is as valid as the double-quoted spelling, and matching only the
+#: latter makes the sniffer disagree with the parser about the very same file. The value
+#: is group 2; group 1 is the quote the backreference matches.
+_TYPE_ATTR = re.compile(rb'\btype\s*=\s*(["\'])(.*?)\1', re.S)
+_ENCODING_ATTR = re.compile(r'\bencoding\s*=\s*(["\'])(.*?)\1', re.S)
 
 
 def sniff_vtk_type(head: bytes) -> str:
@@ -117,7 +125,7 @@ def sniff_vtk_type(head: bytes) -> str:
     if tag is None:
         return ""
     attr = _TYPE_ATTR.search(tag.group(0))
-    return attr.group(1).decode("ascii", errors="replace") if attr else ""
+    return attr.group(2).decode("ascii", errors="replace") if attr else ""
 
 
 @dataclass(frozen=True)
@@ -141,22 +149,6 @@ class _Context:
 def _localname(tag: str) -> str:
     """``{ns}Piece`` → ``Piece``. VTK XML is namespace-free in practice, not by rule."""
     return tag.rsplit("}", 1)[-1]
-
-
-def _source_name(tag: str, prefixes: dict[str, str]) -> str:
-    """``{ns}Piece`` → the spelling the SOURCE used (``Piece`` or ``vtk:Piece``).
-
-    A synthesised closing tag has to match the start tag literally, so it cannot be
-    built from ``element.tag``: ElementTree hands that back in Clark notation and
-    ``</{http://…}Piece>`` is not well-formed XML at all. ``prefixes`` is the
-    uri → prefix map the pull parser's ``start-ns`` events supply; an empty prefix is a
-    default ``xmlns=``, whose members are spelled by their local name.
-    """
-    if not tag.startswith("{"):
-        return tag
-    uri, _, local = tag[1:].partition("}")
-    prefix = prefixes.get(uri, "")
-    return f"{prefix}:{local}" if prefix else local
 
 
 def _child(parent: ET.Element, name: str) -> Optional[ET.Element]:
@@ -200,6 +192,8 @@ def _int_attr(
 def _split_appended(raw: bytes, filename: str) -> tuple[bytes, bytes, str]:
     """Cut the byte stream at ``<AppendedData``. Returns ``(header, payload, encoding)``.
 
+    With no appended section the payload and the encoding both come back empty.
+
     This has to happen before anything else: with ``encoding="raw"`` the payload is
     arbitrary binary sitting inside the document, so feeding the whole file to an XML
     parser fails on the *data*, not on the markup, and the header is lost with it.
@@ -208,16 +202,29 @@ def _split_appended(raw: bytes, filename: str) -> tuple[bytes, bytes, str]:
     is located by an absolute offset and bounded by its own length header — and trimming
     it would mean scanning binary data for a closing tag that may legitimately occur
     inside it.
+
+    ``encoding=`` is REQUIRED rather than defaulted. Raw bytes and base64 text are not
+    reliably distinguishable from the payload itself, and guessing wrong does not fail
+    honestly: base64 read as raw yields a byte count in the billions and an error blaming
+    the data, on a file that is perfectly valid. Every VTK writer emits the attribute, so
+    refusing by name costs nothing real and never mis-diagnoses.
     """
     marker = raw.find(b"<AppendedData")
     if marker < 0:
-        return raw, b"", "raw"
+        return raw, b"", ""
     tag_end = raw.find(b">", marker)
     if tag_end < 0:
         raise ValueError(f"{filename}: <AppendedData> tag is never closed")
     tag = raw[marker : tag_end + 1].decode("ascii", errors="replace")
     match = _ENCODING_ATTR.search(tag)
-    encoding = (match.group(1) if match else "raw").lower()
+    if match is None:
+        raise ValueError(
+            f"{filename}: <AppendedData> carries no encoding= attribute, so whether its "
+            "payload is raw bytes or base64 text is undecidable — the two cannot be told "
+            "apart from the payload, and guessing wrong reports a corrupt file rather "
+            "than a valid one. Every VTK writer emits it."
+        )
+    encoding = match.group(2).lower()
     if encoding not in ("raw", "base64"):
         raise ValueError(
             f"{filename}: <AppendedData encoding={encoding!r}> — expected 'raw' or "
@@ -232,39 +239,45 @@ def _split_appended(raw: bytes, filename: str) -> tuple[bytes, bytes, str]:
     return raw[:marker], raw[start + 1 :], encoding
 
 
-def _parse_header_document(head: bytes, filename: str) -> ET.Element:
-    """Parse the pre-``<AppendedData>`` prefix, closing whatever it left open.
+def _parse_header_document(head: bytes, filename: str, *, cut: bool) -> ET.Element:
+    """Parse the pre-``<AppendedData>`` prefix, which is missing its closing tags.
 
-    The cut lands between elements, so the prefix is a well-formed document missing only
-    its closing tags. They are synthesised from the element stack the pull parser was
-    holding at the cut rather than hardcoded, because how deep the cut is depends on the
-    writer (``</Piece></PolyData>`` for one piece, more for several). The names are the
-    SOURCE's own spellings, not ``element.tag``: under an ``xmlns=`` the latter is Clark
-    notation and ``</{uri}Piece>`` is not well-formed, so a namespaced document with an
-    appended section would fail on markup this function itself wrote.
+    A *pull* parser rather than :func:`ET.fromstring`, because the prefix is deliberately
+    an incomplete document and ``fromstring`` demands a complete one. Nothing has to be
+    synthesised to make up the difference: ``ElementTree``'s tree builder appends each
+    element to its parent at its own ``start`` event, so the element carried by the FIRST
+    ``start`` event *is* the root, and by the time the feed returns it already has every
+    element that completed before the cut hanging off it, text included. Synthesising
+    closing tags and re-parsing would additionally have to reproduce each tag's source
+    spelling — which is not recoverable from ``element.tag`` at all once a namespace is in
+    play, and not recoverable from the prefix map either, since two prefixes may legally
+    bind the same URI.
+
+    ``cut`` says whether the stream really was truncated at ``<AppendedData``. When it was
+    not, the whole file is here and is required to be a COMPLETE document, so the parser
+    is closed and an unbalanced tag is reported rather than quietly tolerated.
 
     ``xml.etree`` is used directly — bandit's B314; the waiver rationale is on the import
     at the top of this module.
     """
-    # Typed loosely: the stub's event-tuple generic does not narrow usefully for a
-    # three-event parser, and `start-ns` yields a (prefix, uri) tuple rather than an
-    # element at all.
-    parser: Any = ET.XMLPullParser(events=("start", "end", "start-ns"))
+    # Typed loosely: the stub's event-tuple generic does not narrow to `Element` for a
+    # parser constructed with an `events` tuple.
+    parser: Any = ET.XMLPullParser(events=("start",))
     try:
         parser.feed(head)
-        stack: list[str] = []
-        prefixes: dict[str, str] = {}
-        for event, payload in parser.read_events():
-            if event == "start-ns":
-                prefix, uri = payload
-                prefixes.setdefault(uri, prefix)
-            elif event == "start":
-                stack.append(_source_name(payload.tag, prefixes))
-            elif stack:
-                stack.pop()
-        closing = "".join(f"</{tag}>" for tag in reversed(stack)).encode("utf-8")
-        # Waiver rationale: see the import at the top of this module.
-        return ET.fromstring(head + closing)  # nosec B314
+        root: Optional[ET.Element] = None
+        for _event, element in parser.read_events():
+            root = element
+            break
+        if root is None:
+            # No element started at all. `close()` raises ElementTree's own
+            # "no element found", which names the position; the raise below is
+            # unreachable belt-and-braces.
+            parser.close()
+            raise ValueError(f"{filename}: malformed VTK XML header — no element found")
+        if not cut:
+            parser.close()
+        return root
     except ET.ParseError as exc:
         raise ValueError(f"{filename}: malformed VTK XML header — {exc}") from exc
 
@@ -425,18 +438,21 @@ def _ascii_values(
 ) -> NDArray:
     """Parse a whitespace-separated ``format="ascii"`` payload.
 
-    Integers go through ``int()`` rather than numpy's own string cast so that ``1.5`` in
-    an ``Int64`` array is refused instead of silently truncated. Both that and a word in
-    a ``Float32`` array raise a bare ``ValueError`` naming neither the file nor the
-    array, so the failure is re-raised with both.
+    Numpy's string cast refuses rather than truncates, so ``1.5`` in an ``Int64`` array is
+    an error and not a silent 1 — but it raises TWO different exceptions and only one of
+    them is a ``ValueError``. A malformed token (a word in a ``Float32`` array, ``1.5`` in
+    an integer one) is a ``ValueError``; an integer token OUTSIDE the target dtype's range
+    — ``300`` or ``-1`` in a ``UInt8`` colour array a writer forgot to clip, an oversized
+    ``Int64`` connectivity index — is an ``OverflowError``, which is an ``ArithmeticError``
+    and shares no base with ``ValueError``. Left uncaught it escapes ``import_mesh``'s
+    documented contract *and* the CLI's ``except (ValueError, …)`` funnel, so the user
+    gets a raw traceback for an ordinary bad file. Both are re-raised naming the file and
+    the array, which neither carries.
     """
     tokens = text.split()
     try:
-        if native.kind == "f":
-            values: NDArray = np.array(tokens, dtype=native)
-        else:
-            values = np.array([int(t) for t in tokens], dtype=native)
-    except ValueError as exc:
+        values: NDArray = np.array(tokens, dtype=native)
+    except (ValueError, OverflowError) as exc:
         raise ValueError(
             f"{ctx.name}: {where} has an ascii token that is not a {type_name} "
             f"value — {exc}"
@@ -755,7 +771,10 @@ def read_vtp(path: Path) -> dict[str, object]:
     """
     raw = path.read_bytes()
     head, appended, encoding = _split_appended(raw, path.name)
-    root = _parse_header_document(head, path.name)
+    # A shorter head is exactly the case where the stream WAS cut at `<AppendedData`, so
+    # the closing tags are legitimately missing; anything else is the whole file and must
+    # still be a complete document.
+    root = _parse_header_document(head, path.name, cut=len(head) < len(raw))
 
     if _localname(root.tag) != "VTKFile":
         raise ValueError(

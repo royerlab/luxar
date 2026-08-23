@@ -17,7 +17,7 @@ bar with `xml.etree` + `base64` + `zlib`.
 | PLY | `.ply` | ascii, binary LE **and** binary BE; faces as `property list`; optional `nx/ny/nz` normals and `red/green/blue[/alpha]` colours |
 | OBJ | `.obj` | 1-based **and** negative indices; polygons fan-triangulated; `v x y z r g b` vertex colours; materials ignored |
 | STL | `.stl` | ascii and binary; always welded (STL is a triangle soup); per-facet normals dropped |
-| VTK XML PolyData | `.vtp` | `ascii` / inline base64 (`binary`) / appended `raw` **and** `base64`; `vtkZLibDataCompressor`; `UInt32` and `UInt64` headers; either byte order; `Polys` (fan-triangulated) and `Strips`; `Verts`/`Lines` dropped; `PointData` normals and colours |
+| VTK XML PolyData | `.vtp` | `ascii` / inline base64 (`binary`) / appended `raw` **and** `base64`; `vtkZLibDataCompressor`; `UInt32` and `UInt64` headers; either byte order; `Polys` (fan-triangulated) and `Strips`; `Verts`/`Lines` dropped; `PointData` normals and colours; several `<Piece>`s concatenated into one surface; XML namespaces, prefixed or default |
 | glTF 2.0 | `.gltf`, `.glb` | GLB chunks, external and data-URI buffers, interleaved accessors (`byteStride`), full node-transform composition, `COLOR_0` |
 
 ## What the readers normalize, and why
@@ -67,10 +67,26 @@ bar with `xml.etree` + `base64` + `zlib`.
 - **A `.vtp` with `<AppendedData encoding="raw">` is not well-formed XML.** The bytes
   after the `_` marker are arbitrary binary — NUL bytes, `<`, `&`, invalid UTF-8 — so
   `ElementTree` refuses the *whole* document, header included. The byte stream is split
-  on the literal `<AppendedData` first, the leading portion is parsed with a synthesised
-  close for every element still open at the cut, and each appended `DataArray` is indexed
-  into the tail by its own `offset=`. That is ParaView's default output, so it is the
-  common case rather than an exotic one.
+  on the literal `<AppendedData` first, the leading portion is fed to a *pull* parser —
+  whose first `start` event already carries the root with every element that completed
+  before the cut hanging off it, so nothing has to be synthesised to replace the closing
+  tags that never arrive — and each appended `DataArray` is indexed into the tail by its
+  own `offset=`. That is ParaView's default output, so it is the common case rather than
+  an exotic one. `encoding=` itself is *required*, not defaulted: raw bytes and base64
+  text cannot be told apart from the payload, and a wrong guess reports a valid file as
+  corrupt instead of failing honestly.
+- **A `.vtp` may put every tag in an XML namespace**, by default declaration or by
+  prefix, so tags are matched by local name throughout. One URI may legally have more
+  than one in-scope prefix at once, which is why the header parser reads the tree the
+  parser already built rather than trying to rebuild each tag's source spelling: the
+  spelling is not recoverable from ElementTree's Clark notation, and a uri → prefix map
+  inverts a relation that is not one-to-one.
+- **A `.vtp` may carry several `<Piece>`s, each numbering its own points from 0.** They
+  are concatenated into one vertex array, so every index shifts by the running base —
+  bounded against its own piece *first*, since after the shift an over-running index
+  lands inside a neighbouring piece's geometry instead of raising. `PointData` is
+  all-or-nothing across the pieces: a normals array present on only some of them would
+  otherwise mean either a short attribute or invented rows.
 - **A compressed inline VTP block is TWO concatenated base64 streams.** VTK encodes the
   block header (`nblocks`, block size, last partial size, then one compressed size per
   block) separately from the compressed payload and writes the two encodings back to
@@ -156,14 +172,25 @@ face is compared as its three sorted corner positions.
 
 **The VTP fixtures are entirely self-attesting, and that is a real limit.** Neither VTK,
 meshio nor PyVista is a dependency of this package or of its test environment, so every
-`.vtp` byte the suite ever sees was produced by `_synthetic.py`'s own `_VtpWriter`. Where
-the reader and that writer share a misreading of the format, the tests agree with
-themselves and say nothing. Two arms carry no external corroboration at all — appended
-base64, and either byte order's big-endian variant — because no fixture from a real
-writer exists to check them against. The partial mitigation is that the trap most likely
-to be shared — the two concatenated base64 streams of a compressed block — is pinned by a
-test that reconstructs the layout **by hand** from the raw element text rather than by
-round-tripping through the reader, and that the cumulative-*end*-offsets rule is pinned by
-a fixture (a quad beside a triangle) on which the wrong reading changes the face count
-rather than merely rotating it. Corroborating the writer against real ParaView output
-remains worth doing the first time a `.vtp` in the wild misparses.
+`.vtp` byte the suite ever sees was produced by `_synthetic.py`'s own `_VtpWriter`. **No
+arm carries external corroboration** — not one file from a real writer is checked against,
+in any encoding. Where the reader and that writer share a misreading of the format, the
+tests agree with themselves and say nothing.
+
+Two things stand in for a real file. First, the format claims the whole decoder rests on
+were reasoned out against the VTK XML specification and re-derived independently, rather
+than being read off the writer: `offsets` are cumulative *end* offsets, a *compressed*
+inline block is two concatenated base64 streams while an uncompressed one is a single
+stream, and an appended-base64 `offset=` counts *characters* and not bytes. Second, the
+two most consequential of those are pinned by tests that do not go through the reader at
+all — the two-stream layout by a test that reconstructs the positions **by hand** from the
+raw element text, and the cumulative-ends rule by a fixture (a quad beside a triangle) on
+which the wrong reading changes the face *count* rather than merely rotating the cell
+list.
+
+Neither substitutes for a byte from ParaView. In practice the least-corroborated arms are
+the ones no writer in common use emits, since a misreading there would also be the last to
+surface in the field: big-endian (`byte_order="BigEndian"`), which no mainstream writer
+produces today, and appended base64, which VTK writes far less often than appended raw.
+Checking `_VtpWriter` against real ParaView output remains worth doing the first time a
+`.vtp` in the wild misparses.

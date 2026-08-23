@@ -615,6 +615,9 @@ def _shifted_faces(shift: float) -> set[tuple[float, ...]]:
 #: UInt64 header, and legacy files are UInt32. Big-endian is synthetic — no common
 #: writer emits it today — but the format allows it and `byte_order=` is a one-line
 #: thing to ignore.
+#: A namespace URI to hang the VTP namespace fixtures on. Any URI does; this is VTK's.
+_VTK_NS = "http://www.kitware.com/vtk"
+
 _VTP_MATRIX = [
     ("appended-raw", False, "UInt32", False),
     ("appended-raw", True, "UInt32", False),
@@ -894,19 +897,25 @@ class TestVtp:
         with pytest.raises(ValueError, match="not a VTK XML file"):
             import_mesh(p)
 
+    @pytest.mark.parametrize("declared", ["7", "3"])
     def test_a_declared_point_count_that_disagrees_is_named(
-        self, tmp_path: Path
+        self, declared: str, tmp_path: Path
     ) -> None:
         """`NumberOfPoints` is a free cross-check on the whole decode chain.
 
         A block header read at the wrong width, or an offset off by a stream, yields a
         differently-sized array rather than an exception — this is what turns that into
         a named error.
+
+        BOTH directions, because the check is `!=`: an over-declaring file (7 against 4)
+        alone leaves `>` indistinguishable from `!=`, and an under-declaring one is the
+        commoner corruption — a truncated write, or a piece whose arrays were appended to
+        without its header being updated.
         """
         p = tmp_path / "count.vtp"
         write_vtp(p, GT, mode="ascii")
         text = p.read_text(encoding="ascii").replace(
-            'NumberOfPoints="4"', 'NumberOfPoints="7"'
+            'NumberOfPoints="4"', f'NumberOfPoints="{declared}"'
         )
         p.write_text(text, encoding="ascii")
         with pytest.raises(ValueError, match="NumberOfPoints"):
@@ -989,6 +998,76 @@ class TestVtp:
         assert mesh.normals is not None, '<PointData Normals="SurfaceNormals"> ignored'
         assert mesh.colors is not None, '<PointData Scalars="CellTint"> ignored'
         np.testing.assert_allclose(np.linalg.norm(mesh.normals, axis=1), 1.0, atol=1e-5)
+
+    def test_a_conventional_colour_NAME_is_enough_on_its_own(
+        self, tmp_path: Path
+    ) -> None:
+        """The middle of the three colour rules, which nothing else can reach.
+
+        `<PointData>` need not designate `Scalars=`, and VTK's UInt8 convention only
+        covers unsigned-char arrays. A **Float32** array called "Colors" with no
+        designation is left to the conventional-spelling rule alone — and every other
+        fixture either designates its colour array or is UInt8, so without this one the
+        whole branch could be deleted and nothing would notice.
+        """
+        p = tmp_path / "namedcolor.vtp"
+        write_vtp_point_data(
+            p, GT, [(GT.colors.astype(np.float32), "Float32", "Colors", 3)]
+        )
+        assert b'Scalars="' not in p.read_bytes(), "the fixture must NOT designate one"
+        mesh = import_mesh(p)
+        assert mesh.normals is None
+        assert mesh.colors is not None, '<DataArray Name="Colors"> was not taken'
+        for vertex, color in zip(mesh.vertices, mesh.colors):
+            row = int(np.argmin(np.linalg.norm(GT.vertices - vertex, axis=1)))
+            np.testing.assert_array_equal(color, GT.colors[row])
+
+    def test_a_saturated_0_to_1_palette_is_still_the_0_to_1_convention(
+        self, tmp_path: Path
+    ) -> None:
+        """`peak <= 1.0`, inclusive — the boundary the mid-range palette cannot reach.
+
+        Any 0..1 colour array containing one fully saturated channel (pure white, pure
+        red, a highlight) peaks at exactly 1.0. Under a `peak < 1.0` test that file falls
+        through to the 0..255 branch, where every channel clips to 0 or 1 and the surface
+        renders black. The palette is otherwise mid-range so the arm stays honest about
+        scaling rather than being trivially right at both ends.
+        """
+        palette = np.array(
+            [[255, 64, 32], [10, 200, 90], [77, 77, 77], [3, 250, 128]], dtype=np.uint8
+        )
+        gt = dataclasses.replace(GT, colors=palette)
+        p = tmp_path / "saturated.vtp"
+        write_vtp(p, gt, colors="float01")
+        mesh = import_mesh(p)
+        assert mesh.colors is not None
+        assert int(mesh.colors.max()) == 255, "the fixture must saturate a channel"
+        np.testing.assert_array_equal(
+            np.sort(mesh.colors, axis=0), np.sort(palette, axis=0)
+        )
+
+    @pytest.mark.parametrize(
+        "attr,name,vtk_type,message",
+        [
+            ("Normals", "Normals", "Float32", "normals decoded to"),
+            ("colours", "colors", "UInt8", "colours decoded to"),
+        ],
+    )
+    def test_a_point_data_array_shorter_than_the_point_list_is_named(
+        self, attr: str, name: str, vtk_type: str, message: str, tmp_path: Path
+    ) -> None:
+        """A `PointData` array must have one row per point, and both guards say so.
+
+        Three rows against four points is what a truncated block, a wrong-width header or
+        a piece assembled from mismatched arrays produces — and it does not raise on its
+        own: `add_mesh` would be handed an attribute shorter than the vertex list, or (in
+        a multi-piece file) a stack whose rows no longer line up with any piece.
+        """
+        values = (GT.normals if attr == "Normals" else GT.colors)[:3]
+        p = tmp_path / "short.vtp"
+        write_vtp_point_data(p, GT, [(values, vtk_type, name, 3)])
+        with pytest.raises(ValueError, match=rf"short\.vtp.*{message}"):
+            import_mesh(p)
 
     # -------------------------------------------------------------- multiple <Piece>s
 
@@ -1091,6 +1170,186 @@ class TestVtp:
         assert _sorted_face_set(mesh) == EXPECTED_FACES
         assert mesh.normals is not None and mesh.colors is not None
 
+    def test_a_single_quoted_type_attribute_sniffs_the_same(
+        self, tmp_path: Path
+    ) -> None:
+        """`AttValue ::= '"' … '"' | "'" … "'"` — both quotes are XML.
+
+        The sniffer is a regex (the appended-raw arm is not parseable XML at all), so it
+        has to accept what the parser does. Matching only double quotes splits the two
+        apart: `detect_mesh_format` refuses the file as "no `<VTKFile type=…>` root
+        element" while `read_vtp`, which asks the parsed tree, reads the very same bytes
+        without complaint.
+        """
+        p = tmp_path / "singlequote.vtp"
+        write_vtp(p, GT, mode="ascii")
+        text, hits = re.subn(
+            r'type="PolyData"',
+            "type='PolyData'",
+            p.read_text(encoding="ascii"),
+            count=1,
+        )
+        assert hits == 1
+        p.write_text(text, encoding="ascii")
+        assert detect_mesh_format(p) == "vtp"
+        assert _sorted_face_set(import_mesh(p)) == EXPECTED_FACES
+
+    def test_a_single_quoted_appended_encoding_is_honoured(
+        self, tmp_path: Path
+    ) -> None:
+        """The same widening, on the arm where it corrupts DATA rather than a sniff.
+
+        `<AppendedData encoding='base64'>` unmatched means the base64 tail is decoded as
+        raw bytes, and the first four ASCII characters of a base64 stream read as a
+        UInt32 byte count in the billions — so a valid file is reported as truncated.
+        """
+        p = tmp_path / "sqenc.vtp"
+        write_vtp(p, GT, mode="appended-base64")
+        raw = p.read_bytes()
+        patched = raw.replace(b'encoding="base64"', b"encoding='base64'", 1)
+        assert patched != raw
+        p.write_bytes(patched)
+        assert _sorted_face_set(import_mesh(p)) == EXPECTED_FACES
+
+    @pytest.mark.parametrize("mode", ["appended-raw", "appended-base64"])
+    def test_an_appended_block_with_no_encoding_is_refused_by_name(
+        self, mode: str, tmp_path: Path
+    ) -> None:
+        """A deliberate refusal, not a default.
+
+        Raw bytes and base64 text cannot be told apart from the payload, and a wrong
+        guess does not fail honestly — base64 read as raw reports a byte count in the
+        billions and blames the data, on a file that is perfectly valid. Every VTK writer
+        emits the attribute, so naming its absence costs nothing real.
+        """
+        p = tmp_path / "noencoding.vtp"
+        write_vtp(p, GT, mode=mode)
+        raw = p.read_bytes()
+        patched = re.sub(rb' encoding="[^"]*"', b"", raw, count=1)
+        assert patched != raw
+        p.write_bytes(patched)
+        with pytest.raises(ValueError, match=r"noencoding\.vtp.*no encoding="):
+            import_mesh(p)
+
+    def test_a_file_that_is_nothing_but_an_appended_section_is_named(
+        self, tmp_path: Path
+    ) -> None:
+        """The cut can leave NO header at all, and there is then no root to return.
+
+        Reachable through the explicit-format path, the same way `read_vtp`'s own type
+        check is. Without the guard the header parser hands back `None` and the very next
+        line asks it for `.tag`, so an `AttributeError` escapes the ValueError contract.
+        """
+        p = tmp_path / "headless.vtp"
+        p.write_bytes(
+            b'<AppendedData encoding="raw">\n_\x00\x01\x02\n</AppendedData>\n'
+        )
+        with pytest.raises(
+            ValueError, match=r"headless\.vtp: malformed VTK XML header"
+        ):
+            import_mesh(p, format="vtp")
+
+    def test_a_document_with_no_appended_section_must_still_be_complete(
+        self, tmp_path: Path
+    ) -> None:
+        """Only the appended arm is allowed to be missing its closing tags.
+
+        The header parser tolerates an unclosed document because the stream was CUT at
+        `<AppendedData` on purpose. A file with no appended section was not cut, so the
+        same tolerance would swallow a genuinely truncated write — here one that stops
+        after the last `</Piece>`, which still carries a complete-looking surface.
+        """
+        p = tmp_path / "cut.vtp"
+        write_vtp(p, GT, mode="inline-base64")
+        raw = p.read_bytes()
+        p.write_bytes(raw[: raw.index(b"</PolyData>")])
+        with pytest.raises(ValueError, match=r"cut\.vtp: malformed VTK XML header"):
+            import_mesh(p)
+
+    @pytest.mark.parametrize("attr", ["byte_order", "header_type"])
+    def test_an_omitted_root_attribute_takes_the_documented_default(
+        self, attr: str, tmp_path: Path
+    ) -> None:
+        """`byte_order` defaults to LittleEndian and `header_type` to UInt32.
+
+        Every fixture emits both, so the two `or` defaults were never exercised — and
+        either one flipped decodes a valid little-endian UInt32 file into garbage
+        positions or a nonsense byte count, silently for the first and loudly for the
+        second. The fixture is inline base64 so both actually matter: an ascii payload
+        has neither a byte order nor a block header.
+        """
+        p = tmp_path / "defaults.vtp"
+        write_vtp(p, GT, mode="inline-base64")
+        text, hits = re.subn(
+            rf' {attr}="[^"]*"', "", p.read_text(encoding="ascii"), count=1
+        )
+        assert hits == 1
+        p.write_text(text, encoding="ascii")
+        mesh = import_mesh(p)
+        assert _sorted_face_set(mesh) == EXPECTED_FACES
+        assert mesh.colors is not None and mesh.normals is not None
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            pytest.param(
+                {
+                    "xmlns": _VTK_NS,
+                    "root_decls": f'xmlns:vtk="{_VTK_NS}"',
+                    "root_prefix": "vtk:",
+                },
+                id="default-then-prefixed-root",
+            ),
+            pytest.param(
+                {"root_decls": f'xmlns:vtk="{_VTK_NS}" xmlns="{_VTK_NS}"'},
+                id="prefixed-then-default-root",
+            ),
+            pytest.param(
+                {
+                    "root_decls": f'xmlns:a="{_VTK_NS}"',
+                    "root_prefix": "a:",
+                    "piece_decls": f'xmlns:b="{_VTK_NS}"',
+                    "piece_prefix": "b:",
+                },
+                id="two-prefixes-root-and-piece",
+            ),
+            pytest.param(
+                {
+                    "xmlns": _VTK_NS,
+                    "piece_decls": f'xmlns:vtk="{_VTK_NS}"',
+                    "piece_prefix": "vtk:",
+                },
+                id="default-root-prefixed-piece",
+            ),
+        ],
+    )
+    def test_two_prefixes_for_one_namespace_uri_still_read(
+        self, kwargs: dict[str, str], tmp_path: Path
+    ) -> None:
+        """A URI may legally have more than one in-scope prefix, in any order.
+
+        The reader takes the root straight off the pull parser's first `start` event, so
+        the source's own tag SPELLINGS never have to be reconstructed — which is the
+        whole point: they are not recoverable from `element.tag` (Clark notation drops
+        the prefix) and not recoverable from a uri → prefix map either, because that map
+        inverts a relation which is not one-to-one.
+
+        The first two cases are the ones that were actually refused as "mismatched tag":
+        the root's own prefix is the one a synthesised `</…VTKFile>` has to get right, and
+        with two prefixes bound to one URI a first-wins map gets it wrong in EITHER order.
+        The last two — declarations added at the `<Piece>` level — happen to survive a
+        prefix map because a real writer closes `</Piece></PolyData>` before
+        `<AppendedData>`, so those tags are never synthesised; they are here because that
+        is an accident of where VTK puts the appended section, not a property anything
+        checks.
+        """
+        p = tmp_path / "ns.vtp"
+        write_vtp(p, GT, mode="appended-raw", **kwargs)
+        assert detect_mesh_format(p) == "vtp"
+        mesh = import_mesh(p)
+        assert _sorted_face_set(mesh) == EXPECTED_FACES
+        assert mesh.normals is not None and mesh.colors is not None
+
     # --------------------------------------------------- every error names the file
 
     @pytest.mark.parametrize("value", ["abc", ""])
@@ -1167,6 +1426,85 @@ class TestVtp:
             encoding="ascii",
         )
         with pytest.raises(ValueError, match=r"tokens\.vtp"):
+            import_mesh(p)
+
+    @pytest.mark.parametrize(
+        "name,body",
+        [
+            ("colors", "300 0 0 " + "0 " * 9),
+            ("colors", "-1 0 0 " + "0 " * 9),
+            ("connectivity", "99999999999999999999999 " + "0 " * 11),
+        ],
+    )
+    def test_an_out_of_range_ascii_integer_is_a_clean_error(
+        self, name: str, body: str, tmp_path: Path
+    ) -> None:
+        """A ValueError, not the OverflowError a bare cast raises.
+
+        Numpy's string→int conversion raises `ValueError` for a malformed token but
+        `OverflowError` for one outside the target dtype's range — and `OverflowError` is
+        an `ArithmeticError`, sharing no base with `ValueError`. `300` or `-1` in a
+        `UInt8` colour array (a writer that forgot to clip) and an oversized `Int64`
+        connectivity index are ordinary bad files, but an uncaught `OverflowError`
+        escapes both `import_mesh`'s documented contract and the CLI's
+        `except (ValueError, …)` funnel, so the user sees a raw traceback.
+
+        The same rule the OBJ reader is held to a few hundred lines up.
+        """
+        p = tmp_path / "overflow.vtp"
+        write_vtp(p, GT, mode="ascii")
+        p.write_text(
+            _replace_array_text(p.read_text(encoding="ascii"), name, body),
+            encoding="ascii",
+        )
+        with pytest.raises(ValueError, match=r"overflow\.vtp"):
+            import_mesh(p)
+
+    def test_points_with_no_component_count_are_rescued_as_triples(
+        self, tmp_path: Path
+    ) -> None:
+        """`NumberOfComponents` is optional, and a flat `<Points>` array is still triples.
+
+        A PolyData point is always 3D, so a 1-D positions array of length 3N is
+        unambiguous — and reading it as N*3 separate scalars would fail the
+        `points.shape[1]` check on a perfectly good file.
+        """
+        p = tmp_path / "flatpoints.vtp"
+        write_vtp(p, GT, mode="ascii")
+        text, hits = re.subn(
+            r'(Name="Points") NumberOfComponents="3"',
+            r"\g<1>",
+            p.read_text(encoding="ascii"),
+            count=1,
+        )
+        assert hits == 1
+        p.write_text(text, encoding="ascii")
+        mesh = import_mesh(p)
+        assert mesh.n_vertices == 4
+        assert _sorted_face_set(mesh) == EXPECTED_FACES
+
+    def test_flat_points_that_are_not_a_multiple_of_three_are_named(
+        self, tmp_path: Path
+    ) -> None:
+        """The other half of the rescue: 11 coordinates are not points at all.
+
+        Without the `% 3` refusal `reshape(-1, 3)` raises numpy's own "cannot reshape
+        array of size 11", which names neither the file nor `<Points>`.
+        """
+        p = tmp_path / "ragged-points.vtp"
+        write_vtp(p, GT, mode="ascii")
+        text, hits = re.subn(
+            r'(Name="Points") NumberOfComponents="3"',
+            r"\g<1>",
+            p.read_text(encoding="ascii"),
+            count=1,
+        )
+        assert hits == 1
+        p.write_text(
+            _replace_array_text(text, "Points", "0 0 0 1 0 0 0 1 0 0 0"),
+            encoding="ascii",
+        )
+        with pytest.raises(ValueError, match=r"ragged-points\.vtp.*multiple of 3"):
             import_mesh(p)
 
     def test_a_ragged_raw_payload_is_named(self, tmp_path: Path) -> None:
