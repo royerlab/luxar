@@ -464,8 +464,11 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
                 line_type="indexed",
                 # LUMINOUS, not `additive`: same glow, but it respects depth,
                 # so rivers on the far side of the now-opaque globe are hidden
-                # rather than drawn over it. RIVER_LIFT clears the terrain point
-                # shell by ~4x POINT_RADII, so near-side rivers are unaffected.
+                # rather than drawn over it. RIVER_LIFT clears the shell's own
+                # rendered thickness (0.4 world units versus a 0.36 sprite
+                # diameter). Opaque point sprites write their centre depth
+                # across that disc, though, so independently sampled higher
+                # terrain can still occlude river segments in high-relief areas.
                 blending_mode="luminous",
                 opacity=1.0,
                 intensity=RIVER_INTENSITY,
