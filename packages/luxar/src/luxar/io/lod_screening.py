@@ -78,13 +78,13 @@ import zarr
 from arbol import aprint, asection
 
 from .._zarr_compat import close, open_group
-from ..core.transforms import transform_bounding_box
 from ..core.group.lod.group import (
     PARTITION_FINEST_AREA,
     WHOLE_OBJECT_FINEST_ANCHOR,
     coverage_fractions,
     partitioned_coverage_fractions,
 )
+from ..core.transforms import transform_bounding_box
 from ..typing_utils.constants import DERIVED_LOD_SELECTOR, LOD_SELECTORS
 
 # Private imports, deliberately — the same choice (and the same reasoning)

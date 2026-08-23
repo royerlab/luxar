@@ -752,7 +752,9 @@ class TestTransformBoundingBox:
         assert lo.tolist() == pytest.approx(pts.min(axis=0).tolist())
         assert hi.tolist() == pytest.approx(pts.max(axis=0).tolist())
 
-    def test_drops_corners_with_degenerate_homogeneous_w(self) -> None:
+    def test_drops_corners_with_degenerate_homogeneous_w(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         matrix = np.array(
             [
                 [1.0, 0.0, 0.0, 0.0],
@@ -766,6 +768,10 @@ class TestTransformBoundingBox:
 
         assert lo.tolist() == pytest.approx([1, 0, 0])
         assert hi.tolist() == pytest.approx([1, 1, 1])
+        assert (
+            "transform_bounding_box: skipped 4/8 corner(s) with |w| < 1e-12"
+            in capsys.readouterr().out
+        )
 
     def test_keeps_corners_at_homogeneous_w_threshold(self) -> None:
         matrix = np.array(
@@ -782,6 +788,14 @@ class TestTransformBoundingBox:
         assert lo.tolist() == [0, 0, 0]
         assert hi.tolist() == pytest.approx([1e12, 1e12, 1e12])
 
+    def test_keeps_corners_with_negative_homogeneous_w(self) -> None:
+        matrix = np.diag([1.0, 1.0, 1.0, -1.0])
+
+        lo, hi = transform_bounding_box(matrix, [0, 0, 0], [1, 1, 1])
+
+        assert lo.tolist() == [-1, -1, -1]
+        assert hi.tolist() == [0, 0, 0]
+
     def test_all_degenerate_corners_fall_back_to_input_box(self) -> None:
         matrix = np.array(
             [
@@ -792,7 +806,9 @@ class TestTransformBoundingBox:
             ]
         )
 
-        lo, hi = transform_bounding_box(matrix, [-1, -2, -3], [4, 5, 6])
+        lo, hi = transform_bounding_box(matrix, [-1, -2, -3, 7], [4, 5, 6, 9])
 
         assert lo.tolist() == [-1, -2, -3]
         assert hi.tolist() == [4, 5, 6]
+        assert lo.shape == (3,)
+        assert hi.shape == (3,)

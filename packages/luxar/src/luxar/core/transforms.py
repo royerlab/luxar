@@ -11,10 +11,14 @@ from __future__ import annotations
 from typing import Any, Literal, Tuple, Union, cast
 
 import numpy as np
+from arbol import aprint
 from numpy.typing import NDArray
 
 from ..typing_utils.aliases import TransformMatrix
 from ..validation.types import validate_transform
+
+# Paired with bounds-math.ts::transformBoundingBox's W_EPSILON.
+W_EPSILON = 1e-12
 
 
 def identity() -> TransformMatrix:
@@ -530,8 +534,8 @@ def transform_bounding_box(
 
     Returns:
         Tuple ``(new_lo, new_hi)`` of the enclosing box, each a length-3
-        float64 array. Corners with degenerate homogeneous ``w`` are omitted;
-        if all corners are degenerate, the input box is returned unchanged.
+        float64 array. Corners with ``|w| < W_EPSILON (1e-12)`` are omitted;
+        if all corners are omitted, the input box is returned unchanged.
 
     Example:
         >>> m = translate(3, 0, 0)
@@ -561,9 +565,15 @@ def transform_bounding_box(
     # Perspective divide (w == 1 for affine transforms). Skip degenerate
     # corners exactly as the viewer does so they cannot produce NaN/inf bounds.
     w = transformed[:, 3]
-    keep = np.abs(w) >= 1e-12
+    keep = np.abs(w) >= W_EPSILON
     if not bool(keep.any()):
-        return lo_arr.copy(), hi_arr.copy()
+        return lo_arr[:3].copy(), hi_arr[:3].copy()
+    kept_count = int(keep.sum())
+    if kept_count < 8:
+        aprint(
+            f"⚠ transform_bounding_box: skipped {8 - kept_count}/8 corner(s) "
+            f"with |w| < {W_EPSILON} (degenerate perspective projection)"
+        )
     points = transformed[keep, :3] / w[keep, None]
 
     return points.min(axis=0), points.max(axis=0)
