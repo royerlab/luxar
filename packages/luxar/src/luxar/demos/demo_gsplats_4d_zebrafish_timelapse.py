@@ -492,6 +492,11 @@ def acquisition_box_um() -> tuple[np.ndarray, np.ndarray]:
     it without either needing the other in hand.
     """
     half = 0.5 * np.asarray(VOXEL_SIZE_ZYX_UM) * np.asarray(ACQUISITION_SHAPE_ZYX)
+    # float32, because that is the width the cage vertices are STORED at. Left in
+    # float64 the declared dimension range and the written vertex disagree in the
+    # last bit, and the compiler correctly warns that a vertex sits outside its
+    # own axis — a warning that would be noise here and hides real ones.
+    half = half.astype(np.float32)
     return -half, half
 
 
