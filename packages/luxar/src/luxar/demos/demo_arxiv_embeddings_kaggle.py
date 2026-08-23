@@ -1221,8 +1221,8 @@ def generate_paper_landscape(
                 )
                 _cat_legend += f'<div><span style="color:#{r:02x}{g:02x}{b:02x}">█</span> {cat}</div>'
             _cat_legend += "</div>"
-            # x=0.05, not 0.02: the legend grew to ten rows over the full
-            # corpus and its lower entries ran under the viewer's icon rail.
+            # x=0.05, not 0.02: the full-corpus legend has ten-plus rows and
+            # its lower entries otherwise run under the viewer's icon rail.
             scene.add_html(
                 _cat_legend,
                 position=(0.05, 0.97),

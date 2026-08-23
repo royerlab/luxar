@@ -591,7 +591,7 @@ class TestRadiiTrackCloudDensity:
         assert top < median_nn
         assert top > 0.5 * median_nn
 
-    def test_a_bundle_without_the_measurement_still_builds(
+    def test_a_degenerate_cloud_without_spacing_still_builds(
         self, monkeypatch, tmp_path
     ) -> None:
         """A degenerate cloud has no measurable spacing; fall back, do not crash."""
