@@ -451,7 +451,10 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             span = max_val - min_val
             if span == 0.0:
                 return None
-            viewer_affine_slack = span * float(np.finfo(np.float32).eps)
+            # With u = eps32 / 2, the viewer's six staged f32 roundings are
+            # bounded by u * (min + max + 4 * span). The decode ULP below pays
+            # 2u * max, leaving 3u * span = 1.5 * eps32 * span here.
+            viewer_affine_slack = 1.5 * span * float(np.finfo(np.float32).eps)
             levels = (1 << bits) - 1
             slack = span / (2.0 * levels)
 
