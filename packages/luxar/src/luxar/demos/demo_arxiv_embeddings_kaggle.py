@@ -52,7 +52,7 @@ FIRST RUN (one-time) — budget ~39 GB of disk, not the ~32 GB downloaded:
   * metadata lookup     0.3 GB -> ~/.cache/luxar/arxiv_metadata_lookup.pkl
   * PCA matrix          1.6 GB -> ~/.cache/luxar/arxiv_kaggle/pca128_all.npy
   No Kaggle credentials are needed — both are public dataset URLs.
-  `luxar demo cache clear arxiv_papers_kaggle` reclaims the 1.9 GB under the
+  `luxar demo cache clear arxiv_papers_kaggle` reclaims the ~3.6 GB under the
   `arxiv_kaggle` namespace; the embeddings ZIP and the two metadata files sit
   at the cache ROOT rather than inside it, so they survive and must be deleted
   by hand.
@@ -722,7 +722,8 @@ def resolve_paper_metadata(
         f"✓ Matched {matched:,}/{n:,} papers to arXiv metadata ({matched_percent:.1f}%)"
     )
     aprint(
-        f"✓ {n - matched - undated:,} dated from their own identifier, "
+        f"✓ Of {n - matched:,} papers without snapshot metadata, "
+        f"{n - matched - undated:,} dated from their identifier and "
         f"{undated:,} left undated"
     )
     aprint(f"✓ {len(set(categories))} distinct categories")
@@ -1033,8 +1034,9 @@ def generate_paper_landscape(
             "median_nn": median_nn,
         }
 
-    # UMAP + matched metadata cached under ~/.cache/luxar/arxiv_kaggle, keyed on
-    # everything that changes the result, so a second identical run is instant.
+    # UMAP + matched metadata cached under ~/.cache/luxar/arxiv_kaggle. The
+    # backend is deliberately absent from the key: either backend produces a
+    # valid embedding, and recomputing 3.29M points just to switch is wasteful.
     # version=3: v1 bundles were a date-ordered PREFIX of the corpus with no
     # `median_nn`; v2 bundles carry `update_date` years, which
     # `resolve_paper_metadata` no longer produces. Neither may be reused — the
@@ -1259,7 +1261,7 @@ def _positive(flag: str, raw: str) -> int:
 
 def _parse_sample(raw: str) -> int | None:
     """``all`` / ``full`` mean the whole corpus; anything else is a count."""
-    return None if raw in ("all", "full") else _positive("--sample", raw)
+    return None if raw.strip().lower() in ("all", "full") else _positive("--sample", raw)
 
 
 def _parse_pca_dim(raw: str) -> int:

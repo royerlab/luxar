@@ -641,7 +641,7 @@ class TestParseArgs:
     def test_defaults_are_the_whole_corpus_on_auto(self) -> None:
         assert demo.parse_args([]) == (None, demo.DEFAULT_PCA_DIM, "auto", 0)
 
-    @pytest.mark.parametrize("spelling", ["all", "full"])
+    @pytest.mark.parametrize("spelling", ["all", "full", "ALL", "FULL"])
     def test_all_and_full_both_mean_the_whole_corpus(self, spelling) -> None:
         assert demo.parse_args([f"--sample={spelling}"])[0] is None
 
