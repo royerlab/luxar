@@ -2009,6 +2009,27 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
     },
     buildMesh: buildLineInstancedMesh,
   },
+  // Opaque-mode contribution cutout: the capsule has its own fragment
+  // predicate, so pin it independently from the quad line primitive.
+  'line-capsule-opaque': {
+    source: CAPSULE_LINE_SOURCE,
+    buildUniforms: () => ({
+      ...buildVisualLineUniforms(buildLineDataTexture(), true),
+      uOpacity: { value: 0.02 },
+    }),
+    buildDefines: () => ({ LUXAR_GAMMA_ONE: '', LUXAR_OPAQUE_RGB_CONTRIBUTION: '' }),
+    buildTSLMaterial: (uniforms) => {
+      const m = capsuleLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'opaque',
+        gammaOne: true,
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildLineInstancedMesh,
+  },
   // VOLUMETRIC blending: the τ tail with per-element alpha optical-depth
   // mapping (uHasElementAlpha) — mirrors the quad's 'line-volumetric'.
   'line-capsule-volumetric': {

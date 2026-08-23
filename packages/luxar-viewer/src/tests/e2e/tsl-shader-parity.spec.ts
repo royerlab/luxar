@@ -2580,6 +2580,7 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     'line-capsule-taper',
     'line-capsule-colormap',
     'line-capsule-max',
+    'line-capsule-opaque',
     'line-capsule-volumetric',
     'line-capsule-nearclip',
     'line-capsule-nearclip-taper',
