@@ -138,7 +138,7 @@ def main() -> None:
         )
 
     aprint(f"Done. View with: luxar serve {output_path} --viewer")
-    aprint("Press 4 then [/] to walk time. The axis markers stay; the scan-line moves.")
+    aprint("Press 1 then [/] to walk time. The axis markers stay; the scan-line moves.")
 
 
 if __name__ == "__main__":

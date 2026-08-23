@@ -186,8 +186,8 @@ def main():
 
         aprint(f"\nTo view: luxar serve {output_path}")
         aprint("Navigation controls:")
-        aprint("- Press '4' to select Time dimension, then use [ ] to navigate")
-        aprint("- Press '5' to select Channel dimension, then use [ ] to navigate")
+        aprint("- Press '1' to select W dimension, then use [ ] to navigate")
+        aprint("- Press '2' to select Channel dimension, then use [ ] to navigate")
         aprint("- Use sliders in the UI for smooth navigation")
         aprint("=" * 60)
 

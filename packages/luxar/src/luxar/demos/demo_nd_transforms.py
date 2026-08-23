@@ -455,8 +455,8 @@ def _channel_node_name(label: str) -> str:
 # (label, permutation, note) — permutation[local_index] = world_index.
 CHANNEL_ROWS: List[Tuple[str, Optional[List[int]], str]] = [
     ("IDENTITY\nPERM 0 1 2", None, "WORLD RED/GREEN/BLUE -> LOCAL R/G/B"),
-    ("SWAP RED-GREEN\nPERM 1 0 2", [1, 0, 2], "WORLD GREEN -> R; RED -> G"),
-    ("ROTATE\nPERM 2 0 1", [2, 0, 1], "WORLD BLUE -> R; RED -> G"),
+    ("SWAP RED-GREEN\nPERM 1 0 2", [1, 0, 2], "WORLD GREEN -> R / RED -> G"),
+    ("ROTATE\nPERM 2 0 1", [2, 0, 1], "WORLD BLUE -> R / RED -> G"),
 ]
 
 

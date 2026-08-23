@@ -144,8 +144,8 @@ def main() -> None:
         )
 
     aprint(f"Done. View with: luxar serve {output_path} --viewer")
-    aprint("Press 4 then [/] to walk time; both instruments stay in lockstep.")
-    aprint("Press 5 to switch channels; permutation reorders Instrument B.")
+    aprint("Press 1 then [/] to walk time; both instruments stay in lockstep.")
+    aprint("Press 2 to switch channels; permutation reorders Instrument B.")
 
 
 if __name__ == "__main__":

@@ -122,7 +122,7 @@ def main() -> None:
         )
 
     aprint(f"Done. View with: luxar serve {output_path} --viewer")
-    aprint("Press 4 then [/] to walk species labels (cat/dog/bird).")
+    aprint("Press 1 then [/] to walk species labels (cat/dog/bird).")
 
 
 if __name__ == "__main__":

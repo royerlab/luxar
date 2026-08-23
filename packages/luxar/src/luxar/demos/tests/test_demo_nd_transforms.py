@@ -70,6 +70,19 @@ EXPECTED_CHANNEL_LOCALS = {
 }
 
 
+def _composed_frame_affine(row: demo.FrameRow) -> tuple[float, float]:
+    child = (row.nd_transform or {}).get("Frame", {})
+    parent = (row.parent_nd_transform or {}).get("Frame", {})
+    child_scale = child.get("scale", 1.0)
+    child_offset = child.get("offset", 0.0)
+    parent_scale = parent.get("scale", 1.0)
+    parent_offset = parent.get("offset", 0.0)
+    return (
+        parent_scale * child_scale,
+        parent_scale * child_offset + parent_offset,
+    )
+
+
 def test_every_world_frame_matches_the_readout_and_authored_marker_domain() -> None:
     """Audit all 16 world frames, including both out-of-range edges."""
     assert len(demo.FRAME_ROWS) == len(EXPECTED_FRAME_LOCALS)
@@ -77,6 +90,7 @@ def test_every_world_frame_matches_the_readout_and_authored_marker_domain() -> N
     for row in demo.FRAME_ROWS:
         name = row.label.split("\n")[0]
         expected = EXPECTED_FRAME_LOCALS[name]
+        assert _composed_frame_affine(row) == (row.scale, row.offset)
         actual = tuple(row.local_for_world(world) for world in range(demo.N_FRAMES))
         assert actual == expected
         assert set(row.local_frames()) == {
@@ -95,3 +109,18 @@ def test_every_world_channel_matches_the_readout_inverse_permutation() -> None:
             for world in range(len(demo.CHANNELS))
         )
         assert actual == EXPECTED_CHANNEL_LOCALS[name]
+
+
+def test_every_authored_world_space_caption_has_a_glyph() -> None:
+    """Keep edited labels from silently rasterizing unsupported characters as '?'."""
+    authored = [
+        *(text for row in demo.FRAME_ROWS for text in (row.label, row.note)),
+        *(text for label, _permutation, note in demo.CHANNEL_ROWS for text in (label, note)),
+    ]
+    unsupported = {
+        character
+        for text in authored
+        for character in text
+        if character != "\n" and character not in demo._GLYPHS
+    }
+    assert unsupported == set()

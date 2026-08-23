@@ -61,7 +61,7 @@ USAGE
 
 Controls:
     - Mouse drag: rotate,  Scroll: zoom
-    - Press '4' to select the haplotype dimension, then '[' / ']' to scrub
+    - Press '1' to select the haplotype dimension, then '[' / ']' to scrub
       between the Maternal and Paternal genomes (or use the dimension slider)
 """
 
@@ -632,7 +632,7 @@ def build_scene(output_path: Path, polylines: list[dict]) -> int:
                 DEMO_META.get("citation"),
             )
             scene.add_text(
-                "press '4' then '[' / ']' — scrub Maternal ⇄ Paternal",
+                "press '1' then '[' / ']' — scrub Maternal ⇄ Paternal",
                 position=(0.02, 0.97),
                 font_size=0.014,
                 anchor="bottom-left",

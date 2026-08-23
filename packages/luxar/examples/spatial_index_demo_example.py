@@ -244,8 +244,8 @@ def main():
         aprint("📡 To view this dataset:")
         aprint(f"   luxar serve {output_path}")
         aprint("🎮 Navigation tips:")
-        aprint("   - Press 4 then [ ] to navigate through time")
-        aprint("   - Press 5 then [ ] to navigate channels")
+        aprint("   - Press 1 then [ ] to navigate through time")
+        aprint("   - Press 2 then [ ] to navigate channels")
         aprint("   - Notice how large-radius points remain visible across slices")
 
         if not args.no_spatial_index:
