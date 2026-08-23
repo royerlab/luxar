@@ -120,7 +120,7 @@ DEMO_META = {
     "category": "microscopy",
     "geometry": "mixed",
     "requirements": {
-        "download_mb": 45,
+        "download_mb": 23,  # the 22,348,280-byte archive, and nothing else
         "compute": "medium",
         "gpu": "optional",
         "local_data": "git-lfs",
@@ -201,9 +201,12 @@ AXIS_STEP_MIN = 2.0
 
 CACHE_DIR = DEMO_CACHE_ROOT / DEMO_NAME
 LSM_PATH = CACHE_DIR / "cxcr4aMO2_290112.lsm"
-#: Per-timepoint fits, keyed on the fit schedule so retuning cannot hit a stale
-#: entry: the knobs below change splat SHAPES while leaving the count identical,
-#: which a cache keyed on the frame index alone would silently serve back.
+#: Per-timepoint fits, keyed on EVERY knob of the fit schedule so retuning
+#: cannot hit a stale entry. All of them change the result while leaving the
+#: frame index identical, and the cull is the sharpest: the SPLAT BUDGET table
+#: is the proof — same 32k seeds, retention .95 gives 9,889 splats and .9999
+#: gives 12,940. A cache keyed on the frame alone would serve the old fits back
+#: to anyone re-running that sweep.
 FITS_DIR = CACHE_DIR / "fits"
 #: The stacked 4D archive this machine built, in the demo's own namespace. It is
 #: a different artifact from the hosted file of the same purpose, so it must NOT
@@ -379,7 +382,8 @@ def select_timepoints(n_total: int, limit: Optional[int]) -> list[int]:
     10 frames becomes 2, spanning 56%. Scanning every stride and keeping the
     most frames that fit in the budget (ties to the one reaching furthest)
     dominates both — measured over n = 2..199 and limit = 2..59, its worst span
-    is 89% against 66% for rounding down and 56% for rounding up.
+    is 80% against 50.4% for rounding down and 50.3% for rounding up. (At the
+    151 frames this demo actually has, the search never drops below 95.3%.)
 
     The scan is over at most ``n_total`` strides on a list of timepoints, so it
     is free next to a single fit.
@@ -402,7 +406,10 @@ def select_timepoints(n_total: int, limit: Optional[int]) -> list[int]:
 # Fitting
 # =============================================================================
 def _fit_cache_path(frame: int) -> Path:
-    return FITS_DIR / f"f{frame:04d}_k{SEEDS}_i{N_ITERS}_{FLOOR}.gsplats.zarr.zip"
+    return FITS_DIR / (
+        f"f{frame:04d}_k{SEEDS}_i{N_ITERS}_p{EARLY_STOP_PATIENCE}"
+        f"_c{CULL_RETENTION}_{FLOOR}.gsplats.zarr.zip"
+    )
 
 
 def fit_timepoint(volume: np.ndarray, frame: int, acquisition: tuple):
@@ -609,7 +616,7 @@ def build_lod(stacked: GSplatData) -> GSplatData:
 # The acquisition cage
 # =============================================================================
 #: The 12 edges of a box, as index pairs into the 8 corners of :func:`_corners`
-#: (bit i of a corner index selects max over min on axis i).
+#: (axis a is bit ``2 - a`` of the corner index: axis 0 is the HIGH bit).
 _BOX_EDGES = (
     (0, 1),
     (2, 3),
@@ -627,7 +634,7 @@ _BOX_EDGES = (
 
 
 def _corners(bmin: np.ndarray, bmax: np.ndarray) -> np.ndarray:
-    """The 8 corners of an axis-aligned box, bit i selecting max on axis i."""
+    """The 8 corners of an axis-aligned box; axis a is bit ``2 - a``."""
     return np.array(
         [
             [bmax[a] if (i >> (2 - a)) & 1 else bmin[a] for a in range(3)]

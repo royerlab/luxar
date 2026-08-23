@@ -74,7 +74,9 @@ class TestTimepointSelection:
         the very defect this function replaced.
         """
         frames = _demo.select_timepoints(151, limit)
-        assert frames[-1] / 150 >= 0.89, (
+        # 0.953 is the true worst over every limit at n=151, so this is a bound
+        # rather than a comfortable margin.
+        assert frames[-1] / 150 >= 0.95, (
             f"limit {limit} stops at frame {frames[-1]} of 150, spanning only "
             f"{frames[-1] / 150:.0%} of the recording"
         )
@@ -262,7 +264,7 @@ class TestCageLines:
 
         # Counting 24 thick vertices would also pass for twelve DIAGONALS, so
         # identify each edge by the pair of corners it joins and demand exactly
-        # the twelve real ones. `_corners` bit i selects max on axis i, so two
+        # the twelve real ones. In `_corners` axis a is bit (2 - a), so two
         # corners share an edge iff their ids differ in exactly one bit.
         segs = verts[:24].reshape(-1, 2, 3)
         corner_id = lambda p: tuple(  # noqa: E731
@@ -406,6 +408,13 @@ class TestTheStackedArchiveSurvivesItsRoundTrip:
         assert reloaded is not None, "the demo's reader refused the archive it wrote"
         assert reloaded[0].ndim == 4
         assert reloaded[0].n_substitutive == laddered.n_substitutive
+        # The fragile half. MEMORY re-quantizes centres to per-axis uint16, and
+        # the time column survives exactly only because the encoder detects a
+        # gridded axis and snaps to it. If that detection regresses, every
+        # slider stop goes empty — and everything above here stays green.
+        assert np.allclose(np.unique(reloaded[0].centers[:, 3]), times), (
+            "the time coordinate did not survive the archive's quantization"
+        )
 
     def test_time_is_a_hard_barrier_at_every_coarse_level(self, toy, monkeypatch):
         """A coarse level that merged across time would smear the recording.
@@ -413,6 +422,12 @@ class TestTheStackedArchiveSurvivesItsRoundTrip:
         Checked on the LADDER rather than on the archive, because this is a
         property of the reduction: with ``coarsen_dims=(0, 1, 2)`` every level
         must still carry every timepoint, however few splats it has left.
+
+        The assertion compares the VALUES, not how many there are. Counting is
+        the trap: with the barrier off, a coarse level of three timepoints comes
+        out at ``[0, 1.84, 4]`` — two frames averaged into one — which is still
+        three distinct values and passes a count test. Measured, with both
+        ``coarsen_dims=(0, 1, 2, 3)`` and ``coarsen_dims=None``.
         """
         shape, fits, _ = toy
         monkeypatch.setattr(_demo, "ACQUISITION_SHAPE_ZYX", shape)
@@ -423,9 +438,10 @@ class TestTheStackedArchiveSurvivesItsRoundTrip:
         for level in laddered.substitutive_levels:
             centers = np.concatenate([sub.centers for sub in level.additive_sublods])
             present = np.unique(np.round(centers[:, 3], 4))
-            assert len(present) == len(times), (
-                f"level {level.level_index} kept {len(present)} of {len(times)} "
-                "timepoints; coarsening crossed the time barrier"
+            assert np.allclose(present, times), (
+                f"level {level.level_index} carries times {present}, not "
+                f"{times}; coarsening crossed the time barrier and averaged "
+                "frames together"
             )
 
     def test_a_single_timepoint_archive_is_refused_by_name(self, toy, monkeypatch):
