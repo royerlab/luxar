@@ -27,6 +27,7 @@ import {
   minNearForRadius,
   SPHERE_SAFETY_EXPANSION,
 } from '../../../../../scene/scene-manager/clipping/bounds-math';
+import { log } from '../../../../../utils/log';
 
 function makeCamera(
   position = new THREE.Vector3(0, 0, 100),
@@ -188,8 +189,13 @@ describe('autoAdjustFromBounds — metadata path', () => {
       max: { x: 5, y: 5, z: 5 },
     };
     const { ctx, setSceneScale } = makeCtx({ metadataBounds });
-    autoAdjustFromBounds(ctx);
+    const successSpy = vi.spyOn(log, 'success').mockImplementation(() => {});
+
+    const result = autoAdjustFromBounds(ctx);
+
+    expect(result.applied).toBe(false);
     expect(setSceneScale).not.toHaveBeenCalled();
+    expect(successSpy).not.toHaveBeenCalled();
   });
 });
 

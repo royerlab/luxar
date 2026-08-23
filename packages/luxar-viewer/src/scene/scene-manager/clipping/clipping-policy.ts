@@ -199,10 +199,12 @@ export function autoAdjustFromBounds(ctx: ClippingCtx): {
     const { near, far } = calculateClippingPlanesFromSphere(sphere, cameraPos, boundRatio);
     const applied = applyClippingPlanes(ctx.camera, near, far);
 
-    log.success(
-      Modules.SCENE_MANAGER,
-      `Clipping planes set from metadata bounds (near: ${near.toFixed(4)}, far: ${far.toFixed(1)})`
-    );
+    if (applied) {
+      log.success(
+        Modules.SCENE_MANAGER,
+        `Clipping planes set from metadata bounds (near: ${near.toFixed(4)}, far: ${far.toFixed(1)})`
+      );
+    }
 
     return { near, far, applied };
   }
