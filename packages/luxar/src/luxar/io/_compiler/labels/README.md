@@ -234,10 +234,11 @@ introduced by #1491.
 
 ## The `sort_order` argument
 
-When a data node is spatially reordered (Morton/Hilbert ordering), its labels
-must be permuted to stay aligned with the reordered geometry. Both writers
-accept an optional index array and apply `labels[i] for i in sort_order` before
-building the CSR arrays. The correct array depends on geometry type:
+When a data node is spatially reordered (Morton/Hilbert ordering), its labels,
+keys, and image labels must be permuted to stay aligned with the reordered
+geometry. The serializers accept an optional index array and apply the same
+permutation before building their CSR arrays. The correct array depends on
+geometry type:
 
 | Geometry | `sort_order` source |
 |----------|---------------------|
@@ -250,9 +251,9 @@ building the CSR arrays. The correct array depends on geometry type:
 An additive ladder (`additive_lod=` on `add_points` / `add_lines`) stores its
 geometry in `additive_<i>/` subgroups, but the viewer's loader concatenates the
 levels it has loaded into a **single buffer** — no one level's array is what a
-pick index addresses. So the label CSR lives on the **parent** ladder node (which
-therefore carries `has_labels`) and the `additive_<i>` subgroups carry **no** label
-arrays at all.
+pick index addresses. Each present string channel therefore gets one CSR on the
+**parent** ladder node (carrying `has_labels` and/or `has_keys`), while the
+`additive_<i>` subgroups carry neither channel.
 
 Index `k` of the parent CSR is the `k`-th element of the concatenation
 `additive_0 || additive_1 || …` (coarsest → finest), each level in its own
@@ -292,12 +293,13 @@ so across a lines ladder the hover only lands on the right string when every ele
 carries the same one (`labels` has no broadcast form — it is always one entry per
 element). #1439 carried that map over the levels for Points only.
 
-Labels are all-or-nothing across a ladder — a partially-labelled ladder cannot
-produce a correct union, so `validate_ladder_labels` rejects it.
+Labels and keys are independently all-or-nothing across a ladder — a partial
+channel cannot produce a correct union, so `validate_ladder_labels` rejects it.
 
 ## Usage
 
-These are internal helpers; in practice you pass `labels=` / `image_labels=` to
+These are internal helpers; in practice you pass `labels=` / `keys=` /
+`image_labels=` to
 the compiler's `write_points` / `write_lines` / `write_gsplats` methods. Direct
 use mirrors what the compiler does:
 

@@ -859,21 +859,21 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         / ``visible``) — these inherit down to subgroups via the
         viewer's scene-graph composition at render time.
 
-        **Labels**: per-element string labels are written as ONE CSR pair on the
-        PARENT node (which therefore carries ``has_labels``); the
-        ``additive_<i>`` subgroups carry none. The parent CSR's index space is
+        **String channels**: per-element ``labels`` and ``keys`` are each written
+        as one CSR pair on the parent (stamping ``has_labels`` / ``has_keys``);
+        the ``additive_<i>`` subgroups carry neither. Each parent CSR's index space is
         the committed union — the concatenation of the levels in
         ``additive_0 … additive_{n-1}`` order, each level in its own stored
         (spatially reordered) order — because the viewer's progressive loader
-        concatenates loaded levels into one buffer. Labels are all-or-nothing
-        across the ladder.
+        concatenates loaded levels into one buffer. Each channel is independently
+        all-or-nothing across the ladder.
 
         Args:
             path: Path for the points node within the store.
             levels: List of per-level dicts with keys ``positions`` /
                 ``colors`` / ``radii`` / ``sharpness`` / ``scalars`` /
-                ``labels``. ``positions`` is required; others may be
-                ``None``. ``labels`` must be present on every level or
+                ``labels`` / ``keys``. ``positions`` is required; others may be
+                ``None``. Each string channel must be present on every level or
                 on none.
             extend_to_all: Forwarded to each per-level write. Already-resolved
                 dimension NAMES — the caller expands the ``"all"`` sentinel,
@@ -1022,17 +1022,18 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         Mirrors :meth:`write_points_multi_lod`. Each level dict carries
         ``vertices`` + ``widths`` + ``colors`` / ``sharpness`` /
-        ``scalars`` / ``labels`` + ``segments`` (local index pairs into
+        ``scalars`` / ``labels`` / ``keys`` + ``segments`` (local index pairs into
         that level's vertices) + ``n_polylines``. Each subgroup is
         written via :meth:`write_lines` with ``line_type='indexed'``
         and the local segment indices.
 
-        **Labels** (per-VERTEX for Lines) are written as ONE CSR pair on the
-        PARENT node — which therefore carries ``has_labels`` — describing the
-        committed union: the concatenation of the levels in
+        **String channels** (per-VERTEX for Lines) are written as one CSR pair
+        per present ``labels`` / ``keys`` channel on the parent, which stamps
+        ``has_labels`` / ``has_keys``. Each pair describes the committed union:
+        the concatenation of the levels in
         ``additive_0 … additive_{n-1}`` order, each level in its own stored
-        (spatially reordered) order. The ``additive_<i>`` subgroups carry none.
-        Labels are all-or-nothing across the ladder.
+        (spatially reordered) order. The ``additive_<i>`` subgroups carry neither.
+        Each channel is independently all-or-nothing across the ladder.
         """
         self._check_not_finalized("write_lines_multi_lod")
 
@@ -1485,7 +1486,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         byte-identical to a standalone one by construction.
 
         Used for ``GSplatData`` embeds, whose arrays are always full per-splat
-        (no uniform-Cholesky / scalar-amplitude / labels — those leaf-only
+        (no uniform-Cholesky / scalar-amplitude / labels / keys — those leaf-only
         scene features stay on :meth:`write_gsplats`).
 
         Args:

@@ -155,7 +155,7 @@ def validate_ladder_labels(
     positions_key: str,
     channel: str = "labels",
 ) -> bool:
-    """Pre-write gate for an additive ladder's labels; returns whether it is labelled.
+    """Pre-write gate for one additive-ladder string channel.
 
     PURE — reads only ``levels``, touches no store — so the multi-LOD writers can
     call it BEFORE ``require_group`` creates the parent node. A rejected ladder
@@ -164,12 +164,11 @@ def validate_ladder_labels(
 
     Enforces two rules:
 
-    - **All-or-nothing**: labels on every level or on none. A partially-labelled
-      ladder cannot produce a correct union, and silently labelling only part of
-      it would misalign every slot after the first unlabelled level.
-    - **Per-level length**: each level's label count must equal that level's own
+    - **All-or-nothing**: values on every level or on none. A partial channel
+      cannot produce a correct union and would misalign every later slot.
+    - **Per-level length**: each level's value count must equal that level's own
       element count. The flat writers check this themselves; a laddered write
-      hands them ``labels=None``, so the check has to happen here instead.
+      omits the channel from its children, so the check has to happen here instead.
       Skipped when any level's element array is not ``(N, D)``: that is a
       geometry fault, and the per-level writer's positions validator names it
       properly. Diagnosing it here would both report the wrong fault and index
@@ -185,12 +184,12 @@ def validate_ladder_labels(
             the errors differ.
 
     Returns:
-        ``True`` when the ladder carries labels (so the caller should build the
+        ``True`` when the ladder carries the channel (so the caller should build the
         parent union CSR), ``False`` when no level does.
 
     Raises:
-        ValueError: On mixed label presence (the message names the first
-            unlabelled level) or a per-level length mismatch.
+        ValueError: On mixed channel presence (the message names the first
+            missing level) or a per-level length mismatch.
     """
     from ....validation.base import validate_labels_for_writing
 
@@ -229,13 +228,13 @@ def write_ladder_union_labels_csr(
     compressor: "CompressorLike",
     channel: str = "labels",
 ) -> None:
-    """Write ONE label CSR spanning an additive ladder's levels, on the parent.
+    """Write one string-channel CSR spanning an additive ladder's levels.
 
     An additive LOD ladder stores its data in ``additive_<i>/`` subgroups, but
     the viewer's progressive loader concatenates the levels it has loaded into a
     single buffer — so no one level's array is the thing a pick index addresses.
-    The label CSR therefore lives on the PARENT ladder node and spans the levels;
-    the ``additive_<i>`` subgroups carry no label arrays at all.
+    The CSR therefore lives on the PARENT ladder node and spans the levels;
+    the ``additive_<i>`` subgroups carry no arrays for this channel.
 
     **Index-space contract**: index ``k`` of the parent CSR is the ``k``-th
     element of the concatenation ``additive_0 || additive_1 || …``, with each
@@ -285,6 +284,7 @@ def write_ladder_union_labels_csr(
             reordered (identity).
         n_elements: Total element count across all levels (for validation).
         compressor: Scene default compressor for both CSR arrays.
+        channel: ``"labels"`` or ``"keys"``; selects the on-disk array names.
 
     Raises:
         ValueError: If ``level_labels`` and ``level_sort_orders`` differ in

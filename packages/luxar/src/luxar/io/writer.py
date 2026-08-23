@@ -268,16 +268,15 @@ class ZarrWriterProtocol(Protocol):
         """Write multi-additive-LOD Points: parent node + ``additive_<i>/`` subgroups.
 
         Each level is a dict with ``positions`` plus optional
-        ``colors`` / ``radii`` / ``sharpness`` / ``scalars`` / ``labels``.
+        ``colors`` / ``radii`` / ``sharpness`` / ``scalars`` / ``labels`` /
+        ``keys``.
         See :func:`luxar.core.group.lod.points.make_additive_lod_points`
         for the level-construction helper that produces the input.
 
-        ``labels`` is all-or-nothing across the ladder (a partially-labelled
-        ladder is rejected) and is NOT written per level: the implementation
-        writes ONE CSR pair on the PARENT node, spanning the levels in
-        ``additive_0 … additive_{n-1}`` order with each level in its own stored
-        (spatially reordered) order. The parent therefore carries ``has_labels``
-        and the subgroups carry none.
+        ``labels`` and ``keys`` are independently all-or-nothing across the
+        ladder and are NOT written per level. Each present channel gets one CSR
+        pair on the parent, spanning the levels in stored order; the subgroups
+        carry neither channel.
         """
         ...
 
@@ -292,18 +291,17 @@ class ZarrWriterProtocol(Protocol):
         """Write multi-additive-LOD Lines (polyline-level granularity).
 
         Each level is a dict with ``vertices`` + ``widths`` + ``segments``
-        plus optional ``colors`` / ``sharpness`` / ``scalars`` / ``labels``
+        plus optional ``colors`` / ``sharpness`` / ``scalars`` / ``labels`` /
+        ``keys``
         and ``n_polylines`` (summed into the returned metadata only — the
         parent group does not stamp it). See
         :func:`luxar.core.group.lod.lines.make_additive_lod_lines` for the
         helper that produces the input.
 
-        ``labels`` is all-or-nothing across the ladder (a partially-labelled
-        ladder is rejected) and is NOT written per level: the implementation
-        writes ONE per-VERTEX CSR pair on the PARENT node, spanning the levels in
-        ``additive_0 … additive_{n-1}`` order with each level in its own stored
-        (spatially reordered) order. The parent therefore carries ``has_labels``
-        and the subgroups carry none.
+        ``labels`` and ``keys`` are independently all-or-nothing across the
+        ladder and are NOT written per level. Each present channel gets one
+        per-vertex CSR pair on the parent, spanning the levels in stored order;
+        the subgroups carry neither channel.
         """
         ...
 
