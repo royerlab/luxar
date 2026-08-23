@@ -323,7 +323,7 @@ def main():
     )
     aprint("\nTo visualize: luxar serve temporal_spiral_sphere_4d_example.luxar.zarr")
     aprint(
-        "Then navigate through time with the 't' dimension controls (press 4, then [/])"
+        "Then navigate through time with the 't' dimension controls (press 1, then [/])"
     )
 
 
