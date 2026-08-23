@@ -438,9 +438,9 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
                 # construction, so every level is a bounded fraction of its part.
                 additive_lod=dict(counts="stream:20000", method="random", seed=0),
                 partition=dict(max_elements=MAX_GLOBE_POINTS_PER_NODE),
-                # The terrain still appears late, and all at once, well after the
-                # rivers. That is NOT a scheduling bug, so do not go looking for
-                # one: each partition's ladder above streams in geometric order.
+                # The terrain still appears late, well after the rivers. That is
+                # NOT a scheduling bug, so do not go looking for one: each
+                # partition's ladder above streams in geometric order.
                 #
                 # The last two levels contain 68% of the points and 62 of the
                 # terrain's 92 MB, so most of the terrain payload is still
