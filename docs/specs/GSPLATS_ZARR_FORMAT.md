@@ -1022,18 +1022,20 @@ rewrites a store must apply all three rules:
   tolerated. The direction is safe: a *missing* barrier only costs over-fetch,
   while a false one gives a spatial axis tight chunk bounds and can drop splats
   from a query — the asymmetry `detect_barrier_dims` is written around, so no
-  splats are lost either way. And the inherited value is *true of these outputs*:
-  none of those commands coarsens anything, so the axes the `levels` build
-  blended stay blended in their results.
+  splats are lost either way. And the inherited value is *true of these outputs
+  except the finest level*: none of those commands coarsens anything, so the axes
+  the `levels` build blended stay blended in their results — but a substitutive
+  ladder's finest level is the input **unreduced**, and in it that axis was never
+  blended at all.
 
-  The finest level is the honest edge of that. A substitutive ladder's finest
-  level is the input **unreduced**, so its stacked axis is still gridded and a
-  barrier there would have been legitimate — `flatten` of a 4D coarsen-all
-  `levels` store hands back exactly those 200 original splats and now orders them
-  with no barrier at all. That is the price of one layout per ladder instead of a
-  heuristic answering each level separately, and it is why a `>3D` build that
-  means to keep a time/channel axis should say so with `--coarsen-dims` rather
-  than rely on the fallback to notice.
+  That exception is the honest edge of the move. `flatten` of a 4D coarsen-all
+  `levels` store hands back exactly those 200 original, never-blended splats
+  while carrying `coarsen_dims: [0, 1, 2, 3]` — a claim about splats it is not
+  true of, and with it the loss of a barrier that would have been legitimate.
+  That is the price of one layout per ladder instead of a heuristic answering
+  each level separately, and it is why a `>3D` build that means to keep a
+  time/channel axis should say so with `--coarsen-dims` rather than rely on the
+  fallback to notice.
 
   Exempt from the scrub is not exempt from being TRUE. A rewrite that coarsens
   over its own choice of axes owes the output a fresh `coarsen_dims`, because the

@@ -58,6 +58,27 @@ _VALID_PARTITION_RULES = ("median", "midpoint", "sah")
 #: ``max_elements`` default used for the tiles branch.
 _MULTISCALE_CAP_TARGET = 256_000
 
+#: What ``--coarsen-dims`` does BEYOND steering the reduction, per recipe — the
+#: second half of the >3D no-barrier warning below. ``levels`` stamps the
+#: resolved choice and the writer reads it back, so the flag also fixes the
+#: CHUNK layout — for the whole ladder, finest level included, even though that
+#: level is the input unreduced and its own grid would have survived a per-level
+#: guess. ``overview`` / ``adaptive`` publish no stamp at all, so the choice
+#: never lands on disk and their layout stays guessed per level (#1600). A
+#: lookup rather than a branch: this command is already at the C901 ceiling.
+_COARSEN_STAMP_NOTES = {
+    "levels": (
+        "    With --recipe levels that choice is also published and fixes the "
+        "chunk layout of the WHOLE ladder — the finest level included, though "
+        "it is your input unreduced."
+    ),
+    "overview": (
+        "    Note that this recipe does not publish the choice: it steers the "
+        "reduction, but the chunk layout is still guessed per level."
+    ),
+}
+_COARSEN_STAMP_NOTES["adaptive"] = _COARSEN_STAMP_NOTES["overview"]
+
 # Per-recipe relevance tokens. Each tuning option belongs to a token group; a
 # recipe only accepts options whose token is in its allowed set. ``--levels`` is
 # its own token because ``overview`` accepts the other substitutive options
@@ -841,29 +862,16 @@ def lod_recipe(
                             f"{data.ndim}D data"
                         )
                 parsed_coarsen = tuple(idxs) if len(idxs) < data.ndim else None
-            elif data.ndim > 3 and recipe in (
-                "levels",
-                "overview",
-                "adaptive",
-            ):
+            elif data.ndim > 3 and recipe in _COARSEN_STAMP_NOTES:
                 aprint(
                     f"  ⚠ {data.ndim}D input with no --coarsen-dims: substitutive "
                     "coarsening will merge across ALL dims. If some dims are "
                     "categorical/sliced (time/channel/...), pass --coarsen-dims "
                     "with the spatial column indices to keep them as barriers."
                 )
-                # `levels` stamps the resolved choice and the writer reads it
-                # back, so the flag also fixes the CHUNK layout — for the WHOLE
-                # ladder, finest level included, even though that level is the
-                # input unreduced and its own grid would have survived a
-                # per-level guess (#1600). Stated without branching on the
-                # recipe: `overview` / `adaptive` publish no stamp yet and are
-                # still guessed per level, which is tracked on the same issue.
-                aprint(
-                    "    With --recipe levels that choice is also published and "
-                    "fixes the chunk layout of the WHOLE ladder — the finest "
-                    "level included, though it is your input unreduced."
-                )
+                # ...and what the flag does beyond that, which differs by
+                # recipe — see `_COARSEN_STAMP_NOTES`.
+                aprint(_COARSEN_STAMP_NOTES[recipe])
 
             params = RecipeParams(
                 n_lods=n_lods if n_lods is not None else 4,

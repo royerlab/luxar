@@ -292,7 +292,7 @@ def _normalise_coarsen_dims(
 
 
 def resolved_merge_coarsen_dims(
-    coarsen_dims: Optional[Sequence[int]], ndim: int
+    coarsen_dims: Optional[Sequence[int]], ndim: Optional[int]
 ) -> list[int]:
     """The dims a substitutive reduction ACTUALLY coarsens over, spelled EXPLICITLY.
 
@@ -332,8 +332,21 @@ def resolved_merge_coarsen_dims(
     level is the unreduced input and keeps its integral grid). ``[0, …, d-1]``
     asserts the empty complement outright on either grid and on every level,
     i.e. the no-barrier layout the reduction actually earned.
+
+    ``ndim`` is only read to EXPAND a ``None`` request, so a caller that always
+    names its dims may pass ``None`` for it rather than a stand-in width — a
+    made-up width is the one thing this must not appear to assert. The two
+    ``None``\\ s together are a caller bug, not a coarsen-everything answer, and
+    raise instead of returning the empty list (whose complement is every axis a
+    barrier — the splat-dropping direction).
     """
     if coarsen_dims is None:
+        if ndim is None:
+            raise ValueError(
+                "resolved_merge_coarsen_dims: a coarsen-everything request "
+                "(coarsen_dims=None) needs the width to expand it over, but "
+                "ndim is None too."
+            )
         return list(range(int(ndim)))
     return sorted({int(d) for d in coarsen_dims})
 

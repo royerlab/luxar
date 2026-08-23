@@ -616,16 +616,18 @@ def _stamped_coarsen_dims(
     :func:`~luxar.gsplats.lod.substitutive.resolved_merge_coarsen_dims` rather
     than re-derived here, so this third producer of the key cannot drift from
     the two that build the levels themselves (#1600). Only that resolver's
-    normalising half runs: ``dims`` is already a list, so the ``ndim`` it
-    reserves for expanding a ``None`` request is never read — that expansion is
-    ``default``, which the caller resolved against the part width only the
-    manifest can supply. Hence the ``0`` passed for it; any value would do, and
-    a made-up width is the one thing this must not appear to assert.
+    normalising half runs: ``dims`` is already an explicit sequence by the time
+    it gets there, so the ``ndim`` the resolver reserves for expanding a ``None``
+    request is never read — that expansion is ``default``, which the caller
+    resolved against the part width only the manifest can supply. Hence the
+    ``None`` passed for it: a made-up width is the one thing this must not
+    appear to assert, and the resolver raises rather than guessing if the two
+    ever meet.
     """
     from luxar.gsplats.lod.substitutive import resolved_merge_coarsen_dims
 
     dims = requested if requested is not None else default
-    return None if dims is None else resolved_merge_coarsen_dims(dims, 0)
+    return None if dims is None else resolved_merge_coarsen_dims(dims, None)
 
 
 def _recipe_pipeline_info(

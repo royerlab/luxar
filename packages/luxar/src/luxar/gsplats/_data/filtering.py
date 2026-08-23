@@ -283,10 +283,12 @@ _STRUCTURE_SCOPED_STATS_KEYS = (
 #:   direction is the safe one (:func:`~luxar.io._ordering.compound
 #:   .detect_barrier_dims` documents the asymmetry: a MISSING barrier costs
 #:   over-fetch, a false one gives a spatial axis tight chunk bounds and can drop
-#:   splats), and the value stays TRUE — none of those rewrites coarsens
-#:   anything, so an axis blended upstream is still blended. What it does cost is
-#:   the finest level: it is the input unreduced, so ``flatten`` hands back the
-#:   original splats with no per-slice locality even though a barrier there would
+#:   splats), and the value stays TRUE of every output EXCEPT the finest level —
+#:   none of those rewrites coarsens anything, so an axis blended upstream is
+#:   still blended, but the finest level is the input UNREDUCED and that axis was
+#:   never blended in it. So ``flatten`` of a coarsen-everything ``levels`` store
+#:   hands back the original splats still claiming ``[0, …, d-1]``: a false claim
+#:   as well as a lost barrier, costing the per-slice locality one there would
 #:   have been legitimate. One layout per ladder, chosen by the producer, instead
 #:   of a heuristic answering each level on its own.
 #: * The :data:`~luxar.gsplats.io.save_gsplats.NORMALIZATION_STATS_KEYS` block

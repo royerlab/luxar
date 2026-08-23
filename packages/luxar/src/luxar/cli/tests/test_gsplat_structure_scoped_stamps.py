@@ -1228,6 +1228,55 @@ def test_a_levels_build_stamps_the_coarsen_dims_it_used(
     )
 
 
+@pytest.mark.parametrize(
+    ("recipe", "tail", "expected", "forbidden"),
+    [
+        ("levels", ("-K", "4", "-L", "2"), "also published", "does not publish"),
+        (
+            "overview",
+            ("--max-elements", "80", "-K", "4"),
+            "does not publish",
+            "also published",
+        ),
+        (
+            "adaptive",
+            ("--max-elements", "80", "-K", "4", "-L", "2"),
+            "does not publish",
+            "also published",
+        ),
+    ],
+)
+def test_the_no_coarsen_dims_warning_tells_each_recipe_its_own_truth(
+    tmp_path: Path,
+    recipe: str,
+    tail: Sequence[str],
+    expected: str,
+    forbidden: str,
+) -> None:
+    """>3D and no ``--coarsen-dims``: what the flag would buy differs by recipe.
+
+    All three coarsen, so all three warn — but only ``levels`` publishes the
+    resolved choice, so only there does the flag also fix the chunk layout.
+    ``overview`` / ``adaptive`` stamp nothing (#1600), and telling their users
+    otherwise is a promise the store does not keep.
+    """
+    src = tmp_path / "flat.gsplats.zarr"
+    _data(200, stats=dict(_DESCRIPTIVE)).save(src, include_fitting_info=True)
+    out = tmp_path / "out.gsplats.zarr"
+    result = CliRunner().invoke(
+        app,
+        ["gsplat", "lod", str(src), str(out), "--recipe", recipe, *tail],
+    )
+    assert result.exit_code == 0, result.output
+    assert "no --coarsen-dims" in result.output, "the 4D input drew no warning at all"
+    assert expected in result.output, (
+        f"--recipe {recipe} was not told what its own stamp does:\n{result.output}"
+    )
+    assert forbidden not in result.output, (
+        f"--recipe {recipe} was told another recipe's story:\n{result.output}"
+    )
+
+
 def test_a_levels_build_on_a_fine_grid_gets_one_layout_for_the_whole_ladder(
     tmp_path: Path,
 ) -> None:

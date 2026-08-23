@@ -2017,12 +2017,19 @@ class TestCoarsenDims:
         identity assertion is what proves that attribute is the shared function
         rather than a private copy; the batch producer imports inside the
         function, so patching the defining module intercepts it.
+
+        Every producer is driven through the entry point PRODUCTION uses — for
+        the batch one that is ``_recipe_pipeline_info``, the only caller of its
+        private stamp helper. Calling the helper directly would leave the seam
+        that actually drifts (the call site) untested: re-inlining the rule
+        there kept an earlier version of this test green.
         """
         import importlib
 
         from luxar.gsplats.batch import merge_orchestrator
         from luxar.gsplats.lod import substitutive as substitutive_mod
         from luxar.gsplats.lod.decimate import decimate
+        from luxar.gsplats.lod.recipes import RecipeParams
 
         # `luxar.gsplats.lod` re-exports the `decimate` FUNCTION under the
         # submodule's own name, so the module has to be fetched by path.
@@ -2052,11 +2059,17 @@ class TestCoarsenDims:
         assert calls, "decimate's merge family spelled its own coarsen_dims stamp"
 
         calls.clear()
-        # The batch producer's stamp resolution, exercised at the seam rather
-        # than through a whole merge: an explicit request and the per-part
-        # default both have to arrive through the shared function.
-        assert merge_orchestrator._stamped_coarsen_dims((2, 0, 0), None) == [0, 2]
-        assert merge_orchestrator._stamped_coarsen_dims(None, (2, 1, 0)) == [0, 1, 2]
+        # The batch producer, at the entry point the merge itself calls: an
+        # explicit request and the per-part default both have to arrive through
+        # the shared function, whichever way the record is assembled.
+        info = merge_orchestrator._recipe_pipeline_info(
+            "levels", RecipeParams(coarsen_dims=(2, 0, 0))
+        )
+        assert info is not None and info["coarsen_dims"] == [0, 2]
+        info = merge_orchestrator._recipe_pipeline_info(
+            "levels", RecipeParams(), default_coarsen_dims=(2, 1, 0)
+        )
+        assert info is not None and info["coarsen_dims"] == [0, 1, 2]
         assert len(calls) == 2, (
             "batch-fit merge spelled its own coarsen_dims stamp instead of "
             f"resolving it through the shared helper (calls: {calls})"
@@ -2064,8 +2077,24 @@ class TestCoarsenDims:
         # ...and the honest `None` (no manifest width, no request) is NOT a
         # resolution: nothing to share, nothing to call.
         calls.clear()
-        assert merge_orchestrator._stamped_coarsen_dims(None, None) is None
+        info = merge_orchestrator._recipe_pipeline_info("levels", RecipeParams())
+        assert info is not None and info["coarsen_dims"] is None
         assert not calls
+
+    def test_a_widthless_coarsen_everything_request_raises(self):
+        """No width, no request — the one combination that has no answer.
+
+        The batch producer passes ``ndim=None`` because it only ever hands over
+        an explicit dim list; the width it would need to expand a ``None``
+        request is the part width only the manifest knows. Answering ``[]``
+        there would claim EVERY axis as a barrier (the complement), which is the
+        splat-dropping direction — so it raises instead (#1600 review).
+        """
+        with pytest.raises(ValueError, match="ndim is None"):
+            resolved_merge_coarsen_dims(None, None)
+        # ...while the explicit request the batch producer actually sends is
+        # resolved without ever reading the width.
+        assert resolved_merge_coarsen_dims((2, 0, 0), None) == [0, 2]
 
     def test_single_barrier_value_is_noop(self):
         # All splats share barrier value 0 → one group → identical to all-dims.

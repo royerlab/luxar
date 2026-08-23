@@ -65,17 +65,21 @@ provenance says so*, and it moves in the direction that cannot lose data: a
 missing barrier only over-fetches, whereas a false one gives a spatial axis tight
 chunk bounds and can drop splats from a query (the asymmetry `detect_barrier_dims`
 is written around). None of those commands coarsens anything, so the inherited
-list stays true of their output.
+list stays true of their output — every part of it except the finest level.
 
-The honest edge is the finest level. A ladder's finest level is the input
-unreduced, so its stacked axis is still gridded and a barrier there would have
+That exception is the honest edge. A ladder's finest level is the input
+unreduced, so its stacked axis was never blended and a barrier there would have
 been defensible — `gsplat flatten` of a 4D coarsen-all `levels` store returns
-exactly those 200 original splats and now orders them with no barrier at all.
-That is the cost of one layout per ladder instead of a heuristic answering each
-level separately. A `>3D` build that means to keep a time or channel axis should
-say so with `--coarsen-dims`, which `gsplat lod` already warns about when the
-flag is absent — the warning now spells out that the finest level loses its
-per-timepoint chunk locality too.
+exactly those 200 original, never-blended splats while carrying `coarsen_dims:
+[0, 1, 2, 3]`, a claim about splats it is not true of, and orders them with no
+barrier at all. That is the cost of one layout per ladder instead of a heuristic
+answering each level separately. A `>3D` build that means to keep a time or
+channel axis should say so with `--coarsen-dims`, which `gsplat lod` already
+warns about when the flag is absent — the warning now also says what the flag
+buys beyond steering the reduction, which differs by recipe: `levels` publishes
+the choice and thereby fixes the chunk layout of the whole ladder (the finest
+level included, though it is the input unreduced), while `overview` and
+`adaptive` publish nothing and stay guessed per level.
 
 Existing stores are not touched and still read correctly — a `null` there means
 what it always meant. Only newly written stores move, and they move with a fresh
