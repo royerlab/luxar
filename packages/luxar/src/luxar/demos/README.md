@@ -464,6 +464,10 @@ The 3072D vectors are never held in RAM: `vectors.dat` is streamed in blocks and
 through a PCA basis down to 128D (fitted on a 300k-row uniform subsample), and only that
 `(N, 128) float32` matrix is cached and handed to UMAP. Pass `--sample=N` for a *uniform
 random* subset on a smaller machine, and `--pca-dim` / `--device` to trade quality for time.
+The sample bounds UMAP, metadata, and label RAM/time; a cold run still downloads the full
+archive, streams every vector twice, and writes the corpus-wide PCA cache. When launching
+through `hatch run`, override its one-thread CPU defaults, for example with
+`OMP_NUM_THREADS=16 MKL_NUM_THREADS=16`.
 
 **Demonstrates**: Multi-million-element embedding visualization, streaming decode of a
 40 GB binary attached to a ZIP, PCA pre-reduction before UMAP, optional GPU (cuML) UMAP,

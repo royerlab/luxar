@@ -594,8 +594,8 @@ class TestRadiiTrackCloudDensity:
     def test_a_bundle_without_the_measurement_still_builds(
         self, monkeypatch, tmp_path
     ) -> None:
-        """A v1-shaped bundle has no ``median_nn``; fall back, do not crash."""
-        top = self._max_radius(monkeypatch, tmp_path, 0.0, "legacy")
+        """A degenerate cloud has no measurable spacing; fall back, do not crash."""
+        top = self._max_radius(monkeypatch, tmp_path, 0.0, "degenerate")
         assert top == pytest.approx(0.016, rel=1e-3)
 
 
@@ -762,3 +762,17 @@ class TestMainReportsBadFlagsCleanly:
             demo.main()
         assert exc.value.code == 2
         assert "Error:" in capsys.readouterr().out
+
+    def test_whole_corpus_banner_warns_before_starting_work(
+        self, monkeypatch, capsys, tmp_path
+    ) -> None:
+        monkeypatch.setattr(sys, "argv", ["demo", "--no-serve"])
+        monkeypatch.setattr(demo, "get_demos_output_dir", lambda: tmp_path)
+        monkeypatch.setattr(demo, "generate_paper_landscape", lambda *a, **k: 1)
+
+        demo.main()
+
+        out = capsys.readouterr().out
+        assert "~39 GB" in out
+        assert "hours on CPU" in out
+        assert "--sample=N" in out

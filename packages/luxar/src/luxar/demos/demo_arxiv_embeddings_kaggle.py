@@ -60,6 +60,8 @@ FIRST RUN (one-time) — budget ~39 GB of disk, not the ~32 GB downloaded:
 SUBSEQUENT RUNS
   * warm `arxiv_kaggle` bundle -> seconds
   * warm PCA cache, new UMAP   -> minutes (GPU) to hours (CPU, full corpus)
+  When using `hatch run`, override its one-thread defaults for CPU work, e.g.
+  `OMP_NUM_THREADS=16 MKL_NUM_THREADS=16 hatch run python ...`.
 
 Usage:
     python demo_arxiv_embeddings_kaggle.py [OPTIONS]
@@ -69,7 +71,8 @@ Usage:
                       ID, so a prefix is a date slice, not a sample. Spell the
                       whole corpus `all`, not its size — the bundle cache is
                       keyed on the spelling, so the two cache separately.
-    --seed=S          Seed for that sample (default 0).
+    --seed=S          Seed for that sample (default 0), and for fitting a cold
+                      PCA basis. A warm `pca<dim>_*` cache is reused regardless.
     --pca-dim=D       PCA components fed to UMAP (default 128).
     --device=auto|cpu|gpu
                       `gpu` runs cuML's UMAP (RAPIDS) when importable; `auto`
@@ -84,7 +87,7 @@ Requirements:
 Controls:
     - Explore clusters of related research
     - Color = arXiv category / preprint server, or publication year
-    - Size = recency (newer papers larger)
+    - Size = recency (newer papers larger; undated papers use the midpoint)
     - Ctrl+C to stop
 """
 
@@ -483,7 +486,8 @@ def build_pca_matrix(
         zip_path: The embeddings ZIP.
         cache_dir: Directory for ``pca<dim>_basis.npz`` / ``pca<dim>_all.npy``.
         pca_dim: Number of components to keep.
-        seed: Seed for the fit subsample.
+        seed: Seed for the fit subsample when fitting a new basis. A warm
+            ``pca<dim>_*`` cache is reused regardless of the seed.
 
     Returns:
         A read-only ``(n_papers, pca_dim) float32`` memmap.
@@ -1100,8 +1104,8 @@ def generate_paper_landscape(
 
         # Per-point radii by recency (newer=larger), scaled to the cloud's OWN
         # measured spacing so the same code is correctly sized at 100k and at
-        # 3.29M papers. A stale bundle (no measurement) falls back to the ramp
-        # that was hand-tuned at 500k.
+        # 3.29M papers. A degenerate cloud with no measurable spacing falls back
+        # to the ramp that was hand-tuned at 500k.
         if median_nn > 0:
             radius_base = RADIUS_MIN_NN_FRACTION * median_nn
             radius_gain = (RADIUS_MAX_NN_FRACTION - RADIUS_MIN_NN_FRACTION) * median_nn
@@ -1112,6 +1116,7 @@ def generate_paper_landscape(
             f"(median NN spacing {median_nn:.5f})"
         )
         radii_pp = (radius_base + radius_gain * yr_t).astype(np.float32)
+        # Either end of the ramp would assign a date the neutral colour refuses to.
         radii_pp[~dated] = radius_base + 0.5 * radius_gain
 
         def _title(i: int) -> str:
@@ -1393,6 +1398,11 @@ def main() -> None:
         + ("whole corpus" if sample_size is None else f"{sample_size:,} papers")
     )
     aprint(f"  PCA dim: {pca_dim}   UMAP device: {device}   seed: {seed}")
+    if sample_size is None:
+        aprint(
+            "  First run: budget ~39 GB of disk and hours on CPU; "
+            "use --sample=N to bound UMAP RAM/time."
+        )
     aprint("")
 
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
