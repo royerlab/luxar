@@ -142,6 +142,7 @@ def validate_mesh_arrays(
     double_sided: bool = True,
     labels: Any = None,
     image_labels: Any = None,
+    keys: Any = None,
 ) -> Tuple[int, int]:
     """Validate a mesh's arrays and channels. Pure — reads nothing, writes nothing.
 
@@ -217,6 +218,11 @@ def validate_mesh_arrays(
         validate_scalars_preflight(scalars, n_vertices)
     if labels is not None:
         validate_labels_for_writing(labels, n_vertices)
+    # Keys ride the same pre-flight as labels: the CSR serializer
+    # UTF-8-encodes each entry, so a non-str or a length mismatch must be
+    # caught BEFORE any array reaches disk (#1917).
+    if keys is not None:
+        validate_labels_for_writing(keys, n_vertices, context="keys")
     if image_labels is not None:
         validate_image_labels_for_writing(image_labels, n_vertices)
     return n_vertices, n_dims
@@ -235,6 +241,7 @@ def write_mesh(
     double_sided: bool = True,
     labels: Optional["Sequence[str]"] = None,
     image_labels: Optional[Any] = None,
+    keys: Optional["Sequence[str]"] = None,
     **attrs: Any,
 ) -> dict[str, Any]:
     """Write mesh data to Zarr (see ``LuxarZarrCompiler.write_mesh``).
@@ -463,6 +470,15 @@ def write_mesh(
         write_labels_csr(group, labels, n_vertices, ctx.compressor, None)
         metadata["has_labels"] = True
         group.attrs["has_labels"] = True
+
+    # Per-element machine-readable keys (issue #1917). Same CSR encoding and
+    # the same spatial permutation as labels — a key must stay paired with
+    # its element — so it reuses the serializer with a different channel.
+    # Mesh has no spatial index (`ordering` is always "none"), so no
+    # permutation to apply — same as the labels write above.
+    if keys is not None:
+        write_labels_csr(group, keys, n_vertices, ctx.compressor, None, channel="keys")
+        metadata["has_keys"] = True
 
     if image_labels is not None:
         write_image_labels_csr(group, image_labels, n_vertices, ctx.compressor, None)

@@ -142,6 +142,7 @@ def validate_lines_channels(
     scalars: Any = None,
     labels: Any = None,
     image_labels: Any = None,
+    keys: Any = None,
 ) -> None:
     """Validate every per-vertex channel against ``n_vertices``. Pure — no I/O.
 
@@ -186,6 +187,11 @@ def validate_lines_channels(
     # were written).
     if labels is not None:
         validate_labels_for_writing(labels, n_vertices)
+    # Keys ride the same pre-flight as labels: the CSR serializer
+    # UTF-8-encodes each entry, so a non-str or a length mismatch must be
+    # caught BEFORE any array reaches disk (#1917).
+    if keys is not None:
+        validate_labels_for_writing(keys, n_vertices, context="keys")
     # 0h. Image labels: length (dense) / index bounds (sparse dict) — see
     # validate_image_labels_for_writing for why this moved out of the CSR
     # writer itself.
@@ -205,6 +211,7 @@ def write_lines(
     line_type: str = "polyline",
     labels: Optional["Sequence[str]"] = None,
     image_labels: Optional[Any] = None,
+    keys: Optional["Sequence[str]"] = None,
     **attrs: Any,
 ) -> dict[str, Any]:
     """Write lines data to Zarr with dual spatial indexing (see ``write_lines``).
@@ -599,6 +606,18 @@ def write_lines(
         )
         write_labels_csr(group, labels, n_vertices, ctx.compressor, sort_order)
         metadata["has_labels"] = True
+
+    # Per-element machine-readable keys (issue #1917). Same CSR encoding and
+    # the same spatial permutation as labels — a key must stay paired with
+    # its element — so it reuses the serializer with a different channel.
+    if keys is not None:
+        key_sort_order = (
+            ordering_data["vertex_sort_indices"] if ordering_data is not None else None
+        )
+        write_labels_csr(
+            group, keys, n_vertices, ctx.compressor, key_sort_order, channel="keys"
+        )
+        metadata["has_keys"] = True
 
     # Write image labels if provided (CSR-style, no compression on blobs)
     if image_labels is not None:

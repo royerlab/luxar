@@ -596,6 +596,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         scalars: Optional[Union[NDArray[np.float32], float]] = None,
         labels: Optional["Sequence[str]"] = None,
         image_labels: Optional[Any] = None,
+        keys: Optional[Sequence[str]] = None,
         **attrs: Any,
     ) -> PointsMetadata:
         """Write points data progressively to Zarr.
@@ -637,6 +638,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             scalars,
             labels,
             image_labels,
+            keys=keys,
             **attrs,
         )
         self._metadata_cache[metadata["path"]] = metadata
@@ -657,6 +659,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         line_type: str = "polyline",
         labels: Optional["Sequence[str]"] = None,
         image_labels: Optional[Any] = None,
+        keys: Optional[Sequence[str]] = None,
         **attrs: Any,
     ) -> dict[str, Any]:
         """Write lines data to Zarr with dual spatial indexing.
@@ -705,6 +708,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             line_type,
             labels,
             image_labels,
+            keys=keys,
             **attrs,
         )
         self._metadata_cache[path.lstrip("/")] = metadata
@@ -725,6 +729,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         double_sided: bool = True,
         labels: Optional["Sequence[str]"] = None,
         image_labels: Optional[Any] = None,
+        keys: Optional[Sequence[str]] = None,
         **attrs: Any,
     ) -> dict[str, Any]:
         """Write a triangle mesh to Zarr.
@@ -782,6 +787,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             double_sided,
             labels,
             image_labels,
+            keys=keys,
             **attrs,
         )
         self._metadata_cache[path.lstrip("/")] = metadata
@@ -918,7 +924,11 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 **({"lod_stats": lvl["lod_stats"]} if lvl.get("lod_stats") else {}),
                 **({"extend_to_all": extend_to_all} if extend_to_all else {}),
                 _skip_scene_bounds=True,
-                **({"_return_sort_order": True} if labelled else {}),
+                # Plain keyword rather than a conditional `**{...}` unpack:
+                # `record_forwarded_sort_order` treats False exactly as absent,
+                # and a `dict[str, bool]` unpack is checked against every typed
+                # parameter it could bind to — which now includes `keys`.
+                _return_sort_order=labelled,
             )
             # POP, not read: the permutation is only needed to build the union
             # CSR, and the metadata dict lands in ``self._metadata_cache``.
@@ -1054,7 +1064,11 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 **({"lod_stats": lvl["lod_stats"]} if lvl.get("lod_stats") else {}),
                 **({"extend_to_all": extend_to_all} if extend_to_all else {}),
                 _skip_scene_bounds=True,
-                **({"_return_sort_order": True} if labelled else {}),
+                # Plain keyword rather than a conditional `**{...}` unpack:
+                # `record_forwarded_sort_order` treats False exactly as absent,
+                # and a `dict[str, bool]` unpack is checked against every typed
+                # parameter it could bind to — which now includes `keys`.
+                _return_sort_order=labelled,
             )
             # POP, not read: the permutation is only needed to build the union
             # CSR, and the metadata dict lands in ``self._metadata_cache``.
@@ -1360,6 +1374,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         ] = None,
         labels: Optional["Sequence[str]"] = None,
         image_labels: Optional[Any] = None,
+        keys: Optional[Sequence[str]] = None,
         **attrs: Any,
     ) -> dict[str, Any]:
         """Write Gaussian splats data to Zarr (single-LOD, flat layout).
@@ -1392,6 +1407,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             colors,
             labels,
             image_labels,
+            keys=keys,
             **attrs,
         )
         self._metadata_cache[path.lstrip("/")] = metadata

@@ -143,6 +143,7 @@ class Group(Node):
         ] = None,
         labels: Optional[Union[List[str], Sequence[str]]] = None,
         image_labels: Optional[Any] = None,
+        keys: Optional[Union[List[str], Sequence[str]]] = None,
         parent: Optional[Node] = None,
         extend_to_all: Optional[Union[List[str], str]] = None,
         dim_order: Optional[List[str]] = None,
@@ -170,6 +171,12 @@ class Group(Node):
                 Accepts List[bytes], List[PIL.Image], List[ndarray], List[Path],
                 or Dict[int, Any] for sparse assignment. Prefer pre-encoded
                 JPEG/WebP blobs for best compression.
+            keys: Optional list of machine-readable strings, one per element,
+                for ``link`` / ``copy`` templates to substitute as
+                ``{hover_key}``. Same length rule and the same spatial
+                reordering as ``labels`` — a key stays paired with its element
+                — but kept separate so the visible label can stay readable
+                prose while the URL is built from a bare id.
             parent: Parent node (default: this group)
             extend_to_all: Visibility extension across non-displayed dimensions
             dim_order: Map data columns to scene dimensions by name.
@@ -252,6 +259,7 @@ class Group(Node):
                 sharpness=sharpness,
                 scalars=scalars,
                 labels=labels,
+                keys=keys,
                 image_labels=image_labels,
                 parent=parent,
                 extend_to_all=extend_to_all,
@@ -282,6 +290,7 @@ class Group(Node):
         ] = None,
         labels: Optional[Union[List[str], Sequence[str]]] = None,
         image_labels: Optional[Any] = None,
+        keys: Optional[Union[List[str], Sequence[str]]] = None,
         indices: Optional[np.ndarray[Any, Any]] = None,
         line_type: str = "polyline",
         parent: Optional[Node] = None,
@@ -305,6 +314,12 @@ class Group(Node):
                 Requires ``colormap`` in attrs. Mutually exclusive with ``colors``.
             labels: Optional list of strings, one per vertex. Used for hover tooltips.
             image_labels: Optional per-element images for hover thumbnails.
+            keys: Optional list of machine-readable strings, one per element,
+                for ``link`` / ``copy`` templates to substitute as
+                ``{hover_key}``. Same length rule and the same spatial
+                reordering as ``labels`` — a key stays paired with its element
+                — but kept separate so the visible label can stay readable
+                prose while the URL is built from a bare id.
             indices: Vertex-index pairs for ``line_type="indexed"``, as a flat
                 even-element ``(2E,)`` array or an ``(E, 2)`` pair array. Connected
                 edges must reference the same vertex row for joint continuity;
@@ -370,6 +385,7 @@ class Group(Node):
                 sharpness=sharpness,
                 scalars=scalars,
                 labels=labels,
+                keys=keys,
                 image_labels=image_labels,
                 indices=indices,
                 line_type=line_type,
@@ -398,6 +414,7 @@ class Group(Node):
         double_sided: bool = True,
         labels: Optional[Sequence[str]] = None,
         image_labels: Optional[Any] = None,
+        keys: Optional[Union[List[str], Sequence[str]]] = None,
         partition: Any = None,
         parent: Optional["Node"] = None,
         extend_to_all: Optional[Union[List[str], str]] = None,
@@ -483,6 +500,12 @@ class Group(Node):
             labels: Optional per-vertex strings for hover tooltips.
             image_labels: Optional per-vertex images for hover thumbnails. Not
                 supported alongside ``partition``.
+            keys: Optional list of machine-readable strings, one per element,
+                for ``link`` / ``copy`` templates to substitute as
+                ``{hover_key}``. Same length rule and the same spatial
+                reordering as ``labels`` — a key stays paired with its element
+                — but kept separate so the visible label can stay readable
+                prose while the URL is built from a bare id.
             partition: ``True`` for the default cap, or
                 ``{"max_elements": int, "rule": "median"|"midpoint"|"sah"}``, to
                 split the surface into spatially-culled parts. ``max_elements``
@@ -541,6 +564,7 @@ class Group(Node):
                 shading=shading,
                 double_sided=double_sided,
                 labels=labels,
+                keys=keys,
                 image_labels=image_labels,
                 partition=partition,
                 parent=parent,
@@ -568,6 +592,7 @@ class Group(Node):
         ] = None,
         labels: Optional[Union[List[str], Sequence[str]]] = None,
         image_labels: Optional[Any] = None,
+        keys: Optional[Union[List[str], Sequence[str]]] = None,
         parent: Optional[Node] = None,
         extend_to_all: Optional[Union[List[str], str]] = None,
         dim_order: Optional[List[str]] = None,
@@ -587,6 +612,12 @@ class Group(Node):
                 column is per-splat opacity in [0, 1]), RGB tuple, or None
             labels: Optional list of strings, one per splat. Used for hover tooltips.
             image_labels: Optional per-element images for hover thumbnails.
+            keys: Optional list of machine-readable strings, one per element,
+                for ``link`` / ``copy`` templates to substitute as
+                ``{hover_key}``. Same length rule and the same spatial
+                reordering as ``labels`` — a key stays paired with its element
+                — but kept separate so the visible label can stay readable
+                prose while the URL is built from a bare id.
             parent: Parent node (default: this group)
             extend_to_all: Visibility extension across non-displayed dimensions
             dim_order: Map data columns to scene dimensions by name.
@@ -642,6 +673,7 @@ class Group(Node):
                 cholesky_factors=cholesky_factors,
                 colors=colors,
                 labels=labels,
+                keys=keys,
                 image_labels=image_labels,
                 parent=parent,
                 extend_to_all=extend_to_all,
