@@ -378,8 +378,7 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
                     # target the viewer pivots on the metadata bounding-box
                     # centre, which relief exaggeration pulls ~1 unit off the
                     # origin (the deepest trenches and the highest peaks are not
-                    # antipodal), and any per-scene view the visitor left behind
-                    # outranks the bounds anyway. The globe is generated about
+                    # antipodal). The globe is generated about
                     # the origin by construction — `lonlat_to_xyz` measures every
                     # radius from it — so (0, 0, 0) IS the planet's centre, and
                     # stating it keeps the turntable concentric with the sphere.
