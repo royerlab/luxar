@@ -12,18 +12,24 @@ import numpy as np
 
 HELIX_RADIUS_VISUAL_SCALE = 2.0
 MAX_AZIMUTH_SAMPLE_STEP = 0.05
+TRACK_TRANSVERSE_ARC_BUDGET = 10.0
 
 
 def _transverse_sampling(
-    *, transverse_momentum: float, charge: int, magnetic_field: float, requested_step: float
+    *,
+    transverse_momentum: float,
+    charge: int,
+    magnetic_field: float,
+    requested_step: float,
+    n_points: int,
 ) -> tuple[float, float, float]:
     radius = (
-        HELIX_RADIUS_VISUAL_SCALE
-        * transverse_momentum
-        / abs(charge * magnetic_field)
+        HELIX_RADIUS_VISUAL_SCALE * transverse_momentum / abs(charge * magnetic_field)
     )
     turn_sign = -float(np.sign(charge * magnetic_field))
-    sample_step = min(requested_step, radius * MAX_AZIMUTH_SAMPLE_STEP)
+    smooth_step = min(requested_step, radius * MAX_AZIMUTH_SAMPLE_STEP)
+    coverage_step = TRACK_TRANSVERSE_ARC_BUDGET / max(n_points - 1, 1)
+    sample_step = max(smooth_step, coverage_step)
     return radius, turn_sign, sample_step
 
 
@@ -84,7 +90,15 @@ def generate_helix_points(
 
     ``transverse_step`` advances along the projected path in the x-y plane;
     z advances by the matching ``p_z / p_T`` ratio. The requested step is
-    reduced for tight helices so soft tracks remain smooth.
+    reduced for tight helices when the point budget permits. Sampling preserves
+    a shared ``TRACK_TRANSVERSE_ARC_BUDGET`` across both demos, so a soft track
+    loses smoothness before it loses physical coverage.
+
+    The transverse path follows the parametric equations
+    ``x = x0 + sign*r*(sin(phi) - sin(phi0))`` and
+    ``y = y0 - sign*r*(cos(phi) - cos(phi0))``. In real detector units,
+    ``r[m] = p_T[GeV/c] / (0.3 * |q| * B[T])``; the demos omit the unit-conversion
+    factor and apply the named visual scale below.
 
     ``HELIX_RADIUS_VISUAL_SCALE`` is the only deliberate geometric distortion:
     it opens the transverse curvature for readability without changing the
@@ -97,9 +111,12 @@ def generate_helix_points(
         magnetic_field: Non-zero axial magnetic field strength.
         max_radius: Maximum cylindrical detector radius.
         max_z: Maximum absolute longitudinal detector coordinate.
-        n_points: Maximum number of returned samples.
+        n_points: Maximum number of returned samples. If this ceiling cannot
+            cover the shared arc budget at the angular smoothing limit, coverage
+            wins and the samples become coarser.
         transverse_step: Requested arc-length step in the transverse plane.
-        shower_radius: Optional radius at which to include one final shower sample.
+        shower_radius: Optional radius at which to include one final shower sample,
+            used for electrons once bremsstrahlung starts an EM cascade.
 
     Returns:
         An ``(N, 3)`` float32 array of sampled centerline points.
@@ -132,6 +149,7 @@ def generate_helix_points(
             charge=charge,
             magnetic_field=magnetic_field,
             requested_step=transverse_step,
+            n_points=n_points,
         )
         longitudinal_rate = pz / transverse_momentum
     else:

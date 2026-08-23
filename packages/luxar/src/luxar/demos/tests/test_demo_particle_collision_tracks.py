@@ -34,7 +34,7 @@ def _particle(*, charge: int, px: float, py: float = 0.0, pz: float = 0.0) -> Pa
 
 
 def _track_points(
-    generator: TrackGenerator, particle: Particle, n_points: int = 8
+    generator: TrackGenerator, particle: Particle, n_points: int = 100
 ) -> np.ndarray:
     result = generator(particle, np.random.default_rng(0), n_points)
     vertices = result[0]
@@ -171,13 +171,15 @@ def test_track_stops_after_first_shower_radius_sample() -> None:
 
 
 def test_soft_track_azimuth_sampling_stays_below_cap() -> None:
-    points = _sample_points(momentum=np.array([0.05, 0.0, 0.0]), max_radius=1.0)
+    points = _sample_points(
+        momentum=np.array([0.05, 0.0, 0.0]), max_radius=1.0, n_points=5000
+    )
     steps = np.diff(points[:, :2], axis=0)
     step_azimuths = np.unwrap(np.arctan2(steps[:, 1], steps[:, 0]))
 
-    assert np.max(np.abs(np.diff(step_azimuths))) == pytest.approx(
-        MAX_AZIMUTH_SAMPLE_STEP, abs=5e-6
-    )
+    azimuth_steps = np.abs(np.diff(step_azimuths))
+    assert np.median(azimuth_steps) == pytest.approx(MAX_AZIMUTH_SAMPLE_STEP, abs=5e-6)
+    assert np.max(azimuth_steps) <= MAX_AZIMUTH_SAMPLE_STEP + 3e-5
 
 
 @pytest.mark.parametrize("pz, expected_z", [(-3.0, -25.0), (3.0, 25.0)])
@@ -188,6 +190,22 @@ def test_pure_longitudinal_track_reaches_detector_endcap(
 
     assert points[:, :2] == pytest.approx(np.zeros((11, 2)))
     assert points[-1, 2] == pytest.approx(expected_z)
+
+
+@pytest.mark.parametrize("transverse_momentum", [0.12, 0.3, 0.6, 1.0, 1.5, 2.0])
+def test_static_and_animated_tracks_cover_comparable_transverse_arc(
+    transverse_momentum: float,
+) -> None:
+    particle = _particle(charge=1, px=transverse_momentum)
+    static_points = _track_points(generate_helix_track, particle, n_points=100)
+    animated_points = _track_points(
+        generate_helix_track_with_times, particle, n_points=1000
+    )
+
+    static_arc = np.linalg.norm(np.diff(static_points[:, :2], axis=0), axis=1).sum()
+    animated_arc = np.linalg.norm(np.diff(animated_points[:, :2], axis=0), axis=1).sum()
+
+    assert static_arc == pytest.approx(animated_arc, rel=0.04)
 
 
 @pytest.mark.parametrize(
@@ -208,7 +226,14 @@ def test_particle_legend_uses_rendered_track_colors(particle_type: str) -> None:
     red, green, blue = PARTICLE_TYPES[particle_type]["color"]
     css_color = f"rgb({round(red * 255)} {round(green * 255)} {round(blue * 255)})"
 
-    assert f'color:{css_color}' in PARTICLE_LEGEND_HTML
+    assert f"color:{css_color}" in PARTICLE_LEGEND_HTML
+
+
+def test_particle_legend_names_only_generated_charges() -> None:
+    assert "π±/K⁺" in PARTICLE_LEGEND_HTML
+    assert "p (protons)" in PARTICLE_LEGEND_HTML
+    assert "K±" not in PARTICLE_LEGEND_HTML
+    assert "p/p̄" not in PARTICLE_LEGEND_HTML
 
 
 @pytest.mark.parametrize(

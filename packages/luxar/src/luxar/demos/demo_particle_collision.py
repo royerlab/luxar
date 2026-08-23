@@ -46,7 +46,7 @@ Different particles interact differently with matter:
    - Light (0.511 MeV/c²), easily deflected
    - Create electromagnetic showers via bremsstrahlung
    - Completely absorbed in EM calorimeter (~20 radiation lengths)
-   - Tight helical tracks due to low mass
+   - Track curvature is determined by transverse momentum p_T, not mass
 
 2. PHOTONS (γ):
    - No charge → NO TRACK (invisible in tracker)
@@ -62,7 +62,7 @@ Different particles interact differently with matter:
    - Heavy leptons (105.7 MeV/c²), minimal ionizing
    - Penetrate ENTIRE detector (very weakly interacting)
    - Only particles reaching outermost muon chambers
-   - Gentle curves due to high mass
+   - Track curvature is determined by transverse momentum p_T, not mass
 
 5. NEUTRINOS (ν):
    - No charge, no strong interaction
@@ -263,8 +263,8 @@ PARTICLE_LEGEND_HTML = (
     '<div style="font-weight:bold;color:#ccc;margin-bottom:0.4vh">Particle Tracks</div>'
     f"<div>{_legend_swatches('electron', 'positron')} e\u207b/e\u207a (electrons)</div>"
     f"<div>{_legend_swatches('muon_minus', 'muon_plus')} \u03bc\u207b/\u03bc\u207a (muons)</div>"
-    f"<div>{_legend_swatches('pion_plus', 'pion_minus', 'kaon')} \u03c0\u00b1/K\u00b1 (hadrons)</div>"
-    f"<div>{_legend_swatches('proton')} p/p\u0304 (protons)</div>"
+    f"<div>{_legend_swatches('pion_plus', 'pion_minus', 'kaon')} \u03c0\u00b1/K\u207a (hadrons)</div>"
+    f"<div>{_legend_swatches('proton')} p (protons)</div>"
     f"<div>{_legend_swatches('photon')} \u03b3 (photons)</div>"
     "</div>"
 )
@@ -306,13 +306,12 @@ class Particle:
     """Represents a particle with kinematic properties.
 
     In particle physics, we typically work with:
-    - Energy E (GeV) - total relativistic energy
+    - Displayed energy E (GeV)
     - Momentum p (GeV/c) - 3-vector (px, py, pz)
-    - Mass m (GeV/c²) - rest mass
+    - Mass m (MeV/c²) - rest mass from ``PARTICLE_TYPES``
 
-    Related by: E² = (pc)² + (mc²)²
-
-    For visualization, we use natural units where c = 1.
+    For visualization, the event generators use natural units and the
+    ultrarelativistic approximation E = |p|; mass does not enter the trajectory.
     """
 
     particle_type: str
@@ -396,6 +395,7 @@ def generate_helix_track(
         return generate_straight_track(particle, rng, n_points)
 
     max_radius = particle.stops_at if particle.stops_at else MUON_OUTER
+    # Electrons start bremsstrahlung-driven EM cascades on entering the ECAL.
     shower_radius = ECAL_INNER if particle.stops_at == ECAL_OUTER else None
     points = generate_helix_points(
         origin=particle.origin,
@@ -1255,9 +1255,9 @@ def main() -> None:
     aprint("")
     aprint("  Physics Features:")
     aprint("    - Charged particles curve in magnetic field (Lorentz force)")
-    aprint("    - Electrons/positrons: tight spirals, stop in EM calorimeter")
-    aprint("    - Muons: gentle curves, traverse entire detector")
-    aprint("    - Hadrons: medium curves, stop in hadronic calorimeter")
+    aprint("    - Electrons/positrons: p_T-dependent curves, stop in EM calorimeter")
+    aprint("    - Muons: p_T-dependent curves, traverse entire detector")
+    aprint("    - Hadrons: p_T-dependent curves, stop in hadronic calorimeter")
     aprint("    - Jets: collimated sprays from quark/gluon fragmentation")
     aprint("")
     aprint("  Detector Layers:")

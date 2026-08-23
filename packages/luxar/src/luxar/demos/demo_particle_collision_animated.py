@@ -46,7 +46,7 @@ Different particles interact differently with matter:
    - Light (0.511 MeV/c²), easily deflected
    - Create electromagnetic showers via bremsstrahlung
    - Completely absorbed in EM calorimeter (~20 radiation lengths)
-   - Tight helical tracks due to low mass
+   - Track curvature is determined by transverse momentum p_T, not mass
 
 2. PHOTONS (γ):
    - No charge → NO TRACK (invisible in tracker)
@@ -62,7 +62,7 @@ Different particles interact differently with matter:
    - Heavy leptons (105.7 MeV/c²), minimal ionizing
    - Penetrate ENTIRE detector (very weakly interacting)
    - Only particles reaching outermost muon chambers
-   - Gentle curves due to high mass
+   - Track curvature is determined by transverse momentum p_T, not mass
 
 5. NEUTRINOS (ν):
    - No charge, no strong interaction
@@ -218,6 +218,7 @@ def generate_helix_track_with_times(
         return generate_straight_track_with_times(particle, rng, n_points)
 
     max_radius = particle.stops_at if particle.stops_at else MUON_OUTER
+    # Electrons start bremsstrahlung-driven EM cascades on entering the ECAL.
     shower_radius = ECAL_INNER if particle.stops_at == ECAL_OUTER else None
     points = generate_helix_points(
         origin=particle.origin,
@@ -1081,9 +1082,9 @@ def main() -> None:
     aprint("")
     aprint("  Physics Features:")
     aprint("    - Charged particles curve in magnetic field (Lorentz force)")
-    aprint("    - Electrons/positrons: tight spirals, stop in EM calorimeter")
-    aprint("    - Muons: gentle curves, traverse entire detector")
-    aprint("    - Hadrons: medium curves, stop in hadronic calorimeter")
+    aprint("    - Electrons/positrons: p_T-dependent curves, stop in EM calorimeter")
+    aprint("    - Muons: p_T-dependent curves, traverse entire detector")
+    aprint("    - Hadrons: p_T-dependent curves, stop in hadronic calorimeter")
     aprint("    - Jets: collimated sprays from quark/gluon fragmentation")
     aprint("")
     aprint("  Animation Timeline (50 nanoseconds total):")
