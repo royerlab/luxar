@@ -271,7 +271,8 @@ Ships only code. The first run reads a few hundred parquet parts straight out of
 GBIF's AWS Open Data snapshot (anonymous, no account, ~200 MB on the wire thanks
 to column projection), downloads ~124 MB of CC0 tracks and a 5 MB NASA texture,
 then builds the scene. Sources are cached under
-``~/.cache/luxar/biodiversity_planetary_scale/``; ``--recompute`` rebuilds.
+``~/.cache/luxar/biodiversity_planetary_scale/``; ``--recompute`` rebuilds,
+while ``--keep-stale`` reuses an existing scene despite a marker mismatch.
 
 DATA SOURCES & CITATIONS
 ------------------------
@@ -295,7 +296,7 @@ USAGE
 -----
     luxar demo run biodiversity_planetary_scale
     python demo_biodiversity_planetary_scale.py [--n-points N] [--n-parts K]
-        [--recompute] [--no-serve] [--serve-only]
+        [--recompute] [--keep-stale] [--no-serve] [--serve-only]
 
 Controls:
     Mouse drag rotate, scroll zoom, right-drag pan.
@@ -716,6 +717,7 @@ FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
 RECOMPUTE = FLAGS["recompute"]
+KEEP_STALE = FLAGS["keep_stale"]
 
 #: Identifies the builder that wrote a scene; folded into the build marker
 #: so a source change invalidates it just as a flag change does (#1957).
@@ -2974,7 +2976,11 @@ def write_scene_marker(output_path: Path) -> None:
 
 def load_or_build_scene(output_path: Path) -> Path:
     """Return the built scene, regenerating it when flags or data changed."""
-    if output_path.exists() and not RECOMPUTE and scene_marker_matches(output_path):
+    if (
+        output_path.exists()
+        and not RECOMPUTE
+        and (KEEP_STALE or scene_marker_matches(output_path))
+    ):
         aprint(f"Using existing scene: {output_path}")
         return output_path
     if output_path.exists() and not RECOMPUTE:

@@ -29,8 +29,10 @@ regenerate + cache it. This demo ships ONLY code:
     parses + builds the globe scene (to the standard demos-output dir), and
     caches the source + parsed polylines under
     ``~/.cache/luxar/global_rivers_earth/``.
-  * Subsequent runs load the built scene instantly; ``--recompute`` forces a
-    rebuild (source/polylines stay cached, so it never re-fetches the ~1 GB).
+  * Subsequent runs load the built scene instantly. A source change rebuilds
+    the scene automatically; ``--keep-stale`` reuses the existing build, while
+    ``--recompute`` forces a rebuild (source/polylines stay cached, so it never
+    re-fetches the ~1 GB).
 
 Requires: ``pyshp`` (shapefile reader) and ``tifffile`` (GeoTIFF reader).
 
@@ -43,7 +45,8 @@ ETOPO 2022 Global Relief Model — NOAA NCEI (2022), doi:10.25921/fd45-gt74.
 
 USAGE
 -----
-    python demo_global_rivers_earth.py [--recompute] [--no-serve] [--serve-only]
+    python demo_global_rivers_earth.py [--recompute] [--keep-stale]
+                                       [--no-serve] [--serve-only]
 """
 
 DEMO_META = {

@@ -291,10 +291,9 @@ BUILDER_FINGERPRINT_ATTR: Final[str] = "builder_fingerprint"
 def demo_source_fingerprint(module_file: Union[str, Path]) -> str:
     """Short content hash of a demo module's source, for staleness checks.
 
-    Call as ``demo_source_fingerprint(__file__)``. The hash covers the builder's
-    SOURCE TEXT, so any edit that could change the output — a constant, an
-    appearance kwarg, a whole new node — produces a different fingerprint, while
-    re-running an unchanged demo produces the same one.
+    Call as ``demo_source_fingerprint(__file__)``. The hash covers that demo
+    module's SOURCE TEXT, so an edit to the file produces a different
+    fingerprint, while re-running an unchanged demo produces the same one.
 
     Args:
         module_file: Path to the demo module (normally ``__file__``).

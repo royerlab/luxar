@@ -210,6 +210,7 @@ from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import (
     add_demo_caption,
     cached_download,
+    demo_source_fingerprint,
     launch_viewer,
     parse_demo_flags,
     parse_int_arg,
@@ -550,6 +551,10 @@ FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
 RECOMPUTE = FLAGS["recompute"]
+
+#: Identifies the builder that wrote the scene, alongside the sizing knobs and
+#: authored schema version in :data:`SCENE_MARKER` (#1957).
+FINGERPRINT: Final = demo_source_fingerprint(__file__)
 
 POINTS_PER_STREAMLINE = parse_int_arg("points", DEFAULT_POINTS)
 PER_BUNDLE = parse_int_arg("per-bundle", DEFAULT_PER_BUNDLE)
@@ -1102,7 +1107,8 @@ def scene_marker_matches(marker: Path, *, points: int, per_bundle: int) -> bool:
     except (OSError, ValueError):
         return False
     return (
-        record.get("version") == SCENE_SCHEMA_VERSION
+        record.get("builder") == FINGERPRINT
+        and record.get("version") == SCENE_SCHEMA_VERSION
         and record.get("points") == points
         and record.get("per_bundle") == per_bundle
     )
@@ -1111,10 +1117,11 @@ def scene_marker_matches(marker: Path, *, points: int, per_bundle: int) -> bool:
 def load_or_build_scene(output_path: Path) -> Path:
     """Return the built scene path, regenerating on a fresh system.
 
-    Reuse is keyed on the sizing knobs and on :data:`SCENE_SCHEMA_VERSION` as
-    well as on the file existing: the scene path is fixed, so nothing else
-    distinguishes a scene built at the defaults from one built with ``--points``
-    / ``--per-bundle``, or from one built before the labels existed.
+    Reuse is keyed on this builder's fingerprint, the sizing knobs and
+    :data:`SCENE_SCHEMA_VERSION` as well as on the file existing: the scene path
+    is fixed, so nothing else distinguishes a scene built at the defaults from
+    one built with ``--points`` / ``--per-bundle``, or from one built before a
+    source or schema change.
     """
     if (
         output_path.exists()
@@ -1132,6 +1139,7 @@ def load_or_build_scene(output_path: Path) -> Path:
     SCENE_MARKER.write_text(
         json.dumps(
             {
+                "builder": FINGERPRINT,
                 "version": SCENE_SCHEMA_VERSION,
                 "points": POINTS_PER_STREAMLINE,
                 "per_bundle": PER_BUNDLE,

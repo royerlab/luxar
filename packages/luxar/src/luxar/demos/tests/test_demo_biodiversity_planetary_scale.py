@@ -54,6 +54,19 @@ from luxar.demos.demo_biodiversity_planetary_scale import (
     tile_count_for,
 )
 
+
+def test_keep_stale_reuses_an_existing_scene_with_a_mismatched_marker(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    output_path = tmp_path / "biodiversity.luxar.zarr"
+    output_path.mkdir()
+    monkeypatch.setattr(demo_module, "RECOMPUTE", False)
+    monkeypatch.setattr(demo_module, "KEEP_STALE", True)
+    monkeypatch.setattr(demo_module, "scene_marker_matches", lambda _path: False)
+
+    assert demo_module.load_or_build_scene(output_path) == output_path
+
+
 # ---------------------------------------------------------------------------
 # lonlat_to_xyz
 # ---------------------------------------------------------------------------

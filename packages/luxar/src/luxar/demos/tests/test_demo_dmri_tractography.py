@@ -249,6 +249,7 @@ class TestSceneMarker:
             tmp_path / "scene_build.json",
             json.dumps(
                 {
+                    "builder": _demo.FINGERPRINT,
                     "version": _demo.SCENE_SCHEMA_VERSION,
                     "points": 28,
                     "per_bundle": 6000,
@@ -277,6 +278,13 @@ class TestSceneMarker:
             marker, points=points, per_bundle=per_bundle
         )
 
+    def test_different_builder_forces_a_rebuild(self, tmp_path: Path) -> None:
+        marker = self._current(tmp_path)
+        record = json.loads(marker.read_text())
+        record["builder"] = "older-builder"
+        marker.write_text(json.dumps(record))
+        assert not _demo.scene_marker_matches(marker, points=28, per_bundle=6000)
+
     def test_pre_label_marker_forces_a_rebuild(self, tmp_path: Path) -> None:
         # A scene built before hover labels existed: right sizing, no version
         # key. Reusing it would serve a label-less scene while the docs (and
@@ -292,6 +300,7 @@ class TestSceneMarker:
             tmp_path / "scene_build.json",
             json.dumps(
                 {
+                    "builder": _demo.FINGERPRINT,
                     "version": _demo.SCENE_SCHEMA_VERSION - 1,
                     "points": 28,
                     "per_bundle": 6000,
