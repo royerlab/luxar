@@ -361,9 +361,12 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         Linear quantization uses half a grid quantum; geometric-log encoding
         uses the corresponding half-step at the array maximum, capped at the
         maximum because its grid is anchored there and cannot decode above it.
-        A relative-epsilon term for the wider of float32 and the authored dtype,
-        floored at one subnormal quantum of either dtype, covers the reader's
-        cast back to ``original_dtype`` and the viewer's float32 reconstruction.
+        The Python reader's final cast is covered by ``max_val`` times the
+        wider epsilon of float32 and the authored dtype, floored at one
+        subnormal quantum of either dtype. The viewer additionally needs
+        ``1.5 * span * eps32`` for its staged-float32 linear affine chain, or
+        ``max_val * eps32 * max(abs(min_log), abs(max_log))`` for the rounded
+        anchors used by its otherwise-float64 geometric-log reconstruction.
 
         Args:
             data: The positive-scalar array exactly as it will be encoded.

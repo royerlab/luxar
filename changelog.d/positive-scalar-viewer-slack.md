@@ -6,5 +6,6 @@ product, and sum. For a narrow class of float64 arrays on the uint16 tier, those
 roundings could move a decoded radius or line width just beyond the pad used to
 build its chunk bound, allowing an edge query to miss that chunk.
 
-The pad now covers the full float32 affine reconstruction while remaining tighter
-than two measured upward displacements in the deterministic regression.
+The pad now uses a derived allowance for the full float32 affine reconstruction
+on both linear tiers and also covers the rounded float32 log anchors used by the
+geometric-log viewer path.
