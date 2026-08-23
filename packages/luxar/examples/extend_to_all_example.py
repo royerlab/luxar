@@ -126,7 +126,7 @@ def main() -> None:
                 "The scan-line uses <code>extend_to_all=[]</code> so it shows "
                 "only at its own time slice; the axis markers use "
                 "<code>extend_to_all=['time']</code> so they persist across all "
-                "frames. Press <code>4</code> then <code>[</code>/<code>]</code> "
+                "frames. Press <code>1</code> then <code>[</code>/<code>]</code> "
                 "to walk time."
             ),
             observe=[

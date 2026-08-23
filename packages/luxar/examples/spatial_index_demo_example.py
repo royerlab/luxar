@@ -208,8 +208,8 @@ def main():
                     "A 5D clustered point cloud built with a "
                     "spatial index, which reorders "
                     "points by locality so only relevant chunks load per slice. "
-                    "Press <code>4</code> then <code>[</code>/<code>]</code> "
-                    "for time, <code>5</code> then <code>[</code>/<code>]</code> "
+                    "Press <code>1</code> then <code>[</code>/<code>]</code> "
+                    "for time, <code>2</code> then <code>[</code>/<code>]</code> "
                     "for channel."
                 ),
                 observe=[

@@ -210,9 +210,9 @@ def main():
                 "<code>Channel</code> dimensions are navigated as sliders."
             ),
             observe=[
-                "Press <code>4</code> for Time, then <code>[</code> / "
+                "Press <code>1</code> for Time, then <code>[</code> / "
                 "<code>]</code>: the grid rotates 10° per frame.",
-                "Press <code>5</code> for Channel: colour switches red, green, blue.",
+                "Press <code>2</code> for Channel: colour switches red, green, blue.",
                 "Point sizes oscillate with time.",
                 "The R/G/B axis markers stay visible at every time and channel.",
             ],

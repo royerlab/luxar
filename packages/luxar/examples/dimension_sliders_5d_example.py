@@ -152,9 +152,9 @@ def main():
                 "dimensions are driven by the bottom slider UI."
             ),
             observe=[
-                "Press <code>4</code> for W, then <code>[</code> / "
+                "Press <code>1</code> for W, then <code>[</code> / "
                 "<code>]</code>: the spiral rotates and Z oscillates.",
-                "Press <code>5</code> for Channel: colour cycles red, green, "
+                "Press <code>2</code> for Channel: colour cycles red, green, "
                 "blue with smaller points per channel.",
                 "Dragging the bottom sliders gives the same navigation.",
             ],

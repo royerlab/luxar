@@ -113,7 +113,7 @@ def main() -> None:
                 "shows only the points in that category."
             ),
             observe=[
-                "Press <code>4</code> for species, then <code>[</code> / "
+                "Press <code>1</code> for species, then <code>[</code> / "
                 "<code>]</code> to step.",
                 "The slider shows names (cat, dog, bird), not integers.",
                 "Each label reveals a differently-coloured cluster: orange, "
