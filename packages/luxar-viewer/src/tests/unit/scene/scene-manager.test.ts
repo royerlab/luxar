@@ -688,6 +688,19 @@ describe('SceneManager', () => {
       await sceneManager.init({ canvas: mockCanvas as any });
     });
 
+    it('forwards controls changes through the scene change event', () => {
+      const controlsHandler = vi
+        .mocked(sceneManager.controls.addEventListener)
+        .mock.calls.find(([type]) => type === 'change')?.[1];
+      const listener = vi.fn();
+      sceneManager.addEventListener('change', listener);
+
+      expect(controlsHandler).toBeDefined();
+      controlsHandler?.();
+
+      expect(listener).toHaveBeenCalledTimes(1);
+    });
+
     it.each([
       [
         'relative changes used by the FOV slider and modifier-wheel',

@@ -196,6 +196,7 @@ describe('autoAdjustFromBounds — metadata path', () => {
     expect(result.applied).toBe(false);
     expect(setSceneScale).not.toHaveBeenCalled();
     expect(successSpy).not.toHaveBeenCalled();
+    successSpy.mockRestore();
   });
 });
 
