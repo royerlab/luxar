@@ -37,7 +37,7 @@ It also emits `elementIds` (via the shared `buildElementIdMap` in
 `data/loaders/element-ids.ts`, which GSplats and Lines compose with too): the visible-buffer
 slot → on-disk element index map that picking uses for per-element label
 lookups. It is built only for a node declaring `has_labels` /
-`has_image_labels` — the label reader it exists for, and it costs 4 B/point on
+`has_image_labels` / `has_keys` — the string readers it exists for, and it costs 4 B/point on
 the zero-allocation path — and omitted on the identity path (one range starting
 at 0, no effective-radius compaction). An unlabelled node can still be picked
 (the embedder `selection` event provisions picking on its own), and its

@@ -159,6 +159,8 @@ scene.luxar.zarr/
 │   ├── chunk_bounds/       # Chunk bounding boxes for spatial queries (optional)
 │   ├── label_offsets/      # Per-element label byte offsets, CSR-style (optional)
 │   ├── label_bytes/        # Concatenated UTF-8 label strings (optional)
+│   ├── key_offsets/        # Per-element key byte offsets, CSR-style (optional)
+│   ├── key_bytes/          # Concatenated UTF-8 key strings (optional)
 │   ├── image_label_offsets/ # Per-element image byte offsets, CSR-style (optional)
 │   ├── image_label_bytes/  # Concatenated encoded image blobs (optional)
 │   └── <child_nodes>/      # Nested child nodes (recursive structure)
@@ -933,16 +935,17 @@ per-vertex arrays are reordered by the vertex sort):
   per-segment); declared via `has_scalars` / `scalar_data_range` / `colormap`
   attrs (see *Scalar Colormap Attributes* below).
 
-Per-vertex labels (`label_offsets`/`label_bytes`) and image labels
+Per-vertex labels (`label_offsets`/`label_bytes`), keys
+(`key_offsets`/`key_bytes`), and image labels
 (`image_label_offsets`/`image_label_bytes`) are supported with the same
-CSR-style layout as Points (see *Per-Element Labels*). Because the labels are
-per-vertex while the viewer picks whole *segments*, hover and selection on a
-lines node report the picked segment's **start** vertex. Two consequences follow
-from that convention: on a segment that the current slice clips only partially
-the reported start vertex may lie entirely outside the visible slab (what is
-drawn starts at the clipped position, not at the stored vertex), and **any
-vertex that is never a segment's start is unreachable by hovering** — its label
-can never be shown.
+CSR-style layout as Points (see *Per-Element Labels* and *Per-Element Keys*).
+Because the string channels are per-vertex while the viewer picks whole
+*segments*, hover and selection on a lines node report the picked segment's
+**start** vertex. Two consequences follow from that convention: on a segment
+that the current slice clips only partially the reported start vertex may lie
+entirely outside the visible slab (what is drawn starts at the clipped position,
+not at the stored vertex), and **any vertex that is never a segment's start is
+unreachable by hovering** — its label or key can never be read.
 
 Which vertices those are depends on `original_line_type` (the segment pairs are
 built by `luxar.io._ordering.lines.convert_to_indexed`):
@@ -1058,9 +1061,10 @@ they are rejected on points, lines, Gaussian splats, and groups.
 - **Shape:** `(V,)` — per-vertex colormap scalars; declared via `has_scalars` /
   `scalar_data_range` / `colormap` (see *Scalar Colormap Attributes* below).
 
-Per-vertex labels (`label_offsets`/`label_bytes`) and image labels
+Per-vertex labels (`label_offsets`/`label_bytes`), keys
+(`key_offsets`/`key_bytes`), and image labels
 (`image_label_offsets`/`image_label_bytes`) use the same CSR-style layout as
-Points (see *Per-Element Labels*).
+Points (see *Per-Element Labels* and *Per-Element Keys*).
 
 **Not written for a mesh node:** no spatial index (`ordering` is always `"none"`).
 
@@ -1073,11 +1077,11 @@ re-indexes its own gathered vertex table (so the parent's `n_vertices` exceeds t
 source count by the boundary duplication, exactly as `kind=partition` parts do);
 no level carries `energy_fraction_cum` and the parent carries no
 `reference_energy`, because a reveal prefix is a partial object at full brightness
-rather than a dim version of the whole; and `has_labels` is **not** set, because one
-source vertex maps to a slot in every level that touches it, so a union label CSR
-spanning levels has no well-defined index space. Labelled meshes take
-`substitutive_lod=` or `partition=`, both of which keep their labels. A mesh **may**
-be a child of a `kind=partition` group;
+rather than a dim version of the whole; and neither `has_labels` nor `has_keys`
+is set, because one source vertex maps to a slot in every level that touches it,
+so a union string CSR spanning levels has no well-defined index space. Labelled
+or keyed meshes take `substitutive_lod=` or `partition=`, both of which keep
+their per-element strings. A mesh **may** be a child of a `kind=partition` group;
 `add_mesh(partition=…)` writes exactly that, with each part carrying its own
 gathered-and-renumbered vertex table (vertices on a cut are duplicated between
 neighbouring parts). A mesh may equally be a child of a `kind=lod` group —
@@ -1574,8 +1578,8 @@ non-partitioned node both refer to the same node.
 Whether `{hover_index}` is the *on-disk* element index — the one the node's
 arrays and its label CSR are keyed by — depends on the geometry. It is the
 on-disk index for a **flat** Points, GSplats or Lines node that declares
-`has_labels` or `has_image_labels`, and for a Mesh always, since mesh picking reports the
-vertex's on-disk ordinal directly. **Lines** takes the longest route to get
+`has_labels`, `has_image_labels`, or `has_keys`, and for a Mesh always, since
+mesh picking reports the vertex's on-disk ordinal directly. **Lines** takes the longest route to get
 there: a line is drawn one instance per *segment* and picking reports that
 segment's slot, while the lines label CSR is written per *vertex*, so a labelled
 lines node resolves the slot all the way back to the picked segment's start
