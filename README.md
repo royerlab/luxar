@@ -295,9 +295,10 @@ stream:
 | **Tribolium embryo** — light-sheet, 1 timepoint | 965 × 1871 × 991 = 1.8 G voxels (3.3 GB as TIFF) | 296,559 splats · **2.0 MB** |
 | **C. elegans embryo** — confocal, 400 timepoints | 400 × 41 × 512 × 512 = 4.3 G voxels | 5.5M splats · **72 MB** (180 KB per timepoint) |
 
-Both are the cached fits bundled with this repository under
-`packages/luxar/src/luxar/demos/data/`, fitted at full source resolution — the
-single-file Tribolium fit works out to about 7 bytes per splat on disk. They then
+The *C. elegans* fit is bundled under `packages/luxar/src/luxar/demos/data/`;
+the Tribolium fit is produced locally because its source is not redistributable.
+Both use full source resolution, and the single-file Tribolium fit works out to
+about 7 bytes per splat on disk. They then
 render in any WebGL2 desktop browser: no 3D textures, no ray-marching, and no CUDA
 on the viewing machine.
 
