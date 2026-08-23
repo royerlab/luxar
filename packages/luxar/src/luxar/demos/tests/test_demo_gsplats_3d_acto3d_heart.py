@@ -75,9 +75,15 @@ def test_every_channel_is_additive(channel_nodes: dict[str, dict]) -> None:
         assert attrs.get("blending_mode") == "additive", name
 
 
-def test_every_channel_keeps_its_partial_opacity(
+def test_every_channel_keeps_its_authored_opacity(
     channel_nodes: dict[str, dict],
 ) -> None:
-    """An unbounded sum of three channels clips without partial opacity."""
-    for name, attrs in channel_nodes.items():
-        assert attrs.get("opacity") == pytest.approx(0.48), name
+    """The dense nuclear stain stays below the two structural channels."""
+    expected = {
+        "gsplats_sytox_green_nuclei": 0.12,
+        "gsplats_tomato_lectin_vasculature": 0.30,
+        "gsplats_tnni3_cardiac_tissue": 0.16,
+    }
+    assert set(channel_nodes) == set(expected)
+    for name, opacity in expected.items():
+        assert channel_nodes[name].get("opacity") == pytest.approx(opacity)
