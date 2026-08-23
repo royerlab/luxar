@@ -56,6 +56,21 @@ from luxar.io.optimise import (
 _META_DOCS = frozenset({"zarr.json", ".zarray", ".zgroup", ".zattrs", ".zmetadata"})
 
 
+def _is_case_insensitive_fs(where: Path) -> bool:
+    """Does ``where``'s filesystem fold case (macOS, Windows)?
+
+    A case-differing payload name like ``Zarr.json`` is an ordinary distinct
+    file on Linux and the group's own ``zarr.json`` here, so the fixture that
+    needs real bytes under that name is unbuildable on one side of the divide.
+    """
+    probe = where / "CaseProbe"
+    probe.write_text("x")
+    try:
+        return (where / "caseprobe").exists()
+    finally:
+        probe.unlink()
+
+
 def _walk(group: Any, path: str = ""):
     """Yield ``(path, node, is_array)`` for every node, root included."""
     yield path or "/", group, False
@@ -531,9 +546,7 @@ class TestPayloadFiles:
         an ordinary distinct file the source really holds, and skipping it
         shipped — under exit code 0 — the very state the copy exists to prevent:
         an ``image_file`` attr naming a file the output does not have."""
-        probe = tmp_path / "CaseProbe"
-        probe.write_text("x")
-        if (tmp_path / "caseprobe").exists():
+        if _is_case_insensitive_fs(tmp_path):
             pytest.skip("a case-insensitive filesystem cannot hold the fixture")
         src = _store_with_a_payload_attr(
             tmp_path / "src.luxar.zarr", "Zarr.json", payload=None
@@ -556,18 +569,20 @@ class TestPayloadFiles:
         self, tmp_path: Path
     ) -> None:
         """Refusing is about BYTES the copy cannot carry faithfully. With no
-        file behind the attr there are none, so the same name that stops the
-        pass above must not strand a store that is merely missing its overlay —
-        the output is exactly as complete as its input."""
+        file behind the attr there are none, so a metadata-like name must not
+        strand a store that is merely missing its overlay — the output is
+        exactly as complete as its input. ``.ZMetadata`` is absent from a
+        subgroup in both zarr formats, so this branch stays covered on every
+        filesystem."""
         src = _store_with_a_payload_attr(
-            tmp_path / "src.luxar.zarr", "Zarr.json", payload=None
+            tmp_path / "src.luxar.zarr", ".ZMetadata", payload=None
         )
         dst = tmp_path / "out.luxar.zarr"
         optimise_store(src, dst, verify=True)
         attrs = dict(open_group(dst, mode="r")["overlays/logo"].attrs)
-        assert attrs["image_file"] == "Zarr.json"
+        assert attrs["image_file"] == ".ZMetadata"
         assert attrs["type"] == "overlay_image"
-        assert not any(p.name == "Zarr.json" for p in dst.rglob("*"))
+        assert not any(p.name == ".ZMetadata" for p in dst.rglob("*"))
 
     def test_a_dangling_metadata_document_name_is_skipped_under_a_case_fold(
         self,
