@@ -3,8 +3,11 @@ from collections.abc import Callable
 import numpy as np
 import pytest
 
-from luxar.demos._particle_collision_tracks import HELIX_RADIUS_VISUAL_SCALE
-from luxar.demos.demo_particle_collision import Particle, generate_helix_track
+from luxar.demos._particle_collision_tracks import (
+    MAX_AZIMUTH_SAMPLE_STEP,
+    generate_helix_points,
+)
+from luxar.demos.demo_particle_collision import B_FIELD, Particle, generate_helix_track
 from luxar.demos.demo_particle_collision_animated import (
     generate_helix_track_with_times,
 )
@@ -103,8 +106,8 @@ def test_rendered_curvature_keeps_the_documented_radius_scale(
     chord_length = np.linalg.norm(first_step)
     measured_radius = chord_length / (2 * np.sin(abs(turn_angle) / 2))
 
-    expected_radius = HELIX_RADIUS_VISUAL_SCALE * pt / 2.0
-    assert measured_radius == pytest.approx(expected_radius, rel=1e-3)
+    physical_radius = pt / B_FIELD
+    assert measured_radius / physical_radius == pytest.approx(2.0, rel=1e-3)
 
 
 @pytest.mark.parametrize(
@@ -124,3 +127,58 @@ def test_neutral_track_remains_straight(generator: TrackGenerator) -> None:
 
     assert np.linalg.matrix_rank(steps) == 1
     assert steps[0] / np.linalg.norm(steps[0]) == pytest.approx([0.6, 0.8, 0.0])
+
+
+def _sample_points(
+    *,
+    momentum: np.ndarray | None = None,
+    max_radius: float = 15.0,
+    n_points: int = 200,
+    shower_radius: float | None = None,
+) -> np.ndarray:
+    return generate_helix_points(
+        origin=np.zeros(3),
+        momentum=np.array([3.0, 0.0, 0.0]) if momentum is None else momentum,
+        charge=1,
+        magnetic_field=B_FIELD,
+        max_radius=max_radius,
+        max_z=25.0,
+        n_points=n_points,
+        transverse_step=0.25,
+        shower_radius=shower_radius,
+    )
+
+
+def test_track_stops_at_maximum_detector_radius() -> None:
+    points = _sample_points(max_radius=0.5)
+
+    assert len(points) < 200
+    assert np.all(np.linalg.norm(points[:, :2], axis=1) <= 0.5)
+
+
+def test_track_stops_after_first_shower_radius_sample() -> None:
+    points = _sample_points(shower_radius=0.5)
+    radii = np.linalg.norm(points[:, :2], axis=1)
+
+    assert len(points) < 200
+    assert radii[-2] <= 0.5 < radii[-1]
+
+
+def test_soft_track_azimuth_sampling_stays_below_cap() -> None:
+    points = _sample_points(momentum=np.array([0.05, 0.0, 0.0]), max_radius=1.0)
+    steps = np.diff(points[:, :2], axis=0)
+    step_azimuths = np.unwrap(np.arctan2(steps[:, 1], steps[:, 0]))
+
+    assert np.max(np.abs(np.diff(step_azimuths))) == pytest.approx(
+        MAX_AZIMUTH_SAMPLE_STEP, abs=5e-6
+    )
+
+
+@pytest.mark.parametrize("pz, expected_z", [(-3.0, -25.0), (3.0, 25.0)])
+def test_pure_longitudinal_track_reaches_detector_endcap(
+    pz: float, expected_z: float
+) -> None:
+    points = _sample_points(momentum=np.array([0.0, 0.0, pz]), n_points=11)
+
+    assert points[:, :2] == pytest.approx(np.zeros((11, 2)))
+    assert points[-1, 2] == pytest.approx(expected_z)

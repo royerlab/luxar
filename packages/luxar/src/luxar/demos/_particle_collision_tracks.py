@@ -1,9 +1,71 @@
+"""Shared charged-track sampling for the particle-collision demos.
+
+The demos deliberately render helices at twice their physical radius for visual
+clarity. This module owns that distortion and the sampling contract so the static
+and animated adapters cannot drift apart. It returns only centerline points;
+colors, widths, segment expansion, and animation timing remain adapter concerns.
+"""
+
 from __future__ import annotations
 
 import numpy as np
 
 HELIX_RADIUS_VISUAL_SCALE = 2.0
 MAX_AZIMUTH_SAMPLE_STEP = 0.05
+
+
+def _transverse_sampling(
+    *, transverse_momentum: float, charge: int, magnetic_field: float, requested_step: float
+) -> tuple[float, float, float]:
+    radius = (
+        HELIX_RADIUS_VISUAL_SCALE
+        * transverse_momentum
+        / abs(charge * magnetic_field)
+    )
+    turn_sign = -float(np.sign(charge * magnetic_field))
+    sample_step = min(requested_step, radius * MAX_AZIMUTH_SAMPLE_STEP)
+    return radius, turn_sign, sample_step
+
+
+def _sample_track_points(
+    *,
+    origin: np.ndarray,
+    initial_azimuth: float,
+    transverse_momentum: float,
+    longitudinal_rate: float,
+    radius: float,
+    turn_sign: float,
+    sample_step: float,
+    max_radius: float,
+    max_z: float,
+    n_points: int,
+    shower_radius: float | None,
+) -> np.ndarray:
+    points: list[np.ndarray] = []
+    for point_index in range(n_points):
+        sampled_distance = point_index * sample_step
+        z = origin[2] + longitudinal_rate * sampled_distance
+
+        if transverse_momentum == 0:
+            x, y = origin[:2]
+        else:
+            azimuth = initial_azimuth + turn_sign * sampled_distance / radius
+            x = origin[0] + radius * turn_sign * (
+                np.sin(azimuth) - np.sin(initial_azimuth)
+            )
+            y = origin[1] - radius * turn_sign * (
+                np.cos(azimuth) - np.cos(initial_azimuth)
+            )
+
+        radial_distance = float(np.hypot(x, y))
+        if radial_distance > max_radius or abs(z) > max_z:
+            break
+
+        points.append(np.array([x, y, z]))
+        if shower_radius is not None and radial_distance > shower_radius:
+            break
+
+    return np.asarray(points, dtype=np.float32).reshape(-1, 3)
 
 
 def generate_helix_points(
@@ -27,6 +89,24 @@ def generate_helix_points(
     ``HELIX_RADIUS_VISUAL_SCALE`` is the only deliberate geometric distortion:
     it opens the transverse curvature for readability without changing the
     track tangent or pitch.
+
+    Args:
+        origin: Track origin as an ``(x, y, z)`` vector.
+        momentum: Momentum as a ``(p_x, p_y, p_z)`` vector.
+        charge: Non-zero electric charge in elementary-charge units.
+        magnetic_field: Non-zero axial magnetic field strength.
+        max_radius: Maximum cylindrical detector radius.
+        max_z: Maximum absolute longitudinal detector coordinate.
+        n_points: Maximum number of returned samples.
+        transverse_step: Requested arc-length step in the transverse plane.
+        shower_radius: Optional radius at which to include one final shower sample.
+
+    Returns:
+        An ``(N, 3)`` float32 array of sampled centerline points.
+
+    Raises:
+        ValueError: If charge or magnetic field is zero, or the requested step
+            is not positive.
     """
     if charge == 0:
         raise ValueError("helix generation requires a charged particle")
@@ -47,40 +127,30 @@ def generate_helix_points(
     transverse_momentum = float(np.hypot(px, py))
     if transverse_momentum > 0:
         initial_azimuth = float(np.arctan2(py, px))
-        radius = (
-            HELIX_RADIUS_VISUAL_SCALE
-            * transverse_momentum
-            / abs(charge * magnetic_field)
+        radius, turn_sign, sample_step = _transverse_sampling(
+            transverse_momentum=transverse_momentum,
+            charge=charge,
+            magnetic_field=magnetic_field,
+            requested_step=transverse_step,
         )
-        turn_sign = -float(np.sign(charge * magnetic_field))
-        sample_step = min(transverse_step, radius * MAX_AZIMUTH_SAMPLE_STEP)
         longitudinal_rate = pz / transverse_momentum
     else:
+        # With no transverse motion, use the point budget along z: a transverse
+        # step is undefined and neither radial detector boundary can be reached.
         sample_step = max_z / max(n_points - 1, 1)
         longitudinal_rate = float(np.sign(pz))
+        initial_azimuth = radius = turn_sign = 0.0
 
-    points: list[np.ndarray] = []
-    for point_index in range(n_points):
-        sampled_distance = point_index * sample_step
-        z = origin[2] + longitudinal_rate * sampled_distance
-
-        if transverse_momentum == 0:
-            x, y = origin[:2]
-        else:
-            azimuth = initial_azimuth + turn_sign * sampled_distance / radius
-            x = origin[0] + radius / turn_sign * (
-                np.sin(azimuth) - np.sin(initial_azimuth)
-            )
-            y = origin[1] - radius / turn_sign * (
-                np.cos(azimuth) - np.cos(initial_azimuth)
-            )
-
-        radial_distance = float(np.hypot(x, y))
-        if radial_distance > max_radius or abs(z) > max_z:
-            break
-
-        points.append(np.array([x, y, z]))
-        if shower_radius is not None and radial_distance > shower_radius:
-            break
-
-    return np.asarray(points, dtype=np.float32).reshape(-1, 3)
+    return _sample_track_points(
+        origin=origin,
+        initial_azimuth=initial_azimuth,
+        transverse_momentum=transverse_momentum,
+        longitudinal_rate=longitudinal_rate,
+        radius=radius,
+        turn_sign=turn_sign,
+        sample_step=sample_step,
+        max_radius=max_radius,
+        max_z=max_z,
+        n_points=n_points,
+        shower_radius=shower_radius,
+    )
