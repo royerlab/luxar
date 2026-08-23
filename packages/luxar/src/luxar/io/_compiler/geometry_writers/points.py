@@ -30,7 +30,7 @@ from ..labels.image_labels import (
     validate_image_labels_for_writing,
     write_image_labels_csr,
 )
-from ..labels.text_labels import write_labels_csr
+from ..labels.text_labels import write_string_channels_csr
 from ..node_common import (
     POINTS_RESERVED_ATTRS,
     apply_default_render_attrs,
@@ -407,25 +407,19 @@ def write_points(
         ordering_data["sort_order"] if ordering_data is not None else None,
     )
 
-    # 11. Write labels if provided (CSR-style: label_offsets + label_bytes)
-    if labels is not None:
-        sort_order = ordering_data["sort_order"] if ordering_data is not None else None
-        write_labels_csr(group, labels, n_points, ctx.compressor, sort_order)
-        metadata["has_labels"] = True
-
-    # Per-element machine-readable keys (issue #1917). Same CSR encoding and
-    # the same spatial permutation as labels — a key must stay paired with
-    # its element — so it reuses the serializer with a different channel.
-    if keys is not None:
-        sort_order = ordering_data["sort_order"] if ordering_data is not None else None
-        write_labels_csr(
-            group, keys, n_points, ctx.compressor, sort_order, channel="keys"
-        )
-        metadata["has_keys"] = True
+    sort_order = ordering_data["sort_order"] if ordering_data is not None else None
+    write_string_channels_csr(
+        group,
+        labels=labels,
+        keys=keys,
+        n_elements=n_points,
+        compressor=ctx.compressor,
+        sort_order=sort_order,
+        metadata=metadata,
+    )
 
     # 12. Write image labels if provided (CSR-style, no compression on blobs)
     if image_labels is not None:
-        sort_order = ordering_data["sort_order"] if ordering_data is not None else None
         write_image_labels_csr(
             group, image_labels, n_points, ctx.compressor, sort_order
         )

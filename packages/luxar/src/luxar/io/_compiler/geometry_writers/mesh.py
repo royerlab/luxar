@@ -40,7 +40,7 @@ from ..labels.image_labels import (
     validate_image_labels_for_writing,
     write_image_labels_csr,
 )
-from ..labels.text_labels import write_labels_csr
+from ..labels.text_labels import write_string_channels_csr
 from ..node_common import (
     MESH_RESERVED_ATTRS,
     apply_default_render_attrs,
@@ -466,20 +466,15 @@ def write_mesh(
     if not skip_scene_bounds:
         ctx.update_scene_bounds(position_bounds)
 
-    # 6. Labels (CSR). Per-vertex, like the lines writer.
-    if labels is not None:
-        write_labels_csr(group, labels, n_vertices, ctx.compressor, None)
-        metadata["has_labels"] = True
-        group.attrs["has_labels"] = True
-
-    # Per-element machine-readable keys (issue #1917). Same CSR encoding and
-    # the same spatial permutation as labels — a key must stay paired with
-    # its element — so it reuses the serializer with a different channel.
-    # Mesh has no spatial index (`ordering` is always "none"), so no
-    # permutation to apply — same as the labels write above.
-    if keys is not None:
-        write_labels_csr(group, keys, n_vertices, ctx.compressor, None, channel="keys")
-        metadata["has_keys"] = True
+    write_string_channels_csr(
+        group,
+        labels=labels,
+        keys=keys,
+        n_elements=n_vertices,
+        compressor=ctx.compressor,
+        sort_order=None,
+        metadata=metadata,
+    )
 
     if image_labels is not None:
         write_image_labels_csr(group, image_labels, n_vertices, ctx.compressor, None)

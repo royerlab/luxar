@@ -244,6 +244,18 @@ UNNAMED_CLUSTER_LABEL = "Mixed"
 SYNTHETIC_ID_PREFIX = "Protein_"
 
 
+def _uniprot_link_attrs(protein_ids: list[str]) -> dict[str, object]:
+    """Build links only for real accessions, never synthetic fallback ids."""
+    if all(pid.startswith(SYNTHETIC_ID_PREFIX) for pid in protein_ids):
+        aprint("  ⓘ Synthetic accessions — skipping UniProt links")
+        return {}
+    return {
+        "keys": list(protein_ids),
+        "link": "https://www.uniprot.org/uniprotkb/{hover_key}/entry",
+        "copy": "{hover_key}",
+    }
+
+
 # =============================================================================
 # Dataset Download
 # =============================================================================
@@ -1156,20 +1168,7 @@ def generate_protein_landscape(
             # loader substitutes synthetic `Protein_<i>` strings, and linking
             # those would ship a demo whose every click 404s. Same detection
             # the cluster-naming path uses.
-            real_accessions = not all(
-                pid.startswith(SYNTHETIC_ID_PREFIX) for pid in protein_ids
-            )
-            link_attrs = (
-                {
-                    "keys": list(protein_ids),
-                    "link": "https://www.uniprot.org/uniprotkb/{hover_key}/entry",
-                    "copy": "{hover_key}",
-                }
-                if real_accessions
-                else {}
-            )
-            if not real_accessions:
-                aprint("  ⓘ Synthetic accessions — skipping UniProt links")
+            link_attrs = _uniprot_link_attrs(protein_ids)
 
             scene.add_points(
                 "proteins",

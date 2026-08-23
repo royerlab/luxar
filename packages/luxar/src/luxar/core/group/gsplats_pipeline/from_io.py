@@ -499,7 +499,8 @@ def _reject_labels_on_a_grafted_wrapper(
     # call passing both is answered deterministically — same tie-break as the
     # ``lod_group=`` half of the gate.
     kwarg = next(
-        (k for k in ("labels", "image_labels") if attrs.get(k) is not None), None
+        (k for k in ("labels", "image_labels", "keys") if attrs.get(k) is not None),
+        None,
     )
     if kwarg is None:
         return
@@ -574,10 +575,14 @@ def _validate_labelled_leaf_length(
     divergence is the same sanctioned trade
     ``compositing.validate_points_channels_before_split`` already documents.
     """
+    from ....validation.base import validate_labels_for_writing
     from ..compositing import validate_labels_before_split
 
     try:
         validate_labels_before_split(attrs.get("labels"), n_splats)
+        keys = attrs.get("keys")
+        if keys is not None:
+            validate_labels_for_writing(keys, n_splats, context="keys", noun="Keys")
         image_labels = attrs.get("image_labels")
         if image_labels is not None:
             from luxar.io._compiler.labels.image_labels import (

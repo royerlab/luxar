@@ -419,6 +419,7 @@ def _reject_before_wrapper(
     attrs: Optional[Dict[str, Any]] = None,
     labels: Any = None,
     image_labels: Any = None,
+    keys: Any = None,
 ) -> None:
     """Refuse what is judgeable up front BEFORE the ``kind=lod`` group exists (#1446).
 
@@ -704,7 +705,11 @@ def _reject_before_wrapper(
         # flat-path counterpart at all (the flat path ACCEPTS labels and
         # validates them last of all, in the writer sweep), so it must not
         # outrank any fault the flat path would report first.
-        for kwarg, value in (("labels", labels), ("image_labels", image_labels)):
+        for kwarg, value in (
+            ("labels", labels),
+            ("image_labels", image_labels),
+            ("keys", keys),
+        ):
             if value is not None:
                 raise ValueError(
                     labels_on_wrapper_reason(
@@ -835,6 +840,7 @@ def add_gsplats_from_data_impl(
             # would ride into every child through ``child_attrs``.
             labels=attrs.get("labels"),
             image_labels=attrs.get("image_labels"),
+            keys=attrs.get("keys"),
         )
         return add_gsplats_as_lod_group_impl(
             group,

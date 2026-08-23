@@ -28,7 +28,7 @@ from ..labels.image_labels import (
     validate_image_labels_for_writing,
     write_image_labels_csr,
 )
-from ..labels.text_labels import write_labels_csr
+from ..labels.text_labels import write_string_channels_csr
 from ..node_common import (
     GSPLATS_RESERVED_ATTRS,
     validate_node_path,
@@ -51,6 +51,33 @@ def scene_barrier_dims(store: zarr.Group, n_dims: int) -> Optional[List[int]]:
     return [
         i for i, d in enumerate(dims) if i < n_dims and d.discrete and not d.display
     ]
+
+
+def _write_element_annotations(
+    group: zarr.Group,
+    *,
+    labels: Optional["Sequence[str]"],
+    keys: Optional["Sequence[str]"],
+    image_labels: Optional[Any],
+    n_splats: int,
+    compressor: Any,
+    ordering_data: Optional[dict[str, Any]],
+    metadata: dict[str, Any],
+) -> None:
+    """Write optional per-element annotation channels with one permutation."""
+    sort_order = ordering_data["sort_order"] if ordering_data is not None else None
+    write_string_channels_csr(
+        group,
+        labels=labels,
+        keys=keys,
+        n_elements=n_splats,
+        compressor=compressor,
+        sort_order=sort_order,
+        metadata=metadata,
+    )
+    if image_labels is not None:
+        write_image_labels_csr(group, image_labels, n_splats, compressor, sort_order)
+        metadata["has_image_labels"] = True
 
 
 def write_gsplats(
@@ -195,29 +222,16 @@ def write_gsplats(
     # Update scene-level bounds
     ctx.update_scene_bounds(metadata["position_bounds"])
 
-    # Write labels if provided (CSR-style: label_offsets + label_bytes)
-    if labels is not None:
-        sort_order = ordering_data["sort_order"] if ordering_data is not None else None
-        write_labels_csr(group, labels, n_splats, ctx.compressor, sort_order)
-        metadata["has_labels"] = True
-
-    # Per-element machine-readable keys (issue #1917). Same CSR encoding and
-    # the same spatial permutation as labels — a key must stay paired with
-    # its element — so it reuses the serializer with a different channel.
-    if keys is not None:
-        sort_order = ordering_data["sort_order"] if ordering_data is not None else None
-        write_labels_csr(
-            group, keys, n_splats, ctx.compressor, sort_order, channel="keys"
-        )
-        metadata["has_keys"] = True
-
-    # Write image labels if provided (CSR-style, no compression on blobs)
-    if image_labels is not None:
-        sort_order = ordering_data["sort_order"] if ordering_data is not None else None
-        write_image_labels_csr(
-            group, image_labels, n_splats, ctx.compressor, sort_order
-        )
-        metadata["has_image_labels"] = True
+    _write_element_annotations(
+        group,
+        labels=labels,
+        keys=keys,
+        image_labels=image_labels,
+        n_splats=n_splats,
+        compressor=ctx.compressor,
+        ordering_data=ordering_data,
+        metadata=metadata,
+    )
 
     aprint(f"✅ GSplats written to {path}")
 

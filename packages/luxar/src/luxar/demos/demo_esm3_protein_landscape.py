@@ -99,6 +99,25 @@ from luxar.utils.paths import get_demos_output_dir
 DEFAULT_SAMPLE_SIZE = 0  # 0 = all (~572K)
 
 
+def _linkable_accessions(accessions: list[str], n_proteins: int) -> list[str] | None:
+    """Return aligned accessions, or preserve an old cache without links."""
+    if len(accessions) == n_proteins:
+        return accessions
+    aprint("  ⓘ Cached metadata has no accessions — skipping UniProt links")
+    return None
+
+
+def _uniprot_link_attrs(keys: list[str] | None) -> dict[str, object]:
+    """Build link attributes only when the cache supplied aligned keys."""
+    if keys is None:
+        return {}
+    return {
+        "keys": keys,
+        "link": "https://www.uniprot.org/uniprotkb/{hover_key}/entry",
+        "copy": "{hover_key}",
+    }
+
+
 SWISSPROT_FASTA_URLS = [
     # ExPASy mirror (faster, more reliable)
     "https://ftp.expasy.org/databases/uniprot/current_release/knowledgebase/complete/uniprot_sprot.fasta.gz",
@@ -809,27 +828,15 @@ def generate_esm3_landscape(
         # cache costs a 90 MB download plus a full ESM pass to rebuild, so it is
         # honoured rather than invalidated); the demo then simply ships without
         # links.
-        have_accessions = len(accessions) == n
-        if not have_accessions:
-            aprint("  ⓘ Cached metadata has no accessions — skipping UniProt links")
-
         stacked = stack_colorings(
             positions,
             [
                 {"label": "Taxon", "colors": taxon_colors, "labels": taxon_labels},
                 {"label": "Domain", "colors": domain_colors, "labels": domain_labels},
             ],
-            keys=list(accessions) if have_accessions else None,
+            keys=_linkable_accessions(accessions, n),
         )
-        link_attrs = (
-            {
-                "keys": stacked.keys,
-                "link": "https://www.uniprot.org/uniprotkb/{hover_key}/entry",
-                "copy": "{hover_key}",
-            }
-            if stacked.keys is not None
-            else {}
-        )
+        link_attrs = _uniprot_link_attrs(stacked.keys)
         radii = np.full(len(stacked.positions), 0.012, dtype=np.float32)
 
     with asection("Writing to Zarr"):

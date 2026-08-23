@@ -32,7 +32,7 @@ from ..labels.image_labels import (
     validate_image_labels_for_writing,
     write_image_labels_csr,
 )
-from ..labels.text_labels import write_labels_csr
+from ..labels.text_labels import write_string_channels_csr
 from ..node_common import (
     LINES_RESERVED_ATTRS,
     apply_default_render_attrs,
@@ -607,32 +607,21 @@ def write_lines(
     if not skip_scene_bounds:
         ctx.update_scene_bounds(position_bounds)
 
-    # Write labels if provided (CSR-style: label_offsets + label_bytes)
-    # For lines, labels are per-vertex (n_vertices)
-    if labels is not None:
-        sort_order = (
-            ordering_data["vertex_sort_indices"] if ordering_data is not None else None
-        )
-        write_labels_csr(group, labels, n_vertices, ctx.compressor, sort_order)
-        metadata["has_labels"] = True
-
-    # Per-element machine-readable keys (issue #1917). Same CSR encoding and
-    # the same spatial permutation as labels — a key must stay paired with
-    # its element — so it reuses the serializer with a different channel.
-    if keys is not None:
-        key_sort_order = (
-            ordering_data["vertex_sort_indices"] if ordering_data is not None else None
-        )
-        write_labels_csr(
-            group, keys, n_vertices, ctx.compressor, key_sort_order, channel="keys"
-        )
-        metadata["has_keys"] = True
+    sort_order = (
+        ordering_data["vertex_sort_indices"] if ordering_data is not None else None
+    )
+    write_string_channels_csr(
+        group,
+        labels=labels,
+        keys=keys,
+        n_elements=n_vertices,
+        compressor=ctx.compressor,
+        sort_order=sort_order,
+        metadata=metadata,
+    )
 
     # Write image labels if provided (CSR-style, no compression on blobs)
     if image_labels is not None:
-        sort_order = (
-            ordering_data["vertex_sort_indices"] if ordering_data is not None else None
-        )
         write_image_labels_csr(
             group, image_labels, n_vertices, ctx.compressor, sort_order
         )

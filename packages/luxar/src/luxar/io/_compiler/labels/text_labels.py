@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Final, Mapping, Optional, Sequence
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Final,
+    Mapping,
+    MutableMapping,
+    Optional,
+    Sequence,
+)
 
 import numpy as np
 import zarr
@@ -117,6 +125,31 @@ def write_labels_csr(
     )
 
 
+def write_string_channels_csr(
+    group: zarr.Group,
+    *,
+    labels: Optional[Sequence[str]],
+    keys: Optional[Sequence[str]],
+    n_elements: int,
+    compressor: "CompressorLike",
+    sort_order: Optional[np.ndarray],
+    metadata: MutableMapping[str, Any],
+) -> None:
+    """Write every present per-element string channel with one permutation."""
+    for channel, values in (("labels", labels), ("keys", keys)):
+        if values is None:
+            continue
+        write_labels_csr(
+            group,
+            values,
+            n_elements,
+            compressor,
+            sort_order,
+            channel=channel,
+        )
+        metadata[STRING_CHANNELS[channel][2]] = True
+
+
 def validate_ladder_labels(
     levels: Sequence[Mapping[str, Any]],
     positions_key: str,
@@ -179,7 +212,12 @@ def validate_ladder_labels(
         # same error the caller would see with no labels at all.
         return True
     for lvl, shape in zip(levels, level_shapes):
-        validate_labels_for_writing(lvl[channel], int(shape[0]))
+        validate_labels_for_writing(
+            lvl[channel],
+            int(shape[0]),
+            context=channel,
+            noun=channel.capitalize(),
+        )
     return True
 
 

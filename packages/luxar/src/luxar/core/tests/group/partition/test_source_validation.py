@@ -2112,6 +2112,7 @@ class TestASingleFlatLeafGraftStillLabels:
 _WRONG_LENGTH_WORDING = {
     "labels": "labels: Labels length (8)",
     "image_labels": "Image labels length (8)",
+    "keys": "keys: Keys length (8)",
 }
 
 
