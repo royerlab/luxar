@@ -334,7 +334,7 @@ Driven by `evaluateDepthSortPerFrame` (depth-sort-coordinator.ts):
 
 ### Global Scale Assignment
 
-Because `renderOrder` is compared **globally** across all transparent meshes, the assignment must put every sorted-mode mesh on ONE sequential integer scale (0..M−1, farthest first). Steps:
+Because `renderOrder` is compared **globally** across all transparent meshes, the assignment must put every sorted-mode mesh on ONE sequential integer scale (1..M, farthest first), reserving THREE's default 0 for empty parts that have not committed yet. Steps:
 
 1. **Group by wrapper/leaf identity** — meshes sharing a partition wrapper form one order group; a single-leaf mesh is its own group of one
 2. **Order groups by mean view-z** — the mean of each group's members' content centroids (bounding-sphere centers through model-view); more negative = farther. A documented approximation: exact inter-group ordering does not exist for arbitrarily interleaved groups, but wrappers/leaves are normally spatially disjoint datasets, and co-located overlapping layers have no meaningful cross order anyway.
@@ -342,9 +342,9 @@ Because `renderOrder` is compared **globally** across all transparent meshes, th
 3. **Within a group, BSP ranks or view-z**:
    - **BSP tree** — when both sides have a BSP rank (a ranked wrapper ranks ALL its members): order by `partRank` ascending (0 = farthest). This is exact for point/gsplat BSP cells at any camera pose, including inside the volume (Fuchs–Kedem–Naylor painter's algorithm), and approximate for centroid-split lines/mesh or overlapping uniform tiles.
    - **Centroid (fallback)** — when either side lacks a rank (rank-less legacy wrapper members, or a single-leaf mesh): order by `viewZ` ascending (more negative = farther). Per-object ordering: approximate, and it degenerates when the camera is inside the volume — which is why the BSP path exists.
-4. **Write sequential integers** — 0..M−1 to `mesh.renderOrder`
+4. **Write sequential integers** — 1..M to `mesh.renderOrder`
 
-**Transparent objects OUTSIDE the coordinator's sorted set** (commutative modes) keep `renderOrder` 0 and tie with the globally-farthest sorted mesh (falling back to THREE's per-object z) — depth interleaving with unsorted content stays out of scope.
+**Transparent objects OUTSIDE the coordinator's sorted set** (commutative modes), plus empty parts that have never committed, keep `renderOrder` 0 and draw before the globally-farthest sorted mesh — depth interleaving with unsorted content stays out of scope.
 
 ### BSP Tree Traversal
 

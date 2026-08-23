@@ -1656,6 +1656,10 @@ function pumpChunkedOrderingApplies(): void {
  * nodes whose live mode is no longer order-dependent. A streaming
  * chunked apply does NOT skip — a fresher sort fills the inactive
  * buffer concurrently.
+ *
+ * Work is tiered by dependency: frame-state cleanup runs above every gate,
+ * pure main-thread cross-node ordering runs above the loader gate, and only
+ * work that touches the SortWorker stays below that gate.
  */
 export function evaluateDepthSortPerFrame(): void {
   // Drop the previous frame's render-order state FIRST — before any
@@ -1731,10 +1735,11 @@ export function evaluateDepthSortPerFrame(): void {
     // Keep that work paused during a loader sweep, but do not pause the
     // pure-main-thread cross-mesh ordering collected above.
     if (loadInProgress) continue;
-    // LOD demotion returned the geometry to the pool — same signal the
-    // resolve path checks; a sort dispatched now would be dropped there.
-    // A temporarily stamp-less tracked mesh still receives its cross-mesh
-    // rank above so visible partition parts never alias renderOrder 0.
+    // Mode switches and late-worker re-registration deliberately invalidate
+    // commit stamps while the existing geometry stays visible. Those meshes
+    // still receive their cross-mesh rank above, but cannot dispatch a worker
+    // sort until re-commit. LOD demotion is only a defensive peer case here:
+    // its synchronous release removes the mesh from nodeStates first.
     if (!hasCommittedData(mesh)) continue;
     const bs = (mesh.geometry as THREE.BufferGeometry | undefined)?.boundingSphere;
 
