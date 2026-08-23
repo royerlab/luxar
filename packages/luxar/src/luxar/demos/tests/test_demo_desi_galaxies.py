@@ -478,15 +478,41 @@ class TestWarnIfSceneIsStale:
                 part.attrs["n_additive_sublods"] = len(increments)
                 part.attrs["n_points"] = n_points
                 for rung_index, count in enumerate(increments):
-                    part.create_group(f"additive_{rung_index}").attrs[
-                        "n_points"
-                    ] = count
+                    part.create_group(f"additive_{rung_index}").attrs["n_points"] = (
+                        count
+                    )
 
         _demo.warn_if_scene_is_stale(scene)
 
         out = capsys.readouterr().out
         assert out.count("single node contains 4,875,978 points") == 2
         assert "rm -rf" in out
+
+    def test_warns_when_flat_finest_exceeds_the_node_capacity(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        scene = tmp_path / "desi.luxar.zarr"
+        increments = [
+            2_000,
+            2_000,
+            4_000,
+            8_000,
+            16_000,
+            32_000,
+            64_000,
+            128_000,
+            256_000,
+            512_000,
+            *([900_000] * 9),
+            627_955,
+        ]
+        self._write_laddered(scene, increments)
+
+        _demo.warn_if_scene_is_stale(scene)
+
+        out = capsys.readouterr().out
+        assert out.count("single node contains 9,751,955 points") == 2
+        assert "commits" not in out
 
     def test_warns_when_a_bounded_ladder_contains_only_the_old_sample(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
