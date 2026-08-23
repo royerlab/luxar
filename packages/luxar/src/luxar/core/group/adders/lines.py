@@ -944,6 +944,7 @@ def add_lines_multi_lod_wrapper_impl(
                 ),
                 "scalars": slice_optional_array(scalars, vertex_index_arr, n_vertices),
                 "labels": slice_optional_array(labels, vertex_index_arr, n_vertices),
+                "keys": slice_optional_array(keys, vertex_index_arr, n_vertices),
                 "segments": level_segments,
                 "n_polylines": len(level_polylines),
                 "lod_stats": per_level_stats[level_i],

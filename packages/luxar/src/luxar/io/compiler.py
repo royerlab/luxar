@@ -892,6 +892,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # require_group, because this gate is pure and a rejected ladder must
         # not leave an empty node behind.
         labelled = validate_ladder_labels(levels, "positions")
+        # Keys obey the same all-or-nothing rule across the ladder, and land
+        # in the same union CSR on the parent (#1917).
+        keyed = validate_ladder_labels(levels, "positions", channel="keys")
 
         # Validate every path segment (rejects empty/dot-prefixed names —
         # the F1/F5 chokepoint) + strip the leading slash.
@@ -928,11 +931,11 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 # `record_forwarded_sort_order` treats False exactly as absent,
                 # and a `dict[str, bool]` unpack is checked against every typed
                 # parameter it could bind to — which now includes `keys`.
-                _return_sort_order=labelled,
+                _return_sort_order=labelled or keyed,
             )
             # POP, not read: the permutation is only needed to build the union
             # CSR, and the metadata dict lands in ``self._metadata_cache``.
-            if labelled:
+            if labelled or keyed:
                 level_sort_orders.append(level_meta.pop("sort_order", None))
             level_metas.append(level_meta)
 
@@ -973,6 +976,16 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 self.compressor,
             )
             metadata["has_labels"] = True
+        if keyed:
+            write_ladder_union_labels_csr(
+                group,
+                [lvl["keys"] for lvl in levels],
+                level_sort_orders,
+                n_points_total,
+                self.compressor,
+                channel="keys",
+            )
+            metadata["has_keys"] = True
 
         self._metadata_cache[path] = metadata
         aprint(
@@ -1025,6 +1038,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # require_group, because this gate is pure and a rejected ladder must
         # not leave an empty node behind.
         labelled = validate_ladder_labels(levels, "vertices")
+        # Keys obey the same all-or-nothing rule across the ladder, and land
+        # in the same union CSR on the parent (#1917).
+        keyed = validate_ladder_labels(levels, "vertices", channel="keys")
 
         # Validate every path segment (rejects empty/dot-prefixed names —
         # the F1/F5 chokepoint) + strip the leading slash.
@@ -1068,11 +1084,11 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 # `record_forwarded_sort_order` treats False exactly as absent,
                 # and a `dict[str, bool]` unpack is checked against every typed
                 # parameter it could bind to — which now includes `keys`.
-                _return_sort_order=labelled,
+                _return_sort_order=labelled or keyed,
             )
             # POP, not read: the permutation is only needed to build the union
             # CSR, and the metadata dict lands in ``self._metadata_cache``.
-            if labelled:
+            if labelled or keyed:
                 level_sort_orders.append(level_meta.pop("sort_order", None))
             level_metas.append(level_meta)
 
@@ -1120,6 +1136,16 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 self.compressor,
             )
             metadata["has_labels"] = True
+        if keyed:
+            write_ladder_union_labels_csr(
+                group,
+                [lvl["keys"] for lvl in levels],
+                level_sort_orders,
+                n_vertices_total,
+                self.compressor,
+                channel="keys",
+            )
+            metadata["has_keys"] = True
 
         self._metadata_cache[path] = metadata
         aprint(

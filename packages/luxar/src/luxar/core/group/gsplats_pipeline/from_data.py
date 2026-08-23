@@ -140,7 +140,7 @@ def labels_on_a_laddered_leaf_reason(kwarg: str) -> str:
 # they are named parameters of the LEAF ``Group.add_gsplats`` that this adder
 # forwards onward STRUCTURALLY rather than colliding with a value of its own —
 # see the rule stated in full at the gate itself (:func:`_reject_before_wrapper`).
-GATE_FORWARDED_LEAF_PARAMS = ("labels", "image_labels", "partition")
+GATE_FORWARDED_LEAF_PARAMS = ("labels", "image_labels", "keys", "partition")
 
 # The keys for which a present-but-``None`` value means ABSENT, and which are
 # therefore DELETED from ``**attrs`` before dispatch (#1471, #1496). Four
