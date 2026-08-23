@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     import numpy as np
 
     from luxar.gsplats.doctor import DoctorReport, Finding, StoreKind
+    from luxar.gsplats.gsplat_data import GSplatData
 
 
 _IMPORTANT_FITTING_KEYS = (
@@ -672,6 +673,23 @@ def _print_quality_comparison(
     aprint("=" * 50)
 
 
+def _load_gsplats_for_comparison(path: Path) -> "GSplatData":
+    """Materialize the tree selection that the renderer shows by default."""
+    from luxar.gsplats.gsplat_data import GSplatData
+    from luxar.gsplats.io.load_gsplats import load_gsplat_node
+    from luxar.gsplats.tree import is_matrix_shaped, iter_default_leaves
+
+    node, stats = load_gsplat_node(path, include_stats=True)
+    if is_matrix_shaped(node):
+        return GSplatData.from_tree(node, stats=stats)
+
+    parts = [
+        GSplatData.from_tree(leaf).flattened() for leaf in iter_default_leaves(node)
+    ]
+    flat = GSplatData.concatenate(parts)
+    return GSplatData.from_additive_sublods(list(flat.additive_sublods), stats=stats)
+
+
 def compare_quality(
     gsplats_path: Path = typer.Argument(
         ..., exists=True, help="Path to .gsplats.zarr dataset (or .zip/.tar.gz)"
@@ -729,7 +747,6 @@ def compare_quality(
         import torch
 
         from luxar.cli.gsplat_config import load_volume, parse_shape
-        from luxar.gsplats.gsplat_data import GSplatData
         from luxar.gsplats.metrics import compute_quality_metrics
         from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
         from luxar.gsplats.utils.device import resolve_torch_device
@@ -737,7 +754,7 @@ def compare_quality(
         with asection("Quality Comparison"):
             # Load gsplat dataset
             with asection("Loading gsplat dataset"):
-                data = GSplatData.load(gsplats_path, include_stats=False)
+                data = _load_gsplats_for_comparison(gsplats_path)
                 n_splats = data.n_splats
                 ndim = data.ndim
                 aprint(f"Loaded {n_splats:,} splats ({ndim}D)")

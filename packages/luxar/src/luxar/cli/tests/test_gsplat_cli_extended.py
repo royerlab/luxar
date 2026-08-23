@@ -2080,6 +2080,50 @@ class TestSliceCommand:
 
 
 class TestCompareCommand:
+    def test_compare_partition_uses_all_default_rendered_leaves(
+        self,
+        runner: CliRunner,
+        sample_gsplats: Path,
+        small_volume_npy: Path,
+        tmp_path: Path,
+    ) -> None:
+        """The default tiled output shape is scored without a flatten pre-pass."""
+        from luxar.cli.gsplat_ops.inspect_commands import (
+            _load_gsplats_for_comparison,
+        )
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+
+        data = GSplatData.load(sample_gsplats)
+        partition_path = tmp_path / "partition.gsplats.zarr"
+        write_gsplats_tree(
+            partition_path,
+            data.to_spatial_partition(max_elements=2),
+            ordering="none",
+            pipeline_info={"image_min": 3.0},
+        )
+
+        loaded = _load_gsplats_for_comparison(partition_path)
+        assert loaded.n_splats == data.n_splats
+        assert loaded.stats["image_min"] == 3.0
+
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "compare",
+                str(partition_path),
+                str(small_volume_npy),
+                "--shape",
+                "16,16,16",
+                "--device",
+                "cpu",
+            ],
+        )
+
+        assert result.exit_code == 0, f"compare failed: {result.stdout}"
+        assert "Loaded 5 splats (3D)" in result.stdout
+
     def test_compare_accepts_auto_device(
         self,
         runner: CliRunner,
