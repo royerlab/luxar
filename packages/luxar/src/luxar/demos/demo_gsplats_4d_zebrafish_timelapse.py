@@ -192,6 +192,12 @@ DENOISING (measured 2026-08-23; why h is pinned and not calibrated):
     entirely out of cells, so more, smaller splats survive. Counting splats is
     not counting detail — it is only detail once you know what they are on.
 
+    The three-frame sweep predicted 12,777-23,514 splats at this budget. Fitting
+    all 151 timepoints landed at 12,462-23,478 (median 17,977; 2,689,314 total,
+    against 1,590,010 undenoised). Worth stating because it is the only
+    out-of-sample check any of these tables get: a strength and a budget both
+    chosen on three frames, holding over fifty times as many.
+
 THE LOD LADDER, AND A MEASUREMENT TRAP INSIDE IT:
     The stacked node carries a substitutive ladder (``levels``: 3 coarse levels,
     each 4x smaller) with ``coarsen_dims=(0, 1, 2)`` — the three SPATIAL centre
@@ -386,7 +392,8 @@ LOCAL_FIT = local_fit_path(DEMO_NAME, GSPLATS_FILE)
 #: ``seeds`` proposes and ``cull_retention`` disposes. The seed budget is a
 #: CEILING, not a target: the post-fit cull keeps splats only until 99.99% of the
 #: amplitude is accounted for, so the count that ships is whatever the frame
-#: needs — 12,800 to 23,500 across this recording. Both numbers matter and the
+#: needs — measured over the full run, 12,462 to 23,478, median 17,977. Both
+#: numbers matter and the
 #: second is the one people forget: raising `seeds` past the plateau changes
 #: nothing, while moving `cull_retention` from the fitter's default 0.95 to
 #: 0.9999 was worth +3.4 dB of foreground on its own, because on data this
