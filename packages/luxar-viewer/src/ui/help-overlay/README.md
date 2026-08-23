@@ -60,6 +60,7 @@ import { installTypeToFilter } from './help-overlay/type-to-filter';
 
 const release = trapFocus(panel, { autoFocusFirst: false });
 const releaseFilter = installTypeToFilter(panel, () => filterInput, {
+  // Every shortcut this panel advertises while open — see passthroughKeys below.
   passthroughKeys: [config.input.keyboard.shortcuts.toggleHelp],
 });
 ```
@@ -85,26 +86,34 @@ mechanism level so both filtered panels behave identically:
   `Tab`, `Enter`, `F1`, …), `Space` (a leading space matches nothing and it
   scrolls a `tabindex="-1"` container), keys already `defaultPrevented`,
   keys typed while focus is already on a typing surface, and keys arriving
-  while `resolveFilterInput()` returns `null` (nothing to filter).
+  while `resolveFilterInput()` returns `null` (nothing to filter — the
+  dataset browser hides its search bar while loading, on an error and in an
+  empty directory). None of those are released to the globals; they are
+  contained like any other key.
 - Focuses the filter **without** `preventDefault` for a keystroke that opens
   an IME composition (`isComposing`, or the legacy `keyCode === 229`), so
   the composition retargets to the input; composing against the
   non-editable container would drop the first character outright, which is
   every CJK/IME and European dead-key layout.
 - Steers `ArrowDown` into the panel's list when `resolveFirstItem` supplies
-  one (the dataset browser's first listing row) — with focus parked on the
-  container, the search field's own `ArrowDown` handler never sees the key.
-- **Contains everything else while the panel is modal.** A key that
-  originates AT the container (i.e. focus is genuinely parked on the shell)
-  and is neither forwarded nor `Escape`/`Tab`/a passthrough key gets
-  `stopPropagation()` — no `preventDefault`, so native in-panel behaviour
-  such as scrolling with `Home`/`PageDown` still works. Without this,
-  `Home`/`End` would jump the selected dimension and `Shift`+arrows would
-  change the animation speed _behind_ an `aria-modal` dialog: no panel
-  pushes an `InputContext`, so the autofocused text field used to be the
-  only thing suppressing global shortcuts. Containment is gated on the
-  event **target**, so an inner control's own keys (a listing row's
-  `Enter`/arrow navigation, the filter's keydown) are untouched.
+  one (the dataset browser's first listing row) and focus is still on the
+  container — with focus parked there, the search field's own `ArrowDown`
+  handler never sees the key. Once focus is inside the list, the list's own
+  arrow navigation takes over.
+- **Contains everything else while the panel is modal.** Every key that
+  bubbles to the container and is neither forwarded nor `Escape`/`Tab`/an
+  eligible passthrough key gets `stopPropagation()` — no `preventDefault`,
+  so native behaviour survives: scrolling the panel with `Home`/`PageDown`,
+  and browser-level shortcuts (`Ctrl+F`/`Ctrl+A`/`Ctrl+C`, `Cmd+W`, `F5`,
+  `F1`–`F12`). Without this, `Home`/`End` would jump the selected dimension
+  and `Shift`+arrows would change the animation speed _behind_ an
+  `aria-modal` dialog: no panel pushes an `InputContext`, so the autofocused
+  text field used to be the only thing suppressing global shortcuts.
+  Containment does **not** look at the event target — a key from a listing
+  row, the filter or a breadcrumb is contained too, or a single `Tab` would
+  hand the scene back its shortcuts. Inner handlers still run: they fire
+  first on the way up, and a key one of them consumed
+  (`defaultPrevented`) is contained rather than released.
 - Returns an idempotent release function that removes the listener.
 
 **`passthroughKeys` and the `h`-toggles-vs-`h`-filters trade-off.** Both
@@ -116,6 +125,15 @@ types it even as the first character, and filtering is case-insensitive, so
 nothing is unreachable. Matching is case-insensitive but Shift-sensitive:
 CapsLock (`H` with `shiftKey === false`) still toggles, because the global
 lookup lowercases the key.
+
+`passthroughKeys` is the panel's whole **advertised** key surface, not just
+its toggle: containment silences everything else, so a shortcut chip the
+panel renders (the dataset browser's banner shows `H Help`) must be listed
+or it is dead. The dataset browser therefore declares `o` and `h`; the help
+overlay declares `h`. The exemption is gated on `event.target === container`
+— once focus has moved into a field or a row those keys are ordinary
+characters again, so typing a path beginning with `o` into the dataset
+browser cannot close it.
 
 ## Why it lives here
 

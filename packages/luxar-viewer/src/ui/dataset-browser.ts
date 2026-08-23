@@ -212,13 +212,20 @@ export class DatasetBrowser {
    * FIRST character of a filter query (it types normally once the field has
    * focus).
    *
-   * The resolver prefers the manual-entry field when that fallback form is
-   * mounted (a server that cannot be listed at all — S3/CloudFront, nginx
-   * with `autoindex off`): that field is NOT autofocused, for the same reason
-   * the search bar isn't, so typing has to be routed into it explicitly.
-   * Otherwise it returns the search input, or `null` while the search bar is
-   * hidden (loading, error, empty directory) — there is nothing to filter
-   * then, and the keystroke is simply contained by the modal.
+   * The resolver only ever names the SEARCH field, and only while the search
+   * bar is actually shown: it returns `null` while that bar is hidden
+   * (loading, error, empty directory, manual-entry fallback), and the
+   * keystroke is then contained by the modal. The manual-entry `#manual-path`
+   * field is deliberately NOT a resolver target — it is a URL entry field,
+   * not a filter, and routing type-to-filter into it would mean a path
+   * beginning with the panel's own passthrough key (`output/scan.zarr`)
+   * closed the browser instead of typing. The user clicks or Tabs into that
+   * field, which is a deliberate act, and from there the ordinary typing
+   * guard applies exactly as it does for every other text field in the app.
+   *
+   * `passthroughKeys` lists every shortcut this panel advertises while it is
+   * open: `O` (its own toggle) and `H` (the `H Help` chip in the welcome
+   * banner). Containment would otherwise make that chip a lie.
    *
    * `resolveFirstItem` restores the "`ArrowDown` enters the listing"
    * affordance the search field's own handler provides: with focus parked on
@@ -228,14 +235,15 @@ export class DatasetBrowser {
     return installTypeToFilter(
       this.panel,
       () => {
-        const manual = this.panel.querySelector<HTMLInputElement>('#manual-path');
-        if (manual) return manual;
         const bar = this.panel.querySelector<HTMLElement>('#luxar-dataset-browser-search-bar');
         if (!bar || bar.style.display === 'none') return null;
         return this.panel.querySelector<HTMLInputElement>('#luxar-dataset-browser-search');
       },
       {
-        passthroughKeys: [viewerConfig.input.keyboard.shortcuts.toggleDatasetBrowser],
+        passthroughKeys: [
+          viewerConfig.input.keyboard.shortcuts.toggleDatasetBrowser,
+          viewerConfig.input.keyboard.shortcuts.toggleHelp,
+        ],
         resolveFirstItem: () =>
           this.panel.querySelector<HTMLElement>('.luxar-dataset-browser__file-item'),
       }
@@ -893,8 +901,11 @@ export class DatasetBrowser {
     // typing guard, which would make `O` one-way again — the exact bug
     // issue #1922 fixes, and this fallback is reachable in production (any
     // host that serves an `index.html` instead of a listing). Focus stays on
-    // the panel container and `installTypeToFilterOnPanel`'s resolver routes
-    // the first printable keystroke into this field.
+    // the panel container; the user clicks or Tabs into this field to type a
+    // path, and from then on it behaves like every other text field in the
+    // app. It is NOT wired into type-to-filter: this is a URL, not a filter
+    // query, so forwarding into it would route `o` (the browser's own
+    // passthrough key) to the global binding and close the panel mid-path.
   }
 
   /**

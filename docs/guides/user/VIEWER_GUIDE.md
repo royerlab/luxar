@@ -146,13 +146,23 @@ Orthographic projection for 2D viewing. The camera looks straight down one axis.
 | Escape | Close all open panels |
 
 The help overlay (`H`) and the dataset browser (`O`) both carry a filter field,
-and just typing narrows the list — no click needed. Their own toggle key is the
-one exception: pressing `H` in the help overlay (or `O` in the dataset browser)
-closes the panel rather than typing that letter, so start such a query with any
-other character — or with `Shift`+that letter, which types it. Matching is
-case-insensitive. In the dataset browser, `ArrowDown` moves from the panel into
-the listing. While either panel is open the other shortcuts are held for the
-panel and do not reach the scene behind it; `Escape` always closes it.
+and while one is on screen just typing narrows the list — no click needed.
+Their own toggle key is the one exception: pressing `H` in the help overlay (or
+`O` in the dataset browser) closes the panel rather than typing that letter, so
+start such a query with any other character — or with `Shift`+that letter, which
+types it. Matching is case-insensitive. In the dataset browser, `ArrowDown`
+moves from the panel into the listing. The browser hides its filter when there
+is nothing to narrow (while a directory loads, after an error, in an empty
+directory, and in the "enter a path manually" fallback shown for a server that
+cannot be listed); in the path field, click or `Tab` into it and type — it takes
+a URL, not a filter query. While either panel is open the other shortcuts are held for the
+panel and do not reach the scene behind it — including once you have tabbed or
+clicked into a field or a listing row. The exceptions are `Escape` (always
+closes the panel), `Tab` (cycles focus inside it) and the keys the panel itself
+advertises: its own toggle key, plus `H` in the dataset browser so the
+`H` Help chip in its banner works. Those pass through only while focus is still
+on the panel itself, which is why typing `o` into the dataset browser's path
+field types an `o` instead of closing it.
 
 ### Camera and View
 

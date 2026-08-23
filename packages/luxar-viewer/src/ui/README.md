@@ -399,8 +399,20 @@ Initial focus is on the panel container, not the search field (nor the
 manual-entry field of the unlistable-server fallback), so the `O` shortcut
 still toggles the browser shut — see the type-to-filter note under
 [Helper Overlays](#7-helper-overlays) (issue #1922). Typing still narrows the
-listing from the first keystroke, and `ArrowDown` moves into the list from the
-panel container as well as from the search field.
+listing from the first keystroke whenever the search bar is on screen — it is
+hidden while a directory loads, after an error, in an empty directory and in the
+manual fallback, and keystrokes are contained by the modal in those states — and
+`ArrowDown` moves into the list from the panel container as well as from the
+search field.
+
+The panel declares `O` and `H` as passthrough keys: `O` is its own toggle, and
+`H` is the shortcut its welcome banner advertises with an `H Help` chip — modal
+containment would otherwise make that chip dead. The manual-entry
+`#manual-path` field is deliberately NOT wired into type-to-filter: it takes a
+URL, not a filter query, so forwarding into it would route the `o` of
+`output/scan.zarr` to the global binding and close the panel mid-path. Click or
+Tab into it to type; from there the ordinary typing guard applies, and `Escape`
+still closes the panel.
 
 **Interface:**
 
@@ -643,16 +655,21 @@ text input trips `InputHandler`'s typing guard, which drops every key but
 swallowed as typing, issue #1922). `help-overlay/type-to-filter.ts` restores
 type-to-filter by forwarding the first printable keystroke into the filter, and
 the dataset browser (`O`) uses the same mechanism. The panel's own toggle key is
-passed through to the global binding, so it cannot be the first character of a
-filter query (`Shift`+that key types it like any other character — the global
-lookup spells the shifted form `"h+shift"`, which matches no binding).
+passed through to the global binding while focus is on the container, so it
+cannot be the first character of a filter query (`Shift`+that key types it like
+any other character — the global lookup spells the shifted form `"h+shift"`,
+which matches no binding).
 
 The same container listener keeps the panel **modal**: no panel pushes an
-`InputContext`, so while focus is parked on the shell it stops every other key
-from reaching the global bindings behind the dialog (`Home`/`End` would
-otherwise jump the selected dimension, `Shift`+arrows change the animation
-speed). Only `Escape`, `Tab` and the passthrough toggle key get out, and
-containment never calls `preventDefault`, so scrolling the panel still works.
+`InputContext`, so it stops every other key from reaching the global bindings
+behind the dialog (`Home`/`End` would otherwise jump the selected dimension,
+`Shift`+arrows change the animation speed). Containment applies to keys
+bubbling up from inner controls too — a listing row, the filter, a breadcrumb —
+so one `Tab` cannot hand the scene its shortcuts back. Only `Escape`, `Tab` and
+the panel's declared passthrough keys get out, the last of those only while
+focus is still on the container itself. Containment never calls
+`preventDefault`, so panel scrolling and browser-level shortcuts (`Ctrl+F`,
+`Cmd+W`, `F5`) still work.
 
 ### 8. Recording Panel
 

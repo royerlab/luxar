@@ -203,18 +203,61 @@ describe('installTypeToFilter', () => {
     expect(harness.escaped).toEqual([]);
   });
 
-  it('does not contain keys that originate at an inner control', () => {
+  it('contains keys that bubble up from an inner control', () => {
     harness = mount();
     harness.row.focus();
 
     // The listener is on the container, so an inner control's key bubbles
-    // through it. Containment is gated on the event TARGET, so a row's own
-    // Home/Enter handling (and anything it deliberately lets escape) is
-    // untouched.
-    press({ key: 'Home' });
-    press({ key: 'Enter' });
+    // through it — and must be contained there too. Gating containment on the
+    // event TARGET would mean a single `Tab` (or one `ArrowDown` into the
+    // listing) handed `Home`/`End`/`Shift`+arrows/fly arrows straight back to
+    // the scene behind an `aria-modal` panel.
+    const home = press({ key: 'Home' });
+    const enter = press({ key: 'Enter' });
 
-    expect(harness.escaped).toEqual(['Home', 'Enter']);
+    expect(harness.escaped).toEqual([]);
+    // Never `preventDefault`ed: the row's own handlers already ran on the way
+    // up, and native scrolling / browser shortcuts must survive.
+    expect(home.defaultPrevented).toBe(false);
+    expect(enter.defaultPrevented).toBe(false);
+  });
+
+  it.each(['Escape', 'Tab'])('still lets %s out from an inner control', (key) => {
+    harness = mount();
+    harness.row.focus();
+
+    // The two exemptions are unconditional on the event target: Escape
+    // dismisses the panel from anywhere inside it, Tab drives the focus trap.
+    press({ key });
+
+    expect(harness.escaped).toEqual([key]);
+  });
+
+  it('does not pass a passthrough key through from an inner control', () => {
+    harness = mount({ passthroughKeys: ['o'] });
+    harness.row.focus();
+
+    // The passthrough exemption is gated on `event.target === container`, so
+    // once focus has left the shell the key is an ordinary character again
+    // (here: forwarded into the filter). Otherwise typing a path starting
+    // with `o` into a panel field would close the panel.
+    const event = press({ key: 'o' });
+
+    expect(harness.escaped).toEqual([]);
+    expect(harness.input.value).toBe('o');
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('contains a passthrough key typed into the filter itself', () => {
+    harness = mount({ passthroughKeys: ['o'] });
+    harness.input.focus();
+
+    // Focus is on a typing surface: the browser types the character, and the
+    // key must not ALSO reach the global binding and close the panel.
+    const event = press({ key: 'o' });
+
+    expect(harness.escaped).toEqual([]);
+    expect(event.defaultPrevented).toBe(false);
   });
 
   it.each([{ ctrlKey: true }, { metaKey: true }, { altKey: true }])(
@@ -358,17 +401,22 @@ describe('installTypeToFilter', () => {
     expect(harness.input.value).toBe('');
   });
 
-  it('ignores a key an inner handler already consumed', () => {
+  it('contains — rather than releases — a key an inner handler already consumed', () => {
     harness = mount();
-    // A descendant (e.g. a listing row) claims the key first; the event then
-    // bubbles to the container already `defaultPrevented`.
+    // A descendant (e.g. a listing row's arrow navigation, which calls
+    // preventDefault WITHOUT stopPropagation) claims the key first; the event
+    // then bubbles to the container already `defaultPrevented`.
     harness.row.addEventListener('keydown', (e) => e.preventDefault());
     harness.row.focus();
 
     press({ key: 'b' });
+    press({ key: 'Home' });
 
+    // Not forwarded into the filter (the inner handler owns it)…
     expect(harness.input.value).toBe('');
     expect(document.activeElement).toBe(harness.row);
+    // …and not handed to the global bindings either.
+    expect(harness.escaped).toEqual([]);
   });
 
   it('forwards a key pressed while a non-typing descendant holds focus', () => {

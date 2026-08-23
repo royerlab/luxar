@@ -1291,14 +1291,19 @@ describe('DatasetBrowser', () => {
         expect(isTypingInInput(document.activeElement)).toBe(false);
       });
 
-      it('forwards the first printable keystroke into the manual path field', async () => {
-        await openManualEntry();
+      it('does NOT route type-to-filter into the manual path field', async () => {
+        const panel = await openManualEntry();
 
+        // `#manual-path` is a URL entry field, not a filter. Wiring it into
+        // the type-to-filter forwarder meant a path starting with the panel's
+        // own passthrough key (`output/scan.zarr`) closed the browser on its
+        // first character. The keystroke is contained by the modal instead;
+        // the user clicks or Tabs into the field to type a path.
         const event = press({ key: 'd' });
 
-        expect(document.activeElement).toBe(manualInput());
-        expect(manualInput().value).toBe('d');
-        expect(event.defaultPrevented).toBe(true);
+        expect(document.activeElement).toBe(panel);
+        expect(manualInput().value).toBe('');
+        expect(event.defaultPrevented).toBe(false);
       });
 
       it('still lets `O` reach the global binding', async () => {
@@ -1318,22 +1323,175 @@ describe('DatasetBrowser', () => {
           document.removeEventListener('keydown', listener);
         }
       });
-    });
 
-    it('passes keys through while the search bar is hidden (nothing to filter)', async () => {
-      // Empty directory → `setSearchVisible(false)`; there is no filter to
-      // forward into, so the key keeps its normal global meaning.
-      navigateMock.mockReset();
-      navigateMock.mockResolvedValue(defaultNavigateResult({ entries: [] }));
-      new DatasetBrowser({ container, onDatasetSelect, onClose });
-      await vi.waitFor(() => {
-        expect(container.querySelector('.luxar-dataset-browser__empty')).not.toBeNull();
+      it('a path typed into the focused field keeps `o` local and submits on Enter', async () => {
+        const seen: string[] = [];
+        const listener = (e: KeyboardEvent) => seen.push(e.key);
+        document.addEventListener('keydown', listener);
+        try {
+          await openManualEntry();
+          manualInput().focus();
+
+          // The browser types this one; it must NOT also reach the `O`
+          // binding and close the panel mid-path (that was the regression).
+          const typed = press({ key: 'o' });
+          expect(seen).toEqual([]);
+          expect(typed.defaultPrevented).toBe(false);
+
+          // Enter still submits the field's own form-ish handler.
+          manualInput().value = 'output/scan.zarr';
+          press({ key: 'Enter' });
+
+          expect(getFullUrlMock).toHaveBeenCalledWith('output/scan.zarr');
+          expect(onDatasetSelect).toHaveBeenCalledWith('http://example.com/output/scan.zarr');
+        } finally {
+          document.removeEventListener('keydown', listener);
+        }
       });
 
-      const event = press({ key: 'b' });
+      it('Escape from the focused path field still reaches the global handler', async () => {
+        const seen: string[] = [];
+        const listener = (e: KeyboardEvent) => seen.push(e.key);
+        document.addEventListener('keydown', listener);
+        try {
+          await openManualEntry();
+          manualInput().focus();
+
+          press({ key: 'Escape' });
+
+          // InputHandler's typing guard lets Escape through, and containment
+          // exempts it, so the panel-close flow still runs from this field.
+          expect(seen).toEqual(['Escape']);
+        } finally {
+          document.removeEventListener('keydown', listener);
+        }
+      });
+    });
+
+    it('contains a printable key while the search bar is hidden (nothing to filter)', async () => {
+      // Empty directory → `setSearchVisible(false)`. The search `<input>` is
+      // still in the DOM, so a resolver that skipped the visibility check
+      // would type into an invisible field. Nothing to filter, and the panel
+      // is still modal, so the key is contained rather than released to the
+      // scene behind it.
+      const seen: string[] = [];
+      const listener = (e: KeyboardEvent) => seen.push(e.key);
+      document.addEventListener('keydown', listener);
+      try {
+        navigateMock.mockReset();
+        navigateMock.mockResolvedValue(defaultNavigateResult({ entries: [] }));
+        new DatasetBrowser({ container, onDatasetSelect, onClose });
+        await vi.waitFor(() => {
+          expect(container.querySelector('.luxar-dataset-browser__empty')).not.toBeNull();
+        });
+        expect(searchInput()).not.toBeNull();
+
+        const event = press({ key: 'b' });
+
+        expect(event.defaultPrevented).toBe(false);
+        expect(searchInput().value).toBe('');
+        expect(seen).toEqual([]);
+      } finally {
+        document.removeEventListener('keydown', listener);
+      }
+    });
+
+    it('types into the search field only while the search bar is shown', async () => {
+      // The other half of the resolver's ordering: with the bar visible the
+      // same keystroke DOES land in the field (so the test above pins the
+      // visibility gate, not merely a broken resolver).
+      await openWithListing();
+      const bar = container.querySelector('#luxar-dataset-browser-search-bar') as HTMLElement;
+      expect(bar.style.display).toBe('');
+
+      press({ key: 'b' });
+      expect(searchInput().value).toBe('b');
+
+      // Hide the bar the way `setSearchVisible(false)` does and try again from
+      // the container: the resolver must now refuse.
+      bar.style.display = 'none';
+      (container.querySelector('#luxar-dataset-browser') as HTMLElement).focus();
+      const event = press({ key: 'z' });
 
       expect(event.defaultPrevented).toBe(false);
-      expect(searchInput().value).toBe('');
+      expect(searchInput().value).toBe('b');
+    });
+
+    describe('shortcuts the panel advertises reach the global bindings', () => {
+      /** Record every key that made it to a document-level listener. */
+      async function keysReachingGlobals(
+        open: () => Promise<void> | void,
+        keys: string[]
+      ): Promise<string[]> {
+        const seen: string[] = [];
+        const listener = (e: KeyboardEvent) => seen.push(e.key);
+        document.addEventListener('keydown', listener);
+        try {
+          await open();
+          for (const key of keys) press({ key });
+        } finally {
+          document.removeEventListener('keydown', listener);
+        }
+        return seen;
+      }
+
+      it('renders an `H Help` chip in the welcome banner', () => {
+        new DatasetBrowser({ container, onDatasetSelect, onClose });
+        const chip = container.querySelector('.luxar-dataset-browser__banner-kbd');
+        expect(chip?.textContent).toBe('H');
+        expect(container.querySelector('#luxar-dataset-browser-welcome')?.textContent).toContain(
+          'Help'
+        );
+      });
+
+      it('lets `H` and `O` out with a listing rendered', async () => {
+        const seen = await keysReachingGlobals(async () => {
+          await openWithListing();
+        }, ['h', 'o']);
+
+        expect(seen).toEqual(['h', 'o']);
+      });
+
+      it('lets `H` and `O` out in the empty-directory state (no filter mounted)', async () => {
+        const seen = await keysReachingGlobals(async () => {
+          navigateMock.mockReset();
+          navigateMock.mockResolvedValue(defaultNavigateResult({ entries: [] }));
+          new DatasetBrowser({ container, onDatasetSelect, onClose });
+          await vi.waitFor(() => {
+            expect(container.querySelector('.luxar-dataset-browser__empty')).not.toBeNull();
+          });
+        }, ['h', 'o']);
+
+        // This state has no filter and no `#manual-path`, and it persists for
+        // as long as the directory stays empty — the chip must not be dead.
+        expect(seen).toEqual(['h', 'o']);
+      });
+
+      it('lets `H` and `O` out while the directory is still loading', async () => {
+        const seen = await keysReachingGlobals(() => {
+          navigateMock.mockReset();
+          // Never resolves: a slow host can hold this state for tens of
+          // seconds (four sequential probe stages in DirectoryNavigator).
+          navigateMock.mockReturnValue(new Promise<never>(() => {}));
+          new DatasetBrowser({ container, onDatasetSelect, onClose });
+          expect(container.querySelector('.luxar-dataset-browser__loading')).not.toBeNull();
+        }, ['h', 'o']);
+
+        expect(seen).toEqual(['h', 'o']);
+      });
+
+      it('still contains every OTHER shortcut in those states', async () => {
+        const seen = await keysReachingGlobals(async () => {
+          navigateMock.mockReset();
+          navigateMock.mockResolvedValue(defaultNavigateResult({ entries: [] }));
+          new DatasetBrowser({ container, onDatasetSelect, onClose });
+          await vi.waitFor(() => {
+            expect(container.querySelector('.luxar-dataset-browser__empty')).not.toBeNull();
+          });
+        }, ['b', 'v', 'p', 'Home', 'End']);
+
+        expect(seen).toEqual([]);
+      });
     });
 
     it('close() releases the forwarder', async () => {

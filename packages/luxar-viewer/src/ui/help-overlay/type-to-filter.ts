@@ -24,20 +24,33 @@
  * pushes an `InputContext`, so with focus parked on a `tabindex="-1"`
  * container `Home`/`End` would jump the selected dimension, `Shift`+arrows
  * would change the animation speed, and arrows would steer the fly camera —
- * all while a modal is open. The container listener therefore stops any key
- * that originates AT THE CONTAINER ITSELF from propagating to the global
- * bindings, with three deliberate exceptions:
+ * all while a modal is open. The rule is therefore unconditional on focus:
+ *
+ * > **Every key that bubbles to the container is contained
+ * > (`stopPropagation`), EXCEPT `Escape`, `Tab`/`Shift+Tab`, and the panel's
+ * > declared `passthroughKeys` when the event originates at the container
+ * > itself.**
  *
  * - `Escape` — panel dismissal goes through the global handler.
  * - `Tab` — must reach the focus trap.
- * - the panel's own passthrough toggle key — the entire point of this module.
+ * - `passthroughKeys` — the keys the panel itself advertises (its own toggle
+ *   key, plus any shortcut chip it renders). Gated on
+ *   `event.target === container` so that typing one of them into the panel's
+ *   own filter/path field cannot close the panel.
  *
- * The gate is the event *target*, not the key: an event that originates at an
- * inner control (a listing row's `Enter`/arrow navigation, the filter's own
- * keydown) merely bubbles through the container and is left alone. Containment
- * is `stopPropagation` only, never `preventDefault`, so native in-panel
- * behaviour (scrolling the panel with `Home`/`PageDown`, browser-level
- * shortcuts) is untouched.
+ * Containment deliberately does NOT depend on the event target: a key
+ * bubbling up from a listing row, the filter, or a breadcrumb is contained
+ * too, otherwise one `Tab` (or one `ArrowDown` into the listing) would hand
+ * `Home`/`End`/`Shift`+arrows/fly arrows straight back to the scene behind the
+ * modal. Inner handlers are unaffected — they run first, on the way up; this
+ * listener only stops the event going *further*. A key an inner handler
+ * already consumed (`defaultPrevented`) is likewise contained rather than
+ * released to the globals.
+ *
+ * Containment is `stopPropagation` only, never `preventDefault`, so native
+ * behaviour survives: scrolling the panel with `Home`/`PageDown`, and every
+ * browser-level shortcut (`Ctrl+F`/`Ctrl+A`/`Ctrl+C`, `Cmd+W`, `F5`,
+ * `F1`–`F12`).
  *
  * ## The `h`-toggles vs `h`-filters conflict
  *
@@ -46,11 +59,13 @@
  * the panel — which is the bug this module exists to fix. The panel's own
  * toggle key is therefore listed in `passthroughKeys` and is *not* captured
  * as the first keystroke; it propagates to the global binding and toggles the
- * panel shut. Every other printable character starts filtering, and once the
- * filter has focus the toggle key types normally like any other letter (the
- * forwarder only ever looks at keys that arrive while focus is NOT on a
- * typing surface). Filtering is case-insensitive, so nothing is unreachable —
- * "help" is found by typing `elp` first, or by pressing any other key first.
+ * panel shut. Every other printable character starts filtering (whenever a
+ * filter is mounted), and once the filter has focus the toggle key types
+ * normally like any other letter — the forwarder only ever looks at keys that
+ * arrive while focus is NOT on a typing surface, and the passthrough
+ * exemption only applies while focus is on the container. Filtering is
+ * case-insensitive, so nothing is unreachable — "help" is found by typing
+ * `elp` first, or by pressing any other key first.
  */
 
 import { isTypingInInput } from '../../input/input-handler/commands/focus-utils';
@@ -65,11 +80,22 @@ const ALWAYS_GLOBAL_KEYS: ReadonlySet<string> = new Set(['Escape', 'Tab']);
 export interface TypeToFilterOptions {
   /**
    * Keys that must reach the global bindings instead of starting
-   * type-to-filter — in practice the panel's own toggle key (`h`, `o`).
+   * type-to-filter: everything this panel *advertises* while it is open — its
+   * own toggle key (`h`, `o`) plus any other shortcut chip it renders (the
+   * dataset browser's welcome banner shows an `H Help` chip, so it declares
+   * both `o` and `h`). Anything not listed here is contained by the modal, so
+   * a chip the panel draws but does not declare would be dead.
+   *
    * Matched case-insensitively so a CapsLock'd `H` still toggles, but only
    * while Shift is NOT held: the global lookup spells a shifted key
    * `"h+shift"`, which no binding registers, so `Shift`+the key is forwarded
    * into the filter like any other printable character.
+   *
+   * The exemption applies only to an event whose target IS the container —
+   * i.e. focus is still parked on the panel shell. Once focus has moved into
+   * a field or a row, these keys behave like any other character (typed into
+   * the filter if one is available, contained otherwise), so typing `o` into
+   * the dataset browser's path field cannot close it.
    */
   passthroughKeys?: readonly string[];
   /**
@@ -117,7 +143,11 @@ export interface TypeToFilterOptions {
  *   never handled twice,
  * - keys arriving while `resolveFilterInput()` returns `null` — a panel whose
  *   filter is currently hidden (the dataset browser hides its search bar
- *   while a directory is loading) has nothing to filter.
+ *   while loading, on an error, and in an empty directory) has nothing to
+ *   filter. Those keys are contained, not released: a modal must not let `b`
+ *   or `v` mutate the scene behind it just because its filter is away. The
+ *   keys the panel still advertises in that state must therefore be listed in
+ *   `passthroughKeys`.
  *
  * A keystroke that opens an IME composition (`isComposing`, or the legacy
  * `keyCode === 229` Safari/Chromium spelling) is a special case: the filter is
@@ -148,11 +178,14 @@ export function installTypeToFilter(
   container.focus({ preventScroll: true });
 
   const handleKeyDown = (event: KeyboardEvent): void => {
-    if (event.defaultPrevented) return;
+    // Escape (panel dismissal) and Tab (the focus trap) are exempt from
+    // containment no matter where they come from.
+    if (ALWAYS_GLOBAL_KEYS.has(event.key)) return;
 
-    // Only a key that originates AT the container means "focus is parked on
-    // the modal shell"; anything bubbling up from an inner control belongs to
-    // that control.
+    // `event.target === container` means "focus is still parked on the modal
+    // shell". It gates ONLY the passthrough exemption below — containment
+    // itself is target-independent, or one Tab into an inner control would
+    // reopen the whole scene behind the modal to global shortcuts.
     const atContainer = event.target === container;
     const typingSurface = isTypingInInput(event.target as Element | null);
 
@@ -162,6 +195,7 @@ export function installTypeToFilter(
     // composing against a non-editable container loses the character.
     if (event.isComposing || event.keyCode === 229) {
       if (!typingSurface) resolveFilterInput()?.focus({ preventScroll: true });
+      event.stopPropagation();
       return;
     }
 
@@ -171,41 +205,45 @@ export function installTypeToFilter(
     const isModified = (event.ctrlKey || event.metaKey || event.altKey) && !isAltGraph;
 
     if (!isModified) {
-      // Shift is deliberately excluded: `Shift+H` spells `"h+shift"` in the
-      // global lookup and matches no binding, so passing it through would
-      // make it a dead key.
-      if (!event.shiftKey && passthrough.has(event.key.toLowerCase())) return;
+      // A key the panel advertises, pressed while focus is on the panel shell:
+      // let it reach its global binding. Shift is deliberately excluded —
+      // `Shift+H` spells `"h+shift"` in the global lookup and matches no
+      // binding, so passing it through would make it a dead key.
+      if (atContainer && !event.shiftKey && passthrough.has(event.key.toLowerCase())) return;
 
-      if (atContainer && event.key === 'ArrowDown' && !event.shiftKey) {
-        const firstItem = options.resolveFirstItem?.() ?? null;
-        if (firstItem) {
-          event.preventDefault();
-          event.stopPropagation();
-          firstItem.focus();
-          return;
+      // An inner handler already claimed this key (a listing row's arrow
+      // navigation calls preventDefault without stopPropagation). Don't
+      // forward it — and don't release it either; fall through to containment.
+      if (!event.defaultPrevented) {
+        if (atContainer && event.key === 'ArrowDown' && !event.shiftKey) {
+          const firstItem = options.resolveFirstItem?.() ?? null;
+          if (firstItem) {
+            event.preventDefault();
+            event.stopPropagation();
+            firstItem.focus();
+            return;
+          }
         }
-      }
 
-      if (event.key.length === 1 && event.key !== ' ' && !typingSurface) {
-        const filterInput = resolveFilterInput();
-        if (filterInput) {
-          event.preventDefault();
-          event.stopPropagation();
-          filterInput.focus({ preventScroll: true });
-          // Append rather than replace: focus may have been parked on a row
-          // or the close button while the filter already held a query.
-          filterInput.value += event.key;
-          filterInput.dispatchEvent(new Event('input', { bubbles: true }));
-          return;
+        if (event.key.length === 1 && event.key !== ' ' && !typingSurface) {
+          const filterInput = resolveFilterInput();
+          if (filterInput) {
+            event.preventDefault();
+            event.stopPropagation();
+            filterInput.focus({ preventScroll: true });
+            // Append rather than replace: focus may have been parked on a row
+            // or the close button while the filter already held a query.
+            filterInput.value += event.key;
+            filterInput.dispatchEvent(new Event('input', { bubbles: true }));
+            return;
+          }
         }
       }
     }
 
     // Modal containment: nothing behind an `aria-modal` panel should hear a
-    // key the user aimed at the panel itself.
-    if (atContainer && !ALWAYS_GLOBAL_KEYS.has(event.key)) {
-      event.stopPropagation();
-    }
+    // key the user aimed at the panel — wherever inside the panel it landed.
+    event.stopPropagation();
   };
 
   container.addEventListener('keydown', handleKeyDown);

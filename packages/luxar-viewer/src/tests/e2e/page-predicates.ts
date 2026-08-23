@@ -3,10 +3,13 @@
  *
  * Playwright serializes the function source and evaluates it in the page, so
  * everything here must be self-contained: no imports, no closure variables,
- * no references to module scope. That is also why these are duplicates of
- * production helpers rather than imports of them — and why they get a parity
- * unit test (`src/tests/unit/tests/e2e-page-predicates.test.ts`) that asserts
- * they still agree with the production originals.
+ * no references to module scope. A free identifier here is not a compile
+ * error — it becomes a page-side `ReferenceError` visible only in a full
+ * Playwright run. That is also why these are duplicates of production helpers
+ * rather than imports of them — and why they get a unit test
+ * (`src/tests/unit/tests/e2e-typing-surface-parity.test.ts`) that asserts both
+ * that they still agree with the production originals and that they stay
+ * self-contained.
  *
  * @module tests/e2e/page-predicates
  */
