@@ -54,6 +54,43 @@ const SUM_MODES = ['additive', 'luminous', 'volumetric'] as const;
 /** Modes that use peak projection — effect C, not yet calibrated. */
 const PEAK_MODES = ['max', 'normal', 'opaque'] as const;
 
+/**
+ * sRGB code point (0…255) → linear channel value.
+ *
+ * The in-page measurement below carries its own copy — a `page.evaluate` body
+ * is serialised to the browser and cannot close over module scope — so this
+ * one exists purely to derive `COVERAGE_FLOOR` from the same transfer function
+ * instead of hardcoding a magic float.
+ */
+function toLinear(v: number): number {
+  const c = v / 255;
+  return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+}
+
+/**
+ * A crop pixel counts as COVERED above one sRGB code point (≈3.0e-4 linear).
+ *
+ * That is the smallest value an 8-bit screenshot can encode above black, so the
+ * predicate reads as "this pixel is not background" and says nothing about how
+ * bright the cell is — which is the point: it separates the geometric question
+ * (how much of the crop did this family fill?) from the photometric one.
+ */
+const COVERAGE_FLOOR = toLinear(1);
+
+/**
+ * What one cell crop reports.
+ *
+ * `mean` is coverage × value and is what the parity ratios have always used;
+ * on its own it cannot tell "the gsplat is dimmer" from "the gsplat covers
+ * fewer pixels". `peak` is value alone (blind to coverage) and `covered` is
+ * coverage alone (blind to value), so the three together decompose the ratio.
+ */
+interface CellMetrics {
+  mean: number;
+  peak: number;
+  covered: number;
+}
+
 /** Canvas-normalised cell centre, so the crop survives DPR and element offset. */
 interface Cell {
   cell: string;
@@ -132,21 +169,21 @@ async function setBlendingMode(page: Page, mode: string): Promise<void> {
 }
 
 /**
- * Mean LINEAR luminance in each cell crop of the current canvas.
+ * LINEAR-luminance metrics for each cell crop of the current canvas.
  *
  * Decoding happens IN-PAGE off a data URL (the pattern `samplePixelsAt` in
  * helpers.ts uses) so the suite needs no Node image decoder. Screenshots are
  * sRGB-encoded — linearising before averaging is what makes the ratios mean
  * anything.
  */
-async function cellLuminances(page: Page, centres: Cell[]): Promise<Map<string, number>> {
+async function cellLuminances(page: Page, centres: Cell[]): Promise<Map<string, CellMetrics>> {
   const canvas = page.locator('canvas').first();
   await canvas.waitFor({ state: 'visible' });
   const png = await canvas.screenshot({ animations: 'disabled' });
   const dataUrl = `data:image/png;base64,${png.toString('base64')}`;
 
   const measured = await page.evaluate(
-    async ({ url, cells, halfFrac }) => {
+    async ({ url, cells, halfFrac, floor }) => {
       const img = new Image();
       img.decoding = 'sync';
       const loaded = new Promise<void>((resolve, reject) => {
@@ -169,7 +206,7 @@ async function cellLuminances(page: Page, centres: Cell[]): Promise<Map<string, 
       };
 
       const half = Math.max(4, Math.round(halfFrac * off.height));
-      const out: Array<[string, number]> = [];
+      const out: Array<[string, { mean: number; peak: number; covered: number }]> = [];
       for (const cell of cells) {
         const cx = Math.round(cell.u * off.width);
         const cy = Math.round(cell.v * off.height);
@@ -179,31 +216,80 @@ async function cellLuminances(page: Page, centres: Cell[]): Promise<Map<string, 
         const h = Math.min(half * 2, off.height - y0);
         const { data } = ctx.getImageData(x0, y0, w, h);
         let sum = 0;
+        let peak = 0;
+        let lit = 0;
         for (let i = 0; i < data.length; i += 4) {
-          sum +=
+          const lum =
             0.2126 * toLinear(data[i]) +
             0.7152 * toLinear(data[i + 1]) +
             0.0722 * toLinear(data[i + 2]);
+          sum += lum;
+          if (lum > peak) peak = lum;
+          if (lum > floor) lit++;
         }
-        out.push([cell.cell, sum / (data.length / 4)]);
+        const n = data.length / 4;
+        out.push([cell.cell, { mean: sum / n, peak, covered: lit / n }]);
       }
       return out;
     },
-    { url: dataUrl, cells: centres, halfFrac: CROP_HALF_FRAC }
+    { url: dataUrl, cells: centres, halfFrac: CROP_HALF_FRAC, floor: COVERAGE_FLOOR }
   );
 
   return new Map(measured);
 }
 
-/** gsplat/points brightness ratio per radius for whatever mode is active. */
-async function parityRatios(page: Page, centres: Cell[]): Promise<number[]> {
+/** Both families' metrics for one radius, plus the two ratios they support. */
+interface ParityRow {
+  radius: number;
+  pts: CellMetrics;
+  gsp: CellMetrics;
+  meanRatio: number;
+  peakRatio: number;
+}
+
+/** Per-radius gsplat-vs-points measurement for whatever mode is active. */
+async function parityMetrics(page: Page, centres: Cell[]): Promise<ParityRow[]> {
   const lum = await cellLuminances(page, centres);
   return RADII.map((radius, i) => {
     const pts = lum.get(`pts_r${i}`)!;
     const gsp = lum.get(`gsp_r${i}`)!;
-    expect(pts, `points cell r=${radius} must render something`).toBeGreaterThan(1e-6);
-    return gsp / pts;
+    expect(pts.mean, `points cell r=${radius} must render something`).toBeGreaterThan(1e-6);
+    return { radius, pts, gsp, meanRatio: gsp.mean / pts.mean, peakRatio: gsp.peak / pts.peak };
   });
+}
+
+/** gsplat/points MEAN brightness ratio per radius — what the assertions use. */
+async function parityRatios(page: Page, centres: Cell[]): Promise<number[]> {
+  return (await parityMetrics(page, centres)).map((row) => row.meanRatio);
+}
+
+/**
+ * Dump the per-radius measurement so a failure is diagnosable from the CI log.
+ *
+ * A mean ratio alone cannot say WHY it moved: under `opaque` a gsplat quad
+ * stamps one depth for its whole footprint, so a cluster's faint tails can
+ * depth-reject the bright cores behind them — which shrinks coverage, not
+ * photometry. Printing mean/peak/covered side by side separates the two
+ * (issue #1929).
+ */
+function logMetricsTable(mode: string, rows: ParityRow[]): void {
+  // Mean and peak are small linear luminances, so they only read in exponential
+  // form; coverage and the ratios are O(1) and read better fixed.
+  const lum = (v: number): string => v.toExponential(3).padStart(9);
+  const frac = (v: number): string => v.toFixed(3).padStart(7);
+  console.log(`[lift-parity] ${mode}`);
+  console.log(
+    '[lift-parity]     r |  pts mean  pts peak pts cov |' +
+      '  gsp mean  gsp peak gsp cov |   mean×   peak×'
+  );
+  for (const row of rows) {
+    console.log(
+      `[lift-parity]  ${row.radius.toFixed(2).padStart(4)} |` +
+        ` ${lum(row.pts.mean)} ${lum(row.pts.peak)} ${frac(row.pts.covered)} |` +
+        ` ${lum(row.gsp.mean)} ${lum(row.gsp.peak)} ${frac(row.gsp.covered)} |` +
+        ` ${frac(row.meanRatio)} ${frac(row.peakRatio)}`
+    );
+  }
 }
 
 function expectParity(ratios: number[], mode: string, band = PARITY_TOLERANCE): void {
@@ -256,7 +342,12 @@ test.describe('Lifted-gsplat / Points parity', () => {
     test(`${mode}: a lifted gsplat renders like the point it came from`, async ({ page }) => {
       const centres = await cellCentres(page);
       await setBlendingMode(page, mode);
-      expectParity(await parityRatios(page, centres), mode);
+      const rows = await parityMetrics(page, centres);
+      logMetricsTable(mode, rows);
+      expectParity(
+        rows.map((row) => row.meanRatio),
+        mode
+      );
     });
   }
 
@@ -264,7 +355,9 @@ test.describe('Lifted-gsplat / Points parity', () => {
     test(`${mode}: lifted gsplat shows the known effect-C divergence`, async ({ page }) => {
       const centres = await cellCentres(page);
       await setBlendingMode(page, mode);
-      const ratios = await parityRatios(page, centres);
+      const rows = await parityMetrics(page, centres);
+      logMetricsTable(mode, rows);
+      const ratios = rows.map((row) => row.meanRatio);
       // Effect C (peak-vs-sum lift calibration) is OPEN: under peak projection
       // the lifted gsplat reports a raw a_lift = opacity/(uRIF·σ) that diverges
       // as 1/σ — the gsplat renders ~12× brighter than its point at R=0.05 and
@@ -272,7 +365,7 @@ test.describe('Lifted-gsplat / Points parity', () => {
       // radii rather than marking the whole test `test.fail()`: an unconditional
       // test.fail() silently accepts a blank render, a shader-compile error, or a
       // no-op mode switch (all of which would otherwise leave the ratio ≈ 1) as
-      // the "expected" failure. `parityRatios` already fails loudly if either
+      // the "expected" failure. `parityMetrics` already fails loudly if either
       // family renders nothing. When effect C lands these ratios collapse to ≈ 1
       // and this assertion fails — delete it then and fold the mode into the
       // SUM_MODES loop.
