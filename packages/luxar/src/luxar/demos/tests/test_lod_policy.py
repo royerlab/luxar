@@ -63,6 +63,13 @@ _CHOOSES_OUTSIDE_THE_POLICY = {
         "that result; its two bare .save() calls are the per-timepoint refit cache "
         "and that already-laddered crop"
     ),
+    "demo_gsplats_4d_zebrafish_timelapse.py": (
+        "same shape as its cell-tracking sibling: build_lod() asks build_recipe "
+        "for 'levels' with time as a hard coarsening barrier "
+        "(coarsen_dims=(0, 1, 2)) and the 4D archive it ships is that result; its "
+        "two bare .save() calls are the per-timepoint fit cache, which is scratch "
+        "consumed by the stack, and that already-laddered archive"
+    ),
 }
 
 #: Fitting demos not yet routed through the policy. SHRINKS to empty.
@@ -82,7 +89,6 @@ _NOT_YET_ROUTED = {
     "demo_gsplats_3d_tng_cosmic_web.py",
     "demo_gsplats_3d_tribolium_embryo.py",
     "demo_gsplats_4d_celegans_tracking.py",
-    "demo_gsplats_4d_zebrafish_timelapse.py",
 }
 
 
