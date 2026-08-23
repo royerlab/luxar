@@ -184,10 +184,21 @@ describe('InputHandler — dimension selection feedback', () => {
     }
   });
 
-  it('toasts the available navigable keys and leaves the current selection unchanged', () => {
-    const managerState = sceneDimsManager as unknown as { dims: SimpleDims | null };
+  it('toasts when keyboard navigation is already at a non-cyclic bound', () => {
+    const managerState = sceneDimsManager as unknown as {
+      dims: SimpleDims | null;
+      dimensionRanges: Array<[number, number]> | null;
+    };
     const previousDims = managerState.dims;
-    managerState.dims = dims;
+    const previousRanges = managerState.dimensionRanges;
+    managerState.dims = { ...dims, currentStep: [0, 0, 0, 15, 0] };
+    managerState.dimensionRanges = [
+      [0, 0],
+      [0, 0],
+      [0, 0],
+      [0, 15],
+      [0, 2],
+    ];
     const showToast = vi.fn();
     setNotifierBackend({
       showError: vi.fn(),
@@ -199,20 +210,17 @@ describe('InputHandler — dimension selection feedback', () => {
       clearError: vi.fn(),
     });
     const handler = makeHandler();
-    (handler as unknown as { selectedDimension: number }).selectedDimension = 0;
 
     try {
-      (handler as unknown as { selectDimension(index: number): void }).selectDimension(4);
-
-      expect((handler as unknown as { selectedDimension: number }).selectedDimension).toBe(0);
-      expect(showToast).toHaveBeenCalledWith(
-        'Dimension key 5 is unavailable. Use 1 for Frame or 2 for Channel.',
-        2000
-      );
+      (
+        handler as unknown as { handleDimensionNavigation(direction: -1 | 1): void }
+      ).handleDimensionNavigation(1);
+      expect(showToast).toHaveBeenCalledWith('Frame is already at its maximum (15).', 2000);
     } finally {
       clearNotifierBackend();
       handler.dispose();
       managerState.dims = previousDims;
+      managerState.dimensionRanges = previousRanges;
     }
   });
 });

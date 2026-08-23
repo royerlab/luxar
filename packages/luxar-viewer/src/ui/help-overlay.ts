@@ -100,7 +100,7 @@ const HELP_SECTIONS: HelpSection[] = [
     entries: [
       {
         keys: ['1 – 9'],
-        label: 'Select a non-displayed dimension (1 = first slider)',
+        label: 'Select a non-displayed dimension (panel header shows target)',
       },
       { keys: ['[', ']'], label: 'Step along the selected dimension' },
       { keys: ['Wheel'], label: 'On a slider: step (⇧ fine, ⌃ coarse, ⌃⇧ extra-fine)' },

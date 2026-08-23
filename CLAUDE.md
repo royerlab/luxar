@@ -1318,7 +1318,7 @@ Support: nm, um, mm, cm, m, meter, metre, km, inch, foot, px, au
 - Step sizes used for keyboard navigation in viewer
 
 ### nD Navigation
-- Keyboard: 1-9 selects dimension, `[`/`]` navigates
+- Keyboard: 1-9 selects a non-displayed dimension, `[`/`]` navigates
 - Radius-based slicing: geometry visible based on nD hypersphere intersection
 
 ---

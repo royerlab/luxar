@@ -80,8 +80,7 @@ describe('computeDimensionStep', () => {
     expect(result!.targetDim).toBe(4); // second navigable = Channel
   });
 
-  it('clamps selectedDimension to navigable range', () => {
-    // selectedDimension = 99, but only 2 navigable dims → should target the last (index 1 → dim 4)
+  it('fails closed when selectedDimension is past the navigable range', () => {
     const dims = makeDims({ currentStep: [0, 0, 0, 5, 5] });
     const ranges: ReadonlyArray<readonly [number, number]> = [
       [0, 10],
@@ -91,7 +90,7 @@ describe('computeDimensionStep', () => {
       [0, 100],
     ];
     const result = computeDimensionStep(1, 99, dims, ranges);
-    expect(result!.targetDim).toBe(4);
+    expect(result).toBeNull();
   });
 
   it('reports changed=false when at the maximum and direction is +1 (clamped to range)', () => {

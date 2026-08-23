@@ -55,9 +55,8 @@ test.describe('nD Navigation - Dimension Selection', () => {
     await expect(status).toContainText('[/]: 2 · Channel');
 
     await page.keyboard.press('5');
-    await expect(page.locator('#luxar-toast')).toHaveText(
-      'Dimension key 5 is unavailable. Use 1 for W or 2 for Channel.'
-    );
+    await expect(page.locator('#luxar-toast')).toContainText('1 for W');
+    await expect(page.locator('#luxar-toast')).toContainText('2 for Channel');
     await expect(status).toContainText('[/]: 2 · Channel');
   });
 

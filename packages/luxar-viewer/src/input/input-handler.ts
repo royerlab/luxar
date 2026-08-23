@@ -52,7 +52,7 @@ import {
   computeDimensionStep,
   resolveSelectedDimension,
 } from './input-handler/dimension-navigation/compute-step';
-import { getNonDisplayedDimensions } from './input-handler/dimension-navigation/selection';
+import { describeNavigableKeys } from './input-handler/dimension-navigation/selection';
 import { PanelCoordinator } from './input-handler/commands/panel-coordinator';
 import { WindowEventHandler } from './input-handler/window-events/window-event-handler';
 import { registerAllKeyBindings } from './input-handler/key-bindings/register-all';
@@ -859,17 +859,32 @@ export class InputHandler {
    * @private
    */
   private handleDimensionNavigation(direction: -1 | 1): void {
+    const dims = sceneDimsManager.getDims();
+    const ranges = sceneDimsManager.getDimensionRanges();
     const step = computeDimensionStep(
       direction,
       this.selectedDimension,
-      sceneDimsManager.getDims(),
-      sceneDimsManager.getDimensionRanges(),
+      dims,
+      ranges,
       // The animation menu's per-dimension Step override also drives [ / ]
       // (user decision: one quantum for animation + keyboard; the slider
       // wheel/drag deliberately stay on the dimension's own base step).
       (d) => this.animationManager?.getStepSize(d) ?? null
     );
-    if (!step || !step.changed) return;
+    if (!step) return;
+    if (!step.changed) {
+      const range = ranges?.[step.targetDim];
+      const bound = range?.[direction > 0 ? 1 : 0];
+      const current = dims?.currentStep[step.targetDim];
+      const isCyclic = dims?.metadata?.[step.targetDim]?.cyclic || false;
+      if (!isCyclic && bound !== undefined && current === bound) {
+        const name =
+          sceneDimsManager.getDimensionNames()[step.targetDim] || `Dim ${step.targetDim}`;
+        const edge = direction > 0 ? 'maximum' : 'minimum';
+        notifier.toast(`${name} is already at its ${edge} (${bound}).`);
+      }
+      return;
+    }
 
     sceneDimsManager.setDimensionValue(step.targetDim, step.newValue);
     this.animationController.startAnimation();
@@ -892,34 +907,13 @@ export class InputHandler {
       this.selectedDimension = result.selectedDimension;
       this.dimensionSliders?.setSelectedDimension(result.selectedDimension);
     } else if ('navigableCount' in result) {
-      const message = this.dimensionSelectionError(index, dims);
+      const message = describeNavigableKeys(index, dims, sceneDimsManager.getDimensionNames());
       log.info(
         Modules.INPUT,
         `Dimension ${index + 1} not available (only ${result.navigableCount} non-displayed dimensions)`
       );
       notifier.toast(message);
     }
-  }
-
-  private dimensionSelectionError(
-    index: number,
-    dims: ReturnType<typeof sceneDimsManager.getDims>
-  ): string {
-    const prefix = `Dimension key ${index + 1} is unavailable.`;
-    if (!dims) return `${prefix} No scene dimensions are loaded.`;
-
-    const navigable = getNonDisplayedDimensions(dims);
-    if (navigable.length === 0) return `${prefix} This scene has no non-displayed dimensions.`;
-
-    const options = navigable.map((dimIndex, keyIndex) => {
-      const name = dims.metadata?.[dimIndex]?.name ?? `dimension ${dimIndex + 1}`;
-      return `${keyIndex + 1} for ${name}`;
-    });
-    const available =
-      options.length === 1
-        ? options[0]
-        : `${options.slice(0, -1).join(', ')} or ${options[options.length - 1]}`;
-    return `${prefix} Use ${available}.`;
   }
 
   /**

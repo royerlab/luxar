@@ -1,6 +1,7 @@
 import { SimpleDims } from '../types/dims';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
 import { calculateStepSize } from '../input/input-handler/dimension-navigation/step-math';
+import { getNonDisplayedDimensions } from '../input/input-handler/dimension-navigation/selection';
 import { getViewerContainer } from '../utils/viewer-container';
 import type { DimensionAnimationManager } from '../scene/animation/dimension-animation-manager';
 import { config } from '../config';
@@ -966,13 +967,13 @@ export class DimensionSliders {
   public updateStatusBar(): void {
     const parts: string[] = [];
 
-    const navigableDims = Array.from({ length: this.dims.ndim }, (_, index) => index).filter(
-      (index) => !this.dims.displayed.includes(index)
-    );
+    const navigableDims = getNonDisplayedDimensions(this.dims);
     const selectedDim = navigableDims[this.selectedDimension];
     if (selectedDim !== undefined) {
       const selectedName = this.dimensionNames[selectedDim] || `Dim ${selectedDim}`;
       parts.push(`[/]: ${this.selectedDimension + 1} · ${selectedName}`);
+    } else {
+      parts.push('[/]: unavailable');
     }
 
     // Show which dimensions are currently displayed in 3D

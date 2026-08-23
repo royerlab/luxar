@@ -82,6 +82,16 @@ describe('DimensionSliders - keyboard selection indicator', () => {
     expect(status?.textContent).toContain('[/]: 2 · Channel');
     sliders.dispose();
   });
+
+  it('shows an unavailable target instead of silently naming another dimension', () => {
+    const sliders = buildSliders();
+    const status = document.querySelector('.luxar-dimension-sliders__status');
+
+    sliders.setSelectedDimension(9);
+    expect(status?.textContent).toContain('[/]: unavailable');
+    expect(status?.textContent).not.toContain('[/]: 10 · Channel');
+    sliders.dispose();
+  });
 });
 
 // ui.md O1 / Phase E39: previously named "Memory Leak Prevention" — a
