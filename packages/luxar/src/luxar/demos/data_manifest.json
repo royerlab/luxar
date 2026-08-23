@@ -404,8 +404,8 @@
       "files": [
         {
           "name": "zebrafish_4d.gsplats.zarr.zip",
-          "sha256": "79e9d34948673095aa7ddd7715652b15e5ea02f99955f53a8b0ec2d718e1fec3",
-          "bytes": 22359702
+          "sha256": "ec8d80d14d0216b9743f93ae1eb2aaca12fcbf79ed38e19db3bccc63dedc8a53",
+          "bytes": 22348280
         }
       ]
     },
