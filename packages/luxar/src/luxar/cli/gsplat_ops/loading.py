@@ -22,9 +22,10 @@ def load_matrix_gsplats(
     node, stats = load_gsplat_node(path, include_stats=include_stats)
     if not is_matrix_shaped(node):
         aprint(
-            f"❌ Error: `luxar gsplat {command}` requires a matrix-shaped input "
-            "and does not preserve partition/nested-tree topology. Run "
-            "`luxar gsplat flatten` first."
+            f"❌ Error: {path.name}: 'luxar gsplat {command}' needs a flat "
+            "(matrix-shaped) store and cannot preserve partition/nested-tree "
+            f"topology. Collapse it first with 'luxar gsplat flatten {path.name} "
+            "flat.gsplats.zarr'."
         )
         raise typer.Exit(1)
     return GSplatData.from_tree(node, stats=stats)

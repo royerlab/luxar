@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -90,12 +92,18 @@ def test_render_partition_matches_sum_of_default_leaves(tmp_path: Path) -> None:
 
 
 def test_default_partition_load_retains_requested_root_stats(tmp_path: Path) -> None:
+    from luxar.gsplats.gsplat_data import GSplatData
     from luxar.gsplats.io import load_default_gsplats
+    from luxar.gsplats.io.load_gsplats import load_gsplat_node
 
     partition_path, _, _ = _write_inputs(tmp_path)
 
+    node, stats = load_gsplat_node(partition_path, include_stats=True)
+    selected = GSplatData.from_default_selection(node, stats=stats)
     data = load_default_gsplats(partition_path, include_stats=True)
 
+    assert selected.n_splats == 6
+    assert selected.stats["image_min"] == 600.0
     assert data.n_splats == 6
     assert data.n_substitutive == 1
     assert data.n_additive_sublods == 1
@@ -111,6 +119,7 @@ def test_default_partition_load_retains_requested_root_stats(tmp_path: Path) -> 
         ("slice", "slice"),
         ("decimate", "decimate"),
         ("merge", "merge"),
+        ("partition", "partition"),
     ],
 )
 def test_matrix_rewrite_commands_reject_partition_without_traceback(
@@ -119,7 +128,7 @@ def test_matrix_rewrite_commands_reject_partition_without_traceback(
     command_name: str,
 ) -> None:
     partition_path, flat_path, target_path = _write_inputs(tmp_path)
-    output_path = tmp_path / f"{case}.gsplats.zarr"
+    output_path = tmp_path / f"{case}-output.gsplats.zarr"
 
     args = {
         "cull": [
@@ -171,17 +180,58 @@ def test_matrix_rewrite_commands_reject_partition_without_traceback(
             "--output",
             str(output_path),
         ],
+        "partition": [
+            "gsplat",
+            "partition",
+            str(partition_path),
+            str(output_path),
+            "--max-elements",
+            "3",
+        ],
     }[case]
 
     result = CliRunner().invoke(app, args)
     combined_output = result.output + (result.stderr or "")
 
     assert result.exit_code == 1
+    assert f"{partition_path.name}: 'luxar gsplat {command_name}'" in combined_output
+    assert "needs a flat (matrix-shaped) store" in combined_output
     assert (
-        f"`luxar gsplat {command_name}` requires a matrix-shaped input"
+        f"'luxar gsplat flatten {partition_path.name} flat.gsplats.zarr'"
         in combined_output
     )
-    assert "`luxar gsplat flatten` first" in combined_output
     assert "not matrix-shaped" not in combined_output
     assert "Traceback" not in combined_output
     assert not output_path.exists()
+
+
+def test_napari_partition_uses_default_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    partition_path, _, _ = _write_inputs(tmp_path)
+    added: dict[str, np.ndarray] = {}
+
+    class Viewer:
+        def __init__(self, *, title: str) -> None:
+            assert title == f"GSplats: {partition_path.name}"
+
+        def add_image(self, volume: np.ndarray, **_: object) -> None:
+            added["volume"] = volume
+
+        def add_points(self, centers: np.ndarray, **_: object) -> None:
+            added["centers"] = centers
+
+    monkeypatch.setitem(
+        sys.modules,
+        "napari",
+        SimpleNamespace(Viewer=Viewer, run=lambda: None),
+    )
+
+    result = CliRunner().invoke(app, ["gsplat", "napari", str(partition_path)])
+    combined_output = result.output + (result.stderr or "")
+
+    assert result.exit_code == 0, combined_output
+    assert added["centers"].shape == (6, 3)
+    assert added["volume"].max() > 0
+    assert "Loaded 6 splats (3D)" in combined_output
+    assert "Traceback" not in combined_output
