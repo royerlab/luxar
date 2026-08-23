@@ -35,7 +35,6 @@ no generated scenes is a read-only no-op, matching ``check-demo-ladders``.
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 from typing import Iterable, Optional
@@ -43,40 +42,8 @@ from typing import Iterable, Optional
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO_ROOT / "packages" / "luxar" / "src"))
 
+from luxar._zarr_compat import read_node_attrs  # noqa: E402
 from luxar.demos.registry import iter_demos  # noqa: E402
-
-#: Metadata documents in both on-disk layouts. Format 2 has no ``zarr.json``;
-#: format 3 has no ``.zattrs``. Probing for the wrong one reports a perfectly
-#: good store as unreadable.
-_V3_DOC = "zarr.json"
-_V2_CONSOLIDATED = ".zmetadata"
-_V2_ATTRS = ".zattrs"
-
-
-def read_root_attrs(store: Path) -> Optional[dict]:
-    """Root attributes of a store, whichever zarr layout it uses."""
-    v3 = store / _V3_DOC
-    if v3.is_file():
-        try:
-            doc: dict = json.loads(v3.read_text())
-        except (OSError, ValueError):
-            return None
-        return dict(doc.get("attributes", {}))
-    consolidated = store / _V2_CONSOLIDATED
-    if consolidated.is_file():
-        try:
-            meta: dict = json.loads(consolidated.read_text())["metadata"]
-        except (OSError, ValueError, KeyError):
-            return None
-        return dict(meta.get(_V2_ATTRS, {}))
-    attrs = store / _V2_ATTRS
-    if attrs.is_file():
-        try:
-            loose: dict = json.loads(attrs.read_text())
-        except (OSError, ValueError):
-            return None
-        return dict(loose)
-    return None
 
 
 def compare(store: Path, declared: Optional[dict]) -> Optional[str]:
@@ -85,7 +52,7 @@ def compare(store: Path, declared: Optional[dict]) -> Optional[str]:
     ``declared`` is the demo's ``DEMO_META["citation"]``, or ``None`` for a
     procedurally generated demo that owes no credit.
     """
-    attrs = read_root_attrs(store)
+    attrs = read_node_attrs(store)
     if attrs is None:
         return "no readable root metadata (neither zarr.json nor .zmetadata/.zattrs)"
     carried = attrs.get("citation")

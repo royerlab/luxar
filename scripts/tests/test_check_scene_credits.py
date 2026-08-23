@@ -24,7 +24,7 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO_ROOT / "scripts"))
 
-from check_scene_credits import compare, main, read_root_attrs  # noqa: E402
+from check_scene_credits import compare, main  # noqa: E402
 
 CITED = {
     "short": "Tully et al. 2023 (Cosmicflows-4)",
@@ -45,9 +45,7 @@ def _v2_store(root: Path, name: str, attrs: dict) -> Path:
     store = root / f"{name}.luxar.zarr"
     store.mkdir(parents=True)
     (store / ".zgroup").write_text(json.dumps({"zarr_format": 2}))
-    (store / ".zmetadata").write_text(
-        json.dumps({"zarr_consolidated_format": 1, "metadata": {".zattrs": attrs}})
-    )
+    (store / ".zattrs").write_text(json.dumps(attrs))
     return store
 
 
@@ -91,12 +89,12 @@ def test_unreadable_store_is_reported_not_skipped(tmp_path: Path) -> None:
     assert "no readable root metadata" in (compare(store, CITED) or "")
 
 
-def test_read_root_attrs_prefers_the_layout_present(tmp_path: Path) -> None:
-    """A v2 store has no zarr.json; probing for it must not mask the real attrs."""
-    v2 = _v2_store(tmp_path / "a", "legacy", {"citation": CITED})
-    assert read_root_attrs(v2) == {"citation": CITED}
-    v3 = _v3_store(tmp_path / "b", "modern", {"citation": CITED})
-    assert read_root_attrs(v3) == {"citation": CITED}
+def test_stale_consolidated_attrs_do_not_override_live_v2_attrs(tmp_path: Path) -> None:
+    store = _v2_store(tmp_path, "legacy", {"citation": CITED})
+    (store / ".zmetadata").write_text(
+        json.dumps({"zarr_consolidated_format": 1, "metadata": {".zattrs": {}}})
+    )
+    assert compare(store, CITED) is None
 
 
 def test_no_built_scenes_is_a_clean_no_op(tmp_path: Path, capsys) -> None:
