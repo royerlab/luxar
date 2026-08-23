@@ -347,7 +347,7 @@ class TestStreamingPcaReduction:
         cache = tmp_path / "cache"
         basis_path = cache / "pca8_basis.npz"
 
-        def interrupted_savez(destination, **arrays) -> None:
+        def interrupted_savez(destination, **_arrays) -> None:
             if hasattr(destination, "write"):
                 destination.write(b"partial")
             else:

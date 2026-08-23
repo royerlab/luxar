@@ -456,8 +456,8 @@ def build_pca_matrix(
 
     The raw matrix is never materialized — at full scale it is 40 GB — and peak
     RSS is bounded by the fit subsample (3.7 GB). The result is cached under
-    ``cache_dir`` keyed on ``pca_dim`` only, so later projections do not re-read
-    the 3072-D vectors. The caller still reads ``papers.csv`` from the ZIP.
+    ``cache_dir`` keyed on ``pca_dim`` only, so later UMAP runs do not re-read the
+    3072-D vectors. The caller still reads ``papers.csv`` from the ZIP.
 
     Args:
         zip_path: The embeddings ZIP.
@@ -508,6 +508,7 @@ def build_pca_matrix(
             evr = float(pca.explained_variance_ratio_.sum())
             aprint(f"✓ PCA fitted on {filled:,} rows — explains {evr:.1%} of variance")
 
+            # Use a handle: np.savez would append ".npz" to the temp path.
             with basis_tmp_path.open("wb") as basis_file:
                 np.savez(
                     basis_file,
