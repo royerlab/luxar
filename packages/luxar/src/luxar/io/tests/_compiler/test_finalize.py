@@ -452,6 +452,10 @@ def test_payload_terms_are_prefix_free(tmp_path: Path) -> None:
         # the walk really does meet such a name; encoding it must not raise, and
         # the store's own UnicodeEncodeError is a ValueError.
         ("im\ud800age.png", 3, b"unreadable:"),
+        # Absent by the case-exact listing: these names would otherwise resolve
+        # onto zarr's own metadata document on a case-insensitive filesystem.
+        ("Zarr.json", 3, b"absent:"),
+        (".ZAttrs", 2, b"absent:"),
     ],
 )
 def test_compute_content_hashes_tolerates_unreadable_payload_names(
@@ -461,10 +465,11 @@ def test_compute_content_hashes_tolerates_unreadable_payload_names(
 
     Pins only what the payload step owns: no raise (one escaping would reach
     ``finalize()``, which stamps the store ``incomplete``), a convergent digest,
-    and which of the two sentinels was folded — ``unsafe:`` for a name refused
-    semantically, ``unreadable:`` for the store's own verdict. That a change to
-    the *name* moves the hash comes from step 2, which hashes the attrs JSON, not
-    from here — do not read this test as covering it.
+    and which of the three sentinels was folded — ``unsafe:`` for a name refused
+    semantically, ``unreadable:`` for the store's own verdict, or ``absent:``
+    when the case-exact listing does not contain a metadata-colliding name. That
+    a change to the *name* moves the hash comes from step 2, which hashes the
+    attrs JSON, not from here — do not read this test as covering it.
     """
     root = _overlay_image_store(
         tmp_path / "scene", None, filename=filename, zarr_format=zarr_format
