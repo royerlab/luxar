@@ -23,6 +23,28 @@ class CompositionMixin(_GSplatDataOps):
     """Merge / partition / embed — the multi-dataset composition family."""
 
     @classmethod
+    def from_default_selection(
+        cls,
+        node: "GSplatNode",
+        *,
+        stats: Optional[Dict[str, Any]] = None,
+    ) -> "GSplatData":
+        """Materialize the tree selection rendered by default.
+
+        Matrix-shaped nodes are preserved verbatim. Nested trees become one
+        flat dataset containing every partition part and only each LOD group's
+        default (finest) child.
+        """
+        from luxar.gsplats.tree import is_matrix_shaped, iter_default_leaves
+
+        if is_matrix_shaped(node):
+            return cls.from_tree(node, stats=stats)
+
+        parts = [cls.from_tree(leaf).flattened() for leaf in iter_default_leaves(node)]
+        flat = cls.concatenate(parts)
+        return cls.from_additive_sublods(list(flat.additive_sublods), stats=stats)
+
+    @classmethod
     def concatenate(cls, datasets: list["GSplatData"]) -> "GSplatData":
         """Concatenate multiple GSplatData objects into one.
 

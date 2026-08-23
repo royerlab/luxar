@@ -674,25 +674,21 @@ def _print_quality_comparison(
     aprint("=" * 50)
 
 
-def _load_gsplats_for_comparison(path: Path) -> "GSplatData":
+def _load_gsplats_for_comparison(path: Path) -> tuple["GSplatData", int, int]:
     """Materialize the tree selection that the renderer shows by default.
 
     Root stats come along on both paths so the caller can resolve the
-    normalization basis (#1173).
+    normalization basis (#1173). They remain unscrubbed because this temporary
+    flat dataset is never persisted.
     """
     from luxar.gsplats.gsplat_data import GSplatData
     from luxar.gsplats.io.load_gsplats import load_gsplat_node
-    from luxar.gsplats.tree import is_matrix_shaped, iter_default_leaves
+    from luxar.gsplats.tree import iter_default_leaves, total_splats
 
     node, stats = load_gsplat_node(path, include_stats=True)
-    if is_matrix_shaped(node):
-        return GSplatData.from_tree(node, stats=stats)
-
-    parts = [
-        GSplatData.from_tree(leaf).flattened() for leaf in iter_default_leaves(node)
-    ]
-    flat = GSplatData.concatenate(parts)
-    return GSplatData.from_additive_sublods(list(flat.additive_sublods), stats=stats)
+    n_leaves = sum(1 for _ in iter_default_leaves(node))
+    data = GSplatData.from_default_selection(node, stats=stats)
+    return data, n_leaves, total_splats(node)
 
 
 def _validate_image_min_override(image_min: Optional[float]) -> None:
@@ -805,10 +801,18 @@ def compare_quality(
                 # background-relative and the reference is raw, and without the
                 # stored `image_min` the two cannot be reconciled (#1173). This
                 # is metadata only — no extra array decode.
-                data = _load_gsplats_for_comparison(gsplats_path)
+                data, n_leaves, n_stored_splats = _load_gsplats_for_comparison(
+                    gsplats_path
+                )
                 n_splats = data.n_splats
                 ndim = data.ndim
                 aprint(f"Loaded {n_splats:,} splats ({ndim}D)")
+                aprint(f"Materialized {n_leaves:,} default-rendered leaf/leaves")
+                if n_stored_splats > n_splats:
+                    aprint(
+                        f"Skipped {n_stored_splats - n_splats:,} splats in coarse "
+                        "LOD levels; compression ratio covers the whole store"
+                    )
 
             # Resolve truncation radius from dataset if not explicitly set
             if truncate is None:
