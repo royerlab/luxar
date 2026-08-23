@@ -655,7 +655,7 @@ export class GSplatMaterial
     //     so this is exactly the linear One + One sum (TSL relied on
     //     this equivalence all along; parity is pixel-exact).
     //   max → CustomBlending + MaxEquation + One/One.
-    //   opaque → NormalBlending + depth write.
+    //   opaque → CustomBlending alpha-over + depth write.
     // The historical GLSL-only CustomBlending dance with a SEPARATE
     // alpha-channel MaxEquation guard is gone: its only remaining
     // purpose was keeping accumulated alpha finite for the
