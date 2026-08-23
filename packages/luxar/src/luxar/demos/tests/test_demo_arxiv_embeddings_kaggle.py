@@ -204,6 +204,20 @@ class TestParseArgs:
         with pytest.raises(ValueError, match="device must be one of"):
             demo.parse_args(["--device=tpu"])
 
+    @pytest.mark.parametrize("sample", [0, -5])
+    def test_non_positive_sample_is_rejected_before_data_loading(
+        self, sample: int
+    ) -> None:
+        with pytest.raises(ValueError, match="sample must be positive"):
+            demo.parse_args([f"--sample={sample}"])
+
+    @pytest.mark.parametrize("pca_dim", [0, demo.EMBEDDING_DIM + 1])
+    def test_pca_dim_outside_embedding_width_is_rejected_before_data_loading(
+        self, pca_dim: int
+    ) -> None:
+        with pytest.raises(ValueError, match="pca-dim must be between"):
+            demo.parse_args([f"--pca-dim={pca_dim}"])
+
 
 class TestResolvePaperMetadata:
     """arXiv rows come from Cornell; preprint-server rows describe themselves."""

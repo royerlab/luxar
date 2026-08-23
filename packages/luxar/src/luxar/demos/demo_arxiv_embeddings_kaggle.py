@@ -1177,6 +1177,12 @@ def parse_args(argv: list[str]) -> tuple[int | None, int, str, int]:
 
     if device not in ("auto", "cpu", "gpu"):
         raise ValueError(f"device must be one of auto/cpu/gpu, got {device!r}")
+    if sample_size is not None and sample_size < 1:
+        raise ValueError(f"sample must be positive or 'all', got {sample_size}")
+    if not 1 <= pca_dim <= EMBEDDING_DIM:
+        raise ValueError(
+            f"pca-dim must be between 1 and {EMBEDDING_DIM}, got {pca_dim}"
+        )
 
     return sample_size, pca_dim, device, seed
 
