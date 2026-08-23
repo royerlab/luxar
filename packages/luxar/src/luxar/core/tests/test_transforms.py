@@ -796,7 +796,7 @@ class TestTransformBoundingBox:
         assert lo.tolist() == [-1, -1, -1]
         assert hi.tolist() == [0, 0, 0]
 
-    def test_all_degenerate_corners_fall_back_to_input_box(self) -> None:
+    def test_all_degenerate_corners_fall_back_to_input_box(self, capsys) -> None:
         matrix = np.array(
             [
                 [1.0, 0.0, 0.0, 10.0],
@@ -812,3 +812,7 @@ class TestTransformBoundingBox:
         assert hi.tolist() == [4, 5, 6]
         assert lo.shape == (3,)
         assert hi.shape == (3,)
+        assert (
+            "transform_bounding_box: skipped 8/8 corner(s) with |w| < 1e-12"
+            in capsys.readouterr().out
+        )

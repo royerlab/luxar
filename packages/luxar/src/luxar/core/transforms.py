@@ -566,14 +566,14 @@ def transform_bounding_box(
     # corners exactly as the viewer does so they cannot produce NaN/inf bounds.
     w = transformed[:, 3]
     keep = np.abs(w) >= W_EPSILON
-    if not bool(keep.any()):
-        return lo_arr[:3].copy(), hi_arr[:3].copy()
     kept_count = int(keep.sum())
     if kept_count < 8:
         aprint(
             f"⚠ transform_bounding_box: skipped {8 - kept_count}/8 corner(s) "
             f"with |w| < {W_EPSILON} (degenerate perspective projection)"
         )
+    if kept_count == 0:
+        return lo_arr[:3].copy(), hi_arr[:3].copy()
     points = transformed[keep, :3] / w[keep, None]
 
     return points.min(axis=0), points.max(axis=0)
