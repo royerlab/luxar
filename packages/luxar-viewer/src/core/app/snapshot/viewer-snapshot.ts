@@ -120,8 +120,8 @@ export function restoreCamera(sceneManager: SceneManager, cam: CameraSnapshot): 
   // produces. Its subscribers are exactly what a programmatic pose change
   // needs: the SceneManager handler (ortho-zoom material refresh + scene
   // 'change' → wakes the render loop, whose per-frame
-  // `lodGroupRegistry.evaluatePerFrame` then sees the new pose and invalidates
-  // the picking system). Without it the loop stays idle-paused and
+  // `lodGroupRegistry.evaluatePerFrame` then sees the new pose, and marks the
+  // picking system dirty). Without it the loop stays idle-paused and
   // `setCameraPose()` leaves the previous LOD level pinned on screen.
   sceneManager.controls.dispatchEvent({ type: 'change' });
 }
