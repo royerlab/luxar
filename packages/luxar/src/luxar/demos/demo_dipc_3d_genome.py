@@ -107,6 +107,26 @@ from luxar.utils.paths import get_demos_output_dir
 # Configuration
 # -----------------------------------------------------------------------------
 
+#: Genome assembly the ``.3dg`` coordinates are in.
+#:
+#: NOT stated in the GEO record (GSE117876) or either SubSeries, so it is taken
+#: from the toolchain that produced these files: tanlongzhi/dip-c ships its
+#: GM12878 SNP file "in hg19 coordinates" and every reference table beside it
+#: (``color/hg19.chr.len``, ``color/hg19.cpg.20k.txt``) is hg19. GM12878 is the
+#: cell line this demo loads.
+#:
+#: Worth stating as a constant rather than inlining: a browser link on the wrong
+#: assembly does not fail, it silently shows a real but WRONG locus — positions
+#: move by megabases between hg19 and hg38 — so the provenance of this one value
+#: is the whole basis for trusting the link.
+DIPC_GENOME_BUILD = "hg19"
+
+#: Half-width of the browser window a click opens, in base pairs.
+#:
+#: Dip-C resolves to 20 kb, so +/-10 kb frames exactly the particle under the
+#: cursor and nothing it cannot distinguish.
+DIPC_LOCUS_HALF_WIDTH_BP = 10_000
+
 GEO_TAR_URL = (
     "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE117nnn/GSE117876/suppl/"
     "GSE117876_RAW.tar"
@@ -446,6 +466,7 @@ def _haplotype_geometry(
     vparts: list[np.ndarray] = []
     cparts: list[np.ndarray] = []
     labels: list[str] = []
+    keys: list[str] = []
     eparts: list[np.ndarray] = []
     offset = 0
     for p in polys:
@@ -467,11 +488,25 @@ def _haplotype_geometry(
             f"chr{p['chrom']}:{mb:.1f} Mb ({HAPLOTYPE_NAMES[p['haplotype']]})"
             for mb in pos_mb
         )
+        # Click a particle to open its locus in the UCSC browser (#1917). The
+        # label rounds to 0.1 Mb for reading and appends the haplotype, so the
+        # coordinate is rebuilt here from the underlying base pairs instead.
+        # UCSC is 1-based, hence the clamp; the haplotype is dropped because the
+        # browser has no notion of one and both copies share the locus.
+        keys.extend(
+            "chr{}:{}-{}".format(
+                p["chrom"],
+                max(1, int(bp) - DIPC_LOCUS_HALF_WIDTH_BP),
+                int(bp) + DIPC_LOCUS_HALF_WIDTH_BP,
+            )
+            for bp in p["positions"]
+        )
     if not vparts:
         # Every arm degenerate (<2 beads) — np.concatenate([]) would raise.
         return (
             np.empty((0, 4), dtype=np.float32),
             np.empty((0, 3), dtype=np.float32),
+            [],
             [],
             np.empty((0, 2), dtype=np.uint32),
         )
@@ -479,6 +514,7 @@ def _haplotype_geometry(
         np.concatenate(vparts),
         np.concatenate(cparts),
         labels,
+        keys,
         np.concatenate(eparts),
     )
 
@@ -519,16 +555,18 @@ def build_scene(output_path: Path, polylines: list[dict]) -> int:
             vparts: list[np.ndarray] = []
             cparts: list[np.ndarray] = []
             labels: list[str] = []
+            keys: list[str] = []
             eparts: list[np.ndarray] = []
             vertex_offset = 0
             for hap in range(len(HAPLOTYPE_NAMES)):
                 polys = [p for p in polylines if p["haplotype"] == hap]
                 if not polys:
                     continue
-                verts, colors, labs, edges = _haplotype_geometry(polys, hap)
+                verts, colors, labs, ks, edges = _haplotype_geometry(polys, hap)
                 vparts.append(verts)
                 cparts.append(colors)
                 labels.extend(labs)
+                keys.extend(ks)
                 # Shift this haplotype's edge indices into the concatenated
                 # vertex block so both genome copies batch into ONE node.
                 eparts.append((edges + vertex_offset).astype(np.uint32))
@@ -591,6 +629,12 @@ def build_scene(output_path: Path, polylines: list[dict]) -> int:
                     widths=0.006,
                     colors=all_colors,
                     labels=labels,
+                    keys=keys,
+                    link=(
+                        "https://genome.ucsc.edu/cgi-bin/hgTracks"
+                        f"?db={DIPC_GENOME_BUILD}&position={{hover_key}}"
+                    ),
+                    copy="{hover_key}",
                     indices=all_edges,
                     line_type="indexed",
                     sharpness=0.5,
