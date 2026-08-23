@@ -163,6 +163,8 @@ def proc_table() -> list[tuple[int, int, str, str]]:
     try:
         names = os.listdir("/proc")
     except OSError:
+        if os.name != "posix":
+            return rows
         try:
             out = subprocess.run(  # nosec B603, B607  # fixed argv, no user input
                 ["ps", "-axww", "-o", "pid=,pgid=,state=,command="],

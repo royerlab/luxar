@@ -254,8 +254,8 @@ running demo — even one forgotten in another terminal — and free its ports.
 - `discover_runs()`: Live demo runs from the registry plus a `ps` sweep for
   strays — a process that *leads its own group* and is genuinely running
   `python -m luxar.demos.demo_*`; prunes dead/hijacked
-  entries, never returns the caller's own process group. Falls back to
-  `proc_table()` when `ps` is missing, so the identity check that keeps a
+  entries, never returns the caller's own process group. On Linux, falls back
+  to `proc_table()` when `ps` is missing, so the identity check that keeps a
   recycled pgid alive-and-innocent never silently disappears. Off POSIX, where
   neither exists, a pid listing (`tasklist`) still prunes a record left behind
   by a reboot or a hard-killed owner

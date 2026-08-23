@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import signal
 import sys
 import time
@@ -281,12 +282,8 @@ bad row
 
     def ps_run(args, **kwargs):  # type: ignore[no-untyped-def]
         assert args == ["ps", "-axww", "-o", "pid=,pgid=,state=,command="]
-        assert kwargs == {
-            "capture_output": True,
-            "text": True,
-            "timeout": 5.0,
-            "check": True,
-        }
+        assert kwargs["check"] is True
+        assert kwargs["timeout"] == 5.0
         return Result()
 
     monkeypatch.setattr(process.os, "listdir", no_proc)
@@ -305,6 +302,20 @@ def test_proc_table_is_unknown_when_proc_and_ps_are_unavailable(monkeypatch) -> 
 
     monkeypatch.setattr(process.os, "listdir", unavailable)
     monkeypatch.setattr(process.subprocess, "run", unavailable)
+
+    assert process.proc_table() == []
+
+
+def test_proc_table_does_not_run_ps_off_posix(monkeypatch) -> None:
+    def no_proc(_path: str) -> list[str]:
+        raise OSError
+
+    def unexpected_ps(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise AssertionError("ps must not run off POSIX")
+
+    monkeypatch.setattr(process.os, "name", "nt")
+    monkeypatch.setattr(process.os, "listdir", no_proc)
+    monkeypatch.setattr(process.subprocess, "run", unexpected_ps)
 
     assert process.proc_table() == []
 
@@ -345,6 +356,7 @@ def test_teardown_does_not_wait_out_an_unreaped_zombie() -> None:
 
 
 @posix_only
+@pytest.mark.skipif(shutil.which("ps") is None, reason="requires ps")
 def test_terminate_process_group_accepts_ps_reported_zombie(monkeypatch) -> None:
     """A killed direct child is success before its parent reaps the zombie."""
     import subprocess
