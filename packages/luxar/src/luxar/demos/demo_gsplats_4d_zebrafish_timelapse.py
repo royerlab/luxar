@@ -481,8 +481,10 @@ def to_microns(fit: GSplatData) -> GSplatData:
     spot while the cage slid past it.
     """
     scale = np.diag(np.asarray(VOXEL_SIZE_ZYX_UM, dtype=np.float64))
-    centre = 0.5 * np.asarray(VOXEL_SIZE_ZYX_UM) * np.asarray(ACQUISITION_SHAPE_ZYX)
-    return fit.transform(scale).translate(-centre)
+    # The box's own half-extent IS the centre offset, so the splats and the cage
+    # cannot drift apart: both read it from the same place.
+    _, half = acquisition_box_um()
+    return fit.transform(scale).translate(-half)
 
 
 def combine_to_4d(
