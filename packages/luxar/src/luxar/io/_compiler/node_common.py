@@ -19,12 +19,17 @@ from typing import Any, Dict, FrozenSet, Optional
 
 import numpy as np
 import zarr
+from arbol import aprint
 from numpy.typing import NDArray
 
 from ...core.dimensions import Dimensions
 from ...core.group.compositing import (
     IDENTITY_COMPOSITING_ATTRS,
     WRITER_STAMPED_APPEARANCE_DEFAULTS,
+)
+from ...typing_utils.constants import (
+    ELEMENT_TEXELS_PER_ELEMENT,
+    max_elements_per_node,
 )
 from ...validation.types import (
     validate_appearance_fraction,
@@ -508,6 +513,70 @@ def apply_default_render_attrs(attrs: Dict[str, Any]) -> None:
     for key in IDENTITY_COMPOSITING_ATTRS:
         if key not in attrs:
             attrs[key] = WRITER_STAMPED_APPEARANCE_DEFAULTS[key]
+
+
+def warn_if_over_element_cap(
+    geometry_type: str,
+    count: int,
+    node_path: str,
+    *,
+    enabled: bool = True,
+) -> bool:
+    """Warn when a node holds more elements than one node can render (#1957).
+
+    The viewer packs per-element render data into an element texture and
+    CLAMPS a node that overflows it — ``clampElementCapacity`` drops the tail
+    with a single console warning and no other signal. Geometry is stored in
+    Hilbert order, so the lost tail is one spatially CONTIGUOUS lobe: the
+    symptom is a clean-edged wedge of missing geometry, which reads as a data
+    or masking bug rather than a capacity limit. #1957 lost the entire North
+    Atlantic to a 2.3% overflow this way.
+
+    The cap depends on the viewer's GPU, so the only bound an author can rely
+    on is the 4096-class floor in
+    :func:`~luxar.typing_utils.constants.max_elements_per_node`. Warning here
+    puts the diagnosis at the point where it is cheap to act on — while the
+    data is being authored — instead of leaving it to whoever opens the scene
+    on a smaller GPU months later.
+
+    A warning, not an error: a node above the floor still renders whole on a
+    16384-class GPU, so refusing to write it would reject data that works.
+
+    Args:
+        geometry_type: A key of ``ELEMENT_TEXELS_PER_ELEMENT`` ("points",
+            "lines", "gsplats"). Any other type is a no-op.
+        count: Elements in this node — segments for lines, points for points,
+            splats for gsplats.
+        node_path: The node's path, for the message.
+        enabled: False to suppress a redundant child warning when its parent
+            checks the aggregate count.
+
+    Returns:
+        True if a warning was emitted.
+    """
+    if not enabled or geometry_type not in ELEMENT_TEXELS_PER_ELEMENT:
+        return False
+    cap = max_elements_per_node(geometry_type)
+    if count <= cap:
+        return False
+    noun = {"points": "points", "lines": "segments", "gsplats": "splats"}[geometry_type]
+    remedy = (
+        "Run `luxar gsplat lod --recipe tiles`, or use "
+        "partition=dict(max_elements=...) from the scene API"
+        if geometry_type == "gsplats"
+        else "Split it with partition=dict(max_elements=...)"
+    )
+    aprint(
+        f"⚠️  '{node_path}' holds {count:,} {noun}, above the {cap:,} a single "
+        f"{geometry_type} node can render on a 4096-class GPU. If the whole "
+        f"node is committed at once, such a GPU can silently drop the tail — "
+        f"and because elements are stored in Hilbert "
+        f"order, that tail is one contiguous region, so it looks like a "
+        f"clean-edged hole in the data (#1957). An nD node sliced on a "
+        f"non-displayed dimension commits only its current slice. {remedy} "
+        f"to render everywhere."
+    )
+    return True
 
 
 def validate_render_attrs(
