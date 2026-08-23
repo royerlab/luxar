@@ -60,7 +60,9 @@ pub fn decode_quantized_u16(data: &[u16], min_val: f32, max_val: f32, output: &m
     // ArrayDecoder routes through the TypeScript mirror; Python's
     // _decode_bounded_scalar remains f64 with a different operand order. Exact
     // viewer expectations mirror this order in
-    // tests/fixtures/generate_expectations.py::_viewer_kernel_decode.
+    // tests/fixtures/generate_expectations.py::_viewer_kernel_decode. Changing
+    // the order or permitting an FMA also requires re-deriving the writer's
+    // _positive_scalar_quantization_slack chunk-bound allowance.
     let scale = (max_val - min_val) / 65535.0;
 
     for i in 0..data.len() {
