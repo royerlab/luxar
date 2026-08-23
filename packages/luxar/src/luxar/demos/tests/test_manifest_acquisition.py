@@ -109,7 +109,6 @@ _STORED_BYTES_PENDING = {
     "gsplats_multichannel",
     "gsplats_dapi",
     "gsplats_celegans",
-    "gsplats_zebrafish",
 }
 
 
