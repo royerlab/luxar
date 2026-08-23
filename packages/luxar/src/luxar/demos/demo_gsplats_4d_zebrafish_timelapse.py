@@ -43,9 +43,13 @@ recur, and they generalise to any near-empty volume:
    frame's intensity a fit puts back is impossible to fake and immediately
    exposes a filter that deleted signal — it was 44% when the background floor
    was on, and nobody noticed from the dB.
-4. **An automatic calibration that pins at the edge of its grid has told you
-   nothing.** Widen the grid and look again; if it still climbs, the estimator
-   does not apply to your data. Two of them behave that way here.
+4. **An automatic calibration that answers at the edge of its own grid has
+   told you nothing.** Widen the grid and look again; if the answer keeps
+   moving, the estimator does not apply to your data. The NLM calibrator does
+   exactly this here — its default range stops at 0.08 and it returns 0.08 —
+   and widening the range only sends it further past the useful value. The
+   ``cal`` K* sweep fails a related way: it answers the SECOND point of its own
+   grid, with a confidence margin smaller than the spacing between points.
 
 WHAT MAKES THIS A 4D NODE (and not 151 nodes in a trench coat):
     Every timepoint is still fitted on its own — that is what keeps each fit
