@@ -850,6 +850,41 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
     const ordering = getActiveSortedIndexAttribute(geom)!.array as Uint32Array;
     expect(Array.from(ordering.subarray(0, 6))).toEqual([0, 1, 2, 3, 4, 5]);
   });
+
+  it('fromInstance append cancels a partially applied ordering and normalises slot 0', () => {
+    setSortedIndexChunkElementsForTests(2);
+    configureSortedIndexChunkedApply(true);
+    const geom = pool.acquireGSplatsGeometry('node', 16);
+    const src6 = makeSource(6);
+    const packed = (count: number) => ({
+      centers3D: src6.centers.subarray(0, count * 3),
+      amplitudes: src6.amplitudes.subarray(0, count),
+      choleskyFactors: src6.choleskyFactors.subarray(0, count * 6),
+      colors: src6.colors.subarray(0, count * 3),
+    });
+
+    try {
+      pool.updateGSplatsGeometry(geom, packed(4), 4);
+      writeSortedIndexOrdering(geom, new Uint32Array([3, 2, 1, 0]), 4);
+      drainSortedIndexApply(geom);
+      expect(activeSortedIndexSlot(geom)).toBe(1);
+
+      writeSortedIndexOrdering(geom, new Uint32Array([0, 1, 3, 2]), 4);
+      expect(pumpSortedIndexOrderingApply(geom).more).toBe(true);
+      expect(hasPendingSortedIndexOrderingApply(geom)).toBe(true);
+
+      pool.updateGSplatsGeometry(geom, packed(6), 6, 3.0, { fromInstance: 4 });
+
+      expect(hasPendingSortedIndexOrderingApply(geom)).toBe(false);
+      expect(activeSortedIndexSlot(geom)).toBe(0);
+      const ordering = getActiveSortedIndexAttribute(geom)!.array as Uint32Array;
+      expect(Array.from(ordering.subarray(0, 6))).toEqual([0, 1, 2, 3, 4, 5]);
+      expect(geom.instanceCount).toBe(6);
+    } finally {
+      cancelSortedIndexOrderingApply(geom);
+      setSortedIndexChunkElementsForTests(null);
+    }
+  });
 });
 
 describe('per-node gsplat materials — manager registration lifecycle', () => {

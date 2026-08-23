@@ -322,22 +322,19 @@ export class GSplatsBufferAdapter {
     // Presence stamp — shared chokepoint with the non-pool writer paths;
     // see stampGSplatPresenceFlags (refresh on every update: pool tenants).
     stampGSplatPresenceFlags(geometry, { colorComponents: data.colorComponents });
-    if (fromSplat > 0) {
-      // Keep the expensive texture upload suffix-only, but reset the enlarged
-      // draw to one coherent fallback permutation. Retaining the old sorted
-      // prefix and appending a storage-order suffix makes alpha-over render two
-      // independently ordered populations until the fresh worker sort lands.
+    // An append keeps the expensive texture upload suffix-only, but resets the
+    // enlarged draw to one coherent fallback permutation: retaining the old
+    // sorted prefix and appending a storage-order suffix makes alpha-over render
+    // two independently ordered populations until the fresh worker sort lands.
+    // A full write also resets unless `preserveOrdering` (chosen by
+    // commit-gsplats-geometry.ts) keeps a same-count prior while its re-sort
+    // lands. Skipping that write also correctly registers no new update range.
+    if (fromSplat > 0 || !options?.preserveOrdering) {
       writeSortedIndexIdentity(geometry, count);
-    } else if (!options?.preserveOrdering) {
-      // `preserveOrdering` (commit path decides — see
-      // commit-gsplats-geometry.ts): keep the node's existing depth-sort
-      // permutation instead of resetting to identity, so a same-count
-      // recommit doesn't flash storage order while the re-sort lands.
-      // Skipping the write also skips registering an update range — correct
-      // because the attribute content didn't change (the already-uploaded
-      // permutation stays valid; any still-pending ranges from earlier
-      // writes remain registered on the attribute and flush as usual).
-      writeSortedIndexIdentity(geometry, count);
+      // Full identity re-homes the geometry on slot 0. The commit path must
+      // therefore call noteDepthSortCommit after this update; its immediate
+      // syncSortedIndexSlot pushes the new slot to visual and pick materials
+      // before either can draw (the per-frame pump re-asserts it thereafter).
     }
 
     geometry.instanceCount = count;
