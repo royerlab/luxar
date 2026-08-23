@@ -631,37 +631,41 @@ def test_source_tree_is_the_one_being_tested() -> None:
 
 
 def _returns_the_prelod_fit(src: str, name: str) -> list[str]:
-    """Names returned straight after ``save_with_lod`` in the same block.
+    """Names returned after being passed to ``save_with_lod`` in a function.
 
     The third way to throw a topology away, after the loud one (a tree read
     flat) and the silent one (a scene rebuilt from loose arrays): write the
     ladder to the cache and then hand the SCENE the pre-LOD variable that was
     passed IN. ``save_with_lod`` returns nothing, so the name still refers to the
     flat fit. The warm path loads the archive back and gets the levels, so only
-    a ``--recompute`` run is flat — and that is the run gallery stills come
-    from, which is why nothing noticed.
+    a local refit (``--recompute``, or no precomputed archive) is flat.
     """
     out = []
-    for node in ast.walk(ast.parse(src, filename=name)):
-        body = getattr(node, "body", None)
-        if not isinstance(body, list):
+    for function in ast.walk(ast.parse(src, filename=name)):
+        if not isinstance(function, ast.FunctionDef):
             continue
-        for stmt, nxt in zip(body, body[1:]):
-            call = stmt.value if isinstance(stmt, ast.Expr) else None
-            if not (
-                isinstance(call, ast.Call)
-                and isinstance(call.func, ast.Name)
-                and call.func.id == "save_with_lod"
-                and call.args
-                and isinstance(call.args[0], ast.Name)
-            ):
-                continue
+        saved = set()
+        returned = []
+        for node in ast.walk(function):
             if (
-                isinstance(nxt, ast.Return)
-                and isinstance(nxt.value, ast.Name)
-                and nxt.value.id == call.args[0].id
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "save_with_lod"
             ):
-                out.append(call.args[0].id)
+                data = (
+                    node.args[0]
+                    if node.args
+                    else next(
+                        (kw.value for kw in node.keywords if kw.arg == "data"), None
+                    )
+                )
+                if isinstance(data, ast.Name):
+                    saved.add(data.id)
+            elif isinstance(node, ast.Return) and isinstance(node.value, ast.Name):
+                returned.append(node.value.id)
+        out.extend(
+            returned_name for returned_name in returned if returned_name in saved
+        )
     return out
 
 
@@ -700,12 +704,34 @@ def test_a_costly_recipe_is_not_handed_to_the_scene_as_the_pre_lod_fit() -> None
 
 def test_the_pre_lod_return_detector_catches_the_shape_it_is_meant_to() -> None:
     """A detector that never fires would let the bug back in silently."""
-    bad = (
-        "def f():\n"
-        "    result = fit()\n"
-        "    save_with_lod(result, path, recipe='levels')\n"
-        "    return result\n"
-    )
+    bad = {
+        "adjacent": (
+            "def f():\n"
+            "    result = fit()\n"
+            "    save_with_lod(result, path, recipe='levels')\n"
+            "    return result\n"
+        ),
+        "intervening statement": (
+            "def f():\n"
+            "    result = fit()\n"
+            "    save_with_lod(result, path, recipe='levels')\n"
+            "    aprint('cached')\n"
+            "    return result\n"
+        ),
+        "dedented return": (
+            "def f():\n"
+            "    result = fit()\n"
+            "    with section():\n"
+            "        save_with_lod(result, path, recipe='levels')\n"
+            "    return result\n"
+        ),
+        "keyword data": (
+            "def f():\n"
+            "    result = fit()\n"
+            "    save_with_lod(data=result, path=path, recipe='levels')\n"
+            "    return result\n"
+        ),
+    }
     good = (
         "def f():\n"
         "    result = fit()\n"
@@ -713,5 +739,6 @@ def test_the_pre_lod_return_detector_catches_the_shape_it_is_meant_to() -> None:
         "    stored = load_local_fit_gsplats_at([path], label='d')\n"
         "    return result if stored is None else stored[0]\n"
     )
-    assert _returns_the_prelod_fit(bad, "bad.py") == ["result"]
+    for shape, source in bad.items():
+        assert _returns_the_prelod_fit(source, f"bad {shape}.py") == ["result"]
     assert _returns_the_prelod_fit(good, "good.py") == []
