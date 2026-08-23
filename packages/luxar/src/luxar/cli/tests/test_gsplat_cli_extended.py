@@ -2200,6 +2200,7 @@ class TestCompareCommand:
         shifted_metrics = json.loads(shifted_json.read_text())
         for key in ("mse", "psnr_db", "ssim", "rel_l2", "max_abs_error"):
             assert raw_metrics[key] == pytest.approx(shifted_metrics[key])
+
     def test_compare_accepts_auto_device(
         self,
         runner: CliRunner,
