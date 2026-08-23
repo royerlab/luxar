@@ -83,6 +83,7 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
     DatasetUnavailable,
+    add_demo_caption,
     detect_device,
     launch_viewer,
     load_dataset_gsplats,
@@ -336,7 +337,9 @@ def create_luxar_scene(gsplats_data: GSplatData, output_path: Path) -> Path:
             # is dust, not a scientific colour encoding.
             scene = compiler.create_scene(
                 dimensions=dims,
-                viewer_config=ViewerConfig(tone_mapping="ACES", exposure=-0.17),
+                viewer_config=ViewerConfig(
+                    cinematic_mode=True, tone_mapping="ACES", exposure=-0.17
+                ),
                 citation=DEMO_META["citation"],
             )
             scene.attrs["title"] = (
@@ -382,12 +385,10 @@ def create_luxar_scene(gsplats_data: GSplatData, output_path: Path) -> Path:
                 color="rgba(255,255,255,0.65)",
                 blend_mode="difference",
             )
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 "Leike & Enßlin 2020 • 3D dust density • ~1 pc/voxel",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.5)",
+                DEMO_META.get("citation"),
             )
         aprint(f"Scene saved: {output_path}")
         return output_path

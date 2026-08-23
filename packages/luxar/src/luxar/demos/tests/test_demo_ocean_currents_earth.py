@@ -129,10 +129,12 @@ def test_globe_camera_looks_at_the_requested_point() -> None:
     cam = globe_camera(-84.0, 25.0)
     surface = lonlat_to_xyz(np.array([-84.0]), np.array([25.0]), np.zeros(1))[0]
     pos = np.array(cam.position)
-    # The camera sits outside the globe, on the requested point's surface normal.
-    assert np.linalg.norm(pos) > RADIUS
+    # The camera stays on the requested surface normal at the pre-cinematic
+    # opening distance after the 42° -> 63° pull-in.
+    assert np.linalg.norm(pos) == pytest.approx(1.62 * RADIUS, rel=1e-3)
     unit_surface = surface / np.linalg.norm(surface)
     assert np.allclose(pos / np.linalg.norm(pos), unit_surface, atol=1e-6)
+    assert cam.fov is None
 
 
 def test_globe_camera_targets_the_centre_of_the_earth() -> None:

@@ -91,6 +91,61 @@ def test_cull_prunes_empty_middle_rung_and_rederives_structure(tmp_path) -> None
     assert loaded.substitutive_levels[0].stats["lod_cutpoints"] == [1, 2]
 
 
+def test_pruning_refreshes_the_batch_merge_spelling_of_the_rung_count() -> None:
+    """The same ladder summary, one spelling over (#1600 review).
+
+    ``batch-fit merge --recipe stream`` publishes it WITHOUT the ``lod_`` prefix
+    (``_recipe_pipeline_info``), and culling or filtering such a store prunes
+    rungs: the prefixed half self-healed through ``_refresh_ladder_summary``
+    while ``n_lods: 3`` rode through a few keys away, still describing the
+    ladder that is gone.
+
+    The trio's other two must NOT move. ``method`` is the additive ORDERING,
+    which dropping an empty rung does not change; ``breakpoints`` is the build
+    SPEC that was requested, and this rewrite built no new ladder from another
+    one (unlike ``gsplat additive``, which drops it).
+
+    The block comes from the producer rather than a literal, so a knob added
+    there cannot quietly go unhandled — minus ``per_part``, which claims a
+    partition this single-ladder matrix is not.
+    """
+    from luxar.gsplats.batch.merge_orchestrator import _recipe_pipeline_info
+    from luxar.gsplats.lod.recipes import RecipeParams
+
+    info = _recipe_pipeline_info(
+        "stream",
+        RecipeParams(n_lods=3, additive_method="mass", breakpoints="equal-count"),
+    )
+    assert info and info["n_lods"] == 3
+    summary = {
+        **{key: value for key, value in info.items() if key != "per_part"},
+        "lod_n_lods": 3,
+        "lod_cutpoints": [1, 2, 3],
+    }
+    source = GSplatData.from_substitutive_levels(
+        [
+            SubstitutiveLevel(
+                additive_sublods=[
+                    _rung(0.0, 10.0, 0),
+                    _rung(1.0, 0.1, 1),
+                    _rung(2.0, 9.0, 2),
+                ],
+                stats={"lod_n_lods": 3, "lod_cutpoints": [1, 2, 3]},
+            )
+        ],
+        stats=dict(summary),
+    )
+
+    result = source.cull(method="cumulative", retention=0.99)
+
+    assert [lod.n_splats for lod in result.additive_sublods] == [1, 1]
+    assert result.stats["lod_n_lods"] == 2, "the prefixed half regressed"
+    assert result.stats["n_lods"] == 2
+    assert result.stats["method"] == "mass"
+    assert result.stats["breakpoints"] == "equal-count"
+    assert summary["n_lods"] == 3, "the caller's dict was edited"
+
+
 def test_pruning_recomputes_authored_ladder_stamps() -> None:
     first = _rung(0.0, 10.0, 0)
     first = AdditiveSubLOD(

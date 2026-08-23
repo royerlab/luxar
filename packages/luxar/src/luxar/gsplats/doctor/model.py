@@ -16,7 +16,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 __all__ = ["Finding", "DoctorReport", "Severity", "SEVERITIES"]
 
 #: How much a finding matters. ``error`` = the store is wrong or renders wrong;
-#: ``warning`` = degraded but valid; ``note`` = worth knowing, nothing to do.
+#: ``warning`` = degraded but valid; ``note`` = worth knowing.
 Severity = str
 SEVERITIES: tuple = ("error", "warning", "note")
 

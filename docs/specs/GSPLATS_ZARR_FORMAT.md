@@ -764,7 +764,9 @@ Absent on datasets written before these keys existed; readers should report
 nothing rather than infer a source grid from the bounding box.
 
 **Quality metrics** (fitting/.zattrs, optional) — the round-trip score of the
-fit, measured by re-rendering the splats against the volume they were fitted to:
+fit, measured by re-rendering the splats against the fit-basis reference
+`clip(V - image_min, 0, None)`, not the raw acquisition. The PSNR `data_range`
+and relative-L2 denominator are derived from that shifted reference too:
 
 ```json
 {
@@ -807,9 +809,9 @@ would put a bare `NaN` / `Infinity` token in the metadata document — not JSON,
 and fatal to a strict reader for the whole store rather than for that one key.
 `foreground_fraction` is still present in that case, so the artifact says why.
 
-**What survives a rewrite.** Inherited `fitting/` stamps fall into two
-categories, invalidated along two independent axes, and a tool that rewrites a
-store must apply both rules:
+**What survives a rewrite.** Inherited `fitting/` and `pipeline/` stamps fall
+into three categories, invalidated along three independent axes, and a tool that
+rewrites a store must apply all three rules:
 
 * **Content-scoped** — every number MEASURED against the source volume: the
   scores above, `final_loss` / `final_rel_l2` / `final_max_abs_error`, the
@@ -883,13 +885,196 @@ store must apply both rules:
   excluded splats, because that is what makes the compression ratio quote a
   volume the artifact no longer represents. `source_dtype` is exempt: a crop
   cannot change the element type. A non-spatial cull keeps this whole block.
+* **Structure-scoped** — the artifact's own **topology** record in `pipeline/`:
+  `lod_kind`, `recipe`, `compression_factor`, `method`, `n_substitutive_levels`,
+  `coverage_inflation`, `conserve_mass`, `refine`, `refine_iters`, the additive
+  ladder summary (`lod_method`, `lod_n_lods`, `lod_breakpoints_kind`,
+  `lod_cutpoints`, `lod_substitutive_level`) and the `batch-fit merge` per-part
+  knobs (`per_part`, `n_lods`, `breakpoints`, `levels`, `additive_ladders`).
+  Dropped only by a rewrite that changes the **structure kind**. The test for a
+  new command is one question — *can this command's output have a different
+  structure kind than its input?* — and if the answer is yes it must scrub, even
+  when a particular run happens to preserve the kind. Four commands qualify
+  today: `flatten` (one flat leaf), `partition` (a `kind=partition` of bare
+  leaves), `decimate` (one flat leaf whenever it actually reduces; its
+  `target >= n_splats` early return hands the input straight back, which
+  correctly republishes the record because nothing changed) and `lod`, whose
+  every `--recipe` starts from `data.flattened()` — so no `lod` output preserves
+  its input's shape, and a laddered or substitutive store is a legal input (the
+  gate is matrix-shaped-ness, so a partition and a lod group with non-leaf
+  children are both refused). `lod` is also the one of the four that publishes
+  a topology record of its own, and it publishes **only** what its own builder
+  stamped: `recipe` alone for `flat` / `tiles` / `overview` / `adaptive`, plus the
+  additive ladder summary for `stream`, plus the substitutive block as well for
+  `levels`. Nothing positive is invented to fill the gap — an absent `lod_kind`
+  is the format's "this artifact does not know", and the alternative (stamping
+  `lod_kind: additive` on a `stream` output) would be a new claim rather than a
+  scrub. Content-changing but structure-**preserving** ops keep the block and
+  *re-stamp* the counts that moved instead: a `cull` of a substitutive pyramid is
+  still that pyramid, with refreshed `lod_n_lods` / `lod_cutpoints` — and, when
+  the store carries it, the un-prefixed `n_lods` that says the same thing (see
+  the second-spelling paragraph below). Its two siblings stay: `method` is the
+  additive *ordering*, which pruning an emptied rung does not change, and
+  `breakpoints` is the build **spec** that was requested — this rewrite built no
+  new ladder from another one, it pruned the ladder that spec produced.
 
-Neither category subsumes the other, which is why one predicate cannot serve
-both: an amplitude-threshold cull loses the scores and keeps the grid, a
-whole-volume bbox that excluded nothing keeps both, and a real crop loses both.
-Descriptive counters are never dropped by either rule — `iterations`,
+  A structure-preserving rewrite that REPLACES the thing a stamp summarises owes
+  the same refresh. `additive` re-ladders every leaf, so the root ladder summary
+  is rebuilt from the tree it wrote — `lod_n_lods` / `lod_cutpoints` from the
+  ladder, `lod_method` / `lod_breakpoints_kind` read back off the rebuilt leaf so
+  an `auto` request publishes the method it resolved to (and each is *deleted*
+  when the rebuilt leaf does not publish it — absence is the format's "this artifact does
+  not know", while the inherited value would describe the ladder that is gone).
+  The summary describes
+  ONE ladder: the leaf itself for a flat store, and for a `kind=lod` group the
+  level `lod_substitutive_level` names (the rule `cull` already follows).
+  `lod_substitutive_level` itself is untouched — a re-ladder moves no level. On a
+  shape where no single leaf can be the summary (a `kind=partition`, whose parts
+  hold different counts and therefore different rung counts) the block is
+  *dropped* rather than filled from an arbitrary part; that is also what the
+  `tiles` / `overview` / `adaptive` builders publish at the root. Present keys
+  only, in both directions: a store that never published a summary does not
+  acquire one.
+
+  The **same ladder has a second spelling** in the same group, and it gets the
+  same treatment: the un-prefixed `n_lods` / `method` / `breakpoints` that
+  `batch-fit merge --recipe stream` stamps for its per-part recipe, which
+  `additive` over a batch-fit partition would otherwise leave asserting the rung
+  count the drop above had just refused to assert. `n_lods` is refreshed from the
+  ladder and `method` read back off the rebuilt leaf, exactly as their prefixed
+  twins are; `breakpoints` is *dropped* rather than refreshed, because it holds
+  the build **spec** (`"stream:14000"`, `"counts:5,15,40"`) in a different
+  vocabulary from the leaf's resolved `lod_breakpoints_kind` and cannot be read
+  back off a ladder. `per_part` is left alone — a per-leaf re-ladder leaves a
+  per-part ladder per-part. The `levels` branch of that same producer stamps a
+  `method` too, but it is the *substitutive* merge method, which a re-ladder does
+  not touch; `lod_kind` is what tells the two apart. The prune-family rewrites
+  above (`cull`, `filter`, `slice`, `transform`) refresh the un-prefixed count as
+  well, for the same reason and from the same helper: a `batch-fit merge --recipe
+  stream` output that is culled until a rung empties has one fewer rung, whichever
+  spelling states it.
+
+  Two things in `pipeline/` are **exempt**, which is why this is a deny-list of
+  key names rather than "drop the group". The normalization block (`floor`,
+  `image_min`, `image_max`, `intensity_range`) describes the *input volume's*
+  intensity scale, which regrouping splats cannot change. And `coarsen_dims` is
+  read back by the writer — `write_gsplats_tree` derives the chunk-ordering
+  barrier axes from its complement — so dropping it would silently change the
+  output's chunk layout, not just its metadata.
+
+  That complement is taken **only from a list**. A written `null` and an absent
+  key are indistinguishable to the reader (`_barrier_from_coarsen_dims`), so both
+  mean *no provenance* and fall through to `detect_barrier_dims` auto-detection —
+  a *guess* about the stored coordinates, not "no barrier". It re-imposes a
+  barrier on an axis a reduction just blended exactly when the reduction leaves
+  that axis' grid **intact** (timepoints far enough apart that no cluster spans
+  two of them, so the coordinates stay integral); where the reduction averages
+  the grid away, auto-detection finds nothing and is merely redundant. Which of
+  the two you get is a property of the data, not of the metadata, so the
+  explicit spelling is the honest one either way.
+  "Coarsen everything" therefore has an explicit spelling and a
+  non-spelling: `[0, …, d-1]`, whose complement is the empty list (a real,
+  authoritative *no barrier*), versus `null`, which asserts nothing and lands on
+  the heuristic. Producers do not yet agree on this: `decimate`'s `merge`
+  family writes the explicit list, while `make_substitutive_lod` (and so every
+  `lod --recipe levels` build) still writes `null` and carries the same latent
+  fallback. That divergence is deliberate for now — changing the substitutive
+  builder would move the chunk layout of every existing `levels` pipeline — and
+  is recorded on #1600.
+
+  Exempt from the scrub is not exempt from being TRUE. A rewrite that coarsens
+  over its own choice of axes owes the output a fresh `coarsen_dims`, because the
+  inherited one would put the barrier on an axis this reduction just blended.
+  `decimate`'s `merge` family therefore re-stamps the set it resolved, always as
+  an explicit sorted list: the requested dims for a proper subset, and the full
+  `[0, …, d-1]` for coarsen-everything (the default, and what a request naming
+  every dim normalises to). Its `prefix` family stamps nothing: a prefix merges
+  no axis and every survivor is one of the input's splats at its own coordinates,
+  so the inherited value — and the layout derived from it — stays true.
+  `--coarsen-dims` is a merge-only knob, never published by a prefix, and
+  `decimate` warns (a `UserWarning`, displayed as an arbol line under the CLI)
+  when a run resolved to `prefix` and dropped it
+  (with `method="auto"` the family flips at the 50 %-kept crossover, taking the
+  output's chunk layout with it). The request is range-validated for both
+  families before the family is chosen, so the same argument cannot be a hard
+  error on one path and silently accepted on the other.
+
+No category subsumes another, which is why one predicate cannot serve them: an
+amplitude-threshold cull loses the scores and keeps the grid and the topology, a
+whole-volume bbox that excluded nothing keeps all three, a real crop loses the
+scores and the grid but keeps the topology, and `flatten` loses only the
+topology. Descriptive counters are never dropped by any rule — `iterations`,
 `best_iteration`, `converged`, `time_seconds`, `fitter_name` and `filtered` /
 `filter_criteria` describe the run or the edit, both of which happened.
+
+**What survives a rewrite: the authored appearance.** The rules above govern
+what a rewriting tool must *drop*; the mirror-image obligation is what it must
+*keep*. A rewriting command owns the **structure**, not the **look**: the
+builders construct fresh nodes that know nothing about the input, so unless the
+source root's authored compositing attrs are handed back to the writer, its own
+defaults take over — `blending_mode` disappears entirely and
+`opacity` / `absorption` / `gamma` / `intensity` / `offset` snap back to their
+identity, silently resetting whatever was tuned in the Layers panel. The key set
+is `AUTHORED_APPEARANCE_ATTRS` (`core/group/compositing.py`): the compositing
+attrs minus `transform` (a stored matrix is column-major and would be transposed
+a second time on the way back in), plus `colormap`. It is read with
+`gsplats/io/load_gsplats.read_authored_appearance` — directories and `.zip` /
+`.tar.gz` archives alike — and passed as `root_attrs=` to
+`write_gsplats_tree` / `GSplatData.save`, which seeds it at **lowest
+precedence** so the command's own structural attrs still win. The one attr
+refused on the way through is a `colormap` of `"custom"`: it names a sibling
+`colormap_lut` array the attrs-only read cannot carry, so the bare sentinel
+would dangle.
+
+With **several** inputs (`gsplat merge`) there is no single source root, so the
+carried value must be **agreed**: a key rides along only when every input that
+*has* an opinion on it agrees, and an input with no opinion casts no vote (at
+least one input must have one for the key to appear). On any disagreement the
+key is dropped and the command **says so**, naming the key, the differing values
+(each with the input it came from) and what lands on disk instead — the same
+unanimity rule as
+`agreed_normalization_stats`, but loud rather than silent, because appearance is
+hand-authored and a user who tuned two datasets has to be told which choice did
+not survive.
+
+"Having an opinion" is narrower than "carrying the key", and that is the
+load-bearing detail. The writer STAMPS identity values on every save —
+`opacity: 1.0` / `absorption: 1.0` / `gamma: 1.0` / `intensity: 1.0` /
+`offset: 0.0` / `layer: true`, plus `colormap: "gray"` on a colorless store —
+so a value **equal to the writer's manufactured default** counts as silence,
+exactly like an absent key (the values live in one place,
+`WRITER_STAMPED_APPEARANCE_DEFAULTS` in `core/group/compositing.py`, which is
+what both the writers and the vote read). The cost is stated plainly: nothing on
+disk distinguishes a deliberately authored `opacity: 1.0` from an untouched
+store, so a deliberate identity loses to a sibling's `0.75`. The alternative is
+worse — it is what the code did first: a tuned dataset merged with a freshly
+fitted one disagreed on **seven** keys, dropped all seven, and the writer then
+stamped its defaults back, which *is* the untouched input's value. Same result,
+plus seven warnings.
+
+`visible` is the one key where ABSENCE is itself a vote. The viewer treats a
+missing `visible` as visible, so an input without the key is positively saying
+"shown": `visible: false` is carried only when **every** input hides, and one
+hidden input plus one silent one is a disagreement rather than a unanimous hide.
+Without that exception a single hidden input opened the whole merged dataset
+hidden. `blending_mode` / `nd_transform` / `join` keep the plain no-vote rule,
+where absence genuinely means "no opinion".
+
+One key is additionally dropped because the merge itself invalidates it:
+`colormap`, whenever the merged output carries per-splat RGB that the inputs'
+palettes do not describe. Three predicates cover that: `--channel-colors`
+always bakes RGB, `GSplatData.concatenate` white-fills a colorless input to
+match a colored sibling, and a colored input with no authored palette is
+positively asking the viewer to use its per-splat RGB. The white-fill case
+happens on a plain merge and under `--as-dimension` too. The viewer makes an
+ancestor palette override per-splat RGB unconditionally, so a carried palette
+would render those splats through a scalar ramp. `colormap` is also refused
+outright when any input root declares the `"custom"` sentinel: that palette
+cannot be carried, and treating the input as having no opinion would hand the
+merged root a *sibling's* palette. `--as-dimension` does **not** invalidate
+`nd_transform`: the new axis is appended LAST, so every existing dimension keeps
+its name and its index and the new one simply has no entry — the identity
+default.
 
 ### Pipeline Group Attributes (Optional)
 

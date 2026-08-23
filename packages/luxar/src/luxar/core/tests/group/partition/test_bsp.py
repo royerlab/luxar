@@ -66,6 +66,16 @@ class TestResolvePartitionSpec:
         with pytest.raises(ValueError, match="rule must be"):
             resolve_partition_spec({"rule": "bogus"})
 
+    def test_unknown_keys_are_refused_in_sorted_order(self) -> None:
+        with pytest.raises(
+            ValueError,
+            match=(
+                r"partition: unrecognized keys \['other', 'parts'\]\. "
+                r"Valid keys: max_elements, rule\."
+            ),
+        ):
+            resolve_partition_spec({"parts": 4, "other": True})
+
     @pytest.mark.parametrize("spec", ["nonsense", 3, False])
     def test_anything_but_true_or_a_dict_raises_type_error(self, spec: object) -> None:
         """Including ``False`` — and that is the CALLERS' job to prevent.

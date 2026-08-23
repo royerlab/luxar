@@ -30,12 +30,14 @@ from typing import Any, Callable, Optional
 from arbol import aprint, asection
 
 from luxar.gsplats.batch.task_pool import cancel_pool_on_interrupt
+from luxar.gsplats.fit_basis import fit_image_min
 from luxar.gsplats.fit_tiled_parallel import luxar_argv0
-from luxar.gsplats.merged_quality import announce_unscored_partition_merge
 
 from .fit_planned import (
     _padded_bounds,
-    _score_planned_flat_merge,
+    _planned_merge_stats,
+    _score_planned_merge,
+    _stamp_planned_normalization,
 )
 from .spec import FitPlan
 
@@ -174,7 +176,7 @@ def fit_planned_parallel(
     volume : array-like, optional
         The exact array the workers fit: same channel/timepoint selection and
         same resolution level, on ``plan.volume_shape``'s grid. Required to
-        stamp merged quality metrics on a flat result; another array with the
+        stamp merged quality metrics on the merged result; another array with the
         same shape would produce a plausible but invalid score. Direct callers
         may omit it, in which case the omission is announced.
     device : str, optional
@@ -188,8 +190,10 @@ def fit_planned_parallel(
 
     Returns
     -------
-    GSplatData
-        Merged result (concatenation of every box's core-kept splats).
+    GSplatData or GSplatNode
+        Flat concatenation, or a tree retaining every box as an additive part.
+        Both carry whole-volume merged quality metrics when ``volume`` is
+        available; a tree stores them in its root ``meta["fit_stats"]``.
 
     Raises
     ------
@@ -280,7 +284,7 @@ def fit_planned_parallel(
         p = box_paths[i]
         if p.exists():
             try:
-                gd = GSplatData.load(p)
+                gd = GSplatData.load(p, include_stats=True)
             except Exception as exc:  # present but unreadable/partial store
                 corrupt.append((i, repr(exc)))
                 continue
@@ -322,7 +326,32 @@ def fit_planned_parallel(
             bsp_tree=plan.bsp_tree,
             region_labels=region_boxes,
         )
-        announce_unscored_partition_merge(result)
+        from luxar.gsplats.tree import GSplatPartition, total_splats
+
+        _stamp_planned_normalization(result.meta, regions)
+        fit_stats = _planned_merge_stats(
+            regions,
+            n_boxes=len(plan.boxes),
+            n_boxes_fit=n_boxes_fit,
+            overlap=int(plan.overlap),
+            volume_shape=tuple(int(s) for s in plan.volume_shape),
+            elapsed=elapsed,
+            delivered_splats=int(total_splats(result)),
+            parallel_jobs=jobs,
+            partition=True,
+        )
+        is_partition = isinstance(result, GSplatPartition)
+        _score_planned_merge(
+            regions if is_partition else regions[0],
+            volume,
+            plan_shape=tuple(int(s) for s in plan.volume_shape),
+            device=device,
+            verbose=verbose,
+            image_min=fit_image_min(result.meta),
+            stats=fit_stats,
+            partition=is_partition,
+        )
+        result.meta["fit_stats"] = fit_stats
     else:
         # `concatenate` keeps the reloaded boxes' shared truncation_radius; a
         # manual re-`GSplatData(...)` of the three arrays reset it to the default
@@ -330,31 +359,24 @@ def fit_planned_parallel(
         # keys are applied afterwards.
         result = GSplatData.concatenate(regions)
         result.stats.update(
-            {
-                "planned_fit": True,
-                "n_boxes": len(plan.boxes),
-                "n_boxes_fit": n_boxes_fit,
-                "overlap": int(plan.overlap),
-                "volume_shape": list(plan.volume_shape),
-                "parallel_jobs": int(jobs),
-                "elapsed_seconds": float(elapsed),
-                # Wall clock, as the uniform tiled merge stamps it
-                # (`merge_tile_results`): one key must not mean "summed fit time"
-                # here and "elapsed" there — and concurrent boxes make a sum
-                # exceed the run. Here it is the SOLE writer rather than an
-                # overwrite, unlike the sequential twin: a reloaded box brings
-                # back its leaf `lod_stats` but not its top-level `stats` (that
-                # needs `include_stats=True`), so `concatenate` sees no box
-                # times to sum in the first place.
-                "time_seconds": float(elapsed),
-            }
+            _planned_merge_stats(
+                regions,
+                n_boxes=len(plan.boxes),
+                n_boxes_fit=n_boxes_fit,
+                overlap=int(plan.overlap),
+                volume_shape=tuple(int(s) for s in plan.volume_shape),
+                elapsed=elapsed,
+                delivered_splats=result.n_splats,
+                parallel_jobs=jobs,
+            )
         )
-        _score_planned_flat_merge(
+        _score_planned_merge(
             result,
             volume,
             plan_shape=tuple(int(s) for s in plan.volume_shape),
             device=device,
             verbose=verbose,
+            image_min=fit_image_min(result.stats),
         )
 
     if not keep_boxes:

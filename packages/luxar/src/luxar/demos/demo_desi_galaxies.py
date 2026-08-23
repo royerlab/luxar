@@ -74,6 +74,7 @@ DEMO_META = {
     "outputs": ["desi_galaxies"],
     "citation": {
         "short": "DESI Collaboration 2025 (DR1)",
+        "ref": "DESI Collaboration 2025",
         "doi": "10.48550/arXiv.2503.14745",
         "license": "CC BY 4.0",
     },
@@ -93,11 +94,13 @@ from luxar import (
 )
 from luxar._zarr_compat import consolidate, open_group
 from luxar.demos import (
+    add_demo_caption,
     is_lfs_pointer,
     launch_viewer,
     parse_demo_flags,
     substitutive_lod_or_flat,
 )
+from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -743,13 +746,12 @@ def create_scene(
         radial = np.linalg.norm(positions.astype(np.float64), axis=1)
         r95 = float(np.percentile(radial, 95))
         r_max = float(radial.max())
-        fov_deg = 50.0
+        fov_deg = CINEMATIC_FOV_DEG
         cam_dist = 0.75 * r95 / np.tan(np.radians(fov_deg) / 2.0)
         camera = CameraConfig(
             position=(0.0, 0.0, cam_dist),
             target=SCENE_CAMERA_TARGET,
             up=(0.0, 1.0, 0.0),
-            fov=fov_deg,
             near=float(max(1.0, cam_dist * 0.005)),
             # Far must clear the whole cloud from the camera, which sits outside
             # it: worst case is the antipodal galaxy at cam_dist + r_max.
@@ -804,7 +806,7 @@ def create_scene(
             scene = compiler.create_scene(
                 citation=DEMO_META["citation"],
                 dimensions=dims,
-                viewer_config=ViewerConfig(camera=camera),
+                viewer_config=ViewerConfig(cinematic_mode=True, camera=camera),
             )
             scene.attrs["title"] = "DESI DR1 — The Cosmic Web"
 
@@ -848,12 +850,10 @@ def create_scene(
                 color="rgba(255,255,255,0.7)",
                 blend_mode="difference",
             )
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 "~9.75M galaxies & quasars • redshift → comoving Mpc",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.5)",
+                DEMO_META.get("citation"),
             )
         aprint(f"Scene saved: {output_path}")
         return output_path

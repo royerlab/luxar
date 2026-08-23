@@ -43,12 +43,16 @@ Quality falls smoothly (~3-4 dB per halving) with no knee, so there is no single
 
 from __future__ import annotations
 
+import warnings
 from typing import Literal, Optional, Sequence, Union
 
 import numpy as np
 from arbol import aprint, asection
 
-from luxar.gsplats._data.filtering import scrub_measured_stats
+from luxar.gsplats._data.filtering import (
+    scrub_measured_stats,
+    stats_after_structure_change,
+)
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.lod.additive import compute_additive_order
 from luxar.gsplats.lod.substitutive import merge_to_count
@@ -93,6 +97,69 @@ def resolve_target_count(target: Union[int, float], n_in: int) -> int:
     return max(1, min(n, n_in))
 
 
+def resolved_merge_coarsen_dims(
+    coarsen_dims: Optional[Sequence[int]], ndim: int
+) -> list[int]:
+    """The dims a ``merge`` ACTUALLY coarsens over, spelled EXPLICITLY.
+
+    Always a literal list, never ``None`` — including for the coarsen-everything
+    case (the ``coarsen_dims=None`` default, and a request naming every dim,
+    which :func:`~luxar.gsplats.lod.substitutive._normalise_coarsen_dims`
+    collapses to the same thing). The two spellings are NOT interchangeable on
+    disk: :func:`~luxar.gsplats.io.save_gsplats._barrier_from_coarsen_dims`
+    cannot tell a written ``null`` from an absent key, so both read as "no
+    provenance" and fall through to ``detect_barrier_dims`` auto-detection —
+    a GUESS about the result's coordinates, not "no barrier".
+
+    What that guess costs depends on the data, and it was measured rather than
+    asserted (#1600 review). Auto-detection re-imposes the very barrier this
+    merge blended over exactly when the reduction leaves the stacked axis' grid
+    INTACT: on 200 4D splats over three timepoints spaced 1000 apart against a
+    spatial extent of 100, no cluster ever spans two timepoints, the coordinates
+    stay integral, and the fallback hands back ``[3]``. On a fine grid (step 1)
+    the merge averages those coordinates away, the axis stops looking integral,
+    and the fallback finds nothing — there it is merely redundant. ``[0, …,
+    d-1]`` asserts the empty complement outright on either grid, i.e. the
+    no-barrier layout the reduction actually earned.
+
+    KNOWN DIVERGENCE from :func:`~luxar.gsplats.lod.substitutive
+    .make_substitutive_lod`, the sibling producer of the same operator: it
+    stamps a literal ``None`` for its own coarsen-everything case and therefore
+    carries the same latent auto-detect fallback. Changing it would move the
+    chunk layout of every ``lod --recipe levels`` build, so it is deliberately
+    left alone here and recorded on #1600 instead. The consequence is that the
+    same choice can be published two ways depending on which command made it —
+    ``decimate`` publishes the honest one.
+    """
+    if coarsen_dims is None:
+        return list(range(int(ndim)))
+    return sorted({int(d) for d in coarsen_dims})
+
+
+def _validate_coarsen_dims(
+    coarsen_dims: Optional[Sequence[int]], data: GSplatData
+) -> None:
+    """Range-check a ``coarsen_dims`` request for EITHER family.
+
+    Reuses the merge's own validator rather than restating its rules, so the two
+    families reject exactly the same requests. Only ``merge`` reaches that
+    validator on its own (inside ``merge_to_count``), which left an out-of-range
+    index a hard error on one family and silently accepted on the other — and
+    with ``method="auto"`` which family you get depends on the kept fraction.
+
+    Validation ONLY: the merge path re-runs the same call for real, and the
+    continuous-barrier ``RuntimeWarning`` belongs to the reduction that actually
+    groups by those dims, so it is suppressed here rather than emitted twice.
+    """
+    if coarsen_dims is None:
+        return
+    from luxar.gsplats.lod.substitutive import _normalise_coarsen_dims
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        _normalise_coarsen_dims(coarsen_dims, data)
+
+
 def resolve_method(method: AutoOrMethod, n_target: int, n_in: int) -> MethodName:
     """Resolve ``"auto"`` against the measured crossover (see module docstring)."""
     if method != "auto":
@@ -132,7 +199,16 @@ def decimate(
         seed: Seed for the ``random`` ordering (prefix only; every other
             ordering, and the clustering, is deterministic).
         coarsen_dims: Center-column indices merging may combine over; the rest
-            are hard barriers (merge only). Default: all dims.
+            are hard barriers (merge only). Default: all dims. A ``merge``
+            stamps the RESOLVED set on the result (the writer turns it into the
+            chunk-ordering barrier); a ``prefix`` ignores the argument (a
+            ``UserWarning``, so the notice survives ``verbose=False``) and keeps
+            the input's stamp, having coarsened nothing. Under the ``luxar`` CLI
+            that warning renders as an arbol line like any other output.
+            The request is range-validated for BOTH families, before
+            the family is chosen — under ``method="auto"`` which one runs
+            depends on the kept fraction, and an argument may not be a hard
+            error on one path and silently accepted on the other.
         lloyd_iterations: Lloyd refinement passes (merge only).
         verbose: Narrate the reduction.
 
@@ -148,16 +224,50 @@ def decimate(
         on the console).
 
     Raises:
-        ValueError: on an out-of-range target or an unknown method.
+        ValueError: on an out-of-range target, an unknown method, or a
+            ``coarsen_dims`` index outside ``[0, data.ndim)``.
     """
     n_in = int(data.n_splats)
     n_target = resolve_target_count(target, n_in)
     chosen = resolve_method(method, n_target, n_in)
+    _validate_coarsen_dims(coarsen_dims, data)
 
     if n_target >= n_in:
         if verbose:
             aprint(f"Target {n_target:,} >= input {n_in:,} — returning input unchanged")
         return data
+
+    if coarsen_dims is not None and chosen == "prefix":
+        # The family decides whether this knob means anything, and with
+        # `method="auto"` the family flips at the measured crossover — so a
+        # request honoured at -f 0.4 is silently dropped at -f 0.5, taking the
+        # output's chunk layout with it. Say so rather than letting the caller
+        # infer it from the stamp (#1600 review).
+        #
+        # A WARNING, not an `aprint`: this is a library function, and "your
+        # argument had a surprising effect" is what `GSplatData.filter` already
+        # warns for (`_data/filtering.py`). Every other line this function
+        # writes is gated on `verbose`, so an unconditional print would put a
+        # programmatic `decimate(..., verbose=False)` on stdout unbidden. The
+        # CLI still shows it: `luxar`'s root callback installs
+        # `install_arbol_warnings`, which renders warnings as arbol lines.
+        why = (
+            f" (method='auto' resolved to prefix: the request keeps "
+            f"{100.0 * n_target / n_in:.1f}% of the input, at or above the "
+            f"{100.0 * PREFIX_ABOVE_FRACTION:.0f}% crossover — pass "
+            f"method='merge' to force a merge)"
+            if method == "auto"
+            else ""
+        )
+        warnings.warn(
+            f"coarsen_dims={sorted({int(d) for d in coarsen_dims})} is IGNORED "
+            f"by the 'prefix' family{why}: a prefix keeps whole input splats at "
+            "their own coordinates and merges no axis, so it coarsens nothing "
+            "and the input's own coarsen_dims stamp (and the chunk-ordering "
+            "barrier derived from it) stays true of the survivors",
+            UserWarning,
+            stacklevel=2,
+        )
 
     with (
         asection(
@@ -207,7 +317,48 @@ def decimate(
         # surviving splat is a new one. The region stamps are NOT touched: neither
         # family is a spatial restriction, so the survivors still represent the
         # whole fitted volume.
-        out = GSplatData.from_tree(out.tree, stats=dict(data.stats))
+        #
+        # The input's TOPOLOGY record goes with them, and it goes HERE rather than
+        # in the CLI because the RETURN TYPE is the reason: this function's
+        # contract is one flat leaf whatever it was handed, so an inherited
+        # `lod_kind: substitutive` / `n_substitutive_levels: 4` /
+        # `lod_cutpoints: [...]` is false of every result it can produce — no
+        # caller can want it kept. Scrubbing in the command instead left the
+        # public `luxar.gsplats.lod.decimate` API publishing the defect (#1600).
+        # `coarsen_dims` is exempt from that scrub (the writer reads it back to
+        # derive the chunk-ordering barrier) — see _STRUCTURE_SCOPE_EXEMPT_KEYS —
+        # and is RE-STAMPED just below instead.
+        out = GSplatData.from_tree(
+            out.tree, stats=stats_after_structure_change(data.stats)
+        )
+        if chosen == "merge":
+            # The one inherited pipeline key this reduction OWNS. The writer
+            # derives the ordering barrier from its complement
+            # (`_barrier_from_coarsen_dims`), so an inherited `[0, 1, 2]` over a
+            # merge told `--coarsen-dims 1,2,3` — or over the default, which
+            # coarsens EVERYTHING — puts the barrier on an axis this merge just
+            # blended, and the absent-stamp direction silently fell back to
+            # auto-detect instead of recording the barrier the user asked for
+            # (#1600). Stamped unconditionally: the merge decides these dims
+            # whether or not the input had an opinion.
+            #
+            # Always the EXPLICIT dim list, coarsen-everything included — a
+            # written `null` is indistinguishable from an absent key to the
+            # writer and lands back on auto-detect, which re-imposes a barrier
+            # on a blended axis whenever the reduction left that axis' grid
+            # intact (and is redundant when it did not — measured both ways in
+            # `resolved_merge_coarsen_dims`). That diverges from
+            # `make_substitutive_lod`, which still spells that case `None`; see
+            # `resolved_merge_coarsen_dims` for why it is not changed here.
+            out.stats["coarsen_dims"] = resolved_merge_coarsen_dims(
+                coarsen_dims, data.ndim
+            )
+        # A `prefix` KEEPS the input's stamp. It merges nothing — every surviving
+        # splat is one of the input's, at its own coordinates — so whichever axes
+        # were hard barriers for this splat set still are, and the inherited value
+        # (and the layout the writer derives from it) stays true of the result.
+        # Stamping the request would be the lie here: `coarsen_dims` is a
+        # merge-only knob that this family ignored.
         scrub_measured_stats(out)
         from luxar.gsplats.lod.restamp import refresh_reduction_lod_stats
 

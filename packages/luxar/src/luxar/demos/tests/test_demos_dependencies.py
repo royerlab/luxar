@@ -465,9 +465,11 @@ class TestSubstitutiveLodGate:
 class TestScannedModuleSet:
     """The guards below are only as good as the set of files they read.
 
-    Ten guards read :func:`scanned_demo_modules` — four here, plus the
+    Sixteen guards read :func:`scanned_demo_modules` — four here, plus the
     entry-point preflight, substitutive-LOD, Layers-panel, import-spelling,
-    tone-mapping-policy and fit-provenance guards next door.
+    tone-mapping-policy, fit-provenance, caption-coverage and cinematic-mode
+    guards next door.
+
     A gate that moves out of a ``demo_*.py`` into a shared helper must stay
     covered, so the set is a denylist over ``demos/*.py`` rather than an opt-in
     filename pattern.
@@ -482,7 +484,7 @@ class TestScannedModuleSet:
 
     def test_the_set_is_a_denylist_over_every_module(self) -> None:
         # Not an allowlist: a new demos/_plot_helpers.py must be picked up with
-        # no edit here, or it would silently escape all ten guards.
+        # no edit here, or it would silently escape all sixteen guards.
         demos_dir = Path(__file__).resolve().parents[1]
         on_disk = {p.name for p in demos_dir.glob("*.py")}
         scanned = {p.name for p in scanned_demo_modules()}
@@ -650,6 +652,12 @@ class TestNoRuntimePipInstall:
 #: pinned + tabled or justified here, so an unpinned dependency cannot ship by
 #: accident (see the blind spot noted on TestNoUnpinnedThirdPartyImports).
 UNLISTED_IMPORTS_OK = {
+    # Pure accelerator, deliberately NOT routed through `require_module`: absence
+    # is a silent fall-back to `umap-learn`. Tabling it would be worse than
+    # leaving it out — RAPIDS ships CUDA-only wheels with no macOS build, so
+    # `deps` would show a permanently unmet row and `deps --install` would offer
+    # an install that cannot succeed on most machines.
+    "cuml": "soft optional GPU UMAP; no CPU-only wheel, absence falls back to umap-learn",
     # Soft optional: the demo prints a warning and returns, so it runs fine
     # without napari. Pinned only in the heavyweight `tracksdata` extra
     # (napari + PyQt6); tabling it would make `deps --install` pull all of that

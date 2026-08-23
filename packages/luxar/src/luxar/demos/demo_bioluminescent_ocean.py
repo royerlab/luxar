@@ -93,7 +93,8 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer
+from luxar.core.viewer_config import ViewerConfig
+from luxar.demos import add_demo_caption, launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -722,7 +723,9 @@ def generate_ocean_scene(
                 ),
             ]
         )
-        scene = compiler.create_scene(dimensions=dims)
+        scene = compiler.create_scene(
+            dimensions=dims, viewer_config=ViewerConfig(cinematic_mode=True)
+        )
 
         with asection(f"Generating {n_frames} frames of animation"):
             # Collect all data across frames
@@ -885,12 +888,10 @@ def generate_ocean_scene(
         )
 
         # Info
-        scene.add_text(
+        add_demo_caption(
+            scene,
             f"{n_jellyfish} jellyfish \u2022 {n_frames} frames",
-            position=(0.98, 0.97),
-            font_size=0.015,
-            anchor="bottom-right",
-            color="rgba(200,200,200,0.45)",
+            DEMO_META.get("citation"),
         )
 
     return total_segments, total_points

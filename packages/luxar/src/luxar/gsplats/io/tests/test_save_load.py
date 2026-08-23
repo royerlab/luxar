@@ -16,7 +16,7 @@ import pytest
 import zarr
 
 from luxar._zarr_compat import read_consolidated_attrs
-from luxar.conftest import array_compressor
+from luxar.conftest import array_compressor, confine_temp_dirs
 from luxar.encoding import EncodingMode
 from luxar.gsplats import GSplatData
 from luxar.gsplats.io import (
@@ -84,21 +84,7 @@ def _targz_store_flat(store: Path, archive: Path) -> Path:
 
 def _luxar_temp_dirs() -> set:
     """The extractor's temp directories currently present, as a set of paths."""
-    return set(Path(tempfile.gettempdir()).glob("luxar_gsplat_*"))
-
-
-def _confine_temp_dirs(tmp_path: Path, monkeypatch) -> None:
-    """Point BOTH ``mkdtemp`` and :func:`_luxar_temp_dirs` at this test's own dir.
-
-    Without this the probe globs the machine-global ``/tmp`` and any concurrent
-    process extracting a gsplats archive inside the window fails the "nothing was
-    extracted" / "the temp dir was removed" assertions (reproduced with a
-    background loop; this repo is routinely worked in several worktrees at once).
-    ``tempfile.mkdtemp()`` honours ``tempfile.tempdir``, and so does
-    ``tempfile.gettempdir()``, so setting it confines the extractor and the probe
-    together.
-    """
-    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    return set(Path(tempfile.gettempdir()).glob("luxar_gsplat_archive_*"))
 
 
 def _uncompressed_model_bytes(n_splats: int, ndim: int = 3) -> int:
@@ -1052,7 +1038,7 @@ class TestInspectGsplats:
         # the ambient format leaves half of `NODE_GROUP_DOCS` untested.
         from luxar._zarr_compat import ZARR_FORMAT, set_zarr_format
 
-        _confine_temp_dirs(tmp_path, monkeypatch)
+        confine_temp_dirs(tmp_path, monkeypatch)
         n_splats = 20000
         original = ZARR_FORMAT
         set_zarr_format(write_format)
@@ -1081,7 +1067,7 @@ class TestInspectGsplats:
         # Cleanup was unverified: neutering the `shutil.rmtree` left the whole
         # suite green. A nested archive IS extracted, so its temp directory must be
         # gone afterwards.
-        _confine_temp_dirs(tmp_path, monkeypatch)
+        confine_temp_dirs(tmp_path, monkeypatch)
         archive = tmp_path / "a.gsplats.zarr.zip"
         save_gsplats(
             path=archive,
@@ -1101,7 +1087,7 @@ class TestInspectGsplats:
         # gsplats store.
         from luxar._zarr_compat import open_group as zc_open_group
 
-        _confine_temp_dirs(tmp_path, monkeypatch)
+        confine_temp_dirs(tmp_path, monkeypatch)
         store = tmp_path / "bad.gsplats.zarr"
         zc_open_group(str(store), mode="w")
         archive = tmp_path / "bad.gsplats.zarr.zip"
@@ -1336,7 +1322,7 @@ class TestFlatZipClassifier:
         from luxar._zarr_compat import open_group as zc_open_group
         from luxar.gsplats.io._archive import resolve_store_path
 
-        _confine_temp_dirs(tmp_path, monkeypatch)
+        confine_temp_dirs(tmp_path, monkeypatch)
         store = tmp_path / "d.gsplats.zarr"
         save_gsplats(path=store, **create_test_splats_3d(50), ordering="none")
         archive = _zip_store_flat(store, tmp_path / "flat.gsplats.zarr.zip")
@@ -1358,7 +1344,7 @@ class TestFlatZipClassifier:
             # LAYOUT: a flat tree is moved INSIDE a fresh extractor temp dir
             # rather than being one. Handing back the extraction dir as-is would
             # make every caller's `rmtree(temp_dir)` remove the system temp root.
-            assert resolved.parent.name.startswith("luxar_gsplat_")
+            assert resolved.parent.name.startswith("luxar_gsplat_archive_")
             assert resolved.parent != Path(tempfile.gettempdir())
             assert resolved.name != resolved.parent.name
         finally:
@@ -1454,7 +1440,7 @@ class TestFlatArchiveStoreRoot:
         from luxar.gsplats.io.load_gsplats import load_gsplat_node
         from luxar.gsplats.tree import node_ndim, total_splats
 
-        _confine_temp_dirs(tmp_path, monkeypatch)
+        confine_temp_dirs(tmp_path, monkeypatch)
         archive = self._flat(self._store(tmp_path, write_format), tmp_path, container)
 
         data = load_gsplats(archive)
@@ -1533,7 +1519,7 @@ class TestFlatArchiveStoreRoot:
         "no new directories" holds vacuously over a wiped tree. Hence the second
         assertion — the fixtures live in that root, and they must survive a load.
         """
-        _confine_temp_dirs(tmp_path, monkeypatch)
+        confine_temp_dirs(tmp_path, monkeypatch)
         store = self._store(tmp_path, 3)
         archive = self._flat(store, tmp_path, container)
 
@@ -1557,13 +1543,13 @@ class TestFlatArchiveStoreRoot:
         """
         from luxar.gsplats.io._archive import resolve_store_path
 
-        _confine_temp_dirs(tmp_path, monkeypatch)
+        confine_temp_dirs(tmp_path, monkeypatch)
         archive = self._flat(self._store(tmp_path, 3), tmp_path, container)
 
         resolved, temp_dir = resolve_store_path(archive)
         try:
             assert temp_dir == resolved.parent
-            assert resolved.parent.name.startswith("luxar_gsplat_")
+            assert resolved.parent.name.startswith("luxar_gsplat_archive_")
             assert resolved.parent != Path(tempfile.gettempdir())
             assert resolved.name != resolved.parent.name
             assert resolved.name == "flat.gsplats.zarr"
@@ -1633,7 +1619,7 @@ class TestFlatArchiveStoreRoot:
             resolve_store_path,
         )
 
-        _confine_temp_dirs(tmp_path, monkeypatch)
+        confine_temp_dirs(tmp_path, monkeypatch)
         archive = tmp_path / f"bare.gsplats.zarr.{container}"
         self._write_members(
             archive,
@@ -1649,6 +1635,8 @@ class TestFlatArchiveStoreRoot:
         assert read_archive_root_attrs(archive) == {}
         resolved, temp_dir = resolve_store_path(archive)
         try:
+            assert temp_dir is not None
+            assert temp_dir.name.startswith("luxar_gsplat_archive_")
             assert resolved.name == "x.gsplats.zarr"
         finally:
             if temp_dir is not None:
@@ -1674,7 +1662,7 @@ class TestFlatArchiveStoreRoot:
             resolve_store_path,
         )
 
-        _confine_temp_dirs(tmp_path, monkeypatch)
+        confine_temp_dirs(tmp_path, monkeypatch)
         archive = tmp_path / f"filenamed.gsplats.zarr.{container}"
         self._write_members(
             archive,
@@ -1714,7 +1702,7 @@ class TestFlatArchiveStoreRoot:
         """
         from luxar.gsplats.io._archive import resolve_store_path
 
-        _confine_temp_dirs(tmp_path, monkeypatch)
+        confine_temp_dirs(tmp_path, monkeypatch)
         archive = tmp_path / f"flat.gsplats.zarr.{container}"
         self._write_members(archive, container, [(f"{doc}/junk", "not a document")])
 
@@ -1795,7 +1783,7 @@ class TestFlatArchiveStoreRoot:
             resolve_store_path,
         )
 
-        _confine_temp_dirs(tmp_path, monkeypatch)
+        confine_temp_dirs(tmp_path, monkeypatch)
         archive = tmp_path / f"both.gsplats.zarr.{container}"
         if doc == ".zgroup":
             members = [
@@ -1837,7 +1825,7 @@ class TestFlatArchiveStoreRoot:
         """
         from luxar.gsplats.io._archive import read_archive_root_attrs
 
-        _confine_temp_dirs(tmp_path, monkeypatch)
+        confine_temp_dirs(tmp_path, monkeypatch)
         payload = tmp_path / "payload"
         payload.mkdir()
         shutil.move(str(self._store(tmp_path, 3)), str(payload / "mystore"))
@@ -1868,7 +1856,7 @@ class TestFlatArchiveStoreRoot:
             resolve_store_path,
         )
 
-        _confine_temp_dirs(tmp_path, monkeypatch)
+        confine_temp_dirs(tmp_path, monkeypatch)
         wrapper = tmp_path / "wrapper"
         wrapper.mkdir()
         shutil.move(str(self._store(tmp_path, 3)), str(wrapper / "mystore"))

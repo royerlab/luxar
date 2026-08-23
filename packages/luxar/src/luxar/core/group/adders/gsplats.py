@@ -175,12 +175,11 @@ def add_gsplats_impl(
             if not warn_if_partition_needs_more_dims(ndim, name):
                 partition = None
 
-        if partition is not None:
+        if partition is not None and n_splats > 0:
             from ..partition import (
-                median_bsp_partition,
-                midpoint_bsp_partition,
+                bsp_leaf_parts,
                 resolve_partition_spec,
-                sah_bsp_partition,
+                spatial_bsp_tree,
                 warn_if_oversized_single_part,
             )
 
@@ -192,12 +191,8 @@ def add_gsplats_impl(
                     "Decompose the data manually or omit image_labels."
                 )
 
-            if partition_rule == "sah":
-                parts = sah_bsp_partition(ctr_arr, max_elements)
-            elif partition_rule == "midpoint":
-                parts = midpoint_bsp_partition(ctr_arr, max_elements)
-            else:
-                parts = median_bsp_partition(ctr_arr, max_elements)
+            tree = spatial_bsp_tree(ctr_arr, max_elements, rule=partition_rule)
+            parts = bsp_leaf_parts(tree)
             warn_if_oversized_single_part(
                 len(parts), int(parts[0].size) if parts else 0, max_elements, name
             )
@@ -216,6 +211,7 @@ def add_gsplats_impl(
                     parent=parent,
                     extend_to_all=extend_to_all,
                     max_elements=max_elements,
+                    bsp_tree=tree.to_serializable(),
                     **attrs,
                 )
             # 1 part → fall through to single-leaf write.
@@ -291,6 +287,7 @@ def add_gsplats_partition_wrapper_impl(
     parent: Optional["Node"],
     extend_to_all: Optional[Union[List[str], str]],
     max_elements: int,
+    bsp_tree: Dict[str, Any],
     **attrs: Any,
 ) -> "Group":
     """Build a kind=partition wrapper Group with one GSplats child per BSP part."""
@@ -359,6 +356,10 @@ def add_gsplats_partition_wrapper_impl(
             partition=False,
             **leaf_attrs,
         )
+    from ..partition import persist_pruned_bsp_tree
+
+    # Unlike lines, every resolved gsplats part is written in order.
+    persist_pruned_bsp_tree(wrapper, bsp_tree, range(len(parts)))
 
     wrapper._persist_attr("position_bounds", position_bounds_from_array(ctr_arr))
 

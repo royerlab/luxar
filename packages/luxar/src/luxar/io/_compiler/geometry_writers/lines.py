@@ -451,6 +451,8 @@ def write_lines(
         ctx.dataset_ctx,
         "width",
         per_array_bytes=True,
+        # The chunk-bound slack assumes widths cannot reuse another array's encoding.
+        deduplicate=False,
     )
 
     # Initialize metadata

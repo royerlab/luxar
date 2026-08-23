@@ -23,6 +23,10 @@ from arbol import aprint
 from numpy.typing import NDArray
 
 from ...core.dimensions import Dimensions
+from ...core.group.compositing import (
+    IDENTITY_COMPOSITING_ATTRS,
+    WRITER_STAMPED_APPEARANCE_DEFAULTS,
+)
 from ...typing_utils.constants import (
     ELEMENT_TEXELS_PER_ELEMENT,
     max_elements_per_node,
@@ -148,8 +152,19 @@ KNOWN_RENDER_ATTRS: FrozenSet[str] = frozenset(
         "ambient",
         "blending_mode",
         "colormap",
+        # Per-element interaction templates (issue #1917). ``link`` builds a
+        # URL opened on left-click, ``copy`` a plain string offered by the
+        # right-click menu, both substituting the hover vocabulary
+        # (``{hover_label}`` / ``{hover_node}`` / ``{hover_index}``).
+        # ``link_target`` picks the browsing context. Advertised here rather
+        # than hidden in ``_ALLOWED_NODE_ATTRS`` for the same reason as
+        # lines-only ``join``: they are real knobs a user authors, so a typo
+        # deserves to see them in the hint.
+        "copy",
         "gamma",
         "intensity",
+        "link",
+        "link_target",
         # Lines-only join style at degree-2 polyline joints (issue #790).
         # Advertised here rather than hidden in ``_ALLOWED_NODE_ATTRS``
         # because it is a real appearance knob a user authors, so it belongs
@@ -209,9 +224,8 @@ _ALLOWED_NODE_ATTRS: FrozenSet[str] = frozenset(
         "display_type",
         "max_elements",
         "position_bounds",
-        # BSP tree stamped on a kind=partition group by the gsplat graft path
-        # (add_partition_group); the viewer reads it for back-to-front part
-        # ordering.
+        # BSP tree stamped on a kind=partition group by the native leaf adders
+        # and gsplat graft path; the viewer reads it for back-to-front ordering.
         "bsp_tree",
         # Geometry-writer internal forwarding flags. NOT an exhaustive list of
         # them: a flag popped BEFORE this gate runs never needs listing here.
@@ -490,17 +504,15 @@ def apply_default_render_attrs(attrs: Dict[str, Any]) -> None:
     ancestor sets it.
 
     Mirrors the GSplat defaults in :func:`~luxar.io._compiler.gsplat_assembly.\
-    apply_gsplat_group_attrs` (which additionally defaults ``truncation_radius``).
+    apply_gsplat_group_attrs` (which additionally defaults ``truncation_radius``)
+    — literally, not by coincidence: both read their values from
+    :data:`~luxar.core.group.compositing.WRITER_STAMPED_APPEARANCE_DEFAULTS`,
+    which is also what the READER consults to tell a manufactured identity from
+    an authored one (the ``gsplat merge`` agreement rule).
     """
-    for key, default in (
-        ("opacity", 1.0),
-        ("absorption", 1.0),
-        ("gamma", 1.0),
-        ("intensity", 1.0),
-        ("offset", 0.0),
-    ):
+    for key in IDENTITY_COMPOSITING_ATTRS:
         if key not in attrs:
-            attrs[key] = default
+            attrs[key] = WRITER_STAMPED_APPEARANCE_DEFAULTS[key]
 
 
 def warn_if_over_element_cap(geometry_type: str, count: int, node_path: str) -> bool:
@@ -678,9 +690,43 @@ def validate_render_attrs(
 
         validate_colormap(attrs["colormap"])
 
+    _validate_interaction_attrs(attrs)
+
 
 def _validate_mesh_appearance_attrs(attrs: Dict[str, Any]) -> None:
     """Validate the five mesh-only appearance values in the shared attr gate."""
     for key, (validator, label) in _MESH_APPEARANCE_VALIDATORS.items():
         if key in attrs:
             validator(attrs[key], label)
+
+
+def _validate_interaction_attrs(attrs: Dict[str, Any]) -> None:
+    """Validate element interaction templates in the shared attr gate."""
+    # Checked before the node exists on disk because the failure they prevent
+    # is otherwise silent: a bad link writes cleanly and simply does nothing
+    # when the user clicks it, with no file or console diagnostic (#1917).
+    if "link" in attrs:
+        from ...validation.types import validate_link
+
+        validate_link(attrs["link"])
+
+    if "copy" in attrs:
+        from ...validation.types import validate_copy_template
+
+        validate_copy_template(attrs["copy"])
+
+    if "link_target" in attrs:
+        from ...validation.types import validate_link_target
+
+        validate_link_target(attrs["link_target"])
+
+    # `link_target` alone is inert — it only says WHERE a link would open.
+    # Refuse it rather than write a node whose only interaction attr can
+    # never be read, which is a typo (`link_taget=`) far more often than a
+    # deliberate choice.
+    if "link_target" in attrs and "link" not in attrs:
+        raise ValueError(
+            "link_target was given without link. It only selects the browsing "
+            "context for a link, so on its own it has no effect. Add "
+            "link='https://...' or drop link_target."
+        )

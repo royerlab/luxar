@@ -1,11 +1,14 @@
 """Tests for ViewerConfig, CameraConfig, and related dataclasses."""
 
 import json
+import re
 from pathlib import Path
 
 import pytest
 
+from luxar.conftest import find_repo_relative_file
 from luxar.core.viewer_config import (
+    VALID_FOV_PRESETS,
     AnimationConfig,
     CameraConfig,
     DimensionsConfig,
@@ -81,6 +84,36 @@ class TestCameraConfig:
         assert cam.fov_preset == "50mm Normal"
         d = cam.to_dict()
         assert d["fov_preset"] == "50mm Normal"
+
+    def test_fov_preset_names_match_viewer_contract(self) -> None:
+        camera_source = find_repo_relative_file(
+            Path("packages/luxar-viewer/src/config/sections/camera/data.ts"),
+            Path(__file__).resolve(),
+        )
+        assert camera_source is not None, (
+            "cannot locate packages/luxar-viewer/src/config/sections/camera/data.ts; "
+            "if the viewer file moved, update this contract test"
+        )
+
+        source = camera_source.read_text(encoding="utf-8")
+        presets_match = re.search(
+            r"fovPresets:\s*\{(?P<body>.*?)^\s*\},",
+            source,
+            re.DOTALL | re.MULTILINE,
+        )
+        assert presets_match is not None, (
+            "cannot find cameraConfig.fovPresets in viewer data.ts"
+        )
+        preset_names = tuple(
+            quoted or bare
+            for quoted, bare in re.findall(
+                r"^\s*(?:['\"]([^'\"]+)['\"]|([A-Za-z_$][\w$]*))\s*:",
+                presets_match.group("body"),
+                re.MULTILINE,
+            )
+        )
+
+        assert preset_names == VALID_FOV_PRESETS
 
     def test_invalid_fov_preset(self) -> None:
         with pytest.raises(ValueError, match="fov_preset must be one of"):
@@ -169,6 +202,33 @@ class TestAnimationConfig:
         anim2 = AnimationConfig.from_dict(d)
         assert anim2.playing is True
         assert anim2.loop == "bounce"
+
+    def test_step_size_round_trips(self) -> None:
+        """The viewer writes this field; Python has to be able to carry it.
+
+        Ctrl+Shift+S captures a per-dimension step override into the scene's
+        `animation` block. Before this field existed the round trip dropped it
+        silently: read a captured scene into Python, write it back, and the
+        override was gone with nothing said.
+        """
+        anim = AnimationConfig(playing=True, step_size=2.5)
+        restored = AnimationConfig.from_dict(anim.to_dict())
+        assert restored.step_size == 2.5
+
+        # Auto (the usual case) must stay absent rather than serialize as null,
+        # so it cannot be mistaken for an explicit override downstream.
+        assert "step_size" not in AnimationConfig(playing=True).to_dict()
+
+    def test_invalid_step_size(self) -> None:
+        # Matches the viewer's own `setStepSize` guard.
+        for bad in (0.0, -1.0, float("inf"), float("nan")):
+            with pytest.raises(ValueError, match="step_size must be > 0"):
+                AnimationConfig(step_size=bad)
+
+    def test_invalid_target_fps(self) -> None:
+        for bad in (0.0, -1.0, float("inf"), float("nan")):
+            with pytest.raises(ValueError, match="target_fps must be finite and > 0"):
+                AnimationConfig(target_fps=bad)
 
     def test_invalid_loop(self) -> None:
         with pytest.raises(ValueError, match="loop must be one of"):

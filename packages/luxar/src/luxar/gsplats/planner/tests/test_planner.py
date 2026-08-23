@@ -221,6 +221,47 @@ class TestFitPlanned:
         assert c[:, 0].min() >= 0 and c[:, 0].max() < 64
         assert c[:, 2].min() >= 0 and c[:, 2].max() < 64
 
+    @pytest.mark.parametrize("partition", [False, True])
+    def test_scoring_receives_the_merged_box_basis(self, monkeypatch, partition):
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        fit_planned_module = importlib.import_module(
+            "luxar.gsplats.planner.fit_planned"
+        )
+        captured = []
+
+        def fake_fit_one_box(volume, box, pad, cap, **kwargs):
+            center = np.array(
+                [[(box.box[i] + box.box[i + 1]) / 2 for i in (0, 2, 4)]],
+                np.float32,
+            )
+            return GSplatData(
+                centers=center,
+                amplitudes=np.ones(1, np.float32),
+                cholesky_factors=np.array([[1, 0, 1, 0, 0, 1]], np.float32),
+                stats={
+                    "floor": 500.0,
+                    "image_min": 500.0,
+                    "image_max": 501.0,
+                    "intensity_range": 1.0,
+                },
+            )
+
+        def capture_score(*args, image_min, **kwargs):
+            captured.append(image_min)
+
+        monkeypatch.setattr(fit_planned_module, "_fit_one_box", fake_fit_one_box)
+        monkeypatch.setattr(fit_planned_module, "_score_planned_merge", capture_score)
+        plan = _toy_plan(n_boxes=2, budget=5)
+        fit_planned_module.fit_planned(
+            np.full(plan.volume_shape, 500.0, np.float32),
+            plan,
+            partition=partition,
+            verbose=False,
+        )
+
+        assert captured == [500.0]
+
 
 class TestPlanCliResolveDensity:
     def test_explicit_flags_build_density(self):
@@ -344,7 +385,11 @@ def _toy_plan(n_boxes: int = 3, budget: int = 100, width: int = 16) -> FitPlan:
 _FAKE_BOX_TIME_SECONDS = 1000.0
 
 
-def _fake_box_builder(n_per_box: int = 5, truncation_radius: float | None = None):
+def _fake_box_builder(
+    n_per_box: int = 5,
+    truncation_radius: float | None = None,
+    image_min: float = 0.0,
+):
     """Worker builder writing ``n_per_box`` deterministic splats — no torch/GPU.
 
     ``truncation_radius`` stands in for a box worker whose fit config asked for a
@@ -370,7 +415,10 @@ def _fake_box_builder(n_per_box: int = 5, truncation_radius: float | None = None
             chol = np.tile(np.array([1, 0, 1, 0, 0, 1], np.float32), (k, 1))
             GSplatData(centers=centers, amplitudes=amps,
                        cholesky_factors=chol{radius},
-                       stats={{"time_seconds": {_FAKE_BOX_TIME_SECONDS!r}}},
+                       stats={{"time_seconds": {_FAKE_BOX_TIME_SECONDS!r},
+                              "floor": {image_min!r}, "image_min": {image_min!r},
+                              "image_max": {image_min + 1.0!r},
+                              "intensity_range": 1.0}},
                        ).save(r"{out_path}")
             """
         )
@@ -1230,9 +1278,96 @@ class TestFitPlannedParallel:
         assert "does not match the plan grid" in notice
         assert str(tuple(plan.volume_shape)) in notice
 
-    def test_partition_skip_is_announced_even_with_a_reference(self, tmp_path, capsys):
+    def test_partition_with_reference_records_flat_equivalent_quality(
+        self, tmp_path, capsys
+    ):
         plan = _toy_plan(n_boxes=2)
-        fit_planned_parallel(
+        volume = _corner_blobs(tuple(plan.volume_shape), n=3, corner=12)
+        flat = fit_planned_parallel(
+            plan,
+            jobs=2,
+            tmp_dir=tmp_path / "flat-boxes",
+            worker_cmd_builder=_fake_box_builder(5),
+            volume=volume,
+            device="cpu",
+            verbose=False,
+        )
+        node = fit_planned_parallel(
+            plan,
+            jobs=2,
+            tmp_dir=tmp_path / "partition-boxes",
+            worker_cmd_builder=_fake_box_builder(5),
+            volume=volume,
+            device="cpu",
+            partition=True,
+            verbose=False,
+        )
+
+        stats = node.meta["fit_stats"]
+        quality_keys = {
+            "mse",
+            "psnr_db",
+            "ssim",
+            "foreground_psnr_db",
+            "foreground_threshold",
+            "foreground_fraction",
+        }
+        assert quality_keys <= stats.keys()
+        assert stats["psnr_db"] == pytest.approx(flat.stats["psnr_db"])
+        assert stats["mse"] == pytest.approx(flat.stats["mse"])
+        assert "floor" not in stats
+        assert "concatenated_from" not in stats
+        assert stats["splats_per_tile"] == [5, 5]
+        assert node.meta["floor"] == pytest.approx(0.0)
+        assert node.meta["image_min"] == pytest.approx(0.0)
+        assert node.meta["image_max"] == pytest.approx(1.0)
+        assert node.meta["intensity_range"] == pytest.approx(1.0)
+        assert flat.stats["floor"] == pytest.approx(node.meta["floor"])
+        assert flat.stats["image_min"] == pytest.approx(node.meta["image_min"])
+        assert "No merged quality metrics" not in capsys.readouterr().out
+
+        from luxar.cli.gsplat_ops.fitting.fit_utils import save_fit_output
+
+        output = tmp_path / "partition.gsplats.zarr"
+        save_fit_output(node, output, compress=None, verbose=False)
+
+        import zarr
+
+        root = zarr.open_group(str(output), mode="r")
+        assert root["fitting"].attrs["psnr_db"] == pytest.approx(stats["psnr_db"])
+        assert root["fitting"].attrs["n_splats"] == node.n_splats
+        assert root["pipeline"].attrs["planned_fit"] is True
+
+    def test_single_region_partition_request_records_quality_without_flatten_notice(
+        self, tmp_path, capsys
+    ):
+        from luxar.gsplats.tree import GSplatPartition
+
+        plan = _toy_plan(n_boxes=1)
+        volume = _corner_blobs(tuple(plan.volume_shape), n=3, corner=12)
+        result = fit_planned_parallel(
+            plan,
+            jobs=1,
+            tmp_dir=tmp_path / "boxes",
+            worker_cmd_builder=_fake_box_builder(5),
+            volume=volume,
+            device="cpu",
+            partition=True,
+            verbose=False,
+        )
+
+        assert not isinstance(result, GSplatPartition)
+        assert np.isfinite(result.meta["fit_stats"]["psnr_db"])
+        notice = capsys.readouterr().out
+        assert "No merged quality metrics" not in notice
+        assert "gsplat flatten" not in notice
+
+    def test_partition_quality_budget_skip_is_announced(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        plan = _toy_plan(n_boxes=2)
+        monkeypatch.setenv("LUXAR_TILED_QUALITY_MAX_GB", "0")
+        node = fit_planned_parallel(
             plan,
             jobs=2,
             tmp_dir=tmp_path / "boxes",
@@ -1242,32 +1377,80 @@ class TestFitPlannedParallel:
             verbose=False,
         )
 
+        assert "psnr_db" not in node.meta["fit_stats"]
         notice = capsys.readouterr().out
-        assert "No merged quality metrics" in notice
-        assert "kind=partition" in notice
+        assert "Merged quality metrics skipped" in notice
         assert "gsplat flatten" in notice
+        assert "gsplat compare" in notice
 
-    def test_single_region_partition_notice_does_not_require_flatten(
+    def test_partition_missing_reference_is_announced_and_keeps_root_stats(
         self, tmp_path, capsys
     ):
-        from luxar.gsplats.tree import GSplatPartition
-
-        plan = _toy_plan(n_boxes=1)
-        result = fit_planned_parallel(
-            plan,
-            jobs=1,
+        node = fit_planned_parallel(
+            _toy_plan(n_boxes=2),
+            jobs=2,
             tmp_dir=tmp_path / "boxes",
             worker_cmd_builder=_fake_box_builder(5),
-            volume=np.zeros(plan.volume_shape, np.float32),
             partition=True,
             verbose=False,
         )
 
-        assert not isinstance(result, GSplatPartition)
+        assert node.meta["fit_stats"]["planned_fit"] is True
+        assert "psnr_db" not in node.meta["fit_stats"]
         notice = capsys.readouterr().out
         assert "No merged quality metrics" in notice
-        assert "gsplat compare" in notice
-        assert "gsplat flatten" not in notice
+        assert "reference volume" in notice
+        assert "gsplat flatten" in notice
+
+    def test_partition_disagreeing_box_bases_warn_and_score_raw(self, tmp_path, capsys):
+        builders = {
+            0: _fake_box_builder(5, image_min=2.0),
+            1: _fake_box_builder(5, image_min=3.0),
+        }
+
+        def builder(i: int, out_path: Path) -> list[str]:
+            return builders[i](i, out_path)
+
+        plan = _toy_plan(n_boxes=2)
+        volume = _corner_blobs(tuple(plan.volume_shape), n=3, corner=12) + 10.0
+        node = fit_planned_parallel(
+            plan,
+            jobs=2,
+            tmp_dir=tmp_path / "boxes",
+            worker_cmd_builder=builder,
+            volume=volume,
+            device="cpu",
+            partition=True,
+            verbose=False,
+        )
+
+        assert "image_min" not in node.meta
+        assert "floor" not in node.meta
+        assert np.isfinite(node.meta["fit_stats"]["psnr_db"])
+        notice = capsys.readouterr().out
+        assert "records no normalization basis" in notice
+        assert "computed against the RAW volume" in notice
+
+    @pytest.mark.parametrize("partition", [False, True])
+    def test_quality_is_independent_of_the_removed_pedestal(self, tmp_path, partition):
+        plan = _toy_plan(n_boxes=2)
+        signal = _corner_blobs(tuple(plan.volume_shape), n=3, corner=12)
+        psnr = []
+        for pedestal in (0.0, 500.0):
+            result = fit_planned_parallel(
+                plan,
+                jobs=2,
+                tmp_dir=tmp_path / f"boxes-{pedestal:g}",
+                worker_cmd_builder=_fake_box_builder(5, image_min=pedestal),
+                volume=signal + pedestal,
+                device="cpu",
+                partition=partition,
+                verbose=False,
+            )
+            stats = result.meta["fit_stats"] if partition else result.stats
+            psnr.append(stats["psnr_db"])
+
+        assert psnr[1] == pytest.approx(psnr[0], abs=0.05)
 
 
 # ── The fit's truncation radius survives the planned path (#1637) ──
@@ -1412,11 +1595,19 @@ class TestPlannedFitTruncationRadius:
         from luxar.gsplats.planner import fit_planned
 
         V, plan = self._tiny_volume_and_plan()
+        flat = fit_planned(V, plan, partition=False, truncate=3.5, **_FAST_FIT)
         node = fit_planned(V, plan, partition=True, truncate=3.5, **_FAST_FIT)
         notice = capsys.readouterr().out
-        assert "No merged quality metrics" in notice
-        assert "gsplat flatten" in notice
-        assert "gsplat compare" in notice
+        assert np.isfinite(node.meta["fit_stats"]["psnr_db"])
+        assert node.meta["fit_stats"]["psnr_db"] == pytest.approx(flat.stats["psnr_db"])
+        assert node.meta["fit_stats"]["mse"] == pytest.approx(flat.stats["mse"])
+        assert node.meta["fit_stats"]["planned_fit"] is True
+        assert node.meta["fit_stats"]["n_splats"] == node.n_splats
+        assert "concatenated_from" not in node.meta["fit_stats"]
+        assert node.meta["fit_stats"]["splats_per_tile"]
+        assert "image_max" not in node.meta["fit_stats"]
+        assert node.meta["image_max"] == pytest.approx(flat.stats["image_max"])
+        assert "No merged quality metrics" not in notice
 
         leaves = _leaf_nodes(node)
         assert leaves
@@ -1767,24 +1958,56 @@ class TestPlannedFitTruncationRadius:
         ).stats["time_seconds"]
         assert box_time == pytest.approx(_FAKE_BOX_TIME_SECONDS)
         # ... and whatever a box recorded, `time_seconds` on the merge means one
-        # thing: wall clock, as the uniform tiled merge stamps it. (Nothing has to
-        # be overwritten HERE — a reloaded box brings back its leaf `lod_stats`
-        # but not its top-level stats, so `concatenate` has no box times to sum;
-        # `test_flat_merge_stamps_wall_clock_time` covers the sequential branch
-        # where it does and the overwrite is load-bearing.)
+        # thing: wall clock, as the uniform tiled merge stamps it. This fake
+        # persists fitting info, so the reload and `concatenate` do bring back
+        # and sum the box times; the overwrite is load-bearing here too.
         assert merged.stats["time_seconds"] == pytest.approx(
             merged.stats["elapsed_seconds"]
         )
         assert merged.stats["time_seconds"] < 60.0
+
+    def test_parallel_flat_merge_keeps_the_box_basis(self, tmp_path):
+        merged = fit_planned_parallel(
+            _toy_plan(n_boxes=2),
+            jobs=2,
+            tmp_dir=tmp_path / "boxes",
+            worker_cmd_builder=_fake_box_builder(5, image_min=500.0),
+            verbose=False,
+        )
+
+        assert merged.stats["image_min"] == pytest.approx(500.0)
+
+    def test_parallel_partition_recipe_keeps_the_box_basis(self, tmp_path, monkeypatch):
+        import luxar.gsplats.lod.recipes as recipes
+        from luxar.gsplats.lod.recipes import RecipeParams
+
+        captured = []
+
+        def fake_build(part, recipe, params, *, cell=None):
+            captured.append(params.image_min)
+            return part
+
+        monkeypatch.setattr(recipes, "build_part_lod", fake_build)
+        fit_planned_parallel(
+            _toy_plan(n_boxes=2),
+            jobs=2,
+            tmp_dir=tmp_path / "boxes",
+            worker_cmd_builder=_fake_box_builder(5, image_min=500.0),
+            partition=True,
+            recipe="levels",
+            recipe_params=RecipeParams(),
+            verbose=False,
+        )
+
+        assert captured == [500.0, 500.0]
 
     def test_parallel_partition_parts_keep_the_box_stats_and_radius(self, tmp_path):
         """``fit -j N`` (the default partition): each part carries its own box.
 
         The radius and the per-box fit stats reach a part by a different route
         than the sequential path's in-memory hand-off — through the box store: the
-        leaf writer stamps a box's stats as its `lod_stats`, and the reload
-        restores them onto the sub-LOD even though the top-level `stats` (which
-        would need `include_stats=True`) comes back empty.
+        leaf writer stamps a box's stats as its `lod_stats`, and the reload asks
+        for top-level `stats` while also restoring them onto the sub-LOD.
         """
         node = fit_planned_parallel(
             _toy_plan(n_boxes=2),

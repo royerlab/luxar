@@ -1,8 +1,8 @@
 """Attribute/geometry filtering mixin for ``GSplatData``, and the ``stats`` rules.
 
-Inherited-``stats`` hygiene comes in TWO categories, because a rewritten artifact
-can invalidate a stamp along either of two independent axes and no single
-predicate covers both:
+Inherited-``stats`` hygiene comes in THREE categories, because a rewritten
+artifact can invalidate a stamp along any of three independent axes and no single
+predicate covers more than one:
 
 * :data:`_REGION_SCOPED_STATS_KEYS` — what the splats REPRESENT. Invalidated by a
   spatial restriction (a bbox/slice that excluded splats), and by nothing else:
@@ -16,15 +16,34 @@ predicate covers both:
   reconstruction completely, and a merge-family reduction can hit the requested
   count exactly while replacing every splat with a representative. Predicate:
   "did the content change" — :func:`_stats_after_content_change`.
+* :data:`_STRUCTURE_SCOPED_STATS_KEYS` — the artifact's OWN TOPOLOGY: which LOD
+  mechanism built it, how many substitutive levels and additive rungs it has,
+  where the ladder cutpoints fall, which recipe was run. Invalidated when a
+  rewrite changes the STRUCTURE KIND, and by nothing else: a cull rewrites the
+  content while leaving a substitutive pyramid a substitutive pyramid (and its
+  root ladder counts are RE-STAMPED, not dropped — see
+  :func:`~luxar.gsplats._data.transforms._refresh_ladder_summary`, reached from
+  ``_map_substitutive`` / ``_map_additive`` through
+  ``_stats_after_ladder_rebuild``; the neighbouring
+  :func:`~luxar.gsplats.lod.restamp.refresh_reduction_lod_stats` passes the ROOT
+  dict through verbatim and rewrites only the per-level / per-rung stamps),
+  whereas ``flatten`` turns that pyramid into one flat leaf without touching a
+  single splat. Predicate: the rewriting command's own knowledge that it produced
+  a different kind of thing — :func:`stats_after_structure_change`.
 
 Reusing the region predicate for the metrics is what #1600 was: a ``cull -r 0.5``
 that halved the splat count published the pre-cull PSNR as its own, and ``gsplat
-info`` reads ``psnr_db`` as THE dataset's reconstruction quality. Neither category
-subsumes the other — a whole-volume bbox that removed nothing keeps both, a
-non-spatial cull keeps the region stamp and loses the metrics, an actual crop
-loses both.
+info`` reads ``psnr_db`` as THE dataset's reconstruction quality. The third axis
+is the same issue's other half: ``flatten`` / ``partition`` / ``lod`` /
+``decimate`` published ``lod_kind: substitutive``, ``n_substitutive_levels: 4``
+and ``lod_cutpoints: [2, 4, 5, 7]`` for a store that is one flat leaf (or four
+bare parts) — ``lod --recipe flat`` printing that block one line above its own
+``recipe: flat``. No category subsumes another — a whole-volume bbox that removed nothing
+keeps all three, a non-spatial cull keeps the region and topology stamps and
+loses the metrics, an actual crop loses region and metrics but keeps the topology,
+and ``flatten`` loses only the topology.
 
-The LOD Q·e ladder stamps are a third, artifact-local category —
+The LOD Q·e ladder stamps are a fourth, artifact-local category —
 ``lod_stats.energy_fraction_cum`` (the prefix energy e(k) of a rung),
 ``level_stats.reference_energy`` (its weight w) and ``level_stats.quality`` (the
 measured Q of a level against its group's finest). Those are measured on the
@@ -54,7 +73,7 @@ because a shallow ``dict(self.stats)`` shares that list with the input).
 from __future__ import annotations
 
 import warnings
-from typing import TYPE_CHECKING, Any, Dict, List, MutableMapping, Sequence
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, MutableMapping, Sequence
 
 import numpy as np
 
@@ -176,6 +195,90 @@ _CONTENT_SCOPED_OP_RECORD_KEYS = (
     "amplitude_retention",
 )
 
+#: The artifact's OWN TOPOLOGY record: what shape the LOD/partition builders gave
+#: it. Enumerated from the PRODUCERS, not from a reader's expectations —
+#: ``make_substitutive_lod`` (``gsplats/lod/substitutive.py``),
+#: ``make_additive_lod`` (``gsplats/lod/additive.py``), the ``recipe`` stamp on the
+#: ``gsplat lod`` / demo LOD-policy write paths, and
+#: ``_recipe_pipeline_info`` (``gsplats/batch/merge_orchestrator.py``), which is
+#: the only site that stamps ``per_part`` / ``n_lods`` / ``breakpoints`` /
+#: ``levels`` / ``additive_ladders``.
+#:
+#: A DENY-LIST rather than "drop the ``pipeline/`` group", because that group is
+#: shared: it also carries
+#: :data:`~luxar.gsplats.io.save_gsplats.NORMALIZATION_STATS_KEYS` (the input
+#: volume's intensity scale, true whatever shape the splats end up in) and
+#: ``coarsen_dims``, which is load-bearing — see
+#: :data:`_STRUCTURE_SCOPE_EXEMPT_KEYS`.
+#:
+#: Three names here are generic enough to be worth stating: ``method``,
+#: ``refine`` and ``refine_iters``. As TOP-LEVEL ``stats`` keys they are stamped
+#: only by the two LOD producers above (the substitutive merge method, and the
+#: ``--refine l2|volume`` pass over merged levels), so they are unambiguous
+#: today — a fitter's own choices are spelled ``fitter_name`` / ``seed_method`` /
+#: ``culling_method``, and the per-level ``refine`` / ``refine_stats`` live in a
+#: level's own ``meta["stats"]`` dict, which this rule never touches. Should a
+#: future producer stamp a top-level ``method`` meaning something else, the
+#: conservative resolution is to RENAME that one rather than narrow this set: a
+#: surviving false ``method: auto`` on a flattened leaf is the defect, while a
+#: dropped-but-still-true one costs a line ``gsplat info`` prints under
+#: "Additional Metadata".
+_STRUCTURE_SCOPED_STATS_KEYS = (
+    # make_substitutive_lod's out_stats.
+    "lod_kind",
+    "compression_factor",
+    "method",
+    "n_substitutive_levels",
+    "coverage_inflation",
+    "conserve_mass",
+    "refine",
+    "refine_iters",
+    # make_additive_lod's out_stats (the ladder over the summary level).
+    "lod_method",
+    "lod_n_lods",
+    "lod_breakpoints_kind",
+    "lod_cutpoints",
+    "lod_substitutive_level",
+    # The build instruction, stamped by the `lod` CLI and the demo LOD policy.
+    "recipe",
+    # _recipe_pipeline_info (batch-fit merge): the per-part recipe knobs.
+    "per_part",
+    "n_lods",
+    "breakpoints",
+    "levels",
+    "additive_ladders",
+)
+
+#: Topology-ADJACENT keys that share the ``pipeline/`` group and must survive a
+#: structure change. Not a taste call in either case:
+#:
+#: * ``coarsen_dims`` is READ BACK BY THE WRITER.
+#:   :func:`~luxar.gsplats.io.save_gsplats._barrier_from_coarsen_dims` derives
+#:   ``write_gsplats_tree``'s chunk-ordering barrier axes from its COMPLEMENT, so
+#:   scrubbing it does not merely delete a stamp — it silently changes the
+#:   output's chunk layout (a stacked time/channel axis loses its barrier and
+#:   falls back to per-leaf auto-detection, smearing every chunk across
+#:   timepoints and destroying per-slice read locality). The exemption rests on
+#:   that mechanism alone, NOT on the value being true — a rewrite that CHANGES
+#:   which axes it coarsened over owes the output a fresh stamp, and scrubbing
+#:   the key here would neither produce one nor leave the chunks where they were.
+#:   ``decimate`` is the case that had to learn this: its ``merge`` family now
+#:   re-stamps the dims it resolved — see
+#:   :func:`~luxar.gsplats.lod.decimate.resolved_merge_coarsen_dims`, called
+#:   right after this scrub — while its ``prefix`` family keeps the inherited
+#:   value because it blends no axis.
+#: * The :data:`~luxar.gsplats.io.save_gsplats.NORMALIZATION_STATS_KEYS` block
+#:   (``floor`` / ``image_min`` / ``image_max`` / ``intensity_range``) describes
+#:   the INPUT VOLUME's intensity scale. Regrouping splats cannot change what
+#:   pedestal was subtracted before fitting. Named here for the record; they are
+#:   exempt by simply not appearing above, and the completeness test asserts the
+#:   two sets stay disjoint.
+#:
+#: Nothing in production READS this tuple — the writer never consults it. It is
+#: the classification anchor for the completeness test, which requires every key
+#: a builder stamps to be either scrubbed or listed here with its reason.
+_STRUCTURE_SCOPE_EXEMPT_KEYS = ("coarsen_dims",)
+
 #: ``stats`` keys whose value is a LIST of nested stats dicts. The progressive
 #: fitter stores one dict per pass here, mixing measured scores
 #: (``cumulative_psnr_db``) with descriptive counts (``pass_index``,
@@ -216,6 +319,46 @@ def drop_content_scoped_stats(stats: "MutableMapping[str, Any]") -> None:
                 )
                 for entry in nested
             ]
+
+
+def stats_after_structure_change(stats: "Mapping[str, Any]") -> "Dict[str, Any]":
+    """A COPY of ``stats`` with the artifact's inherited TOPOLOGY record removed.
+
+    For a rewrite that KNOWS it produced a different kind of thing: ``gsplat
+    flatten`` and :func:`~luxar.gsplats.lod.decimate.decimate` emit one flat leaf,
+    ``gsplat partition`` emits a ``kind=partition`` of bare leaves, and ``gsplat
+    lod`` emits whatever ``--recipe`` says from any matrix-shaped input (every
+    recipe starts by flattening, so none of them preserves it). All four thread
+    the input's stats through to the output's ``fitting/`` / ``provenance/`` /
+    ``pipeline/`` groups (correct — the fit provenance is still true), which is how
+    a flattened pyramid came to advertise ``lod_kind: substitutive`` with four
+    levels and a four-rung ladder it does not have (#1600). ``lod`` applies this to
+    the LOADED INPUT rather than to a result, because its two write paths both
+    descend from that one dict and each builder then stamps its own true record
+    over the cleaned copy.
+
+    Returns a copy rather than mutating: the call sites hand over the dict they
+    loaded off disk, or the dataset's own ``stats``, and the rest of this
+    module's contract is that a rewrite never edits what the caller still owns.
+    Scrubs BY KEY (:data:`_STRUCTURE_SCOPED_STATS_KEYS`), never by dropping the
+    ``pipeline/`` group, which also holds the normalization block and the
+    load-bearing ``coarsen_dims`` — see :data:`_STRUCTURE_SCOPE_EXEMPT_KEYS`.
+
+    Deliberately NOT applied inside ``flattened()`` / ``concatenate`` /
+    ``to_spatial_partition``: those are general-purpose domain methods with other
+    callers (a recipe builds an intermediate flat view of a level it is ABOUT to
+    wrap in a lod group again, and scrubbing there would erase a record that is
+    still true of the result). Their RETURN VALUE does not settle what kind of
+    thing will be published, so the knowledge belongs to whoever publishes.
+    ``decimate()`` is the opposite case and does apply it itself, at the domain
+    layer: its contract is one flat leaf whatever it was handed, so no caller can
+    want the topology record kept — leaving the scrub to the CLI left the public
+    ``luxar.gsplats.lod.decimate`` API reproducing the defect.
+    """
+    scrubbed = dict(stats)
+    for key in _STRUCTURE_SCOPED_STATS_KEYS:
+        scrubbed.pop(key, None)
+    return scrubbed
 
 
 def content_scoped_stats(stats: "MutableMapping[str, Any]") -> "Dict[str, Any]":

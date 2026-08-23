@@ -61,6 +61,7 @@ DEMO_META = {
     "outputs": ["gsplats_3d_cryoem_virus"],
     "citation": {
         "short": "Zhang et al. 2011 (EMDB EMD-5384)",
+        "ref": "Zhang et al. 2011",
         "doi": "10.1073/pnas.1107847108",
         "license": "CC0 1.0",
     },
@@ -76,6 +77,7 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
     DatasetUnavailable,
+    add_demo_caption,
     detect_device,
     launch_viewer,
     load_dataset_gsplats,
@@ -292,7 +294,7 @@ def create_luxar_scene(gsplats_data: GSplatData, output_path: Path) -> Path:
             scene = compiler.create_scene(
                 citation=DEMO_META["citation"],
                 dimensions=dims,
-                viewer_config=ViewerConfig(tone_mapping="ACES"),
+                viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="ACES"),
             )
             scene.attrs["title"] = (
                 "GSplats: Cryo-EM Giant Virus Capsid (PBCV-1, EMD-5384)"
@@ -322,12 +324,10 @@ def create_luxar_scene(gsplats_data: GSplatData, output_path: Path) -> Path:
                 color="rgba(255,255,255,0.7)",
                 blend_mode="difference",
             )
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 "EMDB EMD-5384 • electron-density map → Gaussian splats",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.5)",
+                DEMO_META.get("citation"),
             )
         aprint(f"Scene saved: {output_path}")
         return output_path

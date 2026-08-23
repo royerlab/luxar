@@ -9,8 +9,8 @@ from typing import Any, Optional, Sequence
 import numpy as np
 from arbol import aprint
 
+from luxar.gsplats.fit_basis import MISSING_BASIS_HINT, reference_on_fit_basis
 from luxar.gsplats.gsplat_data import GSplatData
-from luxar.gsplats.tree import GSplatNode, GSplatPartition
 
 #: Upper bound, in GiB, on the memory a merged-quality score may hold resident.
 #: Above it the score is SKIPPED — and says so out loud, because an archive that
@@ -128,33 +128,6 @@ def announce_unscored_merge(reason: str, *, partition: "bool | None" = False) ->
     )
 
 
-def announce_unscored_partition_merge(
-    node: "GSplatData | GSplatNode", *, suffix: str = ""
-) -> None:
-    """Explain why a requested partition merge was not scored.
-
-    Derives both the reason and compare recourse from the node the merge
-    actually returned. A single surviving part is deliberately returned without
-    a partition wrapper and may be either a leaf or an LOD group.
-
-    Parameters
-    ----------
-    node : GSplatData or GSplatNode
-        The node returned by the requested partition merge.
-    suffix : str, default ""
-        Caller-specific detail appended to the shared reason.
-    """
-    is_partition = isinstance(node, GSplatPartition)
-    reason = (
-        "the requested content-partition merge produced a kind=partition tree, "
-        "but that path does not yet compute a whole-tree score"
-        if is_partition
-        else "the requested content-partition merge collapsed to a single "
-        "matrix-shaped part, but that path does not yet compute a merged score"
-    )
-    announce_unscored_merge(f"{reason}{suffix}", partition=is_partition)
-
-
 def resolve_merged_reference(
     volume: "Any | None",
     expected_shape: tuple[int, ...],
@@ -205,6 +178,11 @@ def _to_voxel_frame(merged: GSplatData, scale: Optional[Sequence[float]]) -> GSp
     )
 
 
+def _announce_missing_basis(image_min: Optional[float]) -> None:
+    if image_min is None:
+        aprint(f"WARNING: {MISSING_BASIS_HINT}")
+
+
 def stamp_merged_quality(
     merged: "GSplatData | Sequence[GSplatData]",
     volume: Any,
@@ -213,6 +191,7 @@ def stamp_merged_quality(
     grid_scale: Optional[Sequence[float]],
     device: Optional[str],
     verbose: bool,
+    image_min: Optional[float],
     stats: "dict[str, Any] | None" = None,
 ) -> None:
     """Score the MERGED reconstruction against the whole volume, in place.
@@ -223,12 +202,11 @@ def stamp_merged_quality(
     actually ships. Without this a tiled archive carries no PSNR at all — which
     is exactly what a published dataset is asked for.
 
-    The reference is ``volume`` exactly as the caller handed it in: the pedestal
-    the tiles subtracted is NOT put back and per-tile denoising is not applied to
-    it, so the score is against the acquisition — the same basis
-    ``luxar gsplat compare`` uses, and the same one the non-tiled path scores a
-    floor-suppressed fit against (its consequences are issue #1173's, not this
-    function's; matching it is what keeps the two paths' numbers comparable).
+    The reference is shifted onto the merged fit's background-relative basis
+    using the explicitly resolved ``image_min``. The tiles reconstruct
+    ``V - image_min``, not the raw acquisition, so leaving the pedestal in the
+    reference would make tiled and non-tiled fits publish different metrics for
+    the same signal (#1173).
     Under ``--denoise`` that parity ends, and not in this path's favor: the tiles
     reconstruct denoised data while the reference here keeps its noise, so the
     score is capped by that noise, whereas ``--tiling none`` denoises the whole
@@ -253,6 +231,7 @@ def stamp_merged_quality(
         return
     if not parts or sum(part.n_splats for part in parts) == 0:
         return
+    _announce_missing_basis(image_min)
     budget_gb = _quality_budget_gb()
     needed_gb = _QUALITY_PEAK_VOLUMES * 4 * float(np.prod(volume_shape)) / 1024**3
     if needed_gb > budget_gb:
@@ -288,9 +267,10 @@ def stamp_merged_quality(
                     else:
                         rendered.add_(part_render)
                         del part_render
-                reference = torch.as_tensor(
-                    np.asarray(volume, dtype=np.float32), device=rendered.device
+                reference_np = reference_on_fit_basis(
+                    np.asarray(volume, dtype=np.float32), image_min
                 )
+                reference = torch.as_tensor(reference_np, device=rendered.device)
                 quality = compute_quality_metrics(rendered, reference)
         finally:
             # Released whether or not the score succeeded: the failure this most
@@ -323,7 +303,6 @@ def stamp_merged_quality(
 
 __all__ = [
     "announce_unscored_merge",
-    "announce_unscored_partition_merge",
     "resolve_merged_reference",
     "stamp_merged_quality",
 ]

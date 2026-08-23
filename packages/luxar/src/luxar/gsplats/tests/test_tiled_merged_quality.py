@@ -26,7 +26,6 @@ from luxar.gsplats.merged_quality import (
     _QUALITY_BUDGET_GB,
     _QUALITY_PEAK_VOLUMES,
     _quality_budget_gb,
-    announce_unscored_partition_merge,
 )
 
 #: Anisotropic on purpose: an isotropic spacing would hide a per-axis error in
@@ -89,6 +88,23 @@ def test_partition_merge_records_the_same_whole_volume_score(
     assert not missing, f"the partition merge lost {missing}"
     assert stats["psnr_db"] == pytest.approx(flat.stats["psnr_db"], abs=0.5)
     assert "No merged quality metrics" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("partition", [False, True])
+def test_tiled_quality_is_independent_of_the_removed_pedestal(
+    volume: np.ndarray, partition: bool
+) -> None:
+    """A merged fit and its reference must be scored on the same basis."""
+    low_result = _fit(volume + 50.0, partition=partition, cull_retention=None)
+    high_result = _fit(volume + 4000.0, partition=partition, cull_retention=None)
+    low = low_result.meta["fit_stats"] if partition else low_result.stats
+    high = high_result.meta["fit_stats"] if partition else high_result.stats
+    low_basis = low_result.meta if partition else low
+    high_basis = high_result.meta if partition else high
+
+    assert low_basis["image_min"] == pytest.approx(50.0, abs=0.1)
+    assert high_basis["image_min"] == pytest.approx(4000.0, abs=0.1)
+    assert high["psnr_db"] == pytest.approx(low["psnr_db"], abs=0.5)
 
 
 def test_partition_quality_reaches_the_archive_and_info(
@@ -201,8 +217,39 @@ def test_partition_scoring_without_a_stats_target_keeps_the_finished_fit(
         grid_scale=None,
         device="cpu",
         verbose=False,
+        image_min=None,
     )
     assert "not given a stats target" in capsys.readouterr().out
+
+
+def test_merged_scoring_warns_when_the_basis_is_unknown(
+    volume: np.ndarray,
+    capsys: pytest.CaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    part = GSplatData(
+        centers=np.array([[1.0, 1.0, 1.0]], dtype=np.float32),
+        amplitudes=np.ones(1, dtype=np.float32),
+        cholesky_factors=np.array([[1.0, 0.0, 1.0, 0.0, 0.0, 1.0]], dtype=np.float32),
+    )
+    monkeypatch.setattr(merged_quality, "_quality_budget_gb", lambda: 0.0)
+
+    merged_quality.stamp_merged_quality(
+        part,
+        volume,
+        volume_shape=volume.shape,
+        grid_scale=None,
+        device="cpu",
+        verbose=False,
+        image_min=None,
+        stats={},
+    )
+
+    output = capsys.readouterr().out
+    assert "records no normalization basis" in output
+    assert "Merged quality metrics skipped" in output
 
 
 def test_the_returned_splats_stay_in_physical_coordinates(
@@ -328,29 +375,3 @@ def test_an_unparseable_budget_override_does_not_lose_the_fit(
     stats = _fit(volume).stats
     assert np.isfinite(stats["psnr_db"])
     assert "LUXAR_TILED_QUALITY_MAX_GB" in capsys.readouterr().out
-
-
-def test_partition_notice_describes_the_node_the_merge_returned(capsys) -> None:
-    """Collapsed LOD parts and real partitions get accurate shared recourse."""
-    from luxar.gsplats.gsplat_data import GSplatData
-
-    region = GSplatData(
-        centers=np.array([[1.0, 1.0, 1.0], [2.0, 2.0, 2.0]], np.float32),
-        amplitudes=np.ones(2, np.float32),
-        cholesky_factors=np.tile(
-            np.array([[1.0, 0.0, 1.0, 0.0, 0.0, 1.0]], np.float32), (2, 1)
-        ),
-    )
-
-    collapsed = GSplatData.partition_from_regions([region], recipe="levels")
-    announce_unscored_partition_merge(collapsed)
-    collapsed_notice = capsys.readouterr().out
-    assert "collapsed to a single matrix-shaped part" in collapsed_notice
-    assert "single leaf" not in collapsed_notice
-    assert "gsplat flatten" not in collapsed_notice
-
-    partition = GSplatData.partition_from_regions([region, region])
-    announce_unscored_partition_merge(partition)
-    partition_notice = capsys.readouterr().out
-    assert "produced a kind=partition tree" in partition_notice
-    assert "gsplat flatten" in partition_notice

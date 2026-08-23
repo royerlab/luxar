@@ -58,6 +58,8 @@ const HELP_SECTIONS: HelpSection[] = [
       { keys: ['⇧', 'Drag'], label: 'Rotate view (alternative)' },
       { keys: ['Wheel'], label: 'Zoom in / out' },
       { keys: ['⇧', 'Wheel'], label: 'Roll around the view axis' },
+      { keys: ['Click'], label: 'Open the hovered element link' },
+      { keys: ['Right click'], label: 'Actions for the hovered element' },
       { keys: ['Space'], label: 'Toggle fullscreen' },
       { keys: ['F'], label: 'Fit scene (recenter camera)' },
       { keys: ['V'], label: 'View mode: orbit / fly / ortho' },
@@ -123,6 +125,7 @@ const HELP_SECTIONS: HelpSection[] = [
       { keys: ['Ctrl/⌘', 'Wheel'], label: 'Adjust field of view (perspective)' },
       { keys: ['Ctrl', 'L'], label: 'Debug console' },
       { keys: ['Ctrl', '⇧', 'S'], label: 'Export viewer state to clipboard' },
+      { keys: ['⇧', 'F10'], label: 'Context menu for the hovered element' },
     ],
   },
 ];

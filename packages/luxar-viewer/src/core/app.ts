@@ -420,6 +420,23 @@ export class LuxarApp {
       setTheme: (id) => ThemeManager.getInstance().setTheme(id),
       setDimensionValue: (i, v) => sceneDimsManager.setDimensionValue(i, v),
       setDocumentTitle,
+      startDimensionAnimation: (dim, options) => {
+        // Resolved lazily: the animation manager is built when a scene with an
+        // animatable dimension loads, which for the first dataset happens in
+        // the same init pass as this call.
+        const manager = this.inputHandler.getAnimationManager();
+        manager?.play(dim, {
+          targetFPS: options.targetFPS,
+          loopMode: options.loopMode,
+          direction: options.direction,
+        });
+        // Keep the playback options together, then apply the independent step
+        // override. `setStepSize` validates the value itself and rejects a
+        // non-positive one rather than animating nowhere.
+        if (options.stepSize !== undefined) {
+          manager?.setStepSize(dim, options.stepSize);
+        }
+      },
     });
   }
 
@@ -497,6 +514,12 @@ export class LuxarApp {
       getOverlayManager: () => this.overlayManager,
       onSelection: (sel) => this.embedderEvents.emit('selection', sel),
       hasSelectionConsumer: () => this.embedderEvents.hasListeners('selection'),
+      hasElementActionConsumer: () =>
+        this.embedderEvents.hasListeners('element-click') ||
+        this.embedderEvents.hasListeners('element-contextmenu'),
+      allowLinks: this.options.allowLinks ?? true,
+      onElementClick: (p) => this.embedderEvents.emit('element-click', p),
+      onElementContextMenu: (p) => this.embedderEvents.emit('element-contextmenu', p),
     });
     this.pickingSystem = result.pickingSystem;
     this.labelLoader = result.labelLoader;

@@ -77,6 +77,7 @@ def run_additive_dataset(
             make_additive_lod,
             validate_counts_breakpoints,
         )
+        from luxar.gsplats.lod.restamp import refresh_root_ladder_summary
         from luxar.gsplats.tree import (
             GSplatLeaf,
             GSplatNode,
@@ -197,8 +198,17 @@ def run_additive_dataset(
                         shutil.rmtree(output_path)
                     else:
                         output_path.unlink()
+                # The ROOT ladder summary describes the ladder this run just
+                # REPLACED. `_merged_leaf_meta` keeps each leaf's own stats
+                # fresh, but the root block rides through from the input, so a
+                # store re-laddered from four rungs to six kept advertising four
+                # (#1600). Refreshed from the tree actually written — not from
+                # the request, so an `auto` method publishes what it resolved to.
                 fitting_info, fitting_config, provenance_info, pipeline_info = (
-                    split_fitting_info(stats or {}, include_fitting_info=True)
+                    split_fitting_info(
+                        refresh_root_ladder_summary(stats or {}, result),
+                        include_fitting_info=True,
+                    )
                 )
                 write_gsplats_tree(
                     output_path,
