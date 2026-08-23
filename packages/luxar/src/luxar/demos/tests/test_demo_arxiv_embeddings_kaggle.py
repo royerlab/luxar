@@ -61,6 +61,14 @@ def _decoded_radii(scene) -> np.ndarray:
     return ArrayDecoder().decode(node["radii"], node)
 
 
+def _overlay_attrs(scene) -> list[dict]:
+    """Attributes for every authored overlay in storage order."""
+    import zarr
+
+    overlays = zarr.open_group(str(scene), mode="r")["overlays"]
+    return [dict(overlays[name].attrs) for name in sorted(overlays.group_keys())]
+
+
 def _fake_bundle(n: int = 40) -> dict:
     """A valid warm-cache bundle: the exact keys/shapes consumed downstream.
 
@@ -151,6 +159,48 @@ class TestCompleteCacheRunsWithoutLodDeps:
         assert attrs.get("kind") == "lod"
         assert (out / "arxiv_papers_kaggle" / "child_0").exists()
         assert not (out / "arxiv_papers_kaggle" / "positions").exists()
+
+
+class TestScenePresentation:
+    def test_title_does_not_claim_the_full_corpus_for_a_sample(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        _install_warm_cache(monkeypatch)
+        monkeypatch.setattr(demo, "substitutive_lod_or_flat", lambda spec: None)
+        out = tmp_path / "sampled.luxar.zarr"
+
+        demo.generate_paper_landscape(out, sample_size=40)
+
+        title = next(
+            attrs["text"]
+            for attrs in _overlay_attrs(out)
+            if attrs.get("anchor") == "top-left"
+        )
+        assert title == "arXiv · bioRxiv · medRxiv Papers"
+        assert "3.3M" not in title
+
+    def test_preprint_servers_stay_in_the_category_legend_below_the_top_ten(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        bundle = _fake_bundle(n=40)
+        bundle["categories"] = (
+            ["cat0"] * 26
+            + [f"cat{i}" for i in range(1, 12)]
+            + ["biorxiv", "medrxiv", "other"]
+        )
+        monkeypatch.setattr(demo, "cache_computed", lambda *a, **k: bundle)
+        monkeypatch.setattr(demo, "substitutive_lod_or_flat", lambda spec: None)
+        out = tmp_path / "legend.luxar.zarr"
+
+        demo.generate_paper_landscape(out, sample_size=40)
+
+        legend = next(
+            attrs["html"]
+            for attrs in _overlay_attrs(out)
+            if attrs.get("visible_range") == {"coloring": 0}
+        )
+        assert "> biorxiv</div>" in legend
+        assert "> medrxiv</div>" in legend
 
 
 # =============================================================================

@@ -1186,7 +1186,7 @@ def generate_paper_landscape(
 
             # --- Overlays ---
             scene.add_text(
-                "arXiv · bioRxiv · medRxiv — 3.3M Papers",
+                "arXiv · bioRxiv · medRxiv Papers",
                 position=(0.02, 0.02),
                 font_size=0.055,
                 anchor="top-left",
@@ -1200,7 +1200,16 @@ def generate_paper_landscape(
                 'padding:0.5vh;border-radius:3px">'
                 '<div style="font-weight:bold;color:#ccc;margin-bottom:0.3vh">Category</div>'
             )
-            for cat, _ in sorted(cat_counts.items(), key=lambda x: -x[1])[:10]:
+            legend_categories = [
+                cat for cat, _ in sorted(cat_counts.items(), key=lambda x: -x[1])[:10]
+            ]
+            for preprint_server in ("biorxiv", "medrxiv"):
+                if (
+                    preprint_server in cat_counts
+                    and preprint_server not in legend_categories
+                ):
+                    legend_categories.append(preprint_server)
+            for cat in legend_categories:
                 r, g, b = (
                     int(round(v * 255))
                     for v in CATEGORY_COLORS.get(cat, CATEGORY_COLORS["other"])
@@ -1261,7 +1270,9 @@ def _positive(flag: str, raw: str) -> int:
 
 def _parse_sample(raw: str) -> int | None:
     """``all`` / ``full`` mean the whole corpus; anything else is a count."""
-    return None if raw.strip().lower() in ("all", "full") else _positive("--sample", raw)
+    return (
+        None if raw.strip().lower() in ("all", "full") else _positive("--sample", raw)
+    )
 
 
 def _parse_pca_dim(raw: str) -> int:
