@@ -482,7 +482,7 @@ def fit_channel(
         zip_deflate=True,
     )
 
-    return GSplatData.load(cache_file, include_stats=True)
+    return GSplatData.load(cache_file, include_stats=False)
 
 
 def fit_all_channels(

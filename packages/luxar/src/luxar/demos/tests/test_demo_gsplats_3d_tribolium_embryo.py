@@ -80,6 +80,7 @@ def test_fit_normalises_counts_and_floor_without_mutating_input(
     )
     assert (tmp_path / "tribolium.gsplats.zarr.zip").exists()
     assert stored.n_splats == 8
+    assert stored.n_additive_sublods == 4
     np.testing.assert_array_equal(volume, original)
 
 

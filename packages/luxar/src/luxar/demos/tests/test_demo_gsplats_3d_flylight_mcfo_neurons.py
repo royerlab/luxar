@@ -1247,6 +1247,7 @@ def test_fit_volume_forwards_the_schedule_to_the_fitter(tmp_path, monkeypatch) -
     assert seen["source_dtype"] == "uint16", "the acquisition dtype was dropped"
     assert cache_file.exists()
     assert len(stored.amplitudes) == 8
+    assert stored.n_additive_sublods == 4
 
 
 def test_fit_volume_without_a_schedule_passes_no_overrides(
@@ -1278,6 +1279,7 @@ def test_fit_volume_without_a_schedule_passes_no_overrides(
         assert knob not in seen, f"{knob} leaked into the neuropil fit"
     assert cache_file.exists()
     assert len(stored.amplitudes) == 8
+    assert stored.n_additive_sublods == 4
 
 
 def test_fit_cache_paths_differ_between_components_and_settings() -> None:

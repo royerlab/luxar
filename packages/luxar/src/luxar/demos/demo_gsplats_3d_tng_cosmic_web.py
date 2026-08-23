@@ -297,7 +297,7 @@ def fit_volume(volume: np.ndarray) -> GSplatData:
             compress="zip",
             zip_deflate=True,
         )
-        return GSplatData.load(CACHE_FILE, include_stats=True)
+        return GSplatData.load(CACHE_FILE, include_stats=False)
 
 
 def load_or_build_gsplats() -> GSplatData:

@@ -65,11 +65,11 @@ _CHOOSES_OUTSIDE_THE_POLICY = {
     ),
 }
 
-#: Fitting demos not yet routed through the policy. SHRINKS to empty.
+#: No fitting demo may be parked here instead of choosing a topology.
 #:
-#: These keep whatever topology their fitter happens to produce — which is the
-#: defect the policy exists to remove, not a configuration. Every one of them is
-#: cache-only or local-compute, which is why they are not urgent.
+#: This empty set is a tripwire: new fitting demos must route through the policy
+#: or qualify for one of the explicit exemptions above. The downloadable archives
+#: still need regeneration after policy changes; that publication pass is #1879.
 _NOT_YET_ROUTED: set[str] = set()
 
 
@@ -223,13 +223,9 @@ def test_every_fitting_demo_chooses_a_topology_or_is_listed() -> None:
 
 
 def test_the_pending_list_shrinks_and_does_not_go_stale() -> None:
-    """A demo that has been routed must leave the list."""
+    """The former backlog stays empty now that every fitting demo has a policy."""
+    assert not _NOT_YET_ROUTED
     fitting = _fitting_demos()
-    for name in sorted(_NOT_YET_ROUTED):
-        assert name in fitting, f"{name} no longer fits — drop it from the list"
-        assert not _policy_recipes(fitting[name]), (
-            f"{name} now chooses a topology — remove it from _NOT_YET_ROUTED"
-        )
     for name in sorted(_NO_CACHED_ARTIFACT):
         assert name in fitting, f"{name} no longer fits — drop the exemption"
 
