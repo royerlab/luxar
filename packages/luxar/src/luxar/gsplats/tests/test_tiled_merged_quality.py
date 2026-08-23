@@ -279,17 +279,22 @@ def test_the_memory_budget_skips_rather_than_thrashes(
     assert "gsplat compare" in out
 
 
-def test_a_partition_budget_skip_includes_the_required_flatten_step(
+def test_a_partition_budget_skip_points_straight_at_compare(
     volume: np.ndarray, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
-    """The fallback command must accept the tree-shaped archive it describes."""
+    """The fallback command reads the tree-shaped archive as written.
+
+    ``gsplat compare`` loads a ``kind=partition`` store directly (#1978), so the
+    recourse must not send the user through a full-disk ``gsplat flatten`` copy
+    of what can be large output.
+    """
     monkeypatch.setenv("LUXAR_TILED_QUALITY_MAX_GB", "0.0000001")
     node = _fit(volume, partition=True)
     assert "psnr_db" not in node.meta["fit_stats"]
     out = capsys.readouterr().out
     assert "Merged quality metrics skipped" in out
-    assert "gsplat flatten" in out
     assert "gsplat compare" in out
+    assert "gsplat flatten" not in out
 
 
 def test_the_peak_estimate_covers_ssims_intermediates() -> None:
