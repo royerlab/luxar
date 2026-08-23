@@ -7,12 +7,14 @@ A rotatable 3D globe built from two of Luxar's geometry types at once:
     spiral-sphere** (uniform, no pole clustering), each point displaced radially
     by its **ETOPO 2022** elevation and colored by a hypsometric palette (deep
     abyssal navy -> ocean blue -> coastal cyan -> green lowland -> tan -> snow).
-    Rendered near-transparent (opacity 0.05) as a subtle backdrop, with
-    additive-LOD for a fast progressive first paint.
+    Rendered **opaque** as a solid planet, with additive-LOD for a fast
+    progressive first paint.
   * **Rivers (Lines)** — every HydroRIVERS reach (Strahler order >= 3), kept as
     **connected polylines** (so the line material renders seamless joints),
     draped just above the terrain and colored teal->white by Strahler order so
-    minor tributaries read teal and major rivers white. Additive-LOD streams the
+    minor tributaries read teal and major rivers white. Blended **luminous** —
+    the glow of additive, but depth-aware, so the far-side network is occluded
+    by the globe instead of showing through it. Additive-LOD streams the
     biggest rivers first.
 
 This exercises two of Luxar's four geometry types (Points + Lines) at global
@@ -97,10 +99,16 @@ DECIMATE_DEG = 0.06  # drop river vertices closer than this (~2-3x line width)
 RADIUS = 100.0  # globe radius (scene units)
 EXAGG = 45.0  # vertical exaggeration of elevation relief
 POINT_RADII = 0.09  # terrain point size (8M points form a dense shell)
-EARTH_OPACITY = 0.05  # near-transparent backdrop; lets the rivers dominate
+EARTH_OPACITY = 1.0  # solid globe: an OPAQUE shell the rivers are occluded BY
 RIVER_LIFT = 0.004  # lift rivers barely above the terrain surface
 RIVER_WIDTH = 0.015
-RIVER_INTENSITY = 1.6
+# Display window for the rivers layer. The layers panel states appearance as a
+# display range and the shader as gain/offset: `intensity = 1 / (max - min)`
+# (`rendering/display-range.ts`). Authoring the window and inverting it here
+# keeps the number in the code the one the panel shows (0 - 0.38), instead of a
+# gain whose window has to be recomputed to be read.
+RIVER_DISPLAY_MAX = 0.38
+RIVER_INTENSITY = 1.0 / RIVER_DISPLAY_MAX
 R_EARTH = 6_371_000.0  # metres, for elevation -> relief fraction
 
 FLAGS = parse_demo_flags()
@@ -373,7 +381,12 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
                 positions=gpos,
                 radii=POINT_RADII,
                 colors=gcolors,
-                blending_mode="normal",
+                # OPAQUE, not `normal`: this is the backdrop, and opaque is the
+                # only mode that leaves the viewer's sorted-transparent set and
+                # unconditionally writes depth — which is what gives the
+                # `luminous` rivers below a surface to be occluded by, so the
+                # far-side network is hidden instead of showing through.
+                blending_mode="opaque",
                 opacity=EARTH_OPACITY,
                 layer=True,
                 # `spatial-uniform` with n_lods=5 looked like a ladder but was
@@ -394,8 +407,12 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
                 colors=rcolors,
                 indices=rindices,
                 line_type="indexed",
-                blending_mode="additive",
-                opacity=0.95,
+                # LUMINOUS, not `additive`: same glow, but it respects depth,
+                # so rivers on the far side of the now-opaque globe are hidden
+                # rather than drawn over it. RIVER_LIFT clears the terrain point
+                # shell by ~4x POINT_RADII, so near-side rivers are unaffected.
+                blending_mode="luminous",
+                opacity=1.0,
                 intensity=RIVER_INTENSITY,
                 layer=True,
             )
