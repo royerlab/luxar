@@ -40,6 +40,7 @@ def _write_inputs(tmp_path: Path) -> tuple[Path, Path, Path]:
     write_gsplats_tree(
         partition_path,
         data.to_spatial_partition(max_elements=n_splats // 2),
+        fitting_info={"image_min": 600.0},
     )
     data.save(flat_path)
     np.save(target_path, np.zeros((12, 12, 12), dtype=np.float32))
@@ -86,6 +87,19 @@ def test_render_partition_matches_sum_of_default_leaves(tmp_path: Path) -> None:
     )
     np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-6)
     assert "Loaded 6 splats (3D)" in result.output
+
+
+def test_default_partition_load_retains_requested_root_stats(tmp_path: Path) -> None:
+    from luxar.gsplats.io import load_default_gsplats
+
+    partition_path, _, _ = _write_inputs(tmp_path)
+
+    data = load_default_gsplats(partition_path, include_stats=True)
+
+    assert data.n_splats == 6
+    assert data.n_substitutive == 1
+    assert data.n_additive_sublods == 1
+    assert data.stats["image_min"] == 600.0
 
 
 @pytest.mark.parametrize(

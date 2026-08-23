@@ -6,6 +6,7 @@ data in a dedicated zarr format (.gsplats.zarr).
 Main functions:
 - save_gsplats() - Save GSplatData to .gsplats.zarr
 - load_gsplats() - Load GSplatData from .gsplats.zarr
+- load_default_gsplats() - Materialize the tree's default-rendered selection
 - inspect_gsplats_zarr() - Inspect .gsplats.zarr metadata
 - format_gsplats_info() - Format inspection info as string
 
@@ -18,7 +19,7 @@ from luxar.gsplats.io.inspect_gsplats import (
     format_gsplats_info,
     inspect_gsplats_zarr,
 )
-from luxar.gsplats.io.load_gsplats import load_gsplats
+from luxar.gsplats.io.load_gsplats import load_default_gsplats, load_gsplats
 from luxar.gsplats.io.save_gsplats import save_gsplats
 
 # Re-export ordering functions from luxar.io for convenience
@@ -30,6 +31,7 @@ from luxar.io.ordering import (
 __all__ = [
     "save_gsplats",
     "load_gsplats",
+    "load_default_gsplats",
     "inspect_gsplats_zarr",
     "format_gsplats_info",
     "sort_splats_spatial",
