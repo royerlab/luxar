@@ -263,7 +263,7 @@ REPRODUCING ANY OF THIS:
 
 USAGE:
     python demo_gsplats_4d_zebrafish_timelapse.py [--recompute] [--no-serve]
-        [--serve-only] [--max-timepoints=N]
+        [--refit-all] [--serve-only] [--max-timepoints=N]
 
     --recompute:        Ignore the shipped archive; download the LSM and build
                         the 4D fit locally (needs a GPU). Per-timepoint fits are
@@ -291,7 +291,7 @@ DEMO_META = {
     "category": "microscopy",
     "geometry": "mixed",
     "requirements": {
-        "download_mb": 23,  # the 22,348,280-byte archive, and nothing else
+        "download_mb": 40,  # the 41,262,407-byte archive, and nothing else
         "compute": "medium",
         "gpu": "optional",
         "local_data": "git-lfs",
@@ -393,8 +393,8 @@ LOCAL_FIT = local_fit_path(DEMO_NAME, GSPLATS_FILE)
 #: CEILING, not a target: the post-fit cull keeps splats only until 99.99% of the
 #: amplitude is accounted for, so the count that ships is whatever the frame
 #: needs — measured over the full run, 12,462 to 23,478, median 17,977. Both
-#: numbers matter and the
-#: second is the one people forget: raising `seeds` past the plateau changes
+#: numbers matter, and the second is the one people forget: raising `seeds`
+#: past the plateau changes
 #: nothing, while moving `cull_retention` from the fitter's default 0.95 to
 #: 0.9999 was worth +3.4 dB of foreground on its own, because on data this
 #: sparse the discarded 5% of amplitude IS the dim cells.
@@ -1068,10 +1068,11 @@ def create_luxar_scene(stacked: GSplatData, output_path: Path) -> Path:
                 f"laser-scanning microscopy through gastrulation: {n_timepoints} "
                 f"timepoints over {t_max / 60:.1f} hours, {stacked.n_splats:,} "
                 f"Gaussian splats in one 4D node with time as its fourth centre "
-                f"column. The labelled endodermal cells start as a tight cluster "
-                f"and spread over the yolk; the wireframe cage is the imaged "
-                f"volume, ruled every {GRID_STEP_UM:.0f} um. Play the Time slider "
-                f"to run the recording; press L for per-layer controls. "
+                f"column, each timepoint non-local-means denoised (h={DENOISE_H}) "
+                f"before fitting. The labelled endodermal cells start as a tight "
+                f"cluster and spread over the yolk; the wireframe cage is the "
+                f"imaged volume, ruled every {GRID_STEP_UM:.0f} um. Play the Time "
+                f"slider to run the recording; press L for per-layer controls. "
                 f"Zenodo 1211599, DOI 10.5281/zenodo.1211599, CC BY-SA 4.0."
             )
 

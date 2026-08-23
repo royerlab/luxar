@@ -15,7 +15,6 @@ The demo is loaded by file path, like its cell-tracking sibling.
 
 from __future__ import annotations
 
-import contextlib
 import importlib.util
 import itertools
 import sys
@@ -559,24 +558,38 @@ class TestTheFitCacheKeyMovesWithEveryKnob:
     def test_every_fitting_knob_is_covered_by_this_test(self) -> None:
         """The list above must not drift behind the call it mirrors.
 
-        Reads the actual ``fit_gaussian_splats`` call in ``fit_timepoint`` and
-        requires that each module constant it passes is one this test varies.
-        Without this the parametrization silently stops covering new knobs.
+        Reads the actual fitting and preprocessing calls and requires that each
+        module constant they pass is one this test varies. Without this the
+        parametrization silently stops covering new knobs.
         """
         import ast
         import inspect
 
-        tree = ast.parse(inspect.getsource(_demo.fit_timepoint).lstrip())
-        passed = {
-            node.id
+        call_names = {"fit_gaussian_splats", "denoise_volume_array"}
+        trees = [
+            ast.parse(inspect.getsource(function).lstrip())
+            for function in (_demo.fit_timepoint, _demo.denoise)
+        ]
+        found = {
+            call.func.id
+            for tree in trees
             for call in ast.walk(tree)
             if isinstance(call, ast.Call)
-            and getattr(call.func, "id", None) == "fit_gaussian_splats"
+            and isinstance(call.func, ast.Name)
+            and call.func.id in call_names
+        }
+        passed = {
+            node.id
+            for tree in trees
+            for call in ast.walk(tree)
+            if isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Name)
+            and call.func.id in call_names
             for kw in call.keywords
             for node in ast.walk(kw.value)
             if isinstance(node, ast.Name) and node.id.isupper()
         }
-        assert passed, "could not find the fit call; this test has gone stale"
+        assert found == call_names, "could not find every guarded call"
         assert passed <= set(self.KNOBS) | self.EXEMPT, (
             f"{sorted(passed - set(self.KNOBS) - self.EXEMPT)} reach the fit "
             "but are not in KNOBS, so nothing checks they are in the cache "
@@ -641,20 +654,36 @@ class TestRecomputeResumes:
         assert _demo.fit_all_timepoints(array, [0]) == [sentinel]
 
     def test_refit_all_ignores_the_cache(self, monkeypatch) -> None:
+        import luxar.gsplats
+
+        class FitReached(Exception):
+            pass
+
         read: list[str] = []
+        fitted: list[str] = []
         monkeypatch.setattr(_demo, "REFIT_ALL", True)
+        monkeypatch.setattr(_demo, "DEVICE", "cpu")
         monkeypatch.setattr(
             _demo.GSplatData,
             "load",
             staticmethod(lambda *a, **k: read.append("hit")),
         )
         monkeypatch.setattr(_demo, "_fit_cache_path", lambda frame: _Exists())
-        # Past the cache branch it reaches the real fitter with a None volume
-        # and blows up. WHICH exception is not the point — that it got there at
-        # all is, so this asserts on the cache probe rather than on the error.
-        with contextlib.suppress(Exception):
+        monkeypatch.setattr(_demo, "denoise", lambda volume: volume)
+
+        def stop_at_fit(*args, **kwargs):
+            fitted.append("fit")
+            raise FitReached
+
+        monkeypatch.setattr(
+            luxar.gsplats,
+            "fit_gaussian_splats",
+            stop_at_fit,
+        )
+        with pytest.raises(FitReached):
             _demo.fit_timepoint(None, 0, (None, None))
         assert read == [], "the cache was read despite --refit-all"
+        assert fitted == ["fit"]
 
 
 class _Exists:
