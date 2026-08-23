@@ -39,7 +39,7 @@ export interface DimensionStepResult {
 /**
  * Compute the next dimension-navigation step given the current dim
  * state. Returns `null` when navigation cannot proceed (no dims, no
- * ranges, no navigable dimensions).
+ * ranges, no navigable dimensions, or a stale selected-dimension slot).
  *
  * The `changed` threshold is a step-relative epsilon (`snapStep * 1e-9`,
  * matching `SceneDimsManager`) so a sub-micro-unit grid is still
@@ -59,12 +59,8 @@ export function computeDimensionStep(
 ): DimensionStepResult | null {
   if (!dims || !dimensionRanges) return null;
 
-  const navigableDims = getNonDisplayedDimensions(dims);
-  if (navigableDims.length === 0) return null;
-
-  // Target the currently selected dimension (bounded by available dimensions)
-  const dimIndex = Math.min(selectedDimension, navigableDims.length - 1);
-  const targetDim = navigableDims[dimIndex];
+  const targetDim = getSelectedDimensionIndex(selectedDimension, dims);
+  if (targetDim < 0) return null;
 
   const currentValue = dims.currentStep[targetDim];
   const dimMeta = dims.metadata?.[targetDim];

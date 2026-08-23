@@ -59,8 +59,8 @@ test.describe('nD Transforms', () => {
     expect(pointsAtTime0).toBeGreaterThan(0);
     expect(pointsAtTime0).toBeLessThanOrEqual(100); // At most 100 (both groups)
 
-    // Navigate to time=5 (press '4' to select Time dim, then ']' 5 times)
-    await page.keyboard.press('4'); // Select Time dimension (4th dim, index 3)
+    // Navigate to time=5 (press '1' to select the only non-displayed dim, then ']' 5 times)
+    await page.keyboard.press('1');
     await waitForNextRender(page, 2);
 
     for (let i = 0; i < 5; i++) {
@@ -93,7 +93,7 @@ test.describe('nD Transforms', () => {
     await waitForNextRender(page, 2);
 
     // Navigate to time=3 (neither group has data here)
-    await page.keyboard.press('4');
+    await page.keyboard.press('1');
     await waitForNextRender(page, 2);
 
     for (let i = 0; i < 3; i++) {

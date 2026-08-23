@@ -32,6 +32,29 @@ export function getNonDisplayedDimensions(dims: SimpleDims): number[] {
   return nonDisplayed;
 }
 
+/** Describe the valid digit-key mappings after an unavailable selection. */
+export function describeNavigableKeys(
+  index: number,
+  dims: SimpleDims | null | undefined,
+  dimensionNames: readonly string[]
+): string {
+  const prefix = `Dimension key ${index + 1} is unavailable.`;
+  if (!dims) return `${prefix} This scene has no navigable dimensions.`;
+
+  const navigable = getNonDisplayedDimensions(dims);
+  if (navigable.length === 0) return `${prefix} This scene has no navigable dimensions.`;
+
+  const options = navigable.map((dimIndex, keyIndex) => {
+    const name = dimensionNames[dimIndex] || `Dim ${dimIndex}`;
+    return `${keyIndex + 1} for ${name}`;
+  });
+  const available =
+    options.length === 1
+      ? options[0]
+      : `${options.slice(0, -1).join(', ')} or ${options[options.length - 1]}`;
+  return `${prefix} Use ${available}.`;
+}
+
 /**
  * Calculate the next dimension index for cyclic selection.
  *

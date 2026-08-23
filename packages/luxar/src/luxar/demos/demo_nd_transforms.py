@@ -66,9 +66,9 @@ Channel (categorical → permutation). Markers are colour-coded letters carrying
 their own LOCAL channel identity — a red "R" is local channel 0 wherever it
 ends up::
 
-  IDENTITY            [0, 1, 2]   every letter lights under its own name
-  SWAP RED-GREEN      [1, 0, 2]   R lights under GREEN, G lights under RED
-  ROTATE              [2, 0, 1]   R lights under BLUE, G under RED, B under GREEN
+  IDENTITY            [0, 1, 2]   world RED/GREEN/BLUE selects local R/G/B
+  SWAP RED-GREEN      [1, 0, 2]   world GREEN selects local R; RED selects G
+  ROTATE              [2, 0, 1]   world BLUE selects local R; RED selects G
 
 ================================================================================
 FEATURES DEMONSTRATED
@@ -94,8 +94,9 @@ Usage:
     python demo_nd_transforms.py [--no-serve]
 
 Controls:
-    - Press '4' to select Frame, then '[' / ']' to step the world frame
-    - Press '5' to select Channel, then '[' / ']' to step the world channel
+    - Press '1' to select Frame, then '[' / ']' to step the world frame
+    - Press '2' to select Channel, then '[' / ']' to step the world channel
+      (digit keys count only the non-displayed dimensions)
     - Ctrl+C to stop and cleanup
     - Browser opens automatically
 """
@@ -453,10 +454,15 @@ def _channel_node_name(label: str) -> str:
 
 # (label, permutation, note) — permutation[local_index] = world_index.
 CHANNEL_ROWS: List[Tuple[str, Optional[List[int]], str]] = [
-    ("IDENTITY\nPERM 0 1 2", None, "EACH LETTER UNDER ITS OWN NAME"),
-    ("SWAP RED-GREEN\nPERM 1 0 2", [1, 0, 2], "R UNDER GREEN - G UNDER RED"),
-    ("ROTATE\nPERM 2 0 1", [2, 0, 1], "R UNDER BLUE - G UNDER RED"),
+    ("IDENTITY\nPERM 0 1 2", None, "WORLD RED/GREEN/BLUE -> LOCAL R/G/B"),
+    ("SWAP RED-GREEN\nPERM 1 0 2", [1, 0, 2], "WORLD GREEN -> R / RED -> G"),
+    ("ROTATE\nPERM 2 0 1", [2, 0, 1], "WORLD BLUE -> R / RED -> G"),
 ]
+
+
+def channel_local_for_world(perm: Optional[List[int]], world: int) -> int:
+    """Local channel selected by a world-channel query."""
+    return world if perm is None else perm.index(world)
 
 
 # =============================================================================
@@ -948,8 +954,9 @@ def _add_overlays(scene: Any) -> None:
         "The gap between them, in ruler ticks, IS the nd_transform.<br>"
         "Faint grey = every slot the row could light.<br>"
         '<div style="padding-top:0.6vh">'
-        "Press <b>4</b> then <b>[</b> / <b>]</b> to step Frame<br>"
-        "Press <b>5</b> then <b>[</b> / <b>]</b> to step Channel"
+        "Press <b>1</b> then <b>[</b> / <b>]</b> to step Frame<br>"
+        "Press <b>2</b> then <b>[</b> / <b>]</b> to step Channel<br>"
+        "Digits count the non-displayed dimensions shown in the slider panel"
         "</div>"
         "</div>",
         position=(0.985, 0.025),
@@ -979,7 +986,7 @@ def _add_overlays(scene: Any) -> None:
     for c, cname in enumerate(CHANNELS):
         rows = []
         for label, perm, _note in CHANNEL_ROWS:
-            local = c if perm is None else perm.index(c)
+            local = channel_local_for_world(perm, c)
             rows.append(
                 (
                     label.split("\n")[0],
@@ -1268,14 +1275,15 @@ def main() -> None:
     aprint(f"Generated {total:,} elements")
     aprint("")
     aprint("What to check in the viewer:")
-    aprint("  1. Press '4' to select Frame, then step with '[' and ']'.")
+    aprint("  1. Press '1' to select Frame, then step with '[' and ']'.")
     aprint("  2. IDENTITY's digit always sits under the cyan cursor and equals T.")
     aprint("  3. OFFSET +5 trails by exactly 5 ticks; OFFSET -3 leads by 3.")
     aprint("  4. Both *2 rows light only on even T, one tick apart.")
     aprint("  5. NESTED *2 THEN +1 lands on the SAME tick as SCALE *2 OFFSET +2.")
     aprint("  6. REVERSE walks right-to-left as T increases.")
-    aprint("  7. Press '5' for Channel: the lit letter's colour is its LOCAL")
+    aprint("  7. Press '2' for Channel: the lit letter's colour is its LOCAL")
     aprint("     channel; its position is that channel's own slot.")
+    aprint("     Digit keys count only the non-displayed dimensions.")
     aprint("  8. The bottom-left readout is the EXPECTED answer for this T.")
     aprint("")
 

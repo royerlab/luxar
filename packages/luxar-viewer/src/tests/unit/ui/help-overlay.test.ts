@@ -24,6 +24,14 @@ afterEach(() => {
 });
 
 describe('showHelpOverlay - Memory Leak Prevention', () => {
+  it('explains that digit keys address non-displayed dimensions', () => {
+    showHelpOverlay();
+
+    expect(document.getElementById('luxar-help-overlay')?.textContent).toContain(
+      'Select a non-displayed dimension (panel header shows target)'
+    );
+  });
+
   it('should not create multiple overlays when called repeatedly', () => {
     showHelpOverlay();
     const firstOverlay = document.getElementById('luxar-help-overlay');

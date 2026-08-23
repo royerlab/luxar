@@ -38,6 +38,10 @@ vi.mock('../../../../../data', () => ({
   releasePrefetchResources: vi.fn(),
 }));
 
+vi.mock('../../../../../utils/viewer-container', () => ({
+  getViewerContainer: vi.fn(() => ({})),
+}));
+
 // Stub the animation manager class so init-animation tests don't
 // reach into the real DimensionAnimationManager (which constructs
 // timers + listeners).
@@ -329,6 +333,45 @@ describe('initDimensionSliders', () => {
     const ctx = makeCtx();
     initDimensionSliders(ctx);
     expect(sceneDimsManager.addListener).not.toHaveBeenCalled();
+  });
+
+  it('seeds the slider panel with the current keyboard-selected dimension', () => {
+    const dims = { ndim: 5, displayed: [0, 1, 2], currentStep: [0, 0, 0, 0, 0] };
+    const dimensionRanges: Array<[number, number]> = [
+      [0, 1],
+      [0, 1],
+      [0, 1],
+      [0, 15],
+      [0, 2],
+    ];
+    (sceneDimsManager.initFromScene as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    (sceneDimsManager.getDims as ReturnType<typeof vi.fn>).mockReturnValue(dims);
+    (sceneDimsManager.getDimensionRanges as ReturnType<typeof vi.fn>).mockReturnValue(
+      dimensionRanges
+    );
+    (sceneDimsManager.getDimensionNames as ReturnType<typeof vi.fn>).mockReturnValue([
+      'X',
+      'Y',
+      'Z',
+      'Frame',
+      'Channel',
+    ]);
+    (sceneDimsManager.getDimensionUnits as ReturnType<typeof vi.fn>).mockReturnValue([]);
+    (sceneDimsManager.hasNonDisplayedDimensions as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    const factory = vi.fn(() => ({
+      setVisible: vi.fn(),
+      setAnimationManager: vi.fn(),
+      update: vi.fn(),
+      dispose: vi.fn(),
+    })) as unknown as DimNavSetupCtx['dimensionSlidersFactory'];
+    const ctx = makeCtx({ dimensionSlidersFactory: factory });
+    ctx.setSelectedDimension(1);
+
+    initDimensionSliders(ctx);
+
+    expect(factory).toHaveBeenCalledWith(
+      expect.objectContaining({ selectedDimension: 1, dims, dimensionRanges })
+    );
   });
 
   it('registers exactly one sceneDimsManager listener even when invoked twice', () => {
