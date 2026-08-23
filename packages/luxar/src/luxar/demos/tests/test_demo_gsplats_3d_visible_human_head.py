@@ -26,9 +26,15 @@ _DEMO_PATH = (
     Path(__file__).resolve().parents[1] / "demo_gsplats_3d_visible_human_head.py"
 )
 _DATA_MANIFEST_PATH = _DEMO_PATH.parent / "data_manifest.json"
-_SHIPPED_FIT_SHA256 = "c6ebbab8c2d1bdff0d5fd35f7032c6a375724b5fe5e6d33e8ca4e6af6ab139f6"
+# The pair the cc-by deposition actually holds: the REFIT (29,378,476 B) and the
+# sidecar resampled against IT (1,908,888 rows, matching the refit's splat count
+# exactly). The previous constants named the pre-refit 20,572,128-byte fit and
+# the sidecar #1911 resampled for that one — a self-consistent pair, but not the
+# hosted one. Pinning one file from each pair is the #1670 mis-ordering all over
+# again, so these two move together or not at all.
+_SHIPPED_FIT_SHA256 = "859830d8af8873beef48cf12e1ad8d2707b000495facc777683b14f92be90065"
 _SHIPPED_COLORS_SHA256 = (
-    "63bce184e56d6d3b5f8f6817100c66310984c45da65fd94cdbc0a42ac05abb44"
+    "82990426778d245e5195334a41eaf5f5b865a532e295444696b94401856ea2c1"
 )
 
 

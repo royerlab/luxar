@@ -15,9 +15,8 @@ import numpy as np
 import pytest
 import zarr
 
-from luxar.demos import load_manifest, voxel_sampled_payload_agreement
+from luxar.demos import voxel_sampled_payload_agreement
 from luxar.gsplats.gsplat_data import GSplatData
-from luxar.utils.download import verify_file_checksum
 
 pytest.importorskip("scipy")
 
@@ -311,29 +310,22 @@ class TestLabelSidecarOrdering:
         assert _demo._labels_match_fit(fit, labels, "unverifiable")
         assert "UNVERIFIED" in capsys.readouterr().out
 
-    def test_manifest_pair_is_accepted(self) -> None:
-        """The pair resolved into the manifest cache must pass its guard.
+    def test_shipped_pair_is_accepted(self) -> None:
+        """The pair actually in Git LFS must pass the guard it is checked by.
 
         A guard nobody can satisfy is a guard that always refits. Only the ACCEPT
         verdict is asserted: the numbers themselves (agreement, splat count) are
         properties of the artifact and must be free to change when it is
         regenerated.
         """
-        spec = load_manifest()["datasets"][_demo.DEMO_NAME]
-        entries = {entry["name"]: entry for entry in spec["files"]}
-        paths = {
-            _demo.FIT_FILE: _demo.CACHE_FIT,
-            _demo.LABELS_FILE: _demo.CACHE_LABELS,
-        }
-        for name, path in paths.items():
-            expected = entries[name]["sha256"]
-            if not path.exists() or not verify_file_checksum(
-                path, None, expected, verbose=False
-            ):
-                pytest.skip(f"{name} is not checksum-verified in the manifest cache")
-        fit = GSplatData.load(paths[_demo.FIT_FILE], include_stats=False)
-        labels = _load_labels(paths[_demo.LABELS_FILE])
-        assert _demo._labels_match_fit(fit, labels, "manifest cache")
+        from luxar.demos import is_lfs_pointer
+
+        for path in (_demo.LFS_FIT, _demo.LFS_LABELS):
+            if not path.exists() or is_lfs_pointer(path):
+                pytest.skip(f"{path.name} not materialized (run `git lfs pull`)")
+        fit = GSplatData.load(_demo.LFS_FIT, include_stats=False)
+        labels = _load_labels(_demo.LFS_LABELS)
+        assert _demo._labels_match_fit(fit, labels, "shipped")
 
 
 def _same_voxel_pairs(centers: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
