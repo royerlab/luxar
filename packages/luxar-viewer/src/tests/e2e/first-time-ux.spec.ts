@@ -10,7 +10,7 @@
  */
 
 import { test, expect } from './fixtures';
-import { waitForNextRender } from './helpers';
+import { focusCanvas, waitForLuxarReady, waitForNextRender } from './helpers';
 
 test.describe('First-Time User Experience', () => {
   test('should show dataset browser when no dataset specified', async ({ page }) => {
@@ -190,22 +190,29 @@ test.describe('First-Time User Experience', () => {
     });
     // Regression guard: the Escape path must route through
     // `DatasetBrowser.close()` so `onClose` fires and
-    // `LuxarApp.datasetBrowser` is cleared. Without that, the `O`
-    // shortcut handler bails out via `if (!this.datasetBrowser)
-    // return` and makes `O` a silent no-op until reload.
+    // `LuxarApp.datasetBrowser` is cleared. Without that, the
+    // `open-dataset-browser` toggle still sees `hasOpenBrowser() === true`
+    // and the next `O` closes a phantom browser instead of reopening
+    // the real one.
     await page.goto(
       '/?src=http://localhost:9000/datasets/examples/rainbow_sphere_4d_example.luxar.zarr&debug'
     );
-    await page.waitForFunction(() => !!(window as any).__luxarDebug?.app, {
-      timeout: 10000,
-    });
-    await page.click('canvas').catch(() => {
-      // Canvas may not be focusable yet; press 'O' on document instead.
-    });
+    // Must be `waitForLuxarReady`, NOT `__luxarDebug.app`: the latter is
+    // published at construction, but the window-level
+    // `open-dataset-browser` listener is only installed at the end of
+    // `LuxarApp.init()`, after the awaited dataset load. An `O` pressed
+    // before that dispatches its event into the void and nothing opens.
+    await waitForLuxarReady(page);
+
+    const browser = page.locator('.luxar-dataset-browser').first();
+    // A `?src=` load must not auto-open the browser. Asserted before
+    // `focusCanvas`, which would Escape it away and make this vacuous.
+    await expect(browser).toBeHidden();
+
+    await focusCanvas(page);
 
     // First: confirm `O` opens it on a fresh page.
     await page.keyboard.press('o');
-    const browser = page.locator('.luxar-dataset-browser').first();
     await expect(browser).toBeVisible({ timeout: 5000 });
 
     // Press Escape — DatasetBrowser.close() fires onClose, clears
@@ -233,14 +240,22 @@ test.describe('First-Time User Experience', () => {
     await page.goto(
       '/?src=http://localhost:9000/datasets/examples/rainbow_sphere_4d_example.luxar.zarr&debug'
     );
-    await page.waitForFunction(() => !!(window as any).__luxarDebug?.app, {
-      timeout: 10000,
-    });
-    await page.click('canvas').catch(() => {});
+    // Must be `waitForLuxarReady`, NOT `__luxarDebug.app`: the latter is
+    // published at construction, but the window-level
+    // `open-dataset-browser` listener is only installed at the end of
+    // `LuxarApp.init()`, after the awaited dataset load. An `O` pressed
+    // before that dispatches its event into the void and nothing opens.
+    await waitForLuxarReady(page);
+
+    const browser = page.locator('.luxar-dataset-browser').first();
+    // A `?src=` load must not auto-open the browser. Asserted before
+    // `focusCanvas`, which would Escape it away and make this vacuous.
+    await expect(browser).toBeHidden();
+
+    await focusCanvas(page);
 
     // Open the browser via the O shortcut.
     await page.keyboard.press('o');
-    const browser = page.locator('.luxar-dataset-browser').first();
     await expect(browser).toBeVisible({ timeout: 5000 });
 
     // Inject a focused text input inside the browser (mimics the
