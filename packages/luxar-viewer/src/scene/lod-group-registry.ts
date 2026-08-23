@@ -498,7 +498,7 @@ export interface LODGroupEntry {
    */
   staleHoldSinceMs?: number;
   /**
-   * True once a stale hold has exhausted {@link STALE_HOLD_MS} without the
+   * True once a stale hold has exhausted `STALE_HOLD_MS` without the
    * aspiration recommitting. Latches the coarse fallback for the rest of this
    * scrub; cleared when the aspiration finally lands fresh.
    */
@@ -623,7 +623,7 @@ export interface LODGroupRegistryDeps {
   getViewVersion?: () => number;
   /**
    * Monotonic wall clock in milliseconds, for the stale-hold budget (see
-   * {@link STALE_HOLD_MS}). Injectable so tests can advance it deterministically;
+   * `STALE_HOLD_MS`). Injectable so tests can advance it deterministically;
    * omitted ⇒ ``performance.now()``.
    */
   now?: () => number;
@@ -1696,15 +1696,15 @@ export class LODGroupRegistry {
    *   - the previous display is still ready and is FINER than the fallback
    *     (holding something coarser than the fallback would be a downgrade),
    *   - the fallback is a SEVERE downgrade — below
-   *     {@link STALE_HOLD_MIN_RATIO} of the held level's committed count —
+   *     `STALE_HOLD_MIN_RATIO` of the held level's committed count —
    *     so a fallback that is nearly as good is taken immediately (it is
    *     fresh, and freshness wins whenever quality is comparable),
-   *   - the hold has not exhausted its {@link STALE_HOLD_MS} budget.
+   *   - the hold has not exhausted its `STALE_HOLD_MS` budget.
    *
    * The budget is deliberately spent from when the hold STARTS and is not
    * refreshed by later version bumps, and once exhausted it latches until the
    * aspiration commits fresh. So a continuous drag degrades to exactly the
-   * pre-existing behaviour after {@link STALE_HOLD_MS}, rather than freezing on
+   * pre-existing behaviour after `STALE_HOLD_MS`, rather than freezing on
    * one frame for as long as the user keeps dragging.
    */
   private staleHoldDisplayIndex(
