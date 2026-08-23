@@ -60,8 +60,8 @@ Each subdirectory contains pre-fitted `.gsplats.zarr.zip` files for one demo:
 
 | Directory | Demo | Contents |
 |-----------|------|----------|
-| `gsplats_multichannel/` | 3D organoid multi-channel | 2 channel files (~1.1 MB total) |
-| `gsplats_dapi/` | 3D organoid DAPI nuclei | 1 file (~365 KB) |
+| `gsplats_multichannel/` | Mouse blastocyst, Lamin B1 + DAPI | 2 channel files (~1.1 MB total) |
+| `gsplats_dapi/` | Mouse blastocyst, DAPI nuclei | 1 file (~365 KB) |
 | `gsplats_cells3d/` | 4D cells3d multi-channel | 2 channel files (~1.0 MB total) |
 | `gsplats_kidney/` | 4D kidney multi-channel | 3 channel files (~4.9 MB total) |
 | `gsplats_zebrafish/` | 4D zebrafish timelapse | 1 stacked 4D archive, 151 timepoints (~22 MB) |
@@ -149,9 +149,12 @@ Outer zip containing many per-frame `.gsplats.zarr.zip` files. Automatically ext
 
 ## Data Sources & Citations
 
-- **Organoid data**: IDR study idr0062, Image 6001240 (Blin et al., Lowell lab,
+- **Blastocyst data**: IDR study idr0062, Image 6001240 (Blin et al., Lowell lab,
   University of Edinburgh) — a mouse blastocyst imaged for the Nessys
-  nuclear-segmentation benchmark, despite the demo's "organoid" naming
+  nuclear-segmentation benchmark. The demos used to call it an "organoid";
+  they are now named for what it is. The DIRECTORY and FILE names above keep
+  their old spelling because they are published Zenodo artifacts pinned by
+  sha256 — a remote name is not ours to change
   - Blin et al. (2019), *PLoS Biology*, doi:10.1371/journal.pbio.3000388 (CC BY 4.0)
   - Hosted by the Image Data Resource: Williams et al. (2017) *Nature Methods*
     14(8):775-781

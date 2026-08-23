@@ -52,7 +52,7 @@ OVERLAPPING_LAYER_DEMOS = (
     "demo_gsplats_3d_kidney_multichannel_layers.py",
     "demo_gsplats_3d_kidney_multichannel_toggles.py",
     "demo_gsplats_3d_opencell_map4.py",
-    "demo_gsplats_3d_organoid_multichannel.py",
+    "demo_gsplats_3d_blastocyst_multichannel.py",
     "demo_gsplats_4d_neuromast_2ch.py",
 )
 

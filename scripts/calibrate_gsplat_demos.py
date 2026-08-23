@@ -120,7 +120,7 @@ def _import_demo(file_stem: str) -> ModuleType:
 
 
 def _load_dapi() -> list[tuple[str, np.ndarray]]:
-    mod = _import_demo("demo_gsplats_3d_organoid_dapi_nuclei")
+    mod = _import_demo("demo_gsplats_3d_blastocyst_dapi_nuclei")
     # The loader also hands back the acquisition (shape, dtype) it declares to the
     # fitter; calibration only ever sees the working copy, so drop it.
     V, _acquisition = mod.load_dapi_data()
@@ -148,8 +148,8 @@ def _load_acto3d() -> list[tuple[str, np.ndarray]]:
     return [(f"ch{i}", v) for i, v in enumerate(vols)]
 
 
-def _load_organoid_multi() -> list[tuple[str, np.ndarray]]:
-    mod = _import_demo("demo_gsplats_3d_organoid_multichannel")
+def _load_blastocyst_multi() -> list[tuple[str, np.ndarray]]:
+    mod = _import_demo("demo_gsplats_3d_blastocyst_multichannel")
     vols, _source_dtype = mod.load_multichannel_data()
     return [(f"ch{i}", v) for i, v in enumerate(vols)]
 
@@ -259,7 +259,7 @@ def _load_codex_pancreas_tile() -> list[tuple[str, np.ndarray]]:
 # peak under the corrected ``n2s`` preset.
 DEMOS: List[Dict[str, Any]] = [
     {
-        "name": "organoid_dapi",
+        "name": "blastocyst_dapi",
         "loader": _load_dapi,
         "k_min": 1_000,
         "k_max": 256_000,
@@ -288,11 +288,11 @@ DEMOS: List[Dict[str, Any]] = [
         "comment": "256^3 3-channel light-sheet mouse heart",
     },
     {
-        "name": "organoid_multichannel",
-        "loader": _load_organoid_multi,
+        "name": "blastocyst_multichannel",
+        "loader": _load_blastocyst_multi,
         "k_min": 1_000,
         "k_max": 256_000,
-        "comment": "256^3 2-channel organoid",
+        "comment": "256^3 2-channel blastocyst",
     },
     {
         "name": "cells3d_multichannel",

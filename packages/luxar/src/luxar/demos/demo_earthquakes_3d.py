@@ -125,6 +125,12 @@ from PIL import Image
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import add_demo_caption, cached_download, launch_viewer
+from luxar.demos._globe_common import (
+    fibonacci_sphere,
+    lonlat_to_xyz,
+    sample_equirect,
+    surface_point_radius,
+)
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -137,8 +143,20 @@ EARTH_RADIUS = 1.0
 # Cloud layer radius (slightly above Earth surface)
 CLOUD_RADIUS = 1.015  # About 1.5% above Earth surface (~100km at Earth scale)
 
-# Sphere resolution (number of points on Earth surface)
-EARTH_POINTS = 120000  # High resolution for texture mapping (4x increase)
+# Sphere resolution (number of points on Earth surface).
+#
+# 120k was far too few and it showed: points on a sphere of radius 1 sit a mean
+# `sqrt(4*pi/n)` apart, so at 120k the spacing is 0.0102 while the point radius
+# was pinned at a constant 0.003 — a third of the gap. The globe rendered as a
+# dot screen with stair-stepped coastlines rather than as a surface. The sibling
+# `demo_ocean_currents_earth` uses 8M for the same texture on the same sphere.
+#
+# 2M brings the spacing to 0.0025 and, with the radius now DERIVED from the
+# spacing rather than hardcoded, closes the surface. The clouds stay at 60k:
+# they are diffuse, luminous and thresholded down to ~40% coverage, so the
+# lattice does not read through them, and their generator evaluates fractal
+# noise in a Python loop that does not scale.
+EARTH_POINTS = 2_000_000
 CLOUD_POINTS = 60000  # Fewer points for clouds (they're diffuse)
 
 # NASA Blue Marble image URL (2048x1024 equirectangular projection). The former
@@ -172,46 +190,32 @@ COLOR_OLD = np.array([0.2, 0.1, 0.6])  # Deep purple
 # =============================================================================
 
 
-def generate_fibonacci_sphere(n_points: int, radius: float = 1.0) -> np.ndarray:
-    """Generate uniformly distributed points on a sphere using Fibonacci spiral.
+def generate_fibonacci_sphere(
+    n_points: int, radius: float = 1.0, *, jitter: bool = False
+) -> np.ndarray:
+    """Uniformly distributed points on a sphere, via the golden-angle spiral.
 
-    This method produces a nearly uniform distribution of points on a sphere,
-    much better than using regular latitude/longitude grids which cluster
-    points near the poles.
+    A regular lat/lon grid clusters points at the poles and spends most of its
+    budget there; the Fibonacci lattice does not.
 
-    The algorithm uses the golden ratio (φ = 1.618...) to space points
-    optimally as you spiral from pole to pole.
+    Delegates to :mod:`luxar.demos._globe_common`, which is also what
+    ``demo_ocean_currents_earth`` and the rivers globe use — the previous local
+    copy iterated in Python, at roughly 90 us a point, which is why this demo
+    was stuck at a point count too low to render a surface.
 
     Args:
-        n_points: Number of points to generate
-        radius: Sphere radius
+        n_points: Number of points to generate.
+        radius: Sphere radius.
+        jitter: Dither the lattice by ~1 cell. **On for anything textured**: the
+            bare lattice beats against an equirectangular texture into visible
+            moire once the point radius approaches the spacing. Off for the
+            cloud layer, whose own noise threshold already breaks up the grid.
 
     Returns:
-        Array of shape (n_points, 3) with (x, y, z) coordinates
+        Array of shape ``(n_points, 3)`` with (x, y, z) coordinates.
     """
-    points = np.zeros((n_points, 3))
-
-    # Golden ratio
-    phi = (1 + np.sqrt(5)) / 2
-    golden_angle = 2 * np.pi / phi
-
-    for i in range(n_points):
-        # Map i to [-1, 1] (cosine of latitude)
-        # This ensures uniform area distribution
-        y = 1 - (2 * i / (n_points - 1))
-
-        # Radius at this latitude
-        r_at_y = np.sqrt(1 - y * y)
-
-        # Longitude using golden angle
-        theta = golden_angle * i
-
-        x = r_at_y * np.cos(theta)
-        z = r_at_y * np.sin(theta)
-
-        points[i] = [x * radius, y * radius, z * radius]
-
-    return points.astype(np.float32)
+    lon, lat = fibonacci_sphere(n_points, jitter=jitter)
+    return lonlat_to_xyz(lon, lat, 0.0, radius)
 
 
 def latlon_to_xyz(lat: float, lon: float, radius: float = 1.0) -> np.ndarray:
@@ -381,29 +385,25 @@ def compute_earth_colors_from_texture(
         Array of RGB colors (n_points, 3) in range [0, 1]
     """
     n_points = len(positions)
-    colors = np.zeros((n_points, 3), dtype=np.float32)
-
     aprint(f"Mapping {n_points:,} points to Earth texture...")
 
-    # Vectorized lat/lon calculation for speed
     x = positions[:, 0]
     y = positions[:, 1]
     z = positions[:, 2]
 
-    # Calculate lat/lon for all points
-    lats = np.degrees(np.arcsin(y / EARTH_RADIUS))
-    # Negate longitude to flip horizontally (match image orientation)
+    lats = np.degrees(np.arcsin(np.clip(y / EARTH_RADIUS, -1.0, 1.0)))
+    # Longitude increases in the -z sense here (see `latlon_to_xyz`), which is
+    # the same convention `_globe_common.lonlat_to_xyz` and the quake placement
+    # at `latlon_to_xyz(lat, -lon, ...)` use, so this inversion is what puts the
+    # texture and the markers on the SAME Earth. Verified against the actual
+    # Blue Marble image: sampling this way puts land at Sahara / Amazon / Tibet
+    # and ocean at mid-Pacific / mid-Atlantic / mid-Indian, 6 for 6.
     lons = -np.degrees(np.arctan2(z, x))
 
-    # Sample texture for each point
-    for i in range(n_points):
-        colors[i] = sample_texture_at_latlon(lats[i], lons[i], texture)
-
-        # Progress indicator for large point counts
-        if (i + 1) % 20000 == 0:
-            aprint(
-                f"  Progress: {i + 1:,}/{n_points:,} ({(i + 1) / n_points * 100:.1f}%)"
-            )
+    # One vectorized bilinear lookup for every point. The loop this replaces
+    # called a scalar sampler per point and could not be run at a point count
+    # high enough for the globe to read as a surface.
+    colors = sample_equirect(texture, lons, lats)
 
     aprint("✓ Texture mapping complete")
 
@@ -1283,7 +1283,12 @@ def generate_earthquake_scene(
 
     # Generate Earth sphere
     with asection(f"Generating Earth sphere ({EARTH_POINTS:,} points)"):
-        earth_positions = generate_fibonacci_sphere(EARTH_POINTS, EARTH_RADIUS)
+        # jitter=True: the bare lattice beats against the equirectangular Blue
+        # Marble into curved moire "worms" that look exactly like a broken land
+        # mask. The dither trades that structure for unstructured noise.
+        earth_positions = generate_fibonacci_sphere(
+            EARTH_POINTS, EARTH_RADIUS, jitter=True
+        )
 
         if use_texture:
             earth_colors = compute_earth_colors_from_texture(
@@ -1332,8 +1337,19 @@ def generate_earthquake_scene(
                 viewer_config=ViewerConfig(cinematic_mode=True),
             )
 
-            # Add Earth surface
-            earth_radii = np.full(len(earth_positions), 0.003, dtype=np.float32)
+            # Add Earth surface. The radius is DERIVED from the point spacing
+            # (`surface_point_radius`), not pinned: a constant is tuned once at
+            # one point count and then silently stipples the globe when the
+            # count changes. At EARTH_POINTS the spacing is ~0.0025 Earth radii,
+            # so the old hardcoded 0.003 happened to be roughly right only at
+            # the count it was chosen for.
+            earth_point_radius = surface_point_radius(
+                len(earth_positions), EARTH_RADIUS, overlap=1.0
+            )
+            aprint(f"Earth point radius: {earth_point_radius:.5f} R⊕")
+            earth_radii = np.full(
+                len(earth_positions), earth_point_radius, dtype=np.float32
+            )
             earth_sharpness = np.full(len(earth_positions), 0.55, dtype=np.float32)
 
             # Earth surface uses opaque blending - solid rendering with depth write

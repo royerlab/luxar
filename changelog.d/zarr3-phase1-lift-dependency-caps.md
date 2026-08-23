@@ -33,5 +33,6 @@ The prose that restated these caps is updated in the same pass: the
 `_dependencies` module rule (whose motivating example is now metpy's NumPy-2
 floor), the `INSTALL_SPECS` note, `demos/README.md`, and the install hints printed
 by `demo_zebrahub_velocity_streamlines`,
-`demo_gsplats_3d_organoid_dapi_nuclei` and `demo_gsplats_3d_organoid_multichannel`
+`demo_gsplats_3d_blastocyst_dapi_nuclei` and
+`demo_gsplats_3d_blastocyst_multichannel`
 — which were telling users to pin napari below 0.8 on purpose.
