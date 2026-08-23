@@ -11,6 +11,7 @@ appears below with a reason.
 from __future__ import annotations
 
 import ast
+from collections.abc import Iterator
 from pathlib import Path
 
 import numpy as np
@@ -640,13 +641,25 @@ def _returns_the_prelod_fit(src: str, name: str) -> list[str]:
     flat fit. The warm path loads the archive back and gets the levels, so only
     a local refit (``--recompute``, or no precomputed archive) is flat.
     """
+
+    def function_body_nodes(function: ast.FunctionDef) -> Iterator[ast.AST]:
+        stack = list(function.body)
+        while stack:
+            node = stack.pop()
+            if isinstance(
+                node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+            ):
+                continue
+            yield node
+            stack.extend(ast.iter_child_nodes(node))
+
     out = []
     for function in ast.walk(ast.parse(src, filename=name)):
         if not isinstance(function, ast.FunctionDef):
             continue
         saved = set()
         returned = []
-        for node in ast.walk(function):
+        for node in function_body_nodes(function):
             if (
                 isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Name)
@@ -695,10 +708,10 @@ def test_a_costly_recipe_is_not_handed_to_the_scene_as_the_pre_lod_fit() -> None
             continue
         offenders = _returns_the_prelod_fit(src, name)
         assert not offenders, (
-            f"{name} returns {offenders} straight after save_with_lod, which is "
-            "the FLAT pre-LOD fit — the scene loses the levels the archive "
-            "carries, and a cold run renders differently from a warm one. "
-            "Return what was stored instead."
+            f"{name} returns {offenders} after passing them to save_with_lod, "
+            "which hands the scene the FLAT pre-LOD fit — the scene loses the "
+            "levels the archive carries, and a local refit renders differently "
+            "from a later cache hit. Return what was stored instead."
         )
 
 
@@ -739,6 +752,15 @@ def test_the_pre_lod_return_detector_catches_the_shape_it_is_meant_to() -> None:
         "    stored = load_local_fit_gsplats_at([path], label='d')\n"
         "    return result if stored is None else stored[0]\n"
     )
+    shadowed = (
+        "def f():\n"
+        "    result = fit()\n"
+        "    def cache_other_result():\n"
+        "        result = fit_other()\n"
+        "        save_with_lod(result, path, recipe='levels')\n"
+        "    return result\n"
+    )
     for shape, source in bad.items():
         assert _returns_the_prelod_fit(source, f"bad {shape}.py") == ["result"]
     assert _returns_the_prelod_fit(good, "good.py") == []
+    assert _returns_the_prelod_fit(shadowed, "shadowed.py") == []
