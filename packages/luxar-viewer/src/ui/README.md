@@ -403,7 +403,10 @@ listing from the first keystroke whenever the search bar is on screen — it is
 hidden while a directory loads, after an error, in an empty directory and in the
 manual fallback, and keystrokes are contained by the modal in those states — and
 `ArrowDown` moves into the list from the panel container as well as from the
-search field.
+search field. If a navigation loading state, breadcrumb rebuild or cancelled
+path edit removes the focused child, the browser re-parks focus on the panel
+only when focus is otherwise unclaimed (`null` or `<body>`), preserving modal
+containment without stealing focus from a dialog stacked on top.
 
 The panel declares `O` and `H` as passthrough keys: `O` is its own toggle, and
 `H` is the shortcut its welcome banner advertises with an `H Help` chip — modal

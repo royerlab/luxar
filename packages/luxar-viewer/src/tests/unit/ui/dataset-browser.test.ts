@@ -1321,6 +1321,48 @@ describe('DatasetBrowser', () => {
       expect(panel.contains(document.activeElement)).toBe(true);
     });
 
+    it('an in-flight navigation keeps focus and shortcuts inside the panel', async () => {
+      navigateMock.mockReset();
+      let resolveNextListing: (result: unknown) => void = () => {};
+      const nextListing = new Promise<unknown>((resolve) => {
+        resolveNextListing = resolve;
+      });
+      navigateMock
+        .mockResolvedValueOnce(
+          defaultNavigateResult({
+            entries: [{ name: 'nested', path: 'nested', type: 'directory' }],
+            strategy: 'html',
+          })
+        )
+        .mockReturnValueOnce(nextListing);
+
+      new DatasetBrowser({ container, onDatasetSelect, onClose });
+      await vi.waitFor(() => {
+        expect(container.querySelector('.luxar-dataset-browser__file-item')).not.toBeNull();
+      });
+      const panel = container.querySelector('#luxar-dataset-browser') as HTMLElement;
+      const seen: string[] = [];
+      const listener = (event: KeyboardEvent) => seen.push(event.key);
+      window.addEventListener('keydown', listener);
+
+      try {
+        press({ key: 'ArrowDown' });
+        press({ key: 'Enter' });
+
+        expect(container.querySelector('.luxar-dataset-browser__loading')).not.toBeNull();
+        expect(document.activeElement).toBe(panel);
+
+        press({ key: 'Home' });
+        expect(seen).toEqual([]);
+      } finally {
+        window.removeEventListener('keydown', listener);
+        resolveNextListing(defaultNavigateResult({ currentPath: 'nested', entries: [] }));
+        await vi.waitFor(() => {
+          expect(container.querySelector('.luxar-dataset-browser__empty')).not.toBeNull();
+        });
+      }
+    });
+
     it('a completed navigation does not steal focus from a stacked modal', async () => {
       navigateMock.mockReset();
       let resolveNextListing: (result: unknown) => void = () => {};
