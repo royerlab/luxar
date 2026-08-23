@@ -50,6 +50,7 @@ from luxar.demos.registry import iter_demos  # noqa: E402
 from luxar.utils.paths import get_demos_output_dir  # noqa: E402
 
 _ATTRIBUTION_FIELDS = ("short", "doi", "license")
+Target = tuple[str, Path, Optional[dict]]
 
 
 def compare(store: Path, declared: Optional[dict]) -> Optional[str]:
@@ -106,6 +107,28 @@ def _store_stem(path: Path) -> str:
     return path.name
 
 
+def _explicit_targets(stores: Iterable[Path]) -> tuple[list[Target], list[str]]:
+    """Resolve named paths to registered demo outputs and skip unsupported ones."""
+    by_stem = {
+        stem: (demo.key, demo.citation)
+        for demo in iter_demos()
+        for stem in demo.outputs
+    }
+    targets = []
+    skipped = []
+    for store in stores:
+        known = by_stem.get(_store_stem(store))
+        if known is None:
+            skipped.append(f"{store.name}: not a known demo output, skipped")
+            continue
+        if store.name.endswith(".luxar.zarr.zip"):
+            skipped.append(f"{store.name}: archive stores are not inspected, skipped")
+            continue
+        key, declared = known
+        targets.append((key, store, declared))
+    return targets, skipped
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
@@ -123,23 +146,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = parser.parse_args(argv)
 
     if args.stores:
-        by_stem = {}
-        for demo in iter_demos():
-            for stem in demo.outputs:
-                by_stem[stem] = (demo.key, demo.citation)
-        targets = []
-        skipped = []
-        for store in args.stores:
-            stem = _store_stem(store)
-            known = by_stem.get(stem)
-            if known is None:
-                skipped.append(f"{store.name}: not a known demo output, skipped")
-                continue
-            if store.name.endswith(".luxar.zarr.zip"):
-                skipped.append(f"{store.name}: archive stores are not inspected, skipped")
-                continue
-            key, declared = known
-            targets.append((key, store, declared))
+        targets, skipped = _explicit_targets(args.stores)
     else:
         targets = list(_demo_stores(args.demos_dir))
         skipped = []
