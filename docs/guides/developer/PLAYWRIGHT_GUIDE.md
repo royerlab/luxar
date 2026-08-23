@@ -590,7 +590,7 @@ re-run the spec at `--workers=1`.
 1. **Run tests before committing**: `pnpm test:e2e`
 2. **Update snapshots carefully**: Only when changes are intentional
 3. **Write focused tests**: One behavior per test
-4. **Use helper functions**: Reuse common patterns
+4. **Use helper functions**: Wait for `waitForLuxarReady(page)` before reading state or dispatching keyboard/mouse input
 5. **Test on real data**: Don't rely only on demo datasets
 
 ### For CI/CD

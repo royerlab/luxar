@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any, Callable, Optional, Sequence, Tuple
 
 import numpy as np
 
+from luxar.gsplats.fit_basis import fit_image_min
 from luxar.gsplats.merged_quality import (
     announce_unscored_merge,
     resolve_merged_reference,
@@ -117,6 +118,7 @@ def _score_planned_merge(
     plan_shape: tuple[int, ...],
     device: Optional[str],
     verbose: bool,
+    image_min: Optional[float],
     stats: "dict[str, Any] | None" = None,
     partition: bool = False,
 ) -> None:
@@ -142,6 +144,7 @@ def _score_planned_merge(
         grid_scale=None,
         device=device,
         verbose=verbose,
+        image_min=image_min,
         stats=stats,
     )
 
@@ -511,6 +514,7 @@ def fit_planned(
             plan_shape=tuple(int(s) for s in plan.volume_shape),
             device=device,
             verbose=verbose,
+            image_min=fit_image_min(result.meta),
             stats=fit_stats,
             partition=is_partition,
         )
@@ -539,6 +543,7 @@ def fit_planned(
         plan_shape=tuple(int(s) for s in plan.volume_shape),
         device=device,
         verbose=verbose,
+        image_min=fit_image_min(merged.stats),
     )
     return merged
 
