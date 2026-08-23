@@ -126,9 +126,9 @@ CHANNELS = [
 ]
 
 # Per-channel brightness multiplier applied before writing. Kept conservative
-# here; volumetric compositing bounds accumulated radiance (unlike the former
-# additive sum, which saturated around ~0.6), so a hotter value stays
-# well-behaved if a brighter render is wanted.
+# because the two channels are emitters whose contributions should sum. Their
+# additive blend is order-independent and saturates around ~0.6 — raise it only
+# alongside the Layers panel's display range.
 LAYER_INTENSITY = 0.4
 
 # Manifest dataset + the files it pins, one per channel. A local refit is OUR
@@ -372,8 +372,9 @@ Controls:
                         cholesky_factors=gsplats.cholesky_factors,
                         dim_order=["z", "y", "x"],
                         opacity=1.0,
-                        absorption=1.0,
-                        blending_mode="volumetric",
+                        # One global order slot per node cannot interleave these
+                        # co-located volumes; additive is order-independent.
+                        blending_mode="additive",
                         layer=True,
                         colormap=colormap,
                     )

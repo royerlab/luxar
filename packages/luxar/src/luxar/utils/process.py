@@ -150,19 +150,47 @@ def _exit_code(returncode: Optional[int]) -> int:
 _SIGKILL = getattr(signal, "SIGKILL", signal.SIGTERM)
 
 
-def proc_table() -> list[tuple[int, int, str, str]]:
-    """Best-effort ``(pid, pgid, state, command)`` rows read from ``/proc``.
+def _ps_proc_table() -> list[tuple[int, int, str, str]]:
+    """Best-effort process-table rows from ``ps`` on POSIX systems."""
+    rows: list[tuple[int, int, str, str]] = []
+    if os.name != "posix":
+        return rows
+    try:
+        out = subprocess.run(  # nosec B603, B607  # fixed argv, no user input
+            ["ps", "-axww", "-o", "pid=,pgid=,state=,command="],
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+            check=True,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return rows
+    for line in out.splitlines():
+        parts = line.split(None, 3)
+        if len(parts) < 3 or not parts[2]:
+            continue
+        try:
+            command = parts[3] if len(parts) == 4 else ""
+            rows.append((int(parts[0]), int(parts[1]), parts[2][0], command))
+        except ValueError:
+            continue
+    return rows
 
-    A stdlib stand-in for ``ps``: no subprocess, and it still answers on the
-    slim containers where ``procps`` is not installed. Returns ``[]`` where
-    ``/proc`` is absent (macOS, Windows) — callers must read that as "process
-    table unknown", never as "nothing is running".
+
+def proc_table() -> list[tuple[int, int, str, str]]:
+    """Best-effort ``(pid, pgid, state, command)`` process-table rows.
+
+    Read ``/proc`` directly where available, avoiding a subprocess and still
+    working in slim containers without ``procps``. Fall back to ``ps`` on
+    POSIX systems such as macOS. Returns ``[]`` when neither source is
+    available — callers must read that as "process table unknown", never as
+    "nothing is running".
     """
     rows: list[tuple[int, int, str, str]] = []
     try:
         names = os.listdir("/proc")
     except OSError:
-        return rows
+        return _ps_proc_table()
     for name in names:
         if not name.isdigit():
             continue
@@ -193,8 +221,8 @@ def _group_has_live_member(pgid: int) -> bool:
     exited but whose corpses their parent has not collected yet. A zombie
     holds no port, no memory and no file descriptor, so counting one as "still
     running" would make teardown burn the whole signal ladder and then report
-    failure for a group it did kill. Answered from ``/proc``; where the table
-    (or this group) cannot be seen there, assume the group is alive.
+    failure for a group it did kill. Where the process table (or this group)
+    cannot be seen, assume the group is alive.
     """
     states = [state for _pid, p, state, _cmd in proc_table() if p == pgid]
     return not states or any(state != "Z" for state in states)

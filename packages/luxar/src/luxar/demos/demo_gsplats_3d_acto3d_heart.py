@@ -137,9 +137,24 @@ ORIGINAL_VOXEL_SIZE = (2.4009, 1.0635, 1.0635)  # Z, Y, X in um
 
 # Channel configuration with colormaps for layer-based rendering
 CHANNELS = [
-    {"index": 0, "name": "SYTOX Green (Nuclei)", "colormap": "green"},
-    {"index": 1, "name": "Tomato Lectin (Vasculature)", "colormap": "red"},
-    {"index": 2, "name": "TNNI3 (Cardiac Tissue)", "colormap": "blue"},
+    {
+        "index": 0,
+        "name": "SYTOX Green (Nuclei)",
+        "colormap": "green",
+        "opacity": 0.12,
+    },
+    {
+        "index": 1,
+        "name": "Tomato Lectin (Vasculature)",
+        "colormap": "red",
+        "opacity": 0.30,
+    },
+    {
+        "index": 2,
+        "name": "TNNI3 (Cardiac Tissue)",
+        "colormap": "blue",
+        "opacity": 0.16,
+    },
 ]
 
 # Fit parameters (fixed-K, seeds=K*)
@@ -583,24 +598,24 @@ Controls:
             for i, (gsplats, ch_config) in enumerate(zip(gsplats_list, CHANNELS)):
                 ch_name = ch_config["name"]
                 colormap = ch_config["colormap"]
+                opacity = ch_config["opacity"]
 
                 with asection(f"Adding {ch_name} (layer)"):
                     centered = gsplats.translate(-shared_centroid)
                     centered = centered.scale_intensity(0.1)
                     n_splats = len(centered.amplitudes)
 
-                    # Volumetric compositing at whole-node granularity lets a
-                    # channel attenuate channels drawn behind it, so the nuclear
-                    # stain no longer washes out the vasculature and cardiac
-                    # tissue as an unbounded additive sum did. Partial opacity
-                    # keeps all three channels readable through one another.
+                    # One global order slot per node cannot interleave these
+                    # co-located volumes; additive is order-independent. This
+                    # supersedes the volumetric appearance tuning from #880.
+                    # Per-channel opacity keeps the dense nuclear stain from
+                    # washing out the vasculature and cardiac tissue.
                     scene.add_gsplats_from_data(
                         name=f"gsplats_{ch_name.lower().replace(' ', '_').replace('(', '').replace(')', '')}",
                         result=centered,
                         dim_order=["z", "y", "x"],
-                        opacity=0.48,
-                        absorption=1.0,
-                        blending_mode="volumetric",
+                        opacity=opacity,
+                        blending_mode="additive",
                         layer=True,
                         colormap=colormap,
                     )

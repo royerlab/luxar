@@ -155,7 +155,7 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.core.viewer_config import ViewerConfig
+from luxar.core.viewer_config import DimensionsConfig, ViewerConfig
 from luxar.demos import (
     DatasetUnavailable,
     add_demo_caption,
@@ -439,13 +439,30 @@ def create_luxar_scene(gsplats_list, output_path=None):
 
         dims = Dimensions(dim_list)
 
+        # Open with every channel visible. A non-displayed discrete dimension
+        # otherwise starts at its range MINIMUM — which here is "Off" for all
+        # three toggles, so the scene would open on an empty view and the demo
+        # would only show something after the visitor found the sliders.
+        # `current_step` is indexed by ABSOLUTE dimension index, displayed dims
+        # included; 0.0 for x/y/z is exactly what the viewer defaults them to
+        # (they are camera-controlled), so only the toggles actually move.
+        open_all_on = DimensionsConfig(
+            current_step=[0.0, 0.0, 0.0] + [1.0] * len(CHANNELS)
+        )
+
         with LuxarZarrCompiler(
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
             scene = compiler.create_scene(
                 dimensions=dims,
                 citation=DEMO_META["citation"],
-                viewer_config=ViewerConfig(cinematic_mode=True),
+                viewer_config=ViewerConfig(
+                    cinematic_mode=True,
+                    # Slowly turn the tissue on load: the three stains only read
+                    # as one 3D structure while it moves.
+                    auto_rotate=True,
+                    dimensions=open_all_on,
+                ),
             )
 
             scene.attrs["title"] = (
@@ -471,6 +488,7 @@ Channels:
   - Red:   Alexa Fluor 568 Phalloidin — actin filaments (605nm)
 
 Navigation:
+  - Opens with all three channels On and the camera auto-rotating
   - Toggle Nuclei/WGA/Actin on/off independently
   - 8 visibility combinations (all on, pairs, singles, all off)
   - Mouse drag to rotate, scroll to zoom, right-click drag to pan
@@ -522,8 +540,9 @@ Navigation:
                         fill_sigma={own_dim: 0},
                         extend_to_all=other_dims,
                         opacity=1.0,
-                        absorption=1.0,
-                        blending_mode="volumetric",
+                        # One global order slot per node cannot interleave these
+                        # co-located volumes; additive is order-independent.
+                        blending_mode="additive",
                         layer=True,
                     )
                     aprint(
