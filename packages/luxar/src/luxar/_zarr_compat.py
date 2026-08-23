@@ -998,10 +998,11 @@ def list_raw_keys(group: zarr.Group) -> frozenset[str]:
     (macOS, Windows) ``Zarr.json`` folds to the node's own ``zarr.json`` — so a
     probe for a payload that does not exist comes back with the METADATA
     DOCUMENT's bytes, and "no such key" is unobservable for precisely the names
-    where the distinction decides whether a store is safe to copy
-    (``luxar.io.optimise._copy_payload_files``). A directory LISTING is not
-    folded: the store reports the names it actually stores, and Python compares
-    them case-sensitively on every platform.
+    where the distinction decides whether a payload contributes bytes to the
+    content hash (``luxar.io._compiler.finalize.hashing._payload_terms``) or is
+    safe to copy (``luxar.io.optimise._copy_payload_files``). A directory
+    LISTING is not folded: the store reports the names it actually stores, and
+    Python compares them case-sensitively on every platform.
 
     Immediate children only, subdirectories (subgroups, chunk directories) and
     plain files alike, as bare names relative to ``group`` — never a nested path
@@ -1015,8 +1016,9 @@ def list_raw_keys(group: zarr.Group) -> frozenset[str]:
     against ``LocalStore``, ``MemoryStore`` and ``ZipStore`` alike. Listing is
     one of the capabilities the store ABC leaves optional (``supports_listing``),
     which is why this is a targeted disambiguator and not how payloads are
-    ENUMERATED — the attrs name them, and the compile-time hasher stays on that
-    route (``io/_compiler/finalize/README.md``).
+    ENUMERATED — the attrs name them in both walks, and the listing only
+    disambiguates a metadata-document collision
+    (``io/_compiler/finalize/README.md``).
 
     Args:
         group: Group whose own prefix is listed — ``group`` may be the root or
