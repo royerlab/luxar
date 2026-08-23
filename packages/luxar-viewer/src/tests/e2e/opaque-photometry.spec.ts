@@ -127,16 +127,17 @@ async function overlapOpaqueInFrontOfLuminous(
     if (!opaque || !luminous) return null;
 
     const worldCenter = (object: any) => {
-      object.geometry.computeBoundingBox();
-      const center = object.geometry.boundingBox.getCenter(object.position.clone());
+      const boundingBox = object.geometry.boundingBox;
+      if (!boundingBox) throw new Error(`${type}: geometry has no authored bounding box`);
+      const center = boundingBox.getCenter(object.position.clone());
       return object.localToWorld(center);
     };
     const worldRadius = (object: any) => {
-      object.geometry.computeBoundingSphere();
+      const boundingSphere = object.geometry.boundingSphere;
+      if (!boundingSphere) throw new Error(`${type}: geometry has no authored bounding sphere`);
       const scale = object.getWorldScale(object.position.clone());
       return (
-        object.geometry.boundingSphere.radius *
-        Math.max(Math.abs(scale.x), Math.abs(scale.y), Math.abs(scale.z))
+        boundingSphere.radius * Math.max(Math.abs(scale.x), Math.abs(scale.y), Math.abs(scale.z))
       );
     };
     const projectedBounds = (object: any) => {
