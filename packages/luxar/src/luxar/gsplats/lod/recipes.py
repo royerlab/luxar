@@ -44,7 +44,7 @@ Two return shapes (see :data:`RecipeResult`):
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Callable, List, Literal, Optional, Tuple, Union, get_args
 
 import numpy as np
@@ -165,6 +165,10 @@ class RecipeParams:
     # Source volume for refine="volume" (full-res, splat coordinate frame).
     # Excluded from eq/repr: a large ndarray is payload, not identity.
     volume: Optional[np.ndarray] = field(default=None, compare=False, repr=False)
+    # Normalization level removed from ``volume`` by the input fit. Per-part
+    # paths cannot recover top-level stats from a bare tree node, so the owning
+    # caller carries it alongside the volume payload.
+    image_min: Optional[float] = None
     # ``volume_axes[i]`` is the volume axis holding center dim ``i``; None means
     # the identity. A stacked timelapse needs it: Luxar puts spatial dims first
     # and the stacked axis LAST, while the source array is usually time-FIRST.
@@ -434,6 +438,7 @@ def _substitutive_for_part(
         refine_iters=params.refine_iters,
         volume=params.volume,
         volume_axes=params.volume_axes,
+        image_min=params.image_min,
         volume_box=_cell_for_coarsened_dims(cell, params, part_data.ndim),
         device=params.device,
         seed=params.seed,
@@ -500,6 +505,10 @@ def build_adaptive(data: GSplatData, params: RecipeParams) -> GSplatPartition:
     cap above one partition. ``adaptive`` is the per-part substitutive form — the
     most adaptive of the three, for the largest scenes.
     """
+    from luxar.gsplats.fit_basis import fit_image_min
+
+    if params.image_min is None:
+        params = replace(params, image_min=fit_image_min(data.stats))
     base = data.flattened()
     partition = base.to_spatial_partition(
         max_elements=params.effective_max_elements,

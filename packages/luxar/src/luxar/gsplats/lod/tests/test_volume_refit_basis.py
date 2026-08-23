@@ -14,6 +14,7 @@ import pytest
 
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.lod import volume_refit as vr
+from luxar.gsplats.lod.recipes import RecipeParams, build_part_lod
 
 
 def _seed(n: int = 6) -> GSplatData:
@@ -22,6 +23,16 @@ def _seed(n: int = 6) -> GSplatData:
         centers=rng.uniform(4.0, 12.0, (n, 3)).astype(np.float32),
         amplitudes=rng.uniform(0.2, 1.0, n).astype(np.float32),
         cholesky_factors=np.tile([1.5, 0, 1.5, 0, 0, 1.5], (n, 1)).astype(np.float32),
+    )
+
+
+def _seed_with_basis(n: int = 8, image_min: float = 500.0) -> GSplatData:
+    seed = _seed(n)
+    return GSplatData(
+        centers=seed.centers,
+        amplitudes=seed.amplitudes,
+        cholesky_factors=seed.cholesky_factors,
+        stats={"image_min": image_min},
     )
 
 
@@ -83,6 +94,89 @@ def test_an_unknown_basis_leaves_behaviour_unchanged(monkeypatch) -> None:
 
     assert captured["floor"] == "auto"
     np.testing.assert_array_equal(captured["volume"], raw)
+
+
+def test_per_part_levels_forward_the_owning_fits_basis(monkeypatch) -> None:
+    """A bare part tree has no top-level stats, so its owner must carry them."""
+    captured = []
+
+    def fake_refine(seed, volume, *, config, device=None):
+        captured.append(config.image_min)
+        return seed, {}
+
+    monkeypatch.setattr(vr, "volume_refine_splats", fake_refine)
+    params = RecipeParams(
+        compression_factor=2,
+        levels=1,
+        refine="volume",
+        refine_iters=1,
+        volume=_volume(500.0),
+        image_min=500.0,
+        additive_ladders=False,
+        quality_stamps=False,
+        device="cpu",
+    )
+    build_part_lod(
+        _seed(8).tree,
+        "levels",
+        params,
+        cell=[(0.0, 16.0), (0.0, 16.0), (0.0, 16.0)],
+    )
+
+    assert captured and set(captured) == {500.0}
+
+
+def test_fit_time_partition_carries_region_basis_to_part_recipe(monkeypatch) -> None:
+    import luxar.gsplats.lod.recipes as recipes
+
+    captured = []
+
+    def fake_build(part, recipe, params, *, cell=None):
+        captured.append(params.image_min)
+        return part
+
+    monkeypatch.setattr(recipes, "build_part_lod", fake_build)
+    node = GSplatData.partition_from_regions(
+        [_seed_with_basis()], recipe="levels", recipe_params=RecipeParams()
+    )
+
+    assert node is not None
+    assert captured == [500.0]
+
+
+def test_adaptive_recipe_carries_input_basis_to_every_part(monkeypatch) -> None:
+    import luxar.gsplats.lod.recipes as recipes
+
+    captured = []
+
+    def fake_part(part, params, *, coverage, cell=None):
+        captured.append(params.image_min)
+        return part
+
+    monkeypatch.setattr(recipes, "_substitutive_for_part", fake_part)
+    node = recipes.build_adaptive(
+        _seed_with_basis(), RecipeParams(max_elements=4, quality_stamps=False)
+    )
+
+    assert node.children
+    assert captured and set(captured) == {500.0}
+
+
+def test_batch_merge_carries_part_basis_to_part_recipe(monkeypatch) -> None:
+    import luxar.gsplats.lod.recipes as recipes
+    from luxar.gsplats.batch.merge_orchestrator import _finalize_part_node
+
+    captured = []
+
+    def fake_build(part, recipe, params, *, cell=None):
+        captured.append(params.image_min)
+        return part
+
+    monkeypatch.setattr(recipes, "build_part_lod", fake_build)
+    node = _finalize_part_node(_seed_with_basis(), "levels", None, 1)
+
+    assert node is not None
+    assert captured == [500.0]
 
 
 def test_the_never_worse_guard_compares_on_one_basis(monkeypatch) -> None:

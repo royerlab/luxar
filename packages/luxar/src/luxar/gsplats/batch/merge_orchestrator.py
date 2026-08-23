@@ -542,9 +542,12 @@ def _finalize_part_node(
 
     import dataclasses
 
+    from luxar.gsplats.fit_basis import fit_image_min
     from luxar.gsplats.lod.recipes import RecipeParams, build_part_lod
 
     params = recipe_params if recipe_params is not None else RecipeParams()
+    if params.image_min is None:
+        params = dataclasses.replace(params, image_min=fit_image_min(part.stats))
     if recipe == "levels" and params.coarsen_dims is None:
         # Stacked-timepoint axis (the last column) is a barrier; coarsen the rest.
         n_spatial = part.ndim - (1 if n_timepoints > 1 else 0)
