@@ -6,6 +6,7 @@ the shared ``app_gsplat`` Typer.
 
 from __future__ import annotations
 
+import math
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
@@ -672,6 +673,37 @@ def _print_quality_comparison(
     aprint("=" * 50)
 
 
+def _validate_image_min_override(image_min: Optional[float]) -> None:
+    if image_min is not None and (not math.isfinite(image_min) or image_min < 0.0):
+        raise typer.BadParameter(
+            "must be a finite, non-negative level", param_hint="--image-min"
+        )
+
+
+def _reference_on_dataset_basis(
+    reference: "np.ndarray", stats: Any, image_min: Optional[float]
+) -> "np.ndarray":
+    from luxar.gsplats.fit_basis import (
+        MISSING_BASIS_HINT,
+        fit_image_min,
+        reference_on_fit_basis,
+    )
+
+    resolved_min = float(image_min) if image_min is not None else fit_image_min(stats)
+    if resolved_min is None:
+        aprint(f"WARNING: {MISSING_BASIS_HINT}")
+    elif resolved_min == 0.0:
+        aprint("Basis: fit removed no background (image_min=0)")
+    else:
+        source = "--image-min" if image_min is not None else "dataset"
+        reference = reference_on_fit_basis(reference, resolved_min)
+        aprint(
+            f"Basis: reference shifted by image_min={resolved_min:.6g} "
+            f"(from {source}); scores are background-relative, matching the render"
+        )
+    return reference
+
+
 def compare_quality(
     gsplats_path: Path = typer.Argument(
         ..., exists=True, help="Path to .gsplats.zarr dataset (or .zip/.tar.gz)"
@@ -694,6 +726,14 @@ def compare_quality(
         "--truncate",
         "-t",
         help="Truncation radius in sigma. Defaults to dataset's stored value.",
+    ),
+    image_min: Optional[float] = typer.Option(
+        None,
+        "--image-min",
+        help="Background level the fit subtracted, for a dataset that does not "
+        "record one. A render is background-relative, so the reference is "
+        "shifted by this before scoring. Normally read from the dataset; pass it "
+        "only for stores fitted before the level was persisted.",
     ),
     channel: Optional[int] = typer.Option(
         None, "--channel", "-c", help="Channel index for OME-Zarr reference"
@@ -723,6 +763,8 @@ def compare_quality(
         luxar gsplat compare fitted.gsplats.zarr original.zarr --output-json metrics.json
         luxar gsplat compare fitted.gsplats.zarr original.zarr -j metrics.json -q
     """
+    _validate_image_min_override(image_min)
+
     try:
         import json
 
@@ -737,7 +779,11 @@ def compare_quality(
         with asection("Quality Comparison"):
             # Load gsplat dataset
             with asection("Loading gsplat dataset"):
-                data = GSplatData.load(gsplats_path, include_stats=False)
+                # `include_stats=True` so the normalization basis is reachable:
+                # a render is background-relative and the reference is raw, and
+                # without the stored `image_min` the two cannot be reconciled
+                # (#1173). This is metadata only — no extra array decode.
+                data = GSplatData.load(gsplats_path, include_stats=True)
                 n_splats = data.n_splats
                 ndim = data.ndim
                 aprint(f"Loaded {n_splats:,} splats ({ndim}D)")
@@ -752,6 +798,11 @@ def compare_quality(
                     reference_path, channel=channel, timepoint=timepoint
                 )
                 ref_shape = ref_np.shape
+
+                # Put the reference on the render's basis before anything scores
+                # it. An explicit --image-min wins over the stored level so a
+                # pre-provenance store is still comparable.
+                ref_np = _reference_on_dataset_basis(ref_np, data.stats, image_min)
 
             # Determine rendering shape
             if shape is not None:
@@ -789,7 +840,11 @@ def compare_quality(
                         f"range [{rendered_t.min().item():.4f}, {rendered_t.max().item():.4f}]"
                     )
 
-                # Upload reference to same device
+                # Upload reference to same device, on the FIT's basis. Scoring
+                # a background-relative render against a pedestal-bearing
+                # reference charges the fit for background it never claimed to
+                # represent, which is the artifact this command most needed
+                # fixing (#1173).
                 ref_t = torch.from_numpy(ref_np).to(rendered_t.device)
 
                 # Compute metrics (all on GPU)
@@ -820,8 +875,6 @@ def compare_quality(
 
         # JSON output
         if output_json is not None:
-            import math
-
             # Replace non-finite floats (inf/nan) with None for valid JSON
             safe_metrics = {
                 k: (v if isinstance(v, (int, str)) or math.isfinite(v) else None)

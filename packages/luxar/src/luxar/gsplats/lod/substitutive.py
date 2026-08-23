@@ -645,6 +645,19 @@ def _volume_refine_level(
 # ─────────────────────────────────────────────────────────────────────
 
 
+def _resolve_refit_image_min(
+    data: GSplatData, image_min: Optional[float], verbose: bool
+) -> Optional[float]:
+    from luxar.gsplats.fit_basis import MISSING_BASIS_HINT, fit_image_min
+
+    resolved = fit_image_min(
+        {"image_min": image_min} if image_min is not None else data.stats
+    )
+    if resolved is None and verbose:
+        aprint(f"refine=volume: {MISSING_BASIS_HINT}")
+    return resolved
+
+
 def make_substitutive_lod(
     data: GSplatData,
     *,
@@ -660,6 +673,7 @@ def make_substitutive_lod(
     refine_iters: Optional[int] = None,
     volume: Optional[np.ndarray] = None,
     volume_axes: Optional[Sequence[int]] = None,
+    image_min: Optional[float] = None,
     volume_box: Optional[Sequence[tuple[float, float]]] = None,
     device: Union[str, torch.device, None] = "auto",
     seed: Optional[int] = None,
@@ -775,6 +789,10 @@ def make_substitutive_lod(
         3D re-fit has always assumed. A stacked timelapse needs it: Luxar
         puts spatial dims first and the stacked axis LAST, while the source
         array is typically ``(t, z, y, x)`` with time FIRST.
+    image_min
+        Normalization level removed by the input fit. When omitted, it is read
+        from ``data.stats``; per-part recipe callers pass it explicitly because
+        converting a bare tree node to ``GSplatData`` has no top-level stats.
     volume_box
         Per-coarsened-dim ``(low, high)`` bounds restricting the re-fit to one
         spatial tile, for the per-part (``adaptive``) caller. The re-fit then
@@ -898,10 +916,16 @@ def make_substitutive_lod(
         eff_refine_iters = (
             int(refine_iters) if refine_iters is not None else VolumeRefitConfig().iters
         )
+        # The ladder's basis comes from the INPUT fit, which is the only thing
+        # that knows what background was already removed. Without it the inner
+        # re-fit re-estimates one from the raw volume and the refined level can
+        # end up on a different basis from its siblings (#1177).
+        refit_image_min = _resolve_refit_image_min(data, image_min, verbose)
         volume_cfg = replace(
             VolumeRefitConfig(),
             iters=eff_refine_iters,
             conserve_mass=bool(conserve_mass),
+            image_min=refit_image_min,
         )
         if device is not None and not (isinstance(device, str) and device == "auto"):
             refit_device = str(device)

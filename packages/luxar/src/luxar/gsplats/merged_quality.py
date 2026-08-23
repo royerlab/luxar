@@ -9,6 +9,7 @@ from typing import Any, Optional, Sequence
 import numpy as np
 from arbol import aprint
 
+from luxar.gsplats.fit_basis import MISSING_BASIS_HINT, reference_on_fit_basis
 from luxar.gsplats.gsplat_data import GSplatData
 
 #: Upper bound, in GiB, on the memory a merged-quality score may hold resident.
@@ -177,6 +178,11 @@ def _to_voxel_frame(merged: GSplatData, scale: Optional[Sequence[float]]) -> GSp
     )
 
 
+def _announce_missing_basis(image_min: Optional[float]) -> None:
+    if image_min is None:
+        aprint(f"WARNING: {MISSING_BASIS_HINT}")
+
+
 def stamp_merged_quality(
     merged: "GSplatData | Sequence[GSplatData]",
     volume: Any,
@@ -185,6 +191,7 @@ def stamp_merged_quality(
     grid_scale: Optional[Sequence[float]],
     device: Optional[str],
     verbose: bool,
+    image_min: Optional[float],
     stats: "dict[str, Any] | None" = None,
 ) -> None:
     """Score the MERGED reconstruction against the whole volume, in place.
@@ -195,12 +202,11 @@ def stamp_merged_quality(
     actually ships. Without this a tiled archive carries no PSNR at all — which
     is exactly what a published dataset is asked for.
 
-    The reference is ``volume`` exactly as the caller handed it in: the pedestal
-    the tiles subtracted is NOT put back and per-tile denoising is not applied to
-    it, so the score is against the acquisition — the same basis
-    ``luxar gsplat compare`` uses, and the same one the non-tiled path scores a
-    floor-suppressed fit against (its consequences are issue #1173's, not this
-    function's; matching it is what keeps the two paths' numbers comparable).
+    The reference is shifted onto the merged fit's background-relative basis
+    using the explicitly resolved ``image_min``. The tiles reconstruct
+    ``V - image_min``, not the raw acquisition, so leaving the pedestal in the
+    reference would make tiled and non-tiled fits publish different metrics for
+    the same signal (#1173).
     Under ``--denoise`` that parity ends, and not in this path's favor: the tiles
     reconstruct denoised data while the reference here keeps its noise, so the
     score is capped by that noise, whereas ``--tiling none`` denoises the whole
@@ -225,6 +231,7 @@ def stamp_merged_quality(
         return
     if not parts or sum(part.n_splats for part in parts) == 0:
         return
+    _announce_missing_basis(image_min)
     budget_gb = _quality_budget_gb()
     needed_gb = _QUALITY_PEAK_VOLUMES * 4 * float(np.prod(volume_shape)) / 1024**3
     if needed_gb > budget_gb:
@@ -260,9 +267,10 @@ def stamp_merged_quality(
                     else:
                         rendered.add_(part_render)
                         del part_render
-                reference = torch.as_tensor(
-                    np.asarray(volume, dtype=np.float32), device=rendered.device
+                reference_np = reference_on_fit_basis(
+                    np.asarray(volume, dtype=np.float32), image_min
                 )
+                reference = torch.as_tensor(reference_np, device=rendered.device)
                 quality = compute_quality_metrics(rendered, reference)
         finally:
             # Released whether or not the score succeeded: the failure this most

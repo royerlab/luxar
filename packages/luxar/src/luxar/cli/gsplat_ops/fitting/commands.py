@@ -102,8 +102,15 @@ def render_to_file(
 ) -> None:
     """Render Gaussian splats back to a volume.
 
-    Useful for quality comparison with original data. Auto-detects the
-    output format from file extension (.npy or .tiff).
+    Auto-detects the output format from file extension (.npy or .tiff).
+
+    The output is BACKGROUND-RELATIVE, and that is by design: a fit
+    reconstructs ``V - image_min``, and the level it removed is never added
+    back. So this is not directly comparable to the original volume — differencing
+    the two scores the fit for a pedestal it deliberately did not represent. To
+    compare, either subtract the same level from the reference
+    (``clip(V - image_min, 0, None)``, where ``image_min`` is reported by
+    ``luxar gsplat info``), or use ``luxar gsplat compare``, which does it for you.
 
     If --shape is not given, it is auto-computed from the bounding box.
 
