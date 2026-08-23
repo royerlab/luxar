@@ -65,10 +65,8 @@ def channel_nodes(tmp_path_factory) -> dict[str, dict]:
 def test_every_channel_is_additive(channel_nodes: dict[str, dict]) -> None:
     """All three stains composite additively — none may occlude another.
 
-    The channels are independent fluorescence emitters of one specimen, so a
-    volumetric revert (which lets the nuclear stain in front attenuate the
-    vasculature and cardiac tissue behind it) would invent a depth cue the
-    data does not carry.
+    The channels are independent fluorescence emitters of one specimen, and
+    one order slot per node cannot interleave their co-located volumes.
     """
     assert len(channel_nodes) == 3
     for name, attrs in channel_nodes.items():

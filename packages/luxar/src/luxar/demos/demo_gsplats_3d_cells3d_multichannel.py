@@ -126,9 +126,9 @@ CHANNELS = [
 ]
 
 # Per-channel brightness multiplier applied before writing. Kept conservative
-# because the two channels composite additively (the only order-independent
-# choice for overlapping layers) and an additive sum saturates around ~0.6 —
-# raise it only alongside the Layers panel's display range.
+# because the two channels are emitters whose contributions should sum. Their
+# additive blend is order-independent and saturates around ~0.6 — raise it only
+# alongside the Layers panel's display range.
 LAYER_INTENSITY = 0.4
 
 # Manifest dataset + the files it pins, one per channel. A local refit is OUR
