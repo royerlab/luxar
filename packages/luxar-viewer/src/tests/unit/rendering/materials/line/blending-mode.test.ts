@@ -242,8 +242,7 @@ describe('LineTSLMaterial.applyBlendingMode (TSL)', () => {
   });
 
   it('opaque mode disables transparency and writes depth', () => {
-    const mat = new LineTSLMaterial({ primitive: 'screen-space' });
-    mat.applyBlendingMode('opaque');
+    const mat = new LineTSLMaterial({ primitive: 'screen-space', blendingMode: 'opaque' });
     expect(mat.transparent).toBe(false);
     expect(mat.depthWrite).toBe(true);
     expect(mat.depthTest).toBe(true);
@@ -255,6 +254,7 @@ describe('LineTSLMaterial.applyBlendingMode (TSL)', () => {
 
     mat.applyBlendingMode('additive');
     expect(mat.defines?.LUXAR_OPAQUE_RGB_CONTRIBUTION).toBeUndefined();
+    expect(mat.userData.blendingMode).toBe('additive');
   });
 
   it('luminous mode is additive but depth-tested', () => {

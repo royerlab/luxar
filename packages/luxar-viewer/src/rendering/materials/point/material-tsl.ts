@@ -214,15 +214,15 @@ export class PointTSLMaterial
     // constructor pattern — three-geometry symmetry.
     this.userData.blendingMode = materialConfig.blendingMode ?? 'additive';
 
-    // For max mode, the shader needs the LUXAR_MAX_RGB_CONTRIBUTION
-    // define from the very first compile. Apply it before rebuild
-    // so the factory sees the right define set. Volumetric mirrors
-    // this with LUXAR_VOLUMETRIC (the factory derives the output
-    // branch from `blendingMode`; the define is the rebuild-boundary
-    // tracker `applyBlendingMode` keys on). (Other modes don't touch
-    // defines, so they're no-ops here.)
+    // Build-time output branches seed their rebuild-boundary trackers
+    // before the first graph build. The factory derives each branch
+    // from `blendingMode`; these defines let `applyBlendingMode` detect
+    // every later crossing away from it.
     if (this.userData.blendingMode === 'max') {
       this.defines.LUXAR_MAX_RGB_CONTRIBUTION = '';
+    }
+    if (this.userData.blendingMode === 'opaque') {
+      this.defines.LUXAR_OPAQUE_RGB_CONTRIBUTION = '';
     }
     if (isVolumetricMode(this.userData.blendingMode as BlendingMode)) {
       this.defines.LUXAR_VOLUMETRIC = '';
@@ -530,10 +530,9 @@ export class PointTSLMaterial
     this.userData.depthTest = state.depthTest;
 
     // The TSL factory reads `blendingMode` to decide the shader-output
-    // shape (`useMaxRGBContribution` derives from `mode === 'max'`;
-    // the volumetric output branch directly from the mode). Flipping
-    // max ↔ non-max or crossing volumetric changes the graph; rebuild
-    // so the colorNode reflects the new branch. userData.blendingMode
+    // shape (`max`, `opaque`, and `volumetric` are build-time branches).
+    // Crossing any of them changes the graph; rebuild so the colorNode
+    // reflects the new branch. userData.blendingMode
     // is already the new mode, so the rebuild's factory config picks
     // up the right branch.
     if (definesChanged) {

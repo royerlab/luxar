@@ -217,13 +217,13 @@ export class LineTSLMaterial
     // the node at first build must stay frozen for the material's life.
     this.userData.linePrimitive = resolveLinePrimitive(materialConfig.primitive);
 
-    // For max mode, the shader needs the LUXAR_MAX_RGB_CONTRIBUTION
-    // define from the very first compile; volumetric mirrors this with
-    // LUXAR_VOLUMETRIC (the factory derives the output branch from
-    // `blendingMode`; the define is the rebuild-boundary tracker
-    // `applyBlendingMode` keys on). Mirrors PointTSLMaterial.
+    // Build-time output branches seed their rebuild-boundary trackers
+    // before the first graph build. Mirrors PointTSLMaterial.
     if (this.userData.blendingMode === 'max') {
       this.defines.LUXAR_MAX_RGB_CONTRIBUTION = '';
+    }
+    if (this.userData.blendingMode === 'opaque') {
+      this.defines.LUXAR_OPAQUE_RGB_CONTRIBUTION = '';
     }
     if (isVolumetricMode(this.userData.blendingMode as BlendingMode)) {
       this.defines.LUXAR_VOLUMETRIC = '';
@@ -529,10 +529,9 @@ export class LineTSLMaterial
     this.userData.depthTest = state.depthTest;
 
     // The TSL factory reads `blendingMode` to decide the shader-output
-    // shape (`useMaxRGBContribution` derives from `mode === 'max'`;
-    // the volumetric output branch directly from the mode). Flipping
-    // max ↔ non-max or crossing volumetric changes the graph; rebuild
-    // so the colorNode reflects the new branch. userData.blendingMode
+    // shape (`max`, `opaque`, and `volumetric` are build-time branches).
+    // Crossing any of them changes the graph; rebuild so the colorNode
+    // reflects the new branch. userData.blendingMode
     // is already the new mode, so the rebuild's factory config picks
     // up the right branch.
     if (definesChanged) {
