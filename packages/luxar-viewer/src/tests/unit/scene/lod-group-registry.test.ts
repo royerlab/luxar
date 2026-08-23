@@ -465,7 +465,8 @@ function makeRegistry(
   residentByteBudget?: number,
   getResidentBytes?: () => number,
   getViewVersion?: () => number,
-  requestRender?: () => void
+  requestRender?: () => void,
+  now?: () => number
 ) {
   const camera = new THREE.Camera();
   camera.matrixWorldInverse.identity();
@@ -476,6 +477,7 @@ function makeRegistry(
     getDisplayDims: () => displayDims,
     ...(getViewVersion != null ? { getViewVersion } : {}),
     ...(requestRender != null ? { requestRender } : {}),
+    ...(now != null ? { now } : {}),
     ...(residentByteBudget != null
       ? {
           getResidentByteBudget: () => residentByteBudget,
@@ -2653,15 +2655,28 @@ describe('LODGroupRegistry — never-downgrade display gate', () => {
 
   it('scrub-settle: the complete coarse fallback is held over the fine chunk-1 recommit', () => {
     let version = 1;
-    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => version);
+    let clock = 0;
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      () => version,
+      undefined,
+      () => clock
+    );
     const coarse = makeCountedChild(0, 1, 100);
     const fine = makeCountedChild(0.5, 1, 1000); // complete for v1
     reg.register(makeEntry([coarse, fine], 0, '/g'));
     reg.evaluatePerFrame();
     expect(fine.object.visible).toBe(true); // steady state: fine shown
 
-    // Scrub to v2: both stale → staleness fallback (coarsest ready).
+    // Scrub to v2: both stale. The stale-hold keeps the fine level's previous
+    // slice up first (it is 10x the fallback — see the stale-hold suite); this
+    // test is about what happens AFTER that budget is spent, so run the clock
+    // past it to reach the staleness fallback.
     version = 2;
+    reg.evaluatePerFrame();
+    clock += 1000;
     reg.evaluatePerFrame();
     expect(coarse.object.visible).toBe(true);
 
@@ -3768,5 +3783,195 @@ describe('LODGroupRegistry — capture quiescence (isCaptureQuiescent)', () => {
     // …but a failed level can never become ready this frame, so blocking on it
     // would buy a timeout on every remaining capture frame.
     expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+});
+
+describe('LODGroupRegistry — stale-hold over a far coarser fallback', () => {
+  /** A registry whose clock and view version the test drives. */
+  function makeScrubRig(coarseCount: number, fineCount: number) {
+    const state = { version: 1, clock: 0 };
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      () => state.version,
+      undefined,
+      () => state.clock
+    );
+    const coarse = makeCountedChild(0, 1, coarseCount);
+    const fine = makeCountedChild(0.5, 1, fineCount);
+    reg.register(makeEntry([coarse, fine], 0, '/g'));
+    reg.evaluatePerFrame();
+    return { reg, coarse, fine, state };
+  }
+
+  /** The sweep recommitting a child for `version`, keeping its count. */
+  function recommit(child: ReturnType<typeof makeCountedChild>, version: number, count: number) {
+    Object.assign(child.object.userData!, {
+      loadedViewVersion: version,
+      visibleSplatCount: count,
+      committedLadderComplete: true,
+    });
+  }
+
+  it('holds the previous slice instead of flashing down to a token of it', () => {
+    // The reported defect: stepping the Time slider on a 4D timelapse dropped
+    // the finest level (6,900 splats) to the coarsest (108) for ~70 ms and back
+    // — every step — while the fine level's data was already cached.
+    const { reg, coarse, fine, state } = makeScrubRig(100, 1000);
+    expect(fine.object.visible).toBe(true);
+
+    state.version = 2; // scrub: both stale, coarse is 10% of fine
+    reg.evaluatePerFrame();
+    expect(fine.object.visible).toBe(true);
+    expect(coarse.object.visible).toBe(false);
+
+    // Even once the cheap coarse level recommits fresh, the far better stale
+    // fine level stays up — it is the previous FRAME, not a previous view.
+    recommit(coarse, 2, 100);
+    reg.evaluatePerFrame();
+    expect(fine.object.visible).toBe(true);
+
+    // ...until the fine level lands for the new slice, which ends the hold.
+    recommit(fine, 2, 1000);
+    reg.evaluatePerFrame();
+    expect(fine.object.visible).toBe(true);
+    expect(coarse.object.visible).toBe(false);
+  });
+
+  it('takes the fresh fallback immediately when it is comparably good', () => {
+    // Freshness normally wins: only a SEVERE downgrade justifies showing the
+    // wrong slice. At 60% of the fine level the fallback is taken at once.
+    const { reg, coarse, fine, state } = makeScrubRig(600, 1000);
+    state.version = 2;
+    reg.evaluatePerFrame();
+    expect(coarse.object.visible).toBe(true);
+    expect(fine.object.visible).toBe(false);
+  });
+
+  it('gives up after the budget so a long scrub shows live coarse geometry', () => {
+    const { reg, coarse, fine, state } = makeScrubRig(100, 1000);
+    state.version = 2;
+    reg.evaluatePerFrame();
+    expect(fine.object.visible).toBe(true); // holding
+
+    state.clock += 260; // past STALE_HOLD_MS
+    reg.evaluatePerFrame();
+    expect(coarse.object.visible).toBe(true);
+    expect(fine.object.visible).toBe(false);
+  });
+
+  it('does not re-arm the hold on every version bump during a drag', () => {
+    // The budget is spent from when the hold STARTS, not from the last version
+    // change — otherwise a drag (a new version every frame) would re-hold
+    // forever and freeze the display on one stale frame.
+    const { reg, coarse, fine, state } = makeScrubRig(100, 1000);
+    state.version = 2;
+    reg.evaluatePerFrame();
+    state.clock += 260;
+    reg.evaluatePerFrame();
+    expect(coarse.object.visible).toBe(true); // gave up
+
+    for (let i = 0; i < 5; i++) {
+      state.version += 1; // keep scrubbing
+      state.clock += 16;
+      reg.evaluatePerFrame();
+      expect(coarse.object.visible).toBe(true);
+      expect(fine.object.visible).toBe(false);
+    }
+  });
+
+  it('re-arms once the aspiration lands, so the NEXT step is held again', () => {
+    const { reg, coarse, fine, state } = makeScrubRig(100, 1000);
+    state.version = 2;
+    reg.evaluatePerFrame();
+    state.clock += 260;
+    reg.evaluatePerFrame();
+    expect(coarse.object.visible).toBe(true); // budget spent
+
+    recommit(fine, 2, 1000); // the wait ends
+    reg.evaluatePerFrame();
+    expect(fine.object.visible).toBe(true);
+
+    state.version = 3; // next step is held again, not flashed
+    state.clock += 16;
+    reg.evaluatePerFrame();
+    expect(fine.object.visible).toBe(true);
+    expect(coarse.object.visible).toBe(false);
+  });
+
+  it('never holds a level COARSER than the fallback, even with inverted counts', () => {
+    // Holding something coarser than the fallback would be a downgrade — the
+    // opposite of the point. With CONSISTENT data the count ratio already
+    // declines that (a coarser level has fewer elements), so this pins the
+    // ordering guard on its own by inverting the counts: the sort of
+    // inconsistent store the fresh-but-empty guard above also exists for.
+    const state = { version: 1, clock: 0 };
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      () => state.version,
+      undefined,
+      () => state.clock
+    );
+    const coarse = makeCountedChild(0, 1, 5000); // MORE than the fine level
+    // A threshold this camera's coverage never reaches, so the selector really
+    // settles on index 0 rather than promoting the finer level.
+    const fine = makeCountedChild(50, 1, 1000);
+    reg.register(makeEntry([coarse, fine], 0, '/g')); // index 0 displayed
+    reg.evaluatePerFrame();
+    expect(coarse.object.visible).toBe(true);
+
+    // The FINER level is the fresh fallback. Its count (1000) is far below the
+    // displayed coarse level's (5000), so the ratio test alone would hold —
+    // only the index ordering stops it.
+    state.version = 2;
+    recommit(fine, 2, 1000);
+    reg.evaluatePerFrame();
+    expect(coarse.object.visible).toBe(false);
+    expect(fine.object.visible).toBe(true);
+  });
+
+  it('stays given up when the fallback moves COARSER mid-scrub', () => {
+    // Why the exhausted latch is not redundant with the index ordering. Once
+    // the budget is spent the display drops to the fallback and the gate memory
+    // follows it, so ordering alone blocks a re-hold — until the fallback moves
+    // to a COARSER level (levels refreshing out of order during a drag), at
+    // which point the memory is finer than the fallback again and the hold
+    // would re-arm, freezing the display for another budget.
+    const state = { version: 1, clock: 0 };
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      () => state.version,
+      undefined,
+      () => state.clock
+    );
+    const l0 = makeCountedChild(0, 1, 100);
+    const l1 = makeCountedChild(0.25, 1, 500);
+    const l2 = makeCountedChild(0.5, 1, 5000);
+    reg.register(makeEntry([l0, l1, l2], 2, '/g'));
+    reg.evaluatePerFrame();
+    expect(l2.object.visible).toBe(true);
+
+    // Scrub: everything stale → hold l2, then spend the budget. l1 is the
+    // coarsest READY level here, so it becomes the fallback and the memory.
+    state.version = 2;
+    reg.evaluatePerFrame();
+    recommit(l1, 2, 500);
+    state.clock += 260;
+    reg.evaluatePerFrame();
+    expect(l1.object.visible).toBe(true);
+
+    // Now l0 refreshes for a newer version and l1 falls behind: the fallback
+    // moves from index 1 to index 0, so the memory (1) is finer than it again.
+    state.version = 3;
+    recommit(l0, 3, 100);
+    state.clock += 16;
+    reg.evaluatePerFrame();
+    expect(l0.object.visible).toBe(true); // still given up, not re-held
+    expect(l1.object.visible).toBe(false);
   });
 });
