@@ -83,6 +83,8 @@ export async function decodeLUT(
   const n = indices.length;
 
   // Convert LUT to Float32Array for WASM
+  // Changing this cast requires re-deriving the writer's
+  // positive_scalar_round_trip_slack chunk-bound allowance.
   const lutF32 = new Float32Array(lut);
 
   if (lutMode === 'scalar') {

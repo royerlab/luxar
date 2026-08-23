@@ -13,7 +13,7 @@ visually-lossless fidelity.
 Two dataset shapes are handled:
   * single-dataset ``*.gsplats.zarr.zip`` — one gsplat store per zip.
   * timelapse bundle ``*_gsplats.zip`` — an outer zip of many per-frame
-    ``*.gsplats.zarr.zip`` stores (celegans, zebrafish).
+    ``*.gsplats.zarr.zip`` stores (celegans).
 
 Per store, the transform is chosen by structure:
   * flat leaf (with/without an additive ladder)  -> ``gsplat flatten`` then

@@ -26,7 +26,7 @@ Safety:
   - ``--dry-run`` prints the plan and exits.
   - Every output is validated by loading it back and confirming
     ``n_additive_sublods >= 2`` and total splat count == the original.
-  - 4D bundle demos (celegans, zebrafish) extract the per-timepoint
+  - 4D bundle demos (celegans) extract the per-timepoint
     ``.gsplats.zarr.zip`` files, LOD each, and re-zip into a NEW bundle
     next to the original; the original bundle is never overwritten until
     the new bundle has been validated end-to-end.
@@ -148,7 +148,6 @@ PLAIN_DEMOS: List[PlainDemo] = [
 
 BUNDLE_DEMOS: List[BundleDemo] = [
     BundleDemo("celegans", "gsplats_celegans", "celegans_s1.gsplats.zarr.zip"),
-    BundleDemo("zebrafish", "gsplats_zebrafish", "zebrafish.gsplats.zarr.zip"),
 ]
 
 
@@ -329,7 +328,7 @@ def process_plain(demo: PlainDemo, *, dry_run: bool, in_place: bool) -> bool:
 
 
 def process_bundle(demo: BundleDemo, *, dry_run: bool, in_place: bool) -> bool:
-    """Process a 4D bundle demo (celegans, zebrafish).
+    """Process a 4D bundle demo (celegans).
 
     Extracts the source zip into a temp dir, runs `lod additive` on every
     per-timepoint entry, re-packs the lot into a new bundle alongside the

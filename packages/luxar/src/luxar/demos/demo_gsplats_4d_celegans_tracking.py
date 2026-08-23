@@ -125,6 +125,7 @@ from luxar.demos import (
     require_module,
     warn_if_no_cuda_gpu,
 )
+from luxar.demos._lod_policy import save_with_lod
 from luxar.encoding import EncodingMode
 from luxar.gsplats import fit_gaussian_splats
 from luxar.gsplats.clahe import apply_clahe
@@ -930,8 +931,10 @@ def fit_timepoint(
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     tmp_file = cache_file.with_suffix(cache_file.suffix + ".tmp")
     tmp_file.touch()  # marker: save in progress
-    result.save(
+    save_with_lod(
+        result,
         cache_file,
+        recipe="stream",
         encoding_mode=EncodingMode.MEMORY,
         include_fitting_info=True,
         compress="zip",
@@ -1578,8 +1581,10 @@ def combine_timepoints_to_4d(gsplats_list: list[GSplatData]) -> GSplatData:
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         tmp_file = cache_file.with_suffix(cache_file.suffix + ".tmp")
         tmp_file.touch()
-        combined.save(
+        save_with_lod(
+            combined,
             cache_file,
+            recipe="stream",
             encoding_mode=EncodingMode.MEMORY,
             include_fitting_info=True,
             compress="zip",
@@ -1588,7 +1593,7 @@ def combine_timepoints_to_4d(gsplats_list: list[GSplatData]) -> GSplatData:
         tmp_file.unlink(missing_ok=True)
         aprint(f"Cached combined 4D dataset: {cache_file.name}")
 
-    return combined
+    return GSplatData.load(cache_file, include_stats=True)
 
 
 # -- Specific-brightness threshold for background rejection ----------------
@@ -1667,8 +1672,10 @@ def filter_background_splats(
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         tmp_file = cache_file.with_suffix(cache_file.suffix + ".tmp")
         tmp_file.touch()
-        filtered.save(
+        save_with_lod(
+            filtered,
             cache_file,
+            recipe="stream",
             encoding_mode=EncodingMode.MEMORY,
             include_fitting_info=True,
             compress="zip",
@@ -1677,7 +1684,7 @@ def filter_background_splats(
         tmp_file.unlink(missing_ok=True)
         aprint(f"Cached filtered 4D dataset: {cache_file.name}")
 
-    return filtered
+    return GSplatData.load(cache_file, include_stats=True)
 
 
 def create_luxar_scene(

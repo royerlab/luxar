@@ -444,10 +444,7 @@
       "script": "demo_gsplats_3d_kidney_multichannel_toggles.py",
       "dataset": "datasets/demos/gsplats_6d_kidney_multichannel_toggles.luxar.zarr",
       "citation": "G. Buckley 2018 (scikit-image kidney)",
-      "dimensionNav": {
-        "key": "1",
-        "steps": 1
-      }
+      "note": "The scene authors its own opening state; regenerate the dataset with `--force` before capturing."
     },
     {
       "id": "gsplats_3d_opencell_map4",
@@ -480,7 +477,7 @@
     {
       "id": "gsplats_4d_zebrafish_timelapse",
       "title": "4D Zebrafish Timelapse",
-      "geometry": "gsplats",
+      "geometry": "mixed",
       "category": "microscopy",
       "script": "demo_gsplats_4d_zebrafish_timelapse.py",
       "dataset": "datasets/demos/gsplats_4d_zebrafish_timelapse.luxar.zarr",
