@@ -222,7 +222,7 @@ def test_every_fitting_demo_chooses_a_topology_or_is_listed() -> None:
     )
 
 
-def test_the_pending_list_shrinks_and_does_not_go_stale() -> None:
+def test_the_pending_list_stays_empty() -> None:
     """The former backlog stays empty now that every fitting demo has a policy."""
     assert not _NOT_YET_ROUTED
     fitting = _fitting_demos()
