@@ -63,9 +63,8 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
    - `write_points_ordering_to_zarr(group, ordering_data, ctx.compressor)` — if `ordering_data is not None` (sets `has_spatial_index`, and puts the curve name in `metadata["ordering"]`; `"none"` otherwise, so `Points.ordering` reports the writer's real choice)
 
 8. **Write labels** (CSR serialization; `sort_order` derived from `ordering_data`):
-   - `write_labels_csr(group, labels, n_points, ctx.compressor, sort_order)` — if `labels is not None`
+   - `write_string_channels_csr(group, labels=…, keys=…, n_elements=n_points, compressor=ctx.compressor, sort_order=sort_order, metadata=metadata)` — writes each present text channel and stamps its `has_*`. One call for both so they cannot receive DIFFERENT permutations, which is the shape of every mis-pairing bug this channel has had (#1917)
    - `write_image_labels_csr(group, image_labels, n_points, ctx.compressor, sort_order)` — if `image_labels is not None`
-   - `write_labels_csr(group, keys, n_points, ctx.compressor, sort_order, channel="keys")` — if `keys is not None`; same encoder, writing `key_offsets` / `key_bytes` and stamping `has_keys` (#1917)
    - A multi-LOD **parent** instead gets a single union CSR (`write_ladder_union_labels_csr`) and its `additive_<i>` levels get none — the writer is called with `labels=None` plus the private `_return_sort_order=True` flag, which returns this node's `sort_order` in the metadata so the parent can build that union. `keys` rides the identical path (its own union CSR on the parent), which is why the flag is set when the ladder is labelled **or** keyed
 
 9. **Return metadata**: `{"n_points", "ndim", "path", "has_colors", "has_radii", "has_sharpness", "position_bounds", "ordering"}` plus (conditionally) `max_radius`, `has_scalars`, `has_spatial_index`, `has_labels`, `has_image_labels`, `has_keys` (no `"type"` key)
@@ -120,9 +119,8 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
    - `compute_position_bounds(vertices)` → `position_bounds`, stamped as the `position_bounds` group attr and forwarded to `ctx.update_scene_bounds(...)` unless the caller set `_skip_scene_bounds` (the multi-LOD parent writer aggregates the global bounds once instead)
 
 9. **Write labels** (CSR serialization; `sort_order` = `ordering_data["vertex_sort_indices"]` when ordered, per-vertex):
-   - `write_labels_csr(group, labels, n_vertices, ctx.compressor, sort_order)` — if `labels is not None`
+   - `write_string_channels_csr(group, labels=…, keys=…, n_elements=n_vertices, compressor=ctx.compressor, sort_order=sort_order, metadata=metadata)` — both text channels through one call, so both get the SAME per-vertex permutation (#1917)
    - `write_image_labels_csr(group, image_labels, n_vertices, ctx.compressor, sort_order)` — if `image_labels is not None`
-   - `write_labels_csr(group, keys, n_vertices, ctx.compressor, sort_order, channel="keys")` — if `keys is not None` (#1917)
    - A multi-LOD **parent** instead gets a single per-vertex union CSR (`write_ladder_union_labels_csr`) and its `additive_<i>` levels get none — the writer is called with `labels=None` plus the private `_return_sort_order=True` flag, which returns this node's per-vertex `sort_order` in the metadata so the parent can build that union. `keys` rides the identical path
 
 10. **Return metadata**: `{"n_vertices", "n_segments", "ndim", "original_line_type", "has_colors", "has_sharpness", "max_width"}` plus ordering keys and `position_bounds` (and conditionally `has_spatial_index`, `has_scalars`, `has_labels`, `has_image_labels`, `has_keys`) — no `"type"` key

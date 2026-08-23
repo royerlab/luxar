@@ -61,6 +61,18 @@ independent of `labels`: a node may carry either, both, or neither. The length
 error names the channel, so a bad `keys` length does not report "Labels
 length".
 
+### `text_labels.write_string_channels_csr(group, *, labels, keys, n_elements, compressor, sort_order, metadata)`
+
+What the four flat geometry writers actually call. Writes whichever text
+channels are present via `write_labels_csr` and stamps each one's presence attr
+into `metadata`.
+
+One call for both channels rather than two, deliberately: they then cannot
+receive different `sort_order`s. Every mis-pairing bug this channel has had has
+the same shape — a CSR built against a permutation that is not the one its
+elements were stored in — and passing the permutation once removes the chance to
+get it wrong per channel.
+
 ### `text_labels.write_ladder_union_labels_csr(group, level_labels, level_sort_orders, n_elements, compressor, channel="labels")`
 
 Write ONE CSR pair on the **parent** node of an additive-LOD ladder, describing
