@@ -184,10 +184,10 @@ def generate_helix_track_with_times(
     The Lorentz force F = q(v × B) causes charged particles to follow
     helical paths in a uniform magnetic field:
 
-    - Radius of curvature: r = p_T / (|q| × B)
+    - Physical radius of curvature: r = p_T / (|q| × B)
       → Higher momentum = larger radius = STRAIGHTER track
       → This is how we MEASURE momentum in real detectors!
-      → The shared helper applies one named radial visualization scale
+      → Rendered radius applies the named HELIX_RADIUS_VISUAL_SCALE
 
     - Sign of charge determines direction of curvature
       → Positive particles curve clockwise (from above)
@@ -196,8 +196,8 @@ def generate_helix_track_with_times(
     - Helix pitch determined by p_z/p_T ratio
       → Forward-going particles have elongated helices
 
-    The track width in visualization represents the particle's energy -
-    higher energy particles leave "brighter" tracks (more ionization).
+    Track width uses a mild p_T-dependent visualization scale, while color
+    identifies the particle type.
 
     Args:
         particle: Particle object with kinematics
@@ -205,10 +205,10 @@ def generate_helix_track_with_times(
         n_points: Maximum number of points along track
 
     Returns:
-        vertices: (N*2, 3) array of line segment vertices (start, end pairs)
-        widths: (N*2,) array of line widths (energy visualization)
-        colors: (N*2, 3) array of RGB colors (particle identification)
-        birth_times: (N*2,) normalized birth time [0, 1] for each vertex
+        vertices: (2*(M-1), 3) segment vertices for M sampled track points
+        widths: (2*(M-1),) p_T-scaled line widths
+        colors: (2*(M-1), 3) particle-identification colors
+        birth_times: (2*(M-1),) normalized birth time [0, 1]
     """
     if particle.charge == 0:
         # Neutral particles (photons, neutrons) have no charge

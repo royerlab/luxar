@@ -3,6 +3,7 @@ from collections.abc import Callable
 import numpy as np
 import pytest
 
+from luxar.demos._particle_collision_tracks import HELIX_RADIUS_VISUAL_SCALE
 from luxar.demos.demo_particle_collision import Particle, generate_helix_track
 from luxar.demos.demo_particle_collision_animated import (
     generate_helix_track_with_times,
@@ -37,7 +38,9 @@ def _track_points(
     "generator", [generate_helix_track, generate_helix_track_with_times]
 )
 @pytest.mark.parametrize("charge", [-1, 1])
-@pytest.mark.parametrize("momentum", [(3.0, 0.0, 0.0), (3.0, 4.0, -2.0)])
+@pytest.mark.parametrize(
+    "momentum", [(3.0, 0.0, 0.0), (3.0, 4.0, -2.0), (0.0, 0.0, 3.0)]
+)
 def test_charged_track_starts_along_momentum(
     generator: TrackGenerator, charge: int, momentum: tuple[float, float, float]
 ) -> None:
@@ -100,7 +103,8 @@ def test_rendered_curvature_keeps_the_documented_radius_scale(
     chord_length = np.linalg.norm(first_step)
     measured_radius = chord_length / (2 * np.sin(abs(turn_angle) / 2))
 
-    assert measured_radius == pytest.approx(pt, rel=1e-3)
+    expected_radius = HELIX_RADIUS_VISUAL_SCALE * pt / 2.0
+    assert measured_radius == pytest.approx(expected_radius, rel=1e-3)
 
 
 @pytest.mark.parametrize(

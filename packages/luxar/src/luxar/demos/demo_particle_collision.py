@@ -343,10 +343,10 @@ def generate_helix_track(
     The Lorentz force F = q(v × B) causes charged particles to follow
     helical paths in a uniform magnetic field:
 
-    - Radius of curvature: r = p_T / (|q| × B)
+    - Physical radius of curvature: r = p_T / (|q| × B)
       → Higher momentum = larger radius = STRAIGHTER track
       → This is how we MEASURE momentum in real detectors!
-      → The shared helper applies one named radial visualization scale
+      → Rendered radius applies the named HELIX_RADIUS_VISUAL_SCALE
 
     - Sign of charge determines direction of curvature
       → Positive particles curve clockwise (from above)
@@ -355,8 +355,8 @@ def generate_helix_track(
     - Helix pitch determined by p_z/p_T ratio
       → Forward-going particles have elongated helices
 
-    The track width in visualization represents the particle's energy -
-    higher energy particles leave "brighter" tracks (more ionization).
+    Track width uses a mild p_T-dependent visualization scale, while color
+    identifies the particle type.
 
     Args:
         particle: Particle object with kinematics

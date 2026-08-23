@@ -56,7 +56,7 @@ def generate_helix_points(
         sample_step = min(transverse_step, radius * MAX_AZIMUTH_SAMPLE_STEP)
         longitudinal_rate = pz / transverse_momentum
     else:
-        sample_step = transverse_step
+        sample_step = max_z / max(n_points - 1, 1)
         longitudinal_rate = float(np.sign(pz))
 
     points: list[np.ndarray] = []
