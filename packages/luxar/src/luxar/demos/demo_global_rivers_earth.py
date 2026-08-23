@@ -8,8 +8,8 @@ A rotatable 3D globe built from two of Luxar's geometry types at once:
     by its **ETOPO 2022** elevation and colored by a hypsometric palette (deep
     abyssal navy -> ocean blue -> coastal cyan -> green lowland -> tan -> snow).
     Rendered **opaque** as a solid planet, with a geometric additive ladder
-    (the shell only reads as a surface once the last levels land — see the note
-    in ``build_scene``).
+    (most of the payload is in the last two levels — see the note in
+    ``build_scene``).
   * **Rivers (Lines)** — every HydroRIVERS reach (Strahler order >= 3), kept as
     **connected polylines** (so the line material renders seamless joints),
     draped just above the terrain and colored teal->white by Strahler order so
