@@ -6,6 +6,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO_ROOT / "scripts"))
 
@@ -42,6 +44,16 @@ def test_current_pr_can_be_excluded_during_reconciliation() -> None:
             2003, pull_requests, exclude_pr=2005
         )
     ] == [2004]
+
+
+def test_path_comparison_never_treats_shared_files_as_equivalent() -> None:
+    comparison = guard.compare_paths(
+        {"viewer/element-id-map.ts", "viewer/init-picking.ts"},
+        {"viewer/element-id-map.ts", "python/geometry_writers/README.md"},
+    )
+    assert comparison.duplicate_only == {"python/geometry_writers/README.md"}
+    assert comparison.survivor_only == {"viewer/init-picking.ts"}
+    assert comparison.shared == {"viewer/element-id-map.ts"}
 
 
 def test_api_rows_keep_only_same_repository_closing_references() -> None:
@@ -92,6 +104,30 @@ def test_json_output_is_serializable_and_stable(monkeypatch, capsys) -> None:
     row = json.loads(capsys.readouterr().out)[0]
     assert row["number"] == 2004
     assert row["closing_issue_numbers"] == [2003, 2011]
+
+
+def test_compare_mode_reports_unique_and_shared_paths(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        guard,
+        "list_open_pull_requests",
+        lambda repo: [_pr(2004, 2003)],
+    )
+    paths = {
+        2004: {"viewer/shared.ts", "viewer/survivor.ts"},
+        2005: {"viewer/shared.ts", "python/unique.md"},
+    }
+    monkeypatch.setattr(guard, "pull_request_paths", lambda repo, number: paths[number])
+    assert guard.main(["2003", "--exclude-pr", "2005", "--compare-pr", "2005"]) == 1
+    output = capsys.readouterr().out
+    assert "python/unique.md" in output
+    assert "viewer/survivor.ts" in output
+    assert "path overlap is not equivalence" in output
+
+
+def test_compare_mode_requires_excluding_the_duplicate_pr(monkeypatch) -> None:
+    monkeypatch.setattr(guard, "list_open_pull_requests", lambda repo: [])
+    with pytest.raises(SystemExit, match="2"):
+        guard.main(["2003", "--compare-pr", "2005"])
 
 
 def test_main_succeeds_when_issue_has_no_open_closing_pr(monkeypatch, capsys) -> None:
