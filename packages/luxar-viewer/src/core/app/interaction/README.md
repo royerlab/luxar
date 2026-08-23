@@ -18,7 +18,7 @@ existing `**attrs` pass-through and need no adder signature:
 scene.add_gsplats(
     "proteins", centers=..., labels=protein_names, keys=accessions,
     link="https://www.uniprot.org/uniprotkb/{hover_key}/entry",
-    copy="{hover_key}",             # optional; defaults to the key, then label
+    copy="{hover_key}",             # optional; without a template, Copy uses the label
     link_target="_blank",           # optional; the default
 )
 ```

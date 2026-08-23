@@ -13,8 +13,8 @@ import type { OverlayManager } from '../../../ui/overlay-manager';
 import type { EventGroup } from '../../../utils/cross-layer/event-group';
 
 /**
- * Result of {@link initPicking}. All three fields are `undefined` when
- * the scene has no labels / no zarr store / no LuxarScene root, in which
+ * Result of {@link initPicking}. All four fields are `undefined` when
+ * the scene has no picking consumers / no scene loader / no LuxarScene root, in which
  * case picking is intentionally inactive for this session.
  */
 export interface InitPickingResult {
@@ -103,12 +103,10 @@ export function disposePickingSession(ports: {
  *
  * 1. Tear down any previous picking session (event listeners, system,
  *    loaders) so a dataset switch never leaks state.
- * 2. Walk the freshly-loaded LuxarScene root looking for
- *    `userData.attrs.has_labels` / `has_image_labels`. Bail out early
- *    when nothing requests labels — keeps the bench-only synthetic
- *    scenes free of picking overhead.
- * 3. Stand up new {@link LabelLoader} / {@link ImageLabelLoader} backed
- *    by the scene loader's zarr store + root location.
+ * 2. Walk the freshly-loaded LuxarScene root looking for text/image channels
+ *    and interaction templates. Bail out early when nothing can consume a pick.
+ * 3. Stand up label/key {@link LabelLoader} instances and an
+ *    {@link ImageLabelLoader} backed by the scene loader's zarr store.
  * 4. Construct {@link PickingSystem} with the pick-result handler that
  *    forwards to {@link OverlayManager.updateHoverContent}.
  * 5. Wire DOM + Three.js EventDispatcher listeners (mousemove,
@@ -133,7 +131,7 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
   // initPicking call) removes them in one shot.
   disposePickingSession(ports);
 
-  // Check if any node has labels or image labels
+  // Check if any node has hover channels or interaction templates.
   const root = ports.sceneManager.scene?.children?.find((c) => c.name === 'LuxarScene') as
     THREE.Group | undefined;
   if (!root) {
@@ -194,7 +192,7 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
   // entirely (keeps the bench-only synthetic scenes free of picking cost).
   const wantsSelection =
     (ports.hasSelectionConsumer?.() ?? false) || (ports.hasElementActionConsumer?.() ?? false);
-  if (!hasAnyLabels && !hasAnyImageLabels && !hasAnyInteraction && !wantsSelection) {
+  if (!hasAnyLabels && !hasAnyImageLabels && !hasAnyKeys && !hasAnyInteraction && !wantsSelection) {
     return {
       pickingSystem: undefined,
       labelLoader: undefined,
