@@ -4,6 +4,8 @@
 
 import { Page } from '@playwright/test';
 
+import { isTypingSurfaceInPage } from './page-predicates';
+
 /**
  * Wait for Luxar to fully initialize
  * Increased timeout for E2E tests with real dataset loading
@@ -1568,6 +1570,20 @@ export async function focusCanvas(page: Page): Promise<void> {
       if (canvas) canvas.focus();
     });
   }
+}
+
+/**
+ * `true` when keyboard focus is on a "typing surface" in the page.
+ *
+ * Thin wrapper around {@link isTypingSurfaceInPage} — the predicate lives in
+ * `page-predicates.ts` (self-contained, so Playwright can serialize it into
+ * the page) and is kept honest by a parity unit test against the production
+ * `focus-utils.ts::isTypingInInput`.
+ *
+ * @param page - Playwright page
+ */
+export async function isFocusOnTypingSurface(page: Page): Promise<boolean> {
+  return await page.evaluate(isTypingSurfaceInPage);
 }
 
 // ============================================================================

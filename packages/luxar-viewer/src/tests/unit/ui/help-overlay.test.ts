@@ -4,11 +4,38 @@
 // helpers (`ui/error-overlay`) live in `error-overlay.test.ts`.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { showHelpOverlay, hideHelpOverlay } from '../../../ui/help-overlay';
+import { isTypingInInput } from '../../../input/input-handler/commands/focus-utils';
+
+/**
+ * Cost, in pending 0 ms timers, of ONE focus transition in this environment.
+ * jsdom queues a `selectionchange` tick on every `focus()`
+ * (`Selection-impl._associateRange`); a real browser queues nothing. Measured
+ * per test rather than hardcoded, so the timer-leak guards below stay exact
+ * without draining timers — draining a 0 ms tick would also retire the
+ * untracked 0 ms timer those guards exist to catch (audit G17).
+ */
+let focusTickCost = 0;
+
+/**
+ * Timer count with the overlay closed and focus parked on {@link focusAnchor}.
+ * The guards assert `baseline + focusTransitions * focusTickCost`.
+ */
+let baselineTimerCount = 0;
+
+/** Element that holds focus before an overlay opens, so `trapFocus` has a real element to restore to. */
+let focusAnchor: HTMLElement;
 
 // Mock DOM environment
 beforeEach(() => {
   document.body.innerHTML = '';
   vi.useFakeTimers();
+
+  focusAnchor = document.createElement('div');
+  focusAnchor.tabIndex = -1;
+  document.body.appendChild(focusAnchor);
+  focusAnchor.focus();
+  focusTickCost = vi.getTimerCount();
+  baselineTimerCount = focusTickCost;
 });
 
 afterEach(() => {
@@ -22,6 +49,21 @@ afterEach(() => {
 
   document.body.innerHTML = '';
 });
+
+/**
+ * Assert the overlay left NO timer of its own pending.
+ *
+ * An open-then-close cycle performs `focusTransitions` focus moves (the
+ * container on open, the restore on close), each of which costs
+ * {@link focusTickCost} environment timers. Anything above that is the
+ * overlay's — the 100 ms click-listener timer if it stopped being cancelled,
+ * or an untracked 0 ms timer (audit G17). Deliberately does NOT advance the
+ * clock: `advanceTimersByTime(0)` retires the environment tick, but it retires
+ * a leaked 0 ms timer with it and the guard stops biting.
+ */
+function expectNoOverlayTimersPending(focusTransitions: number): void {
+  expect(vi.getTimerCount()).toBe(baselineTimerCount + focusTransitions * focusTickCost);
+}
 
 describe('showHelpOverlay - Memory Leak Prevention', () => {
   it('explains that digit keys address non-displayed dimensions', () => {
@@ -65,7 +107,9 @@ describe('showHelpOverlay - Memory Leak Prevention', () => {
     showHelpOverlay();
     hideHelpOverlay();
 
-    expect(vi.getTimerCount()).toBe(0);
+    // Two focus transitions: onto the overlay container, then back to the
+    // anchor when the trap restores focus.
+    expectNoOverlayTimersPending(2);
   });
 
   it('close button cancels delayed listener registration', () => {
@@ -75,7 +119,7 @@ describe('showHelpOverlay - Memory Leak Prevention', () => {
     closeBtn.click();
 
     expect(document.getElementById('luxar-help-overlay')).toBeNull();
-    expect(vi.getTimerCount()).toBe(0);
+    expectNoOverlayTimersPending(2);
   });
 
   it('rapid hide then show cannot attach the stale overlay listener', () => {
@@ -173,6 +217,170 @@ describe('showHelpOverlay - Memory Leak Prevention', () => {
     expect(text).toContain('Open the hovered element link');
     expect(text).toContain('Actions for the hovered element');
     expect(text).toContain('Context menu for the hovered element');
+  });
+});
+
+describe('showHelpOverlay - initial focus and type-to-filter (#1922)', () => {
+  const overlayEl = (): HTMLElement => document.getElementById('luxar-help-overlay') as HTMLElement;
+  const filterEl = (): HTMLInputElement =>
+    overlayEl().querySelector('.luxar-panel-filter__input') as HTMLInputElement;
+  const visibleRowText = (): string[] =>
+    Array.from(overlayEl().querySelectorAll<HTMLElement>('.luxar-help-overlay__row'))
+      .filter((row) => row.style.display !== 'none')
+      .map((row) => (row.textContent ?? '').toLowerCase());
+
+  function pressOnOverlay(init: KeyboardEventInit & { key: string }): KeyboardEvent {
+    const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init });
+    (document.activeElement ?? overlayEl()).dispatchEvent(event);
+    return event;
+  }
+
+  it('parks focus on the overlay container, never on the filter field', () => {
+    showHelpOverlay();
+    // Run out every pending timer: a focus timer (the old autofocus, or the
+    // focus trap's own first-focusable one) would move focus here.
+    vi.advanceTimersByTime(200);
+
+    expect(document.activeElement).toBe(overlayEl());
+    // The exact predicate `InputHandler.onKeyDown` guards on. If this were
+    // true, the second `H` would be swallowed as typing and the overlay
+    // could not be closed from the keyboard.
+    expect(isTypingInInput(document.activeElement)).toBe(false);
+  });
+
+  it('the first printable keystroke lands in the filter and narrows the list', () => {
+    showHelpOverlay();
+    const rowsBefore = visibleRowText().length;
+    expect(rowsBefore).toBeGreaterThan(1);
+
+    const event = pressOnOverlay({ key: 'r' });
+
+    expect(document.activeElement).toBe(filterEl());
+    expect(filterEl().value).toBe('r');
+    // The filter's own `input` handler ran — rows are actually narrowed, and
+    // every survivor matches. Asserting the rendered result (not just focus)
+    // is what pins the dispatched `input` event.
+    const rows = visibleRowText();
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.length).toBeLessThan(rowsBefore);
+    expect(rows.every((text) => text.includes('r'))).toBe(true);
+    // Not double-inserted, and not leaked to the global bindings.
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('leaves `H` to the global binding so the overlay stays a toggle', () => {
+    const seen: string[] = [];
+    const listener = (e: KeyboardEvent) => seen.push(e.key);
+    document.addEventListener('keydown', listener);
+    try {
+      showHelpOverlay();
+
+      const event = pressOnOverlay({ key: 'h' });
+
+      // `H` must reach the document-level handler (which toggles the panel
+      // shut) rather than being consumed as the first filter character.
+      expect(seen).toEqual(['h']);
+      expect(event.defaultPrevented).toBe(false);
+      expect(filterEl().value).toBe('');
+      expect(document.activeElement).toBe(overlayEl());
+    } finally {
+      document.removeEventListener('keydown', listener);
+    }
+  });
+
+  it('a forwarded printable never reaches the global bindings', () => {
+    const seen: string[] = [];
+    const listener = (e: KeyboardEvent) => seen.push(e.key);
+    document.addEventListener('keydown', listener);
+    try {
+      showHelpOverlay();
+
+      // `v` cycles the camera mode globally. Typing it into the filter must
+      // not also switch to fly mode behind the overlay.
+      pressOnOverlay({ key: 'v' });
+
+      expect(filterEl().value).toBe('v');
+      expect(seen).toEqual([]);
+    } finally {
+      document.removeEventListener('keydown', listener);
+    }
+  });
+
+  it('keeps non-printable global shortcuts off the scene while it is modal', () => {
+    const seen: string[] = [];
+    const listener = (e: KeyboardEvent) => seen.push(e.key);
+    document.addEventListener('keydown', listener);
+    try {
+      showHelpOverlay();
+
+      // `Home`/`End` jump the selected dimension and Shift+arrows change the
+      // animation speed (`animation-shortcuts.ts`). No panel pushes an
+      // InputContext, so with focus on a `tabindex="-1"` container the
+      // container listener is the only thing containing them.
+      pressOnOverlay({ key: 'Home' });
+      pressOnOverlay({ key: 'End' });
+      pressOnOverlay({ key: 'ArrowUp', shiftKey: true });
+
+      expect(seen).toEqual([]);
+      // Escape is the one key that must still get out — it closes the panel.
+      pressOnOverlay({ key: 'Escape' });
+      expect(seen).toEqual(['Escape']);
+    } finally {
+      document.removeEventListener('keydown', listener);
+    }
+  });
+
+  it('does not double-insert once the filter holds focus', () => {
+    showHelpOverlay();
+    pressOnOverlay({ key: 'r' });
+    expect(document.activeElement).toBe(filterEl());
+
+    // The browser inserts the character itself now; the forwarder must keep
+    // its hands off or the field would read "rr".
+    const event = pressOnOverlay({ key: 'e' });
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(filterEl().value).toBe('r');
+  });
+
+  it('types Shift+H into the filter instead of dropping it', () => {
+    showHelpOverlay();
+
+    // The global lookup spells this "h+shift", which no binding registers, so
+    // passing it through would make Shift+H a dead key.
+    const event = pressOnOverlay({ key: 'H', shiftKey: true });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(filterEl());
+    expect(filterEl().value).toBe('H');
+  });
+
+  it('hideHelpOverlay releases the type-to-filter listener', () => {
+    showHelpOverlay();
+    const overlay = overlayEl();
+    const filter = filterEl();
+
+    hideHelpOverlay();
+
+    // The detached container must no longer forward keystrokes.
+    const event = new KeyboardEvent('keydown', { key: 'r', bubbles: true, cancelable: true });
+    overlay.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+    expect(filter.value).toBe('');
+  });
+
+  it('a re-opened overlay starts type-to-filter fresh', () => {
+    showHelpOverlay();
+    pressOnOverlay({ key: 'r' });
+    expect(filterEl().value).toBe('r');
+
+    hideHelpOverlay();
+    showHelpOverlay();
+
+    expect(document.activeElement).toBe(overlayEl());
+    expect(filterEl().value).toBe('');
+    pressOnOverlay({ key: 'z' });
+    expect(filterEl().value).toBe('z');
   });
 });
 
