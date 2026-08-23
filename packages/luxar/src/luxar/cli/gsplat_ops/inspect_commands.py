@@ -675,7 +675,11 @@ def _print_quality_comparison(
 
 
 def _load_gsplats_for_comparison(path: Path) -> "GSplatData":
-    """Materialize the tree selection that the renderer shows by default."""
+    """Materialize the tree selection that the renderer shows by default.
+
+    Root stats come along on both paths so the caller can resolve the
+    normalization basis (#1173).
+    """
     from luxar.gsplats.gsplat_data import GSplatData
     from luxar.gsplats.io.load_gsplats import load_gsplat_node
     from luxar.gsplats.tree import is_matrix_shaped, iter_default_leaves
