@@ -91,15 +91,20 @@ def test_partition_merge_records_the_same_whole_volume_score(
     assert "No merged quality metrics" not in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("partition", [False, True])
 def test_tiled_quality_is_independent_of_the_removed_pedestal(
-    volume: np.ndarray,
+    volume: np.ndarray, partition: bool
 ) -> None:
     """A merged fit and its reference must be scored on the same basis."""
-    low = _fit(volume + 50.0, partition=False).stats
-    high = _fit(volume + 4000.0, partition=False).stats
+    low_result = _fit(volume + 50.0, partition=partition, cull_retention=None)
+    high_result = _fit(volume + 4000.0, partition=partition, cull_retention=None)
+    low = low_result.meta["fit_stats"] if partition else low_result.stats
+    high = high_result.meta["fit_stats"] if partition else high_result.stats
+    low_basis = low_result.meta if partition else low
+    high_basis = high_result.meta if partition else high
 
-    assert low["image_min"] == pytest.approx(50.0, abs=0.1)
-    assert high["image_min"] == pytest.approx(4000.0, abs=0.1)
+    assert low_basis["image_min"] == pytest.approx(50.0, abs=0.1)
+    assert high_basis["image_min"] == pytest.approx(4000.0, abs=0.1)
     assert high["psnr_db"] == pytest.approx(low["psnr_db"], abs=0.5)
 
 
@@ -213,6 +218,7 @@ def test_partition_scoring_without_a_stats_target_keeps_the_finished_fit(
         grid_scale=None,
         device="cpu",
         verbose=False,
+        image_min=None,
     )
     assert "not given a stats target" in capsys.readouterr().out
 

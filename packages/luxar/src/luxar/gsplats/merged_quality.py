@@ -9,7 +9,7 @@ from typing import Any, Optional, Sequence
 import numpy as np
 from arbol import aprint
 
-from luxar.gsplats.fit_basis import fit_image_min, reference_on_fit_basis
+from luxar.gsplats.fit_basis import MISSING_BASIS_HINT, reference_on_fit_basis
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.tree import GSplatNode, GSplatPartition
 
@@ -214,6 +214,7 @@ def stamp_merged_quality(
     grid_scale: Optional[Sequence[float]],
     device: Optional[str],
     verbose: bool,
+    image_min: Optional[float],
     stats: "dict[str, Any] | None" = None,
 ) -> None:
     """Score the MERGED reconstruction against the whole volume, in place.
@@ -225,7 +226,7 @@ def stamp_merged_quality(
     is exactly what a published dataset is asked for.
 
     The reference is shifted onto the merged fit's background-relative basis
-    using the normalization level in ``target_stats``. The tiles reconstruct
+    using the explicitly resolved ``image_min``. The tiles reconstruct
     ``V - image_min``, not the raw acquisition, so leaving the pedestal in the
     reference would make tiled and non-tiled fits publish different metrics for
     the same signal (#1173).
@@ -253,6 +254,8 @@ def stamp_merged_quality(
         return
     if not parts or sum(part.n_splats for part in parts) == 0:
         return
+    if image_min is None:
+        aprint(f"WARNING: {MISSING_BASIS_HINT}")
     budget_gb = _quality_budget_gb()
     needed_gb = _QUALITY_PEAK_VOLUMES * 4 * float(np.prod(volume_shape)) / 1024**3
     if needed_gb > budget_gb:
@@ -289,7 +292,7 @@ def stamp_merged_quality(
                         rendered.add_(part_render)
                         del part_render
                 reference_np = reference_on_fit_basis(
-                    np.asarray(volume, dtype=np.float32), fit_image_min(target_stats)
+                    np.asarray(volume, dtype=np.float32), image_min
                 )
                 reference = torch.as_tensor(reference_np, device=rendered.device)
                 quality = compute_quality_metrics(rendered, reference)
