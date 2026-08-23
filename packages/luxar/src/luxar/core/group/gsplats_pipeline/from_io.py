@@ -545,7 +545,7 @@ def _validate_labelled_leaf_length(
 
     Runs ``labels`` then ``keys`` then ``image_labels`` — the flat writer's own
     order (``write_gsplats`` steps 0d then 0e) — and reuses its validators rather
-    than re-implementing either rule:
+    than re-implementing any rule:
 
     * ``labels`` → :func:`~luxar.core.group.compositing.validate_labels_before_split`,
       which no-ops on ``None`` and otherwise delegates to
@@ -559,7 +559,7 @@ def _validate_labelled_leaf_length(
       kind of hoist, covering the dense length check, the sparse-dict key
       type/bounds, the one-shot-iterable refusal, and every entry's type.
 
-    Both raise a plain ``ValueError`` (``ValidationError`` is a subclass) or,
+    These validators raise a plain ``ValueError`` (``ValidationError`` is a subclass) or,
     for a malformed ``image_labels`` (a bad dict key type, a one-shot
     iterable, a wrongly-typed entry), a ``TypeError`` — caught here and
     re-raised as ``ValueError`` with the prefix this module applies by hand,

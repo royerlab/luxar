@@ -945,7 +945,7 @@ Because the string channels are per-vertex while the viewer picks whole
 that the current slice clips only partially the reported start vertex may lie
 entirely outside the visible slab (what is drawn starts at the clipped position,
 not at the stored vertex), and **any vertex that is never a segment's start is
-unreachable by hovering** — its label or key can never be read.
+unreachable by hovering** — its label, key, or image label can never be read.
 
 Which vertices those are depends on `original_line_type` (the segment pairs are
 built by `luxar.io._ordering.lines.convert_to_indexed`):
@@ -1077,11 +1077,12 @@ re-indexes its own gathered vertex table (so the parent's `n_vertices` exceeds t
 source count by the boundary duplication, exactly as `kind=partition` parts do);
 no level carries `energy_fraction_cum` and the parent carries no
 `reference_energy`, because a reveal prefix is a partial object at full brightness
-rather than a dim version of the whole; and neither `has_labels` nor `has_keys`
-is set, because one source vertex maps to a slot in every level that touches it,
-so a union string CSR spanning levels has no well-defined index space. Labelled
-or keyed meshes take `substitutive_lod=` or `partition=`, both of which keep
-their per-element strings. A mesh **may** be a child of a `kind=partition` group;
+rather than a dim version of the whole; and `has_labels`, `has_keys`, and
+`has_image_labels` are all **unset**, because one source vertex maps to a slot in
+every level that touches it, so a union annotation CSR spanning levels has no
+well-defined index space. Annotated meshes take `substitutive_lod=` or
+`partition=`, both of which keep their per-element annotations. A mesh **may**
+be a child of a `kind=partition` group;
 `add_mesh(partition=…)` writes exactly that, with each part carrying its own
 gathered-and-renumbered vertex table (vertices on a cut are duplicated between
 neighbouring parts). A mesh may equally be a child of a `kind=lod` group —
