@@ -61,7 +61,7 @@ Usage:
                       uses it if present, else umap-learn on the CPU.
 
 Requirements:
-    - Install: pip install 'luxar[demos]'   # umap-learn, scikit-learn, pandas
+    - Install: pip install 'luxar[demos]'   # umap-learn, scikit-learn
     - Optional: pip install 'luxar[gsplats]'   # torch + scipy, for Points LOD
       coarsening; without it the scene is a flat (fully viewable) point cloud
     - Optional: a RAPIDS cuML install, for GPU UMAP on the full corpus
@@ -624,9 +624,9 @@ def resolve_paper_metadata(
             undated += 1
 
     n = len(ids)
+    matched_percent = matched / n * 100 if n else 0.0
     aprint(
-        f"✓ Matched {matched:,}/{n:,} papers to arXiv metadata "
-        f"({matched / n * 100:.1f}%)"
+        f"✓ Matched {matched:,}/{n:,} papers to arXiv metadata ({matched_percent:.1f}%)"
     )
     aprint(
         f"✓ {n - matched - undated:,} dated from their preprint DOI, "
@@ -1174,6 +1174,9 @@ def parse_args(argv: list[str]) -> tuple[int | None, int, str, int]:
             device = arg.split("=", 1)[1]
         elif arg.startswith("--seed="):
             seed = int(arg.split("=", 1)[1])
+
+    if device not in ("auto", "cpu", "gpu"):
+        raise ValueError(f"device must be one of auto/cpu/gpu, got {device!r}")
 
     return sample_size, pca_dim, device, seed
 

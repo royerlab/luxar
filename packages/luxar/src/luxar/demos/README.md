@@ -454,7 +454,7 @@ Visualizes the **whole** `tomtum/openai-arxiv-embeddings` corpus — 3,286,365 p
 **Run**: `luxar demo run arxiv_papers_kaggle`
 
 **Requires**: Internet access for the one-time ~30 GB embeddings download plus the ~1.8 GB
-Cornell arXiv metadata snapshot (both cached under `~/.cache/luxar/`), and `pandas` +
+Cornell arXiv metadata snapshot (both cached under `~/.cache/luxar/`), and `scikit-learn` +
 `umap-learn`. No Kaggle credentials are needed. `luxar[gsplats]` (torch + scipy) is optional
 — without it the scene builds as a flat, fully viewable point cloud instead of the Points
 LOD ladder.

@@ -190,6 +190,21 @@ class TestSelectSampleIsRandomNotAPrefix:
         assert len(deciles) == 10
 
 
+class TestParseArgs:
+    def test_default_processes_the_whole_corpus(self) -> None:
+        assert demo.parse_args([]) == (None, 128, "auto", 0)
+
+    def test_all_options_are_parsed(self) -> None:
+        assert demo.parse_args(
+            ["--sample=250000", "--pca-dim=64", "--device=gpu", "--seed=7"]
+        ) == (250_000, 64, "gpu", 7)
+        assert demo.parse_args(["--sample=all"]) == (None, 128, "auto", 0)
+
+    def test_invalid_device_is_rejected_before_data_loading(self) -> None:
+        with pytest.raises(ValueError, match="device must be one of"):
+            demo.parse_args(["--device=tpu"])
+
+
 class TestResolvePaperMetadata:
     """arXiv rows come from Cornell; preprint-server rows describe themselves."""
 
@@ -230,6 +245,9 @@ class TestResolvePaperMetadata:
         _, cats, years = demo.resolve_paper_metadata(["9901.00001"], ["arxiv"], {})
         assert cats == ["other"]
         assert years == [0]
+
+    def test_empty_selection_returns_empty_metadata(self) -> None:
+        assert demo.resolve_paper_metadata([], [], {}) == ([], [], [])
 
 
 class TestStreamingPcaReduction:
