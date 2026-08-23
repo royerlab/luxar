@@ -364,7 +364,7 @@ def _reparent_flat_store(temp_dir: Path, compressed_path: Path) -> Path:
     moved into a second temp directory instead of being returned as-is, and the
     contract holds unchanged.
     """
-    outer = Path(tempfile.mkdtemp(prefix="luxar_gsplat_"))
+    outer = Path(tempfile.mkdtemp(prefix="luxar_gsplat_archive_"))
     target = outer / _flat_store_dir_name(compressed_path.name)
     try:
         shutil.move(str(temp_dir), str(target))
@@ -431,7 +431,7 @@ def extract_compressed_zarr(compressed_path: Path) -> Path:
             before the error propagates.
     """
     compressed_path = Path(compressed_path)
-    temp_dir = Path(tempfile.mkdtemp(prefix="luxar_gsplat_"))
+    temp_dir = Path(tempfile.mkdtemp(prefix="luxar_gsplat_archive_"))
     try:
         if _is_zip(compressed_path):
             _extract_zip(compressed_path, temp_dir)

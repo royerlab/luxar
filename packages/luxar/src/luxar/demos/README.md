@@ -102,8 +102,9 @@ a literal `cinematic_mode=True`.
 
 The preset also expands the field of view from 47° to 63°. The viewer resolves
 that FOV before automatic framing, so an auto-framed scene keeps the fitted
-subject occupancy intended for the lens. A returning visitor's stored FOV still
-takes precedence over the scene-authored value by design.
+subject occupancy intended for the lens. A returning visitor's stored FOV takes
+precedence only for auto-framed scenes; an authored position is restored with
+the scene FOV it was composed for.
 
 An authored camera position is a stronger contract, because its distance was
 composed for one FOV. Every authored pose **composes for 63°** through
@@ -228,12 +229,30 @@ Dense sphere (200k points) with perfect distribution and rainbow colors.
 
 ---
 
-#### demo_volumetric_cloud.py - Fractal Cloud Structure
-Realistic cloud using multi-octave fractal noise and varying point sizes.
+#### demo_volumetric_cloud.py - Evolving Cumulus (3D + time)
+A convective cumulus lived through its whole life cycle on a hidden `time` axis: a low fragment at the condensation level, a cauliflower turret billowing upward, a mature top leaning downwind, then the whole body pulling in as the thermals feeding it die.
 
-**Run**: `luxar demo run cloud [-- --points=1000000]`
+**Run**: `luxar demo run cloud [-- --parcels=1000000] [-- --frames=240]`
 
-**Demonstrates**: Self-contained Perlin-like fractal noise, multi-octave detail at multiple scales, volumetric density filtering, varying point sizes based on local density, soft cloud-like appearance (low sharpness 0.2-0.35 on the normalized [0, 1] knob).
+120 timepoints, ~2.7M points, about 140 s of CPU time to generate, 22.4 MB on disk, and about 1.1 GB peak RSS; scale `--parcels` down on a memory-tight machine. `--frames` is a pure **resolution** knob: speeds are expressed per unit phase and each frame advances by `dt = 1/(n_frames-1)`, so every frame count samples the same evolution, just more finely. Integrating a fixed displacement once per frame — which is what it did before — made the distance travelled proportional to the frame count, so asking for twice the temporal resolution would have silently given you a cloud that drifted twice as far.
+
+Three things, kept separate. *Where the air goes* is an analytic velocity field built to be exactly divergence-free — an axisymmetric convection roll written through a Stokes stream function, plus a wind shear that leans the cloud downwind, plus a slow swirl — through which 600k parcels are pushed with midpoint steps, so a point is a parcel of air that keeps its identity frame to frame. (Solenoidality is load-bearing: the parcels are a Monte Carlo sample of a uniform density, and only a divergence-free field keeps that sample uniform as it deforms. Measured over the full 120-frame run, the core parcel count holds to within about 3%.) *What shape the cloud is* is the union of rising thermal bubbles, rooted in a slab of cloud sitting on the condensation level — because a cumulus is not a shape but a process, a succession of buoyant bubbles punching up through the LCL, and rendering their union is what produces the cauliflower. *Where the water is* is 4D fractal noise in **material** coordinates — each parcel's fixed label — which welds the texture to the fluid so it stretches and folds instead of boiling in place.
+
+The noise's time axis is a stack of static 3D fields at the fixed material coordinates, quintic-interpolated between — exactly 4D value noise, for the price of a lerp — with temporal frequency growing as `2^(2k/3)` rather than `2^k`, in the spirit of Kolmogorov eddy-turnover scaling, because at the naive rate the fine octaves read as shimmer.
+
+**The renderer has to be in the same optical regime as the shading**, and this is where the demo went most wrong. A cumulus is optically *thick*: you see its surface. `additive` blending models the opposite regime — an optically thin emissive medium that ignores depth entirely. Shading each parcel by the water above it and then compositing with a mode that cannot occlude painted a dark interior that was fully visible *through* the lit shell: the cloud rendered as a glowing archway with a hole in the middle, and from overhead as a ring. Measured on that build, the core carried the **highest** point density (346 vs 51 per unit area at the rim) and the **lowest** brightness (0.46 vs 0.85) — a hole in the light, not in the geometry. The node is `volumetric`, with per-point RGBA alpha as optical depth.
+
+Light is baked in three terms because points are emissive: direct sun attenuated along the sun's own ray, blue skylight attenuated along the vertical, and a weak ground bounce. The sun is deliberately **off to one side** — a light directly overhead illuminates every surface by depth alone, so two lobes at the same altitude are lit identically however they face and the relief vanishes.
+
+Several details here were found by measurement, never by reading, and each is commented at the site because none of them announces itself:
+
+- The old positional hash (`(xi*C1 + yi*C2 + zi*C3) % M`) left the value correlated with coordinate magnitude, so near the lattice origin every corner returned nearly the same number. Combined with sampling less than one lattice cell, the "7-octave fractal noise" was a smooth ramp, and the demo emitted **790 points out of 800,000 candidates**. A 32-bit avalanche finalizer fixes it.
+- Blending two independent time keyframes with weights summing to one halves the variance mid-interval. Invisible spatially; along *time* every parcel shares one weight, so the whole cloud breathed in and out of focus.
+- The threshold is standardized over the parcels *inside* the envelope, per frame. Measuring once is not enough (the coarsest octave's spatial mean walks with time); measuring globally is not enough either (the flow keeps replacing the air inside the cloud).
+- Exposure has to leave headroom: under emission-absorption a thick medium's radiance tends to the parcel colour itself, and the preset's bloom threshold of 0.01 blooms the *whole* cloud onto itself. Three light terms that each looked reasonable summed to 1.4 and clipped every lit face to flat white.
+- Once the medium is opaque, dissipation must show in the **silhouette**. Expressing decay by raising the noise threshold erodes the interior, which can no longer be seen at all.
+
+**Demonstrates**: A 3D+time Points scene with `time` as a hidden discrete axis (integer frames, `step=1`, so the viewer's ±0.5 membership gate selects exactly one), `volumetric` emission-absorption blending with per-point RGBA optical depth, Lagrangian advection through an analytic solenoidal field, 4D fractal noise in material coordinates, a metaball-style union of thermals, baked three-term lighting for an emissive geometry type, a frozen per-parcel emission threshold so point density tracks condensate without flickering, an opening camera composed for the cinematic 63° lens from the data's own extent, an authored opening timepoint (`current_step`), a turntable (`auto_rotate`) at roughly one revolution every 26 seconds, and time playback running from the moment it loads (`animation`, indexed by dimension so only the hidden `time` axis runs). `K` pauses. Playback rate is a ceiling rather than a promise — the viewer throttles to what chunk streaming sustains, which for this scene measures about 4 fps.
 
 ---
 
@@ -427,25 +446,32 @@ luxar demo run network_performance -- --points=2000000 --profile satellite
 
 ### Embedding and UMAP Demos
 
-#### demo_arxiv_embeddings_semantic_scholar.py - arXiv Papers (Semantic Scholar)
-Visualizes scientific papers in 3D embedding space. Papers cluster by topic, colored by research field, sized by citation count.
-
-**Run**: `luxar demo run arxiv_papers_semantic_scholar`
-
-**Requires**: Internet access, `sentence-transformers` and `umap-learn` packages. Embeds abstracts with Sentence-BERT (all-MiniLM-L6-v2) and reduces to 3D with UMAP. `luxar[gsplats]` (torch + scipy) is optional — without it the scene builds as a flat, fully viewable point cloud instead of the Points LOD ladder.
-
-**Demonstrates**: Semantic embedding of text, UMAP dimensionality reduction (384D to 3D), citation-based sizing, research field clustering, Semantic Scholar API usage.
-
----
-
 #### demo_arxiv_embeddings_kaggle.py - arXiv Papers (Kaggle / OpenAI)
-Visualizes arXiv papers using pre-computed OpenAI embeddings from the Kaggle "openai-arxiv-embeddings" dataset (2M+ papers, 3072D).
+Visualizes the **whole** `tomtum/openai-arxiv-embeddings` corpus — 3,286,365 preprints
+(2,902,228 arXiv + 308,367 bioRxiv + 75,770 medRxiv, through 2025-12) with pre-computed
+`text-embedding-3-large` vectors (3072D), projected to 3D by UMAP.
 
 **Run**: `luxar demo run arxiv_papers_kaggle`
 
-**Requires**: Internet access, Kaggle account (for first download, ~30 GB cached to `~/.cache/mlcroissant/`), `mlcroissant` and `umap-learn` packages. First run takes 8-15 minutes; subsequent runs use cache. `luxar[gsplats]` (torch + scipy) is optional — without it the scene builds as a flat, fully viewable point cloud instead of the Points LOD ladder.
+**Requires**: Internet access for the one-time ~30 GB embeddings download plus the ~1.8 GB
+Cornell arXiv metadata snapshot (budget ~39 GB of disk under `~/.cache/luxar/`,
+since the metadata ZIP is also extracted), and `scikit-learn` + `umap-learn`. No
+Kaggle credentials are needed. `luxar[gsplats]` (torch + scipy) is optional
+— without it the scene builds as a flat, fully viewable point cloud instead of the Points
+LOD ladder.
 
-**Demonstrates**: Large-scale embedding visualization (2M+ papers), pre-computed OpenAI text-embedding-3-large, UMAP reduction, Kaggle dataset integration via mlcroissant.
+The 3072D vectors are never held in RAM: `vectors.dat` is streamed in blocks and projected
+through a PCA basis down to 128D (fitted on a 300k-row uniform subsample), and only that
+`(N, 128) float32` matrix is cached and handed to UMAP. Pass `--sample=N` for a *uniform
+random* subset on a smaller machine, and `--pca-dim` / `--device` to trade quality for time.
+The sample bounds UMAP, metadata, and label RAM/time; a cold run still downloads the full
+archive, streams every vector twice, and writes the corpus-wide PCA cache. When launching
+through `hatch run`, override its one-thread CPU defaults, for example with
+`OMP_NUM_THREADS=16 MKL_NUM_THREADS=16`.
+
+**Demonstrates**: Multi-million-element embedding visualization, streaming decode of a
+40 GB binary attached to a ZIP, PCA pre-reduction before UMAP, optional GPU (cuML) UMAP,
+self-calibrating point radii, Points substitutive LOD.
 
 ---
 
@@ -867,7 +893,7 @@ Large isotropic 3D light-sheet volume of a developing beetle (*Tribolium castane
 
 **Requires**: Internet access (downloads ~2.6 GB from Zenodo), GPU recommended. 965 x 1871 x 991 voxels.
 
-**Demonstrates**: Large-volume Gaussian splatting, isotropic light-sheet microscopy, Zenodo/Cell Tracking Challenge data, Zeiss LightSheet Z.1 data, `normal` (peak-projection) blending to keep this volume's heavy diffuse background out of the way instead of accumulating it along every ray.
+**Demonstrates**: Large-volume Gaussian splatting, isotropic light-sheet microscopy, Zenodo/Cell Tracking Challenge data, Zeiss LightSheet Z.1 data, `volumetric` emission-absorption blending with strong absorption (κ=3.13) and low opacity (0.06) so the embryo reads as dense tissue without the diffuse background overwhelming it, plus a 0–1.085 display window tuned for the direct-colour layer. Also demonstrates measuring a **specimen** background rather than trusting the default floor: this stack has two levels (a ~204-count detector offset outside the embryo and its own ~675-count autofluorescence inside), and subtracting only the first left ~84% of the emitted mass as haze.
 
 ---
 
@@ -920,7 +946,7 @@ Takes the precomputed Tribolium embryo fit and builds an **adaptive Level of Det
 
 **Run**: `luxar demo run gsplats_lod_tribolium`
 
-**Requires**: Precomputed Tribolium splats (Git LFS); no network/GPU needed for the default path. `--recompute` re-fits from Zenodo (network + GPU).
+**Requires**: A Tribolium fit in the local cache under `~/.cache/luxar/gsplats_tribolium`. A cold cache or `--recompute` re-fits from Zenodo (network + GPU).
 
 **Demonstrates**: Substitutive LOD via `make_substitutive_lod` (`kmeans_lloyd`), `add_gsplats_from_data(lod_group=True)`, auto level-count from base splat count (#levels scales as log_K(N)), per-level debug coloring, `coverage_fraction` LOD selection in the viewer. Options: `--levels=N`, `--factor=K`, `--method=NAME`, `--serve-only`.
 
@@ -931,7 +957,7 @@ Lays out `--count` (default 100) copies of the single adaptive-detail Tribolium 
 
 **Run**: `luxar demo run gsplats_lod_embryo_line`
 
-**Requires**: Precomputed Tribolium splats (Git LFS); no network/GPU needed for the default path. `--recompute` re-fits from Zenodo (network + GPU).
+**Requires**: A Tribolium fit in the local cache under `~/.cache/luxar/gsplats_tribolium`. A cold cache or `--recompute` re-fits from Zenodo (network + GPU).
 
 **Demonstrates**: Per-object `coverage_fraction` LOD selection at scale, scene-graph transforms (`add_group(transform=...)`, `transforms.compose`/`rotate`/`translate`) for placement so splat arrays stay identical, automatic `array_ref` array deduplication in the encoder, a `layer=True` `embryo_line` container group (one Layers-panel row for the whole line rather than 100), and initial-camera setup via `ViewerConfig(camera=CameraConfig(...))`. Options: `--count=N`, `--levels=N`, `--factor=K`, `--method=NAME`, `--serve-only`.
 
@@ -942,7 +968,7 @@ Runs the unified `luxar gsplat lod --recipe` pipeline on the **one** precomputed
 
 **Run**: `luxar demo run gsplats_recipes_tribolium`
 
-**Requires**: Precomputed Tribolium splats (Git LFS); no network/GPU needed for the default path. `--recompute` re-fits from Zenodo (network + GPU).
+**Requires**: A Tribolium fit in the local cache under `~/.cache/luxar/gsplats_tribolium`. A cold cache or `--recompute` re-fits from Zenodo (network + GPU).
 
 **Demonstrates**: The `lod --recipe` engine (`build_recipe`/`RecipeParams`) and the three novel topologies — `tiles` (per-part additive ladders), `overview` (coarse cap over a `tiles` fine branch), and `adaptive` (per-part substitutive lod groups); writing each recipe via the CLI's exact path (`GSplatData.save` for matrix recipes, `write_gsplats_tree` for composed node trees) and grafting them with `add_group(transform=...)` + `add_gsplats_from_file`. Options: `--max-elements=N`, `--factor=K`, `--serve-only`.
 
@@ -1439,7 +1465,6 @@ hatch run python packages/luxar/src/luxar/demos/demo_hilbert_curve_3d.py
 hatch run python packages/luxar/src/luxar/demos/demo_network_performance.py
 
 # --- Embedding / UMAP ---
-hatch run python packages/luxar/src/luxar/demos/demo_arxiv_embeddings_semantic_scholar.py
 hatch run python packages/luxar/src/luxar/demos/demo_arxiv_embeddings_kaggle.py
 hatch run python packages/luxar/src/luxar/demos/demo_protein_embeddings_cafa5.py
 hatch run python packages/luxar/src/luxar/demos/demo_esm3_protein_landscape.py

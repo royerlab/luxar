@@ -174,4 +174,18 @@ export interface LuxarAppOptions {
    * `UrlParams.depthSort` (`?depthSort=0` disables).
    */
   depthSort?: boolean;
+
+  /**
+   * Allow a picked element's authored `link` to be opened on left-click
+   * (issue #1917). Defaults to true.
+   *
+   * Set false — or load with `?no-links` — when embedding scenes you did not
+   * author: `.zattrs` is untrusted input, and this is the switch that
+   * guarantees no navigation can originate in data. It suppresses the
+   * navigation, the two link items in the right-click menu, and the pointer
+   * cursor; `Copy` keeps working, because writing to the clipboard is not
+   * navigation. The `element-click` / `element-contextmenu` embedder events
+   * still fire, so a host can implement its own behaviour instead.
+   */
+  allowLinks?: boolean;
 }

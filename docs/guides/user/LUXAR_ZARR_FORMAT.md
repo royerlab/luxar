@@ -1463,6 +1463,61 @@ Overlays with `"hover": true` in their `.zattrs` act as hover tooltips. Their `t
 
 When labels exist on any node but no hover overlay is explicitly defined, a default hover overlay is auto-injected at scene finalization time.
 
+### Element Interaction Templates
+
+The same substitution vocabulary drives two per-**node** attrs that make a
+picked element clickable. They live on the geometry node (not on an overlay),
+because a scene has effectively one hover overlay but many layers, and the
+target is a property of the data:
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `link` | `string` | URL template. Opened on left-click (no drag). Must resolve to an absolute `http`/`https` URL. |
+| `copy` | `string` | Plain-text template offered as `Copy` in the right-click menu. Defaults to `{hover_label}` when absent and the node has labels. |
+| `link_target` | `string` | `"_blank"` (default) or `"_self"`. |
+
+```python
+scene.add_points(
+    "organs", positions, labels=organ_names,
+    link="https://en.wikipedia.org/wiki/Special:Search?search={hover_label}",
+    copy="{hover_label}",
+)
+```
+
+Right-clicking a picked element opens a menu with `Copy "<text>"` plus, when a
+`link` resolves, `Open link in new tab` and `Copy link address`. Nothing is
+shown when the element offers neither.
+
+Element actions currently require a settled hover pick, so taps on touch-only
+devices do not trigger them.
+
+**Substitution and escaping differ by consumer.** Values interpolated into a
+`link` are percent-encoded, so a label may contribute *content* to the URL but
+never *structure* — a label containing `/`, `?`, `#` or `&` cannot add a path
+segment, query or fragment. Values interpolated into `copy` are not escaped:
+plain text is the point. Tooltip escaping is unchanged.
+
+**A referenced placeholder that resolves empty suppresses the action** rather
+than leaving a hole. `https://example.org/{hover_label}` on an element with no
+label would otherwise become `https://example.org/`, a valid URL to the wrong
+place. This is the normal case at coarse levels of a `substitutive_lod=`
+ladder, whose synthesised gsplat levels inherit the node attrs but carry no
+labels.
+
+Both the Python writer and the viewer validate a `link`: the scheme must be
+`http` or `https` (an allowlist — the viewer *navigates* to this value, and
+`.zattrs` is untrusted input), the URL must be absolute (a relative one would
+resolve against whatever origin the viewer is served from), it must not embed
+credentials (`https://good.example@evil.example/` reads as one host and goes to
+another, including in `Copy link address`), and it is length-capped. `link_target` is restricted to the two keywords that imply `noopener`;
+any other value would be a *named* browsing context, which the browser opens
+with a live `window.opener` the destination could use to navigate the viewer
+tab. Links open with `noopener,noreferrer`.
+
+Viewers can refuse links entirely — `?no-links`, or `allowLinks: false` in the
+embedder options. That suppresses navigation, the two link menu items and the
+pointer cursor, while leaving `Copy` working.
+
 Under a `kind=partition` layer, `{hover_node}` and `{hover_index}` are reported
 against different nodes and are not directly joinable: `{hover_node}` is the
 outermost partition wrapper (the layer the user sees, matching the layers panel),

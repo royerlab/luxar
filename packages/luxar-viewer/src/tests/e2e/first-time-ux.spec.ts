@@ -12,6 +12,9 @@
 import { test, expect, type Locator, type Page } from './fixtures';
 import { focusCanvas, waitForLuxarReady, waitForNextRender } from './helpers';
 
+const TEST_4D_DATASET =
+  'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_4d.luxar.zarr';
+
 test.describe('First-Time User Experience', () => {
   test('should show dataset browser when no dataset specified', async ({ page }) => {
     // Navigate with no dataset parameter
@@ -166,24 +169,14 @@ test.describe('First-Time User Experience', () => {
     const browser = page.locator('.dataset-browser, .luxar-dataset-browser').first();
     await expect(browser).toBeVisible({ timeout: 5000 });
 
-    // Try close button (×)
-    const closeBtn = browser
-      .locator('button[aria-label="Close"], .close-button, .close-btn, button:has-text("×")')
-      .first();
-    if (await closeBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await closeBtn.click();
-      await expect(browser).toBeHidden({ timeout: 5000 });
-    } else {
-      // If no close button, navigate to a dataset to dismiss
-      await page.goto(
-        '/?src=http://localhost:9000/datasets/examples/rainbow_sphere_4d_example.luxar.zarr&debug'
-      );
-      await expect(browser).toBeHidden({ timeout: 10000 });
-    }
+    const closeBtn = browser.getByRole('button', { name: 'Close dataset browser' });
+    await expect(closeBtn).toBeVisible();
+    await closeBtn.click();
+    await expect(browser).toBeHidden({ timeout: 5000 });
   });
 
   /**
-   * Load the rainbow-sphere dataset, wait until the `O` shortcut is live, and
+   * Load the generated 4D fixture, wait until the `O` shortcut is live, and
    * return the dataset-browser locator with the canvas focused.
    *
    * Must be `waitForLuxarReady`, NOT `__luxarDebug.app`: the latter is
@@ -198,9 +191,7 @@ test.describe('First-Time User Experience', () => {
    * instead of the whole test timeout.
    */
   async function openViewerReadyForShortcut(page: Page): Promise<Locator> {
-    await page.goto(
-      '/?src=http://localhost:9000/datasets/examples/rainbow_sphere_4d_example.luxar.zarr&debug&no-opfs'
-    );
+    await page.goto(`/?src=${TEST_4D_DATASET}&debug&no-opfs`);
     await waitForLuxarReady(page, 30000);
 
     const browser = page.locator('.luxar-dataset-browser').first();

@@ -96,6 +96,7 @@ FIXTURE_NAMES: list[str] = [
     "test_lines_blending_modes.luxar.zarr",
     "test_lines_categorical.luxar.zarr",
     "test_lines_volumetric_reversed.luxar.zarr",
+    "test_linked_points.luxar.zarr",
     "test_lod_group.luxar.zarr",
     "test_lod_group_additive_finest.luxar.zarr",
     "test_lod_group_volumetric.luxar.zarr",
@@ -4383,6 +4384,80 @@ def generate_labelled_points_test() -> None:
         aprint(f"  {n} labelled points; default hover overlay auto-injected")
 
 
+# The element-interaction fixture asserts on these exact strings, so they are
+# named constants rather than inline literals (issue #1917).
+LINKED_LABEL = "Linked point"
+LINKED_URL_PREFIX = "https://example.org/entry/"
+
+
+def generate_linked_points_test() -> None:
+    """Points carrying `link` / `copy` templates, for the click-actions E2E spec.
+
+    One clickable point at the world origin — `element-actions.spec.ts` clicks
+    the canvas centre and asserts the popup URL, so a single centred target
+    removes any ambiguity about what was hit — plus four far-off corner points
+    that exist only to give the scene a non-degenerate bounding box. Without
+    them the auto-frame bails ("zero extent") and the near/far planes collapse,
+    which is noisy at best and flaky at worst.
+
+    Only the centre point is labelled; the corners carry empty labels, which is
+    also free coverage for the rule that an empty substitution SUPPRESSES the
+    link rather than opening `https://example.org/entry/`.
+
+    The label contains a space so the spec can prove that a substituted value
+    is percent-encoded into the URL rather than interpolated raw — the property
+    that stops a label from restructuring the link.
+    """
+    with asection("Generating Linked Points Test (E2E element actions)"):
+        output = FIXTURES_DIR / "test_linked_points.luxar.zarr"
+
+        # Centre point first (the click target), then bounds-giving corners
+        # far enough out that the cursor cannot land on one by accident.
+        positions = np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [-20.0, -20.0, -20.0],
+                [20.0, -20.0, 20.0],
+                [-20.0, 20.0, 20.0],
+                [20.0, 20.0, -20.0],
+            ],
+            dtype=np.float32,
+        )
+        n = positions.shape[0]
+        colors = np.tile(np.array([[1.0, 0.5, 0.25]], dtype=np.float32), (n, 1))
+        radii = np.concatenate(
+            [np.array([2.0], dtype=np.float32), np.full(n - 1, 0.5, dtype=np.float32)]
+        )
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.MEMORY,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            scene.add_points(
+                "linked_points",
+                positions=positions,
+                colors=colors,
+                radii=radii,
+                labels=[LINKED_LABEL] + [""] * (n - 1),
+                link=LINKED_URL_PREFIX + "{hover_label}",
+                copy="id={hover_label}",
+            )
+
+        aprint(f"  Created {output}")
+        aprint(f"  1 linked point at the origin + {n - 1} unlabelled corners")
+
+
 # Label of the single hover target in test_labelled_partitioned_points. Kept as
 # a named constant because hover-tooltip.spec.ts asserts this exact string.
 MARKER_LABEL = "Origin marker"
@@ -4599,6 +4674,11 @@ def main() -> None:
         aprint("")
 
         generate_labelled_points_test()
+        aprint("")
+
+        generate_linked_points_test()
+        aprint("")
+
         generate_labelled_partitioned_points_test()
         aprint("")
 

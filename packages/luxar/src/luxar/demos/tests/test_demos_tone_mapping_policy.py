@@ -163,10 +163,12 @@ EXCEPTIONS: dict[str, tuple[tuple[str, ...], str]] = {
     ),
     "demo_gsplats_3d_tribolium_embryo.py": (
         ("Neutral",),
-        "exposure=1.97 (~2 stops) because the blending mode projects peaks "
-        "instead of integrating along the ray, so the scene runs over range; "
-        "the pin was verified against this volume and Neutral rolls the peaks "
-        "off instead of clipping them flat",
+        "exposure=1.97 (~2 stops) to lift the volumetric emission-absorption "
+        "integral back to a readable level once the layer's own opacity is held "
+        "down to 0.06 to keep that integral in range; what still reaches the "
+        "top is the embryo's dense core, and the pin was verified against this "
+        "volume where Neutral rolls those peaks off instead of clipping them "
+        "flat",
     ),
 }
 

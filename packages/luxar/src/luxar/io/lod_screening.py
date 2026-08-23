@@ -84,6 +84,7 @@ from ..core.group.lod.group import (
     coverage_fractions,
     partitioned_coverage_fractions,
 )
+from ..core.transforms import transform_bounding_box
 from ..typing_utils.constants import DERIVED_LOD_SELECTOR, LOD_SELECTORS
 
 # Private imports, deliberately — the same choice (and the same reasoning)
@@ -436,12 +437,7 @@ def _box_corners(box: Box3) -> np.ndarray:
 
 
 def transform_box(box: Box3, matrix: np.ndarray) -> Box3:
-    """Lift a box through a 4x4, mirroring ``bounds-math.ts::transformBoundingBox``.
-
-    All eight corners are transformed and re-bounded (a rotation makes the corner
-    set, not the min/max pair, the thing that must be mapped). Corners whose
-    homogeneous ``w`` is under ``1e-12`` are dropped exactly as the viewer drops
-    them, and a box whose every corner is degenerate falls back to itself.
+    """Lift a box through a 4x4 via the shared bounds implementation.
 
     Args:
         box: The box in local space.
@@ -450,24 +446,10 @@ def transform_box(box: Box3, matrix: np.ndarray) -> Box3:
     Returns:
         The world-space AABB of the transformed corners.
     """
-    corners = _box_corners(box)
-    projected = corners @ matrix.T
-    w = projected[:, 3]
-    keep = np.abs(w) >= 1e-12
-    if not bool(keep.any()):
-        return box
-    points = projected[keep, :3] / w[keep, None]
+    lo, hi = transform_bounding_box(matrix, box.min, box.max)
     return Box3(
-        (
-            float(points[:, 0].min()),
-            float(points[:, 1].min()),
-            float(points[:, 2].min()),
-        ),
-        (
-            float(points[:, 0].max()),
-            float(points[:, 1].max()),
-            float(points[:, 2].max()),
-        ),
+        (float(lo[0]), float(lo[1]), float(lo[2])),
+        (float(hi[0]), float(hi[1]), float(hi[2])),
     )
 
 

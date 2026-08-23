@@ -19,7 +19,8 @@ describe('readUrlParams', () => {
       noOpfs: false,
       cacheDebug: false,
       clearCache: false,
-      lodFade: true, // LOD cross-fade is ON by default (opt-out via ?no-lod-fade)
+      lodFade: true,
+      allowLinks: true, // element links are ON by default (opt-out via ?no-links)
       lodEnergyComp: true, // streaming brightness compensation is ON (opt-out via ?no-lod-energy)
       blendWarmup: true, // WebGL blend-variant warm-up is ON by default (opt-out via ?no-blend-warmup)
       depthSort: true, // gsplat depth sorting is ON by default (opt-out via ?depthSort=0)
@@ -49,6 +50,14 @@ describe('readUrlParams', () => {
     expect(readUrlParams('').lodFade).toBe(true);
     expect(readUrlParams('?debug').lodFade).toBe(true);
     expect(readUrlParams('?no-lod-fade').lodFade).toBe(false);
+  });
+
+  it('allowLinks defaults ON and is disabled only by ?no-links', () => {
+    expect(readUrlParams('').allowLinks).toBe(true);
+    expect(readUrlParams('?debug').allowLinks).toBe(true);
+    expect(readUrlParams('?no-links').allowLinks).toBe(false);
+    // Not confusable with the other no-* flags that share a prefix.
+    expect(readUrlParams('?no-lod-fade').allowLinks).toBe(true);
   });
 
   it('lodEnergyComp defaults ON and is disabled only by ?no-lod-energy', () => {
