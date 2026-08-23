@@ -568,6 +568,7 @@ class TestSceneRowBudget:
         )
         assert all(
             array.attrs["encoding"]["name"] == "array_ref"
+            and array.attrs["encoding"]["target"].startswith("By tracer type/")
             for array in redshift_positions
         )
 
@@ -625,10 +626,7 @@ class TestSceneRowBudget:
                     for attrs in part_attrs
                 )
                 n_finest = sum(attrs["n_points"] for attrs in part_attrs)
-                assert n_finest > 9_000_000, (
-                    f"shipped finest level holds {n_finest:,} points; the row cap "
-                    "was removed, so it should carry the full ~9.75M catalog"
-                )
+                assert n_finest == 9_751_955
 
                 # And no single additive rung may exceed the commit ceiling —
                 # the invariant that makes the full catalog streamable at all.
