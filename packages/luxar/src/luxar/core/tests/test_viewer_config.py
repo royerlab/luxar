@@ -1,15 +1,18 @@
 """Tests for ViewerConfig, CameraConfig, and related dataclasses."""
 
 import json
+import re
 from pathlib import Path
 
 import pytest
 
+from luxar.conftest import find_repo_relative_file
 from luxar.core.viewer_config import (
     AnimationConfig,
     CameraConfig,
     DimensionsConfig,
     UIConfig,
+    VALID_FOV_PRESETS,
     ViewerConfig,
 )
 
@@ -81,6 +84,34 @@ class TestCameraConfig:
         assert cam.fov_preset == "50mm Normal"
         d = cam.to_dict()
         assert d["fov_preset"] == "50mm Normal"
+
+    def test_fov_preset_names_match_viewer_contract(self) -> None:
+        camera_source = find_repo_relative_file(
+            Path("packages/luxar-viewer/src/config/sections/camera/data.ts"),
+            Path(__file__).resolve(),
+        )
+        assert camera_source is not None, (
+            "cannot locate packages/luxar-viewer/src/config/sections/camera/data.ts; "
+            "if the viewer file moved, update this contract test"
+        )
+
+        source = camera_source.read_text(encoding="utf-8")
+        presets_match = re.search(
+            r"fovPresets:\s*\{(?P<body>.*?)^\s*\},",
+            source,
+            re.DOTALL | re.MULTILINE,
+        )
+        assert presets_match is not None, "cannot find cameraConfig.fovPresets in viewer data.ts"
+        preset_names = tuple(
+            quoted or bare
+            for quoted, bare in re.findall(
+                r"^\s*(?:['\"]([^'\"]+)['\"]|([A-Za-z_$][\w$]*))\s*:",
+                presets_match.group("body"),
+                re.MULTILINE,
+            )
+        )
+
+        assert preset_names == VALID_FOV_PRESETS
 
     def test_invalid_fov_preset(self) -> None:
         with pytest.raises(ValueError, match="fov_preset must be one of"):
