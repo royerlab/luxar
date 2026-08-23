@@ -84,6 +84,61 @@ async function setOpaqueOpacity(page: Page, nodeType: 'points' | 'lines', opacit
   );
 }
 
+async function setOpaqueVisible(page: Page, nodeType: 'points' | 'lines', visible: boolean) {
+  return page.evaluate(
+    ({ type, value }) => {
+      let updated = 0;
+      const debug = (window as any).__luxarDebug;
+      debug.scene.traverse((object: any) => {
+        if (
+          object.userData?.nodeType !== type ||
+          object.material?.userData?.blendingMode !== 'opaque'
+        )
+          return;
+        object.visible = value;
+        updated++;
+      });
+      debug.renderOnce?.();
+      return updated;
+    },
+    { type: nodeType, value: visible }
+  );
+}
+
+async function overlapOpaqueInFrontOfLuminous(
+  page: Page,
+  nodeType: 'points' | 'lines'
+): Promise<number> {
+  return page.evaluate((type) => {
+    const debug = (window as any).__luxarDebug;
+    let opaque: any;
+    let luminous: any;
+    debug.scene.traverse((object: any) => {
+      if (object.userData?.nodeType !== type || !object.material) return;
+      const mode = object.material.userData?.blendingMode;
+      object.visible = mode === 'opaque' || mode === 'luminous';
+      if (mode === 'opaque') opaque = object;
+      if (mode === 'luminous') luminous = object;
+    });
+    if (!opaque || !luminous) return 0;
+
+    const worldCenter = (object: any) => {
+      object.geometry.computeBoundingBox();
+      const center = object.geometry.boundingBox.getCenter(object.position.clone());
+      return object.localToWorld(center);
+    };
+    debug.scene.updateMatrixWorld(true);
+    opaque.position.add(worldCenter(luminous).sub(worldCenter(opaque)));
+
+    debug.scene.updateMatrixWorld(true);
+    const cameraPosition = debug.camera.getWorldPosition(opaque.position.clone());
+    opaque.position.add(cameraPosition.sub(worldCenter(opaque)).normalize().multiplyScalar(1));
+    debug.scene.updateMatrixWorld(true);
+    debug.renderOnce?.();
+    return 1;
+  }, nodeType);
+}
+
 for (const [nodeType, fixture] of [
   ['points', POINTS_FIXTURE],
   ['lines', LINES_FIXTURE],
@@ -111,11 +166,50 @@ for (const [nodeType, fixture] of [
     expect(await setOpaqueOpacity(page, nodeType, 0.1)).toBeGreaterThan(0);
     await waitForNextRender(page, 2);
     const dimmed = await meanCanvasLinearLuminance(page);
+    const dimmedRatio = dimmed / full;
 
     expect(full, `${nodeType}: isolated opaque geometry must render`).toBeGreaterThan(1e-5);
     expect(
-      dimmed / full,
-      `${nodeType}: opaque framebuffer output must respond to fragment alpha`
-    ).toBeLessThan(0.35);
+      dimmedRatio,
+      `${nodeType}: opaque framebuffer output must retain measurable fragment alpha`
+    ).toBeGreaterThan(0.08);
+    expect(
+      dimmedRatio,
+      `${nodeType}: opaque framebuffer output must dim with fragment alpha`
+    ).toBeLessThan(0.18);
+  });
+
+  test(`dim opaque ${nodeType} do not erase luminous geometry behind`, async ({ page }) => {
+    await page.goto(`/?src=${fixture}&debug&dpr=1&no-opfs`);
+    await waitForLuxarReady(page);
+    await page.waitForFunction(
+      (type) => {
+        const modes = new Set<string>();
+        (window as any).__luxarDebug.scene.traverse((object: any) => {
+          if (object.userData?.nodeType === type && (object.geometry?.instanceCount ?? 0) > 0) {
+            modes.add(object.material?.userData?.blendingMode);
+          }
+        });
+        return modes.has('opaque') && modes.has('luminous');
+      },
+      nodeType,
+      { timeout: 60000 }
+    );
+
+    expect(await overlapOpaqueInFrontOfLuminous(page, nodeType)).toBe(1);
+    expect(await setOpaqueVisible(page, nodeType, false)).toBeGreaterThan(0);
+    await waitForNextRender(page, 2);
+    const luminousOnly = await meanCanvasLinearLuminance(page);
+
+    expect(await setOpaqueVisible(page, nodeType, true)).toBeGreaterThan(0);
+    expect(await setOpaqueOpacity(page, nodeType, 0.00005)).toBeGreaterThan(0);
+    await waitForNextRender(page, 2);
+    const withDimOpaque = await meanCanvasLinearLuminance(page);
+
+    expect(luminousOnly, `${nodeType}: luminous geometry behind must render`).toBeGreaterThan(1e-5);
+    expect(
+      withDimOpaque / luminousOnly,
+      `${nodeType}: negligible opaque contributions must not stamp the depth buffer`
+    ).toBeGreaterThan(0.9);
   });
 }

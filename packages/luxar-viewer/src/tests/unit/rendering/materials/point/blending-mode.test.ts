@@ -67,6 +67,10 @@ describe('PointMaterial.applyBlendingMode', () => {
     expect(mat.blending).toBe(THREE.CustomBlending);
     expect(mat.blendSrc).toBe(THREE.SrcAlphaFactor);
     expect(mat.blendDst).toBe(THREE.OneMinusSrcAlphaFactor);
+    expect(mat.defines.LUXAR_OPAQUE_RGB_CONTRIBUTION).toBe('');
+
+    mat.applyBlendingMode('additive');
+    expect(mat.defines.LUXAR_OPAQUE_RGB_CONTRIBUTION).toBeUndefined();
   });
 
   it('luminous mode is additive but depth-tested', () => {
@@ -102,6 +106,14 @@ describe('PointMaterial.applyBlendingMode', () => {
     const mat = new PointMaterial();
     expect(mat.fragmentShader).toContain('defined(LUXAR_MAX_RGB_CONTRIBUTION)');
     expect(mat.fragmentShader).toContain('finalColor * alpha');
+  });
+
+  it('point opaque fragments discard by alpha-weighted RGB contribution', () => {
+    const mat = new PointMaterial();
+    expect(mat.fragmentShader).toContain('#ifdef LUXAR_OPAQUE_RGB_CONTRIBUTION');
+    expect(mat.fragmentShader).toContain(
+      'max(adjusted.r, max(adjusted.g, adjusted.b)) * alpha < 1e-4'
+    );
   });
 
   it('point fragment shader contains the volumetric emission–absorption branch', () => {

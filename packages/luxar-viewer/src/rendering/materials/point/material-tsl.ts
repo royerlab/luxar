@@ -494,6 +494,8 @@ export class PointTSLMaterial
     const previousMode = this.userData.blendingMode as BlendingMode | undefined;
     const wantsContrib = state.shaderOutputMode === 'rgb-contribution';
     const hasContrib = 'LUXAR_MAX_RGB_CONTRIBUTION' in this.defines;
+    const wantsOpaqueContrib = mode === 'opaque';
+    const hasOpaqueContrib = 'LUXAR_OPAQUE_RGB_CONTRIBUTION' in this.defines;
     // Volumetric is a BUILD-TIME output branch in the factory: any
     // volumetric crossing must rebuild the graph. The define is the
     // tracker (mirrors max's LUXAR_MAX_RGB_CONTRIBUTION), and every
@@ -508,6 +510,13 @@ export class PointTSLMaterial
       definesChanged = true;
     } else if (!wantsContrib && hasContrib) {
       delete this.defines.LUXAR_MAX_RGB_CONTRIBUTION;
+      definesChanged = true;
+    }
+    if (wantsOpaqueContrib && !hasOpaqueContrib) {
+      this.defines.LUXAR_OPAQUE_RGB_CONTRIBUTION = '';
+      definesChanged = true;
+    } else if (!wantsOpaqueContrib && hasOpaqueContrib) {
+      delete this.defines.LUXAR_OPAQUE_RGB_CONTRIBUTION;
       definesChanged = true;
     }
     if (wantsVolumetric && !hasVolumetric) {

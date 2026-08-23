@@ -163,6 +163,15 @@ describe('PointTSLMaterial.applyBlendingMode', () => {
     expect(mat.blending).toBe(THREE.CustomBlending);
     expect(mat.userData.blendingMode).toBe('max');
   });
+
+  it('opaque mode tracks the contribution-cutout graph across transitions', () => {
+    const mat = new PointTSLMaterial();
+    mat.applyBlendingMode('opaque');
+    expect(mat.defines?.LUXAR_OPAQUE_RGB_CONTRIBUTION).toBe('');
+
+    mat.applyBlendingMode('luminous');
+    expect(mat.defines?.LUXAR_OPAQUE_RGB_CONTRIBUTION).toBeUndefined();
+  });
 });
 
 describe('PointTSLMaterial clone', () => {

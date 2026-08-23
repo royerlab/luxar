@@ -6,14 +6,6 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
-#### Opaque Points and Lines preserve opacity and soft-edge photometry
-
-The viewer's `opaque` blend state now uses explicit SrcAlpha/OneMinusSrcAlpha
-custom blending while remaining depth-writing and in Three.js's opaque render
-list. Three.js otherwise replaces `NormalBlending` plus `transparent: false`
-with `NoBlending`, which made Points and Lines discard layer opacity,
-soft-edge falloff, sub-pixel compensation, and per-element alpha.
-
 #### Viewer stylesheets: a phantom radius token, magic z-indexes, duplicated rgba
 
 Three kinds of drift in the viewer CSS, all mechanical and all chosen to be

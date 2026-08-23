@@ -100,15 +100,7 @@ export class PointMaterial
     // overrides this with the canonical mode-derived state — the
     // value here only matters during the brief window between
     // `super({...})` returning and `applyBlendingMode` running.
-    const initialMode = blendingMode;
-    let initialBlending: THREE.Blending;
-    if (isOpaque || initialMode === 'normal') {
-      initialBlending = THREE.NormalBlending;
-    } else if (initialMode === 'additive' || initialMode === 'luminous') {
-      initialBlending = THREE.AdditiveBlending;
-    } else {
-      initialBlending = THREE.CustomBlending; // max / volumetric
-    }
+    const initialBlending = getPointBlendingState(blendingMode).blending;
 
     super({
       uniforms: {
@@ -425,7 +417,7 @@ export class PointMaterial
 
     // Defensive: THREE may leave `defines` undefined when none were
     // passed at construction. We rely on it as our source of truth for
-    // the LUXAR_MAX_RGB_CONTRIBUTION / LUXAR_VOLUMETRIC shader defines.
+    // the mode-specific shader defines.
     if (!this.defines) {
       this.defines = {};
     }
@@ -434,6 +426,8 @@ export class PointMaterial
     const previousMode = this.userData.blendingMode as BlendingMode | undefined;
     const wantsContrib = state.shaderOutputMode === 'rgb-contribution';
     const hasContrib = 'LUXAR_MAX_RGB_CONTRIBUTION' in this.defines;
+    const wantsOpaqueContrib = mode === 'opaque';
+    const hasOpaqueContrib = 'LUXAR_OPAQUE_RGB_CONTRIBUTION' in this.defines;
     // Volumetric = its own output branch (emission–absorption): every
     // non-volumetric transition must clear the define (a
     // volumetric→normal switch must not strand it). Mirrors the gsplat
@@ -447,6 +441,13 @@ export class PointMaterial
       definesChanged = true;
     } else if (!wantsContrib && hasContrib) {
       delete this.defines.LUXAR_MAX_RGB_CONTRIBUTION;
+      definesChanged = true;
+    }
+    if (wantsOpaqueContrib && !hasOpaqueContrib) {
+      this.defines.LUXAR_OPAQUE_RGB_CONTRIBUTION = '';
+      definesChanged = true;
+    } else if (!wantsOpaqueContrib && hasOpaqueContrib) {
+      delete this.defines.LUXAR_OPAQUE_RGB_CONTRIBUTION;
       definesChanged = true;
     }
     if (wantsVolumetric && !hasVolumetric) {

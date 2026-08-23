@@ -190,7 +190,9 @@ export interface CompleteBlendingState {
    * colour). The other three values document the fragment-output
    * contract for readers but are consumed by no wrapper:
    * `'alpha-weighted'` (additive/luminous/normal — RGB unweighted,
-   * alpha = intensity·opacity), `'opaque'`, and `'premultiplied-alpha'`
+   * alpha = intensity·opacity), `'opaque'` (the same alpha-carrying
+   * Point/Line output, with a contribution cutout before depth write;
+   * Mesh emits its own cutout alpha), and `'premultiplied-alpha'`
    * (gsplat `normal` — RGB carries the full premultiplied contribution,
    * alpha a clamped coverage term for `OneMinusSrcAlpha` destination
    * attenuation; the gsplat wrappers key that branch off
@@ -272,7 +274,12 @@ export function getCompleteBlendingState(
     // Opaque-list alpha-over with depth writes. This must be
     // CustomBlending: THREE.WebGLRenderer special-cases
     // NormalBlending + transparent=false to NoBlending, which would
-    // discard the fragment alpha carried by Points and Lines.
+    // discard the fragment alpha carried by Points and Lines. The
+    // opaque list sorts front-to-back, so opacity reveals the clear
+    // colour rather than geometry behind; Point/Line shaders discard
+    // negligible contributions before writing depth. Mesh emits alpha
+    // 1.0, making this blend an identity there, but still pays the ROP
+    // cost of enabling blending for its default mode.
     return {
       blending: THREE.CustomBlending,
       blendEquation: THREE.AddEquation,
