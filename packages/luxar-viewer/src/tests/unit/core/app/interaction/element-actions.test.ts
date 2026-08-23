@@ -25,7 +25,7 @@ import {
   MAX_COPY_CHARS,
 } from '../../../../../core/app/interaction/element-actions';
 
-const VALUES = { label: 'P04637', nodeName: '/proteins', elementIndex: 42 };
+const VALUES = { label: 'P04637', key: 'P04637', nodeName: '/proteins', elementIndex: 42 };
 
 /** A node carrying the given `.zattrs`, as the loader would have written them. */
 function nodeWithAttrs(attrs: Record<string, unknown>): THREE.Object3D {
@@ -163,6 +163,89 @@ describe('buildElementUrl — a value cannot restructure the URL', () => {
     });
     expect(new URL(url!).searchParams.get('admin')).toBeNull();
     expect(new URL(url!).searchParams.get('q')).toBe('a&admin=1');
+  });
+});
+
+describe('buildElementUrl — the same attacks, through {hover_key}', () => {
+  // Every URL-safety test above drives `{hover_label}`. `{hover_key}` (#1917)
+  // is the placeholder MORE likely to carry third-party data — it exists to
+  // hold an id column straight out of someone else's dataset, where the label
+  // is usually prose the scene author wrote. The two share a substitution
+  // helper, so these should pass for free; that is exactly why they are worth
+  // pinning, because a future escaping change made only for labels would leave
+  // the untrusted channel behind and nothing else would notice.
+
+  it('a key cannot escape the intended host', () => {
+    const url = buildElementUrl('https://good.example/{hover_key}', {
+      ...VALUES,
+      key: '..//evil.example',
+    });
+    expect(new URL(url!).host).toBe('good.example');
+  });
+
+  it('a key cannot traverse the target path', () => {
+    const url = buildElementUrl('https://ex.org/entry/{hover_key}', {
+      ...VALUES,
+      key: '../../admin',
+    });
+    expect(new URL(url!).pathname).toBe('/entry/..%2F..%2Fadmin');
+  });
+
+  it('a key cannot inject an extra query parameter', () => {
+    const url = buildElementUrl('https://ex.org/?q={hover_key}', {
+      ...VALUES,
+      key: 'a&admin=1',
+    });
+    expect(new URL(url!).searchParams.get('admin')).toBeNull();
+    expect(new URL(url!).searchParams.get('q')).toBe('a&admin=1');
+  });
+
+  it('a key cannot smuggle credentials into the authority', () => {
+    const url = buildElementUrl('https://good.example/{hover_key}', {
+      ...VALUES,
+      key: '@evil.example',
+    });
+    expect(new URL(url!).host).toBe('good.example');
+  });
+
+  it('a key containing a fragment separator stays in the path', () => {
+    const url = buildElementUrl('https://ex.org/{hover_key}', {
+      ...VALUES,
+      key: 'a#b',
+    });
+    expect(new URL(url!).hash).toBe('');
+    expect(new URL(url!).pathname).toBe('/a%23b');
+  });
+
+  it('a key cannot introduce a second scheme', () => {
+    const url = buildElementUrl('https://ex.org/{hover_key}', {
+      ...VALUES,
+      key: 'javascript:alert(1)',
+    });
+    expect(new URL(url!).protocol).toBe('https:');
+    expect(url).not.toContain('javascript:');
+  });
+
+  it('a missing key suppresses the link rather than truncating it', () => {
+    expect(buildElementUrl('https://ex.org/{hover_key}', { ...VALUES, key: '' })).toBeNull();
+  });
+
+  it('a key over the length cap is rejected, not truncated', () => {
+    const url = buildElementUrl('https://ex.org/{hover_key}', {
+      ...VALUES,
+      key: 'x'.repeat(MAX_LINK_CHARS + 1),
+    });
+    expect(url).toBeNull();
+  });
+
+  it('a key and a label substitute independently', () => {
+    const url = buildElementUrl('https://ex.org/{hover_key}?shown={hover_label}', {
+      ...VALUES,
+      key: 'P04637',
+      label: 'P04637 · DNA-binding cluster',
+    });
+    expect(new URL(url!).pathname).toBe('/P04637');
+    expect(new URL(url!).searchParams.get('shown')).toBe('P04637 · DNA-binding cluster');
   });
 });
 

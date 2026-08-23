@@ -88,6 +88,8 @@ Controls:
     - Explore clusters of related research
     - Color = arXiv category / preprint server, or publication year
     - Size = recency (newer papers larger; undated papers use the midpoint)
+    - Click a paper to open it (via doi.org, so arXiv, bioRxiv and medRxiv all
+      resolve); right-click to copy its DOI
     - Ctrl+C to stop
 """
 
@@ -631,6 +633,43 @@ _ARXIV_ID_OLD = re.compile(r"^[a-zA-Z.\-]+/(\d{2})(\d{2})\d{3}$")
 _PREPRINT_DOI_DATE = re.compile(r"/(\d{4})\.\d{2}\.\d{2}\.")
 
 
+def paper_doi(paper_id: str) -> str:
+    """The DOI for a row of ``papers.csv``, whichever server it came from.
+
+    Backs the demo's click-through: one ``https://doi.org/{hover_key}`` template
+    resolves all three preprint servers, so the mixed corpus needs no per-server
+    branching at the node level (a node carries a single ``link``).
+
+    bioRxiv and medRxiv rows already carry a DOI in the id column
+    (``10.1101/2020.03.03.20030890``, ``10.64898/...``); arXiv rows carry a bare
+    id, and arXiv has retroactively minted ``10.48550/arXiv.<id>`` for every
+    paper it holds.
+
+    Dispatches on the id's own shape rather than the ``journal`` column, so a row
+    whose journal is blank or unexpected still resolves — ``read_paper_index``
+    defaults a missing journal to ``"arxiv"`` and
+    :func:`resolve_paper_metadata` buckets anything unrecognised as ``"other"``,
+    neither of which says anything about the id.
+
+    The viewer percent-encodes the WHOLE substituted key (its path-traversal
+    guard), so what reaches doi.org has even the DOI's own prefix separator
+    escaped — ``https://doi.org/10.48550%2FarXiv.hep-th%2F9901001``, two escaped
+    slashes for an old-style arXiv id. doi.org unescapes before resolving, which
+    is not something to take on trust: checked against the live resolver, that
+    URL and ``10.64898%2F2025.12.05.25341689`` both 302 to the right paper.
+
+    Args:
+        paper_id: An identifier from ``papers.csv``.
+
+    Returns:
+        A DOI with no scheme or ``doi.org/`` prefix — the bare value the
+        ``link`` template substitutes and right-click copies.
+    """
+    if paper_id.startswith("10."):
+        return paper_id
+    return f"10.48550/arXiv.{paper_id}"
+
+
 def arxiv_submission_year(paper_id: str) -> int:
     """Submission year encoded in an arXiv ID, or ``0`` if it is not an arXiv ID.
 
@@ -1008,6 +1047,7 @@ def generate_paper_landscape(
                 "categories": [],
                 "years": [],
                 "titles": None,
+                "ids": [],
                 "median_nn": 0.0,
             }
         aprint(f"✓ Visualizing {len(selected):,} of {len(pca_matrix):,} papers")
@@ -1035,6 +1075,11 @@ def generate_paper_landscape(
             "categories": list(categories),
             "years": list(years),
             "titles": list(titles) if titles is not None else None,
+            # The paper's own identifier, for the DOI link (#1917). Already read
+            # from `papers.csv` and sliced for `resolve_paper_metadata` just
+            # above, then dropped — and the hover label is a truncated title, so
+            # nothing downstream could reconstruct it.
+            "ids": [ids[i] for i in selected],
             "median_nn": median_nn,
         }
 
@@ -1055,6 +1100,15 @@ def generate_paper_landscape(
     categories = list(bundle["categories"])
     years = list(bundle["years"])
     titles = bundle["titles"]
+    # `.get`, and deliberately NO version bump: `cache_computed` pickles the
+    # whole dict under `<key>_v<version>`, so an added field reads back fine and
+    # a bundle written before this simply lacks it. Bumping to v4 would force
+    # every warm cache to re-stream 40 GB of vectors through PCA and re-run UMAP
+    # over 3.29M points, and the bar for that — set by the version note above —
+    # is a change to what the computation OUTPUTS. Adding a field changes none
+    # of it, so a pre-existing bundle ships without links instead of triggering
+    # hours of recomputation.
+    paper_ids = list(bundle.get("ids") or [])
     median_nn = float(bundle.get("median_nn") or 0.0)
 
     if len(positions) == 0:
@@ -1132,6 +1186,10 @@ def generate_paper_landscape(
         ]
         year_labels = [f"{_title(i)} ({_year(i)})" for i in range(n_papers)]
 
+        have_ids = len(paper_ids) == n_papers
+        if not have_ids:
+            aprint("  ⓘ Cached bundle predates stored paper ids — skipping DOI links")
+
         stacked = stack_colorings(
             positions,
             [
@@ -1142,6 +1200,16 @@ def generate_paper_landscape(
                 },
                 {"label": "Year", "colors": year_colors, "labels": year_labels},
             ],
+            keys=[paper_doi(p) for p in paper_ids] if have_ids else None,
+        )
+        link_attrs = (
+            {
+                "keys": stacked.keys,
+                "link": "https://doi.org/{hover_key}",
+                "copy": "{hover_key}",
+            }
+            if stacked.keys is not None
+            else {}
         )
         radii = np.tile(radii_pp, len(stacked.categories)).astype(np.float32)
 
@@ -1183,6 +1251,7 @@ def generate_paper_landscape(
                 opacity=0.9,
                 intensity=0.1,
                 labels=stacked.labels,
+                **link_attrs,
                 layer=True,
                 substitutive_lod=substitutive_lod_or_flat(
                     dict(compression_factor=8, levels=3, device="auto")

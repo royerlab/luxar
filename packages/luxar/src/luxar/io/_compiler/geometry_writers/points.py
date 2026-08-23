@@ -30,7 +30,7 @@ from ..labels.image_labels import (
     validate_image_labels_for_writing,
     write_image_labels_csr,
 )
-from ..labels.text_labels import write_labels_csr
+from ..labels.text_labels import write_string_channels_csr
 from ..node_common import (
     POINTS_RESERVED_ATTRS,
     apply_default_render_attrs,
@@ -40,6 +40,7 @@ from ..node_common import (
     validate_node_path,
     validate_render_attrs,
     validate_scalars_preflight,
+    warn_if_over_element_cap,
 )
 from ..spatial_ordering.points import (
     build_points_ordering,
@@ -56,6 +57,7 @@ def validate_points_channels(
     scalars: Any = None,
     labels: Any = None,
     image_labels: Any = None,
+    keys: Any = None,
 ) -> None:
     """Validate every per-point channel against ``n_points``. Pure — no I/O.
 
@@ -122,6 +124,11 @@ def validate_points_channels(
     # were written).
     if labels is not None:
         validate_labels_for_writing(labels, n_points)
+    # Keys ride the same pre-flight as labels: the CSR serializer
+    # UTF-8-encodes each entry, so a non-str or a length mismatch must be
+    # caught BEFORE any array reaches disk (#1917).
+    if keys is not None:
+        validate_labels_for_writing(keys, n_points, context="keys", noun="Keys")
     # 0f. Image labels: length (dense) / index bounds (sparse dict) — see
     # validate_image_labels_for_writing for why this moved out of the CSR
     # writer itself.
@@ -139,6 +146,7 @@ def write_points(
     scalars: Optional[Union[NDArray[np.float32], float]] = None,
     labels: Optional["Sequence[str]"] = None,
     image_labels: Optional[Any] = None,
+    keys: Optional["Sequence[str]"] = None,
     **attrs: Any,
 ) -> PointsMetadata:
     """Write points data progressively to Zarr (see ``write_points`` docstring).
@@ -152,12 +160,16 @@ def write_points(
     build the ladder's union label CSR, and the permutation is not persisted on
     disk. Opt-in so the flat path never parks a big index array in the
     compiler's metadata cache.
+
+    ``_skip_element_cap_warning`` is private plumbing for additive ladders: the
+    parent warns on the concatenated total, so per-level warnings are redundant.
     """
     # Private forwarding flag: the multi-LOD writer needs this node's spatial
     # permutation to build the ladder's union label CSR (the permutation is not
     # persisted on disk). Popped FIRST so it never reaches the attr validator or
     # .zattrs.
     return_sort_order = attrs.pop("_return_sort_order", False)
+    skip_element_cap_warning = bool(attrs.pop("_skip_element_cap_warning", False))
 
     # Import validation functions locally to avoid circular imports
     from ....validation.base import (
@@ -189,8 +201,8 @@ def write_points(
     path = validate_node_path(path)
     # 0c. Positions shape/finiteness.
     n_points, n_dims = validate_positions_for_writing(positions)
-    # 0d-0f. Per-point channel sweep (colors, radii, sharpness, scalars, then
-    # labels, then image_labels), shared verbatim with the pre-split gate the
+    # 0d-0f. Per-point channel sweep (colors, radii, sharpness, scalars, labels,
+    # keys, then image_labels), shared verbatim with the pre-split gate the
     # partition / LOD wrappers run against the source count — see
     # validate_points_channels.
     validate_points_channels(
@@ -201,6 +213,7 @@ def write_points(
         scalars=scalars,
         labels=labels,
         image_labels=image_labels,
+        keys=keys,
     )
     # 0g. Transform / nd_transform normalization is pure attr processing
     # (reads only the scene dimensions), so run it in the gate too — a bad
@@ -349,6 +362,9 @@ def write_points(
     group.attrs.update(attrs)
     group.attrs["type"] = "points"
     group.attrs["n_points"] = n_points
+    warn_if_over_element_cap(
+        "points", n_points, group.name, enabled=not skip_element_cap_warning
+    )
     group.attrs["ndim"] = n_dims
     # Presence flags mirror the Lines writer (has_colors/has_sharpness) so every
     # geometry type stamps the same attrs the viewer can rely on.
@@ -391,15 +407,19 @@ def write_points(
         ordering_data["sort_order"] if ordering_data is not None else None,
     )
 
-    # 11. Write labels if provided (CSR-style: label_offsets + label_bytes)
-    if labels is not None:
-        sort_order = ordering_data["sort_order"] if ordering_data is not None else None
-        write_labels_csr(group, labels, n_points, ctx.compressor, sort_order)
-        metadata["has_labels"] = True
+    sort_order = ordering_data["sort_order"] if ordering_data is not None else None
+    write_string_channels_csr(
+        group,
+        labels=labels,
+        keys=keys,
+        n_elements=n_points,
+        compressor=ctx.compressor,
+        sort_order=sort_order,
+        metadata=metadata,
+    )
 
     # 12. Write image labels if provided (CSR-style, no compression on blobs)
     if image_labels is not None:
-        sort_order = ordering_data["sort_order"] if ordering_data is not None else None
         write_image_labels_csr(
             group, image_labels, n_points, ctx.compressor, sort_order
         )

@@ -59,6 +59,9 @@ export interface GSplatsMetadata {
   /** Whether per-element image labels exist (CSR-encoded, for hover thumbnails) */
   has_image_labels?: boolean;
 
+  /** Whether per-element stable string keys exist (CSR-encoded, for element actions) */
+  has_keys?: boolean;
+
   /** Elements per chunk */
   chunk_size: number;
 
@@ -220,8 +223,9 @@ export interface LoadedGSplatsData {
    * and disjoint — the first half of the slot → on-disk element index map
    * picking needs (`data/loaders/element-ids.ts`). Published by
    * `GSplatsSpatialIndexLoader` ONLY when the node declares a per-element
-   * label CSR (`has_labels` / `has_image_labels`): nothing else reads the map,
-   * and the field otherwise rides along in every SliceCache snapshot for free.
+   * string/image CSR (`has_labels` / `has_image_labels` / `has_keys`): nothing
+   * else reads the map, and the field otherwise rides along in every SliceCache
+   * snapshot for free.
    * Absent ⇒ no map is composed and picking falls back to the raw slot.
    */
   ranges?: readonly SplatRange[];

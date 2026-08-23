@@ -192,6 +192,7 @@ export class OverlayManager {
   private hoverOverlays = new Map<string, HoverOverlayEntry>();
   /** Cache last hover result to skip redundant DOM updates. */
   private _lastHoverLabel: string | null = null;
+  private _lastHoverKey: string | null = null;
   private _lastHoverImageUrl: string | null = null;
   private _lastHoverIndex: number = -1;
   private _lastHoverNode: string | null = null;
@@ -308,8 +309,8 @@ export class OverlayManager {
   /**
    * Update hover overlay content from a GPU picking result.
    *
-   * Substitutes template variables ({hover_label}, {hover_image_label},
-   * {hover_node}, {hover_index}) in all hover overlays.
+   * Substitutes template variables ({hover_label}, {hover_key},
+   * {hover_image_label}, {hover_node}, {hover_index}) in all hover overlays.
    * Fades out if result is null or has no content.
    *
    * @param result - Pick result with label text, or null to clear
@@ -317,6 +318,7 @@ export class OverlayManager {
   updateHoverContent(
     result: {
       label?: string | null;
+      key?: string | null;
       imageUrl?: string | null;
       nodeName: string;
       elementIndex: number;
@@ -324,23 +326,26 @@ export class OverlayManager {
   ): void {
     // Skip redundant DOM updates when hovering over the same element
     const newLabel = result?.label ?? null;
+    const newKey = result?.key ?? null;
     const newImageUrl = result?.imageUrl ?? null;
     const newIndex = result?.elementIndex ?? -1;
     const newNode = result?.nodeName ?? null;
     if (
       newLabel === this._lastHoverLabel &&
+      newKey === this._lastHoverKey &&
       newImageUrl === this._lastHoverImageUrl &&
       newIndex === this._lastHoverIndex &&
       newNode === this._lastHoverNode
     )
       return;
     this._lastHoverLabel = newLabel;
+    this._lastHoverKey = newKey;
     this._lastHoverImageUrl = newImageUrl;
     this._lastHoverIndex = newIndex;
     this._lastHoverNode = newNode;
 
     for (const hover of this.hoverOverlays.values()) {
-      const hasContent = result && (result.label || result.imageUrl);
+      const hasContent = result && (result.label || result.key || result.imageUrl);
       if (!hasContent) {
         // Fade out
         hover.el.style.opacity = '0';
@@ -358,7 +363,12 @@ export class OverlayManager {
         // empty segment silently produces a valid-looking wrong URL.
         let text = substituteHoverTemplate(
           hover.template,
-          { label: result.label, nodeName: result.nodeName, elementIndex: result.elementIndex },
+          {
+            label: result.label,
+            key: result.key,
+            nodeName: result.nodeName,
+            elementIndex: result.elementIndex,
+          },
           isHtml ? 'html' : 'text'
         ).text;
 
@@ -387,6 +397,10 @@ export class OverlayManager {
         // identical re-show keeps the decoded image visible. See
         // HoverOverlayEntry.lastRendered.
         const rendered = isHtml ? this.sanitizeHtml(text) : text;
+        if (rendered === '') {
+          hover.el.style.opacity = '0';
+          continue;
+        }
         if (rendered !== hover.lastRendered) {
           if (isHtml) {
             hover.el.innerHTML = rendered;

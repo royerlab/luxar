@@ -32,7 +32,7 @@ from ..labels.image_labels import (
     validate_image_labels_for_writing,
     write_image_labels_csr,
 )
-from ..labels.text_labels import write_labels_csr
+from ..labels.text_labels import write_string_channels_csr
 from ..node_common import (
     LINES_RESERVED_ATTRS,
     apply_default_render_attrs,
@@ -42,6 +42,7 @@ from ..node_common import (
     validate_node_path,
     validate_render_attrs,
     validate_scalars_preflight,
+    warn_if_over_element_cap,
 )
 from ..spatial_ordering.lines import build_lines_ordering, write_lines_ordering_to_zarr
 
@@ -142,6 +143,7 @@ def validate_lines_channels(
     scalars: Any = None,
     labels: Any = None,
     image_labels: Any = None,
+    keys: Any = None,
 ) -> None:
     """Validate every per-vertex channel against ``n_vertices``. Pure — no I/O.
 
@@ -151,7 +153,7 @@ def validate_lines_channels(
     — read that docstring (including the ``image_labels`` / issue #1491
     paragraph on why the finest-child-written-last ``substitutive_lod=``
     wrapper needs this pre-split, not just at the flat writer). ``widths`` is
-    required, so it is validated unconditionally and FIRST; all five channels
+    required, so it is validated unconditionally and FIRST; all seven channels
     are per-VERTEX, not per-segment.
     """
     from ....validation.base import (
@@ -186,6 +188,11 @@ def validate_lines_channels(
     # were written).
     if labels is not None:
         validate_labels_for_writing(labels, n_vertices)
+    # Keys ride the same pre-flight as labels: the CSR serializer
+    # UTF-8-encodes each entry, so a non-str or a length mismatch must be
+    # caught BEFORE any array reaches disk (#1917).
+    if keys is not None:
+        validate_labels_for_writing(keys, n_vertices, context="keys", noun="Keys")
     # 0h. Image labels: length (dense) / index bounds (sparse dict) — see
     # validate_image_labels_for_writing for why this moved out of the CSR
     # writer itself.
@@ -205,6 +212,7 @@ def write_lines(
     line_type: str = "polyline",
     labels: Optional["Sequence[str]"] = None,
     image_labels: Optional[Any] = None,
+    keys: Optional["Sequence[str]"] = None,
     **attrs: Any,
 ) -> dict[str, Any]:
     """Write lines data to Zarr with dual spatial indexing (see ``write_lines``).
@@ -220,12 +228,16 @@ def write_lines(
     disk. The key name matches the Points writer's so both multi-LOD writers
     read one key. Opt-in so the flat path never parks a big index array in the
     compiler's metadata cache.
+
+    ``_skip_element_cap_warning`` is private plumbing for additive ladders: the
+    parent warns on the concatenated total, so per-level warnings are redundant.
     """
     # Private forwarding flag: the multi-LOD writer needs this node's per-vertex
     # spatial permutation to build the ladder's union label CSR (the permutation
     # is not persisted on disk). Popped FIRST so it never reaches the attr
     # validator or .zattrs.
     return_sort_order = attrs.pop("_return_sort_order", False)
+    skip_element_cap_warning = bool(attrs.pop("_skip_element_cap_warning", False))
 
     from ....validation.base import (
         validate_colors_for_writing,
@@ -286,7 +298,7 @@ def write_lines(
     )
 
     # 0e-0h. Per-vertex channel sweep (widths first, then colors, sharpness,
-    # scalars, labels, image_labels), shared verbatim with the pre-split gate
+    # scalars, labels, image_labels, keys), shared verbatim with the pre-split gate
     # the partition / LOD wrappers run against the source count — see
     # validate_lines_channels.
     validate_lines_channels(
@@ -297,6 +309,7 @@ def write_lines(
         scalars=scalars,
         labels=labels,
         image_labels=image_labels,
+        keys=keys,
     )
     # 0i. Transform / nd_transform normalization is pure attr processing
     # (reads only the scene dimensions), so run it in the gate too — a bad
@@ -563,6 +576,9 @@ def write_lines(
     group.attrs["type"] = "lines"
     group.attrs["n_vertices"] = n_vertices
     group.attrs["n_segments"] = n_segments
+    warn_if_over_element_cap(
+        "lines", n_segments, group.name, enabled=not skip_element_cap_warning
+    )
     group.attrs["ndim"] = n_dims
     group.attrs["original_line_type"] = line_type
     group.attrs["has_colors"] = metadata["has_colors"]
@@ -591,20 +607,21 @@ def write_lines(
     if not skip_scene_bounds:
         ctx.update_scene_bounds(position_bounds)
 
-    # Write labels if provided (CSR-style: label_offsets + label_bytes)
-    # For lines, labels are per-vertex (n_vertices)
-    if labels is not None:
-        sort_order = (
-            ordering_data["vertex_sort_indices"] if ordering_data is not None else None
-        )
-        write_labels_csr(group, labels, n_vertices, ctx.compressor, sort_order)
-        metadata["has_labels"] = True
+    sort_order = (
+        ordering_data["vertex_sort_indices"] if ordering_data is not None else None
+    )
+    write_string_channels_csr(
+        group,
+        labels=labels,
+        keys=keys,
+        n_elements=n_vertices,
+        compressor=ctx.compressor,
+        sort_order=sort_order,
+        metadata=metadata,
+    )
 
     # Write image labels if provided (CSR-style, no compression on blobs)
     if image_labels is not None:
-        sort_order = (
-            ordering_data["vertex_sort_indices"] if ordering_data is not None else None
-        )
         write_image_labels_csr(
             group, image_labels, n_vertices, ctx.compressor, sort_order
         )

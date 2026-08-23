@@ -135,17 +135,17 @@ def main() -> None:
                 "channel labels — no positions are rewritten."
             ),
             observe=[
-                "Press <code>4</code> for time, then <code>[</code> / "
+                "Press <code>1</code> for time, then <code>[</code> / "
                 "<code>]</code>: both clusters step in lockstep.",
                 "Instrument A (left) shows world t=0–4; B (right) shows world t=5–9.",
-                "Press <code>5</code> for channel: the permutation reorders "
+                "Press <code>2</code> for channel: the permutation reorders "
                 "Instrument B's colours.",
             ],
         )
 
     aprint(f"Done. View with: luxar serve {output_path} --viewer")
-    aprint("Press 4 then [/] to walk time; both instruments stay in lockstep.")
-    aprint("Press 5 to switch channels; permutation reorders Instrument B.")
+    aprint("Press 1 then [/] to walk time; both instruments stay in lockstep.")
+    aprint("Press 2 to switch channels; permutation reorders Instrument B.")
 
 
 if __name__ == "__main__":

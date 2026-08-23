@@ -683,6 +683,33 @@ class TestLabelsValidation:
         with pytest.raises(ValidationError, match="sequence of strings"):
             validate_labels_for_writing("abc", 3)
 
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            (
+                "abc",
+                "keys: Expected keys to be a sequence of strings, got str\n"
+                "💡 Suggestion: Pass one key string per element, "
+                "e.g. keys=['a', 'b', ...]",
+            ),
+            (
+                ["a", 1, "c"],
+                "keys: Key at index 1 is int, expected str or None (got 1)\n"
+                "💡 Suggestion: Convert keys to strings, "
+                "e.g. keys=[str(x) for x in values]",
+            ),
+        ],
+    )
+    def test_channel_name_used_throughout_errors(
+        self, value: Any, expected: str
+    ) -> None:
+        from luxar.validation.base import validate_labels_for_writing
+
+        with pytest.raises(ValidationError) as excinfo:
+            validate_labels_for_writing(value, 3, context="keys", noun="Keys")
+
+        assert str(excinfo.value) == expected
+
 
 class TestScalarBroadcastValidation:
     """Scalar (broadcast) inputs must validate like their array siblings."""

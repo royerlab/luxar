@@ -114,17 +114,18 @@ export interface LoadedPointsData {
    * commit by `data/scene-loader/commit/commit-points-geometry.ts`, which
    * forwards it to `types/committed-data::setElementIdMap`. Picking reads that
    * MESH-level stamp — not this field — via
-   * `rendering/picking/picking-system/element-id-map.ts`, so hover labels index
-   * the per-element label CSR (`label_offsets` / `label_bytes`) by the on-disk
-   * index rather than by the storage slot the pick shader reports.
+   * `rendering/picking/picking-system/element-id-map.ts`, so hover string
+   * channels index their per-element CSR by the on-disk index rather than by
+   * the storage slot the pick shader reports.
    * The two diverge after spatial range loading (only the visible ranges are
    * concatenated) or effective-radius compaction (zero-radius points are
    * dropped in place).
    *
-   * OMITTED in three cases: when the node declares neither `has_labels` nor
-   * `has_image_labels` (the map costs 4 B/point on the zero-allocation
-   * accumulator path and no LABEL reader exists — the embedder `selection`
-   * event can still fire on such a node and keeps reporting the slot); when
+   * OMITTED in three cases: when the node declares none of `has_labels`,
+   * `has_image_labels`, or `has_keys` (the map costs 4 B/point on the
+   * zero-allocation accumulator path and no string/image reader exists — the
+   * embedder `selection` event can still fire on such a node and keeps
+   * reporting the slot); when
    * the identity holds — a single range starting at 0 with no compaction, i.e.
    * the common plain-3D case; and when the map could not be built at all, in
    * which case {@link LoadedPointsData.elementIdsUnavailable} is set (the slot
@@ -133,16 +134,16 @@ export interface LoadedPointsData {
    *
    * On an additive LOD ladder each level's map is in that LEVEL's on-disk
    * index space. `points-progressive-loader.ts::concatenatePointsData` either
-   * composes the levels into the PARENT node's union label CSR space (when the
-   * parent declares that CSR — the `levelOffsets` path, #1439) or publishes
-   * nothing at all.
+   * composes the levels into the PARENT node's union string-channel CSR space
+   * (when the parent declares that CSR — the `levelOffsets` path, #1439) or
+   * publishes nothing at all.
    */
   elementIds?: Uint32Array;
 
   /**
    * Set (only when true) when a slot → on-disk map was WANTED — the node
-   * declares `has_labels` / `has_image_labels` — but could not be built: the
-   * slot is NOT the on-disk index and there is no map to say what is.
+   * declares `has_labels` / `has_image_labels` / `has_keys` — but could not be
+   * built: the slot is NOT the on-disk index and there is no map to say what is.
    *
    * Distinct from a plain missing {@link LoadedPointsData.elementIds}, which
    * usually means the identity holds. A consumer that composes this payload
@@ -253,6 +254,9 @@ export interface PointsMetadata {
 
   /** Whether per-element image labels exist (CSR-encoded, for hover thumbnails) */
   has_image_labels?: boolean;
+
+  /** Whether per-element stable string keys exist (CSR-encoded, for element actions) */
+  has_keys?: boolean;
 
   /** Spatial ordering method */
   ordering?: 'morton' | 'hilbert' | 'none';

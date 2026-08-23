@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     import numpy as np
 
     from luxar.gsplats.doctor import DoctorReport, Finding, StoreKind
+    from luxar.gsplats.gsplat_data import GSplatData
 
 
 _IMPORTANT_FITTING_KEYS = (
@@ -673,6 +674,34 @@ def _print_quality_comparison(
     aprint("=" * 50)
 
 
+def _load_gsplats_for_comparison(path: Path) -> tuple["GSplatData", int, int]:
+    """Materialize the tree selection that the renderer shows by default.
+
+    Root stats come along on both paths so the caller can resolve the
+    normalization basis (#1173). They remain unscrubbed because this temporary
+    flat dataset is never persisted.
+    """
+    from luxar.gsplats.gsplat_data import GSplatData
+    from luxar.gsplats.io.load_gsplats import load_gsplat_node
+    from luxar.gsplats.tree import iter_default_leaves, total_splats
+
+    node, stats = load_gsplat_node(path, include_stats=True)
+    n_leaves = sum(1 for _ in iter_default_leaves(node))
+    data = GSplatData.from_default_selection(node, stats=stats)
+    return data, n_leaves, total_splats(node)
+
+
+def _announce_unscored_comparison_splats(
+    *, n_stored_splats: int, n_scored_splats: int
+) -> None:
+    """Report coarse LOD splats excluded from the default-rendered selection."""
+    if n_stored_splats > n_scored_splats:
+        aprint(
+            f"Skipped {n_stored_splats - n_scored_splats:,} splats in coarse "
+            "LOD levels; compression ratio covers the whole store"
+        )
+
+
 def _validate_image_min_override(image_min: Optional[float]) -> None:
     if image_min is not None and (not math.isfinite(image_min) or image_min < 0.0):
         raise typer.BadParameter(
@@ -755,7 +784,10 @@ def compare_quality(
 
     Renders the gsplats back to a volume and computes PSNR, SSIM, MSE,
     relative L2 error, and maximum absolute error.  All heavy computation
-    runs on GPU when available.
+    runs on GPU when available. Partition and nested stores are scored over
+    their default-rendered selection: all parts and each LOD group's finest
+    level. The compression ratio covers the whole store, including coarse
+    levels that are not scored.
 
     Examples:
         luxar gsplat compare fitted.gsplats.zarr original.tiff
@@ -771,7 +803,6 @@ def compare_quality(
         import torch
 
         from luxar.cli.gsplat_config import load_volume, parse_shape
-        from luxar.gsplats.gsplat_data import GSplatData
         from luxar.gsplats.metrics import compute_quality_metrics
         from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
         from luxar.gsplats.utils.device import resolve_torch_device
@@ -779,14 +810,21 @@ def compare_quality(
         with asection("Quality Comparison"):
             # Load gsplat dataset
             with asection("Loading gsplat dataset"):
-                # `include_stats=True` so the normalization basis is reachable:
-                # a render is background-relative and the reference is raw, and
-                # without the stored `image_min` the two cannot be reconciled
-                # (#1173). This is metadata only — no extra array decode.
-                data = GSplatData.load(gsplats_path, include_stats=True)
+                # Stats come along (`include_stats=True` inside the helper) so
+                # the normalization basis is reachable: a render is
+                # background-relative and the reference is raw, and without the
+                # stored `image_min` the two cannot be reconciled (#1173). This
+                # is metadata only — no extra array decode.
+                data, n_leaves, n_stored_splats = _load_gsplats_for_comparison(
+                    gsplats_path
+                )
                 n_splats = data.n_splats
                 ndim = data.ndim
                 aprint(f"Loaded {n_splats:,} splats ({ndim}D)")
+                aprint(f"Materialized {n_leaves:,} default-rendered leaf/leaves")
+                _announce_unscored_comparison_splats(
+                    n_stored_splats=n_stored_splats, n_scored_splats=n_splats
+                )
 
             # Resolve truncation radius from dataset if not explicitly set
             if truncate is None:

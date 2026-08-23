@@ -501,6 +501,7 @@ def build_node_points(
     np.ndarray,
     list[str],
     list[str],
+    list[str],
     np.ndarray,
     np.ndarray,
     np.ndarray,
@@ -509,6 +510,7 @@ def build_node_points(
 
     Returns:
         positions (2N, 4), colors (2N, 3), radii (2N,), labels (2N,),
+        keys (2N, bare gene symbols for the GeneCards link),
         chrom_categories, chrom_codes (N,), community_palette (K, 3),
         chrom_palette (C, 3)
     """
@@ -564,11 +566,21 @@ def build_node_points(
     ]
     labels = per_node_labels * 2
 
+    # Click a protein to open its GeneCards entry, right-click to copy the gene
+    # symbol (#1917). The symbol opens the label but the label continues into
+    # chromosome, degree and community across two lines, so the URL needs the
+    # bare symbol from `keys=`.
+    #
+    # Duplicated `* 2` exactly like the labels: this node set is written once
+    # per colour view and every per-element channel has to match.
+    keys = [str(sym) for sym in nodes] * 2
+
     return (
         positions,
         colors,
         radii,
         labels,
+        keys,
         chrom_cats,
         chrom_codes,
         comm_palette,
@@ -713,6 +725,7 @@ def build_scene(
         node_colors,
         node_radii,
         node_labels,
+        node_keys,
         chrom_cats,
         chrom_codes,
         comm_palette,
@@ -775,6 +788,9 @@ def build_scene(
                 opacity=0.95,
                 intensity=0.2,
                 labels=node_labels,
+                keys=node_keys,
+                link="https://www.genecards.org/cgi-bin/carddisp.pl?gene={hover_key}",
+                copy="{hover_key}",
                 layer=True,
             )
 

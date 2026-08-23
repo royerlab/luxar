@@ -10,10 +10,10 @@ Extract the per-geometry pipeline bodies from the orchestrator so each geometry 
 
 | Module | Geometry | Entry Point | Context Type |
 |--------|----------|-------------|--------------|
-| **points.py** | Points | `write_points(ctx: GeometryWriteCtx, path, positions, colors=None, radii=None, sharpness=None, scalars=None, labels=None, image_labels=None, **attrs)` | `GeometryWriteCtx` |
-| **lines.py** | Lines | `write_lines(ctx: GeometryWriteCtx, path, vertices, widths, colors=None, sharpness=None, scalars=None, indices=None, line_type="polyline", labels=None, image_labels=None, **attrs)` | `GeometryWriteCtx` |
-| **gsplats.py** | GSplats | `write_gsplats(ctx: GSplatsWriteCtx, path, centers, amplitudes, cholesky_factors, colors=None, labels=None, image_labels=None, **attrs)` | `GSplatsWriteCtx` |
-| **mesh.py** | Mesh | `write_mesh(ctx: GeometryWriteCtx, path, vertices, faces, normals=None, normal_dims=None, colors=None, scalars=None, shading=None, double_sided=True, labels=None, image_labels=None, **attrs)` | `GeometryWriteCtx` |
+| **points.py** | Points | `write_points(ctx: GeometryWriteCtx, path, positions, colors=None, radii=None, sharpness=None, scalars=None, labels=None, image_labels=None, keys=None, **attrs)` | `GeometryWriteCtx` |
+| **lines.py** | Lines | `write_lines(ctx: GeometryWriteCtx, path, vertices, widths, colors=None, sharpness=None, scalars=None, indices=None, line_type="polyline", labels=None, image_labels=None, keys=None, **attrs)` | `GeometryWriteCtx` |
+| **gsplats.py** | GSplats | `write_gsplats(ctx: GSplatsWriteCtx, path, centers, amplitudes, cholesky_factors, colors=None, labels=None, image_labels=None, keys=None, **attrs)` | `GSplatsWriteCtx` |
+| **mesh.py** | Mesh | `write_mesh(ctx: GeometryWriteCtx, path, vertices, faces, normals=None, normal_dims=None, colors=None, scalars=None, shading=None, double_sided=True, labels=None, image_labels=None, keys=None, **attrs)` | `GeometryWriteCtx` |
 | **gsplats.py** | GSplats subtree | `write_gsplat_leaf_subtree(ctx: GSplatsWriteCtx, path, leaf, **attrs)` | `GSplatsWriteCtx` |
 
 The pipelines are stateless: they read only the narrow config in the `Ctx` dataclass (encoder, compressor, ordering settings, zarr store) and return a metadata dict for the caller to record.
@@ -63,11 +63,11 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
    - `write_points_ordering_to_zarr(group, ordering_data, ctx.compressor)` — if `ordering_data is not None` (sets `has_spatial_index`, and puts the curve name in `metadata["ordering"]`; `"none"` otherwise, so `Points.ordering` reports the writer's real choice)
 
 8. **Write labels** (CSR serialization; `sort_order` derived from `ordering_data`):
-   - `write_labels_csr(group, labels, n_points, ctx.compressor, sort_order)` — if `labels is not None`
+   - `write_string_channels_csr(group, labels=…, keys=…, n_elements=n_points, compressor=ctx.compressor, sort_order=sort_order, metadata=metadata)` — writes each present text channel and stamps its `has_*`. One call for both so they cannot receive DIFFERENT permutations, which is the shape of every mis-pairing bug this channel has had (#1917)
    - `write_image_labels_csr(group, image_labels, n_points, ctx.compressor, sort_order)` — if `image_labels is not None`
-   - A multi-LOD **parent** instead gets a single union CSR (`write_ladder_union_labels_csr`) and its `additive_<i>` levels get none — the writer is called with `labels=None` plus the private `_return_sort_order=True` flag, which returns this node's `sort_order` in the metadata so the parent can build that union
+   - A multi-LOD **parent** instead gets a single union CSR (`write_ladder_union_labels_csr`) and its `additive_<i>` levels get none — the writer is called with `labels=None` plus the private `_return_sort_order=True` flag, which returns this node's `sort_order` in the metadata so the parent can build that union. `keys` rides the identical path (its own union CSR on the parent), which is why the flag is set when the ladder is labelled **or** keyed
 
-9. **Return metadata**: `{"n_points", "ndim", "path", "has_colors", "has_radii", "has_sharpness", "position_bounds", "ordering"}` plus (conditionally) `max_radius`, `has_scalars`, `has_spatial_index`, `has_labels`, `has_image_labels` (no `"type"` key)
+9. **Return metadata**: `{"n_points", "ndim", "path", "has_colors", "has_radii", "has_sharpness", "position_bounds", "ordering"}` plus (conditionally) `max_radius`, `has_scalars`, `has_spatial_index`, `has_labels`, `has_image_labels`, `has_keys` (no `"type"` key)
 
 ### Lines Pipeline (`write_lines`)
 
@@ -78,13 +78,14 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
    - Validate `line_type` in `("segments", "polyline", "loop", "indexed")`
    - Type-specific vertex count checks (segments: even, polyline: ≥2, loop: ≥3, indexed: requires `indices`)
    - `validate_line_indices(indices, n_vertices)` — the indexed edge list, shared with a second caller like the two functions below. Normalizes with `np.asarray` and accepts only a flat even-element `(2E,)` array or an `(E, 2)` pair array, then integer dtype and `[0, n_vertices)` bounds — all before `convert_to_indexed`, which is what makes the bounds check meaningful. Returns the normalized array. `compositing.validate_line_indices_before_split` runs it from each split branch of `add_lines`, ahead of that branch's topology builder: `lod.lines.identify_polylines` checks only dtype and bounds and then reshapes to pairs, so an `(E, 3)` array was reinterpreted as `3E/2` edges the author never wound and written (#1437). Topology before channels, mirroring mesh's faces-first order
-   - `validate_lines_channels(n_vertices, widths=…, colors=…, sharpness=…, scalars=…, labels=…, image_labels=…)` — every per-vertex channel check in one shared function, the Points sibling (see its entry above for why it is shared). `widths` is required, so it is validated first and unconditionally; all five channels are per-VERTEX, not per-segment. It covers, in this order:
+   - `validate_lines_channels(n_vertices, widths=…, colors=…, sharpness=…, scalars=…, labels=…, image_labels=…, keys=…)` — every per-vertex channel check in one shared function, the Points sibling (see its entry above for why it is shared). `widths` is required, so it is validated first and unconditionally; all seven channels are per-VERTEX, not per-segment. It covers, in this order:
      - `validate_widths_for_writing(widths, n_vertices)` — arrays AND broadcast scalars
      - `validate_colors_for_writing(colors, n_vertices, channels=(3,4))` — if colors is an array
      - `validate_broadcast_color(colors, "colors")` — if colors is a tuple/list
      - `validate_sharpness_for_writing(sharpness, n_vertices)` — arrays AND broadcast scalars
      - `validate_scalars_preflight(scalars, n_vertices)` — length check
      - `validate_labels_for_writing(labels, n_vertices)` — if `labels is not None` (labels are per-vertex)
+     - `validate_labels_for_writing(keys, n_vertices, context="keys", noun="Keys")` — if `keys is not None`
      - `validate_image_labels_for_writing(image_labels, n_vertices)` — length (dense) / index bounds (sparse dict) + per-item type, if `image_labels is not None` (#1491)
    - `prepare_transform_attrs(attrs, ctx.store)`
 
@@ -118,11 +119,11 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
    - `compute_position_bounds(vertices)` → `position_bounds`, stamped as the `position_bounds` group attr and forwarded to `ctx.update_scene_bounds(...)` unless the caller set `_skip_scene_bounds` (the multi-LOD parent writer aggregates the global bounds once instead)
 
 9. **Write labels** (CSR serialization; `sort_order` = `ordering_data["vertex_sort_indices"]` when ordered, per-vertex):
-   - `write_labels_csr(group, labels, n_vertices, ctx.compressor, sort_order)` — if `labels is not None`
+   - `write_string_channels_csr(group, labels=…, keys=…, n_elements=n_vertices, compressor=ctx.compressor, sort_order=sort_order, metadata=metadata)` — both text channels through one call, so both get the SAME per-vertex permutation (#1917)
    - `write_image_labels_csr(group, image_labels, n_vertices, ctx.compressor, sort_order)` — if `image_labels is not None`
-   - A multi-LOD **parent** instead gets a single per-vertex union CSR (`write_ladder_union_labels_csr`) and its `additive_<i>` levels get none — the writer is called with `labels=None` plus the private `_return_sort_order=True` flag, which returns this node's per-vertex `sort_order` in the metadata so the parent can build that union
+   - A multi-LOD **parent** instead gets a single per-vertex union CSR (`write_ladder_union_labels_csr`) and its `additive_<i>` levels get none — the writer is called with `labels=None` plus the private `_return_sort_order=True` flag, which returns this node's per-vertex `sort_order` in the metadata so the parent can build that union. `keys` rides the identical path
 
-10. **Return metadata**: `{"n_vertices", "n_segments", "ndim", "original_line_type", "has_colors", "has_sharpness", "max_width"}` plus ordering keys and `position_bounds` (and conditionally `has_spatial_index`, `has_scalars`, `has_labels`, `has_image_labels`) — no `"type"` key
+10. **Return metadata**: `{"n_vertices", "n_segments", "ndim", "original_line_type", "has_colors", "has_sharpness", "max_width"}` plus ordering keys and `position_bounds` (and conditionally `has_spatial_index`, `has_scalars`, `has_labels`, `has_image_labels`, `has_keys`) — no `"type"` key
 
 ### GSplats Pipeline (`write_gsplats`)
 

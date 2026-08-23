@@ -7493,6 +7493,57 @@ class TestFlattenCommand:
         assert loaded.n_splats == n0  # count conserved
         assert loaded.n_substitutive == 1  # a single flat leaf (no LOD/partition)
 
+    @pytest.mark.parametrize(
+        "lod_args",
+        [
+            ["--recipe", "stream", "--n-lods", "3"],
+            ["--recipe", "levels", "-K", "2", "-L", "1", "--device", "cpu"],
+        ],
+    )
+    def test_flatten_ladder_collapses_before_partitioning(
+        self,
+        runner: CliRunner,
+        medium_gsplats: Path,
+        tmp_path: Path,
+        lod_args: list[str],
+    ) -> None:
+        """Flattening a matrix ladder restores the documented partition remedy."""
+        from luxar import Dimensions, LuxarZarrCompiler
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        ladder = tmp_path / "ladder.gsplats.zarr"
+        ladder_result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(ladder),
+                *lod_args,
+            ],
+        )
+        assert ladder_result.exit_code == 0, ladder_result.stdout
+        loaded_ladder = GSplatData.load(ladder)
+        assert loaded_ladder.n_additive_sublods > 1 or loaded_ladder.n_substitutive > 1
+
+        flat = tmp_path / "flat.gsplats.zarr"
+        flatten_result = runner.invoke(
+            app, ["gsplat", "flatten", str(ladder), str(flat)]
+        )
+        assert flatten_result.exit_code == 0, flatten_result.stdout
+        loaded = GSplatData.load(flat)
+        assert loaded.n_splats == GSplatData.load(medium_gsplats).n_splats
+        assert loaded.n_additive_sublods == 1
+        assert loaded.n_substitutive == 1
+
+        scene_path = tmp_path / "scene.luxar.zarr"
+        with LuxarZarrCompiler(scene_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_gsplats_from_file("g", flat, partition={"max_elements": 8})
+
+        store = zarr.open_group(scene_path, mode="r")
+        assert store["g"].attrs["kind"] == "partition"
+
     def test_flatten_then_multiscale_lod(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:

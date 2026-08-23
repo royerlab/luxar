@@ -121,7 +121,7 @@ def validate_node_name(name: Any, context: str = "node name") -> str:
 
 
 def validate_labels_for_writing(
-    labels: Any, n_elements: int, context: str = "labels"
+    labels: Any, n_elements: int, context: str = "labels", noun: str = "Labels"
 ) -> None:
     """Validate per-element string labels BEFORE any zarr write.
 
@@ -134,6 +134,9 @@ def validate_labels_for_writing(
             ``str`` entries; ``None`` entries are allowed (null label).
         n_elements: Expected number of elements.
         context: Context for error messages.
+        noun: Capitalised channel name used in error messages. The ``keys``
+            channel shares this validator, and reporting its faults as label
+            faults sends the author looking at the wrong argument.
 
     Raises:
         ValidationError: If labels are not a sequence of str/None with one
@@ -145,23 +148,28 @@ def validate_labels_for_writing(
         labels, (Sequence, np.ndarray)
     ):
         raise ValidationError(
-            f"{context}: Expected a sequence of strings, got {type(labels).__name__}",
-            "Pass one label string per element, e.g. labels=['a', 'b', ...]",
+            f"{context}: Expected {noun.lower()} to be a sequence of strings, "
+            f"got {type(labels).__name__}",
+            f"Pass one {noun.removesuffix('s').lower()} string per element, "
+            f"e.g. {context}=['a', 'b', ...]",
         )
 
     if len(labels) != n_elements:
         raise ValidationError(
-            f"{context}: Labels length ({len(labels)}) must match element "
+            f"{context}: {noun} length ({len(labels)}) must match element "
             f"count ({n_elements})",
-            f"Provide exactly {n_elements} labels (use '' or None for no label)",
+            f"Provide exactly {n_elements} {noun.lower()} "
+            "(use '' or None for no entry)",
         )
 
     for i, label in enumerate(labels):
         if label is not None and not isinstance(label, str):
             raise ValidationError(
-                f"{context}: Label at index {i} is {type(label).__name__}, "
+                f"{context}: {noun.removesuffix('s')} at index {i} is "
+                f"{type(label).__name__}, "
                 f"expected str or None (got {label!r})",
-                "Convert labels to strings, e.g. labels=[str(x) for x in values]",
+                f"Convert {noun.lower()} to strings, "
+                f"e.g. {context}=[str(x) for x in values]",
             )
 
 

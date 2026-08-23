@@ -139,10 +139,17 @@ def run_flatten_dataset(
                 raise typer.Exit(1)
 
             flat = GSplatData.from_default_selection(node).flattened()
-            flat = GSplatData.from_additive_sublods(
-                list(flat.additive_sublods),
-                stats=stats_after_structure_change(stats),
-            )
+            # The default-selection factory may preserve a matrix-shaped input's
+            # stats; keep the root-level provenance/fitting stats from the source
+            # tree — minus its TOPOLOGY record, which this command has just
+            # invalidated: the output is one flat leaf, so an inherited
+            # `lod_kind: substitutive` / `n_substitutive_levels: 4` /
+            # `lod_cutpoints: [...]` describes a tree that no longer exists (#1600).
+            if stats:
+                flat = GSplatData.from_additive_sublods(
+                    list(flat.additive_sublods),
+                    stats=stats_after_structure_change(stats),
+                )
             aprint(
                 f"Flattened {len(leaves)} leaf/leaves → {flat.n_splats:,} splats "
                 f"({flat.ndim}D, single matrix-shaped leaf)"

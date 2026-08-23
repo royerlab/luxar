@@ -10,7 +10,12 @@
  */
 
 import { test, expect, type Locator, type Page } from './fixtures';
-import { focusCanvas, waitForLuxarReady, waitForNextRender } from './helpers';
+import {
+  focusCanvas,
+  isFocusOnTypingSurface,
+  waitForLuxarReady,
+  waitForNextRender,
+} from './helpers';
 
 const TEST_4D_DATASET =
   'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_4d.luxar.zarr';
@@ -229,6 +234,56 @@ test.describe('First-Time User Experience', () => {
     // browser after Escape closes it.
     await page.keyboard.press('o');
     await expect(browser).toBeVisible({ timeout: 5000 });
+  });
+
+  test('`O` closes the dataset browser it opened (round-trip toggle)', async ({ page }) => {
+    test.info().annotations.push({
+      type: 'allow-console-errors',
+      description:
+        'Opening the dataset browser triggers directory listing that 404s on the static test server.',
+    });
+    // Issue #1922: the browser used to autofocus its search field, which trips
+    // `InputHandler`'s typing guard — the second `O` was swallowed as typing
+    // and the "toggle" only ever opened. Initial focus is now on the panel
+    // container, so `O` reaches the global binding and closes it.
+    const browser = await openViewerReadyForShortcut(page);
+
+    await page.keyboard.press('o');
+    await expect(browser).toBeVisible({ timeout: 5000 });
+
+    // Focus must not be on a typing surface, or the next `O` is swallowed.
+    expect(await isFocusOnTypingSurface(page)).toBe(false);
+
+    // The critical half: `O` again must CLOSE it, with no Escape in between.
+    await page.keyboard.press('o');
+    await expect(browser).toBeHidden({ timeout: 5000 });
+  });
+
+  test('typing filters the dataset listing from the first keystroke', async ({ page }) => {
+    test.info().annotations.push({
+      type: 'allow-console-errors',
+      description:
+        'Opening the dataset browser triggers directory listing that 404s on the static test server.',
+    });
+    // The other half of #1922: dropping the autofocus must not cost
+    // type-to-filter. The first printable key is forwarded into the search
+    // field by the panel-level `installTypeToFilter` handler.
+    const browser = await openViewerReadyForShortcut(page);
+    await page.keyboard.press('o');
+    await expect(browser).toBeVisible({ timeout: 5000 });
+
+    // The search bar renders once a listing produced entries. The E2E server
+    // (`python3 -m http.server`) always emits an HTML listing, so this is a
+    // hard requirement, not a "skip if the server can't list" — skipping here
+    // would silently retire the only E2E coverage of this behaviour.
+    const searchBar = page.locator('#luxar-dataset-browser-search-bar');
+    await expect(searchBar).toBeVisible({ timeout: 5000 });
+
+    await page.keyboard.press('z');
+
+    const search = page.locator('#luxar-dataset-browser-search');
+    await expect(search).toBeFocused();
+    await expect(search).toHaveValue('z');
   });
 
   test('Escape closes the dataset browser even when focus is in a text input', async ({ page }) => {

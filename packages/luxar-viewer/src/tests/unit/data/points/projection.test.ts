@@ -1426,6 +1426,20 @@ describe('projectPointsTo3D — elementIds map', () => {
     expect(result.elementIds?.[0]).toBe(2048);
   });
 
+  it('emits elementIds for a keyed node (has_keys only)', () => {
+    const result = projectPointsTo3D(
+      wasm,
+      new Float32Array(issueCount * 3),
+      null,
+      null,
+      null,
+      makeViewState(),
+      issueRanges,
+      makeCtx({ nodeAttrs: makeAttrs({ has_keys: true }) })
+    );
+    expect(result.elementIds?.[0]).toBe(2048);
+  });
+
   it('emits on-disk indices for the multi-range shape from the issue', () => {
     // Ranges [(2048, 4096), (4096, 6000)] → 3952 visible points, so slot 0 is
     // on-disk 2048. Pre-fix `elementIds` was never populated at all.

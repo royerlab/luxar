@@ -377,8 +377,8 @@ class Scene(Group):
 
         Args:
             text: The text content to display. When ``hover`` is True, this
-                is a template with ``{hover_label}``, ``{hover_node}``,
-                ``{hover_index}`` placeholders.
+                is a template with ``{hover_label}``, ``{hover_key}``,
+                ``{hover_node}``, ``{hover_index}`` placeholders.
             position: (x, y) in normalized screen coords [0, 1]. Origin is top-left.
             name: Optional overlay name. Auto-generated if None.
             font_size: Font size as fraction of viewport height (default 0.025 = 2.5vh).
@@ -538,7 +538,7 @@ class Scene(Group):
         Args:
             html: HTML content string (will be sanitized). When ``hover``
                 is True, this is a template with ``{hover_label}``,
-                ``{hover_image_label}``, ``{hover_node}``,
+                ``{hover_key}``, ``{hover_image_label}``, ``{hover_node}``,
                 ``{hover_index}`` placeholders.
             position: (x, y) in normalized screen coords [0, 1].
             name: Optional overlay name. Auto-generated if None.

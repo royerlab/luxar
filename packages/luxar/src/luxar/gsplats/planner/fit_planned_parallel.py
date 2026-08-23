@@ -349,7 +349,6 @@ def fit_planned_parallel(
             verbose=verbose,
             image_min=fit_image_min(result.meta),
             stats=fit_stats,
-            partition=is_partition,
         )
         result.meta["fit_stats"] = fit_stats
     else:

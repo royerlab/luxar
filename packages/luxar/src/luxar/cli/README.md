@@ -367,7 +367,7 @@ luxar gsplat slice input.gsplats.zarr output.gsplats.zarr ":50, 20:80, :"
 ```
 
 #### `luxar gsplat compare`
-Compare reconstruction quality against a reference volume (PSNR, SSIM, MSE).
+Compare reconstruction quality against a reference volume (PSNR, SSIM, MSE). Partition and nested stores are scored over their default-rendered selection: all parts and each LOD group's finest level. The reported compression ratio covers the whole store, including coarse levels that are not scored.
 ```bash
 luxar gsplat compare fitted.gsplats.zarr original.tiff
 luxar gsplat compare fitted.gsplats.zarr original.npy --device cuda --output-json metrics.json
