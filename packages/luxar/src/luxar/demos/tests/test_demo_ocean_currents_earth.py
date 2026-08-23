@@ -9,11 +9,13 @@ texture), so those are pinned here. No network and no IO.
 from __future__ import annotations
 
 from pathlib import Path
+from types import ModuleType
 
 import numpy as np
 import pytest
 
-from luxar.demos import demo_ocean_currents_earth
+from luxar._zarr_compat import consolidate, open_group
+from luxar.demos import demo_global_rivers_earth, demo_ocean_currents_earth
 from luxar.demos.demo_ocean_currents_earth import (
     LINE_OPACITY,
     MAX_GLOBE_POINTS_PER_NODE,
@@ -36,6 +38,49 @@ from luxar.typing_utils.constants import (
     MAX_POINTS_PER_POINTS_NODE,
     MAX_SEGMENTS_PER_LINES_NODE,
 )
+
+
+@pytest.mark.parametrize(
+    "demo_module,download_name",
+    [
+        (demo_ocean_currents_earth, "download_sources"),
+        (demo_global_rivers_earth, "_download_sources"),
+    ],
+)
+def test_scene_gate_rebuilds_only_for_a_stale_builder(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    demo_module: ModuleType,
+    download_name: str,
+) -> None:
+    output_path = tmp_path / "scene.luxar.zarr"
+    group = open_group(output_path, mode="w")
+    group.attrs["builder_fingerprint"] = "older-builder"
+    consolidate(group)
+
+    reached_download = False
+
+    def stop_at_download() -> tuple[Path, Path]:
+        nonlocal reached_download
+        reached_download = True
+        raise RuntimeError("download reached")
+
+    monkeypatch.setattr(demo_module, "CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(demo_module, "RECOMPUTE", False)
+    monkeypatch.setattr(demo_module, "KEEP_STALE", False)
+    monkeypatch.setattr(demo_module, download_name, stop_at_download)
+
+    with pytest.raises(RuntimeError, match="download reached"):
+        demo_module.load_or_build_scene(output_path)
+    assert reached_download
+
+    group = open_group(output_path, mode="a")
+    group.attrs["builder_fingerprint"] = demo_module.FINGERPRINT
+    consolidate(group)
+    reached_download = False
+
+    assert demo_module.load_or_build_scene(output_path) == output_path
+    assert not reached_download
 
 
 def _uniform_eastward_field(nlat: int = 41, nlon: int = 80) -> LonLatField:

@@ -21,7 +21,7 @@ from typing import Any, Callable, Final, NamedTuple, Optional, Union, overload
 import numpy as np
 from arbol import aprint, asection
 
-from .._zarr_compat import read_node_attrs
+from .._zarr_compat import is_consolidated, read_node_attrs
 from ..core.dimensions import Dimension, Dimensions
 from ..typing_utils.aliases import PathLike
 from ..typing_utils.config import check_dataset_size_warning
@@ -325,9 +325,9 @@ def scene_is_current(
     missing streamlines had been fixed three weeks earlier, because the fix
     never rebuilt the stale store on disk.
 
-    So a scene is current only when it exists AND was written by this exact
-    builder. A scene from before fingerprinting carries no attr and is treated
-    as stale — one rebuild, then it stamps itself.
+    So a scene is current only when its save finished AND it was written by
+    this exact builder. A scene from before fingerprinting carries no attr and
+    is treated as stale — one rebuild, then it stamps itself.
 
     This gates SCENE ASSEMBLY only. Downloads, gsplat fits and precomputed
     bundles keep their own caches under ``~/.cache/luxar``, so a source edit
@@ -350,6 +350,8 @@ def scene_is_current(
         return False
     if keep_stale:
         return True
+    if not is_consolidated(output_path):
+        return False
     if not fingerprint:
         # Unreadable source: no basis to call it stale, and rebuilding a large
         # scene on a bad guess is worse than serving the one on disk.

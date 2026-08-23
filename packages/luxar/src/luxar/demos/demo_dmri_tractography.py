@@ -159,6 +159,7 @@ Usage:
     python -m luxar.demos.demo_dmri_tractography
     python -m luxar.demos.demo_dmri_tractography --no-serve
     python -m luxar.demos.demo_dmri_tractography --recompute
+    python -m luxar.demos.demo_dmri_tractography --keep-stale
     python -m luxar.demos.demo_dmri_tractography --per-bundle=3000 --points=20
 
 Controls:
@@ -551,6 +552,7 @@ FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
 RECOMPUTE = FLAGS["recompute"]
+KEEP_STALE = FLAGS["keep_stale"]
 
 #: Identifies the builder that wrote the scene, alongside the sizing knobs and
 #: authored schema version in :data:`SCENE_MARKER` (#1957).
@@ -1126,8 +1128,11 @@ def load_or_build_scene(output_path: Path) -> Path:
     if (
         output_path.exists()
         and not RECOMPUTE
-        and scene_marker_matches(
-            SCENE_MARKER, points=POINTS_PER_STREAMLINE, per_bundle=PER_BUNDLE
+        and (
+            KEEP_STALE
+            or scene_marker_matches(
+                SCENE_MARKER, points=POINTS_PER_STREAMLINE, per_bundle=PER_BUNDLE
+            )
         )
     ):
         aprint(f"Using existing scene: {output_path}")

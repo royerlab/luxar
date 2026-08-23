@@ -313,6 +313,24 @@ class TestSceneMarker:
         marker = self._write(tmp_path / "scene_build.json", "{not json")
         assert not _demo.scene_marker_matches(marker, points=28, per_bundle=6000)
 
+    def test_keep_stale_reuses_an_existing_scene(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        output_path = tmp_path / "scene.luxar.zarr"
+        output_path.mkdir()
+        monkeypatch.setattr(_demo, "KEEP_STALE", True)
+        monkeypatch.setattr(_demo, "RECOMPUTE", False)
+        monkeypatch.setattr(
+            _demo, "scene_marker_matches", lambda *args, **kwargs: False
+        )
+        monkeypatch.setattr(
+            _demo,
+            "load_or_build_bundles",
+            lambda **kwargs: pytest.fail("stale scene should have been reused"),
+        )
+
+        assert _demo.load_or_build_scene(output_path) == output_path
+
 
 class TestNodeBudget:
     """The two viewer limits the sizing constants exist to respect."""

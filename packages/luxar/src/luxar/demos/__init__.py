@@ -64,6 +64,7 @@ from ._dependencies import (
 )
 
 __all__ = [
+    "BUILDER_FINGERPRINT_ATTR",
     "INSTALL_SPECS",
     "LOCAL_FIT_DIRNAME",
     "BundleMemberNotFound",
@@ -73,7 +74,6 @@ __all__ = [
     "DependencyStatus",
     "LocalComputeDataset",
     "MissingDependencyError",
-    "BUILDER_FINGERPRINT_ATTR",
     "add_demo_caption",
     "cache_computed",
     "cached_download",
@@ -81,6 +81,7 @@ __all__ = [
     "create_random_spheres",
     "create_time_series_demo",
     "dataset_spec",
+    "demo_source_fingerprint",
     "detect_device",
     "ensure_dataset",
     "extras_for",
@@ -97,7 +98,6 @@ __all__ = [
     "load_precomputed_bundle",
     "load_precomputed_gsplats",
     "local_fit_path",
-    "demo_source_fingerprint",
     "parse_demo_flags",
     "parse_int_arg",
     "parse_path_arg",

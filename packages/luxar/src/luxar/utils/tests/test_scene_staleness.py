@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from luxar._zarr_compat import open_group
+from luxar._zarr_compat import consolidate, open_group
 from luxar.utils.demos import (
     BUILDER_FINGERPRINT_ATTR,
     demo_source_fingerprint,
@@ -22,12 +22,14 @@ from luxar.utils.demos import (
 )
 
 
-def _write_scene(path: Path, fingerprint: str | None) -> Path:
+def _write_scene(path: Path, fingerprint: str | None, *, finished: bool = True) -> Path:
     """Create a minimal zarr group, optionally stamped with ``fingerprint``."""
     group = open_group(path, mode="w")
     group.attrs["type"] = "scene"
     if fingerprint is not None:
         group.attrs[BUILDER_FINGERPRINT_ATTR] = fingerprint
+    if finished:
+        consolidate(group)
     return path
 
 
@@ -67,6 +69,11 @@ def test_missing_scene_is_not_current(tmp_path: Path) -> None:
 def test_matching_fingerprint_is_current(tmp_path: Path) -> None:
     scene = _write_scene(tmp_path / "s.luxar.zarr", "abc123")
     assert scene_is_current(scene, "abc123") is True
+
+
+def test_matching_fingerprint_on_unfinished_scene_is_stale(tmp_path: Path) -> None:
+    scene = _write_scene(tmp_path / "s.luxar.zarr", "abc123", finished=False)
+    assert scene_is_current(scene, "abc123") is False
 
 
 def test_differing_fingerprint_is_stale(tmp_path: Path) -> None:
