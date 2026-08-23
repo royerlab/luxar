@@ -259,7 +259,7 @@ describe('initPicking', () => {
   });
 
   describe('interaction template diagnostics', () => {
-    it('warns once for each malformed authored link and names the node', async () => {
+    it('warns once per malformed template and names its first node', async () => {
       (getSceneLoader as unknown as ReturnType<typeof vi.fn>).mockReturnValue(
         makeSceneLoader({ hasStore: true })
       );
@@ -268,10 +268,16 @@ describe('initPicking', () => {
       const malformed = new THREE.Group();
       malformed.name = 'bad-links';
       malformed.userData = { attrs: { link: 'javascript:alert(1)' } };
+      const duplicatePart = new THREE.Group();
+      duplicatePart.name = 'bad-links/part_1';
+      duplicatePart.userData = { attrs: { link: 'javascript:alert(1)' } };
+      const relative = new THREE.Group();
+      relative.name = 'relative-links';
+      relative.userData = { attrs: { link: '/search/{hover_index}' } };
       const valid = new THREE.Group();
       valid.name = 'good-links';
       valid.userData = { attrs: { link: 'https://example.org/{hover_index}' } };
-      root.add(malformed, valid);
+      root.add(malformed, duplicatePart, relative, valid);
       const scene = new THREE.Scene();
       scene.add(root);
       const warning = vi.spyOn(log, 'warning').mockImplementation(() => undefined);
@@ -283,9 +289,16 @@ describe('initPicking', () => {
         getOverlayManager: () => undefined,
       });
 
-      expect(warning).toHaveBeenCalledExactlyOnceWith(
+      expect(warning).toHaveBeenCalledTimes(2);
+      expect(warning).toHaveBeenNthCalledWith(
+        1,
         Modules.APP,
         'Invalid link template on node "bad-links": link scheme "javascript:" is not allowed (only http and https)'
+      );
+      expect(warning).toHaveBeenNthCalledWith(
+        2,
+        Modules.APP,
+        'Invalid link template on node "relative-links": link is not an absolute URL (a relative link would resolve against the viewer\'s own origin)'
       );
     });
   });

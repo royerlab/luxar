@@ -136,6 +136,7 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
   let hasAnyLabels = false;
   let hasAnyImageLabels = false;
   let hasAnyInteraction = false;
+  const linkDiagnostics = new Map<string, { nodeName: string; rejection: string | null }>();
   root.traverse((obj) => {
     const attrs = obj.userData?.attrs;
     if (attrs?.has_labels) {
@@ -152,20 +153,25 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
     if (typeof attrs?.link === 'string' || typeof attrs?.copy === 'string') {
       hasAnyInteraction = true;
     }
-    // Report a `link` that can never resolve, ONCE per node at load, naming the
-    // layer. Without this the only symptom of a typo'd template is a click that
-    // does nothing — no error, nothing in the file, nothing in the console.
+    // Inspect each distinct template once. Partition adders copy non-
+    // compositing attrs onto every part, so warning directly in this traversal
+    // would flood the console with one identical line per leaf.
     // Deliberately only element-INDEPENDENT faults (bad scheme, relative URL,
     // over-length): a per-element miss such as an unlabelled element is normal
     // and must not log per hover. The Python writer refuses these at authoring
     // time, so reaching here means a hand-edited or third-party store.
-    if (typeof attrs?.link === 'string') {
-      const rejection = explainLinkRejection(attrs.link);
-      if (rejection) {
-        log.warning(Modules.APP, `Invalid link template on node "${obj.name}": ${rejection}`);
-      }
+    if (typeof attrs?.link === 'string' && !linkDiagnostics.has(attrs.link)) {
+      linkDiagnostics.set(attrs.link, {
+        nodeName: obj.name,
+        rejection: explainLinkRejection(attrs.link),
+      });
     }
   });
+  for (const { nodeName, rejection } of linkDiagnostics.values()) {
+    if (rejection) {
+      log.warning(Modules.APP, `Invalid link template on node "${nodeName}": ${rejection}`);
+    }
+  }
   // Provision picking when the scene declares labels, declares an interaction
   // template, OR an embedder `selection` listener exists at load time. Without
   // any of those there is no consumer, so skip the pick-mesh/GPU overhead
