@@ -28,13 +28,13 @@ the writers by their fully-qualified submodule path.
 ```
 labels/
 ├── __init__.py        # empty — package marker only
-├── text_labels.py     # write_labels_csr — UTF-8 string labels
+├── text_labels.py     # write_labels_csr — UTF-8 strings (labels AND keys)
 └── image_labels.py    # normalize_image_label + write_image_labels_csr
 ```
 
 ## API
 
-### `text_labels.write_labels_csr(group, labels, n_elements, compressor, sort_order=None)`
+### `text_labels.write_labels_csr(group, labels, n_elements, compressor, sort_order=None, channel="labels")`
 
 Encode a sequence of strings (one per element) as UTF-8 and write the CSR pair:
 
@@ -45,7 +45,23 @@ Encode a sequence of strings (one per element) as UTF-8 and write the CSR pair:
 Sets `group.attrs["has_labels"] = True`. Raises `ValueError` if
 `len(labels) != n_elements`. Both arrays are chunked at 65536 elements.
 
-### `text_labels.write_ladder_union_labels_csr(group, level_labels, level_sort_orders, n_elements, compressor)`
+`channel` selects WHICH per-element string channel is written; the encoding,
+chunking and length rule are identical for both. `STRING_CHANNELS` is the single
+mapping from channel name to the three on-disk names, so the two channels cannot
+drift apart:
+
+| `channel` | offsets array | bytes array | presence attr |
+|---|---|---|---|
+| `"labels"` (default) | `label_offsets` | `label_bytes` | `has_labels` |
+| `"keys"` | `key_offsets` | `key_bytes` | `has_keys` |
+
+`keys` (#1917) carries the machine-readable string a `link` / `copy` template
+substitutes as `{hover_key}` — the bare id a composite prose label hides. It is
+independent of `labels`: a node may carry either, both, or neither. The length
+error names the channel, so a bad `keys` length does not report "Labels
+length".
+
+### `text_labels.write_ladder_union_labels_csr(group, level_labels, level_sort_orders, n_elements, compressor, channel="labels")`
 
 Write ONE CSR pair on the **parent** node of an additive-LOD ladder, describing
 the ladder's committed **union**. Concatenates each level's labels in that
@@ -55,17 +71,26 @@ already in final order, so no further permutation is applied.
 
 Raises `ValueError` if `level_labels` and `level_sort_orders` differ in length;
 a union/total mismatch is caught by `write_labels_csr`'s own length check.
+`channel` is forwarded verbatim, so a keys-carrying ladder writes its union to
+`key_offsets` / `key_bytes` on the same parent.
 
-### `text_labels.validate_ladder_labels(levels, positions_key) -> bool`
+A ladder that carries `keys` but no `labels` still needs every level's
+`sort_order`, so the multi-LOD writers ask for them when the ladder is labelled
+**or** keyed. Deciding on `labelled` alone silently fell back to source order and
+paired every key with the wrong element.
+
+### `text_labels.validate_ladder_labels(levels, positions_key, channel="labels") -> bool`
 
 Pre-write gate for a ladder's labels, returning whether the ladder is labelled at
-all. **Pure** (reads only `levels`), so the multi-LOD writers call it BEFORE
+all. Called once per channel — the two verdicts are independent, and a ladder may
+be keyed without being labelled. **Pure** (reads only `levels`), so the multi-LOD writers call it BEFORE
 `require_group` — a rejected ladder must not leave an empty node behind. Enforces
 all-or-nothing presence across levels (the error names the first unlabelled level)
 and each level's label count against that level's own element count. The length
 check is skipped when any level's element array is not `(N, D)` — that fault
 belongs to the per-level writer's positions validator, which names it properly.
-`positions_key` is `"positions"` for Points and `"vertices"` for Lines.
+`positions_key` is `"positions"` for Points and `"vertices"` for Lines. The
+all-or-nothing error names the channel it is enforcing.
 
 ### `image_labels.check_image_label_type(item) -> None`
 
