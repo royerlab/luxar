@@ -79,6 +79,15 @@ const PEAK_MODES = ['max', 'normal', 'opaque'] as const;
  * These are measurements, not budgets — `max` reproduces the analytic
  * 1/(uRIF·σ) to ~1% (see the cross-check at the assertion site), so the band
  * around them below can afford to be narrow.
+ *
+ * RE-MEASURE ALL SIX after any change to the `LIFT_PARITY_*` fixture constants
+ * (generate_test_data.py:2316 — `LIFT_PARITY_OPACITY` above all, whose own
+ * comment invites tuning it), to the radii or blob geometry, to the pinned
+ * camera, or to the viewport. Only `max` (analytic, 1/(uRIF·σ)) and `opaque`
+ * (`max` × uOpacity) can be re-derived on paper; `normal`'s 29.7 / 7.8 is pure
+ * measurement, because both families are over-composited and clipping there.
+ * Raising the opacity from 0.003 to 0.01 turns four of these six cells red with
+ * a message blaming a shader regression that did not happen.
  */
 const PEAK_DIVERGENCE_EXPECTED: Record<(typeof PEAK_MODES)[number], readonly [number, number]> = {
   max: [30.7, 12.2],
@@ -113,9 +122,12 @@ const PEAK_DIVERGENCE_EXPECTED: Record<(typeof PEAK_MODES)[number], readonly [nu
  * goes 27.0 → 11.1, outside [18.0, 40.5] (and `max` r=0.05 → 29.6, `opaque`
  * r=0.02 → 4.42).
  *
- * Why 50% and not tighter: `normal`'s gsplat peak is already saturating (0.913
- * at r=0.02, 0.855 at r=0.05), so a driver that clips it the rest of the way to
- * 1.0 moves those two cells by up to ~17% with nothing actually wrong.
+ * Why a factor of 1.5 and not tighter: `normal`'s gsplat peak is already
+ * saturating — 0.855 at r=0.05, and ~0.999 at r=0.02 (0.0336 × 29.73), which
+ * VOLUMETRIC_BLENDING_SPEC.md independently calls clipped. A driver that clips
+ * r=0.05 the rest of the way to 1.0 moves THAT cell by up to ~17% with nothing
+ * actually wrong; r=0.02 has ~0.1% of headroom left and cannot move that way at
+ * all. One ~17% cell is the widest such move, and 1.5× clears it with room.
  *
  * And `normal`'s UPPER edge is structurally dead — do not assume all six checks
  * are two-sided. Its points peak is 0.0336 / 0.1094 and the gsplat peak cannot
@@ -142,8 +154,11 @@ const PEAK_DIVERGENCE_BAND = 0.5;
  *                into RGB and lose nothing. Net: the gsplat reads DIMMER. The
  *                arithmetic closes — multiplying the opaque peak ratios by
  *                1/0.003 (the fixture's authored uOpacity) recovers `max`'s to
- *                within 3% at all four radii, i.e. one radius-independent
- *                factor and nothing density- or radius-dependent.
+ *                within ~3% at the three finer radii and ~6% at r=0.40, where
+ *                the printed 0.005 carries only one significant figure
+ *                (0.005/0.003 = 1.667 against `max`'s 1.57). One
+ *                radius-independent factor, nothing density- or
+ *                radius-dependent.
  */
 const PEAK_DIVERGENCE_DIRECTION: Record<(typeof PEAK_MODES)[number], 'brighter' | 'dimmer'> = {
   max: 'brighter',
@@ -167,6 +182,10 @@ function toLinear(v: number): number {
 /**
  * A crop pixel counts as COVERED above ≈3.0e-4 — the LUMINANCE of a NEUTRAL
  * pixel one sRGB code point above black.
+ *
+ * The predicate is strict (`lum > floor`) and a neutral code-1 pixel evaluates
+ * to EXACTLY this value (the Rec.709 weights sum to 1), so it does NOT clear
+ * the bar: the smallest neutral that counts is code point 2.
  *
  * It is a per-channel linear value compared against a Rec.709 luminance, so it
  * is only "the smallest thing an 8-bit screenshot can encode" for grey: a
@@ -416,11 +435,11 @@ function logMetricsTable(mode: string, rows: ParityRow[]): void {
   // Mean and peak are small linear luminances, so they only read in exponential
   // form; coverage and the ratios are O(1) and read better fixed.
   //
-  // `frac` spells non-finite values out and pads to 8 rather than 7: a points
-  // cell that rendered nothing gives meanRatio = Infinity, and
-  // `(Infinity).toFixed(3)` is the 8-character string 'Infinity', which
-  // padStart(7) leaves alone — mis-aligning the column in precisely the row
-  // this table is printed BEFORE the guards in order to diagnose.
+  // `frac` spells non-finite values out rather than printing them: a points
+  // cell that rendered nothing gives meanRatio = Infinity, and 'inf' reads in
+  // the table where a numeric formatting of it would not. Its padStart(8) is
+  // set by the ' pts cov' header column below (nine characters including the
+  // leading space), not by anything the function can emit.
   const lum = (v: number): string => v.toExponential(3).padStart(9);
   const frac = (v: number): string =>
     (Number.isFinite(v) ? v.toFixed(3) : Number.isNaN(v) ? 'nan' : v > 0 ? 'inf' : '-inf').padStart(
@@ -454,40 +473,36 @@ function expectParity(ratios: number[], mode: string, band = PARITY_TOLERANCE): 
 
 test.describe('Lifted-gsplat / Points parity', () => {
   /**
-   * The config's 60 s per-test default does not fit this fixture, and
-   * `beforeEach` runs inside it: `page.goto` under the config's 60 s
-   * `navigationTimeout`, then two 60 s `waitForFunction` budgets (the debug
-   * handle, then eight committed leaves), then a 3 s settle, then
-   * `openBlendControl`, whose three retries each pay `focusCanvas`'s click, a
-   * `waitForSelector(…, 5000)` and a `rail.click()` under the 10 s
-   * `actionTimeout`, plus a 1 s settle. The κ test then measures TWICE, and
-   * each `cellLuminances` can spend CANVAS_READY_TIMEOUT on the visibility wait
-   * and CANVAS_READY_TIMEOUT again on the screenshot.
+   * Pin the viewport instead of inheriting `devices['Desktop Chrome']` from
+   * playwright.config.ts. Two things here silently assume 1280×720:
+   *   - `CROP_HALF_FRAC = 58/720`, whose numerator is a pixel count.
+   *   - Every number in `PEAK_DIVERGENCE_EXPECTED`. At r=0.02 the points sprite
+   *     is only ~1–2 px, right at the 1.5 px floor in
+   *     `rendering/materials/point/shader-glsl.ts:187` (compensated by
+   *     `sizeScale²` at :293). A SMALLER viewport pushes it under the floor and
+   *     drops the points peak by up to 2.25×, taking the magnitude outside its
+   *     band on a pure environment change with no product defect.
+   */
+  test.use({ viewport: { width: 1280, height: 720 } });
+
+  /**
+   * The config's 60 s per-test default is measurably too tight: in one
+   * verification run the κ test took 56.6 s, and with a second worker hammering
+   * the shared :9000 data server four of the seven tests died on the generic
+   * `Test timeout of 60000ms exceeded` when the real cause was the scene-load
+   * `waitForFunction`. The payoff of raising it is diagnostic, not capacity —
+   * at 180 s those same failures surfaced as `page.waitForFunction: Timeout
+   * 60000ms exceeded`, letting the INNER bounded waits (that one,
+   * CANVAS_READY_TIMEOUT, `actionTimeout`) name their own cause.
    *
-   * 180 s does NOT cover the sum of those saturated bounds — goto 60 + two
-   * scene-load 60s alone overflow it, before `openBlendControl` and the κ
-   * test's two measurements — and that is deliberate. Two things are measured
-   * rather than assumed:
-   *   - The 60 s default is genuinely too tight. In one verification run the κ
-   *     test took 56.6 s. In another, with a second worker hammering the shared
-   *     :9000 data server, four of the seven tests died on the generic `Test
-   *     timeout of 60000ms exceeded` while the real cause was the scene-load
-   *     `waitForFunction`.
-   *   - The payoff of raising it is diagnostic, not capacity. At the raised
-   *     budget those same failures surfaced as `page.waitForFunction: Timeout
-   *     60000ms exceeded` — naming the scene-load predicate instead of the
-   *     whole test. The point is to let the INNER, bounded waits (that one,
-   *     CANVAS_READY_TIMEOUT, `actionTimeout`) report their own cause.
-   * A run that saturates two 60 s scene-load budgets is failing anyway and
-   * should fail promptly rather than hold a worker for five minutes, so the
-   * value covers the realistic slow path and not the pathological one.
-   *
-   * 180 s rather than 300 s is also a convention call. frame-pacing.spec.ts:123
-   * is the only 300 s precedent in the tree and its describe holds ONE test;
-   * every other one (test-fixtures-rendering.spec.ts:55, webgl-errors.spec.ts:52,
-   * all-examples-smoke-test.spec.ts:112) is 120 s. Across these seven tests at
-   * the daemon's `--retries 2`, a wedged spec costs 7 × 3 × 180 s = 63 min,
-   * against 105 min at 300 s.
+   * 180 s deliberately does NOT cover every inner bound saturating at once:
+   * `goto` plus the two 60 s scene-load waits exhaust it exactly and the 3 s
+   * settle tips it over. A run that saturates those is failing anyway and
+   * should fail promptly rather than hold a worker for five minutes. 180 s
+   * rather than 300 s is also a convention call — 120 s is the usual raise in
+   * this suite and 300 s exists once, on a single-test describe — and across
+   * seven tests at the daemon's `--retries 2` a wedged spec costs
+   * 7 × 3 × 180 s = 63 min, against 105 min at 300 s.
    */
   test.describe.configure({ timeout: 180000 });
 
@@ -547,24 +562,16 @@ test.describe('Lifted-gsplat / Points parity', () => {
       logMetricsTable(mode, rows);
       expectPointsRendered(rows);
       const direction = PEAK_DIVERGENCE_DIRECTION[mode];
-      // Asserted on the PEAK, not on the crop mean, because the peak is the
-      // quantity peak projection actually calibrates: the gsplat peak branch
-      // renders a_lift = opacity/(uRIF·σ) unboosted — without the sum branch's
-      // `rayIntegrationBoost · dilationCompensation` — and under `max` — whose
-      // points peak is a flat authored opacity at every radius — the measured
-      // ratio reproduces the analytic 1/(uRIF·σ) to ~1% (30.8 / 12.3 / 4.11 /
-      // 1.54 predicted vs 30.66 / 12.15 / 4.05 / 1.57 measured). The mean cannot
-      // be read that way: `opaque` is the only peak mode with depthWrite, and a
-      // gsplat quad stamps one centre depth across its whole truncated
-      // footprint, so faint tails depth-reject the bright cores behind them and
-      // gsplat coverage collapses 0.34 → 0.05 over the radii on peaks that are
-      // bit-identical to `max`'s. That is geometry, not photometry — the mean
-      // (coverage × value) swallows it whole and the peak is immune to it.
-      //
-      // The SUM_MODES tests and the κ test stay on the MEAN for the mirror
-      // reason: their peak ratio is 0.66 at r=0.02 — a handful of 8-bit-
-      // quantised pixels, nowhere near surviving the 10% parity band — while
-      // their mean ratio sits at 0.96–0.99.
+      // Asserted on the PEAK, not the crop mean. It is the quantity peak
+      // projection calibrates (mechanism in PEAK_DIVERGENCE_DIRECTION; band in
+      // PEAK_DIVERGENCE_BAND; why the sum arms use the mean instead, in
+      // PARITY_TOLERANCE), and the cross-check those docblocks cite lives here:
+      // under `max` the measured ratio reproduces the analytic 1/(uRIF·σ) to
+      // ~1% — 30.8 / 12.3 / 4.11 / 1.54 predicted vs 30.66 / 12.15 / 4.05 /
+      // 1.57 measured. The mean cannot be read that way, because `opaque`'s
+      // depth-driven coverage collapse (0.34 → 0.05 over the radii, on peaks
+      // bit-identical to `max`'s — see logMetricsTable) is geometry, not
+      // photometry: the mean swallows it whole and the peak is immune to it.
       //
       // We assert the divergence is PRESENT rather than marking the whole test
       // `test.fail()`: an unconditional test.fail() silently accepts a blank
@@ -578,8 +585,9 @@ test.describe('Lifted-gsplat / Points parity', () => {
       // BAND, whose message names the expected value it left; `opaque`'s ratio
       // is effect C times #1993's uOpacity = 0.003, so run that product
       // forward:
-      //   C alone      max/normal collapse to ≈ 1, an order of magnitude under
-      //                their band floors (20.5 / 19.8), so the BAND fails.
+      //   C alone      max/normal collapse to ≈ 1, 5–20× under their band
+      //                floors (20.5 / 19.8 at r=0.02, 8.1 / 5.2 at r=0.05), so
+      //                the BAND fails.
       //                `opaque` keeps #1993 alone — 1 × 0.003, still 'dimmer' —
       //                and its magnitude jumps 10.8× → 333×, over its 16.2
       //                ceiling. Fold max/normal into the SUM_MODES loop.
@@ -601,6 +609,14 @@ test.describe('Lifted-gsplat / Points parity', () => {
       //                flip per cell and a cell at 0.999 reads 'dimmer' and
       //                passes. Delete these assertions and fold every peak mode
       //                into the SUM_MODES loop.
+      //
+      // Only the two finest radii are asserted: by r=0.40 `normal` diverges by
+      // just 1.028×, so DIRECTION is a coin flip and no relative band means
+      // anything there (`max`'s 1.57× is better but the same species). That
+      // costs real teeth — under the uRIF mutation above, `max` would go
+      // 4.05 → 9.85 at r=0.15 and 1.57 → 3.82 at r=0.40, both outside their
+      // bands. Two catches deliberately not taken, in exchange for not
+      // asserting on cells where the divergence has faded into the noise.
       for (const i of [0, 1]) {
         const ratio = rows[i].peakRatio;
         // A gsplat cell that rendered NOTHING would sail through a `dimmer`
@@ -618,9 +634,9 @@ test.describe('Lifted-gsplat / Points parity', () => {
           `r=${RADII[i]} in ${mode}: peak ratio ${ratio.toFixed(3)} — the lifted gsplat is ` +
             `expected to render ${direction} than its point`
         ).toBe(direction);
-        // The magnitude has to sit in a ±50% relative band around the value
-        // measured for THIS (mode, radius) — see PEAK_DIVERGENCE_BAND for why
-        // a single global window could not do this job.
+        // The magnitude has to sit within a factor of 1.5 either way of the
+        // value measured for THIS (mode, radius) — see PEAK_DIVERGENCE_BAND
+        // for why a single global window could not do this job.
         const magnitude = Math.max(ratio, 1 / ratio);
         const expected = PEAK_DIVERGENCE_EXPECTED[mode][i];
         const low = expected / (1 + PEAK_DIVERGENCE_BAND);
