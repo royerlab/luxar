@@ -356,14 +356,15 @@ for (const theme of THEMES) {
       'http://localhost:9000/datasets/examples/dimension_sliders_5d_example.luxar.zarr';
     await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug&dpr=1`);
     await waitForTheme(page, theme);
+    await waitForLuxarReady(page);
 
     // Let the scene settle (glass popover blurs the canvas behind it).
     await page.waitForTimeout(1000);
 
     await page.evaluate(() => {
-      document
-        .querySelector('[data-rail-id="nav"]')
-        ?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      const navButton = document.querySelector('[data-rail-id="nav"]');
+      if (!navButton) throw new Error('Navigation rail button not found');
+      navButton.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     });
 
     const popover = page.locator('.luxar-control-rail__popover');
@@ -394,14 +395,15 @@ for (const theme of THEMES) {
       'http://localhost:9000/datasets/examples/dimension_sliders_5d_example.luxar.zarr';
     await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug&dpr=1`);
     await waitForTheme(page, theme);
+    await waitForLuxarReady(page);
 
     // Let the scene settle (glass popover blurs the canvas behind it).
     await page.waitForTimeout(1000);
 
     await page.evaluate(() => {
-      document
-        .querySelector('[data-rail-id="home"]')
-        ?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      const homeButton = document.querySelector('[data-rail-id="home"]');
+      if (!homeButton) throw new Error('Home rail button not found');
+      homeButton.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     });
 
     const popover = page.locator('.luxar-control-rail__popover');
