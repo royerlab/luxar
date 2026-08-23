@@ -43,7 +43,8 @@ Tan, L., Xing, D., Chang, C.-H., Li, H., & Xie, X. S. (2018).
     "Three-dimensional genome structures of single diploid human cells."
     Science, 361(6405), 924–928. DOI: 10.1126/science.aat5641
 Data: GEO accession GSE117876 (``GSE117876_RAW.tar``), GM12878 / PBMC single
-    cells. Dip-C tools & ``.3dg`` format: https://github.com/tanlongzhi/dip-c
+    cells; human coordinates use the hg19 assembly. Dip-C tools & ``.3dg``
+    format: https://github.com/tanlongzhi/dip-c
 
 SELF-CONTAINED / CACHING
 ------------------------

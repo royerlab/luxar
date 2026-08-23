@@ -39,6 +39,7 @@ MIN_BEADS_PER_ARM = _demo.MIN_BEADS_PER_ARM
 GENOME_ASSEMBLY = _demo.GENOME_ASSEMBLY
 UCSC_WINDOW_BP = _demo.UCSC_WINDOW_BP
 _ucsc_region = _demo._ucsc_region
+_haplotype_geometry = _demo._haplotype_geometry
 
 
 class TestSplitChromHaplotype:
@@ -95,6 +96,19 @@ class TestUcscRegion:
 
     def test_shifts_window_at_chromosome_start(self) -> None:
         assert _ucsc_region("X", 20_000) == "chrX:1-100000"
+
+    def test_haplotypes_share_browser_locus_but_not_label(self) -> None:
+        base = {
+            "vertices": np.zeros((2, 3), dtype=np.float32),
+            "positions": np.array([1_000_000, 1_020_000], dtype=np.int64),
+            "color": np.ones(3, dtype=np.float32),
+            "chrom": "1",
+        }
+        maternal = _haplotype_geometry([{**base, "haplotype": 0}], 0)
+        paternal = _haplotype_geometry([{**base, "haplotype": 1}], 1)
+
+        assert maternal[3] == paternal[3]
+        assert maternal[2] != paternal[2]
 
 
 class TestBuildPolylines:
