@@ -1042,6 +1042,25 @@ describe('LuxarApp', () => {
       }
     });
 
+    it('removes the early browser listener and clears initializing state when init fails', async () => {
+      mockFetch.mockResolvedValue({ ok: true });
+      mockSceneManager.loadSceneData.mockRejectedValueOnce(new Error('initial load failed'));
+
+      await expect(
+        app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' })
+      ).rejects.toThrow('initial load failed');
+
+      const browserRegistration = mockAddEventListener.mock.calls.find(
+        (call) => call[0] === 'open-dataset-browser'
+      );
+      expect(browserRegistration).toBeDefined();
+      expect(mockRemoveEventListener).toHaveBeenCalledWith(
+        'open-dataset-browser',
+        browserRegistration![1]
+      );
+      expect(() => app.switchDataset('http://example.com/retry.zarr')).toThrow(/before init/);
+    });
+
     it('does not call history.replaceState when updateBrowserUrl is false', async () => {
       const replaceStateSpy = vi.spyOn(window.history, 'replaceState').mockImplementation(() => {});
 
