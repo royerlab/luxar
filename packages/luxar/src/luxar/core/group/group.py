@@ -171,7 +171,7 @@ class Group(Node):
                 Accepts List[bytes], List[PIL.Image], List[ndarray], List[Path],
                 or Dict[int, Any] for sparse assignment. Prefer pre-encoded
                 JPEG/WebP blobs for best compression.
-            keys: Optional list of machine-readable strings, one per element,
+            keys: Optional list of machine-readable strings, one per point,
                 for ``link`` / ``copy`` templates to substitute as
                 ``{hover_key}``. Same length rule and the same spatial
                 reordering as ``labels`` — a key stays paired with its element
@@ -314,7 +314,7 @@ class Group(Node):
                 Requires ``colormap`` in attrs. Mutually exclusive with ``colors``.
             labels: Optional list of strings, one per vertex. Used for hover tooltips.
             image_labels: Optional per-element images for hover thumbnails.
-            keys: Optional list of machine-readable strings, one per element,
+            keys: Optional list of machine-readable strings, one per vertex,
                 for ``link`` / ``copy`` templates to substitute as
                 ``{hover_key}``. Same length rule and the same spatial
                 reordering as ``labels`` — a key stays paired with its element
@@ -500,7 +500,7 @@ class Group(Node):
             labels: Optional per-vertex strings for hover tooltips.
             image_labels: Optional per-vertex images for hover thumbnails. Not
                 supported alongside ``partition``.
-            keys: Optional list of machine-readable strings, one per element,
+            keys: Optional list of machine-readable strings, one per vertex,
                 for ``link`` / ``copy`` templates to substitute as
                 ``{hover_key}``. Same length rule and the same spatial
                 reordering as ``labels`` — a key stays paired with its element
@@ -612,7 +612,7 @@ class Group(Node):
                 column is per-splat opacity in [0, 1]), RGB tuple, or None
             labels: Optional list of strings, one per splat. Used for hover tooltips.
             image_labels: Optional per-element images for hover thumbnails.
-            keys: Optional list of machine-readable strings, one per element,
+            keys: Optional list of machine-readable strings, one per splat,
                 for ``link`` / ``copy`` templates to substitute as
                 ``{hover_key}``. Same length rule and the same spatial
                 reordering as ``labels`` — a key stays paired with its element
