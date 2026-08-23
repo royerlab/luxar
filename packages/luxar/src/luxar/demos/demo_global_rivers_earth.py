@@ -443,9 +443,10 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
                 #    fills the opening frame selects the 41 MB level, not the
                 #    cheap ones. And its coarse levels are calibrated by
                 #    conserved render-light (integrated emission), which needs an
-                #    integrating blend: under `opaque` (NormalBlending +
-                #    depthWrite) the Gaussian tails never accumulate, so only the
-                #    dense cores paint and the globe renders as dark specks —
+                #    integrating blend: under `opaque` (depth-writing alpha-over;
+                #    gsplats emit alpha 1.0, so it is an overwrite for them) the
+                #    Gaussian tails never accumulate, so only the dense cores
+                #    paint and the globe renders as dark specks —
                 #    identical mid-load and fully settled.
                 #  * Fewer, bigger points (2M at radius 0.18) would genuinely fix
                 #    the wait — ~23 MB, solid at ~12 MB — but trades away zoom
