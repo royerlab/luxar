@@ -1,5 +1,11 @@
 """A fit's own reported metrics must be scored on the basis it reconstructs (#1173).
 
+Deliberately NOT marked `slow`, despite running real CPU fits (~6.5 s + ~1.8 s).
+CI runs `-m 'not slow'`, and these are the only coverage of the primary site, so
+marking them put the one test that justifies the change outside the gate: with the
+marker on, replacing `reference_on_fit_basis` in `results.py` with the identity
+left the whole non-slow fitting suite green. Keep them collected.
+
 The site that mattered most: `psnr_db`/`ssim`/`mse` are persisted into the store
 and printed by `gsplat info`, so a floor-penalised score is not a cosmetic
 problem — it is a published number that inverts comparisons between fits.
@@ -40,7 +46,6 @@ def _fit_psnr(volume: np.ndarray, floor) -> float:
     return float(stats["psnr_db"])
 
 
-@pytest.mark.slow
 def test_a_floored_fit_is_not_penalised_for_the_pedestal_it_removed() -> None:
     """The inversion this fix exists to remove.
 
@@ -61,7 +66,6 @@ def test_a_floored_fit_is_not_penalised_for_the_pedestal_it_removed() -> None:
     )
 
 
-@pytest.mark.slow
 def test_reported_metrics_use_the_recorded_image_min() -> None:
     """The score must be consistent with the level the store advertises, so a
     reader can reproduce it."""

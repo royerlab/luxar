@@ -207,6 +207,7 @@ def test_the_never_worse_guard_compares_on_one_basis(monkeypatch) -> None:
     )
     # A pedestal-offset MSE on this volume would sit at/above 500**2; on the
     # shifted basis the floor of the error is the signal only.
+    # Asserted unconditionally: both keys are always present under
+    # `never_worse=True`, so gating on `key in stats` only weakened the check.
     for key in ("mse_seed", "mse_refit"):
-        if key in stats and stats[key] is not None:
-            assert float(stats[key]) < 500.0**2
+        assert float(stats[key]) < 500.0**2
