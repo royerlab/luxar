@@ -16,6 +16,10 @@ Demos deliberately NOT listed, and why they are not violations:
 
 - ``demo_gsplats_3d_decimation_study`` -- four variants placed side by side; the
   bounding boxes are disjoint, so nothing overlaps.
+- ``demo_gsplats_lod_embryo_line`` -- one node per embryo, placed by disjoint
+  transforms.
+- ``demo_gsplats_recipes_tribolium`` -- one node per recipe, placed by disjoint
+  transforms.
 - ``demo_gsplats_4d_cell_tracking_challenge`` -- one node per crop, placed by
   disjoint transforms.
 - ``demo_storm_3d_microtubules`` -- two nodes separated on a ``view`` axis, so
