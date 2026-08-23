@@ -569,6 +569,130 @@ class TestPayloadFiles:
         assert attrs["type"] == "overlay_image"
         assert not any(p.name == "Zarr.json" for p in dst.rglob("*"))
 
+    def test_a_dangling_metadata_document_name_is_skipped_under_a_case_fold(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        restore_zarr_format: None,
+    ) -> None:
+        """The same dangling attr as above, on a case-INSENSITIVE filesystem —
+        the platforms this whole branch exists for, and the ones CI never runs
+        on. There, an open-by-name for ``Zarr.json`` is resolved by the OS onto
+        the group's own ``zarr.json``, so a read can never report "no such key"
+        for precisely the names whose absence decides skip-vs-refuse: the branch
+        was dead on macOS/Windows, every store of this shape was refused, and the
+        refusal quoted the metadata document's byte count as the payload's.
+
+        The fold is simulated at the narrowest seam that produces it — the copy's
+        own byte reader, made to resolve a name case-blind exactly as the
+        filesystem would. The fix decides the branch from a directory LISTING
+        instead, which no filesystem folds, so the skip must survive this patch.
+        """
+        # Pinned to format 3, the one whose node document IS named `zarr.json` —
+        # at format 2 the pair is `.zgroup`/`.zattrs` and there is nothing for
+        # this name to fold onto, so the fixture would not pose the question.
+        set_zarr_format(3)
+        src = _store_with_a_payload_attr(
+            tmp_path / "src.luxar.zarr", "Zarr.json", payload=None
+        )
+        exact_read = optimise_mod.read_raw_bytes
+
+        def case_insensitive_read(group: Any, filename: str) -> bytes | None:
+            """What macOS does: fall back to a case-blind match on the key."""
+            found = exact_read(group, filename)
+            if found is not None:
+                return found
+            for key in optimise_mod.list_raw_keys(group):
+                if key.lower() == filename.lower():
+                    return exact_read(group, key)
+            return None
+
+        monkeypatch.setattr(optimise_mod, "read_raw_bytes", case_insensitive_read)
+        # The patch really does fold, or the test proves nothing.
+        logo = open_group(src, mode="r")["overlays/logo"]
+        assert case_insensitive_read(logo, "Zarr.json") is not None
+
+        dst = tmp_path / "out.luxar.zarr"
+        optimise_store(src, dst, verify=True)
+        attrs = dict(open_group(dst, mode="r")["overlays/logo"].attrs)
+        assert attrs["image_file"] == "Zarr.json"
+        assert attrs["type"] == "overlay_image"
+        assert not any(p.name == "Zarr.json" for p in dst.rglob("*"))
+
+    def test_a_metadata_document_name_held_by_a_directory_is_skipped(
+        self, tmp_path: Path
+    ) -> None:
+        """:func:`list_raw_keys` reports every immediate child key — subgroups,
+        arrays and plain subdirectories, not only files. So a case-shifted
+        metadata-document name that is a DIRECTORY lists like a payload while
+        holding no bytes at all, and refusing over it would advise renaming a
+        file that does not exist to save bytes that do not exist. The read the
+        listing gates is what tells the two apart: it comes back empty-handed for
+        a directory, and the pass takes the same skip as for a dangling attr.
+        Case-sensitive filesystems only, as above."""
+        probe = tmp_path / "CaseProbe"
+        probe.write_text("x")
+        if (tmp_path / "caseprobe").exists():
+            pytest.skip("a case-insensitive filesystem cannot hold the fixture")
+        src = _store_with_a_payload_attr(
+            tmp_path / "src.luxar.zarr", "Zarr.json", payload=None
+        )
+        (src / "overlays" / "logo" / "Zarr.json").mkdir()
+        # The fixture really does pose the question: the name lists, so only the
+        # read outcome can separate it from the refusable shape.
+        logo = open_group(src, mode="r")["overlays/logo"]
+        assert "Zarr.json" in optimise_mod.list_raw_keys(logo)
+
+        dst = tmp_path / "out.luxar.zarr"
+        optimise_store(src, dst, verify=True)
+        attrs = dict(open_group(dst, mode="r")["overlays/logo"].attrs)
+        assert attrs["image_file"] == "Zarr.json"
+        assert attrs["type"] == "overlay_image"
+        assert not any(p.name == "Zarr.json" for p in dst.rglob("*"))
+
+    @pytest.mark.parametrize(
+        "payload",
+        [b"\x89PNG\r\n\x1a\n" + b"p" * 4242, b""],
+        ids=["with-bytes", "zero-byte"],
+    )
+    def test_the_refusal_reports_the_payload_file_s_own_byte_count(
+        self, tmp_path: Path, payload: bytes
+    ) -> None:
+        """The count in the refusal is the user's evidence that something real is
+        at stake, so the branch has to still fire for a genuine distinct file and
+        quote THAT file's own length — not the node document's, which would
+        advise renaming a file of a size that exists nowhere. What it pins is the
+        pairing: the listing must find the payload's exact spelling (an inverted
+        or empty or lowercasing :func:`list_raw_keys` all fail here) and the
+        length must be the one read back under it. Case-sensitive filesystems
+        only: elsewhere the fixture's two keys are one key.
+
+        The zero-byte case additionally pins that the copy's skip test is ``is
+        None`` and not truthiness: an empty file reads back as ``b""``, so under
+        ``if not held`` a real, distinct, EMPTY ``Zarr.json`` ships under exit
+        code 0 — and on macOS writing it truncates the node document to nothing,
+        which is the whole failure class this branch exists to prevent."""
+        probe = tmp_path / "CaseProbe"
+        probe.write_text("x")
+        if (tmp_path / "caseprobe").exists():
+            pytest.skip("a case-insensitive filesystem cannot hold the fixture")
+        src = _store_with_a_payload_attr(
+            tmp_path / "src.luxar.zarr", "Zarr.json", payload=None
+        )
+        logo_dir = src / "overlays" / "logo"
+        (logo_dir / "Zarr.json").write_bytes(payload)
+        # Named by SET rather than by literal, so the assertion holds at either
+        # on-disk format (v3 has `zarr.json`, v2 the `.zgroup`/`.zattrs` pair).
+        # The count the refusal quotes is the one read back under the payload's
+        # own name, and no node document here shares that length.
+        documents = [p for p in logo_dir.iterdir() if p.name in _META_DOCS]
+        assert documents and all(p.stat().st_size != len(payload) for p in documents)
+
+        dst = tmp_path / "out.luxar.zarr"
+        with pytest.raises(ValueError, match=rf"dropping the {len(payload)} bytes"):
+            optimise_store(src, dst, verify=True)
+        assert not dst.exists()
+
     def test_a_payload_the_source_does_not_have_is_skipped(
         self, tmp_path: Path
     ) -> None:
