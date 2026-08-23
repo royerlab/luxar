@@ -38,6 +38,18 @@ def test_orbit_trap_equalization_preserves_ties_and_order() -> None:
     assert equalized[1] < equalized[3] < equalized[0]
 
 
+def test_surface_appearance_handles_an_empty_surface() -> None:
+    colors, lighting, ambient_occlusion = _mandelbulb_surface_appearance(
+        np.empty((0, 3)),
+        np.empty(0),
+        np.empty(0),
+    )
+
+    assert colors.shape == (0, 3)
+    assert lighting.shape == (0,)
+    assert ambient_occlusion.shape == (0,)
+
+
 def test_surface_appearance_has_broad_colour_and_lighting_range() -> None:
     positions, distances, orbit_trap = _surface_sample()
 

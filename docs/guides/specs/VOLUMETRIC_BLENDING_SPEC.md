@@ -737,10 +737,12 @@ integral through the existing super-Gaussian radial profile
 point the math is the isotropic special case of §3.1). Per the three-geometry
 symmetry rule: same mode name, same attr, shared `needsDepthSort`.
 Showcase + exit criterion: switch the **mandelbulb demo**
-(`packages/luxar/src/luxar/demos/demo_mandelbulb.py:252-260`) to
-`blending_mode="volumetric"` — today it must dim its colors ×0.1 (L221) to keep
-the dense fractal surface from blowing out under additive; volumetric's bounded
-accumulation removes that workaround and adds real depth cueing to the surface.
+(`generate_mandelbulb_volumetric` in
+`packages/luxar/src/luxar/demos/demo_mandelbulb.py`) to
+`blending_mode="volumetric"` — before this phase it had to dim its colors ×0.1
+to keep the dense fractal surface from blowing out under additive; volumetric's
+bounded accumulation removes that workaround and adds real depth cueing to the
+surface.
 
 **Phase 4 — lines (IMPLEMENTED 2026-07-24)**: segment-midpoint depth sort
 (standard approximation; artifacts only when long segments interleave —
