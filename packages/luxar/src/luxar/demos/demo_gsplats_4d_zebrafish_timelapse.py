@@ -119,6 +119,7 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
+    DatasetUnavailable,
     add_demo_caption,
     detect_device,
     launch_viewer,
@@ -133,7 +134,6 @@ from luxar.demos import (
 from luxar.demos.registry import DEMO_CACHE_ROOT
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
-from luxar.utils.data_fetch import DatasetUnavailable
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -240,8 +240,9 @@ def open_lsm() -> Any:
     constants — a record re-uploaded with a different calibration would
     otherwise mislabel every axis of a rebuilt archive without a word.
     """
+    import zarr  # a core dependency, unlike tifffile
+
     tifffile = require_module("tifffile")
-    zarr = require_module("zarr")
 
     from luxar.utils.download import robust_download
 
