@@ -167,6 +167,27 @@ class TestSelectSampleIsRandomNotAPrefix:
         assert np.all(np.diff(idx) > 0)
         assert idx.min() >= 0 and idx.max() < 10_000
 
+    def test_a_numeric_whole_corpus_is_flagged_as_a_duplicate_bundle(
+        self, capsys
+    ) -> None:
+        """Same result as `--sample=all`, different cache key — so say so.
+
+        The key is the SPELLING: the corpus size is unknown until the ZIP is
+        opened, and opening it before the cache lookup would cost a warm-bundle
+        run a 30 GB download. The hint is what stops the habit instead.
+        """
+        assert np.array_equal(demo.select_sample(1_000, 1_000), np.arange(1_000))
+        out = capsys.readouterr().out
+        assert "whole corpus" in out and "--sample=all" in out
+
+    def test_a_real_subset_says_nothing(self, capsys) -> None:
+        demo.select_sample(1_000, 250)
+        assert "whole corpus" not in capsys.readouterr().out
+
+    def test_sample_none_says_nothing(self, capsys) -> None:
+        demo.select_sample(1_000, None)
+        assert "whole corpus" not in capsys.readouterr().out
+
     def test_seed_is_reproducible_and_seeds_differ(self) -> None:
         a = demo.select_sample(10_000, 250, seed=3)
         b = demo.select_sample(10_000, 250, seed=3)

@@ -66,7 +66,9 @@ Usage:
 
     --sample=N        Uniform RANDOM sample of N papers (default: the whole
                       corpus). Random, not a prefix: `papers.csv` is sorted by
-                      ID, so a prefix is a date slice, not a sample.
+                      ID, so a prefix is a date slice, not a sample. Spell the
+                      whole corpus `all`, not its size — the bundle cache is
+                      keyed on the spelling, so the two cache separately.
     --seed=S          Seed for that sample (default 0).
     --pca-dim=D       PCA components fed to UMAP (default 128).
     --device=auto|cpu|gpu
@@ -598,6 +600,17 @@ def select_sample(n_rows: int, sample_size: int | None, seed: int = 0) -> np.nda
         Ascending row indices (ascending keeps the memmap gather sequential).
     """
     if sample_size is None or sample_size >= n_rows:
+        if sample_size is not None:
+            # Same result, different cache key. The bundle is keyed on the
+            # SPELLING because the corpus size is not known until the ZIP is
+            # opened, and opening it here would cost a warm-bundle run its
+            # whole point (a 30 GB download for someone who reclaimed the
+            # disk). So say so instead of silently caching a second copy.
+            aprint(
+                f"ℹ️  --sample={sample_size:,} is the whole corpus; "
+                "`--sample=all` is the canonical spelling and caches under "
+                "one key (this run adds a second bundle of the same content)."
+            )
         return np.arange(n_rows, dtype=np.int64)
     rng = np.random.default_rng(seed)
     return np.sort(rng.choice(n_rows, size=sample_size, replace=False))
