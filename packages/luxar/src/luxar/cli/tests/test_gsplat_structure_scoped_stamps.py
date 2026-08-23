@@ -896,6 +896,55 @@ def _data3(n: int, *, stats: Dict[str, Any]) -> GSplatData:
     )
 
 
+def _laddered_fixture(tmp_path: Path, n_lods: int = 6) -> Path:
+    """A flat leaf whose ladder is summarised in BOTH spellings, honestly.
+
+    ``gsplat lod --recipe stream`` stamps the ``lod_*`` five and nothing else, so
+    a fixture built from it alone leaves the un-prefixed trio
+    (:func:`~luxar.gsplats.batch.merge_orchestrator._recipe_pipeline_info`'s
+    ``n_lods`` / ``method`` / ``breakpoints``, what ``batch-fit merge --recipe
+    stream`` publishes for the same ladder) exercised by nothing but the one
+    hand-written ``additive`` test above — precisely the "somebody remembered to
+    list it" hole this post-condition exists to close (#1600 review). The trio's
+    VALUES come from the producer rather than a literal, so a knob added there
+    cannot quietly go unhandled here either.
+
+    The producer's whole ``stream`` block is copied, not just the trio: it is
+    ``lod_kind: "additive"`` that tells a consumer the shared ``method`` key is
+    the ADDITIVE ordering (:func:`~luxar.gsplats.lod.restamp._recipe_ladder_keys`
+    reads exactly that), so a fixture carrying the trio without it would be a
+    shape no producer writes. ``per_part`` is the one key left off: this store is
+    one flat leaf, not a partition, and the per-part branch of the guard already
+    has its own honest/dishonest pair of tests above.
+
+    Both spellings start out TRUE of the ladder on disk, so a row that goes red
+    is describing the command's staleness and not the fixture's.
+    """
+    from luxar.gsplats.batch.merge_orchestrator import _recipe_pipeline_info
+    from luxar.gsplats.lod.recipes import RecipeParams
+
+    flat = tmp_path / "flat.gsplats.zarr"
+    _data3(200, stats=dict(_DESCRIPTIVE)).save(flat, include_fitting_info=True)
+    laddered = tmp_path / "laddered.gsplats.zarr"
+    _run(
+        ("lod", "{in}", "{out}", "--recipe", "stream", "--n-lods", str(n_lods)),
+        flat,
+        laddered,
+    )
+
+    data = GSplatData.load(laddered, include_stats=True)
+    rungs = len(data.additive_sublods)
+    assert rungs == n_lods, f"the ladder did not build: {rungs} rungs"
+    recipe = _recipe_pipeline_info(
+        "stream", RecipeParams(n_lods=rungs, additive_method="mass")
+    )
+    assert recipe and recipe["n_lods"] == rungs
+    data.stats.update({k: v for k, v in recipe.items() if k != "per_part"})
+    src = tmp_path / "both-spellings.gsplats.zarr"
+    data.save(src, include_fitting_info=True)
+    return src
+
+
 @pytest.mark.parametrize(
     "argv", [argv for _, argv in _LADDER_ROWS], ids=[i for i, _ in _LADDER_ROWS]
 )
@@ -909,12 +958,14 @@ def test_a_published_ladder_summary_describes_the_ladder_on_disk(
     and never having claimed anything all satisfy it — what it forbids is the
     one thing #1600 is about: a number that describes the ladder the command
     replaced.
+
+    Both spellings of the count are in play (see :func:`_laddered_fixture`): a
+    ``cull`` / ``filter`` that prunes rungs refreshed the ``lod_*`` half through
+    ``_refresh_ladder_summary`` while the batch-merge ``n_lods`` rode through
+    stale, which is what the trio in the fixture catches.
     """
-    flat = tmp_path / "flat.gsplats.zarr"
-    _data3(200, stats=dict(_DESCRIPTIVE)).save(flat, include_fitting_info=True)
-    src = tmp_path / "laddered.gsplats.zarr"
-    _run(("lod", "{in}", "{out}", "--recipe", "stream", "--n-lods", "3"), flat, src)
-    assert {"lod_n_lods", "lod_cutpoints"} <= set(_pipeline_attrs(src)), (
+    src = _laddered_fixture(tmp_path)
+    assert {"lod_n_lods", "lod_cutpoints", "n_lods"} <= set(_pipeline_attrs(src)), (
         "the fixture publishes no ladder summary — nothing could go stale"
     )
     _assert_published_ladder_matches_disk(src)  # the fixture itself is honest

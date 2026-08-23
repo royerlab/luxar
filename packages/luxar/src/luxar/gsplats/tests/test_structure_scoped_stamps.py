@@ -357,6 +357,31 @@ def test_the_root_ladder_summary_refreshes_only_keys_that_were_there() -> None:
     }
 
 
+def test_a_summary_key_the_rebuilt_leaf_cannot_supply_is_dropped() -> None:
+    """...and the other direction: a value that cannot be refreshed goes.
+
+    The two halves of the same refresh disagreed. ``_refresh_recipe_ladder``
+    DELETES its ``method`` when the rebuilt leaf publishes none, while the
+    ``lod_*`` half silently kept the inherited one — the ladder-that-is-gone
+    claim this function exists to scrub (#1600 review). Unreachable from
+    ``gsplat additive`` today, because ``make_additive_lod`` always stamps both;
+    reachable by anyone calling this public function on a hand-built tree.
+
+    ``lod_n_lods`` in the same dict is the control: the refresh still ran, so the
+    deletion is the rule rather than an early return.
+    """
+    bare = _laddered_tree([[10, 10, 10]])  # a leaf publishing no ladder stats
+    assert refresh_root_ladder_summary(
+        {
+            "lod_method": "greedy",
+            "lod_breakpoints_kind": "equal-count",
+            "lod_n_lods": 9,
+            "recipe": "stream",
+        },
+        bare,
+    ) == {"lod_n_lods": 3, "recipe": "stream"}
+
+
 @pytest.mark.parametrize(
     ("level", "expected_rungs"),
     [

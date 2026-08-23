@@ -11,7 +11,10 @@ store re-laddered from three rungs to six went on advertising three, under the
 method and breakpoints kind of the ladder that no longer existed. That block is
 now rebuilt from the tree actually written — counts and cutpoints from the
 ladder, `lod_method` and `lod_breakpoints_kind` read back off the rebuilt leaf so
-an `auto` request publishes the method it resolved to. It summarises ONE ladder,
+an `auto` request publishes the method it resolved to — and deleted outright when
+the rebuilt leaf publishes neither, rather than left carrying the inherited
+value, which is the one thing the refresh exists to prevent. It summarises ONE
+ladder,
 following the rule `cull` already uses: the leaf itself for a flat store, and for
 a `kind=lod` group the level `lod_substitutive_level` names. Where no single leaf
 can be that summary — a `kind=partition`, whose parts hold different counts and
@@ -34,6 +37,17 @@ produced. `per_part` stays: a per-leaf re-ladder leaves a per-part ladder
 per-part. The `levels` branch of the same producer stamps a `method` too, but it
 is the substitutive merge method, which a re-ladder does not touch — `lod_kind`
 tells the two apart.
+
+The prune family reaches the same key from the other side, and did not handle it
+either: `cull` / `filter` (and any rewrite that empties a rung) refresh
+`lod_n_lods` / `lod_cutpoints` from the surviving ladder, so a batch-merge store
+culled from six rungs to three self-healed the prefixed half while `n_lods: 6`
+rode through beside it. The shared refresh now covers both spellings of the
+count. Its two siblings stay put here: `method` is the additive *ordering*, which
+dropping an emptied rung does not change, and `breakpoints` is the build spec
+that was requested — unlike a re-ladder, this rewrite built no new ladder from a
+different spec, it pruned the one that spec produced (its prefixed twin
+`lod_breakpoints_kind` survives the same rewrite untouched for the same reason).
 
 `gsplat decimate` published its input's `coarsen_dims` whatever it had actually
 coarsened over. That key is deliberately exempt from the structure scrub because
@@ -79,7 +93,12 @@ untouched, as before: nothing changed, so nothing is re-stamped.
 One generic post-condition now backs the whole re-ladder rule at the command
 level: for every rewriting `gsplat` command — enumerated from the registry, not
 from a hand-written list — a published `lod_n_lods` / `lod_cutpoints` / `n_lods`
-must match the ladder actually on disk, or be absent. A `kind=partition` root
+must match the ladder actually on disk, or be absent. Its fixture publishes BOTH
+spellings, taken from the batch producer itself rather than a literal, which is
+how the `cull` / `filter` case above was found: with only the `lod_*` half on
+disk the un-prefixed key was exercised by nothing but the one hand-written
+`additive` test — the "somebody remembered to list it" failure the generic guard
+exists to replace. A `kind=partition` root
 under `per_part: True` is checked against EVERY leaf rather than rejected
 outright: that shape is exactly what `batch-fit merge --recipe stream --n-lods 6`
 writes on purpose and it can be perfectly honest, so a blanket rejection would

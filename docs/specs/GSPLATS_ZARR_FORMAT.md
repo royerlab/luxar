@@ -909,13 +909,21 @@ rewrites a store must apply all three rules:
   `lod_kind: additive` on a `stream` output) would be a new claim rather than a
   scrub. Content-changing but structure-**preserving** ops keep the block and
   *re-stamp* the counts that moved instead: a `cull` of a substitutive pyramid is
-  still that pyramid, with refreshed `lod_n_lods` / `lod_cutpoints`.
+  still that pyramid, with refreshed `lod_n_lods` / `lod_cutpoints` — and, when
+  the store carries it, the un-prefixed `n_lods` that says the same thing (see
+  the second-spelling paragraph below). Its two siblings stay: `method` is the
+  additive *ordering*, which pruning an emptied rung does not change, and
+  `breakpoints` is the build **spec** that was requested — this rewrite built no
+  new ladder from another one, it pruned the ladder that spec produced.
 
   A structure-preserving rewrite that REPLACES the thing a stamp summarises owes
   the same refresh. `additive` re-ladders every leaf, so the root ladder summary
   is rebuilt from the tree it wrote — `lod_n_lods` / `lod_cutpoints` from the
   ladder, `lod_method` / `lod_breakpoints_kind` read back off the rebuilt leaf so
-  an `auto` request publishes the method it resolved to. The summary describes
+  an `auto` request publishes the method it resolved to (and *deleted* when the
+  rebuilt leaf publishes neither — absence is the format's "this artifact does
+  not know", while the inherited value would describe the ladder that is gone).
+  The summary describes
   ONE ladder: the leaf itself for a flat store, and for a `kind=lod` group the
   level `lod_substitutive_level` names (the rule `cull` already follows).
   `lod_substitutive_level` itself is untouched — a re-ladder moves no level. On a
@@ -938,7 +946,11 @@ rewrites a store must apply all three rules:
   back off a ladder. `per_part` is left alone — a per-leaf re-ladder leaves a
   per-part ladder per-part. The `levels` branch of that same producer stamps a
   `method` too, but it is the *substitutive* merge method, which a re-ladder does
-  not touch; `lod_kind` is what tells the two apart.
+  not touch; `lod_kind` is what tells the two apart. The prune-family rewrites
+  above (`cull`, `filter`, `slice`, `transform`) refresh the un-prefixed count as
+  well, for the same reason and from the same helper: a `batch-fit merge --recipe
+  stream` output that is culled until a rung empties has one fewer rung, whichever
+  spelling states it.
 
   Two things in `pipeline/` are **exempt**, which is why this is a deny-list of
   key names rather than "drop the group". The normalization block (`floor`,

@@ -114,7 +114,12 @@ def refresh_root_ladder_summary(
     count/cutpoint half this reuses): a store that never published a ladder
     summary does not acquire one here. ``lod_method`` and
     ``lod_breakpoints_kind`` are read back off the leaf the rebuild wrote rather
-    than from the request, so ``auto`` publishes the method it resolved to.
+    than from the request, so ``auto`` publishes the method it resolved to — and
+    when the rebuilt leaf publishes neither, the root key is DELETED rather than
+    left describing the ladder that is gone, exactly as
+    :func:`_refresh_recipe_ladder` treats its ``method`` twin. Absence is the
+    format's "this artifact does not know"; keeping the inherited value is the
+    one thing this function exists to prevent.
     ``lod_substitutive_level`` is left alone — a re-ladder moves no level.
 
     When no single leaf is the summary (see :func:`_root_summary_leaf`) the whole
@@ -151,8 +156,12 @@ def refresh_root_ladder_summary(
     leaf_stats = leaf.meta.get("stats")
     leaf_stats = leaf_stats if isinstance(leaf_stats, dict) else {}
     for key in ("lod_method", "lod_breakpoints_kind"):
-        if key in refreshed and key in leaf_stats:
+        if key not in refreshed:
+            continue
+        if key in leaf_stats:
             refreshed[key] = leaf_stats[key]
+        else:
+            del refreshed[key]
     if recipe_present:
         _refresh_recipe_ladder(refreshed, leaf_stats, len(cutpoints))
     return refreshed
@@ -166,6 +175,11 @@ def _refresh_recipe_ladder(
     ``n_lods`` and ``method`` are recoverable from the tree that was written —
     the rung count, and the resolved ordering the rebuilt leaf published (so an
     ``auto`` request records what it became, as the ``lod_*`` half already does).
+    The count is restated here rather than left to
+    :func:`~luxar.gsplats._data.transforms._refresh_ladder_summary` (which the
+    caller runs first, and which now refreshes it too, for the prune-family
+    rewrites that never reach this function) so the trio's three rules read in
+    one place; the two agree by construction — both are the rung count.
 
     ``breakpoints`` is DROPPED rather than refreshed: it holds the build SPEC
     (``"stream:14000"``, ``"counts:5,15,40"``, ``"equal-count"``) in a different
