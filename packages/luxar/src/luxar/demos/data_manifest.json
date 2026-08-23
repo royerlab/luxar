@@ -466,13 +466,13 @@
         },
         "253tp": {
           "default": false,
-          "approx_bytes": 11428060091,
+          "approx_bytes": 9253211541,
           "note": "Full 253-timepoint timelapse \u2014 opt-in (large download).",
           "files": [
             {
               "name": "h2afva_253tp.gsplats.zarr.zip",
-              "sha256": "46621b393d4a49421987ee400ce0be08b73d4da03441230bc6f59ff31917214e",
-              "bytes": 11428060091
+              "sha256": "77d42e8478e6ac581c801915ef31c94eba736fe0560f60cf4356462c3eb2db35",
+              "bytes": 9253211541
             }
           ]
         }

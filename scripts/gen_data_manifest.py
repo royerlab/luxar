@@ -437,7 +437,7 @@ DATASETS: dict[str, dict] = {
             ),
             "253tp": dict(
                 default=False,
-                approx_bytes=11_428_060_091,
+                approx_bytes=9_253_211_541,
                 note="Full 253-timepoint timelapse — opt-in (large download).",
             ),
         },
