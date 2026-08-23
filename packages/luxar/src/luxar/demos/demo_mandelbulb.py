@@ -251,7 +251,12 @@ def _mandelbulb_ambient_occlusion(
     power: int,
     step: float,
 ) -> np.ndarray:
-    """Bake directional distance-field AO along each outward normal."""
+    """Bake directional distance-field AO along each outward normal.
+
+    The distance field makes occlusion directional and independent of point
+    sampling density; a KD-tree neighbour count cannot distinguish a flat sheet
+    from a crevice with the same local point count.
+    """
     occlusion = np.zeros(len(positions), dtype=np.float64)
     total_weight = 0.0
     for index in range(5):
@@ -475,9 +480,10 @@ def generate_mandelbulb_volumetric(
                 # shader uniforms as intensity = 1/(max-min), offset =
                 # -min/(max-min) (rendering/display-range.ts::computeUniforms),
                 # so a min of 0 leaves offset at its identity and the max is
-                # simply 1/intensity. A max of 14 restores the average emitted
-                # radiance while preserving the new shadow range.
-                intensity=1.0 / 14.0,
+                # simply 1/intensity. A max of 26 preserves the new shadow
+                # range while leaving the real-GPU gallery capture close to
+                # exposure-neutral (-0.31 EV auto adjustment).
+                intensity=1.0 / 26.0,
                 # Expose the node in the viewer's Layers panel so the
                 # appearance above is live-tunable — in volumetric mode the
                 # panel shows the Absorption (kappa) slider alongside opacity /
