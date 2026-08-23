@@ -395,11 +395,12 @@ File browser for navigating and loading Zarr datasets from servers.
 - Search and filter capabilities
 - Recent datasets history
 
-Initial focus is on the panel container, not the search field, so the `O`
-shortcut still toggles the browser shut — see the type-to-filter note under
+Initial focus is on the panel container, not the search field (nor the
+manual-entry field of the unlistable-server fallback), so the `O` shortcut
+still toggles the browser shut — see the type-to-filter note under
 [Helper Overlays](#7-helper-overlays) (issue #1922). Typing still narrows the
-listing from the first keystroke, and `ArrowDown` moves from the filter into
-the list.
+listing from the first keystroke, and `ArrowDown` moves into the list from the
+panel container as well as from the search field.
 
 **Interface:**
 
@@ -643,7 +644,15 @@ swallowed as typing, issue #1922). `help-overlay/type-to-filter.ts` restores
 type-to-filter by forwarding the first printable keystroke into the filter, and
 the dataset browser (`O`) uses the same mechanism. The panel's own toggle key is
 passed through to the global binding, so it cannot be the first character of a
-filter query.
+filter query (`Shift`+that key types it like any other character — the global
+lookup spells the shifted form `"h+shift"`, which matches no binding).
+
+The same container listener keeps the panel **modal**: no panel pushes an
+`InputContext`, so while focus is parked on the shell it stops every other key
+from reaching the global bindings behind the dialog (`Home`/`End` would
+otherwise jump the selected dimension, `Shift`+arrows change the animation
+speed). Only `Escape`, `Tab` and the passthrough toggle key get out, and
+containment never calls `preventDefault`, so scrolling the panel still works.
 
 ### 8. Recording Panel
 

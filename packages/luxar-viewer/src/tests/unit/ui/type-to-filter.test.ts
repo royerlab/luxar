@@ -27,7 +27,11 @@ interface Harness {
 
 const ITEMS = ['alpha', 'beta', 'help', 'gamma'];
 
-function mount(options?: { passthroughKeys?: readonly string[]; filterAvailable?: boolean }) {
+function mount(options?: {
+  passthroughKeys?: readonly string[];
+  filterAvailable?: boolean;
+  withFirstItem?: boolean;
+}) {
   const container = document.createElement('div');
   const input = document.createElement('input');
   input.type = 'text';
@@ -60,7 +64,10 @@ function mount(options?: { passthroughKeys?: readonly string[]; filterAvailable?
   const releaseForwarder = installTypeToFilter(
     container,
     () => (options?.filterAvailable === false ? null : input),
-    { passthroughKeys: options?.passthroughKeys }
+    {
+      passthroughKeys: options?.passthroughKeys,
+      resolveFirstItem: options?.withFirstItem ? () => row : undefined,
+    }
   );
   harness.release = () => {
     releaseForwarder();
@@ -77,14 +84,18 @@ function press(init: KeyboardEventInit & { key: string }): KeyboardEvent {
 }
 
 describe('installTypeToFilter', () => {
-  let harness: Harness;
+  // Reset between cases: a test that never calls `mount()` would otherwise
+  // still see the previous test's harness and double-release it in afterEach.
+  let harness: Harness | undefined;
 
   beforeEach(() => {
+    harness = undefined;
     document.body.innerHTML = '';
   });
 
   afterEach(() => {
     harness?.release();
+    harness = undefined;
     document.body.innerHTML = '';
   });
 
@@ -149,32 +160,65 @@ describe('installTypeToFilter', () => {
     expect(harness.input.value).toBe('');
   });
 
-  it.each(['Escape', 'Tab', 'Enter', 'ArrowDown', 'ArrowUp', 'F1', 'Backspace', 'Home', 'End'])(
-    'lets the non-printable key %s through untouched',
+  it.each(['Enter', 'ArrowDown', 'ArrowUp', 'F1', 'Backspace', 'Home', 'End', 'PageDown'])(
+    'contains the non-printable key %s inside the modal',
     (key) => {
       harness = mount();
 
       const event = press({ key });
 
+      // Not typed into the filter, not `preventDefault`ed (native in-panel
+      // behaviour such as scrolling still applies) — but it must NOT reach
+      // the global bindings behind an `aria-modal` dialog, or `Home`/`End`
+      // would jump the selected dimension and `Shift`+arrows would change the
+      // animation speed while a panel is open.
       expect(event.defaultPrevented).toBe(false);
       expect(document.activeElement).toBe(harness.container);
       expect(harness.input.value).toBe('');
-      expect(harness.escaped).toEqual([key]);
+      expect(harness.escaped).toEqual([]);
     }
   );
 
-  it('lets Space through — it is a global shortcut, not a filter character', () => {
+  it.each(['Escape', 'Tab'])('still lets %s reach the global handler', (key) => {
+    harness = mount();
+
+    // Escape dismisses the panel via the global handler and Tab drives the
+    // focus trap; containment must not swallow either.
+    const event = press({ key });
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(harness.escaped).toEqual([key]);
+  });
+
+  it('contains Space rather than typing it', () => {
     harness = mount();
 
     const event = press({ key: ' ' });
 
+    // Space is not a filter character (a leading space matches nothing and it
+    // scrolls a `tabindex="-1"` container). It also must not reach the global
+    // bindings from inside a modal.
     expect(event.defaultPrevented).toBe(false);
     expect(harness.input.value).toBe('');
-    expect(harness.escaped).toEqual([' ']);
+    expect(harness.escaped).toEqual([]);
+  });
+
+  it('does not contain keys that originate at an inner control', () => {
+    harness = mount();
+    harness.row.focus();
+
+    // The listener is on the container, so an inner control's key bubbles
+    // through it. Containment is gated on the event TARGET, so a row's own
+    // Home/Enter handling (and anything it deliberately lets escape) is
+    // untouched.
+    press({ key: 'Home' });
+    press({ key: 'Enter' });
+
+    expect(harness.escaped).toEqual(['Home', 'Enter']);
   });
 
   it.each([{ ctrlKey: true }, { metaKey: true }, { altKey: true }])(
-    'lets modified keys through untouched (%o)',
+    'does not type modified keys into the filter (%o)',
     (modifier) => {
       harness = mount();
 
@@ -182,23 +226,86 @@ describe('installTypeToFilter', () => {
 
       expect(event.defaultPrevented).toBe(false);
       expect(harness.input.value).toBe('');
-      expect(harness.escaped).toEqual(['s']);
+      // Contained like every other non-forwarded key: an application
+      // shortcut aimed at the scene must not fire from inside the modal.
+      expect(harness.escaped).toEqual([]);
     }
   );
 
-  it('lets a shifted printable key through when it is the passthrough key', () => {
+  it('types an AltGr-composed character instead of dropping it', () => {
+    harness = mount();
+
+    // Windows reports AltGr as ctrlKey + altKey with an ordinary printable
+    // `key` (AltGr+E = €, AltGr+2 = @). Rejecting it as "modified" made every
+    // dataset whose name starts with @ / € / ~ / \ / | unreachable by typing.
+    const event = press({ key: '@', ctrlKey: true, altKey: true });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(harness.input);
+    expect(harness.input.value).toBe('@');
+    expect(harness.escaped).toEqual([]);
+  });
+
+  it('lets the unshifted passthrough key through, in either letter case', () => {
     harness = mount({ passthroughKeys: ['h'] });
 
     // The panel's own toggle key must reach the global binding so the panel
-    // can close — both cases, since the global bindings lowercase the key.
+    // can close. CapsLock reports `H` with `shiftKey === false`, and the
+    // global lookup lowercases, so that case must pass through too.
     const lower = press({ key: 'h' });
-    const upper = press({ key: 'H', shiftKey: true });
+    const capsLocked = press({ key: 'H' });
 
     expect(lower.defaultPrevented).toBe(false);
-    expect(upper.defaultPrevented).toBe(false);
+    expect(capsLocked.defaultPrevented).toBe(false);
     expect(harness.input.value).toBe('');
     expect(harness.escaped).toEqual(['h', 'H']);
     expect(document.activeElement).toBe(harness.container);
+  });
+
+  it('types Shift+the passthrough key into the filter (it is not a binding)', () => {
+    harness = mount({ passthroughKeys: ['h'] });
+
+    // `getBindingKeyFromEvent` spells a shifted `H` as "h+shift", and only
+    // "h" is registered — so passing Shift+H through would make it a dead
+    // key. It is an ordinary printable character instead.
+    const event = press({ key: 'H', shiftKey: true });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(harness.input);
+    expect(harness.input.value).toBe('H');
+    expect(harness.escaped).toEqual([]);
+  });
+
+  it('steers ArrowDown into the listing when a first item is supplied', () => {
+    harness = mount({ withFirstItem: true });
+
+    const event = press({ key: 'ArrowDown' });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(harness.row);
+    expect(harness.escaped).toEqual([]);
+  });
+
+  it('contains ArrowDown when there is no listing to enter', () => {
+    harness = mount();
+
+    const event = press({ key: 'ArrowDown' });
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(document.activeElement).toBe(harness.container);
+    expect(harness.escaped).toEqual([]);
+  });
+
+  it('leaves Shift+ArrowDown out of the listing affordance', () => {
+    harness = mount({ withFirstItem: true });
+
+    // Shift+ArrowDown is the animation-speed binding; it is contained by the
+    // modal rather than repurposed as list navigation.
+    const event = press({ key: 'ArrowDown', shiftKey: true });
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(document.activeElement).toBe(harness.container);
+    expect(harness.escaped).toEqual([]);
   });
 
   it('still forwards every other printable key when a passthrough key is set', () => {
@@ -210,26 +317,44 @@ describe('installTypeToFilter', () => {
     expect(harness.filtered).toEqual(['beta', 'help']);
   });
 
-  it('ignores IME composition keystrokes', () => {
+  it.each([{ isComposing: true }, { keyCode: 229 }])(
+    'hands an IME composition to the filter without preventing it (%o)',
+    (composing) => {
+      harness = mount();
+
+      const event = press({ key: 'a', ...composing });
+
+      // The composition must RETARGET to the input: composing against the
+      // non-editable container drops the first character outright (every
+      // CJK/IME and European dead-key layout). So focus moves but the event
+      // is left alone — the composer, not this forwarder, lands the text.
+      expect(document.activeElement).toBe(harness.input);
+      expect(event.defaultPrevented).toBe(false);
+      expect(harness.input.value).toBe('');
+    }
+  );
+
+  it('does not re-focus on a composition keystroke aimed at the filter', () => {
     harness = mount();
+    harness.input.focus();
+    harness.input.value = 'x';
 
-    const composing = press({ key: 'a', isComposing: true });
-    expect(composing.defaultPrevented).toBe(false);
-    expect(harness.input.value).toBe('');
+    const event = press({ key: 'a', isComposing: true });
 
-    // Legacy spelling of the same thing.
-    const legacy = press({ key: 'a', keyCode: 229 });
-    expect(legacy.defaultPrevented).toBe(false);
-    expect(harness.input.value).toBe('');
+    expect(event.defaultPrevented).toBe(false);
+    expect(document.activeElement).toBe(harness.input);
+    expect(harness.input.value).toBe('x');
   });
 
-  it('passes the key through when the filter is unavailable', () => {
+  it('contains the key when the filter is unavailable', () => {
     harness = mount({ filterAvailable: false });
 
     const event = press({ key: 'b' });
 
+    // Nothing to type into — but the panel is still modal, so the key must
+    // not toggle a scene control behind it either.
     expect(event.defaultPrevented).toBe(false);
-    expect(harness.escaped).toEqual(['b']);
+    expect(harness.escaped).toEqual([]);
     expect(harness.input.value).toBe('');
   });
 

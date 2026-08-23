@@ -30,6 +30,14 @@ release();
   `tabindex="-1"` container itself — Tab steers into the first focusable
   and Shift+Tab into the last, instead of letting the browser default
   walk out of the modal.
+- Filters that list down to elements that are actually **rendered**. A raw
+  `querySelectorAll` also matches inputs inside a `display: none` subtree
+  (the dataset browser hides its whole search row while a directory
+  loads), and `.focus()` on one of those is a no-op in a real browser — so
+  `Shift+Tab` from the container would strand focus. Visibility is tested
+  with `getClientRects()`, falling back to an explicit
+  `display`/`visibility`/`hidden` walk up the ancestor chain because jsdom
+  has no layout and reports zero rects for everything.
 - Asynchronously focuses the first focusable element via
   `setTimeout(..., 0)` so it runs after the caller has finished mounting
   DOM. The timer id is captured so it can be cancelled on cleanup. Pass
@@ -68,21 +76,46 @@ mechanism level so both filtered panels behave identically:
 - Forwards the first printable keystroke into the filter: focus the input,
   append the character, dispatch `input`, then `preventDefault` (no double
   insertion) and `stopPropagation` (a forwarded `v` must not also cycle the
-  camera mode).
-- Passes through anything with Ctrl/Meta/Alt, any `key.length !== 1`
-  (`Escape`, `Tab`, `Enter`, `ArrowDown`, `F1`, …), `Space` (a global
-  shortcut, and it scrolls a `tabindex="-1"` container), IME composition
-  keystrokes, keys already `defaultPrevented`, keys typed while focus is
-  already on a typing surface, and keys arriving while
-  `resolveFilterInput()` returns `null` (nothing to filter).
+  camera mode). `Shift`+a printable is forwarded like any other character —
+  including `Shift`+the panel's own toggle key, since the global lookup
+  spells that `"h+shift"` and no binding registers it.
+- Does not forward: anything with Ctrl/Meta/Alt **except** the AltGr
+  signature (`ctrlKey && altKey` with a one-character `key`, which is how
+  Windows reports `AltGr+E` = `€`), any `key.length !== 1` (`Escape`,
+  `Tab`, `Enter`, `F1`, …), `Space` (a leading space matches nothing and it
+  scrolls a `tabindex="-1"` container), keys already `defaultPrevented`,
+  keys typed while focus is already on a typing surface, and keys arriving
+  while `resolveFilterInput()` returns `null` (nothing to filter).
+- Focuses the filter **without** `preventDefault` for a keystroke that opens
+  an IME composition (`isComposing`, or the legacy `keyCode === 229`), so
+  the composition retargets to the input; composing against the
+  non-editable container would drop the first character outright, which is
+  every CJK/IME and European dead-key layout.
+- Steers `ArrowDown` into the panel's list when `resolveFirstItem` supplies
+  one (the dataset browser's first listing row) — with focus parked on the
+  container, the search field's own `ArrowDown` handler never sees the key.
+- **Contains everything else while the panel is modal.** A key that
+  originates AT the container (i.e. focus is genuinely parked on the shell)
+  and is neither forwarded nor `Escape`/`Tab`/a passthrough key gets
+  `stopPropagation()` — no `preventDefault`, so native in-panel behaviour
+  such as scrolling with `Home`/`PageDown` still works. Without this,
+  `Home`/`End` would jump the selected dimension and `Shift`+arrows would
+  change the animation speed _behind_ an `aria-modal` dialog: no panel
+  pushes an `InputContext`, so the autofocused text field used to be the
+  only thing suppressing global shortcuts. Containment is gated on the
+  event **target**, so an inner control's own keys (a listing row's
+  `Enter`/arrow navigation, the filter's keydown) are untouched.
 - Returns an idempotent release function that removes the listener.
 
 **`passthroughKeys` and the `h`-toggles-vs-`h`-filters trade-off.** Both
 cannot hold for one character: forwarding the first `h` into the help
 overlay's filter would re-break the toggle. The panel's own toggle key is
 therefore listed in `passthroughKeys` and cannot be the _first_ character
-of a query; it types normally once the filter has focus, and filtering is
-case-insensitive, so nothing is unreachable.
+of a query; it types normally once the filter has focus, `Shift`+that key
+types it even as the first character, and filtering is case-insensitive, so
+nothing is unreachable. Matching is case-insensitive but Shift-sensitive:
+CapsLock (`H` with `shiftKey === false`) still toggles, because the global
+lookup lowercases the key.
 
 ## Why it lives here
 

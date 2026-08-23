@@ -149,7 +149,10 @@ The help overlay (`H`) and the dataset browser (`O`) both carry a filter field,
 and just typing narrows the list — no click needed. Their own toggle key is the
 one exception: pressing `H` in the help overlay (or `O` in the dataset browser)
 closes the panel rather than typing that letter, so start such a query with any
-other character. Matching is case-insensitive.
+other character — or with `Shift`+that letter, which types it. Matching is
+case-insensitive. In the dataset browser, `ArrowDown` moves from the panel into
+the listing. While either panel is open the other shortcuts are held for the
+panel and do not reach the scene behind it; `Escape` always closes it.
 
 ### Camera and View
 

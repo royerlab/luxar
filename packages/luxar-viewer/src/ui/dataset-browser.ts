@@ -14,7 +14,9 @@ import { extractBaseUrl, extractPath } from './dataset-browser/url-utils';
 import { BROWSER_ICONS } from './dataset-browser/icons';
 import { trapFocus } from './help-overlay/focus-trap';
 import { installTypeToFilter } from './help-overlay/type-to-filter';
-import { config } from '../config';
+// Aliased: the constructor parameter is also called `config`
+// ({@link DatasetBrowserConfig}), and a bare import would be shadowed by it.
+import { config as viewerConfig } from '../config';
 import { log, Modules } from '../utils/log';
 import { showToast } from './toast';
 
@@ -210,21 +212,33 @@ export class DatasetBrowser {
    * FIRST character of a filter query (it types normally once the field has
    * focus).
    *
-   * The resolver returns `null` while the search bar is hidden (loading,
-   * error, empty directory, manual-entry fallback): there is nothing to
-   * filter then, so keys keep their normal global meaning — the same as
-   * before this change, when the trap parked focus on the close button until
-   * the listing arrived.
+   * The resolver prefers the manual-entry field when that fallback form is
+   * mounted (a server that cannot be listed at all — S3/CloudFront, nginx
+   * with `autoindex off`): that field is NOT autofocused, for the same reason
+   * the search bar isn't, so typing has to be routed into it explicitly.
+   * Otherwise it returns the search input, or `null` while the search bar is
+   * hidden (loading, error, empty directory) — there is nothing to filter
+   * then, and the keystroke is simply contained by the modal.
+   *
+   * `resolveFirstItem` restores the "`ArrowDown` enters the listing"
+   * affordance the search field's own handler provides: with focus parked on
+   * the container, that handler never sees the key.
    */
   private installTypeToFilterOnPanel(): () => void {
     return installTypeToFilter(
       this.panel,
       () => {
+        const manual = this.panel.querySelector<HTMLInputElement>('#manual-path');
+        if (manual) return manual;
         const bar = this.panel.querySelector<HTMLElement>('#luxar-dataset-browser-search-bar');
         if (!bar || bar.style.display === 'none') return null;
         return this.panel.querySelector<HTMLInputElement>('#luxar-dataset-browser-search');
       },
-      { passthroughKeys: [config.input.keyboard.shortcuts.toggleDatasetBrowser] }
+      {
+        passthroughKeys: [viewerConfig.input.keyboard.shortcuts.toggleDatasetBrowser],
+        resolveFirstItem: () =>
+          this.panel.querySelector<HTMLElement>('.luxar-dataset-browser__file-item'),
+      }
     );
   }
 
@@ -875,7 +889,12 @@ export class DatasetBrowser {
       }
     };
 
-    input.focus();
+    // Deliberately NOT focused: a focused text field trips `InputHandler`'s
+    // typing guard, which would make `O` one-way again — the exact bug
+    // issue #1922 fixes, and this fallback is reachable in production (any
+    // host that serves an `index.html` instead of a listing). Focus stays on
+    // the panel container and `installTypeToFilterOnPanel`'s resolver routes
+    // the first printable keystroke into this field.
   }
 
   /**
@@ -884,11 +903,15 @@ export class DatasetBrowser {
   show(): void {
     this.scrim.style.display = '';
     this.panel.style.display = 'flex';
-    // Re-arm what hide() released (no-op when already armed). Re-installing
-    // the forwarder also re-parks focus on the container, so a re-shown panel
-    // starts type-to-filter fresh.
+    // Re-arm what hide() released (no-op when already armed).
     this.untrapFocus ??= trapFocus(this.panel, { autoFocusFirst: false });
     this.untypeToFilter ??= this.installTypeToFilterOnPanel();
+    // Re-park focus unconditionally: `??=` skips the re-install (and with it
+    // the forwarder's own container focus) whenever the panel was never
+    // hidden, so a re-shown panel would otherwise start wherever focus
+    // happened to be. It must start fresh on the container — that is what
+    // keeps `O` a toggle and type-to-filter armed.
+    this.panel.focus({ preventScroll: true });
   }
 
   /**

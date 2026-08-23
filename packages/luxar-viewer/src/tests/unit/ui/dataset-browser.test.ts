@@ -1199,6 +1199,127 @@ describe('DatasetBrowser', () => {
       }
     });
 
+    it('a forwarded printable never reaches the global bindings', async () => {
+      const seen: string[] = [];
+      const listener = (e: KeyboardEvent) => seen.push(e.key);
+      document.addEventListener('keydown', listener);
+      try {
+        await openWithListing();
+
+        // `b` toggles the scale bar globally; typing it into the filter must
+        // not also toggle it behind the modal.
+        press({ key: 'b' });
+
+        expect(searchInput().value).toBe('b');
+        expect(seen).toEqual([]);
+      } finally {
+        document.removeEventListener('keydown', listener);
+      }
+    });
+
+    it('keeps non-printable global shortcuts off the scene while it is modal', async () => {
+      const seen: string[] = [];
+      const listener = (e: KeyboardEvent) => seen.push(e.key);
+      document.addEventListener('keydown', listener);
+      try {
+        await openWithListing();
+
+        // Home/End jump the selected dimension; Shift+arrows change the
+        // animation speed. Neither belongs to a scene hidden behind an
+        // `aria-modal` panel.
+        press({ key: 'Home' });
+        press({ key: 'ArrowUp', shiftKey: true });
+        expect(seen).toEqual([]);
+
+        // Escape still has to get out so the browser can close.
+        press({ key: 'Escape' });
+        expect(seen).toEqual(['Escape']);
+      } finally {
+        document.removeEventListener('keydown', listener);
+      }
+    });
+
+    it('does not double-insert once the search field holds focus', async () => {
+      await openWithListing();
+      press({ key: 'b' });
+      expect(document.activeElement).toBe(searchInput());
+
+      // The browser types this one itself — the forwarder must not also
+      // append it, or the field would read "be" after a single keystroke.
+      const event = press({ key: 'e' });
+
+      expect(event.defaultPrevented).toBe(false);
+      expect(searchInput().value).toBe('b');
+    });
+
+    it('ArrowDown moves from the panel into the listing', async () => {
+      const panel = await openWithListing();
+      expect(document.activeElement).toBe(panel);
+
+      const event = press({ key: 'ArrowDown' });
+
+      // With focus parked on the container, the search field's own ArrowDown
+      // handler never sees the key and the list's handler bails (its target
+      // is not a row) — the container has to provide the affordance.
+      const firstRow = container.querySelector('.luxar-dataset-browser__file-item');
+      expect(document.activeElement).toBe(firstRow);
+      expect(event.defaultPrevented).toBe(true);
+    });
+
+    describe('manual-entry fallback (unlistable server)', () => {
+      /** Mount a browser whose directory cannot be listed at all. */
+      async function openManualEntry(): Promise<HTMLElement> {
+        navigateMock.mockReset();
+        navigateMock.mockResolvedValue(defaultNavigateResult({ entries: [], strategy: 'manual' }));
+        new DatasetBrowser({ container, onDatasetSelect, onClose });
+        await vi.waitFor(() => {
+          expect(container.querySelector('#manual-path')).not.toBeNull();
+        });
+        return container.querySelector('#luxar-dataset-browser') as HTMLElement;
+      }
+
+      const manualInput = (): HTMLInputElement =>
+        container.querySelector('#manual-path') as HTMLInputElement;
+
+      it('does not autofocus the manual path field', async () => {
+        const panel = await openManualEntry();
+
+        // Autofocusing it would trip InputHandler's typing guard and make `O`
+        // one-way again — the exact bug #1922 fixes, and this fallback is
+        // reachable in production (S3/CloudFront, nginx `autoindex off`).
+        expect(document.activeElement).toBe(panel);
+        expect(isTypingInInput(document.activeElement)).toBe(false);
+      });
+
+      it('forwards the first printable keystroke into the manual path field', async () => {
+        await openManualEntry();
+
+        const event = press({ key: 'd' });
+
+        expect(document.activeElement).toBe(manualInput());
+        expect(manualInput().value).toBe('d');
+        expect(event.defaultPrevented).toBe(true);
+      });
+
+      it('still lets `O` reach the global binding', async () => {
+        const seen: string[] = [];
+        const listener = (e: KeyboardEvent) => seen.push(e.key);
+        document.addEventListener('keydown', listener);
+        try {
+          const panel = await openManualEntry();
+
+          const event = press({ key: 'o' });
+
+          expect(seen).toEqual(['o']);
+          expect(event.defaultPrevented).toBe(false);
+          expect(manualInput().value).toBe('');
+          expect(document.activeElement).toBe(panel);
+        } finally {
+          document.removeEventListener('keydown', listener);
+        }
+      });
+    });
+
     it('passes keys through while the search bar is hidden (nothing to filter)', async () => {
       // Empty directory → `setSearchVisible(false)`; there is no filter to
       // forward into, so the key keeps its normal global meaning.
@@ -1258,6 +1379,28 @@ describe('DatasetBrowser', () => {
       press({ key: 'b' });
       expect(searchInput().value).toBe('b');
       expect(renderedNames()).toEqual(['beta.zarr']);
+      browser.close();
+    });
+
+    it('show() re-parks focus even when the forwarder was never released', async () => {
+      navigateMock.mockReset();
+      navigateMock.mockResolvedValue(defaultNavigateResult({ entries: ENTRIES, strategy: 'html' }));
+      const browser = new DatasetBrowser({ container, onDatasetSelect, onClose });
+      await vi.waitFor(() => {
+        expect(container.querySelectorAll('.luxar-dataset-browser__file-item').length).toBe(3);
+      });
+      const panel = container.querySelector('#luxar-dataset-browser') as HTMLElement;
+
+      // Focus wandered into the listing; show() is then called WITHOUT a
+      // preceding hide(), so `??=` skips the re-install (and with it the
+      // forwarder's container focus). The panel must re-park focus anyway.
+      const firstRow = container.querySelector('.luxar-dataset-browser__file-item') as HTMLElement;
+      firstRow.focus();
+      expect(document.activeElement).toBe(firstRow);
+
+      browser.show();
+
+      expect(document.activeElement).toBe(panel);
       browser.close();
     });
   });

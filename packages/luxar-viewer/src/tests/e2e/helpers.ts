@@ -4,6 +4,8 @@
 
 import { Page } from '@playwright/test';
 
+import { isTypingSurfaceInPage } from './page-predicates';
+
 /**
  * Wait for Luxar to fully initialize
  * Increased timeout for E2E tests with real dataset loading
@@ -1573,26 +1575,15 @@ export async function focusCanvas(page: Page): Promise<void> {
 /**
  * `true` when keyboard focus is on a "typing surface" in the page.
  *
- * Mirrors `input/input-handler/commands/focus-utils.ts::isTypingInInput`, the
- * exact predicate `InputHandler.onKeyDown` guards on — it drops every key but
- * Escape while this is true. A modal panel that leaves focus on a text field
- * therefore makes its own toggle key one-way (issue #1922), so panel toggle
- * tests assert this is `false`. The logic is duplicated (not imported) because
- * it has to run inside the page context.
+ * Thin wrapper around {@link isTypingSurfaceInPage} — the predicate lives in
+ * `page-predicates.ts` (self-contained, so Playwright can serialize it into
+ * the page) and is kept honest by a parity unit test against the production
+ * `focus-utils.ts::isTypingInInput`.
  *
  * @param page - Playwright page
  */
 export async function isFocusOnTypingSurface(page: Page): Promise<boolean> {
-  return await page.evaluate(() => {
-    const el = document.activeElement;
-    if (!el) return false;
-    const tag = el.tagName.toLowerCase();
-    if (tag === 'input') {
-      const type = (el as HTMLInputElement).type?.toLowerCase();
-      return type !== 'range' && type !== 'checkbox' && type !== 'radio';
-    }
-    return tag === 'textarea' || tag === 'select' || el.getAttribute('contenteditable') === 'true';
-  });
+  return await page.evaluate(isTypingSurfaceInPage);
 }
 
 // ============================================================================

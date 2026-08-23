@@ -17,6 +17,28 @@
  * Shared by `ui/help-overlay.ts` and `ui/dataset-browser.ts`; `trapFocus` +
  * `installTypeToFilter` is the house idiom for a filtered modal panel.
  *
+ * ## Modal containment
+ *
+ * The autofocused text field was, de facto, the only thing keeping global
+ * shortcuts from reaching the scene *behind* an `aria-modal` dialog: no panel
+ * pushes an `InputContext`, so with focus parked on a `tabindex="-1"`
+ * container `Home`/`End` would jump the selected dimension, `Shift`+arrows
+ * would change the animation speed, and arrows would steer the fly camera —
+ * all while a modal is open. The container listener therefore stops any key
+ * that originates AT THE CONTAINER ITSELF from propagating to the global
+ * bindings, with three deliberate exceptions:
+ *
+ * - `Escape` — panel dismissal goes through the global handler.
+ * - `Tab` — must reach the focus trap.
+ * - the panel's own passthrough toggle key — the entire point of this module.
+ *
+ * The gate is the event *target*, not the key: an event that originates at an
+ * inner control (a listing row's `Enter`/arrow navigation, the filter's own
+ * keydown) merely bubbles through the container and is left alone. Containment
+ * is `stopPropagation` only, never `preventDefault`, so native in-panel
+ * behaviour (scrolling the panel with `Home`/`PageDown`, browser-level
+ * shortcuts) is untouched.
+ *
  * ## The `h`-toggles vs `h`-filters conflict
  *
  * Both requirements cannot hold for one character: if the very first `h`
@@ -33,15 +55,31 @@
 
 import { isTypingInInput } from '../../input/input-handler/commands/focus-utils';
 
+/**
+ * Keys that must always reach the document-level handler, even while the
+ * modal holds focus: `Escape` closes the panel, `Tab` drives the focus trap.
+ */
+const ALWAYS_GLOBAL_KEYS: ReadonlySet<string> = new Set(['Escape', 'Tab']);
+
 /** Options for {@link installTypeToFilter}. */
 export interface TypeToFilterOptions {
   /**
    * Keys that must reach the global bindings instead of starting
    * type-to-filter — in practice the panel's own toggle key (`h`, `o`).
-   * Matched case-insensitively, so `Shift`+the key behaves the same way the
-   * global binding does.
+   * Matched case-insensitively so a CapsLock'd `H` still toggles, but only
+   * while Shift is NOT held: the global lookup spells a shifted key
+   * `"h+shift"`, which no binding registers, so `Shift`+the key is forwarded
+   * into the filter like any other printable character.
    */
   passthroughKeys?: readonly string[];
+  /**
+   * Optional lookup for the first item of a navigable list inside the panel
+   * (the dataset browser's first listing row). When supplied, `ArrowDown`
+   * pressed while focus is parked on the container moves focus there — the
+   * affordance the search field's own `ArrowDown` handler provides once the
+   * field has focus. Return `null` when there is no list to enter.
+   */
+  resolveFirstItem?: () => HTMLElement | null;
 }
 
 /**
@@ -62,24 +100,34 @@ export interface TypeToFilterOptions {
  * lands) and `stopPropagation`ed (so a forwarded `v` doesn't also cycle the
  * camera mode on its way to the document-level handler).
  *
- * Ignored — i.e. left to propagate untouched:
- * - anything with Ctrl/Meta/Alt held (those are application shortcuts),
+ * Not forwarded into the filter:
+ * - anything with Ctrl/Meta/Alt held (those are application shortcuts) —
+ *   except the AltGr signature (`ctrlKey && altKey` with a one-character
+ *   `key`), which is how Windows reports `AltGr+E` = `€` or `AltGr+2` = `@`
+ *   and is a perfectly ordinary printable character,
  * - `event.key.length !== 1`, which covers `Escape`, `Tab` (must keep
- *   reaching the focus trap), `Enter`, `Backspace`, `ArrowDown` (documented
- *   as moving into the dataset list), `F1`, `Home`/`End`, and every dead key,
- * - `Space`: it is a global shortcut (fullscreen), it scrolls a
- *   `tabindex="-1"` container in some browsers, and a leading space is
- *   meaningless to a substring filter. Once the filter has focus Space types
- *   normally, since the forwarder no longer sees the event.
- * - keys mid-IME-composition (`isComposing`, or the legacy `keyCode === 229`
- *   Safari/Chromium spelling), whose committed text arrives via `input`,
+ *   reaching the focus trap), `Enter`, `Backspace`, `ArrowDown` (steered into
+ *   the listing when `resolveFirstItem` supplies one), `F1`, `Home`/`End`,
+ *   and every dead key,
+ * - `Space`: it scrolls a `tabindex="-1"` container in some browsers, and a
+ *   leading space is meaningless to a substring filter. Once the filter has
+ *   focus Space types normally, since the forwarder no longer sees the event.
  * - keys already handled by an inner listener (`defaultPrevented`),
  * - keys typed while focus is already on a typing surface, so a character is
  *   never handled twice,
  * - keys arriving while `resolveFilterInput()` returns `null` — a panel whose
  *   filter is currently hidden (the dataset browser hides its search bar
- *   while a directory is loading) has nothing to filter, so the key keeps its
- *   normal global meaning.
+ *   while a directory is loading) has nothing to filter.
+ *
+ * A keystroke that opens an IME composition (`isComposing`, or the legacy
+ * `keyCode === 229` Safari/Chromium spelling) is a special case: the filter is
+ * focused but the event is NOT `preventDefault`ed, so the composition
+ * retargets to the input and its committed text lands there. Composing
+ * against the non-editable container would drop the first character outright,
+ * which is every CJK/IME and European dead-key layout.
+ *
+ * Everything that is neither forwarded nor an exception is still contained —
+ * see "Modal containment" in the module header.
  *
  * @param container - The panel element. Gains `tabindex="-1"` and keyboard focus.
  * @param resolveFilterInput - Looks up the filter field at keystroke time.
@@ -101,25 +149,63 @@ export function installTypeToFilter(
 
   const handleKeyDown = (event: KeyboardEvent): void => {
     if (event.defaultPrevented) return;
+
+    // Only a key that originates AT the container means "focus is parked on
+    // the modal shell"; anything bubbling up from an inner control belongs to
+    // that control.
+    const atContainer = event.target === container;
+    const typingSurface = isTypingInInput(event.target as Element | null);
+
     // `keyCode === 229` is the pre-`isComposing` spelling still emitted by
-    // some IME paths; both mean "this keystroke belongs to the composer".
-    if (event.isComposing || event.keyCode === 229) return;
-    if (event.ctrlKey || event.metaKey || event.altKey) return;
-    if (event.key.length !== 1) return;
-    if (event.key === ' ') return;
-    if (passthrough.has(event.key.toLowerCase())) return;
-    if (isTypingInInput(event.target as Element | null)) return;
+    // some IME paths; both mean "this keystroke opens a composition". Hand it
+    // to the filter WITHOUT preventDefault so the composer retargets there —
+    // composing against a non-editable container loses the character.
+    if (event.isComposing || event.keyCode === 229) {
+      if (!typingSurface) resolveFilterInput()?.focus({ preventScroll: true });
+      return;
+    }
 
-    const filterInput = resolveFilterInput();
-    if (!filterInput) return;
+    // Windows AltGr sets ctrlKey AND altKey while producing a normal
+    // printable character, so it must not be mistaken for a shortcut.
+    const isAltGraph = event.ctrlKey && event.altKey && event.key.length === 1;
+    const isModified = (event.ctrlKey || event.metaKey || event.altKey) && !isAltGraph;
 
-    event.preventDefault();
-    event.stopPropagation();
-    filterInput.focus({ preventScroll: true });
-    // Append rather than replace: focus may have been parked on a row or the
-    // close button while the filter already held a query.
-    filterInput.value += event.key;
-    filterInput.dispatchEvent(new Event('input', { bubbles: true }));
+    if (!isModified) {
+      // Shift is deliberately excluded: `Shift+H` spells `"h+shift"` in the
+      // global lookup and matches no binding, so passing it through would
+      // make it a dead key.
+      if (!event.shiftKey && passthrough.has(event.key.toLowerCase())) return;
+
+      if (atContainer && event.key === 'ArrowDown' && !event.shiftKey) {
+        const firstItem = options.resolveFirstItem?.() ?? null;
+        if (firstItem) {
+          event.preventDefault();
+          event.stopPropagation();
+          firstItem.focus();
+          return;
+        }
+      }
+
+      if (event.key.length === 1 && event.key !== ' ' && !typingSurface) {
+        const filterInput = resolveFilterInput();
+        if (filterInput) {
+          event.preventDefault();
+          event.stopPropagation();
+          filterInput.focus({ preventScroll: true });
+          // Append rather than replace: focus may have been parked on a row
+          // or the close button while the filter already held a query.
+          filterInput.value += event.key;
+          filterInput.dispatchEvent(new Event('input', { bubbles: true }));
+          return;
+        }
+      }
+    }
+
+    // Modal containment: nothing behind an `aria-modal` panel should hear a
+    // key the user aimed at the panel itself.
+    if (atContainer && !ALWAYS_GLOBAL_KEYS.has(event.key)) {
+      event.stopPropagation();
+    }
   };
 
   container.addEventListener('keydown', handleKeyDown);

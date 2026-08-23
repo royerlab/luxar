@@ -6,10 +6,36 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { showHelpOverlay, hideHelpOverlay } from '../../../ui/help-overlay';
 import { isTypingInInput } from '../../../input/input-handler/commands/focus-utils';
 
+/**
+ * Cost, in pending 0 ms timers, of ONE focus transition in this environment.
+ * jsdom queues a `selectionchange` tick on every `focus()`
+ * (`Selection-impl._associateRange`); a real browser queues nothing. Measured
+ * per test rather than hardcoded, so the timer-leak guards below stay exact
+ * without draining timers — draining a 0 ms tick would also retire the
+ * untracked 0 ms timer those guards exist to catch (audit G17).
+ */
+let focusTickCost = 0;
+
+/**
+ * Timer count with the overlay closed and focus parked on {@link focusAnchor}.
+ * The guards assert `baseline + focusTransitions * focusTickCost`.
+ */
+let baselineTimerCount = 0;
+
+/** Element that holds focus before an overlay opens, so `trapFocus` has a real element to restore to. */
+let focusAnchor: HTMLElement;
+
 // Mock DOM environment
 beforeEach(() => {
   document.body.innerHTML = '';
   vi.useFakeTimers();
+
+  focusAnchor = document.createElement('div');
+  focusAnchor.tabIndex = -1;
+  document.body.appendChild(focusAnchor);
+  focusAnchor.focus();
+  focusTickCost = vi.getTimerCount();
+  baselineTimerCount = focusTickCost;
 });
 
 afterEach(() => {
@@ -25,15 +51,18 @@ afterEach(() => {
 });
 
 /**
- * jsdom queues a 0 ms `selectionchange` timer on every `focus()` call
- * (`Selection-impl._associateRange`), and the overlay focuses its container on
- * open (#1922). Drain that environment tick so `getTimerCount()` reflects only
- * the overlay's OWN timers — the click-listener timer runs at
- * `helpClickDelayMs` (100 ms) and therefore still shows up here if a
- * regression stopped cancelling it.
+ * Assert the overlay left NO timer of its own pending.
+ *
+ * An open-then-close cycle performs `focusTransitions` focus moves (the
+ * container on open, the restore on close), each of which costs
+ * {@link focusTickCost} environment timers. Anything above that is the
+ * overlay's — the 100 ms click-listener timer if it stopped being cancelled,
+ * or an untracked 0 ms timer (audit G17). Deliberately does NOT advance the
+ * clock: `advanceTimersByTime(0)` retires the environment tick, but it retires
+ * a leaked 0 ms timer with it and the guard stops biting.
  */
-function drainSelectionChangeTicks(): void {
-  vi.advanceTimersByTime(0);
+function expectNoOverlayTimersPending(focusTransitions: number): void {
+  expect(vi.getTimerCount()).toBe(baselineTimerCount + focusTransitions * focusTickCost);
 }
 
 describe('showHelpOverlay - Memory Leak Prevention', () => {
@@ -70,8 +99,9 @@ describe('showHelpOverlay - Memory Leak Prevention', () => {
     showHelpOverlay();
     hideHelpOverlay();
 
-    drainSelectionChangeTicks();
-    expect(vi.getTimerCount()).toBe(0);
+    // Two focus transitions: onto the overlay container, then back to the
+    // anchor when the trap restores focus.
+    expectNoOverlayTimersPending(2);
   });
 
   it('close button cancels delayed listener registration', () => {
@@ -81,8 +111,7 @@ describe('showHelpOverlay - Memory Leak Prevention', () => {
     closeBtn.click();
 
     expect(document.getElementById('luxar-help-overlay')).toBeNull();
-    drainSelectionChangeTicks();
-    expect(vi.getTimerCount()).toBe(0);
+    expectNoOverlayTimersPending(2);
   });
 
   it('rapid hide then show cannot attach the stale overlay listener', () => {
@@ -249,6 +278,73 @@ describe('showHelpOverlay - initial focus and type-to-filter (#1922)', () => {
     } finally {
       document.removeEventListener('keydown', listener);
     }
+  });
+
+  it('a forwarded printable never reaches the global bindings', () => {
+    const seen: string[] = [];
+    const listener = (e: KeyboardEvent) => seen.push(e.key);
+    document.addEventListener('keydown', listener);
+    try {
+      showHelpOverlay();
+
+      // `v` cycles the camera mode globally. Typing it into the filter must
+      // not also switch to fly mode behind the overlay.
+      pressOnOverlay({ key: 'v' });
+
+      expect(filterEl().value).toBe('v');
+      expect(seen).toEqual([]);
+    } finally {
+      document.removeEventListener('keydown', listener);
+    }
+  });
+
+  it('keeps non-printable global shortcuts off the scene while it is modal', () => {
+    const seen: string[] = [];
+    const listener = (e: KeyboardEvent) => seen.push(e.key);
+    document.addEventListener('keydown', listener);
+    try {
+      showHelpOverlay();
+
+      // `Home`/`End` jump the selected dimension and Shift+arrows change the
+      // animation speed (`animation-shortcuts.ts`). No panel pushes an
+      // InputContext, so with focus on a `tabindex="-1"` container the
+      // container listener is the only thing containing them.
+      pressOnOverlay({ key: 'Home' });
+      pressOnOverlay({ key: 'End' });
+      pressOnOverlay({ key: 'ArrowUp', shiftKey: true });
+
+      expect(seen).toEqual([]);
+      // Escape is the one key that must still get out — it closes the panel.
+      pressOnOverlay({ key: 'Escape' });
+      expect(seen).toEqual(['Escape']);
+    } finally {
+      document.removeEventListener('keydown', listener);
+    }
+  });
+
+  it('does not double-insert once the filter holds focus', () => {
+    showHelpOverlay();
+    pressOnOverlay({ key: 'r' });
+    expect(document.activeElement).toBe(filterEl());
+
+    // The browser inserts the character itself now; the forwarder must keep
+    // its hands off or the field would read "rr".
+    const event = pressOnOverlay({ key: 'e' });
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(filterEl().value).toBe('r');
+  });
+
+  it('types Shift+H into the filter instead of dropping it', () => {
+    showHelpOverlay();
+
+    // The global lookup spells this "h+shift", which no binding registers, so
+    // passing it through would make Shift+H a dead key.
+    const event = pressOnOverlay({ key: 'H', shiftKey: true });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(filterEl());
+    expect(filterEl().value).toBe('H');
   });
 
   it('hideHelpOverlay releases the type-to-filter listener', () => {
