@@ -959,8 +959,8 @@ export class DimensionSliders {
    * slice positions in all non-displayed dimensions.
    *
    * Format:
-   * - Categorical: "Display: X, Y, Z | Channel: DAPI | Time: 5.20s"
-   * - Numeric: "Display: X, Y, Z | Time: 5.20s | Index: 2"
+   * - Categorical: "[/]: 1 · Channel | Display: X, Y, Z | Channel: DAPI | Time: 5.20s"
+   * - Numeric: "[/]: 1 · Time | Display: X, Y, Z | Time: 5.20s | Index: 2"
    *
    * @public
    */

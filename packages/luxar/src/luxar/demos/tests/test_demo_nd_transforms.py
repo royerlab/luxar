@@ -117,10 +117,11 @@ def test_every_authored_world_space_caption_has_a_glyph() -> None:
         *(text for row in demo.FRAME_ROWS for text in (row.label, row.note)),
         *(text for label, _permutation, note in demo.CHANNEL_ROWS for text in (label, note)),
     ]
+    rendered_variants = [*authored, *(text.lower() for text in authored)]
     unsupported = {
         character
-        for text in authored
+        for text in rendered_variants
         for character in text
-        if character != "\n" and character not in demo._GLYPHS
+        if character != "\n" and character.upper() not in demo._GLYPHS
     }
     assert unsupported == set()

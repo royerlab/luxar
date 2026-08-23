@@ -223,6 +223,50 @@ describe('InputHandler — dimension selection feedback', () => {
       managerState.dimensionRanges = previousRanges;
     }
   });
+
+  it('uses the category label when a categorical dimension is already at its bound', () => {
+    const managerState = sceneDimsManager as unknown as {
+      dims: SimpleDims | null;
+      dimensionRanges: Array<[number, number]> | null;
+    };
+    const previousDims = managerState.dims;
+    const previousRanges = managerState.dimensionRanges;
+    managerState.dims = { ...dims, currentStep: [0, 0, 0, 7, 2] };
+    managerState.dimensionRanges = [
+      [0, 0],
+      [0, 0],
+      [0, 0],
+      [0, 15],
+      [0, 2],
+    ];
+    const showToast = vi.fn();
+    setNotifierBackend({
+      showError: vi.fn(),
+      showToast,
+      showHelpOverlay: vi.fn(),
+      hideHelpOverlay: vi.fn(),
+      showLoadingIndicator: vi.fn(),
+      hideLoadingIndicator: vi.fn(),
+      clearError: vi.fn(),
+    });
+    const handler = makeHandler();
+    (handler as unknown as { selectedDimension: number }).selectedDimension = 1;
+
+    try {
+      (
+        handler as unknown as { handleDimensionNavigation(direction: -1 | 1): void }
+      ).handleDimensionNavigation(1);
+      expect(showToast).toHaveBeenCalledWith(
+        'Channel is already at its maximum (BLUE).',
+        2000
+      );
+    } finally {
+      clearNotifierBackend();
+      handler.dispose();
+      managerState.dims = previousDims;
+      managerState.dimensionRanges = previousRanges;
+    }
+  });
 });
 
 describe('InputHandler — optional setters', () => {

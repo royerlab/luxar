@@ -880,8 +880,11 @@ export class InputHandler {
       if (!isCyclic && bound !== undefined && current === bound) {
         const name =
           sceneDimsManager.getDimensionNames()[step.targetDim] || `Dim ${step.targetDim}`;
+        const categories = dims?.metadata?.[step.targetDim]?.categories;
+        const category = categories?.[Math.round(bound)];
+        const boundLabel = category !== undefined ? category : bound;
         const edge = direction > 0 ? 'maximum' : 'minimum';
-        notifier.toast(`${name} is already at its ${edge} (${bound}).`);
+        notifier.toast(`${name} is already at its ${edge} (${boundLabel}).`);
       }
       return;
     }
