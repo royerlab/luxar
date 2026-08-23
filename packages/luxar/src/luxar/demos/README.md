@@ -270,7 +270,7 @@ Stunning volumetric representation of the famous Mandelbulb 3D fractal.
 
 **Run**: `luxar demo run mandelbulb [-- --resolution=128] [-- --power=8]`
 
-**Demonstrates**: 3D fractal mathematics (extension of Mandelbrot set), distance estimation for surface detection, iteration-based coloring, adaptive point sizing, spherical coordinate transformation, escape-time algorithm in 3D.
+**Demonstrates**: 3D fractal mathematics (extension of Mandelbrot set), distance estimation for surface detection, orbit-trap coloring, distance-field normals and ambient occlusion, baked key lighting, adaptive point sizing, spherical coordinate transformation, escape-time algorithm in 3D.
 
 ---
 
