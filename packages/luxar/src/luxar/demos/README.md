@@ -713,7 +713,7 @@ The wiring of the human brain: all 87 named white-matter tracts of the HCP-1065 
 
 **Run**: `luxar demo run dmri_tractography [-- --per-bundle 6000 --points 28]`
 
-**Requires**: Internet access on first run — downloads `hcp1065_avg_tracts_trk.zip` (588 MB) to `~/.cache/luxar/dmri_tractography/` and caches the decoded bundles as an `.npz`. Needs `nibabel` (in the `demos` extra). No GPU. Building the scene takes ~25 min because every node lifts its segments to Gaussian beads for the substitutive LOD; it is a one-time cost, paid again only on `--recompute`. Substitutive Lines LOD needs `luxar[gsplats]` (torch + scipy); without it the bundles are written flat (fully viewable, no coarse levels).
+**Requires**: Internet access on first run — downloads `hcp1065_avg_tracts_trk.zip` (588 MB) to `~/.cache/luxar/dmri_tractography/` and caches the decoded bundles as an `.npz`. Needs `nibabel` (in the `demos` extra). No GPU. Building the scene takes ~25 min because every node lifts its segments to Gaussian beads for the substitutive LOD; the cached scene rebuilds on `--recompute` or when the demo builder fingerprint changes, unless `--keep-stale` is passed. Substitutive Lines LOD needs `luxar[gsplats]` (torch + scipy); without it the bundles are written flat (fully viewable, no coarse levels).
 
 **Demonstrates**: Lines as the *native* geometry for data that is already made of curves — no conversion, unlike every volumetric demo. Arc-length resampling (the source is ~0.4 mm-sampled, ~10x finer than any rendered line width); `line_type="indexed"` with per-streamline contiguous vertices so thick tubes render seamless joints; 87 separate nodes, each sized to stay under both the un-laddered-leaf gate (200K vertices) and the per-node element-texture segment bound; per-node **substitutive LOD** at `compression_factor=256` — thin lines need a far larger K than the default, because the bead lift is driven by arc-length ÷ width rather than by segment count (at K=4 the "coarse" level comes out 5.6x heavier than the fine one, and the scene balloons to 2.1 GB); `blending_mode="additive"` at low opacity with a display window, which is order-independent and so cannot pop as the camera orbits — unlike `normal`, whose per-object transparent-pass sort flips between overlapping bundles; and per-tract **hover labels** broadcast across a node's vertices (Lines labels are per-vertex), which ride the ladder's finest level only, so the tooltip appears once a bundle is zoomed to roughly fill the view. Data: [Yeh 2022](https://doi.org/10.1038/s41467-022-32595-4), [HCP-1065 atlas](https://brain.labsolver.org/hcp_trk_atlas.html) (CC BY-SA 4.0; WU-Minn HCP data-use terms).
 
@@ -1240,7 +1240,7 @@ from luxar.demos import (
     cache_computed,  # cache an expensive result (UMAP, field) — versioned, param-keyed
     require_local_data,  # gate LFS-tracked local data (clear "git lfs pull" message)
     require_module,  # gate an OPTIONAL dependency at its point of use (see #7)
-    parse_demo_flags,  # --recompute / --no-serve / --serve-only
+    parse_demo_flags,  # --recompute / --keep-stale / --no-serve / --serve-only
     parse_int_arg,  # --points=N / --sample N integer flags
     parse_path_arg,  # --cache-dir PATH / --data=PATH path flags (expands ~)
     hsv_to_rgb,  # vectorized rainbow / hue-ramp colouring
