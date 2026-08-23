@@ -415,6 +415,7 @@ export class DatasetBrowser {
         <div class="luxar-dataset-browser__skeleton-row"></div>
       </div>
     `;
+    this.parkFocusIfUnclaimed();
     statusBar.textContent = 'Fetching directory contents...';
     this.setSearchVisible(false);
 
@@ -547,6 +548,15 @@ export class DatasetBrowser {
     editBtn.setAttribute('aria-label', 'Enter dataset path manually');
     editBtn.onclick = () => this.openPathEditor();
     breadcrumb.appendChild(editBtn);
+
+    this.parkFocusIfUnclaimed();
+  }
+
+  /** Keep modal keyboard handling active after a focused child is replaced. */
+  private parkFocusIfUnclaimed(): void {
+    if (!document.activeElement || document.activeElement === document.body) {
+      this.panel.focus();
+    }
   }
 
   /**

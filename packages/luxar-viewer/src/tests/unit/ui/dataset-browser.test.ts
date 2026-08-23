@@ -324,6 +324,31 @@ describe('DatasetBrowser', () => {
       expect(input.value).toBe('data/sub');
     });
 
+    it('Escape from the path editor returns focus to the panel', async () => {
+      navigateMock.mockResolvedValueOnce(
+        defaultNavigateResult({ currentPath: 'data/sub', entries: [] })
+      );
+
+      new DatasetBrowser({ container, onDatasetSelect, onClose });
+      await vi.waitFor(() => {
+        expect(container.querySelector('#luxar-dataset-browser-path-edit')).not.toBeNull();
+      });
+
+      (container.querySelector('#luxar-dataset-browser-path-edit') as HTMLButtonElement).click();
+      const input = container.querySelector(
+        '.luxar-dataset-browser__path-input'
+      ) as HTMLInputElement;
+      expect(document.activeElement).toBe(input);
+
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      );
+
+      const panel = container.querySelector('#luxar-dataset-browser') as HTMLElement;
+      expect(container.querySelector('.luxar-dataset-browser__path-input')).toBeNull();
+      expect(document.activeElement).toBe(panel);
+    });
+
     it('Enter on a .zarr path selects it via getFullUrl and closes', async () => {
       navigateMock.mockResolvedValueOnce(defaultNavigateResult());
 
@@ -1264,6 +1289,73 @@ describe('DatasetBrowser', () => {
       const firstRow = container.querySelector('.luxar-dataset-browser__file-item');
       expect(document.activeElement).toBe(firstRow);
       expect(event.defaultPrevented).toBe(true);
+    });
+
+    it('directory navigation from the listing keeps focus inside the panel', async () => {
+      navigateMock.mockReset();
+      navigateMock
+        .mockResolvedValueOnce(
+          defaultNavigateResult({
+            entries: [{ name: 'nested', path: 'nested', type: 'directory' }],
+            strategy: 'html',
+          })
+        )
+        .mockResolvedValueOnce(defaultNavigateResult({ currentPath: 'nested', entries: [] }));
+
+      new DatasetBrowser({ container, onDatasetSelect, onClose });
+      await vi.waitFor(() => {
+        expect(container.querySelector('.luxar-dataset-browser__file-item')).not.toBeNull();
+      });
+      const panel = container.querySelector('#luxar-dataset-browser') as HTMLElement;
+
+      press({ key: 'ArrowDown' });
+      expect(document.activeElement).toBe(
+        container.querySelector('.luxar-dataset-browser__file-item')
+      );
+
+      press({ key: 'Enter' });
+      await vi.waitFor(() => {
+        expect(container.querySelector('.luxar-dataset-browser__empty')).not.toBeNull();
+      });
+
+      expect(panel.contains(document.activeElement)).toBe(true);
+    });
+
+    it('a completed navigation does not steal focus from a stacked modal', async () => {
+      navigateMock.mockReset();
+      let resolveNextListing: (result: unknown) => void = () => {};
+      const nextListing = new Promise<unknown>((resolve) => {
+        resolveNextListing = resolve;
+      });
+      navigateMock
+        .mockResolvedValueOnce(
+          defaultNavigateResult({
+            entries: [{ name: 'nested', path: 'nested', type: 'directory' }],
+            strategy: 'html',
+          })
+        )
+        .mockReturnValueOnce(nextListing);
+
+      new DatasetBrowser({ container, onDatasetSelect, onClose });
+      await vi.waitFor(() => {
+        expect(container.querySelector('.luxar-dataset-browser__file-item')).not.toBeNull();
+      });
+
+      press({ key: 'ArrowDown' });
+      press({ key: 'Enter' });
+
+      const stackedModal = document.createElement('div');
+      stackedModal.tabIndex = -1;
+      document.body.appendChild(stackedModal);
+      stackedModal.focus();
+
+      resolveNextListing(defaultNavigateResult({ currentPath: 'nested', entries: [] }));
+      await vi.waitFor(() => {
+        expect(container.querySelector('.luxar-dataset-browser__empty')).not.toBeNull();
+      });
+
+      expect(document.activeElement).toBe(stackedModal);
+      stackedModal.remove();
     });
 
     describe('manual-entry fallback (unlistable server)', () => {
