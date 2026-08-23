@@ -976,13 +976,31 @@ rewrites a store must apply all three rules:
   "Coarsen everything" therefore has an explicit spelling and a
   non-spelling: `[0, …, d-1]`, whose complement is the empty list (a real,
   authoritative *no barrier*), versus `null`, which asserts nothing and lands on
-  the heuristic. **Every producer writes the explicit list**, resolved through
+  the heuristic. **Three producers write the explicit list**, resolved through
   one shared function (`resolved_merge_coarsen_dims`): `decimate`'s `merge`
   family, `make_substitutive_lod` (and so every `lod --recipe levels` build),
-  and the `batch-fit merge` per-part record. The one remaining `null` is a
-  `batch-fit merge` whose manifest never recorded a `spatial_shape`: the merge
-  cannot establish the part width there and declines to invent one, since a
-  wrong explicit list is worse than an absent one — the writer acts on it.
+  and the `batch-fit merge` per-part record. `batch-fit merge` still writes
+  `null` when its manifest never recorded a `spatial_shape`: the merge cannot
+  establish the part width there and declines to invent one, since a wrong
+  explicit list is worse than an absent one — the writer acts on it.
+
+  **Three substitutive producers publish nothing at all**, and an absent key is
+  read exactly as a `null`: `lod --recipe adaptive`, `lod --recipe overview`,
+  and `fit --recipe levels`. All three write their `pipeline/` group from their
+  *input's* stats rather than from the recipe they just ran (`cli/lod.py`'s
+  composed-recipe branch and `fit_utils.save_fit_output`), so the reduction's
+  own choice never reaches the store — including a `--coarsen-dims` the user
+  passed explicitly. Measured on a 200-splat 4D fixture over three timepoints
+  spaced 1000 apart, `--parts 2 -K 4 -L 2`: `adaptive` writes no `coarsen_dims`
+  and comes out with the per-level *mixture* described above (16 groups at `[]`,
+  8 at `[3]`) whether or not `--coarsen-dims 0,1,2` was given; `overview` writes
+  none and gets `[3]` on all 12 groups, the barrier its merged coarse level
+  blended away. Fixing that means plumbing the composed recipes' own parameters
+  into the record, which is tracked on #1600 and is not what the shared resolver
+  above changed. (`flat`, `stream` and `tiles` publish nothing either, but
+  correctly: they run no substitutive reduction, so they blend no axis and the
+  inherited value — or the fallback — stays true of the result.)
+
   Otherwise `null` appears only in stores written before this was settled
   (#1600); it still reads correctly — as no provenance — and nothing rewrites
   those stores in place.
@@ -993,6 +1011,29 @@ rewrites a store must apply all three rules:
   purely spatially and no longer group by timepoint. That is the layout the
   reduction earned — it blended that axis — but a store rebuilt at a *new*
   `content_hash` cannot be served under the old URL to a warm viewer cache.
+
+  The move does **not stop at the `levels` store**. `coarsen_dims` is exempt
+  from the structure scrub (above), so the explicit list is *inherited* by every
+  downstream rewrite of that store and takes the new layout with it. Measured on
+  the same fixture: `flatten`, `additive`, `partition`, `cull`, `filter`,
+  `slice`, `transform`, `reencode`, and a `lod --recipe tiles|stream` rebuilt off
+  the `levels` store all carry `[0, 1, 2, 3]` and write `slice_dims: []` where
+  before they wrote `[3]`. Two things make that acceptable rather than merely
+  tolerated. The direction is safe: a *missing* barrier only costs over-fetch,
+  while a false one gives a spatial axis tight chunk bounds and can drop splats
+  from a query — the asymmetry `detect_barrier_dims` is written around, so no
+  splats are lost either way. And the inherited value is *true of these outputs*:
+  none of those commands coarsens anything, so the axes the `levels` build
+  blended stay blended in their results.
+
+  The finest level is the honest edge of that. A substitutive ladder's finest
+  level is the input **unreduced**, so its stacked axis is still gridded and a
+  barrier there would have been legitimate — `flatten` of a 4D coarsen-all
+  `levels` store hands back exactly those 200 original splats and now orders them
+  with no barrier at all. That is the price of one layout per ladder instead of a
+  heuristic answering each level separately, and it is why a `>3D` build that
+  means to keep a time/channel axis should say so with `--coarsen-dims` rather
+  than rely on the fallback to notice.
 
   Exempt from the scrub is not exempt from being TRUE. A rewrite that coarsens
   over its own choice of axes owes the output a fresh `coarsen_dims`, because the

@@ -852,6 +852,18 @@ def lod_recipe(
                     "categorical/sliced (time/channel/...), pass --coarsen-dims "
                     "with the spatial column indices to keep them as barriers."
                 )
+                # `levels` stamps the resolved choice and the writer reads it
+                # back, so the flag also fixes the CHUNK layout — for the WHOLE
+                # ladder, finest level included, even though that level is the
+                # input unreduced and its own grid would have survived a
+                # per-level guess (#1600). Stated without branching on the
+                # recipe: `overview` / `adaptive` publish no stamp yet and are
+                # still guessed per level, which is tracked on the same issue.
+                aprint(
+                    "    With --recipe levels that choice is also published and "
+                    "fixes the chunk layout of the WHOLE ladder — the finest "
+                    "level included, though it is your input unreduced."
+                )
 
             params = RecipeParams(
                 n_lods=n_lods if n_lods is not None else 4,

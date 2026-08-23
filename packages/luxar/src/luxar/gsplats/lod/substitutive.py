@@ -296,11 +296,20 @@ def resolved_merge_coarsen_dims(
 ) -> list[int]:
     """The dims a substitutive reduction ACTUALLY coarsens over, spelled EXPLICITLY.
 
-    The single resolution every producer of the ``coarsen_dims`` stamp shares
-    (:func:`make_substitutive_lod` here, :func:`~luxar.gsplats.lod.decimate
+    The single resolution shared by every path that WRITES the ``coarsen_dims``
+    stamp (:func:`make_substitutive_lod` here, :func:`~luxar.gsplats.lod.decimate
     .decimate`'s ``merge`` family, and the ``batch-fit merge`` per-part record)
-    — one function so a third one cannot quietly publish the same choice a
+    — one function so a fourth one cannot quietly publish the same choice a
     second way.
+
+    Three substitutive producers write NO stamp at all and are therefore not
+    reached by this: ``lod --recipe adaptive`` / ``--recipe overview`` and
+    ``fit --recipe levels`` build their ``pipeline/`` group out of their INPUT's
+    stats rather than out of the recipe they ran, so the reduction's own choice
+    — an explicit ``--coarsen-dims`` included — never lands on disk, and an
+    absent key reads exactly like the ``null`` below. Routing those through here
+    means plumbing a composed recipe's parameters into its record, which is a
+    separate change tracked on #1600.
 
     Always a literal list, never ``None`` — including for the coarsen-everything
     case (the ``coarsen_dims=None`` default, and a request naming every dim,

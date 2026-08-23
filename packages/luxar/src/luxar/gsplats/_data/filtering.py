@@ -267,9 +267,28 @@ _STRUCTURE_SCOPED_STATS_KEYS = (
 #:   :func:`~luxar.gsplats.lod.substitutive.resolved_merge_coarsen_dims`, called
 #:   right after this scrub — while its ``prefix`` family keeps the inherited
 #:   value because it blends no axis. That resolution is SHARED with
-#:   ``make_substitutive_lod`` (and the ``batch-fit merge`` per-part record), so
-#:   every producer of this key spells coarsen-everything the same explicit way
-#:   rather than as a ``null`` the writer reads as no provenance at all.
+#:   ``make_substitutive_lod`` and the ``batch-fit merge`` per-part record, so
+#:   the three paths that WRITE this key spell coarsen-everything the same
+#:   explicit way rather than as a ``null`` the writer reads as no provenance at
+#:   all. (``lod --recipe adaptive`` / ``overview`` and ``fit --recipe levels``
+#:   coarsen too but publish no stamp at all — still on #1600.)
+#:
+#:   The exemption has a CONSEQUENCE worth stating, because #1600 made the
+#:   inherited value load-bearing where it used to be an inert ``null``: a
+#:   ``levels`` store that coarsened everything now carries ``[0, …, d-1]``, and
+#:   every structure-preserving rewrite of it — ``cull`` / ``filter`` / ``slice``
+#:   / ``transform`` / ``reencode``, plus ``flatten`` / ``partition`` /
+#:   ``additive`` / a rebuilt ``lod`` — inherits that list and writes
+#:   ``slice_dims: []`` where it used to write the auto-detected barrier. The
+#:   direction is the safe one (:func:`~luxar.io._ordering.compound
+#:   .detect_barrier_dims` documents the asymmetry: a MISSING barrier costs
+#:   over-fetch, a false one gives a spatial axis tight chunk bounds and can drop
+#:   splats), and the value stays TRUE — none of those rewrites coarsens
+#:   anything, so an axis blended upstream is still blended. What it does cost is
+#:   the finest level: it is the input unreduced, so ``flatten`` hands back the
+#:   original splats with no per-slice locality even though a barrier there would
+#:   have been legitimate. One layout per ladder, chosen by the producer, instead
+#:   of a heuristic answering each level on its own.
 #: * The :data:`~luxar.gsplats.io.save_gsplats.NORMALIZATION_STATS_KEYS` block
 #:   (``floor`` / ``image_min`` / ``image_max`` / ``intensity_range``) describes
 #:   the INPUT VOLUME's intensity scale. Regrouping splats cannot change what

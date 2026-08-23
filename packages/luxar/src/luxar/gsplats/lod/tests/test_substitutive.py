@@ -2000,22 +2000,72 @@ class TestCoarsenDims:
         )
         assert out.stats["coarsen_dims"] == expected
 
-    def test_the_stamp_is_resolved_by_the_shared_helper(self):
+    def test_the_stamp_is_resolved_by_the_shared_helper(self, monkeypatch):
         """One resolution for every producer of this key, not three copies.
 
-        ``decimate``'s ``merge`` family and the ``batch-fit merge`` per-part
-        record publish the same stamp for the same choice, and the way they are
-        kept from drifting is that all three call
-        :func:`resolved_merge_coarsen_dims`. Pinned so a future edit that
-        inlines the rule here goes red instead of quietly reopening #1600.
-        """
-        from luxar.gsplats.lod.decimate import (
-            resolved_merge_coarsen_dims as from_decimate,
-        )
+        ``make_substitutive_lod``, ``decimate``'s ``merge`` family and the
+        ``batch-fit merge`` per-part record publish the same stamp for the same
+        choice, and the way they are kept from drifting is that all three CALL
+        :func:`resolved_merge_coarsen_dims`. Pinned by spying on the shared
+        function rather than on the values it returns: an inlined re-spelling
+        produces the same list today, so a value assertion would stay green
+        through exactly the drift this exists to catch (#1600 review — the batch
+        producer inlined the rule and no test noticed).
 
-        assert from_decimate is resolved_merge_coarsen_dims
+        Each producer is spied at the binding IT resolves. ``decimate`` binds
+        the name at import time, so its module attribute is patched and the
+        identity assertion is what proves that attribute is the shared function
+        rather than a private copy; the batch producer imports inside the
+        function, so patching the defining module intercepts it.
+        """
+        import importlib
+
+        from luxar.gsplats.batch import merge_orchestrator
+        from luxar.gsplats.lod import substitutive as substitutive_mod
+        from luxar.gsplats.lod.decimate import decimate
+
+        # `luxar.gsplats.lod` re-exports the `decimate` FUNCTION under the
+        # submodule's own name, so the module has to be fetched by path.
+        decimate_mod = importlib.import_module("luxar.gsplats.lod.decimate")
+
+        assert decimate_mod.resolved_merge_coarsen_dims is resolved_merge_coarsen_dims
         assert resolved_merge_coarsen_dims(None, 4) == [0, 1, 2, 3]
         assert resolved_merge_coarsen_dims((3, 1, 1), 4) == [1, 3]
+
+        calls: list[tuple] = []
+
+        def spy(coarsen_dims, ndim):
+            calls.append((coarsen_dims, ndim))
+            return resolved_merge_coarsen_dims(coarsen_dims, ndim)
+
+        monkeypatch.setattr(substitutive_mod, "resolved_merge_coarsen_dims", spy)
+        monkeypatch.setattr(decimate_mod, "resolved_merge_coarsen_dims", spy)
+
+        data = _stacked_categorical(n_per=40, n_groups=2)
+
+        calls.clear()
+        make_substitutive_lod(data, compression_factor=4, levels=1, device="cpu")
+        assert calls, "make_substitutive_lod spelled its own coarsen_dims stamp"
+
+        calls.clear()
+        decimate(data, target=20, method="merge", verbose=False)
+        assert calls, "decimate's merge family spelled its own coarsen_dims stamp"
+
+        calls.clear()
+        # The batch producer's stamp resolution, exercised at the seam rather
+        # than through a whole merge: an explicit request and the per-part
+        # default both have to arrive through the shared function.
+        assert merge_orchestrator._stamped_coarsen_dims((2, 0, 0), None) == [0, 2]
+        assert merge_orchestrator._stamped_coarsen_dims(None, (2, 1, 0)) == [0, 1, 2]
+        assert len(calls) == 2, (
+            "batch-fit merge spelled its own coarsen_dims stamp instead of "
+            f"resolving it through the shared helper (calls: {calls})"
+        )
+        # ...and the honest `None` (no manifest width, no request) is NOT a
+        # resolution: nothing to share, nothing to call.
+        calls.clear()
+        assert merge_orchestrator._stamped_coarsen_dims(None, None) is None
+        assert not calls
 
     def test_single_barrier_value_is_noop(self):
         # All splats share barrier value 0 → one group → identical to all-dims.

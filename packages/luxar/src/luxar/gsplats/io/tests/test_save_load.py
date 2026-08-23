@@ -3352,10 +3352,12 @@ class TestBarrierAwareOrdering:
         NOTE: this is _barrier_from_coarsen_dims's empty-complement branch, and
         since #1600 it is on the ORDINARY path rather than a direct-caller
         curiosity: `_normalise_coarsen_dims` still collapses coarsen-all to an
-        internal `None`, but every producer of the stamp (make_substitutive_lod,
-        decimate's merge family, the batch-fit merge per-part record) now
-        resolves that back to the full list through
-        `resolved_merge_coarsen_dims` before writing it. The `None` spelling is
+        internal `None`, but the three paths that WRITE the stamp
+        (make_substitutive_lod, decimate's merge family, the batch-fit merge
+        per-part record) now resolve that back to the full list through
+        `resolved_merge_coarsen_dims` before writing it. (`lod --recipe
+        adaptive` / `overview` and `fit --recipe levels` write no stamp at all,
+        so they still land on the branch below — #1600.) The `None` spelling is
         indistinguishable from 'no provenance' and would land on auto-detect,
         re-imposing the barrier the reduction just blended away."""
         from luxar.gsplats.io.save_gsplats import write_gsplats_tree

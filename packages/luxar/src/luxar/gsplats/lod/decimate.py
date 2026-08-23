@@ -58,9 +58,10 @@ from luxar.gsplats.lod.additive import compute_additive_order
 
 # `resolved_merge_coarsen_dims` is imported rather than defined here: it moved
 # next to `_normalise_coarsen_dims` (the collapse it compensates for) when
-# `make_substitutive_lod` started sharing it, so the two producers of the
-# `coarsen_dims` stamp cannot drift apart again. Still reachable under its
-# original `luxar.gsplats.lod.decimate` name.
+# `make_substitutive_lod` and the `batch-fit merge` per-part record started
+# sharing it, so the three producers of the `coarsen_dims` stamp cannot drift
+# apart again. Still reachable under its original
+# `luxar.gsplats.lod.decimate` name.
 from luxar.gsplats.lod.substitutive import merge_to_count, resolved_merge_coarsen_dims
 from luxar.utils.lod_methods import AutoOrMethod as AdditiveOrdering
 
@@ -315,9 +316,9 @@ def decimate(
             # on a blended axis whenever the reduction left that axis' grid
             # intact (and is redundant when it did not — measured both ways in
             # `resolved_merge_coarsen_dims`). Shared with
-            # `make_substitutive_lod`, which resolves its own stamp through the
-            # same function, so the two producers of this key cannot spell the
-            # same choice two ways.
+            # `make_substitutive_lod` and the `batch-fit merge` per-part record,
+            # which resolve their own stamp through the same function, so the
+            # producers of this key cannot spell the same choice two ways.
             out.stats["coarsen_dims"] = resolved_merge_coarsen_dims(
                 coarsen_dims, data.ndim
             )

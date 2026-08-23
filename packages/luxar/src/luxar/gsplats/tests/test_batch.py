@@ -1748,21 +1748,53 @@ class TestMergeOrchestrator:
         # `test_merge_recipe_levels_stamps_the_part_coarsen_dims`.
         assert pipe["coarsen_dims"] is None
 
+    def _gridded_tile(self, n: int, seed: int):
+        """A tile whose LAST spatial axis sits on a coarse integer grid.
+
+        The continuous `_tile` cannot show that the stamp is load-bearing: the
+        writer's fallback finds no barrier on it either, so an unstamped store
+        gets the same layout by accident. Three integral z planes over ``n``
+        splats clear ``detect_barrier_dims``' ``n_unique * 4 <= n`` guard, so
+        the fallback DOES flag axis 2 on the unreduced finest level while the
+        merged levels (whose z the reduction averaged away) come out bare —
+        the per-level mixture the stamp exists to replace.
+        """
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        rng = np.random.default_rng(seed)
+        chol = np.zeros((n, 6), dtype=np.float32)
+        chol[:, [0, 2, 5]] = 1.0
+        centers = np.empty((n, 3), dtype=np.float32)
+        centers[:, :2] = rng.uniform(0, 50, (n, 2))
+        centers[:, 2] = rng.integers(0, 3, size=n) * 10.0
+        return GSplatData(
+            centers=centers,
+            amplitudes=np.ones(n, dtype=np.float32),
+            cholesky_factors=chol,
+        )
+
     @pytest.mark.parametrize(
-        ("n_t", "expected"),
+        ("n_t", "stamp", "barrier"),
         [
             # Single timepoint: the parts are 3D and the reduction coarsens all
-            # three, so the complement is empty — a real "no barrier".
-            (1, [0, 1, 2]),
+            # three, so the complement is empty — a real "no barrier", and the
+            # stamp is the ONLY thing that puts it there (the fallback would
+            # barrier the gridded z axis on the finest level).
+            (1, [0, 1, 2], []),
             # Stacked timepoints: the merge appends the time axis LAST and
             # `_finalize_part_node` keeps it out of the coarsening, so the stamp
-            # names the spatial dims only and the complement is [3].
-            (2, [0, 1, 2]),
+            # names the spatial dims only and the complement is [3]. Here the
+            # layout is nailed down twice over — `_merge_partition` also passes
+            # the stacked axis as an authoritative `barrier_dims`, which wins in
+            # `write_partition_streaming` — so this row pins that the two AGREE.
+            # A stamp naming dim 3 would publish a provenance the store's own
+            # layout contradicts.
+            (2, [0, 1, 2], [3]),
         ],
         ids=["single-timepoint", "stacked-timepoints"],
     )
     def test_merge_recipe_levels_stamps_the_part_coarsen_dims(
-        self, tmp_path: Path, n_t: int, expected: "list[int]"
+        self, tmp_path: Path, n_t: int, stamp: "list[int]", barrier: "list[int]"
     ) -> None:
         """The per-part default is PUBLISHED, not left to the writer to guess.
 
@@ -1772,21 +1804,55 @@ class TestMergeOrchestrator:
         width comes from ``manifest.spatial_shape`` — the same field the
         explicit stacked-time ``barrier_dims`` is already taken from — so the
         record is available before the first tile is assembled.
+
+        Asserted on the LAYOUT as well as the key: this is the one path where
+        the width is INFERRED from the manifest rather than observed on a part,
+        so an attr-only assertion would pass on a stamp the writer never acted
+        on (#1600 review).
         """
         import zarr
 
-        from luxar.gsplats.batch.manifest import BatchManifest
+        from luxar.gsplats.batch.manifest import BatchManifest, output_filename
         from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.io.ordering import detect_barrier_dims
 
         out_dir = tmp_path / "batch"
-        self._write_tiles(out_dir / "tiles", n_t=n_t, n_c=1, n_k=2)
+        tiles_dir = out_dir / "tiles"
+        tiles_dir.mkdir(parents=True, exist_ok=True)
+        n_k = 2
+        for t in range(n_t):
+            for k in range(n_k):
+                self._gridded_tile(40, seed=t * n_k + k).save(
+                    tiles_dir / output_filename(t, 0, k, n_t, 1, n_k)
+                )
+        # The control that makes the single-timepoint row mean something: on the
+        # unreduced finest level the fallback flags the gridded axis, so the
+        # expected `[]` cannot be reached by the guess the stamp displaces.
+        assert detect_barrier_dims(
+            np.asarray(self._gridded_tile(40, seed=0).centers)
+        ) == [2]
+
         manifest = BatchManifest(
-            n_timepoints=n_t, n_channels=1, n_tiles=2, spatial_shape=(50, 50, 50)
+            n_timepoints=n_t, n_channels=1, n_tiles=n_k, spatial_shape=(50, 50, 50)
         )
         final = merge_batch_results(manifest, out_dir, verbose=False, recipe="levels")
 
-        pipe = dict(zarr.open_group(str(final), mode="r")["pipeline"].attrs)
-        assert list(pipe["coarsen_dims"]) == expected
+        root = zarr.open_group(str(final), mode="r")
+        assert list(dict(root["pipeline"].attrs)["coarsen_dims"]) == stamp
+
+        found: "list[list[int]]" = []
+
+        def walk(group) -> None:
+            if "slice_dims" in group.attrs:
+                found.append([int(d) for d in group.attrs["slice_dims"]])
+            for name in group.group_keys():
+                walk(group[name])
+
+        walk(root)
+        assert found, "no ordering attrs written at all"
+        assert all(b == barrier for b in found), (
+            f"the written ordering barrier {found} does not follow the stamped {stamp}"
+        )
 
     def test_merge_recipe_levels_uses_manifest_floor_basis(
         self, tmp_path: Path, monkeypatch
