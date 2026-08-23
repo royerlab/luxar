@@ -74,7 +74,9 @@ describe('LineMaterial.applyBlendingMode (GLSL)', () => {
     expect(mat.transparent).toBe(false);
     expect(mat.depthWrite).toBe(true);
     expect(mat.depthTest).toBe(true);
-    expect(mat.blending).toBe(THREE.NormalBlending);
+    expect(mat.blending).toBe(THREE.CustomBlending);
+    expect(mat.blendSrc).toBe(THREE.SrcAlphaFactor);
+    expect(mat.blendDst).toBe(THREE.OneMinusSrcAlphaFactor);
     expect(mat.userData.blendingMode).toBe('opaque');
   });
 
@@ -230,7 +232,9 @@ describe('LineTSLMaterial.applyBlendingMode (TSL)', () => {
     expect(mat.transparent).toBe(false);
     expect(mat.depthWrite).toBe(true);
     expect(mat.depthTest).toBe(true);
-    expect(mat.blending).toBe(THREE.NormalBlending);
+    expect(mat.blending).toBe(THREE.CustomBlending);
+    expect(mat.blendSrc).toBe(THREE.SrcAlphaFactor);
+    expect(mat.blendDst).toBe(THREE.OneMinusSrcAlphaFactor);
     expect(mat.userData.blendingMode).toBe('opaque');
   });
 

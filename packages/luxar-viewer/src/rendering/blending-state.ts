@@ -269,9 +269,12 @@ export function getCompleteBlendingState(
   }
 
   if (mode === 'opaque') {
-    // Opaque: standard alpha-blended primitive that writes depth.
+    // Opaque-list alpha-over with depth writes. This must be
+    // CustomBlending: THREE.WebGLRenderer special-cases
+    // NormalBlending + transparent=false to NoBlending, which would
+    // discard the fragment alpha carried by Points and Lines.
     return {
-      blending: THREE.NormalBlending,
+      blending: THREE.CustomBlending,
       blendEquation: THREE.AddEquation,
       blendSrc: THREE.SrcAlphaFactor,
       blendDst: THREE.OneMinusSrcAlphaFactor,

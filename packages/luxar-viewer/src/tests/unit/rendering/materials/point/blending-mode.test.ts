@@ -64,7 +64,9 @@ describe('PointMaterial.applyBlendingMode', () => {
     expect(mat.transparent).toBe(false);
     expect(mat.depthWrite).toBe(true);
     expect(mat.depthTest).toBe(true);
-    expect(mat.blending).toBe(THREE.NormalBlending);
+    expect(mat.blending).toBe(THREE.CustomBlending);
+    expect(mat.blendSrc).toBe(THREE.SrcAlphaFactor);
+    expect(mat.blendDst).toBe(THREE.OneMinusSrcAlphaFactor);
   });
 
   it('luminous mode is additive but depth-tested', () => {
