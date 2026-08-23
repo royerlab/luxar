@@ -94,6 +94,8 @@ function isUnusablePlane(value: number): boolean {
  * would allocate a log string 60x a second to say so. The
  * `bounds-math.property.test.ts` ratio property is the regression
  * tripwire for the automatic paths instead.
+ *
+ * @returns true when the planes were applied; false when validation rejected them.
  */
 export function applyClippingPlanes(camera: LuxarCamera, near: number, far: number): boolean {
   // Non-finite check FIRST, and separately from `near >= far`: every comparison
@@ -157,18 +159,19 @@ export function applyClippingPlanes(camera: LuxarCamera, near: number, far: numb
  * graph. Also feeds the bounding-box diagonal into the scale-aware
  * controls.
  *
- * @returns the near/far that were applied; on empty scenes,
- *   returns the configured defaults without touching the camera.
+ * @returns the derived near/far and whether they were applied; on empty
+ *   scenes, returns the configured defaults with `applied: false` without
+ *   touching the camera.
  *
  * Note on that empty-scene return: those configured defaults
  * (`near` 0.1 / `far` 1000) are a ratio of 10,000 — well past
  * `MAX_NEAR_FAR_RATIO`. That is deliberate and inert, not an oversight
- * to "fix": the branch touches no camera, its only production caller
- * (`SceneManager.autoAdjustClippingPlanes`) discards the value, and it
- * is reached only when the scene has neither metadata bounds nor
- * geometry — i.e. when there is nothing to z-fight. The camera keeps the
- * same defaults it was constructed with, and the first real bounds put
- * it back under the bound.
+ * to "fix": the branch touches no camera, and its only production caller
+ * (`SceneManager.autoAdjustClippingPlanes`) uses `applied: false` to avoid
+ * dispatching a view change. It is reached only when the scene has neither
+ * metadata bounds nor geometry — i.e. when there is nothing to z-fight. The
+ * camera keeps the same defaults it was constructed with, and the first real
+ * bounds put it back under the bound.
  */
 export function autoAdjustFromBounds(ctx: ClippingCtx): {
   near: number;
