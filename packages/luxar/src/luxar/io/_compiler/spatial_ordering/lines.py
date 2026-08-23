@@ -134,6 +134,8 @@ def build_lines_ordering(
 
     # Compute segment chunk bounds
     # Need to expand widths if scalar or broadcasted
+    # These branches deliberately use float32: the bounds then start from the
+    # same value the viewer decodes, even though the writer stores authored widths.
     if isinstance(widths, (int, float)):
         widths_expanded = np.full(n_vertices, float(widths), dtype=np.float32)
     elif isinstance(widths, np.ndarray) and widths.shape[0] == 1:
