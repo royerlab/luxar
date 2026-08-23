@@ -95,7 +95,7 @@ function isUnusablePlane(value: number): boolean {
  * `bounds-math.property.test.ts` ratio property is the regression
  * tripwire for the automatic paths instead.
  */
-export function applyClippingPlanes(camera: LuxarCamera, near: number, far: number): void {
+export function applyClippingPlanes(camera: LuxarCamera, near: number, far: number): boolean {
   // Non-finite check FIRST, and separately from `near >= far`: every comparison
   // against NaN is false, so `NaN >= far` does not reject and a NaN would sail
   // through into the projection matrix, blanking the view with no diagnostic.
@@ -122,12 +122,12 @@ export function applyClippingPlanes(camera: LuxarCamera, near: number, far: numb
       Modules.SCENE_MANAGER,
       `Ignoring invalid clipping planes (near: ${near}, far: ${far})`
     );
-    return;
+    return false;
   }
 
   if (near >= far) {
     log.warning(Modules.SCENE_MANAGER, 'Near plane must be less than far plane');
-    return;
+    return false;
   }
 
   const ratio = far / near;
@@ -146,6 +146,7 @@ export function applyClippingPlanes(camera: LuxarCamera, near: number, far: numb
     Modules.SCENE_MANAGER,
     `Clipping planes updated - Near: ${near < 0.001 ? near.toExponential(1) : near.toFixed(3)}, Far: ${far.toFixed(1)} (ratio: ${ratio.toFixed(0)}:1)`
   );
+  return true;
 }
 
 /**
@@ -169,7 +170,11 @@ export function applyClippingPlanes(camera: LuxarCamera, near: number, far: numb
  * same defaults it was constructed with, and the first real bounds put
  * it back under the bound.
  */
-export function autoAdjustFromBounds(ctx: ClippingCtx): { near: number; far: number } {
+export function autoAdjustFromBounds(ctx: ClippingCtx): {
+  near: number;
+  far: number;
+  applied: boolean;
+} {
   const cameraPos = {
     x: ctx.camera.position.x,
     y: ctx.camera.position.y,
@@ -189,14 +194,14 @@ export function autoAdjustFromBounds(ctx: ClippingCtx): { near: number; far: num
 
     const sphere = boundingBoxToSphere(sceneBounds);
     const { near, far } = calculateClippingPlanesFromSphere(sphere, cameraPos, boundRatio);
-    applyClippingPlanes(ctx.camera, near, far);
+    const applied = applyClippingPlanes(ctx.camera, near, far);
 
     log.success(
       Modules.SCENE_MANAGER,
       `Clipping planes set from metadata bounds (near: ${near.toFixed(4)}, far: ${far.toFixed(1)})`
     );
 
-    return { near, far };
+    return { near, far, applied };
   }
 
   // Fallback: bounds from the loaded scene graph.
@@ -206,6 +211,7 @@ export function autoAdjustFromBounds(ctx: ClippingCtx): { near: number; far: num
     return {
       near: config.renderingControls.defaults.near,
       far: config.renderingControls.defaults.far,
+      applied: false,
     };
   }
 
@@ -221,9 +227,9 @@ export function autoAdjustFromBounds(ctx: ClippingCtx): { near: number; far: num
 
   const sphere = boundingBoxToSphere(fallbackBounds);
   const { near, far } = calculateClippingPlanesFromSphere(sphere, cameraPos, boundRatio);
-  applyClippingPlanes(ctx.camera, near, far);
+  const applied = applyClippingPlanes(ctx.camera, near, far);
 
-  return { near, far };
+  return { near, far, applied };
 }
 
 /**

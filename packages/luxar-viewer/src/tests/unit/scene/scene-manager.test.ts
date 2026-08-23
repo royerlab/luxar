@@ -720,6 +720,56 @@ describe('SceneManager', () => {
     );
   });
 
+  describe('clipping projection invalidation', () => {
+    beforeEach(async () => {
+      await sceneManager.init({ canvas: mockCanvas as any });
+    });
+
+    it('dispatches scene change after valid manual clipping planes are applied', () => {
+      const listener = vi.fn();
+      sceneManager.addEventListener('change', listener);
+
+      sceneManager.updateClippingPlanes(0.5, 500);
+
+      expect(sceneManager.camera.near).toBe(0.5);
+      expect(sceneManager.camera.far).toBe(500);
+      expect(listener).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not dispatch scene change when manual clipping planes are rejected', () => {
+      const listener = vi.fn();
+      sceneManager.addEventListener('change', listener);
+
+      sceneManager.updateClippingPlanes(500, 0.5);
+
+      expect(listener).not.toHaveBeenCalled();
+    });
+
+    it('dispatches scene change after automatic clipping planes are applied', () => {
+      const group = new THREE.Group();
+      group.userData.positionBounds = {
+        min: [-5, -5, -5],
+        max: [5, 5, 5],
+      };
+      sceneManager.scene.add(group);
+      const listener = vi.fn();
+      sceneManager.addEventListener('change', listener);
+
+      sceneManager.autoAdjustClippingPlanes();
+
+      expect(listener).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not dispatch scene change when automatic clipping has no bounds to apply', () => {
+      const listener = vi.fn();
+      sceneManager.addEventListener('change', listener);
+
+      sceneManager.autoAdjustClippingPlanes();
+
+      expect(listener).not.toHaveBeenCalled();
+    });
+  });
+
   describe('loadSceneData orchestration', () => {
     // Pin the 7-step call chain and the positionApplied conditional. These
     // tests complement the basic smoke tests in `scene loading` — they spy
