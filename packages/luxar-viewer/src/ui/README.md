@@ -1079,17 +1079,17 @@ Slider movements propagate through `sceneDimsManager.setDimensionValue()`
 rather than a local event emitter, so there is no `on()` / `setDimensions()` /
 `setValue()` API.
 
-| Method                         | Description                                      |
-| ------------------------------ | ------------------------------------------------ |
-| `setAnimationManager(manager)` | Connect animation manager and build controls     |
-| `setSelectedDimension(slot)`   | Set the dimension the `[` / `]` keys target      |
-| `toggle()`                     | Toggle slider panel visibility                   |
-| `setVisible(visible)`          | Explicitly show/hide the panel                   |
-| `hide()`                       | Hide the panel                                   |
-| `getIsVisible()`               | Get current visibility state                     |
-| `update()`                     | Refresh slider thumbs from `sceneDimsManager`    |
-| `updateStatusBar()`            | Refresh the status/title display                 |
-| `dispose()`                    | Clean up listeners and DOM                       |
+| Method                         | Description                                   |
+| ------------------------------ | --------------------------------------------- |
+| `setAnimationManager(manager)` | Connect animation manager and build controls  |
+| `setSelectedDimension(slot)`   | Set the dimension the `[` / `]` keys target   |
+| `toggle()`                     | Toggle slider panel visibility                |
+| `setVisible(visible)`          | Explicitly show/hide the panel                |
+| `hide()`                       | Hide the panel                                |
+| `getIsVisible()`               | Get current visibility state                  |
+| `update()`                     | Refresh slider thumbs from `sceneDimsManager` |
+| `updateStatusBar()`            | Refresh the status/title display              |
+| `dispose()`                    | Clean up listeners and DOM                    |
 
 ### RenderingControls
 
