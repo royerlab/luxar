@@ -31,8 +31,8 @@ test.describe('nD Navigation - Dimension Selection', () => {
     await page.goto(`/?src=${DATASETS.sliders5D}&debug`);
     await waitForLuxarReady(page);
 
-    // Press '4' to select 4th dimension (index 3)
-    await page.keyboard.press('4');
+    // Digit keys address the non-displayed dimensions: 1 selects W.
+    await page.keyboard.press('1');
 
     // Wait for input to be processed
     await waitForNextRender(page);
@@ -40,6 +40,25 @@ test.describe('nD Navigation - Dimension Selection', () => {
     // Verify dimension was selected (check state is stable)
     const state = await getLuxarState(page);
     expect(state.initialized).toBe(true);
+  });
+
+  test('should show the selected target and reject out-of-range digits visibly', async ({
+    page,
+  }) => {
+    await page.goto(`/?src=${DATASETS.sliders5D}&debug`);
+    await waitForLuxarReady(page);
+
+    const status = page.locator('.luxar-dimension-sliders__status');
+    await expect(status).toContainText('[/]: 1 · W');
+
+    await page.keyboard.press('2');
+    await expect(status).toContainText('[/]: 2 · Channel');
+
+    await page.keyboard.press('5');
+    await expect(page.locator('#luxar-toast')).toHaveText(
+      'Dimension key 5 is unavailable. Use 1 for W or 2 for Channel.'
+    );
+    await expect(status).toContainText('[/]: 2 · Channel');
   });
 
   test('should navigate forward with ] key', async ({ page }) => {
@@ -60,7 +79,7 @@ test.describe('nD Navigation - Dimension Selection', () => {
     const initialPoints = initialState.totalPoints;
 
     // Select dimension and navigate
-    await page.keyboard.press('4'); // Select 4th dim
+    await page.keyboard.press('1'); // Select first non-displayed dim (W)
     await waitForNextRender(page);
 
     await page.keyboard.press(']'); // Navigate forward
@@ -91,7 +110,7 @@ test.describe('nD Navigation - Dimension Selection', () => {
     const initialPoints = initialState.totalPoints;
 
     // Navigate forward first
-    await page.keyboard.press('5');
+    await page.keyboard.press('2');
     await waitForNextRender(page);
     await page.keyboard.press(']');
     await waitForDimensionNavigation(page, initialPoints, 8000);
@@ -124,7 +143,7 @@ test.describe('nD Navigation - Spatial Index Queries', () => {
     consoleLogs.length = 0; // Clear initial logs
 
     // Navigate through dimension
-    await page.keyboard.press('4');
+    await page.keyboard.press('1');
     await waitForNextRender(page);
     await page.keyboard.press(']');
     await waitForSpatialQueryOrThrow(page);
@@ -164,8 +183,8 @@ test.describe('nD Navigation - Spatial Index Queries', () => {
       return state?.dimensions?.currentStep ? [...state.dimensions.currentStep] : null;
     });
 
-    // Navigate to a different slice on dimension 4
-    await page.keyboard.press('4');
+    // Navigate to a different slice on the first non-displayed dimension.
+    await page.keyboard.press('1');
     await waitForNextRender(page);
     await page.keyboard.press(']');
     await waitForSpatialQueryOrThrow(page);
@@ -195,7 +214,7 @@ test.describe('nD Navigation - Spatial Index Queries', () => {
     await waitForDataLoaded(page);
 
     // Select dimension
-    await page.keyboard.press('4');
+    await page.keyboard.press('1');
     await waitForNextRender(page);
 
     // Navigate forward multiple times
@@ -225,7 +244,7 @@ test.describe('nD Navigation - Spatial Index Queries', () => {
     await waitForLuxarReady(page);
 
     // Navigate forward (cache miss)
-    await page.keyboard.press('4');
+    await page.keyboard.press('1');
     await waitForNextRender(page);
     await page.keyboard.press(']');
     await waitForSpatialQueryOrThrow(page);
@@ -256,7 +275,7 @@ test.describe('nD Navigation - Broadcasting', () => {
     await waitForLuxarReady(page);
 
     // Navigate through a dimension (may be broadcast)
-    await page.keyboard.press('4');
+    await page.keyboard.press('1');
     await page.keyboard.press(']');
     await waitForSpatialQueryOrThrow(page);
 
@@ -333,7 +352,7 @@ test.describe('nD Navigation - Performance', () => {
     // Measure navigation time
     const startTime = Date.now();
 
-    await page.keyboard.press('4');
+    await page.keyboard.press('1');
     await waitForNextRender(page);
     await page.keyboard.press(']');
 
@@ -369,7 +388,7 @@ test.describe('nD Navigation - Performance', () => {
     await page.goto(`/?src=${DATASETS.sliders5D}&debug`);
     await waitForLuxarReady(page);
 
-    await page.keyboard.press('4');
+    await page.keyboard.press('1');
 
     // Rapid navigation (stress test)
     for (let i = 0; i < 5; i++) {
