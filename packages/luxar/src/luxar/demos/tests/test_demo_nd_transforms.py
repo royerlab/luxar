@@ -115,7 +115,11 @@ def test_every_authored_world_space_caption_has_a_glyph() -> None:
     """Keep edited labels from silently rasterizing unsupported characters as '?'."""
     authored = [
         *(text for row in demo.FRAME_ROWS for text in (row.label, row.note)),
-        *(text for label, _permutation, note in demo.CHANNEL_ROWS for text in (label, note)),
+        *(
+            text
+            for label, _permutation, note in demo.CHANNEL_ROWS
+            for text in (label, note)
+        ),
     ]
     rendered_variants = [*authored, *(text.lower() for text in authored)]
     unsupported = {
