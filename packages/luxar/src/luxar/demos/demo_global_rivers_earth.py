@@ -418,6 +418,42 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
                 # a single final commit. A `stream:` ladder is geometric by
                 # construction, so every level is a bounded fraction of the whole.
                 additive_lod=dict(counts="stream:20000", method="random", seed=0),
+                # The terrain still appears late, and all at once, well after the
+                # rivers. That is NOT a scheduling bug, so do not go looking for
+                # one: the ladder above streams exactly as designed. Measured
+                # over a cold load, all ten levels arrive in geometric order —
+                # 15 / 15 / 23 / 41 / 75 / 143 / 279 / 553 / 1101 / 1237 chunk
+                # requests.
+                #
+                # What gates VISIBILITY is coverage, not count, and an additive
+                # prefix of a dense shell is a thinner shell rather than a
+                # coarser planet — every level shares the one POINT_RADII. On a
+                # radius-100 globe, 20k points of radius 0.09 cover
+                # 20000·π·0.09² / 4π·100² = 0.4% of the sphere; levels 0-7 are
+                # 1144 of the 3482 chunk requests yet never pass ~26%. The last
+                # two levels — 62 of the terrain's 92 MB — are what finally make
+                # it read as a surface. A line has no such threshold (it is
+                # visible from its FIRST chunk), which is why the rivers always
+                # win the race.
+                #
+                # Two fixes were tried and rejected, so that the data stays as it
+                # is (8M points is the honest resolution of the source):
+                #
+                #  * `substitutive_lod` — builds correctly (15,590 / 124,878 /
+                #    999,830 gsplat levels over the 8M-point finest, at 776 KB /
+                #    5.9 MB / 41 MB) but does not help HERE, twice over. A
+                #    whole-object `levels` ladder anchors its finest at >=0.5
+                #    screen area and steps one level per halving, so a globe that
+                #    fills the opening frame selects the 41 MB level, not the
+                #    cheap ones. And its coarse levels are calibrated by
+                #    conserved render-light (integrated emission), which needs an
+                #    integrating blend: under `opaque` (NormalBlending +
+                #    depthWrite) the Gaussian tails never accumulate, so only the
+                #    dense cores paint and the globe renders as dark specks —
+                #    identical mid-load and fully settled.
+                #  * Fewer, bigger points (2M at radius 0.18) would genuinely fix
+                #    the wait — ~23 MB, solid at ~12 MB — but trades away zoom
+                #    detail, which is the point of the demo.
             )
             # Connected polylines (indexed) so the material renders seamless
             # joints. No additive-LOD here: LOD-ing connected lines requires an
