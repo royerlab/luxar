@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import signal
 import sys
 import time
@@ -257,7 +258,12 @@ linux_only = pytest.mark.skipif(not _HAS_PROC, reason="requires /proc (Linux)")
 
 
 @linux_only
-def test_proc_table_lists_this_process() -> None:
+def test_proc_table_lists_this_process(monkeypatch) -> None:
+    monkeypatch.setattr(
+        process.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("no subprocess on the /proc path"),
+    )
     rows = process.proc_table()
     mine = [row for row in rows if row[0] == os.getpid()]
     assert len(mine) == 1
@@ -265,6 +271,58 @@ def test_proc_table_lists_this_process() -> None:
     assert pgid == os.getpgrp()
     assert state != "Z"
     assert "python" in command.lower()
+
+
+def test_proc_table_falls_back_to_ps_without_proc(monkeypatch) -> None:
+    class Result:
+        stdout = """\
+  101   101 S+   python -m luxar
+  202   101 Z+   [python]
+  303   303 R
+bad row
+"""
+
+    def no_proc(_path: str) -> list[str]:
+        raise OSError
+
+    def ps_run(args, **kwargs):  # type: ignore[no-untyped-def]
+        assert args == ["ps", "-axww", "-o", "pid=,pgid=,state=,command="]
+        assert kwargs["check"] is True
+        assert kwargs["timeout"] == 5.0
+        return Result()
+
+    monkeypatch.setattr(process.os, "listdir", no_proc)
+    monkeypatch.setattr(process.subprocess, "run", ps_run)
+
+    assert process.proc_table() == [
+        (101, 101, "S", "python -m luxar"),
+        (202, 101, "Z", "[python]"),
+        (303, 303, "R", ""),
+    ]
+
+
+def test_proc_table_is_unknown_when_proc_and_ps_are_unavailable(monkeypatch) -> None:
+    def unavailable(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise OSError
+
+    monkeypatch.setattr(process.os, "listdir", unavailable)
+    monkeypatch.setattr(process.subprocess, "run", unavailable)
+
+    assert process.proc_table() == []
+
+
+def test_proc_table_does_not_run_ps_off_posix(monkeypatch) -> None:
+    def no_proc(_path: str) -> list[str]:
+        raise OSError
+
+    def unexpected_ps(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise AssertionError("ps must not run off POSIX")
+
+    monkeypatch.setattr(process.os, "name", "nt")
+    monkeypatch.setattr(process.os, "listdir", no_proc)
+    monkeypatch.setattr(process.subprocess, "run", unexpected_ps)
+
+    assert process.proc_table() == []
 
 
 @posix_only
@@ -296,6 +354,42 @@ def test_teardown_does_not_wait_out_an_unreaped_zombie() -> None:
         start = time.monotonic()
         _teardown(proc, pgid=proc.pid, interrupt_timeout=5.0, term_timeout=3.0)
         assert time.monotonic() - start < 2.0
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=5)
+
+
+@posix_only
+@pytest.mark.skipif(shutil.which("ps") is None, reason="requires ps")
+def test_terminate_process_group_accepts_ps_reported_zombie(monkeypatch) -> None:
+    """A killed direct child is success before its parent reaps the zombie."""
+    import subprocess
+
+    proc = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True
+    )
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+
+        def no_proc(_path: str) -> list[str]:
+            raise OSError
+
+        monkeypatch.setattr(process.os, "listdir", no_proc)
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            states = [s for _p, g, s, _c in process.proc_table() if g == proc.pid]
+            if states == ["Z"]:
+                break
+            time.sleep(0.05)
+        assert states == ["Z"], f"expected a ps-reported zombie group, saw {states}"
+
+        start = time.monotonic()
+        assert process.terminate_process_group(
+            proc.pid, interrupt_timeout=5.0, term_timeout=5.0
+        )
+        assert time.monotonic() - start < 2.0
+        assert proc.wait(timeout=5) == -signal.SIGKILL
     finally:
         if proc.poll() is None:
             proc.kill()
