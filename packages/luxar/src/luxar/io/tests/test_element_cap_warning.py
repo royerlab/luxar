@@ -159,9 +159,7 @@ def test_a_flat_node_warns_on_its_total(
 
     out = capsys.readouterr().out
     assert "'/flat'" in out
-    assert (
-        "5,000 points" if geometry_type == "points" else "5,000 segments"
-    ) in out
+    assert ("5,000 points" if geometry_type == "points" else "5,000 segments") in out
 
 
 @pytest.mark.parametrize("geometry_type", ["points", "lines"])
