@@ -11,7 +11,7 @@
  */
 
 import { test, expect, type Page } from './fixtures';
-import { waitForNextRender } from './helpers';
+import { waitForLuxarReady, waitForNextRender } from './helpers';
 
 // Themes to test
 const THEMES = ['dark', 'light', 'frosted-glass'] as const;
@@ -99,6 +99,7 @@ for (const theme of THEMES) {
       'http://localhost:9000/datasets/examples/dimension_sliders_5d_example.luxar.zarr';
     await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug&dpr=1`);
     await waitForTheme(page, theme);
+    await waitForLuxarReady(page);
 
     // Trigger help overlay with H key
     await page.keyboard.press('h');
@@ -126,15 +127,7 @@ for (const theme of THEMES) {
     await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug&dpr=1`);
     await waitForTheme(page, theme);
 
-    // Wait for app to be fully initialized
-    await page.waitForFunction(
-      () => {
-        const debug = (window as any).__luxarDebug;
-        return debug && debug.getState && debug.getState().initialized;
-      },
-      null, // no arguments
-      { timeout: 45000 }
-    );
+    await waitForLuxarReady(page);
 
     // Wait for dimension sliders to be created (they're shown by default for nD datasets)
     const dimensionSliders = page.locator('.luxar-dimension-sliders');
@@ -172,15 +165,7 @@ for (const theme of THEMES) {
     await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug&dpr=1`);
     await waitForTheme(page, theme);
 
-    // Wait for app to be fully initialized
-    await page.waitForFunction(
-      () => {
-        const debug = (window as any).__luxarDebug;
-        return debug && debug.getState && debug.getState().initialized;
-      },
-      null, // no arguments
-      { timeout: 45000 }
-    );
+    await waitForLuxarReady(page);
 
     // Press M to cycle to mini/compact view (hidden → compact)
     await page.keyboard.press('m');
@@ -209,15 +194,7 @@ for (const theme of THEMES) {
     await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug&dpr=1`);
     await waitForTheme(page, theme);
 
-    // Wait for app to be fully initialized
-    await page.waitForFunction(
-      () => {
-        const debug = (window as any).__luxarDebug;
-        return debug && debug.getState && debug.getState().initialized;
-      },
-      null, // no arguments
-      { timeout: 45000 }
-    );
+    await waitForLuxarReady(page);
 
     // Press M twice to cycle to expanded view
     await page.keyboard.press('m');
@@ -248,15 +225,7 @@ for (const theme of THEMES) {
     await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug&dpr=1`);
     await waitForTheme(page, theme);
 
-    // Wait for app to be initialized before keyboard input
-    await page.waitForFunction(
-      () => {
-        const debug = (window as any).__luxarDebug;
-        return debug && debug.getState && debug.getState().initialized;
-      },
-      null,
-      { timeout: 45000 }
-    );
+    await waitForLuxarReady(page);
 
     // Trigger debug console with Ctrl+L (correct class is luxar-debug-console)
     await page.keyboard.press('Control+l');
@@ -279,16 +248,9 @@ for (const theme of THEMES) {
   test(`@visual dataset browser - ${theme} theme`, async ({ page }) => {
     await page.goto(`/?theme=${theme}&debug&dpr=1`);
     await waitForTheme(page, theme);
+    await waitForLuxarReady(page);
 
-    // The dataset browser auto-opens when no dataset is loaded (welcome UX).
-    // The 'o' key TOGGLES it, so only press it if it hasn't already opened —
-    // pressing 'o' on an already-open browser would toggle it closed. By the
-    // time waitForTheme resolves, the auto-show has fired, so this is
-    // deterministic while still opening the browser if auto-show is disabled.
     const datasetBrowser = page.locator('.luxar-dataset-browser');
-    if (!(await datasetBrowser.isVisible())) {
-      await page.keyboard.press('o');
-    }
     await expect(datasetBrowser).toBeVisible({ timeout: 2000 });
 
     // Extra wait for frosted-glass theme which has animation/blur effects
@@ -355,6 +317,7 @@ for (const theme of THEMES) {
       'http://localhost:9000/datasets/examples/dimension_sliders_5d_example.luxar.zarr';
     await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug&dpr=1`);
     await waitForTheme(page, theme);
+    await waitForLuxarReady(page);
 
     // Let the scene settle so the panel's near/far readouts are stable.
     await page.waitForTimeout(1000);
@@ -393,14 +356,15 @@ for (const theme of THEMES) {
       'http://localhost:9000/datasets/examples/dimension_sliders_5d_example.luxar.zarr';
     await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug&dpr=1`);
     await waitForTheme(page, theme);
+    await waitForLuxarReady(page);
 
     // Let the scene settle (glass popover blurs the canvas behind it).
     await page.waitForTimeout(1000);
 
     await page.evaluate(() => {
-      document
-        .querySelector('[data-rail-id="nav"]')
-        ?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      const navButton = document.querySelector('[data-rail-id="nav"]');
+      if (!navButton) throw new Error('Navigation rail button not found');
+      navButton.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     });
 
     const popover = page.locator('.luxar-control-rail__popover');
@@ -431,14 +395,15 @@ for (const theme of THEMES) {
       'http://localhost:9000/datasets/examples/dimension_sliders_5d_example.luxar.zarr';
     await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug&dpr=1`);
     await waitForTheme(page, theme);
+    await waitForLuxarReady(page);
 
     // Let the scene settle (glass popover blurs the canvas behind it).
     await page.waitForTimeout(1000);
 
     await page.evaluate(() => {
-      document
-        .querySelector('[data-rail-id="home"]')
-        ?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      const homeButton = document.querySelector('[data-rail-id="home"]');
+      if (!homeButton) throw new Error('Home rail button not found');
+      homeButton.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     });
 
     const popover = page.locator('.luxar-control-rail__popover');
