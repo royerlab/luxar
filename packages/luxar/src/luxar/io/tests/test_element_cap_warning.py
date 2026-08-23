@@ -10,10 +10,13 @@ diagnosis where it is cheap to act on.
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
+from luxar import Dimensions, LuxarZarrCompiler
 from luxar.io._compiler.node_common import warn_if_over_element_cap
 from luxar.typing_utils.constants import (
+    ELEMENT_TEXELS_PER_ELEMENT,
     MAX_POINTS_PER_POINTS_NODE,
     MAX_SEGMENTS_PER_LINES_NODE,
     MAX_SPLATS_PER_GSPLATS_NODE,
@@ -91,3 +94,54 @@ def test_the_warning_names_the_count_the_cap_and_the_remedy(
     assert "11,440,000" in out
     assert "2,793,472" in out
     assert "partition=dict(max_elements=...)" in out
+
+
+@pytest.mark.parametrize("geometry_type", ["points", "lines"])
+def test_an_additive_ladder_warns_on_its_total(
+    geometry_type: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """Sub-cap levels still overflow because the viewer concatenates the ladder."""
+    monkeypatch.setitem(ELEMENT_TEXELS_PER_ELEMENT, geometry_type, 4096)
+    positions = np.zeros((3_001, 3), dtype=np.float32)
+
+    with LuxarZarrCompiler(tmp_path / f"{geometry_type}.luxar.zarr") as compiler:
+        compiler.create_scene(dimensions=Dimensions.default_3d())
+        if geometry_type == "points":
+            compiler.write_points_multi_lod(
+                "ladder",
+                [{"positions": positions}, {"positions": positions}],
+            )
+        else:
+            compiler.write_lines_multi_lod(
+                "ladder",
+                [
+                    {"vertices": positions, "widths": 0.1},
+                    {"vertices": positions, "widths": 0.1},
+                ],
+            )
+
+    out = capsys.readouterr().out
+    expected = "6,002 points" if geometry_type == "points" else "6,000 segments"
+    assert "'ladder'" in out
+    assert expected in out
+
+
+def test_a_gsplat_leaf_warns_on_its_total(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    monkeypatch.setitem(ELEMENT_TEXELS_PER_ELEMENT, "gsplats", 4096)
+    centers = np.zeros((5_000, 3), dtype=np.float32)
+    cholesky = np.array([1.0, 0.0, 1.0, 0.0, 0.0, 1.0], dtype=np.float32)
+
+    with LuxarZarrCompiler(tmp_path / "gsplats.luxar.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_gsplats("gs", centers, 1.0, cholesky)
+
+    out = capsys.readouterr().out
+    assert "'/gs'" in out
+    assert "5,000 splats" in out
