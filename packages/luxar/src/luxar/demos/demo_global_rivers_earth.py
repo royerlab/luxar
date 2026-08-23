@@ -425,17 +425,12 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
                 # 15 / 15 / 23 / 41 / 75 / 143 / 279 / 553 / 1101 / 1237 chunk
                 # requests.
                 #
-                # What gates VISIBILITY is coverage, not count, and an additive
-                # prefix of a dense shell is a thinner shell rather than a
-                # coarser planet — every level shares the one POINT_RADII. On a
-                # radius-100 globe, 20k points of radius 0.09 cover
-                # 20000·π·0.09² / 4π·100² = 0.4% of the sphere; levels 0-7 are
-                # 1144 of the 3482 chunk requests yet reach only ~52% in this
-                # linear model (~40% after overlap). The last two levels — 62 of
-                # the terrain's 92 MB — are what finally make it read as a
-                # surface. A line has no such threshold (it is
-                # visible from its FIRST chunk), which is why the rivers always
-                # win the race.
+                # The last two levels contain 68% of the points and 62 of the
+                # terrain's 92 MB, so most of the terrain payload is still
+                # outstanding after the first eight levels. The shell is not
+                # complete until those final commits arrive. A line is visible
+                # from its FIRST chunk, which is why the rivers always win the
+                # race.
                 #
                 # Two fixes were tried and rejected, so that the data stays as it
                 # is:
