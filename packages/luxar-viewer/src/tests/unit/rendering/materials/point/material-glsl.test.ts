@@ -414,6 +414,9 @@ describe('PointMaterial', () => {
 
       expect(opaqueMaterial.transparent).toBe(false);
       expect(opaqueMaterial.depthWrite).toBe(true);
+      expect(opaqueMaterial.blending).toBe('CustomBlending');
+      expect(opaqueMaterial.blendSrc).toBe(THREE.SrcAlphaFactor);
+      expect(opaqueMaterial.blendDst).toBe(THREE.OneMinusSrcAlphaFactor);
     });
   });
 });

@@ -720,6 +720,28 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     });
   }
 
+  // Opaque-mode contribution cutout: low opacity places the discard
+  // boundary inside the primitive. With NoBlending readback on both
+  // harness sides, parity compares the GLSL and TSL cutout predicates.
+  for (const variant of ['point-opaque', 'line-opaque'] as const) {
+    test(`${variant}: opaque contribution-cutout parity`, async ({ page }) => {
+      await bootHarness(page);
+
+      const glslPixels = await runGLSL(page, variant);
+      const tslResult = await runTSL(page, variant);
+
+      assertBothRendered(glslPixels, tslResult.pixels, variant);
+      expect(
+        meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+        `${variant}: per-covered-pixel parity (footprint-invariant)`
+      ).toBeLessThan(2.0);
+      expect(
+        meanAbsDiff(glslPixels, tslResult.pixels),
+        `${variant}: opaque cutout boundary parity`
+      ).toBeLessThan(2.0);
+    });
+  }
+
   test('line: instanced quad line with width / sharpness / GOG', async ({ page }) => {
     await bootHarness(page);
 
@@ -2558,6 +2580,7 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     'line-capsule-taper',
     'line-capsule-colormap',
     'line-capsule-max',
+    'line-capsule-opaque',
     'line-capsule-volumetric',
     'line-capsule-nearclip',
     'line-capsule-nearclip-taper',

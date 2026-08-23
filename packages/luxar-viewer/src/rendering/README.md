@@ -269,7 +269,8 @@ Specialized shader material for volumetric Gaussian splatting with nD slicing su
   write depth) and either ramps its shaded RGB or folds the fade into
   coverage depending on the mode; lines have no 0.01 reject at all — the
   fade multiplies into the intensity chain and a fragment leaves through
-  the separate `max(rgb) < 1e-4` discard
+  a colour-only `max(rgb) < 1e-4` discard in non-opaque modes or an
+  alpha-weighted RGB-contribution discard in `opaque`
 - **Screen-coverage fade**: unconditional amplitude fade toward the
   extent clamp (no hard-edged clamped rectangles, any sigma scale)
 
