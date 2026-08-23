@@ -244,6 +244,12 @@ def volume_refine_splats(
     # re-estimating a second (different) background on top of that. When the
     # store recorded no level, behaviour is unchanged from before — `auto` still
     # runs — because guessing here would be worse than the status quo.
+    # The branch is on "is the basis KNOWN", not on "is it nonzero". A recorded
+    # `image_min` of exactly 0 is a real answer — a `floor="none"` fit of a volume
+    # whose minimum is 0 — and it means the ladder's basis is the raw volume. Left
+    # to `auto` the re-fit would estimate a background that level explicitly says
+    # is not there, which is the same cross-level divergence in the other
+    # direction. The shift itself is a no-op at 0, so one branch covers both.
     if config.image_min is not None:
         volume = reference_on_fit_basis(volume, config.image_min)
         inner_floor: "str | float" = "none"

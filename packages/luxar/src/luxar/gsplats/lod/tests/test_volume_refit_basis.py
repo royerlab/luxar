@@ -75,6 +75,35 @@ def test_a_known_basis_shifts_the_target_and_disables_the_inner_floor(
     assert float(captured["volume"].max()) == pytest.approx(1500.0)
 
 
+def test_a_recorded_zero_basis_still_disables_the_inner_floor(monkeypatch) -> None:
+    """``image_min == 0`` is a real answer, not a missing one.
+
+    The format spec pins every tile of a TILED fit at ``image_min = 0`` on
+    purpose, so that no second per-tile constant is subtracted twice across an
+    overlap band. Such a ladder's basis IS the raw volume, and letting the re-fit
+    run at ``"auto"`` would have it estimate a background that level explicitly
+    denies — the same cross-level divergence, in the other direction. Branching on
+    "is the basis known" rather than "is it nonzero" is what covers this.
+    """
+    captured: dict = {}
+
+    def fake_fit(volume, **kwargs):
+        captured["volume"] = np.asarray(volume).copy()
+        captured["floor"] = kwargs.get("floor")
+        return _seed()
+
+    monkeypatch.setattr("luxar.gsplats.fit_gsplats.fit_gaussian_splats", fake_fit)
+    cfg = vr.VolumeRefitConfig(
+        image_min=0.0, iters=1, never_worse=False, conserve_mass=False
+    )
+    raw = _volume(500.0)
+    vr.volume_refine_splats(_seed(), raw, config=cfg, device="cpu")
+
+    assert captured["floor"] == "none"
+    # A zero level means no shift, so the volume must arrive untouched.
+    np.testing.assert_array_equal(captured["volume"], raw)
+
+
 def test_an_unknown_basis_leaves_behaviour_unchanged(monkeypatch) -> None:
     """A store that records nothing must keep today's behaviour rather than have
     a level guessed for it — guessing would be worse than the status quo."""
@@ -93,26 +122,6 @@ def test_an_unknown_basis_leaves_behaviour_unchanged(monkeypatch) -> None:
     vr.volume_refine_splats(_seed(), raw, config=cfg, device="cpu")
 
     assert captured["floor"] == "auto"
-    np.testing.assert_array_equal(captured["volume"], raw)
-
-
-def test_a_recorded_zero_basis_disables_the_inner_floor(monkeypatch) -> None:
-    """Zero means nothing was removed, not that the fit omitted the basis."""
-    captured: dict = {}
-
-    def fake_fit(volume, **kwargs):
-        captured["volume"] = np.asarray(volume).copy()
-        captured["floor"] = kwargs.get("floor")
-        return _seed()
-
-    monkeypatch.setattr("luxar.gsplats.fit_gsplats.fit_gaussian_splats", fake_fit)
-    raw = _volume(0.0)
-    cfg = vr.VolumeRefitConfig(
-        image_min=0.0, iters=1, never_worse=False, conserve_mass=False
-    )
-    vr.volume_refine_splats(_seed(), raw, config=cfg, device="cpu")
-
-    assert captured["floor"] == "none"
     np.testing.assert_array_equal(captured["volume"], raw)
 
 

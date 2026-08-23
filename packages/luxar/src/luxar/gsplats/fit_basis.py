@@ -49,12 +49,28 @@ def fit_image_min(stats: Optional[Mapping[str, Any]]) -> Optional[float]:
     "this fit removed nothing" apart from "this fit did not say", and warn about
     the second. A non-finite or negative value is treated as not recorded: both
     would corrupt the shift, and neither is a level any fit legitimately applies.
+
+    Note that ``0.0`` is a real answer, not a degenerate one: per the format spec
+    a TILED fit pins every tile at ``image_min = 0`` on purpose, so that no
+    second per-tile constant is subtracted twice across an overlap band.
+
+    "Not recorded" is likewise ordinary rather than exceptional —
+    ``agreed_normalization_stats`` drops any key the merged inputs disagree on,
+    so a merge of independently fitted volumes says nothing here by design.
+
+    The keys are a subset of ``NORMALIZATION_STATS_KEYS``
+    (``gsplats/io/save_gsplats.py``), which is the canonical spelling; they are
+    named literally rather than imported to keep this module free of the IO layer.
     """
     if not stats:
         return None
     for key in ("image_min", "floor"):
         value = stats.get(key)
-        if value is None:
+        # `bool` before `float`: it is an `int` subclass, so `float(True)` is 1.0.
+        # On a normalised store, where levels are ~0.04, a level of 1.0 clips the
+        # ENTIRE reference to zero — a silently meaningless score rather than an
+        # error. No fit writes a boolean here, so reject it as not-recorded.
+        if value is None or isinstance(value, bool):
             continue
         try:
             level = float(value)
@@ -72,15 +88,30 @@ def reference_on_fit_basis(
     """Shift ``volume`` onto the basis a fit with this ``image_min`` reconstructs.
 
     The exact inverse of the shift ``_normalize_data`` applies, clipped at zero
-    the same way. ``image_min`` of ``None`` or ``0.0`` returns the input
-    unchanged (as an array), so a caller can pass whatever it resolved without
-    branching.
+    the same way. ``image_min`` of ``None`` or ``0.0`` skips the shift, so a
+    caller can pass whatever it resolved without branching.
 
     Clipping is not cosmetic: sub-floor voxels were clipped to 0 going in, so
     leaving them negative here would score the fit for failing to reproduce
     values it was never shown.
+
+    **Dtype:** a floating input keeps its own dtype; an INTEGER input becomes
+    float32. Both matter. Subtracting a python float from an integer array
+    promotes to float64 under NEP 50 — four times the memory of a ``uint16``
+    reference, and a float64 result then makes ``compute_quality_metrics`` raise
+    ``expected scalar type Double but found Float`` against a float32 render.
+    Today every caller comes through ``load_volume``, which already returns
+    float32, so this is a guard on the contract rather than a live bug — but the
+    conversion is centralised here precisely so the next caller cannot trip it.
     """
     array = np.asarray(volume)
+    if array.dtype.kind != "f":
+        array = array.astype(np.float32)
     if image_min is None or image_min == 0.0:
         return array
-    return np.clip(array - float(image_min), 0.0, None)
+    # Subtract in the array's OWN dtype so float32 stays float32 (a python float
+    # is weak under NEP 50, but being explicit survives future promotion rules).
+    # Annotated because `dtype.type(...)` is untyped, which would otherwise make
+    # the whole expression — and this function's return — `Any`.
+    shifted: np.ndarray = np.clip(array - array.dtype.type(image_min), 0.0, None)
+    return shifted

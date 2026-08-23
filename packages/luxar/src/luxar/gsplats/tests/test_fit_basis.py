@@ -50,6 +50,18 @@ class TestFitImageMin:
             {"image_min": float("nan"), "floor": 0.3}
         ) == pytest.approx(0.3)
 
+    def test_a_boolean_is_not_read_as_a_level(self) -> None:
+        """``bool`` is an ``int`` subclass, so ``float(True)`` is 1.0.
+
+        On a normalised store, where levels are ~0.04, a level of 1.0 clips the
+        ENTIRE reference to zero — a silently meaningless score rather than an
+        error. No fit writes a boolean here, so it must read as not-recorded.
+        """
+        assert fit_image_min({"image_min": True}) is None
+        assert fit_image_min({"image_min": False}) is None
+        # ...and it must not shadow a usable `floor` sitting behind it.
+        assert fit_image_min({"image_min": True, "floor": 0.25}) == pytest.approx(0.25)
+
     def test_hint_names_the_stat_and_the_consequence(self) -> None:
         """The three call sites share this string; it has to say what is wrong and
         what the reader should distrust."""
@@ -92,6 +104,35 @@ class TestReferenceOnFitBasis:
         """So a caller can pass whatever it resolved without branching."""
         v = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
         np.testing.assert_array_equal(reference_on_fit_basis(v, level), v)
+
+    @pytest.mark.parametrize(
+        ("dtype", "expected"),
+        [
+            (np.float32, np.float32),
+            (np.float64, np.float64),
+            (np.float16, np.float16),
+            (np.uint16, np.float32),
+            (np.int16, np.float32),
+            (np.int32, np.float32),
+        ],
+    )
+    def test_floating_dtype_is_kept_and_integers_become_float32(
+        self, dtype, expected
+    ) -> None:
+        """Not cosmetic. An integer array minus a python float promotes to
+        float64 under NEP 50 — four times the memory of a ``uint16`` reference,
+        and a float64 result makes ``compute_quality_metrics`` raise "expected
+        scalar type Double but found Float" against a float32 render.
+        """
+        v = np.full((3, 3), 1000, dtype=dtype)
+        assert reference_on_fit_basis(v, 675.0).dtype == expected
+
+    def test_the_no_shift_path_also_normalises_integer_dtype(self) -> None:
+        """Otherwise a caller's dtype would depend on whether a floor happened to
+        be active, which is a surprise waiting for the first integer reference."""
+        v = np.full((3, 3), 1000, dtype=np.uint16)
+        assert reference_on_fit_basis(v, None).dtype == np.float32
+        assert reference_on_fit_basis(v, 0.0).dtype == np.float32
 
     def test_does_not_mutate_the_caller_s_array(self) -> None:
         v = np.array([700.0, 800.0], dtype=np.float32)

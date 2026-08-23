@@ -600,9 +600,15 @@ def finalize_results(
             # than an unfloored one while being the better representation.
             # `data_range` and `rel_l2` follow the reference, so shifting it here
             # fixes their denominators too (#1173).
+            # `copy=False`, not a bare `astype`: `config.V` is already float32
+            # (see the note above), and `astype` copies even when the dtype
+            # matches — a second full-volume allocation on top of the shift's, on
+            # a volume that can be gigabytes. This keeps the float64 guard (a
+            # float64 reference makes the metrics raise against a float32 render)
+            # without paying for it in the common case.
             ref = torch.from_numpy(
                 reference_on_fit_basis(config.V, preprocessed_data.image_min).astype(
-                    np.float32
+                    np.float32, copy=False
                 )
             ).to(rendered.device)
             quality = compute_quality_metrics(rendered, ref)
