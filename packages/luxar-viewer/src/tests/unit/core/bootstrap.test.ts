@@ -96,6 +96,7 @@ const EMPTY_PARAMS: UrlParams = {
   cacheDebug: false,
   clearCache: false,
   lodFade: true,
+  allowLinks: true,
   lodEnergyComp: true,
   blendWarmup: true,
   depthSort: true,

@@ -50,6 +50,33 @@ LINE_JOIN_STYLES: Final[frozenset[str]] = frozenset({"none", "miter"})
 # today's default forever and the viewer could never move it. Not dead code.
 DEFAULT_LINE_JOIN: Final[str] = "miter"
 
+# Per-element interaction templates (issue #1917).
+#
+# Browsing contexts a node's `link_target` may name. Restricted to the two
+# keywords that imply `noopener`: any OTHER value is a *named* target, which
+# hands the opened page a live `window.opener` it can use to cross-origin
+# navigate the viewer tab (reverse tabnabbing). The viewer enforces the same
+# two, letter-for-letter, in `ui/overlay-manager.ts`; keep them in step.
+LINK_TARGETS: Final[frozenset[str]] = frozenset({"_blank", "_self"})
+DEFAULT_LINK_TARGET: Final[str] = "_blank"
+
+# URL schemes a `link` template may resolve to. An ALLOWLIST, not a denylist:
+# the viewer NAVIGATES to this URL rather than rendering it, and `.zattrs` is
+# untrusted input, so anything exotic (`javascript:`, `data:`, `blob:`,
+# `file:`, `vbscript:`) must be refused rather than enumerated.
+LINK_SCHEMES: Final[frozenset[str]] = frozenset({"http", "https"})
+
+# Ceiling on a built URL, matched by the viewer's own per-click check. Well
+# above any real link; there to bound what a hostile store can push at the
+# browser after per-element substitution.
+MAX_LINK_CHARS: Final[int] = 2048
+
+# Ceiling on a built copy string. Larger than the URL cap because a copy
+# payload is legitimately prose (a whole record, a citation) rather than an
+# address, but still bounded: it reaches the system clipboard, outliving the
+# page, and originates in untrusted `.zattrs`.
+MAX_COPY_CHARS: Final[int] = 8 * 1024
+
 # LOD selector modes — how the viewer interprets a kind=lod group's per-child
 # `coverage_fraction` thresholds (the group's `selector` attr names the units):
 #

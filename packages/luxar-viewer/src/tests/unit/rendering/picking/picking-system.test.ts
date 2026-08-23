@@ -1211,7 +1211,14 @@ describe('PickingSystem — stale readback ordering', () => {
     system.registerNode(mainNode, pickNode, id);
 
     const gate = deferred<PickResult | null>();
-    const fakeResult: PickResult = { nodeId: id, elementId: 7, brightness: 1, mainNode };
+    const fakeResult: PickResult = {
+      nodeId: id,
+      elementId: 7,
+      brightness: 1,
+      mainNode,
+      screenX: 0,
+      screenY: 0,
+    };
     (system as unknown as { readbackAndVote: () => Promise<PickResult | null> }).readbackAndVote =
       () => gate.promise;
 
@@ -1304,5 +1311,67 @@ describe('PickingSystem — element-ID remap (issue #1421)', () => {
     // Slot 1 of a node whose visible buffer starts at on-disk 2048.
     const result = await pickSlot(1, new Uint32Array([2048, 2049, 4096]));
     expect(result?.elementId).toBe(2049);
+  });
+});
+
+/**
+ * The generation counter click-to-act depends on (issue #1917).
+ *
+ * `PickedElementCache` treats `pickGeneration` as "everything that can make an
+ * already-delivered PickResult stop describing reality". These tests pin both
+ * halves of that contract against the real system: what MUST advance it, and
+ * — just as load-bearing — what must NOT.
+ */
+describe('PickingSystem — pickGeneration / visibleSignature', () => {
+  let system: PickingSystem;
+
+  beforeEach(() => {
+    system = new PickingSystem(makeStubRenderer(), makeStubCapabilities(), makeCamera(), vi.fn());
+  });
+
+  it('markDirty advances the generation', () => {
+    const before = system.pickGeneration;
+    system.markDirty();
+    expect(system.pickGeneration).toBeGreaterThan(before);
+  });
+
+  it('onMouseLeave advances the generation', () => {
+    const before = system.pickGeneration;
+    system.onMouseLeave();
+    expect(system.pickGeneration).toBeGreaterThan(before);
+  });
+
+  it('dispose advances the generation', () => {
+    const before = system.pickGeneration;
+    system.dispose();
+    expect(system.pickGeneration).toBeGreaterThan(before);
+  });
+
+  /**
+   * THE load-bearing negative. An ordinary click is pointerdown → controls
+   * `start` → suppress(true) → pointerup → suppress(false). If suppression
+   * advanced the generation, the cached pick would be invalid by the time the
+   * click resolved and EVERY click would silently refuse itself.
+   */
+  it('suppress does NOT advance the generation — an ordinary click depends on this', () => {
+    const before = system.pickGeneration;
+    system.suppress(true);
+    system.suppress(false);
+    expect(system.pickGeneration).toBe(before);
+  });
+
+  it('visibleSignature changes when a registered node is hidden', () => {
+    // The signal `pickGeneration` cannot carry: hiding a layer from the panel
+    // does not dirty the buffer (`applyVisibility` only requests a render).
+    const mainNode = new THREE.Object3D();
+    const pickMesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+    system.registerNode(mainNode, pickMesh, system.allocatePickId());
+
+    const before = system.visibleSignature;
+    mainNode.visible = false;
+    expect(system.visibleSignature).not.toBe(before);
+
+    mainNode.visible = true;
+    expect(system.visibleSignature).toBe(before);
   });
 });

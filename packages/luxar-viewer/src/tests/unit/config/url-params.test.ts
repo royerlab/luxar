@@ -19,7 +19,8 @@ describe('readUrlParams', () => {
       noOpfs: false,
       cacheDebug: false,
       clearCache: false,
-      lodFade: true, // LOD cross-fade is ON by default (opt-out via ?no-lod-fade)
+      lodFade: true,
+      allowLinks: true, // LOD cross-fade is ON by default (opt-out via ?no-lod-fade)
       lodEnergyComp: true, // streaming brightness compensation is ON (opt-out via ?no-lod-energy)
       blendWarmup: true, // WebGL blend-variant warm-up is ON by default (opt-out via ?no-blend-warmup)
       depthSort: true, // gsplat depth sorting is ON by default (opt-out via ?depthSort=0)

@@ -497,6 +497,9 @@ export class LuxarApp {
       getOverlayManager: () => this.overlayManager,
       onSelection: (sel) => this.embedderEvents.emit('selection', sel),
       hasSelectionConsumer: () => this.embedderEvents.hasListeners('selection'),
+      allowLinks: this.options.allowLinks ?? true,
+      onElementClick: (p) => this.embedderEvents.emit('element-click', p),
+      onElementContextMenu: (p) => this.embedderEvents.emit('element-contextmenu', p),
     });
     this.pickingSystem = result.pickingSystem;
     this.labelLoader = result.labelLoader;

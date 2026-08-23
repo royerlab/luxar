@@ -565,13 +565,14 @@ describe('initPicking', () => {
       expect(targets).toContain('resize');
       expect(targets).toContain('scroll');
 
-      // core.md W10 strengthening: previously `>=4`. Pin to EXACTLY 4 so
-      // a regression that double-registered a cleanup (or added a 5th
-      // listener without considering teardown) gets flagged. The four
-      // are: controls.removeEventListener('change' | 'start' | 'end')
-      // and sceneManager.removeEventListener('camera-changed') — see
-      // core/app/picking/init-picking.ts lines 144, 161, 162, 169.
-      expect(addSpy.mock.calls.length).toBe(4);
+      // core.md W10 strengthening: previously `>=4`. Pin to EXACTLY the
+      // current count so a regression that double-registered a cleanup (or
+      // added a listener without considering teardown) gets flagged. The five
+      // are: controls.removeEventListener('change' | 'start' | 'end'),
+      // sceneManager.removeEventListener('camera-changed'), and the canvas
+      // actions' cursor reset (#1917), which must run on teardown so a
+      // session disposed mid-hover leaves no pointer cursor behind.
+      expect(addSpy.mock.calls.length).toBe(5);
       // Each registered cleanup is a function (not a value / object).
       for (const call of addSpy.mock.calls) {
         expect(typeof call[0]).toBe('function');

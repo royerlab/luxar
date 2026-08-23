@@ -143,8 +143,19 @@ KNOWN_RENDER_ATTRS: FrozenSet[str] = frozenset(
         "ambient",
         "blending_mode",
         "colormap",
+        # Per-element interaction templates (issue #1917). ``link`` builds a
+        # URL opened on left-click, ``copy`` a plain string offered by the
+        # right-click menu, both substituting the hover vocabulary
+        # (``{hover_label}`` / ``{hover_node}`` / ``{hover_index}``).
+        # ``link_target`` picks the browsing context. Advertised here rather
+        # than hidden in ``_ALLOWED_NODE_ATTRS`` for the same reason as
+        # lines-only ``join``: they are real knobs a user authors, so a typo
+        # deserves to see them in the hint.
+        "copy",
         "gamma",
         "intensity",
+        "link",
+        "link_target",
         # Lines-only join style at degree-2 polyline joints (issue #790).
         # Advertised here rather than hidden in ``_ALLOWED_NODE_ATTRS``
         # because it is a real appearance knob a user authors, so it belongs
@@ -624,6 +635,36 @@ def validate_render_attrs(
         from ...validation.types import validate_colormap
 
         validate_colormap(attrs["colormap"])
+
+    # Interaction templates (#1917). Checked here, before the node exists on
+    # disk, because the failure they prevent is otherwise SILENT: a bad
+    # `link` writes cleanly and simply does nothing when the user clicks it,
+    # with nothing in the file or the console to point at.
+    if "link" in attrs:
+        from ...validation.types import validate_link
+
+        validate_link(attrs["link"])
+
+    if "copy" in attrs:
+        from ...validation.types import validate_copy_template
+
+        validate_copy_template(attrs["copy"])
+
+    if "link_target" in attrs:
+        from ...validation.types import validate_link_target
+
+        validate_link_target(attrs["link_target"])
+
+    # `link_target` alone is inert — it only says WHERE a link would open.
+    # Refuse it rather than write a node whose only interaction attr can
+    # never be read, which is a typo (`link_taget=`) far more often than a
+    # deliberate choice.
+    if "link_target" in attrs and "link" not in attrs:
+        raise ValueError(
+            "link_target was given without link. It only selects the browsing "
+            "context for a link, so on its own it has no effect. Add "
+            "link='https://...' or drop link_target."
+        )
 
 
 def _validate_mesh_appearance_attrs(attrs: Dict[str, Any]) -> None:

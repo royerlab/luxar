@@ -65,6 +65,34 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
     description: 'Open dataset browser',
   });
 
+  // Element context menu at the current hover (issue #1917) — the keyboard
+  // path the UI design guide requires of every context menu (§7.8).
+  //
+  // Registered on NAVIGATION, not FLY_CONTROLS: that context uses an
+  // `allowedKeys` whitelist which contains neither key, and reaches a
+  // NAVIGATION binding only through passthrough — so registering here is what
+  // makes the shortcut work in BOTH modes.
+  //
+  // Dispatches a window event rather than calling a command, because the
+  // listener is rebuilt on every dataset load while this binding lives for the
+  // app's lifetime. Same decoupling as `open-dataset-browser` above.
+  const openElementMenu = (): void => {
+    window.dispatchEvent(new CustomEvent('luxar-open-element-menu'));
+  };
+  contextManager.registerBinding(InputContext.NAVIGATION, {
+    key: 'F10',
+    modifiers: { shift: true },
+    handler: openElementMenu,
+    preventDefault: true,
+    description: 'Open the context menu for the hovered element',
+  });
+  contextManager.registerBinding(InputContext.NAVIGATION, {
+    key: 'ContextMenu',
+    handler: openElementMenu,
+    preventDefault: true,
+    description: 'Open the context menu for the hovered element',
+  });
+
   // Performance stats
   contextManager.registerBinding(InputContext.NAVIGATION, {
     key: config.input.keyboard.shortcuts.togglePerformance,

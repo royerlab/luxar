@@ -49,6 +49,7 @@ export type {
   EmbedderDimensions,
   ScreenshotOptions,
   SelectionPayload,
+  ElementPointerPayload,
   CameraSnapshot,
   DimensionMetadata,
   Unsubscribe,
