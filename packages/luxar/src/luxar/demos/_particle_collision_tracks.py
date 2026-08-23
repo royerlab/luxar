@@ -46,10 +46,13 @@ def _sample_track_points(
     max_z: float,
     n_points: int,
     shower_radius: float | None,
+    max_sampled_distance: float | None,
 ) -> np.ndarray:
     points: list[np.ndarray] = []
     for point_index in range(n_points):
         sampled_distance = point_index * sample_step
+        if max_sampled_distance is not None and sampled_distance > max_sampled_distance:
+            break
         z = origin[2] + longitudinal_rate * sampled_distance
 
         if transverse_momentum == 0:
@@ -171,4 +174,7 @@ def generate_helix_points(
         max_z=max_z,
         n_points=n_points,
         shower_radius=shower_radius,
+        max_sampled_distance=(
+            TRACK_TRANSVERSE_ARC_BUDGET if transverse_momentum > 0 else None
+        ),
     )

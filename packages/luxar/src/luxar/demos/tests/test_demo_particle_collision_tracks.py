@@ -5,6 +5,7 @@ import pytest
 
 from luxar.demos._particle_collision_tracks import (
     MAX_AZIMUTH_SAMPLE_STEP,
+    TRACK_TRANSVERSE_ARC_BUDGET,
     generate_helix_points,
 )
 from luxar.demos.demo_particle_collision import (
@@ -180,6 +181,14 @@ def test_soft_track_azimuth_sampling_stays_below_cap() -> None:
     azimuth_steps = np.abs(np.diff(step_azimuths))
     assert np.median(azimuth_steps) == pytest.approx(MAX_AZIMUTH_SAMPLE_STEP, abs=5e-6)
     assert np.max(azimuth_steps) <= MAX_AZIMUTH_SAMPLE_STEP + 3e-5
+
+
+def test_transverse_arc_budget_limits_generous_point_ceiling() -> None:
+    points = _sample_points(momentum=np.array([10.0, 0.0, 0.0]), n_points=5000)
+    transverse_arc = np.linalg.norm(np.diff(points[:, :2], axis=0), axis=1).sum()
+
+    assert len(points) == 41
+    assert transverse_arc == pytest.approx(TRACK_TRANSVERSE_ARC_BUDGET, rel=1e-4)
 
 
 @pytest.mark.parametrize("pz, expected_z", [(-3.0, -25.0), (3.0, 25.0)])
