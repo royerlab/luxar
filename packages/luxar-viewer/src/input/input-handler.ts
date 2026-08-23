@@ -882,7 +882,7 @@ export class InputHandler {
    * switch between controlling different non-displayed dimensions with
    * the [ and ] navigation keys.
    *
-   * @param index - Zero-based dimension index to select
+   * @param index - Zero-based position in the non-displayed dimension list
    * @private
    */
   private selectDimension(index: number): void {

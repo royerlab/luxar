@@ -2,7 +2,6 @@
 
 from .. import demo_nd_transforms as demo
 
-
 EXPECTED_FRAME_LOCALS = {
     "IDENTITY": tuple(range(16)),
     "OFFSET +5": (None, None, None, None, None, *range(11)),
