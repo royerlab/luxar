@@ -717,8 +717,9 @@ def warn_if_scene_is_stale(scene_path: Path) -> None:
             aprint(
                 f"  ⚠ This scene's '{layer_name}' finest level's largest single "
                 f"node contains {max_node_points:,} points, above the current "
-                f"{SCENE_MAX_POINTS_PER_NODE:,}-point ceiling, so a 4096-class "
-                "GPU will silently drop its tail. Rebuild it with:\n"
+                f"{SCENE_MAX_POINTS_PER_NODE:,}-point demo ceiling. It lacks the "
+                "current per-node safety margin, and larger nodes can silently "
+                "lose their tail on a 4096-class GPU. Rebuild it with:\n"
                 "      luxar demo run desi_galaxies -- --recompute\n"
                 "    or delete the scene and re-run to unpack a current shipped "
                 "asset:\n"
