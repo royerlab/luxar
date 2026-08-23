@@ -68,8 +68,8 @@ test.describe('Spatial Index Query Accuracy', () => {
     await waitForLuxarReady(page);
     await waitForPointsLoaded(page, 1);
 
-    // Navigate in dimension 4 (Time) to trigger spatial query
-    await page.keyboard.press('4');
+    // Navigate in Time, the first non-displayed dimension, to trigger spatial query
+    await page.keyboard.press('1');
     await waitForNextRender(page);
     await page.keyboard.press(']');
     await waitForSpatialQueryOrThrow(page);
@@ -108,7 +108,7 @@ test.describe('Spatial Index Query Accuracy', () => {
     queryLogs.length = 0;
 
     // Navigate to trigger a fresh spatial query
-    await page.keyboard.press('4');
+    await page.keyboard.press('1');
     await waitForNextRender(page);
     await page.keyboard.press(']');
     await waitForSpatialQueryOrThrow(page);
@@ -144,7 +144,7 @@ test.describe('Spatial Index Query Accuracy', () => {
     await waitForPointsLoaded(page, 1);
 
     // Navigate through non-displayed dimension to trigger radius computation
-    await page.keyboard.press('4');
+    await page.keyboard.press('1');
     await waitForNextRender(page);
     await page.keyboard.press(']');
     await waitForSpatialQueryOrThrow(page);
@@ -227,7 +227,7 @@ test.describe('Spatial Index Query Accuracy', () => {
     expect(baselinePoints).toBeGreaterThan(0);
 
     // Navigate to a different time slice to ensure we're away from edges
-    await page.keyboard.press('4');
+    await page.keyboard.press('1');
     await waitForNextRender(page);
     await page.keyboard.press(']');
     await page.keyboard.press(']');
@@ -267,7 +267,7 @@ test.describe('Spatial Index - Navigation Outside Bounds', () => {
 
     // Navigate far outside data bounds in the Time dimension
     // Time range is 0-9, so navigating forward 20+ steps should go well beyond
-    await page.keyboard.press('4');
+    await page.keyboard.press('1');
     await waitForNextRender(page);
 
     for (let i = 0; i < 25; i++) {
@@ -322,7 +322,7 @@ test.describe('Spatial Index - Cache Behavior', () => {
     cacheLogs.length = 0;
 
     // First navigation - should miss cache or load data
-    await page.keyboard.press('4');
+    await page.keyboard.press('1');
     await waitForNextRender(page);
     await page.keyboard.press(']');
     await waitForSpatialQueryOrThrow(page);
@@ -341,7 +341,7 @@ test.describe('Spatial Index - Cache Behavior', () => {
     const initialPoints = initialState.totalPoints;
 
     // Navigate forward
-    await page.keyboard.press('4');
+    await page.keyboard.press('1');
     await waitForNextRender(page);
     await page.keyboard.press(']');
     await waitForSpatialQueryOrThrow(page);
@@ -382,7 +382,7 @@ test.describe('Spatial Index - Cache Behavior', () => {
     await waitForLuxarReady(page);
 
     // Navigate several times to populate cache
-    await page.keyboard.press('4');
+    await page.keyboard.press('1');
 
     for (let i = 0; i < 3; i++) {
       await page.keyboard.press(']');
@@ -432,7 +432,7 @@ test.describe('Spatial Index - Error Handling', () => {
     await waitForPointsLoaded(page, 1);
 
     // Navigate to extreme position
-    await page.keyboard.press('4');
+    await page.keyboard.press('1');
     await waitForNextRender(page);
 
     // Navigate forward many times (will go well outside bounds)

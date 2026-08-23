@@ -127,7 +127,7 @@ test.describe('@visual Visual Regression - HDR & Tone Mapping', () => {
     });
 
     // Navigate to different slice
-    await page.keyboard.press('4');
+    await page.keyboard.press('1');
     await page.keyboard.press(']');
 
     // Wait for slice navigation to complete and render to stabilize

@@ -38,7 +38,7 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
         }
       },
       preventDefault: false,
-      description: `Select dimension ${i}`,
+      description: `Select non-displayed dimension ${i}`,
     });
   }
 

@@ -261,7 +261,7 @@ whole query→fetch→decode pipeline.)
 *Why nD slicing vs dimension reduction?*
 
 * Preserves all data dimensions
-* Intuitive keyboard navigation (1-9 select dimension, [ ] navigate)
+* Intuitive keyboard navigation (1-9 select a non-displayed dimension, [ ] navigate)
 * No information loss from projection
 
 WebGL Layer (Rendering)

@@ -98,7 +98,10 @@ const HELP_SECTIONS: HelpSection[] = [
     title: 'nD navigation',
     icon: RAIL_ICONS.dims,
     entries: [
-      { keys: ['1 – 9'], label: 'Select dimension to control' },
+      {
+        keys: ['1 – 9'],
+        label: 'Select a non-displayed dimension (panel header shows target)',
+      },
       { keys: ['[', ']'], label: 'Step along the selected dimension' },
       { keys: ['Wheel'], label: 'On a slider: step (⇧ fine, ⌃ coarse, ⌃⇧ extra-fine)' },
       { keys: ['N'], label: 'Dimension sliders panel' },

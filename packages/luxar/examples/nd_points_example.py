@@ -217,7 +217,7 @@ def main():
             observe=[
                 "Press <code>1</code> for time, then <code>[</code> / "
                 "<code>]</code>: the spiral evolves and brightens.",
-                "Press <code>5</code> for channel: red, green, blue subsets appear.",
+                "Press <code>2</code> for channel: red, green, blue subsets appear.",
                 "Grey reference points sit offset near (30, 30) at discrete "
                 "time/channel values.",
             ],
@@ -235,7 +235,8 @@ def main():
         aprint("  - channel: [0, 1, 2] au (non-displayed, discrete)")
         aprint(
             "\nIn the viewer:"
-            "\n  - Use keys 1-5 to select dimension for navigation"
+            "\n  - Press 1 for time or 2 for channel (digit keys count only the "
+            "non-displayed dimensions)"
             "\n  - Use [ and ] to step through non-displayed dimensions"
             "\n  - Only 3D spatial view is displayed, other dims are sliced"
         )

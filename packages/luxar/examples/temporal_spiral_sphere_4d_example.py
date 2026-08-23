@@ -301,7 +301,7 @@ def main():
                 "A dense Fibonacci-spiral sphere animated over a discrete "
                 "<code>t</code> dimension, with per-frame undulating colors, "
                 "pulsating <code>radii</code>, and dynamic <code>sharpness</code>. "
-                "Press <code>4</code> then <code>[</code>/<code>]</code> to step "
+                "Press <code>1</code> then <code>[</code>/<code>]</code> to step "
                 "through time."
             ),
             observe=[
@@ -323,7 +323,7 @@ def main():
     )
     aprint("\nTo visualize: luxar serve temporal_spiral_sphere_4d_example.luxar.zarr")
     aprint(
-        "Then navigate through time with the 't' dimension controls (press 4, then [/])"
+        "Then navigate through time with the 't' dimension controls (press 1, then [/])"
     )
 
 
