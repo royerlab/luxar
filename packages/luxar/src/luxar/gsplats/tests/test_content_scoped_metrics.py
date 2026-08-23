@@ -437,6 +437,8 @@ _UNAFFECTED = {
     "metrics survive, while promoted-dimensional count/energy stamps are "
     "recomputed and stale quality/refine measurements are removed",
     "from_tree": "constructor — the caller supplies the stats",
+    "from_default_selection": "tree constructor — the caller supplies root stats "
+    "for the default-rendered content",
     "from_additive_sublods": "constructor — the caller supplies the stats",
     "from_substitutive_levels": "constructor — the caller supplies the stats",
     "load": "reads stats off disk; it inherits nothing from another artifact",

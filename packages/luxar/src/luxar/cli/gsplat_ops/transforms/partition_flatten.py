@@ -131,32 +131,21 @@ def run_flatten_dataset(
             with asection("Loading tree"):
                 node, stats = load_gsplat_node(input_path, include_stats=True)
 
-            # One flat GSplatData per default-rendered leaf (finest level only,
-            # all parts). `.flattened()` collapses each leaf's additive ladder to
-            # a single full set so `concatenate` (which requires a matching
-            # substitutive depth) merges them cleanly.
-            parts = [
-                GSplatData.from_tree(leaf).flattened()
-                for leaf in iter_default_leaves(node)
-            ]
-            if not parts:
-                aprint("❌ Error: input tree has no leaves")
-                raise typer.Exit(1)
-
-            flat = GSplatData.concatenate(parts)
-            # concatenate() builds a fresh stats dict from the first input; keep
-            # the root-level provenance/fitting stats from the source tree — minus
-            # its TOPOLOGY record, which this command has just invalidated: the
-            # output is one flat leaf, so an inherited `lod_kind: substitutive` /
-            # `n_substitutive_levels: 4` / `lod_cutpoints: [...]` describes a tree
-            # that no longer exists (#1600).
+            n_leaves = sum(1 for _ in iter_default_leaves(node))
+            flat = GSplatData.from_default_selection(node).flattened()
+            # The default-selection factory may preserve a matrix-shaped input's
+            # stats; keep the root-level provenance/fitting stats from the source
+            # tree — minus its TOPOLOGY record, which this command has just
+            # invalidated: the output is one flat leaf, so an inherited
+            # `lod_kind: substitutive` / `n_substitutive_levels: 4` /
+            # `lod_cutpoints: [...]` describes a tree that no longer exists (#1600).
             if stats:
                 flat = GSplatData.from_additive_sublods(
                     list(flat.additive_sublods),
                     stats=stats_after_structure_change(stats),
                 )
             aprint(
-                f"Flattened {len(parts)} leaf/leaves → {flat.n_splats:,} splats "
+                f"Flattened {n_leaves} leaf/leaves → {flat.n_splats:,} splats "
                 f"({flat.ndim}D, single matrix-shaped leaf)"
             )
 
