@@ -75,7 +75,7 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.core.viewer_config import ViewerConfig
+from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import add_demo_caption, launch_viewer, parse_demo_flags
 from luxar.encoding import EncodingMode
 from luxar.utils.paths import get_demos_output_dir
@@ -372,7 +372,30 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
         with LuxarZarrCompiler(output_path, encoding_mode=EncodingMode.PRECISION) as c:
             scene = c.create_scene(
                 dimensions=dims,
-                viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="ACES"),
+                viewer_config=ViewerConfig(
+                    # Orbit about the CENTRE OF THE EARTH. Without an authored
+                    # target the viewer pivots on the metadata bounding-box
+                    # centre, which relief exaggeration pulls ~1 unit off the
+                    # origin (the deepest trenches and the highest peaks are not
+                    # antipodal), and any per-scene view the visitor left behind
+                    # outranks the bounds anyway. The globe is generated about
+                    # the origin by construction — `lonlat_to_xyz` measures every
+                    # radius from it — so (0, 0, 0) IS the planet's centre, and
+                    # stating it keeps the turntable concentric with the sphere.
+                    # A target alone does not pin the camera: the viewer still
+                    # auto-frames the distance, it just preserves this pivot.
+                    camera=CameraConfig(target=(0.0, 0.0, 0.0)),
+                    cinematic_mode=True,
+                    tone_mapping="ACES",
+                    # -1 EV. The globe went from a 0.05-opacity backdrop to an
+                    # OPAQUE full-opacity shell and the rivers from gain 1.6 to
+                    # 2.63, so the neutral 0.0 default now clips the lit
+                    # hemisphere. One stop down is what the scene actually wants;
+                    # a viewer-side tweak would not travel with the demo, and
+                    # dimming the layers instead would undo the authored
+                    # appearance above.
+                    exposure=-1.0,
+                ),
                 citation=DEMO_META["citation"],
             )
             scene.attrs["title"] = "Rivers of Earth — global topography + HydroRIVERS"
