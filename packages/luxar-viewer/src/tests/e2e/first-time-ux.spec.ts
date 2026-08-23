@@ -190,13 +190,16 @@ test.describe('First-Time User Experience', () => {
    * published at construction, but the window-level `open-dataset-browser`
    * listener is only installed at the end of `LuxarApp.init()`, after the
    * awaited dataset load. An `O` pressed before that dispatches its event
-   * into the void and nothing opens. The 30 s bound (vs the 45 s default)
-   * keeps the worst case inside the 60 s per-test cap, so a slow shard fails
-   * on the readiness gate's own message instead of a bare test timeout.
+   * into the void and nothing opens. `&no-opfs` because neither test asserts
+   * the L2 OPFS cache tier and automated Chromium's OPFS stalls systemically
+   * (10 s per op — issue #1645), which can eat the readiness budget before
+   * the circuit breaker trips. The 30 s bound (vs the 45 s default) means a
+   * slow-but-eventually-ready shard fails on the readiness gate's own message
+   * rather than as a bare test timeout.
    */
   async function openViewerReadyForShortcut(page: Page): Promise<Locator> {
     await page.goto(
-      '/?src=http://localhost:9000/datasets/examples/rainbow_sphere_4d_example.luxar.zarr&debug'
+      '/?src=http://localhost:9000/datasets/examples/rainbow_sphere_4d_example.luxar.zarr&debug&no-opfs'
     );
     await waitForLuxarReady(page, 30000);
 
