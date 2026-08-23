@@ -2935,7 +2935,7 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
       ready: opts.ready ?? true,
     };
   }
-  function makeReg(crossFade: boolean) {
+  function makeReg(crossFade: boolean, getViewVersion = () => 2, now?: () => number) {
     const camera = new THREE.Camera();
     camera.matrixWorldInverse.identity();
     camera.projectionMatrix.identity();
@@ -2943,8 +2943,9 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
       getCamera: () => camera,
       getViewportSize: () => ({ width: 800, height: 600 }),
       getDisplayDims: () => [0, 1, 2],
-      getViewVersion: () => 2,
+      getViewVersion,
       getCrossFadeEnabled: () => crossFade,
+      now,
     });
   }
   const liveOpacity = (c: LODGroupChild): number =>
@@ -2962,6 +2963,37 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
     expect(liveOpacity(coarse)).toBeCloseTo(0.5, 6);
     expect(coarse.lastVisibleTick).toBeGreaterThan(0);
     expect(fine.lastVisibleTick).toBeGreaterThan(0);
+  });
+
+  it('does not blend a held-stale aspiration with a fresh partner', () => {
+    const state = { version: 2, clock: 0 };
+    const reg = makeReg(
+      true,
+      () => state.version,
+      () => state.clock
+    );
+    const coarse = fadeChild(0);
+    const fine = fadeChild(0.5);
+    (coarse.object.userData as { visibleSplatCount: number }).visibleSplatCount = 10;
+    reg.register(makeEntry([coarse, fine], 0, '/g'));
+
+    reg.evaluatePerFrame();
+    expect(coarse.object.visible).toBe(true);
+    expect(fine.object.visible).toBe(true);
+    expect(liveOpacity(coarse)).toBeCloseTo(0.5, 6);
+    expect(liveOpacity(fine)).toBeCloseTo(0.5, 6);
+
+    state.version = 3;
+    Object.assign(coarse.object.userData, {
+      loadedViewVersion: 3,
+      visibleSplatCount: 10,
+    });
+    reg.evaluatePerFrame();
+
+    expect(reg.get('/g')!.displayedChildIndex).toBe(1);
+    expect(coarse.object.visible).toBe(false);
+    expect(fine.object.visible).toBe(true);
+    expect(liveOpacity(fine)).toBe(1);
   });
 
   it('weights shift with the metric position in the band (finer boundary just above the metric ⇒ coarse dominant)', () => {

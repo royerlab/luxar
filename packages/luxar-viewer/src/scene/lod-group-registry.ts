@@ -467,8 +467,9 @@ export interface LODGroupEntry {
    * points at the coarsest fresh level while the aspiration reloads, and
    * during a never-downgrade hold it can also point at a FINER
    * previously-displayed level while a coarser streaming aspiration catches
-   * up. A per-frame transient written by ``evaluateEntry`` and read by
-   * ``enforceByteBudget`` (same synchronous ``evaluatePerFrame`` pass)
+   * up. During a stale hold it can instead remain on a finer STALE level while
+   * the next slice decodes. A per-frame transient written by ``evaluateEntry``
+   * and read by ``enforceByteBudget`` (same synchronous ``evaluatePerFrame`` pass)
    * so eviction never releases the on-screen level. ``undefined`` before the
    * first evaluation ⇒ treated as ``activeChildIndex``. Tracks what is ACTUALLY
    * on screen every frame — including the coarse level shown while the group is
@@ -477,8 +478,8 @@ export interface LODGroupEntry {
    */
   displayedChildIndex?: number;
   /**
-   * The last level displayed while the group was ON SCREEN — the
-   * never-downgrade gate's "previously-displayed level" memory. Distinct from
+   * The last level displayed while the group was ON SCREEN — shared memory for
+   * the never-downgrade gate and stale hold. Distinct from
    * ``displayedChildIndex`` because the off-screen gate transiently displays
    * (and would otherwise record) the coarsest ready level; folding that into
    * the gate memory would let a mere look-away-and-back clobber a held finer
@@ -488,13 +489,11 @@ export interface LODGroupEntry {
    */
   heldDisplayChildIndex?: number;
   /**
-   * Wall-clock ms at which the current **stale hold** started, or ``undefined``
-   * when not holding — see ``staleHoldDisplayIndex``. Set on the first frame the
-   * registry keeps a stale-but-far-finer previous level instead of dropping to
-   * the coarse fresh fallback; cleared the moment the aspiration recommits
-   * fresh (the hold ended naturally) or the budget runs out (the hold gave up,
-   * and must NOT re-arm on the next version bump, or a continuous scrub would
-   * re-hold every frame and never show live geometry).
+   * Wall-clock ms at which the current **stale-hold budget** started — see
+   * ``staleHoldDisplayIndex``. Set on the first eligible hold and retained when
+   * a later ratio check declines to hold, so the budget cannot restart during
+   * the same scrub. Cleared only when the aspiration recommits fresh or the
+   * budget is exhausted.
    */
   staleHoldSinceMs?: number;
   /**
@@ -1369,6 +1368,7 @@ export class LODGroupRegistry {
       this.deps.getCrossFadeEnabled?.() === true &&
       entry.selectorMode === 'auto' &&
       !entry.offScreen &&
+      aspirationFresh &&
       displayIdx === entry.activeChildIndex &&
       coverageMetric >= 0
     ) {
@@ -1676,6 +1676,13 @@ export class LODGroupRegistry {
    * fresh, which displayed the OLD slice from a stale partition/overview branch
    * after a re-slice even while a genuinely fresh level was resident.
    */
+  private coarsestFreshOrReadyIndex(entry: LODGroupEntry, version: number): number {
+    for (let i = 0; i < entry.children.length; i++) {
+      if (this.childFreshAndCount(entry.children[i], version).fresh) return i;
+    }
+    return this.coarsestReadyIndex(entry);
+  }
+
   /**
    * Should a STALE previously-displayed level be kept on screen for a few more
    * frames instead of dropping to ``fallbackIdx``, the coarsest fresh level?
@@ -1723,9 +1730,8 @@ export class LODGroupRegistry {
     const prev = entry.children[prevIdx];
     if (!prev || !isReady(prev)) return undefined;
 
-    // Compare committed counts, and only across one geometry type — splat
-    // counts and segment counts are not comparable (the never-downgrade gate
-    // refuses the same way).
+    // Compare committed counts. An unknown count on either side means there is
+    // no evidence the fallback is severe, so decline the hold.
     const prevCount = this.childFreshAndCount(prev, version).count;
     const fallback = entry.children[fallbackIdx];
     const fallbackCount = fallback ? this.childFreshAndCount(fallback, version).count : null;
@@ -1744,13 +1750,6 @@ export class LODGroupRegistry {
     // Keep the held level warm so eviction does not reclaim it mid-hold.
     prev.lastVisibleTick = this.tick;
     return prevIdx;
-  }
-
-  private coarsestFreshOrReadyIndex(entry: LODGroupEntry, version: number): number {
-    for (let i = 0; i < entry.children.length; i++) {
-      if (this.childFreshAndCount(entry.children[i], version).fresh) return i;
-    }
-    return this.coarsestReadyIndex(entry);
   }
 
   /**
