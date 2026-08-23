@@ -99,6 +99,11 @@ def compare(store: Path, declared: Optional[dict]) -> Optional[str]:
         return None
     if not carried:
         return f"declares {want!r} but the store carries no citation"
+    if not carried.get("short"):
+        # `validate_citation` requires `short`, so a luxar-written store always
+        # has one -- but a hand-edited or foreign store may not, and the generic
+        # comparison below would report the confusing "carries None".
+        return f"declares {want!r} but the store's citation has no 'short': {carried!r}"
     if carried.get("short") != want:
         return f"carries {carried.get('short')!r} but the demo declares {want!r}"
     return None
