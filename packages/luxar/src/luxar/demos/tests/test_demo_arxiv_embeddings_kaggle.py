@@ -231,6 +231,22 @@ class TestResolvePaperMetadata:
         )
         assert (titles, cats, years) == (["T"], ["cs"], [2021])
 
+    def test_year_comes_from_the_id_not_the_snapshots_update_date(self) -> None:
+        """The regression guard for a 400,803-paper mislabel.
+
+        The Cornell snapshot's ``year`` is ``update_date`` — the last revision —
+        and nothing in it predates 2007. A 1992 paper revised in 2015 must read
+        1992, or the Year view collapses 35 years of arXiv into 19.
+        """
+        lookup = {"hep-th/9201001": {"category": "hep-th", "title": "T", "year": 2015}}
+        _, _, years = demo.resolve_paper_metadata(["hep-th/9201001"], ["arxiv"], lookup)
+        assert years == [1992]
+
+    def test_snapshot_year_is_the_fallback_for_an_unparseable_id(self) -> None:
+        lookup = {"weird-id": {"category": "cs", "title": "T", "year": 2019}}
+        _, _, years = demo.resolve_paper_metadata(["weird-id"], ["arxiv"], lookup)
+        assert years == [2019]
+
     def test_preprint_servers_are_their_own_category_not_other(self) -> None:
         ids = ["10.1101/2020.03.03.20030890", "10.1101/2019.12.01.111111"]
         _, cats, _ = demo.resolve_paper_metadata(ids, ["medrxiv", "biorxiv"], {})
@@ -255,10 +271,52 @@ class TestResolvePaperMetadata:
         assert cats == ["biorxiv"]
         assert years == [0]
 
-    def test_unmatched_arxiv_row_falls_back_to_other(self) -> None:
+    def test_unmatched_arxiv_row_falls_back_to_other_but_keeps_its_year(self) -> None:
+        """No snapshot entry still leaves the ID, which carries the date."""
         _, cats, years = demo.resolve_paper_metadata(["9901.00001"], ["arxiv"], {})
         assert cats == ["other"]
-        assert years == [0]
+        assert years == [1999]
+
+
+class TestArxivSubmissionYear:
+    """Both arXiv ID styles decode; nothing else is mistaken for one."""
+
+    @pytest.mark.parametrize(
+        "paper_id,year",
+        [
+            ("0704.0001", 2007),  # first new-style month
+            ("2511.02119", 2025),
+            ("9108.0001", 1991),  # arXiv's opening month, 4-digit serial
+            ("hep-lat/0506004", 2005),
+            ("math.AG/0601001", 2006),
+            ("cond-mat/9910001", 1999),
+            ("astro-ph/9108001", 1991),
+        ],
+    )
+    def test_known_ids(self, paper_id, year) -> None:
+        assert demo.arxiv_submission_year(paper_id) == year
+
+    @pytest.mark.parametrize(
+        "not_arxiv",
+        [
+            "10.1101/2020.03.03.20030890",  # a preprint DOI, handled elsewhere
+            "10.1101/001891",
+            "",
+            "0704",
+            "0704.1",  # serial too short
+            "0700.0001",  # month 00
+            "0713.0001",  # month 13
+            "notanid",
+        ],
+    )
+    def test_rejects_non_arxiv_ids(self, not_arxiv) -> None:
+        assert demo.arxiv_submission_year(not_arxiv) == 0
+
+    def test_the_1991_pivot_is_exact(self) -> None:
+        """91..99 are 19xx and 00..90 are 20xx — check both sides of the seam."""
+        assert demo.arxiv_submission_year("9101.0001") == 1991
+        assert demo.arxiv_submission_year("9012.0001") == 2090
+        assert demo.arxiv_submission_year("0001.0001") == 2000
 
     def test_empty_selection_returns_empty_metadata(self) -> None:
         assert demo.resolve_paper_metadata([], [], {}) == ([], [], [])
@@ -365,6 +423,31 @@ class TestStreamingPcaReduction:
         assert reduced.shape == (400, 8)
         assert basis_path.exists()
         assert not list(cache.glob("*.tmp")), "retry must replace partial temp files"
+
+    def test_a_truncated_pass_caches_no_basis_and_no_projection(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """A short stream yields a PREFIX, and `papers.csv` is date-ordered.
+
+        The subsample would then be uniform over an arbitrary date slice rather
+        than the corpus, and — because the basis is CACHED — every later
+        projection would inherit that skew silently. Nothing may survive.
+        """
+        zip_path, _ = self._fixture(tmp_path, n=400)
+        cache = tmp_path / "short"
+
+        real_stream = demo._stream_vectors
+        monkeypatch.setattr(
+            demo,
+            "_stream_vectors",
+            lambda z, n, cb: real_stream(z, n // 2, cb),
+        )
+
+        with pytest.raises(ValueError, match="truncated"):
+            demo.build_pca_matrix(zip_path, cache, pca_dim=8, seed=0)
+
+        leftovers = sorted(p.name for p in cache.iterdir()) if cache.exists() else []
+        assert leftovers == [], f"a truncated pass left {leftovers} behind"
 
     def test_pca_preserves_neighbourhood_structure(self, tmp_path) -> None:
         """The point of PCA here is that UMAP still sees the same neighbours.
@@ -519,3 +602,50 @@ class TestUmapDeviceSelection:
         )
         demo.reduce_embeddings_umap(np.zeros((4, 8), np.float32), device="cpu")
         assert called == []
+
+
+class TestParseArgs:
+    """Values are validated at parse time, not behind the 30 GB streaming pass."""
+
+    def test_defaults_are_the_whole_corpus_on_auto(self) -> None:
+        assert demo.parse_args([]) == (None, demo.DEFAULT_PCA_DIM, "auto", 0)
+
+    @pytest.mark.parametrize("spelling", ["all", "full"])
+    def test_all_and_full_both_mean_the_whole_corpus(self, spelling) -> None:
+        assert demo.parse_args([f"--sample={spelling}"])[0] is None
+
+    def test_every_flag_together(self) -> None:
+        got = demo.parse_args(
+            ["--no-serve", "--sample=5", "--pca-dim=32", "--device=cpu", "--seed=2"]
+        )
+        assert got == (5, 32, "cpu", 2)
+
+    def test_device_is_case_insensitive(self) -> None:
+        assert demo.parse_args(["--device=GPU"])[2] == "gpu"
+
+    @pytest.mark.parametrize(
+        "arg",
+        [
+            "--device=tpu",
+            "--device=",
+            "--sample=0",  # used to build an empty scene with no error at all
+            "--sample=-5",
+            "--sample=abc",
+            "--pca-dim=0",
+            "--pca-dim=-3",
+            "--seed=x",
+            "--seed=-1",  # np.random.default_rng rejects it, much later
+        ],
+    )
+    def test_unusable_values_raise_here(self, arg) -> None:
+        with pytest.raises(ValueError):
+            demo.parse_args([arg])
+
+    def test_unknown_flags_are_ignored(self) -> None:
+        """`luxar demo run` forwards its own flags (e.g. --no-serve)."""
+        assert demo.parse_args(["--no-serve", "--whatever"]) == (
+            None,
+            demo.DEFAULT_PCA_DIM,
+            "auto",
+            0,
+        )

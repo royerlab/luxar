@@ -19,10 +19,17 @@ server each came from:
     bioRxiv    308,367
     medRxiv     75,770
 
-…through 2025-12. Titles, categories and dates come from the separate Cornell
-arXiv metadata snapshot (~1.8 GB), also on Kaggle; papers it does not cover fall
-back to their preprint server (`biorxiv` / `medrxiv`), which is a real category
+…through 2025-12. Titles and categories come from the separate Cornell arXiv
+metadata snapshot (~1.8 GB), also on Kaggle; papers it does not cover fall back
+to their preprint server (`biorxiv` / `medrxiv`), which is a real category
 rather than a grey "other".
+
+Dates do NOT come from the snapshot, which records `update_date` — the LAST
+REVISION. Nothing in it predates 2007, so reading years from it would paint the
+400,803 papers submitted from 1991 through 2006 as 2007-or-later and squeeze 35
+years of arXiv into 19. The year is instead decoded from the identifier
+itself: `0704.0001` and `hep-lat/0506004` both carry their submission month, and
+a bioRxiv/medRxiv DOI carries a full date. Span: **1991 to 2025**.
 
 HOW THE FULL CORPUS FITS IN MEMORY
 ==================================
@@ -38,11 +45,17 @@ not re-read; `papers.csv` still comes from the ZIP, so keep the archive.
 DOWNLOAD & CACHING
 ==================
 
-FIRST RUN (one-time)
-  * embeddings ZIP  ~30 GB  ->  ~/.cache/luxar/arxiv_embeddings.zip
-  * metadata ZIP    ~1.8 GB ->  ~/.cache/luxar/arxiv_kaggle/
-  * PCA matrix      1.6 GB  ->  ~/.cache/luxar/arxiv_kaggle/pca128_all.npy
+FIRST RUN (one-time) — budget ~39 GB of disk, not the ~32 GB downloaded:
+  * embeddings ZIP     30.4 GB -> ~/.cache/luxar/arxiv_embeddings.zip
+  * metadata ZIP        1.7 GB -> ~/.cache/luxar/arxiv_kaggle/arxiv-metadata.zip
+  * metadata JSON       4.7 GB -> ~/.cache/luxar/arxiv_metadata.json  (extracted)
+  * metadata lookup     0.3 GB -> ~/.cache/luxar/arxiv_metadata_lookup.pkl
+  * PCA matrix          1.6 GB -> ~/.cache/luxar/arxiv_kaggle/pca128_all.npy
   No Kaggle credentials are needed — both are public dataset URLs.
+  `luxar demo cache clear arxiv_papers_kaggle` reclaims the 1.9 GB under the
+  `arxiv_kaggle` namespace; the embeddings ZIP and the two metadata files sit
+  at the cache ROOT rather than inside it, so they survive and must be deleted
+  by hand.
 
 SUBSEQUENT RUNS
   * warm `arxiv_kaggle` bundle -> seconds
@@ -94,6 +107,7 @@ DEMO_META = {
     },
 }
 
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -131,7 +145,10 @@ EMBEDDING_DIM = 3072
 DEFAULT_PCA_DIM = 128
 
 #: Rows drawn uniformly at random to FIT the PCA basis. 300k x 3072 float32 is
-#: 3.7 GB held once, which is what bounds this pipeline's peak RSS.
+#: 3.7 GB, held once — that is what bounds the REDUCTION stage, which is the
+#: point of streaming. It is not the pipeline's peak: the Cornell lookup dict is
+#: ~3 GB and the stacked per-point hover labels are larger again, so a
+#: whole-corpus build was measured at ~12 GB RSS overall.
 PCA_FIT_ROWS = 300_000
 
 #: Rows decoded per read from the ZIP. 8192 x 3072 x 4 B = 100 MB per block.
@@ -502,6 +519,16 @@ def build_pca_matrix(
 
             aprint(f"Collecting a {fit_rows:,}-row uniform subsample...")
             _stream_vectors(zip_path, n_rows, collect)
+            if filled != fit_rows:
+                # A short pass means the stream ended early, so what we hold is
+                # a uniform sample of a PREFIX — and `papers.csv` is date-
+                # ordered, so that is a date-biased basis. Refusing here matters
+                # more than it looks: the basis is cached, so accepting one
+                # would silently skew every future projection too.
+                raise ValueError(
+                    f"vectors.dat ended after {filled:,} of {fit_rows:,} "
+                    "subsample rows — the download is truncated"
+                )
 
             pca = PCA(n_components=pca_dim, svd_solver="randomized", random_state=seed)
             pca.fit(subsample[:filled])
@@ -575,6 +602,52 @@ def select_sample(n_rows: int, sample_size: int | None, seed: int = 0) -> np.nda
     return np.sort(rng.choice(n_rows, size=sample_size, replace=False))
 
 
+#: An arXiv identifier encodes its own submission month, in one of two styles:
+#: ``YYMM.NNNNN`` since 2007-04 (``0704.0001``), and ``archive/YYMMNNN`` before
+#: that (``hep-lat/0506004``, ``math.AG/0601001``). Every one of the corpus's
+#: 2,902,228 arXiv rows parses under one of these.
+_ARXIV_ID_NEW = re.compile(r"^(\d{2})(\d{2})\.\d{4,5}$")
+_ARXIV_ID_OLD = re.compile(r"^[a-zA-Z.\-]+/(\d{2})(\d{2})\d{3}$")
+
+#: bioRxiv/medRxiv DOIs carry a full date: ``10.1101/2020.03.03.20030890``.
+_PREPRINT_DOI_DATE = re.compile(r"/(\d{4})\.\d{2}\.\d{2}\.")
+
+
+def arxiv_submission_year(paper_id: str) -> int:
+    """Submission year encoded in an arXiv ID, or ``0`` if it is not an arXiv ID.
+
+    Preferred over the Cornell snapshot's ``update_date``, which is the LAST
+    REVISION date: no record in the snapshot predates 2007, so reading years
+    from it paints the 400,803 papers submitted from 1991 through 2006 as
+    2007-or-later and compresses 35 years of arXiv into 19.
+
+    This deliberately re-crosses a fence. An ID decode existed in 3638ba8bf and
+    was dropped by 5e34d3e27 ("integrate arXiv metadata for real categories,
+    titles, and years"), whose actual subject was categories and titles — which
+    an identifier cannot supply and which still come from the snapshot. The year
+    was collateral. The decode it removed also never handled old-style IDs (it
+    guessed 2010) and fell back to a literal 2015; this one handles both styles
+    and returns 0 rather than inventing a date, so restoring it is not a revert
+    to what was removed.
+
+    Args:
+        paper_id: An identifier from ``papers.csv``.
+
+    Returns:
+        A four-digit year, or ``0`` when the ID is not an arXiv identifier.
+    """
+    m = _ARXIV_ID_NEW.match(paper_id) or _ARXIV_ID_OLD.match(paper_id)
+    if not m:
+        return 0
+    yy, mm = int(m.group(1)), int(m.group(2))
+    if not 1 <= mm <= 12:
+        return 0
+    # arXiv's identifiers begin in 1991 (the corpus's earliest is 9107), so a
+    # two-digit year of 91..99 is 19xx and everything else is 20xx. The rule
+    # stays unambiguous until 2091.
+    return 1900 + yy if yy >= 91 else 2000 + yy
+
+
 def resolve_paper_metadata(
     ids: list[str],
     journals: list[str],
@@ -582,8 +655,11 @@ def resolve_paper_metadata(
 ) -> tuple[list[str], list[str], list[int]]:
     """Attach a title, a category and a year to every selected paper.
 
-    The Cornell snapshot covers arXiv only. A bioRxiv/medRxiv row instead takes
-    its category from its preprint server and its year from the date embedded in
+    Titles and categories come from the Cornell snapshot, which covers arXiv
+    only. Years do NOT: the snapshot records ``update_date``, so the year is
+    taken from the arXiv ID itself (see :func:`arxiv_submission_year`) and the
+    snapshot is only a fallback. A bioRxiv/medRxiv row instead takes its
+    category from its preprint server and its year from the date embedded in
     its DOI (``10.1101/2020.03.03.20030890``). Legacy bioRxiv accessions
     (``10.1101/001891``) carry no date at all and get year ``0``, which the
     caller renders as :data:`UNKNOWN_YEAR_COLOR` rather than guessing.
@@ -596,10 +672,6 @@ def resolve_paper_metadata(
     Returns:
         ``(titles, categories, years)``; ``years`` is 0 where unknown.
     """
-    import re
-
-    doi_date = re.compile(r"/(\d{4})\.\d{2}\.\d{2}\.")
-
     titles: list[str] = []
     categories: list[str] = []
     years: list[int] = []
@@ -612,7 +684,9 @@ def resolve_paper_metadata(
             titles.append(meta["title"])
             cat = meta["category"]
             categories.append(cat.split(".")[0] if "." in cat else cat)
-            years.append(int(meta["year"]))
+            # The ID is the submission date; `meta["year"]` is only the last
+            # revision, so it is the fallback, not the source.
+            years.append(arxiv_submission_year(pid) or int(meta["year"]))
             matched += 1
             continue
 
@@ -620,12 +694,13 @@ def resolve_paper_metadata(
         server = journal if journal in ("biorxiv", "medrxiv") else "other"
         categories.append(server)
         titles.append(f"{server}:{pid}" if server != "other" else f"arXiv:{pid}")
-        m = doi_date.search(pid)
+        m = _PREPRINT_DOI_DATE.search(pid)
         if m:
             years.append(int(m.group(1)))
         else:
-            years.append(0)
-            undated += 1
+            years.append(arxiv_submission_year(pid))
+            if years[-1] == 0:
+                undated += 1
 
     n = len(ids)
     matched_percent = matched / n * 100 if n else 0.0
@@ -633,7 +708,7 @@ def resolve_paper_metadata(
         f"✓ Matched {matched:,}/{n:,} papers to arXiv metadata ({matched_percent:.1f}%)"
     )
     aprint(
-        f"✓ {n - matched - undated:,} dated from their preprint DOI, "
+        f"✓ {n - matched - undated:,} dated from their own identifier, "
         f"{undated:,} left undated"
     )
     aprint(f"✓ {len(set(categories))} distinct categories")
@@ -1159,25 +1234,57 @@ def parse_args(argv: list[str]) -> tuple[int | None, int, str, int]:
     Args:
         argv: Arguments without the program name.
 
+    Every value is validated HERE rather than where it is first used. The two
+    consumers sit behind a multi-minute streaming pass over a 30 GB ZIP (hours
+    on a cold cache), so a typo in ``--device`` used to surface only after all
+    of it, and a non-positive ``--sample`` / ``--pca-dim`` either crashed there
+    with a bare numpy or sklearn message or — for ``--sample=0`` — produced an
+    empty scene with no error at all.
+
+    Args:
+        argv: Arguments without the program name.
+
     Returns:
         ``(sample_size, pca_dim, device, seed)``; ``sample_size`` is ``None``
         for the whole corpus (the default, and what ``--sample=all`` spells).
+
+    Raises:
+        ValueError: A flag carries an unusable value.
     """
     sample_size = DEFAULT_SAMPLE_SIZE
     pca_dim = DEFAULT_PCA_DIM
     device = "auto"
     seed = 0
 
+    def _positive(flag: str, raw: str) -> int:
+        try:
+            value = int(raw)
+        except ValueError:
+            raise ValueError(f"{flag} needs an integer, got {raw!r}") from None
+        if value < 1:
+            raise ValueError(f"{flag} must be at least 1, got {value}")
+        return value
+
     for arg in argv:
         if arg.startswith("--sample="):
-            value = arg.split("=", 1)[1]
-            sample_size = None if value in ("all", "full") else int(value)
+            raw = arg.split("=", 1)[1]
+            sample_size = None if raw in ("all", "full") else _positive("--sample", raw)
         elif arg.startswith("--pca-dim="):
-            pca_dim = int(arg.split("=", 1)[1])
+            pca_dim = _positive("--pca-dim", arg.split("=", 1)[1])
         elif arg.startswith("--device="):
-            device = arg.split("=", 1)[1]
+            device = arg.split("=", 1)[1].lower()
+            if device not in ("auto", "cpu", "gpu"):
+                raise ValueError(f"--device must be auto, cpu or gpu, got {device!r}")
         elif arg.startswith("--seed="):
-            seed = int(arg.split("=", 1)[1])
+            raw = arg.split("=", 1)[1]
+            try:
+                seed = int(raw)
+            except ValueError:
+                raise ValueError(f"--seed needs an integer, got {raw!r}") from None
+            # `np.random.default_rng` rejects a negative seed, and it is not
+            # reached until the sampling step.
+            if seed < 0:
+                raise ValueError(f"--seed must be non-negative, got {seed}")
 
     if device not in ("auto", "cpu", "gpu"):
         raise ValueError(f"device must be one of auto/cpu/gpu, got {device!r}")
