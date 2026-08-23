@@ -58,23 +58,16 @@ def test_fit_normalises_counts_and_floor_without_mutating_input(
     original = volume.copy()
     captured: dict[str, object] = {}
 
-    class FakeResult:
-        amplitudes = np.ones(1, dtype=np.float32)
-
-        def save(self, path, **kwargs) -> None:
-            captured["save_path"] = path
-            captured["save_kwargs"] = kwargs
-
     def fake_fit_gaussian_splats(image, **kwargs):
         captured["image"] = image
         captured["fit_kwargs"] = kwargs
-        return FakeResult()
+        return _tiny_gsplat_data()
 
     monkeypatch.setattr("luxar.gsplats.fit_gaussian_splats", fake_fit_gaussian_splats)
     monkeypatch.setattr(_DEMO_MODULE, "CACHE_DIR", tmp_path)
     monkeypatch.setattr(_DEMO_MODULE, "DEVICE", "cpu")
 
-    _DEMO_MODULE.fit_tribolium(volume)
+    stored = _DEMO_MODULE.fit_tribolium(volume)
 
     fitted_image = captured["image"]
     fit_kwargs = captured["fit_kwargs"]
@@ -85,6 +78,8 @@ def test_fit_normalises_counts_and_floor_without_mutating_input(
     assert fit_kwargs["floor"] == pytest.approx(
         _DEMO_MODULE.SPECIMEN_BACKGROUND_COUNTS / float(volume.max())
     )
+    assert (tmp_path / "tribolium.gsplats.zarr.zip").exists()
+    assert stored.n_splats == 8
     np.testing.assert_array_equal(volume, original)
 
 
