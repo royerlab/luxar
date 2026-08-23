@@ -10,6 +10,8 @@ from luxar.demos._particle_collision_tracks import (
 )
 from luxar.demos.demo_particle_collision import (
     B_FIELD,
+    MUON_INNER,
+    MUON_OUTER,
     PARTICLE_LEGEND_HTML,
     PARTICLE_TYPES,
     Particle,
@@ -171,24 +173,43 @@ def test_track_stops_after_first_shower_radius_sample() -> None:
     assert radii[-2] <= 0.5 < radii[-1]
 
 
-def test_soft_track_azimuth_sampling_stays_below_cap() -> None:
-    points = _sample_points(
-        momentum=np.array([0.05, 0.0, 0.0]), max_radius=1.0, n_points=5000
-    )
+@pytest.mark.parametrize(
+    "generator, n_points",
+    [(generate_helix_track, 100), (generate_helix_track_with_times, 1000)],
+)
+def test_soft_track_sampling_uses_demo_point_budget(
+    generator: TrackGenerator, n_points: int
+) -> None:
+    points = _track_points(generator, _particle(charge=1, px=0.03), n_points)
     steps = np.diff(points[:, :2], axis=0)
     step_azimuths = np.unwrap(np.arctan2(steps[:, 1], steps[:, 0]))
 
     azimuth_steps = np.abs(np.diff(step_azimuths))
-    assert np.median(azimuth_steps) == pytest.approx(MAX_AZIMUTH_SAMPLE_STEP, abs=5e-6)
-    assert np.max(azimuth_steps) <= MAX_AZIMUTH_SAMPLE_STEP + 3e-5
+    expected_step = max(MAX_AZIMUTH_SAMPLE_STEP, 2 * np.pi / (n_points - 1))
+    assert np.median(azimuth_steps) == pytest.approx(expected_step, abs=5e-5)
+    assert np.max(azimuth_steps) <= expected_step + 5e-5
 
 
 def test_transverse_arc_budget_limits_generous_point_ceiling() -> None:
     points = _sample_points(momentum=np.array([10.0, 0.0, 0.0]), n_points=5000)
     transverse_arc = np.linalg.norm(np.diff(points[:, :2], axis=0), axis=1).sum()
 
-    assert len(points) == 41
+    assert len(points) == 65
     assert transverse_arc == pytest.approx(TRACK_TRANSVERSE_ARC_BUDGET, rel=1e-4)
+
+
+@pytest.mark.parametrize(
+    "generator, n_points",
+    [(generate_helix_track, 100), (generate_helix_track_with_times, 1000)],
+)
+def test_stiff_muon_reaches_muon_chambers(
+    generator: TrackGenerator, n_points: int
+) -> None:
+    points = _track_points(generator, _particle(charge=1, px=20.0), n_points)
+    radial_distances = np.linalg.norm(points[:, :2], axis=1)
+
+    assert radial_distances.max() >= MUON_INNER
+    assert radial_distances.max() <= MUON_OUTER
 
 
 @pytest.mark.parametrize("pz, expected_z", [(-3.0, -25.0), (3.0, 25.0)])

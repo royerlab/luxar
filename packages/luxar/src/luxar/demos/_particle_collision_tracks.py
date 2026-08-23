@@ -12,7 +12,7 @@ import numpy as np
 
 HELIX_RADIUS_VISUAL_SCALE = 2.0
 MAX_AZIMUTH_SAMPLE_STEP = 0.05
-TRACK_TRANSVERSE_ARC_BUDGET = 10.0
+TRACK_TRANSVERSE_ARC_BUDGET = 16.0
 
 
 def _transverse_sampling(
@@ -22,15 +22,16 @@ def _transverse_sampling(
     magnetic_field: float,
     requested_step: float,
     n_points: int,
-) -> tuple[float, float, float]:
+) -> tuple[float, float, float, float]:
     radius = (
         HELIX_RADIUS_VISUAL_SCALE * transverse_momentum / abs(charge * magnetic_field)
     )
     turn_sign = -float(np.sign(charge * magnetic_field))
     smooth_step = min(requested_step, radius * MAX_AZIMUTH_SAMPLE_STEP)
-    coverage_step = TRACK_TRANSVERSE_ARC_BUDGET / max(n_points - 1, 1)
+    max_sampled_distance = min(TRACK_TRANSVERSE_ARC_BUDGET, 2 * np.pi * radius)
+    coverage_step = max_sampled_distance / max(n_points - 1, 1)
     sample_step = max(smooth_step, coverage_step)
-    return radius, turn_sign, sample_step
+    return radius, turn_sign, sample_step, max_sampled_distance
 
 
 def _sample_track_points(
@@ -93,9 +94,10 @@ def generate_helix_points(
 
     ``transverse_step`` advances along the projected path in the x-y plane;
     z advances by the matching ``p_z / p_T`` ratio. The requested step is
-    reduced for tight helices when the point budget permits. Sampling preserves
-    a shared ``TRACK_TRANSVERSE_ARC_BUDGET`` across both demos, so a soft track
-    loses smoothness before it loses physical coverage.
+    reduced for tight helices. Sampling covers at most one transverse revolution
+    or the shared ``TRACK_TRANSVERSE_ARC_BUDGET``, whichever is shorter. If the
+    point ceiling cannot cover that useful arc at the angular smoothing limit,
+    the samples become only as coarse as needed to preserve coverage.
 
     The transverse path follows the parametric equations
     ``x = x0 + sign*r*(sin(phi) - sin(phi0))`` and
@@ -115,8 +117,8 @@ def generate_helix_points(
         max_radius: Maximum cylindrical detector radius.
         max_z: Maximum absolute longitudinal detector coordinate.
         n_points: Maximum number of returned samples. If this ceiling cannot
-            cover the shared arc budget at the angular smoothing limit, coverage
-            wins and the samples become coarser.
+            cover the useful transverse arc at the angular smoothing limit,
+            coverage wins and the samples become coarser.
         transverse_step: Requested arc-length step in the transverse plane.
         shower_radius: Optional radius at which to include one final shower sample,
             used for electrons once bremsstrahlung starts an EM cascade.
@@ -147,7 +149,7 @@ def generate_helix_points(
     transverse_momentum = float(np.hypot(px, py))
     if transverse_momentum > 0:
         initial_azimuth = float(np.arctan2(py, px))
-        radius, turn_sign, sample_step = _transverse_sampling(
+        radius, turn_sign, sample_step, max_sampled_distance = _transverse_sampling(
             transverse_momentum=transverse_momentum,
             charge=charge,
             magnetic_field=magnetic_field,
@@ -161,6 +163,7 @@ def generate_helix_points(
         sample_step = max_z / max(n_points - 1, 1)
         longitudinal_rate = float(np.sign(pz))
         initial_azimuth = radius = turn_sign = 0.0
+        max_sampled_distance = None
 
     return _sample_track_points(
         origin=origin,
@@ -174,7 +177,5 @@ def generate_helix_points(
         max_z=max_z,
         n_points=n_points,
         shower_radius=shower_radius,
-        max_sampled_distance=(
-            TRACK_TRANSVERSE_ARC_BUDGET if transverse_momentum > 0 else None
-        ),
+        max_sampled_distance=max_sampled_distance,
     )
