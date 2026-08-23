@@ -1965,6 +1965,27 @@ def create_cytoself_scene(
                     per_cell_labels.append("\n".join(parts))
             labels = per_cell_labels * len(available_attrs) if per_cell_labels else None
 
+            # Click a cell to open its protein in the Human Protein Atlas,
+            # right-click to copy the name (#1917). The Atlas rather than a gene
+            # database because this demo IS subcellular localization, and that
+            # is the page which shows it.
+            #
+            # The label joins every available attribute with newlines —
+            # localization and protein name together — so the URL needs the bare
+            # name from `keys=`. Tiled per view exactly like the labels: the
+            # protein a cell shows does not change with the active attribute.
+            protein_keys = None
+            if "protein_name" in available_attrs:
+                names = category_maps.get("protein_name", [])
+                per_cell_keys = []
+                for i in range(n_points):
+                    code = int(attributes["protein_name"][i])
+                    # Out of range means the code/category map disagree; an empty
+                    # key suppresses that cell's link rather than opening a search
+                    # for a bare integer.
+                    per_cell_keys.append(str(names[code]) if code < len(names) else "")
+                protein_keys = per_cell_keys * len(available_attrs)
+
             all_image_labels = _resolve_image_labels(
                 image_labels,
                 n_points=n_points,
@@ -1982,6 +2003,15 @@ def create_cytoself_scene(
                 intensity=0.18,
                 labels=labels,
                 image_labels=all_image_labels,
+                **(
+                    {
+                        "keys": protein_keys,
+                        "link": "https://www.proteinatlas.org/search/{hover_key}",
+                        "copy": "{hover_key}",
+                    }
+                    if protein_keys is not None
+                    else {}
+                ),
                 layer=True,
             )
 
