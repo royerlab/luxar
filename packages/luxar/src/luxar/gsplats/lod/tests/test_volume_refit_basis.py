@@ -162,23 +162,6 @@ def test_adaptive_recipe_carries_input_basis_to_every_part(monkeypatch) -> None:
     assert captured and set(captured) == {500.0}
 
 
-def test_batch_merge_carries_part_basis_to_part_recipe(monkeypatch) -> None:
-    import luxar.gsplats.lod.recipes as recipes
-    from luxar.gsplats.batch.merge_orchestrator import _finalize_part_node
-
-    captured = []
-
-    def fake_build(part, recipe, params, *, cell=None):
-        captured.append(params.image_min)
-        return part
-
-    monkeypatch.setattr(recipes, "build_part_lod", fake_build)
-    node = _finalize_part_node(_seed_with_basis(), "levels", None, 1)
-
-    assert node is not None
-    assert captured == [500.0]
-
-
 def test_the_never_worse_guard_compares_on_one_basis(monkeypatch) -> None:
     """The guard renders seed and candidate against `volume`; once that is
     shifted, both sides and the persisted `mse_seed`/`mse_refit` are on the fit's

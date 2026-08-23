@@ -870,6 +870,7 @@ def _merge_partition(
             else:
                 from luxar.gsplats.io.save_gsplats import write_gsplats_tree
 
+                part.stats.update(floor_stats)
                 node = _finalize_part_node(
                     part,
                     recipe,
@@ -920,6 +921,7 @@ def _merge_partition(
                 if verbose:
                     aprint(f"  {label} {k}: empty, skipping")
                 continue
+            part.stats.update(floor_stats)
             # Each part is a single nD splat set → a matrix-shaped tree (a leaf,
             # or — with a per-part recipe — a leaf-with-ladder / substitutive lod
             # group). Hand the tree node straight to the streaming writer; it

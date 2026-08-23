@@ -1691,6 +1691,16 @@ class TestMergeOrchestrator:
         root = zarr.open_group(str(final), mode="r")
         assert "pipeline" in root, "merged partition is missing the pipeline/ group"
         pipe = dict(root["pipeline"].attrs)
+        assert pipe["recipe"] == "levels"  # the recipe (build instruction)
+        assert pipe["lod_kind"] == "substitutive"  # the reduction MECHANISM
+        assert pipe["per_part"] is True
+        assert pipe["compression_factor"] == 4  # RecipeParams defaults
+        assert pipe["levels"] == 3
+        assert pipe["conserve_mass"] is True
+        assert pipe["refine"] == "none"
+        # None records the per-part default (spatial dims; time axis = barrier).
+        assert pipe["coarsen_dims"] is None
+        pipe = dict(root["pipeline"].attrs)
         assert pipe["recipe"] == "stream"  # the recipe (build instruction)
         assert pipe["lod_kind"] == "additive"  # the reduction MECHANISM, not the recipe
         assert pipe["per_part"] is True
@@ -1733,16 +1743,34 @@ class TestMergeOrchestrator:
 
         root = zarr.open_group(str(final), mode="r")
         assert "pipeline" in root, "merged partition is missing the pipeline/ group"
-        pipe = dict(root["pipeline"].attrs)
-        assert pipe["recipe"] == "levels"  # the recipe (build instruction)
-        assert pipe["lod_kind"] == "substitutive"  # the reduction MECHANISM
-        assert pipe["per_part"] is True
-        assert pipe["compression_factor"] == 4  # RecipeParams defaults
-        assert pipe["levels"] == 3
-        assert pipe["conserve_mass"] is True
-        assert pipe["refine"] == "none"
-        # None records the per-part default (spatial dims; time axis = barrier).
-        assert pipe["coarsen_dims"] is None
+
+    def test_merge_recipe_levels_uses_manifest_floor_basis(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Reloaded tiles have no stats, so the manifest must supply the basis."""
+        import luxar.gsplats.lod.recipes as recipes
+        from luxar.gsplats.batch.manifest import BatchManifest
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+
+        out_dir = tmp_path / "batch"
+        self._write_tiles(out_dir / "tiles", n_t=1, n_c=1, n_k=2)
+        captured = []
+
+        def fake_build(part, recipe, params, *, cell=None):
+            captured.append(params.image_min)
+            return part
+
+        monkeypatch.setattr(recipes, "build_part_lod", fake_build)
+        manifest = BatchManifest(
+            n_timepoints=1,
+            n_channels=1,
+            n_tiles=2,
+            floor_level=500.0,
+            fit_args={"floor": 500.0},
+        )
+        merge_batch_results(manifest, out_dir, verbose=False, recipe="levels")
+
+        assert captured == [500.0, 500.0]
 
     def test_merge_recipe_single_tile_emits_lod_not_partition(
         self, tmp_path: Path
