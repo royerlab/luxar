@@ -12,7 +12,42 @@ toggleable layer. Without it there is nothing to judge scale, depth or drift
 against — the cells float in an unmarked void, and the migration that is the
 whole point of the recording is impossible to read.
 
-WHAT MAKES THIS A 4D NODE (and not 64 nodes in a trench coat):
+================================================================================
+READ THIS FIRST: what this demo is trying to teach
+================================================================================
+
+This file is longer than a demo needs to be, on purpose. The dataset is
+**extremely sparse** — 98.7 to 99.8% of its voxels are exactly zero — and almost
+every automatic default in the fitting pipeline is calibrated for data that is
+not. Three separate defaults INVERT on it, each in the same way: an estimator
+that asks "what value best predicts a held-out voxel?" answers "zero", because
+zero is almost always right. Follow those estimators and you ship a dataset with
+the specimen filtered out of it.
+
+The general lesson, and the reason for the tables below: **on sparse data,
+measure the thing you actually care about, not the thing that is easy to
+measure.** Every number in this docstring is a measurement, each with the
+command that produced it implied by the surrounding constant. Four rules
+recur, and they generalise to any near-empty volume:
+
+1. **Global PSNR is the reward for predicting empty space.** On a 99%-empty
+   stack it barely moves when the specimen is destroyed. Always score a
+   foreground — and where the "foreground" itself contains noise, score the
+   part you care about (here: voxels inside real connected components).
+2. **Never score a preprocessed fit against its own preprocessed input.** A
+   floored or denoised fit compared to the floored or denoised volume looks
+   excellent by construction. Score against the raw acquisition, and when the
+   preprocessing was deliberate (denoising), split the score into what it
+   risked and what it bought rather than collapsing both into one number.
+3. **Reproduced ENERGY is the honest sparse-data metric.** The share of the
+   frame's intensity a fit puts back is impossible to fake and immediately
+   exposes a filter that deleted signal — it was 44% when the background floor
+   was on, and nobody noticed from the dB.
+4. **An automatic calibration that pins at the edge of its grid has told you
+   nothing.** Widen the grid and look again; if it still climbs, the estimator
+   does not apply to your data. Two of them behave that way here.
+
+WHAT MAKES THIS A 4D NODE (and not 151 nodes in a trench coat):
     Every timepoint is still fitted on its own — that is what keeps each fit
     small and separately cacheable — but the fits are then
     ``combine_as_new_dimension``-stacked into ONE 4D ``GSplatData`` whose fourth
@@ -22,6 +57,12 @@ WHAT MAKES THIS A 4D NODE (and not 64 nodes in a trench coat):
     the axis. The previous version of this demo instead wrote one flat gsplats
     node per timepoint with ``fill={"time": t}`` — 64 sibling nodes, no LOD, no
     shared appearance, one Layers row each.
+
+    Why it matters beyond tidiness: a stacked node is what makes a LOD ladder
+    possible at all (there is one object to coarsen), what gives the whole
+    recording one appearance to edit in the Layers panel, and what lets the
+    viewer's spatial index cull by time. The cost is that time becomes a
+    coordinate you must protect — see ``LOD_COARSEN_DIMS``.
 
 DATA SOURCE & CITATIONS:
     Zenodo record 1211599 — ``cxcr4aMO2_290112.lsm`` (Zeiss LSM, 2.1 GB),
@@ -107,14 +148,17 @@ DENOISING (measured 2026-08-23; why h is pinned and not calibrated):
     reproducing the noise it was asked to remove, which is why neither column is
     a plain PSNR.
 
-    |  h   | t=0 cell / noise | t=75 cell / noise | t=150 cell / noise |
-    |------|------------------|-------------------|--------------------|
-    | none | 19.16 / 0.667    | 21.42 / 0.620     | 18.57 / 0.236      |
-    | 0.02 | 19.93 / 0.377    | 22.30 / 0.463     | 18.67 / 0.228      |
-    | 0.05 | 19.47 / 0.021    | 21.32 / 0.053     | 19.07 / 0.036      |
-    | 0.08 | 19.52 / 0.010    | 19.04 / 0.016     | 18.68 / 0.020      |
-    | 0.12 | 17.85 / 0.010    | 16.08 / 0.017     | 17.22 / 0.024      |
-    | 0.20 | 14.13 / 0.011    | 12.85 / 0.029     | 13.35 / 0.042      |
+    Each cell is ``cell PSNR / noise energy reproduced / splats``, all at a
+    fixed 32,000-seed budget:
+
+    |  h   | t=0                  | t=75                 | t=150                |
+    |------|----------------------|----------------------|----------------------|
+    | none | 19.16 / .667 /  6,926| 21.42 / .620 /  9,139| 18.57 / .236 / 18,895|
+    | 0.02 | 19.93 / .377 / 14,476| 22.30 / .463 /  9,212| 18.67 / .228 / 18,870|
+    | 0.05 | 19.47 / .021 / 23,514| 21.32 / .053 / 12,777| 19.07 / .036 / 20,683|
+    | 0.08 | 19.52 / .010 / 24,811| 19.04 / .016 / 21,346| 18.68 / .020 / 25,180|
+    | 0.12 | 17.85 / .010 / 25,161| 16.08 / .017 / 21,675| 17.22 / .024 / 26,495|
+    | 0.20 | 14.13 / .011 / 25,732| 12.85 / .029 / 23,245| 13.35 / .042 / 25,616|
 
     0.05 is the knee: cell fidelity is break-even to +0.5 dB against no filtering
     at all, while the noise the fit reproduces collapses by 12-30x. By 0.08 the
@@ -135,9 +179,77 @@ DENOISING (measured 2026-08-23; why h is pinned and not calibrated):
 
     Cost: the fit budget is unchanged. Re-derived on denoised data, the plateau
     is still 32,000 seeds (64,000 scores WORSE at t=0: 19.27 against 19.70), but
-    the same budget now delivers more splats — nothing is being wasted on spikes,
-    so the amplitude spreads across the cells and the 0.9999 retention keeps
-    more of it.
+    the same budget now delivers far MORE splats — 6,926 raw against 23,514 at
+    h=0.05 on frame 0, where the noise share is worst. That looks backwards
+    until you see why: the 0.9999 retention keeps splats until 99.99% of the
+    amplitude is accounted for, and with a third of the energy sitting in
+    isolated spikes the fit reaches that threshold early, having modelled the
+    noise and stopped. Remove the spikes and the same threshold has to be met
+    entirely out of cells, so more, smaller splats survive. Counting splats is
+    not counting detail — it is only detail once you know what they are on.
+
+THE LOD LADDER, AND A MEASUREMENT TRAP INSIDE IT:
+    The stacked node carries a substitutive ladder (``levels``: 3 coarse levels,
+    each 4x smaller) with ``coarsen_dims=(0, 1, 2)`` — the three SPATIAL centre
+    columns. Column 3 is time, and leaving it out makes it a **hard barrier**:
+    coarsening may merge two splats that are near each other in space at the
+    same timepoint, never two at different timepoints. Without the barrier a
+    coarse level would average frame 40 into frame 41 and the migration would
+    smear into a blur that gets worse the further out you zoom. This is the
+    general rule for any stacked axis — time, channel, condition: a coarsening
+    that crosses it is mixing measurements that were never simultaneous.
+
+    The trap: when checking whether the ladder LOST anything, do not reach for
+    ``volumes()`` or the amplitude sum. A stacked axis has sigma = 0, so a
+    splat's nD "volume" is zero (or a degenerate product) and any total built
+    from it is meaningless — twice during this work it produced a convincing
+    "the coarse level lost 40% of the mass" alarm that was purely an artefact of
+    the sigma-0 axis. The check that actually works is to **render each level to
+    a volume and compare brightness**: the first coarse level holds 95.8% of the
+    finest level's, which is what conservation is supposed to look like. When a
+    derived quantity has a degenerate factor in it, measure the observable
+    instead.
+
+AUTHORING FOR THE VIEWER (three traps that only a browser reveals):
+    None of these show up in a test, a PSNR, or a scene-graph dump. All three
+    were found by loading the built scene and using it, and all three generalise
+    to any 4D demo.
+
+    1. A DISCRETE dimension's ``step`` must be exactly representable in binary.
+       The viewer turns a discrete axis into an ``<input type="range">``, whose
+       value is snapped onto ``min + k*step``. Hand it the LSM's measured
+       interval — 2.0001470947 min — and the browser computes ``150 * step`` a
+       hair above ``max`` and clamps to 149, so the FINAL timepoint cannot be
+       selected at all. The axis therefore steps by exactly 2.0 min, a nominal
+       value, at a cost of 1.3 s of drift accumulated over five hours. Nominal
+       but reachable beats recorded but not. See ``AXIS_STEP_MIN``.
+
+    2. The ORDER of the ``Dimensions`` list is what the viewer maps onto screen
+       x/y/z. It does not have to match the centre-column order — ``dim_order``
+       maps those by NAME — and here it deliberately does not: listing Z first
+       shows an 859 x 859 x 316 um slab edge-on, as a tall narrow column. The
+       two long axes go first so the opening view is the one the microscope was
+       pointed at. See ``create_luxar_scene``.
+
+    3. An additive reference layer must lose every contest for attention. The
+       cage's first colours were bright enough to bury the specimen it exists to
+       measure — 2% of the frame, drawn over by a glowing box. Roughly halving
+       them fixed it. See ``BOX_EDGE_COLOR``.
+
+REPRODUCING ANY OF THIS:
+    Every table here came from the same shape of experiment: hold everything
+    fixed, sweep one knob, and score each arm against the RAW frames. The
+    scoring helper that matters is the connected-component split — cells are
+    components of >= 8 voxels, shot noise is everything else — because it is
+    what separates "the filter removed noise" from "the filter removed signal",
+    which no single PSNR can do.
+
+    The fits are cached per timepoint under a key that includes every knob that
+    changes the result (seeds, iterations, patience, cull retention, floor,
+    denoise h), so re-running a sweep cannot be served a stale answer. That
+    keying is not bookkeeping — an earlier version of this demo keyed only on
+    the frame index, and the tables above are exactly the sort of sweep it
+    would have silently invalidated.
 
 USAGE:
     python demo_gsplats_4d_zebrafish_timelapse.py [--recompute] [--no-serve]
@@ -262,9 +374,17 @@ FITS_DIR = CACHE_DIR / "fits"
 LOCAL_FIT = local_fit_path(DEMO_NAME, GSPLATS_FILE)
 
 #: Fit schedule. See the module docstring's SPLAT BUDGET table for the sweep
-#: these came from. ``seeds`` proposes and ``cull_retention`` disposes: 32,000
-#: seeds deliver ~9,400 splats on a busy frame and fewer on an early, near-empty
-#: one, which is the point — the budget adapts to how much embryo there is.
+#: these came from, and DENOISING for why it was re-derived once the frames are
+#: filtered (same answer: 32,000 is still the plateau).
+#:
+#: ``seeds`` proposes and ``cull_retention`` disposes. The seed budget is a
+#: CEILING, not a target: the post-fit cull keeps splats only until 99.99% of the
+#: amplitude is accounted for, so the count that ships is whatever the frame
+#: needs — 12,800 to 23,500 across this recording. Both numbers matter and the
+#: second is the one people forget: raising `seeds` past the plateau changes
+#: nothing, while moving `cull_retention` from the fitter's default 0.95 to
+#: 0.9999 was worth +3.4 dB of foreground on its own, because on data this
+#: sparse the discarded 5% of amplitude IS the dim cells.
 SEEDS = 32_000
 N_ITERS = 5_000
 EARLY_STOP_PATIENCE = 500
@@ -483,6 +603,11 @@ def denoise(volume: np.ndarray) -> np.ndarray:
     and falls back to a much slower PyTorch path when it is not — over 151
     timepoints that difference is hours, so the warning the library prints is
     worth acting on before a refit.
+
+    Note what this does to the DOWNSTREAM fit: it raises the splat count rather
+    than lowering it (6,926 -> 23,514 on frame 0 at a fixed seed budget). The
+    cull threshold has to be met out of cells once the spikes are gone. See the
+    module docstring's DENOISING section.
     """
     if not DENOISE_H:
         return volume
