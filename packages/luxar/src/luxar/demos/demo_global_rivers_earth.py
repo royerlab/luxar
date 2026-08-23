@@ -7,15 +7,16 @@ A rotatable 3D globe built from two of Luxar's geometry types at once:
     spiral-sphere** (uniform, no pole clustering), each point displaced radially
     by its **ETOPO 2022** elevation and colored by a hypsometric palette (deep
     abyssal navy -> ocean blue -> coastal cyan -> green lowland -> tan -> snow).
-    Rendered **opaque** as a solid planet, with additive-LOD for a fast
-    progressive first paint.
+    Rendered **opaque** as a solid planet, with a geometric additive ladder
+    (the shell only reads as a surface once the last levels land — see the note
+    in ``build_scene``).
   * **Rivers (Lines)** — every HydroRIVERS reach (Strahler order >= 3), kept as
     **connected polylines** (so the line material renders seamless joints),
     draped just above the terrain and colored teal->white by Strahler order so
     minor tributaries read teal and major rivers white. Blended **luminous** —
     the glow of additive, but depth-aware, so the far-side network is occluded
-    by the globe instead of showing through it. Additive-LOD streams the
-    biggest rivers first.
+    by the globe instead of showing through it. The rivers stream via the
+    spatial-chunk index.
 
 This exercises two of Luxar's four geometry types (Points + Lines) at global
 scale with level-of-detail, in real geographic 3D.
@@ -430,9 +431,10 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
                 # coarser planet — every level shares the one POINT_RADII. On a
                 # radius-100 globe, 20k points of radius 0.09 cover
                 # 20000·π·0.09² / 4π·100² = 0.4% of the sphere; levels 0-7 are
-                # 1144 of the 3482 chunk requests yet never pass ~26%. The last
-                # two levels — 62 of the terrain's 92 MB — are what finally make
-                # it read as a surface. A line has no such threshold (it is
+                # 1144 of the 3482 chunk requests yet reach only ~52% in this
+                # linear model (~40% after overlap). The last two levels — 62 of
+                # the terrain's 92 MB — are what finally make it read as a
+                # surface. A line has no such threshold (it is
                 # visible from its FIRST chunk), which is why the rivers always
                 # win the race.
                 #
