@@ -696,7 +696,7 @@ describe('SceneManager', () => {
       sceneManager.addEventListener('change', listener);
 
       expect(controlsHandler).toBeDefined();
-      controlsHandler?.();
+      controlsHandler?.({ type: 'change', target: sceneManager.controls });
 
       expect(listener).toHaveBeenCalledTimes(1);
     });
