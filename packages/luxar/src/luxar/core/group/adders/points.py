@@ -681,6 +681,7 @@ def add_points_multi_lod_wrapper_impl(
                 "sharpness": slice_optional_array(sharpness, level_indices, n_points),
                 "scalars": slice_optional_array(scalars, level_indices, n_points),
                 "labels": slice_optional_array(labels, level_indices, n_points),
+                "keys": slice_optional_array(keys, level_indices, n_points),
                 "lod_stats": per_level_stats[level_i],
             }
         )

@@ -105,15 +105,17 @@ def write_gsplats(
     # 0d. Labels: sequence-of-str type + length check (the CSR serializer
     # would otherwise AttributeError on a non-str entry AFTER the arrays
     # were written).
-    if labels is not None:
+    if labels is not None or keys is not None:
+        # Hoisted above both branches: `keys` rides the same pre-flight as
+        # `labels` — the CSR serializer UTF-8-encodes each entry, so a non-str
+        # or a length mismatch must be caught BEFORE any array reaches disk
+        # (#1917) — and a per-branch import would leave the second use unbound.
         from ....validation.base import validate_labels_for_writing
 
-        validate_labels_for_writing(labels, n_splats)
-    # Keys ride the same pre-flight as labels: the CSR serializer
-    # UTF-8-encodes each entry, so a non-str or a length mismatch must be
-    # caught BEFORE any array reaches disk (#1917).
-    if keys is not None:
-        validate_labels_for_writing(keys, n_splats, context="keys")
+        if labels is not None:
+            validate_labels_for_writing(labels, n_splats)
+        if keys is not None:
+            validate_labels_for_writing(keys, n_splats, context="keys")
 
     # 0e. Image labels: length (dense) / index bounds (sparse dict) — see
     # validate_image_labels_for_writing for why this moved out of the CSR
