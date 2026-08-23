@@ -731,11 +731,10 @@ def test_needs_local_input_ignores_entries_with_no_runnable_script(
 class TestUnbuildableEntries:
     """``UNBUILDABLE_IDS`` — soft-skipped WITHOUT being spawned.
 
-    A demo that cannot be built on any machine (today: the Visible Human head,
-    whose shipped sidecar is misordered against its fit, #1670) would otherwise
-    be RUN like any other: a ~1.1 GB download plus a 4M-splat fit that exceeds
-    ``GEN_TIMEOUT_S``, landing in the hard ``timeout`` bucket, returning 1 and
-    aborting ``make generate-gallery`` before a single tile is captured.
+    A demo with a known-broken shipped input and an impractical fallback would
+    otherwise be RUN like any other, exceed ``GEN_TIMEOUT_S``, land in the hard
+    ``timeout`` bucket, return 1 and abort ``make generate-gallery`` before a
+    single tile is captured. The list is empty while no demo meets that bar.
     """
 
     def test_an_unbuildable_entry_is_skipped_without_running(

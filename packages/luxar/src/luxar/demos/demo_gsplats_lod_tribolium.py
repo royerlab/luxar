@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """GSplats Demo: Adaptive Level of Detail on a real Tribolium embryo (Light-Sheet)
 
-Takes the ~256K-splat fit of the *Tribolium castaneum* embryo (the same
+Takes the ~300K-splat fit of the *Tribolium castaneum* embryo (the same
 precomputed dataset as ``demo_gsplats_3d_tribolium_embryo.py``) and builds an
 **adaptive Level of Detail (LOD)** pyramid on top of it, then ships it to the
 viewer with per-level debug colors so the detail switching is visible.
@@ -17,7 +17,7 @@ WHAT THIS DEMONSTRATES — ADAPTIVE LEVEL OF DETAIL AT SCALE
 ================================================================================
 
 The tiny ``examples/gsplats_lod_example.py`` shows this on a 12-blob synthetic
-volume.  This demo does the same thing on a *real* quarter-million-splat
+volume.  This demo does the same thing on a *real* ~300K-splat
 microscopy dataset, which is where adaptive detail actually earns its keep:
 
 - **Substitutive levels**: each coarser level *replaces* the finer one with a
@@ -37,12 +37,12 @@ microscopy dataset, which is where adaptive detail actually earns its keep:
   highest quality.
 
 Pipeline:
-1. **Load** precomputed ~256K-splat Tribolium fit (Git LFS / local cache)
+1. **Load** the locally cached ~300K-splat Tribolium fit (cold cache re-fits)
 2. **Center + scale** intensity (so every synthesized level is consistent)
 3. **Build** a substitutive ladder with ``make_substitutive_lod``.
    The number of ÷4 levels needed scales as log_4(N): the precomputed
-   cached fit is ~256K splats, so auto-leveling builds 7 levels
-   (≈256K / 64K / 16K / 4K / 1K / 250 / 62 splats, finest→coarsest)
+   cached fit is ~300K splats, so auto-leveling builds 7 levels
+   (≈296K / 74K / 19K / 4.6K / 1.2K / 289 / 72 splats, finest→coarsest)
    down to a handful of blobs. The level count is auto-derived from the
    actual base splat count (override with --levels=N).
 4. **Colorize** each level (green → amber → red) for visible level-switching
@@ -69,10 +69,11 @@ Options:
     --factor=K:    Per-level compression factor (default: 4)
     --method=NAME: auto (default) | kmeans_lloyd | greedy_lloyd | kmeans | greedy
 
-By default the base splats are loaded from package data (Git LFS).  Use
---recompute to re-fit from scratch (requires network + GPU).  The substitutive
-ladder is always built fresh from the base splats (that is the point of the
-demo); use --serve-only to reopen the last generated scene without rebuilding.
+By default the base splats are loaded from the local cache under
+~/.cache/luxar/gsplats_tribolium. A cold cache or --recompute re-fits from the
+raw source (requires network + GPU). The substitutive ladder is always built
+fresh from the base splats (that is the point of the demo); use --serve-only to
+reopen the last generated scene without rebuilding.
 
 Output:
     - Scene saved to:  datasets/demos/gsplats_lod_tribolium.luxar.zarr
@@ -82,7 +83,7 @@ Output:
 DEMO_META = {
     "key": "gsplats_lod_tribolium",
     "title": "Adaptive Level of Detail on a real Tribolium embryo (Light-Sheet)",
-    "description": "A ~256K-splat Tribolium embryo with an adaptive substitutive LOD ladder for zoom detail.",
+    "description": "A ~300K-splat Tribolium embryo with an adaptive substitutive LOD ladder for zoom detail.",
     "category": "microscopy",
     "geometry": "gsplats",
     "requirements": {
@@ -101,6 +102,7 @@ DEMO_META = {
             "Barry 2021 (GIANI, Zenodo 5270323); "
             "Cell Tracking Challenge (Maška et al. 2023)"
         ),
+        "ref": "Barry / Maška et al. 2023",
         "doi": "10.5281/zenodo.5270323",
     },
 }
@@ -114,6 +116,7 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
+    add_demo_caption,
     detect_device,
     launch_viewer,
     load_precomputed_gsplats,
@@ -136,8 +139,8 @@ from luxar.utils.paths import get_demos_output_dir
 # Substitutive LOD parameters.
 #
 # Each coarser level keeps ~N/K splats, so the number of useful levels scales
-# as log_K(N): the precomputed cached fit is ~256K splats, which auto-derives
-# to 7 levels (≈256K / 64K / 16K / 4K / 1K / 250 / 62, finest→coarsest) down to
+# as log_K(N): the precomputed cached fit is ~300K splats, which auto-derives
+# to 7 levels (≈296K / 74K / 19K / 4.6K / 1.2K / 289 / 72, finest→coarsest) down to
 # a handful of blobs. LEVELS=None auto-derives the count from the actual base
 # splat count so the coarsest level lands near MIN_COARSEST splats; override
 # with --levels=N.
@@ -309,7 +312,7 @@ def create_luxar_scene(colored: GSplatData, output_path: Path) -> Path:
                 # other gsplat demos. NOTE: the per-level debug colours
                 # (green -> amber -> red) must stay tellable apart; ACES shifts
                 # hues, so check them if this demo's level cues get muddy.
-                viewer_config=ViewerConfig(tone_mapping="ACES"),
+                viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="ACES"),
             )
 
             scene.attrs["title"] = (
@@ -319,7 +322,7 @@ def create_luxar_scene(colored: GSplatData, output_path: Path) -> Path:
 Adaptive Level of Detail — Tribolium castaneum Embryo (Light-Sheet)
 ===================================================================
 
-A ~256K-splat fit of a beetle embryo, stored at several resolutions.
+A ~300K-splat fit of a beetle embryo, stored at several resolutions.
 
 Level of Detail (LOD) means the viewer shows the simplest version of the
 embryo that still looks right at the current zoom: a detailed version up
@@ -361,12 +364,10 @@ Navigation:
                 color="rgba(255,255,255,0.6)",
                 blend_mode="difference",
             )
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 "Light-sheet microscopy • adaptive level of detail",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
 
             # Explanatory panel, placed below the title so the two don't overlap.
@@ -429,7 +430,7 @@ def main() -> None:
     aprint("=" * 70)
     aprint("GSplats Demo: Adaptive Level of Detail — Tribolium castaneum Embryo")
     aprint("=" * 70)
-    aprint("~256K real microscopy splats -> adaptive level-of-detail pyramid")
+    aprint("~300K real microscopy splats -> adaptive level-of-detail pyramid")
     aprint("")
 
     output_path = get_demos_output_dir() / "gsplats_lod_tribolium.luxar.zarr"
@@ -451,6 +452,11 @@ def main() -> None:
     )
 
     if precomputed is not None:
+        from luxar.demos.demo_gsplats_3d_tribolium_embryo import (
+            warn_if_cached_tribolium_fit_predates_floor,
+        )
+
+        warn_if_cached_tribolium_fit_predates_floor()
         base = precomputed[0]
     else:
         # --recompute path: re-fit the base splats from the raw volume by

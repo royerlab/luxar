@@ -73,6 +73,7 @@ DEMO_META = {
     "outputs": ["gsplats_4d_neuromast_2ch"],
     "citation": {
         "short": "Jacobo lab, CZ Biohub San Francisco",
+        "ref": "Jacobo lab / CZ Biohub",
         "license": "CC BY 4.0",
     },
 }
@@ -85,7 +86,7 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
-from luxar.demos import launch_viewer, parse_demo_flags
+from luxar.demos import add_demo_caption, launch_viewer, parse_demo_flags
 from luxar.gsplats.io.load_gsplats import load_gsplat_node
 from luxar.gsplats.tree import center_bounds
 from luxar.utils.paths import get_demos_output_dir
@@ -205,7 +206,7 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
             scene = compiler.create_scene(
                 citation=DEMO_META["citation"],
                 dimensions=dims,
-                viewer_config=ViewerConfig(tone_mapping="ACES"),
+                viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="ACES"),
             )
             scene.attrs["title"] = "GSplats: 4D Two-Channel Neuromast Timelapse"
             scene.attrs["description"] = (
@@ -241,6 +242,11 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
                 anchor="top-left",
                 color="rgba(255,255,255,0.6)",
                 blend_mode="difference",
+            )
+            add_demo_caption(
+                scene,
+                "Light-sheet / iSIM • membranes + nuclei",
+                DEMO_META.get("citation"),
             )
 
     aprint(f"Scene saved: {output_path}")

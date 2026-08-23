@@ -20,6 +20,7 @@ import zarr
 from luxar._zarr_compat import consolidate as zc_consolidate
 from luxar._zarr_compat import open_group as zc_open_group
 from luxar._zarr_compat import read_consolidated_attrs, read_node_attrs
+from luxar.conftest import confine_temp_dirs
 from luxar.gsplats.doctor import diagnose_store
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.io.save_gsplats import write_gsplats_tree
@@ -41,7 +42,9 @@ def _partition_store(tmp: Path, n: int = 400, parts_cap: int = 80) -> Path:
     return path
 
 
-def _partition_scene(tmp: Path, geometry: str = "points") -> tuple[Path, str]:
+def _partition_scene(
+    tmp: Path, geometry: str = "points", *, drop_tree: bool = True
+) -> tuple[Path, str]:
     """A real scene containing one native points or mesh partition."""
     from luxar import Dimensions, LuxarZarrCompiler
 
@@ -92,10 +95,48 @@ def _partition_scene(tmp: Path, geometry: str = "points") -> tuple[Path, str]:
 
     root = zc_open_group(str(path), mode="r+")
     group = root[geometry]
-    if "bsp_tree" in group.attrs:
+    if drop_tree and "bsp_tree" in group.attrs:
         del group.attrs["bsp_tree"]
     zc_consolidate(root)
     return path, geometry
+
+
+def _disjoint_centroid_split_lines_scene(tmp: Path) -> Path:
+    """A native lines partition whose valid plane crosses one part's bounds."""
+    from luxar import Dimensions, LuxarZarrCompiler
+
+    first = np.column_stack(
+        (
+            np.arange(11, dtype=np.float32),
+            np.zeros(11, dtype=np.float32),
+            np.zeros(11, dtype=np.float32),
+        )
+    )
+    second = np.column_stack(
+        (
+            np.arange(12, 15, dtype=np.float32),
+            np.zeros(3, dtype=np.float32),
+            np.zeros(3, dtype=np.float32),
+        )
+    )
+    positions = np.concatenate((first, second))
+    indices = np.array(
+        [(i, i + 1) for i in range(10)] + [(i, i + 1) for i in range(11, 13)],
+        dtype=np.uint32,
+    )
+
+    path = tmp / "disjoint-lines.luxar.zarr"
+    with LuxarZarrCompiler(path) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_lines(
+            "lines",
+            positions,
+            widths=0.1,
+            indices=indices,
+            line_type="indexed",
+            partition={"max_elements": 12, "rule": "median"},
+        )
+    return path
 
 
 def _uniform_tiled_store(tmp: Path) -> Path:
@@ -473,6 +514,34 @@ class TestSplitPlanesCheck:
             boxes = _part_boxes(path)
             assert _order_violations(_root_attrs(path)["bsp_tree"], boxes) == 0
 
+    def test_small_stale_offset_on_points_remains_an_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path, group_path = _partition_scene(Path(tmp), drop_tree=False)
+            node_path = path / group_path
+            attrs = read_node_attrs(node_path)
+            assert attrs is not None
+
+            def shift(node: dict) -> dict:
+                if "part" in node:
+                    return node
+                return {
+                    "axis": node["axis"],
+                    "split": node["split"] + 2.0,
+                    "left": shift(node["left"]),
+                    "right": shift(node["right"]),
+                }
+
+            root = zc_open_group(str(path), mode="r+")
+            root[group_path].attrs["bsp_tree"] = shift(attrs["bsp_tree"])
+            zc_consolidate(root)
+
+            report = diagnose_store(path)
+            (finding,) = report.findings
+            assert finding.path == group_path
+            assert finding.severity == "error"
+            assert finding.fixable
+            assert not report.healthy
+
     def test_an_approximate_tree_over_overlapping_parts_is_left_alone(self) -> None:
         """A uniform-tiled fit's parts overlap, so NO tree separates them and
         failing the separation test says nothing about staleness. Condemning one
@@ -486,10 +555,38 @@ class TestSplitPlanesCheck:
             (finding,) = report.findings
             assert finding.severity == "note"
             assert not finding.fixable
+            assert "centroid-split lines or mesh" in finding.detail
             assert report.healthy  # a note does not fail the gate
 
             diagnose_store(path, fix=True)
             assert _root_attrs(path)["bsp_tree"] == before
+
+    def test_disjoint_centroid_split_lines_are_approximate_and_rebuilt(self) -> None:
+        from luxar.core.group.partition import serialized_bsp_tree_separates
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _disjoint_centroid_split_lines_scene(Path(tmp))
+            node_path = path / "lines"
+            before_attrs = read_node_attrs(node_path)
+            assert before_attrs is not None
+            before = before_attrs["bsp_tree"]
+            boxes = _part_boxes(node_path)
+            assert not serialized_bsp_tree_separates(before, boxes)
+
+            report = diagnose_store(path)
+            (finding,) = report.findings
+            assert finding.path == "lines"
+            assert finding.severity == "note"
+            assert finding.fixable
+            assert report.healthy
+
+            fixed = diagnose_store(path, fix=True)
+            after_attrs = read_node_attrs(node_path)
+            assert after_attrs is not None
+            after = after_attrs["bsp_tree"]
+            assert after != before
+            assert serialized_bsp_tree_separates(after, boxes)
+            assert fixed.healthy
 
     def test_sparse_uniform_content_keeps_the_producer_tree(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -757,12 +854,14 @@ class TestStoreGuards:
             with pytest.raises(ValueError, match="unpack"):
                 diagnose_store(self._archive(Path(tmp)), fix=True)
 
-    def test_diagnosing_an_archive_leaves_no_temp_directory_behind(self) -> None:
-        import tempfile as _tempfile
+    def test_diagnosing_an_archive_leaves_no_temp_directory_behind(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        archive = self._archive(tmp_path)
+        confine_temp_dirs(tmp_path, monkeypatch)
+        assert Path(tempfile.gettempdir()) == tmp_path
 
-        with tempfile.TemporaryDirectory() as tmp:
-            archive = self._archive(Path(tmp))
-            root = Path(_tempfile.gettempdir())
-            before = set(root.glob("luxar_gsplat_*"))
+        # Stand in for a concurrent compressed save in the confined root.
+        with tempfile.TemporaryDirectory(prefix="luxar_gsplat_save_", dir=tmp_path):
             diagnose_store(archive)
-            assert set(root.glob("luxar_gsplat_*")) == before
+            assert list(tmp_path.glob("luxar_gsplat_archive_*")) == []

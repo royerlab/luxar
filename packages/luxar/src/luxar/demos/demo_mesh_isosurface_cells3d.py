@@ -107,6 +107,7 @@ DEMO_META = {
     # header keeps that software citation where it belongs.
     "citation": {
         "short": "Allen Institute for Cell Science (scikit-image cells3d)",
+        "ref": "Allen Institute for Cell Science",
     },
 }
 
@@ -115,7 +116,13 @@ from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
-from luxar.demos import launch_viewer, parse_demo_flags, require_module
+from luxar.demos import (
+    add_demo_caption,
+    launch_viewer,
+    parse_demo_flags,
+    require_module,
+)
+from luxar.demos._cinematic_camera import pull_in
 from luxar.encoding import EncodingMode
 from luxar.utils.paths import get_demos_output_dir
 
@@ -278,6 +285,7 @@ def create_scene(output_path) -> None:
             scene = compiler.create_scene(
                 dimensions=dims,
                 viewer_config=ViewerConfig(
+                    cinematic_mode=True,
                     # ACES set explicitly — the house default, and stating it keeps
                     # the compiler's "nothing was chosen" LUT notice quiet.
                     tone_mapping="ACES",
@@ -287,10 +295,16 @@ def create_scene(output_path) -> None:
                     # default up-axis convention frames the volume edge-on and it
                     # reads as a line. `up` along Z puts the slab face-on.
                     camera=CameraConfig(
-                        position=(
-                            float(extent[0]) * 3.0,
-                            float(extent[1]) * 0.9,
-                            float(extent[2]) * 1.1,
+                        # The extent multiples are the framing this pose was
+                        # tuned at; `pull_in` restates that framing for the
+                        # cinematic preset's wider 35 mm lens, which the scene
+                        # takes whole by pinning no `fov` of its own.
+                        position=pull_in(
+                            (
+                                float(extent[0]) * 3.0,
+                                float(extent[1]) * 0.9,
+                                float(extent[2]) * 1.1,
+                            )
                         ),
                         target=(0.0, 0.0, 0.0),
                         up=(1.0, 0.0, 0.0),
@@ -317,6 +331,11 @@ def create_scene(output_path) -> None:
                     layer=True,
                 )
                 aprint(f"added '{channel['name']}' ({channel['label']})")
+            add_demo_caption(
+                scene,
+                "scikit-image cells3d • isosurfaces",
+                DEMO_META.get("citation"),
+            )
 
     aprint(f"Scene written to {output_path}")
 

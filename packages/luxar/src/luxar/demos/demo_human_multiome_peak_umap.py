@@ -40,6 +40,7 @@ DEMO_META = {
     },
     "citation": {
         "short": "Domcke et al. 2020; peak-UMAP analysis Kim et al. 2024",
+        "ref": "Domcke / Kim et al. 2020–2024",
         "doi": "10.1126/science.aba7612",
         "license": "CC BY 4.0",
     },
@@ -56,7 +57,9 @@ import pandas as pd
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
+    add_demo_caption,
     launch_viewer,
     require_local_data,
     substitutive_lod_or_flat,
@@ -223,7 +226,9 @@ def create_human_scene(
         # Create scene
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
-                dimensions=dims, citation=DEMO_META["citation"]
+                dimensions=dims,
+                citation=DEMO_META["citation"],
+                viewer_config=ViewerConfig(cinematic_mode=True),
             )
 
             total_points = len(positions_combined)
@@ -311,12 +316,10 @@ def create_human_scene(
                             transition_duration=0.2,
                         )
 
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 f"{n_points:,} peaks • Human scATAC-seq • 3D UMAP",
-                position=(0.98, 0.97),
-                font_size=0.012,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
 
         aprint(f"Scene created with {n_points:,} points")

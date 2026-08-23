@@ -33,7 +33,7 @@ Defines `SetupContext` and `SetupResult` — the shared call-shape used by every
 
 ### `sync-current-state.ts`
 
-`syncCurrentState(context)` is the inverse direction: pulls live state from the scene manager + camera + `ControlsManager` into `RenderingSettings` and refreshes every relevant `RenderingControllers` entry. Called whenever the panel becomes visible so the user sees what subsystems actually report rather than what they were last told to be. Snaps `fov` to a `config.camera.fovPresets` label when within 0.5°, mirrors fly-config from `ControlsManager` (persists across orbit↔fly switches), updates orbit `autoRotate`/`autoRotateSpeed`, and finishes with `gui.controllersRecursive().forEach(c => c.updateDisplay())` plus a cinematic-checkbox refresh and a navigation-folder visibility update.
+`syncCurrentState(context)` is the inverse direction: pulls live state from the scene manager + camera + `ControlsManager` into `RenderingSettings` and refreshes every relevant `RenderingControllers` entry. Called whenever the panel becomes visible so the user sees what subsystems actually report rather than what they were last told to be. Snaps `fov` to a `config.camera.fovPresets` label when within 0.5°, mirrors fly-config from `ControlsManager` (persists across orbit↔fly switches), updates orbit `autoRotate`/`autoRotateSpeed`, and finishes with `gui.controllersRecursive().forEach(c => c.updateDisplay())` plus a cinematic-checkbox refresh and a navigation-folder visibility update. `syncCameraFovState(settings, sceneManager)` provides the narrow FOV/preset-only state sync used after dataset loads.
 
 ### `settings-persistence.ts`
 

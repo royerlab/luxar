@@ -104,6 +104,7 @@ DEMO_META = {
             "Barry 2021 (GIANI, Zenodo 5270323); "
             "Cell Tracking Challenge (Maška et al. 2023)"
         ),
+        "ref": "Barry / Maška et al. 2023",
         "doi": "10.5281/zenodo.5270323",
     },
 }
@@ -122,17 +123,19 @@ from luxar import (
     ViewerConfig,
 )
 from luxar.core import transforms
-
-# Reuse the single-embryo LOD demo's ladder builder + palette (build_lod_ladder,
-# level_colors, COMPRESSION_FACTOR) as a normal sibling import rather than
-# duplicating the LOD logic.
-from luxar.demos import demo_gsplats_lod_tribolium as _LOD
 from luxar.demos import (
+    add_demo_caption,
     launch_viewer,
     load_precomputed_gsplats,
     parse_demo_flags,
     warn_if_no_cuda_gpu,
 )
+
+# Reuse the single-embryo LOD demo's ladder builder + palette (build_lod_ladder,
+# level_colors, COMPRESSION_FACTOR) as a normal sibling import rather than
+# duplicating the LOD logic.
+from luxar.demos import demo_gsplats_lod_tribolium as _LOD
+from luxar.demos._cinematic_camera import framing_scale
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.paths import get_demos_output_dir
@@ -145,6 +148,7 @@ COUNT = 100  # number of embryos along the line (override with --count=N)
 SPACING_FACTOR = 1.5  # center-to-center spacing as a multiple of embryo diameter
 JITTER_FRACTION = 0.18  # lateral/along-line jitter as a fraction of spacing
 SEED = 0  # RNG seed so the layout is reproducible
+AUTHORED_CAMERA_FOV_DEG = 50.0  # vertical FOV the 0.12 L centre offset was tuned at
 
 # Parse shared demo flags + this demo's extras.
 FLAGS = parse_demo_flags()
@@ -167,6 +171,11 @@ def load_base_splats() -> GSplatData:
         recompute=RECOMPUTE,
     )
     if precomputed is not None:
+        from luxar.demos.demo_gsplats_3d_tribolium_embryo import (
+            warn_if_cached_tribolium_fit_predates_floor,
+        )
+
+        warn_if_cached_tribolium_fit_predates_floor()
         return precomputed[0]
 
     # --recompute path: re-fit from the raw volume via the base Tribolium demo.
@@ -225,26 +234,26 @@ def embryo_transforms(
 
 
 def camera_for_line(n: int, spacing: float, diameter: float) -> CameraConfig:
-    """Stand just off the NEAR end of the line and look ALONG its axis.
+    """Stand back along -X from the row centre and look along its axis.
 
-    The camera sits a hair before the first embryo, shifted sideways by about
-    one embryo diameter (and slightly raised), aiming down the +X axis at the
-    far end — so the whole row of embryos recedes into the distance rather than
-    the front one occluding the rest.
+    The camera remains inside the row's X span, shifted sideways by about two
+    embryo diameters and raised by one, aiming down the +X axis so the whole row
+    recedes into the distance rather than the front embryos occluding the rest.
     """
     radius = diameter / 2.0
     total_len = (n - 1) * spacing
-    # Stand back off the near end (−X), offset sideways ~2 diameters in +Z and
-    # raised ~1 diameter in +Y, and aim at the MIDDLE of the row — so the whole
-    # sequence recedes diagonally and stays centred (standing right at the first
-    # embryo blows it out and crams the line into a corner).
-    position = (-total_len * 0.12, diameter * 1.0, diameter * 2.2)
+    # Scale the authored 0.12 L offset back from the row centre for the cinematic
+    # lens, offset sideways ~2 diameters in +Z and raised ~1 diameter in +Y, then
+    # aim near the +X end (+0.45 L from centre) so the sequence recedes
+    # diagonally (standing right at an embryo blows it out and crams the line
+    # into a corner).
+    centre_offset = total_len * 0.12 * framing_scale(AUTHORED_CAMERA_FOV_DEG)
+    position = (-centre_offset, diameter * 1.0, diameter * 2.2)
     target = (total_len * 0.45, 0.0, 0.0)
     return CameraConfig(
         position=position,
         target=target,
         up=(0.0, 1.0, 0.0),
-        fov=50.0,
         near=max(0.1, radius * 0.02),
         far=total_len * 1.5 + radius * 10.0,
     )
@@ -275,7 +284,7 @@ def create_luxar_scene(
             scene = compiler.create_scene(
                 citation=DEMO_META["citation"],
                 dimensions=dims,
-                viewer_config=ViewerConfig(camera=camera),
+                viewer_config=ViewerConfig(cinematic_mode=True, camera=camera),
             )
 
             scene.attrs["title"] = (
@@ -346,12 +355,10 @@ Navigation:
                 color="rgba(255,255,255,0.6)",
                 blend_mode="difference",
             )
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 "Light-sheet microscopy • adaptive level of detail",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
 
             # Explanatory panel, placed below the title so the two don't overlap.

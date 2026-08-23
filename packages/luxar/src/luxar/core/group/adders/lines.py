@@ -45,6 +45,7 @@ from ..partition import is_requested, reject_mismatched_partition_parent
 if TYPE_CHECKING:
     from ...node import Node
     from ..group import Group
+    from ..partition import BSPNode
 
 
 def _sah_polyline_centroids(
@@ -67,6 +68,34 @@ def _sah_polyline_centroids(
         ],
         dtype=np.float64,
     )
+
+
+def _build_line_partition_tree(
+    vert_arr: np.ndarray,
+    polyline_indices: List[np.ndarray],
+    n_vertices: int,
+    max_elements: int,
+    rule: str,
+) -> Tuple[Optional["BSPNode"], List[List[int]]]:
+    """Build the requested atomic-polyline BSP and flatten its leaves."""
+    from ..partition import bsp_leaf_parts, spatial_bsp_polyline_tree, spatial_bsp_tree
+
+    if rule != "sah":
+        tree = spatial_bsp_polyline_tree(
+            vert_arr, polyline_indices, max_elements, rule=rule
+        )
+    elif not polyline_indices:
+        tree = None
+    else:
+        centroids = _sah_polyline_centroids(vert_arr, polyline_indices)
+        approximate_vertices_per_polyline = max(
+            1, n_vertices // max(1, len(polyline_indices))
+        )
+        centroid_cap = max(1, max_elements // approximate_vertices_per_polyline)
+        tree = spatial_bsp_tree(centroids, max_elements=centroid_cap, rule="sah")
+
+    parts = [] if tree is None else [part.tolist() for part in bsp_leaf_parts(tree)]
+    return tree, parts
 
 
 def add_lines_impl(
@@ -274,10 +303,7 @@ def add_lines_impl(
         if partition is not None:
             from ..lod.lines import identify_polylines
             from ..partition import (
-                median_bsp_polylines,
-                midpoint_bsp_polylines,
                 resolve_partition_spec,
-                sah_bsp_partition,
                 warn_if_oversized_single_part,
             )
 
@@ -296,32 +322,13 @@ def add_lines_impl(
 
             polyline_indices = identify_polylines(n_vertices, line_type, indices)
 
-            if partition_rule == "sah":
-                # SAH operates on per-polyline centroids in this
-                # context too — same atomic-polyline guarantee.
-                if not polyline_indices:
-                    polyline_parts: List[List[int]] = []
-                else:
-                    centroids = _sah_polyline_centroids(vert_arr, polyline_indices)
-                    # Cap is per-vertex; SAH gives us per-centroid
-                    # parts; we re-aggregate to vertex-count parts.
-                    approx_per_poly = max(
-                        1,
-                        n_vertices // max(1, len(polyline_indices)),
-                    )
-                    centroid_cap = max(1, max_elements // approx_per_poly)
-                    centroid_parts = sah_bsp_partition(
-                        centroids, max_elements=centroid_cap
-                    )
-                    polyline_parts = [idx_arr.tolist() for idx_arr in centroid_parts]
-            elif partition_rule == "midpoint":
-                polyline_parts = midpoint_bsp_polylines(
-                    vert_arr, polyline_indices, max_elements
-                )
-            else:
-                polyline_parts = median_bsp_polylines(
-                    vert_arr, polyline_indices, max_elements
-                )
+            tree, polyline_parts = _build_line_partition_tree(
+                vert_arr,
+                polyline_indices,
+                n_vertices,
+                max_elements,
+                partition_rule,
+            )
 
             warn_if_oversized_single_part(
                 len(polyline_parts),
@@ -332,6 +339,7 @@ def add_lines_impl(
                 name,
             )
             if len(polyline_parts) > 1:
+                assert tree is not None
                 preflight_extend_to_all(scene, extend_to_all, vert_arr, "lines")
                 return add_lines_partition_wrapper_impl(
                     group,
@@ -350,6 +358,7 @@ def add_lines_impl(
                     parent=parent,
                     extend_to_all=extend_to_all,
                     max_elements=max_elements,
+                    bsp_tree=tree.to_serializable(),
                     additive_lod=additive_lod,
                     **attrs,
                 )
@@ -606,6 +615,7 @@ def add_lines_partition_wrapper_impl(
     parent: Optional["Node"],
     extend_to_all: Optional[Union[List[str], str]],
     max_elements: int,
+    bsp_tree: Dict[str, Any],
     additive_lod: Any = None,
     **attrs: Any,
 ) -> "Group":
@@ -695,6 +705,7 @@ def add_lines_partition_wrapper_impl(
     # - ``segments`` ⇒ re-emit as ``segments`` (consecutive member pairs).
     # - ``indexed`` ⇒ re-emit as ``indexed`` with the part's real edges
     #   remapped to part-local vertex indices.
+    written_parts = []
     for i, part_vertex_idx in enumerate(part_vertex_indices):
         if part_vertex_idx.size == 0:
             continue
@@ -771,6 +782,11 @@ def add_lines_partition_wrapper_impl(
             additive_lod=additive_lod,
             **leaf_attrs,
         )
+        written_parts.append(i)
+
+    from ..partition import persist_pruned_bsp_tree
+
+    persist_pruned_bsp_tree(wrapper, bsp_tree, written_parts)
 
     wrapper._persist_attr("position_bounds", position_bounds_from_array(vert_arr))
 

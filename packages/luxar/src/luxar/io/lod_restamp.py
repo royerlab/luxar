@@ -334,6 +334,112 @@ def _is_partition_bound(under_partition: bool, children: Sequence[_ChildNode]) -
     )
 
 
+def _empty_ladder_refusal(
+    group: "zarr.Group", children: Sequence[_ChildNode]
+) -> Optional[SkippedGroup]:
+    """Classify a ``kind=lod`` group with no resolved ladder children."""
+    if children:
+        return None
+    path = group.path or "/"
+    subgroups = sorted(str(name) for name in group.group_keys())
+    if subgroups:
+        return SkippedGroup(
+            path,
+            "unclassifiable-children",
+            f"kind=lod group has {len(subgroups)} child group(s) "
+            f"({', '.join(subgroups)}) but none of them carries a "
+            "scene-node 'type' attr, so the ladder cannot be ordered",
+        )
+    return SkippedGroup(
+        path, "no-children", "kind=lod group has no child groups at all"
+    )
+
+
+def _orphan_ladder_child_refusal(
+    group: "zarr.Group", children: Sequence[_ChildNode]
+) -> Optional[SkippedGroup]:
+    """Refuse a group holding a ladder rung the node filter cannot see, or ``None``.
+
+    A child group the node filter DROPPED but which carries a
+    ``coverage_fraction`` is a ladder rung this pass cannot see. Deriving over the
+    survivors alone writes a PARTIAL ladder: the dropped rung keeps its legacy
+    threshold under the new ``screen-area`` selector, so the result is
+    non-monotonic AND — a legacy value being on the 0..4 diagonal scale — may sit
+    above the screen-area ceiling of 1.0, which no clipped area metric can ever
+    satisfy. The viewer re-sorts such a ladder with a warning
+    (``load-lod-group-node.ts``), swapping levels and stranding the real finest
+    one. Refuse the group and name the child instead.
+
+    Shared with :mod:`luxar.io.lod_screening`, which must refuse exactly the
+    groups this pass refuses or its report predicts a rewrite that never happens.
+
+    Args:
+        group: The ``kind=lod`` group.
+        children: Its resolved ladder children, as ``_lod_children`` yields them.
+
+    Returns:
+        The refusal, or ``None`` when every ``coverage_fraction`` child resolved.
+    """
+    resolved = {name for name, _, _ in children}
+    orphans = sorted(
+        str(name)
+        for name in group.group_keys()
+        if str(name) not in resolved
+        and _threshold_of(dict(group[str(name)].attrs)) is not None
+    )
+    if not orphans:
+        return None
+    return SkippedGroup(
+        group.path or "/",
+        "unclassifiable-ladder-child",
+        f"{len(orphans)} child group(s) ({', '.join(orphans)}) carry a "
+        "'coverage_fraction' but do not resolve as ladder levels (no "
+        "scene-node 'type' attr, or a reserved bucket name), so "
+        f"re-deriving over the {len(children)} that do would leave a "
+        "PARTIAL, non-monotonic ladder with those rungs stranded on "
+        "their legacy thresholds. Fix the children's 'type' stamps first",
+    )
+
+
+def _descending_ladder_refusal(
+    path: str, old: Sequence[Optional[float]]
+) -> Optional[SkippedGroup]:
+    """Refuse a stored ladder that DESCENDS in child order, or ``None``.
+
+    A ladder is coarsest→finest, so its thresholds must ASCEND. When they
+    descend, the resolved child order and the stored thresholds disagree about
+    which level is finest, and re-deriving would write an ascending ladder onto
+    a descending order — silently INVERTING it (the 100-element level shown at
+    half-screen, the 10,000-element one only when tiny). Only checked when the
+    whole ladder is present: a partially-stamped one carries no such claim.
+
+    Shared with :mod:`luxar.io.lod_screening` for the same reason
+    :func:`_orphan_ladder_child_refusal` is.
+
+    Args:
+        path: The group's store path, for the message.
+        old: Its stored thresholds in resolved coarsest→finest child order.
+
+    Returns:
+        The refusal, or ``None`` when the ladder is not a complete descending one.
+    """
+    if not all(value is not None for value in old):
+        return None
+    if not any(
+        b < a  # type: ignore[operator]
+        for a, b in zip(old, old[1:])
+    ):
+        return None
+    return SkippedGroup(
+        path,
+        "descending-ladder",
+        f"the stored ladder {_format_ladder(old)} DESCENDS in the "
+        "resolved coarsest→finest child order, so the two disagree "
+        "about which level is finest; re-deriving would invert it. Fix "
+        "the children's 'child_index' stamps first",
+    )
+
+
 def _plan_lod(
     group: "zarr.Group",
     attrs: Dict[str, Any],
@@ -379,87 +485,21 @@ def _plan_lod(
         return None
 
     children = _lod_children(group)
-    if not children:
-        # Two very different stores land here and the operator must be able to
-        # tell them apart: an EMPTY lod group (nothing to restamp, probably a
-        # broken write) versus one whose children exist but carry no scene-node
-        # `type` attr, where `_lod_children` cannot tell a ladder level from a
-        # bucket and the fix is to the store's stamps, not to this pass.
-        subgroups = sorted(str(name) for name in group.group_keys())
-        if subgroups:
-            report.unresolved.append(
-                SkippedGroup(
-                    path,
-                    "unclassifiable-children",
-                    f"kind=lod group has {len(subgroups)} child group(s) "
-                    f"({', '.join(subgroups)}) but none of them carries a "
-                    "scene-node 'type' attr, so the ladder cannot be ordered",
-                )
-            )
-        else:
-            report.unresolved.append(
-                SkippedGroup(
-                    path, "no-children", "kind=lod group has no child groups at all"
-                )
-            )
+    empty_refusal = _empty_ladder_refusal(group, children)
+    if empty_refusal is not None:
+        report.unresolved.append(empty_refusal)
         return None
 
-    # A child group the node filter DROPPED but which carries a
-    # `coverage_fraction` is a ladder rung this pass cannot see. Deriving over the
-    # survivors alone writes a PARTIAL ladder: the dropped rung keeps its legacy
-    # threshold under the new `screen-area` selector, so the result is
-    # non-monotonic AND — a legacy value being on the 0..4 diagonal scale — may
-    # sit above the screen-area ceiling of 1.0, which no clipped area metric can
-    # ever satisfy. The viewer re-sorts such a ladder with a warning
-    # (`load-lod-group-node.ts`), swapping levels and stranding the real finest
-    # one. Refuse the group and name the child instead.
-    resolved = {name for name, _, _ in children}
-    orphans = sorted(
-        str(name)
-        for name in group.group_keys()
-        if str(name) not in resolved
-        and _threshold_of(dict(group[str(name)].attrs)) is not None
-    )
-    if orphans:
-        report.unresolved.append(
-            SkippedGroup(
-                path,
-                "unclassifiable-ladder-child",
-                f"{len(orphans)} child group(s) ({', '.join(orphans)}) carry a "
-                "'coverage_fraction' but do not resolve as ladder levels (no "
-                "scene-node 'type' attr, or a reserved bucket name), so "
-                f"re-deriving over the {len(children)} that do would leave a "
-                "PARTIAL, non-monotonic ladder with those rungs stranded on "
-                "their legacy thresholds. Fix the children's 'type' stamps first",
-            )
-        )
+    orphan_refusal = _orphan_ladder_child_refusal(group, children)
+    if orphan_refusal is not None:
+        report.unresolved.append(orphan_refusal)
         return None
 
     old = [_threshold_of(child_attrs) for _, _, child_attrs in children]
 
-    # A ladder is coarsest→finest, so its thresholds must ASCEND. When they
-    # descend, the resolved child order and the stored thresholds disagree about
-    # which level is finest, and re-deriving would write an ascending ladder onto
-    # a descending order — silently INVERTING it (the 100-element level shown at
-    # half-screen, the 10,000-element one only when tiny). Only checked when the
-    # whole ladder is present: a partially-stamped one carries no such claim.
-    if (
-        all(value is not None for value in old)
-        and any(
-            b < a  # type: ignore[operator]
-            for a, b in zip(old, old[1:])
-        )
-    ):
-        report.unresolved.append(
-            SkippedGroup(
-                path,
-                "descending-ladder",
-                f"the stored ladder {_format_ladder(old)} DESCENDS in the "
-                "resolved coarsest→finest child order, so the two disagree "
-                "about which level is finest; re-deriving would invert it. Fix "
-                "the children's 'child_index' stamps first",
-            )
-        )
+    descending_refusal = _descending_ladder_refusal(path, old)
+    if descending_refusal is not None:
+        report.unresolved.append(descending_refusal)
         return None
 
     counts = [_count_of(child, child_attrs) for _, child, child_attrs in children]
