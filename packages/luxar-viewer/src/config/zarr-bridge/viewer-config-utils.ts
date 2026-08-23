@@ -13,14 +13,16 @@ import {
   CINEMATIC_SNAPSHOT_KEYS,
   type CinematicSnapshotKeys,
 } from '../cinematic-preset';
+import { cameraConfig } from '../sections/camera/data';
 import { log, Modules } from '../../utils/log';
 
 /**
- * Module-local set of camelCase keys we have already warned about, so that
- * each unknown RenderingSettings field surfaces exactly once instead of
- * spamming the console on repeated calls. Exported for tests to reset.
+ * Module-local sets of values we have already warned about, so each warning
+ * surfaces exactly once instead of spamming the console on repeated calls.
+ * Exported for tests to reset.
  */
 export const _warnedUnknownRenderingKeys = new Set<string>();
+export const _warnedFovPresetConflicts = new Set<string>();
 
 /**
  * Mapping from snake_case zarr viewer_config keys to camelCase RenderingSettings keys.
@@ -106,6 +108,8 @@ export const REVERSE_SETTINGS_MAP: Record<string, string> = Object.fromEntries(
  * Returns only the fields that are set (partial object), plus — when the
  * scene asks for cinematic mode — the cinematic preset expanded into the
  * fields the scene left unset (see `expandCinematicPreset` below).
+ * A recognized camera FOV preset supplies its numeric FOV when absent; a
+ * conflicting numeric FOV wins and warns once per preset/value pair.
  *
  * @param zarrConfig - Viewer config from zarr root attributes
  * @returns Partial RenderingSettings with the fields set in zarr
@@ -135,7 +139,22 @@ export function extractRenderingOverrides(
 
   // camera.fov_preset maps to RenderingSettings.fovPreset
   if (zarrConfig.camera?.fov_preset != null) {
-    overrides.fovPreset = zarrConfig.camera.fov_preset as RenderingSettings['fovPreset'];
+    const fovPreset = zarrConfig.camera.fov_preset as RenderingSettings['fovPreset'];
+    overrides.fovPreset = fovPreset;
+    const presetFov = cameraConfig.fovPresets[fovPreset];
+    if (overrides.fov === undefined) {
+      // `> 0` rejects both the sentinel Custom value and unknown preset names.
+      if (presetFov > 0) overrides.fov = presetFov;
+    } else if (presetFov > 0 && Math.abs(presetFov - overrides.fov) >= 0.5) {
+      const conflictKey = `${fovPreset}:${overrides.fov}`;
+      if (!_warnedFovPresetConflicts.has(conflictKey)) {
+        _warnedFovPresetConflicts.add(conflictKey);
+        log.warning(
+          Modules.CONFIG,
+          `camera.fov (${overrides.fov}°) conflicts with camera.fov_preset "${fovPreset}" (${presetFov}°); the numeric FOV wins and the preset label will be re-derived from it when the panel first opens.`
+        );
+      }
+    }
   }
 
   // camera.near/far map to RenderingSettings.near/far
@@ -154,16 +173,13 @@ export function extractRenderingOverrides(
 /**
  * The two preset keys that describe the camera's framing. They are expanded as
  * ONE unit: if the author set EITHER `camera.fov` or `camera.fov_preset`,
- * NEITHER is filled from the preset.
+ * NEITHER is filled from the cinematic preset.
  *
  * Why coupled — a framing is a unit, and half a pair is worse than neither
- * half. Filling only the missing half makes the slider and the dropdown
- * describe different lenses: an authored `fov_preset: '85mm Portrait'` beside
- * the preset's 35 mm `fov` would actively drive the camera to 63° while the
- * dropdown reads "85mm Portrait" (and the first panel open would rewrite the
- * author's choice to '35mm' from the live FOV). Skipping both keeps exact
- * parity with a non-cinematic scene in either direction: the author's camera
- * authority wins whole, and the base default supplies the other half.
+ * half. A recognized authored `fov_preset` resolves its own numeric FOV above;
+ * this guard prevents the cinematic preset from replacing either half with
+ * its 35 mm lens. An explicit numeric FOV remains authoritative without an
+ * invented label, and an unknown or `Custom` preset remains unresolved.
  */
 const CINEMATIC_FOV_PAIR: readonly CinematicSnapshotKeys[] = ['fov', 'fovPreset'];
 

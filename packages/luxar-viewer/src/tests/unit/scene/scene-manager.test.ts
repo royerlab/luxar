@@ -920,6 +920,22 @@ describe('SceneManager', () => {
       expect(sceneManager.currentFov).toBe(63);
     });
 
+    it('applies an authored FOV preset before auto-framing on a first visit', async () => {
+      const spies = installSpies({
+        viewerConfig: { camera: { fov_preset: '85mm Portrait' } },
+      });
+      let fovAtFrame = 0;
+      spies.autoFrameCamera.mockImplementation(() => {
+        fovAtFrame = sceneManager.currentFov;
+      });
+
+      await sceneManager.loadSceneData('http://example.com/data.zarr', undefined, {
+        applyViewerConfigFov: true,
+      });
+
+      expect(fovAtFrame).toBe(29);
+    });
+
     it('uses an authored FOV instead of the cinematic preset when framing', async () => {
       const spies = installSpies({
         viewerConfig: { cinematic_mode: true, camera: { fov: 38 } },
