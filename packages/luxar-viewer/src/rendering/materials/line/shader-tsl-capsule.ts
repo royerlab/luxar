@@ -122,6 +122,7 @@ export function capsuleLineWebGPUFactory(
 
   const blendingMode = config.blendingMode ?? 'additive';
   const volumetric = isVolumetricMode(blendingMode);
+  const opaque = blendingMode === 'opaque';
   const premultiplyRGB =
     config.useMaxRGBContribution !== undefined
       ? config.useMaxRGBContribution
@@ -638,7 +639,11 @@ export function capsuleLineWebGPUFactory(
       return vec4(gammaColor.mul(alpha).mul(screen), volAlpha);
     }
     const intensityScaled: TSLNode = intensity.mul(vAlphaV).toVar();
-    Discard(maxAdjusted.lessThan(1e-4));
+    if (opaque) {
+      Discard(maxAdjusted.mul(intensityScaled).mul(uOpacity).lessThan(1e-4));
+    } else {
+      Discard(maxAdjusted.lessThan(1e-4));
+    }
     if (premultiplyRGB) {
       const a: TSLNode = intensityScaled.mul(uOpacity).toVar();
       return vec4(gammaColor.mul(a), a);

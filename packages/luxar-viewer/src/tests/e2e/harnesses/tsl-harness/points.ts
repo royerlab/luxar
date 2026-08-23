@@ -568,6 +568,35 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
     },
     buildMesh: buildPointInstancedMesh,
   },
+  // Opaque-mode contribution cutout parity: the GLSL twin compiles with
+  // LUXAR_OPAQUE_RGB_CONTRIBUTION and the TSL graph is built from the
+  // opaque blending mode. Low opacity moves the discard boundary inside
+  // the sprite so a predicate mismatch changes the rendered footprint.
+  'point-opaque': {
+    source: POINT_SOURCE,
+    buildUniforms: () => ({
+      uPointTex: { value: buildPointDataTexture() },
+      pointSizeFactor: { value: 32.0 },
+      maxPointSize: { value: 32.0 },
+      radiusScale: { value: 1.0 },
+      uIsOrtho: { value: 1 },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uOpacity: { value: 0.02 },
+      uInvGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+    }),
+    buildDefines: () => ({ LUXAR_OPAQUE_RGB_CONTRIBUTION: '' }),
+    buildTSLMaterial: (uniforms) => {
+      const m = pointWebGPUFactory(buildPointTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'opaque',
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildPointInstancedMesh,
+  },
   // Point volumetric parity: the emission–absorption output branch
   // (LUXAR_VOLUMETRIC; sum path) — τ = κ·alpha, S(τ) screening,
   // physical absorption alpha, per-point RGBA alpha → w(a) optical

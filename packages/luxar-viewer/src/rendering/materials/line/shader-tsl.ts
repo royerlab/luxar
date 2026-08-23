@@ -262,6 +262,7 @@ export function lineWebGPUFactory(
   // The wrapper's `applyBlendingMode` rebuilds the graph on any
   // volumetric crossing via the LUXAR_VOLUMETRIC define.
   const volumetricGraph = isVolumetricMode(config.blendingMode ?? 'additive');
+  const opaqueGraph = config.blendingMode === 'opaque';
 
   // ---- Vertex computation ----
   //
@@ -799,6 +800,8 @@ export function lineWebGPUFactory(
       // Discard only when color AND τ are both negligible — a black
       // line still absorbs (pure-ink occluders keep their optical depth).
       Discard(maxAdjusted.lessThan(1e-4).and(tau.lessThan(1e-4)));
+    } else if (opaqueGraph) {
+      Discard(maxAdjusted.mul(alpha).lessThan(1e-4));
     } else {
       Discard(maxAdjusted.lessThan(1e-4));
     }
