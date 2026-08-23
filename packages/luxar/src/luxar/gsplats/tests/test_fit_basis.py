@@ -24,7 +24,7 @@ class TestFitImageMin:
         reversing the shift must use ``image_min``."""
         assert fit_image_min({"image_min": 0.25, "floor": 0.10}) == pytest.approx(0.25)
 
-    def test_falls_back_to_floor_for_older_stores(self) -> None:
+    def test_falls_back_to_floor_for_incomplete_metadata(self) -> None:
         assert fit_image_min({"floor": 0.042}) == pytest.approx(0.042)
 
     @pytest.mark.parametrize("stats", [None, {}, {"psnr_db": 31.0}])
