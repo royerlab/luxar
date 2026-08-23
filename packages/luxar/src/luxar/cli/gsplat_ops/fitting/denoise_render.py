@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 def _default_output_shape(
     default_leaves: list[GSplatLeaf], ndim: int
 ) -> tuple[int, ...]:
-    """Return center bounds for exactly the leaves the renderer will draw."""
+    """Return the auto-sized output shape for the leaves the renderer will draw."""
     import numpy as np
 
     from luxar.gsplats.tree import center_bounds
