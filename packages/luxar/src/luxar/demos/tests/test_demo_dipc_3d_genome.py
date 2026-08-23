@@ -36,6 +36,9 @@ save_polylines_npz = _demo.save_polylines_npz
 load_polylines_npz = _demo.load_polylines_npz
 build_scene = _demo.build_scene
 MIN_BEADS_PER_ARM = _demo.MIN_BEADS_PER_ARM
+GENOME_ASSEMBLY = _demo.GENOME_ASSEMBLY
+UCSC_WINDOW_BP = _demo.UCSC_WINDOW_BP
+_ucsc_region = _demo._ucsc_region
 
 
 class TestSplitChromHaplotype:
@@ -82,6 +85,16 @@ class TestChromosomeColor:
     def test_distinct_and_deterministic(self) -> None:
         assert not np.allclose(chromosome_color("1"), chromosome_color("2"))
         np.testing.assert_array_equal(chromosome_color("7"), chromosome_color("7"))
+
+
+class TestUcscRegion:
+    def test_records_source_assembly_and_exact_window(self) -> None:
+        assert GENOME_ASSEMBLY == "hg19"
+        assert UCSC_WINDOW_BP == 100_000
+        assert _ucsc_region("1", 12_340_000) == "chr1:12290000-12389999"
+
+    def test_shifts_window_at_chromosome_start(self) -> None:
+        assert _ucsc_region("X", 20_000) == "chrX:1-100000"
 
 
 class TestBuildPolylines:
@@ -135,6 +148,10 @@ class TestBuildPolylines:
         assert context["extend_to_all"] == ["haplotype"]
 
         genome = dict(root["genome"].attrs)
+        assert genome["link"] == (
+            "https://genome.ucsc.edu/cgi-bin/hgTracks?db=hg19&position={hover_key}"
+        )
+        assert genome["has_keys"] is True
         assert genome["blending_mode"] == "volumetric"
         assert genome["absorption"] == pytest.approx(1.15)
         assert genome["intensity"] == pytest.approx(0.364)

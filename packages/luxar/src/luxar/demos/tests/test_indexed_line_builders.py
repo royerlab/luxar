@@ -174,9 +174,18 @@ def test_dipc_haplotype_builder_preserves_arm_boundaries() -> None:
             "haplotype": 0,
         },
     ]
-    vertices, colors, labels, edges = dipc._haplotype_geometry(polylines, 0)
-    _assert_indexed_geometry(vertices, edges, colors, labels)
+    vertices, colors, labels, keys, edges = dipc._haplotype_geometry(polylines, 0)
+    _assert_indexed_geometry(vertices, edges, colors, labels, keys)
     _assert_edges_stay_within_chains(edges, [4, 3])
+    assert keys == [
+        "chr1:1-100000",
+        "chr1:950000-1049999",
+        "chr1:1950000-2049999",
+        "chr1:2950000-3049999",
+        "chr2:1-100000",
+        "chr2:950000-1049999",
+        "chr2:1950000-2049999",
+    ]
 
 
 def test_lsystem_turtle_reuses_branch_hub() -> None:

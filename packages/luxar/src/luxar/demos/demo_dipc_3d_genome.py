@@ -408,6 +408,15 @@ def load_or_build_polylines(recompute: bool) -> list[dict]:
 
 HAPLOTYPE_NAMES = ["Maternal", "Paternal"]
 
+# GSE117876's human GM12878 samples were processed against hg19. The Dip-C
+# repository's visualization workflow for these structures likewise uses its
+# hg19 chromosome metadata; this must not be inferred from species at link time.
+GENOME_ASSEMBLY = "hg19"
+
+# The hover label rounds a bead coordinate to 0.1 Mb, so link to one explicit
+# 100 kb browser window around that bead. UCSC ranges are 1-based and inclusive.
+UCSC_WINDOW_BP = 100_000
+
 #: Colour of the always-visible "all DNA" scaffold. Deliberately neutral grey
 #: and slightly cool, so it never competes with a chromosome hue: every
 #: chromosome colour in this demo is saturated, and a scaffold with any hue of
@@ -421,10 +430,18 @@ def _position_gradient(base: np.ndarray, n: int) -> np.ndarray:
     return (base[None, :] * t).astype(np.float32)
 
 
+def _ucsc_region(chrom: str, position: int | float) -> str:
+    """Return an exact-width UCSC region containing one Dip-C bead."""
+    center = int(position)
+    start = max(1, center - UCSC_WINDOW_BP // 2)
+    end = start + UCSC_WINDOW_BP - 1
+    return f"chr{chrom}:{start}-{end}"
+
+
 def _haplotype_geometry(
     polys: list[dict],
     hap_slot: int,
-) -> tuple[np.ndarray, np.ndarray, list[str], np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, list[str], list[str], np.ndarray]:
     """Pack one haplotype's chromosome polylines into indexed line geometry.
 
     Each bead is authored ONCE (unique per-vertex arrays) and connectivity is an
@@ -441,11 +458,14 @@ def _haplotype_geometry(
     constant along an arm, so both endpoints of every edge share the same slot
     and an edge is wholly in- or out-of-slice when the viewer scrubs the
     non-displayed haplotype dimension. Returns ``(vertices(M,4), colors(M,3),
-    labels[M], edges(E,2))`` with edge indices local to the returned vertices.
+    labels[M], keys[M], edges(E,2))`` with edge indices local to the returned
+    vertices. Keys are hg19 UCSC regions; haplotype stays in the visible label
+    because the linear reference-browser destination is the same for both copies.
     """
     vparts: list[np.ndarray] = []
     cparts: list[np.ndarray] = []
     labels: list[str] = []
+    keys: list[str] = []
     eparts: list[np.ndarray] = []
     offset = 0
     for p in polys:
@@ -467,11 +487,13 @@ def _haplotype_geometry(
             f"chr{p['chrom']}:{mb:.1f} Mb ({HAPLOTYPE_NAMES[p['haplotype']]})"
             for mb in pos_mb
         )
+        keys.extend(_ucsc_region(p["chrom"], pos) for pos in p["positions"])
     if not vparts:
         # Every arm degenerate (<2 beads) — np.concatenate([]) would raise.
         return (
             np.empty((0, 4), dtype=np.float32),
             np.empty((0, 3), dtype=np.float32),
+            [],
             [],
             np.empty((0, 2), dtype=np.uint32),
         )
@@ -479,6 +501,7 @@ def _haplotype_geometry(
         np.concatenate(vparts),
         np.concatenate(cparts),
         labels,
+        keys,
         np.concatenate(eparts),
     )
 
@@ -519,16 +542,20 @@ def build_scene(output_path: Path, polylines: list[dict]) -> int:
             vparts: list[np.ndarray] = []
             cparts: list[np.ndarray] = []
             labels: list[str] = []
+            keys: list[str] = []
             eparts: list[np.ndarray] = []
             vertex_offset = 0
             for hap in range(len(HAPLOTYPE_NAMES)):
                 polys = [p for p in polylines if p["haplotype"] == hap]
                 if not polys:
                     continue
-                verts, colors, labs, edges = _haplotype_geometry(polys, hap)
+                verts, colors, labs, browser_keys, edges = _haplotype_geometry(
+                    polys, hap
+                )
                 vparts.append(verts)
                 cparts.append(colors)
                 labels.extend(labs)
+                keys.extend(browser_keys)
                 # Shift this haplotype's edge indices into the concatenated
                 # vertex block so both genome copies batch into ONE node.
                 eparts.append((edges + vertex_offset).astype(np.uint32))
@@ -591,6 +618,11 @@ def build_scene(output_path: Path, polylines: list[dict]) -> int:
                     widths=0.006,
                     colors=all_colors,
                     labels=labels,
+                    keys=keys,
+                    link=(
+                        "https://genome.ucsc.edu/cgi-bin/hgTracks?"
+                        f"db={GENOME_ASSEMBLY}&position={{hover_key}}"
+                    ),
                     indices=all_edges,
                     line_type="indexed",
                     sharpness=0.5,
