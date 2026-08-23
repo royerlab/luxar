@@ -117,8 +117,9 @@ test.describe('Lines visual correctness', () => {
     for (let i = 0; i < 9; i++) {
       CENTRAL.push([0.4 + (i % 3) * 0.1, 0.4 + Math.floor(i / 3) * 0.1]);
     }
-    const samples = await samplePixelsAt(page, 'canvas', CORNERS);
-    const centralSamples = await samplePixelsAt(page, 'canvas', CENTRAL);
+    const allSamples = await samplePixelsAt(page, 'canvas', [...CORNERS, ...CENTRAL]);
+    const samples = allSamples.slice(0, CORNERS.length);
+    const centralSamples = allSamples.slice(CORNERS.length);
     // Printed on every run, pass or fail: BOTH halves of the predicate are only
     // meaningful if the healthy frame really does paint the middle and leave a
     // corner dark, and that claim should be checkable from the run log rather

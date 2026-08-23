@@ -59,6 +59,7 @@ test.describe('lod_group node', () => {
         );
         return lodChildren >= 3;
       },
+      null,
       { timeout: 15000 }
     );
   });
@@ -108,6 +109,7 @@ test.describe('lod_group node', () => {
           (idxs.length === 1 || idxs[1] === idxs[0] + 1)
         );
       },
+      null,
       { timeout: 10000 }
     );
     // Pin the settled shape: at most two adjacent levels are visible (a single
@@ -450,6 +452,7 @@ test.describe('lod_group node — volumetric blendable', () => {
         );
         return lodChildren >= 3;
       },
+      null,
       { timeout: 15000 }
     );
   });
@@ -590,7 +593,7 @@ test.describe('lod_group node — volumetric blendable', () => {
               const f = info?.render?.frame ?? info?.frame;
               return typeof f === 'number' ? f : null;
             };
-            const awaitFrames = async (n: number, budgetMs: number): Promise<void> => {
+            const awaitFrames = async (n: number, budgetMs: number): Promise<boolean> => {
               const t0 = performance.now();
               const f0 = frameNo();
               let ticks = 0;
@@ -601,12 +604,13 @@ test.describe('lod_group node — volumetric blendable', () => {
                 await new Promise((r) => requestAnimationFrame(() => r(null)));
                 ticks++;
                 if (f0 == null) {
-                  if (ticks >= n) return; // no counter: fall back to rAF ticks
+                  if (ticks >= n) return true; // no counter: fall back to rAF ticks
                 } else {
                   const f = frameNo();
-                  if (f != null && f >= f0 + n) return;
+                  if (f != null && f >= f0 + n) return true;
                 }
               } while (performance.now() - t0 < budgetMs);
+              return false;
             };
             // Keep the render loop turning for `ms` without asserting anything —
             // the between-pass backoff that lets in-flight chunk fetches land.
@@ -677,12 +681,13 @@ test.describe('lod_group node — volumetric blendable', () => {
             };
 
             // --- Measuring sweep ---------------------------------------------
-            const trace: { k: number; distance: number; levels: Level[] }[] = [];
+            const trace: { k: number; distance: number; levels: Level[]; fresh: boolean }[] = [];
             const blends: {
               distanceScale: number;
               distance: number;
               levels: Level[];
               sum: number;
+              fresh: boolean;
             }[] = [];
             // Every placement must be re-derived by ORBIT controls, or the
             // reported distances are just the request echoed back and prove
@@ -707,10 +712,13 @@ test.describe('lod_group node — volumetric blendable', () => {
               const k = kAt(i);
               const placed = placeAtK(k);
               if (!placed || !placed.viaOrbitControls) viaOrbitControls = false;
-              await awaitFrames(2, Math.min(500, Math.max(0, sweepDeadline - performance.now())));
+              const fresh = await awaitFrames(
+                2,
+                Math.min(500, Math.max(0, sweepDeadline - performance.now()))
+              );
               const levels = sample();
               const distance = placed ? placed.distance : NaN;
-              trace.push({ k, distance, levels });
+              trace.push({ k, distance, levels, fresh });
               if (
                 levels.length === 2 &&
                 levels[1].idx === levels[0].idx + 1 &&
@@ -721,6 +729,7 @@ test.describe('lod_group node — volumetric blendable', () => {
                   distance,
                   levels,
                   sum: levels[0].opacity + levels[1].opacity,
+                  fresh,
                 });
               }
             }
@@ -883,7 +892,7 @@ test.describe('lod_group node — volumetric blendable', () => {
     const traceText = trace
       .map(
         (s) =>
-          `k=${s.k.toFixed(3)} d=${s.distance.toFixed(4)} → ` +
+          `k=${s.k.toFixed(3)} d=${s.distance.toFixed(4)} ${s.fresh ? 'fresh' : 'stale'} → ` +
           (s.levels.length
             ? s.levels.map((l) => `${l.idx}:${l.opacity.toFixed(3)}`).join(' ')
             : '(nothing visible)')
@@ -970,6 +979,7 @@ test.describe('lod_group node — volumetric blendable', () => {
     // already ordered by distance).
     type Blend = (typeof blends)[number];
     const bands: Blend[][] = [];
+    const spreadDegradations: string[] = [];
     for (const b of blends) {
       const current = bands[bands.length - 1];
       const previous = current?.[current.length - 1];
@@ -981,7 +991,7 @@ test.describe('lod_group node — volumetric blendable', () => {
       const bandText = band
         .map(
           (s) =>
-            `  d=${s.distance.toFixed(4)} ` +
+            `  d=${s.distance.toFixed(4)} ${s.fresh ? 'fresh' : 'stale'} ` +
             s.levels.map((l) => `${l.idx}:${l.opacity.toFixed(3)}`).join(' ')
         )
         .join('\n');
@@ -995,16 +1005,30 @@ test.describe('lod_group node — volumetric blendable', () => {
             `inverted dissolve hands each level its partner's weight:\n${bandText}\n\n${report}`
         ).toBeLessThanOrEqual(fine[i - 1] + FADE_MONOTONIC_EPS);
       }
-      if (band.length >= FADE_MIN_SAMPLES) {
-        const fineSpread = Math.max(...fine) - Math.min(...fine);
+      const freshBand = band.filter((sample) => sample.fresh);
+      if (freshBand.length >= FADE_MIN_SAMPLES) {
+        const freshFine = freshBand.map((sample) => sample.levels[1].opacity);
+        const fineSpread = Math.max(...freshFine) - Math.min(...freshFine);
         expect(
           fineSpread,
-          `the ${lo}↔${hi} band was sampled ${band.length} times but level ${hi}'s opacity barely ` +
+          `the ${lo}↔${hi} band had ${freshBand.length} confirmed-fresh samples but level ${hi}'s ` +
+            'opacity barely ' +
             `moved (spread ${fineSpread.toFixed(3)}); the blend weight must VARY with distance — ` +
             'a constant split is a pop at each band edge, which is what the cross-fade ' +
             `exists to prevent:\n${bandText}\n\n${report}`
         ).toBeGreaterThan(FADE_MIN_SPREAD);
+      } else {
+        spreadDegradations.push(
+          `${lo}↔${hi} spread check skipped: ${freshBand.length}/${band.length} samples were ` +
+            `confirmed fresh; need ${FADE_MIN_SAMPLES}`
+        );
       }
+    }
+    if (spreadDegradations.length) {
+      test.info().annotations.push({
+        type: 'degraded',
+        description: spreadDegradations.join('; '),
+      });
     }
 
     expect(
