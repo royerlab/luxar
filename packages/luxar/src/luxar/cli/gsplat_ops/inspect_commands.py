@@ -691,6 +691,17 @@ def _load_gsplats_for_comparison(path: Path) -> tuple["GSplatData", int, int]:
     return data, n_leaves, total_splats(node)
 
 
+def _announce_unscored_comparison_splats(
+    *, n_stored_splats: int, n_scored_splats: int
+) -> None:
+    """Report coarse LOD splats excluded from the default-rendered selection."""
+    if n_stored_splats > n_scored_splats:
+        aprint(
+            f"Skipped {n_stored_splats - n_scored_splats:,} splats in coarse "
+            "LOD levels; compression ratio covers the whole store"
+        )
+
+
 def _validate_image_min_override(image_min: Optional[float]) -> None:
     if image_min is not None and (not math.isfinite(image_min) or image_min < 0.0):
         raise typer.BadParameter(
@@ -811,11 +822,9 @@ def compare_quality(
                 ndim = data.ndim
                 aprint(f"Loaded {n_splats:,} splats ({ndim}D)")
                 aprint(f"Materialized {n_leaves:,} default-rendered leaf/leaves")
-                if n_stored_splats > n_splats:
-                    aprint(
-                        f"Skipped {n_stored_splats - n_splats:,} splats in coarse "
-                        "LOD levels; compression ratio covers the whole store"
-                    )
+                _announce_unscored_comparison_splats(
+                    n_stored_splats=n_stored_splats, n_scored_splats=n_splats
+                )
 
             # Resolve truncation radius from dataset if not explicitly set
             if truncate is None:
