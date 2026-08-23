@@ -86,26 +86,25 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
   // canvas one instead. (Reaching the panel by mouse hides the bug: leaving
   // the canvas fires `mouseleave`, which invalidates the cached pick. Reaching
   // it by Tab does not.) Same guard the other scene-scoped global keys use.
-  const openElementMenu = (): void => {
+  const openElementMenu = (event: KeyboardEvent): void => {
     // Optional-chained: `renderer` is definitely-assigned in production but a
     // stubbed SceneManager in tests need not carry one, and a missing canvas
     // should disable the shortcut rather than throw inside a key handler.
     if (!isFocusOnSceneCanvas(document.activeElement, sceneManager.renderer?.domElement ?? null)) {
       return;
     }
+    event.preventDefault();
     window.dispatchEvent(new CustomEvent('luxar-open-element-menu'));
   };
   contextManager.registerBinding(InputContext.NAVIGATION, {
     key: 'F10',
     modifiers: { shift: true },
     handler: openElementMenu,
-    preventDefault: true,
     description: 'Open the context menu for the hovered element',
   });
   contextManager.registerBinding(InputContext.NAVIGATION, {
     key: 'ContextMenu',
     handler: openElementMenu,
-    preventDefault: true,
     description: 'Open the context menu for the hovered element',
   });
 

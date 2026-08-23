@@ -288,28 +288,33 @@ describe('registerAllKeyBindings — NAVIGATION command dispatch', () => {
     const { bindings, canvas } = setup();
     const listener = vi.fn();
     const button = document.createElement('button');
+    const contextMenu = findBinding(bindings, InputContext.NAVIGATION, 'ContextMenu');
+    const shiftF10 = findBinding(bindings, InputContext.NAVIGATION, 'F10', { shift: true });
     document.body.appendChild(canvas);
     document.body.appendChild(button);
     window.addEventListener('luxar-open-element-menu', listener);
     try {
+      expect(contextMenu.preventDefault).not.toBe(true);
+      expect(shiftF10.preventDefault).not.toBe(true);
+
       document.body.focus();
-      findBinding(bindings, InputContext.NAVIGATION, 'ContextMenu').handler(
-        new KeyboardEvent('keydown')
-      );
+      const bodyEvent = new KeyboardEvent('keydown', { cancelable: true });
+      contextMenu.handler(bodyEvent);
       expect(listener).toHaveBeenCalledTimes(1);
+      expect(bodyEvent.defaultPrevented).toBe(true);
 
       canvas.tabIndex = 0;
       canvas.focus();
-      findBinding(bindings, InputContext.NAVIGATION, 'F10', { shift: true }).handler(
-        new KeyboardEvent('keydown', { shiftKey: true })
-      );
+      const canvasEvent = new KeyboardEvent('keydown', { shiftKey: true, cancelable: true });
+      shiftF10.handler(canvasEvent);
       expect(listener).toHaveBeenCalledTimes(2);
+      expect(canvasEvent.defaultPrevented).toBe(true);
 
       button.focus();
-      findBinding(bindings, InputContext.NAVIGATION, 'ContextMenu').handler(
-        new KeyboardEvent('keydown')
-      );
+      const buttonEvent = new KeyboardEvent('keydown', { cancelable: true });
+      contextMenu.handler(buttonEvent);
       expect(listener).toHaveBeenCalledTimes(2);
+      expect(buttonEvent.defaultPrevented).toBe(false);
     } finally {
       window.removeEventListener('luxar-open-element-menu', listener);
       canvas.remove();
