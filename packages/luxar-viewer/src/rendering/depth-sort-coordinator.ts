@@ -795,8 +795,8 @@ function anyNodeWantsSorting(): boolean {
  * FUTURE commit then registers naturally. Only the re-registration sweep
  * needs that callback, and it checks for itself.
  *
- * (The caller also runs this only after its `isLoadInProgress` early
- * return, so a retry never fires into an in-flight load sweep — the very
+ * (The caller explicitly suppresses this helper while `isLoadInProgress`
+ * is true, so a retry never fires into an in-flight load sweep — the very
  * condition that starves init in the first place.)
  */
 function maybeRetryStarvedWorkerInit(): void {
@@ -824,18 +824,17 @@ function maybeRetryStarvedWorkerInit(): void {
       `${SORT_WORKER_INIT_MAX_ATTEMPTS})`
   );
   // The re-registration below invalidates both freshness stamps on several
-  // nodes at once, and that has two accepted, transient costs. A cleared
+  // nodes at once, with one accepted, transient cost. A cleared
   // `loadedViewVersion` makes the node STALE for the LOD freshness check
   // (`scene/lod-freshness.ts::isFresh`), so a substitutive-LOD group's
   // display falls back to its coarsest ready level (`coarsestFreshOrReadyIndex`
   // in `scene/lod-group-registry.ts`) until the settle-gated `maybeKickReload`
-  // climbs back; and while `committedData` is absent the per-frame pass skips
-  // the node, so it is not collected into that frame's cross-node
-  // `renderOrder` assignment — a transient wrong back-to-front order across
-  // parts. Both self-heal on the re-commit, and both are exactly what the
-  // switch-to-sorted blending-mode hook has always done for ONE node; an
-  // automatic recovery just does it for several, which is why it is written
-  // down here rather than left to be discovered.
+  // climbs back. While `committedData` is absent, the node keeps its exact
+  // cross-node `renderOrder`; only its within-mesh permutation stays stale
+  // until the re-commit. The LOD fallback is exactly what the switch-to-sorted
+  // blending-mode hook has always done for ONE node; an automatic recovery
+  // just does it for several, which is why it is written down here rather than
+  // left to be discovered.
   void ensureWorker().then(
     () => {
       // Epoch guard: a dispose (or another retry) between the dispatch and
@@ -1656,6 +1655,10 @@ function pumpChunkedOrderingApplies(): void {
  * nodes whose live mode is no longer order-dependent. A streaming
  * chunked apply does NOT skip — a fresher sort fills the inactive
  * buffer concurrently.
+ *
+ * Work is tiered by dependency: frame-state cleanup runs above every gate,
+ * pure main-thread cross-node ordering runs above the loader gate, and only
+ * work that touches the SortWorker stays below that gate.
  */
 export function evaluateDepthSortPerFrame(): void {
   // Drop the previous frame's render-order state FIRST — before any
@@ -1677,13 +1680,13 @@ export function evaluateDepthSortPerFrame(): void {
   if (!depthSortEnabled || nodeStates.size === 0) return;
   const camera = getCamera?.();
   if (!camera) return;
-  if (isLoadInProgress?.()) return;
-  // Past the load gate on purpose: a starved init must not be retried while
+  const loadInProgress = isLoadInProgress?.() ?? false;
+  // Keep worker retry behind the load gate: a starved init must not run while
   // a view-update sweep is in flight, since that sweep IS the main-thread
   // saturation that starved it. Everything else the retry needs to know
   // (something visible actually wants sorting, the backoff, an offline
   // capture) it checks itself.
-  maybeRetryStarvedWorkerInit();
+  if (!loadInProgress) maybeRetryStarvedWorkerInit();
 
   if (!scratch) {
     scratch = {
@@ -1699,9 +1702,6 @@ export function evaluateDepthSortPerFrame(): void {
   for (const [nodeId, state] of nodeStates) {
     const mesh = state.mesh;
     if (!isEffectivelyVisible(mesh)) continue;
-    // LOD demotion returned the geometry to the pool — same signal the
-    // resolve path checks; a sort dispatched now would be dropped there.
-    if (!hasCommittedData(mesh)) continue;
     const mode = liveBlendingMode(mesh);
     if (!isLiveOrderDependent(mode)) {
       // No longer order-dependent (e.g. switched to additive) — clear any
@@ -1729,6 +1729,17 @@ export function evaluateDepthSortPerFrame(): void {
     // renderOrder scale (full rationale in
     // `depth-sort-coordinator/render-order.ts`).
     collectRenderOrderSlot(mesh, scratch.mv, scratch.camPos);
+
+    // Everything below dispatches or evaluates a within-mesh worker sort.
+    // Keep that work paused during a loader sweep, but do not pause the
+    // pure-main-thread cross-mesh ordering collected above.
+    if (loadInProgress) continue;
+    // Mode switches and late-worker re-registration deliberately invalidate
+    // commit stamps while the existing geometry stays visible. Those meshes
+    // still receive their cross-mesh rank above, but cannot dispatch a worker
+    // sort until re-commit. LOD demotion is only a defensive peer case here:
+    // its synchronous release removes the mesh from nodeStates first.
+    if (!hasCommittedData(mesh)) continue;
     const bs = (mesh.geometry as THREE.BufferGeometry | undefined)?.boundingSphere;
 
     // === Within-mesh re-sort trigger (Phase 3) ===

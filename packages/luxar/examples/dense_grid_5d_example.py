@@ -210,9 +210,9 @@ def main():
                 "<code>Channel</code> dimensions are navigated as sliders."
             ),
             observe=[
-                "Press <code>4</code> for Time, then <code>[</code> / "
+                "Press <code>1</code> for Time, then <code>[</code> / "
                 "<code>]</code>: the grid rotates 10° per frame.",
-                "Press <code>5</code> for Channel: colour switches red, green, blue.",
+                "Press <code>2</code> for Channel: colour switches red, green, blue.",
                 "Point sizes oscillate with time.",
                 "The R/G/B axis markers stay visible at every time and channel.",
             ],
@@ -229,10 +229,10 @@ def main():
     aprint("VIEWING INSTRUCTIONS:")
     aprint(f"1. Run: luxar serve {scene_path}")
     aprint("2. Use keyboard to navigate time dimension:")
-    aprint("   - Press '4' to select Time dimension")
+    aprint("   - Press '1' to select Time dimension")
     aprint("   - Press '[' and ']' to navigate through time")
     aprint("3. Use keyboard to navigate channel dimension:")
-    aprint("   - Press '5' to select Channel dimension")
+    aprint("   - Press '2' to select Channel dimension")
     aprint("   - Press '[' and ']' to switch channels")
     aprint("")
     aprint("Expected behavior:")

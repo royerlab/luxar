@@ -167,7 +167,7 @@ test.describe('Performance Regression Tracking', () => {
     const startTime = Date.now();
 
     // Perform a single navigation
-    await page.keyboard.press('4');
+    await page.keyboard.press('1');
     await waitForNextRender(page);
     await page.keyboard.press(']');
     await waitForSpatialQueryOrThrow(page);

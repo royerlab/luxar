@@ -172,7 +172,7 @@ test.describe('Dimension Animation - UI Controls', () => {
     await waitForNextRender(page, 1);
 
     // Select a dimension
-    await page.keyboard.press('4');
+    await page.keyboard.press('1');
     await waitForNextRender(page, 1);
 
     // Wait for play button to be visible
@@ -222,7 +222,7 @@ test.describe('Dimension Animation - UI Controls', () => {
     await waitForNextRender(page, 1);
 
     // Select a dimension
-    await page.keyboard.press('4');
+    await page.keyboard.press('1');
     await waitForNextRender(page, 1);
 
     // Right-click play button to open animation settings
@@ -259,7 +259,7 @@ test.describe('Dimension Animation - UI Controls', () => {
     await waitForNextRender(page, 1);
 
     // Select a dimension
-    await page.keyboard.press('4');
+    await page.keyboard.press('1');
     await waitForNextRender(page, 1);
 
     // Right-click play button to open animation settings
@@ -298,7 +298,7 @@ test.describe('Dimension Animation - Keyboard Shortcuts', () => {
     await waitForNextRender(page, 1);
 
     // Select a dimension
-    await page.keyboard.press('4');
+    await page.keyboard.press('1');
     await waitForNextRender(page, 1);
 
     // Press K to start animation
@@ -328,7 +328,7 @@ test.describe('Dimension Animation - Keyboard Shortcuts', () => {
     await waitForNextRender(page, 1);
 
     // Select a dimension
-    await page.keyboard.press('4');
+    await page.keyboard.press('1');
     await waitForNextRender(page, 1);
 
     // Navigate forward a few steps. Capture value BEFORE each press so the
@@ -369,7 +369,7 @@ test.describe('Dimension Animation - Keyboard Shortcuts', () => {
     await waitForNextRender(page, 1);
 
     // Select a dimension
-    await page.keyboard.press('4');
+    await page.keyboard.press('1');
     await waitForNextRender(page, 1);
 
     // Get the max value for this dimension
@@ -403,7 +403,7 @@ test.describe('Dimension Animation - Keyboard Shortcuts', () => {
     await waitForNextRender(page, 1);
 
     // Select a dimension and start animation
-    await page.keyboard.press('4');
+    await page.keyboard.press('1');
     await waitForNextRender(page, 1);
     await page.keyboard.press('k');
     await waitForNextRender(page);
@@ -439,7 +439,7 @@ test.describe('Dimension Animation - Keyboard Shortcuts', () => {
     await waitForNextRender(page, 1);
 
     // Select a dimension and start animation at high FPS
-    await page.keyboard.press('4');
+    await page.keyboard.press('1');
     await waitForNextRender(page, 1);
 
     // Set FPS to 30 via API (more reliable than UI interaction)
@@ -487,7 +487,7 @@ test.describe('Dimension Animation - Animation Behavior', () => {
     await waitForNextRender(page, 1);
 
     // Select a dimension
-    await page.keyboard.press('4');
+    await page.keyboard.press('1');
     await waitForNextRender(page, 1);
 
     // Get initial value
@@ -528,7 +528,7 @@ test.describe('Dimension Animation - Animation Behavior', () => {
     await waitForNextRender(page, 1);
 
     // Select a dimension
-    await page.keyboard.press('4');
+    await page.keyboard.press('1');
     await waitForNextRender(page, 1);
 
     // Set loop mode to loop and high FPS
@@ -580,7 +580,7 @@ test.describe('Dimension Animation - Animation Behavior', () => {
     await waitForNextRender(page, 1);
 
     // Select a dimension
-    await page.keyboard.press('4');
+    await page.keyboard.press('1');
     await waitForNextRender(page, 1);
 
     // Set loop mode to once and high FPS using direct API calls (more reliable than UI)
@@ -688,7 +688,7 @@ test.describe('Dimension Animation - Animation Behavior', () => {
     await waitForNextRender(page, 1);
 
     // Select a dimension
-    await page.keyboard.press('4');
+    await page.keyboard.press('1');
     await waitForNextRender(page, 1);
 
     // Set loop mode to bounce and high FPS
@@ -739,7 +739,7 @@ test.describe('Dimension Animation - Animation Behavior', () => {
     await waitForNextRender(page, 1);
 
     // Select a dimension and start animation
-    await page.keyboard.press('4');
+    await page.keyboard.press('1');
     await waitForNextRender(page, 1);
     await page.keyboard.press('k');
     await waitForNextRender(page);
@@ -917,7 +917,7 @@ test.describe('Dimension Animation - Error Handling', () => {
 
     const initial = await getDimensionValue(page, 3);
     expect(initial).toBeCloseTo(0, 6);
-    await page.keyboard.press('4');
+    await page.keyboard.press('1');
     await page.keyboard.press('k'); // play
     await waitForDimensionValueChange(page, 3, initial, 5000);
     await page.keyboard.press('k'); // pause
@@ -940,7 +940,7 @@ test.describe('Dimension Animation - Error Handling', () => {
       ih?.animationManager?.setStepSize?.(3, 2.5);
     });
 
-    await page.keyboard.press('4'); // select W (4th dimension)
+    await page.keyboard.press('1'); // select W (first non-displayed dimension)
     const initial = await getDimensionValue(page, 3);
     await page.keyboard.press(']');
     await waitForNextRender(page);

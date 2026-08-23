@@ -120,7 +120,6 @@ def _score_planned_merge(
     verbose: bool,
     image_min: Optional[float],
     stats: "dict[str, Any] | None" = None,
-    partition: bool = False,
 ) -> None:
     """Score a planned merge, or explain why no score can be recorded."""
     reference, unscored_reason = resolve_merged_reference(
@@ -130,7 +129,7 @@ def _score_planned_merge(
         missing_reason="this parallel merge was not given a reference volume",
     )
     if unscored_reason is not None:
-        announce_unscored_merge(unscored_reason, partition=partition)
+        announce_unscored_merge(unscored_reason)
         return
 
     # Forward guard for content-box denoising: once boxes can denoise, this
@@ -516,7 +515,6 @@ def fit_planned(
             verbose=verbose,
             image_min=fit_image_min(result.meta),
             stats=fit_stats,
-            partition=is_partition,
         )
         result.meta["fit_stats"] = fit_stats
         return result

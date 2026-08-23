@@ -42,7 +42,7 @@ WorkerCmdBuilder = Callable[[int, int, Path], "list[str]"]
 def _announce_unscored_reason(reason: str | None) -> None:
     """Report why a direct parallel merge could not be scored."""
     if reason is not None:
-        announce_unscored_merge(reason, partition=None)
+        announce_unscored_merge(reason)
 
 
 def _empty_tile(ndim: int) -> GSplatData:

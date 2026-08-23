@@ -25,12 +25,14 @@ from ..utils.data_fetch import (
     local_fit_path,
 )
 from ..utils.demos import (
+    BUILDER_FINGERPRINT_ATTR,
     BundleMemberNotFound,
     cache_computed,
     cached_download,
     create_lorenz_attractor,
     create_random_spheres,
     create_time_series_demo,
+    demo_source_fingerprint,
     detect_device,
     hsv_to_rgb,
     is_lfs_pointer,
@@ -43,6 +45,7 @@ from ..utils.demos import (
     parse_path_arg,
     print_data_provenance,
     require_local_data,
+    scene_is_current,
     stack_colorings,
     voxel_sampled_payload_agreement,
     warn_if_no_cuda_gpu,
@@ -61,6 +64,7 @@ from ._dependencies import (
 )
 
 __all__ = [
+    "BUILDER_FINGERPRINT_ATTR",
     "INSTALL_SPECS",
     "LOCAL_FIT_DIRNAME",
     "BundleMemberNotFound",
@@ -77,6 +81,7 @@ __all__ = [
     "create_random_spheres",
     "create_time_series_demo",
     "dataset_spec",
+    "demo_source_fingerprint",
     "detect_device",
     "ensure_dataset",
     "extras_for",
@@ -99,6 +104,7 @@ __all__ = [
     "print_data_provenance",
     "require_local_data",
     "require_module",
+    "scene_is_current",
     "stack_colorings",
     "substitutive_lod_or_flat",
     "survey",

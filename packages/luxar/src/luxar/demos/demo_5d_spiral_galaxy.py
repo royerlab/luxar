@@ -22,8 +22,8 @@ Usage:
     python demo_5d_spiral_galaxy.py [--points=N]
 
 Controls:
-    - Press '4' to select T dimension (time), then use [ ] to navigate
-    - Press '5' to select Channel dimension, then use [ ] to navigate
+    - Press '1' to select T dimension (time), then use [ ] to navigate
+    - Press '2' to select Channel dimension, then use [ ] to navigate
     - Ctrl+C to stop and cleanup
     - Browser opens automatically
 """
@@ -332,8 +332,8 @@ def main() -> None:
         aprint("Press Ctrl+C when done to stop and cleanup.")
         aprint("")
         aprint("Navigation controls:")
-        aprint("  - Press '4' to select T (time), then [ ] to animate")
-        aprint("  - Press '5' to select Channel, then [ ] to switch populations")
+        aprint("  - Press '1' to select T (time), then [ ] to animate")
+        aprint("  - Press '2' to select Channel, then [ ] to switch populations")
         aprint("  - Use mouse to orbit/zoom")
         aprint("  - Blue = young stars, Yellow = intermediate, Red = old stars")
         aprint("")

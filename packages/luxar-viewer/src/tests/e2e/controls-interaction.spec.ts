@@ -14,6 +14,7 @@ import {
   getLuxarState,
   waitForNextRender,
   dismissDatasetBrowser,
+  isFocusOnTypingSurface,
 } from './helpers';
 
 test.describe('Luxar Controls & Keyboard Shortcuts', () => {
@@ -55,6 +56,13 @@ test.describe('Luxar Controls & Keyboard Shortcuts', () => {
     });
     expect(title).toContain('Luxar Controls');
 
+    // Issue #1922: the overlay used to autofocus its filter field, which
+    // trips `InputHandler`'s typing guard — the second `H` was swallowed as
+    // typing and the "toggle" only ever opened. Focus is now on the overlay
+    // container, so the round-trip below works. Asserting the predicate
+    // directly pins WHY, not just that the close happened to work.
+    expect(await isFocusOnTypingSurface(page)).toBe(false);
+
     // Press H again to dismiss
     await page.keyboard.press('h');
     await waitForNextRender(page);
@@ -63,6 +71,36 @@ test.describe('Luxar Controls & Keyboard Shortcuts', () => {
       return document.getElementById('luxar-help-overlay') === null;
     });
     expect(helpGone).toBe(true);
+  });
+
+  test('typing filters the help overlay from the first keystroke', async ({ page }) => {
+    await page.goto('/?debug&no-opfs');
+    await waitForLuxarReady(page);
+    await dismissDatasetBrowser(page);
+
+    await page.keyboard.press('h');
+    await waitForNextRender(page);
+    await expect(page.locator('#luxar-help-overlay')).toBeVisible();
+
+    // The other half of #1922: dropping the autofocus must not cost
+    // type-to-filter. The container-level forwarder hands the first printable
+    // key to the filter, so no keystroke is lost.
+    await page.keyboard.press('f');
+
+    const filter = page.locator('#luxar-help-overlay .luxar-panel-filter__input');
+    await expect(filter).toBeFocused();
+    await expect(filter).toHaveValue('f');
+
+    // And it really filtered: every visible row matches the query.
+    const rowsAllMatch = await page.evaluate(() => {
+      const rows = Array.from(
+        document.querySelectorAll<HTMLElement>('#luxar-help-overlay .luxar-help-overlay__row')
+      ).filter((row) => row.style.display !== 'none');
+      return (
+        rows.length > 0 && rows.every((row) => (row.textContent ?? '').toLowerCase().includes('f'))
+      );
+    });
+    expect(rowsAllMatch).toBe(true);
   });
 
   test('should track camera position changes via mouse drag', async ({ page }) => {

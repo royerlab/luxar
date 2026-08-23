@@ -1338,7 +1338,7 @@ class TestFitPlannedParallel:
         assert root["fitting"].attrs["n_splats"] == node.n_splats
         assert root["pipeline"].attrs["planned_fit"] is True
 
-    def test_single_region_partition_request_records_quality_without_flatten_notice(
+    def test_single_region_partition_request_records_quality_without_a_notice(
         self, tmp_path, capsys
     ):
         from luxar.gsplats.tree import GSplatPartition
@@ -1380,8 +1380,10 @@ class TestFitPlannedParallel:
         assert "psnr_db" not in node.meta["fit_stats"]
         notice = capsys.readouterr().out
         assert "Merged quality metrics skipped" in notice
-        assert "gsplat flatten" in notice
         assert "gsplat compare" in notice
+        # `compare` reads a `kind=partition` store as written (#1978) — the
+        # recourse must not ask for a full-disk `gsplat flatten` copy first.
+        assert "gsplat flatten" not in notice
 
     def test_partition_missing_reference_is_announced_and_keeps_root_stats(
         self, tmp_path, capsys
@@ -1400,7 +1402,10 @@ class TestFitPlannedParallel:
         notice = capsys.readouterr().out
         assert "No merged quality metrics" in notice
         assert "reference volume" in notice
-        assert "gsplat flatten" in notice
+        assert "gsplat compare" in notice
+        # `compare` reads a `kind=partition` store as written (#1978) — the
+        # recourse must not ask for a full-disk `gsplat flatten` copy first.
+        assert "gsplat flatten" not in notice
 
     def test_partition_disagreeing_box_bases_warn_and_score_raw(self, tmp_path, capsys):
         builders = {
