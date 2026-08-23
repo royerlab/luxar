@@ -845,7 +845,7 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
     // The enlarged draw must use one coherent fallback permutation while the
     // commit-triggered worker sort is pending. Keeping the old sorted prefix
     // followed by the new storage-order suffix renders two independently
-    // ordered populations and produces a detached alpha-over ghost mid-load.
+    // ordered populations.
     expect(activeSortedIndexSlot(geom)).toBe(0);
     const ordering = getActiveSortedIndexAttribute(geom)!.array as Uint32Array;
     expect(Array.from(ordering.subarray(0, 6))).toEqual([0, 1, 2, 3, 4, 5]);
