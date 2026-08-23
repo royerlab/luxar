@@ -147,7 +147,8 @@ describe('GPUBufferPool', () => {
     it('append (fromInstance) keeps the PREFIX permutation and gives only the suffix identity', () => {
       // Suffix-only ordering on append — the points twin of the lines
       // case below; resetting the whole attribute would flash the node
-      // unsorted on every progressive refinement.
+      // unsorted on every progressive refinement. GSplats deliberately
+      // take that trade instead; see the Phase 4 Stage 2 spec rationale.
       const geom = pool.acquirePointsGeometry('append-points', 6);
       pool.updatePointsGeometry(geom, createMockLoadedPointsData(4), 4);
       writeSortedIndexOrdering(geom, new Uint32Array([3, 2, 1, 0]), 4);
@@ -431,7 +432,8 @@ describe('GPUBufferPool', () => {
       // The suffix-only ordering write is load-bearing: resetting the
       // whole aSortedIndex on an append would destroy the live depth-sort
       // permutation and flash the node unsorted on every progressive
-      // refinement until the re-sort lands. Mirrors the points twin below.
+      // refinement until the re-sort lands. GSplats deliberately take that
+      // trade instead; see the Phase 4 Stage 2 spec rationale.
       const makeLinesData = (count: number): ProcessedLinesData => ({
         startPositions: new Float32Array(count * 3),
         endPositions: new Float32Array(count * 3),

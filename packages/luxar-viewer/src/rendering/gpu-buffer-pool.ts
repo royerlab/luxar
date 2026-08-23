@@ -298,7 +298,8 @@ export class GPUBufferPool {
    *   (same-node same-count recommit — the commit path decides; see
    *   commit-gsplats-geometry.ts). `fromInstance`: append fast path (Phase 4
    *   Stage 2) — write & upload only the `[fromInstance, count)` suffix,
-   *   preserving the prefix texels + permutation already on the GPU.
+   *   preserving the prefix texels while resetting the enlarged ordering to
+   *   full identity until the commit-triggered sort lands.
    */
   updateGSplatsGeometry(
     geometry: THREE.InstancedBufferGeometry,

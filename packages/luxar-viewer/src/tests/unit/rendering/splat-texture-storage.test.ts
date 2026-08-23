@@ -819,7 +819,7 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
     expect(Array.from(reset.subarray(0, 4))).toEqual([0, 1, 2, 3]);
   });
 
-  it('fromInstance append: writes only the suffix texels, extends aSortedIndex, keeps the prefix permutation', () => {
+  it('fromInstance append: writes only suffix texels but resets the full ordering to identity', () => {
     const geom = pool.acquireGSplatsGeometry('node', 16);
     const src6 = makeSource(6);
     const packed = (s: SplatTexelSource, count: number) => ({
@@ -842,9 +842,48 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
     expect(texels[0]).toBe(sentinel); // prefix texels untouched
     // Suffix splat 5 center.x written.
     expect(texels[5 * SPLAT_FLOATS_PER_SPLAT]).toBe(src6.centers[15]);
-    // Prefix permutation preserved; suffix gets identity.
+    // The enlarged draw must use one coherent fallback permutation while the
+    // commit-triggered worker sort is pending. Keeping the old sorted prefix
+    // followed by the new storage-order suffix renders two independently
+    // ordered populations.
+    expect(activeSortedIndexSlot(geom)).toBe(0);
     const ordering = getActiveSortedIndexAttribute(geom)!.array as Uint32Array;
-    expect(Array.from(ordering.subarray(0, 6))).toEqual([3, 2, 1, 0, 4, 5]);
+    expect(Array.from(ordering.subarray(0, 6))).toEqual([0, 1, 2, 3, 4, 5]);
+  });
+
+  it('fromInstance append cancels a partially applied ordering and normalises slot 0', () => {
+    setSortedIndexChunkElementsForTests(2);
+    configureSortedIndexChunkedApply(true);
+    const geom = pool.acquireGSplatsGeometry('node', 16);
+    const src6 = makeSource(6);
+    const packed = (count: number) => ({
+      centers3D: src6.centers.subarray(0, count * 3),
+      amplitudes: src6.amplitudes.subarray(0, count),
+      choleskyFactors: src6.choleskyFactors.subarray(0, count * 6),
+      colors: src6.colors.subarray(0, count * 3),
+    });
+
+    try {
+      pool.updateGSplatsGeometry(geom, packed(4), 4);
+      writeSortedIndexOrdering(geom, new Uint32Array([3, 2, 1, 0]), 4);
+      drainSortedIndexApply(geom);
+      expect(activeSortedIndexSlot(geom)).toBe(1);
+
+      writeSortedIndexOrdering(geom, new Uint32Array([2, 3, 0, 1]), 4);
+      expect(pumpSortedIndexOrderingApply(geom).more).toBe(true);
+      expect(hasPendingSortedIndexOrderingApply(geom)).toBe(true);
+
+      pool.updateGSplatsGeometry(geom, packed(6), 6, 3.0, { fromInstance: 4 });
+
+      expect(hasPendingSortedIndexOrderingApply(geom)).toBe(false);
+      expect(activeSortedIndexSlot(geom)).toBe(0);
+      const ordering = getActiveSortedIndexAttribute(geom)!.array as Uint32Array;
+      expect(Array.from(ordering.subarray(0, 6))).toEqual([0, 1, 2, 3, 4, 5]);
+      expect(geom.instanceCount).toBe(6);
+    } finally {
+      cancelSortedIndexOrderingApply(geom);
+      setSortedIndexChunkElementsForTests(null);
+    }
   });
 });
 
