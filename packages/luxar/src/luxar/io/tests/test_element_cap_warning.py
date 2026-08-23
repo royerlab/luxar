@@ -169,16 +169,16 @@ def test_an_additive_ladder_warns_on_its_total(
     tmp_path,
     capsys: pytest.CaptureFixture,
 ) -> None:
-    """Sub-cap levels still overflow because the viewer concatenates the ladder."""
+    """Only the actionable parent path warns when the viewer concatenates levels."""
     monkeypatch.setitem(ELEMENT_TEXELS_PER_ELEMENT, geometry_type, 4096)
-    positions = np.zeros((3_001, 3), dtype=np.float32)
+    positions = np.zeros((5_001, 3), dtype=np.float32)
 
     with LuxarZarrCompiler(tmp_path / f"{geometry_type}.luxar.zarr") as compiler:
         compiler.create_scene(dimensions=Dimensions.default_3d())
         if geometry_type == "points":
             compiler.write_points_multi_lod(
                 "ladder",
-                [{"positions": positions}, {"positions": positions}],
+                [{"positions": positions[:5_000]}, {"positions": positions[:5_000]}],
             )
         else:
             compiler.write_lines_multi_lod(
@@ -190,9 +190,12 @@ def test_an_additive_ladder_warns_on_its_total(
             )
 
     out = capsys.readouterr().out
-    expected = "6,002 points" if geometry_type == "points" else "6,000 segments"
+    expected = "10,000 points" if geometry_type == "points" else "10,000 segments"
     assert "'/ladder'" in out
     assert expected in out
+    assert "'/ladder/additive_0'" not in out
+    assert "'/ladder/additive_1'" not in out
+    assert out.count("above the") == 1
 
 
 def test_a_gsplat_leaf_warns_on_its_total(

@@ -919,6 +919,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 **({"lod_stats": lvl["lod_stats"]} if lvl.get("lod_stats") else {}),
                 **({"extend_to_all": extend_to_all} if extend_to_all else {}),
                 _skip_scene_bounds=True,
+                _skip_element_cap_warning=True,
                 **({"_return_sort_order": True} if labelled else {}),
             )
             # POP, not read: the permutation is only needed to build the union
@@ -1056,6 +1057,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 **({"lod_stats": lvl["lod_stats"]} if lvl.get("lod_stats") else {}),
                 **({"extend_to_all": extend_to_all} if extend_to_all else {}),
                 _skip_scene_bounds=True,
+                _skip_element_cap_warning=True,
                 **({"_return_sort_order": True} if labelled else {}),
             )
             # POP, not read: the permutation is only needed to build the union

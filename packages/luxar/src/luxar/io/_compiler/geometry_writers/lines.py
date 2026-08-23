@@ -221,12 +221,16 @@ def write_lines(
     disk. The key name matches the Points writer's so both multi-LOD writers
     read one key. Opt-in so the flat path never parks a big index array in the
     compiler's metadata cache.
+
+    ``_skip_element_cap_warning`` is private plumbing for additive ladders: the
+    parent warns on the concatenated total, so per-level warnings are redundant.
     """
     # Private forwarding flag: the multi-LOD writer needs this node's per-vertex
     # spatial permutation to build the ladder's union label CSR (the permutation
     # is not persisted on disk). Popped FIRST so it never reaches the attr
     # validator or .zattrs.
     return_sort_order = attrs.pop("_return_sort_order", False)
+    skip_element_cap_warning = bool(attrs.pop("_skip_element_cap_warning", False))
 
     from ....validation.base import (
         validate_colors_for_writing,
@@ -564,7 +568,8 @@ def write_lines(
     group.attrs["type"] = "lines"
     group.attrs["n_vertices"] = n_vertices
     group.attrs["n_segments"] = n_segments
-    warn_if_over_element_cap("lines", n_segments, group.name)
+    if not skip_element_cap_warning:
+        warn_if_over_element_cap("lines", n_segments, group.name)
     group.attrs["ndim"] = n_dims
     group.attrs["original_line_type"] = line_type
     group.attrs["has_colors"] = metadata["has_colors"]

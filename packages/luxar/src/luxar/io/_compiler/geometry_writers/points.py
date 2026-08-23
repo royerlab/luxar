@@ -153,12 +153,16 @@ def write_points(
     build the ladder's union label CSR, and the permutation is not persisted on
     disk. Opt-in so the flat path never parks a big index array in the
     compiler's metadata cache.
+
+    ``_skip_element_cap_warning`` is private plumbing for additive ladders: the
+    parent warns on the concatenated total, so per-level warnings are redundant.
     """
     # Private forwarding flag: the multi-LOD writer needs this node's spatial
     # permutation to build the ladder's union label CSR (the permutation is not
     # persisted on disk). Popped FIRST so it never reaches the attr validator or
     # .zattrs.
     return_sort_order = attrs.pop("_return_sort_order", False)
+    skip_element_cap_warning = bool(attrs.pop("_skip_element_cap_warning", False))
 
     # Import validation functions locally to avoid circular imports
     from ....validation.base import (
@@ -350,7 +354,8 @@ def write_points(
     group.attrs.update(attrs)
     group.attrs["type"] = "points"
     group.attrs["n_points"] = n_points
-    warn_if_over_element_cap("points", n_points, group.name)
+    if not skip_element_cap_warning:
+        warn_if_over_element_cap("points", n_points, group.name)
     group.attrs["ndim"] = n_dims
     # Presence flags mirror the Lines writer (has_colors/has_sharpness) so every
     # geometry type stamps the same attrs the viewer can rely on.
