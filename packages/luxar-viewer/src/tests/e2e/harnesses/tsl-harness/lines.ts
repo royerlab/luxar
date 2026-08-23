@@ -1321,6 +1321,37 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
     },
     buildMesh: buildLineInstancedMesh,
   },
+  // Opaque-mode contribution cutout parity: the GLSL twin compiles with
+  // LUXAR_OPAQUE_RGB_CONTRIBUTION and the TSL graph is built from the
+  // opaque blending mode. Low opacity moves the discard boundary inside
+  // the ribbon so a predicate mismatch changes the rendered footprint.
+  'line-opaque': {
+    source: LINE_SOURCE,
+    buildUniforms: () => ({
+      uLineTex: { value: buildLineDataTexture() },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uIsOrtho: { value: 1 },
+      uNearCull: { value: 0.01 },
+      uMaxLinePixelWidth: { value: 32.0 },
+      uPerspectiveLineScale: { value: 1.0 },
+      uOrthoLineScale: { value: 64.0 },
+      uOpacity: { value: 0.02 },
+      uInvGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+    }),
+    buildDefines: () => ({ LUXAR_OPAQUE_RGB_CONTRIBUTION: '' }),
+    buildTSLMaterial: (uniforms) => {
+      const m = lineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'opaque',
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildLineInstancedMesh,
+  },
   // Line volumetric parity: the emission–absorption output branch
   // (LUXAR_VOLUMETRIC; the TSL side builds it from
   // `blendingMode: 'volumetric'`) — τ = κ·alpha (κ times the same ray

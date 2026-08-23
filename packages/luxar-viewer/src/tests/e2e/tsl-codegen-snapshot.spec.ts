@@ -274,6 +274,10 @@ const SHADERS = [
   // Max-mode premultiplied RGB-contribution fragment (lines; GLSL twin:
   // LUXAR_MAX_RGB_CONTRIBUTION) — distinct generated code vs `line`.
   'line-max',
+  // Opaque contribution-cutout branch (lines; GLSL twin:
+  // LUXAR_OPAQUE_RGB_CONTRIBUTION) — distinct generated code no other
+  // line variant pins.
+  'line-opaque',
   // Emission–absorption output branch (lines, volumetric; GLSL twin:
   // LUXAR_VOLUMETRIC): τ = κ·alpha, S(τ) screening, the
   // w(a) per-endpoint-alpha map, and the color-discard bypass are
@@ -300,6 +304,10 @@ const SHADERS = [
   // Max-mode premultiplied RGB-contribution fragment (points; GLSL twin:
   // LUXAR_MAX_RGB_CONTRIBUTION) — distinct generated code vs `point`.
   'point-max',
+  // Opaque contribution-cutout branch (points; GLSL twin:
+  // LUXAR_OPAQUE_RGB_CONTRIBUTION) — distinct generated code no other
+  // point variant pins.
+  'point-opaque',
   // Emission–absorption output branch (points, volumetric phase 3; GLSL
   // twin: LUXAR_VOLUMETRIC): τ = κ·alpha, S(τ) screening, the
   // w(a) per-point-alpha map, and the color-discard bypass are distinct
