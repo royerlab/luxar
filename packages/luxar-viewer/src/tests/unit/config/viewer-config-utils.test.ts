@@ -228,8 +228,21 @@ describe('extractRenderingOverrides', () => {
     expect(warnSpy).toHaveBeenCalledOnce();
     expect(warnSpy).toHaveBeenCalledWith(
       Modules.CONFIG,
-      expect.stringMatching(/numeric FOV wins.*preset label will read "Custom"/)
+      expect.stringMatching(/numeric FOV wins.*preset label will be re-derived/)
     );
+    warnSpy.mockRestore();
+  });
+
+  it('does not warn when camera.fov remains within the preset label tolerance', () => {
+    const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+
+    const overrides = extractRenderingOverrides({
+      camera: { fov: 29.2, fov_preset: '85mm Portrait' },
+    });
+
+    expect(overrides.fov).toBe(29.2);
+    expect(overrides.fovPreset).toBe('85mm Portrait');
+    expect(warnSpy).not.toHaveBeenCalled();
     warnSpy.mockRestore();
   });
 

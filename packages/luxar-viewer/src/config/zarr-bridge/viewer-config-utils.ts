@@ -143,13 +143,13 @@ export function extractRenderingOverrides(
     if (overrides.fov === undefined) {
       // `> 0` rejects both the sentinel Custom value and unknown preset names.
       if (presetFov > 0) overrides.fov = presetFov;
-    } else if (presetFov > 0 && presetFov !== overrides.fov) {
+    } else if (presetFov > 0 && Math.abs(presetFov - overrides.fov) >= 0.5) {
       const conflictKey = `${fovPreset}:${overrides.fov}`;
       if (!_warnedFovPresetConflicts.has(conflictKey)) {
         _warnedFovPresetConflicts.add(conflictKey);
         log.warning(
           Modules.CONFIG,
-          `camera.fov (${overrides.fov}°) conflicts with camera.fov_preset "${fovPreset}" (${presetFov}°); the numeric FOV wins and the preset label will read "Custom".`
+          `camera.fov (${overrides.fov}°) conflicts with camera.fov_preset "${fovPreset}" (${presetFov}°); the numeric FOV wins and the preset label will be re-derived from it when the panel first opens.`
         );
       }
     }
