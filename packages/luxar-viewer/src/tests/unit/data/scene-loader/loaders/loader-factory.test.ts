@@ -434,6 +434,20 @@ describe('createProgressivePointsLoader', () => {
     expect(pointsProgressiveCtorArgs[0][5]).toEqual([0, 7, 18]);
   });
 
+  it('propagates a has_keys-only parent and builds level offsets', async () => {
+    const node = makeNode('/p', 'points');
+    node.attrs = { has_keys: true };
+    zarrOpenMock
+      .mockImplementationOnce((async () => ({ attrs: { n_points: 7 } })) as never)
+      .mockImplementationOnce((async () => ({ attrs: { n_points: 11 } })) as never);
+
+    await createProgressivePointsLoader(node, 2, {} as SceneNode['attrs'], makeDeps());
+
+    expect((pointsCtorArgs[0][1] as SceneNode).attrs.has_keys).toBe(true);
+    expect((pointsCtorArgs[0][1] as SceneNode).attrs.has_labels).toBe(false);
+    expect(pointsProgressiveCtorArgs[0][5]).toEqual([0, 7, 18]);
+  });
+
   it('passes null levelOffsets (no throw) when a labelled ladder lacks n_points', async () => {
     const node = makeNode('/p', 'points');
     node.attrs = { has_image_labels: true };

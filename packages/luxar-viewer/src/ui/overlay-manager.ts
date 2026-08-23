@@ -397,6 +397,10 @@ export class OverlayManager {
         // identical re-show keeps the decoded image visible. See
         // HoverOverlayEntry.lastRendered.
         const rendered = isHtml ? this.sanitizeHtml(text) : text;
+        if (rendered === '') {
+          hover.el.style.opacity = '0';
+          continue;
+        }
         if (rendered !== hover.lastRendered) {
           if (isHtml) {
             hover.el.innerHTML = rendered;

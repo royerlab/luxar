@@ -750,6 +750,20 @@ describe('OverlayManager.updateHoverContent', () => {
     expect(el.style.opacity).toBe('1');
   });
 
+  it('hides a hover overlay when its rendered template is empty', async () => {
+    await manager.loadOverlays(
+      [makeTextOverlay({ name: 'hover-label-only', hover: true, text: '{hover_label}' })],
+      'http://example.com'
+    );
+    const el = document.querySelector('[data-overlay-name="hover-label-only"]') as HTMLDivElement;
+    const initialText = el.textContent;
+
+    manager.updateHoverContent({ key: 'P04637', nodeName: '/proteins', elementIndex: 7 });
+
+    expect(el.textContent).toBe(initialText);
+    expect(el.style.opacity).toBe('0');
+  });
+
   it('shows a hover overlay configured with both visible_range and transition:"fade"', async () => {
     // Regression: createOverlayElement previously added the
     // luxar-overlay--hidden class for ANY overlay with visible_range +

@@ -929,6 +929,22 @@ describe('GSplatsSpatialIndexLoader', () => {
           }
         });
 
+        it('publishes them for a keyed node too (has_keys alone)', async () => {
+          const labelledLoader = new GSplatsSpatialIndexLoader(
+            mockZarrLocation as unknown as ConstructorParameters<
+              typeof GSplatsSpatialIndexLoader
+            >[0],
+            { ...mockNode, attrs: { ...mockNode.attrs, has_keys: true } } as SceneNode
+          );
+          try {
+            mockExecute.mockResolvedValueOnce([{ start: 100, end: 104 }]);
+            const result = await labelledLoader.loadGSplats(viewState);
+            expect(result.ranges).toEqual([{ start: 100, end: 104 }]);
+          } finally {
+            labelledLoader.dispose();
+          }
+        });
+
         it('omits them for a node with no label CSR (the cheapness gate)', async () => {
           mockExecute.mockResolvedValueOnce([{ start: 2048, end: 4096 }]);
           const result = await bodyLoader.loadGSplats(viewState);

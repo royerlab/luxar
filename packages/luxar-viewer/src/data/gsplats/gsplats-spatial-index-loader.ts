@@ -528,8 +528,9 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     // map picking resolves labels through (issue #1423), and nothing else
     // reads them. Ungated, every gsplats node would drag the array through
     // each SliceCache snapshot for no reader. `LabelLoader.hasLabels()` keys
-    // on the same two attrs; the Points twin gates identically.
-    const wantsElementIds = attrs.has_labels === true || attrs.has_image_labels === true;
+    // on the same three attrs; the Points twin gates identically.
+    const wantsElementIds =
+      attrs.has_labels === true || attrs.has_image_labels === true || attrs.has_keys === true;
 
     // Load directly into the accumulator buffers (zero allocations).
     if (this._accumulator && appConfig.dataLoading.performance.useAccumulators) {
