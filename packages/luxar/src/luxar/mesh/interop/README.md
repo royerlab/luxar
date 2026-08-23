@@ -1,12 +1,14 @@
 # `luxar.mesh.interop` — classical mesh formats → Luxar
 
-Reads PLY, OBJ, STL and glTF/GLB into a `TriangleMesh`, which the CLI writes into a
-`.luxar.zarr` scene. The structural sibling of `luxar.gsplats.interop`, and shaped the
-same way: one frozen intermediate, one hand-written sniffer, a `_READERS` dispatch dict,
-and an `import_mesh()` that does exists-check → sniff → validate → read → normalize.
+Reads PLY, OBJ, STL, VTK XML PolyData and glTF/GLB into a `TriangleMesh`, which the CLI
+writes into a `.luxar.zarr` scene. The structural sibling of `luxar.gsplats.interop`, and
+shaped the same way: one frozen intermediate, one hand-written sniffer, a `_READERS`
+dispatch dict, and an `import_mesh()` that does exists-check → sniff → validate → read →
+normalize.
 
 **No new dependencies.** Everything is NumPy + stdlib, matching the gsplat importer, so
-`luxar mesh import` works on a bare `pip install luxar`.
+`luxar mesh import` works on a bare `pip install luxar`. The VTP reader holds to the same
+bar with `xml.etree` + `base64` + `zlib`.
 
 ## Dialects
 
@@ -15,6 +17,7 @@ and an `import_mesh()` that does exists-check → sniff → validate → read �
 | PLY | `.ply` | ascii, binary LE **and** binary BE; faces as `property list`; optional `nx/ny/nz` normals and `red/green/blue[/alpha]` colours |
 | OBJ | `.obj` | 1-based **and** negative indices; polygons fan-triangulated; `v x y z r g b` vertex colours; materials ignored |
 | STL | `.stl` | ascii and binary; always welded (STL is a triangle soup); per-facet normals dropped |
+| VTK XML PolyData | `.vtp` | `ascii` / inline base64 (`binary`) / appended `raw` **and** `base64`; `vtkZLibDataCompressor`; `UInt32` and `UInt64` headers; either byte order; `Polys` (fan-triangulated) and `Strips`; `Verts`/`Lines` dropped; `PointData` normals and colours |
 | glTF 2.0 | `.gltf`, `.glb` | GLB chunks, external and data-URI buffers, interleaved accessors (`byteStride`), full node-transform composition, `COLOR_0` |
 
 ## What the readers normalize, and why
@@ -29,8 +32,10 @@ and an `import_mesh()` that does exists-check → sniff → validate → read �
   flat. STL supplies no normals at all, so its key degenerates to position and the soup
   still collapses — no per-format special case is needed. The comparison is on rounded
   values; the surviving rows keep full precision.
-- **Fan triangulation.** PLY and OBJ both allow polygons; quads are the common case
+- **Fan triangulation.** PLY, OBJ and VTP all allow polygons; quads are the common case
   from any modelling package. Taking the first three indices would drop half of each.
+  VTP triangle *strips* are triangulated separately, with the alternate-winding flip a
+  strip requires, and merged in as ready-made triangles.
 - **Degenerate-face removal.** Welding can collapse a sliver triangle to a line.
 
 ## Per-format traps that are handled here
@@ -59,6 +64,29 @@ and an `import_mesh()` that does exists-check → sniff → validate → read �
   dropped even when its length matches the vertex count: matching counts are a
   coincidence, and honouring them shades the surface with normals the exporter never
   bound to a vertex. A *partial* binding is dropped whole for the same reason.
+- **A `.vtp` with `<AppendedData encoding="raw">` is not well-formed XML.** The bytes
+  after the `_` marker are arbitrary binary — NUL bytes, `<`, `&`, invalid UTF-8 — so
+  `ElementTree` refuses the *whole* document, header included. The byte stream is split
+  on the literal `<AppendedData` first, the leading portion is parsed with a synthesised
+  close for every element still open at the cut, and each appended `DataArray` is indexed
+  into the tail by its own `offset=`. That is ParaView's default output, so it is the
+  common case rather than an exotic one.
+- **A compressed inline VTP block is TWO concatenated base64 streams.** VTK encodes the
+  block header (`nblocks`, block size, last partial size, then one compressed size per
+  block) separately from the compressed payload and writes the two encodings back to
+  back. A single `b64decode` of the element text succeeds and yields bytes that are not
+  the file's data — the misparse never raises. The header's own length depends on
+  `nblocks`, so it is read in three steps: decode enough characters for the first word,
+  decode the full header, then decode the payload as a second stream starting at the
+  character the first ended on.
+- **VTP `offsets` are cumulative END offsets** with no leading `0`. Read as start
+  offsets, uniform triangles merely rotate the cell list by one; mixed cell lengths also
+  mis-size every cell. The per-array `type=` varies too (`Int64` from modern VTK,
+  `Int32` from older writers, and `connectivity` need not match `offsets`), so every
+  width is read from the array that declares it.
+- **A VTP compressor other than `vtkZLibDataCompressor` is refused by name.** LZ4 and
+  LZMA need codecs outside the standard library, and inflating their blocks with zlib
+  would be a silent misparse rather than an error.
 - **A glTF buffer URI is data from the file.** It must resolve inside the `.gltf`'s own
   directory; an absolute path or a `../` climb is refused rather than read.
 - **glTF node transforms are correctness, not polish.** Skip the graph and every part of
@@ -83,6 +111,13 @@ and an `import_mesh()` that does exists-check → sniff → validate → read �
   reproduces exactly the faceted look STL describes without inventing data.
 - **Draco / meshopt glTF is refused by name.** Not hand-rollable at reasonable cost;
   mirrors `read_spz`'s SPZ-v4 refusal. Run `gltf-transform` first.
+- **A `.vtu` (UnstructuredGrid) is not converted to a surface.** It is a volume mesh;
+  extracting its boundary is a filter, not a read. The sniffer names the actual type and
+  points at ParaView's *Extract Surface* rather than failing inside the PolyData parser.
+- **A nameless float 3-vector in VTP `PointData` is not taken as colour.** In a VTK
+  surface that is far more often a displacement or velocity field. Colour is the array
+  `<PointData Scalars="…">` names, one carrying a conventional colour name, or a `UInt8`
+  3/4-component array — VTK's own unsigned-char colour convention.
 - **OBJ materials, glTF textures/animations/skins/morph targets.** Luxar meshes carry
   geometry plus per-vertex colour; a per-*face* material model would need vertex
   splitting at material boundaries, which is a different feature.

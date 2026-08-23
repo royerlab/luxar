@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import base64
+import dataclasses
+import xml.etree.ElementTree as ET  # nosec B405 - test-only, parses our own fixtures
+import zlib
 from pathlib import Path
 
 import numpy as np
@@ -48,6 +52,10 @@ from ._synthetic import (
     write_ply_truncated_ascii,
     write_stl_ascii,
     write_stl_binary,
+    write_vtp,
+    write_vtp_mixed_cells,
+    write_vtp_points_only,
+    write_vtp_quad,
 )
 
 GT = make_ground_truth()
@@ -540,6 +548,312 @@ class TestGltf:
         p = tmp_path / "draco.gltf"
         write_gltf_draco(p)
         with pytest.raises(ValueError, match="Draco"):
+            import_mesh(p)
+
+
+def _signed_volume(mesh: TriangleMesh) -> float:
+    """Six times the enclosed volume, summed over the triangles.
+
+    Sign-sensitive to WINDING, which the sorted face set is blind to — the tetrahedron's
+    faces are the same three positions either way round.
+    """
+    tri = mesh.vertices[mesh.faces]
+    return float(
+        np.sum(np.einsum("ij,ij->i", np.cross(tri[:, 0], tri[:, 1]), tri[:, 2]))
+    )
+
+
+#: (mode, compressed, header_type, big_endian) — the arms of the VTP encoding matrix.
+#:
+#: Every combination is a file a real writer emits: ParaView defaults to appended-raw,
+#: meshio and PyVista write inline base64 (`format="binary"`), VTK ≥ 9 defaults to a
+#: UInt64 header, and legacy files are UInt32. Big-endian is synthetic — no common
+#: writer emits it today — but the format allows it and `byte_order=` is a one-line
+#: thing to ignore.
+_VTP_MATRIX = [
+    ("appended-raw", False, "UInt32", False),
+    ("appended-raw", True, "UInt32", False),
+    ("appended-raw", True, "UInt64", False),
+    ("appended-base64", False, "UInt32", False),
+    ("appended-base64", True, "UInt32", False),
+    ("appended-base64", True, "UInt64", False),
+    ("inline-base64", False, "UInt32", False),
+    ("inline-base64", True, "UInt32", False),
+    ("inline-base64", True, "UInt64", False),
+    ("ascii", False, "UInt32", False),
+    ("appended-raw", True, "UInt32", True),
+    ("inline-base64", True, "UInt64", True),
+]
+
+
+class TestVtp:
+    @pytest.mark.parametrize(
+        "mode,compressed,header_type,big_endian",
+        _VTP_MATRIX,
+        ids=[
+            f"{m}-{'zlib' if c else 'plain'}-{h}-{'be' if b else 'le'}"
+            for m, c, h, b in _VTP_MATRIX
+        ],
+    )
+    def test_every_encoding_decodes_the_same_surface(
+        self,
+        mode: str,
+        compressed: bool,
+        header_type: str,
+        big_endian: bool,
+        tmp_path: Path,
+    ) -> None:
+        p = tmp_path / "tetra.vtp"
+        write_vtp(
+            p,
+            GT,
+            mode=mode,
+            compressed=compressed,
+            header_type=header_type,
+            big_endian=big_endian,
+        )
+        mesh = import_mesh(p)
+        assert mesh.n_vertices == 4 and mesh.n_faces == 4
+        assert _sorted_face_set(mesh) == EXPECTED_FACES
+        # Attributes too: the encoding matrix is per-DataArray, so a header width read
+        # wrong on the SECOND array would leave the positions intact and corrupt these.
+        assert mesh.normals is not None and mesh.colors is not None
+        np.testing.assert_allclose(np.linalg.norm(mesh.normals, axis=1), 1.0, atol=1e-5)
+        for vertex, color in zip(mesh.vertices, mesh.colors):
+            row = int(np.argmin(np.linalg.norm(GT.vertices - vertex, axis=1)))
+            np.testing.assert_array_equal(color, GT.colors[row])
+
+    def test_a_compressed_inline_block_is_two_base64_streams(
+        self, tmp_path: Path
+    ) -> None:
+        """Trap 2, pinned directly.
+
+        With `vtkZLibDataCompressor` VTK base64-encodes the BLOCK HEADER and the
+        compressed payload separately and concatenates the two encodings in the element
+        text. `b64decode` of the whole text succeeds and yields bytes that are not the
+        file's data — the misparse never raises, it just produces a different mesh. So
+        the guard is equality with the uncompressed encoding of the same geometry, plus
+        a direct check that the naive single-stream decode really would differ.
+        """
+        plain, zipped = tmp_path / "plain.vtp", tmp_path / "zlib.vtp"
+        write_vtp(plain, GT, mode="inline-base64", compressed=False)
+        write_vtp(zipped, GT, mode="inline-base64", compressed=True)
+        a, b = import_mesh(plain), import_mesh(zipped)
+        assert _sorted_face_set(a) == _sorted_face_set(b) == EXPECTED_FACES
+        np.testing.assert_allclose(
+            np.sort(a.vertices, axis=0), np.sort(b.vertices, axis=0), atol=1e-6
+        )
+        assert a.colors is not None and b.colors is not None
+        np.testing.assert_array_equal(
+            np.sort(a.colors, axis=0), np.sort(b.colors, axis=0)
+        )
+
+        # The anti-vacuity half: reconstruct the positions from the raw element text by
+        # hand, so the layout the reader relies on is pinned independently of it.
+        root = ET.fromstring(zipped.read_bytes())  # nosec B314 - our own fixture
+        points_el = next(e for e in root.iter("DataArray") if e.get("Name") == "Points")
+        text = "".join((points_el.text or "").split())
+
+        # Stream one: four UInt32 header words (nblocks, block size, last partial size,
+        # compressed size) = 16 bytes = 24 base64 characters, trailing padding included.
+        nblocks, _block, _last, csize = (
+            int(w) for w in np.frombuffer(base64.b64decode(text[:24]), dtype="<u4")
+        )
+        assert nblocks == 1
+        # Stream two starts at character 24 — a SECOND base64 stream, not a continuation.
+        payload = base64.b64decode(text[24 : 24 + ((csize + 2) // 3) * 4])
+        np.testing.assert_array_equal(
+            np.frombuffer(zlib.decompress(payload[:csize]), dtype="<f4").reshape(-1, 3),
+            GT.vertices,
+        )
+        # And the naive whole-text decode does NOT deliver those compressed bytes: the
+        # header stream's own '=' padding terminates the decode, so the entire payload
+        # silently vanishes instead of raising.
+        assert len(base64.b64decode(text)) - 16 != csize, (
+            "the fixture must actually concatenate two base64 streams, or this test "
+            "cannot distinguish the right decode from the wrong one"
+        )
+
+    def test_multi_block_compression_decodes(self, tmp_path: Path) -> None:
+        """`nblocks > 1` — the case that makes the block header's LENGTH variable.
+
+        With one block the header is always four words wide, so a reader that hardcoded
+        that width would pass every other compressed arm. A tiny block size forces
+        several compressed sizes into the header and the payload stream to start
+        further along.
+        """
+        p = tmp_path / "blocks.vtp"
+        write_vtp(p, GT, mode="inline-base64", compressed=True, block_size=16)
+        assert _sorted_face_set(import_mesh(p)) == EXPECTED_FACES
+
+    def test_appended_raw_is_not_well_formed_xml(self, tmp_path: Path) -> None:
+        """Trap 1: the whole document has to be split before it is parsed.
+
+        `encoding="raw"` puts arbitrary binary — NUL bytes here, and `<`/`&` in general —
+        inside the document, so `ElementTree` refuses the file outright, header and all.
+        """
+        p = tmp_path / "raw.vtp"
+        write_vtp(p, GT, mode="appended-raw")
+        raw = p.read_bytes()
+        assert b"\x00" in raw.split(b"<AppendedData", 1)[1]
+        with pytest.raises(ET.ParseError):
+            ET.fromstring(raw)  # nosec B314 - asserting that this FAILS
+        assert _sorted_face_set(import_mesh(p)) == EXPECTED_FACES
+
+    def test_offsets_are_cumulative_ends_not_starts(self, tmp_path: Path) -> None:
+        """A quad and a triangle in one `<Polys>`, so cell LENGTHS differ.
+
+        VTK XML's `offsets` are cumulative END offsets with no leading zero. Read as
+        start offsets, uniform triangles merely rotate by one cell; mixed lengths also
+        mis-size every cell, so the face count and the surface both change.
+        """
+        p = tmp_path / "mixed.vtp"
+        write_vtp_mixed_cells(p, GT)
+        mesh = import_mesh(p)
+        # Quad → 2 triangles, plus the standalone triangle.
+        assert mesh.n_faces == 3
+        assert mesh.n_vertices == 5
+        expected = {
+            tuple(
+                c
+                for corner in sorted(tuple(np.round(v, 5)) for v in tri)
+                for c in corner
+            )
+            for tri in (
+                [[0, 0, 0], [1, 0, 0], [1, 1, 0]],
+                [[0, 0, 0], [1, 1, 0], [0, 1, 0]],
+                [[1, 0, 0], [2, 0.5, 0], [1, 1, 0]],
+            )
+        }
+        assert _sorted_face_set(mesh) == expected
+
+    def test_quad_is_fan_triangulated(self, tmp_path: Path) -> None:
+        p = tmp_path / "quad.vtp"
+        write_vtp_quad(p, GT)
+        mesh = import_mesh(p)
+        assert mesh.n_faces == 2, "one quad must become two triangles"
+        assert mesh.n_vertices == 4
+
+    def test_strips_triangulate_with_a_consistent_winding(self, tmp_path: Path) -> None:
+        """A triangle strip alternates winding: `i,i+1,i+2` then `i+1,i,i+2`.
+
+        Drop the flip and every second triangle of a strip faces backwards, which
+        single-sided rendering shows as holes. The face SETS are identical either way —
+        reversing a triangle does not change which three vertices it has — so this is
+        asserted on signed volume against the same surface written as polygons.
+        """
+        polys, strips = tmp_path / "polys.vtp", tmp_path / "strips.vtp"
+        write_vtp(polys, GT)
+        write_vtp(strips, GT, strips=True)
+        a, b = import_mesh(polys), import_mesh(strips)
+
+        assert b.n_faces == 4
+        assert _sorted_face_set(b) == EXPECTED_FACES
+        va, vb = _signed_volume(a), _signed_volume(b)
+        assert abs(va) > 1e-6, "the ground truth must enclose volume for this to bite"
+        np.testing.assert_allclose(vb, va, atol=1e-6)
+
+    def test_verts_and_lines_beside_polys_are_dropped(self, tmp_path: Path) -> None:
+        """`<Verts>`/`<Lines>` carry no surface, so they are dropped without comment.
+
+        Folding them into the topology would add degenerate "faces"; refusing the file
+        would reject perfectly ordinary PolyData output.
+        """
+        plain, mixed = tmp_path / "plain.vtp", tmp_path / "mixed.vtp"
+        write_vtp(plain, GT)
+        write_vtp(mixed, GT, with_verts_and_lines=True)
+        assert import_mesh(mixed).n_faces == import_mesh(plain).n_faces == 4
+        assert _sorted_face_set(import_mesh(mixed)) == EXPECTED_FACES
+
+    def test_a_surface_less_polydata_is_a_clean_error(self, tmp_path: Path) -> None:
+        p = tmp_path / "cloud.vtp"
+        write_vtp_points_only(p, GT)
+        with pytest.raises(ValueError, match="no <Polys> or <Strips>"):
+            import_mesh(p)
+
+    @pytest.mark.parametrize("convention", ["float01", "float255"])
+    def test_float_colours_are_read_by_range(
+        self, convention: str, tmp_path: Path
+    ) -> None:
+        """`PointData` colours may be UInt8 0..255 or Float32 in either convention.
+
+        The palette is MID-range on purpose: with an all-0/255 palette a reader that
+        scaled a 0..255 file by 255 and clipped would still produce the right answer.
+        """
+        gt = dataclasses.replace(GT, colors=OBJ_MID_COLORS)
+        byte_file, float_file = tmp_path / "u8.vtp", tmp_path / "f32.vtp"
+        write_vtp(byte_file, gt, colors="uint8")
+        write_vtp(float_file, gt, colors=convention)
+        a, b = import_mesh(byte_file).colors, import_mesh(float_file).colors
+        assert a is not None and b is not None
+        np.testing.assert_allclose(np.sort(a, axis=0), np.sort(b, axis=0), atol=1)
+        np.testing.assert_allclose(
+            np.sort(a, axis=0), np.sort(OBJ_MID_COLORS, axis=0), atol=1
+        )
+        assert int(b.max()) < 255, "a mid-range palette must not clip to solid white"
+
+    @pytest.mark.parametrize(
+        "compressor", ["vtkLZ4DataCompressor", "vtkLZMADataCompressor"]
+    )
+    def test_an_unsupported_compressor_is_refused_by_name(
+        self, compressor: str, tmp_path: Path
+    ) -> None:
+        """Never a silent misparse.
+
+        The fixture's data is written UNCOMPRESSED, so a reader that ignored the
+        `compressor=` attribute would import it perfectly and only fail on a real LZ4
+        file — where it would inflate garbage instead. The refusal has to key on the
+        declared name.
+        """
+        p = tmp_path / "lz4.vtp"
+        write_vtp(p, GT, compressor=compressor)
+        with pytest.raises(ValueError, match=compressor):
+            import_mesh(p)
+        # And the same bytes under the supported name do import, so the refusal is not
+        # accidentally rejecting the fixture for some other reason.
+        ok = tmp_path / "ok.vtp"
+        write_vtp(ok, GT)
+        assert import_mesh(ok).n_faces == 4
+
+    @pytest.mark.parametrize("suffix", [".vtp", ".vtu"])
+    def test_a_non_polydata_vtk_file_names_its_actual_type(
+        self, suffix: str, tmp_path: Path
+    ) -> None:
+        """A `.vtu` is a volume mesh, not a surface — say so at the sniffer.
+
+        Both spellings land on one message: the extension a user typed and the type the
+        file actually declares are independent, and a renamed `.vtu` is the more
+        confusing of the two.
+        """
+        p = tmp_path / f"volume{suffix}"
+        write_vtp(p, GT, root_type="UnstructuredGrid")
+        with pytest.raises(ValueError, match="UnstructuredGrid"):
+            import_mesh(p)
+        with pytest.raises(ValueError, match="PolyData"):
+            detect_mesh_format(p)
+
+    def test_a_vtp_that_is_not_vtk_xml_at_all_is_named(self, tmp_path: Path) -> None:
+        p = tmp_path / "junk.vtp"
+        p.write_bytes(b"<html><body>not a mesh</body></html>")
+        with pytest.raises(ValueError, match="not a VTK XML file"):
+            import_mesh(p)
+
+    def test_a_declared_point_count_that_disagrees_is_named(
+        self, tmp_path: Path
+    ) -> None:
+        """`NumberOfPoints` is a free cross-check on the whole decode chain.
+
+        A block header read at the wrong width, or an offset off by a stream, yields a
+        differently-sized array rather than an exception — this is what turns that into
+        a named error.
+        """
+        p = tmp_path / "count.vtp"
+        write_vtp(p, GT, mode="ascii")
+        text = p.read_text(encoding="ascii").replace(
+            'NumberOfPoints="4"', 'NumberOfPoints="7"'
+        )
+        p.write_text(text, encoding="ascii")
+        with pytest.raises(ValueError, match="NumberOfPoints"):
             import_mesh(p)
 
 

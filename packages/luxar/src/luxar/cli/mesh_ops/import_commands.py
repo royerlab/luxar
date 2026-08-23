@@ -167,7 +167,7 @@ def import_command(
         ...,
         exists=True,
         help="Classical mesh file: .ply (ascii or binary), .obj, .stl (ascii or "
-        "binary), .gltf or .glb.",
+        "binary), .vtp (VTK XML PolyData), .gltf or .glb.",
     ),
     output_path: Path = typer.Argument(..., help="Output .luxar.zarr scene."),
     format: str = typer.Option(
@@ -208,9 +208,9 @@ def import_command(
 ) -> None:
     """Convert a classical mesh file into a Luxar scene.
 
-    Reads PLY / OBJ / STL / glTF with no extra dependencies, welds duplicate vertices,
-    fan-triangulates polygons, and writes a single-node `.luxar.zarr` you can serve
-    directly with `luxar serve`.
+    Reads PLY / OBJ / STL / VTP / glTF with no extra dependencies, welds duplicate
+    vertices, fan-triangulates polygons, and writes a single-node `.luxar.zarr` you can
+    serve directly with `luxar serve`.
 
     \b
     Examples:
@@ -218,6 +218,7 @@ def import_command(
       luxar mesh import scan.stl scan.luxar.zarr --unit mm --name Skull
       luxar mesh import model.glb model.luxar.zarr --no-center
       luxar mesh import surface.obj surface.luxar.zarr --scale 0.001 --unit m
+      luxar mesh import isosurface.vtp cell.luxar.zarr --unit um
     """
     try:
         run_import(

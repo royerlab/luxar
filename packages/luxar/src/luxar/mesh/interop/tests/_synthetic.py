@@ -17,6 +17,7 @@ from __future__ import annotations
 import base64
 import json
 import struct
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -693,16 +694,371 @@ def write_gsplat_ply(path: Path) -> None:
     path.write_bytes(header + np.zeros((2, len(props)), dtype="<f4").tobytes())
 
 
+#: VTK ``type=`` names → numpy dtype strings, for the writer below.
+_VTP_TYPES = {
+    "UInt8": "u1",
+    "Int32": "i4",
+    "Int64": "i8",
+    "UInt32": "u4",
+    "UInt64": "u8",
+    "Float32": "f4",
+    "Float64": "f8",
+}
+
+#: The tetrahedron's four faces as TWO triangle strips, each four vertices long.
+#:
+#: Both rely on the alternate-winding flip (`i, i+1, i+2` then `i+1, i, i+2`): drop it
+#: and the second triangle of each strip comes out reversed. The vertex SETS are
+#: unchanged either way, which is exactly why the strip test has to assert on signed
+#: volume rather than on the face set.
+_VTP_STRIPS = [[0, 2, 1, 3], [2, 0, 3, 1]]
+
+
+class _VtpWriter:
+    """Encodes DataArrays the four ways a real VTK writer does.
+
+    One encoder for every arm of the matrix — appended/inline, raw/base64, zlib or not,
+    UInt32/UInt64 headers, either byte order — so the fixtures differ only in the
+    parameters under test rather than in four hand-maintained encoders.
+    """
+
+    def __init__(
+        self,
+        *,
+        mode: str,
+        compressed: bool,
+        header_type: str,
+        big_endian: bool,
+        block_size: int,
+    ) -> None:
+        self.mode = mode
+        self.compressed = compressed
+        self.header_type = header_type
+        self.order = ">" if big_endian else "<"
+        self.hdr = np.dtype(_VTP_TYPES[header_type]).newbyteorder(self.order)
+        self.block_size = block_size
+        self.tail = bytearray()
+
+    def _stream(self, payload: bytes, *, b64: bool) -> bytes:
+        """One VTK data block: length-prefixed, or zlib block-compressed.
+
+        The base64 arm is **trap 2** as a writer: when the data is compressed, VTK
+        encodes the block header and the compressed payload as two SEPARATE base64
+        streams and writes them back to back. A reader that b64-decodes the
+        concatenation gets bytes that are not the file's data and does not raise.
+        """
+        if not self.compressed:
+            head = np.array([len(payload)], dtype=self.hdr).tobytes()
+            return base64.b64encode(head + payload) if b64 else head + payload
+        blocks = [
+            payload[i : i + self.block_size]
+            for i in range(0, len(payload), self.block_size)
+        ] or [b""]
+        compressed = [zlib.compress(block) for block in blocks]
+        last = len(blocks[-1])
+        words = [len(blocks), self.block_size, 0 if last == self.block_size else last]
+        words += [len(c) for c in compressed]
+        head = np.array(words, dtype=self.hdr).tobytes()
+        body = b"".join(compressed)
+        if not b64:
+            return head + body
+        return base64.b64encode(head) + base64.b64encode(body)
+
+    def array(
+        self,
+        values: NDArray,
+        vtk_type: str,
+        *,
+        name: str | None = None,
+        ncomp: int = 1,
+    ) -> str:
+        """Emit one ``<DataArray>``, stashing appended payloads in ``self.tail``."""
+        dtype = np.dtype(_VTP_TYPES[vtk_type])
+        arr = np.asarray(values, dtype=dtype)
+        attrs = [f'type="{vtk_type}"']
+        if name is not None:
+            attrs.append(f'Name="{name}"')
+        if ncomp != 1:
+            attrs.append(f'NumberOfComponents="{ncomp}"')
+        head = " ".join(attrs)
+
+        if self.mode == "ascii":
+            flat = arr.reshape(-1)
+            body = " ".join(
+                f"{float(v):.9g}" if dtype.kind == "f" else str(int(v)) for v in flat
+            )
+            return f'<DataArray {head} format="ascii">{body}</DataArray>'
+
+        payload = arr.astype(dtype.newbyteorder(self.order)).tobytes()
+        if self.mode == "inline-base64":
+            text = self._stream(payload, b64=True).decode("ascii")
+            return f'<DataArray {head} format="binary">{text}</DataArray>'
+        offset = len(self.tail)
+        self.tail += self._stream(payload, b64=self.mode == "appended-base64")
+        return f'<DataArray {head} format="appended" offset="{offset}"/>'
+
+
+def _vtp_document(
+    path: Path,
+    writer: _VtpWriter,
+    piece_body: str,
+    piece_attrs: str,
+    *,
+    root_type: str,
+    compressor: str | None,
+) -> None:
+    """Wrap one ``<Piece>`` in a ``<VTKFile>`` and write it, appended section and all."""
+    order = "BigEndian" if writer.order == ">" else "LittleEndian"
+    root = [
+        f'type="{root_type}"',
+        'version="1.0"',
+        f'byte_order="{order}"',
+        f'header_type="{writer.header_type}"',
+    ]
+    if compressor is not None:
+        root.append(f'compressor="{compressor}"')
+    text = (
+        '<?xml version="1.0"?>\n'
+        f"<VTKFile {' '.join(root)}>\n"
+        f"<{root_type}>\n"
+        f"<Piece {piece_attrs}>\n"
+        f"{piece_body}\n"
+        "</Piece>\n"
+        f"</{root_type}>\n"
+    )
+    out = bytearray(text.encode("ascii"))
+    if writer.mode.startswith("appended"):
+        encoding = "raw" if writer.mode == "appended-raw" else "base64"
+        out += f'<AppendedData encoding="{encoding}">\n_'.encode("ascii")
+        out += writer.tail
+        out += b"\n</AppendedData>\n"
+    out += b"</VTKFile>\n"
+    path.write_bytes(bytes(out))
+
+
+def write_vtp(
+    path: Path,
+    gt: GroundTruth,
+    *,
+    mode: str = "appended-raw",
+    compressed: bool = False,
+    header_type: str = "UInt32",
+    big_endian: bool = False,
+    block_size: int = 32768,
+    strips: bool = False,
+    with_verts_and_lines: bool = False,
+    colors: str = "uint8",
+    root_type: str = "PolyData",
+    compressor: str | None = None,
+) -> None:
+    """The tetrahedron as a VTK XML PolyData file, in any arm of the encoding matrix.
+
+    ``mode`` is one of ``appended-raw`` (the ParaView default, and the one that makes the
+    document invalid XML), ``appended-base64``, ``inline-base64`` (``format="binary"``)
+    or ``ascii``. ``compressor`` overrides only the declared NAME, so an lz4/lzma
+    fixture can carry perfectly readable data and still have to be refused.
+    """
+    writer = _VtpWriter(
+        mode=mode,
+        compressed=compressed,
+        header_type=header_type,
+        big_endian=big_endian,
+        block_size=block_size,
+    )
+    # Deliberately Int64 connectivity against Int32 offsets: the two widths are read
+    # per array, and modern VTK genuinely mixes them across a file.
+    if strips:
+        cells = _VTP_STRIPS
+        cell_tag, n_polys, n_strips = "Strips", 0, len(cells)
+    else:
+        cells = [[int(i) for i in tri] for tri in gt.faces]
+        cell_tag, n_polys, n_strips = "Polys", len(cells), 0
+    connectivity = [v for cell in cells for v in cell]
+    offsets = list(np.cumsum([len(cell) for cell in cells]))
+
+    if colors == "uint8":
+        color_array = writer.array(gt.colors, "UInt8", name="colors", ncomp=3)
+    elif colors == "float01":
+        color_array = writer.array(
+            gt.colors.astype(np.float32) / 255.0, "Float32", name="colors", ncomp=3
+        )
+    else:
+        color_array = writer.array(
+            gt.colors.astype(np.float32), "Float32", name="colors", ncomp=3
+        )
+
+    body = [
+        '<PointData Normals="Normals" Scalars="colors">',
+        writer.array(gt.normals, "Float32", name="Normals", ncomp=3),
+        color_array,
+        "</PointData>",
+        "<Points>",
+        writer.array(gt.vertices, "Float32", name="Points", ncomp=3),
+        "</Points>",
+    ]
+    n_verts = n_lines = 0
+    if with_verts_and_lines:
+        # Two point cells and one 2-point line, riding along beside the surface. Both
+        # are ordinary in real PolyData output and neither carries any surface, so the
+        # reader must drop them rather than fold them into the topology.
+        n_verts, n_lines = 2, 1
+        body += [
+            "<Verts>",
+            writer.array([0, 1], "Int64", name="connectivity"),
+            writer.array([1, 2], "Int32", name="offsets"),
+            "</Verts>",
+            "<Lines>",
+            writer.array([0, 1], "Int64", name="connectivity"),
+            writer.array([2], "Int32", name="offsets"),
+            "</Lines>",
+        ]
+    body += [
+        f"<{cell_tag}>",
+        writer.array(connectivity, "Int64", name="connectivity"),
+        writer.array(offsets, "Int32", name="offsets"),
+        f"</{cell_tag}>",
+    ]
+    attrs = (
+        f'NumberOfPoints="{len(gt.vertices)}" NumberOfVerts="{n_verts}" '
+        f'NumberOfLines="{n_lines}" NumberOfStrips="{n_strips}" '
+        f'NumberOfPolys="{n_polys}"'
+    )
+    _vtp_document(
+        path,
+        writer,
+        "\n".join(body),
+        attrs,
+        root_type=root_type,
+        compressor=compressor
+        if compressor is not None
+        else ("vtkZLibDataCompressor" if compressed else None),
+    )
+
+
+def write_vtp_quad(path: Path, gt: GroundTruth) -> None:
+    """A VTP whose single polygon is a QUAD, to exercise fan triangulation."""
+    verts = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], dtype=np.float32)
+    writer = _VtpWriter(
+        mode="inline-base64",
+        compressed=False,
+        header_type="UInt32",
+        big_endian=False,
+        block_size=32768,
+    )
+    body = "\n".join(
+        [
+            "<Points>",
+            writer.array(verts, "Float32", name="Points", ncomp=3),
+            "</Points>",
+            "<Polys>",
+            writer.array([0, 1, 2, 3], "Int64", name="connectivity"),
+            writer.array([4], "Int64", name="offsets"),
+            "</Polys>",
+        ]
+    )
+    _vtp_document(
+        path,
+        writer,
+        body,
+        'NumberOfPoints="4" NumberOfVerts="0" NumberOfLines="0" '
+        'NumberOfStrips="0" NumberOfPolys="1"',
+        root_type="PolyData",
+        compressor=None,
+    )
+
+
+#: A quad plus a triangle over five vertices — cells of DIFFERENT lengths.
+#:
+#: The offsets-are-cumulative-ENDS fixture. With uniform triangles a start-offset reader
+#: merely rotates the cell list; with mixed lengths it also mis-sizes every cell, so both
+#: the face count and the surface go wrong.
+_VTP_MIXED_POINTS = np.array(
+    [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [2, 0.5, 0]], dtype=np.float32
+)
+_VTP_MIXED_CELLS = [[0, 1, 2, 3], [1, 4, 2]]
+
+
+def write_vtp_mixed_cells(path: Path, gt: GroundTruth) -> None:
+    """A VTP mixing a quad and a triangle in one ``<Polys>`` block."""
+    writer = _VtpWriter(
+        mode="appended-raw",
+        compressed=False,
+        header_type="UInt32",
+        big_endian=False,
+        block_size=32768,
+    )
+    connectivity = [v for cell in _VTP_MIXED_CELLS for v in cell]
+    offsets = list(np.cumsum([len(cell) for cell in _VTP_MIXED_CELLS]))
+    body = "\n".join(
+        [
+            "<Points>",
+            writer.array(_VTP_MIXED_POINTS, "Float32", name="Points", ncomp=3),
+            "</Points>",
+            "<Polys>",
+            writer.array(connectivity, "Int32", name="connectivity"),
+            writer.array(offsets, "Int64", name="offsets"),
+            "</Polys>",
+        ]
+    )
+    _vtp_document(
+        path,
+        writer,
+        body,
+        'NumberOfPoints="5" NumberOfVerts="0" NumberOfLines="0" '
+        'NumberOfStrips="0" NumberOfPolys="2"',
+        root_type="PolyData",
+        compressor=None,
+    )
+
+
+def write_vtp_points_only(path: Path, gt: GroundTruth) -> None:
+    """A VTP carrying ``<Verts>`` and ``<Lines>`` but no surface at all."""
+    writer = _VtpWriter(
+        mode="inline-base64",
+        compressed=False,
+        header_type="UInt32",
+        big_endian=False,
+        block_size=32768,
+    )
+    body = "\n".join(
+        [
+            "<Points>",
+            writer.array(gt.vertices, "Float32", name="Points", ncomp=3),
+            "</Points>",
+            "<Lines>",
+            writer.array([0, 1, 1, 2], "Int64", name="connectivity"),
+            writer.array([2, 4], "Int64", name="offsets"),
+            "</Lines>",
+        ]
+    )
+    _vtp_document(
+        path,
+        writer,
+        body,
+        'NumberOfPoints="4" NumberOfVerts="0" NumberOfLines="2" '
+        'NumberOfStrips="0" NumberOfPolys="0"',
+        root_type="PolyData",
+        compressor=None,
+    )
+
+
 #: Dialect name → writer, mirroring `_READERS` on the production side.
 WRITERS = {
     "ply": write_ply_binary,
     "obj": write_obj,
     "stl": write_stl_binary,
     "gltf": lambda p, gt: write_glb(p, gt),
+    "vtp": write_vtp,
 }
 
 #: Dialect name → the extension its writer emits.
-SUFFIXES = {"ply": ".ply", "obj": ".obj", "stl": ".stl", "gltf": ".glb"}
+SUFFIXES = {
+    "ply": ".ply",
+    "obj": ".obj",
+    "stl": ".stl",
+    "gltf": ".glb",
+    "vtp": ".vtp",
+}
 
 
 def _glb_with_nodes(
