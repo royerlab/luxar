@@ -53,7 +53,7 @@ Different particles interact differently with matter:
    - Convert to e⁺e⁻ pairs in EM calorimeter
    - Deposit all energy in EM calorimeter
 
-3. HADRONS (π±, K±, p):
+3. HADRONS (π±, K⁺, p):
    - Made of quarks, interact via strong force
    - Penetrate EM calorimeter, stop in hadronic calorimeter
    - Create hadronic showers (nuclear interactions)
@@ -507,7 +507,7 @@ def generate_straight_track(
 #
 # 3. PARTICLE COMPOSITION (typical jet):
 #    - ~60% pions (π±, π⁰) - lightest mesons
-#    - ~25% kaons (K±, K⁰) - contain strange quarks
+#    - ~25% kaons (K⁺) - contain a strange quark
 #    - ~15% protons/neutrons - baryons
 #    - Plus photons from π⁰ → γγ decay
 #

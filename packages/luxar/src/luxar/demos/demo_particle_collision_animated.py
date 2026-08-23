@@ -53,7 +53,7 @@ Different particles interact differently with matter:
    - Convert to e⁺e⁻ pairs in EM calorimeter
    - Deposit all energy in EM calorimeter
 
-3. HADRONS (π±, K±, p):
+3. HADRONS (π±, K⁺, p):
    - Made of quarks, interact via strong force
    - Penetrate EM calorimeter, stop in hadronic calorimeter
    - Create hadronic showers (nuclear interactions)
