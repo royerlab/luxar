@@ -450,14 +450,19 @@
       "license": "cc-by-4.0",
       "source": "h2afva zebrafish histone light-sheet timelapse (Royer lab)",
       "attribution": "Royer lab, CZ Biohub SF (CC BY 4.0).",
-      "pending_upload": true,
       "dir": "h2afva",
       "variants": {
         "51tp": {
           "default": true,
-          "approx_bytes": 2134212223,
+          "approx_bytes": 1873559527,
           "note": "51-timepoint fit (every 5th frame) \u2014 lighter default for the demo.",
-          "files": []
+          "files": [
+            {
+              "name": "h2afva_51tp.gsplats.zarr.zip",
+              "sha256": "c5e14be93c3e5626697bb12b9f9729050985dd9c65e8aece09394358e5874c11",
+              "bytes": 1873559527
+            }
+          ]
         },
         "253tp": {
           "default": false,
