@@ -184,6 +184,34 @@ def test_positive_scalar_slack_reports_exact_encoder_exits(mode: EncodingMode) -
         assert encoder.positive_scalar_round_trip_slack(continuous, mode) is None
 
 
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_positive_scalar_broadcast_slack_bounds_viewer_cast(dtype) -> None:
+    data = np.full(4001, 0.1, dtype=dtype)
+    encoder = ArrayEncoder()
+    slack = encoder.positive_scalar_round_trip_slack(data, EncodingMode.AUTO)
+
+    group = memory_group()
+    encoder.encode(
+        data,
+        group,
+        "s",
+        SemanticType.POSITIVE_SCALAR,
+        mode=EncodingMode.AUTO,
+        deduplicate=False,
+    )
+    encoded = group["s"]
+    assert encoded.attrs["encoding"]["name"] == "broadcasted"
+    authored = float(data[0])
+    upward = float(np.float32(np.asarray(encoded[:])[0])) - authored
+
+    if dtype == np.float32:
+        assert upward == 0.0
+        assert slack is None
+    else:
+        assert upward > 0.0
+        assert slack is not None and upward <= slack
+
+
 @pytest.mark.parametrize(
     "data",
     [
@@ -239,12 +267,34 @@ def test_positive_scalar_slack_is_finite_above_the_float32_range(
     assert np.isfinite(slack)
 
 
-def test_positive_scalar_slack_honours_the_lut_gate() -> None:
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_positive_scalar_slack_honours_the_lut_gate(dtype) -> None:
     encoder = ArrayEncoder()
-    palette = np.linspace(0.1, 5.0, 200, dtype=np.float32)
+    palette = np.linspace(0.1, 5.0, 200, dtype=dtype)
     data = np.resize(palette, 4001)
     assert encoder.encodes_as_lut(data, SemanticType.POSITIVE_SCALAR)
-    assert encoder.positive_scalar_round_trip_slack(data, EncodingMode.AUTO) is None
+    slack = encoder.positive_scalar_round_trip_slack(data, EncodingMode.AUTO)
+
+    group = memory_group()
+    encoder.encode(
+        data,
+        group,
+        "s",
+        SemanticType.POSITIVE_SCALAR,
+        mode=EncodingMode.AUTO,
+        deduplicate=False,
+    )
+    metadata = group["s"].attrs["encoding"]
+    assert metadata["name"] == "lut_uint8"
+    lut = np.asarray(metadata["lut"], dtype=np.float64)
+    upward = np.float32(lut).astype(np.float64) - lut
+
+    if dtype == np.float32:
+        assert float(upward.max()) == 0.0
+        assert slack is None
+    else:
+        assert float(upward.max()) > 0.0
+        assert slack is not None and float(upward.max()) <= slack
     assert (
         encoder.positive_scalar_round_trip_slack(
             data, EncodingMode.AUTO, allow_lut=False
