@@ -921,7 +921,8 @@ def _merge_partition(
                 if verbose:
                     aprint(f"  {label} {k}: empty, skipping")
                 continue
-            part.stats.update(floor_stats)
+            if recipe is not None:
+                part.stats.update(floor_stats)
             # Each part is a single nD splat set → a matrix-shaped tree (a leaf,
             # or — with a per-part recipe — a leaf-with-ladder / substitutive lod
             # group). Hand the tree node straight to the streaming writer; it
