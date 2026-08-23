@@ -140,6 +140,31 @@ def test_gsplat_warning_names_both_supported_remedies(
 
 
 @pytest.mark.parametrize("geometry_type", ["points", "lines"])
+def test_a_flat_node_warns_on_its_total(
+    geometry_type: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """The leaf writers themselves must enforce the cap, not only the helper."""
+    monkeypatch.setitem(ELEMENT_TEXELS_PER_ELEMENT, geometry_type, 4096)
+    positions = np.zeros((5_001, 3), dtype=np.float32)
+
+    with LuxarZarrCompiler(tmp_path / f"{geometry_type}.luxar.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        if geometry_type == "points":
+            scene.add_points("flat", positions[:5_000])
+        else:
+            scene.add_lines("flat", positions, widths=0.1)
+
+    out = capsys.readouterr().out
+    assert "'/flat'" in out
+    assert (
+        "5,000 points" if geometry_type == "points" else "5,000 segments"
+    ) in out
+
+
+@pytest.mark.parametrize("geometry_type", ["points", "lines"])
 def test_an_additive_ladder_warns_on_its_total(
     geometry_type: str,
     monkeypatch: pytest.MonkeyPatch,
