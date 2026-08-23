@@ -207,6 +207,7 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar._zarr_compat import is_consolidated
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import (
     add_demo_caption,
@@ -1127,6 +1128,7 @@ def load_or_build_scene(output_path: Path) -> Path:
     """
     if (
         output_path.exists()
+        and is_consolidated(output_path)
         and not RECOMPUTE
         and (
             KEEP_STALE

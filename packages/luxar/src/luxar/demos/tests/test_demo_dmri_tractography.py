@@ -19,6 +19,8 @@ import numpy as np
 import pytest
 import zarr
 
+from luxar._zarr_compat import consolidate, open_group
+
 _DEMO_PATH = Path(__file__).resolve().parents[1] / "demo_dmri_tractography.py"
 
 
@@ -317,7 +319,8 @@ class TestSceneMarker:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         output_path = tmp_path / "scene.luxar.zarr"
-        output_path.mkdir()
+        group = open_group(output_path, mode="w")
+        consolidate(group)
         monkeypatch.setattr(_demo, "KEEP_STALE", True)
         monkeypatch.setattr(_demo, "RECOMPUTE", False)
         monkeypatch.setattr(
@@ -330,6 +333,22 @@ class TestSceneMarker:
         )
 
         assert _demo.load_or_build_scene(output_path) == output_path
+
+    def test_keep_stale_rebuilds_an_unfinished_scene(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        output_path = tmp_path / "scene.luxar.zarr"
+        open_group(output_path, mode="w")
+        monkeypatch.setattr(_demo, "KEEP_STALE", True)
+        monkeypatch.setattr(_demo, "RECOMPUTE", False)
+        monkeypatch.setattr(
+            _demo,
+            "load_or_build_bundles",
+            lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("rebuild reached")),
+        )
+
+        with pytest.raises(RuntimeError, match="rebuild reached"):
+            _demo.load_or_build_scene(output_path)
 
 
 class TestNodeBudget:

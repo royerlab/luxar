@@ -341,6 +341,7 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar._zarr_compat import is_consolidated
 from luxar.core.group.compositing import position_bounds_from_array
 from luxar.core.group.partition import bsp_leaf_parts, spatial_bsp_tree
 from luxar.core.viewer_config import (
@@ -2978,6 +2979,7 @@ def load_or_build_scene(output_path: Path) -> Path:
     """Return the built scene, regenerating it when flags or data changed."""
     if (
         output_path.exists()
+        and is_consolidated(output_path)
         and not RECOMPUTE
         and (KEEP_STALE or scene_marker_matches(output_path))
     ):
