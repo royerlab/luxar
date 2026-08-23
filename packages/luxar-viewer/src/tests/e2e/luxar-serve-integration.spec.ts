@@ -182,14 +182,29 @@ test.describe('Luxar Serve Integration', () => {
       return;
     }
 
-    // Verify the server responds to .zattrs requests
-    const response = await page.request.get(`http://127.0.0.1:${servePort}/.zattrs`);
-    expect(response.ok()).toBe(true);
+    // Ask for whichever metadata document the store actually has. `.zattrs`
+    // is FORMAT 2; Luxar writes format 3 by default, where the root document
+    // is `zarr.json` and attributes are nested under `attributes`. Hard-coding
+    // either name makes this test a statement about the writer's default
+    // rather than about the server, and it 404s the moment that default moves
+    // — which is exactly what happened. A tree holding both formats is the
+    // normal steady state, so accept both and assert on what they have in
+    // common.
+    const candidates = ['zarr.json', '.zattrs'];
+    let attrs: Record<string, unknown> | undefined;
+    let served: string | undefined;
+    for (const doc of candidates) {
+      const response = await page.request.get(`http://127.0.0.1:${servePort}/${doc}`);
+      if (!response.ok()) continue;
+      const parsed = JSON.parse(await response.text());
+      // Format 3 nests the user attributes; format 2 IS them.
+      attrs = (parsed.attributes ?? parsed) as Record<string, unknown>;
+      served = doc;
+      break;
+    }
 
-    // Response should be valid JSON
-    const body = await response.text();
-    const parsed = JSON.parse(body);
-    expect(parsed).toBeDefined();
-    expect(parsed.luxar_version).toBeDefined();
+    expect(served, `server served neither ${candidates.join(' nor ')}`).toBeDefined();
+    expect(attrs).toBeDefined();
+    expect(attrs!.luxar_version).toBeDefined();
   });
 });

@@ -47,9 +47,10 @@ app/
   zarr metadata HEAD probe, the `DatasetBrowser` modal lifecycle, and the
   scene-dependent UI initialization sequence that follows a successful load.
 - **`viewer-config/`** — Routes the non-rendering fields of the per-dataset
-  `viewer_config` blob (panel show/hide flags, theme, dimension-nav step) onto
-  the running app, plus a pure helper for snapshotting panel visibility around
-  recording. Rendering knobs are routed separately via `RenderingControls`.
+  `viewer_config` blob (panel show/hide flags, theme, dimension-nav step, and
+  animation dispatch) onto the running app, plus a pure helper for snapshotting
+  panel visibility around recording. Rendering knobs are routed separately via
+  `RenderingControls`.
 - **`snapshot/`** — `captureSnapshot` / `restoreSnapshot` + `ViewerSnapshot`
   types. JSON-serialisable view state (camera + slice position only) for
   tests, share-view links, and regression harnesses. Layer-panel and
