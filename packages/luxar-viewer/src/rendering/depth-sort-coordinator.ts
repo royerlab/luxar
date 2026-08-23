@@ -795,8 +795,8 @@ function anyNodeWantsSorting(): boolean {
  * FUTURE commit then registers naturally. Only the re-registration sweep
  * needs that callback, and it checks for itself.
  *
- * (The caller also runs this only after its `isLoadInProgress` early
- * return, so a retry never fires into an in-flight load sweep — the very
+ * (The caller explicitly suppresses this helper while `isLoadInProgress`
+ * is true, so a retry never fires into an in-flight load sweep — the very
  * condition that starves init in the first place.)
  */
 function maybeRetryStarvedWorkerInit(): void {
