@@ -805,13 +805,19 @@ class TestTransformBoundingBox:
                 [0.0, 0.0, 0.0, 0.0],
             ]
         )
+        lo_input = np.array([-1, -2, -3, 7], dtype=np.float64)
+        hi_input = np.array([4, 5, 6, 9], dtype=np.float64)
 
-        lo, hi = transform_bounding_box(matrix, [-1, -2, -3, 7], [4, 5, 6, 9])
+        lo, hi = transform_bounding_box(matrix, lo_input, hi_input)
 
         assert lo.tolist() == [-1, -2, -3]
         assert hi.tolist() == [4, 5, 6]
         assert lo.shape == (3,)
         assert hi.shape == (3,)
+        lo[0] = 100
+        hi[0] = 100
+        assert lo_input.tolist() == [-1, -2, -3, 7]
+        assert hi_input.tolist() == [4, 5, 6, 9]
         assert (
             "transform_bounding_box: skipped 8/8 corner(s) with |w| < 1e-12"
             in capsys.readouterr().out
