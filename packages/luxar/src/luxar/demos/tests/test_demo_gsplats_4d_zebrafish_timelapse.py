@@ -74,11 +74,48 @@ class TestTimepointSelection:
         the very defect this function replaced.
         """
         frames = _demo.select_timepoints(151, limit)
-        stride = frames[1] - frames[0]
-        assert frames[-1] >= 150 - stride, (
-            f"limit {limit} stops at frame {frames[-1]} of 150 with stride "
-            f"{stride}; it should reach within one stride of the end"
+        assert frames[-1] / 150 >= 0.89, (
+            f"limit {limit} stops at frame {frames[-1]} of 150, spanning only "
+            f"{frames[-1] / 150:.0%} of the recording"
         )
+
+    @pytest.mark.parametrize(
+        "n_total,limit,expected",
+        [
+            # Rounding (n-1)/(limit-1) DOWN and truncating (the original) takes
+            # frames 0-99 here and stops at 66% of the run.
+            (151, 100, [0, 2, 150]),
+            # Rounding it UP fixes that and breaks this one: 2 frames, 56%.
+            (10, 3, [0, 4, 8]),
+            (151, 8, [0, 21, 147]),
+        ],
+    )
+    def test_the_stride_beats_both_closed_forms(
+        self, n_total: int, limit: int, expected: list[int]
+    ) -> None:
+        """Pinned by example, because neither rounding rule is good enough.
+
+        Each row is a case where one of the two obvious closed forms loses. The
+        expected values are (first, second, last) of the chosen sampling.
+        """
+        frames = _demo.select_timepoints(n_total, limit)
+        assert [frames[0], frames[1], frames[-1]] == expected, frames
+        assert len(frames) <= limit
+
+    def test_no_stride_would_fit_more_frames_in_the_budget(self) -> None:
+        """The search must actually find the optimum, not merely something legal."""
+        for n_total in (10, 37, 100, 151):
+            for limit in range(2, min(n_total, 40)):
+                frames = _demo.select_timepoints(n_total, limit)
+                best = max(
+                    (len(f), f[-1])
+                    for f in (list(range(0, n_total, s)) for s in range(1, n_total))
+                    if len(f) <= limit
+                )
+                assert (len(frames), frames[-1]) == best, (
+                    f"n={n_total} limit={limit}: chose {len(frames)} frames "
+                    f"ending at {frames[-1]}, but {best} was available"
+                )
 
     def test_a_single_timepoint_is_refused(self) -> None:
         # One timepoint has no step to derive, and the scene it would build is
@@ -101,6 +138,39 @@ class TestAcquisitionBox:
     def test_the_box_is_centred_on_the_origin(self) -> None:
         bmin, bmax = _demo.acquisition_box_um()
         assert np.allclose(bmin, -bmax)
+
+
+class TestTheManifestCarriesTheArchiveTheDemoAsksFor:
+    """The default path resolves a NAME through the manifest, so they must agree.
+
+    Nothing else in the suite pairs the two: ``test_demo_fetch_path`` checks the
+    SHAPE of a demo's fetch call, not that the name it passes exists. A demo can
+    therefore ask for an archive the manifest does not list, stay green in CI,
+    and raise ``FileNotFoundError`` for every user on its default path while the
+    ``--recompute`` path an author exercises works perfectly.
+    """
+
+    def test_the_requested_archive_is_a_manifest_file(self) -> None:
+        import json
+
+        manifest = json.loads(
+            (Path(_DEMO_PATH).resolve().parents[0] / "data_manifest.json").read_text()
+        )
+        entry = manifest["datasets"][_demo.DEMO_NAME]
+        names = [f["name"] for f in entry.get("files", [])]
+        assert _demo.GSPLATS_FILE in names, (
+            f"{_demo.DEMO_NAME} does not list {_demo.GSPLATS_FILE!r} (has "
+            f"{names}); the demo's default path would raise FileNotFoundError "
+            "for every user. Land the archive and regenerate the manifest."
+        )
+
+    def test_the_dataset_directory_is_the_demo_cache_name(self) -> None:
+        import json
+
+        manifest = json.loads(
+            (Path(_DEMO_PATH).resolve().parents[0] / "data_manifest.json").read_text()
+        )
+        assert manifest["datasets"][_demo.DEMO_NAME]["dir"] == _demo.DEMO_NAME
 
 
 class TestVoxelToMicrons:

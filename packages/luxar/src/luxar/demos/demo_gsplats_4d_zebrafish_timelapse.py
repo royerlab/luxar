@@ -87,9 +87,10 @@ FLOOR (why this demo turns off a default the house rule says to keep):
     |    75 |    0.35% |            63/255 | 38.37 / 11.51 dB / 0.55     | 45.94 / 22.14 / 1.00 |
     |   150 |    1.35% |            91/255 | 29.23 /  8.13 dB / 0.44     | 36.73 / 18.82 / 0.97 |
 
-    Up to +7.6 dB global and +10.6 dB foreground for turning it off, and
-    reproduced energy goes from 44-73% back to ~100%. Read the energy column:
-    global PSNR barely moves at frame 0 and hides how much was being deleted.
+    Up to +7.6 dB global (frame 75) and +10.7 dB foreground (frame 150) for
+    turning it off, and reproduced energy goes from 44-73% back to ~100%. Read
+    the energy column: global PSNR barely moves at frame 0 and hides how much
+    was being deleted.
 
 USAGE:
     python demo_gsplats_4d_zebrafish_timelapse.py [--recompute] [--no-serve]
@@ -204,7 +205,7 @@ CULL_RETENTION = 0.9999
 
 #: NO background floor, stated rather than defaulted. The house rule is to stay
 #: on ``auto`` unless you have measured otherwise; this is a dataset where
-#: measuring says otherwise, by up to 10.6 dB of foreground. See the module
+#: measuring says otherwise, by up to 10.7 dB of foreground. See the module
 #: docstring's FLOOR section for the table and why `auto` inverts here.
 FLOOR = "none"
 
@@ -348,19 +349,31 @@ def select_timepoints(n_total: int, limit: Optional[int]) -> list[int]:
     one ``step``, so unevenly spaced frames would land between stops and those
     stops would silently render nothing.
 
-    Given the choice, it spends frames on SPAN rather than on count: the stride
-    is rounded up, so a subsample may return fewer frames than asked for but
-    reaches within one stride of the last one. Rounding down instead maximises
-    the count and can cost a third of the recording — ``--max-timepoints=100``
-    of 151 would take frames 0-99 and stop two thirds of the way through
-    gastrulation, which is the same defect this function exists to remove.
+    The stride is SEARCHED rather than computed, because neither closed form
+    is good enough. Rounding ``(n - 1) / (limit - 1)`` down and truncating to
+    ``limit`` — what this demo used to do — takes frames 0-99 for
+    ``--max-timepoints=100`` of 151 and stops two thirds of the way through
+    gastrulation. Rounding it up fixes that case and breaks a smaller one: 3 of
+    10 frames becomes 2, spanning 56%. Scanning every stride and keeping the
+    most frames that fit in the budget (ties to the one reaching furthest)
+    dominates both — measured over n = 2..199 and limit = 2..59, its worst span
+    is 89% against 66% for rounding down and 56% for rounding up.
+
+    The scan is over at most ``n_total`` strides on a list of timepoints, so it
+    is free next to a single fit.
     """
     if limit is None or limit >= n_total:
         return list(range(n_total))
     if limit < 2:
         raise ValueError(f"--max-timepoints must be at least 2, got {limit}")
-    stride = -(-(n_total - 1) // (limit - 1))  # ceil
-    return list(range(0, n_total, stride))
+    best: list[int] = []
+    for stride in range(1, n_total):
+        frames = list(range(0, n_total, stride))
+        if len(frames) > limit:
+            continue
+        if (len(frames), frames[-1]) > ((len(best), best[-1]) if best else (0, 0)):
+            best = frames
+    return best
 
 
 # =============================================================================
