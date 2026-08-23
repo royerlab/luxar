@@ -40,11 +40,14 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Iterable, Optional
 
+from arbol import aprint
+
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO_ROOT / "packages" / "luxar" / "src"))
 
 from luxar._zarr_compat import read_node_attrs  # noqa: E402
 from luxar.demos.registry import iter_demos  # noqa: E402
+from luxar.utils.paths import get_demos_output_dir  # noqa: E402
 
 _ATTRIBUTION_FIELDS = ("short", "doi", "license")
 
@@ -52,8 +55,9 @@ _ATTRIBUTION_FIELDS = ("short", "doi", "license")
 def compare(store: Path, declared: Optional[dict]) -> Optional[str]:
     """The problem with this store, or ``None`` when it agrees with the demo.
 
-    ``declared`` is the demo's ``DEMO_META["citation"]``, or ``None`` for a
-    procedurally generated demo that owes no credit.
+    ``declared`` is the demo's ``DEMO_META["citation"]``, or ``None`` when the
+    registry has no citation. Registry ``None`` is not by itself proof that a
+    demo is synthetic, so callers must only pass registered demo outputs.
     """
     attrs = read_node_attrs(store)
     if attrs is None:
@@ -89,13 +93,17 @@ def _demo_stores(demos_dir: Path) -> Iterable[tuple[str, Path, Optional[dict]]]:
     """(demo key, store path, declared citation) for every built demo scene."""
     for demo in iter_demos():
         for stem in demo.outputs:
-            for suffix in (".luxar.zarr", ".luxar.zarr.zip"):
-                store = demos_dir / f"{stem}{suffix}"
-                # A zipped store is not inspected: it would have to be unpacked,
-                # and the built directory is what a regeneration writes.
-                if store.is_dir():
-                    yield demo.key, store, demo.citation
-                    break
+            store = demos_dir / f"{stem}.luxar.zarr"
+            if store.is_dir():
+                yield demo.key, store, demo.citation
+
+
+def _store_stem(path: Path) -> str:
+    """Return a scene store's output stem for directory or archive spelling."""
+    for suffix in (".luxar.zarr.zip", ".luxar.zarr"):
+        if path.name.endswith(suffix):
+            return path.name.removesuffix(suffix)
+    return path.name
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -109,7 +117,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument(
         "--demos-dir",
         type=Path,
-        default=_REPO_ROOT / "datasets" / "demos",
+        default=get_demos_output_dir(create=False),
         help="where built demo scenes live",
     )
     args = parser.parse_args(argv)
@@ -120,15 +128,24 @@ def main(argv: Optional[list[str]] = None) -> int:
             for stem in demo.outputs:
                 by_stem[stem] = (demo.key, demo.citation)
         targets = []
+        skipped = []
         for store in args.stores:
-            stem = store.name.removesuffix(".luxar.zarr")
-            key, declared = by_stem.get(stem, (stem, None))
+            stem = _store_stem(store)
+            known = by_stem.get(stem)
+            if known is None:
+                skipped.append(f"{store.name}: not a known demo output, skipped")
+                continue
+            if store.name.endswith(".luxar.zarr.zip"):
+                skipped.append(f"{store.name}: archive stores are not inspected, skipped")
+                continue
+            key, declared = known
             targets.append((key, store, declared))
     else:
         targets = list(_demo_stores(args.demos_dir))
+        skipped = []
 
-    if not targets:
-        print("no built demo scenes found; nothing to check")
+    if not targets and not skipped:
+        aprint("no built demo scenes found; nothing to check")
         return 0
 
     problems = []
@@ -137,9 +154,14 @@ def main(argv: Optional[list[str]] = None) -> int:
         if problem:
             problems.append(f"{key}: {store.name} {problem}")
 
-    print(f"checked {len(targets)} built scene(s); problems: {len(problems)}")
+    aprint(
+        f"checked {len(targets)} built scene(s); problems: {len(problems)}; "
+        f"skipped: {len(skipped)}"
+    )
     for line in problems:
-        print(f"  {line}")
+        aprint(f"  {line}")
+    for line in skipped:
+        aprint(f"  {line}")
     return 1 if problems else 0
 
 

@@ -145,3 +145,27 @@ def test_exit_code_is_non_zero_when_a_store_contradicts_its_demo(
     out = capsys.readouterr().out
     assert code == 1, out
     assert "carries no citation" in out
+
+
+def test_default_discovery_checks_built_demo_stores(tmp_path: Path, capsys) -> None:
+    _v3_store(tmp_path, "cosmicflows_laniakea_full", {"content_hash": "x"})
+    code = main(["--demos-dir", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert code == 1, out
+    assert "checked 1 built scene(s)" in out and "carries no citation" in out
+
+
+def test_unknown_explicit_store_is_skipped(tmp_path: Path, capsys) -> None:
+    store = _v3_store(tmp_path, "my_analysis", {"citation": CITED})
+    assert main([str(store)]) == 0
+    out = capsys.readouterr().out
+    assert "checked 0 built scene(s)" in out
+    assert "not a known demo output, skipped" in out
+
+
+def test_known_explicit_archive_is_named_then_skipped(tmp_path: Path, capsys) -> None:
+    store = tmp_path / "cosmicflows_laniakea_full.luxar.zarr.zip"
+    store.write_bytes(b"not opened")
+    assert main([str(store)]) == 0
+    out = capsys.readouterr().out
+    assert "archive stores are not inspected, skipped" in out
