@@ -622,6 +622,10 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             image_labels: Optional per-element images for hover thumbnails.
                 Accepts List[bytes], List[PIL.Image], List[ndarray], List[Path],
                 or Dict[int, Any] for sparse assignment.
+            keys: Optional list of machine-readable strings, one per point.
+                Stored as CSR-encoded key_offsets + key_bytes arrays for
+                ``link`` / ``copy`` templates to substitute as
+                ``{hover_key}``. Independent of ``labels``.
             **attrs: Additional attributes
 
         Returns:
@@ -690,6 +694,10 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             labels: Optional list of strings, one per vertex. Stored as CSR-encoded
                 label_offsets + label_bytes arrays for hover tooltips.
             image_labels: Optional per-element images for hover thumbnails.
+            keys: Optional list of machine-readable strings, one per vertex.
+                Stored as CSR-encoded key_offsets + key_bytes arrays for
+                ``link`` / ``copy`` templates to substitute as
+                ``{hover_key}``. Independent of ``labels``.
             **attrs: Additional attributes
 
         Returns:
@@ -768,6 +776,10 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             double_sided: Whether back faces render. ``True`` by default.
             labels: Optional per-vertex strings for hover tooltips (CSR-encoded).
             image_labels: Optional per-vertex images for hover thumbnails.
+            keys: Optional list of machine-readable strings, one per vertex.
+                Stored as CSR-encoded key_offsets + key_bytes arrays for
+                ``link`` / ``copy`` templates to substitute as
+                ``{hover_key}``. Independent of ``labels``.
             **attrs: Additional attributes.
 
         Returns:
@@ -1425,6 +1437,10 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             labels: Optional list of strings, one per splat. Stored as CSR-encoded
                 label_offsets + label_bytes arrays for hover tooltips.
             image_labels: Optional per-element images for hover thumbnails.
+            keys: Optional list of machine-readable strings, one per splat.
+                Stored as CSR-encoded key_offsets + key_bytes arrays for
+                ``link`` / ``copy`` templates to substitute as
+                ``{hover_key}``. Independent of ``labels``.
             **attrs: Additional attributes
 
         Returns:
