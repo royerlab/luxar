@@ -67,8 +67,9 @@ export function concatenateGSplatsData(parts: LoadedGSplatsData[]): LoadedGSplat
     // second level lands. `createProgressiveGSplatsLoader` now also clears
     // `has_labels` / `has_image_labels` / `has_keys` on each sub-LOD's attrs, so
     // `ranges` is normally never published at all; this keeps the invariant true
-    // whatever attrs a sub-LOD carries. (A gsplat ladder carries no labels at any
-    // level; the Points / Lines ladders put one union CSR on the parent — #1422.)
+    // whatever attrs a sub-LOD carries. (A gsplat ladder carries no labels/keys
+    // at any level; the Points / Lines ladders put one union CSR per supported
+    // channel on the parent — #1422.)
     const only = parts[0];
     if (only.ranges === undefined) return only;
     const stripped: LoadedGSplatsData = { ...only };

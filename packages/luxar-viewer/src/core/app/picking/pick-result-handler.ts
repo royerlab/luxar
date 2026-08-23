@@ -32,9 +32,9 @@ import type { PickResult } from '../../../rendering/picking/picking-system';
  * level path.
  *
  * REPORTING ONLY — never a lookup path. The wrapper is a bare group: the
- * label/image CSR arrays live on each ``part_<i>`` leaf (the Python
+ * label/key CSR arrays live on each ``part_<i>`` leaf (the Python
  * ``add_points`` / ``add_lines`` / ``add_gsplats`` / ``add_mesh``
- * partition wrappers slice ``labels`` per part), and ``elementId`` is the
+ * partition wrappers slice ``labels`` / ``keys`` per part), and ``elementId`` is the
  * leaf's own index. See {@link buildPickResultHandler}.
  *
  * Returns ``null`` when no kind=partition ancestor exists — caller falls
@@ -80,7 +80,7 @@ export interface PickResultHandlerPorts {
   /**
    * Optional sink for the public `selection` embedder event. Fires with the
    * picked element on every (non-superseded) hover-pick, and `null` when the
-   * hover clears. Independent of whether a label/image tooltip exists —
+   * hover clears. Independent of whether a string/image tooltip exists —
    * reports what is currently picked. Inline shape (not the embedder type) to
    * keep this handler decoupled from the public event module — keep it in sync
    * with `SelectionPayload` in `core/app/embedder/events.ts`.
@@ -147,22 +147,23 @@ export interface PickResultHandlerPorts {
  *   and what an embedder should index against).
  *
  *   Two known limits survive this fix, both outside the handler:
- *   (i) an *additive ladder* carries ONE union CSR on its parent node
- *   (#1422), spanning the levels in `additive_<i>` order — the same node
+ *   (i) an *additive ladder* carries ONE union CSR per present labels/keys
+ *   channel on its parent node (#1422), spanning the levels in
+ *   `additive_<i>` order — the same node
  *   `lookupPath` names, and the same space the progressive loader
  *   produces when it concatenates the committed levels, so the lookup is
  *   correct — for POINTS also under slicing, since the loader now
  *   composes each level's slot → on-disk map into that union space,
  *   offsetting level `i` by the preceding levels' on-disk `n_points`
  *   (#1439). Not for LINES: its raw slot is a per-*segment* one while the
- *   union CSR is per-*vertex* (#1424), so a labelled laddered lines node
- *   is wrong at the granularity, not merely at an offset, whatever the
- *   slicing — and nothing composes a lines ladder's LEVELS either;
- *   gsplat ladders carry no labels at all; and
+ *   union CSR is per-*vertex* (#1424), so a laddered lines node with a
+ *   string channel is wrong at the granularity, not merely at an offset,
+ *   whatever the slicing — and nothing composes a lines ladder's LEVELS
+ *   either; gsplat ladders carry no labels/keys at all; and
  *   (ii) `result.elementId` is only sometimes the on-disk CSR index. It
  *   arrives already resolved wherever the node can resolve one — Points,
  *   GSplats and Lines all do, for a node declaring `has_labels` /
- *   `has_image_labels`, through a published slot → on-disk map or
+ *   `has_image_labels` / `has_keys`, through a published slot → on-disk map or
  *   trivially where the identity already holds and no map is published,
  *   and Mesh needs none because its `gl_VertexID` already IS the on-disk
  *   vertex ordinal (see
@@ -170,27 +171,27 @@ export interface PickResultHandlerPorts {
  *   translation at the single `PickResult` construction site). For a
  *   LINES node the resolved value is the picked segment's **start**
  *   vertex row in the on-disk (spatially sorted) VERTEX ordering, not a
- *   segment row: line labels are per-vertex, and a segment carries a
+ *   segment row: line string channels are per-vertex, and a segment carries a
  *   single `flat` pick id, so exactly one of its two endpoints can be
  *   reported and by convention it is the start (#1424). That resolution
  *   is published for a FLAT lines node only, so any lines node without
- *   it — an *unlabelled* one, and equally a labelled LADDERED one, whose
- *   per-level maps a lines ladder's concat still drops (limit (i), where
- *   only Points composes them) — still reports the raw
+ *   it — one with no string channel, and equally a LADDERED one with a
+ *   string channel, whose per-level maps a lines ladder's concat still
+ *   drops (limit (i), where only Points composes them) — still reports the raw
  *   visible-segment slot, which is neither an on-disk row nor even the
- *   right granularity for a per-vertex CSR. A Points or GSplats node
- *   declaring no labels likewise keeps the raw storage slot — no CSR to
- *   miss, but an embedder reading `SelectionPayload.elementIndex` there
- *   is reading a slot.
+ *   right granularity for a per-vertex CSR. A Points or GSplats node with
+ *   no per-element string channel likewise keeps the raw storage slot — no
+ *   CSR to miss, but an embedder reading `SelectionPayload.elementIndex`
+ *   there is reading a slot.
  * - `null` result → clear hover (`updateHoverContent(null)`); no loader calls.
- * - Non-null result → fetch label + image URL in parallel; emit a
- *   payload only when at least one is truthy. An empty-string label
+ * - Non-null result → fetch label + key + image URL in parallel; emit a
+ *   payload only when at least one is truthy. An empty string
  *   counts as no content (matches `LabelLoader.getLabel` which
  *   already returns `null` for empty labels, but the falsy gate
  *   here is the second line of defense).
- * - Either fetch rejects → log a warning and clear hover. Errors must
+ * - Any fetch rejects → log a warning and clear hover. Errors must
  *   not kill the hover loop.
- * - Ordering: the label/image fetch is async, so a slow fetch from an
+ * - Ordering: the string/image fetch is async, so a slow fetch from an
  *   older invocation could resolve AFTER a newer one (e.g. an uncached
  *   image while the cursor moves on) and re-show a stale tooltip over
  *   fresher state. A monotonic `latest` token, captured per call, gates
@@ -217,8 +218,8 @@ export function buildPickResultHandler(
       // kind=partition-inside-kind=partition, the **outermost** wrapper wins.
       const partitionWrapper = findOutermostPartitionWrapperName(result.mainNode);
       const reportPath = partitionWrapper ?? result.mainNode.name;
-      // …but LOOK UP on the leaf. The wrapper holds no label CSR and does not
-      // share the leaf's element index space (#1415).
+      // …but LOOK UP on the leaf. The wrapper holds no per-element string CSR
+      // and does not share the leaf's element index space (#1415).
       const lookupPath = result.mainNode.name;
       const [label, imageUrl, key] = await Promise.all([
         ports.labelLoader?.getLabel(lookupPath, result.elementId) ?? Promise.resolve(null),
@@ -231,7 +232,7 @@ export function buildPickResultHandler(
       // fetching — drop this stale one rather than clobber fresher state.
       if (seq !== latest) return;
       // Selection reflects the picked element itself, independent of whether
-      // a label/image tooltip exists for it. Both paths are carried: the
+      // a string/image tooltip exists for it. Both paths are carried: the
       // wrapper to display, the leaf `elementIndex` is local to so an embedder
       // can actually resolve the element (#1415).
       ports.onSelection?.({
@@ -262,7 +263,7 @@ export function buildPickResultHandler(
           : null
       );
     } catch (err) {
-      // Don't let label loading errors kill the hover loop. Stay silent if
+      // Don't let string/image loading errors kill the hover loop. Stay silent if
       // superseded — clearing here would wipe a newer invocation's result.
       if (seq !== latest) return;
       log.warning(Modules.APP, `Picking callback error: ${err}`);

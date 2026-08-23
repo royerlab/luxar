@@ -52,9 +52,9 @@ export interface InitPickingPorts {
    * Separate from {@link hasSelectionConsumer} because the two answer
    * different questions and are read at different times, but they are OR'd
    * for both provisioning and gating: a host that subscribes ONLY to
-   * `element-click`, on a scene with no labels and no interaction templates,
-   * would otherwise get a viewer that never picks and therefore an event that
-   * never fires — with nothing to indicate why.
+   * `element-click`, on a scene with no per-element string channels and no
+   * interaction templates, would otherwise get a viewer that never picks and
+   * therefore an event that never fires — with nothing to indicate why.
    */
   hasElementActionConsumer?: () => boolean;
   /**
@@ -123,9 +123,9 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
   // Re-init: tear down listeners from any previous picking session.
   // Usually already done up-front by `loadDataset` (see
   // disposePickingSession) — this defensive re-run (idempotent) covers
-  // callers that reach init directly, and runs before the no-labels
+  // callers that reach init directly, and runs before the no-consumers
   // early-return so we don't leak listeners from the previous session
-  // if this re-init ends up with no labels in the new scene. Subsequent
+  // if this re-init ends up with no pick consumers in the new scene. Subsequent
   // listener registrations below all funnel through the same
   // `pickingEvents` EventGroup, so a future `dispose()` (or the next
   // initPicking call) removes them in one shot.

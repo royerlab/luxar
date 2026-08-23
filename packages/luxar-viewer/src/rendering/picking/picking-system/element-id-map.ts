@@ -3,13 +3,13 @@
  *
  * A pick shader can only report where an element sits in the buffer that was
  * uploaded to the GPU — its **storage slot**. That is not the same number as
- * the element's **on-disk index**, which is what the per-element label CSR
- * (`label_offsets` / `label_bytes`) is keyed by, whenever the visible buffer's
- * index space diverges from the on-disk one. For Points that happens two ways:
+ * the element's **on-disk index**, which is what the per-element string CSRs
+ * are keyed by, whenever the visible buffer's index space diverges from the
+ * on-disk one. For Points that happens two ways:
  * spatial range loading (only the visible on-disk ranges are concatenated) and
  * effective-radius compaction (zero-radius points are dropped in place). A
- * hover tooltip that reads a label at the raw slot then shows a
- * wrong-but-plausible neighbour's label (issue #1421).
+ * consumer that reads a string at the raw slot then gets a wrong-but-plausible
+ * neighbour's value (issue #1421).
  *
  * The fix is a published map: whichever stage knows the slot → on-disk mapping
  * composes it (`data/loaders/element-ids.ts`), the commit pipeline stamps it
@@ -28,22 +28,22 @@
  *    (`commit-points-geometry.ts`) forwards `LoadedPointsData.elementIds` to
  *    the mesh stamp.
  *  - **Points additive ladders** — composed as well, into the ladder's union
- *    index space. `add_points(..., labels=…, additive_lod=True)` writes ONE
- *    union label CSR on the PARENT node, keyed by
+ *    index space. `add_points(..., labels=…, keys=…, additive_lod=True)` writes
+ *    ONE union CSR per present channel on the PARENT node, keyed by
  *    `additive_0 || additive_1 || …` (each level in its stored order) and
- *    declared by the parent's `has_labels` (#1422); the per-level maps are
- *    composed into that space. Because a sub-LOD has
- *    no CSR a reader could key by, `createProgressivePointsLoader` overrides
- *    each `additive_<i>` node's label flags with the PARENT's: with a union CSR
- *    every level builds its own level-space map, and
+ *    declared by the parent's `has_labels` / `has_keys` (#1422); the per-level
+ *    maps are composed into that space. Because a sub-LOD has no CSR a reader
+ *    could key by, `createProgressivePointsLoader` overrides each
+ *    `additive_<i>` node's string-channel flags with the PARENT's: with a union
+ *    CSR every level builds its own level-space map, and
  *    `points-progressive-loader.ts::concatenatePointsData` offsets level `i` by
  *    the preceding levels' ON-DISK counts (`n_points`) to land it in that union
  *    space — a level that published no map (projection identity fast path)
  *    contributing `offset + slot`. Each id is BOUNDED by its own level's row
  *    count as well as shifted: an index past it would name a real row belonging
- *    to a sibling level, which is a confidently wrong label rather than a
- *    missing one. Nothing is emitted when the parent declares
- *    no labels, when the whole resident ladder is complete and unculled (slot
+ *    to a sibling level, which is a confidently wrong string rather than a
+ *    missing one. Nothing is emitted when the parent declares no labels/keys
+ *    CSR, when the whole resident ladder is complete and unculled (slot
  *    IS the union index), or when the inputs are inconsistent. That last case
  *    is NOT a suppression: with no map this helper returns the slot, so on a
  *    sliced ladder the tooltip still shows whatever CSR row the slot hits. What

@@ -162,11 +162,11 @@ function buildLadderElementIdMap(
  * policy). A level the current slice culled to ZERO points abstains from
  * that vote rather than vetoing it — see `concatOptionalField` (#1456).
  *
- * `levelOffsets` (non-null only for a ladder whose PARENT declares the union
- * label CSR) gives each level's half-open extent inside that CSR's index
- * space — CSR-style, so it holds one entry MORE than there are levels; with it
- * the per-level picking maps are composed into one union map, and without it
- * none is published at all — see {@link buildLadderElementIdMap}. `warn` is the
+ * `levelOffsets` (non-null only for a ladder whose PARENT declares at least one
+ * union labels/keys CSR) gives each level's half-open extent inside that CSR's
+ * index space — CSR-style, so it holds one entry MORE than there are levels;
+ * with it the per-level picking maps are composed into one union map, and
+ * without it none is published at all — see {@link buildLadderElementIdMap}. `warn` is the
  * owning loader's once-per-instance fail-closed reporter (this runs on every
  * memoized concat, so an unlatched `log.warning` would spam once per level per
  * view change — tens per second under dimension-animation playback).
@@ -355,9 +355,10 @@ export class PointsProgressiveLoader implements PointsDataLoader {
   private energyTable: readonly number[] | null;
   // CSR-style bounds over the levels' ON-DISK element counts (`nLods + 1`
   // entries): level `i` occupies `[levelOffsets[i], levelOffsets[i + 1])`
-  // inside the parent node's union label CSR index space. Non-null only when
-  // the parent declares that CSR (`createProgressivePointsLoader`); null means
-  // no ladder picking map is published at all.
+  // inside the parent node's union labels/keys CSR index space. Non-null only
+  // when the parent declares at least one such CSR
+  // (`createProgressivePointsLoader`); null means no ladder picking map is
+  // published at all.
   private readonly levelOffsets: readonly number[] | null;
   // One fail-closed composition warning per LOADER, not per concat: the concat
   // re-runs on every (generation, lodCount) miss and a view change bumps the
