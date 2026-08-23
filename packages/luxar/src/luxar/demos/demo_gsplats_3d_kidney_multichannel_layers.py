@@ -491,8 +491,9 @@ Controls:
                         cholesky_factors=gsplats.cholesky_factors,
                         dim_order=["z", "y", "x"],
                         opacity=1.0,
-                        absorption=1.0,
-                        blending_mode="volumetric",
+                        # One global order slot per node cannot interleave these
+                        # co-located volumes; additive is order-independent.
+                        blending_mode="additive",
                         layer=True,
                         colormap=colormap,
                     )
