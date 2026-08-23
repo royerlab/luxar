@@ -497,7 +497,7 @@
     {
       "id": "gsplats_4d_zebrafish_timelapse",
       "title": "4D Zebrafish Timelapse",
-      "geometry": "gsplats",
+      "geometry": "mixed",
       "category": "microscopy",
       "script": "demo_gsplats_4d_zebrafish_timelapse.py",
       "dataset": "datasets/demos/gsplats_4d_zebrafish_timelapse.luxar.zarr",
