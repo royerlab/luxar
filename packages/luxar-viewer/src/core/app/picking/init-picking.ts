@@ -7,6 +7,7 @@ import { LabelLoader, ImageLabelLoader } from '../../../data/loaders';
 import { buildPickResultHandler } from './pick-result-handler';
 import { PickedElementCache } from '../interaction/picked-element-cache';
 import { installCanvasActions, type ElementPointerPayload } from '../interaction/canvas-actions';
+import { explainLinkRejection } from '../interaction/element-actions';
 import type { SceneManager } from '../../../scene/scene-manager';
 import type { OverlayManager } from '../../../ui/overlay-manager';
 import type { EventGroup } from '../../../utils/cross-layer/event-group';
@@ -138,6 +139,12 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
     // (#1917).
     if (typeof attrs?.link === 'string' || typeof attrs?.copy === 'string') {
       hasAnyInteraction = true;
+    }
+    if (typeof attrs?.link === 'string') {
+      const rejection = explainLinkRejection(attrs.link);
+      if (rejection) {
+        log.warning(Modules.APP, `Invalid link template on node "${obj.name}": ${rejection}`);
+      }
     }
   });
   // Provision picking when the scene declares labels, declares an interaction

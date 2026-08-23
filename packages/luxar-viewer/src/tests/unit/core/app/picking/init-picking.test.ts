@@ -15,6 +15,7 @@ import {
   type InitPickingResult,
 } from '../../../../../core/app/picking/init-picking';
 import { EventGroup } from '../../../../../utils/cross-layer/event-group';
+import { log, Modules } from '../../../../../utils/log';
 
 // All heavy collaborators are module-mocked so the test never touches
 // WebGL / zarr stores / GPU picking pipeline.
@@ -254,6 +255,38 @@ describe('initPicking', () => {
 
       expect(result.pickingSystem).toBeUndefined();
       expect(PickingSystem).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('interaction template diagnostics', () => {
+    it('warns once for each malformed authored link and names the node', async () => {
+      (getSceneLoader as unknown as ReturnType<typeof vi.fn>).mockReturnValue(
+        makeSceneLoader({ hasStore: true })
+      );
+      const root = new THREE.Group();
+      root.name = 'LuxarScene';
+      const malformed = new THREE.Group();
+      malformed.name = 'bad-links';
+      malformed.userData = { attrs: { link: 'javascript:alert(1)' } };
+      const valid = new THREE.Group();
+      valid.name = 'good-links';
+      valid.userData = { attrs: { link: 'https://example.org/{hover_index}' } };
+      root.add(malformed, valid);
+      const scene = new THREE.Scene();
+      scene.add(root);
+      const warning = vi.spyOn(log, 'warning').mockImplementation(() => undefined);
+
+      await initPicking({
+        sceneManager: makeSceneManager(scene) as never,
+        pickingEvents,
+        previous: makePreviousEmpty(),
+        getOverlayManager: () => undefined,
+      });
+
+      expect(warning).toHaveBeenCalledExactlyOnceWith(
+        Modules.APP,
+        'Invalid link template on node "bad-links": link scheme "javascript:" is not allowed (only http and https)'
+      );
     });
   });
 
