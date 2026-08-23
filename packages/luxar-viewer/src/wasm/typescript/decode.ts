@@ -20,7 +20,9 @@ export function decode_quantized_u8(
   // Float32Array of widened codes produced by full-array zarr reads. Python
   // `_decode_bounded_scalar` uses f64 with a different operand order; exact
   // viewer expectations mirror this kernel in
-  // `tests/fixtures/generate_expectations.py::_viewer_kernel_decode`.
+  // `tests/fixtures/generate_expectations.py::_viewer_kernel_decode`. Changing
+  // the order or permitting an FMA also requires re-deriving the writer's
+  // `_positive_scalar_quantization_slack` chunk-bound allowance.
   const lo = Math.fround(minVal);
   const hi = Math.fround(maxVal);
   const range = Math.fround(hi - lo);
