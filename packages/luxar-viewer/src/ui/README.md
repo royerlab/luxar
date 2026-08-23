@@ -405,8 +405,8 @@ class DatasetBrowser {
 
 interface DatasetBrowserConfig {
   container: HTMLElement;
-  /** May return a Promise; rejections are caught + toasted. */
-  onDatasetSelect: (fullUrl: string) => void | Promise<void>;
+  /** Return false to keep the browser open; Promise rejections are caught + toasted. */
+  onDatasetSelect: (fullUrl: string) => void | false | Promise<void>;
   onClose?: () => void;
 }
 ```
@@ -1130,7 +1130,7 @@ mounted by its owner (the control rail) via `.element`.
 | `show()` | Show the dataset browser panel |
 | `hide()` | Hide the dataset browser panel |
 
-Constructor takes `DatasetBrowserConfig` with `container`, `onDatasetSelect` callback, and optional `onClose` callback. Navigation is internal.
+Constructor takes `DatasetBrowserConfig` with `container`, an `onDatasetSelect` callback that may return `false` to keep the browser open, and an optional `onClose` callback. Navigation is internal.
 
 ### DataLoadingMonitor
 

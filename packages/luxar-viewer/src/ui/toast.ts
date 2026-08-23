@@ -18,6 +18,8 @@ export function showToast(message: string, durationMs: number = 2000): void {
   // refraction/tint layers would ride the fade with it). Same family as the
   // REC pill and the cursor context menus — the §5 opt-outs.
   toast.className = 'luxar-toast';
+  toast.setAttribute('role', 'status');
+  toast.setAttribute('aria-live', 'polite');
   toast.textContent = message;
   toast.style.opacity = '1';
 

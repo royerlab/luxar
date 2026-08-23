@@ -180,9 +180,9 @@ test.describe('First-Time User Experience', () => {
    * return the dataset-browser locator with the canvas focused.
    *
    * Must be `waitForLuxarReady`, NOT `__luxarDebug.app`: the latter is
-   * published at construction. The browser shortcut is live during init,
-   * but these tests immediately select another dataset, which is refused
-   * until initialization completes. `&no-opfs` because neither test asserts
+   * published at construction, before the input handler binds `O` and before
+   * dataset routing decides whether the browser should open automatically.
+   * `&no-opfs` because neither test asserts
    * the L2 OPFS cache tier and automated Chromium's OPFS stalls systemically
    * (10 s per op — issue #1645), which can eat the readiness budget before
    * the circuit breaker trips. The 30 s bound (vs the 45 s default) only helps

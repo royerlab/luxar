@@ -21,6 +21,8 @@ import { showToast } from './toast';
  * callback (the production path is async — `LuxarApp.loadDataset`)
  * doesn't surface as an unhandled rejection when the browser closes
  * synchronously after firing it.
+ *
+ * @returns `false` when the callback synchronously refuses the selection.
  */
 function safeFireSelect(cb: (url: string) => void | false | Promise<void>, url: string): boolean {
   try {
@@ -376,6 +378,8 @@ export class DatasetBrowser {
         // Pass full URL to preserve directory context
         if (safeFireSelect(this.onDatasetSelect, this.navigator.getFullUrl(result.currentPath))) {
           this.close();
+        } else {
+          void this.navigate(result.parentPath ?? '');
         }
         return;
       }
