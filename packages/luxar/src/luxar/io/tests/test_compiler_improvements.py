@@ -2399,7 +2399,13 @@ class TestInteractionTemplateAttrs:
                 ),
                 link=link,
             )
+            scene.add_mesh(
+                "mesh",
+                np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float32),
+                np.array([[0, 1, 2]], dtype=np.uint32),
+                link=link,
+            )
             compiler.finalize()
             root = zarr.open_group(str(zarr_path), mode="r")
-            for name in ("pts", "lns", "gs"):
+            for name in ("pts", "lns", "gs", "mesh"):
                 assert root[name].attrs["link"] == link

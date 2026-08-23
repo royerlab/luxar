@@ -56,7 +56,8 @@ DEFAULT_LINE_JOIN: Final[str] = "miter"
 # keywords that imply `noopener`: any OTHER value is a *named* target, which
 # hands the opened page a live `window.opener` it can use to cross-origin
 # navigate the viewer tab (reverse tabnabbing). The viewer enforces the same
-# two, letter-for-letter, in `ui/overlay-manager.ts`; keep them in step.
+# two, letter-for-letter, in `core/app/interaction/element-actions.ts`; keep them
+# in step.
 LINK_TARGETS: Final[frozenset[str]] = frozenset({"_blank", "_self"})
 DEFAULT_LINK_TARGET: Final[str] = "_blank"
 

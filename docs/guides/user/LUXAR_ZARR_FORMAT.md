@@ -1461,6 +1461,9 @@ Right-clicking a picked element opens a menu with `Copy "<text>"` plus, when a
 `link` resolves, `Open link in new tab` and `Copy link address`. Nothing is
 shown when the element offers neither.
 
+Element actions currently require a settled hover pick, so taps on touch-only
+devices do not trigger them.
+
 **Substitution and escaping differ by consumer.** Values interpolated into a
 `link` are percent-encoded, so a label may contribute *content* to the URL but
 never *structure* — a label containing `/`, `?`, `#` or `&` cannot add a path
