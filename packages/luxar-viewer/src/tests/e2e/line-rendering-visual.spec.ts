@@ -83,11 +83,18 @@ test.describe('Lines visual correctness', () => {
     await waitForRenderStable(page);
     await assertNoShaderErrors(page);
 
-    // Sample 4 corners of the canvas. The failure mode this guards is one
-    // near-camera segment painting the ENTIRE viewport, so assert what that
-    // artefact DESTROYS: with the camera on the zigzag's near tip, the line
-    // occupies part of the frame and at least one corner must still read as
-    // background. A screen-filling segment leaves none.
+    // The contract here has TWO halves, and each is falsifiable on its own:
+    //   1. something rendered — at least one CENTRAL (non-corner) sample is
+    //      painted, so the frame is not empty; and
+    //   2. it did not paint the whole viewport — at least one CORNER still
+    //      reads as background, which is what the screen-filling artefact
+    //      destroys.
+    // Half 2 alone is not enough: four background corners are exactly what an
+    // EMPTY frame produces too, so a regression in the very mechanism this test
+    // names (`uNearCull` degenerating segments too aggressively) would empty the
+    // viewport and still pass. Half 1 is the complement, sampled with the same
+    // central-grid idiom as the "line body is brighter than background" test
+    // above.
     //
     // Deliberately not a colour-uniformity test. "All four saturated"
     // (`r>240 && g>240 && b>240`) was unfalsifiable — the fixture's vertices
@@ -104,14 +111,36 @@ test.describe('Lines visual correctness', () => {
       [0.05, 0.95],
       [0.95, 0.95],
     ];
+    // A 3×3 grid over the middle of the frame — the same offsets the cap-factor
+    // test uses, so "painted" means the same thing in both places.
+    const CENTRAL: Array<[number, number]> = [];
+    for (let i = 0; i < 9; i++) {
+      CENTRAL.push([0.4 + (i % 3) * 0.1, 0.4 + Math.floor(i / 3) * 0.1]);
+    }
     const samples = await samplePixelsAt(page, 'canvas', CORNERS);
-    // Printed on every run, pass or fail: this predicate is only meaningful if
-    // the healthy frame really does leave a corner dark, and that claim should
-    // be checkable from the run log rather than taken on trust.
+    const centralSamples = await samplePixelsAt(page, 'canvas', CENTRAL);
+    // Printed on every run, pass or fail: BOTH halves of the predicate are only
+    // meaningful if the healthy frame really does paint the middle and leave a
+    // corner dark, and that claim should be checkable from the run log rather
+    // than taken on trust.
     console.log(
       `[near-camera line] corner samples ${JSON.stringify(CORNERS)} → ${JSON.stringify(samples)}`
     );
+    console.log(
+      `[near-camera line] central samples ${JSON.stringify(CENTRAL)} → ` +
+        JSON.stringify(centralSamples)
+    );
+    const PAINTED_SUM = 10; // r+g+b above this is "the line rendered here"
     const BACKGROUND_SUM = 30; // r+g+b at/below this is "unpainted" (near-black)
+    // Half 1: the frame is not empty.
+    expect(
+      centralSamples.filter((p) => p.r + p.g + p.b > PAINTED_SUM).length,
+      'no central sample is painted, i.e. nothing rendered at all — the corner check below is ' +
+        'equally happy with an empty frame, so an over-aggressive `uNearCull` degenerating every ' +
+        `segment would otherwise pass silently (central r+g+b must exceed ${PAINTED_SUM} ` +
+        `somewhere): ${JSON.stringify(centralSamples)}`
+    ).toBeGreaterThanOrEqual(1);
+    // Half 2: and it did not paint the whole viewport.
     const painted = samples.filter((p) => p.r + p.g + p.b > BACKGROUND_SUM);
     expect(
       painted.length,

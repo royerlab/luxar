@@ -337,21 +337,29 @@ passes over the same range, repeated until every level has been observed visible
 at least once — rather than one guessed sleep up front. The waiting still happens
 (a ≤500 ms backoff between passes, to let in-flight fetches land), but it sits
 INSIDE a loop whose exit is the condition, so a fast page pays one pass and a slow
-one keeps going. Bound the warm-up so a page that never settles fails loudly
-instead of hanging (`lod-group.spec.ts`'s volumetric cross-fade sweep is the
-worked example).
+one keeps going. Bound the warm-up on **wall clock alone**, so that an incomplete
+warm-up has by construction spent its whole budget
+(`lod-group.spec.ts`'s volumetric cross-fade sweep is the worked example). A pass
+count is a tempting second bound and is the wrong one: residency is gated on
+CHUNK FETCHES, so the only useful response to "not resident yet" is to keep
+waiting, and stopping early with budget left gives up on the one resource that
+helps. It also makes the exit condition a function of RENDER SPEED — that sweep
+once failed hard on "out of passes with budget to spare", which worked out to
+"a pass ran faster than ~1 s", i.e. a fast machine was more likely to be called
+broken than a slow one.
 
-Bounded warm-ups and in-page deadlines are **fail-open**, so let the strength of
-the assertion follow the evidence — but only where the evidence really is about
-the clock. That sweep makes its strict per-boundary claim only when the warm-up
-reached residency AND the sweep was not truncated, and otherwise falls back to
-"at least one genuine cross-fade" while saying loudly, in the failure text and a
-`degraded` annotation, that this run could not check every boundary. Distinguish
-the bound that was hit before you degrade on it: a warm-up that exhausted its
-wall-clock budget is a loaded-runner race, but one that exhausted its PASS
-allowance with budget to spare ran every pass on a healthy render loop and still
-never saw a level — a product signal, which that sweep fails on outright rather
-than downgrading. Size an in-page deadline from the budget you actually have, too
+Bounded warm-ups and in-page deadlines mean a run can end up with less evidence
+than the assertion wants, so let the strength of the claim follow the evidence —
+but **narrow the contract rather than dropping it**. That sweep makes its strict
+every-boundary claim when the warm-up reached residency AND the sweep was not
+truncated; when the warm-up came up short it still requires a genuine cross-fade
+for every adjacent pair among the levels that DID become resident (a level that
+never arrived cannot fade, but its neighbours' pairs still have to), and only a
+truncated sweep — which never visited part of the range, so no subset of pairs is
+implied — falls all the way back to "at least one genuine cross-fade". Every
+narrowing is stated in the failure text and in a `degraded` annotation, naming
+the levels that were never displayed, so a weakened run is never a quiet one.
+Size an in-page deadline from the budget you actually have, too
 (that sweep's is 90 s inside a 150 s test), or the "exceptional" degraded path
 becomes the normal CI outcome and the strict branch is never exercised.
 
