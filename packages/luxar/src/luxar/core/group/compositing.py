@@ -925,6 +925,7 @@ def validate_gsplats_channels_before_split(
     *,
     colors: Any = None,
     labels: Any = None,
+    keys: Any = None,
 ) -> bool:
     """Run the flat GSplats write gate over the source arrays, pre-split.
 
@@ -942,6 +943,7 @@ def validate_gsplats_channels_before_split(
         colors: Per-splat ``(N, 3|4)`` array, a ``(1, c)`` broadcast row, or a
             uniform RGB(A) list/tuple.
         labels: One string per splat.
+        keys: One stable string key per splat.
 
     Returns:
         ``cholesky_is_uniform`` — whether ``cholesky_factors`` is the uniform
@@ -953,14 +955,17 @@ def validate_gsplats_channels_before_split(
     Raises:
         ValueError: If the trio's shapes/values are not a legal per-splat or
             broadcast combination for ``len(centers)`` splats.
-        ValidationError: If ``labels`` is not one string per splat.
+        ValidationError: If ``labels`` or ``keys`` is not one string per splat.
     """
     from ...io._compiler.gsplat_assembly import validate_gsplat_inputs
+    from ...validation.base import validate_labels_for_writing
 
     (*_normalized, n_splats, _n_dims, cholesky_is_uniform) = validate_gsplat_inputs(
         centers, amplitudes, cholesky_factors, colors
     )
     validate_labels_before_split(labels, n_splats)
+    if keys is not None:
+        validate_labels_for_writing(keys, n_splats, context="keys", noun="Keys")
     return bool(cholesky_is_uniform)
 
 

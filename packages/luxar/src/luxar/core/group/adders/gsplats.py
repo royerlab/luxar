@@ -315,7 +315,12 @@ def add_gsplats_partition_wrapper_impl(
     # `validate_gsplat_inputs` already decided it, and a second copy of the rule
     # here is the drift this whole gate exists to prevent.
     uniform_cholesky = validate_gsplats_channels_before_split(
-        ctr_arr, amplitudes, chol_arr, colors=colors, labels=labels
+        ctr_arr,
+        amplitudes,
+        chol_arr,
+        colors=colors,
+        labels=labels,
+        keys=keys,
     )
     uniform_color = is_broadcast_color(colors)
 

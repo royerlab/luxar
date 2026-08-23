@@ -1483,8 +1483,8 @@ def _validate_partition_sources(
     gather), and hoisting them keeps that function under the C901 limit the
     complexity ratchet enforces. Order is load-bearing and preserved exactly:
     ``image_labels`` first, then faces, then the per-vertex channels in
-    ``normals``, ``colors``, ``scalars``, ``labels`` order — a call that trips
-    several is told about the same one it was told about before.
+    ``normals``, ``colors``, ``scalars``, ``labels``, ``keys`` order — a call
+    that trips several is told about the same one it was told about before.
     """
     from ....io._compiler.node_common import (
         validate_broadcast_color,
@@ -1535,6 +1535,8 @@ def _validate_partition_sources(
         validate_scalars_preflight(scalars, n_vertices)
     if labels is not None:
         validate_labels_for_writing(labels, n_vertices)
+    if keys is not None:
+        validate_labels_for_writing(keys, n_vertices, context="keys", noun="Keys")
 
 
 def _add_mesh_partition(
