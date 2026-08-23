@@ -464,25 +464,45 @@ def test_positive_scalar_precision_slack_covers_the_float32_cast(
 
 
 @pytest.mark.parametrize(
-    ("mode", "data"),
+    ("mode", "data", "allow_lut"),
     [
-        (EncodingMode.AUTO, np.linspace(1e38, 1e39, 20_000, dtype=np.float64)),
-        (EncodingMode.MEMORY, np.linspace(1e38, 1e39, 20_000, dtype=np.float64)),
-        (EncodingMode.PRECISION, np.linspace(1e38, 1e39, 20_000, dtype=np.float64)),
-        (EncodingMode.MEMORY, np.geomspace(1e-300, 1.7e308, 4001)),
+        (
+            EncodingMode.AUTO,
+            np.linspace(1e38, 1e39, 20_000, dtype=np.float64),
+            False,
+        ),
+        (
+            EncodingMode.MEMORY,
+            np.linspace(1e38, 1e39, 20_000, dtype=np.float64),
+            False,
+        ),
+        (
+            EncodingMode.PRECISION,
+            np.linspace(1e38, 1e39, 20_000, dtype=np.float64),
+            False,
+        ),
+        (EncodingMode.MEMORY, np.geomspace(1e-300, 1.7e308, 4001), False),
         (
             EncodingMode.MEMORY,
             np.array([1e-300, np.finfo(np.float64).max], dtype=np.float64),
+            False,
+        ),
+        (EncodingMode.AUTO, np.full(4001, 3.5e38, dtype=np.float64), True),
+        (
+            EncodingMode.AUTO,
+            np.resize(np.array([1.0, 2.0, 3.5e38], dtype=np.float64), 4001),
+            True,
         ),
     ],
 )
 def test_positive_scalar_slack_is_finite_above_the_float32_range(
     mode: EncodingMode,
     data: np.ndarray,
+    allow_lut: bool,
 ) -> None:
     with np.errstate(over="raise", invalid="raise"):
         slack = ArrayEncoder().positive_scalar_round_trip_slack(
-            data, mode, allow_lut=False
+            data, mode, allow_lut=allow_lut
         )
 
     assert slack is not None

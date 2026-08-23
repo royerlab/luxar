@@ -33,14 +33,20 @@ _SCALAR_LUT_PROBE_VALUES = 1024
 def _float32_cast_slack(
     arr: np.ndarray, *, check_values: bool = False
 ) -> Optional[float]:
-    """Return an upward pad for the viewer's float32 cast."""
+    """Return an upward pad for the viewer's float32 cast.
+
+    ``check_values`` measures exact stored broadcast/LUT values; otherwise the
+    precision-mode float32 store gets a conservative dtype-level bound.
+    """
     if np.can_cast(arr.dtype, np.float32, casting="safe"):
         return None
     if check_values:
         values = arr.astype(np.float64, copy=False)
-        upward = np.asarray(arr, dtype=np.float32).astype(np.float64) - values
+        with np.errstate(over="ignore"):
+            upward = np.asarray(arr, dtype=np.float32).astype(np.float64) - values
         max_upward = max(0.0, float(np.max(upward)))
-        return max_upward or None
+        if np.isfinite(max_upward):
+            return max_upward or None
     max_val = float(np.max(arr))
     return max(
         max_val * float(np.finfo(np.float32).eps),

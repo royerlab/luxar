@@ -417,6 +417,8 @@ export class ArrayDecoder {
         throw new Error('[ArrayDecoder] LUT (scalar) is empty');
       }
 
+      // Changing this cast requires re-deriving the writer's
+      // positive_scalar_round_trip_slack chunk-bound allowance.
       const result = new Float32Array(n);
 
       for (let i = 0; i < n; i++) {
