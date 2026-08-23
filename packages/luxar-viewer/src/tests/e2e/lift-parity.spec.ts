@@ -123,15 +123,15 @@ const PEAK_DIVERGENCE_EXPECTED: Record<(typeof PEAK_MODES)[number], readonly [nu
  * r=0.02 → 4.42).
  *
  * Why a factor of 1.5 and not tighter: `normal`'s gsplat peak is already
- * saturating — 0.855 at r=0.05, and ~0.999 at r=0.02 (0.0336 × 29.73), which
- * VOLUMETRIC_BLENDING_SPEC.md independently calls clipped. A driver that clips
- * r=0.05 the rest of the way to 1.0 moves THAT cell by up to ~17% with nothing
- * actually wrong; r=0.02 has ~0.1% of headroom left and cannot move that way at
- * all. One ~17% cell is the widest such move, and 1.5× clears it with room.
+ * saturating toward 1.0 — 0.855 at r=0.05 and 0.913 at r=0.02. A driver that
+ * pushes r=0.05 the rest of the way to 1.0 moves THAT cell by up to ~17% with
+ * nothing actually wrong; r=0.02 can move by ~9.5%, still under the 17% that
+ * sets the band. One ~17% cell is the widest such move, and 1.5× clears it with
+ * room.
  *
  * And `normal`'s UPPER edge is structurally dead — do not assume all six checks
- * are two-sided. Its points peak is 0.0336 / 0.1094 and the gsplat peak cannot
- * exceed 1.0, so the measurable ratio can never exceed 29.8× / 9.14×, inside
+ * are two-sided. Its points peak is 0.0307 / 0.1094 and the gsplat peak cannot
+ * exceed 1.0, so the measurable ratio can never exceed 32.6× / 9.14×, inside
  * [19.8, 44.6] and [5.2, 11.7] no matter what breaks. That is exactly why the
  * uRIF mutation above survives on `normal` and is caught on the other two.
  */
@@ -600,9 +600,12 @@ test.describe('Lifted-gsplat / Points parity', () => {
       //                red — at which point folding max/normal in there is the
       //                wrong move. C is not fixable in the lift without
       //                regressing sum parity.
-      //   #1993 alone  `opaque` recovers its 1/0.003 and flips to 'brighter' at
-      //                ≈ 30.7× / 12.2×, failing on DIRECTION and on the band
-      //                (it is expected at 10.8× / 27.0×). max/normal unchanged.
+      //   #1993 alone  (PR #1994) `opaque` recovers its 1/0.003 and flips to
+      //                'brighter' at ≈ 30.7× / 12.2×, failing on DIRECTION and
+      //                on the band (it is expected at 10.8× / 27.0×). Change
+      //                `PEAK_DIVERGENCE_EXPECTED.opaque` to [30.7, 12.2] and
+      //                `PEAK_DIVERGENCE_DIRECTION.opaque` to 'brighter' in the
+      //                same landing. max/normal unchanged.
       //   both         all three reach parity and fail on the BAND at every
       //                cell. Direction is NOT what catches this one: at true
       //                parity the ratio straddles 1, so `ratio > 1` is a coin
