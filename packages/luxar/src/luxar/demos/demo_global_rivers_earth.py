@@ -105,6 +105,9 @@ ETOPO_URL = (
 )
 
 N_GLOBE = 8_000_000  # Fibonacci-sphere terrain points
+# A 4096-class GPU can commit at most 5,591,040 Points from one node. Keep the
+# 8M-point globe in parts below that floor, each with its own stream ladder.
+MAX_GLOBE_POINTS_PER_NODE = 4_000_000
 MIN_ORDER = 3  # keep HydroRIVERS reaches with Strahler order >= this
 DECIMATE_DEG = 0.06  # drop river vertices closer than this (~2-3x line width)
 RADIUS = 100.0  # globe radius (scene units)
@@ -432,14 +435,12 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
                 # not one: its stratified-grid sampler emitted 8 / 56 / 272 /
                 # 1174 / 7,998,490 points, so 99.98% of the globe still landed in
                 # a single final commit. A `stream:` ladder is geometric by
-                # construction, so every level is a bounded fraction of the whole.
+                # construction, so every level is a bounded fraction of its part.
                 additive_lod=dict(counts="stream:20000", method="random", seed=0),
+                partition=dict(max_elements=MAX_GLOBE_POINTS_PER_NODE),
                 # The terrain still appears late, and all at once, well after the
                 # rivers. That is NOT a scheduling bug, so do not go looking for
-                # one: the ladder above streams exactly as designed. Measured
-                # over a cold load, all ten levels arrive in geometric order —
-                # 15 / 15 / 23 / 41 / 75 / 143 / 279 / 553 / 1101 / 1237 chunk
-                # requests.
+                # one: each partition's ladder above streams in geometric order.
                 #
                 # The last two levels contain 68% of the points and 62 of the
                 # terrain's 92 MB, so most of the terrain payload is still
