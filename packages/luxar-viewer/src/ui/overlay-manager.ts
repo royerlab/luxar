@@ -10,6 +10,7 @@ import { sceneDimsManager } from '../scene/scene-dims-manager';
 import { log, Modules } from '../utils/log';
 import { getViewerContainer } from '../utils/viewer-container';
 import { escapeHtml } from '../utils/escape-html';
+import { substituteHoverTemplate } from '../utils/hover-template';
 import { MAX_OVERLAY_HTML_CHARS, type OverlayConfig } from '../data/loaders';
 
 /** Font preset mappings to CSS font-family stacks */
@@ -346,14 +347,20 @@ export class OverlayManager {
       } else {
         const isHtml = hover.config.type === 'overlay_html';
 
-        // Substitute template variables
-        // HTML overlays: escape values to prevent XSS in innerHTML
-        // Text overlays: no escaping needed since textContent is XSS-safe
-        const esc = isHtml ? escapeHtml : (s: string) => s;
-        let text = hover.template;
-        text = text.replace(/\{hover_label\}/g, result.label ? esc(result.label) : '');
-        text = text.replace(/\{hover_node\}/g, esc(result.nodeName));
-        text = text.replace(/\{hover_index\}/g, String(result.elementIndex));
+        // Substitute the shared hover vocabulary. The escaping mode is the
+        // whole difference between this consumer and the `link` / `copy`
+        // ones: HTML overlays escape (the result reaches innerHTML), text
+        // overlays don't (textContent is inert). See utils/hover-template.ts.
+        //
+        // `hadEmptySubstitution` is deliberately ignored here: a tooltip with
+        // a gap in it is fine and visible, and this branch already only runs
+        // when the element has some content. It exists for `link`, where an
+        // empty segment silently produces a valid-looking wrong URL.
+        let text = substituteHoverTemplate(
+          hover.template,
+          { label: result.label, nodeName: result.nodeName, elementIndex: result.elementIndex },
+          isHtml ? 'html' : 'text'
+        ).text;
 
         // Image label: render as <img> tag (only meaningful in HTML overlays).
         // When hover_image_size is set, wrap in a fixed-size container so the

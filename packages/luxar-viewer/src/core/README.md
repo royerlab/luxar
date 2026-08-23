@@ -148,7 +148,10 @@ class LuxarApp {
     // 6. Animation Loop Start
     this.animationController.startAnimation();
 
-    // 7. Dataset Loading or Browser Display
+    // 7. Dataset Browser Shortcut
+    this.setupDatasetBrowserShortcut();
+
+    // 8. Dataset Loading or Browser Display
     const src = options.src ?? config.defaultZarrPath;
     if (await this.shouldShowBrowser(src)) {
       this.showDatasetBrowser();
@@ -156,9 +159,8 @@ class LuxarApp {
       await this.loadDataset(src);
     }
 
-    // 8. System Event Handling
+    // 9. System Event Handling
     this.setupDisposeOnUnload();
-    this.setupDatasetBrowserShortcut();
     this.setupFocusHandling();
   }
 }
@@ -363,9 +365,9 @@ async init(options: LuxarAppOptions): Promise<void> {
   try {
     // 1. runInitPipeline — builds scene/animation/input/UI subsystems
     //    (each assigned to `partial` so dispose() can find them after a throw)
-    // 2. Dataset routing — showDatasetBrowser() or loadDataset()
-    // 3. setupDisposeOnUnload / setupDatasetBrowserShortcut /
-    //    setupFocusHandling / setupDebugInterface
+    // 2. setupDatasetBrowserShortcut()
+    // 3. Dataset routing — showDatasetBrowser() or loadDataset()
+    // 4. setupDisposeOnUnload / setupFocusHandling / setupDebugInterface
   } catch (error) {
     log.error(Modules.APP, 'Failed to initialize Luxar app:', error);
     // Surface whatever subsystems were built before the throw, then dispose.

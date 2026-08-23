@@ -259,13 +259,14 @@ _STRUCTURE_SCOPED_STATS_KEYS = (
 #:   output's chunk layout (a stacked time/channel axis loses its barrier and
 #:   falls back to per-leaf auto-detection, smearing every chunk across
 #:   timepoints and destroying per-slice read locality). The exemption rests on
-#:   that mechanism alone, NOT on the value being true. Known disagreement, and
-#:   out of scope here: ``decimate --coarsen-dims 1,2,3`` over an input stamped
-#:   ``[0, 1, 2]`` publishes the INHERITED list, so the stamp names the axes the
-#:   merge did not blend over and the derived barrier lands on an axis it did.
-#:   That is a defect in what ``decimate`` STAMPS (tracked on #1600) — scrubbing
-#:   the key here would not fix it and would move every chunk. Do not read a
-#:   surviving ``coarsen_dims`` as verified.
+#:   that mechanism alone, NOT on the value being true — a rewrite that CHANGES
+#:   which axes it coarsened over owes the output a fresh stamp, and scrubbing
+#:   the key here would neither produce one nor leave the chunks where they were.
+#:   ``decimate`` is the case that had to learn this: its ``merge`` family now
+#:   re-stamps the dims it resolved — see
+#:   :func:`~luxar.gsplats.lod.decimate.resolved_merge_coarsen_dims`, called
+#:   right after this scrub — while its ``prefix`` family keeps the inherited
+#:   value because it blends no axis.
 #: * The :data:`~luxar.gsplats.io.save_gsplats.NORMALIZATION_STATS_KEYS` block
 #:   (``floor`` / ``image_min`` / ``image_max`` / ``intensity_range``) describes
 #:   the INPUT VOLUME's intensity scale. Regrouping splats cannot change what

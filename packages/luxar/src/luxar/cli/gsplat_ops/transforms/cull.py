@@ -3,12 +3,33 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal, Optional
+from typing import TYPE_CHECKING, Any, Literal, Mapping, Optional
 
 import typer
 from arbol import aprint, asection
 
 from ..encoding import _resolve_encoding_mode
+
+if TYPE_CHECKING:
+    import numpy as np
+
+
+def _target_on_fit_basis(
+    target: "np.ndarray", stats: Optional[Mapping[str, Any]]
+) -> "np.ndarray":
+    from luxar.gsplats.fit_basis import (
+        MISSING_BASIS_HINT,
+        fit_image_min,
+        reference_on_fit_basis,
+    )
+
+    level = fit_image_min(stats)
+    if level is None:
+        aprint(f"WARNING: {MISSING_BASIS_HINT}")
+    elif level > 0.0:
+        target = reference_on_fit_basis(target, level)
+        aprint(f"Target shifted onto the fit's basis (image_min={level:.6g})")
+    return target
 
 
 def run_cull_dataset(
@@ -64,6 +85,13 @@ def run_cull_dataset(
                             f"but target is {len(target_np.shape)}D"
                         )
                         raise typer.Exit(1)
+
+                    # The error budget is measured against this target, and the
+                    # splats reconstruct `V - image_min`. Left raw, the budget is
+                    # spent on background the splats never claimed to represent,
+                    # which biases retention toward whichever splats reproduce
+                    # haze (#1177). Shift it onto the fit's basis first.
+                    target_np = _target_on_fit_basis(target_np, data.stats)
 
             # Parse --shape if provided
             parsed_shape = None

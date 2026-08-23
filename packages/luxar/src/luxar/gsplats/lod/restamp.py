@@ -1,9 +1,16 @@
-"""Refresh artifact-local LOD stamps after a content-changing rewrite."""
+"""Refresh artifact-local LOD stamps after a rewrite.
+
+Two scopes, both #1600: the per-level / per-rung stamps a content-changing
+rewrite invalidates (:func:`refresh_reduction_lod_stats` and its tree
+counterpart), and the ROOT ladder summary a structure-PRESERVING re-ladder
+leaves describing the ladder it just replaced
+(:func:`refresh_root_ladder_summary`).
+"""
 
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional
 
 import numpy as np
 
@@ -12,7 +19,184 @@ from luxar.utils.lod_methods import is_reveal_method
 if TYPE_CHECKING:
     from luxar.gsplats._data.base import _GSplatDataOps
     from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData, SubstitutiveLevel
-    from luxar.gsplats.tree import GSplatNode
+    from luxar.gsplats.tree import GSplatLeaf, GSplatNode
+
+
+#: The root ``pipeline/`` block that summarises ONE ladder, exactly as
+#: :func:`~luxar.gsplats.lod.additive.make_additive_lod` stamps it: four keys
+#: describing a ladder, plus ``lod_substitutive_level`` naming WHICH substitutive
+#: level they describe.
+_ROOT_LADDER_SUMMARY_KEYS = (
+    "lod_method",
+    "lod_n_lods",
+    "lod_breakpoints_kind",
+    "lod_cutpoints",
+    "lod_substitutive_level",
+)
+
+#: The SAME ladder summary, one spelling over: the un-prefixed knobs
+#: :func:`~luxar.gsplats.batch.merge_orchestrator._recipe_pipeline_info` stamps
+#: for a ``batch-fit merge --recipe stream``. ``gsplat additive`` over a
+#: batch-fit partition is an advertised use case, so these rode through
+#: describing the ladder the re-ladder had just replaced, exactly as the
+#: ``lod_*`` five did (#1600) — and ``_STRUCTURE_SCOPED_STATS_KEYS`` already
+#: classifies both groups as one family.
+#:
+#: Only meaningful when ``lod_kind == "additive"``: the ``levels`` branch of the
+#: same producer stamps a bare ``method`` too, but it is the SUBSTITUTIVE merge
+#: method, which a re-ladder does not touch. See :func:`_recipe_ladder_keys`.
+#:
+#: ``per_part`` is deliberately absent: ``additive`` ladders every leaf
+#: independently, so a per-part ladder is still exactly what the store has.
+_RECIPE_LADDER_SUMMARY_KEYS = ("n_lods", "method", "breakpoints")
+
+
+def _root_summary_leaf(
+    node: "GSplatNode", stats: "Mapping[str, Any]"
+) -> "Optional[GSplatLeaf]":
+    """The single leaf the root ladder summary describes, or ``None``.
+
+    The rule is the producers': a bare leaf summarises itself, and a
+    substitutive ``kind=lod`` group summarises the level named by
+    ``lod_substitutive_level`` — the same summary-level choice
+    :meth:`~luxar.gsplats._data.transforms.TransformsMixin._map_substitutive`
+    makes (clamped into range for a store whose index no longer fits). That
+    index is a MATRIX index (``GSplatData`` orders levels finest-first) while a
+    tree lod group stores its children coarsest-first, hence the mirror.
+
+    ``None`` for every other shape, and it means "no single root ladder exists":
+    a ``kind=partition``'s parts hold different splat counts and therefore
+    different rung counts, so any number published at the root would be true of
+    at most one part. Same for a lod group whose summary child is itself a
+    subtree (the ``overview`` cap over a partition).
+    """
+    from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup
+
+    if isinstance(node, GSplatLeaf):
+        return node
+    if isinstance(node, GSplatLodGroup) and node.children:
+        index = int(stats.get("lod_substitutive_level") or 0)
+        index = min(max(index, 0), len(node.children) - 1)
+        child = node.children[len(node.children) - 1 - index]
+        return child if isinstance(child, GSplatLeaf) else None
+    return None
+
+
+def _recipe_ladder_keys(stats: "Mapping[str, Any]") -> "list[str]":
+    """The present :data:`_RECIPE_LADDER_SUMMARY_KEYS`, or ``[]``.
+
+    Gated on ``lod_kind``, which is what disambiguates the shared ``method``
+    key: ``_recipe_pipeline_info`` writes ``lod_kind="additive"`` exactly for its
+    ``stream`` branch (where ``method`` is the ADDITIVE ordering, replaced by a
+    re-ladder) and ``"substitutive"`` for ``levels`` (where it is the merge
+    method, which a re-ladder leaves true). ``n_lods`` / ``breakpoints`` are
+    stamped by the ``stream`` branch alone, so the gate only ever costs a
+    hypothetical mislabelled store its refresh — never a false one.
+    """
+    if stats.get("lod_kind") != "additive":
+        return []
+    return [key for key in _RECIPE_LADDER_SUMMARY_KEYS if key in stats]
+
+
+def refresh_root_ladder_summary(
+    stats: "Mapping[str, Any]", node: "GSplatNode"
+) -> "Dict[str, Any]":
+    """A copy of ``stats`` whose root ladder summary describes ``node``.
+
+    For a rewrite that REBUILDS every leaf's additive ladder while preserving the
+    structure kind — ``gsplat additive``. The leaves get fresh stats from
+    :func:`~luxar.gsplats.lod.additive.make_additive_lod`, but the root block is
+    threaded through from the input, so a store re-laddered from four rungs to
+    six went on advertising the four it no longer had (#1600).
+
+    PRESENT KEYS ONLY, matching
+    :func:`~luxar.gsplats._data.transforms._refresh_ladder_summary` (whose
+    count/cutpoint half this reuses): a store that never published a ladder
+    summary does not acquire one here. ``lod_method`` and
+    ``lod_breakpoints_kind`` are read back off the leaf the rebuild wrote rather
+    than from the request, so ``auto`` publishes the method it resolved to — and
+    when the rebuilt leaf does not publish it, the root key is DELETED rather than
+    left describing the ladder that is gone, exactly as
+    :func:`_refresh_recipe_ladder` treats its ``method`` twin. Absence is the
+    format's "this artifact does not know"; keeping the inherited value is the
+    one thing this function exists to prevent.
+    ``lod_substitutive_level`` is left alone — a re-ladder moves no level.
+
+    When no single leaf is the summary (see :func:`_root_summary_leaf`) the whole
+    block is DROPPED rather than refreshed from an arbitrary part: an absent
+    summary is what the ``tiles`` / ``overview`` / ``adaptive`` builders publish
+    for exactly that reason, and a wrong number is worse than no number.
+
+    Both spellings of the summary are covered — the five ``lod_*`` keys
+    ``make_additive_lod`` stamps, and :data:`_RECIPE_LADDER_SUMMARY_KEYS`, the
+    un-prefixed trio ``batch-fit merge --recipe stream`` stamps for the same
+    ladder. Otherwise a re-laddered batch-fit partition dropped ``lod_n_lods``
+    (because parts hold different rung counts) while leaving ``n_lods: 6``
+    asserting exactly that number two keys away.
+    """
+    refreshed = dict(stats)
+    present = [key for key in _ROOT_LADDER_SUMMARY_KEYS if key in refreshed]
+    recipe_present = _recipe_ladder_keys(refreshed)
+    if not present and not recipe_present:
+        return refreshed
+
+    leaf = _root_summary_leaf(node, refreshed)
+    if leaf is None:
+        for key in (*present, *recipe_present):
+            del refreshed[key]
+        return refreshed
+
+    from luxar.gsplats._data.transforms import _refresh_ladder_summary
+
+    cutpoints = [
+        int(value)
+        for value in np.cumsum([lod.n_splats for lod in leaf.additive_sublods])
+    ]
+    refreshed = _refresh_ladder_summary(refreshed, cutpoints)
+    leaf_stats = leaf.meta.get("stats")
+    leaf_stats = leaf_stats if isinstance(leaf_stats, dict) else {}
+    for key in ("lod_method", "lod_breakpoints_kind"):
+        if key not in refreshed:
+            continue
+        if key in leaf_stats:
+            refreshed[key] = leaf_stats[key]
+        else:
+            del refreshed[key]
+    if recipe_present:
+        _refresh_recipe_ladder(refreshed, leaf_stats, len(cutpoints))
+    return refreshed
+
+
+def _refresh_recipe_ladder(
+    refreshed: "Dict[str, Any]", leaf_stats: "Mapping[str, Any]", n_rungs: int
+) -> None:
+    """Refresh the un-prefixed ladder trio in place (present keys only).
+
+    ``n_lods`` and ``method`` are recoverable from the tree that was written —
+    the rung count, and the resolved ordering the rebuilt leaf published (so an
+    ``auto`` request records what it became, as the ``lod_*`` half already does).
+    The count is restated here rather than left to
+    :func:`~luxar.gsplats._data.transforms._refresh_ladder_summary` (which the
+    caller runs first, and which now refreshes it too, for the prune-family
+    rewrites that never reach this function) so the trio's three rules read in
+    one place; the two agree by construction — both are the rung count.
+
+    ``breakpoints`` is DROPPED rather than refreshed: it holds the build SPEC
+    (``"stream:14000"``, ``"counts:5,15,40"``, ``"equal-count"``) in a different
+    vocabulary from the leaf's resolved ``lod_breakpoints_kind``
+    (``"stream"`` / ``"explicit-counts"`` / ``"equal-count"``), and the spec that
+    produced a ladder cannot be read back off it. An absent key is the format's
+    "this artifact does not know"; writing the kind into a spec field would be a
+    new wrong claim rather than a scrubbed one.
+    """
+    if "n_lods" in refreshed:
+        refreshed["n_lods"] = int(n_rungs)
+    if "method" in refreshed:
+        if "lod_method" in leaf_stats:
+            refreshed["method"] = leaf_stats["lod_method"]
+        else:
+            del refreshed["method"]
+    refreshed.pop("breakpoints", None)
 
 
 def _has_ladder_stamps(level: "SubstitutiveLevel") -> bool:

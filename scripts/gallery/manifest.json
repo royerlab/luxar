@@ -364,15 +364,6 @@
       "dataset": "datasets/demos/spiral_galaxy_5d.luxar.zarr"
     },
     {
-      "id": "arxiv_papers_semantic_scholar",
-      "title": "arXiv Papers (Semantic Scholar)",
-      "geometry": "points",
-      "category": "embeddings",
-      "script": "demo_arxiv_embeddings_semantic_scholar.py",
-      "dataset": "datasets/demos/arxiv_papers_semantic_scholar.luxar.zarr",
-      "citation": "Semantic Scholar Academic Graph (Ammar et al. 2018)"
-    },
-    {
       "id": "atp_synthase",
       "title": "Atp Synthase",
       "geometry": "points",
@@ -399,14 +390,6 @@
       "script": "demo_caida_as_topology.py",
       "dataset": "datasets/demos/caida_as_topology.luxar.zarr",
       "citation": "CAIDA AS Relationships (Luckie et al. 2013)"
-    },
-    {
-      "id": "chromatrace_choir_umap",
-      "title": "Chromatrace Choir Umap",
-      "geometry": "points",
-      "category": "embeddings",
-      "script": "demo_chromatrace_choir_umap.py",
-      "dataset": "datasets/demos/chromatrace_choir_umap.luxar.zarr"
     },
     {
       "id": "cytoself_protein_landscape",
@@ -684,14 +667,6 @@
       "script": "demo_ocean_currents_earth.py",
       "dataset": "datasets/demos/ocean_currents_earth.luxar.zarr",
       "citation": "HYCOM GOFS 3.1 (Chassignet et al. 2007); NASA Blue Marble"
-    },
-    {
-      "id": "chromatrace_choir_umap_sequence",
-      "title": "Chromatrace CHOIR UMAP (cell-type walk)",
-      "geometry": "points",
-      "category": "embeddings",
-      "script": "demo_chromatrace_choir_umap_sequence.py",
-      "dataset": "datasets/demos/chromatrace_choir_umap_sequence.luxar.zarr"
     },
     {
       "id": "zebrahub_velocity_streamlines",

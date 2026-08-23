@@ -138,11 +138,11 @@ def _ps_snapshot() -> list[tuple[int, int, str]]:
     ``ps -axww`` so command lines are never truncated — the ``-m luxar.demos.``
     fingerprint sits past column 80 behind a long interpreter path.
 
-    Falls back to ``/proc`` when ``ps`` is missing (a slim container), times
-    out, or prints something we cannot parse (BusyBox takes different flags).
-    An empty snapshot does not merely disable the sweep: it also strips
+    On Linux, falls back to ``/proc`` when ``ps`` is missing (a slim container),
+    times out, or prints something we cannot parse (BusyBox takes different
+    flags). An empty snapshot does not merely disable the sweep: it also strips
     discovery of the identity check that keeps a recycled pgid from being
-    killed, so it is worth a second source before giving up.
+    killed, so it is worth a second source where available before giving up.
     """
     try:
         out = subprocess.run(  # nosec B603, B607  # fixed argv, no user input
