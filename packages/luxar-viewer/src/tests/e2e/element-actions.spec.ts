@@ -50,7 +50,9 @@ async function hoverAndSettle(page: Page, at: { x: number; y: number }): Promise
   await page.mouse.move(at.x + 140, at.y + 140);
   await page.waitForTimeout(250);
   await page.mouse.move(at.x, at.y);
-  await page.waitForTimeout(300);
+  await expect(page.locator('[data-overlay-name="__hover_text"]')).toHaveText(LABEL, {
+    timeout: 10000,
+  });
 }
 
 test.describe('element actions — click to open a link', () => {
