@@ -25,7 +25,7 @@ import {
   MAX_COPY_CHARS,
 } from '../../../../../core/app/interaction/element-actions';
 
-const VALUES = { label: 'P04637', nodeName: '/proteins', elementIndex: 42 };
+const VALUES = { label: 'P04637', key: 'P04637', nodeName: '/proteins', elementIndex: 42 };
 
 /** A node carrying the given `.zattrs`, as the loader would have written them. */
 function nodeWithAttrs(attrs: Record<string, unknown>): THREE.Object3D {

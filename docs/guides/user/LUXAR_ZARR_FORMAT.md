@@ -1437,6 +1437,40 @@ multi-additive-LOD Points / Lines node stores a single CSR on the **parent**,
 spanning its `additive_<i>` subgroups (which carry none) — see the **Labels**
 paragraph in the "Multi-additive LOD (progressive loading)" section above.
 
+#### Per-Element Keys (CSR-style)
+
+Optional per-element **machine-readable** strings, for `link` / `copy` templates
+to substitute as `{hover_key}`. Same encoding, same reordering and the same
+all-or-nothing ladder rule as **Per-Element Labels** above — only the array
+names and the presence attr differ. When present, `.zattrs` includes
+`"has_keys": true`.
+
+- **key_offsets/** Array — uint64, shape `(N+1,)`: byte offset of each key
+- **key_bytes/** Array — uint8: concatenated UTF-8 encoded key strings
+
+**Decoding:** `key_i = utf8_decode(key_bytes[offsets[i] : offsets[i+1]])`, with
+`offsets[i] == offsets[i+1]` meaning "no key for this element".
+
+Keys exist because a label and a link key are usually *different strings*. A
+label is composite prose a reader sees on hover (`"P04637 · DNA-binding
+cluster"`); a URL needs the bare id (`"P04637"`). Folding one into the other
+means either a degraded tooltip or an unusable link, and in several datasets the
+id is not present in the label at all. Keys are also far cheaper than storing a
+whole URL per element: a 6-character accession is ~7 bytes against ~45, and the
+viewer decodes the entire CSR into memory on first hover.
+
+Keys are independent of labels: a node may carry either, both, or neither. A
+`link` built purely from `{hover_index}` needs no strings at all.
+
+```python
+scene.add_points(
+    "proteins", positions,
+    labels=[f"{acc} · {cluster}" for acc, cluster in ...],  # what the tooltip shows
+    keys=accessions,                                        # what the URL uses
+    link="https://www.uniprot.org/uniprotkb/{hover_key}/entry",
+)
+```
+
 #### Per-Element Image Labels (CSR-style)
 
 Optional per-element **image** labels for hover thumbnails, written via the
@@ -1468,6 +1502,7 @@ Overlays with `"hover": true` in their `.zattrs` act as hover tooltips. Their `t
 
 | Variable | Description |
 |----------|-------------|
+| `{hover_key}` | The machine-readable key for the picked element (see *Per-Element Keys*). Empty when the node carries none. |
 | `{hover_label}` | The label string for the picked element |
 | `{hover_node}` | Zarr path of the picked layer (e.g., "/cells") |
 | `{hover_index}` | Element index within the node that was hit (on-disk index or buffer slot — see below). For a **lines** node carrying per-vertex labels it is the picked segment's start-vertex row in the stored (spatially ordered) vertex arrays — line labels are per-vertex and a segment carries a single pick id, so its start endpoint is the one reported. |
@@ -1476,8 +1511,9 @@ When labels exist on any node but no hover overlay is explicitly defined, a defa
 
 ### Element Interaction Templates
 
-The same substitution vocabulary drives two per-**node** attrs that make a
-picked element clickable. They live on the geometry node (not on an overlay),
+The same substitution vocabulary — including `{hover_key}`, backed by the
+**Per-Element Keys** CSR — drives two per-**node** attrs that make a picked
+element clickable. They live on the geometry node (not on an overlay),
 because a scene has effectively one hover overlay but many layers, and the
 target is a property of the data:
 
