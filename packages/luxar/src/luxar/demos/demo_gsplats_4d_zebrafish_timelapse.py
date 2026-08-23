@@ -666,6 +666,7 @@ def fit_timepoint(volume: np.ndarray, frame: int, acquisition: tuple):
         DEVICE = detect_device()
     from luxar.gsplats import fit_gaussian_splats
 
+    volume = denoise(volume)
     src_shape, src_dtype = acquisition
     result = fit_gaussian_splats(
         volume,
@@ -713,9 +714,6 @@ def fit_all_timepoints(array, frames: list[int]) -> list[GSplatData]:
         if np.issubdtype(array.dtype, np.integer)
         else 1.0
     )
-    global DEVICE
-    if DEVICE is None:
-        DEVICE = detect_device()  # denoising runs before the first fit sets it
     fits: list[GSplatData] = []
     with asection(
         f"Fitting {len(frames)} timepoints (seeds={SEEDS:,}, {N_ITERS} iters, "
@@ -723,7 +721,7 @@ def fit_all_timepoints(array, frames: list[int]) -> list[GSplatData]:
     ):
         for i, frame in enumerate(frames):
             volume = np.asarray(array[frame]).astype(np.float32) / scale
-            fits.append(fit_timepoint(denoise(volume), frame, acquisition))
+            fits.append(fit_timepoint(volume, frame, acquisition))
             if (i + 1) % 10 == 0 or i == len(frames) - 1:
                 aprint(
                     f"  {i + 1}/{len(frames)} — frame {frame}: "

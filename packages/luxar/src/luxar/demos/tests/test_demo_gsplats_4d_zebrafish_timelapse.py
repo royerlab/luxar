@@ -624,6 +624,22 @@ class TestRecomputeResumes:
         monkeypatch.setattr(_demo, "_fit_cache_path", lambda frame: _Exists())
         assert _demo.fit_timepoint(None, 0, (None, None)) is sentinel
 
+    def test_a_cached_frame_is_not_denoised(self, monkeypatch) -> None:
+        monkeypatch.setattr(_demo, "REFIT_ALL", False)
+        sentinel = _CachedFit()
+        monkeypatch.setattr(
+            _demo.GSplatData, "load", staticmethod(lambda *a, **k: sentinel)
+        )
+        monkeypatch.setattr(_demo, "_fit_cache_path", lambda frame: _Exists())
+        monkeypatch.setattr(
+            _demo,
+            "denoise",
+            lambda volume: pytest.fail("a cached frame was denoised"),
+        )
+        monkeypatch.setattr(_demo, "report_fit_quality", lambda fits: None)
+        array = np.zeros((1, 2, 3, 4), dtype=np.uint8)
+        assert _demo.fit_all_timepoints(array, [0]) == [sentinel]
+
     def test_refit_all_ignores_the_cache(self, monkeypatch) -> None:
         read: list[str] = []
         monkeypatch.setattr(_demo, "REFIT_ALL", True)
@@ -649,3 +665,7 @@ class _Exists:
 
     def unlink(self, missing_ok: bool = False) -> None:
         pass
+
+
+class _CachedFit:
+    n_splats = 1
