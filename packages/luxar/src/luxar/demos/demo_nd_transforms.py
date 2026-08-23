@@ -133,7 +133,8 @@ from luxar import (
     ViewerConfig,
     transforms,
 )
-from luxar.demos import launch_viewer, parse_demo_flags
+from luxar.demos import add_demo_caption, launch_viewer, parse_demo_flags
+from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -988,8 +989,8 @@ def _add_overlays(scene: Any) -> None:
         scene.add_html(
             _readout_html(f"EXPECTED AT WORLD CHANNEL = {cname}", rows),
             name=f"expected_channel_{c}",
-            position=(0.985, 0.975),
-            anchor="bottom-right",
+            position=(0.015, 0.025),
+            anchor="top-left",
             visible_range={"Channel": float(c)},
         )
 
@@ -1036,8 +1037,8 @@ class Layout:
         self.y_max = self.readout_y + (_GLYPH_H - 1) / 2 * CELL_RULER * 1.6
         self.y_min = self.channel_bottom
 
-    def camera(self, fov_deg: float = 28.0, min_aspect: float = 1.35) -> CameraConfig:
-        """A long-lens camera that frames the whole bench with a small margin.
+    def camera(self, min_aspect: float = 1.35) -> CameraConfig:
+        """A cinematic-lens camera that frames the bench with a small margin.
 
         ``min_aspect`` is the narrowest viewport the framing must survive; the
         solved distance satisfies both the vertical and horizontal fits there,
@@ -1057,7 +1058,7 @@ class Layout:
         band = 1.0 - top_strip - bottom_strip
 
         cx = (self.x_min + self.x_max) / 2.0
-        half_tan = np.tan(np.radians(fov_deg) / 2.0)
+        half_tan = np.tan(np.radians(CINEMATIC_FOV_DEG) / 2.0)
         # Fit the content height into the free band, not the whole frame.
         d_vertical = height / band / 2.0 / half_tan
         d_horizontal = width / 2.0 / (half_tan * min_aspect)
@@ -1072,7 +1073,6 @@ class Layout:
         return CameraConfig(
             position=(cx, cy, distance),
             target=(cx, cy, 0.0),
-            fov=fov_deg,
         )
 
 
@@ -1115,6 +1115,7 @@ def generate_demo(output_path: Path) -> int:
             scene = compiler.create_scene(
                 dimensions=dims,
                 viewer_config=ViewerConfig(
+                    cinematic_mode=True,
                     background_color="#07080c",
                     # Neutral rather than the ACES default (#1459): the bench's
                     # colour IS an exact encoding — a red R must read as red —
@@ -1132,6 +1133,8 @@ def generate_demo(output_path: Path) -> int:
                     # countable.
                     tone_mapping="Neutral",
                     bloom_enabled=False,
+                    chromatic_lens_distortion_enabled=False,
+                    detector_noise_enabled=False,
                     auto_rotate=False,
                     # A long lens is nearly orthographic, so ticks line up
                     # honestly instead of fanning out with perspective.
@@ -1140,7 +1143,15 @@ def generate_demo(output_path: Path) -> int:
                     # rows are dark), and not a symmetric special case.
                     dimensions=DimensionsConfig(
                         current_step=[0.0, 0.0, 0.0, 7.0, 0.0],
-                        selected_dimension=3,
+                        # NAVIGABLE position, not an absolute dimension index:
+                        # the viewer resolves this against the non-displayed
+                        # dimensions only (`getSelectedDimensionIndex`), which
+                        # is why the number keys start at `1` for the first
+                        # hidden axis. Here those are Frame (3) and Channel
+                        # (4), so Frame — the axis this scene is about — is 0.
+                        # A 3 asked for a fourth navigable axis that does not
+                        # exist, and resolved to "nothing selected".
+                        selected_dimension=0,
                     ),
                 ),
             )
@@ -1191,6 +1202,11 @@ def generate_demo(output_path: Path) -> int:
                 )
 
             _add_overlays(scene)
+            add_demo_caption(
+                scene,
+                "nD transform composition • visual test bench",
+                DEMO_META.get("citation"),
+            )
 
             # Self-check: every row's node must actually carry the composed
             # transform this file claims for it. In particular the nested row

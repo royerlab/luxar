@@ -56,6 +56,7 @@ DEMO_META = {
     ],
     "citation": {
         "short": "Observatory captures by khyron",
+        "ref": "khyron",
         "license": "CC BY 4.0",
         "url": "https://github.com/khyron/Gaussian-Splatting",
     },
@@ -135,7 +136,7 @@ def build_scene(scene_key: str = "rubin") -> Path:
         out,
         title=f"{spec['title']} — Gaussian splat → Luxar",
         layer_name=spec["layer"],
-        credit=f"{spec['title']} • khyron • CC BY 4.0",
+        credit=f"{spec['title']} • CC BY 4.0",
         citation=DEMO_META["citation"],
     )
 

@@ -13,6 +13,7 @@ planned but not currently available.
 from __future__ import annotations
 
 import json
+import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,6 +44,8 @@ class CameraConfig:
 
     All fields are optional — unset fields use the viewer's built-in defaults.
     Camera config is applied on every scene load (not persisted in localStorage).
+    An authored position is restored with its resolved scene FOV even when the
+    visitor has stored rendering settings.
 
     Attributes:
         position: Camera position in world coordinates (x, y, z).
@@ -178,9 +181,21 @@ class UIConfig:
 class DimensionsConfig:
     """nD dimension navigation state.
 
+    The two fields are indexed DIFFERENTLY, which is the single easiest thing
+    to get wrong here — both demos that set ``selected_dimension`` set it
+    wrongly before this was written down.
+
     Attributes:
-        current_step: The current slice position for each dimension.
-        selected_dimension: Index of the currently selected dimension for keyboard navigation.
+        current_step: Slice position per dimension, indexed by ABSOLUTE
+            dimension index — one entry for every dimension the scene declares,
+            displayed ones included.
+        selected_dimension: Which dimension the keyboard navigates, indexed by
+            NAVIGABLE POSITION among the non-displayed dimensions only. For
+            ``[x, y, z, time]`` the only navigable axis is ``time``, so this is
+            ``0`` and not ``3``; the number keys follow the same numbering,
+            which is why ``1`` selects the first hidden axis. A value at or past
+            the navigable count resolves to "nothing selected"
+            (``getSelectedDimensionIndex`` in the viewer).
     """
 
     current_step: Optional[List[float]] = None
@@ -213,12 +228,23 @@ class AnimationConfig:
         target_fps: Target frames per second.
         loop: Loop mode ('once', 'loop', 'bounce').
         direction: Playback direction ('forward', 'backward').
+        step_size: How far one animation tick advances the dimension, in the
+            dimension's own units. ``None`` means Auto — the viewer derives a
+            step from the dimension's declared ``step`` (discrete) or its range
+            (continuous), which is what almost every scene wants.
     """
 
     playing: Optional[bool] = None
     target_fps: Optional[float] = None
     loop: Optional[str] = None
     direction: Optional[str] = None
+    # Present because the VIEWER already writes it. Ctrl+Shift+S captures a
+    # per-dimension step override into the scene's `animation` block, and
+    # without a field here the round trip silently dropped it: capture a scene
+    # with a custom step, read it into Python, write it back, and the override
+    # was gone with nothing said. It is the only member of that block Python
+    # could not express.
+    step_size: Optional[float] = None
 
     def __post_init__(self) -> None:
         if self.loop is not None and self.loop not in VALID_LOOP_MODES:
@@ -229,11 +255,22 @@ class AnimationConfig:
             raise ValueError(
                 f"direction must be one of {VALID_DIRECTIONS}, got '{self.direction}'"
             )
+        if self.target_fps is not None and (
+            not math.isfinite(self.target_fps) or self.target_fps <= 0
+        ):
+            raise ValueError(
+                f"target_fps must be finite and > 0, got {self.target_fps}"
+            )
+        # Matches the viewer's own guard in `setStepSize`.
+        if self.step_size is not None and (
+            not math.isfinite(self.step_size) or self.step_size <= 0
+        ):
+            raise ValueError(f"step_size must be > 0, got {self.step_size}")
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to dictionary, omitting None fields."""
         result: Dict[str, Any] = {}
-        for field_name in ("playing", "target_fps", "loop", "direction"):
+        for field_name in ("playing", "target_fps", "loop", "direction", "step_size"):
             value = getattr(self, field_name)
             if value is not None:
                 result[field_name] = value
@@ -247,6 +284,7 @@ class AnimationConfig:
             target_fps=data.get("target_fps"),
             loop=data.get("loop"),
             direction=data.get("direction"),
+            step_size=data.get("step_size"),
         )
 
 
@@ -280,7 +318,8 @@ class ViewerConfig:
     Unset fields use the viewer's built-in defaults.
 
     Priority chain (highest to lowest):
-        1. localStorage per-scene user overrides
+        1. localStorage per-scene user overrides, except an authored camera
+           position is restored with its resolved scene FOV
         2. zarr viewer_config (this object)
         3. Viewer application built-in defaults
 

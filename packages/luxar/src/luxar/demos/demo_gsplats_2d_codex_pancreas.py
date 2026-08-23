@@ -127,6 +127,7 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import UIConfig, ViewerConfig
 from luxar.demos import (
     MissingDependencyError,
+    add_demo_caption,
     launch_viewer,
     parse_demo_flags,
     require_module,
@@ -546,8 +547,14 @@ def create_luxar_scene(
             # fidelity ever matters more than the filmic look (#1459) — an
             # exact passthrough, as long as the render is inside [0, 1].
             viewer_config = ViewerConfig(
+                cinematic_mode=True,
                 control_type="ortho",
                 tone_mapping="ACES",
+                # Preserve the projection-only scale bar and measured intensity.
+                bloom_enabled=False,
+                chromatic_lens_distortion_enabled=False,
+                detector_noise_enabled=False,
+                vignette_enabled=False,
                 ui=UIConfig(show_scale_bar=True),
             )
             scene = compiler.create_scene(
@@ -641,12 +648,8 @@ Controls:
             )
 
             # Info
-            scene.add_text(
-                "12-channel multiplexed fluorescence",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+            add_demo_caption(
+                scene, "12-channel multiplexed fluorescence", DEMO_META.get("citation")
             )
 
         aprint(f"Scene saved: {output_path}")

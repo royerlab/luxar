@@ -83,14 +83,7 @@ LOCAL_INPUT_MODES = ("manual-file", "kaggle-auth", "git-lfs")
 #
 # This is a temporary list, not a policy. DELETE an entry the moment its cause is
 # gone — the demo is then generated like any other.
-UNBUILDABLE_IDS: dict[str, str] = {
-    "gsplats_3d_visible_human_head": (
-        "#1670: the shipped vh_head_colors.npz sidecar is misordered against the "
-        "fit it ships with, so the demo refuses the pair and its default path is "
-        "a ~1.1 GB download plus a 4M-splat fit — well past GEN_TIMEOUT_S. "
-        "Delete this entry once vh_head_colors.npz is regenerated."
-    ),
-}
+UNBUILDABLE_IDS: dict[str, str] = {}
 
 
 def load_manifest() -> list[dict[str, Any]]:

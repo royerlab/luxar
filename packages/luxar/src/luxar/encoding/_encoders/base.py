@@ -242,9 +242,11 @@ class BaseEncoderMixin:
         round (vs truncate toward zero), clip to ``[0, levels]``, and cast.
         Callers own the degenerate ``span == 0`` (all-equal) branch — this
         assumes ``span != 0``. ``round_values=False`` reproduces the custom
-        encoder's historical truncating behaviour exactly.
+        encoder's historical truncating behaviour exactly. The affine map uses
+        float64 so narrow input dtypes cannot overflow or change its precision.
         """
-        normalized = (data - min_val) / span
+        working = data.astype(np.float64, copy=False)
+        normalized = (working - min_val) / span
         scaled = normalized * levels
         if round_values:
             scaled = np.round(scaled)

@@ -43,6 +43,7 @@ DEMO_META = {
     "outputs": ["cosmicflows_laniakea_full", "cosmicflows_laniakea"],
     "citation": {
         "short": "Tully et al. 2023 (Cosmicflows-4); Laniakea, Tully et al. 2014",
+        "ref": "Tully et al. 2023",
         "doi": "10.3847/1538-4357/ac94d8",
     },
 }
@@ -59,7 +60,8 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, UIConfig, ViewerConfig
-from luxar.demos import cached_download, launch_viewer
+from luxar.demos import add_demo_caption, cached_download, launch_viewer
+from luxar.demos._cinematic_camera import pull_in
 from luxar.utils.paths import get_demos_output_dir
 
 LANIAKEA_RAW_BASE: Final = "https://raw.githubusercontent.com/manlius/laniakea/main"
@@ -640,11 +642,11 @@ def write_laniakea_scene(
             ]
         )
         viewer_config = ViewerConfig(
+            cinematic_mode=True,
             camera=CameraConfig(
-                position=(1050.0, -1500.0, 780.0),
+                position=pull_in((1050.0, -1500.0, 780.0), from_fov_deg=42.0),
                 target=(0.0, 0.0, 0.0),
                 up=(0.0, 0.0, 1.0),
-                fov=42.0,
                 near=0.1,
                 far=5000.0,
             ),
@@ -710,14 +712,12 @@ def write_laniakea_scene(
                 color="rgba(255,255,255,0.6)",
                 blend_mode="difference",
             )
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 f"{len(galaxies.positions):,} galaxies • "
                 f"{n_streamlines:,} streamlines • {preset_name} preset • "
                 "Cosmicflows-4 / EDD",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
 
         aprint(f"✓ Written to {output_path}")

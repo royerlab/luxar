@@ -136,6 +136,9 @@ describe('RenderingControls', () => {
       },
       controls: mockControls,
       renderer: { domElement: document.createElement('canvas') },
+      setFov: vi.fn((fov) => {
+        mockCamera.fov = fov;
+      }),
       updateFOV: vi.fn((delta) => {
         mockCamera.fov += delta * 0.05;
       }),
@@ -291,14 +294,14 @@ describe('RenderingControls', () => {
       mockCamera.fov = 47;
       mockCamera.near = 0.1;
       mockCamera.far = 1000;
-      mockSceneManager.updateFOV.mockClear();
+      mockSceneManager.setFov.mockClear();
       mockSceneManager.updateClippingPlanes.mockClear();
 
       // Action: Load scene (simulates initialization)
       controls.setSceneId('test-scene');
 
       // Verify: Camera settings were applied
-      expect(mockSceneManager.updateFOV).toHaveBeenCalled();
+      expect(mockSceneManager.setFov).toHaveBeenCalledWith(75);
       expect(mockSceneManager.updateClippingPlanes).toHaveBeenCalledWith(0.5, 2000);
     });
 
@@ -339,14 +342,14 @@ describe('RenderingControls', () => {
       controls.settings.near = 5.0;
       controls.settings.far = 5000;
       mockCamera.fov = 120;
-      mockSceneManager.updateFOV.mockClear();
+      mockSceneManager.setFov.mockClear();
       mockSceneManager.updateClippingPlanes.mockClear();
 
       // Action: Reset to defaults
       controls.resetToDefaults();
 
       // Verify: Camera settings applied
-      expect(mockSceneManager.updateFOV).toHaveBeenCalled();
+      expect(mockSceneManager.setFov).toHaveBeenCalledWith(47);
       expect(mockSceneManager.updateClippingPlanes).toHaveBeenCalledWith(0.1, 1000);
     });
 
@@ -546,7 +549,7 @@ describe('RenderingControls', () => {
       mockCamera.near = 0.1;
 
       // Clear mocks
-      mockSceneManager.updateFOV.mockClear();
+      mockSceneManager.setFov.mockClear();
       mockSceneManager.updateClippingPlanes.mockClear();
       mockSceneManager.setFlyMovementSpeed.mockClear();
       mockSceneManager.setFlyRotationSpeed.mockClear();
@@ -562,7 +565,7 @@ describe('RenderingControls', () => {
       expect(controls.settings.bloomStrength).toBe(1.8);
 
       // Verify: Camera settings applied to managers
-      expect(mockSceneManager.updateFOV).toHaveBeenCalled();
+      expect(mockSceneManager.setFov).toHaveBeenCalledWith(75);
       expect(mockSceneManager.updateClippingPlanes).toHaveBeenCalledWith(0.5, 1000);
 
       // Verify: Navigation settings applied
@@ -792,6 +795,20 @@ describe('RenderingControls', () => {
   });
 
   describe('SyncCurrentState Completeness', () => {
+    it('refreshes the FOV widgets after syncing live camera state', () => {
+      const controls = renderingControls as any;
+      mockCamera.fov = 63;
+      controls.controllers.fov.updateDisplay.mockClear();
+      controls.controllers.fovPreset.updateDisplay.mockClear();
+
+      controls.syncCameraFovState();
+
+      expect(controls.settings.fov).toBe(63);
+      expect(controls.settings.fovPreset).toBe('35mm');
+      expect(controls.controllers.fov.updateDisplay).toHaveBeenCalledOnce();
+      expect(controls.controllers.fovPreset.updateDisplay).toHaveBeenCalledOnce();
+    });
+
     it('should sync all external-changeable settings from managers', () => {
       const controls = renderingControls as any;
 

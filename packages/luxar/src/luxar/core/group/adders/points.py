@@ -255,7 +255,7 @@ def add_points_impl(
                 pos_arr, partition, name, image_labels
             )
             if partition_plan is not None:
-                max_elements, parts = partition_plan
+                max_elements, parts, bsp_tree = partition_plan
                 preflight_extend_to_all(scene, extend_to_all, pos_arr, "points")
                 return add_points_partition_wrapper_impl(
                     group,
@@ -271,6 +271,7 @@ def add_points_impl(
                     parent=parent,
                     extend_to_all=extend_to_all,
                     max_elements=max_elements,
+                    bsp_tree=bsp_tree,
                     additive_lod=additive_lod,
                     **attrs,
                 )
@@ -438,16 +439,18 @@ def add_points_impl(
 
 def _resolve_points_partition(
     pos_arr: np.ndarray, partition: Any, name: str, image_labels: Any
-) -> Optional[tuple[int, List[np.ndarray]]]:
+) -> Optional[tuple[int, List[np.ndarray], Dict[str, Any]]]:
     """Resolve and execute a points partition, returning only a real split."""
     from ..partition import (
-        median_bsp_partition,
-        midpoint_bsp_partition,
+        bsp_leaf_parts,
         resolve_partition_spec,
-        sah_bsp_partition,
+        spatial_bsp_tree,
         warn_if_oversized_single_part,
         warn_if_partition_needs_more_dims,
     )
+
+    if pos_arr.shape[0] == 0:
+        return None
 
     if not warn_if_partition_needs_more_dims(pos_arr.shape[1], name):
         return None
@@ -459,16 +462,12 @@ def _resolve_points_partition(
             "Decompose the data manually or omit image_labels."
         )
 
-    if partition_rule == "sah":
-        parts = sah_bsp_partition(pos_arr, max_elements)
-    elif partition_rule == "midpoint":
-        parts = midpoint_bsp_partition(pos_arr, max_elements)
-    else:
-        parts = median_bsp_partition(pos_arr, max_elements)
+    tree = spatial_bsp_tree(pos_arr, max_elements, rule=partition_rule)
+    parts = bsp_leaf_parts(tree)
     warn_if_oversized_single_part(
         len(parts), int(parts[0].size) if parts else 0, max_elements, name
     )
-    return (max_elements, parts) if len(parts) > 1 else None
+    return (max_elements, parts, tree.to_serializable()) if len(parts) > 1 else None
 
 
 def add_points_partition_wrapper_impl(
@@ -486,6 +485,7 @@ def add_points_partition_wrapper_impl(
     parent: Optional["Node"],
     extend_to_all: Optional[Union[List[str], str]],
     max_elements: int,
+    bsp_tree: Dict[str, Any],
     additive_lod: Any = None,
     wrapper_coverage_fraction: Optional[float] = None,
     **attrs: Any,
@@ -562,6 +562,10 @@ def add_points_partition_wrapper_impl(
             additive_lod=additive_lod,
             **leaf_attrs,
         )
+    from ..partition import persist_pruned_bsp_tree
+
+    # Unlike lines, every resolved points part is written in order.
+    persist_pruned_bsp_tree(wrapper, bsp_tree, range(len(parts)))
 
     # Persist the wrapper's position_bounds (per-axis min/max of the
     # full input) so picking / scene-bounds-cache treat the layer as
@@ -745,7 +749,7 @@ def add_points_substitutive_lod_wrapper_impl(
     extend_to_all: Optional[Union[List[str], str]],
     spec: Dict[str, Any],
     additive_lod: Any = None,
-    fine_partition: Optional[tuple[int, List[np.ndarray]]] = None,
+    fine_partition: Optional[tuple[int, List[np.ndarray], Dict[str, Any]]] = None,
     **attrs: Any,
 ) -> Union["Group", Points]:
     """Write a Points node whose coarse LOD levels are synthesised gsplats.
@@ -885,7 +889,7 @@ def add_points_substitutive_lod_wrapper_impl(
             f"levels; writing the {fallback}."
         )
         if fine_partition is not None:
-            max_elements, parts = fine_partition
+            max_elements, parts, bsp_tree = fine_partition
             # Each part sizes its own ladder; sibling-aware whole-cloud sizing
             # would let the first chunk swallow an entire part.
             return add_points_partition_wrapper_impl(
@@ -902,6 +906,7 @@ def add_points_substitutive_lod_wrapper_impl(
                 parent=parent,
                 extend_to_all=extend_to_all,
                 max_elements=max_elements,
+                bsp_tree=bsp_tree,
                 additive_lod=composed_additive,
                 **attrs,
             )
@@ -995,7 +1000,7 @@ def add_points_substitutive_lod_wrapper_impl(
         )
 
     if fine_partition is not None:
-        max_elements, parts = fine_partition
+        max_elements, parts, bsp_tree = fine_partition
         # Each part sizes its own ladder; sibling-aware whole-cloud sizing
         # would let the first chunk swallow an entire part.
         add_points_partition_wrapper_impl(
@@ -1012,6 +1017,7 @@ def add_points_substitutive_lod_wrapper_impl(
             parent=lod_group_node,
             extend_to_all=extend_to_all,
             max_elements=max_elements,
+            bsp_tree=bsp_tree,
             additive_lod=composed_additive,
             wrapper_coverage_fraction=coverage_vals[-1],
             **child_attrs,

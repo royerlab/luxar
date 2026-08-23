@@ -16,6 +16,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
+
 _DEMO_PATH = Path(__file__).resolve().parents[1] / "demo_asteroids_solar_system.py"
 
 
@@ -218,7 +220,8 @@ def _assert_sun_centered_opening_camera(path: Path) -> None:
     distance = float(np.linalg.norm(position - target))
     assert 30.0 <= distance <= 80.0
     assert position[2] > 0.0  # view the ecliptic from above, not edge-on
-    half_height_at_sun = distance * np.tan(np.radians(camera["fov"]) / 2.0)
+    assert "fov" not in camera
+    half_height_at_sun = distance * np.tan(np.radians(CINEMATIC_FOV_DEG) / 2.0)
     # Neptune's ~30 AU orbit fits, but distant catalog outliers do not drive an
     # all-bounds opening view that shrinks the planetary system to a dot.
     assert 30.0 <= half_height_at_sun <= 40.0

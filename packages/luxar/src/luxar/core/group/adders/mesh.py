@@ -1564,10 +1564,10 @@ def _add_mesh_partition(
     """
     from ....mesh.split import duplication_factor, face_centroids, split_mesh_by_faces
     from ..partition import (
-        median_bsp_partition,
-        midpoint_bsp_partition,
+        bsp_leaf_parts,
+        persist_pruned_bsp_tree,
         resolve_partition_spec,
-        sah_bsp_partition,
+        spatial_bsp_tree,
         warn_if_oversized_single_part,
     )
 
@@ -1610,12 +1610,8 @@ def _add_mesh_partition(
 
     faces2d = faces_arr.reshape(-1, 3)
     centroids = face_centroids(vert_arr, faces2d)
-    if rule == "sah":
-        face_parts = sah_bsp_partition(centroids, max_elements)
-    elif rule == "midpoint":
-        face_parts = midpoint_bsp_partition(centroids, max_elements)
-    else:
-        face_parts = median_bsp_partition(centroids, max_elements)
+    tree = spatial_bsp_tree(centroids, max_elements, rule=rule)
+    face_parts = bsp_leaf_parts(tree)
 
     warn_if_oversized_single_part(
         len(face_parts),
@@ -1683,6 +1679,8 @@ def _add_mesh_partition(
             partition=False,
             **leaf_attrs,
         )
+    # Unlike lines, split_mesh_by_faces returns one written part per BSP leaf.
+    persist_pruned_bsp_tree(wrapper, tree.to_serializable(), range(len(parts)))
 
     # Union of the parts' bounds == the whole input's bounds, computed straight
     # from the source rather than round-tripped through the children's attrs.

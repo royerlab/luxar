@@ -82,6 +82,7 @@ DEMO_META = {
     # header keeps that software citation where it belongs.
     "citation": {
         "short": "Allen Institute for Cell Science (scikit-image cells3d)",
+        "ref": "Allen Institute for Cell Science",
     },
 }
 
@@ -93,6 +94,7 @@ from luxar import Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
     DatasetUnavailable,
+    add_demo_caption,
     launch_viewer,
     load_dataset_gsplats,
     load_local_fit_gsplats,
@@ -310,7 +312,7 @@ def create_luxar_scene(gsplats_list, output_path=None):
             # the accepted trade for its highlight rolloff).
             scene = compiler.create_scene(
                 dimensions=Dimensions.default_3d(),
-                viewer_config=ViewerConfig(tone_mapping="ACES"),
+                viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="ACES"),
                 citation=DEMO_META["citation"],
             )
 
@@ -385,12 +387,8 @@ Controls:
                 anchor="top-left",
                 color="rgba(255,255,255,0.6)",
             )
-            scene.add_text(
-                "scikit-image • 2 channels • BOP LUTs",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+            add_demo_caption(
+                scene, "scikit-image • 2 channels • BOP LUTs", DEMO_META.get("citation")
             )
 
         aprint(f"Scene saved: {output_path}")

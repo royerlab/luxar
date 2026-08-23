@@ -13,6 +13,7 @@ from luxar.typing_utils.constants import DEFAULT_POINT_RADIUS
 from .bounds import (
     _BARRIER_BOUND_EPS,
     _normalise_coord_slack,
+    _normalise_scalar_slack,
     _normalise_slice_dims,
     _store_outward_f32,
 )
@@ -52,6 +53,7 @@ def compute_chunk_bounds_points(
     slice_dims: Optional[list[int]] = None,
     *,
     coord_slack: Optional[NDArray[np.float64]] = None,
+    scalar_slack: Optional[float] = None,
 ) -> np.ndarray:
     """Compute chunk bounding boxes for Points (includes radius extent).
 
@@ -60,23 +62,16 @@ def compute_chunk_bounds_points(
     bound is right in both directions rather than merely wide enough. The
     interval is computed in float64 and narrowed to the float32 store with
     OUTWARD rounding (see :func:`_store_outward_f32`), so the "never tighter"
-    half holds against the AUTHORED radii at every coordinate magnitude — not
+    half holds against the padded radii at every coordinate magnitude — not
     only where a 0.5 pad happens to survive a round-to-nearest store.
 
-    KNOWN GAP — THE DECODED RADIUS IS NOT COVERED. ``radii`` is a
-    POSITIVE_SCALAR and is quantised in its own right (``bounded_scalar_uint8``
-    under AUTO for a typical range), and these bounds are built from the values
-    as handed in, so a DECODED radius can be up to half a quantum LARGER than
-    the one the pad was sized for and the footprint the renderer draws escapes
-    the stored bound by that much. Measured on 20,000 points over a 1000-unit
-    axis with ``radii ~ U(0.1, 5.0)``: decoded − authored up to 9.6e-3, putting
-    5 of 5 chunks marginally outside their own bound (worst 9.3e-3). Note this
-    is the SCALAR half of the footprint: ``coord_slack`` below closes the
-    COORDINATE half (issue #1655) and does nothing for this one, which needs
-    the same treatment — a per-array round-trip slack from the encoder, added
-    to the radius before the pad. The identical caveat applies to a line's
-    widths; see
-    :func:`~luxar.io._ordering.lines.compute_segment_chunk_bounds`.
+    SCALAR QUANTISATION SLACK (``scalar_slack``): ``radii`` is itself a
+    POSITIVE_SCALAR and may decode larger than the authored value. This single
+    per-array pad is added to the radius on SPATIAL dimensions only; barrier
+    dimensions still receive no footprint expansion. The compiler supplies it
+    from
+    :meth:`~luxar.encoding.encoder.ArrayEncoder.positive_scalar_round_trip_slack`;
+    a direct caller that omits it gets authored-radius bounds.
 
     QUANTISATION SLACK (``coord_slack``): these bounds are computed from the
     positions AS HANDED IN, but under the default AUTO encoding the positions
@@ -137,6 +132,9 @@ def compute_chunk_bounds_points(
                    STORE can move a coordinate from the value passed here (see
                    the QUANTISATION SLACK note above). Default None ⇒ zero on
                    every axis. Validated by :func:`_normalise_coord_slack`.
+        scalar_slack: Outward pad covering how far the stored radius can exceed
+                   the authored radius. Applied on spatial dimensions only;
+                   overflow produces conservative infinite spatial bounds.
 
     Returns:
         chunk_bounds: Bounding boxes, shape (num_chunks, d, 2)
@@ -146,6 +144,7 @@ def compute_chunk_bounds_points(
 
     discrete_dims = _normalise_slice_dims(slice_dims, ndim)
     slack = _normalise_coord_slack(coord_slack, ndim)
+    footprint_slack = _normalise_scalar_slack(scalar_slack)
 
     chunk_bounds = np.zeros((num_chunks, ndim, 2), dtype=np.float32)
 
@@ -169,6 +168,15 @@ def compute_chunk_bounds_points(
         else:
             radii_scalar = float(radii)
 
+        padded_chunk_radii: Optional[np.ndarray] = None
+        if chunk_radii is not None:
+            # Overflow to +inf only widens the bound, so it is conservative.
+            with np.errstate(over="ignore"):
+                padded_chunk_radii = (
+                    np.asarray(chunk_radii).astype(np.float64, copy=False)
+                    + footprint_slack
+                )
+
         # Compute bounds for each dimension separately. The pad is added in
         # float64 and stored with outward rounding — see _store_outward_f32.
         for d in range(ndim):
@@ -183,13 +191,13 @@ def compute_chunk_bounds_points(
             else:
                 # SPATIAL dimension: Include radius extent
                 if radii_scalar is not None:
-                    mins_d = coords.min() - radii_scalar
-                    maxs_d = coords.max() + radii_scalar
+                    radius = radii_scalar + footprint_slack
+                    mins_d = coords.min() - radius
+                    maxs_d = coords.max() + radius
                 else:
-                    assert chunk_radii is not None
-                    r = np.asarray(chunk_radii).astype(np.float64, copy=False)
-                    mins_d = (coords - r).min()
-                    maxs_d = (coords + r).max()
+                    assert padded_chunk_radii is not None
+                    mins_d = (coords - padded_chunk_radii).min()
+                    maxs_d = (coords + padded_chunk_radii).max()
 
             # The quantisation displacement applies to EVERY dim — spatial and
             # barrier alike — and is added in float64, before the outward

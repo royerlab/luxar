@@ -89,6 +89,7 @@ DEMO_META = {
     "outputs": ["arxiv_papers_kaggle"],
     "citation": {
         "short": "arXiv metadata by Cornell University; embeddings by tomtum",
+        "ref": "Cornell / tomtum",
         "url": "https://www.kaggle.com/datasets/tomtum/openai-arxiv-embeddings",
     },
 }
@@ -101,7 +102,9 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
+    add_demo_caption,
     cache_computed,
     cached_download,
     hsv_to_rgb,
@@ -1057,7 +1060,9 @@ def generate_paper_landscape(
 
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
-                citation=DEMO_META["citation"], dimensions=dims
+                citation=DEMO_META["citation"],
+                dimensions=dims,
+                viewer_config=ViewerConfig(cinematic_mode=True),
             )
 
             # Substitutive Points LOD for the multi-million-paper cloud —
@@ -1127,13 +1132,11 @@ def generate_paper_landscape(
             )
 
             # Info + source
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 f"{n_papers:,} papers • OpenAI text-embedding-3-large • "
                 f"PCA-{pca_dim} → UMAP 3D",
-                position=(0.98, 0.97),
-                font_size=0.012,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
 
         aprint(f"✓ Visualization created with {n_papers:,} papers")

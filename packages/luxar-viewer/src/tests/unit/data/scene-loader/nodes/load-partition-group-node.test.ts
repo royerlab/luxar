@@ -231,7 +231,7 @@ describe('loadPartitionGroupNode', () => {
   it('stashes bsp_tree on the wrapper and tags each part with its child_index', async () => {
     // The depth-sort coordinator reads `userData.bspTree` off the wrapper and
     // `userData.partIndex` off each part object to map a `bsp_tree` leaf back
-    // to its render mesh for exact back-to-front ordering.
+    // to its render mesh for stable BSP back-to-front ordering.
     attachStubChildren();
     const ctx = makeCtx();
     const bspTree = { axis: 0, split: 0, left: { part: 0 }, right: { part: 1 } };
@@ -257,6 +257,57 @@ describe('loadPartitionGroupNode', () => {
 
     expect(wrapper.userData.bspTree).toEqual(bspTree);
     expect(wrapper.children.map((c) => c.userData.partIndex)).toEqual([0, 1]);
+  });
+
+  it('keeps a nested bsp_tree produced by a native spatial partition', async () => {
+    attachStubChildren();
+    const ctx = makeCtx();
+    const infoSpy = vi.spyOn(log, 'info').mockImplementation(() => {});
+    const warningSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    const bspTree = {
+      axis: 0,
+      split: 0,
+      left: {
+        axis: 0,
+        split: -4,
+        left: { part: 0 },
+        right: { part: 1 },
+      },
+      right: {
+        axis: 0,
+        split: 4,
+        left: { part: 2 },
+        right: { part: 3 },
+      },
+    };
+    const parts = [
+      [-6.2, -5.8],
+      [-2.2, -1.8],
+      [1.8, 2.2],
+      [5.8, 6.2],
+    ].map(([min, max], childIndex) =>
+      makePartNode(`/partition/part_${childIndex}`, 'points', {
+        child_index: childIndex,
+        position_bounds: { min: [min, -0.1, 0], max: [max, 0.1, 0] },
+      })
+    );
+    const node = makePartitionGroupNode(parts, { bsp_tree: bspTree });
+
+    const wrapper = await loadPartitionGroupNode(
+      node,
+      new THREE.Group(),
+      makeStubLoc(),
+      ctx,
+      loadSceneNodesMock
+    );
+
+    expect(wrapper.userData.bspTree).toEqual(bspTree);
+    expect(wrapper.children.map((child) => child.userData.partIndex)).toEqual([0, 1, 2, 3]);
+    expect(warningSpy).not.toHaveBeenCalled();
+    expect(infoSpy).not.toHaveBeenCalledWith(
+      Modules.SCENE_LOADER,
+      expect.stringContaining('without verifiable part bounds')
+    );
   });
 
   it('drops a bsp_tree whose split plane is outside the overlap-tolerant center band', async () => {

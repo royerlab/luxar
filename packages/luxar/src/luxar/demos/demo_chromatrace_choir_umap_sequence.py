@@ -70,7 +70,8 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
-from luxar.demos import launch_viewer, parse_path_arg
+from luxar.demos import add_demo_caption, launch_viewer, parse_path_arg
+from luxar.demos._cinematic_camera import pull_in
 from luxar.utils._umap_utils import format_label
 from luxar.utils.paths import get_demos_output_dir
 
@@ -465,8 +466,12 @@ def build_sequence_scene(
         spatial_max = float(np.abs(coords).max())
         cam_dist = spatial_max * 2.2  # 2.2× half-extent → comfortable framing
         viewer_config = ViewerConfig(
+            cinematic_mode=True,
             camera=CameraConfig(
-                position=(cam_dist, cam_dist * 0.55, cam_dist),
+                # `cam_dist` is the framing tuned at the viewer's 47° default;
+                # `pull_in` restates it for the cinematic preset's 35 mm lens,
+                # which the scene takes whole by pinning no `fov` of its own.
+                position=pull_in((cam_dist, cam_dist * 0.55, cam_dist)),
                 target=(0.0, 0.0, 0.0),
             ),
         )
@@ -589,12 +594,10 @@ def build_sequence_scene(
                 if use_tsp
                 else "CHOIR legend order"
             )
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 f"{n_cells:,} cells • {n_term_real} cell types • {order_note}",
-                position=(0.98, 0.97),
-                font_size=0.012,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.5)",
+                DEMO_META.get("citation"),
             )
 
     return n_cells

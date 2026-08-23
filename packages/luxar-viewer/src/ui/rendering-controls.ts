@@ -19,7 +19,10 @@ import { setupAntiAliasingControls } from './rendering-controls/setup/anti-alias
 import { setupPostProcessingControls } from './rendering-controls/setup/post-processing-setup';
 import { CinematicModeController } from './rendering-controls/cinematic-mode';
 import { applyRenderingSettings } from './rendering-controls/apply-settings';
-import { syncCurrentState as syncCurrentStateImpl } from './rendering-controls/sync-current-state';
+import {
+  syncCameraFovState as syncCameraFovStateImpl,
+  syncCurrentState as syncCurrentStateImpl,
+} from './rendering-controls/sync-current-state';
 import { FocusManager } from './rendering-controls/focus-manager';
 import {
   buildBaseDefaults,
@@ -357,11 +360,7 @@ export class RenderingControls {
     clearStoredSettings(this.sceneId);
 
     // Apply camera settings to scene manager (before post-processing)
-    const currentFOV = this.sceneManager.currentFov;
-    if (Math.abs(currentFOV - this.settings.fov) > 0.5) {
-      const delta = (this.settings.fov - currentFOV) / config.camera.fovSensitivity;
-      this.sceneManager.updateFOV(delta);
-    }
+    this.sceneManager.setFov(this.settings.fov);
 
     // Apply clipping planes (reset to defaults)
     this.sceneManager.updateClippingPlanes(this.settings.near, this.settings.far);
@@ -465,11 +464,7 @@ export class RenderingControls {
     // Apply camera settings after loading (fov, near, far)
     // This ensures loaded settings are actually applied to the camera
     // Note: Dynamic clipping is applied later via applySettings()
-    const currentFOV = this.sceneManager.currentFov;
-    if (Math.abs(currentFOV - this.settings.fov) > 0.5) {
-      const delta = (this.settings.fov - currentFOV) / config.camera.fovSensitivity;
-      this.sceneManager.updateFOV(delta);
-    }
+    this.sceneManager.setFov(this.settings.fov);
 
     // Apply clipping planes
     this.sceneManager.updateClippingPlanes(this.settings.near, this.settings.far);
@@ -545,11 +540,7 @@ export class RenderingControls {
 
     // Apply FOV if overridden
     if (zarrOverrides.fov !== undefined) {
-      const currentFOV = this.sceneManager.currentFov;
-      if (Math.abs(currentFOV - this.settings.fov) > 0.5) {
-        const delta = (this.settings.fov - currentFOV) / config.camera.fovSensitivity;
-        this.sceneManager.updateFOV(delta);
-      }
+      this.sceneManager.setFov(this.settings.fov);
     }
 
     // Apply clipping planes if overridden
@@ -835,6 +826,13 @@ export class RenderingControls {
       updateCinematicModeCheckbox: () => this.updateCinematicModeCheckbox(),
       updateNavigationControls: (controlType) => this.updateNavigationControls(controlType),
     });
+  }
+
+  /** Sync only the live camera FOV and its derived preset into settings. */
+  public syncCameraFovState(): void {
+    syncCameraFovStateImpl(this.settings, this.sceneManager);
+    this.controllers.fov?.updateDisplay();
+    this.controllers.fovPreset?.updateDisplay();
   }
 
   /** Apply current settings to the rendering pipeline. Delegates to a pure helper. */

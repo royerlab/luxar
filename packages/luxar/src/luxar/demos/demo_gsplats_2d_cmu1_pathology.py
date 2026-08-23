@@ -115,6 +115,7 @@ DEMO_META = {
     "outputs": ["gsplats_2d_cmu1_pathology"],
     "citation": {
         "short": "OpenSlide test data (Goode et al. 2013)",
+        "ref": "Goode et al. 2013",
         "doi": "10.4103/2153-3539.119005",
         "license": "CC0 1.0",
     },
@@ -137,6 +138,7 @@ from luxar.core.viewer_config import UIConfig, ViewerConfig
 from luxar.demos import (
     DatasetUnavailable,
     MissingDependencyError,
+    add_demo_caption,
     ensure_dataset,
     launch_viewer,
     local_fit_path,
@@ -548,8 +550,14 @@ def create_luxar_scene(
             # "None" is the documented alternative (#1459) — an exact
             # passthrough, as long as the render sits inside [0, 1].
             viewer_config = ViewerConfig(
+                cinematic_mode=True,
                 control_type="ortho",
                 tone_mapping="ACES",
+                # Preserve the projection-only scale bar and measured intensity.
+                bloom_enabled=False,
+                chromatic_lens_distortion_enabled=False,
+                detector_noise_enabled=False,
+                vignette_enabled=False,
                 ui=UIConfig(show_scale_bar=True),
             )
             scene = compiler.create_scene(
@@ -647,12 +655,10 @@ Controls:
             )
 
             # Info
-            scene.add_text(
+            add_demo_caption(
+                scene,
                 "46K\u00d732K \u2022 H&E stain \u2022 20x",
-                position=(0.98, 0.97),
-                font_size=0.015,
-                anchor="bottom-right",
-                color="rgba(200,200,200,0.45)",
+                DEMO_META.get("citation"),
             )
 
         aprint(f"Scene saved: {output_path}")
