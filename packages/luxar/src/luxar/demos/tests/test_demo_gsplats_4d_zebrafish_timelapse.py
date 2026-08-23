@@ -15,6 +15,7 @@ The demo is loaded by file path, like its cell-tracking sibling.
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import itertools
 import sys
@@ -602,3 +603,49 @@ class TestDenoisingIsASwitch:
         off = _demo._fit_cache_path(0)
         monkeypatch.setattr(_demo, "DENOISE_H", 0.05)
         assert off != _demo._fit_cache_path(0)
+
+
+class TestRecomputeResumes:
+    """``--recompute`` rebuilds the archive but must not refit cached frames.
+
+    The distinction is worth a test because it is invisible until a long run is
+    interrupted, and then it costs the whole run. It is only safe because the
+    cache key covers every knob that changes a fit — see
+    ``TestTheFitCacheKeyMovesWithEveryKnob``, which is what this leans on.
+    """
+
+    def test_a_cached_frame_is_reused_under_recompute(self, monkeypatch) -> None:
+        monkeypatch.setattr(_demo, "RECOMPUTE", True)
+        monkeypatch.setattr(_demo, "REFIT_ALL", False)
+        sentinel = object()
+        monkeypatch.setattr(
+            _demo.GSplatData, "load", staticmethod(lambda *a, **k: sentinel)
+        )
+        monkeypatch.setattr(_demo, "_fit_cache_path", lambda frame: _Exists())
+        assert _demo.fit_timepoint(None, 0, (None, None)) is sentinel
+
+    def test_refit_all_ignores_the_cache(self, monkeypatch) -> None:
+        read: list[str] = []
+        monkeypatch.setattr(_demo, "REFIT_ALL", True)
+        monkeypatch.setattr(
+            _demo.GSplatData,
+            "load",
+            staticmethod(lambda *a, **k: read.append("hit")),
+        )
+        monkeypatch.setattr(_demo, "_fit_cache_path", lambda frame: _Exists())
+        # Past the cache branch it reaches the real fitter with a None volume
+        # and blows up. WHICH exception is not the point — that it got there at
+        # all is, so this asserts on the cache probe rather than on the error.
+        with contextlib.suppress(Exception):
+            _demo.fit_timepoint(None, 0, (None, None))
+        assert read == [], "the cache was read despite --refit-all"
+
+
+class _Exists:
+    """A Path stand-in that is always present and never actually touched."""
+
+    def exists(self) -> bool:
+        return True
+
+    def unlink(self, missing_ok: bool = False) -> None:
+        pass

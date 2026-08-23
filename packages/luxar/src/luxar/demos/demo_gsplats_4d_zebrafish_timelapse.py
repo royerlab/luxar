@@ -259,11 +259,13 @@ USAGE:
     python demo_gsplats_4d_zebrafish_timelapse.py [--recompute] [--no-serve]
         [--serve-only] [--max-timepoints=N]
 
-    --recompute:        Download the LSM and refit from scratch (needs a GPU).
-                        It bypasses the per-timepoint cache too, as the name
-                        says — so an interrupted refit of all 151 frames does
-                        NOT resume, it starts over. Drop the flag to have the
-                        cache honoured once the hosted archive is in place.
+    --recompute:        Ignore the shipped archive; download the LSM and build
+                        the 4D fit locally (needs a GPU). Per-timepoint fits are
+                        still read from the cache, so an interrupted run of all
+                        151 frames RESUMES where it stopped.
+    --refit-all:        With --recompute, also ignore the per-timepoint cache
+                        and fit every frame again. Rarely wanted: the cache key
+                        already carries every constant that changes a fit.
     --no-serve:         Build the scene without launching the viewer.
     --serve-only:       Serve an already-built scene.
     --max-timepoints=N: Fit only N evenly spaced timepoints (refit path only).
@@ -460,6 +462,20 @@ NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
 RECOMPUTE = FLAGS["recompute"]
 
+#: Force every timepoint to be fitted again, ignoring the per-timepoint cache.
+#:
+#: ``--recompute`` deliberately does NOT do this. The cache key carries every
+#: constant that changes a fit (there is a test enumerating them, plus a guard
+#: that fails when a new one reaches the fitter without being added), so a
+#: cached entry under the current key IS what refitting would produce — and
+#: honouring it makes an interrupted run of all 151 timepoints RESUME instead of
+#: starting over. That is not hypothetical: this refit died at frame 37 of 151
+#: and the bypass would have thrown away forty minutes of GPU time.
+#:
+#: The escape hatch exists for the case the key cannot cover — a cache you
+#: suspect was written by a different build of the fitter itself.
+REFIT_ALL = "--refit-all" in sys.argv
+
 #: ``None`` = every timepoint in the recording. Only consulted when refitting.
 MAX_TIMEPOINTS = parse_int_arg("max-timepoints", None, sys.argv)
 
@@ -632,7 +648,7 @@ def fit_timepoint(volume: np.ndarray, frame: int, acquisition: tuple):
     """
     global DEVICE
     cache_file = _fit_cache_path(frame)
-    if cache_file.exists() and not RECOMPUTE:
+    if cache_file.exists() and not REFIT_ALL:
         try:
             return GSplatData.load(cache_file, include_stats=True)
         except Exception as exc:  # noqa: BLE001
