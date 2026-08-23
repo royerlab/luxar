@@ -74,7 +74,7 @@ def compare(store: Path, declared: Optional[dict]) -> Optional[str]:
             )
         return None
     want = declared["short"]
-    if not carried:
+    if carried is None:
         return f"declares {want!r} but the store carries no citation"
     if not carried.get("short"):
         # `validate_citation` requires `short`, so a luxar-written store always

@@ -98,8 +98,9 @@ def test_non_mapping_citation_is_reported(
     assert "malformed citation record" in problem and repr(carried) in problem
 
 
-def test_citation_without_short_is_reported(tmp_path: Path) -> None:
-    store = _v3_store(tmp_path, "malformed", {"citation": {"doi": CITED["doi"]}})
+@pytest.mark.parametrize("carried", [{}, {"doi": CITED["doi"]}])
+def test_citation_without_short_is_reported(tmp_path: Path, carried: dict) -> None:
+    store = _v3_store(tmp_path, "malformed", {"citation": carried})
     problem = compare(store, CITED)
     assert problem is not None and "has no 'short'" in problem
 
