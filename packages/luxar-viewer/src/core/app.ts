@@ -96,6 +96,8 @@ export class LuxarApp {
    */
   private pickingEvents = new EventGroup();
   private isInitialized = false;
+  /** True from the start of init() until routing and app-level wiring complete. */
+  private isInitializing = false;
   /**
    * Re-entrance guard for {@link dispose}. Set while a dispose is in flight
    * so a `beforeunload` callback that fires mid-dispose (or any nested call)
@@ -198,6 +200,7 @@ export class LuxarApp {
     // works even if the same instance was already initialized and
     // disposed.
     this.isDisposed = false;
+    this.isInitializing = true;
     this.options = options;
 
     applyModuleOverrides(options);
@@ -247,6 +250,9 @@ export class LuxarApp {
 
       // Dataset routing: subsystems are wired up, fields are assigned —
       // the orchestrator delegates can now safely read `this.*`.
+      // Install this before routing so O / the rail control can open the
+      // browser while a slow initial dataset load is still in progress.
+      this.setupDatasetBrowserShortcut();
       if (await this.shouldShowBrowser(result.sceneSrc)) {
         try {
           this.showDatasetBrowser();
@@ -262,14 +268,15 @@ export class LuxarApp {
       }
 
       this.setupDisposeOnUnload();
-      this.setupDatasetBrowserShortcut();
       this.setupFocusHandling();
       this.setupOnlineRetry();
       this.setupDebugInterface();
       this.setupEmbedderHooks(options.canvas);
 
       this.isInitialized = true;
+      this.isInitializing = false;
     } catch (error) {
+      this.isInitializing = false;
       log.error(Modules.APP, `Failed to initialize Luxar app: ${getErrorMessage(error)}`, error);
       // Tear down whatever partial state was constructed before the throw.
       // The pipeline writes each subsystem into `partial` as it builds
@@ -309,6 +316,7 @@ export class LuxarApp {
       },
       // Lets the selection handler skip its URL/src side effects when the
       // guarded switch below is going to reject the selection anyway.
+      isInitializing: () => this.isInitializing,
       isSwitchInFlight: () => this.switchInFlight !== undefined,
       // Browser selections must share the same in-flight guard as the public
       // embedder API. Calling loadDataset() directly here used to allow two
@@ -726,6 +734,11 @@ export class LuxarApp {
    */
   switchDataset(src: string): Promise<void> {
     if (!this.isInitialized) {
+      if (this.isInitializing) {
+        throw new Error(
+          'Luxar is still initializing. Try again after the initial dataset finishes loading.'
+        );
+      }
       throw new Error('LuxarApp.switchDataset called before init()');
     }
     if (this.switchInFlight) {

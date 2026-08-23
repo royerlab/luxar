@@ -20,12 +20,14 @@ export interface ShowDatasetBrowserPorts {
   updateBrowserUrl: boolean;
   inputHandler: InputHandler;
   onSrcChange: (src: string) => void;
+  /** True while the app is still completing its initial dataset load and wiring. */
+  isInitializing: () => boolean;
   /**
-   * True while a guarded dataset switch is already in flight. Consulted
-   * BEFORE the selection side effects (host-URL replacement, onSrcChange):
-   * a selection arriving mid-switch is rejected by `loadDataset` below, and
-   * must not leave the host URL or the src snapshot pointing at a dataset
-   * that never loaded.
+   * True while a guarded dataset switch is already in flight. Consulted with
+   * `isInitializing` BEFORE the selection side effects (host-URL replacement,
+   * onSrcChange): a selection that cannot start is rejected by `loadDataset`
+   * below and must not leave the host URL or src snapshot pointing at a
+   * dataset that never loaded.
    */
   isSwitchInFlight: () => boolean;
   loadDataset: (src: string) => Promise<void>;
@@ -45,11 +47,10 @@ export function showDatasetBrowser(ports: ShowDatasetBrowserPorts): DatasetBrows
       const cleanUrl = fullUrl.replace(/\/+$/, '');
 
       // Selection side effects run only when the guarded switch can actually
-      // start. If another switch is already in flight (e.g. the embedder
-      // kicked one off while the modal was open), `loadDataset` below rejects
-      // — running these first would leave the host URL and the src snapshot
-      // pointing at a dataset that never loaded.
-      if (!ports.isSwitchInFlight()) {
+      // start. During initialization, or if another switch is already in
+      // flight, `loadDataset` below rejects — running these first would leave
+      // the host URL and src snapshot pointing at a dataset that never loaded.
+      if (!ports.isInitializing() && !ports.isSwitchInFlight()) {
         // Reflect the chosen dataset in the URL bar only for callers that opt in.
         // The standalone bootstrap opts in; programmatic/embedded usage defaults
         // to no host-page URL mutation.

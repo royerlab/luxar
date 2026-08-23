@@ -1005,6 +1005,43 @@ describe('LuxarApp', () => {
       );
     });
 
+    it('opens during the initial load but refuses selection without changing the source', async () => {
+      mockFetch.mockResolvedValue({ ok: true });
+      let releaseInitialLoad!: () => void;
+      mockSceneManager.loadSceneData.mockImplementationOnce(
+        () => new Promise<void>((resolve) => (releaseInitialLoad = resolve))
+      );
+
+      const initPromise = app.init({
+        canvas: mockCanvas,
+        src: 'http://example.com/initial.zarr',
+        updateBrowserUrl: true,
+      });
+      await vi.waitFor(() => expect(mockSceneManager.loadSceneData).toHaveBeenCalledTimes(1));
+
+      try {
+        const openBrowser = mockAddEventListener.mock.calls.find(
+          (call) => call[0] === 'open-dataset-browser'
+        )?.[1] as (() => void) | undefined;
+        expect(openBrowser).toBeDefined();
+
+        openBrowser!();
+        const browserCall = (DatasetBrowser as any).mock.calls.at(-1);
+        expect(browserCall).toBeDefined();
+        const onSelect = browserCall[0].onDatasetSelect as (url: string) => Promise<void>;
+
+        await expect(onSelect('http://example.com/replacement.zarr')).rejects.toThrow(
+          'Luxar is still initializing. Try again after the initial dataset finishes loading.'
+        );
+        expect((app as any).options.src).toBe('http://example.com/initial.zarr');
+        expect(mockReplaceState).not.toHaveBeenCalled();
+        expect(mockSceneManager.loadSceneData).toHaveBeenCalledTimes(1);
+      } finally {
+        releaseInitialLoad();
+        await initPromise;
+      }
+    });
+
     it('does not call history.replaceState when updateBrowserUrl is false', async () => {
       const replaceStateSpy = vi.spyOn(window.history, 'replaceState').mockImplementation(() => {});
 

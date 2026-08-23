@@ -84,6 +84,7 @@ function makePorts() {
     updateBrowserUrl: true,
     inputHandler: inputHandler as unknown as InputHandler & MockInputHandler,
     onSrcChange: vi.fn(),
+    isInitializing: vi.fn().mockReturnValue(false),
     isSwitchInFlight: vi.fn().mockReturnValue(false),
     loadDataset: vi.fn().mockResolvedValue(undefined),
     onClose: vi.fn(),
@@ -190,6 +191,22 @@ describe('showDatasetBrowser', () => {
       expect(mocks.replaceBrowserDataSourceUrl).not.toHaveBeenCalled();
       expect(ports.onSrcChange).not.toHaveBeenCalled();
       // The guarded dispatch still runs so the caller observes the rejection.
+      expect(ports.loadDataset).toHaveBeenCalledWith('http://example.com/stale.zarr');
+    });
+
+    it('skips the URL/src side effects while the app is initializing', async () => {
+      const ports = makePorts();
+      ports.isInitializing.mockReturnValue(true);
+      ports.loadDataset.mockRejectedValue(new Error('Luxar is still initializing'));
+      showDatasetBrowser(ports);
+      const opts = mocks.DatasetBrowserCtor.mock.calls[0][0] as CapturedOpts;
+
+      await expect(opts.onDatasetSelect('http://example.com/stale.zarr')).rejects.toThrow(
+        /still initializing/
+      );
+
+      expect(mocks.replaceBrowserDataSourceUrl).not.toHaveBeenCalled();
+      expect(ports.onSrcChange).not.toHaveBeenCalled();
       expect(ports.loadDataset).toHaveBeenCalledWith('http://example.com/stale.zarr');
     });
 
