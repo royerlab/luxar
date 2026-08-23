@@ -37,12 +37,13 @@ class CompositionMixin(_GSplatDataOps):
         """
         from luxar.gsplats.tree import is_matrix_shaped, iter_default_leaves
 
+        make = cast("type[GSplatData]", cls)
         if is_matrix_shaped(node):
-            return cls.from_tree(node, stats=stats)
+            return make.from_tree(node, stats=stats)
 
-        parts = [cls.from_tree(leaf).flattened() for leaf in iter_default_leaves(node)]
-        flat = cls.concatenate(parts)
-        return cls.from_additive_sublods(list(flat.additive_sublods), stats=stats)
+        parts = [make.from_tree(leaf).flattened() for leaf in iter_default_leaves(node)]
+        flat = make.concatenate(parts)
+        return make.from_additive_sublods(list(flat.additive_sublods), stats=stats)
 
     @classmethod
     def concatenate(cls, datasets: list["GSplatData"]) -> "GSplatData":
