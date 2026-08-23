@@ -148,6 +148,7 @@ def count_range_warnings(records: Any) -> int:
 #: Element count both halves build their labelled fixtures around.
 N_LABELLED = 8
 LABELS = [f"l{i}" for i in range(N_LABELLED)]
+KEYS = [f"k{i}" for i in range(N_LABELLED)]
 IMAGE_LABELS = [np.zeros((2, 2, 3), dtype=np.uint8) for _ in range(N_LABELLED)]
 
 #: ``(kwarg name, call kwargs, the writer attr that proves it reached disk)``.
@@ -157,6 +158,7 @@ IMAGE_LABELS = [np.zeros((2, 2, 3), dtype=np.uint8) for _ in range(N_LABELLED)]
 LABEL_KWARGS = [
     ("labels", {"labels": LABELS}, "has_labels"),
     ("image_labels", {"image_labels": IMAGE_LABELS}, "has_image_labels"),
+    ("keys", {"keys": KEYS}, "has_keys"),
 ]
 
 

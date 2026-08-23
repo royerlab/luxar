@@ -686,12 +686,12 @@ describe('LinesSpatialIndexLoader', () => {
       };
 
       /** A copy of the body fixture's node with one label flag flipped on. */
-      function makeLabelledNode(flag: 'has_labels' | 'has_image_labels'): SceneNode {
+      function makeLabelledNode(flag: 'has_labels' | 'has_image_labels' | 'has_keys'): SceneNode {
         const base = makeLinesNode();
         return { ...base, attrs: { ...base.attrs, [flag]: true } } as SceneNode;
       }
 
-      function makeLabelledLoader(flag: 'has_labels' | 'has_image_labels') {
+      function makeLabelledLoader(flag: 'has_labels' | 'has_image_labels' | 'has_keys') {
         return new LinesSpatialIndexLoader(
           mockZarrLocation as unknown as ConstructorParameters<typeof LinesSpatialIndexLoader>[0],
           makeLabelledNode(flag)
@@ -729,6 +729,16 @@ describe('LinesSpatialIndexLoader', () => {
         try {
           const result = await labelled.loadLines(viewState);
           expect(result.vertexRangeBounds).toHaveLength(4); // 2 ranges x 2 bounds
+        } finally {
+          labelled.dispose();
+        }
+      });
+
+      it('publishes them for a has_keys node too', async () => {
+        const labelled = makeLabelledLoader('has_keys');
+        try {
+          const result = await labelled.loadLines(viewState);
+          expect(result.vertexRangeBounds).toHaveLength(4);
         } finally {
           labelled.dispose();
         }

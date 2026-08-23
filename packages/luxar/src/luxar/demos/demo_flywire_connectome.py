@@ -414,13 +414,15 @@ _SOMA_RADIUS_DEFAULT = 4.0
 
 def build_neuron_layer(
     sub: pd.DataFrame,
-) -> tuple[np.ndarray, np.ndarray, list[str]]:
+) -> tuple[np.ndarray, np.ndarray, list[str], list[str] | None]:
     """Assemble Points attributes for one super_class subset.
 
     Returns:
         positions (N, 3) as [x, y, z]
         radii (N,) in µm
         labels (list of N hover strings)
+        keys (list of N FlyWire root ids for the Codex link, or None when the
+            frame carries no ``root_id`` column)
     """
     positions = np.column_stack(
         [
@@ -445,7 +447,24 @@ def build_neuron_layer(
         )
     ]
 
-    return positions, radii, labels
+    # Click a soma to open its FlyWire Codex cell page, right-click to copy the
+    # root id (#1917). The id is a 19-digit segment id that appears nowhere in
+    # the label — the label is the cell type and its classifications — so the
+    # URL has to come from `keys=`, which is what that channel is for.
+    #
+    # `root_id` is a nullable Int64 column; a missing one becomes an empty key
+    # rather than the string "<NA>", and the viewer then suppresses the link for
+    # that neuron instead of opening a Codex page for a nonexistent cell.
+    # `None`, not `[]`, when the column is absent: an empty list would be a
+    # length mismatch against N points, so the caller omits `keys=` entirely and
+    # the layer ships without links rather than failing to build.
+    keys = (
+        ["" if pd.isna(rid) else str(int(rid)) for rid in sub["root_id"].tolist()]
+        if "root_id" in sub.columns
+        else None
+    )
+
+    return positions, radii, labels, keys
 
 
 def build_edge_lines(
@@ -647,7 +666,19 @@ def build_scene(
                 sub = neurons[neurons["super_class"] == sc_name]
                 if len(sub) == 0:
                     continue
-                pos, radii, labels = build_neuron_layer(sub)
+                pos, radii, labels, keys = build_neuron_layer(sub)
+                link_attrs = (
+                    {
+                        "keys": keys,
+                        "link": (
+                            "https://codex.flywire.ai/app/cell_details"
+                            "?root_id={hover_key}"
+                        ),
+                        "copy": "{hover_key}",
+                    }
+                    if keys is not None
+                    else {}
+                )
                 scene.add_points(
                     f"Neurons — {sc_name}",
                     positions=pos,
@@ -671,6 +702,7 @@ def build_scene(
                     # toggled.
                     blending_mode="additive",
                     labels=labels,
+                    **link_attrs,
                     layer=True,
                 )
 

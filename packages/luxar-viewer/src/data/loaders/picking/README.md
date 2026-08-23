@@ -2,7 +2,7 @@
 
 Lazy, per-element label fetchers for the picking / hover system. When the
 user hovers an element (point, line, splat), these loaders fetch the
-associated **text label** or **image label** for that single element from
+associated **text label**, **machine-readable key**, or **image label** for that single element from
 zarr, on demand, and cache the result.
 
 ## Overview
@@ -13,6 +13,7 @@ zarr arrays — an offsets array plus a concatenated bytes blob:
 | Label kind | Offsets array         | Bytes array         | `.zattrs` flag     |
 | ---------- | --------------------- | ------------------- | ------------------ |
 | Text       | `label_offsets`       | `label_bytes`       | `has_labels`       |
+| Key        | `key_offsets`         | `key_bytes`         | `has_keys`         |
 | Image      | `image_label_offsets` | `image_label_bytes` | `has_image_labels` |
 
 For element `i`, the payload is `bytes[offsets[i] : offsets[i+1]]`. An
@@ -58,6 +59,7 @@ access, caching the decoded `string[]` per node path.
 import { LabelLoader } from './picking/label-loader';
 
 const loader = new LabelLoader(store, rootLoc);
+const keyLoader = new LabelLoader(store, rootLoc, 'keys');
 
 // First call loads + decodes all labels for the node; later calls hit the cache.
 const label = await loader.getLabel('/points/cells', elementIndex); // string | null
@@ -68,6 +70,10 @@ const label = await loader.getLabel('/points/cells', elementIndex); // string | 
 // the loader's catch (below) rather than by this predicate.
 if (loader.hasLabels(nodeAttrs)) {
   /* node has a label_offsets / label_bytes pair */
+}
+
+if (keyLoader.hasLabels(nodeAttrs)) {
+  /* node has a key_offsets / key_bytes pair, stamped by has_keys */
 }
 
 loader.dispose(); // clear caches + in-flight map

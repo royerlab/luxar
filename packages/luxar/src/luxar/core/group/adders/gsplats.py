@@ -48,6 +48,7 @@ def add_gsplats_impl(
     colors: Any = None,
     labels: Optional[Union[List[str], Sequence[str]]] = None,
     image_labels: Optional[Any] = None,
+    keys: Optional[Union[List[str], Sequence[str]]] = None,
     parent: Optional["Node"] = None,
     extend_to_all: Optional[Union[List[str], str]] = None,
     dim_order: Optional[List[str]] = None,
@@ -208,6 +209,7 @@ def add_gsplats_impl(
                     n_splats=n_splats,
                     colors=colors,
                     labels=labels,
+                    keys=keys,
                     parent=parent,
                     extend_to_all=extend_to_all,
                     max_elements=max_elements,
@@ -238,6 +240,7 @@ def add_gsplats_impl(
             cholesky_factors=chol_arr,
             colors=cast(Any, colors),
             labels=labels,
+            keys=keys,
             image_labels=image_labels,
             **attrs,
         )
@@ -284,6 +287,7 @@ def add_gsplats_partition_wrapper_impl(
     n_splats: int,
     colors: Any,
     labels: Any,
+    keys: Any = None,
     parent: Optional["Node"],
     extend_to_all: Optional[Union[List[str], str]],
     max_elements: int,
@@ -311,7 +315,12 @@ def add_gsplats_partition_wrapper_impl(
     # `validate_gsplat_inputs` already decided it, and a second copy of the rule
     # here is the drift this whole gate exists to prevent.
     uniform_cholesky = validate_gsplats_channels_before_split(
-        ctr_arr, amplitudes, chol_arr, colors=colors, labels=labels
+        ctr_arr,
+        amplitudes,
+        chol_arr,
+        colors=colors,
+        labels=labels,
+        keys=keys,
     )
     uniform_color = is_broadcast_color(colors)
 
@@ -344,6 +353,7 @@ def add_gsplats_partition_wrapper_impl(
             if uniform_color
             else slice_optional_array(colors, indices, n_splats),
             labels=slice_optional_array(labels, indices, n_splats),
+            keys=slice_optional_array(keys, indices, n_splats),
             image_labels=None,
             extend_to_all=extend_to_all,
             # dim_order / fill / fill_sigma already applied to ctr_arr +

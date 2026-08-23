@@ -40,7 +40,7 @@ Scene-loader code never imports the concrete class — it goes through
   and with it the hidden-dim visibility compaction that renumbers the
   slots — runs downstream of the loader, so the loader only publishes
   its half: `LoadedGSplatsData.ranges`, and only for a node declaring
-  `has_labels` / `has_image_labels`. The fused kernel records the
+  `has_labels` / `has_image_labels` / `has_keys`. The fused kernel records the
   surviving source indices, `data-processor-gsplats.ts` composes the two
   via `buildElementIdMap`, and `commit-gsplats-geometry.ts` stamps the
   result onto the MESH (`types/committed-data::setElementIdMap`) — never

@@ -40,7 +40,7 @@ from ..labels.image_labels import (
     validate_image_labels_for_writing,
     write_image_labels_csr,
 )
-from ..labels.text_labels import write_labels_csr
+from ..labels.text_labels import write_string_channels_csr
 from ..node_common import (
     MESH_RESERVED_ATTRS,
     apply_default_render_attrs,
@@ -142,6 +142,7 @@ def validate_mesh_arrays(
     double_sided: bool = True,
     labels: Any = None,
     image_labels: Any = None,
+    keys: Any = None,
 ) -> Tuple[int, int]:
     """Validate a mesh's arrays and channels. Pure — reads nothing, writes nothing.
 
@@ -217,6 +218,11 @@ def validate_mesh_arrays(
         validate_scalars_preflight(scalars, n_vertices)
     if labels is not None:
         validate_labels_for_writing(labels, n_vertices)
+    # Keys ride the same pre-flight as labels: the CSR serializer
+    # UTF-8-encodes each entry, so a non-str or a length mismatch must be
+    # caught BEFORE any array reaches disk (#1917).
+    if keys is not None:
+        validate_labels_for_writing(keys, n_vertices, context="keys", noun="Keys")
     if image_labels is not None:
         validate_image_labels_for_writing(image_labels, n_vertices)
     return n_vertices, n_dims
@@ -235,6 +241,7 @@ def write_mesh(
     double_sided: bool = True,
     labels: Optional["Sequence[str]"] = None,
     image_labels: Optional[Any] = None,
+    keys: Optional["Sequence[str]"] = None,
     **attrs: Any,
 ) -> dict[str, Any]:
     """Write mesh data to Zarr (see ``LuxarZarrCompiler.write_mesh``).
@@ -285,6 +292,7 @@ def write_mesh(
         double_sided=double_sided,
         labels=labels,
         image_labels=image_labels,
+        keys=keys,
     )
     # 0i. Transform / nd_transform normalization is pure attr processing, so it
     # belongs in the gate too — and prepare_transform_attrs is NOT idempotent
@@ -458,11 +466,15 @@ def write_mesh(
     if not skip_scene_bounds:
         ctx.update_scene_bounds(position_bounds)
 
-    # 6. Labels (CSR). Per-vertex, like the lines writer.
-    if labels is not None:
-        write_labels_csr(group, labels, n_vertices, ctx.compressor, None)
-        metadata["has_labels"] = True
-        group.attrs["has_labels"] = True
+    write_string_channels_csr(
+        group,
+        labels=labels,
+        keys=keys,
+        n_elements=n_vertices,
+        compressor=ctx.compressor,
+        sort_order=None,
+        metadata=metadata,
+    )
 
     if image_labels is not None:
         write_image_labels_csr(group, image_labels, n_vertices, ctx.compressor, None)

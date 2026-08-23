@@ -6,7 +6,8 @@ Embeds ~114K Spotify tracks into 3D space using UMAP on 9 audio features
 (danceability, energy, loudness, speechiness, acousticness, instrumentalness,
 liveness, valence, tempo). Colored by genre, sized by popularity.
 
-Hover over any point to see the track name, artist, and genre.
+Hover over any point to see the track name, artist, and genre; click it to
+search YouTube for that track, or right-click to copy the search query.
 
 Data source: the `maharshipandya/spotify-tracks-dataset` on Hugging Face,
 derived from the Spotify Web API (per-track audio features).
@@ -287,6 +288,22 @@ def generate_spotify_landscape(
             for i in range(n_tracks)
         ]
 
+        # Click a track to hear it on YouTube, right-click to copy the query
+        # (#1917). The URL cannot be built from the visible label: that label
+        # truncates the title at 50 characters and appends a genre nobody would
+        # type, so it would search for half a song name plus a noise word.
+        # `keys=` carries the untruncated "title artist" pair the search wants,
+        # which is precisely the split that channel exists for.
+        #
+        # An empty pair stays empty rather than becoming a stray space: the
+        # viewer suppresses a link whose template has an empty substitution, so
+        # a track with no usable text simply is not clickable instead of opening
+        # a search for nothing.
+        search_queries = [
+            f"{track_names[i].strip()} {artists[i].strip()}".strip()
+            for i in range(n_tracks)
+        ]
+
     # Write to Zarr
     with asection("Writing to Zarr"):
         dims = Dimensions(
@@ -315,6 +332,9 @@ def generate_spotify_landscape(
                 opacity=0.9,
                 intensity=0.12,
                 labels=labels,
+                keys=search_queries,
+                link="https://www.youtube.com/results?search_query={hover_key}",
+                copy="{hover_key}",
                 layer=True,
             )
 

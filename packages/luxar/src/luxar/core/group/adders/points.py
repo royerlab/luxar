@@ -65,6 +65,7 @@ def add_points_impl(
     scalars: Any = None,
     labels: Optional[Union[List[str], Sequence[str]]] = None,
     image_labels: Optional[Any] = None,
+    keys: Optional[Union[List[str], Sequence[str]]] = None,
     parent: Optional["Node"] = None,
     extend_to_all: Optional[Union[List[str], str]] = None,
     dim_order: Optional[List[str]] = None,
@@ -230,6 +231,7 @@ def add_points_impl(
                     sharpness=sharpness,
                     scalars=scalars,
                     labels=labels,
+                    keys=keys,
                     image_labels=image_labels,
                     parent=parent,
                     extend_to_all=extend_to_all,
@@ -268,6 +270,7 @@ def add_points_impl(
                     sharpness=sharpness,
                     scalars=scalars,
                     labels=labels,
+                    keys=keys,
                     parent=parent,
                     extend_to_all=extend_to_all,
                     max_elements=max_elements,
@@ -365,6 +368,7 @@ def add_points_impl(
                         sharpness=sharpness,
                         scalars=scalars,
                         labels=labels,
+                        keys=keys,
                         parent=parent,
                         extend_to_all=extend_to_all,
                         method=additive_spec["method"],
@@ -403,6 +407,7 @@ def add_points_impl(
             sharpness=sharpness,
             scalars=scalars,
             labels=labels,
+            keys=keys,
             image_labels=image_labels,
             **attrs,
         )
@@ -482,6 +487,7 @@ def add_points_partition_wrapper_impl(
     sharpness: Any,
     scalars: Any,
     labels: Any,
+    keys: Any = None,
     parent: Optional["Node"],
     extend_to_all: Optional[Union[List[str], str]],
     max_elements: int,
@@ -506,6 +512,7 @@ def add_points_partition_wrapper_impl(
         sharpness=sharpness,
         scalars=scalars,
         labels=labels,
+        keys=keys,
     )
 
     # A uniform RGB(A) list/tuple is the one leaf parameter whose OWN length can
@@ -543,6 +550,7 @@ def add_points_partition_wrapper_impl(
             sharpness=slice_optional_array(sharpness, indices, n_points),
             scalars=slice_optional_array(scalars, indices, n_points),
             labels=slice_optional_array(labels, indices, n_points),
+            keys=slice_optional_array(keys, indices, n_points),
             # image_labels banned alongside partition= (see add_points entry)
             image_labels=None,
             extend_to_all=extend_to_all,
@@ -589,6 +597,7 @@ def add_points_multi_lod_wrapper_impl(
     sharpness: Any,
     scalars: Any,
     labels: Any,
+    keys: Any = None,
     parent: Optional["Node"],
     extend_to_all: Optional[Union[List[str], str]],
     method: str,
@@ -628,6 +637,7 @@ def add_points_multi_lod_wrapper_impl(
         sharpness=sharpness,
         scalars=scalars,
         labels=labels,
+        keys=keys,
     )
     uniform_color = is_broadcast_color(colors)
 
@@ -671,6 +681,7 @@ def add_points_multi_lod_wrapper_impl(
                 "sharpness": slice_optional_array(sharpness, level_indices, n_points),
                 "scalars": slice_optional_array(scalars, level_indices, n_points),
                 "labels": slice_optional_array(labels, level_indices, n_points),
+                "keys": slice_optional_array(keys, level_indices, n_points),
                 "lod_stats": per_level_stats[level_i],
             }
         )
@@ -744,6 +755,7 @@ def add_points_substitutive_lod_wrapper_impl(
     sharpness: Any,
     scalars: Any,
     labels: Any,
+    keys: Any = None,
     image_labels: Any,
     parent: Optional["Node"],
     extend_to_all: Optional[Union[List[str], str]],
@@ -784,6 +796,7 @@ def add_points_substitutive_lod_wrapper_impl(
         sharpness=sharpness,
         scalars=scalars,
         labels=labels,
+        keys=keys,
         image_labels=image_labels,
     )
 
@@ -903,6 +916,7 @@ def add_points_substitutive_lod_wrapper_impl(
                 sharpness=sharpness,
                 scalars=scalars,
                 labels=labels,
+                keys=keys,
                 parent=parent,
                 extend_to_all=extend_to_all,
                 max_elements=max_elements,
@@ -919,6 +933,7 @@ def add_points_substitutive_lod_wrapper_impl(
             sharpness=sharpness,
             scalars=scalars,
             labels=labels,
+            keys=keys,
             image_labels=image_labels,
             parent=parent,
             extend_to_all=extend_to_all,
@@ -1014,6 +1029,7 @@ def add_points_substitutive_lod_wrapper_impl(
             sharpness=sharpness,
             scalars=scalars,
             labels=labels,
+            keys=keys,
             parent=lod_group_node,
             extend_to_all=extend_to_all,
             max_elements=max_elements,
@@ -1034,6 +1050,7 @@ def add_points_substitutive_lod_wrapper_impl(
         sharpness=sharpness,
         scalars=scalars,
         labels=labels,
+        keys=keys,
         image_labels=image_labels,
         extend_to_all=extend_to_all,
         dim_order=None,

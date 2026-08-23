@@ -513,18 +513,30 @@ def _take_brightest(cat: dict, n: int) -> dict:
 # -----------------------------------------------------------------------------
 
 
-def build_labels(cat: dict, top_n: int = LABEL_TOP_N) -> list[str]:
-    """Hover labels for the brightest ``top_n`` asteroids; '' for the rest."""
+def build_labels(cat: dict, top_n: int = LABEL_TOP_N) -> tuple[list[str], list[str]]:
+    """Hover labels and SBDB keys for the brightest ``top_n`` asteroids.
+
+    Both are '' for the rest, and that emptiness is load-bearing on the keys
+    side: the viewer suppresses a link whose template has an empty substitution,
+    so the unlabelled majority is simply not clickable rather than opening a
+    lookup for nothing (#1917).
+
+    The label carries the semi-major axis as well as the designation, so the URL
+    cannot be built from it — hence the separate keys list.
+    """
     n = len(cat["a"])
     labels = [""] * n
+    keys = [""] * n
     H = cat["H"].copy()
     H[np.isnan(H)] = np.inf
     order = np.argsort(H, kind="stable")[: min(top_n, n)]
     names = cat["names"]
     a = cat["a"]
     for j in order:
-        labels[j] = f"{names[j].strip()}  ·  a={a[j]:.2f} AU"
-    return labels
+        designation = names[j].strip()
+        labels[j] = f"{designation}  ·  a={a[j]:.2f} AU"
+        keys[j] = designation
+    return labels, keys
 
 
 # -----------------------------------------------------------------------------
@@ -713,7 +725,7 @@ def build_static_scene(output_path: Path, cat: dict) -> int:
         )
         aprint(f"  Placed {len(pos):,} asteroids at J2000")
 
-        labels = build_labels(cat)
+        labels, sbdb_keys = build_labels(cat)
         semi_major = cat["a"].astype(np.float32)
 
         dims = Dimensions(
@@ -737,6 +749,11 @@ def build_static_scene(output_path: Path, cat: dict) -> int:
                 colormap="turbo",
                 radii=0.012,
                 labels=labels,
+                keys=sbdb_keys,
+                link=(
+                    "https://ssd.jpl.nasa.gov/tools/sbdb_lookup.html#/?sstr={hover_key}"
+                ),
+                copy="{hover_key}",
                 opacity=asteroid_opacity(len(pos)),
                 blending_mode="additive",
                 intensity=ASTEROID_SCALAR_GAIN,

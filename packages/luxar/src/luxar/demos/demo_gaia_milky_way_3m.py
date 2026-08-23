@@ -629,6 +629,11 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
                 blending_mode="volumetric",
                 absorption=MARKER_ABSORPTION,
                 labels=[SUN_LABEL],
+                # One marker, one fixed destination: a single-element node needs
+                # no `keys=` at all, since there is nothing per-element to
+                # substitute. SIMBAD is the canonical object page (#1917).
+                link="https://simbad.cds.unistra.fr/simbad/sim-basic?Ident=Sun",
+                copy="Sun",
                 layer=True,
             )
             aprint(f"  ✓ Sun at ({-r0_kpc * SCALE:.1f}, 0, 0)")
@@ -649,6 +654,11 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
                 blending_mode="volumetric",
                 absorption=MARKER_ABSORPTION,
                 labels=[BETELGEUSE_LABEL],
+                # One marker, one fixed destination: a single-element node needs
+                # no `keys=` at all, since there is nothing per-element to
+                # substitute. SIMBAD is the canonical object page (#1917).
+                link="https://simbad.cds.unistra.fr/simbad/sim-basic?Ident=Betelgeuse",
+                copy="Betelgeuse",
                 layer=True,
             )
             aprint("  ✓ Betelgeuse (red supergiant, 168 pc)")
@@ -669,6 +679,11 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
                 blending_mode="volumetric",
                 absorption=MARKER_ABSORPTION,
                 labels=[RIGEL_LABEL],
+                # One marker, one fixed destination: a single-element node needs
+                # no `keys=` at all, since there is nothing per-element to
+                # substitute. SIMBAD is the canonical object page (#1917).
+                link="https://simbad.cds.unistra.fr/simbad/sim-basic?Ident=Rigel",
+                copy="Rigel",
                 layer=True,
             )
             aprint("  ✓ Rigel (blue supergiant, 265 pc)")

@@ -86,6 +86,7 @@ class ZarrWriterProtocol(Protocol):
         scalars: Optional[Union[ScalarArray, float]] = None,
         labels: Optional[Sequence[str]] = None,
         image_labels: Optional[Any] = None,
+        keys: Optional[Sequence[str]] = None,
         **attrs: Any,
     ) -> PointsMetadata:
         """Write points data immediately to Zarr.
@@ -114,6 +115,8 @@ class ZarrWriterProtocol(Protocol):
                 Used for colormap lookup when a colormap is applied.
             labels: Optional list of strings, one per point, for hover tooltips
             image_labels: Optional per-element images for hover thumbnails
+            keys: Optional machine-readable strings, one per point, for link and
+                copy templates.
             **attrs: Additional attributes for the points
 
         Returns:
@@ -139,6 +142,7 @@ class ZarrWriterProtocol(Protocol):
         line_type: str = "polyline",
         labels: Optional[Sequence[str]] = None,
         image_labels: Optional[Any] = None,
+        keys: Optional[Sequence[str]] = None,
         **attrs: Any,
     ) -> LinesMetadata:
         """Write lines data immediately to Zarr.
@@ -160,6 +164,8 @@ class ZarrWriterProtocol(Protocol):
             line_type: Type of line connectivity
             labels: Optional list of strings, one per vertex, for hover tooltips
             image_labels: Optional per-element images for hover thumbnails
+            keys: Optional machine-readable strings, one per vertex, for link and
+                copy templates.
             **attrs: Additional attributes for the lines
 
         Returns:
@@ -180,6 +186,7 @@ class ZarrWriterProtocol(Protocol):
         double_sided: bool = True,
         labels: Optional[Sequence[str]] = None,
         image_labels: Optional[Any] = None,
+        keys: Optional[Sequence[str]] = None,
         **attrs: Any,
     ) -> MeshMetadata:
         """Write a triangle mesh immediately to Zarr.
@@ -206,6 +213,8 @@ class ZarrWriterProtocol(Protocol):
             double_sided: Whether back faces render (default True)
             labels: Optional list of strings, one per vertex, for hover tooltips
             image_labels: Optional per-element images for hover thumbnails
+            keys: Optional machine-readable strings, one per vertex, for link and
+                copy templates.
             **attrs: Additional attributes for the mesh
 
         Returns:
@@ -222,6 +231,7 @@ class ZarrWriterProtocol(Protocol):
         colors: Optional[Union[ColorArray, tuple, list]] = None,
         labels: Optional[Sequence[str]] = None,
         image_labels: Optional[Any] = None,
+        keys: Optional[Sequence[str]] = None,
         **attrs: Any,
     ) -> GSplatsMetadata:
         """Write Gaussian splats data immediately to Zarr.
@@ -238,6 +248,8 @@ class ZarrWriterProtocol(Protocol):
             colors: Optional - array of shape (N, 3), tuple/list (R,G,B), or None
             labels: Optional list of strings, one per splat, for hover tooltips
             image_labels: Optional per-element images for hover thumbnails
+            keys: Optional machine-readable strings, one per splat, for link and
+                copy templates.
             **attrs: Additional attributes for the gsplats
 
         Returns:
@@ -256,16 +268,15 @@ class ZarrWriterProtocol(Protocol):
         """Write multi-additive-LOD Points: parent node + ``additive_<i>/`` subgroups.
 
         Each level is a dict with ``positions`` plus optional
-        ``colors`` / ``radii`` / ``sharpness`` / ``scalars`` / ``labels``.
+        ``colors`` / ``radii`` / ``sharpness`` / ``scalars`` / ``labels`` /
+        ``keys``.
         See :func:`luxar.core.group.lod.points.make_additive_lod_points`
         for the level-construction helper that produces the input.
 
-        ``labels`` is all-or-nothing across the ladder (a partially-labelled
-        ladder is rejected) and is NOT written per level: the implementation
-        writes ONE CSR pair on the PARENT node, spanning the levels in
-        ``additive_0 … additive_{n-1}`` order with each level in its own stored
-        (spatially reordered) order. The parent therefore carries ``has_labels``
-        and the subgroups carry none.
+        ``labels`` and ``keys`` are independently all-or-nothing across the
+        ladder and are NOT written per level. Each present channel gets one CSR
+        pair on the parent, spanning the levels in stored order; the subgroups
+        carry neither channel.
         """
         ...
 
@@ -280,18 +291,17 @@ class ZarrWriterProtocol(Protocol):
         """Write multi-additive-LOD Lines (polyline-level granularity).
 
         Each level is a dict with ``vertices`` + ``widths`` + ``segments``
-        plus optional ``colors`` / ``sharpness`` / ``scalars`` / ``labels``
+        plus optional ``colors`` / ``sharpness`` / ``scalars`` / ``labels`` /
+        ``keys``
         and ``n_polylines`` (summed into the returned metadata only — the
         parent group does not stamp it). See
         :func:`luxar.core.group.lod.lines.make_additive_lod_lines` for the
         helper that produces the input.
 
-        ``labels`` is all-or-nothing across the ladder (a partially-labelled
-        ladder is rejected) and is NOT written per level: the implementation
-        writes ONE per-VERTEX CSR pair on the PARENT node, spanning the levels in
-        ``additive_0 … additive_{n-1}`` order with each level in its own stored
-        (spatially reordered) order. The parent therefore carries ``has_labels``
-        and the subgroups carry none.
+        ``labels`` and ``keys`` are independently all-or-nothing across the
+        ladder and are NOT written per level. Each present channel gets one
+        per-vertex CSR pair on the parent, spanning the levels in stored order;
+        the subgroups carry neither channel.
         """
         ...
 

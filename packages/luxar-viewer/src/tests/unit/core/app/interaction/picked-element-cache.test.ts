@@ -34,6 +34,7 @@ function makePick(overrides: Partial<CachedPick> = {}): CachedPick {
     hitNodeName: '/proteins',
     elementIndex: 42,
     label: 'P04637',
+    key: 'P04637',
     screenX: 200,
     screenY: 150,
     ...overrides,

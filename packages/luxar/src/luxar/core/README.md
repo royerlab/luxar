@@ -285,6 +285,7 @@ print(f"Has colors: {points.has_colors}")
 - `has_scalars` - Whether scalar values for colormap lookup are present
 - `has_labels` - Whether per-element string labels (hover tooltips) are present
 - `has_image_labels` - Whether per-element image labels (hover thumbnails) are present
+- `has_keys` - Whether per-element machine-readable keys (`{hover_key}` for `link` / `copy`) are present
 - `metadata` - Full metadata dictionary
 
 ### 6. Lines (`lines.py`)
@@ -336,6 +337,7 @@ print(f"Max width: {lines.max_width}")
 - `has_scalars` - Whether scalar values for colormap lookup are present
 - `has_labels` - Whether per-element string labels (hover tooltips) are present
 - `has_image_labels` - Whether per-element image labels (hover thumbnails) are present
+- `has_keys` - Whether per-element machine-readable keys (`{hover_key}` for `link` / `copy`) are present
 - `max_width` - Maximum line width
 - `has_spatial_index` - Whether spatial indexing is enabled
 - `ordering` - Spatial ordering method (e.g., 'morton', 'hilbert', 'none')
@@ -404,6 +406,7 @@ print(f"Center bounds: {splats.center_bounds}")
 - `has_colors` - Whether splat colors are present
 - `has_labels` - Whether per-element string labels (hover tooltips) are present
 - `has_image_labels` - Whether per-element image labels (hover thumbnails) are present
+- `has_keys` - Whether per-element machine-readable keys (`{hover_key}` for `link` / `copy`) are present
 - `ordering` - Spatial ordering type (e.g., 'morton', 'none')
 - `amplitude_range` - Min/max amplitude values
 - `center_bounds` - Bounding box of centers
@@ -560,6 +563,7 @@ explicit turns an invisible wrong-orientation render into a checkable equality.
 - `has_normals` / `normal_dims` - Stored normals and the dimensions they describe
 - `has_colors` / `has_scalars` - Optional per-vertex appearance channels
 - `has_labels` / `has_image_labels` - Hover tooltips / thumbnails
+- `has_keys` - Per-vertex machine-readable keys (`{hover_key}` for `link` / `copy`)
 - `shading` - `"smooth"` or `"flat"`
 - `double_sided` - Whether back faces render
 - `ordering` - Always `"none"` in v1 (no spatial index)

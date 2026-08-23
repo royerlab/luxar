@@ -196,6 +196,7 @@ export function installCanvasActions(ports: CanvasActionsPorts): CanvasActionsHa
   const resolveFor = (pick: CachedPick): ResolvedElementActions => {
     const resolved = resolveElementActions(pick.mainNode, {
       label: pick.label,
+      key: pick.key,
       nodeName: pick.nodeName,
       elementIndex: pick.elementIndex,
     });

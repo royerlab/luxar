@@ -84,6 +84,7 @@ describe('buildPickResultHandler', () => {
     expect(s.getImageUrl).toHaveBeenCalledWith('/Cells', 42);
     expect(s.updateHoverContent).toHaveBeenCalledExactlyOnceWith({
       label: 'Cell 42',
+      key: null,
       imageUrl: null,
       nodeName: '/Cells',
       elementIndex: 42,
@@ -104,6 +105,7 @@ describe('buildPickResultHandler', () => {
 
     expect(s.updateHoverContent).toHaveBeenCalledExactlyOnceWith({
       label: null,
+      key: null,
       imageUrl: 'thumbs/42.png',
       nodeName: '/Cells',
       elementIndex: 42,
@@ -124,6 +126,7 @@ describe('buildPickResultHandler', () => {
 
     expect(s.updateHoverContent).toHaveBeenCalledExactlyOnceWith({
       label: 'Cell 42',
+      key: null,
       imageUrl: 'thumbs/42.png',
       nodeName: '/Cells',
       elementIndex: 42,
@@ -175,9 +178,30 @@ describe('buildPickResultHandler', () => {
 
     expect(s.updateHoverContent).toHaveBeenCalledExactlyOnceWith({
       label: null,
+      key: null,
       imageUrl: 'thumbs/0.png',
       nodeName: '/Cells',
       elementIndex: 0,
+    });
+  });
+
+  it('shows a key-only hover payload for {hover_key} overlays', async () => {
+    const updateHoverContent = vi.fn();
+    const getKey = vi.fn().mockResolvedValue('P04637');
+    const handle = buildPickResultHandler({
+      keyLoader: { getLabel: getKey },
+      overlayManager: { updateHoverContent },
+    });
+
+    await handle(makeResult('/Proteins', 7));
+
+    expect(getKey).toHaveBeenCalledExactlyOnceWith('/Proteins', 7);
+    expect(updateHoverContent).toHaveBeenCalledExactlyOnceWith({
+      label: null,
+      key: 'P04637',
+      imageUrl: null,
+      nodeName: '/Proteins',
+      elementIndex: 7,
     });
   });
 
@@ -251,6 +275,7 @@ describe('buildPickResultHandler', () => {
     expect(s.getLabel).toHaveBeenCalledWith('/Splat/part_3', 42);
     expect(s.updateHoverContent).toHaveBeenCalledExactlyOnceWith({
       label: 'Cell 42',
+      key: null,
       imageUrl: null,
       nodeName: '/Splat',
       elementIndex: 42,
@@ -294,6 +319,7 @@ describe('buildPickResultHandler', () => {
     expect(s.getImageUrl).toHaveBeenCalledWith('/Splat/part_3', 42);
     expect(s.updateHoverContent).toHaveBeenCalledExactlyOnceWith({
       label: 'Cell 42',
+      key: null,
       imageUrl: 'thumbs/42.png',
       nodeName: '/Splat',
       elementIndex: 42,
@@ -332,6 +358,7 @@ describe('buildPickResultHandler', () => {
     // ...reported as the outermost wrapper.
     expect(s.updateHoverContent).toHaveBeenCalledExactlyOnceWith({
       label: 'Cell 42',
+      key: null,
       imageUrl: null,
       nodeName: '/Outer',
       elementIndex: 42,
@@ -407,6 +434,7 @@ describe('buildPickResultHandler', () => {
 
     expect(s.updateHoverContent).toHaveBeenCalledExactlyOnceWith({
       label: 'Cell 2',
+      key: null,
       imageUrl: null,
       nodeName: '/Cells',
       elementIndex: 2,
