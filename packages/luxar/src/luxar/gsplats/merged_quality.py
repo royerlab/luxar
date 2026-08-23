@@ -206,6 +206,11 @@ def _to_voxel_frame(merged: GSplatData, scale: Optional[Sequence[float]]) -> GSp
     )
 
 
+def _announce_missing_basis(image_min: Optional[float]) -> None:
+    if image_min is None:
+        aprint(f"WARNING: {MISSING_BASIS_HINT}")
+
+
 def stamp_merged_quality(
     merged: "GSplatData | Sequence[GSplatData]",
     volume: Any,
@@ -254,8 +259,7 @@ def stamp_merged_quality(
         return
     if not parts or sum(part.n_splats for part in parts) == 0:
         return
-    if image_min is None:
-        aprint(f"WARNING: {MISSING_BASIS_HINT}")
+    _announce_missing_basis(image_min)
     budget_gb = _quality_budget_gb()
     needed_gb = _QUALITY_PEAK_VOLUMES * 4 * float(np.prod(volume_shape)) / 1024**3
     if needed_gb > budget_gb:

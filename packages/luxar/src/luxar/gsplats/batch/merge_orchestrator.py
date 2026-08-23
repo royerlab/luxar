@@ -558,6 +558,13 @@ def _finalize_part_node(
     return build_part_lod(part.tree, recipe, params, cell=cell)
 
 
+def _stamp_recipe_floor(
+    part: "GSplatData", recipe: Optional[str], floor_stats: Dict[str, Any]
+) -> None:
+    if recipe is not None:
+        part.stats.update(floor_stats)
+
+
 def _effective_refine_iters(
     refine: str, refine_iters: "Optional[int]"
 ) -> "Optional[int]":
@@ -921,8 +928,7 @@ def _merge_partition(
                 if verbose:
                     aprint(f"  {label} {k}: empty, skipping")
                 continue
-            if recipe is not None:
-                part.stats.update(floor_stats)
+            _stamp_recipe_floor(part, recipe, floor_stats)
             # Each part is a single nD splat set → a matrix-shaped tree (a leaf,
             # or — with a per-part recipe — a leaf-with-ladder / substitutive lod
             # group). Hand the tree node straight to the streaming writer; it
