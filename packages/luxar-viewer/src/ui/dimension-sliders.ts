@@ -34,6 +34,9 @@ export interface SliderConfig {
 
   /** Optional physical units for each dimension */
   dimensionUnits?: string[];
+
+  /** Zero-based position in the non-displayed dimension list selected for [ / ]. */
+  selectedDimension?: number;
 }
 
 /**
@@ -97,6 +100,9 @@ export class DimensionSliders {
 
   /** Physical units for each dimension */
   private dimensionUnits: string[];
+
+  /** Zero-based position in the non-displayed dimension list selected for [ / ]. */
+  private selectedDimension: number;
 
   /** Map of dimension indices to their corresponding HTML slider elements */
   private sliders: Map<number, HTMLInputElement> = new Map();
@@ -204,6 +210,7 @@ export class DimensionSliders {
     this.dimensionRanges = config.dimensionRanges;
     this.dimensionNames = config.dimensionNames;
     this.dimensionUnits = config.dimensionUnits || [];
+    this.selectedDimension = config.selectedDimension ?? 0;
 
     // Build the UI hierarchy
     const { root, scroll } = this.createSlidersContainer();
@@ -959,6 +966,15 @@ export class DimensionSliders {
   public updateStatusBar(): void {
     const parts: string[] = [];
 
+    const navigableDims = Array.from({ length: this.dims.ndim }, (_, index) => index).filter(
+      (index) => !this.dims.displayed.includes(index)
+    );
+    const selectedDim = navigableDims[this.selectedDimension];
+    if (selectedDim !== undefined) {
+      const selectedName = this.dimensionNames[selectedDim] || `Dim ${selectedDim}`;
+      parts.push(`[/]: ${this.selectedDimension + 1} · ${selectedName}`);
+    }
+
     // Show which dimensions are currently displayed in 3D
     const displayedNames = this.dims.displayed
       .map((idx) => this.dimensionNames[idx] || `Dim ${idx}`)
@@ -996,6 +1012,12 @@ export class DimensionSliders {
     if (this.statusText) {
       this.statusText.textContent = statusContent;
     }
+  }
+
+  /** Update the dimension targeted by the global [ / ] keyboard shortcuts. */
+  public setSelectedDimension(selectedDimension: number): void {
+    this.selectedDimension = selectedDimension;
+    this.updateStatusBar();
   }
 
   /**

@@ -52,6 +52,7 @@ import {
   computeDimensionStep,
   resolveSelectedDimension,
 } from './input-handler/dimension-navigation/compute-step';
+import { getNonDisplayedDimensions } from './input-handler/dimension-navigation/selection';
 import { PanelCoordinator } from './input-handler/commands/panel-coordinator';
 import { WindowEventHandler } from './input-handler/window-events/window-event-handler';
 import { registerAllKeyBindings } from './input-handler/key-bindings/register-all';
@@ -885,15 +886,40 @@ export class InputHandler {
    * @private
    */
   private selectDimension(index: number): void {
-    const result = resolveSelectedDimension(index, sceneDimsManager.getDims());
+    const dims = sceneDimsManager.getDims();
+    const result = resolveSelectedDimension(index, dims);
     if (result.selectedDimension !== null) {
       this.selectedDimension = result.selectedDimension;
+      this.dimensionSliders?.setSelectedDimension(result.selectedDimension);
     } else if ('navigableCount' in result) {
+      const message = this.dimensionSelectionError(index, dims);
       log.info(
         Modules.INPUT,
         `Dimension ${index + 1} not available (only ${result.navigableCount} non-displayed dimensions)`
       );
+      notifier.toast(message);
     }
+  }
+
+  private dimensionSelectionError(
+    index: number,
+    dims: ReturnType<typeof sceneDimsManager.getDims>
+  ): string {
+    const prefix = `Dimension key ${index + 1} is unavailable.`;
+    if (!dims) return `${prefix} No scene dimensions are loaded.`;
+
+    const navigable = getNonDisplayedDimensions(dims);
+    if (navigable.length === 0) return `${prefix} This scene has no non-displayed dimensions.`;
+
+    const options = navigable.map((dimIndex, keyIndex) => {
+      const name = dims.metadata?.[dimIndex]?.name ?? `dimension ${dimIndex + 1}`;
+      return `${keyIndex + 1} for ${name}`;
+    });
+    const available =
+      options.length === 1
+        ? options[0]
+        : `${options.slice(0, -1).join(', ')} or ${options[options.length - 1]}`;
+    return `${prefix} Use ${available}.`;
   }
 
   /**

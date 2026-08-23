@@ -24,6 +24,14 @@ afterEach(() => {
 });
 
 describe('showHelpOverlay - Memory Leak Prevention', () => {
+  it('explains that digit keys address the non-displayed slider order', () => {
+    showHelpOverlay();
+
+    expect(document.getElementById('luxar-help-overlay')?.textContent).toContain(
+      'Select a non-displayed dimension (1 = first slider)'
+    );
+  });
+
   it('should not create multiple overlays when called repeatedly', () => {
     showHelpOverlay();
     const firstOverlay = document.getElementById('luxar-help-overlay');

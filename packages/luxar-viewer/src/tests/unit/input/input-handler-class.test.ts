@@ -33,6 +33,8 @@ import type { SceneManager } from '../../../scene/scene-manager';
 import type { AnimationController } from '../../../scene/animation/animation-controller';
 import type { PerformanceMonitor } from '../../../ui/performance-monitor';
 import type { DebugConsole } from '../../../ui/debug-console';
+import type { SimpleDims } from '../../../types/dims';
+import { clearNotifierBackend, setNotifierBackend } from '../../../utils/cross-layer/notifier';
 
 // AUDIT NOTE (input.md W2): the four `make*Stub` factories below
 // replace first-party internal modules (SceneManager,
@@ -127,6 +129,91 @@ describe('InputHandler — construction', () => {
           factory
         )
     ).not.toThrow();
+  });
+});
+
+describe('InputHandler — dimension selection feedback', () => {
+  function makeHandler(): InputHandler {
+    return new InputHandler(
+      makeSceneManagerStub(),
+      makeAnimationControllerStub(),
+      makePerformanceMonitorStub(),
+      makeDebugConsoleStub()
+    );
+  }
+
+  const dims: SimpleDims = {
+    ndim: 5,
+    displayed: [0, 1, 2],
+    currentStep: [0, 0, 0, 7, 0],
+    metadata: [
+      { name: 'X', unit: '', scale: 1, discrete: false, step: 1 },
+      { name: 'Y', unit: '', scale: 1, discrete: false, step: 1 },
+      { name: 'Z', unit: '', scale: 1, discrete: false, step: 1 },
+      { name: 'Frame', unit: '', scale: 1, discrete: true, step: 1 },
+      {
+        name: 'Channel',
+        unit: '',
+        scale: 1,
+        discrete: true,
+        step: 1,
+        categories: ['RED', 'GREEN', 'BLUE'],
+      },
+    ],
+  };
+
+  it('updates the slider panel when a valid navigable dimension is selected', () => {
+    const managerState = sceneDimsManager as unknown as { dims: SimpleDims | null };
+    const previousDims = managerState.dims;
+    managerState.dims = dims;
+    const setSelectedDimension = vi.fn();
+    const handler = makeHandler();
+    (handler as unknown as { dimensionSliders: unknown }).dimensionSliders = {
+      setSelectedDimension,
+      dispose: vi.fn(),
+    };
+
+    try {
+      (handler as unknown as { selectDimension(index: number): void }).selectDimension(1);
+
+      expect((handler as unknown as { selectedDimension: number }).selectedDimension).toBe(1);
+      expect(setSelectedDimension).toHaveBeenCalledWith(1);
+    } finally {
+      handler.dispose();
+      managerState.dims = previousDims;
+    }
+  });
+
+  it('toasts the available navigable keys and leaves the current selection unchanged', () => {
+    const managerState = sceneDimsManager as unknown as { dims: SimpleDims | null };
+    const previousDims = managerState.dims;
+    managerState.dims = dims;
+    const showToast = vi.fn();
+    setNotifierBackend({
+      showError: vi.fn(),
+      showToast,
+      showHelpOverlay: vi.fn(),
+      hideHelpOverlay: vi.fn(),
+      showLoadingIndicator: vi.fn(),
+      hideLoadingIndicator: vi.fn(),
+      clearError: vi.fn(),
+    });
+    const handler = makeHandler();
+    (handler as unknown as { selectedDimension: number }).selectedDimension = 0;
+
+    try {
+      (handler as unknown as { selectDimension(index: number): void }).selectDimension(4);
+
+      expect((handler as unknown as { selectedDimension: number }).selectedDimension).toBe(0);
+      expect(showToast).toHaveBeenCalledWith(
+        'Dimension key 5 is unavailable. Use 1 for Frame or 2 for Channel.',
+        2000
+      );
+    } finally {
+      clearNotifierBackend();
+      handler.dispose();
+      managerState.dims = previousDims;
+    }
   });
 });
 
