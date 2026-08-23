@@ -550,8 +550,9 @@ class TestDecimateQEM:
             # ndim != 3 delegates, so hold it to exactness; the adjugate path
             # gets the conditioning-aware bound, floored so kappa=1 stays tight.
             rtol = 0.0 if ndim != 3 else max(1e-9, condition**1.5 * eps)
+            atol = 0.0 if ndim != 3 else 1e-8
             np.testing.assert_allclose(
-                solved, np.linalg.solve(matrix, rhs), rtol=rtol, atol=1e-8
+                solved, np.linalg.solve(matrix, rhs), rtol=rtol, atol=atol
             )
 
         rank_deficient = np.eye(ndim, dtype=np.float64)

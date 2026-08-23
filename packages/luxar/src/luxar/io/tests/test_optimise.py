@@ -59,11 +59,9 @@ _META_DOCS = frozenset({"zarr.json", ".zarray", ".zgroup", ".zattrs", ".zmetadat
 def _is_case_insensitive_fs(where: Path) -> bool:
     """Does ``where``'s filesystem fold case (macOS, Windows)?
 
-    Shared because BOTH payload-name tests need it and only one of them had it:
-    a case-differing payload name like ``Zarr.json`` is an ordinary distinct
-    file on Linux and the group's own ``zarr.json`` here, so each test's
-    fixture is unbuildable on one side of that divide. Inlining the probe is
-    what let the second test ship without the guard and fail only on macOS.
+    A case-differing payload name like ``Zarr.json`` is an ordinary distinct
+    file on Linux and the group's own ``zarr.json`` here, so the fixture that
+    needs real bytes under that name is unbuildable on one side of the divide.
     """
     probe = where / "CaseProbe"
     probe.write_text("x")
@@ -571,33 +569,20 @@ class TestPayloadFiles:
         self, tmp_path: Path
     ) -> None:
         """Refusing is about BYTES the copy cannot carry faithfully. With no
-        file behind the attr there are none, so the same name that stops the
-        pass above must not strand a store that is merely missing its overlay —
-        the output is exactly as complete as its input.
-
-        Unrunnable on a case-insensitive filesystem (macOS, Windows). The
-        scenario needs ``Zarr.json`` to be a DANGLING name, but there the same
-        name resolves to the group's own ``zarr.json``, so the attr is not
-        dangling at all and ``optimise_store`` refuses exactly as the test above
-        requires. That refusal is the correct answer on such a filesystem — the
-        two cases are genuinely indistinguishable — so this asserts nothing
-        there and is skipped rather than made to pass by weakening it.
-        """
-        if _is_case_insensitive_fs(tmp_path):
-            pytest.skip(
-                "case-insensitive filesystem: a dangling 'Zarr.json' cannot "
-                "exist here, it resolves to the group's own zarr.json"
-            )
-
+        file behind the attr there are none, so a metadata-like name must not
+        strand a store that is merely missing its overlay — the output is
+        exactly as complete as its input. ``.ZMetadata`` is absent from a
+        subgroup in both zarr formats, so this branch stays covered on every
+        filesystem."""
         src = _store_with_a_payload_attr(
-            tmp_path / "src.luxar.zarr", "Zarr.json", payload=None
+            tmp_path / "src.luxar.zarr", ".ZMetadata", payload=None
         )
         dst = tmp_path / "out.luxar.zarr"
         optimise_store(src, dst, verify=True)
         attrs = dict(open_group(dst, mode="r")["overlays/logo"].attrs)
-        assert attrs["image_file"] == "Zarr.json"
+        assert attrs["image_file"] == ".ZMetadata"
         assert attrs["type"] == "overlay_image"
-        assert not any(p.name == "Zarr.json" for p in dst.rglob("*"))
+        assert not any(p.name == ".ZMetadata" for p in dst.rglob("*"))
 
     def test_a_payload_the_source_does_not_have_is_skipped(
         self, tmp_path: Path

@@ -3,15 +3,12 @@
 Both were invisible to CI — Linux passes them — so they only ever cost a
 developer running the suite locally.
 
-`test_a_dangling_attr_naming_a_metadata_document_is_skipped` builds a store whose
-`image_file` attr names `Zarr.json` with no file behind it, and asserts the
-re-chunk carries on. On a case-insensitive filesystem that name resolves to the
-group's own `zarr.json`, so the attr is not dangling at all and `optimise_store`
-refuses — which is the correct answer there, because the two cases are genuinely
-indistinguishable. Its sibling `test_a_payload_named_like_a_metadata_document_is_refused`
-already skipped for exactly this reason; this one was simply missed. The probe
-both need is now one shared `_is_case_insensitive_fs` helper rather than an
-inline snippet in one of them, which is how the second came to ship without it.
+`test_a_dangling_attr_naming_a_metadata_document_is_skipped` now names
+`.ZMetadata`, which is absent from a subgroup in both zarr formats. That keeps
+the missing-payload branch covered on case-insensitive filesystems. Its sibling
+`test_a_payload_named_like_a_metadata_document_is_refused` still uses
+`Zarr.json` and skips there because the fixture needs real bytes under a name
+that resolves to the group's own `zarr.json`.
 
 `test_small_system_solver_matches_numpy_and_rejects_rank_deficiency` was not a
 platform failure at all — it was flaky everywhere and macOS happened to draw the
@@ -27,6 +24,6 @@ seed.
 The tolerance now follows the conditioning (`kappa**1.5 * eps`, floored at 1e-9),
 which is the adjugate's actual error growth. Over 2000 seeds per rung that is 0
 failures with 17x headroom at kappa=1e8 — while making the well-conditioned rungs
-1000x TIGHTER than the constant it replaces. The delegating arm is now held to
-exact equality, which also records that it compares `np.linalg.solve` against
-itself and therefore pins the delegation rather than any arithmetic.
+substantially tighter than the constant it replaces. The delegating arm is now
+held to exact equality, which also records that it compares `np.linalg.solve`
+against itself and therefore pins the delegation rather than any arithmetic.
