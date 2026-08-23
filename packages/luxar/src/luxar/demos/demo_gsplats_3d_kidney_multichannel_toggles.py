@@ -522,10 +522,8 @@ Navigation:
                         fill_sigma={own_dim: 0},
                         extend_to_all=other_dims,
                         opacity=1.0,
-                        # Overlapping gsplat layers must composite additively:
-                        # splats are depth-sorted WITHIN a layer but not across
-                        # layers, so volumetric/normal would order these
-                        # channels arbitrarily. Additive is order-independent.
+                        # One global order slot per node cannot interleave these
+                        # co-located volumes; additive is order-independent.
                         blending_mode="additive",
                         layer=True,
                     )

@@ -1,12 +1,12 @@
 """Overlapping gsplat layers must composite additively.
 
-Splats are depth-sorted WITHIN a gsplat node, but the viewer does not sort
-across sibling nodes. So when a demo stacks several gsplat *layers* over the
-same specimen, any depth-sorted mode -- ``needsDepthSort`` in the viewer's
-``rendering/blending-state.ts`` is exactly ``normal`` and ``volumetric`` --
-composites them in an arbitrary order, and the render is not correct. Additive
-(like ``max`` and ``luminous``) is order-independent, so it is the only sound
-choice for this class of demo.
+The viewer assigns each depth-sorted gsplat node one global back-to-front order
+slot. That cannot represent interleaved volumes, and co-located layers have a
+degenerate centroid-ordering key that can flip as the camera moves. So when a
+demo stacks several gsplat *layers* over the same specimen, ``normal`` and
+``volumetric`` cannot composite them correctly. Additive (like ``max`` and
+``luminous``) is order-independent, so it is the sound choice for this class of
+demo.
 
 The demos listed here were audited against their built scenes: each authors two
 or more co-visible gsplat layers whose bounding boxes overlap. The test reads
@@ -16,6 +16,10 @@ Demos deliberately NOT listed, and why they are not violations:
 
 - ``demo_gsplats_3d_decimation_study`` -- four variants placed side by side; the
   bounding boxes are disjoint, so nothing overlaps.
+- ``demo_gsplats_4d_cell_tracking_challenge`` -- one node per crop, placed by
+  disjoint transforms.
+- ``demo_storm_3d_microtubules`` -- two nodes separated on a ``view`` axis, so
+  only one is co-visible.
 - ``demo_gsplats_4d_zebrafish_timelapse`` -- one node per timepoint, separated
   on the time axis, so only one is ever co-visible.
 - the ``gsplats_interop_*`` demos -- ``kind=partition`` parts and ``kind=lod``
@@ -78,7 +82,7 @@ def test_no_depth_sorted_mode_on_overlapping_layers(demo: str) -> None:
     offenders = [m for m in modes if m in DEPTH_SORTED_MODES]
     assert not offenders, (
         f"{demo} authors depth-sorted blending {offenders} on overlapping gsplat "
-        "layers; the viewer does not sort across layers, so use 'additive'"
+        "layers; one node-order slot cannot interleave them, so use 'additive'"
     )
 
 

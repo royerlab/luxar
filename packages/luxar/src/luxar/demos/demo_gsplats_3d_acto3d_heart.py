@@ -589,10 +589,9 @@ Controls:
                     centered = centered.scale_intensity(0.1)
                     n_splats = len(centered.amplitudes)
 
-                    # Overlapping gsplat layers must composite additively:
-                    # splats are depth-sorted WITHIN a layer but not across
-                    # layers, so volumetric/normal would order these channels
-                    # arbitrarily. Additive is order-independent.
+                    # One global order slot per node cannot interleave these
+                    # co-located volumes; additive is order-independent. This
+                    # supersedes the volumetric appearance tuning from #880.
                     # All three channels image the same heart, so they overlap
                     # everywhere. Partial opacity keeps their sum from clipping.
                     scene.add_gsplats_from_data(

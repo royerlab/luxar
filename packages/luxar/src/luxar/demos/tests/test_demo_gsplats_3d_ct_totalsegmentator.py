@@ -74,14 +74,12 @@ def _gsplat_layers(scene_path: Path) -> list:
 
 class TestSceneBlending:
     def test_scene_bakes_additive_blending_on_every_layer(self, tmp_path) -> None:
-        # The per-tissue toggle layers all overlap the same body, and the
-        # viewer depth-sorts splats WITHIN a gsplat node but not across
-        # sibling nodes -- so a depth-sorted mode (volumetric/normal) would
-        # composite these layers in an arbitrary order. Additive is
-        # order-independent; pin it so a revert to the old volumetric look is
-        # caught (the helper smoke tests never build the scene). Seed one label per
-        # supergroup so the scene really carries every layer — a layer that is
-        # never built could not be checked.
+        # The per-tissue toggle layers all overlap the same body. The viewer
+        # assigns one global order slot per node, which cannot interleave those
+        # volumes; additive is order-independent. Pin it so a revert to the old
+        # volumetric look is caught (the helper smoke tests never build the
+        # scene). Seed one label per supergroup so the scene really carries
+        # every layer — a layer that is never built could not be checked.
         all_ids = np.array(sorted(CLASS_MAP), dtype=np.int32)
         super_idx = splat_layer_indices(all_ids)
         labels = []
