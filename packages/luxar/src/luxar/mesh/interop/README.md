@@ -153,3 +153,17 @@ bugs behind axis-aligned symmetry). No binary fixtures are committed.
 
 Parity is asserted on the *surface*, not on indices: welding renumbers vertices, so each
 face is compared as its three sorted corner positions.
+
+**The VTP fixtures are entirely self-attesting, and that is a real limit.** Neither VTK,
+meshio nor PyVista is a dependency of this package or of its test environment, so every
+`.vtp` byte the suite ever sees was produced by `_synthetic.py`'s own `_VtpWriter`. Where
+the reader and that writer share a misreading of the format, the tests agree with
+themselves and say nothing. Two arms carry no external corroboration at all — appended
+base64, and either byte order's big-endian variant — because no fixture from a real
+writer exists to check them against. The partial mitigation is that the trap most likely
+to be shared — the two concatenated base64 streams of a compressed block — is pinned by a
+test that reconstructs the layout **by hand** from the raw element text rather than by
+round-tripping through the reader, and that the cumulative-*end*-offsets rule is pinned by
+a fixture (a quad beside a triangle) on which the wrong reading changes the face count
+rather than merely rotating it. Corroborating the writer against real ParaView output
+remains worth doing the first time a `.vtp` in the wild misparses.

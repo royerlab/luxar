@@ -49,9 +49,14 @@ import binascii
 import re
 
 # B405/B314 are waived here. `defusedxml` would be a new dependency this package
-# deliberately does not have, and the exposure it guards — external-entity
-# expansion — is something CPython's ElementTree has never performed. See
-# `_parse_header_document`.
+# deliberately does not have, and the headline exposure it guards — entity-expansion
+# DoS (billion laughs / quadratic blowup) — is already contained by libexpat's own
+# input-amplification cap, present since expat 2.4 and therefore in every interpreter
+# this repo supports (Python 3.12+). A bomb fed to `import_mesh` dies in a fraction of
+# a second with "limit on input amplification factor (from DTD and entities)
+# breached", which `_parse_header_document` reports as a malformed header.
+# ElementTree DOES expand internal entities, so the cap is what does the containing,
+# not any abstinence on ElementTree's part.
 import xml.etree.ElementTree as ET  # nosec B405
 import zlib
 from dataclasses import dataclass
@@ -92,8 +97,14 @@ _COLOR_NAMES = frozenset(
 )
 
 _VTKFILE_TAG = re.compile(rb"<VTKFile\b[^>]*>", re.S)
-_TYPE_ATTR = re.compile(rb'type\s*=\s*"([^"]*)"')
-_ENCODING_ATTR = re.compile(r'encoding\s*=\s*"([^"]*)"')
+#: Both anchored with a LEFT word boundary. XML attribute order is not semantic, and
+#: canonicalization (C14N, lxml) sorts alphabetically — which puts `header_type=` ahead
+#: of `type=`. Unanchored, the first match in
+#: `<VTKFile byte_order="…" header_type="UInt32" type="PolyData" …>` is the header
+#: width, and a perfectly valid file is refused as "type is 'UInt32'". `_` and `t` are
+#: both word characters, so `\b` cannot match inside `header_type`.
+_TYPE_ATTR = re.compile(rb'\btype\s*=\s*"([^"]*)"')
+_ENCODING_ATTR = re.compile(r'\bencoding\s*=\s*"([^"]*)"')
 
 
 def sniff_vtk_type(head: bytes) -> str:
@@ -132,6 +143,22 @@ def _localname(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]
 
 
+def _source_name(tag: str, prefixes: dict[str, str]) -> str:
+    """``{ns}Piece`` → the spelling the SOURCE used (``Piece`` or ``vtk:Piece``).
+
+    A synthesised closing tag has to match the start tag literally, so it cannot be
+    built from ``element.tag``: ElementTree hands that back in Clark notation and
+    ``</{http://…}Piece>`` is not well-formed XML at all. ``prefixes`` is the
+    uri → prefix map the pull parser's ``start-ns`` events supply; an empty prefix is a
+    default ``xmlns=``, whose members are spelled by their local name.
+    """
+    if not tag.startswith("{"):
+        return tag
+    uri, _, local = tag[1:].partition("}")
+    prefix = prefixes.get(uri, "")
+    return f"{prefix}:{local}" if prefix else local
+
+
 def _child(parent: ET.Element, name: str) -> Optional[ET.Element]:
     for element in parent:
         if _localname(element.tag) == name:
@@ -148,6 +175,26 @@ def _named_array(group: ET.Element, name: str) -> Optional[ET.Element]:
         if _localname(element.tag) == "DataArray" and element.get("Name") == name:
             return element
     return None
+
+
+def _int_attr(
+    element: ET.Element, name: str, ctx: _Context, where: str, default: int
+) -> int:
+    """``int(element.get(name))``, but a named error instead of a bare ``ValueError``.
+
+    Every attribute here is data from the file, so ``NumberOfComponents="x"`` or an
+    ``offset=`` a writer left empty must arrive as "which file, which array, which
+    attribute" rather than as ``invalid literal for int()`` from somewhere in the stack.
+    """
+    text = element.get(name)
+    if text is None:
+        return default
+    try:
+        return int(text)
+    except ValueError as exc:
+        raise ValueError(
+            f"{ctx.name}: {where} has {name}={text!r}, which is not an integer"
+        ) from exc
 
 
 def _split_appended(raw: bytes, filename: str) -> tuple[bytes, bytes, str]:
@@ -191,21 +238,28 @@ def _parse_header_document(head: bytes, filename: str) -> ET.Element:
     The cut lands between elements, so the prefix is a well-formed document missing only
     its closing tags. They are synthesised from the element stack the pull parser was
     holding at the cut rather than hardcoded, because how deep the cut is depends on the
-    writer (``</Piece></PolyData>`` for one piece, more for several).
+    writer (``</Piece></PolyData>`` for one piece, more for several). The names are the
+    SOURCE's own spellings, not ``element.tag``: under an ``xmlns=`` the latter is Clark
+    notation and ``</{uri}Piece>`` is not well-formed, so a namespaced document with an
+    appended section would fail on markup this function itself wrote.
 
-    ``xml.etree`` is used directly — bandit's B314. The alternative, ``defusedxml``, is a
-    new dependency this package deliberately does not have; the exposure it guards is
-    external-entity expansion, which CPython's ``ElementTree`` has never performed.
+    ``xml.etree`` is used directly — bandit's B314; the waiver rationale is on the import
+    at the top of this module.
     """
     # Typed loosely: the stub's event-tuple generic does not narrow usefully for a
-    # two-event parser, and the only thing read off each element here is its tag.
-    parser: Any = ET.XMLPullParser(events=("start", "end"))
+    # three-event parser, and `start-ns` yields a (prefix, uri) tuple rather than an
+    # element at all.
+    parser: Any = ET.XMLPullParser(events=("start", "end", "start-ns"))
     try:
         parser.feed(head)
         stack: list[str] = []
-        for event, element in parser.read_events():
-            if event == "start":
-                stack.append(element.tag)
+        prefixes: dict[str, str] = {}
+        for event, payload in parser.read_events():
+            if event == "start-ns":
+                prefix, uri = payload
+                prefixes.setdefault(uri, prefix)
+            elif event == "start":
+                stack.append(_source_name(payload.tag, prefixes))
             elif stack:
                 stack.pop()
         closing = "".join(f"</{tag}>" for tag in reversed(stack)).encode("utf-8")
@@ -348,6 +402,48 @@ def _guard_nblocks(nblocks: int, ceiling: int, ctx: _Context, where: str) -> Non
         )
 
 
+def _from_payload(
+    payload: bytes, stored: np.dtype, ctx: _Context, where: str
+) -> NDArray:
+    """``np.frombuffer`` with the length check spelled out as a named error.
+
+    A block header declaring a byte count that is not a whole number of items is exactly
+    what a mis-read header or a truncated write looks like, and ``np.frombuffer``'s own
+    "buffer size must be a multiple of element size" names neither the file nor the array.
+    """
+    if len(payload) % stored.itemsize:
+        raise ValueError(
+            f"{ctx.name}: {where} decoded to {len(payload)} bytes, which is not a "
+            f"multiple of its {stored.itemsize}-byte item size — the block header "
+            "declares a byte count the data does not match"
+        )
+    return np.frombuffer(payload, dtype=stored)
+
+
+def _ascii_values(
+    text: str, native: np.dtype, type_name: str, ctx: _Context, where: str
+) -> NDArray:
+    """Parse a whitespace-separated ``format="ascii"`` payload.
+
+    Integers go through ``int()`` rather than numpy's own string cast so that ``1.5`` in
+    an ``Int64`` array is refused instead of silently truncated. Both that and a word in
+    a ``Float32`` array raise a bare ``ValueError`` naming neither the file nor the
+    array, so the failure is re-raised with both.
+    """
+    tokens = text.split()
+    try:
+        if native.kind == "f":
+            values: NDArray = np.array(tokens, dtype=native)
+        else:
+            values = np.array([int(t) for t in tokens], dtype=native)
+    except ValueError as exc:
+        raise ValueError(
+            f"{ctx.name}: {where} has an ascii token that is not a {type_name} "
+            f"value — {exc}"
+        ) from exc
+    return values
+
+
 def _read_data_array(element: ET.Element, ctx: _Context, where: str) -> NDArray:
     """Decode one ``<DataArray>`` into a 1-D or ``(N, NumberOfComponents)`` array."""
     type_name = element.get("type", "")
@@ -360,36 +456,41 @@ def _read_data_array(element: ET.Element, ctx: _Context, where: str) -> NDArray:
     stored = native.newbyteorder(ctx.order) if native.itemsize > 1 else native
     fmt = (element.get("format") or "ascii").lower()
 
+    values: NDArray
     if fmt == "ascii":
-        tokens = (element.text or "").split()
-        if native.kind == "f":
-            values: NDArray = np.array(tokens, dtype=native)
-        else:
-            values = np.array([int(t) for t in tokens], dtype=native)
+        values = _ascii_values(element.text or "", native, type_name, ctx, where)
     elif fmt == "binary":
         # "binary" in VTK XML means base64-in-the-element-text, not raw bytes.
         text = "".join((element.text or "").split())
-        values = np.frombuffer(_decode_base64(text, 0, ctx, where), dtype=stored)
+        values = _from_payload(_decode_base64(text, 0, ctx, where), stored, ctx, where)
     elif fmt == "appended":
         if not ctx.appended:
             raise ValueError(
                 f"{ctx.name}: {where} is format='appended' but the file has no "
                 "<AppendedData> section"
             )
-        offset = int(element.get("offset", "0"))
+        offset = _int_attr(element, "offset", ctx, where, 0)
         payload = (
             _decode_raw(offset, ctx, where)
             if not ctx.appended_text
             else _decode_base64(ctx.appended_text, offset, ctx, where)
         )
-        values = np.frombuffer(payload, dtype=stored)
+        values = _from_payload(payload, stored, ctx, where)
     else:
         raise ValueError(
             f"{ctx.name}: {where} has DataArray format {fmt!r}; expected 'ascii', "
             "'binary' or 'appended'"
         )
 
-    ncomp = int(element.get("NumberOfComponents") or 1)
+    ncomp = _int_attr(element, "NumberOfComponents", ctx, where, 1)
+    if ncomp < 1:
+        # Only `ncomp > 1` reshapes, so 0 or -3 would otherwise fall through as a 1-D
+        # array — and the <Points> 1-D rescue below would then import it as if it had
+        # said 3.
+        raise ValueError(
+            f"{ctx.name}: {where} declares NumberOfComponents={ncomp}; a DataArray has "
+            "at least one component per tuple"
+        )
     if ncomp > 1:
         if values.size % ncomp:
             raise ValueError(
@@ -411,6 +512,11 @@ def _cell_rows(
     """
     group = _child(piece, tag)
     if group is None:
+        return []
+    if not _children(group, "DataArray"):
+        # A PRESENT but empty group is zero cells, exactly like an absent one. A surface
+        # written entirely as <Strips> legitimately carries an empty <Polys></Polys>, and
+        # refusing it for a missing 'connectivity' would reject the whole file.
         return []
     conn_el = _named_array(group, "connectivity")
     off_el = _named_array(group, "offsets")
@@ -481,10 +587,19 @@ def _point_attributes(
     arrays = [e for e in pdata if _localname(e.tag) == "DataArray"]
 
     def ncomp(element: ET.Element) -> int:
-        return int(element.get("NumberOfComponents") or 1)
+        return _int_attr(element, "NumberOfComponents", ctx, where, 1)
 
+    # `is not None` on BOTH sides is load-bearing. `<PointData>` need not carry a
+    # `Normals=` designation, and a `<DataArray>` need not carry a `Name=` — VTK's own
+    # unsigned-char colour arrays routinely have neither. Matching `None == None` adopts
+    # the first NAMELESS array as normals, which turns a colour array into garbage
+    # shading (or, at 4 components, into a hard error blaming normals for it).
     designated = pdata.get("Normals")
-    normals_el = next((e for e in arrays if e.get("Name") == designated), None)
+    normals_el = (
+        None
+        if designated is None
+        else next((e for e in arrays if e.get("Name") == designated), None)
+    )
     if normals_el is None:
         normals_el = next(
             (e for e in arrays if (e.get("Name") or "").lower() == "normals"), None
@@ -502,7 +617,11 @@ def _point_attributes(
 
     scalars = pdata.get("Scalars")
     candidates = [e for e in arrays if e is not normals_el and ncomp(e) in (3, 4)]
-    colors_el = next((e for e in candidates if e.get("Name") == scalars), None)
+    colors_el = (
+        None
+        if scalars is None
+        else next((e for e in candidates if e.get("Name") == scalars), None)
+    )
     if colors_el is None:
         colors_el = next(
             (e for e in candidates if (e.get("Name") or "").lower() in _COLOR_NAMES),
@@ -584,7 +703,10 @@ def _read_points(piece: ET.Element, ctx: _Context, where: str) -> NDArray[np.flo
             "point is always 3D"
         )
     declared = piece.get("NumberOfPoints")
-    if declared is not None and int(declared) != points.shape[0]:
+    if (
+        declared is not None
+        and _int_attr(piece, "NumberOfPoints", ctx, where, 0) != points.shape[0]
+    ):
         raise ValueError(
             f"{ctx.name}: {where} declares NumberOfPoints={declared} but its Points "
             f"array decoded to {points.shape[0]} — the data block was misread"
@@ -592,16 +714,29 @@ def _read_points(piece: ET.Element, ctx: _Context, where: str) -> NDArray[np.flo
     return np.ascontiguousarray(points, dtype=np.float32)
 
 
-def _stack_if_complete(chunks: list[Optional[NDArray]]) -> Optional[NDArray]:
+def _stack_if_complete(
+    chunks: list[Optional[NDArray]], filename: str, label: str
+) -> Optional[NDArray]:
     """Concatenate per-piece attribute arrays, or drop the attribute entirely.
 
     A multi-piece file where only SOME pieces carry normals (or colours) has no
     per-vertex value for the rest, and inventing one would shade or colour those pieces
     with data the file never gave them. All or nothing.
+
+    Widths are checked by hand: pieces may disagree (RGB in one, RGBA in the next), and
+    ``np.concatenate``'s own complaint about mismatched dimensions names neither the
+    file nor which attribute went wrong.
     """
     present = [c for c in chunks if c is not None]
     if not present or len(present) != len(chunks):
         return None
+    widths = sorted({int(c.shape[1]) for c in present})
+    if len(widths) > 1:
+        raise ValueError(
+            f"{filename}: its <Piece>s carry {label} of different widths "
+            f"({', '.join(str(w) for w in widths)} components), which cannot be stacked "
+            "into one per-vertex array"
+        )
     return np.concatenate(present, axis=0)
 
 
@@ -684,6 +819,6 @@ def read_vtp(path: Path) -> dict[str, object]:
     return {
         "vertices": np.concatenate(chunks, axis=0),
         "face_rows": face_rows,
-        "normals": _stack_if_complete(normal_chunks),
-        "colors": _stack_if_complete(color_chunks),
+        "normals": _stack_if_complete(normal_chunks, path.name, "normals"),
+        "colors": _stack_if_complete(color_chunks, path.name, "colours"),
     }

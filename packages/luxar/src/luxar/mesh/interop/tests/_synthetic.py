@@ -806,8 +806,16 @@ def _vtp_document(
     *,
     root_type: str,
     compressor: str | None,
+    extra_pieces: list[tuple[str, str]] | None = None,
+    xmlns: str | None = None,
 ) -> None:
-    """Wrap one ``<Piece>`` in a ``<VTKFile>`` and write it, appended section and all."""
+    """Wrap the ``<Piece>``s in a ``<VTKFile>`` and write it, appended section and all.
+
+    ``extra_pieces`` appends further ``(attrs, body)`` pieces after the first — a
+    multi-``<Piece>`` PolyData, which is what the reader's index rebase and its
+    all-or-nothing attribute stacking exist for. ``xmlns`` puts every element into a
+    DEFAULT namespace, which is legal VTK XML and makes every parsed tag Clark-notated.
+    """
     order = "BigEndian" if writer.order == ">" else "LittleEndian"
     root = [
         f'type="{root_type}"',
@@ -815,15 +823,19 @@ def _vtp_document(
         f'byte_order="{order}"',
         f'header_type="{writer.header_type}"',
     ]
+    if xmlns is not None:
+        root.insert(0, f'xmlns="{xmlns}"')
     if compressor is not None:
         root.append(f'compressor="{compressor}"')
+    pieces = [(piece_attrs, piece_body)] + list(extra_pieces or [])
+    piece_text = "".join(
+        f"<Piece {attrs}>\n{body}\n</Piece>\n" for attrs, body in pieces
+    )
     text = (
         '<?xml version="1.0"?>\n'
         f"<VTKFile {' '.join(root)}>\n"
         f"<{root_type}>\n"
-        f"<Piece {piece_attrs}>\n"
-        f"{piece_body}\n"
-        "</Piece>\n"
+        f"{piece_text}"
         f"</{root_type}>\n"
     )
     out = bytearray(text.encode("ascii"))
@@ -850,6 +862,10 @@ def write_vtp(
     colors: str = "uint8",
     root_type: str = "PolyData",
     compressor: str | None = None,
+    normals_name: str = "Normals",
+    colors_name: str = "colors",
+    empty_polys: bool = False,
+    xmlns: str | None = None,
 ) -> None:
     """The tetrahedron as a VTK XML PolyData file, in any arm of the encoding matrix.
 
@@ -857,6 +873,14 @@ def write_vtp(
     document invalid XML), ``appended-base64``, ``inline-base64`` (``format="binary"``)
     or ``ascii``. ``compressor`` overrides only the declared NAME, so an lz4/lzma
     fixture can carry perfectly readable data and still have to be refused.
+
+    ``normals_name`` / ``colors_name`` rename the two ``PointData`` arrays while the
+    ``Normals=`` / ``Scalars=`` designations keep pointing at them. With the DEFAULT
+    names the designations are shadowed by the reader's literal-name fallback, so
+    ignoring them entirely is invisible; a non-default name is what makes them bite.
+
+    ``empty_polys`` emits a present-but-EMPTY ``<Polys></Polys>`` beside a ``<Strips>``
+    surface — legal output for a surface written entirely as strips.
     """
     writer = _VtpWriter(
         mode=mode,
@@ -877,19 +901,19 @@ def write_vtp(
     offsets = list(np.cumsum([len(cell) for cell in cells]))
 
     if colors == "uint8":
-        color_array = writer.array(gt.colors, "UInt8", name="colors", ncomp=3)
+        color_array = writer.array(gt.colors, "UInt8", name=colors_name, ncomp=3)
     elif colors == "float01":
         color_array = writer.array(
-            gt.colors.astype(np.float32) / 255.0, "Float32", name="colors", ncomp=3
+            gt.colors.astype(np.float32) / 255.0, "Float32", name=colors_name, ncomp=3
         )
     else:
         color_array = writer.array(
-            gt.colors.astype(np.float32), "Float32", name="colors", ncomp=3
+            gt.colors.astype(np.float32), "Float32", name=colors_name, ncomp=3
         )
 
     body = [
-        '<PointData Normals="Normals" Scalars="colors">',
-        writer.array(gt.normals, "Float32", name="Normals", ncomp=3),
+        f'<PointData Normals="{normals_name}" Scalars="{colors_name}">',
+        writer.array(gt.normals, "Float32", name=normals_name, ncomp=3),
         color_array,
         "</PointData>",
         "<Points>",
@@ -898,20 +922,28 @@ def write_vtp(
     ]
     n_verts = n_lines = 0
     if with_verts_and_lines:
-        # Two point cells and one 2-point line, riding along beside the surface. Both
-        # are ordinary in real PolyData output and neither carries any surface, so the
-        # reader must drop them rather than fold them into the topology.
+        # A 3-point poly-vertex cell, a single-point one, and a 3-point POLYLINE, riding
+        # along beside the surface. All are ordinary in real PolyData output — a
+        # polyline of three or more points is what `vtkFeatureEdges` and any contour
+        # filter emits — and none carries a surface, so the reader must drop them.
+        #
+        # The cell LENGTHS are the whole point. With 1-index verts and a 2-point line,
+        # fan-triangulation yields nothing from either, so a reader that folded them
+        # straight into the polygon rows would still return the right face count and
+        # this fixture could not tell "dropped" from "folded in and degenerate".
         n_verts, n_lines = 2, 1
         body += [
             "<Verts>",
-            writer.array([0, 1], "Int64", name="connectivity"),
-            writer.array([1, 2], "Int32", name="offsets"),
+            writer.array([0, 1, 2, 3], "Int64", name="connectivity"),
+            writer.array([3, 4], "Int32", name="offsets"),
             "</Verts>",
             "<Lines>",
-            writer.array([0, 1], "Int64", name="connectivity"),
-            writer.array([2], "Int32", name="offsets"),
+            writer.array([0, 1, 2], "Int64", name="connectivity"),
+            writer.array([3], "Int32", name="offsets"),
             "</Lines>",
         ]
+    if empty_polys and cell_tag != "Polys":
+        body += ["<Polys>", "</Polys>"]
     body += [
         f"<{cell_tag}>",
         writer.array(connectivity, "Int64", name="connectivity"),
@@ -932,6 +964,7 @@ def write_vtp(
         compressor=compressor
         if compressor is not None
         else ("vtkZLibDataCompressor" if compressed else None),
+        xmlns=xmlns,
     )
 
 
@@ -1037,6 +1070,159 @@ def write_vtp_points_only(path: Path, gt: GroundTruth) -> None:
         body,
         'NumberOfPoints="4" NumberOfVerts="0" NumberOfLines="2" '
         'NumberOfStrips="0" NumberOfPolys="0"',
+        root_type="PolyData",
+        compressor=None,
+    )
+
+
+def _vtp_writer(mode: str) -> _VtpWriter:
+    """A plain uncompressed little-endian UInt32 writer — the fixtures' default arm."""
+    return _VtpWriter(
+        mode=mode,
+        compressed=False,
+        header_type="UInt32",
+        big_endian=False,
+        block_size=32768,
+    )
+
+
+def write_vtp_two_pieces(
+    path: Path,
+    gt: GroundTruth,
+    *,
+    shift: float = 10.0,
+    normals_on: tuple[bool, bool] = (True, True),
+    color_ncomps: tuple[int, int] = (3, 3),
+    mode: str = "inline-base64",
+) -> None:
+    """TWO ``<Piece>``s — two tetrahedra, the second translated by ``shift`` in x.
+
+    A multi-piece PolyData is what the reader's index rebase exists for: every piece
+    numbers its own points from 0, and they are concatenated into one vertex array. Drop
+    the ``+ base`` shift and the second tetrahedron's faces silently re-describe the
+    first, which is a plausible-looking surface rather than an error. The pieces are
+    disjoint in space so welding cannot merge them and hide the difference.
+
+    ``normals_on`` makes normals present on only SOME pieces — the all-or-nothing case,
+    where inventing rows for the rest would shade them with data the file never gave.
+    ``color_ncomps`` lets the pieces disagree on colour WIDTH (RGB against RGBA), which
+    cannot be stacked at all.
+    """
+    writer = _vtp_writer(mode)
+    pieces: list[tuple[str, str]] = []
+    for index, (has_normals, ncomp) in enumerate(zip(normals_on, color_ncomps)):
+        points = gt.vertices + np.array([shift * index, 0, 0], dtype=np.float32)
+        colors = gt.colors
+        if ncomp == 4:
+            alpha = np.full((len(colors), 1), 255, dtype=np.uint8)
+            colors = np.hstack([colors, alpha])
+        body = ["<PointData>"]
+        if has_normals:
+            body.append(writer.array(gt.normals, "Float32", name="Normals", ncomp=3))
+        body += [
+            writer.array(colors, "UInt8", name="colors", ncomp=ncomp),
+            "</PointData>",
+            "<Points>",
+            writer.array(points, "Float32", name="Points", ncomp=3),
+            "</Points>",
+            "<Polys>",
+            writer.array(
+                [int(v) for tri in gt.faces for v in tri], "Int64", name="connectivity"
+            ),
+            writer.array(list(np.cumsum([3] * len(gt.faces))), "Int32", name="offsets"),
+            "</Polys>",
+        ]
+        attrs = (
+            f'NumberOfPoints="{len(points)}" NumberOfVerts="0" NumberOfLines="0" '
+            f'NumberOfStrips="0" NumberOfPolys="{len(gt.faces)}"'
+        )
+        pieces.append((attrs, "\n".join(body)))
+    _vtp_document(
+        path,
+        writer,
+        pieces[0][1],
+        pieces[0][0],
+        root_type="PolyData",
+        compressor=None,
+        extra_pieces=pieces[1:],
+    )
+
+
+def write_vtp_point_data(
+    path: Path,
+    gt: GroundTruth,
+    arrays: list[tuple[NDArray, str, str | None, int]],
+    *,
+    pdata_attrs: str = "",
+    mode: str = "inline-base64",
+) -> None:
+    """The tetrahedron with a caller-spelled ``<PointData>`` block.
+
+    Each entry is ``(values, vtk_type, name, ncomp)``; ``name=None`` emits a NAMELESS
+    ``<DataArray>``, which is what VTK's own unsigned-char colour arrays look like and
+    the case a ``None == None`` name match silently adopts as normals.
+    """
+    writer = _vtp_writer(mode)
+    body = [f"<PointData {pdata_attrs}>" if pdata_attrs else "<PointData>"]
+    body += [
+        writer.array(values, vtk_type, name=name, ncomp=ncomp)
+        for values, vtk_type, name, ncomp in arrays
+    ]
+    body += [
+        "</PointData>",
+        "<Points>",
+        writer.array(gt.vertices, "Float32", name="Points", ncomp=3),
+        "</Points>",
+        "<Polys>",
+        writer.array(
+            [int(v) for tri in gt.faces for v in tri], "Int64", name="connectivity"
+        ),
+        writer.array(list(np.cumsum([3] * len(gt.faces))), "Int32", name="offsets"),
+        "</Polys>",
+    ]
+    _vtp_document(
+        path,
+        writer,
+        "\n".join(body),
+        f'NumberOfPoints="{len(gt.vertices)}" NumberOfVerts="0" NumberOfLines="0" '
+        f'NumberOfStrips="0" NumberOfPolys="{len(gt.faces)}"',
+        root_type="PolyData",
+        compressor=None,
+    )
+
+
+def write_vtp_polys(
+    path: Path,
+    points: NDArray,
+    connectivity: list[int],
+    offsets: list[int],
+    *,
+    mode: str = "inline-base64",
+) -> None:
+    """A bare ``<Points>`` + ``<Polys>`` PolyData with caller-supplied index arrays.
+
+    The vehicle for the topology guards — an out-of-range vertex, offsets that decrease,
+    offsets that run past the connectivity array — each of which is a plausible-looking
+    misparse rather than an obvious corruption.
+    """
+    writer = _vtp_writer(mode)
+    body = "\n".join(
+        [
+            "<Points>",
+            writer.array(points, "Float32", name="Points", ncomp=3),
+            "</Points>",
+            "<Polys>",
+            writer.array(connectivity, "Int64", name="connectivity"),
+            writer.array(offsets, "Int64", name="offsets"),
+            "</Polys>",
+        ]
+    )
+    _vtp_document(
+        path,
+        writer,
+        body,
+        f'NumberOfPoints="{len(points)}" NumberOfVerts="0" NumberOfLines="0" '
+        f'NumberOfStrips="0" NumberOfPolys="{len(offsets)}"',
         root_type="PolyData",
         compressor=None,
     )

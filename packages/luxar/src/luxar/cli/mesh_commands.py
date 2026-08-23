@@ -12,7 +12,7 @@ app_mesh = typer.Typer(
     help=(
         "Triangle-mesh tools — bring classical surface files into Luxar.\n\n"
         "Getting started:\n"
-        "  luxar mesh import bunny.ply bunny.luxar.zarr   # PLY/OBJ/STL/glTF -> a scene\n"
+        "  luxar mesh import bunny.ply bunny.luxar.zarr  # PLY/OBJ/STL/VTP/glTF -> scene\n"
         "  luxar mesh lod bunny.luxar.zarr bunny_lod.luxar.zarr  # coarse levels\n"
         "  luxar serve bunny.luxar.zarr --viewer          # open it in the browser\n"
     )

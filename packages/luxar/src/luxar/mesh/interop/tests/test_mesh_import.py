@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import dataclasses
+import re
 import xml.etree.ElementTree as ET  # nosec B405 - test-only, parses our own fixtures
 import zlib
 from pathlib import Path
@@ -54,8 +55,11 @@ from ._synthetic import (
     write_stl_binary,
     write_vtp,
     write_vtp_mixed_cells,
+    write_vtp_point_data,
     write_vtp_points_only,
+    write_vtp_polys,
     write_vtp_quad,
+    write_vtp_two_pieces,
 )
 
 GT = make_ground_truth()
@@ -84,6 +88,19 @@ EXPECTED_FACES = {
     )
     for tri in GT.faces
 }
+
+
+def _signed_volume(mesh: TriangleMesh) -> float:
+    """Six times the enclosed volume, summed over the triangles.
+
+    Sign-sensitive to WINDING, which the sorted face set is blind to — the tetrahedron's
+    faces are the same three positions either way round. Shared by the glTF mirroring
+    test and the VTP strip test, which need exactly the same discrimination.
+    """
+    tri = mesh.vertices[mesh.faces]
+    return float(
+        np.sum(np.einsum("ij,ij->i", np.cross(tri[:, 0], tri[:, 1]), tri[:, 2]))
+    )
 
 
 class TestReaderParity:
@@ -480,13 +497,7 @@ class TestGltf:
         # And every face still winds consistently with its own geometry. Compare the
         # signed volume contribution of each triangle: mirroring negates it, so a mesh
         # whose winding was NOT flipped would keep the original sign.
-        def signed_volume(m) -> float:
-            t = m.vertices[m.faces]
-            return float(
-                np.sum(np.einsum("ij,ij->i", np.cross(t[:, 0], t[:, 1]), t[:, 2]))
-            )
-
-        va, vb = signed_volume(a), signed_volume(b)
+        va, vb = _signed_volume(a), _signed_volume(b)
         assert abs(va) > 1e-6, "the ground truth must enclose volume for this to bite"
         assert np.sign(vb) == np.sign(va), (
             "reflecting the geometry without flipping the winding inverts the surface "
@@ -551,16 +562,50 @@ class TestGltf:
             import_mesh(p)
 
 
-def _signed_volume(mesh: TriangleMesh) -> float:
-    """Six times the enclosed volume, summed over the triangles.
-
-    Sign-sensitive to WINDING, which the sorted face set is blind to — the tetrahedron's
-    faces are the same three positions either way round.
-    """
-    tri = mesh.vertices[mesh.faces]
-    return float(
-        np.sum(np.einsum("ij,ij->i", np.cross(tri[:, 0], tri[:, 1]), tri[:, 2]))
+def _replace_array_text(raw: str, name: str, body: str) -> str:
+    """Swap the ascii payload of the `<DataArray Name="name">` in `raw` for `body`."""
+    patched, hits = re.subn(
+        rf'(<DataArray[^>]*Name="{name}"[^>]*>)[^<]*', rf"\g<1>{body}", raw, count=1
     )
+    assert hits == 1, f"no ascii DataArray named {name!r} in the fixture"
+    return patched
+
+
+def _appended_tail_start(raw: bytes) -> int:
+    """The index of the first payload byte after the `<AppendedData ...>_` marker."""
+    return raw.index(b"_", raw.index(b"<AppendedData")) + 1
+
+
+def _patch_appended_header_word(raw: bytes, name: str, value: int) -> bytes:
+    """Overwrite the leading UInt32 header word of the appended DataArray `name`.
+
+    Targeted by NAME rather than by "the array at offset 0": the writer emits the
+    PointData arrays in evaluation order, so offset 0 is a `UInt8` colour block whose
+    one-byte item size cannot express a ragged payload at all.
+    """
+    match = re.search(
+        rf'<DataArray[^>]*Name="{name}"[^>]*offset="(\d+)"', raw.decode("latin-1")
+    )
+    assert match is not None, f"no appended DataArray named {name!r} in the fixture"
+    start = _appended_tail_start(raw) + int(match.group(1))
+    out = bytearray(raw)
+    out[start : start + 4] = value.to_bytes(4, "little")
+    return bytes(out)
+
+
+#: The tetrahedron's faces after a `shift` in x — the second `<Piece>`'s expected surface.
+def _shifted_faces(shift: float) -> set[tuple[float, ...]]:
+    delta = np.array([shift, 0.0, 0.0], dtype=np.float32)
+    return {
+        tuple(
+            c
+            for corner in sorted(
+                tuple(np.round(GT.vertices[i] + delta, 5)) for i in tri
+            )
+            for c in corner
+        )
+        for tri in GT.faces
+    }
 
 
 #: (mode, compressed, header_type, big_endian) — the arms of the VTP encoding matrix.
@@ -756,8 +801,15 @@ class TestVtp:
     def test_verts_and_lines_beside_polys_are_dropped(self, tmp_path: Path) -> None:
         """`<Verts>`/`<Lines>` carry no surface, so they are dropped without comment.
 
-        Folding them into the topology would add degenerate "faces"; refusing the file
+        Folding them into the topology would add spurious "faces"; refusing the file
         would reject perfectly ordinary PolyData output.
+
+        The fixture's cells are deliberately LONG ENOUGH to triangulate: a 3-point
+        polyline (what `vtkFeatureEdges` and every contour filter emits) and a 3-point
+        poly-vertex cell each fan into one real triangle over tetrahedron corners. With
+        the 1-index verts and 2-point line this fixture used to carry, fan triangulation
+        yielded nothing from either and a reader that folded them straight in still
+        returned 4 faces — the test could not fail.
         """
         plain, mixed = tmp_path / "plain.vtp", tmp_path / "mixed.vtp"
         write_vtp(plain, GT)
@@ -779,6 +831,10 @@ class TestVtp:
 
         The palette is MID-range on purpose: with an all-0/255 palette a reader that
         scaled a 0..255 file by 255 and clipped would still produce the right answer.
+
+        Exact equality, not `atol=1`: the float32 round-trip of these twelve channels IS
+        exact in both conventions, and a one-count tolerance is blind to exactly the
+        error class a truncate-vs-round or a 254-vs-255 scale factor produces.
         """
         gt = dataclasses.replace(GT, colors=OBJ_MID_COLORS)
         byte_file, float_file = tmp_path / "u8.vtp", tmp_path / "f32.vtp"
@@ -786,9 +842,9 @@ class TestVtp:
         write_vtp(float_file, gt, colors=convention)
         a, b = import_mesh(byte_file).colors, import_mesh(float_file).colors
         assert a is not None and b is not None
-        np.testing.assert_allclose(np.sort(a, axis=0), np.sort(b, axis=0), atol=1)
-        np.testing.assert_allclose(
-            np.sort(a, axis=0), np.sort(OBJ_MID_COLORS, axis=0), atol=1
+        np.testing.assert_array_equal(np.sort(a, axis=0), np.sort(b, axis=0))
+        np.testing.assert_array_equal(
+            np.sort(a, axis=0), np.sort(OBJ_MID_COLORS, axis=0)
         )
         assert int(b.max()) < 255, "a mid-range palette must not clip to solid white"
 
@@ -855,6 +911,335 @@ class TestVtp:
         p.write_text(text, encoding="ascii")
         with pytest.raises(ValueError, match="NumberOfPoints"):
             import_mesh(p)
+
+    # ---------------------------------------------------------------- PointData rules
+
+    def test_a_nameless_float_triple_is_neither_normals_nor_colour(
+        self, tmp_path: Path
+    ) -> None:
+        """`<PointData>` need not designate normals, and a `<DataArray>` need not be named.
+
+        With neither present, matching `e.get("Name") == pdata.get("Normals")` compares
+        `None` with `None` and the first NAMELESS array is adopted as normals. Here that
+        is a velocity field — the module's documented reason for leaving a nameless float
+        3-vector alone — and adopting it shades the surface with vectors that are not
+        normals at all.
+        """
+        p = tmp_path / "velocity.vtp"
+        velocity = np.array(
+            [[1, 0, 0], [0, 2, 0], [0, 0, 3], [4, 4, 4]], dtype=np.float32
+        )
+        write_vtp_point_data(p, GT, [(velocity, "Float32", None, 3)])
+        mesh = import_mesh(p)
+        assert mesh.normals is None, "a nameless float 3-vector is not a normal field"
+        assert mesh.colors is None, "...and it is not colour either"
+        assert _sorted_face_set(mesh) == EXPECTED_FACES
+
+    def test_a_nameless_uint8_triple_is_colour(self, tmp_path: Path) -> None:
+        """VTK's own convention: unsigned-char 3-component point data IS colour.
+
+        Nameless is the normal spelling for it, so the fallback at the end of the colour
+        search has to be REACHABLE — which it only is once a nameless array stops being
+        swallowed as normals first.
+        """
+        p = tmp_path / "vtkcolors.vtp"
+        write_vtp_point_data(p, GT, [(GT.colors, "UInt8", None, 3)])
+        mesh = import_mesh(p)
+        assert mesh.normals is None, "a colour array was adopted as normals"
+        assert mesh.colors is not None
+        for vertex, color in zip(mesh.vertices, mesh.colors):
+            row = int(np.argmin(np.linalg.norm(GT.vertices - vertex, axis=1)))
+            np.testing.assert_array_equal(color, GT.colors[row])
+
+    def test_a_nameless_rgba_array_keeps_its_fourth_channel(
+        self, tmp_path: Path
+    ) -> None:
+        """4-component colour, which the rest of the fixtures never emit.
+
+        Under the `None == None` match this was not merely mis-attributed but a hard
+        error: the normals check demands `(N, 3)` and blamed the colour array for it.
+        """
+        p = tmp_path / "rgba.vtp"
+        rgba = np.hstack([GT.colors, np.full((len(GT.colors), 1), 128, dtype=np.uint8)])
+        write_vtp_point_data(p, GT, [(rgba, "UInt8", None, 4)])
+        mesh = import_mesh(p)
+        assert mesh.normals is None
+        assert mesh.colors is not None and mesh.colors.shape == (4, 4)
+        np.testing.assert_array_equal(mesh.colors[:, 3], 128)
+
+    def test_the_normals_and_scalars_designations_are_honoured(
+        self, tmp_path: Path
+    ) -> None:
+        """`Normals=` / `Scalars=` may name an array whose `Name=` is anything.
+
+        The default fixture calls them "Normals" and "colors", which the reader's
+        literal-name and colour-name fallbacks find anyway — so ignoring the designations
+        entirely is invisible there. These two names match no fallback, and the colour
+        array is Float32 so the UInt8 convention cannot rescue it either.
+        """
+        p = tmp_path / "designated.vtp"
+        write_vtp(
+            p,
+            GT,
+            normals_name="SurfaceNormals",
+            colors_name="CellTint",
+            colors="float255",
+        )
+        mesh = import_mesh(p)
+        assert mesh.normals is not None, '<PointData Normals="SurfaceNormals"> ignored'
+        assert mesh.colors is not None, '<PointData Scalars="CellTint"> ignored'
+        np.testing.assert_allclose(np.linalg.norm(mesh.normals, axis=1), 1.0, atol=1e-5)
+
+    # -------------------------------------------------------------- multiple <Piece>s
+
+    def test_two_pieces_are_rebased_into_one_vertex_array(self, tmp_path: Path) -> None:
+        """Every `<Piece>` numbers its own points from 0.
+
+        They are concatenated into one array, so each piece's indices shift by the
+        running base. Drop the shift and the second tetrahedron's faces silently
+        re-describe the first — a plausible surface, not an error. The two pieces are
+        disjoint in space so welding cannot merge them and hide it.
+        """
+        p = tmp_path / "pieces.vtp"
+        write_vtp_two_pieces(p, GT, shift=10.0)
+        mesh = import_mesh(p)
+        assert mesh.n_vertices == 8 and mesh.n_faces == 8
+        assert _sorted_face_set(mesh) == EXPECTED_FACES | _shifted_faces(10.0)
+        assert mesh.normals is not None and mesh.normals.shape == (8, 3)
+        assert mesh.colors is not None and mesh.colors.shape == (8, 3)
+
+    def test_normals_on_only_one_piece_are_dropped_whole(self, tmp_path: Path) -> None:
+        """All or nothing: the pieces without normals have no per-vertex value.
+
+        Keeping the partial set means either an array shorter than the vertex list or
+        invented rows shading half the model with data the file never gave. Colours are
+        present on both pieces, so this is not a blanket "drop everything".
+        """
+        p = tmp_path / "half.vtp"
+        write_vtp_two_pieces(p, GT, normals_on=(True, False))
+        mesh = import_mesh(p)
+        assert mesh.normals is None, "normals were invented for the piece without them"
+        assert mesh.colors is not None and mesh.colors.shape[0] == mesh.n_vertices
+
+    def test_pieces_that_disagree_on_colour_width_are_named(
+        self, tmp_path: Path
+    ) -> None:
+        """RGB in one piece, RGBA in the next — not stackable, and `np.concatenate`'s
+        own complaint names neither the file nor the attribute."""
+        p = tmp_path / "widths.vtp"
+        write_vtp_two_pieces(p, GT, color_ncomps=(3, 4))
+        with pytest.raises(ValueError, match=r"widths\.vtp.*different widths"):
+            import_mesh(p)
+
+    # ------------------------------------------------------- markup the format allows
+
+    def test_a_canonicalized_root_tag_still_sniffs_as_polydata(
+        self, tmp_path: Path
+    ) -> None:
+        """XML attribute order is not semantic, and C14N sorts it alphabetically.
+
+        That puts `header_type=` ahead of `type=`, so an unanchored `type\\s*=` regex
+        reads the header WIDTH as the dataset type and refuses a valid file as
+        "type is 'UInt32'". Purely a sniffer defect: `read_vtp` asks the parsed tree, so
+        the explicit-format path reads the same bytes fine.
+        """
+        p = tmp_path / "canonical.vtp"
+        write_vtp(p, GT, mode="ascii")
+        canonical = (
+            '<VTKFile byte_order="LittleEndian" header_type="UInt32" '
+            'type="PolyData" version="1.0">'
+        )
+        text, hits = re.subn(
+            r"<VTKFile [^>]*>", canonical, p.read_text(encoding="ascii"), count=1
+        )
+        assert hits == 1
+        p.write_text(text, encoding="ascii")
+        assert detect_mesh_format(p) == "vtp"
+        assert _sorted_face_set(import_mesh(p)) == EXPECTED_FACES
+
+    def test_a_present_but_empty_polys_group_is_zero_cells(
+        self, tmp_path: Path
+    ) -> None:
+        """A surface written entirely as `<Strips>` may still carry `<Polys></Polys>`.
+
+        An ABSENT cell group is already read as zero cells; a present-but-empty one was
+        refused for a missing 'connectivity', which rejects the whole file.
+        """
+        p = tmp_path / "empty-polys.vtp"
+        write_vtp(p, GT, strips=True, empty_polys=True)
+        assert b"<Polys>" in p.read_bytes(), "the fixture must emit the empty group"
+        mesh = import_mesh(p)
+        assert mesh.n_faces == 4
+        assert _sorted_face_set(mesh) == EXPECTED_FACES
+
+    @pytest.mark.parametrize("mode", ["inline-base64", "appended-raw"])
+    def test_a_default_namespace_is_read_on_both_paths(
+        self, mode: str, tmp_path: Path
+    ) -> None:
+        """A namespaced `<VTKFile>` — legal, and what `_localname` exists for.
+
+        The appended path is the one that breaks. Its closing tags are SYNTHESISED, and
+        building them from ElementTree's Clark notation emits `</{uri}Piece>`, which is
+        not well-formed at all — so the file fails on markup the reader wrote itself,
+        while the inline path (no synthesis) sails through.
+        """
+        p = tmp_path / "ns.vtp"
+        write_vtp(p, GT, mode=mode, xmlns="http://www.kitware.com/vtk")
+        assert b'xmlns="http://www.kitware.com/vtk"' in p.read_bytes()
+        assert detect_mesh_format(p) == "vtp"
+        mesh = import_mesh(p)
+        assert _sorted_face_set(mesh) == EXPECTED_FACES
+        assert mesh.normals is not None and mesh.colors is not None
+
+    # --------------------------------------------------- every error names the file
+
+    @pytest.mark.parametrize("value", ["abc", ""])
+    def test_a_non_integer_appended_offset_is_named(
+        self, value: str, tmp_path: Path
+    ) -> None:
+        p = tmp_path / "badoffset.vtp"
+        write_vtp(p, GT, mode="appended-raw")
+        raw = p.read_bytes()
+        patched = raw.replace(b'offset="0"', f'offset="{value}"'.encode("ascii"), 1)
+        assert patched != raw
+        p.write_bytes(patched)
+        with pytest.raises(ValueError, match=r"badoffset\.vtp"):
+            import_mesh(p)
+
+    def test_a_non_integer_component_count_is_named(self, tmp_path: Path) -> None:
+        p = tmp_path / "badncomp.vtp"
+        write_vtp(p, GT, mode="ascii")
+        p.write_text(
+            p.read_text(encoding="ascii").replace(
+                'NumberOfComponents="3"', 'NumberOfComponents="x"', 1
+            ),
+            encoding="ascii",
+        )
+        with pytest.raises(ValueError, match=r"badncomp\.vtp"):
+            import_mesh(p)
+
+    @pytest.mark.parametrize("declared", ["0", "-3"])
+    def test_a_component_count_below_one_is_refused(
+        self, declared: str, tmp_path: Path
+    ) -> None:
+        """Only `ncomp > 1` reshapes, so 0 or -3 falls through as a 1-D array — and the
+        `<Points>` 1-D rescue then imports it as if it had said 3."""
+        p = tmp_path / "zerocomp.vtp"
+        write_vtp(p, GT, mode="ascii")
+        p.write_text(
+            p.read_text(encoding="ascii").replace(
+                'Name="Points" NumberOfComponents="3"',
+                f'Name="Points" NumberOfComponents="{declared}"',
+                1,
+            ),
+            encoding="ascii",
+        )
+        with pytest.raises(ValueError, match="NumberOfComponents"):
+            import_mesh(p)
+
+    def test_a_non_integer_point_count_is_named(self, tmp_path: Path) -> None:
+        p = tmp_path / "badcount.vtp"
+        write_vtp(p, GT, mode="ascii")
+        p.write_text(
+            p.read_text(encoding="ascii").replace(
+                'NumberOfPoints="4"', 'NumberOfPoints="abc"'
+            ),
+            encoding="ascii",
+        )
+        with pytest.raises(ValueError, match=r"badcount\.vtp"):
+            import_mesh(p)
+
+    @pytest.mark.parametrize(
+        "name,body", [("Points", "nope 1 2"), ("connectivity", "1.5 2 3")]
+    )
+    def test_an_unparseable_ascii_token_is_named(
+        self, name: str, body: str, tmp_path: Path
+    ) -> None:
+        """A word in a Float32 array, and a float in an Int64 one.
+
+        Both raise a bare `ValueError` out of numpy (`invalid literal for int()`), which
+        names neither the file nor which array it came from.
+        """
+        p = tmp_path / "tokens.vtp"
+        write_vtp(p, GT, mode="ascii")
+        p.write_text(
+            _replace_array_text(p.read_text(encoding="ascii"), name, body),
+            encoding="ascii",
+        )
+        with pytest.raises(ValueError, match=r"tokens\.vtp"):
+            import_mesh(p)
+
+    def test_a_ragged_raw_payload_is_named(self, tmp_path: Path) -> None:
+        """A raw block header declaring a byte count the item size does not divide.
+
+        `np.frombuffer`'s own "buffer size must be a multiple of element size" names
+        neither the file nor the array, and this is precisely what a header read at the
+        wrong width looks like.
+        """
+        p = tmp_path / "ragged.vtp"
+        write_vtp(p, GT, mode="appended-raw")
+        # Five bytes is not a whole number of Float32s. Points, not the UInt8 colour
+        # block, because a one-byte item size divides every length there is.
+        p.write_bytes(_patch_appended_header_word(p.read_bytes(), "Points", 5))
+        with pytest.raises(ValueError, match=r"ragged\.vtp.*item size"):
+            import_mesh(p)
+
+    def test_an_absurd_block_count_is_named_not_a_memory_error(
+        self, tmp_path: Path
+    ) -> None:
+        """`_guard_nblocks`, the guard the module docstring argues for at length.
+
+        A block header read at the wrong width or offset yields a count in the billions,
+        which unbounded sizes a `_words` read and, past it, an allocation.
+        """
+        p = tmp_path / "blocks.vtp"
+        write_vtp(p, GT, mode="appended-raw", compressed=True)
+        p.write_bytes(_patch_appended_header_word(p.read_bytes(), "Points", 0xFFFFFFFF))
+        with pytest.raises(ValueError, match="compressed blocks"):
+            import_mesh(p)
+
+    def test_a_vertex_index_past_the_pieces_own_point_count_is_named(
+        self, tmp_path: Path
+    ) -> None:
+        """Bounded against the piece's OWN count, before the multi-piece rebase.
+
+        After `+ base` an index that overran its piece lands inside the assembled vertex
+        array, so the surface stitches to a neighbouring piece's geometry rather than
+        raising.
+        """
+        p = tmp_path / "badindex.vtp"
+        write_vtp_polys(p, GT.vertices, [0, 1, 99], [3])
+        with pytest.raises(ValueError, match="references vertex 99"):
+            import_mesh(p)
+
+    def test_offsets_that_decrease_are_named(self, tmp_path: Path) -> None:
+        p = tmp_path / "backwards.vtp"
+        write_vtp_polys(p, GT.vertices, [0, 1, 2, 0, 2, 3], [6, 3])
+        with pytest.raises(ValueError, match="non-decreasing"):
+            import_mesh(p)
+
+    def test_offsets_past_the_connectivity_array_are_named(
+        self, tmp_path: Path
+    ) -> None:
+        p = tmp_path / "past.vtp"
+        write_vtp_polys(p, GT.vertices, [0, 1, 2], [9])
+        with pytest.raises(ValueError, match="connectivity array holds only 3"):
+            import_mesh(p)
+
+    def test_the_explicit_format_path_refuses_a_non_polydata_file_too(
+        self, tmp_path: Path
+    ) -> None:
+        """`read_vtp`'s own type check is unreachable through sniffing.
+
+        `import_mesh(path)` goes through `detect_mesh_format`, which refuses a
+        non-PolyData `<VTKFile>` first, so the reader's own refusal only ever fires on
+        the explicit `format="vtp"` path — which is a caller-reachable way past the
+        sniffer, not dead code.
+        """
+        p = tmp_path / "volume.vtp"
+        write_vtp(p, GT, root_type="UnstructuredGrid")
+        with pytest.raises(ValueError, match="not 'PolyData'"):
+            import_mesh(p, format="vtp")
 
 
 class TestErrors:
