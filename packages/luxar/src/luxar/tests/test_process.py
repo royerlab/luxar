@@ -21,22 +21,27 @@ class _FakeProc:
     """A stand-in for Popen that records signals and reports liveness."""
 
     def __init__(self, pid: int = 4321, alive: bool = True) -> None:
+        """Initialize a configurable fake child process."""
         self.pid = pid
         self.returncode = 0
         self._alive = alive
         self.sent: list[int] = []
 
     def send_signal(self, sig: int) -> None:
+        """Record a signal sent to the fake child."""
         self.sent.append(sig)
 
     def poll(self):  # type: ignore[no-untyped-def]
+        """Report liveness using the configured fake state."""
         return None if self._alive else 0
 
     def wait(self, timeout=None):  # type: ignore[no-untyped-def]
+        """Return the fake process status without blocking."""
         return self.returncode
 
 
 def test_exit_code_maps_signal_death() -> None:
+    """Negative signal return codes map to the conventional shell status."""
     assert _exit_code(0) == 0
     assert _exit_code(3) == 3
     assert _exit_code(-signal.SIGKILL) == 128 + signal.SIGKILL
@@ -44,6 +49,7 @@ def test_exit_code_maps_signal_death() -> None:
 
 
 def test_normal_exit_returns_child_code() -> None:
+    """A normally exiting child returns its original process status."""
     code = run_child_process(
         [sys.executable, "-c", "import sys; sys.exit(3)"],
         interrupt_timeout=0.1,
@@ -59,6 +65,7 @@ def test_killpg_escalation_stops_when_group_gone(monkeypatch) -> None:
     state = {"term_sent": False}
 
     def fake_killpg(pgid: int, sig: int) -> None:
+        """Record escalation signals and emulate group exit after SIGTERM."""
         calls.append(sig)
         if sig == 0:  # liveness probe
             if state["term_sent"]:
@@ -82,6 +89,7 @@ def test_finally_teardown_runs_on_keyboard_interrupt(monkeypatch) -> None:
     state = {"int_sent": False}
 
     def fake_killpg(pgid: int, sig: int) -> None:
+        """Record escalation signals and emulate group exit after SIGINT."""
         killed.append(sig)
         if sig == 0:
             if state["int_sent"]:
@@ -108,6 +116,7 @@ def test_finally_teardown_runs_on_keyboard_interrupt(monkeypatch) -> None:
 
 
 def test_non_isolate_uses_pid_signals_not_killpg(monkeypatch) -> None:
+    """Non-isolated children are signalled by PID, never by process group."""
     recorded: list[int] = []
     monkeypatch.setattr(
         process.os, "killpg", lambda *a, **k: recorded.append(-1)
@@ -122,11 +131,13 @@ def test_non_isolate_uses_pid_signals_not_killpg(monkeypatch) -> None:
 
 @posix_only
 def test_second_interrupt_jumps_to_sigkill(monkeypatch) -> None:
+    """A second interrupt skips the remaining waits and sends SIGKILL."""
     """A Ctrl-C landing mid-escalation hard-kills instead of orphaning."""
     calls: list[int] = []
     state = {"sigint_raised": False, "dead": False}
 
     def fake_killpg(pgid: int, sig: int) -> None:
+        """Raise a second interrupt during the first liveness probe."""
         calls.append(sig)
         if sig == 0:  # liveness probe
             if state["dead"]:
@@ -148,6 +159,7 @@ def test_second_interrupt_jumps_to_sigkill(monkeypatch) -> None:
 
 
 def test_degrades_without_killpg(monkeypatch) -> None:
+    """Platforms without process groups still tear down the direct child."""
     captured: dict = {}
 
     class _Proc(_FakeProc):
@@ -155,6 +167,7 @@ def test_degrades_without_killpg(monkeypatch) -> None:
             super().__init__()
 
     def fake_popen(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        """Capture spawn options and return the shared fake child."""
         captured.update(kwargs)
         return _Proc()
 
@@ -167,6 +180,7 @@ def test_degrades_without_killpg(monkeypatch) -> None:
 
 @posix_only
 def test_stop_handlers_install_and_restore() -> None:
+    """Temporary termination handlers preserve and restore prior handlers."""
     """SIGTERM/SIGHUP get a KeyboardInterrupt-raising handler, then restored."""
     before_term = signal.getsignal(signal.SIGTERM)
     prev = process._install_stop_handlers()
@@ -228,6 +242,7 @@ def test_external_sigterm_reaps_grandchild() -> None:
 @posix_only
 @pytest.mark.slow
 def test_sigkill_reaches_signal_ignoring_child() -> None:
+    """The final escalation kills a child that ignores softer signals."""
     """A child that ignores SIGINT/SIGTERM is still killed via SIGKILL."""
     import subprocess
 
@@ -259,6 +274,7 @@ linux_only = pytest.mark.skipif(not _HAS_PROC, reason="requires /proc (Linux)")
 
 @linux_only
 def test_proc_table_lists_this_process(monkeypatch) -> None:
+    """The Linux proc-table reader reports the current process accurately."""
     monkeypatch.setattr(
         process.subprocess,
         "run",
@@ -274,6 +290,7 @@ def test_proc_table_lists_this_process(monkeypatch) -> None:
 
 
 def test_proc_table_falls_back_to_ps_without_proc(monkeypatch) -> None:
+    """POSIX systems without procfs parse the equivalent `ps` output."""
     class Result:
         stdout = """\
   101   101 S+   python -m luxar
@@ -283,9 +300,11 @@ bad row
 """
 
     def no_proc(_path: str) -> list[str]:
+        """Emulate a platform without a readable procfs."""
         raise OSError
 
     def ps_run(args, **kwargs):  # type: ignore[no-untyped-def]
+        """Return deterministic `ps` output for fallback parsing."""
         assert args == ["ps", "-axww", "-o", "pid=,pgid=,state=,command="]
         assert kwargs["check"] is True
         assert kwargs["timeout"] == 5.0
@@ -302,7 +321,9 @@ bad row
 
 
 def test_proc_table_is_unknown_when_proc_and_ps_are_unavailable(monkeypatch) -> None:
+    """Missing procfs and `ps` produce an empty unknown snapshot."""
     def unavailable(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        """Emulate an unavailable process-table source."""
         raise OSError
 
     monkeypatch.setattr(process.os, "listdir", unavailable)
@@ -312,10 +333,13 @@ def test_proc_table_is_unknown_when_proc_and_ps_are_unavailable(monkeypatch) -> 
 
 
 def test_proc_table_does_not_run_ps_off_posix(monkeypatch) -> None:
+    """Non-POSIX platforms do not attempt the unavailable `ps` fallback."""
     def no_proc(_path: str) -> list[str]:
+        """Emulate a non-POSIX platform without procfs."""
         raise OSError
 
     def unexpected_ps(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        """Fail if the POSIX-only fallback is invoked."""
         raise AssertionError("ps must not run off POSIX")
 
     monkeypatch.setattr(process.os, "name", "nt")
@@ -373,6 +397,7 @@ def test_terminate_process_group_accepts_ps_reported_zombie(monkeypatch) -> None
         os.killpg(proc.pid, signal.SIGKILL)
 
         def no_proc(_path: str) -> list[str]:
+            """Force the process-table reader through its `ps` path."""
             raise OSError
 
         monkeypatch.setattr(process.os, "listdir", no_proc)
@@ -401,6 +426,7 @@ def test_group_owned_by_another_user_is_never_reported_stopped(monkeypatch) -> N
     """EPERM means "alive and not ours" — reporting it as stopped would lie."""
 
     def denied(pgid: int, sig: int) -> None:
+        """Emulate signalling a process group owned by another user."""
         raise PermissionError(1, "Operation not permitted")
 
     monkeypatch.setattr(process.os, "killpg", denied)
