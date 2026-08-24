@@ -291,6 +291,7 @@ def _filename_index(path: Path, pattern: re.Pattern[str], label: str) -> int | N
 
 
 def compile_index_regex(index_regex: str) -> re.Pattern[str]:
+    """Compile a filename index regex, raising ``ValueError`` unless it has named ``t``."""
     try:
         pattern = re.compile(index_regex)
     except re.error as exc:
