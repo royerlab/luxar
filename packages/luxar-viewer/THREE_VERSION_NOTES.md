@@ -140,18 +140,16 @@ Checked against the two installed trees rather than the release notes:
   rename touch nothing the viewer imports or overrides. Every pinned THREE enum
   value in `src/tests/e2e/blending-expected-state.ts` is unchanged at r185.
 
-### The visual-regression suite is NOT the evidence you might assume
+### The visual-regression suite is local evidence, not CI evidence
 
-`visual-regression.spec.ts` has eleven checked-in baselines and **all of them are
-`chromium-darwin`**; only four Linux baselines exist in the whole E2E tree
-(`basic-rendering`, `blending-modes`, `custom-gui-library`,
-`post-processing-pipeline`). On Linux the rest fail once with "a snapshot doesn't
-exist — writing actual" and pass on retry, so on the platform CI and most
-contributors use, that suite cannot catch a renderer minor moving pixels. The
-four Linux baselines that DO exist came out byte-unchanged at r185, which is real
-but narrow evidence. Do not let a green Linux run stand in for a pixel diff, and
-do not check in the `-chromium-linux.png` files a local run drops — that would
-promote an unreviewed render to the reference.
+The E2E tree now has a complete Linux Chromium baseline for every `@visual`
+test. The four Linux baselines that existed during the r185 upgrade
+(`basic-rendering`, `blending-modes`, `custom-gui-library`, and
+`post-processing-pipeline`) came out byte-unchanged, which remains real but
+narrow evidence for that upgrade. The full corpus was recorded locally rather
+than by CI: run `pnpm test:e2e:visual` and inspect intentional updates from
+`pnpm test:e2e:visual:update`, but do not treat a green pull request as a pixel
+comparison because CI still excludes visual tests.
 
 ## Why tilde, not caret
 

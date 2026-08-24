@@ -156,8 +156,8 @@ pnpm test:e2e:ui
 # Run with headed browser (see it run)
 pnpm test:e2e --headed
 
-# Update visual regression baselines
-pnpm test:e2e --grep "Visual" --update-snapshots
+# Update Linux visual regression baselines
+pnpm test:e2e:visual:update
 
 # View HTML report
 pnpm test:e2e:report
@@ -296,7 +296,7 @@ make run-examples  # Generate datasets
 ### Issue: Visual regression tests fail
 **Solution**: GPU rendering varies. Update baselines:
 ```bash
-pnpm test:e2e --grep "Visual" --update-snapshots
+pnpm test:e2e:visual:update
 ```
 
 ### Issue: "Executable doesn't exist" error

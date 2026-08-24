@@ -5,7 +5,7 @@
  * This catches visual rendering bugs, HDR issues, blending problems, etc.
  *
  * IMPORTANT: First run creates baselines. Subsequent runs compare against them.
- * Update baselines with: pnpm test:e2e --update-snapshots
+ * Update the Linux visual corpus with: pnpm test:e2e:visual:update
  */
 
 import { test, expect } from './fixtures';
@@ -17,6 +17,12 @@ const DATASETS = {
   grid5D: 'http://localhost:9000/datasets/examples/dense_grid_5d_example.luxar.zarr',
   build: 'http://localhost:9000/datasets/examples/build_example_structured.luxar.zarr',
 };
+
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('luxar-control-rail-hint-dismissed', '1');
+  });
+});
 
 test.describe('@visual Visual Regression - Basic Rendering', () => {
   test('should render dimension_navigation dataset consistently', async ({ page }) => {
@@ -50,8 +56,7 @@ test.describe('@visual Visual Regression - Basic Rendering', () => {
 test.describe('@visual Visual Regression - HDR & Tone Mapping', () => {
   // Tests skip gracefully when the exposure API isn't available (see
   // early return below). To regenerate snapshots after intentional
-  // changes: `playwright test visual-regression --update-snapshots
-  // --grep '@visual'`.
+  // changes: `pnpm test:e2e:visual:update`.
   test('should render with exposure = 0.0 (neutral)', async ({ page }) => {
     await page.goto(`/?src=${DATASETS.build}&debug&dpr=1`);
     await waitForLuxarReady(page);

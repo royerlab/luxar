@@ -542,6 +542,17 @@ with `pnpm test:e2e:visual:update`, then inspect every PNG diff before
 committing it. The unit suite rejects non-Linux baseline filenames so
 an unsupported platform corpus cannot silently return.
 
+The 44 baselines added with this policy were recorded on Ubuntu 24.04.4
+LTS with Playwright 1.62.1. Font configuration is not pinned, so a
+font-driven local diff is expected on another distro; re-record it for
+local inspection rather than blessing it into Git. The visual fixtures
+come from `datasets/examples/`: when their producer stamp moves and the
+examples are rebuilt, refresh and inspect the affected baselines too.
+
+Keeping one reproducible Linux corpus leaves room for a future CI job
+covering the DOM/CSS-only `@visual` specs without the WebGL rasterizer
+variability that currently keeps the full E2E job disabled.
+
 ## Conventions for New Specs
 
 1. **Import from `./fixtures`**, never `@playwright/test` directly.
