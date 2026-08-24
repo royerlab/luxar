@@ -155,6 +155,23 @@ class TestEveryWPlanePopulated:
             positions, _ = generate_4d_fractal(fractal_type, grid_size=3)
             assert len(positions) > 0
 
+    def test_empty_plane_error_reports_lattice_plane(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        empty_plane = int(materialised_w_planes(GRID, _demo.W_STRIDE)[1])
+
+        def rule(iw, ix, iy, iz, grid_size):
+            del ix, iy, iz, grid_size
+            keep = iw != empty_plane
+            return keep, np.ones(iw.shape, dtype=np.float32)
+
+        monkeypatch.setattr(
+            _demo, "_fractal_rule", lambda fractal_type, rng: ("test", rule)
+        )
+
+        with pytest.raises(RuntimeError, match=rf"empty w-planes \[{empty_plane}\]"):
+            generate_4d_fractal(0, grid_size=GRID, surface_only=False)
+
     def test_subsample_branch_preserves_every_plane(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

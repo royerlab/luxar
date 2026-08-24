@@ -45,9 +45,9 @@ The sphere used to open as a small ball in the middle of a lot of black, sitting
 still. It is a single decorative object, so the scene now authors its own
 opening camera instead of taking the default fit: the orbit distance is solved
 from the sphere radius so the ball subtends 0.72 of the field of view and spills
-past the edges of the canvas at a 28 degree reference FOV, while the viewer FOV
-remains configurable. Auto-rotation is on from the first frame at the viewer's
-own presentation speed.
+past the edges of the canvas at the cinematic preset's 63 degree reference FOV,
+while the viewer FOV remains configurable. Auto-rotation is on from the first
+frame at the viewer's own presentation speed.
 
 Filling the frame means many more hues sum into every pixel, which washed the
 middle of the ball out to pastel grey, so the authored additive gain is halved
@@ -64,9 +64,10 @@ The scene now authors its own opening camera, with the orbit distance solved
 from the lattice's own bounding-sphere radius (so it tracks `grid_size` and
 `spacing` rather than being a magic number) and the orbit pivot bound to the
 `CubicArray` node's bbox centre. The view is a three-quarter one, so three faces
-are visible and the grid reads as a cube. The distance is solved at a 28 degree
-reference FOV while the viewer FOV remains configurable. Auto-rotation is on
-from the first frame, and the scene opens 1.5 stops down.
+are visible and the grid reads as a cube. The distance is solved at the
+cinematic preset's 63 degree reference FOV while the viewer FOV remains
+configurable. Auto-rotation is on from the first frame, and the scene opens 1.5
+stops down.
 
 #### FlyLight whole-brain demo gains a reference cage
 
@@ -151,13 +152,11 @@ though, are the only strongly pink thing in the room: selecting on hue isolates
 1.1 × 0.8 × 1.1 units. That is the tree, and that is where the camera looks. A
 regression test now fails if the demo ever returns to the garden member.
 
-#### The nD transform bench disambiguates channel captions
+#### The nD transform bench explains its channel captions
 
-The channel half used "under" to mean the world slider value that triggers a
-marker, while the frame half used it spatially for where a marker sits. The
-captions now state the world-channel condition and resulting local channel
-explicitly, and the help card clarifies that a marker sits at its own local
-index rather than under the cursor.
+The help card now clarifies that a marker sits at its own local index rather
+than under the cursor, and the reasoning behind the existing world-to-local
+caption wording is recorded next to the channel-row definitions.
 
 #### The earthquake globe stops looking like a dot screen
 
@@ -264,20 +263,11 @@ continuous surfaces; at 80k they were still stippled. 44.5M points, 89 MB on
 disk (lattice coordinates compress well).
 
 Appearance comes from a live Layers-panel session: `volumetric` blending with
-absorption 1.23 and opacity 0.43, gamma 1.0, and a display window of `[0, 1.971]`
-rather than the `[0, 16]` the old `intensity=0.0625` was stating — the range the
-structure actually occupies.
+absorption 1.23 and opacity 0.43, gamma 1.0, and an authored display window of
+`[0, 1.971]` rather than the `[0, 16]` the old `intensity=0.0625` was stating.
 
 #### Smaller things
 
 The Cubic Array's auto-rotation goes to 0.5, twice the viewer's presentation
 default: the lattice's moiré interference is the thing worth watching, and it
 only resolves as the view angle sweeps.
-
-The nD transform bench's channel captions no longer say "R UNDER GREEN — G UNDER
-RED". A marker is drawn at its own local index, so at world RED the SWAP row
-lights G *in the GREEN column* — and the caption, which meant "when the slider
-is at RED", read as a flat contradiction. "Under" was spatial one section up and
-temporal here. They now read `AT RED->G  AT GREEN->R  AT BLUE->B`, and the help
-card says outright that a marker sits at its own index and never under the
-cursor.

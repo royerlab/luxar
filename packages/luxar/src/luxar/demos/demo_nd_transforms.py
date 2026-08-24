@@ -454,7 +454,7 @@ def _channel_node_name(label: str) -> str:
 
 # (label, permutation, note) — permutation[local_index] = world_index.
 #
-# The notes say "AT <world> -> <letter>", NOT "<letter> UNDER <world>".
+# The notes say "WORLD <channel> -> <letter>", NOT "<letter> UNDER <world>".
 #
 # The old wording was the single most confusing thing in this bench, because
 # "under" means two different things in its two halves. In the FRAME half the
@@ -465,8 +465,8 @@ def _channel_node_name(label: str) -> str:
 # when the world slider is at RED", but the reader is looking at a G sitting
 # under the word GREEN, and reasonably concludes the bench is lying.
 #
-# "AT RED -> G" separates the two: the world value is the condition, the letter
-# is the result, and nothing in the sentence claims a position.
+# "WORLD RED -> G" separates the two: the world value is the condition, the
+# letter is the result, and nothing in the sentence claims a position.
 CHANNEL_ROWS: List[Tuple[str, Optional[List[int]], str]] = [
     ("IDENTITY\nPERM 0 1 2", None, "WORLD RED/GREEN/BLUE -> LOCAL R/G/B"),
     ("SWAP RED-GREEN\nPERM 1 0 2", [1, 0, 2], "WORLD GREEN -> R / RED -> G"),

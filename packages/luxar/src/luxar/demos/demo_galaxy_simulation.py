@@ -293,6 +293,7 @@ def galaxy_camera_position() -> tuple[float, float, float]:
         float(distance * np.cos(inclination)),
     )
 
+
 #: Authored per-point gain. Millions of additive points over a disc sum hard, so
 #: this is small by construction; it is dialled against a render rather than
 #: derived, and moving it means re-checking the frame is not clipping.

@@ -481,7 +481,7 @@ def generate_4d_fractal(
 
     counts = np.asarray(per_plane_counts)
     if (counts == 0).any():
-        empty = np.flatnonzero(counts == 0).tolist()
+        empty = planes[np.flatnonzero(counts == 0)].tolist()
         raise RuntimeError(
             f"{fractal_name}: empty w-planes {empty} — every slider "
             f"stop must show structure"
@@ -681,9 +681,8 @@ def generate_4d_fractal_dataset(
                 gamma=1.0,
                 # `intensity` is the display WINDOW, not a gain: the viewer
                 # recovers [-offset/i, (1-offset)/i]. The old 0.0625 stated the
-                # window [0, 16], over which the pattern values occupy the
-                # bottom eighth. 1/1.971 states [0, 1.971] — the range the panel
-                # was left at — which is where the structure actually lives.
+                # window [0, 16]. 1/1.971 states the authored [0, 1.971] window
+                # left by the Layers-panel appearance pass.
                 intensity=1.0 / 1.971,
                 layer=True,
             )
