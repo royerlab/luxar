@@ -3,8 +3,13 @@
 from pathlib import Path
 
 import numpy as np
+import pytest
 
-from luxar.demos._support import _umap_utils
+# The helpers import Pillow at module scope; Pillow ships in the ``demos``
+# extra, not core.
+pytest.importorskip("PIL")
+
+from luxar.demos._support import _umap_utils  # noqa: E402
 
 
 def test_generate_all_legends_writes_beside_demo_modules(
