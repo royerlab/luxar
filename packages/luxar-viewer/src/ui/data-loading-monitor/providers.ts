@@ -50,7 +50,9 @@ export class MonitorProviderRegistry {
   /** Failed-load records + retry-all from the SceneLoader; feeds the overview banner. */
   failedLoadsProvider: FailedLoadsProviderPort | null = null;
   lodStates = new Map<string, LODProgressState>();
-  // Polled every tick because renderOrder is camera-dependent.
+  // Live per-mesh draw order (blending bucket / depthWrite / renderOrder).
+  // Polled every tick because renderOrder is camera-dependent; the snapshot
+  // drives the scene-graph tree's draw-order chip.
   drawOrderProvider: DrawOrderProvider | null = null;
   drawOrderStates = new Map<string, NodeDrawOrder>();
   accumulatorProviders = emptyAccumulatorSlots();
