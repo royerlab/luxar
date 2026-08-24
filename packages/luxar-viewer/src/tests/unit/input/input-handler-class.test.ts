@@ -383,6 +383,40 @@ describe('InputHandler.init — idempotency', () => {
   });
 });
 
+describe('InputHandler — help overlay', () => {
+  it('passes the registered shortcut snapshot to the notifier', () => {
+    const showHelpOverlay = vi.fn();
+    setNotifierBackend({
+      showError: vi.fn(),
+      showToast: vi.fn(),
+      showHelpOverlay,
+      hideHelpOverlay: vi.fn(),
+      showLoadingIndicator: vi.fn(),
+      hideLoadingIndicator: vi.fn(),
+      clearError: vi.fn(),
+    });
+    const handler = new InputHandler(
+      makeSceneManagerStub(),
+      makeAnimationControllerStub(),
+      makePerformanceMonitorStub(),
+      makeDebugConsoleStub()
+    );
+
+    try {
+      handler.init();
+      (handler as unknown as { toggleHelp(): void }).toggleHelp();
+
+      expect(showHelpOverlay).toHaveBeenCalledOnce();
+      const bindings = showHelpOverlay.mock.calls[0]?.[0];
+      expect(bindings).toBeInstanceOf(Map);
+      expect(bindings?.get('navigation')).toEqual(expect.arrayContaining(['h', 'k']));
+    } finally {
+      handler.dispose();
+      clearNotifierBackend();
+    }
+  });
+});
+
 describe('InputHandler.dispose', () => {
   it('disposes cleanly without prior init() (no listeners to clean up)', () => {
     const debugConsole = makeDebugConsoleStub();
