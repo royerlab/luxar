@@ -5,11 +5,11 @@
  * uploaded to the GPU — its **storage slot**. That is not the same number as
  * the element's **on-disk index**, which is what the per-element string/image
  * CSRs are keyed by, whenever the visible buffer's index space diverges from
- * the on-disk one. For Points that happens two ways:
- * spatial range loading (only the visible on-disk ranges are concatenated) and
- * effective-radius compaction (zero-radius points are dropped in place). A
- * consumer that reads a string at the raw slot then gets a wrong-but-plausible
- * neighbour's value (issue #1421).
+ * the on-disk one. For Points that happens two ways: spatial range loading
+ * (only the visible on-disk ranges are concatenated) and effective-radius
+ * compaction (zero-radius points are dropped in place). A consumer that reads a
+ * string at the raw slot then gets a wrong-but-plausible neighbour's value
+ * (issue #1421).
  *
  * The fix is a published map: whichever stage knows the slot → on-disk mapping
  * composes it (`data/loaders/element-ids.ts`), the commit pipeline stamps it
@@ -61,20 +61,20 @@
  *    `out_source_indices`, since hidden-dim visibility compaction happens
  *    inside it). The standard-3D fast path emits every splat in order, so it
  *    records nothing and the range-offset path alone applies — issue #1423.
- *    Note the Points
- *    "allocation-free in the common case" framing does NOT carry over: on the
- *    general (compacting) projection path the composer's identity fast path is
- *    effectively unreachable, because whenever `ranges` is published there,
- *    source indices are always supplied — so even a labelled node with a
- *    single `[0, N)` range and zero culling allocates a full N-element
- *    identity map. (Only the standard-3D fast path, which supplies none, can
- *    still reach the identity.) Neither is the COST the same as Points': the
- *    retained map is the same 4 B/element, but the general path additionally
- *    allocates the `splatCount`-sized `Uint32Array` per projection that
- *    `emitSourceIndices` documents as 4 B/splat, and round-trips it through
- *    wasm-bindgen, which copies it into linear memory and back out — so a
- *    transient allocation plus ~8 B/splat of memcpy on top, none of which
- *    Points pays. All of it is gated on `has_labels` / `has_image_labels` / `has_keys`.
+ *    Note the Points "allocation-free in the common case" framing does NOT
+ *    carry over: on the general (compacting) projection path the composer's
+ *    identity fast path is effectively unreachable, because whenever `ranges`
+ *    is published there, source indices are always supplied — so even a node
+ *    declaring one of those channels with a single `[0, N)` range and zero
+ *    culling allocates a full N-element identity map. (Only the standard-3D
+ *    fast path, which supplies none, can still reach the identity.) Neither is
+ *    the COST the same as Points': the retained map is the same 4 B/element,
+ *    but the general path additionally allocates the `splatCount`-sized
+ *    `Uint32Array` per projection that `emitSourceIndices` documents as
+ *    4 B/splat, and round-trips it through wasm-bindgen, which copies it into
+ *    linear memory and back out — so a transient allocation plus ~8 B/splat of
+ *    memcpy on top, none of which Points pays. All of it is gated on
+ *    `has_labels` / `has_image_labels` / `has_keys`.
  *  - **Lines** — the longest chain, because on top of range loading it has a
  *    GRANULARITY mismatch: the pick shader reports a visible SEGMENT slot while
  *    line string/image channels are per-VERTEX. Four spaces, composed in
@@ -106,10 +106,10 @@
  *    the hit LEAF (`lookupPath = result.mainNode.name`; the outermost
  *    `kind=partition` wrapper is now the reported path only). The two halves
  *    cannot drift apart, because they name the same object:
- *    `picking-system.ts::readbackAndVote`
- *    builds the result with `elementId: resolveOnDiskElementId(nodeEntry.main,
- *    …)` and `mainNode: nodeEntry.main`, so the node this helper reads the map
- *    from is the node whose `name` becomes the CSR path. The
+ *    `picking-system.ts::readbackAndVote` builds the result with
+ *    `elementId: resolveOnDiskElementId(nodeEntry.main, …)` and
+ *    `mainNode: nodeEntry.main`, so the node this helper reads the map from is
+ *    the node whose `name` becomes the CSR path. The
  *    `partition=`-forwards-`additive_lod=` composition
  *    (`core/group/adders/points.py`) is readable too since #1422: the part's
  *    ladder parent — which IS the part's scene node — carries one union CSR

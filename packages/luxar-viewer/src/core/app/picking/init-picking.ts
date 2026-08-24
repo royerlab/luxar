@@ -39,10 +39,10 @@ export interface InitPickingPorts {
     sel: { nodeName: string; elementIndex: number; hitNodeName: string } | null
   ) => void;
   /**
-   * Whether an embedder `selection` listener currently exists. Read at
-   * init time to provision the picking pipeline even for label-less
-   * datasets, and read LIVE inside the shouldPick gate so pick renders
-   * only run while someone consumes them.
+   * Whether an embedder `selection` listener currently exists. Read at init
+   * time to provision the picking pipeline even for datasets with no
+   * per-element string/image channel, and read LIVE inside the shouldPick gate
+   * so pick renders only run while someone consumes them.
    */
   hasSelectionConsumer?: () => boolean;
   /**

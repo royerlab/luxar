@@ -131,15 +131,14 @@ export interface PickResultHandlerPorts {
  *   for a `part_<i>` of a partition. Using the wrapper for the lookup fails
  *   twice over: it is a bare group with no label/key CSR arrays (they are
  *   written per `part_<i>`), and `result.elementId` is an index in the leaf's
- *   own element space,
- *   meaningless against a whole-node array. Before the split, every
- *   hover on a partitioned layer resolved to an empty tooltip, silently
- *   — `LabelLoader` demotes the missing array to an info log and caches
- *   `[]`. Of the three lookups only the label/key `getLabel` calls are
- *   reachable under a partition today (all four adders refuse
- *   `image_labels` alongside `partition=`, so no `part_<i>` ever owns an
- *   image CSR); `getImageUrl` moves with them for consistency, not because
- *   it is broken today.
+ *   own element space, meaningless against a whole-node array. Before the
+ *   split, every hover on a partitioned layer resolved to an empty tooltip,
+ *   silently — `LabelLoader` demotes the missing array to an info log and
+ *   caches `[]`. Of the three lookups only the label/key `getLabel` calls are
+ *   reachable under a partition today (all four adders refuse `image_labels`
+ *   alongside `partition=`, so no `part_<i>` ever owns an image CSR);
+ *   `getImageUrl` moves with them for consistency, not because it is broken
+ *   today.
  *
  *   The selection event carries both paths so the split is resolvable
  *   from outside: `nodeName` is `reportPath` (display) and
@@ -148,18 +147,17 @@ export interface PickResultHandlerPorts {
  *
  *   Two known limits survive this fix, both outside the handler:
  *   (i) an *additive ladder* carries ONE union CSR per present labels/keys
- *   channel on its parent node (#1422), spanning the levels in
- *   `additive_<i>` order — the same node `lookupPath` names, and the same space
- *   the progressive loader produces when it concatenates the committed
- *   levels, so the lookup is
- *   correct — for POINTS also under slicing, since the loader now
- *   composes each level's slot → on-disk map into that union space,
- *   offsetting level `i` by the preceding levels' on-disk `n_points`
- *   (#1439). Not for LINES: its raw slot is a per-*segment* one while the
- *   union CSR is per-*vertex* (#1424), so a laddered lines node with a
- *   string channel is wrong at the granularity, not merely at an offset,
- *   whatever the slicing — and nothing composes a lines ladder's LEVELS
- *   either; gsplat ladders carry no labels/keys at all; and
+ *   channel on its parent node (#1422), spanning the levels in `additive_<i>`
+ *   order — the same node `lookupPath` names, and the same space the
+ *   progressive loader produces when it concatenates the committed levels, so
+ *   the lookup is correct — for POINTS also under slicing, since the loader now
+ *   composes each level's slot → on-disk map into that union space, offsetting
+ *   level `i` by the preceding levels' on-disk `n_points` (#1439). Not for
+ *   LINES: its raw slot is a per-*segment* one while the union CSR is
+ *   per-*vertex* (#1424), so a laddered lines node with a string channel is
+ *   wrong at the granularity, not merely at an offset, whatever the slicing —
+ *   and nothing composes a lines ladder's LEVELS either; gsplat ladders carry
+ *   no labels/keys at all; and
  *   (ii) `result.elementId` is only sometimes the on-disk CSR index. It
  *   arrives already resolved wherever the node can resolve one — Points,
  *   GSplats and Lines all do, for a node declaring `has_labels` /

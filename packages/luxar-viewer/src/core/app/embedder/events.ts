@@ -81,19 +81,17 @@ export interface SelectionPayload {
    * pick id, so its start endpoint is the one reported. A multi-additive-LOD
    * (laddered) node carries one labels/keys CSR per present channel on the
    * ladder parent, spanning the levels, and declares `has_labels` / `has_keys`
-   * there (#1422).
-   * On POINTS that resolves like a flat node: the per-level maps are composed
-   * into the union CSR's index space (#1439), so the index holds under culling
-   * and compaction too, degrading to the raw committed slot only when the
-   * levels' own metadata is inconsistent.
-   * On LINES no map is composed across the levels, so it reports the raw
-   * committed slot, which is a per-segment one against the per-vertex union
-   * CSR — wrong at the granularity whatever the slicing (#1439 covers Points
-   * only). Otherwise it is the element's slot in the buffer that reached the
-   * GPU, which after spatial range loading or nD compaction is NOT the on-disk
-   * index — and on a Lines node without a
-   * per-element string channel it is a per-segment slot in what is a per-vertex
-   * element space whatever the slicing. See
+   * there (#1422). On POINTS that resolves like a flat node: the per-level maps
+   * are composed into the union CSR's index space (#1439), so the index holds
+   * under culling and compaction too, degrading to the raw committed slot only
+   * when the levels' own metadata is inconsistent. On LINES no map is composed
+   * across the levels, so it reports the raw committed slot, which is a
+   * per-segment one against the per-vertex union CSR — wrong at the granularity
+   * whatever the slicing (#1439 covers Points only). Otherwise it is the
+   * element's slot in the buffer that reached the GPU, which after spatial
+   * range loading or nD compaction is NOT the on-disk index — and on a Lines
+   * node without a per-element string channel it is a per-segment slot in what
+   * is a per-vertex element space whatever the slicing. See
    * `rendering/picking/picking-system/element-id-map.ts`.
    */
   elementIndex: number;
