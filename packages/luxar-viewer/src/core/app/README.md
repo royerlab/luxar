@@ -67,9 +67,10 @@ app/
   it with live runtime components, cache helpers, scene-walking state, and
   the synthetic-scene injector once `init()` finishes.
 - **`picking/`** — Stands up `rendering/picking/PickingSystem` for the current
-  scene when any node has `has_labels` / `has_image_labels`, tears down any
-  prior session, and wires DOM + Three.js EventDispatcher listeners. The pure
-  pick-result → hover-payload branch logic is split into a separate handler
+  scene when any node has `has_labels` / `has_image_labels` / `has_keys`, an
+  element-action template, or an embedder listener that consumes picks. It tears
+  down any prior session and wires DOM + Three.js EventDispatcher listeners. The
+  pure pick-result → hover-payload branch logic is split into a separate handler
   so it can be unit-tested with stub ports.
 - **`overlays/`** — Builds and disposes the three non-3D HUD layers
   (`OverlayManager`, `ScaleBar`, `ColormapLegend`) on `loadDataset()` /

@@ -507,10 +507,10 @@ export class LuxarApp {
   }
 
   /**
-   * Initialize GPU picking system for hover tooltips.
-   * Only activates if any scene node has labels or image labels
-   * (has_labels / has_image_labels in .zattrs).
-   * Wires up: PickingSystem → LabelLoader/ImageLabelLoader → OverlayManager.updateHoverContent.
+   * Initialize GPU picking for hover tooltips, element actions, and embedder
+   * listeners. Activates for labels, image labels, keys, link/copy templates,
+   * or pick consumers. Wires PickingSystem to the label/key loaders,
+   * ImageLabelLoader, and OverlayManager.
    */
   private async initPicking(): Promise<void> {
     const result = await initPickingImpl({
