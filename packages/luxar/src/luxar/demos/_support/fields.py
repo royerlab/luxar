@@ -28,7 +28,7 @@ from typing import Any
 
 import numpy as np
 
-from ..typing_utils.constants import DEFAULT_BLENDING_MODE
+from ...typing_utils.constants import DEFAULT_BLENDING_MODE
 
 
 @dataclass(frozen=True)

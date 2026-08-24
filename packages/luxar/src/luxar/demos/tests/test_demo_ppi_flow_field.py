@@ -16,12 +16,12 @@ pd = pytest.importorskip("pandas")
 
 # The ``luxar.demos`` package is now importable directly (the sys.modules alias
 # that used to shadow it was removed), so we import the demo's helpers normally.
+from luxar.demos import FlowField, cubic_bounds, trilinear_vector  # noqa: E402
 from luxar.demos.demo_ppi_flow_field import (  # noqa: E402
     _grid_points_for_flat_indices,
     array_hash,
     network_hash,
 )
-from luxar.utils.fields import FlowField, cubic_bounds, trilinear_vector  # noqa: E402
 
 compute_cubic_bounds = cubic_bounds
 _trilinear_vector_batch = trilinear_vector

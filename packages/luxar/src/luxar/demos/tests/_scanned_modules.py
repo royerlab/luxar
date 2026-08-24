@@ -101,6 +101,7 @@ EXCLUDED = frozenset({"__init__.py", "_dependencies.py"})
 REQUIRED_SHARED_HELPERS = frozenset(
     {
         "_caption.py",
+        "fields.py",
         "_graph_common.py",
         "_interop_common.py",
         "_roundtrip_common.py",

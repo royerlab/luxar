@@ -85,9 +85,15 @@ GSPLAT_TREES_PRESENT = (
 MIN_GSPLAT_DEMO_TREES = 1
 MIN_GSPLAT_DEMO_MODULES = 25
 
-#: The two helper modules the barrel exists to front. Importing either one
+#: The helper modules the barrel exists to front. Importing any one
 #: directly from a demo — under any spelling — is the drift this module fails on.
-DEEP_MODULES = frozenset({"luxar.utils.demos", "luxar.utils.data_fetch"})
+DEEP_MODULES = frozenset(
+    {
+        "luxar.demos._support.fields",
+        "luxar.utils.data_fetch",
+        "luxar.utils.demos",
+    }
+)
 
 #: ``(package, leaf)`` PAIRS, so ``from luxar.utils import demos`` is recognised
 #: (it binds the same module object as ``import luxar.utils.demos``) without a
@@ -250,7 +256,7 @@ def _barrel_allowed_names() -> set[str]:
 
 
 def test_no_demo_module_reaches_past_the_barrel() -> None:
-    """No demo module may import ``luxar.utils.demos`` / ``.data_fetch`` directly."""
+    """No demo module may import a shared helper module directly."""
     offenders: dict[str, list[str]] = {}
     for path in _guarded_modules():
         hits = _deep_imports(path)
@@ -284,12 +290,16 @@ def test_the_guard_detects_every_deep_spelling(tmp_path: Path) -> None:
         "import luxar.utils.demos",
         "import luxar.utils.demos as ud",
         "import luxar.utils.data_fetch",
+        "import luxar.demos._support.fields",
         "from luxar.utils.demos import launch_viewer",
         "from luxar.utils.data_fetch import ensure_dataset",
+        "from luxar.demos._support.fields import FlowField",
         "from luxar.utils import demos as ud2",
         "from luxar.utils import data_fetch",
+        "from luxar.demos._support import fields",
         "from ..utils.demos import parse_demo_flags",
         "from ..utils import demos as ud3",
+        "from ._support.fields import cubic_bounds",
     ]
     fine = [
         "from luxar.demos import launch_viewer",  # the one true spelling

@@ -87,21 +87,6 @@ Robust download utilities with retry logic, resume capability, and progress trac
 - `warn_if_quarantined(target, ...)`: Print that notice and return the paths. Called from `robust_download()` so a user about to re-fetch a multi-gigabyte artifact is told that a rejected earlier copy is sitting next to it — instead of watching a huge download silently start over
 - `QUARANTINE_SUFFIX`: The `.corrupt` suffix used when a cached artifact fails validation (see `demos.cache_computed`). A quarantined file is never reused
 
-### `fields.py`
-Shared 3D vector-field helpers for flow-field demos (the PPI flow-field demo
-and the zebrahub RNA-velocity-streamlines demo). Deliberately demo-agnostic —
-each demo keeps its own binning, smoothing, caching, and seeding policy.
-
-**Key Class:**
-- `FlowField`: Frozen dataclass — a cubic vector field on a regular grid (`vectors` `(n,n,n,3)`, `grid_min`/`grid_max`, `spacing`, `cache_key`)
-
-**Key Functions:**
-- `cubic_bounds()`: Symmetric cubic AABB around a point cloud, with fractional padding
-- `trilinear_vector()`: Trilinearly sample a `FlowField` at world points (NaN rows for out-of-bounds)
-- `unit_flow()`: Direction-only sample (NaN where the field is zero or out-of-bounds)
-- `rk4_step()`: Vectorized 4-stage Runge-Kutta advection step (NaN-fills streamlines that leave the domain)
-- `add_reference_cube_to_scene()`: Add the field's cubic domain as a 12-edge wire cube (Lines geometry) to a Luxar scene
-
 ### `lod_breakpoints.py`
 Streaming-ladder breakpoint math, shared by all three geometries (Points, Lines,
 GSplats). An additive (streaming) ladder cuts an importance-ordered element

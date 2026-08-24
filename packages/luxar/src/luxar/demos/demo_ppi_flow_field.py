@@ -72,7 +72,15 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, UIConfig, ViewerConfig
-from luxar.demos import add_demo_caption, launch_viewer, require_module
+from luxar.demos import (
+    FlowField,
+    add_demo_caption,
+    add_reference_cube_to_scene,
+    cubic_bounds,
+    launch_viewer,
+    require_module,
+    rk4_step,
+)
 from luxar.demos._cinematic_camera import pull_in
 from luxar.demos._graph_common import (
     compute_communities as louvain_communities,
@@ -84,12 +92,6 @@ from luxar.demos._graph_common import (
     load_huri_edges,
 )
 from luxar.demos._support._umap_utils import get_categorical_color
-from luxar.utils.fields import (
-    FlowField,
-    add_reference_cube_to_scene,
-    cubic_bounds,
-    rk4_step,
-)
 from luxar.utils.paths import get_demos_output_dir
 
 # -----------------------------------------------------------------------------
@@ -699,7 +701,7 @@ def compute_vector_field(
 # -----------------------------------------------------------------------------
 
 
-# Streamline integration uses rk4_step from luxar.utils.fields (imported above).
+# Streamline integration uses rk4_step from the luxar.demos barrel (imported above).
 
 
 def _select_streamline_seeds(pagerank: np.ndarray, max_seeds: int | None) -> np.ndarray:
