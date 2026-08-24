@@ -6,7 +6,7 @@
 #
 .PHONY: help install-dev install-demo-deps format-python format-typescript format-rust format-cuda format-go format-all gen-contract gen-data-manifest \
         lint-python lint-typescript type-check-python type-check-typescript security check-complexity \
-        test-all test-python test-cov-python test-cov-typescript test-cov-all test-fixtures test-wasm test-viewer test-viewer-fixtures \
+        test-all test-python test-cov-python test-cov-typescript test-cov-all test-fixtures ensure-viewer-fixtures test-wasm test-viewer test-viewer-fixtures \
         test-e2e test-e2e-smoke test-perf-e2e \
         clean-all clean-python clean-viewer clean-examples clean-cache clean-setup enable-pre-commit run-pre-commit \
         check-all check-typescript check-rust check-knip check-wasm-deps setup-dev \
@@ -2661,6 +2661,13 @@ test-viewer:  ## Run TypeScript tests (without regenerating fixtures)
 	fi
 	cd packages/luxar-viewer && pnpm test --run
 
+ensure-viewer-fixtures:  ## Regenerate stale generated fixtures before full E2E
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-viewer && pnpm install; \
+	fi
+	cd packages/luxar-viewer && pnpm exec tsx tools/fixture-freshness.ts --ensure
+
 test-cov-typescript:  ## Run TypeScript tests with coverage
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
@@ -2668,7 +2675,7 @@ test-cov-typescript:  ## Run TypeScript tests with coverage
 	fi
 	cd packages/luxar-viewer && pnpm run test:coverage
 
-test-e2e: run-examples  ## Run the full Playwright E2E suite (~17 min at 4 workers; workers scale with load)
+test-e2e: run-examples ensure-viewer-fixtures  ## Run the full Playwright E2E suite (~17 min at 4 workers; workers scale with load)
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
 		cd packages/luxar-viewer && pnpm install; \

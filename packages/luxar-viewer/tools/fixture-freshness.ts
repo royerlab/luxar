@@ -1,5 +1,6 @@
 /** Freshness fingerprints for Python-generated viewer fixtures. */
 
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
@@ -12,6 +13,8 @@ import {
 
 const VIEWER_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PROJECT_ROOT = resolve(VIEWER_ROOT, '../..');
+
+type FixtureGenerator = (scriptPath: string) => void;
 
 /**
  * Every Python file whose content can change what the generator writes.
@@ -131,8 +134,51 @@ export function stampExpectationsInputs(
   );
 }
 
+function runFixtureGenerator(scriptPath: string, projectRoot: string = PROJECT_ROOT): void {
+  execFileSync('hatch', ['run', 'fixtures:python', scriptPath], {
+    cwd: projectRoot,
+    stdio: 'inherit',
+  });
+}
+
+/** Regenerate stale or incomplete fixture artifacts, otherwise return immediately. */
+export function ensureGeneratedFixtures(
+  projectRoot: string = PROJECT_ROOT,
+  fixturesDir: string = resolve(projectRoot, FIXTURES_REPO_RELATIVE_PATH),
+  generate: FixtureGenerator = (scriptPath) => runFixtureGenerator(scriptPath, projectRoot)
+): void {
+  const fixtureGenerator = resolve(fixturesDir, 'generate_test_data.py');
+  const expected = parseGeneratedFixtureNames(fixtureGenerator);
+  const incomplete = expected.filter(
+    (name) => !isGeneratedFixtureComplete(resolve(fixturesDir, name))
+  );
+  const regeneratedFixtures = incomplete.length > 0 || areFixturesStale(projectRoot, fixturesDir);
+
+  if (regeneratedFixtures) generate(fixtureGenerator);
+
+  const stillIncomplete = expected.filter(
+    (name) => !isGeneratedFixtureComplete(resolve(fixturesDir, name))
+  );
+  if (stillIncomplete.length > 0) {
+    throw new Error(
+      `Fixture generation left missing or incomplete outputs: ${stillIncomplete.join(', ')}`
+    );
+  }
+  stampFixtureInputs(projectRoot, fixturesDir);
+
+  if (areExpectationsStale(regeneratedFixtures, projectRoot, fixturesDir)) {
+    generate(resolve(fixturesDir, 'generate_expectations.py'));
+  }
+  stampExpectationsInputs(projectRoot, fixturesDir);
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  stampFixtureInputs();
-  stampExpectationsInputs();
-  console.log('[fixture-freshness] Generated fixture stamps updated.');
+  if (process.argv.includes('--ensure')) {
+    ensureGeneratedFixtures();
+    console.log('[fixture-freshness] Generated fixtures are current.');
+  } else {
+    stampFixtureInputs();
+    stampExpectationsInputs();
+    console.log('[fixture-freshness] Generated fixture stamps updated.');
+  }
 }

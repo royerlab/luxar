@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   areFixturesStale,
+  ensureGeneratedFixtures,
   expectationsInputsFingerprint,
   fixtureInputFiles,
   fixtureInputsFingerprint,
@@ -145,5 +146,56 @@ describe('generated fixture freshness', () => {
       'Cannot stamp missing or incomplete generated fixtures: test.luxar.zarr'
     );
     expect(() => readFileSync(join(fixturesDir, '.fixture-inputs.sha256'))).toThrow();
+  });
+
+  it('does not run generators when fixtures and expectations are current', () => {
+    const { fixturesDir, projectRoot } = writeFixtureInputs();
+    stampExpectationsInputs(projectRoot, fixturesDir);
+    const generated: string[] = [];
+
+    ensureGeneratedFixtures(projectRoot, fixturesDir, (script) => generated.push(script));
+
+    expect(generated).toEqual([]);
+  });
+
+  it('regenerates and stamps stale fixtures before an E2E run', () => {
+    const { fixturesDir, projectRoot, writerPath } = writeFixtureInputs();
+    stampExpectationsInputs(projectRoot, fixturesDir);
+    writeFileSync(writerPath, 'WRITER_VERSION = 2\n');
+    const generated: string[] = [];
+
+    ensureGeneratedFixtures(projectRoot, fixturesDir, (script) => generated.push(script));
+
+    expect(generated.map((script) => script.slice(script.lastIndexOf('/') + 1))).toEqual([
+      'generate_test_data.py',
+      'generate_expectations.py',
+    ]);
+    expect(areFixturesStale(projectRoot, fixturesDir)).toBe(false);
+  });
+
+  it('regenerates an incomplete fixture set before stamping it current', () => {
+    const { fixturesDir, projectRoot } = writeFixtureInputs();
+    rmSync(join(fixturesDir, 'test.luxar.zarr'), { recursive: true });
+    const generated: string[] = [];
+
+    ensureGeneratedFixtures(projectRoot, fixturesDir, (script) => {
+      generated.push(script);
+      if (script.endsWith('generate_test_data.py')) {
+        mkdirSync(join(fixturesDir, 'test.luxar.zarr'));
+        writeFileSync(join(fixturesDir, 'test.luxar.zarr/.zmetadata'), '{}\n');
+      }
+    });
+
+    expect(generated.map((script) => script.slice(script.lastIndexOf('/') + 1))).toEqual([
+      'generate_test_data.py',
+      'generate_expectations.py',
+    ]);
+    expect(areFixturesStale(projectRoot, fixturesDir)).toBe(false);
+  });
+
+  it('wires the generated-fixture ensure step into full E2E', () => {
+    const makefile = readFileSync(resolve(REPO_ROOT, 'Makefile'), 'utf8');
+
+    expect(makefile).toContain('test-e2e: run-examples ensure-viewer-fixtures ');
   });
 });
