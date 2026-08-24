@@ -217,9 +217,10 @@ outright, because it cannot damage what it keeps:
 There is no trade-off to tune: the signal columns are exactly 1.0000 at every
 threshold *by construction*, while NLM dimmed peaks by 6–22%. Only the noise
 column moves, and it plateaus quickly — so take the knee. Downstream the size
-filter gave equal or better foreground PSNR almost everywhere from ~1/10 the
-splats — NLM edged it 19.66 vs 19.51 at t=0 and 19.04 vs 18.77 at t=150 — and the
-fitted result reproduced 1–11% of out-of-signal energy against NLM's 22–50%.
+filter gave equal or better foreground PSNR almost everywhere — NLM edged it
+19.66 vs 19.51 at t=0 and 19.04 vs 18.77 at t=150 — while using ~1/10 the
+splats at early timepoints and about half over the whole archive. The fitted
+result reproduced 1–11% of out-of-signal energy against NLM's 22–50%.
 Scipy, run per timepoint/channel rather than on the stacked array:
 `ndimage.label(v > background, structure=generate_binary_structure(v.ndim, 1))`
 then zero the labels whose `bincount` is below the threshold. Set `background`
