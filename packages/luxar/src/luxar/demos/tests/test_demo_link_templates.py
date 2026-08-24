@@ -20,6 +20,7 @@ import subprocess
 import sys
 from collections import Counter
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlsplit
 
 from ._scanned_modules import scanned_demo_modules
@@ -76,6 +77,101 @@ CANONICAL_LINKS_BY_HOST = {
 CANONICAL_LINKS = frozenset(
     template for templates in CANONICAL_LINKS_BY_HOST.values() for template in templates
 )
+
+# Request audits live beside the canonical registry so a new destination cannot
+# acquire a green static pin without also declaring how its liveness is checked.
+# API-backed probes are used only where the public page is a nondiscriminating
+# JavaScript shell; ``landing_template`` still verifies that canonical page route.
+DEMO_LINK_AUDITS_BY_HOST: dict[str, dict[str, Any]] = {
+    "bgp.he.net": {
+        "mode": "body-marker",
+        "url_template": "https://bgp.he.net/AS{value}",
+        "good": "15169",
+        "bad": "4294967295",
+        "good_marker": "AS15169 Google LLC",
+    },
+    "codex.flywire.ai": {
+        "mode": "human",
+        "reason": "the app shell does not expose cell validity to a plain request",
+        "last_checked": "2026-08-24",
+    },
+    "doi.org": {
+        "mode": "status",
+        "url_template": "https://doi.org/{value}",
+        "good": "10.48550/arXiv.2101.12345",
+        "bad": "10.48550/arXiv.0000.00000",
+    },
+    "earthquake.usgs.gov": {
+        "mode": "status",
+        "landing_template": (
+            "https://earthquake.usgs.gov/earthquakes/eventpage/{value}"
+        ),
+        "url_template": (
+            "https://earthquake.usgs.gov/fdsnws/event/1/query"
+            "?format=geojson&eventid={value}"
+        ),
+        "good": "us7000dflf",
+        "bad": "not-an-event",
+    },
+    "en.wikipedia.org": {
+        "mode": "redirect",
+        "url_template": ("https://en.wikipedia.org/wiki/Special:Search?search={value}"),
+        "good": "TP53",
+        "bad": "LUXAR_NO_SUCH_ARTICLE_2089",
+        "good_final_marker": "/wiki/TP53",
+    },
+    "genome.ucsc.edu": {
+        "mode": "human",
+        "reason": "Cloudflare Turnstile returns the same interstitial for both loci",
+        "last_checked": "2026-08-24",
+    },
+    "simbad.cds.unistra.fr": {
+        "mode": "body-marker",
+        "url_template": (
+            "https://simbad.cds.unistra.fr/simbad/sim-basic?Ident={value}"
+        ),
+        "good": "Betelgeuse",
+        "bad": "LUXAR_NO_SUCH_STAR_2089",
+        "good_marker": "<h1>Betelgeuse",
+    },
+    "ssd.jpl.nasa.gov": {
+        "mode": "human",
+        "reason": "the identifier is URL-fragment state and is never sent in HTTP",
+        "last_checked": "2026-08-24",
+    },
+    "www.ebi.ac.uk": {
+        "mode": "json-count",
+        "landing_template": "https://www.ebi.ac.uk/ols4/search?q={value}",
+        "url_template": ("https://www.ebi.ac.uk/ols4/api/search?q={value}&rows=1"),
+        "good": "CL:0000540",
+        "bad": "LUXAR_NO_SUCH_TERM_2089",
+        "count_path": ("response", "numFound"),
+    },
+    "www.genecards.org": {
+        "mode": "human",
+        "reason": "Cloudflare returns 403 for both valid and invalid genes",
+        "last_checked": "2026-08-24",
+    },
+    "www.proteinatlas.org": {
+        "mode": "body-marker",
+        "url_template": "https://www.proteinatlas.org/search/{value}",
+        "good": "TP53",
+        "bad": "LUXAR_NO_SUCH_GENE_2089",
+        "good_marker": "<title>Search: TP53 - The Human Protein Atlas</title>",
+    },
+    "www.uniprot.org": {
+        "mode": "status",
+        "landing_template": "https://www.uniprot.org/uniprotkb/{value}/entry",
+        "url_template": "https://rest.uniprot.org/uniprotkb/{value}",
+        "good": "P04637",
+        "bad": "LUXAR2089",
+    },
+    "www.youtube.com": {
+        "mode": "human",
+        "reason": "search accepts every query and bogus text still returns results",
+        "last_checked": "2026-08-24",
+    },
+}
 # Keep in sync with hover-template.ts's PLACEHOLDER_PATTERN; hover_image_label is HTML-only.
 LINK_PLACEHOLDERS = ("hover_key", "hover_label", "hover_node", "hover_index")
 
@@ -313,6 +409,10 @@ def test_demo_links_use_registered_canonical_templates() -> None:
     assert resolved_templates == CANONICAL_LINKS, (
         f"unused canonical templates: {sorted(CANONICAL_LINKS - resolved_templates)}"
     )
+
+
+def test_demo_link_audits_cover_every_registered_destination() -> None:
+    assert DEMO_LINK_AUDITS_BY_HOST.keys() == CANONICAL_LINKS_BY_HOST.keys()
 
 
 def test_demo_link_guard_collects_by_module_with_doctests_enabled() -> None:
