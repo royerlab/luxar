@@ -472,9 +472,10 @@ export class InputContextManager {
             const handled = binding.keyupHandler(event) !== false;
             if (handled && binding.preventDefault) event.preventDefault();
             if (handled) return true;
+          } else {
+            // No keyupHandler = this binding doesn't handle keyup
+            return false;
           }
-          // No keyupHandler = this binding doesn't handle keyup
-          return false;
         } else {
           // On keydown: call main handler
           const handled = binding.handler(event) !== false;

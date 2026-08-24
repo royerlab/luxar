@@ -55,9 +55,9 @@ interface HelpSection {
 }
 
 /**
- * The shortcut reference. Maintained by hand alongside the key bindings in
- * input/input-handler/key-bindings/ — keep the two in sync when bindings
- * change.
+ * Pointer gestures remain authored here. Keyboard rows carry canonical
+ * context/key references and are rendered only when the live registration
+ * snapshot contains every referenced binding.
  */
 const HELP_SECTIONS: HelpSection[] = [
   {

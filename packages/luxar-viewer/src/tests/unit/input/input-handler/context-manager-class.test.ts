@@ -333,6 +333,43 @@ describe('InputContextManager', () => {
       expect(lower).toHaveBeenCalledWith(event);
     });
 
+    it('falls through on keyup when a keyup handler declines', () => {
+      const higher = vi.fn(() => false);
+      const lower = vi.fn();
+      manager.registerBinding(InputContext.UI_INTERACTION, {
+        key: 'h',
+        handler: vi.fn(),
+        keyupHandler: higher,
+      });
+      manager.registerBinding(InputContext.NAVIGATION, {
+        key: 'h',
+        handler: vi.fn(),
+        keyupHandler: lower,
+      });
+      manager.setContext(InputContext.UI_INTERACTION);
+
+      const event = new KeyboardEvent('keyup', { key: 'h' });
+      expect(manager.handleKeyEvent(event, 'up')).toBe(true);
+      expect(higher).toHaveBeenCalledWith(event);
+      expect(lower).toHaveBeenCalledWith(event);
+    });
+
+    it('continues Escape routing from typing when a higher context declines', () => {
+      const higher = vi.fn(() => false);
+      const lower = vi.fn();
+      manager.registerBinding(InputContext.UI_INTERACTION, {
+        key: 'Escape',
+        handler: higher,
+      });
+      manager.registerBinding(InputContext.NAVIGATION, { key: 'Escape', handler: lower });
+      manager.setContext(InputContext.TYPING);
+
+      const event = new KeyboardEvent('keydown', { key: 'Escape' });
+      expect(manager.handleKeyEvent(event, 'down')).toBe(true);
+      expect(higher).toHaveBeenCalledWith(event);
+      expect(lower).toHaveBeenCalledWith(event);
+    });
+
     it('does not prevent default when a handler declines the event', () => {
       manager.registerBinding(InputContext.NAVIGATION, {
         key: 'h',
