@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /**
  * R3: focused unit tests for the cache-tab helper functions exported
- * from `data-loading-monitor/templates.ts`. These guard the small pure
+ * from `data-loading-monitor/templates/cache.ts`. These guard the small pure
  * helpers used by both the initial render and the per-tick patcher so
  * changes to the cache-tab UI stay in sync across both paths.
  *
@@ -27,12 +27,12 @@ import {
   CACHE_WARMUP_ACCESSES,
   renderCacheContent,
   CACHE_SECTION_KEYS,
-} from '../../../../ui/data-loading-monitor/templates';
+} from '../../../../../ui/data-loading-monitor/templates/cache';
 import type {
   CacheMetrics,
   CacheStatusBadge,
   GlobalStats,
-} from '../../../../types/data-monitor-types';
+} from '../../../../../types/data-monitor-types';
 
 function makeGlobalStats(): GlobalStats {
   return {
@@ -189,6 +189,17 @@ describe('l2ErrorTotal', () => {
         // writeFailures, corruptedEntries, metadataParseFailures all undefined
       })
     ).toBe(5);
+  });
+});
+
+describe('getCacheHitRateColorClass', () => {
+  it('uses strict-greater-than thresholds (80 maps to warning, not success)', () => {
+    expect(getCacheHitRateColorClass(100)).toBe('luxar-color--success');
+    expect(getCacheHitRateColorClass(80.1)).toBe('luxar-color--success');
+    expect(getCacheHitRateColorClass(80)).toBe('luxar-color--warning');
+    expect(getCacheHitRateColorClass(50.1)).toBe('luxar-color--warning');
+    expect(getCacheHitRateColorClass(50)).toBe('luxar-color--error');
+    expect(getCacheHitRateColorClass(0)).toBe('luxar-color--error');
   });
 });
 
