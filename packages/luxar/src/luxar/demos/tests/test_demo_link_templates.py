@@ -332,7 +332,7 @@ def test_demo_link_guard_collects_by_module_with_doctests_enabled() -> None:
         text=True,
     )
 
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 0, result.stdout + result.stderr
     assert "test_demo_links_use_registered_canonical_templates" in result.stdout
 
 
