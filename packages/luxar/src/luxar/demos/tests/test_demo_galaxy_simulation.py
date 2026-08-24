@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import math
 import sys
 from pathlib import Path
 
@@ -51,3 +52,14 @@ def test_main_validates_frames_before_building(monkeypatch: pytest.MonkeyPatch) 
 
     with pytest.raises(ValueError, match="odd"):
         _demo.main()
+
+
+def test_opening_camera_is_solved_once_at_the_cinematic_lens() -> None:
+    position = _demo.galaxy_camera_position()
+    distance = math.dist((0.0, 0.0, 0.0), position)
+
+    assert distance == pytest.approx(35.05, rel=1e-3)
+    effective_fill = math.degrees(math.asin(_demo.R_DISC_MAX / distance)) / float(
+        _demo.CINEMATIC_FOV_DEG
+    )
+    assert effective_fill == pytest.approx(_demo.CAMERA_FILL)

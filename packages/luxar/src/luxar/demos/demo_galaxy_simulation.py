@@ -152,7 +152,7 @@ from arbol import aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import add_demo_caption, launch_viewer
-from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG, pull_in
+from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -275,12 +275,23 @@ T_FRAMES = 25
 
 #: Camera framing. Solved at the cinematic preset's own lens, so `fov` is left
 #: unset on the CameraConfig (see `demos/_cinematic_camera.py`).
-CAMERA_FILL = 0.42
+CAMERA_FILL = 0.617
 #: A low, near-edge-on inclination shows the disc's thickness, the dust lanes
 #: and the bulge all at once; face-on shows the arms best. 32 degrees is the
 #: compromise most galaxy photographs are taken at.
 CAMERA_INCLINATION_DEG = 32.0
 AUTO_ROTATE_SPEED = 0.10
+
+
+def galaxy_camera_position() -> tuple[float, float, float]:
+    """Return the opening camera position solved at the cinematic lens."""
+    distance = R_DISC_MAX / np.sin(np.radians(CINEMATIC_FOV_DEG * CAMERA_FILL))
+    inclination = np.radians(CAMERA_INCLINATION_DEG)
+    return (
+        0.0,
+        float(distance * np.sin(inclination)),
+        float(distance * np.cos(inclination)),
+    )
 
 #: Authored per-point gain. Millions of additive points over a disc sum hard, so
 #: this is small by construction; it is dialled against a render rather than
@@ -789,13 +800,8 @@ def generate_galaxy(output_path: Path, n_disc: int, n_frames: int) -> int:
             ]
         )
 
-        distance = R_DISC_MAX / np.sin(np.radians(CINEMATIC_FOV_DEG * CAMERA_FILL))
-        inc = np.radians(CAMERA_INCLINATION_DEG)
-        camera_pos = (
-            0.0,
-            float(distance * np.sin(inc)),
-            float(distance * np.cos(inc)),
-        )
+        camera_pos = galaxy_camera_position()
+        distance = float(np.linalg.norm(camera_pos))
         aprint(
             f"Camera distance {distance:.1f} kpc at {CAMERA_INCLINATION_DEG:.0f} deg"
         )
@@ -811,7 +817,7 @@ def generate_galaxy(output_path: Path, n_disc: int, n_frames: int) -> int:
                     auto_rotate=True,
                     auto_rotate_speed=AUTO_ROTATE_SPEED,
                     camera=CameraConfig(
-                        position=pull_in(camera_pos, (0.0, 0.0, 0.0)),
+                        position=camera_pos,
                         target=(0.0, 0.0, 0.0),
                     ),
                 ),
