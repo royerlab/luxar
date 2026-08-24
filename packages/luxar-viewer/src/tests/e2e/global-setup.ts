@@ -30,6 +30,7 @@ import {
   isGeneratedFixtureComplete,
   parseGeneratedFixtureNames,
 } from '../../../tools/fixture-manifest';
+import { checkExampleFixtureFreshness } from '../../../tools/example-fixture-freshness';
 import { e2eWorkerPlan, formatE2EParallelismStamp } from '../../../tools/e2e-workers';
 
 // `package.json` declares `"type": "module"`, so the CommonJS `__dirname`
@@ -160,6 +161,20 @@ export default async function globalSetup(config: FullConfig) {
     // (e.g., basic-rendering, viewer-initialization, test-fixtures, geometry-types)
   } else {
     console.log(`✅ Examples directory found: ${examplesDir}`);
+
+    const freshness = checkExampleFixtureFreshness(projectRoot);
+    if (freshness === 'stale') {
+      throw new Error(
+        'Example datasets are stale. Run "make run-examples" from the repository root.'
+      );
+    }
+    if (freshness === 'unavailable') {
+      hasDatasetWarnings = true;
+      console.warn('⚠️  Could not run the example fixture freshness checker.');
+      console.warn('   Continuing with presence checks only.\n');
+    } else {
+      console.log('✅ Example datasets match the current fixture producer');
+    }
 
     // Check 2: Verify required datasets exist locally and through the HTTP server.
     const missingDatasets: string[] = [];

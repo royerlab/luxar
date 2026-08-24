@@ -14,31 +14,32 @@ scripts/
 └── gallery/               # Gallery dataset generation, capture manifest, and scoring tools
 ```
 
-| Script | Purpose |
-|--------|---------|
-| `check_documentation.py` | Baseline-driven ratchet over package README paths/content plus Python docstring and TypeScript JSDoc coverage (JSON output; fails only on new findings) |
-| `check_complexity.py` | Baseline-driven ratchet over ruff's `C901` cyclomatic-complexity rule (fails only on newly over-complex, or newly worse, functions) |
-| `check_demo_ladders.py` | Audit built demo scenes for missing or degenerate additive streaming ladders |
-| `check_scene_credits.py` | Verify built demo stores carry the `short`, `doi`, and `license` their registry citation declares |
-| `check_fixture_env.py` | Assert the viewer-fixture Hatch environment is CPU-only and free of default-env tooling |
-| `check_version_consistency.py` | Verify the zero-padded Python CalVer and npm-normalized viewer version describe the same release |
-| `set_version.py` | Update the Python and viewer release versions together |
-| `release.sh` | Run release preflight checks, then create and push the release tag |
-| `gen_format_contract.py` | Generate the Python and TypeScript format-contract projections from `format-contract/contract.yaml` |
-| `gen_data_manifest.py` | Regenerate the demo-data manifest (`demos/data_manifest.json`); `--check` is the CI drift gate |
-| `gen_zenodo_records.py` | Generate the Zenodo record descriptions from the manifest and the archives' own stamps; `--check` lists rows that would publish incomplete (never contacts Zenodo) |
-| `generate_galaxy_simple.py` | Fetch Gaia DR3 stars → raw zarr table for demos |
-| `gen_census_umap.py` | Build the large CELLxGENE Census scVI/UMAP cache on a CUDA/RAPIDS environment |
-| `generate_builtin_colormaps.py` | Regenerate built-in colormap LUTs (Python + TS) |
-| `build_cuda_slurm.py` | Submit a CUDA extension build job to Slurm |
-| `check_hpc_setup.py` | Smoke-test the HPC/venv-fallback dev environment |
-| `calibrate_gsplat_demos.py` | Run `luxar gsplat cal` on every gsplat demo's volume(s) |
-| `update_demo_max_splats.py` | Apply calibrated K\* to each demo's `MAX_SPLATS` constant |
-| `add_additive_lod_to_demos.py` | Add an additive LOD ladder to each gsplat demo baseline |
-| `reencode_gsplat_demos.py` | Re-encode and rebuild LOD ladders for committed gsplat demo baselines without refitting |
-| `benchmark_progressive_psnr.py` | Benchmark progressive gsplat fitting (PSNR/SSIM) |
-| `refit_gsplat_demos.sh` | Force-refit every gsplat demo (sequential) |
-| `run_demo_recompute.sh` | Sequential demo recompute from scratch |
+| Script                          | Purpose                                                                                                                                                            |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `check_documentation.py`        | Baseline-driven ratchet over package README paths/content plus Python docstring and TypeScript JSDoc coverage (JSON output; fails only on new findings)            |
+| `check_complexity.py`           | Baseline-driven ratchet over ruff's `C901` cyclomatic-complexity rule (fails only on newly over-complex, or newly worse, functions)                                |
+| `check_demo_ladders.py`         | Audit built demo scenes for missing or degenerate additive streaming ladders                                                                                       |
+| `check_scene_credits.py`        | Verify built demo stores carry the `short`, `doi`, and `license` their registry citation declares                                                                  |
+| `check_fixture_env.py`          | Assert the viewer-fixture Hatch environment is CPU-only and free of default-env tooling                                                                            |
+| `check_version_consistency.py`  | Verify the zero-padded Python CalVer and npm-normalized viewer version describe the same release                                                                   |
+| `set_version.py`                | Update the Python and viewer release versions together                                                                                                             |
+| `release.sh`                    | Run release preflight checks, then create and push the release tag                                                                                                 |
+| `gen_format_contract.py`        | Generate the Python and TypeScript format-contract projections from `format-contract/contract.yaml`                                                                |
+| `gen_data_manifest.py`          | Regenerate the demo-data manifest (`demos/data_manifest.json`); `--check` is the CI drift gate                                                                     |
+| `gen_zenodo_records.py`         | Generate the Zenodo record descriptions from the manifest and the archives' own stamps; `--check` lists rows that would publish incomplete (never contacts Zenodo) |
+| `generate_galaxy_simple.py`     | Fetch Gaia DR3 stars → raw zarr table for demos                                                                                                                    |
+| `gen_census_umap.py`            | Build the large CELLxGENE Census scVI/UMAP cache on a CUDA/RAPIDS environment                                                                                      |
+| `generate_builtin_colormaps.py` | Regenerate built-in colormap LUTs (Python + TS)                                                                                                                    |
+| `build_cuda_slurm.py`           | Submit a CUDA extension build job to Slurm                                                                                                                         |
+| `check_hpc_setup.py`            | Smoke-test the HPC/venv-fallback dev environment                                                                                                                   |
+| `calibrate_gsplat_demos.py`     | Run `luxar gsplat cal` on every gsplat demo's volume(s)                                                                                                            |
+| `update_demo_max_splats.py`     | Apply calibrated K\* to each demo's `MAX_SPLATS` constant                                                                                                          |
+| `add_additive_lod_to_demos.py`  | Add an additive LOD ladder to each gsplat demo baseline                                                                                                            |
+| `reencode_gsplat_demos.py`      | Re-encode and rebuild LOD ladders for committed gsplat demo baselines without refitting                                                                            |
+| `benchmark_progressive_psnr.py` | Benchmark progressive gsplat fitting (PSNR/SSIM)                                                                                                                   |
+| `refit_gsplat_demos.sh`         | Force-refit every gsplat demo (sequential)                                                                                                                         |
+| `run_demo_recompute.sh`         | Sequential demo recompute from scratch                                                                                                                             |
+| `run_examples.py`               | Regenerate `datasets/examples/` when the example builders or Luxar writer changed; `--check` is the E2E freshness gate                                             |
 
 ## Demo Ladder Structural Gate
 
@@ -73,15 +74,15 @@ hatch run check-demo-ladders --screen-only --screen-verdict win --screen-render-
 hatch run check-demo-ladders --screen --screen-aspect 4:3=1.3333
 ```
 
-| flag | meaning |
-|---|---|
-| `--screen` | append the screen to the streaming-ladder gate |
-| `--screen-only` | run ONLY the screen; the gate is skipped |
-| `--screen-aspect` | aspects to measure at, as `label=value`, `W:H` or a bare number (default 1:1, 16:9, 21:9) |
-| `--screen-viewport-long` | pixels on the viewport's LONG axis; affects the legacy diagonal metric only |
-| `--screen-fit-fov` | vertical FOV the fitted camera DISTANCE uses (default 47, the viewer's own) |
-| `--screen-render-fov` | fallback vertical FOV where the store does not author `camera.fov` (pass 63 for the cinematic/35mm preset) |
-| `--screen-verdict` | show only these buckets (repeatable): `win`, `fragile`, `no-op`, `off-screen`, `already-current`, `skipped` |
+| flag                     | meaning                                                                                                     |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| `--screen`               | append the screen to the streaming-ladder gate                                                              |
+| `--screen-only`          | run ONLY the screen; the gate is skipped                                                                    |
+| `--screen-aspect`        | aspects to measure at, as `label=value`, `W:H` or a bare number (default 1:1, 16:9, 21:9)                   |
+| `--screen-viewport-long` | pixels on the viewport's LONG axis; affects the legacy diagonal metric only                                 |
+| `--screen-fit-fov`       | vertical FOV the fitted camera DISTANCE uses (default 47, the viewer's own)                                 |
+| `--screen-render-fov`    | fallback vertical FOV where the store does not author `camera.fov` (pass 63 for the cinematic/35mm preset)  |
+| `--screen-verdict`       | show only these buckets (repeatable): `win`, `fragile`, `no-op`, `off-screen`, `already-current`, `skipped` |
 
 ---
 
@@ -95,6 +96,7 @@ all nested subpackages. It parses Python with the AST and validates backticked
 path-like references in tracked package READMEs.
 
 **Purpose:**
+
 - Require a README for each top-level package under `luxar/` and viewer `src/`
 - Require Quick Start/Getting Started headings and code examples in Python package READMEs
 - Flag low Python docstring and TypeScript JSDoc coverage
@@ -123,6 +125,7 @@ hatch run docs:python scripts/check_documentation.py --no-baseline
 ```
 
 **What it checks:**
+
 - Top-level Python packages have README.md files with minimum content markers
 - Top-level TypeScript packages have README.md files
 - Python modules, functions, classes and methods carry docstrings (AST-parsed, exact)
@@ -147,13 +150,14 @@ Enforces `[tool.ruff.lint.mccabe] max-complexity` (10) as a baseline-driven
 ratchet, the same shape as the documentation ratchet above.
 
 **Purpose:**
+
 - Run `ruff check --select C901` over the same paths as `hatch run lint`
 - Tolerate the pre-existing over-limit functions recorded in
   `scripts/complexity_baseline.json` (228 at the time of writing)
 - Fail (exit 1) when a function is newly over the limit, or when a baselined
-  one gets *more* complex
+  one gets _more_ complex
 - Report paid-down debt as advisory (exit 0) so the baseline can be tightened
-- Report a *move* (a baselined function reappearing under a new path at no
+- Report a _move_ (a baselined function reappearing under a new path at no
   greater complexity, with or without a tidy-up) as advisory too, itemised
   old-key-to-new-key, so a module-move series is not a false red. Full runs
   only — see the restricted-scan note below
@@ -162,7 +166,7 @@ ratchet, the same shape as the documentation ratchet above.
   warning otherwise leaves a partial scan behind a normal exit code), or a FULL
   run that found nothing while the baseline is populated (a mistyped target, a
   wrong `--project-root`, a partial checkout).
-  A *restricted* run finding nothing is legitimate — a subtree may simply be
+  A _restricted_ run finding nothing is legitimate — a subtree may simply be
   clean — so that only warns
 
 `C901` is deliberately not in `[tool.ruff.lint] select`: ruff has no baseline
@@ -212,10 +216,12 @@ tree is regression-free, so the ratchet gates every PR.
 Fetches real star data from ESA's Gaia DR3 archive and saves it as a **raw zarr table** (NOT Luxar format).
 
 **Purpose:**
+
 - Generates raw astronomical data for use in demos
 - Output is consumed by `demo_gaia_milky_way_3m.py`
 
 **Additional Dependencies:**
+
 ```bash
 pip install 'luxar[demos]'
 ```
@@ -247,6 +253,7 @@ from a completed raw zarr without repeating the TAP query.
 **Output Format:**
 
 Raw zarr table (NOT Luxar format) with arrays:
+
 - `x_kpc` - Galactocentric X coordinate (float32)
 - `y_kpc` - Galactocentric Y coordinate (float32)
 - `z_kpc` - Galactocentric Z coordinate (float32)
@@ -256,16 +263,19 @@ Raw zarr table (NOT Luxar format) with arrays:
 Plus metadata: `num_stars`, `magnitude_range`, `description`, `data_source`
 
 **Query Parameters:**
+
 - `parallax > 0.1 mas` → distances up to ~10 kpc from Sun
 - `parallax_over_error > 5` → high-quality measurements only
 - `ORDER BY phot_g_mean_mag ASC` → sorted by brightness
 
 **Coordinate Transform:**
+
 - Uses Astropy's Galactocentric frame
 - R₀ = 8.122 kpc (Sun-GC distance, GRAVITY 2018)
 - Filters to stars within 30 kpc of Galactic Center
 
 **To visualize the data:**
+
 ```bash
 # The raw data CANNOT be viewed directly
 # Use the demo which converts to Luxar format:
@@ -287,6 +297,7 @@ DOI: 10.1051/0004-6361/202243940
 ---
 
 **See also:**
+
 - `demo_gaia_milky_way_3m.py` - Converts raw data to Luxar format and visualizes
 - ESA Gaia Archive: https://gea.esac.esa.int/archive/
 
@@ -301,11 +312,13 @@ source files for **both** the Python package and the TypeScript viewer, keeping
 the two in sync. Requires matplotlib for generation only (not at runtime).
 
 **Usage:**
+
 ```bash
 hatch run python scripts/generate_builtin_colormaps.py
 ```
 
 **Outputs (overwritten in place):**
+
 - `packages/luxar/src/luxar/colormaps/builtins.py`
 - `packages/luxar-viewer/src/rendering/colormap-data.ts`
 
@@ -326,6 +339,7 @@ generates a self-contained sbatch script with step-by-step diagnostics, and
 submits it (or previews with `--dry-run`).
 
 **Usage:**
+
 ```bash
 # Via make (recommended)
 make build-cuda SLURM=1
@@ -431,7 +445,7 @@ See also `scripts/benchmarks/` for the seeding/WASM performance benchmarks.
 
 ## Fitting Benchmarks Must Declare Their Floor Basis
 
-Every gsplat fit called here through a module-level fitting *function* passes an
+Every gsplat fit called here through a module-level fitting _function_ passes an
 explicit `floor=`, and the in-repo harnesses that score PSNR/SSIM against the raw
 volume pin `floor="none"` — the shipped default `floor="auto"` subtracts a
 background pedestal the reference still carries, which penalises the fit for
@@ -443,15 +457,15 @@ carrying the key that is visible at the call site — so declare one when you ad
 fitting script (`floor="auto"` is a valid answer — the gate wants a stated basis,
 not a particular value).
 
-Two shapes stay outside the gate's reach, so pin them by hand. *The class API*:
+Two shapes stay outside the gate's reach, so pin them by hand. _The class API_:
 `GaussianSplatFitter().fit(V)` is a Python-function fit the guard cannot see, as
-an AST call-name check would have to flag every `.fit(` to catch it. *Argv-driven
-fits*: `calibrate_gsplat_demos.py` runs many fits by subprocessing `luxar gsplat
+an AST call-name check would have to flag every `.fit(` to catch it. _Argv-driven
+fits_: `calibrate_gsplat_demos.py` runs many fits by subprocessing `luxar gsplat
 cal` with no `--floor`, and that one needs no pin because `cal` is
 self-consistent — it subtracts the floor from the volume once up front and pins
 its own per-K fits to `floor="none"`.
 
 One caveat when changing a fit path: the two Pareto benchmarks compare against a
-*local, uncommitted* `scripts/benchmarks/data/*baseline*.json`, so a baseline
+_local, uncommitted_ `scripts/benchmarks/data/*baseline*.json`, so a baseline
 recorded on a different floor basis will read as a regression — delete it once
 and let the next run become the baseline.
