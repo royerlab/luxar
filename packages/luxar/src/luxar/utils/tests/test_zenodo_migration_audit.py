@@ -437,3 +437,99 @@ def test_live_without_a_token_does_not_reach_the_network(
     monkeypatch.setattr(audit, "fetch_deposition", _boom)
     assert audit.main() == 1
     assert "needs ZENODO_TOKEN" in capsys.readouterr().out
+
+
+def test_the_live_check_compares_hosted_sizes_not_in_repo_ones(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The exact shape #1734 lands in: `bytes` local, `hosted_bytes` the record's.
+
+    Splitting `sha256` without splitting `bytes` left this comparing the wrong
+    end of the contract, reporting a mismatch for a file that is correct — on
+    EVERY diverged dataset, which with 21 of them would also trip the
+    "wrong manifest" heuristic and tell someone holding the right manifest that
+    they are holding the wrong one.
+    """
+    audit = _audit_module(monkeypatch)
+    datasets = {
+        "gsplats_multichannel": {
+            "bucket": "zenodo",
+            "record": "cc-by",
+            "files": [
+                {
+                    "name": "blastocyst_ch0.gsplats.zarr.zip",
+                    "sha256": "1" * 64,  # the in-repo copy
+                    "bytes": 196680,
+                    "hosted_sha256": "7" * 64,  # what the record serves
+                    "hosted_bytes": 186483,
+                }
+            ],
+        }
+    }
+    dep = _dep(
+        [{"filename": "blastocyst_ch0.gsplats.zarr.zip", "filesize": 186483}],
+        desc="<table><tr>h</tr><tr>1</tr></table>",
+    )
+    fails, warns = audit.check_deposition(
+        "cc-by", dep, audit.pins_of(datasets), audit.dataset_totals(datasets), {}
+    )
+    assert fails == [], fails
+    assert warns == []
+
+
+def test_a_description_claim_is_checked_against_the_hosted_total(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A record's prose describes the record's files, so its sizes are hosted ones.
+
+    Same bug as the pin comparison, second site: summing `bytes` would check the
+    published claim against bytes the record does not serve.
+    """
+    audit = _audit_module(monkeypatch)
+    datasets = {
+        "ds": {
+            "bucket": "zenodo",
+            "record": "cc-by",
+            "files": [
+                {
+                    "name": "a.zip",
+                    "sha256": "1" * 64,
+                    "bytes": 9_000_000,  # in-repo
+                    "hosted_sha256": "7" * 64,
+                    "hosted_bytes": 5_000_000,  # the record's -> "5.0 MB"
+                }
+            ],
+        }
+    }
+    dep = _dep(
+        [{"filename": "a.zip", "filesize": 5_000_000}],
+        desc="<li><code>ds</code> (5.0 MB)</li><table><tr>h</tr><tr>1</tr></table>",
+    )
+    fails, _ = audit.check_deposition(
+        "cc-by", dep, audit.pins_of(datasets), audit.dataset_totals(datasets), {}
+    )
+    assert fails == [], fails
+
+
+def test_an_entry_with_no_hosted_keys_still_uses_its_local_ones(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Most datasets never diverged and carry no hosted keys at all.
+
+    They must keep working off `sha256`/`bytes`, or preferring the hosted side
+    would break the majority to fix the minority.
+    """
+    audit = _audit_module(monkeypatch)
+    datasets = _two_file_dataset()
+    dep = _dep(
+        [
+            {"filename": "a.zip", "filesize": 1024},
+            {"filename": "b.zip", "filesize": 1024},
+        ],
+        desc="<table><tr>h</tr><tr>a</tr><tr>b</tr></table>",
+    )
+    fails, warns = audit.check_deposition(
+        "cc-by", dep, audit.pins_of(datasets), audit.dataset_totals(datasets), {}
+    )
+    assert fails == []
+    assert warns == []

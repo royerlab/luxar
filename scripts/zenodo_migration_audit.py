@@ -342,8 +342,29 @@ ZENODO_API = "https://zenodo.org/api/deposit/depositions"
 _STALE_MANIFEST_SHARE = 0.66
 
 
+def hosted_size(entry: dict) -> int:
+    """The size of the copy the RECORD serves, not the one this repo ships.
+
+    A manifest entry carries both once a refit makes them differ: `bytes` and
+    `sha256` describe the in-repo copy, `hosted_bytes` and `hosted_sha256` the
+    record's. Comparing the local size against a deposition reports a mismatch
+    for every diverged file — correct arithmetic, wrong end of the contract — so
+    every live comparison must resolve the hosted value first.
+    """
+    return int(entry.get("hosted_bytes") or entry.get("bytes") or 0)
+
+
+def hosted_digest(entry: dict) -> str:
+    """The digest of the copy the RECORD serves. See :func:`hosted_size`."""
+    return str(entry.get("hosted_sha256") or entry.get("sha256") or "")
+
+
 def pins_of(datasets: dict) -> dict[str, tuple[str, int, str]]:
-    """``filename -> (record, bytes, sha256)`` for every zenodo-bucket file.
+    """``filename -> (record, hosted bytes, hosted sha256)`` per zenodo file.
+
+    Deliberately the HOSTED side of each entry: this map exists to be compared
+    against a live deposition, and the in-repo values would answer a different
+    question. See :func:`hosted_size`.
 
     Uses :func:`files_of`, so a variant's files are included on the same footing
     as a dataset's own — h2afva's pinned 253tp is only reachable that way.
@@ -353,11 +374,7 @@ def pins_of(datasets: dict) -> dict[str, tuple[str, int, str]]:
         if spec.get("bucket") != "zenodo":
             continue
         for _var, f in files_of(spec):
-            pins[f["name"]] = (
-                spec.get("record", ""),
-                f.get("bytes", 0),
-                f.get("sha256") or "",
-            )
+            pins[f["name"]] = (spec.get("record", ""), hosted_size(f), hosted_digest(f))
     return pins
 
 
@@ -365,10 +382,12 @@ def dataset_totals(datasets: dict) -> dict[str, int]:
     """``dataset -> summed declared bytes``, for description size claims.
 
     A record's contents table names DATASETS, whose size is the sum over their
-    files, while a size claim can also name a single file. Both are resolved.
+    files, while a size claim can also name a single file. Both are resolved, and
+    both from the HOSTED side — the description describes the record's files, so a
+    claim checked against in-repo sizes would be checked against the wrong bytes.
     """
     return {
-        name: sum(f.get("bytes", 0) for _var, f in files_of(spec))
+        name: sum(hosted_size(f) for _var, f in files_of(spec))
         for name, spec in datasets.items()
     }
 
