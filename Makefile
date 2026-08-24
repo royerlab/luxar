@@ -6,7 +6,7 @@
 #
 .PHONY: help install-dev install-demo-deps format-python format-typescript format-rust format-cuda format-go format-all gen-contract gen-data-manifest \
         lint-python lint-typescript type-check-python type-check-typescript security check-complexity \
-        test-all test-python test-cov-python test-cov-typescript test-cov-all test-fixtures test-wasm test-viewer test-viewer-fixtures \
+        test-all test-python test-cov-python test-cov-typescript test-cov-all test-fixtures ensure-viewer-fixtures test-wasm test-viewer test-viewer-fixtures \
         test-e2e test-e2e-smoke test-perf-e2e \
         clean-all clean-python clean-viewer clean-examples clean-cache clean-setup enable-pre-commit run-pre-commit \
         check-all check-typescript check-rust check-knip check-wasm-deps setup-dev \
@@ -696,13 +696,13 @@ test-all:  ## Run all tests (Python+CUDA, Rust/WASM, TypeScript, Go)
 		echo "   Run 'make install-rust' to enable full WASM testing"; \
 	fi
 	@echo ""
-	@echo "🔬 Generating TypeScript test fixtures..."
-	$(HATCH) run fixtures:python packages/luxar-viewer/tests/fixtures/generate_test_data.py
-	@echo "📘 Running TypeScript tests..."
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
 		cd packages/luxar-viewer && pnpm install; \
 	fi
+	@echo "🔬 Generating TypeScript test fixtures..."
+	cd packages/luxar-viewer && pnpm test:generate-fixtures
+	@echo "📘 Running TypeScript tests..."
 	@# When WASM artifacts are present (build above succeeded, or a prior
 	@# build is cached), require the WASM-vs-TypeScript artifact-presence
 	@# meta-test to run instead of being silently skipped via runIf().
@@ -1474,36 +1474,10 @@ demo:  ## Generate the Lorenz demo dataset (datasets/demos/lorenz.luxar.zarr, 10
 	@echo "✅ Demo dataset created at datasets/demos/lorenz.luxar.zarr"
 
 run-examples:  ## Run all examples to generate zarr files (output to datasets/examples/)
-	@echo "🚀 Running all examples to generate zarr files..."
-	@echo "📂 Output directory: datasets/examples/"
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@# Every example is attempted (one failure must not hide the rest), but the
-	@# target FAILS at the end if any did. CI's e2e job builds its datasets with
-	@# this target — exiting 0 on a broken example turns a clear generator error
-	@# into a baffling downstream rendering failure.
-	@total=$$(ls -1 packages/luxar/examples/*_example.py 2>/dev/null | wc -l || echo 0); \
-	count=0; \
-	failed=""; \
-	for script in packages/luxar/examples/*_example.py; do \
-		count=$$((count + 1)); \
-		name=$$(basename $$script); \
-		echo ""; \
-		echo "[$${count}/$${total}] 📊 Running $${name}..."; \
-		echo "────────────────────────────────────────────────"; \
-		if $(HATCH) run python $$script; then \
-			echo "✅ Success: $${name}"; \
-		else \
-			echo "❌ Failed: $${name}"; \
-			failed="$$failed $$name"; \
-		fi; \
-	done; \
-	echo ""; \
-	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
-	if [ -n "$$failed" ]; then \
-		echo "❌ Examples FAILED:$$failed"; \
-		exit 1; \
-	fi; \
-	echo "✅ All examples completed!"
+	@# The runner fingerprints both the example builders and Luxar's production
+	@# Python writer code. E2E entrypoints can therefore depend on this target
+	@# without rebuilding fixtures whose producer contract has not changed.
+	$(HATCH) run python scripts/run_examples.py
 	@echo ""
 	@echo "📁 Generated zarr files in datasets/examples/:"
 	@for zarr in datasets/examples/*.zarr; do \
@@ -2666,8 +2640,12 @@ test-nlm-cuda:  ## Run NLM CUDA extension tests
 	@echo "✅ NLM CUDA tests completed!"
 
 test-fixtures:  ## Generate test fixtures for TypeScript tests
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-viewer && pnpm install; \
+	fi
 	@echo "🔬 Generating test fixtures..."
-	$(HATCH) run fixtures:python packages/luxar-viewer/tests/fixtures/generate_test_data.py
+	cd packages/luxar-viewer && pnpm test:generate-fixtures
 
 test-viewer-fixtures: test-fixtures  ## Generate fixtures + run TypeScript tests
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
@@ -2683,6 +2661,13 @@ test-viewer:  ## Run TypeScript tests (without regenerating fixtures)
 	fi
 	cd packages/luxar-viewer && pnpm test --run
 
+ensure-viewer-fixtures:  ## Regenerate stale generated fixtures before full E2E
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-viewer && pnpm install; \
+	fi
+	cd packages/luxar-viewer && pnpm exec tsx tools/fixture-freshness.ts --ensure
+
 test-cov-typescript:  ## Run TypeScript tests with coverage
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
@@ -2690,21 +2675,21 @@ test-cov-typescript:  ## Run TypeScript tests with coverage
 	fi
 	cd packages/luxar-viewer && pnpm run test:coverage
 
-test-e2e:  ## Run the full Playwright E2E suite (~17 min at 4 workers; workers scale with load)
+test-e2e: run-examples ensure-viewer-fixtures  ## Run the full Playwright E2E suite (~17 min at 4 workers; workers scale with load)
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
 		cd packages/luxar-viewer && pnpm install; \
 	fi
 	cd packages/luxar-viewer && pnpm test:e2e
 
-test-e2e-smoke:  ## Run the E2E smoke subset (what CI would run)
+test-e2e-smoke: run-examples  ## Run the E2E smoke subset (what CI would run)
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
 		cd packages/luxar-viewer && pnpm install; \
 	fi
 	cd packages/luxar-viewer && pnpm test:e2e:smoke
 
-test-perf-e2e:  ## Run the opt-in Playwright performance suite
+test-perf-e2e: run-examples  ## Run the opt-in Playwright performance suite
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
 		cd packages/luxar-viewer && pnpm install; \

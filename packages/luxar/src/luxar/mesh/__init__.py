@@ -12,6 +12,16 @@ distinct modules, and pulling the node class up here would make this package imp
 already reaches a great deal of the package.
 """
 
-from .interop import TriangleMesh, detect_mesh_format, import_mesh
+from .interop import (
+    TriangleMesh,
+    detect_mesh_format,
+    import_mesh,
+    import_mesh_directory,
+)
 
-__all__ = ["TriangleMesh", "detect_mesh_format", "import_mesh"]
+__all__ = [
+    "TriangleMesh",
+    "detect_mesh_format",
+    "import_mesh",
+    "import_mesh_directory",
+]

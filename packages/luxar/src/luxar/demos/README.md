@@ -135,6 +135,9 @@ the AS graph keys on `asn_a`/`asn_b` and the protein networks on
 `sym_a`/`sym_b`; the HuRI loaders hardcode `sym_a`/`sym_b`, being
 protein-specific by construction.
 
+Leaf implementation utilities shared by demos live under `_support/`; the flat
+`_*.py` helpers remain at the package root.
+
 ## Optional dependencies
 
 The core install deliberately excludes the heavyweight packages some demos need
@@ -170,11 +173,12 @@ one in `tests/test_substitutive_lod_gated.py` and the fit-provenance one in
 `tests/test_demo_fit_provenance.py`, which forbids saving a real fit with
 `include_fitting_info=False` — read the set defined by
 `tests/_scanned_modules.py`: every `*.py` directly under `demos/` **except**
-`__init__.py` and `_dependencies.py`. It is a denylist, not a `demo_*.py` glob or
-a `_*_common.py` pattern, so a gate that moves out of a demo into a shared helper
-cannot escape the guards — and any new module dropped in here is covered without
-an edit there. The flip side: a scratch `.py` file left in `demos/` is scanned
-too, so keep throwaway scripts out of this directory.
+`__init__.py` and `_dependencies.py`, plus every non-barrel helper in
+`demos/_support/`. It is a denylist, not a `demo_*.py` glob or a `_*_common.py`
+pattern, so a gate that moves out of a demo into a shared helper cannot escape
+the guards — and any new module dropped in either location is covered without an
+edit there. The flip side: a scratch `.py` file left in either directory is
+scanned too, so keep throwaway scripts out of the package tree.
 
 Installing everything:
 

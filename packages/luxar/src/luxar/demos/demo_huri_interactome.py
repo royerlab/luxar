@@ -138,7 +138,7 @@ from luxar.demos._graph_common import (
     load_huri_edges,
     nodes_hash,
 )
-from luxar.utils._umap_utils import build_legend_html, get_categorical_color
+from luxar.demos._support._umap_utils import build_legend_html, get_categorical_color
 from luxar.utils.paths import get_demos_output_dir
 
 # -----------------------------------------------------------------------------
@@ -789,7 +789,7 @@ def build_scene(
                 intensity=0.2,
                 labels=node_labels,
                 keys=node_keys,
-                link="https://www.genecards.org/cgi-bin/carddisp.pl?gene={hover_key}",
+                link="https://www.genecards.org/card/{hover_key}",
                 copy="{hover_key}",
                 layer=True,
             )

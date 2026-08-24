@@ -29,8 +29,8 @@ function makeRecordingBackend(): RecordingBackend {
     showToast(message, durationMs) {
       calls.push({ method: 'showToast', args: [message, durationMs] });
     },
-    showHelpOverlay() {
-      calls.push({ method: 'showHelpOverlay', args: [] });
+    showHelpOverlay(bindings) {
+      calls.push({ method: 'showHelpOverlay', args: bindings ? [bindings] : [] });
     },
     hideHelpOverlay() {
       calls.push({ method: 'hideHelpOverlay', args: [] });
@@ -131,6 +131,12 @@ describe('notifier — with a backend registered', () => {
     notifier.showHelp();
     notifier.hideHelp();
     expect(backend.calls.map((c) => c.method)).toEqual(['showHelpOverlay', 'hideHelpOverlay']);
+  });
+
+  it('forwards the registered shortcut snapshot to the help backend', () => {
+    const bindings = new Map([['navigation', ['h']]]);
+    notifier.showHelp(bindings);
+    expect(backend.calls).toEqual([{ method: 'showHelpOverlay', args: [bindings] }]);
   });
 
   it('forwards showLoading / hideLoading', () => {

@@ -143,42 +143,6 @@ Path utilities for Luxar dataset generation.
 - `get_examples_output_dir()`: Resolve the centralized `datasets/examples/` output directory
 - `get_demos_output_dir()`: Resolve the centralized `datasets/demos/` output directory
 
-### `spatial_hash.py`
-Spatial hash grids for fast nD proximity queries. Two complementary classes for two access patterns:
-
-**Key Classes:**
-- `SpatialHashGrid`: **online** insert + `has_neighbor_within` (CPU, dict-backed). Used by Poisson-disk seeding where each accept depends on previous accepts.
-- `BatchedSpatialHashGrid`: **batched** build + many radius / k-NN queries. Two backends share the same hash scheme: NumPy (`np.argsort` + `np.searchsorted`) and PyTorch (CUDA / MPS / CPU; pad-and-prune GPU k-NN). With `device='auto'` (default) the GPU backend is preferred and falls back to NumPy on **out-of-memory or device-unavailable conditions only** — generic exceptions propagate so real bugs aren't masked.
-
-**Correctness guarantee** (both classes): radius queries find all hits within the requested radius provided `cell_size >= radius`. The 3^D neighbour-cell scan is then exhaustive. k-NN queries auto-expand the cell shell until the kth-nearest candidate's distance is within the guaranteed-coverage radius (`shell_radius * cell_size`); past 3 shells the entire stored set is brute-forced.
-
-**Quick example:**
-```python
-from luxar.utils.spatial_hash import BatchedSpatialHashGrid
-import numpy as np
-
-points = np.random.randn(10_000, 3).astype(np.float32)
-queries = np.random.randn(1_000, 3).astype(np.float32)
-
-# Auto-select GPU when available, else CPU
-grid = BatchedSpatialHashGrid.from_points(points, cell_size=0.5, device='auto')
-print(grid.backend, grid.device)  # e.g. "torch", cuda:0
-
-# k-NN: (Q, k) distances + indices
-distances, indices = grid.query_knn(queries, k=8)
-
-# Radius: jagged list of indices per query (require radius <= cell_size)
-neighbours = grid.query_radius(queries, radius=0.4)
-```
-
-### `_umap_utils.py`
-Shared utilities for UMAP demo scripts (internal module).
-
-**Key Features:**
-- Color palettes and colormap functions for UMAP visualizations
-- Legend generation utilities
-- Attribute-to-color mapping used by multiome UMAP demos (human, mouse, zebrahub)
-
 ### `data_fetch.py`
 Manifest-driven demo-dataset resolution (R17: retiring in-repo Git LFS in favour
 of fetch-on-demand from Zenodo). Reads `demos/data_manifest.json` — the single
@@ -210,8 +174,8 @@ Demo scene generators, precomputed data helpers, and viewer launch utilities.
   explicit `--port`/`--viewer-port` in `serve_args` override
 - `detect_device()`: Auto-detect the best available compute device (cuda > mps > cpu)
 - `BUILDER_FINGERPRINT_ATTR`: Scene-root attribute that identifies the demo builder
-- `demo_source_fingerprint()`: Hash a demo module's source for scene-staleness checks
-- `scene_is_current()`: Reuse only a completed scene written by the current demo builder
+- `demo_source_fingerprint()`: Hash a demo, Luxar's writer sources, and the Zarr environment for scene-staleness checks
+- `scene_is_current()`: Reuse only a completed scene written by the current demo producer
 - `warn_if_no_cuda_gpu()`: Print a warning if no CUDA GPU is available
 - `load_precomputed_gsplats()`: Load precomputed GSplat data from Git LFS or cache
 - `load_precomputed_bundle()`: Load a precomputed bundle zip (timelapse demos)
@@ -227,6 +191,15 @@ Demo scene generators, precomputed data helpers, and viewer launch utilities.
 - Configurable parameters
 - Git LFS data loading with local cache fallback
 - Educational examples of Luxar features
+
+### `source_fingerprints.py`
+Stable fingerprints for Python sources that produce Luxar stores.
+
+**Key Functions:**
+- `fingerprint_source_files()`: Hash source paths and contents in stable, boundary-safe order
+- `fingerprint_production_sources()`: Hash production Luxar Python sources without caching
+- `production_source_fingerprint()`: Cache that production-source hash per package root and process
+- `store_writer_environment()`: Report installed/configured inputs that affect Zarr output
 
 ### `process.py`
 Deterministic teardown for long-lived child processes (stdlib-only). Owns the
@@ -406,6 +379,5 @@ Internal:
 External:
 - `numpy`: Array operations
 - `arbol`: Progress display in demos and downloads
-- `torch`: PyTorch backend for `BatchedSpatialHashGrid` (GPU k-NN / radius queries)
+- `torch`: Device availability probing in `demos.py`
 - `requests` / `urllib3`: HTTP downloads with retry (lazily imported in `download.py`)
-- `Pillow (PIL)`: Legend image rendering in `_umap_utils.py`

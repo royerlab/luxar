@@ -67,7 +67,7 @@ browser** (`src/ui/dataset-browser.ts` + `styles/components/dataset-browser.css`
 | Glass theme overrides | `src/styles/themes/{frosted-glass,liquid-glass}.css` |
 | Liquid-glass SVG filter | `src/themes/glass-filters.ts` (its `defaultGlassParams` are authoritative — CSS comments describing them have historically gone stale) |
 | Rail/panel icons | `src/ui/control-rail/icons.ts` (`RAIL_ICONS`) |
-| Monitor icons | `src/ui/data-loading-monitor/templates.ts` (`MONITOR_ICONS`) |
+| Monitor icons | `src/ui/data-loading-monitor/templates/primitives.ts` (`MONITOR_ICONS`) |
 | Dataset-browser icons | `src/ui/dataset-browser/icons.ts` (`BROWSER_ICONS`) |
 | Shared panel header/close recipes | `src/styles/base/utilities.css` (`.luxar-panel-header`, `.luxar-panel-close`; #1508 adds `.luxar-panel-filter`, `.luxar-panel-pop`) |
 | Shared context-menu widget (pending #1508) | `src/ui/overlay-widgets/context-menu.ts` + `styles/components/context-menu.css` |

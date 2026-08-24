@@ -72,6 +72,10 @@ export default defineConfig({
   // Fail the build on CI if you accidentally left test.only
   forbidOnly: !!process.env.CI,
 
+  // The checked-in visual corpus is recorded on Linux. Other platforms still
+  // run the tests, but must not create platform-specific snapshots in source.
+  ignoreSnapshots: process.platform !== 'linux',
+
   // Retry flaky tests
   // WebGL tests can be flaky due to GPU timing, driver variability, and resource contention.
   // - Local: 0 retries so developers see flaky failures immediately.

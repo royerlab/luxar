@@ -5,6 +5,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { showHelpOverlay, hideHelpOverlay } from '../../../ui/help-overlay';
 import { isTypingInInput } from '../../../input/input-handler/commands/focus-utils';
+import { InputContext, InputContextManager } from '../../../input/input-handler/context-manager';
+import { registerAllKeyBindings } from '../../../input/input-handler/key-bindings/register-all';
 
 /**
  * Cost, in pending 0 ms timers, of ONE focus transition in this environment.
@@ -66,6 +68,101 @@ function expectNoOverlayTimersPending(focusTransitions: number): void {
 }
 
 describe('showHelpOverlay - Memory Leak Prevention', () => {
+  it('keeps every authored keyboard row present with the real binding registry', () => {
+    const contextManager = new InputContextManager();
+    registerAllKeyBindings({
+      contextManager,
+      sceneManager: {
+        renderer: { domElement: document.createElement('canvas') },
+        controls: { getFlyControls: () => null },
+      } as never,
+      debugConsole: {} as never,
+      animationShortcuts: {
+        getSelectedDimension: () => -1,
+        getAnimationManager: () => undefined,
+      },
+      panels: {
+        getScaleBar: () => undefined,
+        getColormapLegend: () => undefined,
+        getOverlayManager: () => undefined,
+        getRecordingPanel: () => undefined,
+        getLayersPanel: () => undefined,
+      },
+      commands: {
+        navigateDimension: vi.fn(),
+        selectDimension: vi.fn(),
+        toggleHelp: vi.fn(),
+        toggleDimensionSliders: vi.fn(),
+        togglePerformanceStats: vi.fn(),
+        toggleRenderingControls: vi.fn(),
+        toggleControlMode: vi.fn(),
+        setControlMode: vi.fn(),
+        toggleInertialMode: vi.fn(),
+        toggleCinematicMode: vi.fn(),
+        toggleFullscreen: vi.fn(),
+        cycleDataMonitor: vi.fn(),
+        recenterCamera: vi.fn(),
+        exportViewerState: vi.fn(),
+        handleEscape: vi.fn(),
+        shouldHandleSpaceKey: () => true,
+      },
+    });
+    showHelpOverlay();
+    const authoredRows = Array.from(
+      document.querySelectorAll<HTMLElement>('.luxar-help-overlay__row')
+    ).map((row) => row.textContent);
+    hideHelpOverlay();
+
+    showHelpOverlay(contextManager.getRegisteredShortcutBindings());
+    const registeredRows = Array.from(
+      document.querySelectorAll<HTMLElement>('.luxar-help-overlay__row')
+    ).map((row) => row.textContent);
+
+    expect(registeredRows).toEqual(authoredRows);
+  });
+
+  it('omits keyboard rows absent from the live registration snapshot', () => {
+    const bindings = new Map<string, string[]>([[InputContext.NAVIGATION, ['h']]]);
+    showHelpOverlay(bindings);
+
+    const text = document.getElementById('luxar-help-overlay')?.textContent ?? '';
+    expect(text).toContain('Toggle this help');
+    expect(text).not.toContain('Export viewer state to clipboard');
+    expect(text).not.toContain('Animation speed up / down');
+  });
+
+  it('keeps only pointer and wheel gestures when the binding registry is empty', () => {
+    showHelpOverlay(new Map());
+
+    const rows = Array.from(document.querySelectorAll<HTMLElement>('.luxar-help-overlay__row')).map(
+      (row) => ({
+        keys: Array.from(row.querySelectorAll('kbd')).map((key) => key.textContent),
+        label: row.querySelector('.luxar-help-overlay__desc')?.textContent,
+      })
+    );
+
+    expect(rows).toEqual([
+      { keys: ['Drag'], label: 'Pan camera' },
+      { keys: ['Right drag'], label: 'Rotate view' },
+      { keys: ['⇧', 'Drag'], label: 'Rotate view (alternative)' },
+      { keys: ['Wheel'], label: 'Zoom in / out' },
+      { keys: ['⇧', 'Wheel'], label: 'Roll around the view axis' },
+      { keys: ['Click'], label: 'Open the hovered element link' },
+      { keys: ['Right click'], label: 'Actions for the hovered element' },
+      { keys: ['Drag'], label: 'Strafe (pan camera)' },
+      { keys: ['Right drag'], label: 'Free look' },
+      { keys: ['Wheel'], label: 'Move forward / backward' },
+      { keys: ['Drag'], label: 'Pan camera' },
+      { keys: ['Wheel'], label: 'Zoom in / out' },
+      { keys: ['⇧', 'Wheel'], label: 'Roll around the view axis' },
+      {
+        keys: ['Wheel'],
+        label: 'On a slider: step (⇧ fine, ⌃ coarse, ⌃⇧ extra-fine)',
+      },
+      { keys: ['Ctrl/⌘', 'Wheel'], label: 'Adjust field of view (perspective)' },
+    ]);
+  });
+
   it('explains that digit keys address non-displayed dimensions', () => {
     showHelpOverlay();
 

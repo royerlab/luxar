@@ -3,8 +3,8 @@
  *
  * This file runs BEFORE any tests and verifies pre-conditions:
  * 1. Servers can be reached, and belong to THIS checkout
- * 2. Required example datasets exist (warn — many specs do not need them)
- * 3. Generated zarr fixtures exist, are complete, and are served (throw — 19 specs
+ * 2. Example datasets are fresh (fail) and required datasets exist (warn)
+ * 3. Generated zarr fixtures exist, are complete, are current, and are served (throw — 19 specs
  *    hard-depend on them)
  * 4. Basic environment checks
  *
@@ -30,7 +30,9 @@ import {
   isGeneratedFixtureComplete,
   parseGeneratedFixtureNames,
 } from '../../../tools/fixture-manifest';
+import { checkExampleFixtureFreshness } from '../../../tools/example-fixture-freshness';
 import { e2eWorkerPlan, formatE2EParallelismStamp } from '../../../tools/e2e-workers';
+import { areFixturesStale } from '../../../tools/fixture-freshness';
 
 // `package.json` declares `"type": "module"`, so the CommonJS `__dirname`
 // global is undefined at module load. Reconstruct it from `import.meta.url`.
@@ -57,15 +59,17 @@ const REQUIRED_DATASETS = [
 ];
 
 /**
- * Fail with an actionable message when the generated zarr fixtures are absent or unserved.
+ * Fail with an actionable message when generated zarr fixtures are absent, stale, or unserved.
  *
- * Two distinct failure modes, checked separately because their fixes differ:
+ * Three distinct failure modes, checked separately because their fixes differ:
  *
  *  1. **Never generated, or half generated** — a clean checkout on which vitest has never
  *     run, or a generator killed mid-write. Both are reported by name and both are fixed by
  *     rerunning the generator, so they are one check; `isGeneratedFixtureComplete` is what
  *     keeps an interrupted run's stump directory from passing as a fixture.
- *  2. **Generated but unreachable** — the data server is rooted somewhere other than the
+ *  2. **Generated but stale** — production Python or generator sources changed after the
+ *     fixtures were written. Regenerating refreshes both the stores and their input stamp.
+ *  3. **Generated but unreachable** — the data server is rooted somewhere other than the
  *     repository, so the specs' `/packages/luxar-viewer/tests/fixtures/...` URLs 404 even
  *     though the files exist. One HTTP probe settles this; probing all ~47 would add 47
  *     round-trips to every run to re-answer the same question about the serving root.
@@ -114,6 +118,14 @@ async function assertGeneratedFixtures(projectRoot: string, dataBaseURL: string)
     );
   }
 
+  if (areFixturesStale(projectRoot, fixturesDir)) {
+    throw new Error(
+      `Generated zarr fixtures are stale in ${fixturesDir}.\n\nRegenerate them with:\n` +
+        '  pnpm test:generate-fixtures\n' +
+        '(Playwright checks freshness but deliberately does not run the 1-2 minute generator.)'
+    );
+  }
+
   // The serving-root probe. `assertHTTPResource` names the URL, which is the diagnostic:
   // seeing the full `/packages/luxar-viewer/tests/fixtures/...` path 404 is what tells you
   // the data server is rooted at the wrong directory.
@@ -122,7 +134,7 @@ async function assertGeneratedFixtures(projectRoot: string, dataBaseURL: string)
     dataBaseURL
   ).toString();
   await assertHTTPResource(`Generated fixture ${expected[0]}`, probeURL);
-  console.log(`✅ ${expected.length} generated zarr fixtures present and served`);
+  console.log(`✅ ${expected.length} generated zarr fixtures current and served`);
 }
 
 export default async function globalSetup(config: FullConfig) {
@@ -160,6 +172,21 @@ export default async function globalSetup(config: FullConfig) {
     // (e.g., basic-rendering, viewer-initialization, test-fixtures, geometry-types)
   } else {
     console.log(`✅ Examples directory found: ${examplesDir}`);
+
+    const freshness = checkExampleFixtureFreshness(projectRoot);
+    if (freshness.status === 'stale') {
+      throw new Error(
+        'Example datasets are stale. Run "make run-examples" from the repository root.'
+      );
+    }
+    if (freshness.status === 'unavailable') {
+      hasDatasetWarnings = true;
+      console.warn('⚠️  Could not run the example fixture freshness checker.');
+      if (freshness.detail) console.warn(`   ${freshness.detail}`);
+      console.warn('   Continuing with presence checks only.\n');
+    } else {
+      console.log('✅ Example datasets match the current fixture producer');
+    }
 
     // Check 2: Verify required datasets exist locally and through the HTTP server.
     const missingDatasets: string[] = [];

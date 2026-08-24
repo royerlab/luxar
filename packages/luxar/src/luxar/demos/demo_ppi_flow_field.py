@@ -83,7 +83,7 @@ from luxar.demos._graph_common import (
     load_hgnc,
     load_huri_edges,
 )
-from luxar.utils._umap_utils import get_categorical_color
+from luxar.demos._support._umap_utils import get_categorical_color
 from luxar.utils.fields import (
     FlowField,
     add_reference_cube_to_scene,

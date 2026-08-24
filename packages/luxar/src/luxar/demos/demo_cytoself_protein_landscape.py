@@ -106,7 +106,7 @@ from luxar.demos import (
     launch_viewer,
     require_module,
 )
-from luxar.utils._umap_utils import (
+from luxar.demos._support._umap_utils import (
     attribute_to_color,
     build_legend_html,
     generate_all_legends,

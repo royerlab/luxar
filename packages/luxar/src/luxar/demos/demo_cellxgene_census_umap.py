@@ -75,7 +75,7 @@ from luxar.demos import (
     require_local_data,
     substitutive_lod_or_flat,
 )
-from luxar.utils._umap_utils import attribute_to_color
+from luxar.demos._support._umap_utils import attribute_to_color
 from luxar.utils.paths import get_demos_output_dir
 
 # (code-field, display label) for the categorical `coloring` dimension.

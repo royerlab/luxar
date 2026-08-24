@@ -754,7 +754,7 @@ export class LayerControls {
    * Compute the "Active level" readout text for the primary-selected
    * layer, or ``null`` when no LOD readout applies (non-LOD layer, or the
    * lod_group registry isn't populated yet). 1-based ("L3/5") to match
-   * the data-monitor chip (data-loading-monitor/templates.ts) and the
+   * the data-monitor chip (data-loading-monitor/templates/scene-graph.ts) and the
    * dropdown labels. Reads the live active level straight from the
    * registry, so it is correct on any frame — including auto-selection
    * swaps driven by camera motion.

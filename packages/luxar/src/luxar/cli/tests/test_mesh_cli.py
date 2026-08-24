@@ -23,14 +23,17 @@ import zarr
 from typer.testing import CliRunner
 
 from luxar.cli import app
+from luxar.cli.tests._testing import normalized_cli_output
 from luxar.io.reader import LuxarScene
 from luxar.mesh.interop import MESH_FORMATS
 from luxar.mesh.interop.tests._synthetic import (
     SUFFIXES,
     WRITERS,
+    GroundTruth,
     make_ground_truth,
     write_gsplat_ply,
     write_ply_binary,
+    write_ply_orphan_vertices,
     write_stl_binary,
 )
 
@@ -93,6 +96,149 @@ class TestMeshImport:
         # the count here is what would catch a regression that skipped it.
         assert int(node.faces.max()) < 4
 
+    def test_imports_a_time_and_channel_indexed_vtp_directory_as_one_5d_mesh(
+        self, tmp_path: Path
+    ) -> None:
+        source = tmp_path / "meshes" / "cells"
+        source.mkdir(parents=True)
+        WRITERS["vtp"](source / "P12_Ch0-registered-T0001.vtp", GT)
+        WRITERS["vtp"](source / "P12_Ch2-registered-T0003.vtp", GT)
+        out = tmp_path / "cells.luxar.zarr"
+
+        result = runner.invoke(
+            app,
+            [
+                "mesh",
+                "import",
+                str(source),
+                str(out),
+                "--scale",
+                "3",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "Reading 1/2: P12_Ch0-registered-T0001.vtp" in result.output
+        assert "Reading 2/2: P12_Ch2-registered-T0003.vtp" in result.output
+
+        node = LuxarScene.load(out).get_mesh("mesh")
+        assert node.vertices.shape == (8, 5)
+        assert node.faces.shape == (8, 3)
+        assert np.array_equal(np.unique(node.vertices[:, 3]), [1, 3])
+        assert np.array_equal(np.unique(node.vertices[:, 4]), [0, 2])
+        assert np.array_equal(node.vertices[:, :3].min(axis=0), [-1.5, -1.5, -1.5])
+        assert np.array_equal(node.vertices[:, :3].max(axis=0), [1.5, 1.5, 1.5])
+        assert np.array_equal(node.faces[4:], node.faces[:4] + 4)
+        dimensions = zarr.open_group(out, mode="r").attrs["scene_dimensions"]
+        assert [item["name"] for item in dimensions["dimensions"]] == [
+            "x",
+            "y",
+            "z",
+            "t",
+            "c",
+        ]
+        assert dimensions["dimensions"][3]["discrete"] is True
+        assert dimensions["dimensions"][3]["display"] is False
+        assert dimensions["dimensions"][3]["unit"] == "frame"
+        assert dimensions["dimensions"][3]["range"] == [1.0, 3.0]
+        assert dimensions["dimensions"][3]["step"] == 1.0
+        assert dimensions["dimensions"][4]["discrete"] is True
+        assert dimensions["dimensions"][4]["display"] is False
+        assert dimensions["dimensions"][4]["unit"] == "index"
+        assert dimensions["dimensions"][4]["range"] == [0.0, 2.0]
+        assert dimensions["dimensions"][4]["step"] == 2.0
+
+    @pytest.mark.parametrize("axis", ["t", "c"])
+    @pytest.mark.parametrize(
+        ("coordinates", "expected_step"),
+        [
+            ([0, 1, 2], 1.0),
+            ([0, 5, 10], 5.0),
+            ([0, 6, 10], 2.0),
+            ([1, 6, 11], 1.0),
+            ([0], 1.0),
+            ([7], 1.0),
+        ],
+        ids=[
+            "consecutive",
+            "strided",
+            "irregular",
+            "offset-stride",
+            "singleton-zero",
+            "singleton-nonzero",
+        ],
+    )
+    def test_directory_dimension_step_follows_coordinate_stride(
+        self,
+        tmp_path: Path,
+        axis: str,
+        coordinates: list[int],
+        expected_step: float,
+    ) -> None:
+        source = tmp_path / "frames"
+        source.mkdir()
+        for coordinate in coordinates:
+            filename = (
+                f"surface-T{coordinate:04d}.vtp"
+                if axis == "t"
+                else f"surface-Ch{coordinate}-T0001.vtp"
+            )
+            WRITERS["vtp"](source / filename, GT)
+        out = tmp_path / "frames.luxar.zarr"
+
+        result = runner.invoke(
+            app, ["mesh", "import", str(source), str(out), "--no-center"]
+        )
+
+        assert result.exit_code == 0, result.output
+        node = LuxarScene.load(out).get_mesh("mesh")
+        dimensions = zarr.open_group(out, mode="r").attrs["scene_dimensions"]
+        dimension_names = [item["name"] for item in dimensions["dimensions"]]
+        dimension_index = dimension_names.index(axis)
+        assert np.array_equal(np.unique(node.vertices[:, dimension_index]), coordinates)
+        dimension = next(
+            item for item in dimensions["dimensions"] if item["name"] == axis
+        )
+        assert dimension["range"] == [float(coordinates[0]), float(coordinates[-1])]
+        assert dimension["step"] == expected_step
+
+    def test_directory_pattern_rebases_heterogeneous_ply_meshes(
+        self, tmp_path: Path
+    ) -> None:
+        source = tmp_path / "frames"
+        source.mkdir()
+        larger = GroundTruth(
+            vertices=np.vstack((GT.vertices, [[2.0, 0.0, 0.0]])).astype(np.float32),
+            faces=np.vstack((GT.faces, [[0, 1, 4]])).astype(np.uint32),
+            normals=np.vstack((GT.normals, [[1.0, 0.0, 0.0]])).astype(np.float32),
+            colors=np.vstack((GT.colors, [[255, 0, 255]])).astype(np.uint8),
+        )
+        write_ply_binary(source / "surface-T0001.ply", GT)
+        write_ply_binary(source / "surface-T0002.ply", larger)
+        out = tmp_path / "frames.luxar.zarr"
+
+        result = runner.invoke(
+            app,
+            [
+                "mesh",
+                "import",
+                str(source),
+                str(out),
+                "--pattern",
+                "*.ply",
+                "--no-center",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+
+        node = LuxarScene.load(out).get_mesh("mesh")
+        assert node.vertices.shape == (9, 4)
+        first_faces = node.faces[: GT.faces.shape[0]]
+        second_faces = node.faces[GT.faces.shape[0] :]
+        assert int(first_faces.min()) == 0
+        assert int(first_faces.max()) == 3
+        assert int(second_faces.min()) == 4
+        assert int(second_faces.max()) == 8
+
     def test_centering_is_on_by_default_and_can_be_turned_off(
         self, fixtures: dict[str, Path], tmp_path: Path
     ) -> None:
@@ -116,6 +262,47 @@ class TestMeshImport:
         mid = (cv.min(axis=0) + cv.max(axis=0)) / 2
         assert abs(float(mid.max())) < 1e-5
         assert float(rv.min()) == pytest.approx(0.0, abs=1e-6)
+
+    def test_centering_ignores_vertices_outside_the_surface(
+        self, tmp_path: Path
+    ) -> None:
+        source = tmp_path / "orphan.ply"
+        output = tmp_path / "orphan.luxar.zarr"
+        write_ply_orphan_vertices(source)
+
+        result = runner.invoke(app, ["mesh", "import", str(source), str(output)])
+
+        assert result.exit_code == 0, result.stdout
+        vertices = LuxarScene.load(output).get_mesh("mesh").vertices
+        assert vertices.shape == (3, 3)
+        np.testing.assert_allclose(
+            (vertices.min(axis=0) + vertices.max(axis=0)) / 2,
+            [0.0, 0.0, 0.0],
+            atol=1e-6,
+        )
+        assert float(vertices.max() - vertices.min()) == pytest.approx(1.0)
+
+    def test_no_weld_keeps_vertices_outside_the_surface(self, tmp_path: Path) -> None:
+        source = tmp_path / "orphan.ply"
+        output = tmp_path / "orphan.luxar.zarr"
+        write_ply_orphan_vertices(source)
+
+        result = runner.invoke(
+            app,
+            [
+                "mesh",
+                "import",
+                str(source),
+                str(output),
+                "--no-weld",
+                "--no-center",
+            ],
+        )
+
+        assert result.exit_code == 0, result.stdout
+        vertices = LuxarScene.load(output).get_mesh("mesh").vertices
+        assert vertices.shape == (5, 3)
+        assert float(vertices.max()) == 200.0
 
     def test_scale_multiplies_the_extent(
         self, fixtures: dict[str, Path], tmp_path: Path
@@ -260,6 +447,22 @@ class TestMeshImport:
         result = runner.invoke(app, ["mesh", "--help"])
         assert result.exit_code == 0
         assert "import" in result.stdout
+
+    def test_the_group_help_names_every_dialect_it_reads(self) -> None:
+        """The `luxar mesh` blurb enumerates the formats, so it goes stale silently.
+
+        No gate catches it: `test_docs_command_coverage` checks command paths and option
+        spellings, not help PROSE. A dialect the importer supports but the blurb omits
+        reads as unsupported to anyone who looks at `--help` first.
+        """
+        result = runner.invoke(app, ["mesh", "--help"])
+        assert result.exit_code == 0
+        blurb = _plain(result.stdout).lower()
+        missing = [fmt for fmt in MESH_FORMATS if fmt not in blurb]
+        assert not missing, (
+            f"`luxar mesh --help` does not mention {missing}, which "
+            "`luxar mesh import` reads"
+        )
 
 
 def _grid_mesh(n: int = 24) -> tuple[np.ndarray, np.ndarray]:
@@ -510,7 +713,7 @@ class TestMeshLod:
                 ],
             )
             assert old.exit_code != 0
-            pointer = _plain(old.output)
+            pointer = normalized_cli_output(old)
             assert "--subst-method cluster" in pointer, pointer
             # A bare "No such option" would also be a non-zero exit, so assert the
             # replacement AND that typer never got to reject the flag itself.
@@ -2102,7 +2305,7 @@ class TestMeshLodRecipeGateThroughTheRealCLI:
             f"{flag} {value} was accepted under --recipe reveal; the gate is "
             "inferring 'given' from the value again"
         )
-        message = _plain(result.output)
+        message = normalized_cli_output(result)
         assert "--recipe levels" in message, message
         assert not out.exists(), "a refused invocation must write nothing"
 
@@ -2123,9 +2326,8 @@ class TestMeshLodRecipeGateThroughTheRealCLI:
         assert result.exit_code != 0, (
             f"{flag} {value} was accepted under the default recipe"
         )
-        assert "--recipe reveal" in _plain(result.output) or "--subst-method" in _plain(
-            result.output
-        )
+        message = normalized_cli_output(result)
+        assert "--recipe reveal" in message or "--subst-method" in message
         assert not out.exists()
 
     def test_SENSITIVITY_neither_recipe_refuses_its_OWN_flags_at_defaults(

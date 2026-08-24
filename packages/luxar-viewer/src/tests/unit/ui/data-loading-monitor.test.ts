@@ -14,7 +14,7 @@
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { DataLoadingMonitor } from '../../../ui/data-loading-monitor';
-import { nodeStatsContent } from '../../../ui/data-loading-monitor/templates';
+import { nodeStatsContent } from '../../../ui/data-loading-monitor/templates/scene-graph';
 import { POOLED_GEOMETRY_TYPES } from '../../../types/data-monitor-types';
 import type {
   MonitorEvent,
@@ -25,6 +25,18 @@ import type {
   SceneGraphNode,
 } from '../../../types/data-monitor-types';
 import type { TimingEntry, UpdateProfiler } from '../../../profiling/update-profiler';
+
+function seedLODStates(monitor: DataLoadingMonitor, states: Map<string, LODProgressState>): void {
+  monitor.setLODProgressProvider({ getLODStates: () => states });
+  const internals = monitor as unknown as {
+    uiState: { isVisible: boolean };
+    onPollingTick(): void;
+  };
+  const wasVisible = internals.uiState.isVisible;
+  internals.uiState.isVisible = true;
+  internals.onPollingTick();
+  internals.uiState.isVisible = wasVisible;
+}
 
 /**
  * The depth-sort verdict the monitor reads, drivable from a test. Only
@@ -83,6 +95,24 @@ describe('DataLoadingMonitor', () => {
       expect(cfg.maxEvents).toBe(500);
       // Sanity: dispose is wired even for the custom-constructed instance.
       expect(() => customMonitor.dispose()).not.toThrow();
+    });
+
+    it('marks its own structure dirty when provider structure changes', () => {
+      const internals = monitor as unknown as { structureDirty: boolean };
+      const expectStructureDirty = (register: () => void): void => {
+        internals.structureDirty = false;
+        register();
+        expect(internals.structureDirty).toBe(true);
+      };
+
+      expectStructureDirty(() => monitor.setCacheTelemetryState({ kind: 'enabled' }));
+      expectStructureDirty(() => monitor.setGPUBufferPoolProvider({ getStats: vi.fn() }));
+      expectStructureDirty(() => monitor.setProfiler({} as UpdateProfiler));
+      expectStructureDirty(() => monitor.setLODProgressProvider({ getLODStates: () => new Map() }));
+      expectStructureDirty(() =>
+        monitor.setDrawOrderProvider({ getDrawOrderStates: () => new Map() })
+      );
+      expectStructureDirty(() => monitor.resetSceneProviders());
     });
   });
 
@@ -364,9 +394,7 @@ describe('DataLoadingMonitor', () => {
       monitor.connectLoader('/points', spatialLoader('/points'));
 
       // Provider reports the group with levelCount=3 (the OLD basis).
-      (
-        monitor as unknown as { lodStates: Map<string, { kind: string; levelCount: number }> }
-      ).lodStates = new Map([['/lod', { kind: 'lod', levelCount: 3 }]]);
+      seedLODStates(monitor, new Map([['/lod', { kind: 'lod', levelCount: 3 }]]));
 
       const stats = monitor.getGlobalStats();
       // 5 loaders − (4 present under /lod − 1) = 2 logical layers.
@@ -408,9 +436,7 @@ describe('DataLoadingMonitor', () => {
       monitor.connectLoader('/lod/aux', nonSpatialLoader('/lod/aux'));
       monitor.connectLoader('/points', spatialLoader('/points'));
 
-      (
-        monitor as unknown as { lodStates: Map<string, { kind: string; levelCount: number }> }
-      ).lodStates = new Map([['/lod', { kind: 'lod', levelCount: 2 }]]);
+      seedLODStates(monitor, new Map([['/lod', { kind: 'lod', levelCount: 2 }]]));
 
       const stats = monitor.getGlobalStats();
       // totalLoaders: 4 − (3 present − 1) = 2.
@@ -1259,7 +1285,7 @@ describe('DataLoadingMonitor', () => {
 
     it('re-marks active/inactive substitutive level rows per tick (shared activeLevelRole derivation)', () => {
       // The per-tick patcher must derive each level row's role exactly like
-      // the initial render (both call templates.ts's exported
+      // the initial render (both call templates/scene-graph.ts's exported
       // activeLevelRole) and flip the marks in place when the LOD selector
       // switches levels between structural rebuilds.
       monitor.show();
