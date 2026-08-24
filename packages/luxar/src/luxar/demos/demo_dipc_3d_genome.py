@@ -424,7 +424,7 @@ def _position_gradient(base: np.ndarray, n: int) -> np.ndarray:
 def _haplotype_geometry(
     polys: list[dict],
     hap_slot: int,
-) -> tuple[np.ndarray, np.ndarray, list[str], list[str], np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, list[str], np.ndarray]:
     """Pack one haplotype's chromosome polylines into indexed line geometry.
 
     Each bead is authored ONCE (unique per-vertex arrays) and connectivity is an
@@ -441,8 +441,7 @@ def _haplotype_geometry(
     constant along an arm, so both endpoints of every edge share the same slot
     and an edge is wholly in- or out-of-slice when the viewer scrubs the
     non-displayed haplotype dimension. Returns ``(vertices(M,4), colors(M,3),
-    labels[M], keys[M], edges(E,2))`` with edge indices local to the returned
-    vertices; ``keys`` are the per-bead UCSC loci the click-through opens.
+    labels[M], edges(E,2))`` with edge indices local to the returned vertices.
     """
     vparts: list[np.ndarray] = []
     cparts: list[np.ndarray] = []

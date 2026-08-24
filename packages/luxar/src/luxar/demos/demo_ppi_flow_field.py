@@ -903,7 +903,7 @@ def build_node_geometry(
     pagerank: np.ndarray,
     palette: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[str], list[str]]:
-    """Build protein point positions/colors/radii/labels."""
+    """Build protein point positions/colors/radii/labels/keys."""
     pr_norm = _normalized_log(pagerank)
     deg_norm = _normalized_log(degrees.astype(np.float64) + 1.0)
     colors = palette[communities].astype(np.float32)

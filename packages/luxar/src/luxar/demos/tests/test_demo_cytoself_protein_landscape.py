@@ -371,8 +371,6 @@ class TestProteinLinkKeys:
 
     @staticmethod
     def _keys(scene_path) -> list[str]:
-        import zarr
-
         root = zarr.open_group(str(scene_path), mode="r")["Images"]
         node = root
         if not dict(root.attrs).get("has_keys"):
@@ -381,12 +379,7 @@ class TestProteinLinkKeys:
                 if hasattr(child, "attrs") and dict(child.attrs).get("has_keys"):
                     node = child
                     break
-        offsets = np.asarray(node["key_offsets"][:]).astype(int)
-        data = bytes(np.asarray(node["key_bytes"][:]).tobytes())
-        return [
-            data[offsets[i] : offsets[i + 1]].decode("utf-8")
-            for i in range(len(offsets) - 1)
-        ]
+        return _decode_keys(node)
 
     def test_keys_are_the_bare_protein_name(self, tmp_path: Path) -> None:
         coordinates, attributes, category_maps = _inputs()
