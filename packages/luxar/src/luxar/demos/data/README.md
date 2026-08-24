@@ -42,7 +42,7 @@ need renaming on the record, plus a regenerated description (
 `zebrafish_4d.gsplats.zarr.zip` is on the
 `cc-by-sa` record as the pre-component-filter build, and the pin here describes
 the current one, so it needs replacing and its pin re-deriving from the
-deposition. `scripts/zenodo_prepublish_check.py` reports all three.
+deposition. `scripts/zenodo_migration_audit.py --live` reports both.
 
 Five datasets are `local-compute`. For four of them — `gsplats_tribolium`,
 `gsplats_acto3d_heart`, `gsplats_tng_cosmic_web` and `milky_way_gaia_3m` — the
