@@ -236,8 +236,8 @@ Two habits that make any such comparison trustworthy:
 
 Set `--h` on `denoise` or `--denoise-h` on `fit --denoise` explicitly: without it,
 both commands auto-calibrate a selected 3D volume on its central Z slice. Beware
-`calibrate_nlm_h` /
-Noise2Self on very sparse data: the same sparsity can make an `auto` floor land
+`calibrate_nlm_h` (Noise2Self) on very sparse data: the same sparsity can make an
+`auto` floor land
 inside the specimen on a near-all-zero stack. Where a volume is ~99% exact zeros,
 a held-out voxel is best predicted by predicting zero, so maximal smoothing wins
 its cross-validation. It answered 0.055–0.225 on one stack depending on which slice
