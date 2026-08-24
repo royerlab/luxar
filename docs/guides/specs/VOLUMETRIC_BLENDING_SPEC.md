@@ -867,9 +867,18 @@ Invariant and behavior tests:
   overlays row-for-row (κ* ratio 0.97/1.02/1.02/1.00, was 208/34.6/8.5/3.1).
   The per-layer κ slider track (`absorptionBoundsForNode`) retires with it — it
   was a units conversion for exactly this factor and could never serve a mixed
-  points→gsplat LOD ladder. NOT addressed: peak-projection modes
-  (max/normal/opaque), where the lift's sum-only calibration leaves a separate
-  `1/(uRIF·σ)` mismatch (12–39× measured).
+  points→gsplat LOD ladder. NOT addressed: peak-projection modes, where the
+  lift's sum-only calibration leaves a separate `1/(uRIF·σ)` mismatch — but the
+  three modes do not share one number, so the earlier "12–39× measured" here was
+  imprecise: that band is the `max` crop-MEAN ratio at r=0.05 and r=0.02 alone.
+  Gsplat/points
+  PEAK ratio over the four radii: `max` 30.66/12.15/4.05/1.57 and `normal`
+  29.73/7.81/1.835/1.028, both BRIGHTER, with `normal` understating the
+  divergence because its gsplat peak is already saturating near 1.0 (0.91/0.86
+  at the two asserted radii). After #1994 restored point/line alpha-over,
+  `opaque` measures 4.386/0.720/0.219/0.055: the gsplat peak remains effect C,
+  while the points peak grows with radius under depth-tested alpha-over, so the
+  divergence changes sign and then grows toward the coarse radii.
 - **2026-07-24 (later)** — Phase 4 (lines) implemented — the plan is
   complete: transverse chord-integral rayMass through the Gaussian-profile
   ribbon (`LINE_CHORD_SCALE = √(π/ln 100)`,
