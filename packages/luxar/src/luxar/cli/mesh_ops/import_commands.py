@@ -28,13 +28,6 @@ from ...mesh.interop import (
 )
 
 
-def _discrete_coordinate_step(coordinate: np.ndarray) -> float:
-    unique_coordinates = np.unique(coordinate).astype(np.int64)
-    if unique_coordinates.size < 2:
-        return 1.0
-    return float(np.gcd.reduce(unique_coordinates))
-
-
 def run_import(
     *,
     input_path: Path,
@@ -161,6 +154,14 @@ def run_import(
         _verify(output_path, name, mesh, wrote_normals=normals is not None)
         aprint(f"✓ Wrote {output_path}")
     return mesh
+
+
+def _discrete_coordinate_step(coordinate: np.ndarray) -> float:
+    """Return the largest zero-anchored integer grid containing every coordinate."""
+    unique_coordinates = np.unique(coordinate).astype(np.int64)
+    if unique_coordinates.size < 2:
+        return 1.0
+    return float(np.gcd.reduce(unique_coordinates))
 
 
 def _verify(
