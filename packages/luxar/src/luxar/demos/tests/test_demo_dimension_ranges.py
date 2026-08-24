@@ -93,13 +93,13 @@ def test_animated_collision_time_range_covers_every_written_frame(
 def test_ppi_flow_field_persists_float32_grid_bounds(tmp_path: Path) -> None:
     """NumPy-derived field bounds must survive root-attribute serialization."""
     pd = pytest.importorskip("pandas")
+    from luxar.demos import FlowField
     from luxar.demos.demo_ppi_flow_field import (
         PRESETS,
         OrientedEdges,
         StreamlineData,
         write_scene,
     )
-    from luxar.utils.fields import FlowField
 
     output = tmp_path / "ppi.luxar.zarr"
     grid_min = np.array([-1.25, -2.5, -3.75], dtype=np.float32)
