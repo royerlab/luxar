@@ -26,10 +26,6 @@ try:
 except ImportError:
     HAS_TORCH = False
 
-# End-to-end CLI tiled fitting (seconds per test). Slow → CI runs `-m "not
-# slow"`; the full suite runs locally pre-push.
-pytestmark = pytest.mark.slow
-
 runner = CliRunner()
 
 
@@ -50,6 +46,7 @@ def _make_sparse_volume(path: Path) -> None:
     np.save(path, v)
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(not HAS_TORCH, reason="fitting requires torch")
 def test_tiled_parallel_cli_end_to_end(tmp_path: Path) -> None:
     from luxar.gsplats.gsplat_data import GSplatData
@@ -93,6 +90,7 @@ def test_tiled_parallel_cli_end_to_end(tmp_path: Path) -> None:
     assert list(tmp_path.glob(".par.gsplats.zarr.tiles*")) == []
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(not HAS_TORCH, reason="fitting requires torch")
 def test_tiled_parallel_partition_by_default(tmp_path: Path) -> None:
     """Without --flat, a uniform tiled fit emits a kind=partition (one part/tile)."""
@@ -129,6 +127,7 @@ def test_tiled_parallel_partition_by_default(tmp_path: Path) -> None:
     assert type(node).__name__ == "GSplatPartition"
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(not HAS_TORCH, reason="fitting requires torch")
 def test_tiled_parallel_handles_empty_tiles(tmp_path: Path) -> None:
     """Sparse input → many 0-splat tiles must NOT crash the parallel fit.
@@ -168,6 +167,7 @@ def test_tiled_parallel_handles_empty_tiles(tmp_path: Path) -> None:
     assert GSplatData.load(par).n_splats == GSplatData.load(seq).n_splats
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(not HAS_TORCH, reason="fitting requires torch")
 def test_tiled_parallel_matches_sequential(tmp_path: Path) -> None:
     """`-j 2` and the default `-j 1` produce the same splat count (flat merge)."""
@@ -212,6 +212,7 @@ def test_tiled_parallel_matches_sequential(tmp_path: Path) -> None:
     assert GSplatData.load(seq_out).n_splats == GSplatData.load(par_out).n_splats
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(not HAS_TORCH, reason="fitting requires torch")
 def test_tiled_recipe_stream_gives_partition_of_ladders(tmp_path: Path) -> None:
     """`fit --tiling uniform --recipe stream` → a kind=partition whose parts
