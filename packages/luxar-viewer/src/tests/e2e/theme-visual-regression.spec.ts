@@ -271,8 +271,8 @@ for (const theme of THEMES) {
  *
  * The rail is the always-visible left-edge activity bar (PR #452 made
  * Navigation/Settings/Performance rail-native). It idle-dims after ~2.6s,
- * so wake it with a pointer move just before the screenshot to pin the
- * awake (full-opacity) state deterministically.
+ * so keep the pointer on a separator throughout the capture: rail hover
+ * re-arms the idle timer without raising a button tooltip.
  */
 for (const theme of THEMES) {
   test(`@visual control rail - ${theme} theme`, async ({ page }) => {
