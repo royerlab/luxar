@@ -553,6 +553,7 @@ class TestTheFitCacheKeyMovesWithEveryKnob:
         "CULL_RETENTION": 0.5,
         "FLOOR": "p90",
         "MIN_COMPONENT_VOXELS": 7,
+        "COMPONENT_CONNECTIVITY": 3,
     }
 
     #: Constants that reach the fit but deliberately stay OUT of the key, each
@@ -605,7 +606,11 @@ class TestTheFitCacheKeyMovesWithEveryKnob:
         }
         passed = {
             node.id
-            for function in (_demo.fit_timepoint, _demo.denoise)
+            for function in (
+                _demo.fit_all_timepoints,
+                _demo.fit_timepoint,
+                _demo.denoise,
+            )
             for node in ast.walk(ast.parse(inspect.getsource(function).lstrip()))
             if isinstance(node, ast.Name) and node.id in module_consts
         }
@@ -674,6 +679,24 @@ class TestTheComponentFilter:
             ("8-voxel", (slice(2, 4), slice(2, 4), slice(2, 4))),
         ):
             assert out[sel].max() == v[sel].max(), f"{name} object lost its peak"
+
+    def test_connectivity_is_explicit_and_changes_diagonal_membership(
+        self, monkeypatch
+    ) -> None:
+        volume = np.zeros((5, 5, 5), dtype=np.float32)
+        diagonal = np.arange(5)
+        volume[diagonal, diagonal, diagonal] = 1.0
+        monkeypatch.setattr(_demo, "MIN_COMPONENT_VOXELS", 4)
+
+        monkeypatch.setattr(_demo, "COMPONENT_CONNECTIVITY", 1)
+        assert not _demo.denoise(volume).any(), (
+            "6-connectivity must treat a corner-touching diagonal as five specks"
+        )
+
+        monkeypatch.setattr(_demo, "COMPONENT_CONNECTIVITY", 3)
+        assert np.array_equal(_demo.denoise(volume), volume), (
+            "26-connectivity must treat the same diagonal as one 5-voxel object"
+        )
 
     def test_the_input_is_not_mutated(self, monkeypatch) -> None:
         monkeypatch.setattr(_demo, "MIN_COMPONENT_VOXELS", 4)

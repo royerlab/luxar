@@ -143,9 +143,9 @@ SUPPRESSING THE SHOT NOISE (and a metric that lied about it):
     frame is ONE voxel -- p90 is 1-2 at every timepoint. An unfiltered fit
     spends its budget accordingly.
 
-    So each timepoint has its sub-4-voxel connected components deleted before it
-    is fitted. Not smoothed -- deleted. Every object at or above the threshold
-    passes through bit-identical.
+    So each timepoint has its sub-4-voxel 6-connected components deleted before
+    it is fitted. Not smoothed -- deleted. Every 6-connected object at or above
+    the threshold passes through bit-identical.
 
     HOW THIS SECTION GOT REWRITTEN, because the mistake is the lesson:
 
@@ -170,9 +170,9 @@ SUPPRESSING THE SHOT NOISE (and a metric that lied about it):
     movement, not the removal.** Prefer an operation that does not move
     anything, or score by looking.
 
-    WHY A SIZE FILTER, measured against a cell definition (components >= 27
-    voxels) deliberately STRICTER than any threshold under test, so no arm is
-    judged against its own definition:
+    WHY A SIZE FILTER, measured with 6-connectivity against a cell definition
+    (components >= 27 voxels) deliberately STRICTER than any threshold under
+    test, so no arm is judged against its own definition:
 
     | threshold | frame energy removed (t=0) | cell energy | mean cell peak |
     |-----------|----------------------------|-------------|----------------|
@@ -274,11 +274,10 @@ REPRODUCING ANY OF THIS:
 
     The fits are cached per timepoint under a key that includes every knob that
     changes the result (seeds, iterations, patience, cull retention, floor,
-    minimum component size), so re-running a sweep cannot be served a stale
-    answer. That
-    keying is not bookkeeping — an earlier version of this demo keyed only on
-    the frame index, and the tables above are exactly the sort of sweep it
-    would have silently invalidated.
+    minimum component size and connectivity), so re-running a sweep cannot be
+    served a stale answer. That keying is not bookkeeping — an earlier version
+    of this demo keyed only on the frame index, and the tables above are exactly
+    the sort of sweep it would have silently invalidated.
 
 USAGE:
     python demo_gsplats_4d_zebrafish_timelapse.py [--recompute] [--no-serve]
@@ -405,8 +404,9 @@ FITS_DIR = CACHE_DIR / "fits"
 LOCAL_FIT = local_fit_path(DEMO_NAME, GSPLATS_FILE)
 
 #: Fit schedule. See the module docstring's SPLAT BUDGET table for the sweep
-#: these came from. It was re-derived once the frames are filtered and did not
-#: move: 32,000 is still the plateau.
+#: these came from. The seed ceiling was not re-swept after filtering; retaining
+#: 32,000 is harmless because the amplitude cull, not the ceiling, sets the final
+#: count.
 #:
 #: ``seeds`` proposes and ``cull_retention`` disposes. The seed budget is a
 #: CEILING, not a target: the post-fit cull keeps splats only until 99.99% of the
@@ -448,6 +448,11 @@ CULL_RETENTION = 0.9999
 #: and starts risking genuinely small, dim cells at the early timepoints where
 #: cells are few and faint.
 MIN_COMPONENT_VOXELS = 4
+
+#: SciPy connectivity 1: face-connected neighbours only (6-neighbour in 3D).
+#: Connectivity changes which touching voxels form one object, so it is explicit
+#: and participates in the fit cache key rather than arriving as a library default.
+COMPONENT_CONNECTIVITY = 1
 
 #: NO background floor, stated rather than defaulted. The house rule is to stay
 #: on ``auto`` unless you have measured otherwise; this is a dataset where
@@ -648,12 +653,13 @@ def select_timepoints(n_total: int, limit: Optional[int]) -> list[int]:
 def _fit_cache_path(frame: int) -> Path:
     return FITS_DIR / (
         f"f{frame:04d}_k{SEEDS}_i{N_ITERS}_p{EARLY_STOP_PATIENCE}"
-        f"_c{CULL_RETENTION}_{FLOOR}_mc{MIN_COMPONENT_VOXELS}.gsplats.zarr.zip"
+        f"_c{CULL_RETENTION}_{FLOOR}_mc{MIN_COMPONENT_VOXELS}"
+        f"_conn{COMPONENT_CONNECTIVITY}.gsplats.zarr.zip"
     )
 
 
 def denoise(volume: np.ndarray) -> np.ndarray:
-    """Delete connected components below ``MIN_COMPONENT_VOXELS``, in place of a filter.
+    """Delete connected components below ``MIN_COMPONENT_VOXELS`` rather than smoothing.
 
     Pure deletion, not smoothing: every object at or above the threshold comes
     through bit-identical, so cell peaks and cell energy are untouched by
@@ -667,7 +673,8 @@ def denoise(volume: np.ndarray) -> np.ndarray:
         return volume
     from scipy import ndimage
 
-    labels, _ = ndimage.label(volume > 0)
+    structure = ndimage.generate_binary_structure(volume.ndim, COMPONENT_CONNECTIVITY)
+    labels, _ = ndimage.label(volume > 0, structure=structure)
     sizes = np.bincount(labels.ravel())
     small = np.flatnonzero(sizes < MIN_COMPONENT_VOXELS)
     # Excluding label 0 is a COST guard, not a correctness one: background is
