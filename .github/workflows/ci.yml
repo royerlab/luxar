@@ -260,8 +260,8 @@ jobs:
         run: |
           # Self-bounded below the job timeout. If jobs are STILL queued when
           # the window closes but the heartbeat stayed fresh the whole time,
-          # the box is busy, not dead (3 slots; 6 obsidian-routed test jobs on a
-          # push or the nightly, 4 on a PR — and a merge landing during the
+          # the box is busy, not dead (3 slots; 4 obsidian-routed test jobs on a
+          # push or the nightly, 2 on a PR — and a merge landing during the
           # nightly now queues both sets at once, since the two no longer cancel
           # each other — draining) — leave the run alone.
           end=$(( $(date +%s) + 25 * 60 ))
@@ -395,12 +395,11 @@ jobs:
       # siblings on the first red leg, losing precisely the per-version information
       # you need when the legs genuinely differ.
       fail-fast: false
-      # Obsidian exposes three runner slots. Keep one available for
-      # `typescript-tests`, whose slowest numerical sweep is the first unit test
-      # to time out when three xdist legs consume the whole host at once. PRs have
-      # one Python leg and are unaffected; push/nightly runs execute two legs,
-      # then the third, while TypeScript starts immediately alongside them. Keep
-      # the GitHub-hosted fallback elastic: its matrix legs run on separate VMs.
+      # With the three-slot obsidian fleet documented by queue-watchdog, keep one
+      # slot available so `typescript-tests` starts immediately rather than
+      # queueing behind the third Python leg. PRs have one Python leg and are
+      # unaffected; push/nightly runs execute two legs, then the third. Keep the
+      # GitHub-hosted fallback elastic: its matrix legs run on separate VMs.
       max-parallel: ${{ needs.pick-runner.outputs.label == 'obsidian' && 2 || 3 }}
       matrix:
         # FLOOR on every PR, floor + NEWEST on push-to-main and the nightly.
@@ -709,14 +708,13 @@ jobs:
         run: pnpm run check:ci
 
   release-readiness:
-    # Keep the third obsidian slot for TypeScript while the two Python matrix
-    # legs start. `!cancelled()` below still runs this after a TypeScript failure,
-    # so the required release check never disappears behind a failed dependency.
-    needs: [changes, pick-runner, typescript-tests]
+    needs: [changes]
     # Fail-safe fallback to full CI if `changes` fails — see the note on the
     # `changes` job.
     if: ${{ !cancelled() }}
-    runs-on: ${{ needs.pick-runner.outputs.label || 'ubuntu-latest' }}
+    # This one-minute check does not need scarce obsidian capacity and must not
+    # delay the required merge context behind unrelated matrix work.
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
       run:
@@ -801,14 +799,13 @@ jobs:
   # jobs separate prevents their `emptyOutDir` Vite builds from clobbering one
   # another and gives branch protection an unambiguous wheel-viewer signal.
   wheel-viewer:
-    # Same three-slot admission rule as release-readiness. The fail-safe
-    # `!cancelled()` condition keeps this required context explicit even when
-    # TypeScript fails.
-    needs: [changes, pick-runner, typescript-tests]
+    needs: [changes]
     # Required checks must report explicitly even for docs-only changes, and a
     # failed change detector must fall back to the full build rather than skip.
     if: ${{ !cancelled() }}
-    runs-on: ${{ needs.pick-runner.outputs.label || 'ubuntu-latest' }}
+    # Keep the second one-minute release build off the constrained runner pool
+    # and independent of unrelated matrix jobs.
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
       run:
