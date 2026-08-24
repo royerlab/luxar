@@ -399,8 +399,9 @@ jobs:
       # `typescript-tests`, whose slowest numerical sweep is the first unit test
       # to time out when three xdist legs consume the whole host at once. PRs have
       # one Python leg and are unaffected; push/nightly runs execute two legs,
-      # then the third, while TypeScript starts immediately alongside them.
-      max-parallel: 2
+      # then the third, while TypeScript starts immediately alongside them. Keep
+      # the GitHub-hosted fallback elastic: its matrix legs run on separate VMs.
+      max-parallel: ${{ needs.pick-runner.outputs.label == 'obsidian' && 2 || 3 }}
       matrix:
         # FLOOR on every PR, floor + NEWEST on push-to-main and the nightly.
         #
