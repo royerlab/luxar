@@ -421,11 +421,11 @@ def napari_viewer(
         raise typer.Exit(1)
 
     try:
-        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.io.load_gsplats import load_default_gsplats
 
         with asection(f"Loading gsplat dataset: {path.name}"):
             # Load dataset
-            data = GSplatData.load(path, include_stats=True)
+            data = load_default_gsplats(path, include_stats=True)
 
             n_splats = len(data.amplitudes)
             ndim = data.centers.shape[1]

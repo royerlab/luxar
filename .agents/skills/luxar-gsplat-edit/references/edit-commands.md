@@ -1,13 +1,16 @@
 # `luxar gsplat` editing & inspection commands — full reference
 
-Verified from `cli/gsplat_ops/transforms/`, `scene_commands.py`,
-`inspect_commands.py`. All operate on a `.gsplats.zarr` (flat, partition, or nested
-LOD). These write-output commands take `--encoding`/`-e` (`auto`/`precision`/`memory`,
-default `auto`): `transform`, `slice`, `filter`, `cull`, `merge`, `partition`,
-`flatten`, `additive`, `convert`. All of those except `convert` also take
-`--compress` (`zip`/`tar.gz`). `reencode` takes `--encoding` too but defaults to
-`memory`. `migrate-format`, `annotate-quality`, `denoise`, and the inspection
-commands have neither. NOTE: the old `split` command is gone — use `partition`.
+Verified from `cli/gsplat_ops/transforms/`, `scene_commands.py`, and
+`inspect_commands.py`. The read-only inspection commands accept flat, partition,
+or nested LOD stores. `partition`, `cull`, `filter`, `slice`, `decimate`, and
+`merge` require a flat (matrix-shaped) store; run `luxar gsplat flatten` first
+for partition or nested inputs. These write-output commands take `--encoding`/`-e`
+(`auto`/`precision`/`memory`, default `auto`): `transform`, `slice`, `filter`,
+`cull`, `merge`, `partition`, `flatten`, `additive`, `convert`. All of those
+except `convert` also take `--compress` (`zip`/`tar.gz`). `reencode` takes
+`--encoding` too but defaults to `memory`. `migrate-format`, `annotate-quality`,
+`denoise`, and the inspection commands have neither. NOTE: the old `split`
+command is gone — use `partition`.
 
 ---
 
