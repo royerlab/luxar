@@ -346,7 +346,14 @@ def build_scene(
         # after the term, so the query needs the term alone; `format_label` is
         # for reading, not searching.
         per_cell_keys = [
-            str(term_cats[attributes["bio_term"][i]]) for i in range(n_cells)
+            str(term_cats[attributes["bio_term"][i]])
+            # `bio_term` is a pandas categorical code, so an unannotated cell is
+            # -1. Guarding only the upper bound would let that index from the
+            # END and hand the cell a real, wrong term — a link that opens
+            # confidently on the wrong page. Empty instead, which suppresses it.
+            if 0 <= attributes["bio_term"][i] < len(term_cats)
+            else ""
+            for i in range(n_cells)
         ]
         per_cell_labels = [
             f"{format_label(term_cats[attributes['bio_term'][i]])}\n"

@@ -267,7 +267,9 @@ def create_mouse_scene(
                     # Out of range means codes and map disagree; an empty key
                     # suppresses that cell's link rather than searching for an
                     # integer.
-                    per_cell_keys.append(str(cats[code]) if code < len(cats) else "")
+                    per_cell_keys.append(
+                        str(cats[code]) if 0 <= code < len(cats) else ""
+                    )
                 celltype_keys = per_cell_keys * len(available_attrs)
 
             scene.add_points(

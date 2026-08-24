@@ -1983,7 +1983,9 @@ def create_cytoself_scene(
                     # Out of range means the code/category map disagree; an empty
                     # key suppresses that cell's link rather than opening a search
                     # for a bare integer.
-                    per_cell_keys.append(str(names[code]) if code < len(names) else "")
+                    per_cell_keys.append(
+                        str(names[code]) if 0 <= code < len(names) else ""
+                    )
                 protein_keys = per_cell_keys * len(available_attrs)
 
             all_image_labels = _resolve_image_labels(

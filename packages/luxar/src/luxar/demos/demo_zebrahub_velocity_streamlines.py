@@ -840,7 +840,7 @@ def write_scene(
     # developmental stage after it, so the query needs the term alone. A code
     # outside the lookup yields an empty key and the link suppresses.
     cell_keys = [
-        str(anatomy_lookup[int(a)]) if int(a) < len(anatomy_lookup) else ""
+        str(anatomy_lookup[int(a)]) if 0 <= int(a) < len(anatomy_lookup) else ""
         for a in data.anatomy_codes
     ]
     cell_labels = [

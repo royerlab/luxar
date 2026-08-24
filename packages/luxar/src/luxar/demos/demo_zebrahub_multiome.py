@@ -160,7 +160,7 @@ def main() -> None:
             # link suppresses, rather than searching for an integer.
             per_cell_keys = [
                 str(ct_map[attrs["celltype"][i]])
-                if attrs["celltype"][i] < len(ct_map)
+                if 0 <= attrs["celltype"][i] < len(ct_map)
                 else ""
                 for i in range(len(coords))
             ]
@@ -272,7 +272,7 @@ def main() -> None:
             # link suppresses, rather than searching for an integer.
             per_cell_keys = [
                 str(ct_map[attrs["celltype"][i]])
-                if attrs["celltype"][i] < len(ct_map)
+                if 0 <= attrs["celltype"][i] < len(ct_map)
                 else ""
                 for i in range(len(coords))
             ]
