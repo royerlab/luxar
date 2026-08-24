@@ -196,6 +196,8 @@ means the GitHub query failed, so do not treat it as either claimed or
 unclaimed. This check uses GitHub's closing-issue references, not a local branch
 list, so it also sees work created from another checkout or host. It is a manual
 coordination convention, not a CI gate.
+The check requires a GitHub CLI version that supports the
+`closingIssuesReferences` PR field and `gh api --slurp`.
 
 Re-run the check immediately before `gh pr create` to close the window where
 another PR can open while work is in progress. When checking work already

@@ -5,6 +5,9 @@ A local branch list is intentionally not the source of truth here: a pull
 request may have been created from another checkout or host. GitHub's open pull
 requests are the durable, repository-wide view.
 
+This script requires a GitHub CLI version that supports the
+``closingIssuesReferences`` PR field and ``gh api --slurp``.
+
 Usage::
 
     hatch run python scripts/check_open_issue_pr.py 2011
@@ -95,7 +98,7 @@ def _run_gh(args: Sequence[str]) -> Any:
     except subprocess.CalledProcessError as error:
         stderr_lines = [line.strip() for line in (error.stderr or "").splitlines()]
         detail = next(
-            (line for line in reversed(stderr_lines) if line),
+            (line for line in stderr_lines if line),
             f"exit status {error.returncode}",
         )
         print(f"error: gh command failed: {detail}", file=sys.stderr)

@@ -110,24 +110,34 @@ def test_pull_request_paths_flattens_every_api_page(monkeypatch) -> None:
 
 
 @pytest.mark.parametrize(
-    "outcome",
+    ("outcome", "expected_detail"),
     [
-        subprocess.CalledProcessError(
-            4,
-            ["gh", "pr", "list"],
-            stderr="simulated gh failure\n",
+        (
+            subprocess.CalledProcessError(
+                4,
+                ["gh", "pr", "list"],
+                stderr=(
+                    "unknown flag: --slurp\n\n"
+                    "Usage:  gh api <endpoint>\n"
+                    "  --verbose  Enable verbose output\n"
+                ),
+            ),
+            "unknown flag: --slurp",
         ),
-        FileNotFoundError("gh not found"),
-        subprocess.CompletedProcess(
-            ["gh", "pr", "list"],
-            returncode=0,
-            stdout="not-json",
-            stderr="",
+        (FileNotFoundError("gh not found"), "GitHub CLI 'gh' was not found"),
+        (
+            subprocess.CompletedProcess(
+                ["gh", "pr", "list"],
+                returncode=0,
+                stdout="not-json",
+                stderr="",
+            ),
+            "gh returned invalid JSON",
         ),
     ],
 )
 def test_run_gh_failures_exit_three_without_traceback(
-    monkeypatch, capsys, outcome
+    monkeypatch, capsys, outcome, expected_detail
 ) -> None:
     def fake_run(*args, **kwargs):
         if isinstance(outcome, BaseException):
@@ -140,6 +150,7 @@ def test_run_gh_failures_exit_three_without_traceback(
     assert exc_info.value.code == 3
     error = capsys.readouterr().err
     assert error.startswith("error:")
+    assert expected_detail in error
     assert "Traceback" not in error
     assert error.count("\n") == 1
 
