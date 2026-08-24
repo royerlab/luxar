@@ -80,6 +80,7 @@ def run_merge_datasets(
     """Run merge command implementation."""
     try:
         from luxar.cli.gsplat_config import parse_hex_color
+        from luxar.cli.gsplat_ops.loading import load_matrix_gsplats
         from luxar.gsplats.gsplat_data import GSplatData
 
         if len(inputs) < 2:
@@ -95,7 +96,11 @@ def run_merge_datasets(
             total_splats = 0
             for inp in inputs:
                 with asection(f"Loading {inp.name}"):
-                    ds = GSplatData.load(inp, include_stats=False)
+                    ds = load_matrix_gsplats(
+                        inp,
+                        include_stats=False,
+                        command="merge",
+                    )
                     aprint(f"{ds.n_splats:,} splats ({ds.ndim}D)")
                     datasets.append(ds)
                     total_splats += ds.n_splats

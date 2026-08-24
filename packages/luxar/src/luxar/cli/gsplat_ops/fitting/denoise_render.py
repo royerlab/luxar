@@ -3,12 +3,67 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import typer
 from arbol import aprint, asection
 
 from ...utils import format_memory_size
+
+if TYPE_CHECKING:
+    import numpy as np
+
+    from luxar.gsplats.gsplat_data import GSplatData
+    from luxar.gsplats.tree import GSplatLeaf
+
+
+def _default_output_shape(
+    default_leaves: list[GSplatLeaf], ndim: int
+) -> tuple[int, ...]:
+    """Return the auto-sized output shape for the leaves the renderer will draw."""
+    import numpy as np
+
+    from luxar.gsplats.tree import center_bounds
+
+    leaf_bounds = [
+        bounds for leaf in default_leaves if (bounds := center_bounds(leaf)) is not None
+    ]
+    if not leaf_bounds:
+        raise ValueError("GSplat tree has no splat centers")
+    mins = np.min(np.stack([bounds[0] for bounds in leaf_bounds]), axis=0)
+    maxs = np.max(np.stack([bounds[1] for bounds in leaf_bounds]), axis=0)
+    return tuple(int(maxs[index] - mins[index]) + 1 for index in range(ndim))
+
+
+def _render_default_leaves(
+    default_leaves: list[GSplatLeaf],
+    first_data: GSplatData,
+    *,
+    output_shape: tuple[int, ...],
+    device: Optional[str],
+    truncate: float,
+) -> np.ndarray:
+    """Render one leaf directly, or accumulate a multi-leaf default selection."""
+    import numpy as np
+
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    if len(default_leaves) == 1:
+        return first_data.render_to_volume(
+            shape=output_shape,
+            device=device,
+            truncate=truncate,
+        )
+
+    volume = np.zeros(output_shape, dtype=np.float32)
+    for index, leaf in enumerate(default_leaves):
+        leaf_data = first_data if index == 0 else GSplatData.from_tree(leaf)
+        volume += leaf_data.render_to_volume(
+            shape=output_shape,
+            device=device,
+            truncate=truncate,
+        )
+    return volume
 
 
 def run_denoise_volume_cmd(
@@ -124,28 +179,36 @@ def run_render_to_file(
 
         from luxar.cli.gsplat_config import parse_shape
         from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.tree import iter_default_leaves, total_splats
 
         with asection(f"Rendering: {input_path.name}"):
             with asection("Loading gsplat dataset"):
-                data = GSplatData.load(input_path, include_stats=False)
-                ndim = data.ndim
-                aprint(f"Loaded {data.n_splats:,} splats ({ndim}D)")
+                node, _ = load_gsplat_node(input_path, include_stats=False)
+                default_leaves = list(iter_default_leaves(node))
+                if not default_leaves:
+                    raise ValueError("GSplat tree has no default-rendered leaves")
+                first_leaf = default_leaves[0]
+                first_data = GSplatData.from_tree(first_leaf)
+                ndim = first_data.ndim
+                n_splats = sum(total_splats(leaf) for leaf in default_leaves)
+                aprint(f"Loaded {n_splats:,} splats ({ndim}D)")
 
             # Resolve truncation radius from dataset if not explicitly set
             if truncate is None:
-                truncate = data.truncation_radius
+                truncate = first_data.truncation_radius
 
             if shape is not None:
                 output_shape = parse_shape(shape)
             else:
-                mins = data.centers.min(axis=0)
-                maxs = data.centers.max(axis=0)
-                output_shape = tuple(int(maxs[i] - mins[i]) + 1 for i in range(ndim))
+                output_shape = _default_output_shape(default_leaves, ndim)
                 aprint(f"Auto shape from bounding box: {output_shape}")
 
             with asection(f"Rendering to {output_shape}"):
-                volume = data.render_to_volume(
-                    shape=output_shape,
+                volume = _render_default_leaves(
+                    default_leaves,
+                    first_data,
+                    output_shape=output_shape,
                     device=device,
                     truncate=truncate,
                 )

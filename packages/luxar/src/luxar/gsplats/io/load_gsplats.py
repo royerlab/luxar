@@ -30,7 +30,8 @@ def load_gsplats(
     ``kind=lod`` group whose children are all leaves (the substitutive × additive
     matrix). A genuinely nested tree (a ``kind=partition`` root, or a lod group
     with non-leaf children) has no flat ``GSplatData`` equivalent and raises
-    ``ValueError``; consume those via the node tree directly (``read_gsplat_node``).
+    ``ValueError``; use ``load_default_gsplats`` to materialize the default-rendered
+    selection, or consume the node tree directly with ``load_gsplat_node``.
 
     Args:
         path: Path to .gsplats.zarr directory or compressed archive
@@ -46,6 +47,23 @@ def load_gsplats(
     """
     node, stats = load_gsplat_node(path, include_stats=include_stats)
     return GSplatData.from_tree(node, stats=stats)
+
+
+def load_default_gsplats(
+    path: str | Path,
+    include_stats: bool = False,
+) -> GSplatData:
+    """Load the splats selected by the tree's default rendering semantics.
+
+    Matrix-shaped inputs retain their existing substitutive/additive structure.
+    For a partition or nested tree, all partition children, the default (finest)
+    child of each substitutive LOD group, and every additive sub-LOD are
+    materialized as one flat in-memory dataset. Root stats are deliberately
+    retained unchanged when requested because this helper is read-only; a
+    writer that changes topology must scrub structure-scoped metadata itself.
+    """
+    node, stats = load_gsplat_node(path, include_stats=include_stats)
+    return GSplatData.from_default_selection(node, stats=stats)
 
 
 def read_authored_appearance(path: str | Path) -> Dict[str, Any]:

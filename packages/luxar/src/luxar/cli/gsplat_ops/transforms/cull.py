@@ -55,13 +55,17 @@ def run_cull_dataset(
 ) -> None:
     """Run cull command implementation."""
     try:
-        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.cli.gsplat_ops.loading import load_matrix_gsplats
 
         encoding_mode_obj = _resolve_encoding_mode(encoding_mode)
 
         with asection(f"Culling: {input_path.name}"):
             with asection("Loading dataset"):
-                data = GSplatData.load(input_path, include_stats=True)
+                data = load_matrix_gsplats(
+                    input_path,
+                    include_stats=True,
+                    command="cull",
+                )
                 n_original = data.n_splats
                 aprint(f"Loaded {n_original:,} splats ({data.ndim}D)")
 
