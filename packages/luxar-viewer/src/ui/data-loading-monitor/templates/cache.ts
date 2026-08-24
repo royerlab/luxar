@@ -51,6 +51,11 @@ export function getCacheHitRateColorClassWithGuard(rate: number, totalAccesses: 
   return getCacheHitRateColorClass(rate);
 }
 
+/**
+ * Cache-section keys accepted by the collapse toggle. Sections start
+ * collapsed (compact one-line summary) — the Cache tab holds 4 stacked
+ * sections and would otherwise overflow the panel with a scrollbar.
+ */
 export const CACHE_SECTION_KEYS = ['slice', 'l0', 'l1', 'l2'] as const;
 export type CacheSectionKey = (typeof CACHE_SECTION_KEYS)[number];
 
@@ -760,7 +765,3 @@ export function renderCacheContent(
     </div>
   `;
 }
-
-/**
- * Template for recommendation item
- */

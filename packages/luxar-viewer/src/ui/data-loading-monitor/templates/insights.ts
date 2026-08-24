@@ -6,6 +6,9 @@ import type { Recommendation } from '../../../types/data-monitor-types';
 import { escapeHtml } from '../../../utils/escape-html';
 import { MONITOR_ICONS, getColorClass } from './primitives';
 
+/**
+ * Template for recommendation item
+ */
 export function renderRecommendation(rec: Recommendation): string {
   const severityIcons = {
     error: `<span class="${getColorClass('error')}">${MONITOR_ICONS.dot}</span>`,

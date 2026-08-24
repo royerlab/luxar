@@ -330,9 +330,3 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
     </div>
   `;
 }
-
-/**
- * Cache-section keys accepted by the collapse toggle. Sections start
- * collapsed (compact one-line summary) — the Cache tab holds 4 stacked
- * sections and would otherwise overflow the panel with a scrollbar.
- */
