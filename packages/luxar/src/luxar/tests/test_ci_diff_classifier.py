@@ -510,3 +510,16 @@ def test_queue_watchdog_retries_unparseable_jobs_response(
     assert calls == 3
     assert "not parseable; retrying" in result.stdout
     assert not cancelled
+
+
+def test_queue_watchdog_still_cancels_when_every_obsidian_job_is_queued(
+    workflow: str, tmp_path: Path
+) -> None:
+    """No active sibling plus zero heartbeat retains the fail-closed behavior."""
+    snapshots = [[_obsidian_job("python-tests (3.12)", "queued")]]
+    result, calls, cancelled = _run_queue_watchdog(workflow, tmp_path, snapshots)
+
+    assert result.returncode == 1
+    assert calls == 1
+    assert "heartbeat went stale" in result.stdout
+    assert cancelled
