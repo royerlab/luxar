@@ -520,6 +520,12 @@ unchanged; a store that stamps no `slice_dims` falls back to the old inference.
 by the ellipsoidal extent). Encoding metadata on each array carries tighter
 per-array quantization bounds.
 
+Those encoding bounds are leaf-local. Writing the same source splats as one
+AUTO leaf and as an AUTO partition therefore quantizes each part against
+different ranges and does not promise identical decoded float32 values. The
+window harmonization below changes only the display range, not those encoding
+bounds; use PRECISION when a structural rewrite must preserve decoded values.
+
 **Amplitude ranges**: `amplitude_range` (`{"min", "max"}` dict) is the
 metadata bounds record and holds the true min/max of the original
 (pre-quantization) amplitudes. `amplitude_data_range` (`[min, max]` list,
