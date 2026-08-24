@@ -23,6 +23,7 @@ import zarr
 from typer.testing import CliRunner
 
 from luxar.cli import app
+from luxar.cli.tests._testing import normalized_cli_output
 from luxar.io.reader import LuxarScene
 from luxar.mesh.interop import MESH_FORMATS
 from luxar.mesh.interop.tests._synthetic import (
@@ -260,6 +261,22 @@ class TestMeshImport:
         result = runner.invoke(app, ["mesh", "--help"])
         assert result.exit_code == 0
         assert "import" in result.stdout
+
+    def test_the_group_help_names_every_dialect_it_reads(self) -> None:
+        """The `luxar mesh` blurb enumerates the formats, so it goes stale silently.
+
+        No gate catches it: `test_docs_command_coverage` checks command paths and option
+        spellings, not help PROSE. A dialect the importer supports but the blurb omits
+        reads as unsupported to anyone who looks at `--help` first.
+        """
+        result = runner.invoke(app, ["mesh", "--help"])
+        assert result.exit_code == 0
+        blurb = _plain(result.stdout).lower()
+        missing = [fmt for fmt in MESH_FORMATS if fmt not in blurb]
+        assert not missing, (
+            f"`luxar mesh --help` does not mention {missing}, which "
+            "`luxar mesh import` reads"
+        )
 
 
 def _grid_mesh(n: int = 24) -> tuple[np.ndarray, np.ndarray]:
@@ -510,7 +527,7 @@ class TestMeshLod:
                 ],
             )
             assert old.exit_code != 0
-            pointer = _plain(old.output)
+            pointer = normalized_cli_output(old)
             assert "--subst-method cluster" in pointer, pointer
             # A bare "No such option" would also be a non-zero exit, so assert the
             # replacement AND that typer never got to reject the flag itself.
@@ -2102,7 +2119,7 @@ class TestMeshLodRecipeGateThroughTheRealCLI:
             f"{flag} {value} was accepted under --recipe reveal; the gate is "
             "inferring 'given' from the value again"
         )
-        message = _plain(result.output)
+        message = normalized_cli_output(result)
         assert "--recipe levels" in message, message
         assert not out.exists(), "a refused invocation must write nothing"
 
@@ -2123,9 +2140,8 @@ class TestMeshLodRecipeGateThroughTheRealCLI:
         assert result.exit_code != 0, (
             f"{flag} {value} was accepted under the default recipe"
         )
-        assert "--recipe reveal" in _plain(result.output) or "--subst-method" in _plain(
-            result.output
-        )
+        message = normalized_cli_output(result)
+        assert "--recipe reveal" in message or "--subst-method" in message
         assert not out.exists()
 
     def test_SENSITIVITY_neither_recipe_refuses_its_OWN_flags_at_defaults(

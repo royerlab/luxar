@@ -1474,36 +1474,10 @@ demo:  ## Generate the Lorenz demo dataset (datasets/demos/lorenz.luxar.zarr, 10
 	@echo "✅ Demo dataset created at datasets/demos/lorenz.luxar.zarr"
 
 run-examples:  ## Run all examples to generate zarr files (output to datasets/examples/)
-	@echo "🚀 Running all examples to generate zarr files..."
-	@echo "📂 Output directory: datasets/examples/"
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@# Every example is attempted (one failure must not hide the rest), but the
-	@# target FAILS at the end if any did. CI's e2e job builds its datasets with
-	@# this target — exiting 0 on a broken example turns a clear generator error
-	@# into a baffling downstream rendering failure.
-	@total=$$(ls -1 packages/luxar/examples/*_example.py 2>/dev/null | wc -l || echo 0); \
-	count=0; \
-	failed=""; \
-	for script in packages/luxar/examples/*_example.py; do \
-		count=$$((count + 1)); \
-		name=$$(basename $$script); \
-		echo ""; \
-		echo "[$${count}/$${total}] 📊 Running $${name}..."; \
-		echo "────────────────────────────────────────────────"; \
-		if $(HATCH) run python $$script; then \
-			echo "✅ Success: $${name}"; \
-		else \
-			echo "❌ Failed: $${name}"; \
-			failed="$$failed $$name"; \
-		fi; \
-	done; \
-	echo ""; \
-	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
-	if [ -n "$$failed" ]; then \
-		echo "❌ Examples FAILED:$$failed"; \
-		exit 1; \
-	fi; \
-	echo "✅ All examples completed!"
+	@# The runner fingerprints both the example builders and Luxar's production
+	@# Python writer code. E2E entrypoints can therefore depend on this target
+	@# without rebuilding fixtures whose producer contract has not changed.
+	$(HATCH) run python scripts/run_examples.py
 	@echo ""
 	@echo "📁 Generated zarr files in datasets/examples/:"
 	@for zarr in datasets/examples/*.zarr; do \
@@ -2694,21 +2668,21 @@ test-cov-typescript:  ## Run TypeScript tests with coverage
 	fi
 	cd packages/luxar-viewer && pnpm run test:coverage
 
-test-e2e:  ## Run the full Playwright E2E suite (~17 min at 4 workers; workers scale with load)
+test-e2e: run-examples  ## Run the full Playwright E2E suite (~17 min at 4 workers; workers scale with load)
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
 		cd packages/luxar-viewer && pnpm install; \
 	fi
 	cd packages/luxar-viewer && pnpm test:e2e
 
-test-e2e-smoke:  ## Run the E2E smoke subset (what CI would run)
+test-e2e-smoke: run-examples  ## Run the E2E smoke subset (what CI would run)
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
 		cd packages/luxar-viewer && pnpm install; \
 	fi
 	cd packages/luxar-viewer && pnpm test:e2e:smoke
 
-test-perf-e2e:  ## Run the opt-in Playwright performance suite
+test-perf-e2e: run-examples  ## Run the opt-in Playwright performance suite
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
 		cd packages/luxar-viewer && pnpm install; \

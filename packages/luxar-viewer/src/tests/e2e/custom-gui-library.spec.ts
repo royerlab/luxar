@@ -22,7 +22,13 @@ test.describe('Custom GUI Library', () => {
     // Navigate to the demo page which properly loads the GUI library
     await page.goto('/demo-custom-gui.html');
     // Wait for GUI to be created and shown
-    await page.waitForSelector('.luxar-gui', { timeout: 10000 });
+    const gui = page.locator('.luxar-gui');
+    await gui.waitFor({ state: 'visible', timeout: 10000 });
+    await gui.evaluate(async (element) => {
+      await Promise.all(
+        element.getAnimations({ subtree: true }).map((animation) => animation.finished)
+      );
+    });
   });
 
   test('should create and display GUI panel', async ({ page }) => {
@@ -32,6 +38,12 @@ test.describe('Custom GUI Library', () => {
 
     // Verify title
     await expect(gui.locator('.luxar-gui__title')).toHaveText('Custom GUI Demo');
+
+    // The demo must load the shared panel recipes used by GUI's emitted classes.
+    const header = gui.locator('.luxar-gui__header');
+    await expect(header).toHaveCSS('padding-bottom', '6px');
+    await expect(header).toHaveCSS('margin-bottom', '10px');
+    await expect(header).toHaveCSS('border-bottom-width', '1px');
 
     // Verify folders exist (Camera, HDR, Post-Processing, Navigation, Misc)
     const folders = gui.locator('.luxar-gui__folder');

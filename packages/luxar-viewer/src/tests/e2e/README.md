@@ -404,10 +404,12 @@ then runs five preflight checks:
    silently reused. An unrelated catch-all server that returns 200 is
    rejected by checking the marker body here.
 2. **Examples directory** — `datasets/examples/` in the identified
-   checkout is verified to exist. If missing, a warning is logged with
-   instructions to run `make run-examples`; the run is **not** aborted
-   because some specs (basic-rendering, viewer-initialization,
-   test-fixtures, geometry-types) don't need the examples.
+   checkout is verified to exist and, when present, its producer stamp is
+   checked through `scripts/run_examples.py --check`. A stale stamp aborts
+   with instructions to run `make run-examples`; an unavailable checker or
+   missing directory warns and continues because some specs
+   (basic-rendering, viewer-initialization, test-fixtures, geometry-types)
+   don't need the examples.
 3. **Required datasets** — checks for the eight required `*.zarr`
    directories and then issues an HTTP `HEAD` request for each one
    found locally. A fixture that exists on disk but is not reachable

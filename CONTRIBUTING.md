@@ -181,6 +181,45 @@ Maintainers review for:
 
 ## 📝 Pull Request Guidelines
 
+### Coordinate Issue Work
+
+Before creating a branch for a numbered issue, check whether an open pull
+request already declares that it closes the issue:
+
+```bash
+hatch run python scripts/check_open_issue_pr.py <issue-number>
+```
+
+Exit status 1 means the issue already has an open PR. Continue that work or
+coordinate on the existing PR instead of opening another one. Exit status 3
+means the GitHub query failed, so do not treat it as either claimed or
+unclaimed. This check uses GitHub's closing-issue references, not a local branch
+list, so it also sees work created from another checkout or host. It is a manual
+coordination convention, not a CI gate.
+The check requires a GitHub CLI version that supports the
+`closingIssuesReferences` PR field and `gh api --slurp`.
+
+Re-run the check immediately before `gh pr create` to close the window where
+another PR can open while work is in progress. When checking work already
+attached to a PR, pass `--exclude-pr <your-pr>` so it does not match itself.
+Use `--loose` for an advisory list of open PR titles or bodies that mention the
+issue without declaring that they close it; those mentions do not change the
+exit status.
+
+If duplicate PRs still exist, do not select or close one by age alone. Choose
+the survivor by completeness and discussion quality, then inventory both
+branches before closing the other:
+
+```bash
+hatch run python scripts/check_open_issue_pr.py <issue-number> \
+    --exclude-pr <duplicate-pr> --compare-pr <duplicate-pr>
+```
+
+Transfer or explicitly account for every duplicate-only path. Shared paths are
+not proof that the patches are equivalent; inspect both diffs for unique hunks.
+Also copy any materially different review conclusion onto the surviving PR so
+the disagreement remains visible where the work continues.
+
 ### Before Submitting
 - ✅ `make check-all` passes without errors
 - ✅ `make test-cov-python` shows adequate coverage
