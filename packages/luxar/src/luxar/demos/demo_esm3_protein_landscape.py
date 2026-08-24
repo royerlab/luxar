@@ -108,9 +108,19 @@ def _linkable_accessions(accessions: list[str], n_proteins: int) -> list[str] | 
 
 
 def _uniprot_link_attrs(keys: list[str] | None) -> dict[str, object]:
-    """Build link attributes only when the cache supplied aligned keys."""
+    """Link to the exact UniProt entry when the cache supplied aligned keys,
+    otherwise fall back to a search on the hover label.
+
+    Returning ``{}`` here used to mean the points were pickable but inert: every
+    one still carries a "<protein name> — <organism>" label, so the pick looked
+    live and clicking did nothing. A label search is strictly better than that,
+    and costs nothing when keys ARE present since this branch is not taken.
+    """
     if keys is None:
-        return {}
+        return {
+            "link": "https://www.uniprot.org/uniprotkb?query={hover_label}",
+            "copy": "{hover_label}",
+        }
     return {
         "keys": keys,
         "link": "https://www.uniprot.org/uniprotkb/{hover_key}/entry",

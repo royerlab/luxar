@@ -1091,11 +1091,18 @@ def generate_paper_landscape(
     # `resolve_paper_metadata` no longer produces. Neither may be reused — the
     # stored `years` are part of this computation's output, so changing how they
     # are derived invalidates the cache exactly as changing the UMAP would.
+    # version=4: `_compute_bundle` gained an `ids` field (the per-paper DOI keys
+    # that drive the click-through), but the version was NOT bumped at the time.
+    # A warm v3 bundle therefore has no `ids`, `have_ids` is False forever, and
+    # the demo silently ships with picking that does nothing — on every machine
+    # whose cache predates the field, which is the failure this fixes. The bump
+    # is what invalidates those bundles; it costs a UMAP recompute over 3.29M
+    # points (PCA is cached separately and reused).
     cache_key = (
         f"umap3d_n{'all' if sample_size is None else sample_size}"
         f"_pca{pca_dim}_seed{seed}"
     )
-    bundle = cache_computed("arxiv_kaggle", cache_key, _compute_bundle, version=3)
+    bundle = cache_computed("arxiv_kaggle", cache_key, _compute_bundle, version=4)
     positions = bundle["positions"]
     categories = list(bundle["categories"])
     years = list(bundle["years"])
@@ -1209,7 +1216,18 @@ def generate_paper_landscape(
                 "copy": "{hover_key}",
             }
             if stacked.keys is not None
-            else {}
+            # No stored ids (a cached bundle predating them) used to mean NO
+            # click-through at all, which is the worst outcome: every point
+            # already carries a title as its hover label, so the pick was
+            # actionable and silently did nothing. Fall back to a title search
+            # instead — same shape as the label-search links cellxgene
+            # (EBI OLS) and dmri_tractography (Wikipedia) already use. Scholar
+            # rather than arXiv search because this set is arXiv + bioRxiv +
+            # medRxiv, and an arXiv-only search misses the two preprint servers.
+            else {
+                "link": "https://scholar.google.com/scholar?q={hover_label}",
+                "copy": "{hover_label}",
+            }
         )
         radii = np.tile(radii_pp, len(stacked.categories)).astype(np.float32)
 
