@@ -13,6 +13,23 @@ Run it before touching Zenodo, and again after each upload::
 
     python scripts/zenodo_migration_audit.py
 
+The default is entirely local — no network — so it stays fast and runs anywhere.
+``--live`` adds a fourth source, the Zenodo depositions themselves, and is the
+check to run immediately before publishing by hand::
+
+    ZENODO_TOKEN=... python scripts/zenodo_migration_audit.py --live
+
+It is READ-ONLY: the only verb it issues is GET, and it cannot publish. What it
+adds is the one question local state cannot answer — whether the files ON the
+records are the files the manifest promises, in both directions, with no scratch
+objects left behind and no stale numbers in the description.
+
+One caveat it enforces rather than assumes: if nearly every pin disagrees with
+the records, the answer is almost never "the records are broken" but "this is not
+the manifest that will ship" (an un-merged re-pin branch). It says so, because
+correct-looking output about a superseded input is otherwise indistinguishable
+from a real defect.
+
 The checks that matter, and why each one is here:
 
 ``UNDECLARED on disk``
@@ -39,15 +56,30 @@ The checks that matter, and why each one is here:
 
 from __future__ import annotations
 
+import argparse
 import json
+import os
+import re
 import sys
+import urllib.request
 from pathlib import Path
 
-REPO = (
-    Path(sys.argv[1]).resolve()
-    if len(sys.argv) > 1
-    else Path(__file__).resolve().parent.parent
-)
+
+def _repo_from_argv(argv: list[str]) -> Path:
+    """The repo-root positional, ignoring flags.
+
+    Read at import time because ``MANIFEST``/``DATA_DIR`` are module constants
+    (and the tests patch ``sys.argv`` before importing). Flags must be skipped or
+    ``audit.py --live`` would resolve a repo root literally named ``--live`` and
+    then fail on a missing manifest.
+    """
+    positional = [a for a in argv if not a.startswith("-")]
+    if positional:
+        return Path(positional[0]).resolve()
+    return Path(__file__).resolve().parent.parent
+
+
+REPO = _repo_from_argv(sys.argv[1:])
 sys.path.insert(0, str(REPO / "packages/luxar/src"))
 
 MANIFEST = REPO / "packages/luxar/src/luxar/demos/data_manifest.json"
@@ -290,7 +322,248 @@ def _print_readiness(
     print("  blocked on a human decision:  0")
 
 
+# ---------------------------------------------------------------------------
+# Live deposition checks (opt-in, --live)
+#
+# Everything above answers "is the migration ready?" from local state alone.
+# These answer the one question local state cannot: does what is ON the records
+# match what the manifest promises? Every check below is a mistake actually made
+# during the migration, so none of them is hypothetical.
+#
+# Kept as pure functions over (manifest, depositions) with a thin network shell,
+# so the whole thing is testable offline — and so the default stays offline.
+# ---------------------------------------------------------------------------
+
+ZENODO_API = "https://zenodo.org/api/deposit/depositions"
+
+#: Above this share of pinned files failing, the diagnosis is "wrong manifest",
+#: not "broken records". Two thirds is well clear of the handful of genuine
+#: mismatches a real pre-publish run should ever show.
+_STALE_MANIFEST_SHARE = 0.66
+
+
+def pins_of(datasets: dict) -> dict[str, tuple[str, int, str]]:
+    """``filename -> (record, bytes, sha256)`` for every zenodo-bucket file.
+
+    Uses :func:`files_of`, so a variant's files are included on the same footing
+    as a dataset's own — h2afva's pinned 253tp is only reachable that way.
+    """
+    pins: dict[str, tuple[str, int, str]] = {}
+    for spec in datasets.values():
+        if spec.get("bucket") != "zenodo":
+            continue
+        for _var, f in files_of(spec):
+            pins[f["name"]] = (
+                spec.get("record", ""),
+                f.get("bytes", 0),
+                f.get("sha256") or "",
+            )
+    return pins
+
+
+def dataset_totals(datasets: dict) -> dict[str, int]:
+    """``dataset -> summed declared bytes``, for description size claims.
+
+    A record's contents table names DATASETS, whose size is the sum over their
+    files, while a size claim can also name a single file. Both are resolved.
+    """
+    return {
+        name: sum(f.get("bytes", 0) for _var, f in files_of(spec))
+        for name, spec in datasets.items()
+    }
+
+
+def human_bytes(n: int) -> str:
+    """Match the units the record descriptions are written in (MB, then GB)."""
+    mb = n / 1e6
+    return f"{mb / 1000:.1f} GB" if mb >= 1000 else f"{mb:.1f} MB"
+
+
+def check_deposition(
+    rec: str,
+    dep: dict,
+    pins: dict[str, tuple[str, int, str]],
+    totals: dict[str, int],
+    record_meta: dict,
+) -> tuple[list[str], list[str]]:
+    """Compare one live deposition against the manifest. Returns (fails, warns).
+
+    Pure: no I/O. *dep* is the deposition dict as the API returns it.
+    """
+    fails: list[str] = []
+    warns: list[str] = []
+    meta = dep.get("metadata") or {}
+    hosted = {f["filename"]: f for f in (dep.get("files") or [])}
+    tag = f"[{rec}]"
+
+    # 0. Publishing is a one-way door, so this is checked before anything else.
+    if dep.get("submitted"):
+        fails.append(f"{tag} ALREADY SUBMITTED — stop")
+
+    # 1. Pins and hosted files agree, in BOTH directions. One direction alone
+    #    misses the two ways this actually went wrong: a superseded file left on
+    #    the record, and a pin for something never uploaded.
+    for name, f in sorted(hosted.items()):
+        pin = pins.get(name)
+        if pin is None:
+            fails.append(f"{tag} {name} is on the record but NOT pinned")
+        elif pin[1] != f.get("filesize"):
+            fails.append(
+                f"{tag} {name} pinned {pin[1]:,} but hosted {f.get('filesize'):,}"
+            )
+    for name, (r, _b, _s) in sorted(pins.items()):
+        if r == rec and name not in hosted:
+            fails.append(f"{tag} {name} is pinned but ABSENT from the record")
+
+    # 2. No scratch left behind. A failed multipart upload can leave a probe
+    #    object, and a published record cannot be tidied.
+    for name in sorted(hosted):
+        if name.startswith("_") or name.endswith((".corrupt", ".part", ".tmp")):
+            fails.append(f"{tag} scratch file on the record: {name}")
+
+    # 3. The description's own numbers. A record is the one place a stale number
+    #    is PUBLISHED rather than merely wrong.
+    desc = meta.get("description") or ""
+    for mt in re.finditer(r"<li><code>([^<]+)</code>\s*\(([\d.]+\s?[MG]B)", desc):
+        entry, claimed = mt.group(1), mt.group(2)
+        pin = pins.get(entry)
+        size = totals.get(entry) or (pin[1] if pin else None)
+        if size is None:
+            warns.append(f"{tag} description names {entry}, not resolvable to a pin")
+        elif claimed.replace(" ", "") != human_bytes(size).replace(" ", ""):
+            fails.append(
+                f"{tag} description says {entry} is {claimed}, "
+                f"actually {human_bytes(size)}"
+            )
+    if "<table>" not in desc:
+        fails.append(f"{tag} description has no contents table")
+    else:
+        rows = desc.count("<tr>")
+        want = len(hosted) + 1  # + the header row
+        if rows != want:
+            fails.append(
+                f"{tag} table has {rows} rows for {len(hosted)} files (want {want})"
+            )
+    if "<thead" in desc:
+        # Zenodo's HTML sanitiser drops <thead>, so the header row vanishes on
+        # the rendered page while looking correct in the payload you sent.
+        warns.append(f"{tag} description contains <thead>, which Zenodo strips")
+
+    # 4. Metadata Zenodo requires to publish at all.
+    for key in ("title", "creators", "license", "upload_type"):
+        if not meta.get(key):
+            fails.append(f"{tag} metadata missing {key}")
+
+    # 5. The manifest's publication switches are flipped BY HAND at publish time.
+    #    Finding them already set means either a premature edit or a publish that
+    #    happened without this gate running.
+    if record_meta.get("published") or record_meta.get("base_url"):
+        warns.append(f"{tag} manifest already marks this published / base_url set")
+    return fails, warns
+
+
+def diagnose_manifest_staleness(fails: list[str], pins: dict) -> str | None:
+    """Name the likely cause when nearly every pin fails: the wrong manifest.
+
+    Exists because of a real incident. An audit run against ``dev`` reported the
+    records stale "essentially everywhere" and it was believed, when in fact the
+    records were ahead and the manifest was behind — the re-pin was sitting in an
+    unmerged PR. Correct-looking output about a superseded input is the failure
+    mode this whole tool is otherwise blind to, so say it out loud instead of
+    letting a reader interpret 30 mismatches as 30 broken files.
+    """
+    if not pins:
+        return None
+    mismatched = sum(
+        1 for f in fails if ("but hosted" in f or "ABSENT from the record" in f)
+    )
+    if mismatched < _STALE_MANIFEST_SHARE * len(pins):
+        return None
+    return (
+        f"{mismatched} of {len(pins)} pins disagree with the live records.\n"
+        "  That is too many to be a data problem: the likely cause is that THIS\n"
+        "  manifest is not the one that will ship. Check for an unmerged re-pin\n"
+        "  branch before believing any failure above:\n"
+        "      git log --oneline --all -- packages/luxar/src/luxar/demos/data_manifest.json\n"
+        "  Re-run the audit from that branch's worktree."
+    )
+
+
+def fetch_deposition(dep_id: int, token: str) -> dict:
+    """GET one deposition. The only network call in this file, and read-only.
+
+    ``scripts/zenodo_upload_draft.py`` has a near-identical helper, and this is a
+    deliberate duplication rather than an oversight: importing it would pull the
+    repo's ONE mutating Zenodo tool into this process, and "read-only" here is
+    asserted by grepping THIS file for mutating verbs. A ten-line GET is a cheap
+    price for keeping that guarantee local and checkable.
+
+    The Authorization header is UNREDIRECTED on purpose, matching
+    ``scripts/zenodo_upload_draft.py``: urllib's redirect handler copies
+    ``Request.headers`` onto the follow-up request, to whatever host a
+    ``Location`` names. It also keeps the token out of the URL.
+    """
+    req = urllib.request.Request(  # noqa: S310 - literal https URL, built here
+        f"{ZENODO_API}/{dep_id}", method="GET"
+    )
+    req.add_unredirected_header("Authorization", f"Bearer {token}")
+    with urllib.request.urlopen(req, timeout=60) as resp:  # nosec B310
+        payload: dict = json.load(resp)
+    return payload
+
+
+def _audit_live_depositions(manifest: dict, depositions: dict[str, dict]) -> int:
+    """Compare the manifest against fetched depositions; returns the fail count."""
+    print()
+    print("=" * 78)
+    print("LIVE DEPOSITIONS vs MANIFEST")
+    print("=" * 78)
+    datasets, records = manifest["datasets"], manifest["records"]
+    pins = pins_of(datasets)
+    totals = dataset_totals(datasets)
+
+    all_fails: list[str] = []
+    all_warns: list[str] = []
+    for rec, dep in sorted(depositions.items()):
+        fails, warns = check_deposition(rec, dep, pins, totals, records.get(rec) or {})
+        all_fails += fails
+        all_warns += warns
+
+    print(f"  records checked: {len(depositions)}   pins: {len(pins)}")
+    for w in all_warns:
+        print(f"  WARN {w}")
+    for f in all_fails:
+        print(f"  FAIL {f}")
+    if not all_fails and not all_warns:
+        print("  all pins match the live records; no scratch files; metadata complete")
+
+    note = diagnose_manifest_staleness(all_fails, pins)
+    if note:
+        print()
+        print("  !! PROBABLY THE WRONG MANIFEST, NOT BROKEN RECORDS")
+        print(f"  {note}")
+    return len(all_fails)
+
+
+def _parse_args(argv: list[str]) -> argparse.Namespace:
+    """Flags only. The repo positional is consumed at import time for ``REPO``.
+
+    It is accepted (and ignored) here so both spellings keep working:
+    ``audit.py`` and ``audit.py /path/to/repo``.
+    """
+    ap = argparse.ArgumentParser(description=__doc__ or "")
+    ap.add_argument("repo", nargs="?", help="repo root (default: this checkout)")
+    ap.add_argument(
+        "--live",
+        action="store_true",
+        help="also compare the manifest against the live Zenodo depositions "
+        "(needs ZENODO_TOKEN; read-only, never publishes)",
+    )
+    return ap.parse_args(argv)
+
+
 def main() -> int:
+    args = _parse_args(sys.argv[1:])
     m = json.loads(MANIFEST.read_text())
     datasets, records = m["datasets"], m["records"]
 
@@ -299,7 +572,25 @@ def main() -> int:
     _audit_demo_registry(datasets)
     undeclared = _audit_files_on_disk(datasets)
     _print_readiness(records, to_upload, elsewhere, partial)
-    return 1 if undeclared else 0
+
+    live_fails = 0
+    if args.live:
+        token = os.environ.get("ZENODO_TOKEN")
+        if not token:
+            print()
+            print("  --live needs ZENODO_TOKEN in the environment; skipping")
+            return 1
+        # Ids come from the manifest, not a constant: a hardcoded id is how a
+        # gate ends up auditing a record nothing points at any more.
+        wanted = {
+            name: r["zenodo_record"]
+            for name, r in records.items()
+            if r.get("zenodo_record")
+        }
+        depositions = {n: fetch_deposition(i, token) for n, i in sorted(wanted.items())}
+        live_fails = _audit_live_depositions(m, depositions)
+
+    return 1 if (undeclared or live_fails) else 0
 
 
 if __name__ == "__main__":

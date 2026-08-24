@@ -200,3 +200,240 @@ def test_unpulled_lfs_pointer_counts_as_absent(
     out = capsys.readouterr().out
     assert "BYTES NOT ON THIS MACHINE" in out
     assert "datasets ready to upload now: 0" in out
+
+
+# ---------------------------------------------------------------------------
+# --live: the deposition comparison
+#
+# These exercise the pure checks directly, with no network. That is the point of
+# the split: the whole comparison is a function of (manifest, depositions), so a
+# tool that touches a publishable record can be tested without touching one.
+# ---------------------------------------------------------------------------
+
+
+def _dep(files: list[dict], desc: str = "", **meta: object) -> dict:
+    """A deposition dict shaped like the API's, with publishable metadata."""
+    base = {
+        "title": "t",
+        "creators": [{"name": "a"}],
+        "license": "cc-by-4.0",
+        "upload_type": "dataset",
+        "description": desc,
+    }
+    base.update(meta)
+    return {"submitted": False, "metadata": base, "files": files}
+
+
+def _audit_module(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+    """Load the audit against the real repo (these tests never read the tree)."""
+    return _load(REPO_ROOT, REPO_ROOT / "nonexistent-cache", monkeypatch)
+
+
+def test_pins_include_variant_files(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A variant's files are pinned on the same footing as a dataset's own.
+
+    h2afva declares its files only under ``variants``, so a pin collector that
+    reads ``spec["files"]`` alone reports it as having nothing to check — the
+    dataset most in need of checking.
+    """
+    audit = _audit_module(monkeypatch)
+    pins = audit.pins_of(
+        {
+            "h2afva": {
+                "bucket": "zenodo",
+                "record": "h2afva",
+                "variants": {
+                    "253tp": {
+                        "files": [{"name": "big.zip", "sha256": "cc", "bytes": 9}]
+                    }
+                },
+            }
+        }
+    )
+    assert pins == {"big.zip": ("h2afva", 9, "cc")}
+
+
+def test_a_clean_record_produces_no_findings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The happy path is silent — otherwise every real run cries wolf."""
+    audit = _audit_module(monkeypatch)
+    datasets = _two_file_dataset()
+    desc = "<table><tr>h</tr><tr>a</tr><tr>b</tr></table>"
+    dep = _dep(
+        [
+            {"filename": "a.zip", "filesize": 1024},
+            {"filename": "b.zip", "filesize": 1024},
+        ],
+        desc=desc,
+    )
+    fails, warns = audit.check_deposition(
+        "cc-by", dep, audit.pins_of(datasets), audit.dataset_totals(datasets), {}
+    )
+    assert fails == []
+    assert warns == []
+
+
+def test_pin_and_record_are_compared_in_both_directions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A superseded file left ON the record and a pin never uploaded both fail.
+
+    Checking one direction only is how the migration mislaid things twice: a
+    stale object keeps a right-looking name, and a pin for an absent file reads
+    as success until the download 404s after publication.
+    """
+    audit = _audit_module(monkeypatch)
+    datasets = _two_file_dataset()
+    dep = _dep(
+        [
+            {"filename": "a.zip", "filesize": 999},  # wrong size
+            {"filename": "stray.zip", "filesize": 1},  # on record, not pinned
+        ],
+        desc="<table><tr>h</tr><tr>1</tr><tr>2</tr></table>",
+    )
+    fails, _ = audit.check_deposition(
+        "cc-by", dep, audit.pins_of(datasets), audit.dataset_totals(datasets), {}
+    )
+    joined = "\n".join(fails)
+    assert "a.zip pinned 1,024 but hosted 999" in joined
+    assert "stray.zip is on the record but NOT pinned" in joined
+    assert "b.zip is pinned but ABSENT from the record" in joined
+
+
+def test_scratch_objects_and_submission_are_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A probe object left by a failed upload, and an already-published record.
+
+    Both are unfixable after the fact: a published record cannot be tidied, and
+    publication cannot be undone.
+    """
+    audit = _audit_module(monkeypatch)
+    datasets = _two_file_dataset()
+    dep = _dep(
+        [
+            {"filename": "a.zip", "filesize": 1024},
+            {"filename": "b.zip", "filesize": 1024},
+            {"filename": "_write_probe.bin", "filesize": 8},
+        ],
+        desc="<table><tr>h</tr><tr>1</tr><tr>2</tr><tr>3</tr></table>",
+    )
+    dep["submitted"] = True
+    fails, _ = audit.check_deposition(
+        "cc-by", dep, audit.pins_of(datasets), audit.dataset_totals(datasets), {}
+    )
+    joined = "\n".join(fails)
+    assert "ALREADY SUBMITTED" in joined
+    assert "scratch file on the record: _write_probe.bin" in joined
+
+
+def test_a_stale_size_claim_in_the_description_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The record text is the one place a stale number gets PUBLISHED.
+
+    ``ds`` totals 2048 B = 0.0 MB; claiming 5.0 MB is the drift this catches.
+    """
+    audit = _audit_module(monkeypatch)
+    datasets = _two_file_dataset()
+    dep = _dep(
+        [
+            {"filename": "a.zip", "filesize": 1024},
+            {"filename": "b.zip", "filesize": 1024},
+        ],
+        desc="<li><code>ds</code> (5.0 MB)</li><table><tr>h</tr><tr>1</tr><tr>2</tr></table>",
+    )
+    fails, _ = audit.check_deposition(
+        "cc-by", dep, audit.pins_of(datasets), audit.dataset_totals(datasets), {}
+    )
+    assert any("description says ds is 5.0 MB" in f for f in fails)
+
+
+def test_thead_is_warned_because_zenodo_strips_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``<thead>`` survives the payload you send and vanishes on the rendered page."""
+    audit = _audit_module(monkeypatch)
+    datasets = _two_file_dataset()
+    dep = _dep(
+        [
+            {"filename": "a.zip", "filesize": 1024},
+            {"filename": "b.zip", "filesize": 1024},
+        ],
+        desc="<table><thead><tr>h</tr></thead><tr>1</tr><tr>2</tr></table>",
+    )
+    _, warns = audit.check_deposition(
+        "cc-by", dep, audit.pins_of(datasets), audit.dataset_totals(datasets), {}
+    )
+    assert any("<thead>" in w for w in warns)
+
+
+def test_wholesale_mismatch_is_diagnosed_as_the_wrong_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nearly every pin failing means the wrong manifest, not broken records.
+
+    This is the check that exists because of an incident: an audit run against a
+    superseded manifest reported the records stale everywhere and was believed.
+    The records were ahead; the re-pin was sitting in an unmerged PR.
+    """
+    audit = _audit_module(monkeypatch)
+    pins = {f"f{i}.zip": ("cc-by", 10, "x") for i in range(10)}
+    fails = [f"[cc-by] f{i}.zip pinned 10 but hosted 20" for i in range(10)]
+    note = audit.diagnose_manifest_staleness(fails, pins)
+    assert note is not None
+    assert "10 of 10 pins disagree" in note
+    assert "not the one that will ship" in note
+
+
+def test_a_couple_of_real_failures_are_not_diagnosed_away(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The staleness hint must not fire on ordinary findings.
+
+    Two bad files out of ten is exactly the case the gate exists to report, so
+    explaining it away as "wrong manifest" would suppress the real signal.
+    """
+    audit = _audit_module(monkeypatch)
+    pins = {f"f{i}.zip": ("cc-by", 10, "x") for i in range(10)}
+    fails = [f"[cc-by] f{i}.zip pinned 10 but hosted 20" for i in range(2)]
+    assert audit.diagnose_manifest_staleness(fails, pins) is None
+
+
+def test_the_audit_can_only_read_from_zenodo() -> None:
+    """No mutating verb anywhere in the source, and no publish call.
+
+    This tool is pointed at records a human is about to publish by hand, so
+    "read-only" has to be a property of the file rather than an intention. Same
+    guard as ``scripts/zenodo_upload_draft.py`` carries for its own narrow write.
+    """
+    src = _SCRIPT.read_text()
+    for forbidden in ('"POST"', "'POST'", '"PUT"', "'PUT'", '"DELETE"', "'DELETE'"):
+        assert forbidden not in src, f"mutating verb {forbidden} in the audit"
+    assert "/actions/publish" not in src
+    assert src.count('method="GET"') >= 1
+
+
+def test_live_without_a_token_does_not_reach_the_network(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """``--live`` with no token reports and stops, rather than half-running.
+
+    It returns non-zero: a live check that silently did not happen is worse than
+    one that failed, because the caller is about to publish.
+    """
+    repo = tmp_path / "repo"
+    data = _write_manifest(repo, _two_file_dataset())
+    for n in ("a.zip", "b.zip"):
+        (data / "ds").mkdir(exist_ok=True)
+        (data / "ds" / n).write_bytes(b"x" * 1024)
+    monkeypatch.setenv("ZENODO_TOKEN", "")
+    monkeypatch.delenv("ZENODO_TOKEN", raising=False)
+    audit = _load(repo, tmp_path / "cache", monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["zenodo_migration_audit", str(repo), "--live"])
+
+    def _boom(*a: object, **k: object) -> dict:
+        raise AssertionError("fetch attempted without a token")
+
+    monkeypatch.setattr(audit, "fetch_deposition", _boom)
+    assert audit.main() == 1
+    assert "needs ZENODO_TOKEN" in capsys.readouterr().out
