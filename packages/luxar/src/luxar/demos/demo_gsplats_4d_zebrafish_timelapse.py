@@ -203,14 +203,31 @@ SUPPRESSING THE SHOT NOISE (and a metric that lied about it):
     |     0 | NLM | 23,478 |     19.66 |       0.987 |            0.503   |
     |    10 | mc4 |  1,809 |     20.07 |       1.002 |            0.012   |
     |    10 | NLM | 21,398 |     19.96 |       0.997 |            0.488   |
-    |    30 | mc4 |  2,309 |     20.80 |       1.002 |            0.053   |
-    |    30 | NLM | 18,472 |     20.60 |       0.997 |            0.429   |
+    |    75 | mc4 |  7,730 |     22.33 |       0.989 |            0.108   |
+    |    75 | NLM | 12,837 |     21.75 |       0.971 |            0.325   |
+    |   120 | mc4 | 14,090 |     20.53 |       0.965 |            0.076   |
+    |   120 | NLM | 17,740 |     20.50 |       0.962 |            0.243   |
+    |   150 | mc4 | 18,754 |     18.77 |       0.956 |            0.071   |
+    |   150 | NLM | 20,732 |     19.04 |       0.957 |            0.216   |
 
-    Equal or better cell fidelity from about a TENTH of the splats. The last
-    column says where the other nine tenths went: NLM's fits put back 43-50% of
-    the energy outside the cells, because a smeared spike is still something to
-    model and the 0.9999 amplitude retention keeps modelling it. Deleting the
-    spike instead means the budget has nothing to spend on but cells.
+    Equal or better cell fidelity almost everywhere, from a small fraction of
+    the splats at the early timepoints. The last column says where the rest
+    went: NLM's fits put back 22-50% of the energy OUTSIDE the cells against
+    1-11% here, because a smeared spike is still something to model and the
+    0.9999 amplitude retention keeps modelling it. Deleting the spike instead
+    leaves the budget nothing to spend on but cells.
+
+    NLM does win one square -- 19.04 against 18.77 at t=150, with 10% more
+    splats -- and it is left in rather than dropped. By that timepoint only 2.7%
+    of the frame's energy is noise, so there is little for a size filter to
+    remove and the comparison is nearly two unfiltered fits; the 0.27 dB is the
+    cost of having deleted a few small real objects along with the specks. That
+    is the honest shape of this trade, and it is worth seeing next to the 3x
+    lower out-of-cell energy in the same row.
+
+    Note how the splat count tracks the specimen rather than the noise: 1,369 at
+    t=0 where a third of the energy was noise, 18,754 at t=150 where almost none
+    of it is. The whole archive is 1,270,233 splats against NLM's 2,689,314.
 
     This is also the answer to "did we lose detail by shipping fewer splats".
     Splat count is not detail. It is only detail once you know what the splats
