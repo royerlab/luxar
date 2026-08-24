@@ -409,7 +409,12 @@ describe('InputHandler — help overlay', () => {
       expect(showHelpOverlay).toHaveBeenCalledOnce();
       const bindings = showHelpOverlay.mock.calls[0]?.[0];
       expect(bindings).toBeInstanceOf(Map);
-      expect(bindings?.get('navigation')).toEqual(expect.arrayContaining(['h', 'k']));
+      expect(bindings?.get('navigation')).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ key: 'h', actionId: 'help.toggle' }),
+          expect.objectContaining({ key: 'k', actionId: 'animation.toggle' }),
+        ])
+      );
     } finally {
       handler.dispose();
       clearNotifierBackend();

@@ -28,11 +28,13 @@ import type { PerformanceMonitor } from '../../../ui/performance-monitor';
 import type { LayersPanel } from '../../../ui/layers';
 import type { DebugConsole } from '../../../ui/debug-console';
 import type { RecordingPanel } from '../../../ui/recording-panel';
+import { KeyAction, type KeyActionId } from '../../../input/input-handler/key-bindings/actions';
 
 /** Everything the rail item closures reference (all constructed by the pipeline). */
 export interface RailItemsDeps {
   /** The command + panel action surface shared with the keyboard bindings. */
   ui: ReturnType<InputHandler['getUiActions']>;
+  shortcutForAction(actionId: KeyActionId): string | undefined;
   sceneManager: SceneManager;
   /** Shared nD dimension state (the pipeline passes the module singleton). */
   sceneDims: SceneDimsManager;
@@ -52,6 +54,7 @@ export interface RailItemsDeps {
 export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
   const {
     ui,
+    shortcutForAction,
     sceneManager,
     sceneDims,
     renderingControls,
@@ -87,7 +90,7 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
     {
       id: 'help',
       title: 'Help & shortcuts',
-      shortcut: 'H',
+      shortcut: shortcutForAction(KeyAction.toggleHelp),
       icon: RAIL_ICONS.help,
       activate: () => ui.commands.toggleHelp(),
       openSelector: '#luxar-help-overlay',
@@ -98,7 +101,7 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
       // rendering). Momentary — a one-shot action, never shows active state.
       id: 'home',
       title: 'Home · fit scene',
-      shortcut: 'F',
+      shortcut: shortcutForAction(KeyAction.recenterCamera),
       icon: RAIL_ICONS.home,
       momentary: true,
       activate: () => ui.commands.recenterCamera(),
@@ -126,7 +129,7 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
       // the current mode's parameters. The icon mirrors the live control mode.
       id: 'nav',
       title: 'Navigation',
-      shortcut: 'V',
+      shortcut: shortcutForAction(KeyAction.toggleControlMode),
       icon: RAIL_ICONS.navOrbit,
       activate: () => ui.commands.toggleControlMode(),
       render: (btn) => {
@@ -172,7 +175,7 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
     {
       id: 'dims',
       title: 'Dimensions',
-      shortcut: 'N',
+      shortcut: shortcutForAction(KeyAction.toggleDimensions),
       icon: RAIL_ICONS.dims,
       activate: () => ui.commands.toggleDimensionSliders(),
       openSelector: '.luxar-dimension-sliders',
@@ -180,7 +183,7 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
     {
       id: 'render',
       title: 'Rendering',
-      shortcut: 'R',
+      shortcut: shortcutForAction(KeyAction.toggleRendering),
       icon: RAIL_ICONS.render,
       activate: () => {
         if (!renderingControls.isVisible()) closeOtherLeftPanels('render');
@@ -191,7 +194,7 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
     {
       id: 'layers',
       title: 'Layers',
-      shortcut: 'L',
+      shortcut: shortcutForAction(KeyAction.toggleLayers),
       icon: RAIL_ICONS.layers,
       activate: () => {
         if (!layersPanel.isVisible()) closeOtherLeftPanels('layers');
@@ -205,7 +208,7 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
     {
       id: 'monitor',
       title: 'Data monitor',
-      shortcut: 'M',
+      shortcut: shortcutForAction(KeyAction.cycleDataMonitor),
       icon: RAIL_ICONS.monitor,
       activate: () => ui.commands.cycleDataMonitor(),
       openSelector: '.luxar-data-monitor',
@@ -213,15 +216,15 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
     {
       id: 'data',
       title: 'Datasets',
-      shortcut: 'O',
+      shortcut: shortcutForAction(KeyAction.toggleDatasetBrowser),
       icon: RAIL_ICONS.data,
-      activate: () => window.dispatchEvent(new CustomEvent('open-dataset-browser')),
+      activate: () => ui.commands.toggleDatasetBrowser(),
       openSelector: '.luxar-dataset-browser',
     },
     {
       id: 'recording',
       title: 'Recording',
-      shortcut: 'T',
+      shortcut: shortcutForAction(KeyAction.toggleRecording),
       icon: RAIL_ICONS.recording,
       activate: () => {
         if (!recordingPanel.isVisible()) closeOtherLeftPanels('recording');
@@ -233,7 +236,7 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
     {
       id: 'logs',
       title: 'Logs (console)',
-      shortcut: 'Ctrl+L',
+      shortcut: shortcutForAction(KeyAction.toggleDebugConsole),
       icon: RAIL_ICONS.logs,
       activate: () => debugConsole.toggle(),
       isActive: () => debugConsole.getIsVisible(),
@@ -249,7 +252,7 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
         {
           id: 'scalebar',
           title: 'Scale bar',
-          shortcut: 'B',
+          shortcut: shortcutForAction(KeyAction.toggleScaleBar),
           icon: RAIL_ICONS.scalebar,
           activate: () => ui.panels.getScaleBar()?.toggle(),
           openSelector: '.luxar-scale-bar',
@@ -257,7 +260,7 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
         {
           id: 'legend',
           title: 'Colormap legend',
-          shortcut: 'J',
+          shortcut: shortcutForAction(KeyAction.toggleColormapLegend),
           icon: RAIL_ICONS.legend,
           activate: () => ui.panels.getColormapLegend()?.toggle(),
           openSelector: '.luxar-colormap-legend',
@@ -265,7 +268,7 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
         {
           id: 'overlays',
           title: 'Overlays',
-          shortcut: 'U',
+          shortcut: shortcutForAction(KeyAction.toggleOverlays),
           icon: RAIL_ICONS.overlays,
           activate: () => ui.panels.getOverlayManager()?.toggle(),
           openSelector: '.luxar-overlay:not(.luxar-overlay--hidden)',
@@ -273,7 +276,7 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
         {
           id: 'cinematic',
           title: 'Cinematic mode',
-          shortcut: 'C',
+          shortcut: shortcutForAction(KeyAction.toggleCinematicMode),
           icon: RAIL_ICONS.cinematic,
           activate: () => ui.commands.toggleCinematicMode(),
           isActive: () => renderingControls.settings.cinematicMode,
@@ -287,7 +290,7 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
           // Escape or browser UI.
           id: 'fullscreen',
           title: 'Fullscreen',
-          shortcut: 'Space',
+          shortcut: shortcutForAction(KeyAction.toggleFullscreen),
           icon: RAIL_ICONS.fullscreen,
           activate: () => ui.commands.toggleFullscreen(),
           isActive: () => isDocumentFullscreen(),
@@ -325,7 +328,7 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
       // Right-click opens the adaptive-resolution (DPR) controls popover.
       id: 'perf',
       title: 'Performance',
-      shortcut: 'P',
+      shortcut: shortcutForAction(KeyAction.togglePerformance),
       icon: RAIL_ICONS.perf,
       activate: () => ui.commands.togglePerformanceStats(),
       isActive: () => performanceMonitor.visible,

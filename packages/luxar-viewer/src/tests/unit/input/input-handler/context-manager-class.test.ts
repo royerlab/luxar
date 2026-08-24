@@ -9,10 +9,25 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   InputContextManager,
+  type KeyBinding,
   InputContext,
   MAX_KEY_EVENT_DEPTH,
 } from '../../../../input/input-handler/context-manager';
 import { log, Modules } from '../../../../utils/log';
+
+function registerTestBinding(
+  manager: InputContextManager,
+  context: InputContext,
+  binding: Omit<KeyBinding, 'actionId' | 'description' | 'help'> &
+    Partial<Pick<KeyBinding, 'actionId' | 'description' | 'help'>>
+): void {
+  manager.registerBinding(context, {
+    actionId: 'test.action',
+    description: 'Test binding',
+    help: false,
+    ...binding,
+  });
+}
 
 describe('InputContextManager', () => {
   let manager: InputContextManager;
@@ -48,7 +63,7 @@ describe('InputContextManager', () => {
       //
       // Use 'h' — 'a' is in flyModeKeys (blocked in NAVIGATION).
       const handler = vi.fn();
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'h',
         handler,
       });
@@ -59,7 +74,7 @@ describe('InputContextManager', () => {
 
     it('setEnabled toggles dispatch: enabled → disabled suppresses, disabled → enabled resumes', () => {
       const handler = vi.fn();
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'h',
         handler,
       });
@@ -79,18 +94,15 @@ describe('InputContextManager', () => {
   });
 
   describe('binding registration', () => {
-    it('warns when a binding is unreachable under its own context filters', () => {
+    it('keeps registered bindings reachable when deriving context filters', () => {
       const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
 
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.FLY_CONTROLS, {
         key: 'w',
         handler: vi.fn(),
       });
 
-      expect(warning).toHaveBeenCalledWith(
-        Modules.INPUT_CONTEXT,
-        'Key binding w in navigation is unreachable under its context filters'
-      );
+      expect(warning).not.toHaveBeenCalled();
       warning.mockRestore();
     });
   });
@@ -155,20 +167,25 @@ describe('InputContextManager', () => {
 
   describe('key binding registration', () => {
     it('reports canonical registered binding keys by context', () => {
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 's',
         modifiers: { ctrl: true, shift: true },
         handler: vi.fn(),
       });
 
       expect(manager.getRegisteredShortcutBindings().get(InputContext.NAVIGATION)).toEqual([
-        'ctrl+s+shift',
+        expect.objectContaining({
+          actionId: 'test.action',
+          key: 'ctrl+s+shift',
+          description: 'Test binding',
+          help: false,
+        }),
       ]);
     });
     it('should register key bindings', () => {
       const handler = vi.fn();
 
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'h',
         handler,
         preventDefault: true,
@@ -177,13 +194,13 @@ describe('InputContextManager', () => {
 
       const debugInfo = manager.getDebugInfo();
       const navBindings = debugInfo.registeredBindings.get(InputContext.NAVIGATION);
-      expect(navBindings).toContain('h');
+      expect(navBindings).toContainEqual(expect.objectContaining({ key: 'h' }));
     });
 
     it('should register bindings with modifiers', () => {
       const handler = vi.fn();
 
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'l',
         modifiers: { ctrl: true },
         handler,
@@ -192,7 +209,7 @@ describe('InputContextManager', () => {
 
       const debugInfo = manager.getDebugInfo();
       const navBindings = debugInfo.registeredBindings.get(InputContext.NAVIGATION);
-      expect(navBindings).toContain('ctrl+l');
+      expect(navBindings).toContainEqual(expect.objectContaining({ key: 'ctrl+l' }));
     });
 
     it('[input.md C5] registered binding actually fires when matching event is dispatched (end-to-end)', () => {
@@ -202,7 +219,7 @@ describe('InputContextManager', () => {
       // bindings into a different Map but kept the debugInfo accessor
       // honest would survive. Pin the lookup-plus-dispatch contract.
       const handler = vi.fn();
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'h',
         handler,
         preventDefault: true,
@@ -221,7 +238,7 @@ describe('InputContextManager', () => {
       // AND must fire on Ctrl+l. Catches a regression that ignored
       // modifiers when composing the lookup key.
       const handler = vi.fn();
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'l',
         modifiers: { ctrl: true },
         handler,
@@ -250,15 +267,15 @@ describe('InputContextManager', () => {
       const ctrlHandler = vi.fn();
       const altHandler = vi.fn();
 
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'Shift',
         handler: shiftHandler,
       });
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'Control',
         handler: ctrlHandler,
       });
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'Alt',
         handler: altHandler,
       });
@@ -290,12 +307,12 @@ describe('InputContextManager', () => {
       const handler1 = vi.fn();
       const handler2 = vi.fn();
 
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'h',
         handler: handler1,
       });
 
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'h',
         handler: handler2,
       });
@@ -308,7 +325,7 @@ describe('InputContextManager', () => {
     it('should unregister bindings', () => {
       const handler = vi.fn();
 
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'h',
         handler,
       });
@@ -325,8 +342,8 @@ describe('InputContextManager', () => {
     it('falls through when a matching handler explicitly declines the event', () => {
       const higher = vi.fn(() => false);
       const lower = vi.fn();
-      manager.registerBinding(InputContext.UI_INTERACTION, { key: 'h', handler: higher });
-      manager.registerBinding(InputContext.NAVIGATION, { key: 'h', handler: lower });
+      registerTestBinding(manager, InputContext.UI_INTERACTION, { key: 'h', handler: higher });
+      registerTestBinding(manager, InputContext.NAVIGATION, { key: 'h', handler: lower });
       manager.setContext(InputContext.UI_INTERACTION);
 
       const event = new KeyboardEvent('keydown', { key: 'h' });
@@ -335,31 +352,31 @@ describe('InputContextManager', () => {
       expect(lower).toHaveBeenCalledWith(event);
     });
 
-    it('continues through lower contexts when an intermediate handler declines', () => {
+    it('does not visit contexts outside the active fallback route', () => {
       const intermediate = vi.fn(() => false);
       const lower = vi.fn();
-      manager.registerBinding(InputContext.UI_INTERACTION, {
+      registerTestBinding(manager, InputContext.UI_INTERACTION, {
         key: 'h',
         handler: intermediate,
       });
-      manager.registerBinding(InputContext.NAVIGATION, { key: 'h', handler: lower });
+      registerTestBinding(manager, InputContext.NAVIGATION, { key: 'h', handler: lower });
       manager.setContext(InputContext.FLY_CONTROLS);
 
       const event = new KeyboardEvent('keydown', { key: 'h' });
       expect(manager.handleKeyEvent(event, 'down')).toBe(true);
-      expect(intermediate).toHaveBeenCalledWith(event);
+      expect(intermediate).not.toHaveBeenCalled();
       expect(lower).toHaveBeenCalledWith(event);
     });
 
     it('falls through on keyup when a keyup handler declines', () => {
       const higher = vi.fn(() => false);
       const lower = vi.fn();
-      manager.registerBinding(InputContext.UI_INTERACTION, {
+      registerTestBinding(manager, InputContext.UI_INTERACTION, {
         key: 'h',
         handler: vi.fn(),
         keyupHandler: higher,
       });
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'h',
         handler: vi.fn(),
         keyupHandler: lower,
@@ -374,11 +391,11 @@ describe('InputContextManager', () => {
 
     it('falls through on keyup when the current binding has no keyup handler', () => {
       const lower = vi.fn();
-      manager.registerBinding(InputContext.UI_INTERACTION, {
+      registerTestBinding(manager, InputContext.UI_INTERACTION, {
         key: 'h',
         handler: vi.fn(),
       });
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'h',
         handler: vi.fn(),
         keyupHandler: lower,
@@ -392,11 +409,11 @@ describe('InputContextManager', () => {
 
     it('skips lower-context bindings without keyup handlers', () => {
       const lower = vi.fn();
-      manager.registerBinding(InputContext.UI_INTERACTION, {
+      registerTestBinding(manager, InputContext.UI_INTERACTION, {
         key: 'h',
         handler: vi.fn(),
       });
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'h',
         handler: vi.fn(),
         keyupHandler: lower,
@@ -411,11 +428,11 @@ describe('InputContextManager', () => {
     it('continues Escape routing from typing when a higher context declines', () => {
       const higher = vi.fn(() => false);
       const lower = vi.fn();
-      manager.registerBinding(InputContext.UI_INTERACTION, {
+      registerTestBinding(manager, InputContext.UI_INTERACTION, {
         key: 'Escape',
         handler: higher,
       });
-      manager.registerBinding(InputContext.NAVIGATION, { key: 'Escape', handler: lower });
+      registerTestBinding(manager, InputContext.NAVIGATION, { key: 'Escape', handler: lower });
       manager.setContext(InputContext.TYPING);
 
       const event = new KeyboardEvent('keydown', { key: 'Escape' });
@@ -425,7 +442,7 @@ describe('InputContextManager', () => {
     });
 
     it('does not prevent default when a handler declines the event', () => {
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'h',
         handler: () => false,
         preventDefault: true,
@@ -438,7 +455,7 @@ describe('InputContextManager', () => {
     it('should handle registered key events', () => {
       const handler = vi.fn();
 
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'h',
         handler,
         preventDefault: true,
@@ -465,7 +482,7 @@ describe('InputContextManager', () => {
     it('should handle keys with modifiers', () => {
       const handler = vi.fn();
 
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'l',
         modifiers: { ctrl: true },
         handler,
@@ -485,7 +502,7 @@ describe('InputContextManager', () => {
     it('should not handle when disabled', () => {
       const handler = vi.fn();
 
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'h',
         handler,
       });
@@ -504,7 +521,7 @@ describe('InputContextManager', () => {
     it('should block keys in typing context', () => {
       const handler = vi.fn();
 
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'h',
         handler,
       });
@@ -534,7 +551,7 @@ describe('InputContextManager', () => {
       input.focus();
 
       const handler = vi.fn();
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'h',
         handler,
       });
@@ -582,7 +599,7 @@ describe('InputContextManager', () => {
       manager.setContext(InputContext.FLY_CONTROLS);
 
       const handler = vi.fn();
-      manager.registerBinding(InputContext.FLY_CONTROLS, {
+      registerTestBinding(manager, InputContext.FLY_CONTROLS, {
         key: 'w',
         handler,
       });
@@ -600,7 +617,7 @@ describe('InputContextManager', () => {
       manager.setContext(InputContext.NAVIGATION);
 
       const handler = vi.fn();
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.FLY_CONTROLS, {
         key: 'w',
         handler,
       });
@@ -619,7 +636,7 @@ describe('InputContextManager', () => {
       const handler = vi.fn();
 
       // Register in NAVIGATION context
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'h',
         handler,
       });
@@ -641,7 +658,7 @@ describe('InputContextManager', () => {
       const handler = vi.fn();
 
       // Register a handler in a lower priority context
-      manager.registerBinding(InputContext.DIMENSION_NAV, {
+      registerTestBinding(manager, InputContext.DIMENSION_NAV, {
         key: '[',
         handler,
       });
@@ -663,12 +680,12 @@ describe('InputContextManager', () => {
       const handler1 = vi.fn();
       const handler2 = vi.fn();
 
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'h',
         handler: handler1,
       });
 
-      manager.registerBinding(InputContext.FLY_CONTROLS, {
+      registerTestBinding(manager, InputContext.FLY_CONTROLS, {
         key: 'w',
         handler: handler2,
       });
@@ -679,8 +696,12 @@ describe('InputContextManager', () => {
 
       expect(debugInfo.currentContext).toBe(InputContext.FLY_CONTROLS);
       expect(debugInfo.contextStack).toContain(InputContext.NAVIGATION);
-      expect(debugInfo.registeredBindings.get(InputContext.NAVIGATION)).toContain('h');
-      expect(debugInfo.registeredBindings.get(InputContext.FLY_CONTROLS)).toContain('w');
+      expect(debugInfo.registeredBindings.get(InputContext.NAVIGATION)).toContainEqual(
+        expect.objectContaining({ key: 'h' })
+      );
+      expect(debugInfo.registeredBindings.get(InputContext.FLY_CONTROLS)).toContainEqual(
+        expect.objectContaining({ key: 'w' })
+      );
     });
   });
 
@@ -688,7 +709,7 @@ describe('InputContextManager', () => {
     it('should clear context bindings', () => {
       const handler = vi.fn();
 
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'h',
         handler,
       });
@@ -704,7 +725,7 @@ describe('InputContextManager', () => {
       // Make changes
       manager.setContext(InputContext.FLY_CONTROLS);
       manager.pushContext(InputContext.TYPING);
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'h',
         handler: vi.fn(),
       });
@@ -724,7 +745,7 @@ describe('InputContextManager', () => {
     it('should handle keys case-insensitively', () => {
       const handler = vi.fn();
 
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'h', // lowercase
         handler,
       });
@@ -754,7 +775,7 @@ describe('InputContextManager', () => {
       const handler = vi.fn((event: KeyboardEvent) => {
         localMgr.handleKeyEvent(event, 'down');
       });
-      localMgr.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(localMgr, InputContext.NAVIGATION, {
         key: 'h',
         handler,
       });
@@ -778,7 +799,7 @@ describe('InputContextManager', () => {
   describe('Escape in typing context (post-refactor contract)', () => {
     it('dispatches Escape through dispatchEscapeFromTypingContext to the navigation binding', () => {
       const escapeHandler = vi.fn();
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'Escape',
         handler: escapeHandler,
       });
@@ -803,7 +824,7 @@ describe('InputContextManager', () => {
       const dimHandler = vi.fn();
 
       // Register on the lowest-priority context (NAVIGATION).
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'h',
         handler: navHandler,
       });
@@ -820,9 +841,23 @@ describe('InputContextManager', () => {
       expect(dimHandler).not.toHaveBeenCalled();
     });
 
+    it('does not route from navigation into fly controls', () => {
+      const flyHandler = vi.fn();
+      registerTestBinding(manager, InputContext.FLY_CONTROLS, {
+        key: 'ArrowUp',
+        handler: flyHandler,
+      });
+
+      const event = new KeyboardEvent('keydown', { key: 'ArrowUp' });
+      const handled = manager.handleKeyEvent(event, 'down');
+
+      expect(handled).toBe(false);
+      expect(flyHandler).not.toHaveBeenCalled();
+    });
+
     it('does NOT cascade when the current context disables passthrough', () => {
       const navHandler = vi.fn();
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'h',
         handler: navHandler,
       });
@@ -861,7 +896,7 @@ describe('InputContextManager', () => {
       probe = range;
 
       const handler = vi.fn();
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'h',
         handler,
       });
@@ -882,7 +917,7 @@ describe('InputContextManager', () => {
       probe = cb;
 
       const handler = vi.fn();
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'h',
         handler,
       });
@@ -901,7 +936,7 @@ describe('InputContextManager', () => {
       probe = select;
 
       const handler = vi.fn();
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'h',
         handler,
       });
@@ -918,7 +953,7 @@ describe('InputContextManager', () => {
     it('should call handler on keydown', () => {
       const handler = vi.fn();
 
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'c',
         handler,
       });
@@ -933,7 +968,7 @@ describe('InputContextManager', () => {
     it('should NOT call handler on keyup if no keyupHandler provided', () => {
       const handler = vi.fn();
 
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'c',
         handler,
         // No keyupHandler
@@ -953,7 +988,7 @@ describe('InputContextManager', () => {
         toggleState = !toggleState;
       });
 
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'c',
         handler: toggleHandler,
         // No keyupHandler - toggle actions only trigger on keydown
@@ -1000,7 +1035,7 @@ describe('InputContextManager', () => {
     // non-Escape keys and returns true without invoking the handler.
     const probeIsTyping = (mgr: InputContextManager): boolean => {
       const handler = vi.fn();
-      mgr.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(mgr, InputContext.NAVIGATION, {
         key: 'h',
         handler,
       });
@@ -1118,7 +1153,7 @@ describe('InputContextManager', () => {
       const keydownHandler = vi.fn();
       const keyupHandler = vi.fn();
 
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'Escape',
         handler: keydownHandler,
         keyupHandler,
@@ -1136,7 +1171,7 @@ describe('InputContextManager', () => {
       enterTypingContext();
       const keydownHandler = vi.fn();
 
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'Escape',
         handler: keydownHandler,
       });
@@ -1155,13 +1190,13 @@ describe('InputContextManager', () => {
 
       // NAVIGATION binding has only a keydown handler — should be
       // skipped on keyup dispatch.
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'Escape',
         handler: navKeydownOnly,
       });
 
       // UI_INTERACTION binding has a keyupHandler — should fire.
-      manager.registerBinding(InputContext.UI_INTERACTION, {
+      registerTestBinding(manager, InputContext.UI_INTERACTION, {
         key: 'Escape',
         handler: vi.fn(),
         keyupHandler: uiKeyupHandler,
@@ -1194,7 +1229,7 @@ describe('InputContextManager', () => {
     it('[G19] Escape from TYPING with bindings on OTHER keys: returns false (no Escape match)', () => {
       manager.setContext(InputContext.TYPING);
       const handler = vi.fn();
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'h', // not Escape
         handler,
       });
@@ -1210,7 +1245,7 @@ describe('InputContextManager', () => {
       // continues to lower-priority contexts.
       manager.setContext(InputContext.TYPING);
       const downOnly = vi.fn();
-      manager.registerBinding(InputContext.UI_INTERACTION, {
+      registerTestBinding(manager, InputContext.UI_INTERACTION, {
         key: 'Escape',
         handler: downOnly, // keydown handler only — no keyupHandler
       });
@@ -1247,26 +1282,26 @@ describe('InputContextManager', () => {
       // blocked in NAVIGATION. This guards the test from a mutation that
       // empties the blockedKeys array entirely (which would let G20 pass
       // for the wrong reason).
-      const handler = vi.fn();
-      manager.registerBinding(InputContext.NAVIGATION, {
+      const flyHandler = vi.fn();
+      registerTestBinding(manager, InputContext.FLY_CONTROLS, {
         key: 'w',
-        handler,
+        handler: flyHandler,
       });
       const event = new KeyboardEvent('keydown', { key: 'w' });
       const handled = manager.handleKeyEvent(event, 'down');
       expect(handled).toBe(false);
-      expect(handler).not.toHaveBeenCalled();
+      expect(flyHandler).not.toHaveBeenCalled();
     });
 
     it('dispatches a modified NAVIGATION binding when the bare key is blocked', () => {
       const navigationHandler = vi.fn();
       const flyHandler = vi.fn();
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'ArrowUp',
         modifiers: { shift: true },
         handler: navigationHandler,
       });
-      manager.registerBinding(InputContext.FLY_CONTROLS, {
+      registerTestBinding(manager, InputContext.FLY_CONTROLS, {
         key: 'ArrowUp',
         modifiers: { shift: true },
         handler: flyHandler,
@@ -1280,14 +1315,9 @@ describe('InputContextManager', () => {
       expect(flyHandler).not.toHaveBeenCalled();
     });
 
-    it('still routes a bare blocked key to the fly-controls binding', () => {
-      const navigationHandler = vi.fn();
+    it('does not route a bare fly key from navigation into fly controls', () => {
       const flyHandler = vi.fn();
-      manager.registerBinding(InputContext.NAVIGATION, {
-        key: 'ArrowUp',
-        handler: navigationHandler,
-      });
-      manager.registerBinding(InputContext.FLY_CONTROLS, {
+      registerTestBinding(manager, InputContext.FLY_CONTROLS, {
         key: 'ArrowUp',
         handler: flyHandler,
       });
@@ -1295,14 +1325,13 @@ describe('InputContextManager', () => {
       const event = new KeyboardEvent('keydown', { key: 'ArrowUp' });
       const handled = manager.handleKeyEvent(event, 'down');
 
-      expect(handled).toBe(true);
-      expect(navigationHandler).not.toHaveBeenCalled();
-      expect(flyHandler).toHaveBeenCalledWith(event);
+      expect(handled).toBe(false);
+      expect(flyHandler).not.toHaveBeenCalled();
     });
 
-    it('allows modified variants of an allowed key in passthrough contexts', () => {
+    it('does not route UI interaction into fly controls', () => {
       const flyHandler = vi.fn();
-      manager.registerBinding(InputContext.FLY_CONTROLS, {
+      registerTestBinding(manager, InputContext.FLY_CONTROLS, {
         key: 'ArrowUp',
         modifiers: { shift: true },
         handler: flyHandler,
@@ -1312,8 +1341,8 @@ describe('InputContextManager', () => {
       const event = new KeyboardEvent('keydown', { key: 'ArrowUp', shiftKey: true });
       const handled = manager.handleKeyEvent(event, 'down');
 
-      expect(handled).toBe(true);
-      expect(flyHandler).toHaveBeenCalledWith(event);
+      expect(handled).toBe(false);
+      expect(flyHandler).not.toHaveBeenCalled();
     });
   });
 
@@ -1325,7 +1354,7 @@ describe('InputContextManager', () => {
       manager.setContext(InputContext.DIMENSION_NAV);
       const handler = vi.fn();
       // '1' is in dimensionKeys per config.
-      manager.registerBinding(InputContext.DIMENSION_NAV, {
+      registerTestBinding(manager, InputContext.DIMENSION_NAV, {
         key: '1',
         handler,
       });
@@ -1335,21 +1364,16 @@ describe('InputContextManager', () => {
       expect(handler).toHaveBeenCalledTimes(1);
     });
 
-    it('[G21] DIMENSION_NAV context: a NON-dimensionKey ("z") is NOT allowed even if registered', () => {
-      // 'z' is not in dimensionKeys → allowlist rejects it.
+    it('[G21] DIMENSION_NAV derives its allowlist from registered bindings', () => {
       manager.setContext(InputContext.DIMENSION_NAV);
       const handler = vi.fn();
-      manager.registerBinding(InputContext.DIMENSION_NAV, {
+      registerTestBinding(manager, InputContext.DIMENSION_NAV, {
         key: 'z',
         handler,
       });
       const event = new KeyboardEvent('keydown', { key: 'z' });
-      manager.handleKeyEvent(event, 'down');
-      // The binding registers but the allowlist gates dispatch; current
-      // context's allowedKeys filters BEFORE the binding lookup.
-      // (If 'z' has a binding elsewhere with passthrough, it could fire
-      // from a lower context — but no such binding here, so we expect 0.)
-      expect(handler).not.toHaveBeenCalled();
+      expect(manager.handleKeyEvent(event, 'down')).toBe(true);
+      expect(handler).toHaveBeenCalledOnce();
     });
   });
 });

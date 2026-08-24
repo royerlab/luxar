@@ -565,6 +565,7 @@ export async function runInitPipeline(
   const ui = inputHandler.getUiActions();
   const railItems = buildRailItems({
     ui,
+    shortcutForAction: (actionId) => inputHandler.getShortcutLabel(actionId),
     sceneManager,
     sceneDims: sceneDimsManager,
     renderingControls,

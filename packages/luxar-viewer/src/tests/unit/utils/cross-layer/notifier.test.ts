@@ -134,7 +134,19 @@ describe('notifier — with a backend registered', () => {
   });
 
   it('forwards the registered shortcut snapshot to the help backend', () => {
-    const bindings = new Map([['navigation', ['h']]]);
+    const bindings = new Map([
+      [
+        'navigation',
+        [
+          {
+            actionId: 'help.toggle',
+            key: 'h',
+            description: 'Toggle help',
+            help: false as const,
+          },
+        ],
+      ],
+    ]);
     notifier.showHelp(bindings);
     expect(backend.calls).toEqual([{ method: 'showHelpOverlay', args: [bindings] }]);
   });

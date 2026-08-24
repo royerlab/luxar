@@ -27,6 +27,7 @@ import type { DimensionAnimationManager } from '../../../scene/animation/dimensi
 import { InputContext, type InputContextManager } from '../context-manager';
 import { getSelectedDimensionIndex } from '../dimension-navigation/compute-step';
 import { log, Modules } from '../../../utils/log';
+import { KeyAction } from './actions';
 
 /**
  * Read-only access to the two pieces of InputHandler state the
@@ -59,44 +60,78 @@ export class AnimationShortcuts {
   register(): void {
     // K — Toggle play/pause
     this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      actionId: KeyAction.toggleAnimation,
       key: 'k',
       handler: () => this.toggleSelectedDimensionPlayback(),
       preventDefault: true,
-      description: 'Toggle dimension animation (K)',
+      description: 'Play / pause dimension animation',
+      help: { section: 'dimensions', group: 'animation-toggle', keys: ['K'], order: 50 },
     });
 
     // Home — Jump to start
     this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      actionId: KeyAction.jumpAnimation,
+      actionParameter: 'start',
       key: 'Home',
       handler: () => this.jumpSelectedDimensionToBound('start'),
       preventDefault: true,
-      description: 'Jump to dimension start (Home)',
+      description: 'Jump to dimension start / end',
+      help: {
+        section: 'dimensions',
+        group: 'animation-bounds',
+        keys: ['Home', 'End'],
+        order: 60,
+      },
     });
 
     // End — Jump to end
     this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      actionId: KeyAction.jumpAnimation,
+      actionParameter: 'end',
       key: 'End',
       handler: () => this.jumpSelectedDimensionToBound('end'),
       preventDefault: true,
-      description: 'Jump to dimension end (End)',
+      description: 'Jump to dimension start / end',
+      help: {
+        section: 'dimensions',
+        group: 'animation-bounds',
+        keys: ['Home', 'End'],
+        order: 60,
+      },
     });
 
     // Shift+↑ — Increase speed
     this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      actionId: KeyAction.adjustAnimationSpeed,
+      actionParameter: 'increase',
       key: 'ArrowUp',
       modifiers: { shift: true },
       handler: () => this.adjustSelectedDimensionSpeed(+1),
       preventDefault: true,
-      description: 'Increase animation speed (Shift+↑)',
+      description: 'Animation speed up / down',
+      help: {
+        section: 'dimensions',
+        group: 'animation-speed',
+        keys: ['⇧', '↑ / ↓'],
+        order: 70,
+      },
     });
 
     // Shift+↓ — Decrease speed
     this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      actionId: KeyAction.adjustAnimationSpeed,
+      actionParameter: 'decrease',
       key: 'ArrowDown',
       modifiers: { shift: true },
       handler: () => this.adjustSelectedDimensionSpeed(-1),
       preventDefault: true,
-      description: 'Decrease animation speed (Shift+↓)',
+      description: 'Animation speed up / down',
+      help: {
+        section: 'dimensions',
+        group: 'animation-speed',
+        keys: ['⇧', '↑ / ↓'],
+        order: 70,
+      },
     });
 
     log.success(Modules.ANIMATION, 'Animation keyboard shortcuts registered');

@@ -64,6 +64,8 @@ function makeCommands(): KeyBindingsCommands {
     selectDimension: vi.fn(),
     toggleHelp: vi.fn(),
     toggleDimensionSliders: vi.fn(),
+    toggleDatasetBrowser: vi.fn(),
+    openElementMenu: vi.fn(),
     togglePerformanceStats: vi.fn(),
     toggleRenderingControls: vi.fn(),
     toggleControlMode: vi.fn(),
@@ -334,27 +336,19 @@ describe('registerAllKeyBindings — NAVIGATION command dispatch', () => {
     expect(commands.toggleDimensionSliders).toHaveBeenCalled();
   });
 
-  it('o dispatches a CustomEvent("open-dataset-browser") on window', () => {
-    const { bindings } = setup();
-    const listener = vi.fn();
-    window.addEventListener('open-dataset-browser', listener);
-    try {
-      findBinding(bindings, InputContext.NAVIGATION, 'o').handler(new KeyboardEvent('keydown'));
-      expect(listener).toHaveBeenCalledTimes(1);
-    } finally {
-      window.removeEventListener('open-dataset-browser', listener);
-    }
+  it('o dispatches the dataset-browser command', () => {
+    const { bindings, commands } = setup();
+    findBinding(bindings, InputContext.NAVIGATION, 'o').handler(new KeyboardEvent('keydown'));
+    expect(commands.toggleDatasetBrowser).toHaveBeenCalledOnce();
   });
 
   it('element-menu shortcuts dispatch only while focus is on the scene or body', () => {
-    const { bindings, canvas } = setup();
-    const listener = vi.fn();
+    const { bindings, canvas, commands } = setup();
     const button = document.createElement('button');
     const contextMenu = findBinding(bindings, InputContext.NAVIGATION, 'ContextMenu');
     const shiftF10 = findBinding(bindings, InputContext.NAVIGATION, 'F10', { shift: true });
     document.body.appendChild(canvas);
     document.body.appendChild(button);
-    window.addEventListener('luxar-open-element-menu', listener);
     try {
       expect(contextMenu.preventDefault).not.toBe(true);
       expect(shiftF10.preventDefault).not.toBe(true);
@@ -362,23 +356,19 @@ describe('registerAllKeyBindings — NAVIGATION command dispatch', () => {
       document.body.focus();
       const bodyEvent = new KeyboardEvent('keydown', { cancelable: true });
       contextMenu.handler(bodyEvent);
-      expect(listener).toHaveBeenCalledTimes(1);
-      expect(bodyEvent.defaultPrevented).toBe(true);
+      expect(commands.openElementMenu).toHaveBeenCalledWith(bodyEvent);
 
       canvas.tabIndex = 0;
       canvas.focus();
       const canvasEvent = new KeyboardEvent('keydown', { shiftKey: true, cancelable: true });
       shiftF10.handler(canvasEvent);
-      expect(listener).toHaveBeenCalledTimes(2);
-      expect(canvasEvent.defaultPrevented).toBe(true);
+      expect(commands.openElementMenu).toHaveBeenCalledWith(canvasEvent);
 
       button.focus();
       const buttonEvent = new KeyboardEvent('keydown', { cancelable: true });
       contextMenu.handler(buttonEvent);
-      expect(listener).toHaveBeenCalledTimes(2);
-      expect(buttonEvent.defaultPrevented).toBe(false);
+      expect(commands.openElementMenu).toHaveBeenCalledTimes(2);
     } finally {
-      window.removeEventListener('luxar-open-element-menu', listener);
       canvas.remove();
       button.remove();
     }
@@ -472,9 +462,12 @@ describe('registerAllKeyBindings — FLY_CONTROLS dispatch', () => {
     const { contextManager, flyHandleKeyDown } = setupRealContextManager();
     const navigationHandler = vi.fn();
     contextManager.registerBinding(InputContext.NAVIGATION, {
+      actionId: 'test.navigation.arrow-up',
       key: 'ArrowUp',
       modifiers: { shift: true },
       handler: navigationHandler,
+      description: 'Test navigation arrow',
+      help: false,
     });
     contextManager.setContext(InputContext.FLY_CONTROLS);
 

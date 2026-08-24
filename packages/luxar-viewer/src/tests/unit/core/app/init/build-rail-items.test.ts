@@ -44,6 +44,7 @@ function makeDeps(
         toggleFullscreen: vi.fn(),
         togglePerformanceStats: vi.fn(),
         recenterCamera: vi.fn(),
+        toggleDatasetBrowser: vi.fn(),
       },
       panels: {
         getLayersPanel: vi.fn().mockReturnValue({ toggle: layersToggle }),
@@ -53,6 +54,7 @@ function makeDeps(
         getOverlayManager: vi.fn(),
       },
     },
+    shortcutForAction: vi.fn(() => undefined),
     sceneManager: {
       getControlType: vi.fn().mockReturnValue(controlType),
       centerOnOrigin: vi.fn(),

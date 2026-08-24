@@ -68,7 +68,7 @@ function expectNoOverlayTimersPending(focusTransitions: number): void {
 }
 
 describe('showHelpOverlay - Memory Leak Prevention', () => {
-  it('keeps every authored keyboard row present with the real binding registry', () => {
+  it('renders every help-visible registered binding group exactly once', () => {
     const contextManager = new InputContextManager();
     registerAllKeyBindings({
       contextManager,
@@ -93,6 +93,8 @@ describe('showHelpOverlay - Memory Leak Prevention', () => {
         selectDimension: vi.fn(),
         toggleHelp: vi.fn(),
         toggleDimensionSliders: vi.fn(),
+        toggleDatasetBrowser: vi.fn(),
+        openElementMenu: vi.fn(),
         togglePerformanceStats: vi.fn(),
         toggleRenderingControls: vi.fn(),
         toggleControlMode: vi.fn(),
@@ -107,22 +109,37 @@ describe('showHelpOverlay - Memory Leak Prevention', () => {
         shouldHandleSpaceKey: () => true,
       },
     });
-    showHelpOverlay();
-    const authoredRows = Array.from(
-      document.querySelectorAll<HTMLElement>('.luxar-help-overlay__row')
+    const bindings = contextManager.getRegisteredShortcutBindings();
+    showHelpOverlay(bindings);
+    const text = Array.from(
+      document.querySelectorAll<HTMLElement>('.luxar-help-overlay__desc')
     ).map((row) => row.textContent);
-    hideHelpOverlay();
+    const expected = new Map<string, string>();
+    for (const contextBindings of bindings.values()) {
+      for (const binding of contextBindings) {
+        if (binding.help) expected.set(binding.help.group, binding.description);
+      }
+    }
 
-    showHelpOverlay(contextManager.getRegisteredShortcutBindings());
-    const registeredRows = Array.from(
-      document.querySelectorAll<HTMLElement>('.luxar-help-overlay__row')
-    ).map((row) => row.textContent);
-
-    expect(registeredRows).toEqual(authoredRows);
+    for (const description of expected.values()) {
+      expect(text.filter((entry) => entry === description)).toHaveLength(1);
+    }
   });
 
   it('omits keyboard rows absent from the live registration snapshot', () => {
-    const bindings = new Map<string, string[]>([[InputContext.NAVIGATION, ['h']]]);
+    const bindings = new Map([
+      [
+        InputContext.NAVIGATION,
+        [
+          {
+            actionId: 'help.toggle',
+            key: 'h',
+            description: 'Toggle this help',
+            help: { section: 'basics' as const, group: 'help', keys: ['H'], order: 1 },
+          },
+        ],
+      ],
+    ]);
     showHelpOverlay(bindings);
 
     const text = document.getElementById('luxar-help-overlay')?.textContent ?? '';
@@ -164,7 +181,27 @@ describe('showHelpOverlay - Memory Leak Prevention', () => {
   });
 
   it('explains that digit keys address non-displayed dimensions', () => {
-    showHelpOverlay();
+    showHelpOverlay(
+      new Map([
+        [
+          InputContext.NAVIGATION,
+          [
+            {
+              actionId: 'dimension.select',
+              actionParameter: 0,
+              key: '1',
+              description: 'Select a non-displayed dimension (panel header shows target)',
+              help: {
+                section: 'dimensions' as const,
+                group: 'dimension-select',
+                keys: ['1 – 9'],
+                order: 1,
+              },
+            },
+          ],
+        ],
+      ])
+    );
 
     expect(document.getElementById('luxar-help-overlay')?.textContent).toContain(
       'Select a non-displayed dimension (panel header shows target)'
@@ -308,7 +345,26 @@ describe('showHelpOverlay - Memory Leak Prevention', () => {
   });
 
   it('lists the pointer and keyboard element actions', () => {
-    showHelpOverlay();
+    showHelpOverlay(
+      new Map([
+        [
+          InputContext.NAVIGATION,
+          [
+            {
+              actionId: 'element-menu.open',
+              key: 'f10+shift',
+              description: 'Context menu for the hovered element',
+              help: {
+                section: 'panels' as const,
+                group: 'element-menu',
+                keys: ['⇧', 'F10'],
+                order: 1,
+              },
+            },
+          ],
+        ],
+      ])
+    );
     const text = document.getElementById('luxar-help-overlay')?.textContent ?? '';
 
     expect(text).toContain('Open the hovered element link');

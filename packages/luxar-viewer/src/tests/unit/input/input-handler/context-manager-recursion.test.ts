@@ -12,6 +12,7 @@ import {
   InputContext,
   InputContextManager,
   MAX_KEY_EVENT_DEPTH,
+  type KeyBinding,
 } from '../../../../input/input-handler/context-manager';
 import { log } from '../../../../utils/log';
 
@@ -22,13 +23,27 @@ function makeKeyEvent(key = 'p'): KeyboardEvent {
   return new KeyboardEvent('keydown', { key });
 }
 
+function registerTestBinding(
+  manager: InputContextManager,
+  context: InputContext,
+  binding: Omit<KeyBinding, 'actionId' | 'description' | 'help'> &
+    Partial<Pick<KeyBinding, 'actionId' | 'description' | 'help'>>
+): void {
+  manager.registerBinding(context, {
+    actionId: 'test.action',
+    description: 'Test binding',
+    help: false,
+    ...binding,
+  });
+}
+
 describe('InputContextManager re-entrance guard', () => {
   it('caps re-entrance at MAX_KEY_EVENT_DEPTH and emits a single log.error', () => {
     const mgr = new InputContextManager();
     const errSpy = vi.spyOn(log, 'error').mockImplementation(() => {});
 
     let recursiveCalls = 0;
-    mgr.registerBinding(InputContext.NAVIGATION, {
+    registerTestBinding(mgr, InputContext.NAVIGATION, {
       key: 'p',
       handler: (event) => {
         recursiveCalls++;
@@ -57,7 +72,7 @@ describe('InputContextManager re-entrance guard', () => {
     const errSpy = vi.spyOn(log, 'error').mockImplementation(() => {});
 
     let calls = 0;
-    mgr.registerBinding(InputContext.NAVIGATION, {
+    registerTestBinding(mgr, InputContext.NAVIGATION, {
       key: 'p',
       handler: () => {
         calls++;
@@ -75,7 +90,7 @@ describe('InputContextManager re-entrance guard', () => {
 
   it('exception in a handler still releases the depth counter (try/finally)', () => {
     const mgr = new InputContextManager();
-    mgr.registerBinding(InputContext.NAVIGATION, {
+    registerTestBinding(mgr, InputContext.NAVIGATION, {
       key: 'p',
       handler: () => {
         throw new Error('boom');
@@ -86,7 +101,7 @@ describe('InputContextManager re-entrance guard', () => {
     // Depth counter should be back to 0 — a follow-up dispatch must
     // not be incorrectly throttled.
     let secondCallReached = false;
-    mgr.registerBinding(InputContext.NAVIGATION, {
+    registerTestBinding(mgr, InputContext.NAVIGATION, {
       key: 'g',
       handler: () => {
         secondCallReached = true;

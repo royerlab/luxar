@@ -11,7 +11,6 @@
  * - Priority-based key handling
  */
 
-import { config } from '../../config';
 import { log, Modules, LogEmoji } from '../../utils/log';
 import {
   canonicalizeBindingKey,
@@ -19,7 +18,11 @@ import {
   sortContextsByPriority,
 } from './context-manager/routing-rules';
 import { isTypingInInput } from './commands/focus-utils';
-import type { RegisteredShortcutBindings } from '../../types/shortcut-help';
+import type {
+  RegisteredShortcutBinding,
+  RegisteredShortcutBindings,
+  ShortcutHelpMetadata,
+} from '../../types/shortcut-help';
 
 /**
  * Maximum recursion depth for {@link InputContextManager.handleKeyEvent}.
@@ -49,6 +52,8 @@ export enum InputContext {
  * Key binding configuration
  */
 export interface KeyBinding {
+  actionId: string;
+  actionParameter?: string | number;
   key: string;
   modifiers?: {
     ctrl?: boolean;
@@ -64,7 +69,8 @@ export interface KeyBinding {
    */
   keyupHandler?: (event: KeyboardEvent) => boolean | void | Promise<void>;
   preventDefault?: boolean;
-  description?: string;
+  description: string;
+  help: ShortcutHelpMetadata | false;
 }
 
 /**
@@ -76,6 +82,9 @@ export interface ContextConfig {
   allowedKeys?: string[]; // Base or canonical binding keys handled by this context
   blockedKeys?: string[]; // Canonical binding keys never handled by this context
   passthrough?: boolean; // If true, unhandled keys pass to lower contexts
+  fallbackContexts?: InputContext[];
+  allowRegisteredBindings?: boolean;
+  blockBindingsFrom?: InputContext[];
 }
 
 /**
@@ -151,16 +160,11 @@ export class InputContextManager {
    * @private
    */
   private initializeContexts(): void {
-    // Navigation context - default mode
-    // Block bare fly-control keys but allow modified NAVIGATION bindings on them.
-    // Shift itself remains available for FOV control in orbit mode.
-    const flyModeKeysWithoutShift = config.input.keyboard.flyModeKeys.filter((k) => k !== 'Shift');
-
     this.contextConfigs.set(InputContext.NAVIGATION, {
       name: 'Navigation',
       priority: 0,
-      passthrough: true,
-      blockedKeys: [...flyModeKeysWithoutShift],
+      passthrough: false,
+      blockBindingsFrom: [InputContext.FLY_CONTROLS],
     });
 
     // Fly controls context - WASD movement active
@@ -168,13 +172,8 @@ export class InputContextManager {
       name: 'Fly Controls',
       priority: 1,
       passthrough: true,
-      allowedKeys: [
-        ...config.input.keyboard.flyModeKeys,
-        'ArrowUp',
-        'ArrowDown',
-        'ArrowLeft',
-        'ArrowRight',
-      ],
+      fallbackContexts: [InputContext.NAVIGATION],
+      allowRegisteredBindings: true,
     });
 
     // Typing context - highest priority, blocks most shortcuts
@@ -190,6 +189,7 @@ export class InputContextManager {
       name: 'UI Interaction',
       priority: 5,
       passthrough: true,
+      fallbackContexts: [InputContext.NAVIGATION],
     });
 
     // Dimension navigation context
@@ -197,7 +197,8 @@ export class InputContextManager {
       name: 'Dimension Navigation',
       priority: 2,
       passthrough: true,
-      allowedKeys: [...config.input.keyboard.dimensionKeys],
+      fallbackContexts: [InputContext.NAVIGATION],
+      allowRegisteredBindings: true,
     });
   }
 
@@ -333,14 +334,6 @@ export class InputContextManager {
 
     const bindingKey = this.getBindingKey(binding);
     const contextBindings = this.bindings.get(contextKey)!;
-    const config = this.contextConfigs.get(contextKey);
-
-    if (config && !this.isKeyAllowedInContext(binding.key, bindingKey, config)) {
-      log.warning(
-        Modules.INPUT_CONTEXT,
-        `Key binding ${bindingKey} in ${context} is unreachable under its context filters`
-      );
-    }
 
     // Check for conflicts
     if (contextBindings.has(bindingKey)) {
@@ -351,6 +344,15 @@ export class InputContextManager {
     }
 
     contextBindings.set(bindingKey, binding);
+    this.recomputeContextFilters();
+
+    const config = this.contextConfigs.get(contextKey);
+    if (config && !this.isKeyAllowedInContext(binding.key, bindingKey, config)) {
+      log.warning(
+        Modules.INPUT_CONTEXT,
+        `Key binding ${bindingKey} in ${context} is unreachable under its context filters`
+      );
+    }
   }
 
   /**
@@ -385,6 +387,7 @@ export class InputContextManager {
     if (contextBindings) {
       const bindingKey = this.getBindingKey({ key, modifiers } as KeyBinding);
       contextBindings.delete(bindingKey);
+      this.recomputeContextFilters();
     }
   }
 
@@ -590,7 +593,11 @@ export class InputContextManager {
   }
 
   private tryLowerContexts(event: KeyboardEvent, type: 'down' | 'up'): boolean {
-    const sortedContexts = sortContextsByPriority(this.contextConfigs, this.currentContext);
+    const currentConfig = this.contextConfigs.get(this.currentContext);
+    const fallbackContexts = new Set(currentConfig?.fallbackContexts ?? []);
+    const sortedContexts = sortContextsByPriority(this.contextConfigs, this.currentContext).filter(
+      ([context]) => fallbackContexts.has(context)
+    );
     const bindingKey = this.getBindingKeyFromEvent(event);
 
     for (const [context, config] of sortedContexts) {
@@ -775,12 +782,21 @@ export class InputContextManager {
   public getDebugInfo(): {
     currentContext: InputContext;
     contextStack: InputContext[];
-    registeredBindings: Map<InputContext, string[]>;
+    registeredBindings: Map<InputContext, RegisteredShortcutBinding[]>;
   } {
-    const registeredBindings = new Map<InputContext, string[]>();
+    const registeredBindings = new Map<InputContext, RegisteredShortcutBinding[]>();
 
     this.bindings.forEach((bindings, context) => {
-      registeredBindings.set(context as InputContext, Array.from(bindings.keys()));
+      registeredBindings.set(
+        context as InputContext,
+        Array.from(bindings.entries()).map(([key, binding]) => ({
+          actionId: binding.actionId,
+          actionParameter: binding.actionParameter,
+          key,
+          description: binding.description,
+          help: binding.help,
+        }))
+      );
     });
 
     return {
@@ -795,6 +811,15 @@ export class InputContextManager {
     return this.getDebugInfo().registeredBindings;
   }
 
+  public getShortcutLabel(actionId: string): string | undefined {
+    for (const bindings of this.bindings.values()) {
+      for (const [key, binding] of bindings) {
+        if (binding.actionId === actionId) return this.formatShortcutLabel(key);
+      }
+    }
+    return undefined;
+  }
+
   /**
    * Clear all registered key bindings for a specific context.
    *
@@ -806,6 +831,7 @@ export class InputContextManager {
    */
   public clearContextBindings(context: InputContext): void {
     this.bindings.delete(context);
+    this.recomputeContextFilters();
   }
 
   /**
@@ -821,5 +847,35 @@ export class InputContextManager {
     this.currentContext = InputContext.NAVIGATION;
     this.contextStack = [];
     this.bindings.clear();
+    this.recomputeContextFilters();
+  }
+
+  private recomputeContextFilters(): void {
+    for (const [context, contextConfig] of this.contextConfigs) {
+      const ownKeys = new Set(this.bindings.get(context)?.keys() ?? []);
+      if (contextConfig.allowRegisteredBindings) {
+        contextConfig.allowedKeys = Array.from(ownKeys);
+      }
+      if (contextConfig.blockBindingsFrom) {
+        contextConfig.blockedKeys = contextConfig.blockBindingsFrom.flatMap((source) =>
+          Array.from(this.bindings.get(source)?.keys() ?? []).filter((key) => !ownKeys.has(key))
+        );
+      }
+    }
+  }
+
+  private formatShortcutLabel(bindingKey: string): string {
+    if (bindingKey === ' ') return 'Space';
+    return bindingKey
+      .split('+')
+      .map((part) => {
+        if (part === 'ctrl') return 'Ctrl';
+        if (part === 'shift') return 'Shift';
+        if (part === 'alt') return 'Alt';
+        if (part === 'meta') return 'Meta';
+        if (part === 'escape') return 'Esc';
+        return part.length === 1 ? part.toUpperCase() : part;
+      })
+      .join('+');
   }
 }

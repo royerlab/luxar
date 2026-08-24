@@ -570,6 +570,11 @@ export class InputHandler {
       selectDimension: (index) => this.selectDimension(index),
       toggleHelp: () => this.toggleHelp(),
       toggleDimensionSliders: () => this.toggleDimensionSliders(),
+      toggleDatasetBrowser: () => window.dispatchEvent(new CustomEvent('open-dataset-browser')),
+      openElementMenu: (event) => {
+        event.preventDefault();
+        window.dispatchEvent(new CustomEvent('luxar-open-element-menu'));
+      },
       togglePerformanceStats: () => this.togglePerformanceStats(),
       toggleRenderingControls: () => this.toggleRenderingControls(),
       toggleControlMode: () => this.toggleControlMode(),
@@ -667,6 +672,10 @@ export class InputHandler {
   /** Registered bindings used to build the keyboard-shortcut overlay. */
   public getRegisteredShortcutBindings(): RegisteredShortcutBindings {
     return this.contextManager.getRegisteredShortcutBindings();
+  }
+
+  public getShortcutLabel(actionId: string): string | undefined {
+    return this.contextManager.getShortcutLabel(actionId);
   }
 
   /**
