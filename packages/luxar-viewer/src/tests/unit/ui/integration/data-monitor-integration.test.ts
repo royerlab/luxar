@@ -305,9 +305,9 @@ describe('Data Monitor Integration', () => {
 
       // Seed the snapshot the polling tick would populate from the provider:
       // the group at /lod has 3 substitutive levels.
-      (monitor as unknown as { lodStates: Map<string, unknown> }).lodStates = new Map([
-        ['/lod', { kind: 'lod', levelCount: 3, activeLevel: 0 }],
-      ]);
+      (
+        monitor as unknown as { providers: { lodStates: Map<string, unknown> } }
+      ).providers.lodStates = new Map([['/lod', { kind: 'lod', levelCount: 3, activeLevel: 0 }]]);
 
       // Now the K=3 level loaders collapse to one logical layer.
       const stats = monitor.getGlobalStats();

@@ -365,8 +365,10 @@ describe('DataLoadingMonitor', () => {
 
       // Provider reports the group with levelCount=3 (the OLD basis).
       (
-        monitor as unknown as { lodStates: Map<string, { kind: string; levelCount: number }> }
-      ).lodStates = new Map([['/lod', { kind: 'lod', levelCount: 3 }]]);
+        monitor as unknown as {
+          providers: { lodStates: Map<string, { kind: string; levelCount: number }> };
+        }
+      ).providers.lodStates = new Map([['/lod', { kind: 'lod', levelCount: 3 }]]);
 
       const stats = monitor.getGlobalStats();
       // 5 loaders − (4 present under /lod − 1) = 2 logical layers.
@@ -409,8 +411,10 @@ describe('DataLoadingMonitor', () => {
       monitor.connectLoader('/points', spatialLoader('/points'));
 
       (
-        monitor as unknown as { lodStates: Map<string, { kind: string; levelCount: number }> }
-      ).lodStates = new Map([['/lod', { kind: 'lod', levelCount: 2 }]]);
+        monitor as unknown as {
+          providers: { lodStates: Map<string, { kind: string; levelCount: number }> };
+        }
+      ).providers.lodStates = new Map([['/lod', { kind: 'lod', levelCount: 2 }]]);
 
       const stats = monitor.getGlobalStats();
       // totalLoaders: 4 − (3 present − 1) = 2.
