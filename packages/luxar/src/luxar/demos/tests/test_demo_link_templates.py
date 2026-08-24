@@ -304,8 +304,7 @@ def test_demo_links_use_registered_canonical_templates() -> None:
     )
     resolved_templates = {value for _path, _line, value in links if value is not None}
     assert resolved_templates == CANONICAL_LINKS, (
-        f"unused canonical templates: {sorted(CANONICAL_LINKS - resolved_templates)}; "
-        f"unregistered templates: {sorted(resolved_templates - CANONICAL_LINKS)}"
+        f"unused canonical templates: {sorted(CANONICAL_LINKS - resolved_templates)}"
     )
 
 
@@ -380,13 +379,15 @@ def test_demo_link_extractor_rejects_function_local_shadow(tmp_path: Path) -> No
 def build():
     LINK = "https://example.org/shadow/{hover_key}"
     scene.add_points(link=LINK)
+def build_parameter(LINK):
+    scene.add_points(link=LINK)
 """,
         encoding="utf-8",
     )
 
     links, unresolved, unregistered, unclaimed = _audit_links([module], CANONICAL_LINKS)
 
-    assert links == [(module, 4, None)]
+    assert links == [(module, 4, None), (module, 6, None)]
     assert unresolved == links
     assert unregistered == []
     assert unclaimed == [
@@ -460,9 +461,9 @@ build_protein_layer(scene, link_template=UNIPROT_LINK)
 def test_demo_link_audit_allows_resolved_link_prefix_literal(tmp_path: Path) -> None:
     module = tmp_path / "demo_host_constant.py"
     module.write_text(
-        '''HOST = "https://www.genecards.org"
+        """HOST = "https://www.genecards.org"
 scene.add_points(link=f"{HOST}/card/{{hover_key}}")
-''',
+""",
         encoding="utf-8",
     )
 
