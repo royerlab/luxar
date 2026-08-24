@@ -43,7 +43,8 @@ async function getSliceStats(page: any): Promise<{
 }
 
 /**
- * Navigate the hidden frame dimension and wait until its load pass settles.
+ * Navigate the hidden frame dimension and wait for the load-pass signal
+ * (`getState().isLoading`) to settle: frame commit, not additive-ladder drain.
  * A fixed dwell is flaky:
  * rapid navigations coalesce in the SceneLoader's pending queue, so
  * intermediate frames would never get their own load — the S-cache
@@ -62,7 +63,7 @@ async function goToFrame(page: any, frame: number): Promise<void> {
 }
 
 test.describe('SliceCache (S-cache)', () => {
-  test('scrub-back revisits are served from the S-cache (hits > 0, entries stored)', async ({
+  test('scrub-back revisits are served from the S-cache (hit count grows, entries stored)', async ({
     page,
   }) => {
     // `&no-opfs` on every load: this spec never asserts the L2 OPFS tier, and
