@@ -51,9 +51,8 @@ import pandas as pd
 import requests
 from arbol import aprint, asection
 
-from luxar.utils._umap_utils import get_categorical_color
-
 from ._dependencies import require_module
+from ._support._umap_utils import get_categorical_color
 
 # -----------------------------------------------------------------------------
 # Download

@@ -573,7 +573,7 @@ def _subsample_seeds_spatially_diverse(
         Selected seeds with spatial diversity and high intensity.
         If return_indices=True, returns (seeds, original_indices).
     """
-    from luxar.utils.spatial_hash import BatchedSpatialHashGrid
+    from luxar.gsplats.spatial_hash import BatchedSpatialHashGrid
 
     n_available = len(seeds)
     if n_available <= target_count:
@@ -878,7 +878,7 @@ def _add_grid_fallback_seeds(
     # Remove grid points too close to existing seeds (if any exist)
     # But be less aggressive about filtering to ensure we get enough
     if len(existing_seeds) > 0:
-        from luxar.utils.spatial_hash import BatchedSpatialHashGrid
+        from luxar.gsplats.spatial_hash import BatchedSpatialHashGrid
 
         # Use smaller min_distance to be more permissive
         min_distance = max(1.0, spacing * 0.3)  # 30% of spacing, min 1 voxel

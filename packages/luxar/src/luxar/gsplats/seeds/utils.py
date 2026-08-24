@@ -5,8 +5,8 @@ Shared utility functions for seed generation.
 This module contains common utilities used by multiple seed generation methods,
 including peak detection, spatial deduplication algorithms, and Cholesky
 factor construction for Gaussian initialization. The spatial hash grid for
-proximity queries lives in :mod:`luxar.utils.spatial_hash` and is re-exported
-here for backwards compatibility.
+proximity queries lives in :mod:`luxar.gsplats.spatial_hash` and is re-exported
+here for intra-package convenience.
 """
 
 from typing import Optional, cast
@@ -14,7 +14,7 @@ from typing import Optional, cast
 import numpy as np
 from scipy import ndimage as ndi
 
-from luxar.utils.spatial_hash import SpatialHashGrid
+from luxar.gsplats.spatial_hash import SpatialHashGrid
 
 __all__ = ["SpatialHashGrid", "SEED_AMPLITUDE_SCALE"]
 
