@@ -8,7 +8,6 @@ exclusive with `--recipe` at the CLI boundary (not only deep in the library).
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import pytest
@@ -16,25 +15,9 @@ import typer
 from typer.testing import CliRunner
 
 from luxar.cli.gsplat_commands import app_gsplat
+from luxar.cli.tests._testing import normalized_cli_output
 
 runner = CliRunner()
-
-_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
-# Rich renders typer.BadParameter inside a box and HARD-WRAPS the message across
-# lines with border glyphs — so a multi-word phrase is split by "│\n│". Strip the
-# box-drawing glyphs and collapse all whitespace so substring matches survive
-# wrapping (Rich wraps at spaces, so collapsed text reconstructs the prose).
-
-
-def _io(result) -> str:
-    out = result.stdout or ""
-    try:
-        err = result.stderr or ""
-    except (ValueError, AttributeError):
-        err = ""
-    text = _ANSI.sub("", out + err)
-    text = re.sub(r"[─│╭╮╰╯┄┆]", " ", text)
-    return re.sub(r"\s+", " ", text)
 
 
 def _write_manifest(
@@ -472,7 +455,9 @@ class TestMergeStreamingKnobs:
             ["batch-fit", "merge", str(tmp_path), "--target-ms", "200"],
         )
         assert res.exit_code != 0
-        assert "recipe-specific but no recipe is in effect" in _io(res)
+        assert "recipe-specific but no recipe is in effect" in normalized_cli_output(
+            res
+        )
 
 
 # ── runtime: `batch-fit merge` CLI validation ──────────────────────────────
@@ -489,7 +474,7 @@ class TestBatchMergeCliValidation:
             app_gsplat, ["batch-fit", "merge", str(tmp_path), "--n-lods", "6"]
         )
         assert res.exit_code != 0
-        io = _io(res)
+        io = normalized_cli_output(res)
         assert "recipe-specific but no recipe is in effect" in io
         # No --no-recipe/--flat here, so the hint should steer to --recipe.
         assert "Pass --recipe" in io
@@ -510,7 +495,9 @@ class TestBatchMergeCliValidation:
             app_gsplat, ["batch-fit", "merge", str(tmp_path), "--refine", "volume"]
         )
         assert res.exit_code != 0
-        assert "recipe-specific but no recipe is in effect" in _io(res)
+        assert "recipe-specific but no recipe is in effect" in normalized_cli_output(
+            res
+        )
 
         res = runner.invoke(
             app_gsplat,
@@ -525,7 +512,7 @@ class TestBatchMergeCliValidation:
             ],
         )
         assert res.exit_code != 0
-        assert "not used by --recipe stream" in _io(res)
+        assert "not used by --recipe stream" in normalized_cli_output(res)
 
     def test_unknown_recipe_name_reported_even_with_a_knob(
         self, tmp_path: Path
@@ -549,7 +536,7 @@ class TestBatchMergeCliValidation:
             ],
         )
         assert res.exit_code != 0
-        io = _io(res)
+        io = normalized_cli_output(res)
         assert "unknown per-part recipe" in io
         assert "addative" in io
         # Must NOT misreport the valid knob as the problem.
@@ -563,7 +550,7 @@ class TestBatchMergeCliValidation:
             app_gsplat, ["batch-fit", "merge", str(tmp_path), "--recipe", "addative"]
         )
         assert res.exit_code != 0
-        assert "unknown per-part recipe" in _io(res)
+        assert "unknown per-part recipe" in normalized_cli_output(res)
 
     def test_flat_and_recipe_mutually_exclusive(self, tmp_path: Path) -> None:
         """--flat with --recipe is a clean CLI usage error (the message is the
@@ -574,7 +561,10 @@ class TestBatchMergeCliValidation:
             ["batch-fit", "merge", str(tmp_path), "--flat", "--recipe", "stream"],
         )
         assert res.exit_code != 0
-        assert "concatenates all tiles into a single bare leaf" in _io(res)
+        assert (
+            "concatenates all tiles into a single bare leaf"
+            in normalized_cli_output(res)
+        )
 
     def test_recipe_and_no_recipe_mutually_exclusive(self, tmp_path: Path) -> None:
         _write_manifest(tmp_path, merge_recipe=None)
@@ -590,7 +580,7 @@ class TestBatchMergeCliValidation:
             ],
         )
         assert res.exit_code != 0
-        assert "mutually exclusive" in _io(res)
+        assert "mutually exclusive" in normalized_cli_output(res)
 
     def test_no_recipe_overrides_manifest_recipe(self, tmp_path: Path) -> None:
         """With a manifest merge_recipe set, --no-recipe forces a recipe-less
@@ -603,7 +593,9 @@ class TestBatchMergeCliValidation:
         )
         assert res.exit_code != 0
         # eff_recipe is None despite the manifest → the knob is orphaned.
-        assert "recipe-specific but no recipe is in effect" in _io(res)
+        assert "recipe-specific but no recipe is in effect" in normalized_cli_output(
+            res
+        )
 
     def test_no_recipe_hint_does_not_contradict_the_flag(self, tmp_path: Path) -> None:
         """The orphaned-knob hint must NOT tell a user who typed --no-recipe to
@@ -615,7 +607,7 @@ class TestBatchMergeCliValidation:
             ["batch-fit", "merge", str(tmp_path), "--no-recipe", "--n-lods", "6"],
         )
         assert res.exit_code != 0
-        io = _io(res)
+        io = normalized_cli_output(res)
         assert "--no-recipe forces a recipe-less" in io
         assert "drop these" in io
         # The bare contradictory steer ("Pass --recipe ...") must be absent.
@@ -628,7 +620,7 @@ class TestBatchMergeCliValidation:
             app_gsplat, ["batch-fit", "merge", str(tmp_path), "--flat", "--n-lods", "6"]
         )
         assert res.exit_code != 0
-        io = _io(res)
+        io = normalized_cli_output(res)
         assert "--flat forces a recipe-less" in io
         assert "Pass --recipe" not in io
 
@@ -812,7 +804,7 @@ class TestMergeTargetMsBytesSource:
             app_gsplat,
             ["batch-fit", "merge", str(tmp_path), "--target-ms", "200"],
         )
-        io = _io(res)
+        io = normalized_cli_output(res)
         assert "measured from 1 completed tile store(s)" in io
         assert "stream:" in io
 
@@ -824,7 +816,7 @@ class TestMergeTargetMsBytesSource:
             app_gsplat,
             ["batch-fit", "merge", str(tmp_path), "--target-ms", "200"],
         )
-        io = _io(res)
+        io = normalized_cli_output(res)
         assert "analytic estimate" in io
         # 3D analytic 21 B → 29762 (the same figure plan-time now derives).
         assert "stream:29762" in io

@@ -36,6 +36,7 @@ from luxar.cli.gsplat_config import (
     parse_seeds,
     parse_shape,
 )
+from luxar.cli.tests._testing import normalized_cli_output
 from luxar.conftest import confine_temp_dirs
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
@@ -4271,7 +4272,10 @@ class TestLODCommand:
                 ["gsplat", "lod", str(medium_gsplats), str(out), "--recipe", legacy],
             )
             assert result.exit_code != 0, legacy
-            assert current in self._io(result), (legacy, self._io(result))
+            assert current in normalized_cli_output(result), (
+                legacy,
+                normalized_cli_output(result),
+            )
             assert not out.exists()
 
     def test_no_additive_rejected_for_additive_recipe(
@@ -4477,7 +4481,7 @@ class TestLODCommand:
             ],
         )
         assert result.exit_code != 0
-        assert "--target" in self._io(result)
+        assert "--target" in normalized_cli_output(result)
         assert not out.exists()
 
     def test_channel_without_target_rejected(
@@ -4501,7 +4505,7 @@ class TestLODCommand:
             ],
         )
         assert result.exit_code != 0
-        assert "--target" in self._io(result)
+        assert "--target" in normalized_cli_output(result)
         assert not out.exists()
 
     def test_target_requires_refine_volume(
@@ -4526,7 +4530,7 @@ class TestLODCommand:
             ],
         )
         assert result.exit_code != 0
-        assert "--refine volume" in self._io(result)
+        assert "--refine volume" in normalized_cli_output(result)
         assert not out.exists()
 
     def test_refine_volume_rejected_for_stream_recipe(
@@ -4586,7 +4590,7 @@ class TestLODCommand:
                 str(small_volume_npy),
             ],
         )
-        assert result.exit_code == 0, self._io(result)
+        assert result.exit_code == 0, normalized_cli_output(result)
         assert out.exists()
 
     def test_target_axes_requires_a_target(
@@ -4608,7 +4612,7 @@ class TestLODCommand:
             ],
         )
         assert result.exit_code != 0
-        assert "--target-axes" in self._io(result)
+        assert "--target-axes" in normalized_cli_output(result)
 
     def test_target_axes_excludes_the_slicing_selectors(
         self,
@@ -4644,7 +4648,7 @@ class TestLODCommand:
                 ],
             )
             assert result.exit_code != 0, flag
-            assert "--target-axes" in self._io(result)
+            assert "--target-axes" in normalized_cli_output(result)
 
     def test_target_axes_opens_the_target_lazily(
         self,
@@ -4698,7 +4702,7 @@ class TestLODCommand:
                 "z,y,x",
             ],
         )
-        assert result.exit_code == 0, self._io(result)
+        assert result.exit_code == 0, normalized_cli_output(result)
         assert out.exists()
 
     def test_recipe_levels_with_refine_volume_smoke(
@@ -5177,24 +5181,6 @@ class TestLODCommand:
         )
         assert ok.exit_code == 0, f"overwrite failed:\n{ok.stdout}"
 
-    # CSI escape sequences (Rich colourises error panels; under FORCE_COLOR — as
-    # in CI — a flag like ``--substitutive-method`` is split across per-segment
-    # SGR codes, so a raw substring check would miss it). Strip them so message
-    # assertions are colour-agnostic across local (no-TTY) and CI (forced-colour).
-    _ANSI_CSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
-
-    @classmethod
-    def _io(cls, result) -> str:
-        """Combined stdout+stderr with ANSI codes stripped (click 8.3 captures
-        them separately; typer BadParameter messages and tracebacks land on
-        stderr, and Rich may colourise them)."""
-        out = result.stdout or ""
-        try:
-            err = result.stderr or ""
-        except (ValueError, AttributeError):
-            err = ""
-        return cls._ANSI_CSI.sub("", out + err)
-
     @staticmethod
     def _make_2d_gsplats(path: Path) -> Path:
         """A 2D (ndim=2) fitted .gsplats.zarr — BSP partitioning needs >=2 dims."""
@@ -5301,7 +5287,7 @@ class TestLODCommand:
         )
         assert result.exit_code != 0
         assert not out.exists()
-        io = self._io(result)
+        io = normalized_cli_output(result)
         assert "Traceback" not in io
         assert "spatial dimensions" in io
         assert "Use --recipe stream or levels" in io
@@ -5346,7 +5332,7 @@ class TestLODCommand:
             ],
         )
         assert result.exit_code != 0
-        io = self._io(result)
+        io = normalized_cli_output(result)
         assert "Traceback" not in io
         assert "ordering" in io.lower()
 
@@ -5371,7 +5357,7 @@ class TestLODCommand:
             ],
         )
         assert result.exit_code != 0
-        assert "--subst-method" in self._io(result)
+        assert "--subst-method" in normalized_cli_output(result)
 
     def test_count_growing_recipe_fitting_count_matches_leaves(
         self, runner: CliRunner, tmp_path: Path
@@ -5447,7 +5433,7 @@ class TestLODCommand:
         )
         assert result.exit_code != 0
         assert not out.exists()
-        assert "Traceback" not in self._io(result)
+        assert "Traceback" not in normalized_cli_output(result)
 
     def test_multiscale_default_compression_factor_is_n_aware(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path, monkeypatch
@@ -5472,8 +5458,10 @@ class TestLODCommand:
                 "overview",
             ],
         )
-        assert result.exit_code == 0, f"multiscale failed: {self._io(result)}"
-        io = self._io(result)
+        assert result.exit_code == 0, (
+            f"multiscale failed: {normalized_cli_output(result)}"
+        )
+        io = normalized_cli_output(result)
         assert "compression-factor defaulting to 8" in io, io
         assert out.exists()
 
@@ -5495,9 +5483,11 @@ class TestLODCommand:
                 "3",
             ],
         )
-        assert result.exit_code == 0, f"multiscale -K failed: {self._io(result)}"
+        assert result.exit_code == 0, (
+            f"multiscale -K failed: {normalized_cli_output(result)}"
+        )
         # The auto-default message must NOT fire when -K is given.
-        assert "compression-factor defaulting" not in self._io(result)
+        assert "compression-factor defaulting" not in normalized_cli_output(result)
         # Strong check: the explicit K=3 must actually SHAPE the coarse cap, not
         # merely suppress the default message. medium_gsplats has N=32, so the
         # single-level cap holds ceil(32/3)=11 representatives (vs ceil(32/2)=16
@@ -5540,7 +5530,7 @@ class TestLODCommand:
         )
         assert result.exit_code != 0
         assert not out.exists()
-        assert "single-level" in self._io(result)
+        assert "single-level" in normalized_cli_output(result)
 
     def test_lod_stream_breakpoints_grammar(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
@@ -5563,7 +5553,7 @@ class TestLODCommand:
                 "stream:10",
             ],
         )
-        assert result.exit_code == 0, self._io(result)
+        assert result.exit_code == 0, normalized_cli_output(result)
         loaded = GSplatData.load(out, include_stats=True)
         incs = [s.n_splats for s in loaded.additive_sublods]
         assert incs[0] == 10 and sum(incs) == 32  # medium_gsplats N=32
@@ -5608,8 +5598,8 @@ class TestLODCommand:
                 "200",
             ],
         )
-        assert result.exit_code == 0, self._io(result)
-        io = self._io(result)
+        assert result.exit_code == 0, normalized_cli_output(result)
+        io = normalized_cli_output(result)
         assert "--target-ms 200" in io and "stream:" in io
         assert "measured from input store" in io  # input is a real store
         assert out.exists()
@@ -5637,8 +5627,8 @@ class TestLODCommand:
                 "precision",
             ],
         )
-        assert result.exit_code == 0, self._io(result)
-        io = self._io(result)
+        assert result.exit_code == 0, normalized_cli_output(result)
+        io = normalized_cli_output(result)
         assert "re-encodes the output" in io
         assert "analytic estimate" in io
         assert "measured from input store" not in io
@@ -5787,7 +5777,7 @@ class TestLODCommand:
             ],
         )
         assert result.exit_code != 0
-        assert "mutually exclusive" in self._io(result)
+        assert "mutually exclusive" in normalized_cli_output(result)
         assert not out.exists()
 
     def test_lod_bandwidth_knob_requires_target_ms(
@@ -5812,7 +5802,7 @@ class TestLODCommand:
         assert result.exit_code != 0
         # Rich hard-wraps the error box; collapse box glyphs + whitespace so
         # the multi-word phrase survives wrapping.
-        flat = re.sub(r"[│─╭╮╰╯\s]+", " ", self._io(result))
+        flat = normalized_cli_output(result)
         assert "only apply with --target-ms" in flat
 
     def test_lod_target_ms_accepted_for_substitutive(
@@ -5872,7 +5862,7 @@ class TestLODCommand:
                 "stream",
             ],
         )
-        assert result.exit_code == 0, f"failed:\n{self._io(result)}"
+        assert result.exit_code == 0, f"failed:\n{normalized_cli_output(result)}"
         assert seen == [None], seen
 
         explicit_out = tmp_path / "explicit.gsplats.zarr"
@@ -5889,7 +5879,7 @@ class TestLODCommand:
                 "2.0",
             ],
         )
-        assert result.exit_code == 0, f"failed:\n{self._io(result)}"
+        assert result.exit_code == 0, f"failed:\n{normalized_cli_output(result)}"
         assert seen[-1] == pytest.approx(2.0), seen
 
 
@@ -7151,17 +7141,6 @@ class TestAdditiveCommand:
     ladder, structure-preservingly (the per-leaf counterpart of `lod --recipe
     additive`, which needs a flat input)."""
 
-    _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
-
-    @classmethod
-    def _io(cls, result) -> str:
-        out = result.stdout or ""
-        try:
-            err = result.stderr or ""
-        except (ValueError, AttributeError):
-            err = ""
-        return cls._ANSI.sub("", out + err)
-
     def _make_substitutive(self, src: Path, out: Path) -> None:
         """Build a small 3-level substitutive kind=lod tree from src."""
         from luxar.gsplats.gsplat_data import GSplatData
@@ -7195,7 +7174,7 @@ class TestAdditiveCommand:
         result = runner.invoke(
             app, ["gsplat", "additive", str(sub), str(out), "-b", "stream:5"]
         )
-        assert result.exit_code == 0, self._io(result)
+        assert result.exit_code == 0, normalized_cli_output(result)
         node, _ = load_gsplat_node(out, include_stats=True)
         assert isinstance(node, GSplatLodGroup)
         assert len(node.children) == 3  # levels preserved
@@ -7218,12 +7197,12 @@ class TestAdditiveCommand:
             app,
             ["gsplat", "partition", str(medium_gsplats), str(part), "--parts", "3"],
         )
-        assert r.exit_code == 0, self._io(r)
+        assert r.exit_code == 0, normalized_cli_output(r)
         out = tmp_path / "part_add.gsplats.zarr"
         result = runner.invoke(
             app, ["gsplat", "additive", str(part), str(out), "--n-lods", "2"]
         )
-        assert result.exit_code == 0, self._io(result)
+        assert result.exit_code == 0, normalized_cli_output(result)
         node, _ = load_gsplat_node(out, include_stats=True)
         assert isinstance(node, GSplatPartition)
         total = sum(leaf.n_splats for leaf in iter_leaves(node))
@@ -7238,8 +7217,8 @@ class TestAdditiveCommand:
         result = runner.invoke(
             app, ["gsplat", "additive", str(sub), str(out), "--target-ms", "200"]
         )
-        assert result.exit_code == 0, self._io(result)
-        io = self._io(result)
+        assert result.exit_code == 0, normalized_cli_output(result)
+        io = normalized_cli_output(result)
         assert "stream:" in io and "B/splat" in io
 
     def test_additive_target_ms_encoding_change_uses_analytic(
@@ -7261,8 +7240,8 @@ class TestAdditiveCommand:
                 "precision",
             ],
         )
-        assert result.exit_code == 0, self._io(result)
-        io = self._io(result)
+        assert result.exit_code == 0, normalized_cli_output(result)
+        io = normalized_cli_output(result)
         assert "re-encodes the output" in io
         assert "analytic estimate" in io
         assert "measured from input store" not in io
@@ -7286,7 +7265,7 @@ class TestAdditiveCommand:
             ],
         )
         assert result.exit_code != 0
-        assert "exceeds N=32" in self._io(result)
+        assert "exceeds N=32" in normalized_cli_output(result)
         assert not out.exists()
 
     def test_additive_overwrite_guard_and_exclusions(
@@ -7326,7 +7305,7 @@ class TestAdditiveCommand:
             ],
         )
         assert bad.exit_code != 0
-        assert "mutually exclusive" in self._io(bad)
+        assert "mutually exclusive" in normalized_cli_output(bad)
 
     def test_additive_reladders_existing_ladder(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
@@ -7353,7 +7332,7 @@ class TestAdditiveCommand:
         result = runner.invoke(
             app, ["gsplat", "additive", str(first), str(second), "--n-lods", "2"]
         )
-        assert result.exit_code == 0, self._io(result)
+        assert result.exit_code == 0, normalized_cli_output(result)
         loaded = GSplatData.load(second, include_stats=True)
         assert loaded.n_additive_sublods == 2
         assert loaded.n_splats == 32  # union conserved
@@ -8873,8 +8852,9 @@ class TestRefineVolumeRejectsARescaledFrame:
         self, runner: CliRunner, tmp_path: Path
     ) -> None:
         result, out = self._invoke(runner, tmp_path, "voxel_size: [4.0, 1.0]\n", "real")
-        assert result.exit_code != 0, result.output
-        plain = _plain(result.output)
+        output = normalized_cli_output(result)
+        assert result.exit_code != 0, output
+        plain = _plain(output)
         assert "--refine volume" in plain and "voxel_size" in plain
         # Refused BEFORE any fitting, like its --downscale sibling.
         assert not out.exists()
