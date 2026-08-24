@@ -27,12 +27,12 @@ import {
   CACHE_WARMUP_ACCESSES,
   renderCacheContent,
   CACHE_SECTION_KEYS,
-} from '../../../../ui/data-loading-monitor/templates/cache';
+} from '../../../../../ui/data-loading-monitor/templates/cache';
 import type {
   CacheMetrics,
   CacheStatusBadge,
   GlobalStats,
-} from '../../../../types/data-monitor-types';
+} from '../../../../../types/data-monitor-types';
 
 function makeGlobalStats(): GlobalStats {
   return {

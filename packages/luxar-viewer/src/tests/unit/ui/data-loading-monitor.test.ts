@@ -1259,7 +1259,7 @@ describe('DataLoadingMonitor', () => {
 
     it('re-marks active/inactive substitutive level rows per tick (shared activeLevelRole derivation)', () => {
       // The per-tick patcher must derive each level row's role exactly like
-      // the initial render (both call templates.ts's exported
+      // the initial render (both call templates/scene-graph.ts's exported
       // activeLevelRole) and flip the marks in place when the LOD selector
       // switches levels between structural rebuilds.
       monitor.show();
