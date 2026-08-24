@@ -76,6 +76,7 @@ CANONICAL_LINKS_BY_HOST = {
 CANONICAL_LINKS = frozenset(
     template for templates in CANONICAL_LINKS_BY_HOST.values() for template in templates
 )
+# Keep in sync with hover-template.ts's PLACEHOLDER_PATTERN; hover_image_label is HTML-only.
 LINK_PLACEHOLDERS = ("hover_key", "hover_label", "hover_node", "hover_index")
 
 
