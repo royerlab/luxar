@@ -118,9 +118,7 @@ def test_finally_teardown_runs_on_keyboard_interrupt(monkeypatch) -> None:
 def test_non_isolate_uses_pid_signals_not_killpg(monkeypatch) -> None:
     """Non-isolated children are signalled by PID, never by process group."""
     recorded: list[int] = []
-    monkeypatch.setattr(
-        process.os, "killpg", lambda *a, **k: recorded.append(-1)
-    )
+    monkeypatch.setattr(process.os, "killpg", lambda *a, **k: recorded.append(-1))
     proc = _FakeProc(alive=True)
     _teardown(proc, pgid=None, interrupt_timeout=0.02, term_timeout=0.02)
 
@@ -227,9 +225,10 @@ def test_external_sigterm_reaps_grandchild() -> None:
     # Grandchild must be gone (teardown escalated to it).
     dead_deadline = time.monotonic() + 3.0
     while time.monotonic() < dead_deadline:
-        alive = subprocess.run(
-            ["kill", "-0", grandchild], capture_output=True
-        ).returncode == 0
+        alive = (
+            subprocess.run(["kill", "-0", grandchild], capture_output=True).returncode
+            == 0
+        )
         if not alive:
             break
         time.sleep(0.05)
@@ -249,9 +248,7 @@ def test_sigkill_reaches_signal_ignoring_child() -> None:
         "signal.signal(signal.SIGTERM, signal.SIG_IGN);"
         "time.sleep(30)"
     )
-    proc = subprocess.Popen(
-        [sys.executable, "-c", stubborn], start_new_session=True
-    )
+    proc = subprocess.Popen([sys.executable, "-c", stubborn], start_new_session=True)
     try:
         _teardown(proc, pgid=proc.pid, interrupt_timeout=0.2, term_timeout=0.2)
         deadline = time.monotonic() + 3.0
@@ -288,6 +285,7 @@ def test_proc_table_lists_this_process(monkeypatch) -> None:
 
 def test_proc_table_falls_back_to_ps_without_proc(monkeypatch) -> None:
     """POSIX systems without procfs parse the equivalent `ps` output."""
+
     class Result:
         stdout = """\
   101   101 S+   python -m luxar
@@ -319,6 +317,7 @@ bad row
 
 def test_proc_table_is_unknown_when_proc_and_ps_are_unavailable(monkeypatch) -> None:
     """Missing procfs and `ps` produce an empty unknown snapshot."""
+
     def unavailable(*_args, **_kwargs):  # type: ignore[no-untyped-def]
         """Emulate an unavailable process-table source."""
         raise OSError
@@ -331,6 +330,7 @@ def test_proc_table_is_unknown_when_proc_and_ps_are_unavailable(monkeypatch) -> 
 
 def test_proc_table_does_not_run_ps_off_posix(monkeypatch) -> None:
     """Non-POSIX platforms do not attempt the unavailable `ps` fallback."""
+
     def no_proc(_path: str) -> list[str]:
         """Emulate a non-POSIX platform without procfs."""
         raise OSError
