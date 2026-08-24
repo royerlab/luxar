@@ -11,6 +11,7 @@ then re-encoding the dataset anyway would be the whole bug back.
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -44,26 +45,37 @@ def test_ordinary_datasets_are_not_refused() -> None:
 def test_the_refused_set_matches_the_datasets_that_ship_an_npz() -> None:
     """Spell out the coupling, so a NEW sidecar-bearing dataset cannot slip in.
 
-    Enumerated through the SCRIPT's own ``DATA_DIR.glob("gsplats_*/*.zip")`` —
-    the set of dirs it will actually visit — rather than every child of
-    ``DATA_DIR``, so an unrelated directory can never redden this. The assertion
-    is bidirectional, as the name says: a refused dir that ships no sidecar has
-    no reason to be excluded either.
+    The pairing is read from the MANIFEST, which lists every dataset's files
+    whether or not the archives are in the repository — the GSplat payloads are
+    manifest-hosted, so an on-disk enumeration alone would compare the constant
+    against an empty set and pass vacuously. Anything actually on disk is folded
+    in as well, so a locally-added sidecar still trips this. Only ``gsplats_*``
+    directories count, the set the script's own glob will visit, so an unrelated
+    dataset can never redden it. The assertion is bidirectional, as the name
+    says: a refused dir that ships no sidecar has no reason to be excluded.
     """
     if not rg.DATA_DIR.exists():  # pragma: no cover - source checkouts have it
         pytest.skip(f"packaged demo data absent at {rg.DATA_DIR}")
+
+    manifest = json.loads((rg.DATA_DIR.parent / "data_manifest.json").read_text())
+    with_sidecar = set()
+    for name, spec in manifest["datasets"].items():
+        directory = spec.get("dir", name)
+        if not directory.startswith("gsplats_"):
+            continue
+        files = [f["name"] for f in spec.get("files", [])]
+        if any(f.endswith(".zip") for f in files) and any(
+            f.endswith(".npz") for f in files
+        ):
+            with_sidecar.add(directory)
+
     visited = {z.parent for z in rg.DATA_DIR.glob("gsplats_*/*.zip")}
-    if not visited:
-        # The GSplat archives are manifest-hosted rather than in-repo, so there is
-        # no on-disk set to compare the constant against. The coupling itself stays
-        # covered by the synthetic-tree tests below.
-        pytest.skip("no in-repo GSplat archives to enumerate")
-    with_sidecar = {d.name for d in visited if any(d.glob("*.npz"))}
+    with_sidecar |= {d.name for d in visited if any(d.glob("*.npz"))}
+
     assert with_sidecar == set(rg.SIDECAR_PAIRED_DIRS), (
-        "SIDECAR_PAIRED_DIRS must name exactly the visited datasets that ship a "
-        "per-splat .npz sidecar next to their fit: re-encoding a missing one "
-        "would silently misindex its sidecar, and a spurious one is refused for "
-        "no reason"
+        "SIDECAR_PAIRED_DIRS must name exactly the datasets that pair a per-splat "
+        ".npz sidecar with their fit: re-encoding a missing one would silently "
+        "misindex its sidecar, and a spurious one is refused for no reason"
     )
 
 

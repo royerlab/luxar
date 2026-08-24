@@ -58,6 +58,25 @@ def test_the_shipped_archive_is_the_component_filtered_build() -> None:
         "the shipped archive was fitted at these values, and the README, changelog "
         "and docstring tables quote them; changing one means refitting and reshipping"
     )
+    # The archive itself is manifest-hosted, so the read-back below cannot run on
+    # an ordinary checkout. The pin still can, and it is the half that can rot
+    # unnoticed: reverting it to the deposition's pre-component-filter upload
+    # would make the fetch serve the NLM build to every user.
+    import json
+
+    entry = json.loads(
+        (Path(_DEMO_PATH).resolve().parents[0] / "data_manifest.json").read_text()
+    )["datasets"][_demo.DEMO_NAME]
+    pin = next(f for f in entry["files"] if f["name"] == _demo.GSPLATS_FILE)
+    assert (pin["sha256"], pin["bytes"]) == (
+        "b4c0cf690f6906414c449fb8c713b78ed7d5f5f88c270ab58cf741f019456f93",
+        19_229_817,
+    ), (
+        f"{_demo.GSPLATS_FILE} is pinned to {pin['sha256'][:8]}…/{pin['bytes']:,} "
+        "bytes, which is not the component-filtered build; the fetch verifies "
+        "downloads against this pin, so a stale one ships the old archive"
+    )
+
     if not _SHIPPED_ARCHIVE.exists() or _SHIPPED_ARCHIVE.stat().st_size < 1024:
         pytest.skip(
             "zebrafish archive is not on disk here — it is manifest-hosted, and an "

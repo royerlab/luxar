@@ -199,8 +199,9 @@ DEMO_NAME = "gsplats_multichannel"
 # Renamed with the rest. These are the pinned artifact names in
 # `data_manifest.json`; the Zenodo record behind them is still an UNPUBLISHED
 # draft, so the names are ours to correct rather than a frozen external
-# identifier. Only the names change — the sha256 pins are unchanged because the
-# bytes are.
+# identifier. The bytes are unchanged, so the pins stay as they were — but the
+# draft was uploaded under the former `organoids_ch*` names and has to be
+# renamed to match before it is published, or the fetch resolves to a 404.
 GSPLATS_FILES = [
     "blastocyst_ch0.gsplats.zarr.zip",
     "blastocyst_ch1.gsplats.zarr.zip",
