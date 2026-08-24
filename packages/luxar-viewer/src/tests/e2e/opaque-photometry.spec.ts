@@ -225,12 +225,20 @@ for (const [nodeType, fixture] of [
     await waitForNextRender(page, 2);
     const full = await meanCanvasLinearLuminance(page);
 
+    expect(await setOpaqueVisible(page, nodeType, false)).toBeGreaterThan(0);
+    await waitForNextRender(page, 2);
+    const withoutOpaque = await meanCanvasLinearLuminance(page);
+
+    expect(await setOpaqueVisible(page, nodeType, true)).toBeGreaterThan(0);
     expect(await setOpaqueOpacity(page, nodeType, 0.1)).toBeGreaterThan(0);
     await waitForNextRender(page, 2);
     const dimmed = await meanCanvasLinearLuminance(page);
-    const dimmedRatio = dimmed / full;
+    // Scene decorations remain visible when the opaque node is hidden; compare only its signal.
+    const fullSignal = full - withoutOpaque;
+    const dimmedSignal = dimmed - withoutOpaque;
+    const dimmedRatio = dimmedSignal / fullSignal;
 
-    expect(full, `${nodeType}: isolated opaque geometry must render`).toBeGreaterThan(1e-5);
+    expect(fullSignal, `${nodeType}: isolated opaque geometry must render`).toBeGreaterThan(1e-5);
     expect(
       dimmedRatio,
       `${nodeType}: opaque framebuffer output must retain measurable fragment alpha`
