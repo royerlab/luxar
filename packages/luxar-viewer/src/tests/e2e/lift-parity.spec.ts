@@ -113,7 +113,7 @@ const PEAK_DIVERGENCE_EXPECTED: Record<(typeof PEAK_MODES)[number], readonly [nu
  *
  * This replaces a single global (3, 100) window — 33× wide end to end, 97 units
  * of room at EVERY cell, around numbers this file certifies to ~1%. These bands
- * admit between 6.5 units (`normal` r=0.05) and 25.6 (`max` r=0.02), i.e. ~6.8×
+ * admit between 3.8 units (`opaque` r=0.15) and 25.6 (`max` r=0.02), i.e. ~8.4×
  * less room at a typical cell (geometric mean of the six widths), and unlike
  * the window they are centred on what was actually measured there. That is the
  * difference between a bracket and a sanity check. Worked example of what the
