@@ -1146,7 +1146,7 @@ def write_scene(
                 intensity=0.30 * NODE_INTENSITY_SCALE,
                 labels=node_labels,
                 keys=node_keys,
-                link="https://www.genecards.org/cgi-bin/carddisp.pl?gene={hover_key}",
+                link="https://www.genecards.org/card/{hover_key}",
                 copy="{hover_key}",
                 layer=True,
             )
@@ -1162,7 +1162,7 @@ def write_scene(
                 blending_mode="additive",
                 labels=hub_labels,
                 keys=hub_keys,
-                link="https://www.genecards.org/cgi-bin/carddisp.pl?gene={hover_key}",
+                link="https://www.genecards.org/card/{hover_key}",
                 copy="{hover_key}",
                 layer=True,
             )

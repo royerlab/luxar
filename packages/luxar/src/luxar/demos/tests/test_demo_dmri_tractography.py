@@ -501,6 +501,10 @@ class TestTractLabel:
             "SLF3_L", "association"
         )
 
+    def test_tract_key_uses_display_name_and_degrades_to_empty(self) -> None:
+        assert _demo.tract_key("AF_L") == "Arcuate fasciculus"
+        assert _demo.tract_key("NOPE") == ""
+
     @pytest.mark.parametrize(
         "bundle,division",
         [

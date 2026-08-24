@@ -131,7 +131,7 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
    - `validate_render_attrs(attrs, GSPLATS_RESERVED_ATTRS)`
    - `validate_node_path(path)`
    - `validate_gsplat_inputs(centers, amplitudes, cholesky_factors, colors)` → `(centers, amplitudes, cholesky_factors, colors, n_splats, n_dims, cholesky_is_uniform)`
-   - `validate_labels_for_writing(labels, n_splats)` — if `labels is not None`
+   - `validate_labels_for_writing(labels, n_splats, channel_name="labels")` / `validate_labels_for_writing(keys, n_splats, channel_name="keys")` — for each present text channel
    - `validate_image_labels_for_writing(image_labels, n_splats)` — length (dense) / index bounds (sparse dict) + per-item type, if `image_labels is not None` (#1491). GSplats has no `substitutive_lod=` wrapper of its own (a gsplat leaf IS the coarse-level representation other geometry types lift into), so this check does not need its own pre-split gate the way Points/Lines/Mesh's `substitutive_lod=` wrappers do. The GRAFT door (`_reject_labels_on_a_grafted_wrapper` in `core/group/gsplats_pipeline/from_io.py`) is a pre-WRAPPER gate rather than a pre-split one, but it hoists this same validator too, on its one-flat-leaf exemption (#1505) — so this call is not the only one any more.
 
 2. **Setup**: `ctx.store.require_group(path)`
@@ -148,9 +148,8 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
    - This resolves the colormap LUT, prepares/validates `transform` + `nd_transform`, fills rendering defaults (`opacity`, `absorption`, `gamma`, `intensity`, `offset`, `truncation_radius` — `blending_mode` is deliberately never stamped), stamps authoritative `type="gsplats"` attrs, and adds `position_bounds` into `metadata`
    - Then `ctx.update_scene_bounds(metadata["position_bounds"])` folds the leaf's bounds into the scene extent
 
-6. **Write labels** (CSR serialization; `sort_order` derived from `ordering_data`):
-   - `write_labels_csr(group, labels, n_splats, ctx.compressor, sort_order)` — if `labels is not None`
-   - `write_image_labels_csr(group, image_labels, n_splats, ctx.compressor, sort_order)` — if `image_labels is not None`
+6. **Write annotations** (CSR serialization; `sort_order` derived from `ordering_data`):
+   - `_write_element_annotations(group, labels=labels, keys=keys, image_labels=image_labels, n_splats=n_splats, compressor=ctx.compressor, sort_order=sort_order)` — writes every present text/image channel with the same permutation
 
 7. **Return metadata**: the `metadata` dict from `write_gsplat_arrays` — `{"n_splats", "ndim", "has_colors", "amplitude_range", "center_bounds"}` plus ordering keys, `position_bounds` (added by `apply_gsplat_group_attrs`), and — all conditional — `amplitude_data_range` (when `amplitudes` is a non-empty array; note that finalize then HARMONIZES that window across the whole gsplat structure — see `finalize/amplitude_window.py`), `has_labels` / `has_image_labels` / `has_keys` (no `"type"` or `"lut_tone_mapping_warned"` key) — plus the mass statistics `amplitude_mass` / `amplitude_mass_weighted_mean`, which are **unconditional** (`compute_amplitude_mass_stats` normalizes every non-finite or mass-less case to `0.0` / `0.0`, so "present and zero" and "absent" stay distinguishable — the harmonization reads absence as a legacy store)
 
