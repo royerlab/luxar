@@ -597,6 +597,42 @@ def test_live_refuses_to_skip_manifest_records_without_a_deposition_id(
     assert "all pins match the live records" not in output
 
 
+def test_live_fails_when_a_pin_names_an_unknown_record(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    audit = _audit_module(monkeypatch)
+    manifest = {
+        "records": {"cc-by": {"zenodo_record": "123"}},
+        "datasets": {
+            "checked": {
+                "bucket": "zenodo",
+                "record": "cc-by",
+                "files": [{"name": "a.zip", "bytes": 1024}],
+            },
+            "typo": {
+                "bucket": "zenodo",
+                "record": "cc-by-40",
+                "files": [{"name": "b.zip", "bytes": 2048}],
+            },
+        },
+    }
+    depositions = {
+        "cc-by": _dep(
+            [{"filename": "a.zip", "filesize": 1024}],
+            desc=(
+                "<li><code>checked</code> (0.0 MB)</li>"
+                "<table><tr>h</tr><tr>a</tr></table>"
+            ),
+        )
+    }
+
+    assert audit._audit_live_depositions(manifest, depositions, []) == 1
+    output = capsys.readouterr().out
+    assert "records checked: 1   pins: 1" in output
+    assert "FAIL [cc-by-40] no fetched deposition for pinned files: b.zip" in output
+    assert "all pins match the live records" not in output
+
+
 def test_the_live_check_compares_hosted_sizes_not_in_repo_ones(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

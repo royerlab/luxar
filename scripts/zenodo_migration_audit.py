@@ -612,10 +612,24 @@ def _audit_live_depositions(
     datasets, records = manifest["datasets"], manifest["records"]
     pins = pins_of(datasets)
     totals = dataset_totals(datasets)
+    checked_records = set(depositions)
+    unchecked_records = set(unchecked)
+    dangling_records = sorted(
+        {record for record, _bytes in pins.values()}
+        - checked_records
+        - unchecked_records
+    )
 
     all_fails = [
         f"[{name}] manifest has no zenodo_record; live check did not run"
         for name in unchecked
+    ]
+    all_fails += [
+        f"[{record}] no fetched deposition for pinned files: "
+        + ", ".join(
+            sorted(name for name, (rec, _bytes) in pins.items() if rec == record)
+        )
+        for record in dangling_records
     ]
     all_warns: list[str] = []
     claim_counts: dict[str, int] = {}
@@ -626,7 +640,8 @@ def _audit_live_depositions(
         description = (dep.get("metadata") or {}).get("description") or ""
         claim_counts[rec] = len(_description_size_claims(description))
 
-    print(f"  records checked: {len(depositions)}   pins: {len(pins)}")
+    compared_pins = sum(1 for record, _bytes in pins.values() if record in depositions)
+    print(f"  records checked: {len(depositions)}   pins: {compared_pins}")
     for rec, count in sorted(claim_counts.items()):
         print(f"  [{rec}] description size claims parsed: {count}")
     for w in all_warns:
