@@ -1966,6 +1966,19 @@ class TestMeshDirectoryImport:
         with pytest.raises(ValueError, match=message):
             import_mesh_directory(tmp_path, index_regex=index_regex)
 
+    @pytest.mark.parametrize(
+        ("index_regex", "message"),
+        [
+            (r"frame_(?P<c>\d+)", "named 't' capture"),
+            (r"frame_(?P<t>\d+", "Invalid index regex"),
+        ],
+    )
+    def test_index_regex_is_validated_before_file_discovery(
+        self, tmp_path: Path, index_regex: str, message: str
+    ) -> None:
+        with pytest.raises(ValueError, match=message):
+            import_mesh_directory(tmp_path, index_regex=index_regex)
+
     def test_mixed_or_duplicate_coordinates_are_refused(self, tmp_path: Path) -> None:
         write_ply_binary(tmp_path / "a_Ch0-T0001.ply", GT)
         write_ply_binary(tmp_path / "b-T0002.ply", GT)

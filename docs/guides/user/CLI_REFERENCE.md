@@ -399,7 +399,7 @@ extension) and must match exactly once. Captures must be integers exactly repres
 as float32 coordinates. For example:
 
 ```bash
-luxar mesh import --pattern '*.ply'  # import a directory of T-indexed frames
+luxar mesh import frames out.luxar.zarr --pattern '*.ply'
 luxar mesh import frames out.luxar.zarr --index-regex 'frame_(?P<t>\d+)'
 luxar mesh import surfaces out.luxar.zarr --index-regex 't=(?P<t>\d+)-c=(?P<c>\d+)'
 ```

@@ -323,11 +323,11 @@ def _regex_indices(path: Path, pattern: re.Pattern[str]) -> tuple[int, int | Non
 def _discover_indexed_files(
     path: Path, pattern: str, index_regex: str | None
 ) -> list[tuple[int, int | None, Path]]:
+    custom_pattern = None if index_regex is None else _compile_index_regex(index_regex)
     files = sorted(candidate for candidate in path.glob(pattern) if candidate.is_file())
     if not files:
         raise ValueError(f"{path}: no mesh files match pattern {pattern!r}")
 
-    custom_pattern = None if index_regex is None else _compile_index_regex(index_regex)
     indexed: list[tuple[int, int | None, Path]] = []
     for candidate in files:
         if custom_pattern is not None:
