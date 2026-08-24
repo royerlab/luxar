@@ -285,13 +285,16 @@ jobs:
               echo "jobs API read failed; retrying"
               sleep 30; continue
             fi
-            visible=$(echo "$jobs" | jq '[.jobs[] | select(.labels | index("obsidian"))] | length')
+            visible=$(echo "$jobs" | jq '[.jobs[] | select(.labels | index("obsidian"))] | length') \
+              || { echo "jobs API response was not parseable; retrying"; sleep 30; continue; }
             queued=$(echo "$jobs" | jq -r '[.jobs[] | select(.status == "queued")
                                                      | select(.labels | index("obsidian"))
-                                                     | .name] | join(", ")')
+                                                     | .name] | join(", ")') \
+              || { echo "queued-job selection failed; retrying"; sleep 30; continue; }
             running=$(echo "$jobs" | jq -r '[.jobs[] | select(.status == "in_progress")
                                                       | select(.labels | index("obsidian"))
-                                                      | .name] | join(", ")')
+                                                      | .name] | join(", ")') \
+              || { echo "running-job selection failed; retrying"; sleep 30; continue; }
             if [ "$visible" -gt 0 ]; then seen_obsidian=1; fi
             if [ -z "$queued" ]; then
               if [ "$seen_obsidian" -eq 1 ]; then

@@ -374,7 +374,7 @@ def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
 def _run_queue_watchdog(
     workflow: str,
     tmp_path: Path,
-    job_snapshots: list[list[dict[str, object]]],
+    job_snapshots: list[list[dict[str, object]] | str],
 ) -> tuple[subprocess.CompletedProcess[str], int, bool]:
     """Run the real inline watchdog against deterministic GitHub API snapshots."""
     watchdog = yaml.safe_load(workflow)["jobs"]["queue-watchdog"]["steps"][0]["run"]
@@ -398,6 +398,9 @@ if "/jobs?" in endpoint:
     counter.write_text(str(call + 1))
     snapshots = json.loads(Path(os.environ["WATCHDOG_SNAPSHOTS"]).read_text())
     jobs = snapshots[min(call, len(snapshots) - 1)]
+    if jobs == "invalid-json":
+        print("{")
+        raise SystemExit(0)
     if "--jq" in sys.argv:
         print(", ".join(job["name"] for job in jobs if job["status"] == "queued"))
     else:
@@ -487,3 +490,23 @@ def test_queue_watchdog_keeps_held_matrix_leg_covered_while_siblings_run(
     assert result.returncode == 0, result.stdout + result.stderr
     assert calls == 2
     assert not cancelled, "busy capacity was mistaken for a dead obsidian host"
+
+
+def test_queue_watchdog_retries_unparseable_jobs_response(
+    workflow: str, tmp_path: Path
+) -> None:
+    """A transient malformed API response must not red or cancel a healthy run."""
+    snapshots: list[list[dict[str, object]] | str] = [
+        "invalid-json",
+        [
+            _obsidian_job("python-tests (3.12)", "in_progress"),
+            _obsidian_job("python-tests (3.14)", "queued"),
+        ],
+        [_obsidian_job("python-tests (3.14)", "in_progress")],
+    ]
+    result, calls, cancelled = _run_queue_watchdog(workflow, tmp_path, snapshots)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == 3
+    assert "not parseable; retrying" in result.stdout
+    assert not cancelled
