@@ -420,6 +420,35 @@ describe('InputHandler — help overlay', () => {
       clearNotifierBackend();
     }
   });
+
+  it('dispatches browser and element-menu window events through the command surface', () => {
+    const handler = new InputHandler(
+      makeSceneManagerStub(),
+      makeAnimationControllerStub(),
+      makePerformanceMonitorStub(),
+      makeDebugConsoleStub()
+    );
+    const browserListener = vi.fn();
+    const elementMenuListener = vi.fn();
+    window.addEventListener('open-dataset-browser', browserListener);
+    window.addEventListener('luxar-open-element-menu', elementMenuListener);
+
+    try {
+      handler.init();
+      const commands = handler.getUiActions().commands;
+      const event = new KeyboardEvent('keydown', { cancelable: true });
+      commands.toggleDatasetBrowser();
+      commands.openElementMenu(event);
+
+      expect(browserListener).toHaveBeenCalledOnce();
+      expect(elementMenuListener).toHaveBeenCalledOnce();
+      expect(event.defaultPrevented).toBe(true);
+    } finally {
+      handler.dispose();
+      window.removeEventListener('open-dataset-browser', browserListener);
+      window.removeEventListener('luxar-open-element-menu', elementMenuListener);
+    }
+  });
 });
 
 describe('InputHandler.dispose', () => {

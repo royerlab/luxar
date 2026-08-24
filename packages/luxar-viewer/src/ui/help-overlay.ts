@@ -109,11 +109,11 @@ const HELP_SECTIONS: HelpSection[] = [
 ];
 
 function getRegisteredHelpEntries(
-  bindings: RegisteredShortcutBindings | undefined
+  bindings: RegisteredShortcutBindings
 ): Map<ShortcutHelpSectionId, HelpEntry[]> {
   const entries = new Map<ShortcutHelpSectionId, HelpEntry[]>();
   const groups = new Set<string>();
-  for (const contextBindings of bindings?.values() ?? []) {
+  for (const contextBindings of bindings.values()) {
     for (const binding of contextBindings) {
       if (!binding.help || groups.has(binding.help.group)) continue;
       groups.add(binding.help.group);
@@ -145,7 +145,7 @@ const HELP_TIPS: string[] = [
  * click-outside-to-dismiss handler (the delay avoids catching the same click
  * that opened it); {@link hideHelpOverlay} tears both down.
  */
-export function showHelpOverlay(bindings?: RegisteredShortcutBindings) {
+export function showHelpOverlay(bindings: RegisteredShortcutBindings) {
   // Prevent opening multiple overlays - if one exists, do nothing
   const existingHelp = document.getElementById('luxar-help-overlay');
   if (existingHelp) {

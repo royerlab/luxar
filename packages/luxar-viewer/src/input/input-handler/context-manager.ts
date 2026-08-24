@@ -31,9 +31,7 @@ import type {
  * blast radius to a finite stack and surfaces the misconfiguration
  * via a single `log.error`.
  *
- * 10 is comfortably above any realistic UI depth (the deepest
- * documented passthrough chain is `TYPING → UI_INTERACTION →
- * NAVIGATION`, depth 3).
+ * 10 is comfortably above any realistic UI dispatch depth.
  */
 export const MAX_KEY_EVENT_DEPTH = 10;
 
@@ -101,7 +99,7 @@ export interface ContextConfig {
  * - Priority-based context system (higher priority contexts take precedence)
  * - Context stack for nested contexts (modal over main view)
  * - Automatic typing detection (blocks shortcuts when typing in inputs)
- * - Passthrough support (unhandled keys pass to lower priority contexts)
+ * - Explicit fallback routes between compatible contexts
  *
  * @example
  * ```typescript
@@ -109,10 +107,13 @@ export interface ContextConfig {
  *
  * // Register a key binding for navigation context
  * manager.registerBinding(InputContext.NAVIGATION, {
+ *   actionId: 'dimension.navigate',
+ *   actionParameter: -1,
  *   key: '[',
  *   handler: () => navigateBackward(),
  *   preventDefault: true,
- *   description: 'Navigate backward in dimension'
+ *   description: 'Step along the selected dimension',
+ *   help: false
  * });
  *
  * // Switch to fly controls context
@@ -150,7 +151,7 @@ export class InputContextManager {
   /**
    * Initialize default context configurations with priorities and key filters.
    *
-   * Sets up five predefined contexts:
+   * Sets up four predefined contexts:
    * - NAVIGATION (priority 0): Default mode, blocks WASD keys
    * - FLY_CONTROLS (priority 1): Enables WASD + arrow keys for fly mode
    * - TYPING (priority 10): Highest priority, blocks all shortcuts
@@ -295,24 +296,32 @@ export class InputContextManager {
    * @param binding.modifiers - Optional modifiers (ctrl, shift, alt, meta)
    * @param binding.handler - Function to call when key is pressed
    * @param binding.preventDefault - If true, calls event.preventDefault()
-   * @param binding.description - Optional description for debugging/help
+   * @param binding.actionId - Stable action identity independent of its chord
+   * @param binding.description - Required description used by diagnostics/help
+   * @param binding.help - Help grouping metadata, or false for an explicit opt-out
    *
    * @example
    * ```typescript
    * // Register [ key for backward navigation
    * manager.registerBinding(InputContext.NAVIGATION, {
+   *   actionId: 'dimension.navigate',
+   *   actionParameter: -1,
    *   key: '[',
    *   handler: () => navigateBackward(),
    *   preventDefault: true,
-   *   description: 'Navigate backward'
+   *   description: 'Step along the selected dimension',
+   *   help: false
    * });
    *
    * // Register Ctrl+S for save (with modifier)
    * manager.registerBinding(InputContext.UI_INTERACTION, {
+   *   actionId: 'document.save',
    *   key: 's',
    *   modifiers: { ctrl: true },
    *   handler: () => save(),
-   *   preventDefault: true
+   *   preventDefault: true,
+   *   description: 'Save document',
+   *   help: false
    * });
    * ```
    */
@@ -391,7 +400,7 @@ export class InputContextManager {
   ): void {
     const contextBindings = this.bindings.get(context);
     if (contextBindings) {
-      const bindingKey = this.getBindingKey({ key, modifiers } as KeyBinding);
+      const bindingKey = this.getBindingKey({ key, modifiers });
       const binding = contextBindings.get(bindingKey);
       contextBindings.delete(bindingKey);
       if (binding) this.actionBindings.get(context)?.delete(this.getActionKey(binding));
@@ -408,7 +417,7 @@ export class InputContextManager {
    * 2. Check if in typing context (blocks most keys)
    * 3. Check if key is allowed in current context
    * 4. Look for registered binding in current context
-   * 5. If passthrough enabled, try lower priority contexts
+   * 5. If passthrough is enabled, try the declared fallback contexts
    *
    * @param event - Keyboard event to handle
    * @param type - Event type ('down' for keydown, 'up' for keyup)
@@ -540,7 +549,7 @@ export class InputContextManager {
   }
 
   /**
-   * Try to handle event in lower priority contexts (passthrough mechanism).
+   * Try to handle an event in the active context's declared fallbacks.
    *
    * When current context doesn't handle a key and has passthrough enabled,
    * this method tries other contexts in descending priority order. Enables
@@ -697,7 +706,7 @@ export class InputContextManager {
    * console.log(key2); // "ctrl+s+shift" (sorted alphabetically)
    * ```
    */
-  private getBindingKey(binding: KeyBinding): string {
+  private getBindingKey(binding: Pick<KeyBinding, 'key' | 'modifiers'>): string {
     const parts = [binding.key.toLowerCase()];
 
     if (binding.modifiers) {
@@ -789,7 +798,7 @@ export class InputContextManager {
    * // Output:
    * // Current context: navigation
    * // Context stack: []
-   * // Bindings in NAVIGATION: ['[', ']', '1+ctrl', '2+ctrl']
+   * // Bindings in NAVIGATION: [{ actionId: 'help.toggle', key: 'h', ... }]
    * ```
    */
   public getDebugInfo(): {
@@ -819,7 +828,7 @@ export class InputContextManager {
     };
   }
 
-  /** Snapshot of registered binding keys grouped by input context. */
+  /** Snapshot of registered binding metadata grouped by input context. */
   public getRegisteredShortcutBindings(): RegisteredShortcutBindings {
     return this.getDebugInfo().registeredBindings;
   }

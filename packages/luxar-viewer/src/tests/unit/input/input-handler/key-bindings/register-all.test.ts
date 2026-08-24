@@ -33,15 +33,20 @@ import {
 } from '../../../../../input/input-handler/context-manager/routing-rules';
 import type { SceneManager } from '../../../../../scene/scene-manager';
 import type { DebugConsole } from '../../../../../ui/debug-console';
+import type { ShortcutHelpMetadata } from '../../../../../types/shortcut-help';
+import { KeyAction } from '../../../../../input/input-handler/key-bindings/actions';
 
 interface CapturedBinding {
   context: InputContext;
+  actionId: string;
+  actionParameter?: string | number;
   key: string;
   modifiers?: { shift?: boolean; ctrl?: boolean; alt?: boolean; meta?: boolean };
   handler: (event: KeyboardEvent) => void;
   keyupHandler?: (event: KeyboardEvent) => void;
   preventDefault?: boolean;
-  description?: string;
+  description: string;
+  help: ShortcutHelpMetadata | false;
 }
 
 function makeContextManager(): {
@@ -251,6 +256,60 @@ function findBinding(
 // (covered in controls-manager.test.ts and the orbit pointer tests).
 
 describe('registerAllKeyBindings — structure', () => {
+  it('registers unique action identities and explicit help visibility', () => {
+    const { bindings } = setup();
+    const actionKeys = bindings.map(
+      (binding) =>
+        `${binding.context}:${binding.actionId}:${binding.actionParameter ?? '<default>'}`
+    );
+
+    expect(new Set(actionKeys).size).toBe(actionKeys.length);
+    expect(bindings.every((binding) => binding.description.length > 0)).toBe(true);
+    expect(
+      bindings.every((binding) => binding.help === false || binding.help.group.length > 0)
+    ).toBe(true);
+  });
+
+  it('keeps grouped help metadata and descriptions consistent', () => {
+    const { bindings } = setup();
+    const groups = new Map<string, { description: string; help: ShortcutHelpMetadata }>();
+    for (const binding of bindings) {
+      if (!binding.help) continue;
+      const prior = groups.get(binding.help.group);
+      if (prior) {
+        expect({ description: binding.description, help: binding.help }).toEqual(prior);
+      } else {
+        groups.set(binding.help.group, { description: binding.description, help: binding.help });
+      }
+    }
+  });
+
+  it('registers every action used for a control-rail shortcut', () => {
+    const { contextManager } = setupRealContextManager();
+    const railActions = [
+      KeyAction.toggleHelp,
+      KeyAction.recenterCamera,
+      KeyAction.toggleControlMode,
+      KeyAction.toggleDimensions,
+      KeyAction.toggleRendering,
+      KeyAction.toggleLayers,
+      KeyAction.cycleDataMonitor,
+      KeyAction.toggleDatasetBrowser,
+      KeyAction.toggleRecording,
+      KeyAction.toggleDebugConsole,
+      KeyAction.toggleScaleBar,
+      KeyAction.toggleColormapLegend,
+      KeyAction.toggleOverlays,
+      KeyAction.toggleCinematicMode,
+      KeyAction.toggleFullscreen,
+      KeyAction.togglePerformance,
+    ];
+
+    for (const actionId of railActions) {
+      expect(contextManager.getShortcutLabel(actionId), actionId).toBeDefined();
+    }
+  });
+
   it('registers only bindings admitted by their stock context filters', () => {
     const { bindings } = setup();
     const contextManager = new InputContextManager();

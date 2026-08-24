@@ -196,6 +196,7 @@ describe('LuxarApp', () => {
     mockInputHandler = {
       init: vi.fn(),
       getUiActions: vi.fn(() => ({ commands: {}, panels: {} })),
+      getShortcutLabel: vi.fn(() => undefined),
       setRenderingControls: vi.fn(),
       setScaleBar: vi.fn(),
       setRecordingPanel: vi.fn(),

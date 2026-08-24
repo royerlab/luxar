@@ -16,7 +16,4 @@ export interface RegisteredShortcutBinding {
 }
 
 /** Registered keyboard bindings grouped by input-context identifier. */
-export type RegisteredShortcutBindings = ReadonlyMap<
-  string,
-  readonly RegisteredShortcutBinding[]
->;
+export type RegisteredShortcutBindings = ReadonlyMap<string, readonly RegisteredShortcutBinding[]>;

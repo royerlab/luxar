@@ -100,9 +100,8 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
   // NAVIGATION binding only through passthrough — so registering here is what
   // makes the shortcut work in BOTH modes.
   //
-  // Dispatches a window event rather than calling a command, because the
-  // listener is rebuilt on every dataset load while this binding lives for the
-  // app's lifetime. Same decoupling as `open-dataset-browser` above.
+  // The command surface owns the window event dispatch because the listener is
+  // rebuilt on every dataset load while this binding lives for the app's lifetime.
   //
   // Gated on focus being on the scene itself. The layers panel handles these
   // same two keys on its own row listener and calls `preventDefault()` but NOT
@@ -113,9 +112,7 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
   // the canvas fires `mouseleave`, which invalidates the cached pick. Reaching
   // it by Tab does not.) Same guard the other scene-scoped global keys use.
   const openElementMenu = (event: KeyboardEvent): void => {
-    if (
-      !isFocusOnSceneCanvas(document.activeElement, sceneManager.renderer?.domElement ?? null)
-    ) {
+    if (!isFocusOnSceneCanvas(document.activeElement, sceneManager.renderer?.domElement ?? null)) {
       return;
     }
     commands.openElementMenu(event);
