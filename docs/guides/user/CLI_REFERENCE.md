@@ -387,13 +387,21 @@ Draco- and meshopt-compressed glTF is refused by name rather than decoded — ru
 file through `gltf-transform` first.
 
 A directory import defaults to `--pattern '*.vtp'`. Each filename must contain a
-`T<number>` token; if every filename also contains `Ch<number>`, channel is appended as
-a second hidden discrete dimension. Numeric values are preserved, so missing
-timepoints remain gaps instead of renumbering later files. Mixed channel naming and
-duplicate time/channel coordinates are refused rather than guessed. For example:
+case-sensitive `T<number>` token; if every filename also contains case-sensitive
+`Ch<number>`, channel is appended as a second hidden discrete dimension. Numeric values
+are preserved, so missing timepoints remain gaps instead of renumbering later files.
+Mixed channel naming and duplicate time/channel coordinates are refused rather than
+guessed.
+
+For other naming schemes, pass `--index-regex` with a required named `t` capture and an
+optional named `c` capture. The regex searches each filename stem (without the final
+extension) and must match exactly once. Captures must be integers exactly representable
+as float32 coordinates. For example:
 
 ```bash
 luxar mesh import --pattern '*.ply'  # import a directory of T-indexed frames
+luxar mesh import frames out.luxar.zarr --index-regex 'frame_(?P<t>\d+)'
+luxar mesh import surfaces out.luxar.zarr --index-regex 't=(?P<t>\d+)-c=(?P<c>\d+)'
 ```
 
 For example, pass `000_deconv.ome.zarr/meshes/cells` as the input directory and

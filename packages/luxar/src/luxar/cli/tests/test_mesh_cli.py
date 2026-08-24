@@ -146,6 +146,31 @@ class TestMeshImport:
         assert dimensions["dimensions"][4]["range"] == [0.0, 2.0]
         assert dimensions["dimensions"][4]["step"] == 1.0
 
+    def test_directory_import_accepts_a_named_group_index_regex(
+        self, tmp_path: Path
+    ) -> None:
+        source = tmp_path / "frames"
+        source.mkdir()
+        WRITERS["vtp"](source / "surface.0042.vtp", GT)
+        out = tmp_path / "surface.luxar.zarr"
+
+        result = runner.invoke(
+            app,
+            [
+                "mesh",
+                "import",
+                str(source),
+                str(out),
+                "--index-regex",
+                r"surface\.(?P<t>\d+)",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        node = LuxarScene.load(out).get_mesh("mesh")
+        assert node.vertices.shape == (4, 4)
+        assert np.array_equal(node.vertices[:, 3], [42] * 4)
+
     def test_centering_is_on_by_default_and_can_be_turned_off(
         self, fixtures: dict[str, Path], tmp_path: Path
     ) -> None:

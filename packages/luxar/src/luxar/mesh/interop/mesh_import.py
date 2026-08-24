@@ -266,36 +266,80 @@ _TIME_INDEX = re.compile(r"(?:^|[-_])T(?P<index>\d+)(?=$|[-_.])")
 _CHANNEL_INDEX = re.compile(r"(?:^|[-_])Ch(?P<index>\d+)(?=$|[-_.])")
 
 
+def _exact_filename_index(path: Path, value: str, label: str) -> int:
+    try:
+        index = int(value)
+    except ValueError as exc:
+        raise ValueError(
+            f"{path.name}: {label} capture {value!r} is not an integer"
+        ) from exc
+    if abs(index) > 1 << 24:
+        raise ValueError(
+            f"{path.name}: {label} index {index} is too large to represent exactly "
+            "in float32 mesh coordinates"
+        )
+    return index
+
+
 def _filename_index(path: Path, pattern: re.Pattern[str], label: str) -> int | None:
     matches = list(pattern.finditer(path.stem))
     if len(matches) > 1:
         raise ValueError(f"{path.name}: filename contains more than one {label} index")
     if not matches:
         return None
-    value = int(matches[0].group("index"))
-    if value > 1 << 24:
-        raise ValueError(
-            f"{path.name}: {label} index {value} is too large to represent exactly "
-            "in float32 mesh coordinates"
-        )
-    return value
+    return _exact_filename_index(path, matches[0].group("index"), label)
+
+
+def _compile_index_regex(index_regex: str) -> re.Pattern[str]:
+    try:
+        pattern = re.compile(index_regex)
+    except re.error as exc:
+        raise ValueError(f"Invalid index regex {index_regex!r}: {exc}") from exc
+    if "t" not in pattern.groupindex:
+        raise ValueError("Index regex must define a named 't' capture")
+    return pattern
+
+
+def _regex_indices(path: Path, pattern: re.Pattern[str]) -> tuple[int, int | None]:
+    matches = list(pattern.finditer(path.stem))
+    if len(matches) > 1:
+        raise ValueError(f"{path.name}: index regex matches more than once")
+    if not matches:
+        raise ValueError(f"{path.name}: filename does not match the index regex")
+    match = matches[0]
+    time_value = match.group("t")
+    if time_value is None:
+        raise ValueError(f"{path.name}: index regex did not capture a time value")
+    time = _exact_filename_index(path, time_value, "time")
+    channel_value = match.groupdict().get("c")
+    channel = (
+        None
+        if channel_value is None
+        else _exact_filename_index(path, channel_value, "channel")
+    )
+    return time, channel
 
 
 def _discover_indexed_files(
-    path: Path, pattern: str
+    path: Path, pattern: str, index_regex: str | None
 ) -> list[tuple[int, int | None, Path]]:
     files = sorted(candidate for candidate in path.glob(pattern) if candidate.is_file())
     if not files:
         raise ValueError(f"{path}: no mesh files match pattern {pattern!r}")
 
+    custom_pattern = None if index_regex is None else _compile_index_regex(index_regex)
     indexed: list[tuple[int, int | None, Path]] = []
     for candidate in files:
-        time = _filename_index(candidate, _TIME_INDEX, "time")
-        if time is None:
-            raise ValueError(f"{candidate.name}: filename has no T<number> time index")
-        indexed.append(
-            (time, _filename_index(candidate, _CHANNEL_INDEX, "channel"), candidate)
-        )
+        if custom_pattern is not None:
+            time, channel = _regex_indices(candidate, custom_pattern)
+        else:
+            time = _filename_index(candidate, _TIME_INDEX, "time")
+            if time is None:
+                raise ValueError(
+                    f"{candidate.name}: filename has no T<number> time index"
+                )
+            channel = _filename_index(candidate, _CHANNEL_INDEX, "channel")
+        indexed.append((time, channel, candidate))
 
     has_channels = [channel is not None for _, channel, _ in indexed]
     if any(has_channels) and not all(has_channels):
@@ -333,17 +377,20 @@ def import_mesh_directory(
     path: Union[str, Path],
     *,
     pattern: str = "*.vtp",
+    index_regex: str | None = None,
     format: str = "auto",
     weld: bool = True,
     progress: Callable[[int, int, Path], None] | None = None,
 ) -> TriangleMesh:
     """Read per-timepoint mesh files into one nD triangle mesh.
 
-    Filenames must carry ``T<number>`` and may all carry ``Ch<number>``. Numeric
-    values are preserved as coordinates, so a missing timepoint remains a gap rather
-    than shifting later data. Files are ordered by ``(time, channel)`` and faces are
-    rebased into the concatenated vertex array. ``progress``, when provided, is called
-    before each file with ``(one_based_index, total_files, path)``.
+    By default, filenames must carry ``T<number>`` and may all carry ``Ch<number>``.
+    ``index_regex`` overrides that parsing with a regex containing a required named
+    ``t`` capture and optional named ``c`` capture. Numeric values are preserved as
+    coordinates, so a missing timepoint remains a gap rather than shifting later data.
+    Files are ordered by ``(time, channel)`` and faces are rebased into the concatenated
+    vertex array. ``progress``, when provided, is called before each file with
+    ``(one_based_index, total_files, path)``.
     """
     path = Path(path)
     if not path.exists():
@@ -351,7 +398,7 @@ def import_mesh_directory(
     if not path.is_dir():
         raise ValueError(f"Mesh directory is not a directory: {path}")
 
-    indexed = _discover_indexed_files(path, pattern)
+    indexed = _discover_indexed_files(path, pattern, index_regex)
     vertex_blocks: list[NDArray[np.float32]] = []
     face_blocks: list[NDArray[np.uint32]] = []
     normal_blocks: list[NDArray | None] = []

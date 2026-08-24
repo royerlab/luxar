@@ -41,6 +41,7 @@ def run_import(
     keep_normals: bool,
     overwrite: bool,
     pattern: str = "*.vtp",
+    index_regex: str | None = None,
 ) -> TriangleMesh:
     """Read a mesh file or indexed directory into a single-node Luxar scene."""
     from luxar import Dimension, Dimensions, LuxarZarrCompiler
@@ -84,6 +85,7 @@ def run_import(
             import_mesh_directory(
                 input_path,
                 pattern=pattern,
+                index_regex=index_regex,
                 format=format,
                 weld=weld,
                 progress=lambda index, total, path: aprint(
@@ -240,6 +242,12 @@ def import_command(
         "--pattern",
         help="File glob used when INPUT_PATH is a directory.",
     ),
+    index_regex: str | None = typer.Option(
+        None,
+        "--index-regex",
+        help="Filename regex with named 't' and optional 'c' captures, used for "
+        "directory imports instead of T<number>/Ch<number> tokens.",
+    ),
 ) -> None:
     """Convert a mesh file or indexed directory into a Luxar scene.
 
@@ -256,6 +264,7 @@ def import_command(
       luxar mesh import surface.obj surface.luxar.zarr --scale 0.001 --unit m
       luxar mesh import isosurface.vtp cell.luxar.zarr --unit um
       luxar mesh import frames frames.luxar.zarr --pattern '*.ply'
+      luxar mesh import frames frames.luxar.zarr --index-regex 'frame_(?P<t>\\d+)'
     """
     try:
         run_import(
@@ -270,6 +279,7 @@ def import_command(
             keep_normals=keep_normals,
             overwrite=overwrite,
             pattern=pattern,
+            index_regex=index_regex,
         )
     except (ValueError, FileNotFoundError, FileExistsError, RuntimeError) as exc:
         aprint(f"Error: {exc}")
