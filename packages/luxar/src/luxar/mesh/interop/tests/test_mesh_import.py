@@ -875,8 +875,13 @@ class TestVtp:
         plain, mixed = tmp_path / "plain.vtp", tmp_path / "mixed.vtp"
         write_vtp(plain, GT)
         write_vtp(mixed, GT, with_verts_and_lines=True)
-        assert import_mesh(mixed).n_faces == import_mesh(plain).n_faces == 4
-        assert _sorted_face_set(import_mesh(mixed)) == EXPECTED_FACES
+        plain_mesh = import_mesh(plain)
+        mixed_mesh = import_mesh(mixed)
+        assert mixed_mesh.n_faces == plain_mesh.n_faces == 4
+        assert mixed_mesh.n_vertices == plain_mesh.n_vertices == len(GT.vertices)
+        assert _sorted_face_set(mixed_mesh) == EXPECTED_FACES
+        np.testing.assert_array_equal(mixed_mesh.vertices.min(axis=0), [0, 0, 0])
+        np.testing.assert_array_equal(mixed_mesh.vertices.max(axis=0), [1, 1, 1])
 
     def test_a_surface_less_polydata_is_a_clean_error(self, tmp_path: Path) -> None:
         p = tmp_path / "cloud.vtp"

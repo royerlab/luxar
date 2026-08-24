@@ -948,6 +948,15 @@ def write_vtp(
         big_endian=big_endian,
         block_size=block_size,
     )
+    vertices = gt.vertices
+    normals = gt.normals
+    point_colors = gt.colors
+    if with_verts_and_lines:
+        vertices = np.vstack(
+            [vertices, np.array([[100, 100, 100], [200, 200, 200]], np.float32)]
+        )
+        normals = np.vstack([normals, np.zeros((2, 3), np.float32)])
+        point_colors = np.vstack([point_colors, np.zeros((2, 3), np.uint8)])
     # Deliberately Int64 connectivity against Int32 offsets: the two widths are read
     # per array, and modern VTK genuinely mixes them across a file.
     if strips:
@@ -960,23 +969,26 @@ def write_vtp(
     offsets = list(np.cumsum([len(cell) for cell in cells]))
 
     if colors == "uint8":
-        color_array = writer.array(gt.colors, "UInt8", name=colors_name, ncomp=3)
+        color_array = writer.array(point_colors, "UInt8", name=colors_name, ncomp=3)
     elif colors == "float01":
         color_array = writer.array(
-            gt.colors.astype(np.float32) / 255.0, "Float32", name=colors_name, ncomp=3
+            point_colors.astype(np.float32) / 255.0,
+            "Float32",
+            name=colors_name,
+            ncomp=3,
         )
     else:
         color_array = writer.array(
-            gt.colors.astype(np.float32), "Float32", name=colors_name, ncomp=3
+            point_colors.astype(np.float32), "Float32", name=colors_name, ncomp=3
         )
 
     body = [
         f'<PointData Normals="{normals_name}" Scalars="{colors_name}">',
-        writer.array(gt.normals, "Float32", name=normals_name, ncomp=3),
+        writer.array(normals, "Float32", name=normals_name, ncomp=3),
         color_array,
         "</PointData>",
         "<Points>",
-        writer.array(gt.vertices, "Float32", name="Points", ncomp=3),
+        writer.array(vertices, "Float32", name="Points", ncomp=3),
         "</Points>",
     ]
     n_verts = n_lines = 0
@@ -993,11 +1005,11 @@ def write_vtp(
         n_verts, n_lines = 2, 1
         body += [
             "<Verts>",
-            writer.array([0, 1, 2, 3], "Int64", name="connectivity"),
+            writer.array([0, 1, 2, 4], "Int64", name="connectivity"),
             writer.array([3, 4], "Int32", name="offsets"),
             "</Verts>",
             "<Lines>",
-            writer.array([0, 1, 2], "Int64", name="connectivity"),
+            writer.array([3, 4, 5], "Int64", name="connectivity"),
             writer.array([3], "Int32", name="offsets"),
             "</Lines>",
         ]
@@ -1010,7 +1022,7 @@ def write_vtp(
         f"</{cell_tag}>",
     ]
     attrs = (
-        f'NumberOfPoints="{len(gt.vertices)}" NumberOfVerts="{n_verts}" '
+        f'NumberOfPoints="{len(vertices)}" NumberOfVerts="{n_verts}" '
         f'NumberOfLines="{n_lines}" NumberOfStrips="{n_strips}" '
         f'NumberOfPolys="{n_polys}"'
     )
