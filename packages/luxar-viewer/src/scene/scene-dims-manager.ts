@@ -210,11 +210,7 @@ export class SceneDimsManager {
       let range: [number, number];
       if (meta.range) {
         range = meta.range as [number, number];
-      } else if (
-        positionBounds &&
-        i < positionBounds.min.length &&
-        i < positionBounds.max.length
-      ) {
+      } else if (positionBounds && i < positionBounds.min.length && i < positionBounds.max.length) {
         // Fallback: use positionBounds from zarr metadata (world-space)
         range = [positionBounds.min[i], positionBounds.max[i]];
       } else {
