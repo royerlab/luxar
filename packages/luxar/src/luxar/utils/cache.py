@@ -1,4 +1,9 @@
-"""Download and computed-value cache helpers for Luxar demos."""
+"""Download and computed-value cache helpers for Luxar demos.
+
+``cached_download`` downloads a file once, while ``cache_computed`` caches an
+expensive computed result. Both keep demos from hand-rolling cache paths and
+namespace their files under ``~/.cache/luxar/<name>/``.
+"""
 
 from __future__ import annotations
 
@@ -171,7 +176,7 @@ def cache_computed(
     if not recompute and cache_file.exists():
         try:
             with open(cache_file, "rb") as f:
-                result = pickle.load(f)
+                result = pickle.load(f)  # nosec B301  # trusted local cache
             if verbose:
                 aprint(f"✓ Loaded cached result: {cache_file.name}")
             return result
