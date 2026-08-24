@@ -239,10 +239,12 @@ jobs:
   # GitHub-hosted. (Re-run ALL jobs, not just failed ones — "re-run failed"
   # reuses the previous pick-runner output.)
   #
-  # On a healthy box the routed jobs are picked up in seconds and this exits
-  # immediately, so its hosted-minutes cost is negligible. Every failure of its
-  # own plumbing (jobs API blip, unreadable heartbeat variable) fails toward
-  # NOT cancelling — the watchdog must never take down a healthy run.
+  # On push/nightly, max-parallel deliberately holds one Python leg queued
+  # while two Python legs and TypeScript occupy the three slots. The watchdog
+  # stays alive until a slot frees, spending hosted minutes to keep that queued
+  # leg covered. Every failure of its own plumbing (jobs API blip, unreadable
+  # heartbeat variable) fails toward NOT cancelling — the watchdog must never
+  # take down a healthy run.
   queue-watchdog:
     needs: pick-runner
     if: needs.pick-runner.outputs.label == 'obsidian'
@@ -578,8 +580,8 @@ jobs:
     runs-on: ${{ needs.pick-runner.outputs.label || 'ubuntu-latest' }}
     # 60, not 30: same SCHED_IDLE starvation argument as python-tests. Measured
     # at 15.5 min alongside the xdist matrix, so 30 left under 2x — the thinnest
-    # margin of any obsidian-routed job. (release-readiness keeps 30: it runs in
-    # ~1.1 min, so it already has ~27x headroom.)
+    # margin of any obsidian-routed job. release-readiness keeps 30 on its
+    # GitHub-hosted runner, where SCHED_IDLE starvation does not apply.
     timeout-minutes: 60
     defaults:
       run:

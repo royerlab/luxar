@@ -356,8 +356,8 @@ def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
     matrix_expression = jobs["python-tests"]["strategy"]["matrix"]["python-version"]
     matrix_lists = re.findall(r"fromJSON\('([^']+)'\)", matrix_expression)
     assert matrix_lists, "python-tests must declare its event-specific version matrices"
-    off_pr_versions = json.loads(matrix_lists[-1])
-    assert hosted_cap >= len(off_pr_versions), (
+    largest_matrix_size = max(len(json.loads(matrix)) for matrix in matrix_lists)
+    assert hosted_cap >= largest_matrix_size, (
         "the hosted max-parallel branch must not throttle the off-PR Python matrix"
     )
 
