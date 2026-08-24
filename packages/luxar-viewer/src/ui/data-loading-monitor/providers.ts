@@ -15,9 +15,13 @@ import {
 } from '../../types/data-monitor-types';
 import { log, Modules } from '../../utils/log';
 
-type CacheProvider<T> = { getStats: () => T; clear: () => void };
-type GPUBufferPoolProvider = { getStats: () => MemoryMetrics['gpuPool'] };
+/** Cache telemetry source with the matching cache-clear operation. */
+export type CacheProvider<T> = { getStats: () => T; clear: () => void };
 
+/** Live GPU buffer-pool telemetry source. */
+export type GPUBufferPoolProvider = { getStats: () => MemoryMetrics['gpuPool'] };
+
+/** Empty accumulator slots — one per {@link POOLED_GEOMETRY_TYPES} entry. */
 function emptyAccumulatorSlots(): Record<PooledGeometryType, AccumulatorProvider | null> {
   return Object.fromEntries(POOLED_GEOMETRY_TYPES.map((type) => [type, null])) as Record<
     PooledGeometryType,
@@ -25,16 +29,28 @@ function emptyAccumulatorSlots(): Record<PooledGeometryType, AccumulatorProvider
   >;
 }
 
+/**
+ * Owns the monitor's scene-scoped providers and their live snapshots.
+ *
+ * Provider changes call `markStructureDirty` when the orchestrator must
+ * rebuild its painted structure; the flag itself remains orchestrator state.
+ */
 export class MonitorProviderRegistry {
   cacheStatsProvider: CacheStatsProvider | null = null;
   l0CacheProvider: CacheProvider<CacheMetrics['l0']> | null = null;
   sliceCacheProvider: CacheProvider<CacheMetrics['slice']> | null = null;
+  // Pre-wiring this defaults to undefined so the aggregator falls back to
+  // provider-presence inference; once the setter runs, the explicit state wins.
   cacheTelemetryState: CacheTelemetryState | undefined;
   gpuBufferPoolProvider: GPUBufferPoolProvider | null = null;
   profiler: UpdateProfiler | null = null;
+  // Polled each tick; the snapshot drives kind badges, LOD chips, the refining
+  // indicator, and the scene-graph header summary.
   lodProgressProvider: LODProgressProvider | null = null;
+  /** Failed-load records + retry-all from the SceneLoader; feeds the overview banner. */
   failedLoadsProvider: FailedLoadsProviderPort | null = null;
   lodStates = new Map<string, LODProgressState>();
+  // Polled every tick because renderOrder is camera-dependent.
   drawOrderProvider: DrawOrderProvider | null = null;
   drawOrderStates = new Map<string, NodeDrawOrder>();
   accumulatorProviders = emptyAccumulatorSlots();
@@ -116,6 +132,19 @@ export class MonitorProviderRegistry {
     if (provider) {
       log.info(Modules.DATA_MONITOR, `${type} accumulator provider connected`);
     }
+  }
+
+  refreshLiveSnapshots(): void {
+    if (this.lodProgressProvider) {
+      this.lodStates = this.lodProgressProvider.getLODStates();
+    }
+    if (this.drawOrderProvider) {
+      this.drawOrderStates = this.drawOrderProvider.getDrawOrderStates();
+    }
+  }
+
+  clearDrawOrderStates(): void {
+    this.drawOrderStates = new Map();
   }
 
   resetSceneProviders(): void {

@@ -25,8 +25,13 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { DataMonitorManager, cycleDataMonitor } from '../../../../ui/data-monitor-manager';
+import type { DataLoadingMonitor } from '../../../../ui/data-loading-monitor';
 import { SceneLoaderManager } from '../../../../data/scene-loader-manager';
-import type { LoaderMonitor, MonitorEvent } from '../../../../types/data-monitor-types';
+import type {
+  LoaderMonitor,
+  LODProgressState,
+  MonitorEvent,
+} from '../../../../types/data-monitor-types';
 
 // Mock zarr module
 vi.mock('zarr', () => ({
@@ -109,6 +114,18 @@ vi.mock('three', () => ({
   AdditiveBlending: 'AdditiveBlending',
   SubtractiveBlending: 'SubtractiveBlending',
 }));
+
+function seedLODStates(monitor: DataLoadingMonitor, states: Map<string, LODProgressState>): void {
+  monitor.setLODProgressProvider({ getLODStates: () => states });
+  const internals = monitor as unknown as {
+    uiState: { isVisible: boolean };
+    onPollingTick(): void;
+  };
+  const wasVisible = internals.uiState.isVisible;
+  internals.uiState.isVisible = true;
+  internals.onPollingTick();
+  internals.uiState.isVisible = wasVisible;
+}
 
 describe('Data Monitor Integration', () => {
   beforeEach(() => {
@@ -305,9 +322,7 @@ describe('Data Monitor Integration', () => {
 
       // Seed the snapshot the polling tick would populate from the provider:
       // the group at /lod has 3 substitutive levels.
-      (
-        monitor as unknown as { providers: { lodStates: Map<string, unknown> } }
-      ).providers.lodStates = new Map([['/lod', { kind: 'lod', levelCount: 3, activeLevel: 0 }]]);
+      seedLODStates(monitor, new Map([['/lod', { kind: 'lod', levelCount: 3, activeLevel: 0 }]]));
 
       // Now the K=3 level loaders collapse to one logical layer.
       const stats = monitor.getGlobalStats();

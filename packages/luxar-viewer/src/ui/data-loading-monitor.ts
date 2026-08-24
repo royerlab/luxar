@@ -485,7 +485,7 @@ export class DataLoadingMonitor {
     this.sceneGraphState = emptySceneGraphState();
     this.expandedNodes = new Set<string>(['/']);
     this.visibleCountsByPath = new Map();
-    this.providers.drawOrderStates = new Map();
+    this.providers.clearDrawOrderStates();
     this.structureDirty = true;
   }
 
@@ -724,14 +724,8 @@ export class DataLoadingMonitor {
       this.lastEventCleanup = now;
     }
 
-    // 3. Refresh the live LOD / refinement / residency snapshot so the
-    // scene-graph tree's chips and header summary reflect this frame.
-    if (this.providers.lodProgressProvider) {
-      this.providers.lodStates = this.providers.lodProgressProvider.getLODStates();
-    }
-    if (this.providers.drawOrderProvider) {
-      this.providers.drawOrderStates = this.providers.drawOrderProvider.getDrawOrderStates();
-    }
+    // 3. Refresh the live LOD / refinement / residency and draw-order snapshots.
+    this.providers.refreshLiveSnapshots();
 
     // 4. Update UI (this also pulls fresh stats from providers)
     this.updateUI();
