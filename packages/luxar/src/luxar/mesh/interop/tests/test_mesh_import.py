@@ -851,6 +851,22 @@ class TestVtp:
         )
         assert int(b.max()) < 255, "a mid-range palette must not clip to solid white"
 
+    def test_float_colours_outside_the_byte_range_are_clipped(
+        self, tmp_path: Path
+    ) -> None:
+        values = np.array(
+            [[-5, 10, 300], [260, -1, 128], [64, 255, 256], [1, 2, 3]],
+            dtype=np.float32,
+        )
+        expected = np.clip(values, 0, 255).astype(np.uint8)
+        p = tmp_path / "clipped.vtp"
+        write_vtp_point_data(p, GT, [(values, "Float32", "colors", 3)])
+        mesh = import_mesh(p)
+        assert mesh.colors is not None
+        for vertex, color in zip(mesh.vertices, mesh.colors):
+            row = int(np.argmin(np.linalg.norm(GT.vertices - vertex, axis=1)))
+            np.testing.assert_array_equal(color, expected[row])
+
     @pytest.mark.parametrize(
         "compressor", ["vtkLZ4DataCompressor", "vtkLZMADataCompressor"]
     )
