@@ -25,7 +25,9 @@ test.describe('Custom GUI Library', () => {
     const gui = page.locator('.luxar-gui');
     await gui.waitFor({ state: 'visible', timeout: 10000 });
     await gui.evaluate(async (element) => {
-      await Promise.all(element.getAnimations().map((animation) => animation.finished));
+      await Promise.all(
+        element.getAnimations({ subtree: true }).map((animation) => animation.finished)
+      );
     });
   });
 

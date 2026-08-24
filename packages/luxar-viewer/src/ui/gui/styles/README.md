@@ -48,7 +48,8 @@ The library does not import its own CSS — the application stylesheet
 does. `src/styles/index.css` pulls all three files in via
 `@import '../ui/gui/styles/<file>.css'`, so they ship as part of the
 embed-safe library bundle alongside `components/*.css` and the theme
-overrides.
+overrides. Any HTML page that mounts `GUI` must load `src/styles/index.css`
+rather than linking these component files directly.
 
 ## BEM-ish class naming
 
