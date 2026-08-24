@@ -1841,10 +1841,16 @@ class TestTriangleMeshInvariants:
 
 class TestMeshDirectoryImport:
     def test_stacks_numeric_time_and_channel_coordinates(self, tmp_path: Path) -> None:
-        write_vtp(tmp_path / "sample_Ch1-registered-T0010.vtp", GT, compressed=True)
-        write_vtp(tmp_path / "sample_Ch0-registered-T0002.vtp", GT, compressed=True)
+        write_vtp(tmp_path / "a_Ch1-registered-T0010.vtp", GT, compressed=True)
+        write_vtp(tmp_path / "z_Ch0-registered-T0002.vtp", GT, compressed=True)
+        progress: list[tuple[int, int, str]] = []
 
-        mesh = import_mesh_directory(tmp_path)
+        mesh = import_mesh_directory(
+            tmp_path,
+            progress=lambda index, total, path: progress.append(
+                (index, total, path.name)
+            ),
+        )
 
         assert mesh.dimension_names == ("x", "y", "z", "t", "c")
         assert mesh.vertices.shape == (8, 5)
@@ -1855,10 +1861,14 @@ class TestMeshDirectoryImport:
         assert mesh.colors is not None
         assert np.array_equal(mesh.normals[4:], mesh.normals[:4])
         assert np.array_equal(mesh.colors[4:], mesh.colors[:4])
+        assert progress == [
+            (1, 2, "z_Ch0-registered-T0002.vtp"),
+            (2, 2, "a_Ch1-registered-T0010.vtp"),
+        ]
 
     def test_missing_timepoints_remain_coordinate_gaps(self, tmp_path: Path) -> None:
-        write_vtp(tmp_path / "surface-T0001.vtp", GT)
-        write_vtp(tmp_path / "surface-T0003.vtp", GT)
+        write_vtp(tmp_path / "z-T0001.vtp", GT)
+        write_vtp(tmp_path / "a-T0003.vtp", GT)
 
         mesh = import_mesh_directory(tmp_path)
 
@@ -1880,6 +1890,60 @@ class TestMeshDirectoryImport:
         write_ply_binary(tmp_path / "surface.ply", GT)
         with pytest.raises(ValueError, match=r"no T<number> time index"):
             import_mesh_directory(tmp_path, pattern="*.ply")
+
+    def test_lowercase_or_multiple_time_indices_are_refused(
+        self, tmp_path: Path
+    ) -> None:
+        write_ply_binary(tmp_path / "surface-t0001.ply", GT)
+        with pytest.raises(ValueError, match=r"no T<number> time index"):
+            import_mesh_directory(tmp_path, pattern="*.ply")
+
+        (tmp_path / "surface-t0001.ply").unlink()
+        write_ply_binary(tmp_path / "run-T0001-T0002.ply", GT)
+        with pytest.raises(ValueError, match="more than one time index"):
+            import_mesh_directory(tmp_path, pattern="*.ply")
+
+    @pytest.mark.parametrize(
+        ("missing_name", "arrays", "attrs"),
+        [
+            ("colors", [(GT.normals, "Float32", "Normals", 3)], 'Normals="Normals"'),
+            ("normals", [(GT.colors, "UInt8", "colors", 3)], 'Scalars="colors"'),
+        ],
+    )
+    def test_attributes_must_be_present_in_every_file(
+        self,
+        tmp_path: Path,
+        missing_name: str,
+        arrays: list[tuple[np.ndarray, str, str, int]],
+        attrs: str,
+    ) -> None:
+        write_vtp(tmp_path / "a-T0001.vtp", GT)
+        write_vtp_point_data(tmp_path / "b-T0002.vtp", GT, arrays, pdata_attrs=attrs)
+
+        with pytest.raises(
+            ValueError, match=rf"{missing_name} are present in only some"
+        ):
+            import_mesh_directory(tmp_path)
+
+    def test_attribute_component_counts_must_match(self, tmp_path: Path) -> None:
+        rgba = np.column_stack(
+            (GT.colors, np.full(GT.colors.shape[0], 255, dtype=np.uint8))
+        )
+        write_vtp(tmp_path / "a-T0001.vtp", GT)
+        write_vtp_point_data(
+            tmp_path / "b-T0002.vtp",
+            GT,
+            [
+                (GT.normals, "Float32", "Normals", 3),
+                (rgba, "UInt8", "colors", 4),
+            ],
+            pdata_attrs='Normals="Normals" Scalars="colors"',
+        )
+
+        with pytest.raises(
+            ValueError, match="colors have inconsistent component counts"
+        ):
+            import_mesh_directory(tmp_path)
 
     def test_indices_must_remain_exact_float32_coordinates(
         self, tmp_path: Path

@@ -391,9 +391,16 @@ timepoints remain gaps instead of renumbering later files. Mixed channel naming 
 duplicate time/channel coordinates are refused rather than guessed. For example:
 
 ```bash
-luxar mesh import 000_deconv.ome.zarr/meshes/cells cells.luxar.zarr
-luxar mesh import exported_frames frames.luxar.zarr --pattern '*.ply'
+luxar mesh import --pattern '*.ply'  # import a directory of T-indexed frames
 ```
+
+For example, pass `000_deconv.ome.zarr/meshes/cells` as the input directory and
+`cells.luxar.zarr` as the output. Use `--pattern '*.ply'` for a directory such as
+`exported_frames` containing PLY files.
+
+The resulting mesh node has no spatial index: the viewer downloads the entire stacked
+directory even when it draws only one timepoint. Use this path for stacks that fit
+comfortably in memory, not as a streaming representation for very large timelapses.
 
 ### `luxar mesh lod`
 

@@ -81,7 +81,15 @@ def run_import(
 
     with asection(f"Importing {input_path.name}"):
         mesh = (
-            import_mesh_directory(input_path, pattern=pattern, format=format, weld=weld)
+            import_mesh_directory(
+                input_path,
+                pattern=pattern,
+                format=format,
+                weld=weld,
+                progress=lambda index, total, path: aprint(
+                    f"Reading {index}/{total}: {path.name}"
+                ),
+            )
             if input_path.is_dir()
             else import_mesh(input_path, format=format, weld=weld)
         )
@@ -108,17 +116,23 @@ def run_import(
                 "to the derivative flat normal"
             )
 
-        dims = Dimensions(
-            [
+        dimensions = []
+        for index, dimension_name in enumerate(mesh.dimension_names):
+            if index < 3:
+                dimensions.append(Dimension(dimension_name, unit=unit))
+                continue
+            coordinate = vertices[:, index]
+            dimensions.append(
                 Dimension(
                     dimension_name,
-                    unit=unit if index < 3 else "",
-                    display=index < 3,
-                    discrete=index >= 3,
+                    unit="frame" if dimension_name == "t" else "index",
+                    range=(float(coordinate.min()), float(coordinate.max())),
+                    step=1.0,
+                    display=False,
+                    discrete=True,
                 )
-                for index, dimension_name in enumerate(mesh.dimension_names)
-            ]
-        )
+            )
+        dims = Dimensions(dimensions)
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
                 dimensions=dims,
@@ -225,11 +239,12 @@ def import_command(
         help="File glob used when INPUT_PATH is a directory.",
     ),
 ) -> None:
-    """Convert a classical mesh file into a Luxar scene.
+    """Convert a mesh file or indexed directory into a Luxar scene.
 
     Reads PLY / OBJ / STL / VTP / glTF with no extra dependencies, welds duplicate
     vertices, fan-triangulates polygons, and writes a single-node `.luxar.zarr` you can
-    serve directly with `luxar serve`.
+    serve directly with `luxar serve`. A directory stacks files carrying `T<number>`
+    and optional `Ch<number>` filename coordinates into hidden discrete dimensions.
 
     \b
     Examples:
@@ -238,6 +253,7 @@ def import_command(
       luxar mesh import model.glb model.luxar.zarr --no-center
       luxar mesh import surface.obj surface.luxar.zarr --scale 0.001 --unit m
       luxar mesh import isosurface.vtp cell.luxar.zarr --unit um
+      luxar mesh import frames frames.luxar.zarr --pattern '*.ply'
     """
     try:
         run_import(

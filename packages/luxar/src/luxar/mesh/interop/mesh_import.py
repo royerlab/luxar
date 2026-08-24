@@ -250,8 +250,8 @@ def import_mesh(
     )
 
 
-_TIME_INDEX = re.compile(r"(?:^|[-_])T(?P<index>\d+)(?=$|[-_.])", re.IGNORECASE)
-_CHANNEL_INDEX = re.compile(r"(?:^|[-_])Ch(?P<index>\d+)(?=$|[-_.])", re.IGNORECASE)
+_TIME_INDEX = re.compile(r"(?:^|[-_])T(?P<index>\d+)(?=$|[-_.])")
+_CHANNEL_INDEX = re.compile(r"(?:^|[-_])Ch(?P<index>\d+)(?=$|[-_.])")
 
 
 def _filename_index(path: Path, pattern: re.Pattern[str], label: str) -> int | None:
@@ -269,8 +269,38 @@ def _filename_index(path: Path, pattern: re.Pattern[str], label: str) -> int | N
     return value
 
 
-def _stack_optional_attribute(meshes: list[TriangleMesh], name: str) -> NDArray | None:
-    values = [getattr(mesh, name) for mesh in meshes]
+def _discover_indexed_files(
+    path: Path, pattern: str
+) -> list[tuple[int, int | None, Path]]:
+    files = sorted(candidate for candidate in path.glob(pattern) if candidate.is_file())
+    if not files:
+        raise ValueError(f"{path}: no mesh files match pattern {pattern!r}")
+
+    indexed: list[tuple[int, int | None, Path]] = []
+    for candidate in files:
+        time = _filename_index(candidate, _TIME_INDEX, "time")
+        if time is None:
+            raise ValueError(f"{candidate.name}: filename has no T<number> time index")
+        indexed.append(
+            (time, _filename_index(candidate, _CHANNEL_INDEX, "channel"), candidate)
+        )
+
+    has_channels = [channel is not None for _, channel, _ in indexed]
+    if any(has_channels) and not all(has_channels):
+        raise ValueError(
+            "Cannot stack directory: channel indices are present in only some filenames"
+        )
+
+    coordinates = [(time, channel) for time, channel, _ in indexed]
+    if len(set(coordinates)) != len(coordinates):
+        raise ValueError("Cannot stack directory: duplicate time/channel coordinates")
+    indexed.sort(key=lambda item: (item[0], -1 if item[1] is None else item[1]))
+    return indexed
+
+
+def _stack_optional_attribute(
+    values: list[NDArray | None], name: str
+) -> NDArray | None:
     present = [value is not None for value in values]
     if any(present) and not all(present):
         raise ValueError(
@@ -283,7 +313,7 @@ def _stack_optional_attribute(meshes: list[TriangleMesh], name: str) -> NDArray 
         raise ValueError(
             f"Cannot stack directory: {name} have inconsistent component counts"
         )
-    return np.ascontiguousarray(np.concatenate(values, axis=0))
+    return np.concatenate(values, axis=0)
 
 
 def import_mesh_directory(
@@ -292,13 +322,15 @@ def import_mesh_directory(
     pattern: str = "*.vtp",
     format: str = "auto",
     weld: bool = True,
+    progress: Callable[[int, int, Path], None] | None = None,
 ) -> TriangleMesh:
     """Read per-timepoint mesh files into one nD triangle mesh.
 
     Filenames must carry ``T<number>`` and may all carry ``Ch<number>``. Numeric
     values are preserved as coordinates, so a missing timepoint remains a gap rather
-    than shifting later data. Files are ordered by ``(time, channel, name)`` and faces
-    are rebased into the concatenated vertex array.
+    than shifting later data. Files are ordered by ``(time, channel)`` and faces are
+    rebased into the concatenated vertex array. ``progress``, when provided, is called
+    before each file with ``(one_based_index, total_files, path)``.
     """
     path = Path(path)
     if not path.exists():
@@ -306,63 +338,43 @@ def import_mesh_directory(
     if not path.is_dir():
         raise ValueError(f"Mesh directory is not a directory: {path}")
 
-    files = sorted(candidate for candidate in path.glob(pattern) if candidate.is_file())
-    if not files:
-        raise ValueError(f"{path}: no mesh files match pattern {pattern!r}")
-
-    indexed: list[tuple[int, int | None, Path]] = []
-    for candidate in files:
-        time = _filename_index(candidate, _TIME_INDEX, "time")
-        if time is None:
-            raise ValueError(f"{candidate.name}: filename has no T<number> time index")
-        channel = _filename_index(candidate, _CHANNEL_INDEX, "channel")
-        indexed.append((time, channel, candidate))
-
-    has_channels = [channel is not None for _, channel, _ in indexed]
-    if any(has_channels) and not all(has_channels):
-        raise ValueError(
-            "Cannot stack directory: channel indices are present in only some filenames"
-        )
-
-    coordinates = [(time, channel) for time, channel, _ in indexed]
-    if len(set(coordinates)) != len(coordinates):
-        raise ValueError("Cannot stack directory: duplicate time/channel coordinates")
-    indexed.sort(
-        key=lambda item: (item[0], -1 if item[1] is None else item[1], item[2].name)
-    )
-
-    meshes = [import_mesh(file, format=format, weld=weld) for _, _, file in indexed]
-    total_vertices = sum(mesh.n_vertices for mesh in meshes)
-    if total_vertices > np.iinfo(np.uint32).max:
-        raise ValueError(
-            f"Cannot stack {total_vertices} vertices: mesh face indices are uint32"
-        )
-
+    indexed = _discover_indexed_files(path, pattern)
     vertex_blocks: list[NDArray[np.float32]] = []
     face_blocks: list[NDArray[np.uint32]] = []
+    normal_blocks: list[NDArray | None] = []
+    color_blocks: list[NDArray | None] = []
+    formats: set[str] = set()
     offset = 0
-    for (time, channel, _), mesh in zip(indexed, meshes):
+    for file_index, (time, channel, file) in enumerate(indexed, start=1):
+        if progress is not None:
+            progress(file_index, len(indexed), file)
+        mesh = import_mesh(file, format=format, weld=weld)
+        next_offset = offset + mesh.n_vertices
+        if next_offset > np.iinfo(np.uint32).max:
+            raise ValueError(
+                f"Cannot stack {next_offset} vertices: mesh face indices are uint32"
+            )
         discrete = [float(time)]
         if channel is not None:
             discrete.append(float(channel))
         extra = np.broadcast_to(
             np.asarray(discrete, dtype=np.float32), (mesh.n_vertices, len(discrete))
         )
-        vertex_blocks.append(
-            np.ascontiguousarray(np.column_stack((mesh.vertices, extra)))
-        )
-        face_blocks.append(np.ascontiguousarray(mesh.faces + np.uint32(offset)))
-        offset += mesh.n_vertices
+        vertex_blocks.append(np.column_stack((mesh.vertices, extra)))
+        face_blocks.append(mesh.faces + np.uint32(offset))
+        normal_blocks.append(mesh.normals)
+        color_blocks.append(mesh.colors)
+        formats.add(mesh.source_format)
+        offset = next_offset
 
-    formats = {mesh.source_format for mesh in meshes}
     return TriangleMesh(
-        vertices=np.ascontiguousarray(np.concatenate(vertex_blocks, axis=0)),
-        faces=np.ascontiguousarray(np.concatenate(face_blocks, axis=0)),
-        normals=_stack_optional_attribute(meshes, "normals"),
-        colors=_stack_optional_attribute(meshes, "colors"),
+        vertices=np.concatenate(vertex_blocks, axis=0),
+        faces=np.concatenate(face_blocks, axis=0),
+        normals=_stack_optional_attribute(normal_blocks, "normals"),
+        colors=_stack_optional_attribute(color_blocks, "colors"),
         source_format=formats.pop() if len(formats) == 1 else "mixed",
         dimension_names=("x", "y", "z", "t", "c")
-        if all(has_channels)
+        if indexed[0][1] is not None
         else ("x", "y", "z", "t"),
     )
 
