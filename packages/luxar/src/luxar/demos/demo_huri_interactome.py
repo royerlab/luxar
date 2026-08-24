@@ -789,7 +789,7 @@ def build_scene(
                 intensity=0.2,
                 labels=node_labels,
                 keys=node_keys,
-        link="https://www.genecards.org/card/{hover_key}",
+                link="https://www.genecards.org/card/{hover_key}",
                 copy="{hover_key}",
                 layer=True,
             )
