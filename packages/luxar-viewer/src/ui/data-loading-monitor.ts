@@ -2082,7 +2082,7 @@ export class DataLoadingMonitor {
     // label, unit noun and DOM id), so this is where the kind-keyed aggregation
     // model is projected onto them. Only three are projected here: mesh has no
     // headline field of its own — its triangle counts are shown per node in the
-    // scene-graph tree (`templates.ts`, `faceCount`).
+    // scene-graph tree (`templates/scene-graph.ts`, `faceCount`).
     const { totalByType, visibleByType } = this.sceneGraphState;
     const datasetSize = totalByType.points;
     const visiblePoints = visibleByType.points;

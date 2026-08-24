@@ -13,6 +13,9 @@ import type {
   MemoryMetrics,
 } from '../../../types/data-monitor-types';
 import { POOLED_GEOMETRY_TYPES } from '../../../types/data-monitor-types';
+import { formatNumber } from './format';
+import { getColorClass } from './primitives';
+
 export type { GPUPoolTypeStats, GPUPoolStats, AccumulatorStats, MemoryMetrics };
 
 /**
@@ -199,6 +202,3 @@ function renderAccumulatorsSection(accumulators: MemoryMetrics['accumulators']):
 function capitalize(str: string): string {
   return str.charAt(0).toUpperCase() + str.slice(1);
 }
-
-import { getColorClass } from './primitives';
-import { formatNumber } from './format';
