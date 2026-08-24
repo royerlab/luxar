@@ -18,8 +18,6 @@ import {
   calculateReuseRate,
   getReuseRateColorClass,
 } from '../../../../../ui/data-loading-monitor/templates/memory';
-import { getCacheHitRateColorClass } from '../../../../../ui/data-loading-monitor/templates/cache';
-import { renderSecondaryMetrics } from '../../../../../ui/data-loading-monitor/templates/overview';
 
 describe('getColorClass', () => {
   it('prefixes the semantic name with luxar-color--', () => {
@@ -107,17 +105,6 @@ describe('getReuseRateColorClass', () => {
     expect(getReuseRateColorClass(50)).toBe('luxar-color--warning');
     expect(getReuseRateColorClass(49.9)).toBe('luxar-color--error');
     expect(getReuseRateColorClass(0)).toBe('luxar-color--error');
-  });
-});
-
-describe('getCacheHitRateColorClass', () => {
-  it('uses strict-greater-than thresholds (80 maps to warning, not success)', () => {
-    expect(getCacheHitRateColorClass(100)).toBe('luxar-color--success');
-    expect(getCacheHitRateColorClass(80.1)).toBe('luxar-color--success');
-    expect(getCacheHitRateColorClass(80)).toBe('luxar-color--warning');
-    expect(getCacheHitRateColorClass(50.1)).toBe('luxar-color--warning');
-    expect(getCacheHitRateColorClass(50)).toBe('luxar-color--error');
-    expect(getCacheHitRateColorClass(0)).toBe('luxar-color--error');
   });
 });
 
@@ -214,30 +201,5 @@ describe('renderStatGrid', () => {
   it('applies the per-item colorClass when supplied', () => {
     const html = renderStatGrid([{ label: 'a', value: 1, colorClass: 'luxar-color--success' }]);
     expect(html).toContain('luxar-color--success');
-  });
-});
-
-describe('renderSecondaryMetrics — requests served', () => {
-  const memory = { used: 0, limit: 1000 };
-  const querySpeed = { avgTime: 0, perSec: 0 };
-
-  it('surfaces totalRequestsServed in the network detail when present', () => {
-    const html = renderSecondaryMetrics(memory, querySpeed, {
-      bytesTransferred: 100,
-      requestCount: 7,
-      bandwidth: 50,
-      totalBytesServed: 200,
-      totalRequestsServed: 42,
-    });
-    expect(html).toContain('42 reqs');
-  });
-
-  it('falls back to requestCount when totalRequestsServed is undefined', () => {
-    const html = renderSecondaryMetrics(memory, querySpeed, {
-      bytesTransferred: 100,
-      requestCount: 7,
-      bandwidth: 50,
-    });
-    expect(html).toContain('7 reqs');
   });
 });

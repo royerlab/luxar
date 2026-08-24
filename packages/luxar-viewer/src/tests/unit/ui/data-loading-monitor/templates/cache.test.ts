@@ -192,6 +192,17 @@ describe('l2ErrorTotal', () => {
   });
 });
 
+describe('getCacheHitRateColorClass', () => {
+  it('uses strict-greater-than thresholds (80 maps to warning, not success)', () => {
+    expect(getCacheHitRateColorClass(100)).toBe('luxar-color--success');
+    expect(getCacheHitRateColorClass(80.1)).toBe('luxar-color--success');
+    expect(getCacheHitRateColorClass(80)).toBe('luxar-color--warning');
+    expect(getCacheHitRateColorClass(50.1)).toBe('luxar-color--warning');
+    expect(getCacheHitRateColorClass(50)).toBe('luxar-color--error');
+    expect(getCacheHitRateColorClass(0)).toBe('luxar-color--error');
+  });
+});
+
 // S3: no-data guard so initial render uses dimmed instead of error
 // while the cache is still warming up — matches the incremental updater.
 describe('getCacheHitRateColorClassWithGuard (S3)', () => {
