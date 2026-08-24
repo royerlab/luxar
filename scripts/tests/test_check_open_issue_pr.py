@@ -67,6 +67,7 @@ def test_api_rows_keep_only_same_repository_closing_references() -> None:
     row = {
         "number": 2004,
         "title": "Docs",
+        "body": "Refs #2003",
         "url": "https://example.test/2004",
         "headRefName": "docs",
         "closingIssuesReferences": [
@@ -78,13 +79,18 @@ def test_api_rows_keep_only_same_repository_closing_references() -> None:
                 },
             },
             {
-                "number": 2003,
+                "number": 9999,
                 "repository": {"nameWithOwner": "someone/else"},
+            },
+            {
+                "number": 2011,
+                "repository": {"nameWithOwner": "royerlab/luxar"},
             },
         ],
     }
     pull_request = guard.pull_request_from_row(row, "RoyerLab/Luxar")
-    assert pull_request.closing_issue_numbers == {2003}
+    assert pull_request.body == "Refs #2003"
+    assert pull_request.closing_issue_numbers == {2003, 2011}
 
 
 def test_pull_request_paths_flattens_every_api_page(monkeypatch) -> None:
