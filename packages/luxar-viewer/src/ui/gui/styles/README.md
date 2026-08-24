@@ -23,8 +23,9 @@ values are `text-primary`; the raw `rgba(0, 0, 0, …)` control fills in
 - `gui.css` — Root panel chrome. Defines `.luxar-gui` (outer fixed
   container, no overflow so liquid-glass pseudo-elements can paint
   outside the box), `.luxar-gui__scroll` (inner scrollable container
-  with custom thin scrollbar), and the header / title / close-button /
-  children-container subblocks. Deliberately does **not** override
+  with custom thin scrollbar), and the title / children-container
+  subblocks. The shared header and close-button recipes live in
+  `src/styles/base/utilities.css`. Deliberately does **not** override
   `--luxar-shadow-lg` per theme — it uses the same shadow token the control
   rail does; the only `[data-theme]` block here is a light-theme background
   override, and the glass themes live in `src/styles/themes/`.
