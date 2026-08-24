@@ -370,7 +370,7 @@ a hard edge — which every modelling package authors as coincident positions wi
 different normals — survives the import instead of being flattened. Pass `--no-weld` to
 keep the file's exact vertex list.
 
-`.vtp` is VTK XML PolyData — what ParaView, VTK, PyVista and meshio write for a surface,
+`.vtp` is VTK XML PolyData — what ParaView, VTK and PyVista write for a surface,
 and the usual output of a marching-cubes isosurface. Every encoding the format allows is
 read: `ascii`, inline base64 (`format="binary"`), and an appended section in either `raw`
 or `base64` form, each optionally `vtkZLibDataCompressor`-compressed, with a `UInt32` or

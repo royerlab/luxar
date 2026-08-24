@@ -1,6 +1,6 @@
 """VTK XML PolyData (``.vtp``) reader — inline, appended, raw, base64, zlib or not.
 
-The format ParaView, VTK, meshio, PyVista and every ITK/VTK pipeline writes for a
+The format ParaView, VTK, PyVista and every ITK/VTK pipeline writes for a
 surface. It is XML with the *bulk* data escaping the XML, which is where all three of
 its traps live. NumPy + stdlib only (``xml.etree`` + ``base64`` + ``zlib``), matching
 the rest of :mod:`luxar.mesh.interop`.
