@@ -1881,6 +1881,13 @@ class TestMeshDirectoryImport:
         with pytest.raises(ValueError, match=r"no T<number> time index"):
             import_mesh_directory(tmp_path, pattern="*.ply")
 
+    def test_indices_must_remain_exact_float32_coordinates(
+        self, tmp_path: Path
+    ) -> None:
+        write_ply_binary(tmp_path / "surface-T16777217.ply", GT)
+        with pytest.raises(ValueError, match="too large to represent exactly"):
+            import_mesh_directory(tmp_path, pattern="*.ply")
+
 
 class TestWelding:
     """The weld key is position PLUS every per-vertex attribute, not position alone.

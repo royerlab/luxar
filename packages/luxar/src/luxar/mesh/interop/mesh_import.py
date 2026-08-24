@@ -38,7 +38,7 @@ MESH_FORMATS = ("ply", "obj", "stl", "gltf", "vtp")
 
 @dataclass(frozen=True)
 class TriangleMesh:
-    """A decoded triangle mesh in the source file's own coordinate frame.
+    """A decoded triangle mesh in its source coordinate frame.
 
     Every reader returns this, welded and triangulated, so the CLI and the scene
     embed have exactly one shape to handle.
@@ -53,7 +53,7 @@ class TriangleMesh:
     normals: Optional[NDArray[np.float32]] = None
     #: ``(V, 3)`` or ``(V, 4)`` uint8 per-vertex colour, or None.
     colors: Optional[NDArray[np.uint8]] = None
-    #: One of :data:`MESH_FORMATS`, for provenance.
+    #: One of :data:`MESH_FORMATS`, or ``"mixed"`` for a mixed-format directory.
     source_format: str = ""
     #: Names of the coordinate columns in ``vertices``.
     dimension_names: tuple[str, ...] = ("x", "y", "z")
@@ -260,7 +260,13 @@ def _filename_index(path: Path, pattern: re.Pattern[str], label: str) -> int | N
         raise ValueError(f"{path.name}: filename contains more than one {label} index")
     if not matches:
         return None
-    return int(matches[0].group("index"))
+    value = int(matches[0].group("index"))
+    if value > 1 << 24:
+        raise ValueError(
+            f"{path.name}: {label} index {value} is too large to represent exactly "
+            "in float32 mesh coordinates"
+        )
+    return value
 
 
 def _stack_optional_attribute(meshes: list[TriangleMesh], name: str) -> NDArray | None:

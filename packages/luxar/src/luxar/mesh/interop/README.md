@@ -152,7 +152,7 @@ luxar mesh import model.glb model.luxar.zarr --no-center
 ```
 
 ```python
-from luxar.mesh.interop import import_mesh
+from luxar.mesh.interop import import_mesh, import_mesh_directory
 
 mesh = import_mesh("bunny.ply")  # -> TriangleMesh
 scene.add_mesh(
@@ -162,6 +162,17 @@ scene.add_mesh(
     normals=mesh.normals,
     normal_dims=[0, 1, 2],
     colors=mesh.colors,
+)
+
+# P12_Ch0-registered-T0001.vtp, ... → vertices shaped (V, 5): x, y, z, t, c
+timelapse = import_mesh_directory("000_deconv.ome.zarr/meshes/cells")
+scene.add_mesh(
+    "Cells",
+    timelapse.vertices,
+    timelapse.faces,
+    normals=timelapse.normals,
+    normal_dims=[0, 1, 2],
+    colors=timelapse.colors,
 )
 ```
 
