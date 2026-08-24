@@ -108,9 +108,9 @@ so E2E runs locally (`make test-e2e`) or on the GPU box.
 `tests/fixtures/generate_test_data.py`. `pnpm test` (vitest) regenerates them
 automatically; **Playwright does not** — a 1–2 minute generator run hidden
 inside a global setup is a worse failure mode than an error. Instead the
-global setup fails fast, naming `pnpm test:generate-fixtures`. Both harnesses
-read the manifest through `tools/fixture-manifest.ts` so they cannot disagree
-about which fixtures exist.
+global setup fails fast when fixtures are missing or stale, naming `pnpm
+test:generate-fixtures`. Both harnesses read the manifest through
+`tools/fixture-manifest.ts` so they cannot disagree about which fixtures exist.
 
 **Except for the two suites that read no fixtures**, which set
 `LUXAR_E2E_NO_FIXTURES=1` to skip the check:

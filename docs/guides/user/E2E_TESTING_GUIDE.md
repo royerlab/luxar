@@ -175,7 +175,7 @@ Before running E2E tests:
 1. ✅ Generate example datasets: `make run-examples`
 2. ✅ Generate the zarr test fixtures: `pnpm test:generate-fixtures` — 18 specs read
    `packages/luxar-viewer/tests/fixtures/`, and the Playwright pre-flight now fails the
-   whole run if any of them is missing rather than letting those specs time out. `pnpm test`
+   whole run if any of them is missing or stale rather than letting those specs time out. `pnpm test`
    (vitest) regenerates them for you; Playwright deliberately does not, because the
    generator takes 1–2 minutes. For a one-off run of specs you know read no fixtures, set
    `LUXAR_E2E_NO_FIXTURES=1` to skip the check (`pnpm test:e2e:smoke` and

@@ -4,7 +4,7 @@
  * This file runs BEFORE any tests and verifies pre-conditions:
  * 1. Servers can be reached, and belong to THIS checkout
  * 2. Required example datasets exist (warn — many specs do not need them)
- * 3. Generated zarr fixtures exist, are complete, and are served (throw — 19 specs
+ * 3. Generated zarr fixtures exist, are complete, are current, and are served (throw — 19 specs
  *    hard-depend on them)
  * 4. Basic environment checks
  *
@@ -58,15 +58,17 @@ const REQUIRED_DATASETS = [
 ];
 
 /**
- * Fail with an actionable message when the generated zarr fixtures are absent or unserved.
+ * Fail with an actionable message when generated zarr fixtures are absent, stale, or unserved.
  *
- * Two distinct failure modes, checked separately because their fixes differ:
+ * Three distinct failure modes, checked separately because their fixes differ:
  *
  *  1. **Never generated, or half generated** — a clean checkout on which vitest has never
  *     run, or a generator killed mid-write. Both are reported by name and both are fixed by
  *     rerunning the generator, so they are one check; `isGeneratedFixtureComplete` is what
  *     keeps an interrupted run's stump directory from passing as a fixture.
- *  2. **Generated but unreachable** — the data server is rooted somewhere other than the
+ *  2. **Generated but stale** — production Python or generator sources changed after the
+ *     fixtures were written. Regenerating refreshes both the stores and their input stamp.
+ *  3. **Generated but unreachable** — the data server is rooted somewhere other than the
  *     repository, so the specs' `/packages/luxar-viewer/tests/fixtures/...` URLs 404 even
  *     though the files exist. One HTTP probe settles this; probing all ~47 would add 47
  *     round-trips to every run to re-answer the same question about the serving root.

@@ -41,7 +41,7 @@ Standard DOM testing tools don't work for WebGL apps because they can't see insi
 
 Ensure you have Playwright installed (already done if you cloned the repo), and
 generate the zarr fixtures 18 specs read — the E2E pre-flight fails the run if
-they are missing:
+they are missing or stale:
 
 ```bash
 cd packages/luxar-viewer

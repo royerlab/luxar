@@ -222,6 +222,12 @@ Demo scene generators, precomputed data helpers, and viewer launch utilities.
 - `is_lfs_pointer()`: Check if a file is a Git LFS pointer (not actual data)
 - `voxel_sampled_payload_agreement(centers, payload)`: Fraction of same-voxel splat pairs carrying an identical payload row — the correspondence check for a per-splat sidecar shipped alongside a `.gsplats.zarr` fit (`save()` reorders splats, so a sidecar sampled before saving is silently misindexed). `None` when too few splats share a voxel to judge
 
+**Features:**
+- Ready-to-use demo scenes
+- Configurable parameters
+- Git LFS data loading with local cache fallback
+- Educational examples of Luxar features
+
 ### `source_fingerprints.py`
 Stable fingerprints for Python sources that produce Luxar stores.
 
@@ -229,12 +235,6 @@ Stable fingerprints for Python sources that produce Luxar stores.
 - `fingerprint_source_files()`: Hash source paths and contents in stable, boundary-safe order
 - `production_source_fingerprint()`: Cache a stable hash of production Luxar Python sources
 - `store_writer_environment()`: Report installed/configured inputs that affect Zarr output
-
-**Features:**
-- Ready-to-use demo scenes
-- Configurable parameters
-- Git LFS data loading with local cache fallback
-- Educational examples of Luxar features
 
 ### `process.py`
 Deterministic teardown for long-lived child processes (stdlib-only). Owns the

@@ -16,6 +16,7 @@ import { fileURLToPath } from 'url';
 import {
   areExpectationsStale,
   areFixturesStale,
+  stampExpectationsInputs,
   stampFixtureInputs,
 } from '../../tools/fixture-freshness';
 import {
@@ -257,14 +258,14 @@ export async function setup(): Promise<void> {
   const missing = EXPECTED_FIXTURES.filter(
     (name) => !isGeneratedFixtureComplete(resolve(FIXTURES_DIR, name))
   );
-  const stale = areFixturesStale();
+  const stale = areFixturesStale(PROJECT_ROOT, FIXTURES_DIR);
   const regeneratedFixtures = missing.length > 0 || stale;
 
   if (regeneratedFixtures) {
     console.log(
       missing.length > 0
         ? `\n[test-setup] ${missing.length} zarr fixture(s) missing or incomplete — generating...`
-        : '\n[test-setup] fixture generator/encoder sources changed — regenerating...'
+        : '\n[test-setup] fixture production sources changed — regenerating...'
     );
     // All-or-nothing: generate_test_data.py takes no arguments, so there is no
     // per-fixture regeneration to reach for. That is affordable now only
@@ -288,6 +289,7 @@ export async function setup(): Promise<void> {
       `Fixture generation ran but these are still missing or incomplete: ${stillMissing.join(', ')}`
     );
   }
+  stampFixtureInputs(PROJECT_ROOT, FIXTURES_DIR);
 
   if (isExpectationsStale(regeneratedFixtures)) {
     console.log('[test-setup] Round-trip expectations missing/stale — generating...');
@@ -296,8 +298,5 @@ export async function setup(): Promise<void> {
       'round-trip expectations'
     );
   }
-
-  // Stamp only after every fixture is complete and expectations exist, so an
-  // interrupted generator is retried instead of recorded as current.
-  stampFixtureInputs(PROJECT_ROOT, FIXTURES_DIR);
+  stampExpectationsInputs(PROJECT_ROOT, FIXTURES_DIR);
 }

@@ -94,7 +94,7 @@ export function areExpectationsStale(
   );
 }
 
-/** Verify generated outputs are complete, then record both input fingerprints. */
+/** Verify generated fixtures are complete, then record their input fingerprint. */
 export function stampFixtureInputs(
   projectRoot: string = PROJECT_ROOT,
   fixturesDir: string = resolve(projectRoot, FIXTURES_REPO_RELATIVE_PATH)
@@ -109,14 +109,22 @@ export function stampFixtureInputs(
       `Cannot stamp missing or incomplete generated fixtures: ${incomplete.join(', ')}`
     );
   }
-  if (!existsSync(resolve(fixturesDir, 'roundtrip_expectations.json'))) {
-    throw new Error('Cannot stamp missing roundtrip_expectations.json');
-  }
 
   writeFileSync(
     resolve(fixturesDir, '.fixture-inputs.sha256'),
     `${fixtureInputsFingerprint(projectRoot, fixturesDir)}\n`
   );
+}
+
+/** Verify round-trip expectations exist, then record their input fingerprint. */
+export function stampExpectationsInputs(
+  projectRoot: string = PROJECT_ROOT,
+  fixturesDir: string = resolve(projectRoot, FIXTURES_REPO_RELATIVE_PATH)
+): void {
+  if (!existsSync(resolve(fixturesDir, 'roundtrip_expectations.json'))) {
+    throw new Error('Cannot stamp missing roundtrip_expectations.json');
+  }
+
   writeFileSync(
     resolve(fixturesDir, '.expectations-inputs.sha256'),
     `${expectationsInputsFingerprint(projectRoot, fixturesDir)}\n`
@@ -125,5 +133,6 @@ export function stampFixtureInputs(
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   stampFixtureInputs();
+  stampExpectationsInputs();
   console.log('[fixture-freshness] Generated fixture stamps updated.');
 }

@@ -1,15 +1,18 @@
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { dirname, join, resolve } from 'path';
+import { fileURLToPath } from 'url';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   areFixturesStale,
   expectationsInputsFingerprint,
   fixtureInputFiles,
   fixtureInputsFingerprint,
+  stampExpectationsInputs,
   stampFixtureInputs,
 } from '../../../../tools/fixture-freshness';
 
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../../..');
 let temporaryRoot: string | undefined;
 
 afterEach(() => {
@@ -71,6 +74,10 @@ describe('generated fixture freshness', () => {
     const { fixturesDir, projectRoot } = writeFixtureInputs();
     const conftestPath = join(projectRoot, 'packages/luxar/src/luxar/conftest.py');
     writeFileSync(conftestPath, 'PYTEST_ONLY = 1\n');
+    const pythonFingerprintSource = readFileSync(
+      resolve(REPO_ROOT, 'packages/luxar/src/luxar/utils/source_fingerprints.py'),
+      'utf8'
+    );
 
     const relativeInputs = fixtureInputFiles(projectRoot, fixturesDir).map((path) =>
       path.slice(projectRoot.length + 1)
@@ -80,6 +87,9 @@ describe('generated fixture freshness', () => {
     expect(relativeInputs).toContain('packages/luxar/src/luxar/_zarr_compat.py');
     expect(relativeInputs).not.toContain('packages/luxar/src/luxar/conftest.py');
     expect(relativeInputs).not.toContain('packages/luxar/src/luxar/core/tests/test_writer.py');
+    expect(pythonFingerprintSource).toContain('"tests" not in path.relative_to(root).parts');
+    expect(pythonFingerprintSource).toContain('"__pycache__" not in path.relative_to(root).parts');
+    expect(pythonFingerprintSource).toContain('path.name != "conftest.py"');
   });
 
   it('produces the same digest through a symlinked checkout path', () => {
@@ -98,9 +108,10 @@ describe('generated fixture freshness', () => {
     }
   });
 
-  it('stamps complete fixtures and expectations with the current inputs', () => {
+  it('stamps complete fixtures independently of expectations', () => {
     const { fixturesDir, projectRoot } = writeFixtureInputs();
     rmSync(join(fixturesDir, '.fixture-inputs.sha256'));
+    rmSync(join(fixturesDir, 'roundtrip_expectations.json'));
 
     stampFixtureInputs(projectRoot, fixturesDir);
 
@@ -108,8 +119,20 @@ describe('generated fixture freshness', () => {
     expect(readFileSync(join(fixturesDir, '.fixture-inputs.sha256'), 'utf8').trim()).toBe(
       fixtureInputsFingerprint(projectRoot, fixturesDir)
     );
+  });
+
+  it('stamps expectations only when their output exists', () => {
+    const { fixturesDir, projectRoot } = writeFixtureInputs();
+
+    stampExpectationsInputs(projectRoot, fixturesDir);
+
     expect(readFileSync(join(fixturesDir, '.expectations-inputs.sha256'), 'utf8').trim()).toBe(
       expectationsInputsFingerprint(projectRoot, fixturesDir)
+    );
+
+    rmSync(join(fixturesDir, 'roundtrip_expectations.json'));
+    expect(() => stampExpectationsInputs(projectRoot, fixturesDir)).toThrow(
+      'Cannot stamp missing roundtrip_expectations.json'
     );
   });
 
