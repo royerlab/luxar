@@ -45,9 +45,7 @@ GRID = 24  # small but structurally representative (fast: 24^4 = 331K samples)
 N_FRACTALS = 6
 # Precision assertions below use the shipped slider's fetch reach so the
 # coarser test grid cannot mask a production regression.
-PRODUCTION_FETCH_REACH = 0.25 * (
-    _demo.W_STRIDE * 2.0 / _demo.GRID_SIZE_DEFAULT
-)
+PRODUCTION_FETCH_REACH = 0.25 * (_demo.W_STRIDE * 2.0 / _demo.GRID_SIZE_DEFAULT)
 
 
 class TestAxisWorldValues:
