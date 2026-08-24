@@ -131,7 +131,6 @@ def test_non_isolate_uses_pid_signals_not_killpg(monkeypatch) -> None:
 
 @posix_only
 def test_second_interrupt_jumps_to_sigkill(monkeypatch) -> None:
-    """A second interrupt skips the remaining waits and sends SIGKILL."""
     """A Ctrl-C landing mid-escalation hard-kills instead of orphaning."""
     calls: list[int] = []
     state = {"sigint_raised": False, "dead": False}
@@ -180,7 +179,6 @@ def test_degrades_without_killpg(monkeypatch) -> None:
 
 @posix_only
 def test_stop_handlers_install_and_restore() -> None:
-    """Temporary termination handlers preserve and restore prior handlers."""
     """SIGTERM/SIGHUP get a KeyboardInterrupt-raising handler, then restored."""
     before_term = signal.getsignal(signal.SIGTERM)
     prev = process._install_stop_handlers()
@@ -242,7 +240,6 @@ def test_external_sigterm_reaps_grandchild() -> None:
 @posix_only
 @pytest.mark.slow
 def test_sigkill_reaches_signal_ignoring_child() -> None:
-    """The final escalation kills a child that ignores softer signals."""
     """A child that ignores SIGINT/SIGTERM is still killed via SIGKILL."""
     import subprocess
 

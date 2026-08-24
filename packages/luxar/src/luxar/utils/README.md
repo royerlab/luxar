@@ -201,6 +201,9 @@ Stable fingerprints for Python sources that produce Luxar stores.
 - `production_source_fingerprint()`: Cache that production-source hash per package root and process
 - `store_writer_environment()`: Report installed/configured inputs that affect Zarr output
 
+Process lifecycle support used by `demos.py` lives in the package-root
+`../_process.py`; see `../README.md` for its API and teardown guarantees.
+
 ## Usage Examples
 
 ### Creating Demo Scenes
