@@ -2,9 +2,9 @@
 
 Classical mesh formats disagree about whether vertices are shared. PLY and glTF are
 indexed, OBJ is indexed but 1-based and may use polygons, and STL is a pure triangle
-soup with no index at all. :func:`weld_vertices` and :func:`fan_triangulate` bring all
-four to the one representation ``add_mesh`` wants: a shared vertex array plus a
-``(F, 3)`` index array.
+soup with no index at all. :func:`weld_vertices`, :func:`drop_degenerate_faces`, and
+:func:`prune_unreferenced_vertices` bring all five to the one representation
+``add_mesh`` wants: a compact shared vertex array plus a ``(F, 3)`` index array.
 
 Welding matters beyond tidiness. An unwelded surface has no shared vertices, so
 per-vertex normals cannot be averaged across faces, the writer's authoring lint flags
@@ -127,3 +127,40 @@ def drop_degenerate_faces(faces: NDArray[np.uint32]) -> NDArray[np.uint32]:
     keep = (a != b) & (b != c) & (a != c)
     kept: NDArray[np.uint32] = faces[keep]
     return kept
+
+
+def prune_unreferenced_vertices(
+    vertices: NDArray[np.float32],
+    faces: NDArray[np.uint32],
+    *,
+    extras: dict[str, NDArray | None] | None = None,
+) -> tuple[NDArray[np.float32], NDArray[np.uint32], dict[str, NDArray | None]]:
+    """Remove vertices no surviving face references and reindex per-vertex data.
+
+    Call this after :func:`drop_degenerate_faces`: a vertex referenced only by a
+    dropped sliver becomes unreferenced at that point. The import pipeline deliberately
+    calls it only when welding is enabled so ``--no-weld`` preserves the reader's
+    vertex list.
+
+    Args:
+        vertices: ``(V, D)`` positions.
+        faces: ``(F, 3)`` indices into ``vertices``.
+        extras: Per-vertex arrays (normals, colors) to carry through the same remap.
+
+    Returns:
+        ``(compact_vertices, remapped_faces, compact_extras)``.
+    """
+    referenced = np.zeros(vertices.shape[0], dtype=bool)
+    referenced[faces.reshape(-1)] = True
+    survivors = np.flatnonzero(referenced)
+    if survivors.shape[0] == vertices.shape[0]:
+        return vertices, faces, dict(extras or {})
+
+    remap = np.zeros(vertices.shape[0], dtype=np.uint32)
+    remap[survivors] = np.arange(survivors.shape[0], dtype=np.uint32)
+    compact_faces = remap[faces]
+    compact_extras = {
+        key: arr[survivors] if arr is not None else None
+        for key, arr in (extras or {}).items()
+    }
+    return vertices[survivors], compact_faces, compact_extras
