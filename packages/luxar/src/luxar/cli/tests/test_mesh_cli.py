@@ -29,6 +29,7 @@ from luxar.mesh.interop import MESH_FORMATS
 from luxar.mesh.interop.tests._synthetic import (
     SUFFIXES,
     WRITERS,
+    GroundTruth,
     make_ground_truth,
     write_gsplat_ply,
     write_ply_binary,
@@ -145,6 +146,44 @@ class TestMeshImport:
         assert dimensions["dimensions"][4]["unit"] == "index"
         assert dimensions["dimensions"][4]["range"] == [0.0, 2.0]
         assert dimensions["dimensions"][4]["step"] == 1.0
+
+    def test_directory_pattern_rebases_heterogeneous_ply_meshes(
+        self, tmp_path: Path
+    ) -> None:
+        source = tmp_path / "frames"
+        source.mkdir()
+        larger = GroundTruth(
+            vertices=np.vstack((GT.vertices, [[2.0, 0.0, 0.0]])).astype(np.float32),
+            faces=np.vstack((GT.faces, [[0, 1, 4]])).astype(np.uint32),
+            normals=np.vstack((GT.normals, [[1.0, 0.0, 0.0]])).astype(np.float32),
+            colors=np.vstack((GT.colors, [[255, 0, 255]])).astype(np.uint8),
+        )
+        write_ply_binary(source / "surface-T0001.ply", GT)
+        write_ply_binary(source / "surface-T0002.ply", larger)
+        out = tmp_path / "frames.luxar.zarr"
+
+        result = runner.invoke(
+            app,
+            [
+                "mesh",
+                "import",
+                str(source),
+                str(out),
+                "--pattern",
+                "*.ply",
+                "--no-center",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+
+        node = LuxarScene.load(out).get_mesh("mesh")
+        assert node.vertices.shape == (9, 4)
+        first_faces = node.faces[: GT.faces.shape[0]]
+        second_faces = node.faces[GT.faces.shape[0] :]
+        assert int(first_faces.min()) == 0
+        assert int(first_faces.max()) == 3
+        assert int(second_faces.min()) == 4
+        assert int(second_faces.max()) == 8
 
     def test_centering_is_on_by_default_and_can_be_turned_off(
         self, fixtures: dict[str, Path], tmp_path: Path
