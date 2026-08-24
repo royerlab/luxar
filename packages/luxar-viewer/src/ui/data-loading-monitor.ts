@@ -26,6 +26,7 @@ import type {
   LODProgressState,
   DrawOrderProvider,
   NodeDrawOrder,
+  MemoryMetrics,
 } from '../types/data-monitor-types';
 
 import { aggregateCacheMetrics } from './data-loading-monitor/metrics/cache';
@@ -63,7 +64,6 @@ import {
   renderMemoryContent,
   calculateReuseRate,
   getReuseRateColorClass,
-  type MemoryMetrics,
 } from './data-loading-monitor/templates/memory';
 import { renderInsightsContent } from './data-loading-monitor/templates/insights';
 import {

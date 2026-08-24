@@ -2,21 +2,13 @@
  * Memory-tab templates and reuse-rate helpers.
  */
 
-// Memory-metrics contracts live in `types/data-monitor-types` so the data
-// layer's SceneLoaderMonitorPort can reference them precisely. Re-exported
-// here for existing UI template callers; the local `import type` is needed
-// because other functions in this file reference these types directly.
 import type {
-  GPUPoolTypeStats,
   GPUPoolStats,
-  AccumulatorStats,
   MemoryMetrics,
 } from '../../../types/data-monitor-types';
 import { POOLED_GEOMETRY_TYPES } from '../../../types/data-monitor-types';
 import { formatNumber } from './format';
 import { getColorClass } from './primitives';
-
-export type { GPUPoolTypeStats, GPUPoolStats, AccumulatorStats, MemoryMetrics };
 
 /**
  * Helper to calculate reuse rate percentage

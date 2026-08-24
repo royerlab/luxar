@@ -5,8 +5,12 @@
  * for optimization. Detects common issues and suggests solutions.
  */
 
-import type { MonitorEvent, Recommendation, LoaderMetrics } from '../../types/data-monitor-types';
-import type { MemoryMetrics } from './templates/memory';
+import type {
+  MonitorEvent,
+  Recommendation,
+  LoaderMetrics,
+  MemoryMetrics,
+} from '../../types/data-monitor-types';
 import { config } from '../../config';
 import { POOLED_GEOMETRY_TYPES } from '../../types/data-monitor-types';
 
