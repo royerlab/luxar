@@ -247,10 +247,12 @@ jobs:
   # GitHub-hosted. (Re-run ALL jobs, not just failed ones — "re-run failed"
   # reuses the previous pick-runner output.)
   #
-  # On a healthy box the routed jobs are picked up in seconds and this exits
-  # immediately, so its hosted-minutes cost is negligible. Every failure of its
-  # own plumbing (jobs API blip, unreadable heartbeat variable) fails toward
-  # NOT cancelling — the watchdog must never take down a healthy run.
+  # On push/nightly, max-parallel deliberately holds one Python leg queued
+  # while two Python legs and TypeScript occupy the three slots. The watchdog
+  # stays alive until a slot frees, spending hosted minutes to keep that queued
+  # leg covered. Every failure of its own plumbing (jobs API blip, unreadable
+  # heartbeat variable) fails toward NOT cancelling — the watchdog must never
+  # take down a healthy run.
   queue-watchdog:
     needs: pick-runner
     if: needs.pick-runner.outputs.label == 'obsidian'
@@ -268,8 +270,8 @@ jobs:
         run: |
           # Self-bounded below the job timeout. If jobs are STILL queued when
           # the window closes but the heartbeat stayed fresh the whole time,
-          # the box is busy, not dead (5 slots; 6 obsidian-routed test jobs on a
-          # push or the nightly, 4 on a PR — and a merge landing during the
+          # the box is busy, not dead (3 slots; 4 obsidian-routed test jobs on a
+          # push or the nightly, 2 on a PR — and a merge landing during the
           # nightly now queues both sets at once, since the two no longer cancel
           # each other — draining) — leave the run alone.
           end=$(( $(date +%s) + 25 * 60 ))
@@ -403,6 +405,12 @@ jobs:
       # siblings on the first red leg, losing precisely the per-version information
       # you need when the legs genuinely differ.
       fail-fast: false
+      # With the obsidian fleet size documented by queue-watchdog, keep one
+      # slot available so `typescript-tests` starts immediately rather than
+      # queueing behind the third Python leg. PRs have one Python leg and are
+      # unaffected; push/nightly runs execute two legs, then the third. Keep the
+      # GitHub-hosted fallback elastic: its matrix legs run on separate VMs.
+      max-parallel: ${{ needs.pick-runner.outputs.label == 'obsidian' && 2 || 3 }}
       matrix:
         # FLOOR on every PR, floor + NEWEST on push-to-dev and the nightly.
         #
@@ -421,7 +429,8 @@ jobs:
         # "declared" and "tested" cannot drift apart: 3.13 was claimed but never
         # exercised, which is the same species of lie as an untested 3.10 claim.
         # Three legs off-PR is also what this job carried before the floor moved
-        # (3.10/3.11/3.12), so it costs the runner pool nothing new.
+        # (3.10/3.11/3.12). `max-parallel` above controls their fan-out without
+        # weakening the version coverage.
         python-version: ${{ (github.event_name == 'pull_request') && fromJSON('["3.12"]') || fromJSON('["3.12", "3.13", "3.14"]') }}
     env:
       # Pin BLAS/OpenMP to one thread per leg. This suite runs SERIALLY, yet each
@@ -579,8 +588,8 @@ jobs:
     runs-on: ${{ needs.pick-runner.outputs.label || 'ubuntu-latest' }}
     # 60, not 30: same SCHED_IDLE starvation argument as python-tests. Measured
     # at 15.5 min alongside the xdist matrix, so 30 left under 2x — the thinnest
-    # margin of any obsidian-routed job. (release-readiness keeps 30: it runs in
-    # ~1.1 min, so it already has ~27x headroom.)
+    # margin of any obsidian-routed job. release-readiness keeps 30 on its
+    # GitHub-hosted runner, where SCHED_IDLE starvation does not apply.
     timeout-minutes: 60
     defaults:
       run:
@@ -709,11 +718,13 @@ jobs:
         run: pnpm run check:ci
 
   release-readiness:
-    needs: [changes, pick-runner]
+    needs: [changes]
     # Fail-safe fallback to full CI if `changes` fails — see the note on the
     # `changes` job.
     if: ${{ !cancelled() }}
-    runs-on: ${{ needs.pick-runner.outputs.label || 'ubuntu-latest' }}
+    # This one-minute check does not need scarce obsidian capacity and must not
+    # delay the required merge context behind unrelated matrix work.
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
       run:
@@ -798,11 +809,13 @@ jobs:
   # jobs separate prevents their `emptyOutDir` Vite builds from clobbering one
   # another and gives branch protection an unambiguous wheel-viewer signal.
   wheel-viewer:
-    needs: [changes, pick-runner]
+    needs: [changes]
     # Required checks must report explicitly even for docs-only changes, and a
     # failed change detector must fall back to the full build rather than skip.
     if: ${{ !cancelled() }}
-    runs-on: ${{ needs.pick-runner.outputs.label || 'ubuntu-latest' }}
+    # Keep the second one-minute release build off the constrained runner pool
+    # and independent of unrelated matrix jobs.
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
       run:

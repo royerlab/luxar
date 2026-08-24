@@ -29,12 +29,14 @@ workflow still skipped.
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 REPO = Path(__file__).resolve().parents[5]
 WORKFLOW = REPO / ".github/workflows/ci.yml"
@@ -162,7 +164,8 @@ def workflow() -> str:
 
     Read as TEXT on purpose: the patterns live inside single-quoted shell strings
     in a ``run: |`` block, so YAML gives back one opaque script and the literal
-    spelling a maintainer edits is the thing under test.
+    spelling a maintainer edits is the thing under test. Job-graph assertions
+    parse this text as YAML where structure, rather than shell spelling, matters.
     """
     return WORKFLOW.read_text(encoding="utf-8")
 
@@ -329,4 +332,39 @@ def test_the_docs_gate_names_its_own_checker_and_baselines(workflow: str) -> Non
         assert _classifies(pattern, path), (
             f"{path} no longer triggers docs-quality, so a change to the docs "
             "gate's own input would skip the gate"
+        )
+
+
+def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
+    workflow: str,
+) -> None:
+    """Obsidian reserves a TypeScript slot without delaying required checks."""
+    jobs = yaml.safe_load(workflow)["jobs"]
+    max_parallel = re.sub(r"\s+", "", jobs["python-tests"]["strategy"]["max-parallel"])
+    branches = re.fullmatch(
+        r"\$\{\{needs\.pick-runner\.outputs\.label=='obsidian'&&(\d+)\|\|(\d+)\}\}",
+        max_parallel,
+    )
+    assert branches is not None, (
+        "python-tests max-parallel must branch on pick-runner's obsidian label"
+    )
+    obsidian_cap, hosted_cap = map(int, branches.groups())
+    assert obsidian_cap == 2, (
+        "python-tests must leave one of obsidian's three slots for TypeScript"
+    )
+
+    matrix_expression = jobs["python-tests"]["strategy"]["matrix"]["python-version"]
+    matrix_lists = re.findall(r"fromJSON\('([^']+)'\)", matrix_expression)
+    assert matrix_lists, "python-tests must declare its event-specific version matrices"
+    largest_matrix_size = max(len(json.loads(matrix)) for matrix in matrix_lists)
+    assert hosted_cap >= largest_matrix_size, (
+        "the hosted max-parallel branch must not throttle the off-PR Python matrix"
+    )
+
+    for hosted_job in ("release-readiness", "wheel-viewer"):
+        assert jobs[hosted_job]["runs-on"] == "ubuntu-latest", (
+            f"{hosted_job} must stay off the capacity-constrained obsidian pool"
+        )
+        assert jobs[hosted_job]["needs"] == ["changes"], (
+            f"{hosted_job} must not wait for unrelated runner-selected jobs"
         )

@@ -865,9 +865,12 @@ on the box. So the off-PR set is exactly the set of versions the wheel's
 classifiers advertise — "declared" and "tested" are kept identical by
 construction, because a claimed-but-never-exercised version is the same species of
 lie as an untested 3.10 claim would be. Finding a break within 24h is the trade
-against spending three legs on every PR, on a box with five self-hosted slots. (If
-newer interpreters ever become deliberately unsupported, the honest fix is a
-`requires-python` upper bound, not a quiet single-leg matrix.)
+against spending three legs on every PR, on a box with three self-hosted slots.
+On obsidian, `max-parallel: 2` starts two Python legs while reserving the third
+slot for `typescript-tests`; the final Python leg follows, while the short
+`release-readiness` and `wheel-viewer` checks run independently on GitHub-hosted
+runners. (If newer interpreters ever become deliberately unsupported, the honest
+fix is a `requires-python` upper bound, not a quiet single-leg matrix.)
 
 This is also why the version-equality assertion in the job matters: it proves each
 leg really ran the interpreter it claims, rather than whatever pipx picked — the
