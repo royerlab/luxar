@@ -606,12 +606,13 @@ def test_a_partial_sidecar_entry_renders_absent_fields(gen: Any) -> None:
     (row,) = gen._dataset_rows(
         "ds",
         manifest["datasets"]["ds"],
-        {"ds/a.gsplats.zarr.zip": {"n_splats": 7}},
+        {"ds/a.gsplats.zarr.zip": {"n_splats": 7, "source_bytes": "2048"}},
     )
 
     assert row["splats"] == "7"
     assert row["topology"] == gen._ABSENT
     assert row["psnr"] == gen._ABSENT
+    assert row["vs_raw"] == gen._ABSENT
 
 
 def test_load_characteristics_skips_non_object_entries(
