@@ -739,7 +739,17 @@ omit = [
     "*/tests/*",                              # test code, not shipped logic
     "*/__init__.py",                          # re-export shims
     "*/demos/*",                              # demo scripts (import-smoke-tested; main() bodies aren't a coverage target)
-    "*/utils/demos.py",                       # demo path/registry helpers
+    "*/utils/bundles.py",                     # demo support helpers split from the former demos.py
+    "*/utils/cache.py",
+    "*/utils/colors.py",
+    "*/utils/device.py",
+    "*/utils/flags.py",
+    "*/utils/lfs.py",
+    "*/utils/payload_agreement.py",
+    "*/utils/provenance.py",
+    "*/utils/scenes.py",
+    "*/utils/viewer.py",
+    "*/utils/zip_safety.py",
     "*/gsplats/demos/*",                      # research demos (run-on-import; compile-smoke-tested only)
     "*/gsplats/models/gsplats/cuda/*",        # hardware-gated CUDA extension
     "*/gsplats/models/gsplats/metal/*",       # hardware-gated Metal extension
@@ -795,13 +805,13 @@ forbidden_modules = ["luxar.gsplats", "luxar.demos", "luxar.cli"]
 # Direct edges only: utils legitimately reaches gsplats through luxar.io and
 # luxar.typing_utils, which is the layering working rather than a back-edge.
 allow_indirect_imports = true
-# The four remaining production back-edges live in the demos.py/data_fetch.py
-# cluster that #1307 moves together; drop each exception as that lands.
+# The four remaining production back-edges live in the split demo-support
+# modules and data_fetch.py; drop each exception when those dependencies move.
 ignore_imports = [
     "luxar.utils.tests.** -> luxar.**",
-    "luxar.utils.demos -> luxar.gsplats.utils.device",
-    "luxar.utils.demos -> luxar.gsplats.gsplat_data",
-    "luxar.utils.demos -> luxar.demos.demo_lorenz",
+    "luxar.utils.device -> luxar.gsplats.utils.device",
+    "luxar.utils.bundles -> luxar.gsplats.gsplat_data",
+    "luxar.utils.scenes -> luxar.demos.demo_lorenz",
     "luxar.utils.data_fetch -> luxar.gsplats.gsplat_data",
 ]
 

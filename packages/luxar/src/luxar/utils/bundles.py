@@ -299,7 +299,7 @@ def _bundle_member_for(
         except ValueError:
             continue
         if member_path.name == requested_path.name:
-            return member, requested_path
+            return member, requested_path  # type: ignore[return-value]
     raise BundleMemberNotFound(
         f"{fname} not found in bundle {bundle_name}. Available: {safe_members[:5]}..."
     )
