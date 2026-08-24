@@ -614,7 +614,7 @@ _VTK_NS = "http://www.kitware.com/vtk"
 #: (mode, compressed, header_type, big_endian) — the arms of the VTP encoding matrix.
 #:
 #: Every combination is a file a real writer emits: ParaView defaults to appended-raw,
-#: meshio and PyVista write inline base64 (`format="binary"`), VTK ≥ 9 defaults to a
+#: PyVista writes inline base64 (`format="binary"`), VTK ≥ 9 defaults to a
 #: UInt64 header, and legacy files are UInt32. Big-endian is synthetic — no common
 #: writer emits it today — but the format allows it and `byte_order=` is a one-line
 #: thing to ignore.
