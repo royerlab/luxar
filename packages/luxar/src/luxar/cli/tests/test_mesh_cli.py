@@ -32,6 +32,7 @@ from luxar.mesh.interop.tests._synthetic import (
     make_ground_truth,
     write_gsplat_ply,
     write_ply_binary,
+    write_ply_orphan_vertices,
     write_stl_binary,
 )
 
@@ -168,6 +169,47 @@ class TestMeshImport:
         mid = (cv.min(axis=0) + cv.max(axis=0)) / 2
         assert abs(float(mid.max())) < 1e-5
         assert float(rv.min()) == pytest.approx(0.0, abs=1e-6)
+
+    def test_centering_ignores_vertices_outside_the_surface(
+        self, tmp_path: Path
+    ) -> None:
+        source = tmp_path / "orphan.ply"
+        output = tmp_path / "orphan.luxar.zarr"
+        write_ply_orphan_vertices(source)
+
+        result = runner.invoke(app, ["mesh", "import", str(source), str(output)])
+
+        assert result.exit_code == 0, result.stdout
+        vertices = LuxarScene.load(output).get_mesh("mesh").vertices
+        assert vertices.shape == (3, 3)
+        np.testing.assert_allclose(
+            (vertices.min(axis=0) + vertices.max(axis=0)) / 2,
+            [0.0, 0.0, 0.0],
+            atol=1e-6,
+        )
+        assert float(vertices.max() - vertices.min()) == pytest.approx(1.0)
+
+    def test_no_weld_keeps_vertices_outside_the_surface(self, tmp_path: Path) -> None:
+        source = tmp_path / "orphan.ply"
+        output = tmp_path / "orphan.luxar.zarr"
+        write_ply_orphan_vertices(source)
+
+        result = runner.invoke(
+            app,
+            [
+                "mesh",
+                "import",
+                str(source),
+                str(output),
+                "--no-weld",
+                "--no-center",
+            ],
+        )
+
+        assert result.exit_code == 0, result.stdout
+        vertices = LuxarScene.load(output).get_mesh("mesh").vertices
+        assert vertices.shape == (5, 3)
+        assert float(vertices.max()) == 200.0
 
     def test_scale_multiplies_the_extent(
         self, fixtures: dict[str, Path], tmp_path: Path

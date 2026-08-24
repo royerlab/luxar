@@ -3,7 +3,7 @@
  *
  * This file runs BEFORE any tests and verifies pre-conditions:
  * 1. Servers can be reached, and belong to THIS checkout
- * 2. Required example datasets exist (warn — many specs do not need them)
+ * 2. Example datasets are fresh (fail) and required datasets exist (warn)
  * 3. Generated zarr fixtures exist, are complete, and are served (throw — 19 specs
  *    hard-depend on them)
  * 4. Basic environment checks
@@ -30,6 +30,7 @@ import {
   isGeneratedFixtureComplete,
   parseGeneratedFixtureNames,
 } from '../../../tools/fixture-manifest';
+import { checkExampleFixtureFreshness } from '../../../tools/example-fixture-freshness';
 import { e2eWorkerPlan, formatE2EParallelismStamp } from '../../../tools/e2e-workers';
 
 // `package.json` declares `"type": "module"`, so the CommonJS `__dirname`
@@ -160,6 +161,21 @@ export default async function globalSetup(config: FullConfig) {
     // (e.g., basic-rendering, viewer-initialization, test-fixtures, geometry-types)
   } else {
     console.log(`✅ Examples directory found: ${examplesDir}`);
+
+    const freshness = checkExampleFixtureFreshness(projectRoot);
+    if (freshness.status === 'stale') {
+      throw new Error(
+        'Example datasets are stale. Run "make run-examples" from the repository root.'
+      );
+    }
+    if (freshness.status === 'unavailable') {
+      hasDatasetWarnings = true;
+      console.warn('⚠️  Could not run the example fixture freshness checker.');
+      if (freshness.detail) console.warn(`   ${freshness.detail}`);
+      console.warn('   Continuing with presence checks only.\n');
+    } else {
+      console.log('✅ Example datasets match the current fixture producer');
+    }
 
     // Check 2: Verify required datasets exist locally and through the HTTP server.
     const missingDatasets: string[] = [];

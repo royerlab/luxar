@@ -17,7 +17,7 @@ bar with `xml.etree` + `base64` + `zlib`.
 | PLY | `.ply` | ascii, binary LE **and** binary BE; faces as `property list`; optional `nx/ny/nz` normals and `red/green/blue[/alpha]` colours |
 | OBJ | `.obj` | 1-based **and** negative indices; polygons fan-triangulated; `v x y z r g b` vertex colours; materials ignored |
 | STL | `.stl` | ascii and binary; always welded (STL is a triangle soup); per-facet normals dropped |
-| VTK XML PolyData | `.vtp` | `ascii` / inline base64 (`binary`) / appended `raw` **and** `base64`; `vtkZLibDataCompressor`; `UInt32` and `UInt64` headers; either byte order; `Polys` (fan-triangulated) and `Strips`; `Verts`/`Lines` and per-cell `CellData` dropped; `PointData` normals and colours; several `<Piece>`s concatenated into one surface; XML namespaces, prefixed or default |
+| VTK XML PolyData | `.vtp` | `ascii` / inline base64 (`binary`) / appended `raw` **and** `base64`; `vtkZLibDataCompressor`; `UInt32` and `UInt64` headers; either byte order; `Polys` (fan-triangulated) and `Strips`; `Verts`/`Lines` and per-cell `CellData` dropped, along with any points only they referenced; `PointData` normals and colours; several `<Piece>`s concatenated into one surface; XML namespaces, prefixed or default |
 | glTF 2.0 | `.gltf`, `.glb` | GLB chunks, external and data-URI buffers, interleaved accessors (`byteStride`), full node-transform composition, `COLOR_0` |
 
 ## What the readers normalize, and why
@@ -37,6 +37,9 @@ bar with `xml.etree` + `base64` + `zlib`.
   VTP triangle *strips* are triangulated separately, with the alternate-winding flip a
   strip requires, and merged in as ready-made triangles.
 - **Degenerate-face removal.** Welding can collapse a sliver triangle to a line.
+- **Vertex compaction.** After degenerate faces are removed, the default welded import
+  drops vertices no surviving triangle references and remaps every per-vertex attribute
+  with the index buffer. `--no-weld` preserves the reader-produced vertex list instead.
 
 ## Per-format traps that are handled here
 
@@ -120,6 +123,11 @@ bar with `xml.etree` + `base64` + `zlib`.
 
 ## Deliberate omissions
 
+- **Unreferenced vertices are pruned during the default welded import.** Only points
+  referenced by the retained triangle index buffer belong to the imported surface;
+  keeping any others would inflate bounds, camera framing, and the picking ordinal
+  range with geometry nothing draws. `--no-weld` preserves the reader-produced vertex
+  list, including unreferenced points, as its explicit opt-out contract requires.
 - **`gsplats/interop/_ply.py` is not reused.** It rejects `property list` (how a `face`
   element declares its indices) and everything but binary-LE. Generalizing it would put
   list handling and three format branches into a module whose only other consumer is a

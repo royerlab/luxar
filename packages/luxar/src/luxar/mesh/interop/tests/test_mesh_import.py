@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 from .._stl import is_binary_stl
-from .._weld import weld_vertices
+from .._weld import prune_unreferenced_vertices, weld_vertices
 from ..mesh_import import (
     MESH_FORMATS,
     TriangleMesh,
@@ -55,6 +55,7 @@ from ._synthetic import (
     write_ply_binary,
     write_ply_crease,
     write_ply_face_extras,
+    write_ply_orphan_vertices,
     write_ply_quads,
     write_ply_truncated_ascii,
     write_stl_ascii,
@@ -142,6 +143,49 @@ class TestReaderParity:
         write_stl_binary(path, GT)
         assert import_mesh(path, weld=False).n_vertices == 12  # 4 faces × 3 corners
         assert import_mesh(path, weld=True).n_vertices == 4
+
+    def test_welding_prunes_vertices_outside_the_surviving_surface(
+        self, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "orphan.ply"
+        write_ply_orphan_vertices(path)
+
+        mesh = import_mesh(path)
+
+        assert mesh.n_vertices == 3
+        assert mesh.n_faces == 1
+        assert {tuple(vertex) for vertex in mesh.vertices} == {
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+        }
+        assert float(mesh.vertices.max()) == 1.0
+        assert int(mesh.faces.max()) == 2
+        assert mesh.normals is not None
+        assert mesh.colors is not None
+        expected = {
+            (0.0, 0.0, 0.0): ((0.0, 1.0, 0.0), (40, 50, 60)),
+            (1.0, 0.0, 0.0): ((0.0, 0.0, 1.0), (70, 80, 90)),
+            (0.0, 1.0, 0.0): ((-1.0, 0.0, 0.0), (100, 110, 120)),
+        }
+        for vertex, normal, color in zip(mesh.vertices, mesh.normals, mesh.colors):
+            expected_normal, expected_color = expected[tuple(vertex)]
+            np.testing.assert_array_equal(normal, expected_normal)
+            np.testing.assert_array_equal(color, expected_color)
+
+    def test_weld_false_keeps_vertices_outside_the_surface(
+        self, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "orphan.ply"
+        write_ply_orphan_vertices(path)
+
+        mesh = import_mesh(path, weld=False)
+
+        assert mesh.n_vertices == 5
+        assert mesh.n_faces == 1
+        assert float(mesh.vertices.max()) == 200.0
+        assert mesh.normals is not None and mesh.normals.shape == (5, 3)
+        assert mesh.colors is not None and mesh.colors.shape == (5, 3)
 
 
 class TestPly:
@@ -837,8 +881,13 @@ class TestVtp:
         plain, mixed = tmp_path / "plain.vtp", tmp_path / "mixed.vtp"
         write_vtp(plain, GT)
         write_vtp(mixed, GT, with_verts_and_lines=True)
-        assert import_mesh(mixed).n_faces == import_mesh(plain).n_faces == 4
-        assert _sorted_face_set(import_mesh(mixed)) == EXPECTED_FACES
+        plain_mesh = import_mesh(plain)
+        mixed_mesh = import_mesh(mixed)
+        assert mixed_mesh.n_faces == plain_mesh.n_faces == 4
+        assert mixed_mesh.n_vertices == plain_mesh.n_vertices == len(GT.vertices)
+        assert _sorted_face_set(mixed_mesh) == EXPECTED_FACES
+        np.testing.assert_array_equal(mixed_mesh.vertices.min(axis=0), [0, 0, 0])
+        np.testing.assert_array_equal(mixed_mesh.vertices.max(axis=0), [1, 1, 1])
 
     def test_a_surface_less_polydata_is_a_clean_error(self, tmp_path: Path) -> None:
         p = tmp_path / "cloud.vtp"
@@ -1960,6 +2009,20 @@ class TestWelding:
     can pass vacuously: keying on position alone passes ``hard=False`` and fails
     ``hard=True``; refusing to merge anything does the reverse.
     """
+
+    def test_pruning_an_already_compact_mesh_reuses_its_arrays(self) -> None:
+        vertices = np.ascontiguousarray(GT.vertices, dtype=np.float32)
+        faces = np.ascontiguousarray(GT.faces, dtype=np.uint32)
+        normals = np.ascontiguousarray(GT.normals, dtype=np.float32)
+
+        compact_vertices, compact_faces, extras = prune_unreferenced_vertices(
+            vertices, faces, extras={"normals": normals, "colors": None}
+        )
+
+        assert compact_vertices is vertices
+        assert compact_faces is faces
+        assert extras["normals"] is normals
+        assert extras["colors"] is None
 
     def test_a_crease_survives_welding(self, tmp_path: Path) -> None:
         path = tmp_path / "crease.ply"

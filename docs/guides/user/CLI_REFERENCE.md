@@ -368,7 +368,9 @@ and makes picking report a different vertex per triangle for the same corner. We
 merges two vertices only when their position *and* their normals and colours agree, so
 a hard edge — which every modelling package authors as coincident positions with
 different normals — survives the import instead of being flattened. Pass `--no-weld` to
-keep the file's exact vertex list.
+keep the reader-produced vertex list. The default welded path also removes vertices no
+surviving triangle references, so non-surface points cannot inflate the scene bounds or
+picking ordinal range.
 
 `.vtp` is VTK XML PolyData — what ParaView, VTK and PyVista write for a surface,
 and the usual output of a marching-cubes isosurface. Every encoding the format allows is
