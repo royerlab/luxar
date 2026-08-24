@@ -1,5 +1,5 @@
 import { test, expect, type Page } from './fixtures';
-import { waitForLuxarReady, waitForNextRender } from './helpers';
+import { waitForLuxarReady } from './helpers';
 
 const POINTS_FIXTURE =
   'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_points_blending_modes.luxar.zarr';
@@ -46,6 +46,26 @@ async function meanCanvasLinearLuminance(page: Page): Promise<number> {
   }, dataUrl);
 }
 
+async function stableCanvasLinearLuminance(page: Page, label: string): Promise<number> {
+  const captures: number[] = [];
+  let stableCaptures = 0;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    await page.evaluate(() => (window as any).__luxarDebug.renderOnce?.());
+    await page.waitForTimeout(attempt === 0 ? 100 : 1000);
+    const current = await meanCanvasLinearLuminance(page);
+    captures.push(current);
+    const previous = captures.at(-2);
+    if (previous === undefined) {
+      stableCaptures = 1;
+      continue;
+    }
+    const tolerance = Math.max(1e-8, Math.max(Math.abs(previous), Math.abs(current)) * 1e-4);
+    stableCaptures = Math.abs(current - previous) <= tolerance ? stableCaptures + 1 : 1;
+    if (stableCaptures >= 3) return current;
+  }
+  throw new Error(`${label}: canvas luminance did not settle (${captures.join(', ')})`);
+}
+
 async function isolateOpaqueGeometry(page: Page, nodeType: 'points' | 'lines'): Promise<number> {
   return page.evaluate((type) => {
     let opaqueCount = 0;
@@ -84,16 +104,18 @@ async function setOpaqueOpacity(page: Page, nodeType: 'points' | 'lines', opacit
   );
 }
 
-async function setOpaqueVisible(page: Page, nodeType: 'points' | 'lines', visible: boolean) {
+async function setBlendingModeVisible(
+  page: Page,
+  nodeType: 'points' | 'lines',
+  blendingMode: 'opaque' | 'luminous',
+  visible: boolean
+) {
   return page.evaluate(
-    ({ type, value }) => {
+    ({ type, mode, value }) => {
       let updated = 0;
       const debug = (window as any).__luxarDebug;
       debug.scene.traverse((object: any) => {
-        if (
-          object.userData?.nodeType !== type ||
-          object.material?.userData?.blendingMode !== 'opaque'
-        )
+        if (object.userData?.nodeType !== type || object.material?.userData?.blendingMode !== mode)
           return;
         object.visible = value;
         updated++;
@@ -101,7 +123,7 @@ async function setOpaqueVisible(page: Page, nodeType: 'points' | 'lines', visibl
       debug.renderOnce?.();
       return updated;
     },
-    { type: nodeType, value: visible }
+    { type: nodeType, mode: blendingMode, value: visible }
   );
 }
 
@@ -222,31 +244,49 @@ for (const [nodeType, fixture] of [
     );
 
     expect(await isolateOpaqueGeometry(page, nodeType)).toBeGreaterThan(0);
-    await waitForNextRender(page, 2);
-    const full = await meanCanvasLinearLuminance(page);
+    const full = await stableCanvasLinearLuminance(page, `${nodeType}: full opaque capture`);
 
-    expect(await setOpaqueVisible(page, nodeType, false)).toBeGreaterThan(0);
-    await waitForNextRender(page, 2);
-    const withoutOpaque = await meanCanvasLinearLuminance(page);
+    expect(await setBlendingModeVisible(page, nodeType, 'opaque', false)).toBeGreaterThan(0);
+    const withoutOpaque = await stableCanvasLinearLuminance(
+      page,
+      `${nodeType}: first background capture`
+    );
 
-    expect(await setOpaqueVisible(page, nodeType, true)).toBeGreaterThan(0);
+    expect(await setBlendingModeVisible(page, nodeType, 'opaque', true)).toBeGreaterThan(0);
     expect(await setOpaqueOpacity(page, nodeType, 0.1)).toBeGreaterThan(0);
-    await waitForNextRender(page, 2);
-    const dimmed = await meanCanvasLinearLuminance(page);
-    // Scene decorations remain visible when the opaque node is hidden; compare only its signal.
-    const fullSignal = full - withoutOpaque;
-    const dimmedSignal = dimmed - withoutOpaque;
-    const dimmedRatio = dimmedSignal / fullSignal;
+    const dimmed = await stableCanvasLinearLuminance(page, `${nodeType}: dimmed opaque capture`);
 
-    expect(fullSignal, `${nodeType}: isolated opaque geometry must render`).toBeGreaterThan(1e-5);
+    expect(await setBlendingModeVisible(page, nodeType, 'opaque', false)).toBeGreaterThan(0);
+    const withoutOpaqueAfter = await stableCanvasLinearLuminance(
+      page,
+      `${nodeType}: second background capture`
+    );
+    const backgroundDrift = Math.abs(withoutOpaqueAfter - withoutOpaque);
+    const backgroundTolerance = Math.max(1e-8, withoutOpaque * 1e-3);
+    expect(
+      backgroundDrift,
+      `${nodeType}: background changed between captures (before=${withoutOpaque}, after=${withoutOpaqueAfter}, drift=${backgroundDrift})`
+    ).toBeLessThanOrEqual(backgroundTolerance);
+
+    // The clear-colour floor remains when the opaque node is hidden; compare only its signal.
+    const background = (withoutOpaque + withoutOpaqueAfter) / 2;
+    const fullSignal = full - background;
+    const dimmedSignal = dimmed - background;
+    const dimmedRatio = dimmedSignal / fullSignal;
+    const measurements = `full=${full}, withoutOpaque=${withoutOpaque}, withoutOpaqueAfter=${withoutOpaqueAfter}, dimmed=${dimmed}, fullSignal=${fullSignal}, dimmedSignal=${dimmedSignal}, ratio=${dimmedRatio}`;
+
+    expect(
+      fullSignal,
+      `${nodeType}: isolated opaque geometry must dominate the background; ${measurements}`
+    ).toBeGreaterThan(Math.max(1e-4, background * 10));
     expect(
       dimmedRatio,
-      `${nodeType}: opaque framebuffer output must retain measurable fragment alpha`
-    ).toBeGreaterThan(0.08);
+      `${nodeType}: opaque framebuffer output must retain measurable fragment alpha; ${measurements}`
+    ).toBeGreaterThan(0.07);
     expect(
       dimmedRatio,
-      `${nodeType}: opaque framebuffer output must dim with fragment alpha`
-    ).toBeLessThan(0.18);
+      `${nodeType}: opaque framebuffer output must dim with fragment alpha; ${measurements}`
+    ).toBeLessThan(0.15);
   });
 
   test(`dim opaque ${nodeType} do not erase luminous geometry behind`, async ({ page }) => {
@@ -277,19 +317,47 @@ for (const [nodeType, fixture] of [
       overlap.projectedBoundsIntersect,
       `${nodeType}: opaque and luminous projected bounds must overlap`
     ).toBe(true);
-    expect(await setOpaqueVisible(page, nodeType, false)).toBeGreaterThan(0);
-    await waitForNextRender(page, 2);
-    const luminousOnly = await meanCanvasLinearLuminance(page);
+    expect(await setBlendingModeVisible(page, nodeType, 'opaque', false)).toBeGreaterThan(0);
+    expect(await setBlendingModeVisible(page, nodeType, 'luminous', false)).toBeGreaterThan(0);
+    const background = await stableCanvasLinearLuminance(
+      page,
+      `${nodeType}: first luminous background capture`
+    );
 
-    expect(await setOpaqueVisible(page, nodeType, true)).toBeGreaterThan(0);
+    expect(await setBlendingModeVisible(page, nodeType, 'luminous', true)).toBeGreaterThan(0);
+    const luminousOnly = await stableCanvasLinearLuminance(page, `${nodeType}: luminous capture`);
+
+    expect(await setBlendingModeVisible(page, nodeType, 'opaque', true)).toBeGreaterThan(0);
     expect(await setOpaqueOpacity(page, nodeType, 0.00005)).toBeGreaterThan(0);
-    await waitForNextRender(page, 2);
-    const withDimOpaque = await meanCanvasLinearLuminance(page);
+    const withDimOpaque = await stableCanvasLinearLuminance(
+      page,
+      `${nodeType}: dim opaque over luminous capture`
+    );
 
-    expect(luminousOnly, `${nodeType}: luminous geometry behind must render`).toBeGreaterThan(1e-5);
+    expect(await setBlendingModeVisible(page, nodeType, 'opaque', false)).toBeGreaterThan(0);
+    expect(await setBlendingModeVisible(page, nodeType, 'luminous', false)).toBeGreaterThan(0);
+    const backgroundAfter = await stableCanvasLinearLuminance(
+      page,
+      `${nodeType}: second luminous background capture`
+    );
+    const backgroundDrift = Math.abs(backgroundAfter - background);
     expect(
-      withDimOpaque / luminousOnly,
-      `${nodeType}: negligible opaque contributions must not stamp the depth buffer`
+      backgroundDrift,
+      `${nodeType}: luminous background changed between captures (before=${background}, after=${backgroundAfter}, drift=${backgroundDrift})`
+    ).toBeLessThanOrEqual(Math.max(1e-8, background * 1e-3));
+
+    const averageBackground = (background + backgroundAfter) / 2;
+    const luminousSignal = luminousOnly - averageBackground;
+    const withDimOpaqueSignal = withDimOpaque - averageBackground;
+    const visibleRatio = withDimOpaqueSignal / luminousSignal;
+    const measurements = `background=${background}, backgroundAfter=${backgroundAfter}, luminousOnly=${luminousOnly}, withDimOpaque=${withDimOpaque}, luminousSignal=${luminousSignal}, withDimOpaqueSignal=${withDimOpaqueSignal}, ratio=${visibleRatio}`;
+    expect(
+      luminousSignal,
+      `${nodeType}: luminous geometry behind must dominate the background; ${measurements}`
+    ).toBeGreaterThan(Math.max(1e-4, averageBackground * 5));
+    expect(
+      visibleRatio,
+      `${nodeType}: negligible opaque contributions must not stamp the depth buffer; ${measurements}`
     ).toBeGreaterThan(0.9);
   });
 }
