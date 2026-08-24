@@ -191,9 +191,18 @@ hatch run python scripts/check_open_issue_pr.py <issue-number>
 ```
 
 Exit status 1 means the issue already has an open PR. Continue that work or
-coordinate on the existing PR instead of opening another one. This check uses
-GitHub's closing-issue references, not a local branch list, so it also sees work
-created from another checkout or host.
+coordinate on the existing PR instead of opening another one. Exit status 3
+means the GitHub query failed, so do not treat it as either claimed or
+unclaimed. This check uses GitHub's closing-issue references, not a local branch
+list, so it also sees work created from another checkout or host. It is a manual
+coordination convention, not a CI gate.
+
+Re-run the check immediately before `gh pr create` to close the window where
+another PR can open while work is in progress. When checking work already
+attached to a PR, pass `--exclude-pr <your-pr>` so it does not match itself.
+Use `--loose` for an advisory list of open PR titles or bodies that mention the
+issue without declaring that they close it; those mentions do not change the
+exit status.
 
 If duplicate PRs still exist, do not select or close one by age alone. Choose
 the survivor by completeness and discussion quality, then inventory both
