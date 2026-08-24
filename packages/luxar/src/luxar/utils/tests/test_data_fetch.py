@@ -169,9 +169,8 @@ def test_present_zenodo_files_have_checksums():
                 assert len(hosted) == 64 and all(
                     c in "0123456789abcdef" for c in hosted
                 ), f"{name}/{f['name']}: {hosted!r} is not a lowercase hex sha256"
-            # `hosted_bytes` travels with it: a hosted digest without a hosted
-            # size leaves the pre-publish gate comparing the LOCAL size against
-            # the record's, which false-fails on every diverged dataset.
+            # `hosted_bytes` travels with it so the digest and size preserve a
+            # complete description of the hosted artifact as a pair.
             hosted_bytes = f.get("hosted_bytes")
             if hosted_bytes is not None:
                 assert isinstance(hosted_bytes, int) and hosted_bytes > 0, (
@@ -1263,7 +1262,7 @@ def _write_bundle(path: Path, members: dict[str, bytes]) -> None:
             zf.writestr(name, blob)
 
 
-@pytest.mark.parametrize("hosted_mode", ["agree", "diverge"])
+@pytest.mark.parametrize("hosted_mode", ["agree", "diverge", "hosted_only"])
 def test_load_dataset_bundle_verifies_the_outer_zip_then_extracts(
     tmp_path, monkeypatch, hosted_mode
 ):
@@ -1284,7 +1283,8 @@ def test_load_dataset_bundle_verifies_the_outer_zip_then_extracts(
     bundle = lfs_dir / "b.gsplats.zarr.zip"
     _write_bundle(bundle, inner)
     sha = hashlib.sha256(bundle.read_bytes()).hexdigest()
-    hosted_sha = sha if hosted_mode == "agree" else "f" * 64
+    local_sha = None if hosted_mode == "hosted_only" else sha
+    hosted_sha = sha if hosted_mode in {"agree", "hosted_only"} else "f" * 64
 
     manifest = {
         "schema_version": 1,
@@ -1298,9 +1298,9 @@ def test_load_dataset_bundle_verifies_the_outer_zip_then_extracts(
                 "files": [
                     {
                         "name": "b.gsplats.zarr.zip",
-                        "sha256": sha,
                         "hosted_sha256": hosted_sha,
                         "bytes": bundle.stat().st_size,
+                        **({"sha256": local_sha} if local_sha is not None else {}),
                     }
                 ],
             }
@@ -1331,9 +1331,7 @@ def test_load_dataset_bundle_verifies_the_outer_zip_then_extracts(
     # The extracted frames are keyed on the digest that was just verified, not on
     # a (size, mtime) guess a same-size re-upload could reproduce.
     expected_stamp = (
-        f"sha256:{sha}"
-        if hosted_sha == sha
-        else f"sha256:{sha}+{hosted_sha}"
+        f"sha256:{sha}+{hosted_sha}" if hosted_mode == "diverge" else f"sha256:{sha}"
     )
     assert loaded[0][1]["stamp"] == expected_stamp
 
@@ -1639,7 +1637,7 @@ def test_the_download_leg_is_strict_on_the_hosted_digest(fake_repo, monkeypatch)
     )
 
 
-def test_bytes_matching_neither_contract_are_still_quarantined(fake_repo):
+def test_bytes_matching_neither_contract_are_still_quarantined(fake_repo, capsys):
     """Widening acceptance to two digests must not widen it to anything.
 
     The corruption case is what the quarantine exists for, and a two-contract
@@ -1654,9 +1652,13 @@ def test_bytes_matching_neither_contract_are_still_quarantined(fake_repo):
     _corrupt_in_place_preserving_stat(good)
 
     (repaired,) = ensure_dataset(
-        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=True
     )
 
+    out = capsys.readouterr().out
+    assert "SHA256 mismatch" in out
+    assert "Expected hosted:" in out
+    assert "Expected in-repo:" in out
     assert repaired.read_bytes() == b"toy-splat-bytes"
     assert [p.name for p in find_quarantined_files(good)] == [good.name + ".corrupt"]
 
@@ -1717,8 +1719,8 @@ def test_a_hosted_pin_survives_regeneration_when_the_data_is_visible(
     entry = mod.build(committed, prune=False)["datasets"]["gsplats_kidney"]["files"][0]
 
     assert entry["hosted_sha256"] == hosted, "hosted pin lost on regeneration"
-    # The SIZE has to survive too — a digest without its size leaves the
-    # pre-publish gate comparing the local size against the record's.
+    # The SIZE has to survive too so the hosted artifact remains fully
+    # described by a paired digest and size.
     assert entry["hosted_bytes"] == 4242, "hosted size lost on regeneration"
     # The local digest is still re-derived from disk — that is the whole point of
     # the split, and it must not be frozen along with the hosted one.
