@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 import zarr
 
+from luxar import Dimensions, LuxarZarrCompiler
 from luxar.conftest import find_repo_relative_file
 from luxar.io._compiler.finalize.blending_warnings import warn_overlapping_blending
 from luxar.typing_utils.constants import DEFAULT_BLENDING_MODE_BY_GEOMETRY
@@ -24,6 +25,7 @@ def _root(n_dims: int = 3) -> zarr.Group:
                 "range": [0.0, 100.0],
                 "step": 1.0,
                 "display": index < 3,
+                "discrete": index >= 3,
             }
             for index in range(n_dims)
         ]
@@ -113,6 +115,30 @@ def test_default_additive_points_over_opaque_mesh_warns(capsys) -> None:
     assert "blending_mode='luminous'" in output
 
 
+def test_compiler_finalize_reports_default_points_mesh_hazard(
+    tmp_path: Path, capsys
+) -> None:
+    output_path = tmp_path / "scene.luxar.zarr"
+    vertices = np.array(
+        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+        dtype=np.float32,
+    )
+    faces = np.array([[0, 1, 2]], dtype=np.uint32)
+    with LuxarZarrCompiler(output_path) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_points(
+            "points",
+            positions=np.array([[0.1, 0.1, -0.1], [0.2, 0.2, 0.1]], dtype=np.float32),
+        )
+        scene.add_mesh("mesh", vertices, faces)
+
+    output = capsys.readouterr().out
+    assert output.count("mix depth-ignoring and depth-writing geometry") == 1
+    store = zarr.open_group(str(output_path), mode="r")
+    assert "blending_mode" not in store["points"].attrs
+    assert "blending_mode" not in store["mesh"].attrs
+
+
 def test_effective_opacity_and_nearest_blend_setter_drive_depth_writes(capsys) -> None:
     root = _root()
     root.attrs["blending_mode"] = "normal"
@@ -160,6 +186,23 @@ def test_overlapping_sorted_nodes_warn_but_lod_alternatives_do_not(capsys) -> No
     assert "'lod/coarse' (normal) and 'lod/fine' (normal)" not in output
 
 
+def test_partially_overlapping_sorted_nodes_do_not_warn(capsys) -> None:
+    root = _root()
+    _leaf(root, "left", "points", blending_mode="normal")
+    _leaf(
+        root,
+        "right",
+        "gsplats",
+        minimum=[0.5, 0.0, 0.0],
+        maximum=[1.5, 1.0, 1.0],
+        blending_mode="volumetric",
+    )
+
+    warn_overlapping_blending(root)
+
+    assert capsys.readouterr().out == ""
+
+
 def test_slider_separation_suppresses_warning(capsys) -> None:
     root = _root(4)
     _leaf(
@@ -175,6 +218,44 @@ def test_slider_separation_suppresses_warning(capsys) -> None:
         "mesh",
         minimum=[0.0, 0.0, 0.0, 1.0],
         maximum=[1.0, 1.0, 1.0, 1.0],
+    )
+
+    warn_overlapping_blending(root)
+
+    assert capsys.readouterr().out == ""
+
+
+def test_equal_slider_coordinate_remains_co_visible(capsys) -> None:
+    root = _root(4)
+    _leaf(
+        root,
+        "points",
+        "points",
+        minimum=[0.0, 0.0, 0.0, 2.0],
+        maximum=[1.0, 1.0, 1.0, 2.0],
+    )
+    _leaf(
+        root,
+        "mesh",
+        "mesh",
+        minimum=[0.0, 0.0, 0.0, 2.0],
+        maximum=[1.0, 1.0, 1.0, 2.0],
+    )
+
+    warn_overlapping_blending(root)
+
+    assert capsys.readouterr().out.count("⚠️") == 1
+
+
+def test_spatial_boundary_contact_is_not_reported_as_overlap(capsys) -> None:
+    root = _root()
+    _leaf(root, "points", "points", maximum=[1.0, 1.0, 1.0])
+    _leaf(
+        root,
+        "mesh",
+        "mesh",
+        minimum=[1.0, 0.0, 0.0],
+        maximum=[2.0, 1.0, 1.0],
     )
 
     warn_overlapping_blending(root)

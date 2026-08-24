@@ -17,6 +17,7 @@ and the bodies live here so `compiler.py` stays a thin orchestration layer.
 finalize/
 ├── __init__.py          (empty — functions imported directly by module)
 ├── amplitude_window.py  harmonize_gsplat_amplitude_windows()
+├── blending_warnings.py warn_overlapping_blending()
 ├── hashing.py           compute_content_hashes()
 ├── lod_backfill.py      finalize_lod_position_bounds(), finalize_lod_display_types(),
 │                        warn_one_part_partition_anchors()
@@ -290,6 +291,24 @@ is one level's real p99.9, while an `overview` / `adaptive` one is a pooled
 estimate over parts, so the same splats can tone slightly differently depending
 on the topology they were written in (measured 222.34 vs 160.50 on one dataset).
 
+### `blending_warnings.warn_overlapping_blending(store) -> None`
+
+Read-only authoring diagnostics over transform-expanded leaf bounds. Effective
+`blending_mode` uses nearest-setter-wins root→leaf composition; effective
+opacity multiplies down the same chain. Per-type defaults mirror the viewer
+(`additive` for Points/Lines/GSplats, `opaque` for Mesh), and the source-lock
+tests fail if those factories drift.
+
+Two hazards are reported: any positive spatial overlap between an `additive`
+node and a depth-writing node, and containment between two internally sorted,
+depth-testing nodes that do not write depth. The second rule intentionally uses
+containment rather than every partial AABB intersection: an empirical scan of
+the materialized demo/example/fixture corpus found pairwise partial overlap too
+noisy for a warning authors would keep reading. Discrete slider dimensions use
+inclusive interval overlap, while displayed dimensions require positive extent;
+different children of one `kind=lod` group are mutually exclusive and are never
+compared.
+
 ### `validation.prune_childless_wrappers(store) -> None`
 
 Post-order cleanup of empty `kind=partition` and `kind=lod` wrapper chains.
@@ -323,12 +342,13 @@ before the LOD back-fills can aggregate over them. The display-type pass then
 runs before the position-bounds pass (LOD-of-LOD constructions need a resolved
 type before bounds aggregation), the amplitude-window harmonization after
 those, the one-part-anchor warning after all three (it only reads), and
-`compute_content_hashes` runs last so the stamped hashes cover the back-filled
-and corrected attrs.
+the overlapping-blending warning beside it. `compute_content_hashes` runs last
+so the stamped hashes cover the back-filled and corrected attrs.
 
 ```python
 # packages/luxar/src/luxar/io/compiler.py (finalize-time)
 from ._compiler.finalize.amplitude_window import harmonize_gsplat_amplitude_windows
+from ._compiler.finalize.blending_warnings import warn_overlapping_blending
 from ._compiler.finalize.hashing import compute_content_hashes
 from ._compiler.finalize.lod_backfill import (
     finalize_lod_display_types,

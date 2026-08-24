@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import zarr
 from arbol import aprint
 
+from ....core.dimensions import Dimensions
 from ....typing_utils.constants import DEFAULT_BLENDING_MODE_BY_GEOMETRY
 from ..bounds import WorldBoundsLeaf, collect_world_bounds
 
@@ -54,19 +55,38 @@ def _can_coexist(left: _BlendLeaf, right: _BlendLeaf) -> bool:
     )
 
 
-def _intersects(left: WorldBoundsLeaf, right: WorldBoundsLeaf) -> bool:
+def _intersects(
+    left: WorldBoundsLeaf,
+    right: WorldBoundsLeaf,
+    displayed_dimensions: set[int],
+) -> bool:
     dimensions = min(len(left.bounds["min"]), len(right.bounds["min"]))
     if dimensions == 0:
         return False
-    return all(
-        left.bounds["min"][axis] <= right.bounds["max"][axis]
-        and right.bounds["min"][axis] <= left.bounds["max"][axis]
-        for axis in range(dimensions)
-    )
+    for axis in range(dimensions):
+        left_min = left.bounds["min"][axis]
+        left_max = left.bounds["max"][axis]
+        right_min = right.bounds["min"][axis]
+        right_max = right.bounds["max"][axis]
+        if axis in displayed_dimensions:
+            if left_min >= right_max or right_min >= left_max:
+                return False
+        elif left_min > right_max or right_min > left_max:
+            return False
+    return True
 
 
 def _depth_tests(node: _BlendLeaf) -> bool:
     return node.mode != "additive"
+
+
+def _contains(left: WorldBoundsLeaf, right: WorldBoundsLeaf) -> bool:
+    dimensions = min(len(left.bounds["min"]), len(right.bounds["min"]))
+    return dimensions > 0 and all(
+        left.bounds["min"][axis] <= right.bounds["min"][axis]
+        and left.bounds["max"][axis] >= right.bounds["max"][axis]
+        for axis in range(dimensions)
+    )
 
 
 def _depth_writes(node: _BlendLeaf) -> bool:
@@ -83,10 +103,16 @@ def _internally_sorted(node: _BlendLeaf) -> bool:
 
 def warn_overlapping_blending(store: zarr.Group) -> None:
     """Warn once per co-visible overlapping pair with unsafe blend semantics."""
+    if "scene_dimensions" not in store.attrs:
+        return
+    dimensions = Dimensions.from_dict(store.attrs["scene_dimensions"])
+    displayed_dimensions = set(dimensions.displayed[:3])
     leaves = [_effective_leaf(store, leaf) for leaf in collect_world_bounds(store)]
     for index, left in enumerate(leaves):
         for right in leaves[index + 1 :]:
-            if not _can_coexist(left, right) or not _intersects(left.leaf, right.leaf):
+            if not _can_coexist(left, right) or not _intersects(
+                left.leaf, right.leaf, displayed_dimensions
+            ):
                 continue
 
             left_writes = _depth_writes(left)
@@ -111,6 +137,9 @@ def warn_overlapping_blending(store: zarr.Group) -> None:
                 and not right_writes
                 and _internally_sorted(left)
                 and _internally_sorted(right)
+                and (
+                    _contains(left.leaf, right.leaf) or _contains(right.leaf, left.leaf)
+                )
             ):
                 aprint(
                     f"  ⚠️  overlapping depth-sorted nodes '{left.leaf.path}' ({left.mode}) "
