@@ -233,7 +233,8 @@ Stable fingerprints for Python sources that produce Luxar stores.
 
 **Key Functions:**
 - `fingerprint_source_files()`: Hash source paths and contents in stable, boundary-safe order
-- `production_source_fingerprint()`: Cache a stable hash of production Luxar Python sources
+- `fingerprint_production_sources()`: Hash production Luxar Python sources without caching
+- `production_source_fingerprint()`: Cache that production-source hash per package root and process
 - `store_writer_environment()`: Report installed/configured inputs that affect Zarr output
 
 ### `process.py`

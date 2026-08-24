@@ -49,8 +49,10 @@ pnpm install
 pnpm test:generate-fixtures
 ```
 
-`pnpm test` (vitest) regenerates the fixtures automatically; Playwright
-deliberately does not, because the generator takes 1–2 minutes. `pnpm
+`make test-e2e` regenerates stale or incomplete fixtures automatically. Direct
+`pnpm test:e2e` expects the command above first and deliberately does not run the
+1–2 minute generator inside global setup. `pnpm test` (vitest) also regenerates
+the fixtures automatically. `pnpm
 test:e2e:smoke` and `pnpm test:perf:e2e` set `LUXAR_E2E_NO_FIXTURES=1` because
 none of their specs reads a fixture; set it yourself for a one-off run of specs
 you know need none.
