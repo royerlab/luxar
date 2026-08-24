@@ -5,7 +5,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-
 DEMOS_DIR = Path(__file__).resolve().parents[1]
 GENECARDS_LINK = "https://www.genecards.org/card/{hover_key}"
 
