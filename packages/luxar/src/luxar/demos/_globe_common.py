@@ -6,7 +6,7 @@ ocean demo learned to dither its lattice and to sample the texture vectorized,
 and the earthquake demo did not, so the same planet came out visibly worse in
 one of them. These are the shared versions.
 
-The three primitives, and why each is shaped the way it is:
+The four primitives, and why each is shaped the way it is:
 
 ``fibonacci_sphere``
     A golden-angle lattice, because a regular lat/lon grid clusters points at

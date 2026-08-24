@@ -187,7 +187,7 @@ def build_scene() -> Path:
         max_elements=MAX_ELEMENTS_PER_TILE,
         # Streaming ladder for fast first paint (NOT equal-count `n_lods`).
         # Each tile's coarsest additive chunk is ~14k splats — vs the
-        # equal-count 1/6 = ~103k for each of bonsai's two ~620k tiles. First
+        # equal-count 1/4 = ~155k for each of bonsai's two ~620k tiles. First
         # frame decodes ~14k × (tiles in view) instead of the full 1.24M, so the
         # scene shows something almost immediately, then refines by geometric
         # doubling. Energy is heavily front-loaded (the first ~14k already

@@ -149,7 +149,7 @@ R_EARTH_KM: Final = 6371.0
 RADIUS: Final = 100.0  # globe radius in scene units
 
 N_GLOBE: Final = 8_000_000  # jittered Fibonacci-sphere surface points
-GLOBE_RADII: Final = 0.098  # ~1.4x mean point spacing -> a sealed shell
+GLOBE_RADII: Final = 0.098  # ~0.78x mean point spacing -> a sealed shell
 N_SEEDS: Final = 220_000  # streamlines
 N_STEPS: Final = 52  # advection steps per streamline (-> N_STEPS + 1 vertices)
 STEP_KM: Final = 14.0  # arc-length step -> ~730 km ribbons
