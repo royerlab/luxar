@@ -40,17 +40,18 @@ no entry point of its own had every function unreachable and passed vacuously.
 module-level ``def``s for such modules; the two changes only work together.
 
 The set is a DENYLIST on purpose: every ``*.py`` directly under ``demos/``
-*except* :data:`EXCLUDED`. An allowlist keyed on a filename pattern would be
-opt-in, so a future ``demos/_plot_helpers.py`` would escape all seventeen guards
-and reopen the very blind spot this module exists to close.
+*except* :data:`EXCLUDED`, plus every helper in ``demos/_support/`` except its
+barrel. An allowlist keyed on a filename pattern would be opt-in, so a future
+``demos/_plot_helpers.py`` or ``demos/_support/_plot_helpers.py`` would escape
+all seventeen guards and reopen the very blind spot this module exists to close.
 
-The flip side of a denylist: ANY ``*.py`` dropped into ``demos/`` joins the
-guarded set, tracked by git or not. A scratch file such as ``demos/tmp_probe.py``
-with a top-level ``import umap`` therefore turns the suite red (with a message
-that calls it a demo module) where the old ``demo_*.py`` glob would have ignored
-it. That is the intended trade — an untracked module in the package directory is
-importable and can carry the same defects — but put throwaway scripts in
-``delme/`` rather than here.
+The flip side of a denylist: ANY ``*.py`` dropped into ``demos/`` or
+``demos/_support/`` joins the guarded set, tracked by git or not. A scratch file
+such as ``demos/tmp_probe.py`` with a top-level ``import umap`` therefore turns
+the suite red (with a message that calls it a demo module) where the old
+``demo_*.py`` glob would have ignored it. That is the intended trade — an
+untracked module in the package directory is importable and can carry the same
+defects — but put throwaway scripts in ``delme/`` rather than here.
 
 Only two modules are excluded, both because they are infrastructure rather than
 demo code, and one of them would produce a *false* positive:
@@ -93,7 +94,13 @@ EXCLUDED = frozenset({"__init__.py", "_dependencies.py"})
 #: (or breaking the discovery below) fails loudly instead of quietly shrinking
 #: the guarded set — the failure mode this module was written to prevent.
 REQUIRED_SHARED_HELPERS = frozenset(
-    {"_caption.py", "_graph_common.py", "_interop_common.py", "_roundtrip_common.py"}
+    {
+        "_caption.py",
+        "_graph_common.py",
+        "_interop_common.py",
+        "_roundtrip_common.py",
+        "_umap_utils.py",
+    }
 )
 
 #: A floor, not a count: the registry holds ~80 demos, so anything near zero
@@ -109,7 +116,10 @@ def scanned_demo_modules(demos_dir: Path | None = None) -> list[Path]:
             modules, or a shared helper missing from the result.
     """
     root = DEMOS_DIR if demos_dir is None else demos_dir
-    paths = sorted(p for p in root.glob("*.py") if p.name not in EXCLUDED)
+    paths = sorted(
+        [p for p in root.glob("*.py") if p.name not in EXCLUDED]
+        + [p for p in (root / "_support").glob("*.py") if p.name != "__init__.py"]
+    )
     names = {p.name for p in paths}
 
     n_demos = sum(1 for name in names if name.startswith("demo_"))

@@ -471,8 +471,8 @@ class TestScannedModuleSet:
     cinematic-mode guards next door.
 
     A gate that moves out of a ``demo_*.py`` into a shared helper must stay
-    covered, so the set is a denylist over ``demos/*.py`` rather than an opt-in
-    filename pattern.
+    covered, so the set is a denylist over ``demos/*.py`` and
+    ``demos/_support/*.py`` rather than an opt-in filename pattern.
     """
 
     def test_shared_helpers_are_scanned(self) -> None:
@@ -483,12 +483,15 @@ class TestScannedModuleSet:
         )
 
     def test_the_set_is_a_denylist_over_every_module(self) -> None:
-        # Not an allowlist: a new demos/_plot_helpers.py must be picked up with
-        # no edit here, or it would silently escape all seventeen guards.
+        # Not an allowlist: new helpers in either shared-helper location must be
+        # picked up with no edit here, or they silently escape all 17 guards.
         demos_dir = Path(__file__).resolve().parents[1]
-        on_disk = {p.name for p in demos_dir.glob("*.py")}
-        scanned = {p.name for p in scanned_demo_modules()}
-        assert on_disk - scanned == set(EXCLUDED)
+        on_disk = {
+            *demos_dir.glob("*.py"),
+            *(demos_dir / "_support").glob("*.py"),
+        }
+        expected = {p for p in on_disk if p.name not in {*EXCLUDED, "__init__.py"}}
+        assert set(scanned_demo_modules()) == expected
 
     def test_excluded_modules_are_justified(self) -> None:
         # Exclusions cost coverage, so each one is named and explained in
