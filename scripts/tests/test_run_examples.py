@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -144,6 +145,42 @@ def test_stale_fixtures_rebuild_all_examples_and_stamp_outputs(tmp_path: Path) -
         "one_example.luxar.zarr",
         "two_example.luxar.zarr",
     ]
+
+
+def test_rebuild_progress_precedes_child_output_when_piped(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    output_dir = repo / "datasets/examples"
+    output = output_dir / "one_example.luxar.zarr"
+    _write_example(
+        repo,
+        "one",
+        "from pathlib import Path\n"
+        "print('CHILD OUTPUT')\n"
+        f"output = Path({str(output)!r})\n"
+        "output.mkdir(parents=True)\n"
+        "(output / 'zarr.json').write_text('fresh')\n",
+    )
+    driver = (
+        "import importlib.util, pathlib; "
+        f"path = pathlib.Path({str(_MOD_PATH)!r}); "
+        "spec = importlib.util.spec_from_file_location('run_examples', path); "
+        "module = importlib.util.module_from_spec(spec); "
+        "spec.loader.exec_module(module); "
+        f"raise SystemExit(module.generate_examples(pathlib.Path({str(repo)!r}), "
+        f"pathlib.Path({str(output_dir)!r}), python={sys.executable!r}))"
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", driver],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.index(
+        "[1/1] 📊 Running one_example.py..."
+    ) < result.stdout.index("CHILD OUTPUT")
 
 
 def test_failed_rebuild_attempts_every_example_and_leaves_no_marker(

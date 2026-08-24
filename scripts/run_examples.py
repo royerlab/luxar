@@ -165,12 +165,12 @@ def generate_examples(
 ) -> int:
     """Build every example, continuing after failures, and stamp only success."""
     if not force and fixtures_are_current(repo_root, output_dir):
-        print("✅ Example datasets are current; nothing to rebuild.")
+        print("✅ Example datasets are current; nothing to rebuild.", flush=True)
         return 0
 
     scripts = sorted((repo_root / "packages/luxar/examples").glob("*_example.py"))
     if not scripts:
-        print("❌ No example scripts found.", file=sys.stderr)
+        print("❌ No example scripts found.", file=sys.stderr, flush=True)
         return 1
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -180,22 +180,22 @@ def generate_examples(
     environment = build_environment()
     _marker_path(output_dir).unlink(missing_ok=True)
     failures: list[str] = []
-    print("🚀 Rebuilding example datasets from current producer sources...")
-    print(f"📂 Output directory: {output_dir.relative_to(repo_root)}")
-    print("━" * 48)
+    print("🚀 Rebuilding example datasets from current producer sources...", flush=True)
+    print(f"📂 Output directory: {output_dir.relative_to(repo_root)}", flush=True)
+    print("━" * 48, flush=True)
     for index, script in enumerate(scripts, start=1):
-        print(f"\n[{index}/{len(scripts)}] 📊 Running {script.name}...")
-        print("─" * 48)
+        print(f"\n[{index}/{len(scripts)}] 📊 Running {script.name}...", flush=True)
+        print("─" * 48, flush=True)
         result = subprocess.run([python, str(script)], cwd=repo_root, check=False)
         if result.returncode == 0:
-            print(f"✅ Success: {script.name}")
+            print(f"✅ Success: {script.name}", flush=True)
         else:
             failures.append(script.name)
-            print(f"❌ Failed: {script.name}")
+            print(f"❌ Failed: {script.name}", flush=True)
 
-    print("\n" + "━" * 48)
+    print("\n" + "━" * 48, flush=True)
     if failures:
-        print(f"❌ Examples FAILED: {' '.join(failures)}")
+        print(f"❌ Examples FAILED: {' '.join(failures)}", flush=True)
         return 1
     after_signatures = _output_signatures(output_dir)
     generated_outputs = sorted(
@@ -212,13 +212,13 @@ def generate_examples(
             outputs=generated_outputs,
         )
     except RuntimeError as error:
-        print(f"❌ {error}", file=sys.stderr)
+        print(f"❌ {error}", file=sys.stderr, flush=True)
         return 1
     for name in set(previous_outputs) - set(generated_outputs):
         path = output_dir / name
         if path.is_dir():
             shutil.rmtree(path)
-    print("✅ All examples completed and stamped current!")
+    print("✅ All examples completed and stamped current!", flush=True)
     return 0
 
 
