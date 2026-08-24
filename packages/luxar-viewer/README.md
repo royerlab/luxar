@@ -449,7 +449,7 @@ pnpm test:with-fixtures  # Generate test fixtures, then run tests
 # are Linux-only developer aids and are not validated by green CI.
 pnpm test:e2e               # Run all E2E tests
 pnpm test:e2e:smoke         # Run the non-GPU smoke subset
-pnpm test:e2e:visual        # Run Linux visual snapshot tests
+pnpm test:e2e:visual        # Run visual tests (snapshot checks on Linux)
 pnpm test:e2e:visual:update # Refresh Linux visual baselines
 pnpm test:e2e:ui            # Run E2E tests with interactive UI
 pnpm test:e2e:debug         # Run E2E tests in debug mode

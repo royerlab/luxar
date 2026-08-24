@@ -81,7 +81,7 @@
     "test:e2e": "playwright test",
     "test:e2e:ci": "playwright test --grep-invert '@visual' --retries 2",
     "test:e2e:visual": "playwright test --grep '@visual'",
-    "test:e2e:visual:update": "playwright test --grep '@visual' --update-snapshots",
+    "test:e2e:visual:update": "playwright test --grep '@visual' --update-snapshots=all",
     "test:e2e:smoke": "LUXAR_E2E_NO_FIXTURES=1 playwright test viewer-initialization.spec.ts url-parameters.spec.ts dataset-switching.spec.ts controls-interaction.spec.ts keyboard-input-system.spec.ts --retries 2 --timeout 60000",
     "test:e2e:smoke:strict": "LUXAR_E2E_NO_FIXTURES=1 LUXAR_E2E_STRICT_CONSOLE=1 playwright test viewer-initialization.spec.ts url-parameters.spec.ts dataset-switching.spec.ts controls-interaction.spec.ts keyboard-input-system.spec.ts --retries 2 --timeout 60000",
     "test:e2e:ui": "playwright test --ui",
