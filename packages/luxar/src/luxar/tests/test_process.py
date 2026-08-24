@@ -1,4 +1,4 @@
-"""Tests for :mod:`luxar.utils.process` — deterministic child teardown."""
+"""Tests for :mod:`luxar._process` — deterministic child teardown."""
 
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ import time
 
 import pytest
 
-from luxar.utils import process
-from luxar.utils.process import _exit_code, _teardown, run_child_process
+from luxar import _process as process
+from luxar._process import _exit_code, _teardown, run_child_process
 
 _POSIX = hasattr(os, "killpg")
 posix_only = pytest.mark.skipif(not _POSIX, reason="requires os.killpg (POSIX)")
@@ -192,7 +192,7 @@ def test_external_sigterm_reaps_grandchild() -> None:
 
     helper = (
         "import sys;"
-        "from luxar.utils.process import run_child_process;"
+        "from luxar._process import run_child_process;"
         "run_child_process([sys.executable,'-c','import time;time.sleep(30)'],"
         " isolate_group=False)"
     )

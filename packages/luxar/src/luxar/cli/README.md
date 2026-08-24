@@ -56,7 +56,9 @@ print(result.stdout)
 - `lod.py` - the unified `lod --recipe {flat,stream,levels,tiles,overview,adaptive}` command (thin wrapper over `gsplats/lod/recipes.py`; registered onto the `gsplat` app)
 - `gsplat_config.py` - Config system: presets, YAML loading, volume loaders, helpers
 - `demo_commands.py` - The `luxar demo` sub-app: list/info/run/run-all/stop/deps/cache, driven entirely by the `luxar.demos` DEMO_META registry
+- `demo_runs.py` - Stdlib-only discovery and process-group teardown engine behind `luxar demo stop`; tracks live runs under `~/.cache/luxar/running/` and sweeps the process table for unregistered demos
 - `demo_render.py` - Presentation for all four `luxar demo` listings: the catalogue, one demo's detail record, the dependency report, and the cache inventory. The one place in the Python CLI that renders through `rich` and writes to plain stdout instead of `aprint` — a five-column catalogue with one row per bundled demo needs real column layout, and arbol's `├` tree prefix belongs on nested progress output, not on rows meant to be scanned and copy-pasted. The split is by what the output *is*: a standalone inventory you read renders here; anything interleaved with an action (progress, confirmations, install advice, the running-demo list `demo stop` prints before killing them) stays on arbol. Every column width is measured in terminal **cells**, not code points.
+- `../_process.py` - Shared stdlib-only child-process lifecycle primitive used by the CLI and demo utilities without importing the eager `luxar.cli` package
 - `utils.py` - Utility functions for CLI operations
 - `export.py` - Standalone scene export (viewer + data + serve script)
 - `native_app.py` - Native bundle producers (macOS `.app`, Linux portable folder) for `luxar export --native`

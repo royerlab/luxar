@@ -30,7 +30,7 @@ _DEMOS_DIR = Path(__file__).parent
 DEMO_CACHE_ROOT = Path.home() / ".cache" / "luxar"
 
 # Sub-directories of the cache root that are NOT caches. `luxar demo stop`'s
-# pidfile registry lives in `running/` (luxar.utils.demo_runs.DEMO_RUNS_DIR):
+# pidfile registry lives in `running/` (luxar.cli.demo_runs.DEMO_RUNS_DIR):
 # its entries name LIVE demo process groups, so listing it as an unclaimed
 # cache would invite `demo cache clear --orphans` to delete the record of what
 # is still running. A unit test pins the name against DEMO_RUNS_DIR.
