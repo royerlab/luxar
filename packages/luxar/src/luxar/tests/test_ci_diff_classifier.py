@@ -30,6 +30,7 @@ workflow still skipped.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -368,3 +369,121 @@ def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
         assert jobs[hosted_job]["needs"] == ["changes"], (
             f"{hosted_job} must not wait for unrelated runner-selected jobs"
         )
+
+
+def _run_queue_watchdog(
+    workflow: str,
+    tmp_path: Path,
+    job_snapshots: list[list[dict[str, object]]],
+) -> tuple[subprocess.CompletedProcess[str], int, bool]:
+    """Run the real inline watchdog against deterministic GitHub API snapshots."""
+    watchdog = yaml.safe_load(workflow)["jobs"]["queue-watchdog"]["steps"][0]["run"]
+    snapshots_path = tmp_path / "snapshots.json"
+    counter_path = tmp_path / "jobs-api-calls"
+    cancel_path = tmp_path / "cancelled"
+    snapshots_path.write_text(json.dumps(job_snapshots), encoding="utf-8")
+
+    fake_gh = tmp_path / "gh"
+    fake_gh.write_text(
+        """#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+
+endpoint = next((arg for arg in sys.argv if "/actions/" in arg), "")
+if "/jobs?" in endpoint:
+    counter = Path(os.environ["WATCHDOG_COUNTER"])
+    call = int(counter.read_text() or "0") if counter.exists() else 0
+    counter.write_text(str(call + 1))
+    snapshots = json.loads(Path(os.environ["WATCHDOG_SNAPSHOTS"]).read_text())
+    jobs = snapshots[min(call, len(snapshots) - 1)]
+    if "--jq" in sys.argv:
+        print(", ".join(job["name"] for job in jobs if job["status"] == "queued"))
+    else:
+        print(json.dumps({"jobs": jobs}))
+elif "/variables/LUXAR_CI_HEARTBEAT" in endpoint:
+    print("0")
+elif endpoint.endswith("/cancel"):
+    Path(os.environ["WATCHDOG_CANCELLED"]).write_text("yes")
+else:
+    raise SystemExit(f"unexpected gh invocation: {sys.argv!r}")
+""",
+        encoding="utf-8",
+    )
+    fake_gh.chmod(0o755)
+    for name, body in (
+        ("date", "#!/bin/sh\necho 1000\n"),
+        ("sleep", "#!/bin/sh\nexit 0\n"),
+    ):
+        command = tmp_path / name
+        command.write_text(body, encoding="utf-8")
+        command.chmod(0o755)
+
+    env = os.environ | {
+        "PATH": f"{tmp_path}:{os.environ['PATH']}",
+        "GITHUB_REPOSITORY": "royerlab/luxar",
+        "GITHUB_RUN_ID": "2038",
+        "WATCHDOG_SNAPSHOTS": str(snapshots_path),
+        "WATCHDOG_COUNTER": str(counter_path),
+        "WATCHDOG_CANCELLED": str(cancel_path),
+    }
+    result = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", watchdog],
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=5,
+        env=env,
+    )
+    calls = int(counter_path.read_text(encoding="utf-8"))
+    return result, calls, cancel_path.exists()
+
+
+def _obsidian_job(name: str, status: str) -> dict[str, object]:
+    return {"name": name, "status": status, "labels": ["self-hosted", "obsidian"]}
+
+
+def test_queue_watchdog_waits_for_obsidian_jobs_to_materialize(
+    workflow: str, tmp_path: Path
+) -> None:
+    """The hosted watchdog must not win its startup race with dependent jobs."""
+    snapshots = [
+        [],
+        [
+            _obsidian_job("python-tests (3.12)", "in_progress"),
+            _obsidian_job("python-tests (3.14)", "queued"),
+        ],
+        [
+            _obsidian_job("python-tests (3.12)", "completed"),
+            _obsidian_job("python-tests (3.14)", "in_progress"),
+        ],
+    ]
+    result, calls, cancelled = _run_queue_watchdog(workflow, tmp_path, snapshots)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == 3, "watchdog exited before obsidian-routed jobs appeared"
+    assert not cancelled
+
+
+def test_queue_watchdog_keeps_held_matrix_leg_covered_while_siblings_run(
+    workflow: str, tmp_path: Path
+) -> None:
+    """A zero capacity heartbeat is expected after the three slots are admitted."""
+    snapshots = [
+        [
+            _obsidian_job("typescript-tests", "in_progress"),
+            _obsidian_job("python-tests (3.12)", "in_progress"),
+            _obsidian_job("python-tests (3.13)", "in_progress"),
+            _obsidian_job("python-tests (3.14)", "queued"),
+        ],
+        [
+            _obsidian_job("typescript-tests", "completed"),
+            _obsidian_job("python-tests (3.14)", "in_progress"),
+        ],
+    ]
+    result, calls, cancelled = _run_queue_watchdog(workflow, tmp_path, snapshots)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == 2
+    assert not cancelled, "busy capacity was mistaken for a dead obsidian host"

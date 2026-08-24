@@ -248,13 +248,15 @@ jobs:
   # reuses the previous pick-runner output.)
   #
   # On push/nightly, max-parallel deliberately holds one Python leg queued
-  # while two Python legs and TypeScript occupy the three slots. The watchdog
-  # stays alive until a slot frees, spending hosted minutes to keep that queued
-  # leg covered. Every failure of its own plumbing (jobs API blip, unreadable
-  # heartbeat variable) fails toward NOT cancelling — the watchdog must never
-  # take down a healthy run.
+  # while two Python legs and TypeScript occupy the three slots. GitHub reports
+  # that held leg as `queued` with the `obsidian` label (observed 2026-08-24).
+  # The machine heartbeat is an admission signal, not pure liveness: it drops
+  # to 0 as soon as any slot is busy so later runs spill to hosted. Therefore a
+  # queued leg plus an in-progress obsidian sibling is healthy draining, not a
+  # dead box. The watchdog stays alive until the queue drains and fails every
+  # error in its own plumbing toward NOT cancelling.
   queue-watchdog:
-    needs: pick-runner
+    needs: [changes, pick-runner]
     if: needs.pick-runner.outputs.label == 'obsidian'
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -275,18 +277,31 @@ jobs:
           # nightly now queues both sets at once, since the two no longer cancel
           # each other — draining) — leave the run alone.
           end=$(( $(date +%s) + 25 * 60 ))
+          seen_obsidian=0
           while [ "$(date +%s)" -lt "$end" ]; do
-            queued=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?per_page=100" \
-              --jq '[.jobs[] | select(.status == "queued")
-                            | select(.labels | index("obsidian"))
-                            | .name] | join(", ")') || queued=__api_error__
-            if [ "$queued" = "__api_error__" ]; then
+            jobs=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?per_page=100") \
+              || jobs=__api_error__
+            if [ "$jobs" = "__api_error__" ]; then
               echo "jobs API read failed; retrying"
               sleep 30; continue
             fi
+            visible=$(echo "$jobs" | jq '[.jobs[] | select(.labels | index("obsidian"))] | length')
+            queued=$(echo "$jobs" | jq -r '[.jobs[] | select(.status == "queued")
+                                                     | select(.labels | index("obsidian"))
+                                                     | .name] | join(", ")')
+            running=$(echo "$jobs" | jq -r '[.jobs[] | select(.status == "in_progress")
+                                                      | select(.labels | index("obsidian"))
+                                                      | .name] | join(", ")')
+            if [ "$visible" -gt 0 ]; then seen_obsidian=1; fi
             if [ -z "$queued" ]; then
-              echo "every obsidian-routed job has been picked up — done"
-              exit 0
+              if [ "$seen_obsidian" -eq 1 ]; then
+                echo "every obsidian-routed job has been picked up — done"
+                exit 0
+              fi
+              # `changes` and this hosted job complete independently; even with
+              # both in `needs`, the jobs API can lag the newly eligible matrix.
+              echo "obsidian-routed jobs are not visible yet; retrying"
+              sleep 30; continue
             fi
             hb=$(gh api "repos/${GITHUB_REPOSITORY}/actions/variables/LUXAR_CI_HEARTBEAT" \
               --jq .value 2>/dev/null) || hb=""
@@ -298,6 +313,8 @@ jobs:
             # Same freshness window as pick-runner, for the same reasons.
             if [ "$hb" -gt 0 ] && [ "$age" -ge -30 ] && [ "$age" -lt 180 ]; then
               echo "still queued on a live box (heartbeat ${age}s old): $queued"
+            elif [ "$hb" -eq 0 ] && [ -n "$running" ]; then
+              echo "capacity heartbeat is 0 while obsidian jobs are running ($running); still queued: $queued"
             else
               echo "::error::obsidian heartbeat went stale (age ${age}s, hb=$hb) with jobs still queued ($queued) — cancelling the run; re-run all jobs to route to GitHub-hosted"
               gh api -X POST "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/cancel"
