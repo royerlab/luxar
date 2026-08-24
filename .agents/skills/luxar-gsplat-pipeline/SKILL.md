@@ -177,6 +177,69 @@ above) — mask it yourself with `gsplats.rendering.render_to_volume_tensor` plu
 `metrics.compute_psnr`
 (both torch; `render_to_volume` returns NumPy, which `compute_psnr` rejects).
 
+### Denoising before a fit (`luxar gsplat denoise`, or your own filter)
+
+Removing noise before fitting is often worth it: a fit spends its splat budget on
+whatever is in the volume, and on sparse data a surprising share of the energy can
+be shot noise. But **choosing the filter and its strength is where this goes
+wrong**, and the failure is silent.
+
+**A metric keyed on a mask of the UNFILTERED data scores smearing as removal.**
+NLM (and any smoothing filter) is a neighbourhood average: it SPREADS a spike
+rather than deleting it. If you score "share of the noise voxels' energy still
+present", energy that moved one voxel out has left the mask you are watching and
+counts as removed — while remaining plainly visible as a softer, wider blob. On a
+sparse light-sheet timelapse this reported a 12–30x noise reduction where the real
+out-of-cell reduction was ~2x.
+
+The obvious repair — energy outside a *dilated* signal mask — fails the other way:
+the filter's own halo around real structure crosses the boundary and is counted as
+residual noise (measured 1.049, "worse than no filter", where it was signal).
+
+> **Rule: when a filter MOVES things, no mask fixed on the unfiltered data can
+> separate movement from removal.** Prefer an operation that moves nothing, or
+> judge by looking at a MIP / 3D view. A single Z slice will not show it — this
+> class of noise lives across Z, and raw vs filtered look nearly identical slice
+> by slice while differing obviously in projection.
+
+**Match the filter to the noise model.** If the noise is isolated voxels — check
+this, do not assume: on the zebrafish demo the MEDIAN object in a frame was ONE
+voxel, p90 was 1–2 — then a connected-component SIZE filter beats a smoothing one
+outright, because it cannot damage what it keeps:
+
+| arm | frame energy removed | signal energy | mean signal peak |
+|-----|---------------------|---------------|------------------|
+| NLM h=0.05 | ~0.32 | 0.953 | **0.783** |
+| drop components < 2 vox | 0.2959 | 1.0000 | 1.0000 |
+| **drop components < 4 vox** | **0.3208** | **1.0000** | **1.0000** |
+| drop components < 12 vox | 0.3225 | 1.0000 | 1.0000 |
+
+There is no trade-off to tune: the signal columns are exactly 1.0000 at every
+threshold *by construction*, while NLM dimmed peaks by 6–22%. Only the noise
+column moves, and it plateaus quickly — so take the knee. Downstream the size
+filter gave equal-or-better foreground PSNR from ~1/10 the splats at the noisiest
+timepoints, and the fitted result reproduced 1–11% of out-of-signal energy against
+NLM's 22–50%. Scipy: `ndimage.label(v > 0, structure=generate_binary_structure(v.ndim, 1))`
+then zero the labels whose `bincount` is below the threshold — set connectivity
+EXPLICITLY, it changes what counts as one object.
+
+Two habits that make any such comparison trustworthy:
+
+- **Score against the RAW volume**, the one reference no arm touched. Never score
+  a filtered fit against its own filtered input — that is excellent by construction.
+- **Define the signal reference STRICTER than any threshold under test** (e.g.
+  components >= 27 voxels while testing thresholds of 2–12) so no arm is being
+  judged against its own definition.
+
+Beware `calibrate_nlm_h` / Noise2Self on very sparse data: it is defeated by the
+same sparsity that inverts the `auto` floor. Where a volume is ~99% exact zeros a
+held-out voxel is best predicted by predicting zero, so maximal smoothing wins its
+cross-validation. It answered 0.055–0.225 on one stack depending on which slice it
+was pointed at, every value at or past the point where the filter ate signal — and
+its default `h_range` stops at 0.08, so a default call returns a pinned ceiling.
+**An estimator that answers at the edge of its own grid has told you nothing.**
+
+
 ### Symptom → knob
 
 An index into the measured sections, not a substitute for them.
@@ -184,6 +247,7 @@ An index into the measured sections, not a substitute for them.
 | Symptom | Reach for |
 | --- | --- |
 | Thin/faint structure missing | `--floor auto`, never a higher floor — "Background floor suppression" above — then raise K |
+| Noise survives a denoising pass that measured well | you measured displacement, not removal — "Denoising before a fit"; on isolated-voxel noise use a component-size filter |
 | Background haze survives | the viewer's display window and opacity — same section; or `filter --soft-highpass p90` (the `luxar-gsplat-edit` skill) |
 | Thin filaments render as chains of beads | the six-knob schedule under "BOTH entry points default to 1000 iters" below. NOT more seeds (measured *worse*), and NOT a preset: a preset moves `n_iters`, `early_stop_patience` and `max_eccentricity` — but nothing on this schedule, so `enable_dynamic_ops`, `patience` (the plateau LR-decay one, default 15, NOT `early_stop_patience`) and `l1_diag` all stay where they are and you must set them yourself |
 | Blobby, over-smoothed detail | more K first, then a preset for iterations (early stopping makes a preset's `n_iters` a ceiling, so raise them when the loss is still falling at the cap) — but on thin structure read the beading row first |
@@ -225,6 +289,11 @@ Each of these has burned a whole fit cycle. Check them before you launch a long 
   count, not the variable you changed. Fix the seed budget on both arms.
 - **Size VRAM for the per-splat intermediates, not the volume tensor.** A 3.2 Gvoxel
   whole-volume fit asked for 95 GiB after the volume itself came to 12.9 GB. Tile it.
+- **A denoising sweep scored on the noise voxels measures smearing, not removal.**
+  Any smoothing filter moves energy; a mask fixed on the unfiltered volume cannot
+  tell "deleted" from "moved one voxel". Judge a filter on a MIP or in 3D (a single
+  slice hides it), and prefer a filter that moves nothing. See "Denoising before a
+  fit".
 - **Score against the ORIGINAL, and on the foreground.** Global PSNR on a
   97–99%-empty stack is flattered by the empty part and barely moves; foreground
   (say, above 10% of max) and a dim band (1–10%) are where the answer lives. Never
