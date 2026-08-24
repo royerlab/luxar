@@ -138,6 +138,28 @@ class TestMeshImport:
         )
         assert float(vertices.max() - vertices.min()) == pytest.approx(1.0)
 
+    def test_no_weld_keeps_vertices_outside_the_surface(self, tmp_path: Path) -> None:
+        source = tmp_path / "orphan.ply"
+        output = tmp_path / "orphan.luxar.zarr"
+        write_ply_orphan_vertices(source)
+
+        result = runner.invoke(
+            app,
+            [
+                "mesh",
+                "import",
+                str(source),
+                str(output),
+                "--no-weld",
+                "--no-center",
+            ],
+        )
+
+        assert result.exit_code == 0, result.stdout
+        vertices = LuxarScene.load(output).get_mesh("mesh").vertices
+        assert vertices.shape == (5, 3)
+        assert float(vertices.max()) == 200.0
+
     def test_scale_multiplies_the_extent(
         self, fixtures: dict[str, Path], tmp_path: Path
     ) -> None:
