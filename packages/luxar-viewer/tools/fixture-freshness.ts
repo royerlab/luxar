@@ -64,6 +64,13 @@ export function fixtureInputsFingerprint(
   return hashFiles(projectRoot, fixtureInputFiles(projectRoot, fixturesDir));
 }
 
+/**
+ * Whether the fixtures were produced by the current input content.
+ *
+ * The generate-if-missing gate alone let #448 through with complete but stale
+ * stores. Do not replace this digest with mtimes: `git checkout` and fresh
+ * worktrees rewrite mtimes without changing the bytes that determine output.
+ */
 export function areFixturesStale(
   projectRoot: string = PROJECT_ROOT,
   fixturesDir: string = resolve(projectRoot, FIXTURES_REPO_RELATIVE_PATH)
@@ -74,6 +81,11 @@ export function areFixturesStale(
   );
 }
 
+/**
+ * Digest the inputs that describe the expectations rather than statting every
+ * generated zarr tree. This avoids mtime churn while still tracking fixture
+ * producer changes and the expectations generator itself.
+ */
 export function expectationsInputsFingerprint(
   projectRoot: string = PROJECT_ROOT,
   fixturesDir: string = resolve(projectRoot, FIXTURES_REPO_RELATIVE_PATH)
@@ -84,6 +96,14 @@ export function expectationsInputsFingerprint(
   ]);
 }
 
+/**
+ * Whether round-trip expectations must be regenerated.
+ *
+ * `regeneratedFixtures` is load-bearing: `generate_test_data.py` is not
+ * byte-reproducible, so rebuilding fixtures from unchanged inputs can still
+ * change encoded values. Fixtures rebuilt therefore always means expectations
+ * rebuilt, or the round-trip tests compare against values from different stores.
+ */
 export function areExpectationsStale(
   regeneratedFixtures: boolean,
   projectRoot: string = PROJECT_ROOT,
