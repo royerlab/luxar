@@ -12,6 +12,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { buildRailItems, type RailItemsDeps } from '../../../../../core/app/init/build-rail-items';
 import type { ControlRailItem } from '../../../../../ui/control-rail';
+import { KeyAction } from '../../../../../input/input-handler/key-bindings/actions';
 
 function makeDeps(
   overrides: {
@@ -104,6 +105,18 @@ function makeButtonEl(): HTMLButtonElement {
 }
 
 describe('buildRailItems', () => {
+  it('reads shortcut labels from the action registry', () => {
+    const deps = makeDeps();
+    deps.shortcutForAction = vi.fn((actionId) =>
+      actionId === KeyAction.toggleHelp ? '?' : undefined
+    );
+
+    const help = buildRailItems(deps).find((item) => item.id === 'help');
+
+    expect(help?.shortcut).toBe('?');
+    expect(deps.shortcutForAction).toHaveBeenCalledWith(KeyAction.toggleHelp);
+  });
+
   it('produces the expected item ids in order (no screenshot button)', () => {
     const items = buildRailItems(makeDeps());
     expect(items.map((i: ControlRailItem) => i.id)).toEqual([

@@ -13,7 +13,7 @@ import {
   InputContext,
   MAX_KEY_EVENT_DEPTH,
 } from '../../../../input/input-handler/context-manager';
-import { log, Modules } from '../../../../utils/log';
+import { log } from '../../../../utils/log';
 
 function registerTestBinding(
   manager: InputContextManager,
@@ -22,10 +22,10 @@ function registerTestBinding(
     Partial<Pick<KeyBinding, 'actionId' | 'description' | 'help'>>
 ): void {
   manager.registerBinding(context, {
-    actionId: 'test.action',
-    description: 'Test binding',
-    help: false,
     ...binding,
+    actionId: binding.actionId ?? `test.${binding.key}.${JSON.stringify(binding.modifiers ?? {})}`,
+    description: binding.description ?? 'Test binding',
+    help: binding.help ?? false,
   });
 }
 
@@ -175,12 +175,34 @@ describe('InputContextManager', () => {
 
       expect(manager.getRegisteredShortcutBindings().get(InputContext.NAVIGATION)).toEqual([
         expect.objectContaining({
-          actionId: 'test.action',
           key: 'ctrl+s+shift',
           description: 'Test binding',
           help: false,
         }),
       ]);
+    });
+
+    it('rebinds a stable action identity to a new chord', () => {
+      const first = vi.fn();
+      const second = vi.fn();
+      registerTestBinding(manager, InputContext.NAVIGATION, {
+        actionId: 'test.rebind',
+        key: 'h',
+        handler: first,
+      });
+      registerTestBinding(manager, InputContext.NAVIGATION, {
+        actionId: 'test.rebind',
+        key: 'j',
+        handler: second,
+      });
+
+      expect(manager.handleKeyEvent(new KeyboardEvent('keydown', { key: 'h' }), 'down')).toBe(
+        false
+      );
+      expect(manager.handleKeyEvent(new KeyboardEvent('keydown', { key: 'j' }), 'down')).toBe(true);
+      expect(first).not.toHaveBeenCalled();
+      expect(second).toHaveBeenCalledOnce();
+      expect(manager.getShortcutLabel('test.rebind')).toBe('J');
     });
     it('should register key bindings', () => {
       const handler = vi.fn();
@@ -658,13 +680,12 @@ describe('InputContextManager', () => {
       const handler = vi.fn();
 
       // Register a handler in a lower priority context
-      registerTestBinding(manager, InputContext.DIMENSION_NAV, {
+      registerTestBinding(manager, InputContext.UI_INTERACTION, {
         key: '[',
         handler,
       });
 
-      // DIMENSION_NAV allows '[' and has passthrough
-      manager.setContext(InputContext.DIMENSION_NAV);
+      manager.setContext(InputContext.UI_INTERACTION);
 
       const event = new KeyboardEvent('keydown', { key: '[' });
       const handled = manager.handleKeyEvent(event, 'down');
@@ -1343,37 +1364,6 @@ describe('InputContextManager', () => {
 
       expect(handled).toBe(false);
       expect(flyHandler).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('DIMENSION_NAV context [input.md G21]', () => {
-    // input.md G21[P5]: DIMENSION_NAV has allowedKeys = config.input.keyboard.dimensionKeys.
-    // No test set the context to DIMENSION_NAV and exercised a key from
-    // dimensionKeys to confirm the allowlist works.
-    it('[G21] DIMENSION_NAV context: a registered binding on a dimensionKey fires', () => {
-      manager.setContext(InputContext.DIMENSION_NAV);
-      const handler = vi.fn();
-      // '1' is in dimensionKeys per config.
-      registerTestBinding(manager, InputContext.DIMENSION_NAV, {
-        key: '1',
-        handler,
-      });
-      const event = new KeyboardEvent('keydown', { key: '1' });
-      const handled = manager.handleKeyEvent(event, 'down');
-      expect(handled).toBe(true);
-      expect(handler).toHaveBeenCalledTimes(1);
-    });
-
-    it('[G21] DIMENSION_NAV derives its allowlist from registered bindings', () => {
-      manager.setContext(InputContext.DIMENSION_NAV);
-      const handler = vi.fn();
-      registerTestBinding(manager, InputContext.DIMENSION_NAV, {
-        key: 'z',
-        handler,
-      });
-      const event = new KeyboardEvent('keydown', { key: 'z' });
-      expect(manager.handleKeyEvent(event, 'down')).toBe(true);
-      expect(handler).toHaveBeenCalledOnce();
     });
   });
 });

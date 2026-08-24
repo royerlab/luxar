@@ -45,7 +45,6 @@ export enum InputContext {
   FLY_CONTROLS = 'fly_controls', // Fly mode with WASD movement
   TYPING = 'typing', // Text input (forms, search, etc.)
   UI_INTERACTION = 'ui_interaction', // UI panels and controls
-  DIMENSION_NAV = 'dimension_nav', // nD dimension navigation
 }
 
 /**
@@ -125,6 +124,7 @@ export class InputContextManager {
   private currentContext: InputContext = InputContext.NAVIGATION;
   private contextStack: InputContext[] = [];
   private bindings = new Map<string, Map<string, KeyBinding>>();
+  private actionBindings = new Map<string, Map<string, string>>();
   private contextConfigs = new Map<InputContext, ContextConfig>();
   private enabled = true;
 
@@ -140,7 +140,7 @@ export class InputContextManager {
    * Create a new input context manager with default context configurations.
    *
    * Initializes all predefined contexts (NAVIGATION, FLY_CONTROLS, TYPING,
-   * UI_INTERACTION, DIMENSION_NAV) with appropriate priorities and key filters.
+   * UI_INTERACTION) with appropriate priorities and key filters.
    * Starts in NAVIGATION context.
    */
   constructor() {
@@ -155,7 +155,6 @@ export class InputContextManager {
    * - FLY_CONTROLS (priority 1): Enables WASD + arrow keys for fly mode
    * - TYPING (priority 10): Highest priority, blocks all shortcuts
    * - UI_INTERACTION (priority 5): For UI panels
-   * - DIMENSION_NAV (priority 2): For dimension navigation keys
    *
    * @private
    */
@@ -190,15 +189,6 @@ export class InputContextManager {
       priority: 5,
       passthrough: true,
       fallbackContexts: [InputContext.NAVIGATION],
-    });
-
-    // Dimension navigation context
-    this.contextConfigs.set(InputContext.DIMENSION_NAV, {
-      name: 'Dimension Navigation',
-      priority: 2,
-      passthrough: true,
-      fallbackContexts: [InputContext.NAVIGATION],
-      allowRegisteredBindings: true,
     });
   }
 
@@ -333,7 +323,12 @@ export class InputContextManager {
     }
 
     const bindingKey = this.getBindingKey(binding);
+    const actionKey = this.getActionKey(binding);
     const contextBindings = this.bindings.get(contextKey)!;
+    const contextActions = this.actionBindings.get(contextKey) ?? new Map<string, string>();
+    this.actionBindings.set(contextKey, contextActions);
+    const existingBinding = contextBindings.get(bindingKey);
+    const existingActionBindingKey = contextActions.get(actionKey);
 
     // Check for conflicts
     if (contextBindings.has(bindingKey)) {
@@ -342,8 +337,19 @@ export class InputContextManager {
         `Key binding conflict in ${context}: ${bindingKey} is already registered`
       );
     }
+    if (existingBinding) {
+      contextActions.delete(this.getActionKey(existingBinding));
+    }
+    if (existingActionBindingKey && existingActionBindingKey !== bindingKey) {
+      log.warning(
+        Modules.INPUT_CONTEXT,
+        `Key binding action conflict in ${context}: ${actionKey} is already registered`
+      );
+      contextBindings.delete(existingActionBindingKey);
+    }
 
     contextBindings.set(bindingKey, binding);
+    contextActions.set(actionKey, bindingKey);
     this.recomputeContextFilters();
 
     const config = this.contextConfigs.get(contextKey);
@@ -386,7 +392,9 @@ export class InputContextManager {
     const contextBindings = this.bindings.get(context);
     if (contextBindings) {
       const bindingKey = this.getBindingKey({ key, modifiers } as KeyBinding);
+      const binding = contextBindings.get(bindingKey);
       contextBindings.delete(bindingKey);
+      if (binding) this.actionBindings.get(context)?.delete(this.getActionKey(binding));
       this.recomputeContextFilters();
     }
   }
@@ -536,9 +544,8 @@ export class InputContextManager {
    *
    * When current context doesn't handle a key and has passthrough enabled,
    * this method tries other contexts in descending priority order. Enables
-   * fallback behavior - e.g., [ ] keys work in FLY_CONTROLS context even
-   * though they're not registered there, because they fall through to
-   * DIMENSION_NAV context.
+   * fallback behavior - e.g., navigation shortcuts work in FLY_CONTROLS
+   * because that context explicitly falls back to NAVIGATION.
    *
    * @param event - Keyboard event to handle
    * @param type - Event type ('down' or 'up')
@@ -703,6 +710,12 @@ export class InputContextManager {
     return canonicalizeBindingKey(parts.join('+'));
   }
 
+  private getActionKey(binding: Pick<KeyBinding, 'actionId' | 'actionParameter'>): string {
+    return binding.actionParameter === undefined
+      ? binding.actionId
+      : `${binding.actionId}:${binding.actionParameter}`;
+  }
+
   /**
    * Generate binding key from keyboard event for lookup.
    *
@@ -812,9 +825,11 @@ export class InputContextManager {
   }
 
   public getShortcutLabel(actionId: string): string | undefined {
-    for (const bindings of this.bindings.values()) {
-      for (const [key, binding] of bindings) {
-        if (binding.actionId === actionId) return this.formatShortcutLabel(key);
+    for (const actions of this.actionBindings.values()) {
+      for (const [actionKey, bindingKey] of actions) {
+        if (actionKey === actionId || actionKey.startsWith(`${actionId}:`)) {
+          return this.formatShortcutLabel(bindingKey);
+        }
       }
     }
     return undefined;
@@ -831,6 +846,7 @@ export class InputContextManager {
    */
   public clearContextBindings(context: InputContext): void {
     this.bindings.delete(context);
+    this.actionBindings.delete(context);
     this.recomputeContextFilters();
   }
 
@@ -847,6 +863,7 @@ export class InputContextManager {
     this.currentContext = InputContext.NAVIGATION;
     this.contextStack = [];
     this.bindings.clear();
+    this.actionBindings.clear();
     this.recomputeContextFilters();
   }
 
@@ -866,8 +883,12 @@ export class InputContextManager {
 
   private formatShortcutLabel(bindingKey: string): string {
     if (bindingKey === ' ') return 'Space';
-    return bindingKey
-      .split('+')
+    const parts = bindingKey.split('+');
+    const modifierOrder = ['ctrl', 'meta', 'alt', 'shift'];
+    return [
+      ...modifierOrder.filter((modifier) => parts.includes(modifier)),
+      ...parts.filter((part) => !modifierOrder.includes(part)),
+    ]
       .map((part) => {
         if (part === 'ctrl') return 'Ctrl';
         if (part === 'shift') return 'Shift';

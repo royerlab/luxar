@@ -21,7 +21,7 @@ input-handler/
 
 - `context-manager.ts` — `InputContextManager` class plus the
   `InputContext` enum (`NAVIGATION` / `FLY_CONTROLS` / `TYPING` /
-  `UI_INTERACTION` / `DIMENSION_NAV`), the `KeyBinding` /
+  `UI_INTERACTION`), the `KeyBinding` /
   `ContextConfig` interfaces, and the `MAX_KEY_EVENT_DEPTH = 10`
   recursion cap. This is the routing table the orchestrator pushes
   contexts onto and the per-context bindings are registered into.

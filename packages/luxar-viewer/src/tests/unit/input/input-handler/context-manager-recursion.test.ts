@@ -30,10 +30,10 @@ function registerTestBinding(
     Partial<Pick<KeyBinding, 'actionId' | 'description' | 'help'>>
 ): void {
   manager.registerBinding(context, {
-    actionId: 'test.action',
-    description: 'Test binding',
-    help: false,
     ...binding,
+    actionId: binding.actionId ?? `test.${binding.key}.${JSON.stringify(binding.modifiers ?? {})}`,
+    description: binding.description ?? 'Test binding',
+    help: binding.help ?? false,
   });
 }
 
