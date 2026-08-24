@@ -656,10 +656,9 @@ def _prev_files(prev: dict, name: str, variant: Optional[str] = None) -> list[di
 #: Per-file keys that describe the HOSTED artifact rather than the in-repo copy.
 #:
 #: Both must be carried, and for the same reason: `bytes` is as ambiguous as
-#: `sha256` was once the two copies differ. Splitting only the digest leaves the
-#: pre-publish gate comparing the LOCAL size against the record's, which reports
-#: a mismatch for every diverged dataset — a confident wrong answer, and enough
-#: of them to trip the gate's own "wrong manifest" heuristic.
+#: `sha256` was once the two copies differ. Keeping the digest and size paired
+#: preserves a complete description of the hosted artifact for consumers that
+#: need to compare it with the in-repo copy.
 #:
 #: Named explicitly rather than matched as a `hosted_*` prefix, so a typo'd key
 #: is dropped loudly by the drift gate instead of carried forever.

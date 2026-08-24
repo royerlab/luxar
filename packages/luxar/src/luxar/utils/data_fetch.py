@@ -40,8 +40,8 @@ cheap CPU-rebuild ones).
 A demo that builds its own stand-in for a hosted file (a local GPU refit, when
 the record is unpublished and the git-LFS object was never pulled) must NOT store
 it at ``<dataset>/<file>``: that path belongs to the manifest, and step 1 above
-quarantines anything sitting there that fails the pinned sha256 — which a local
-fit never matches. :func:`local_fit_path` gives such an artifact its own
+quarantines anything sitting there that matches neither pinned digest — which a
+local fit never does. :func:`local_fit_path` gives such an artifact its own
 namespace, ``<dataset>/local/<file>``, which the fetch never looks at (#1618).
 """
 
@@ -95,8 +95,8 @@ class DatasetUnavailable(FileNotFoundError):
     Every OTHER ``FileNotFoundError`` out of this module is a fault a demo must
     NOT route around — an unknown file name requested of
     :func:`load_dataset_gsplats`, a dataset that lists no gsplat file at all, a
-    missing packaged manifest (broken install), an in-repo copy that fails its
-    pinned sha256 with no hosted fallback. Those stay plain
+    missing packaged manifest (broken install), an in-repo copy that matches
+    neither pinned digest with no hosted fallback. Those stay plain
     ``FileNotFoundError``, so ``except DatasetUnavailable`` lets them through
     instead of disguising them as a routine multi-minute refit.
 
@@ -273,7 +273,8 @@ def ensure_dataset(
         DatasetUnavailable: data is neither cached, in-repo, nor hosted yet — the
             one condition a caller may route around by building its own copy.
         FileNotFoundError: a fault, not an absence — a missing packaged manifest,
-            or an in-repo copy that fails its sha256 with no hosted fallback.
+            or an in-repo copy that matches neither pinned digest with no hosted
+            fallback.
             :class:`DatasetUnavailable` subclasses this, so catch the subclass
             when you mean "not there yet".
     """
@@ -638,11 +639,11 @@ def local_fit_path(
     The split exists because ``<name>/<filename>`` — with no ``local/`` in it —
     is the path :func:`ensure_dataset` resolves for that manifest entry, and step
     1 of :func:`_ensure_one` treats whatever it finds there as a candidate copy
-    of the HOSTED file: it hashes it against the manifest sha256 and QUARANTINES
-    it on a mismatch. A local fit is a different artifact that happens to answer
-    the same need, so it can never match that hash. Storing one under the hosted
-    name therefore guarantees it is destroyed by the next fetch, and the demo
-    refits from scratch on every single launch (#1618/#1672).
+    of the manifest file: it hashes it against both pinned digests and
+    QUARANTINES it when neither matches. A local fit is a different artifact that
+    happens to answer the same need, so it can never match either digest. Storing
+    one under the manifest name therefore guarantees it is destroyed by the next
+    fetch, and the demo refits from scratch on every single launch (#1618/#1672).
 
     Nothing under ``local/`` is ever hashed, quarantined or overwritten by the
     fetch — the cache dir is shared, the two namespaces are not.
