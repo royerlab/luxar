@@ -395,7 +395,7 @@ jobs:
       # siblings on the first red leg, losing precisely the per-version information
       # you need when the legs genuinely differ.
       fail-fast: false
-      # With the three-slot obsidian fleet documented by queue-watchdog, keep one
+      # With the obsidian fleet size documented by queue-watchdog, keep one
       # slot available so `typescript-tests` starts immediately rather than
       # queueing behind the third Python leg. PRs have one Python leg and are
       # unaffected; push/nightly runs execute two legs, then the third. Keep the
