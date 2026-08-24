@@ -168,11 +168,10 @@ export function calculateNextPosition(
         const wrappedK = ((k % positions) + positions) % positions;
         newPos = range[0] + wrappedK * grid;
       }
-      // Defence in depth. Every wrapped index is inside [0, lastK], so no
-      // current caller can trigger this clamp — it exists so the documented
-      // range guarantee stays true if the snapping above is ever changed or
-      // bypassed.
-      return clamp(newPos, range[0], range[1]);
+      // Keep the recomputed grid value byte-identical to the scene manager's
+      // snap. It may sit an ulp past an exactly on-grid fractional max; a raw
+      // clamp would replace it with a different float and desync cache keys.
+      return newPos;
     } else {
       // Continuous path left EXACTLY as it was: `max ≡ min` here, and the
       // one-full-cycle-backward case is specified to return `max`, not `min`.

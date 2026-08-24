@@ -109,8 +109,9 @@ def validate_discrete_dimension_ranges(
             )
 
         # On-grid check: the viewer snaps discrete navigation TARGETS to the
-        # declared-min-anchored grid min+k*step (SceneDimsManager.setDimensionValue) and its
-        # chunk query reaches only a quarter-step around them, while the
+        # declared-min-anchored grid min+k*step
+        # (SceneDimsManager.setDimensionValue), and its chunk query reaches
+        # only a quarter-step around them, while the
         # write side pads discrete chunk bounds by a tiny epsilon only
         # (ordering._BARRIER_BOUND_EPS). Discrete DATA sitting more than a
         # quarter-step off that grid can therefore pass the viewer's

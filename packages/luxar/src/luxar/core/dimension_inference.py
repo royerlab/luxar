@@ -17,7 +17,11 @@ _MAX_EXACT_FLOAT32_INTEGER = 1 << 24
 
 
 def infer_discrete_step(coordinates: np.ndarray) -> float:
-    """Infer an integer coordinate stride for a range-min-anchored grid."""
+    """Infer an integer coordinate stride for a range-min-anchored grid.
+
+    Non-integer coordinates retain the historical unit step; integer axes are
+    guarded to the exact float32 range before their difference GCD is used.
+    """
     values = np.unique(np.asarray(coordinates))
     if values.size < 2:
         return 1.0
