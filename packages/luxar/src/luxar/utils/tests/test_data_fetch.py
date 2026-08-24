@@ -1802,3 +1802,46 @@ def test_a_mixed_dataset_gets_hosted_pins_only_where_it_had_them(tmp_path, monke
     assert "hosted_sha256" not in entries["vh_head_colors.npz"], (
         "a file with no hosted pin was stamped with one"
     )
+
+
+def test_a_hosted_only_pin_is_still_enforced(fake_repo, monkeypatch):
+    """``sha256`` absent but ``hosted_sha256`` present must NOT read as unverifiable.
+
+    A reachable state: a ``pending_upload`` row's pin has always described the
+    hosted artifact (there is nothing on disk to hash), so moving it to
+    ``hosted_sha256`` leaves no local digest. If "unverifiable" were keyed on
+    ``sha256`` alone, that row would accept any bytes at all — turning a row we
+    know the digest of into the one row we check least.
+    """
+    manifest, cache = fake_repo
+    entry = manifest["datasets"]["gsplats_toy"]["files"][0]
+    entry["hosted_sha256"] = entry.pop("sha256")
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", cache / "does-not-exist")
+
+    dest = cache / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+    dest.parent.mkdir(parents=True)
+    dest.write_bytes(b"wrong-bytes-XXX")  # same length as the real payload
+
+    with pytest.raises(DatasetUnavailable):
+        ensure_dataset(
+            "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+        )
+    assert [p.name for p in find_quarantined_files(dest)] == [dest.name + ".corrupt"]
+
+
+def test_a_hosted_only_pin_accepts_the_bytes_it_describes(fake_repo, monkeypatch):
+    """The other half: correct bytes under a hosted-only pin are reused, not rejected."""
+    manifest, cache = fake_repo
+    entry = manifest["datasets"]["gsplats_toy"]["files"][0]
+    entry["hosted_sha256"] = entry.pop("sha256")
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", cache / "does-not-exist")
+
+    dest = cache / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+    dest.parent.mkdir(parents=True)
+    dest.write_bytes(b"toy-splat-bytes")
+
+    (path,) = ensure_dataset(
+        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+    )
+    assert path == dest
+    assert find_quarantined_files(dest) == []
