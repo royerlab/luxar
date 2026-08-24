@@ -207,15 +207,22 @@ export class SceneDimsManager {
 
     // Step 5: Establish dimension ranges for navigation bounds
     this.dimensionRanges = metadata.map((meta, i) => {
+      let range: [number, number];
       if (meta.range) {
-        return meta.range as [number, number];
+        range = meta.range as [number, number];
+      } else if (
+        positionBounds &&
+        i < positionBounds.min.length &&
+        i < positionBounds.max.length
+      ) {
+        // Fallback: use positionBounds from zarr metadata (world-space)
+        range = [positionBounds.min[i], positionBounds.max[i]];
+      } else {
+        // Last resort: unit range
+        range = [0, 1];
       }
-      // Fallback: use positionBounds from zarr metadata (world-space)
-      if (positionBounds && i < positionBounds.min.length && i < positionBounds.max.length) {
-        return [positionBounds.min[i], positionBounds.max[i]] as [number, number];
-      }
-      // Last resort: unit range
-      return [0, 1];
+      metadata[i].range = range;
+      return range;
     });
 
     // Step 6: Initialize dimension positions (see defaultPosition for the policy)

@@ -6,6 +6,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { SceneDimsManager, snapDiscreteValue } from '../../../scene/scene-dims-manager';
+import { invertNdTransformForQuery } from '../../../data/transforms/nd-transform';
 import * as THREE from 'three';
 
 describe('SceneDimsManager', () => {
@@ -124,6 +125,39 @@ describe('SceneDimsManager', () => {
       };
       manager.initFromScene(scene);
       expect(manager.getDims()!.currentStep[3]).toBe(1.3);
+    });
+
+    it('shares a position-bounds fallback range with discrete transform queries', () => {
+      const scene = new THREE.Scene();
+      scene.userData.sceneDimensions = {
+        dimensions: [
+          { name: 'x', unit: '', display: true },
+          { name: 'y', unit: '', display: true },
+          { name: 'z', unit: '', display: true },
+          { name: 'time', unit: '', step: 5, display: false, discrete: true },
+        ],
+      };
+      scene.userData.positionBounds = {
+        min: [0, 0, 0, 1],
+        max: [10, 10, 10, 11],
+      };
+
+      expect(manager.initFromScene(scene)).toBe(true);
+      const dims = manager.getDims()!;
+      expect(dims.metadata![3].range).toEqual([1, 11]);
+      expect(dims.currentStep[3]).toBe(1);
+
+      for (const world of [1, 6, 11]) {
+        const result = invertNdTransformForQuery(
+          [0, 0, 0, world],
+          [0, 0, 0, 0],
+          { time: { scale: 1 } },
+          dims.metadata!,
+          dims.displayed
+        );
+        expect(result.noPreimage).toBe(false);
+        expect(result.slicePosition[3]).toBe(world);
+      }
     });
 
     it('keeps an already on-grid discrete minimum unchanged', () => {
