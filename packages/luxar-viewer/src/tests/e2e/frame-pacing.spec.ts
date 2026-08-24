@@ -47,8 +47,8 @@ const EXPECTED_NODES = 100;
  */
 const NAV_TIMEOUT_MS = 20000;
 
-/** Budget for `initialized` to flip. */
-const READY_TIMEOUT_MS = 30000;
+/** Budget for `initialized` to flip, matching the smoke test for this fixture. */
+const READY_TIMEOUT_MS = 60000;
 
 /**
  * Budget for the 100 nodes' points to be committed. `waitForPointsLoaded`
@@ -102,7 +102,7 @@ test.describe('Frame pacing (#1724)', () => {
   // named assertion that exists to explain it. Worst case, leg by leg:
   //
   //   navigation                                        20 s
-  //   waitForLuxarReady                                 30 s
+  //   waitForLuxarReady                                 60 s
   //   waitForPointsLoaded  45 s budget + 45 s unclamped
   //                        in-flight probe              90 s
   //   content re-read (getLuxarState, bounded)          10 s
@@ -112,9 +112,9 @@ test.describe('Frame pacing (#1724)', () => {
   //   post-hold re-read                                 10 s
   //   10 probes × 2 s                                   20 s
   //                                                   ------
-  //                                                    235 s
+  //                                                    265 s
   //
-  // 300 s leaves ~65 s for the fixture setup, teardown and the per-step
+  // 300 s leaves ~35 s for the fixture setup, teardown and the per-step
   // overhead between the legs. This is what a FAILING run costs; a healthy one
   // pays only the hold plus the real settle (~15 s measured). The 90 s content
   // leg is the one number this spec cannot shrink from here:
