@@ -686,6 +686,33 @@ def tract_label(bundle: str, division: str) -> str:
     return f"{bundle} — {name}{hemi} · {division} · {gloss}"
 
 
+def tract_key(bundle: str) -> str:
+    """The searchable anatomical name for a bundle, or ``""`` if unknown.
+
+    Backs the click-through (#1917). The hover label leads with the atlas code
+    and trails into division and gloss, so a search built from it would carry
+    three fields nobody typed; this is the name alone — "Arcuate Fasciculus" —
+    which is what an encyclopaedia can resolve.
+
+    Hemisphere is deliberately dropped: left and right arcuate share one
+    article, and "(left)" only narrows the search away from it.
+
+    A bundle missing from :data:`BUNDLE_INFO` returns ``""``, and the viewer
+    suppresses a link whose template has an empty substitution — so an
+    unrecognised tract is simply not clickable, matching how
+    :func:`tract_label` already degrades for it.
+
+    Args:
+        bundle: The atlas bundle code, e.g. ``"AF_L"``.
+
+    Returns:
+        The bundle's full anatomical name, or the empty string.
+    """
+    base, _side = split_hemisphere(bundle)
+    info = BUNDLE_INFO.get(base)
+    return info[0] if info is not None else ""
+
+
 def resample_polyline(points: np.ndarray, n: int) -> np.ndarray:
     """Arc-length resample an ``(M, 3)`` streamline to exactly ``(n, 3)``.
 
@@ -1047,6 +1074,15 @@ def build_scene(bundles: dict, output_path: Path, *, points: int) -> Path:
                     # same string (and a segment index is always < the vertex
                     # count), so the tooltip is right regardless.
                     labels=[tract_label(name, division)] * len(xyz),
+                    # Click a tract to read about it, right-click to copy
+                    # its name (#1917). Per-vertex like the labels, and for
+                    # the same reason: every entry is the same string, so
+                    # whichever vertex the segment resolves to is right.
+                    keys=[tract_key(name)] * len(xyz),
+                    link=(
+                        "https://en.wikipedia.org/wiki/Special:Search?search={hover_key}"
+                    ),
+                    copy="{hover_key}",
                     # `indexed`, NOT `segments`: interior joints must share a
                     # vertex index or thick lines render as chains of beads.
                     line_type="indexed",

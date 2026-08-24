@@ -768,6 +768,12 @@ def categorical_palette(n: int) -> np.ndarray:
     )
 
 
+def _category_label(categories: list[str], code: int) -> str:
+    """Return the mapped category label or the raw out-of-range code."""
+    index = int(code)
+    return categories[index] if 0 <= index < len(categories) else str(index)
+
+
 def build_legend_html(
     anatomy_categories: list[str],
     palette: np.ndarray,
@@ -835,9 +841,17 @@ def write_scene(
 
     stage_lookup = data.stage_categories
     anatomy_lookup = data.anatomy_categories
+    # Click a cell to look its anatomy up in the EBI Ontology Lookup Service,
+    # right-click to copy the term (#1917). The label brackets the
+    # developmental stage after it, so the query needs the term alone. A code
+    # outside the lookup yields an empty key and the link suppresses.
+    cell_keys = [
+        str(anatomy_lookup[int(a)]) if 0 <= int(a) < len(anatomy_lookup) else ""
+        for a in data.anatomy_codes
+    ]
     cell_labels = [
-        f"{anatomy_lookup[int(a)] if int(a) < len(anatomy_lookup) else int(a)}\n"
-        f"[stage {stage_lookup[int(s)] if int(s) < len(stage_lookup) else int(s)}]"
+        f"{_category_label(anatomy_lookup, a)}\n"
+        f"[stage {_category_label(stage_lookup, s)}]"
         for a, s in zip(data.anatomy_codes, data.stage_codes, strict=True)
     ]
 
@@ -921,6 +935,9 @@ def write_scene(
                 opacity=0.92,
                 intensity=CELL_INTENSITY,
                 labels=cell_labels,
+                keys=cell_keys,
+                link="https://www.ebi.ac.uk/ols4/search?q={hover_key}",
+                copy="{hover_key}",
                 layer=True,
             )
 

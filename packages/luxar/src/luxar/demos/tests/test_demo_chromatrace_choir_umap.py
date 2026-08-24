@@ -21,6 +21,7 @@ from typing import Any, Callable
 
 import numpy as np
 import pytest
+import zarr
 
 pd = pytest.importorskip("pandas")
 pytest.importorskip("pyarrow")  # parquet engine
@@ -28,9 +29,13 @@ pytest.importorskip("pyarrow")  # parquet engine
 from luxar.demos.demo_chromatrace_choir_umap import (  # noqa: E402
     COLORMAP_NAME,
     PARQUET_NAME,
+    build_scene,
 )
 from luxar.demos.demo_chromatrace_choir_umap import (  # noqa: E402
     load_chromatrace_data as load_static,
+)
+from luxar.demos.demo_chromatrace_choir_umap_sequence import (  # noqa: E402
+    build_sequence_scene,
 )
 from luxar.demos.demo_chromatrace_choir_umap_sequence import (  # noqa: E402
     load_chromatrace_data as load_sequence,
@@ -151,3 +156,41 @@ class TestLoadChromatraceData:
 
         coords *= 2.0  # would raise if `coords` were still a read-only view
         assert float(coords[0, 0]) == pytest.approx(-2.0)
+
+
+def test_unannotated_cells_keep_label_copy_fallback(tmp_path: Path) -> None:
+    coords = np.array([[0, 0, 0], [1, 0, 0]], dtype=np.float32)
+    attributes = {
+        "bio_term": np.array([0, 1], dtype=np.int32),
+        "bio_group": np.array([0, 1], dtype=np.int32),
+    }
+    category_maps = {
+        "bio_term": ["Neuron", "unannotated"],
+        "bio_group": ["Neural", "Unannotated"],
+    }
+    term_colors = {"Neuron": "#ff0000", "unannotated": "#808080"}
+    groups = [
+        {"name": "Neural", "cell_types": ["Neuron"]},
+        {"name": "Unannotated", "cell_types": ["unannotated"]},
+    ]
+
+    static_path = tmp_path / "static.luxar.zarr"
+    sequence_path = tmp_path / "sequence.luxar.zarr"
+    build_scene(static_path, coords, attributes, category_maps, term_colors, groups)
+    build_sequence_scene(
+        sequence_path,
+        coords,
+        attributes,
+        category_maps,
+        term_colors,
+        ["Neuron", "unannotated"],
+        groups,
+        use_tsp=False,
+    )
+
+    for path, node_name in ((static_path, "Cells"), (sequence_path, "Highlight")):
+        node = zarr.open_group(path, mode="r")[node_name]
+        assert node.attrs["link"] == "https://www.ebi.ac.uk/ols4/search?q={hover_key}"
+        assert node.attrs["has_keys"] is True
+        assert node.attrs["has_labels"] is True
+        assert "copy" not in node.attrs
