@@ -14,7 +14,7 @@ from typing import Optional, cast
 import numpy as np
 from scipy import ndimage as ndi
 
-from luxar.utils.spatial_hash import SpatialHashGrid
+from luxar.gsplats.spatial_hash import SpatialHashGrid
 
 __all__ = ["SpatialHashGrid", "SEED_AMPLITUDE_SCALE"]
 

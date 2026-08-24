@@ -66,7 +66,7 @@ from luxar.utils.lod_methods import GSPLAT_ADDITIVE_CHOICES, GSPLAT_ADDITIVE_MET
 from luxar.utils.lod_methods import AutoOrMethod as AutoOrMethod
 from luxar.utils.lod_methods import MethodName as MethodName
 from luxar.utils.lod_methods import is_reveal_method as _is_reveal_method
-from luxar.utils.spatial_hash import BatchedSpatialHashGrid
+from luxar.gsplats.spatial_hash import BatchedSpatialHashGrid
 from luxar.validation.types import (
     validate_finite_reveal_coords,
     validate_integral_axis_indices,

@@ -138,7 +138,7 @@ from luxar.demos._graph_common import (
     load_huri_edges,
     nodes_hash,
 )
-from luxar.utils._umap_utils import build_legend_html, get_categorical_color
+from luxar.demos._support._umap_utils import build_legend_html, get_categorical_color
 from luxar.utils.paths import get_demos_output_dir
 
 # -----------------------------------------------------------------------------

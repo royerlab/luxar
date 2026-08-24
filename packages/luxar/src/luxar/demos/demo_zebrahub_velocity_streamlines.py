@@ -67,7 +67,7 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, UIConfig, ViewerConfig
 from luxar.demos import add_demo_caption, launch_viewer, require_module
 from luxar.demos._cinematic_camera import pull_in
-from luxar.utils._umap_utils import get_categorical_color
+from luxar.demos._support._umap_utils import get_categorical_color
 from luxar.utils.fields import (
     FlowField,
     add_reference_cube_to_scene,

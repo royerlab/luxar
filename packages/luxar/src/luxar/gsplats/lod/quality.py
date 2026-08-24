@@ -68,7 +68,7 @@ from luxar.gsplats.lod.energy import total_self_energy
 from luxar.gsplats.utils.alpha import effective_amplitudes
 from luxar.gsplats.utils.device import resolve_torch_device
 from luxar.gsplats.utils.trils import unpack_tril
-from luxar.utils.spatial_hash import BatchedSpatialHashGrid
+from luxar.gsplats.spatial_hash import BatchedSpatialHashGrid
 
 __all__ = ["QualityResult", "mixture_quality", "total_self_energy"]
 
