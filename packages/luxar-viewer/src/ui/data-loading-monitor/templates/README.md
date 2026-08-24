@@ -18,6 +18,10 @@ concern modules do not import one another. Cache hit-rate helpers live in
 `cache.ts`, rather than `memory.ts`, because the Cache tab owns their only
 production consumer.
 
+All static styling belongs in `styles/components/data-loading-monitor.css`;
+templates use CSS classes rather than inline styles, with `luxar-color--*`
+modifier classes for dynamic colors.
+
 The Cache tab's markup is an incremental-update contract. `tabs/cache.ts`
 patches elements by stable `data-field` selectors and replaces
 `luxar-color--*` classes in place, so changing those attributes or class names

@@ -19,8 +19,9 @@ import { formatBytes, formatNumber, getCacheMemoryColorClass } from './format';
 
 /**
  * Color class for cache hit-rate metrics (L0/L1/L2). Same threshold
- * shape as the reuse-rate classifier, but with `>` semantics so an
- * 80% hit rate still shows as warning.
+ * shape as the reuse-rate helper in `memory.ts`, but with `>` semantics
+ * so an 80% hit rate still shows as warning — caches do not spend much
+ * time at exactly 80%, but any drop below the threshold is meaningful.
  */
 export function getCacheHitRateColorClass(rate: number): string {
   if (rate > 80) return getColorClass('success');
@@ -28,11 +29,22 @@ export function getCacheHitRateColorClass(rate: number): string {
   return getColorClass('error');
 }
 
-/** Accesses below this count are the cache warm-up phase. */
+/**
+ * Accesses below this count are the warm-up phase: a low hit rate on a
+ * handful of first-touch lookups is expected (the cache HAS to miss
+ * before it can hit) and should read as "no signal yet", not as a
+ * red-alert failure.
+ */
 export const CACHE_WARMUP_ACCESSES = 25;
 
 /**
- * Dim hit-rate colors while the cache is still warming up.
+ * Like {@link getCacheHitRateColorClass} but returns the dimmed color
+ * while the cache is still warming up (fewer than
+ * {@link CACHE_WARMUP_ACCESSES} accesses, including zero). Keeps the
+ * initial render of the cache tab consistent with the incremental
+ * cache-tab updater. Without this, a freshly loaded session shows
+ * hit-rate cards in alarm red when nothing is wrong — the first
+ * lookups are unavoidable misses.
  */
 export function getCacheHitRateColorClassWithGuard(rate: number, totalAccesses: number): string {
   if (totalAccesses < CACHE_WARMUP_ACCESSES) return getColorClass('dimmed');
