@@ -407,7 +407,6 @@ def build_scene(
                 labels=labels,
                 keys=keys,
                 link="https://www.ebi.ac.uk/ols4/search?q={hover_key}",
-                copy="{hover_key}",
                 layer=True,
             )
 

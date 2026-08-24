@@ -517,7 +517,6 @@ def build_sequence_scene(
                 labels=per_cell_hover,
                 keys=per_cell_keys,
                 link="https://www.ebi.ac.uk/ols4/search?q={hover_key}",
-                copy="{hover_key}",
                 layer=True,
             )
 
