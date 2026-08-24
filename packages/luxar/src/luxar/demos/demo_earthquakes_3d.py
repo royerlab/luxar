@@ -199,9 +199,9 @@ def generate_fibonacci_sphere(
     budget there; the Fibonacci lattice does not.
 
     Delegates to :mod:`luxar.demos._globe_common`, which is also what
-    ``demo_ocean_currents_earth`` uses — the previous local copy iterated in
-    Python, at roughly 90 us a point, which is why this demo was stuck at a
-    point count too low to render a surface.
+    ``demo_ocean_currents_earth`` uses. Its vectorized texture sampler replaces
+    the old 90 us-per-point lookup that kept this demo's globe too sparse to
+    render as a surface.
 
     Args:
         n_points: Number of points to generate.
