@@ -193,6 +193,29 @@ SUPPRESSING THE SHOT NOISE (and a metric that lied about it):
     -- not because the noise changes but because the specimen brightens around
     it. A fixed filter, a moving proportion.
 
+    WHAT IT DOES TO THE FIT, which is the part that settles the argument. Both
+    arms rendered back and scored INSIDE the cells of the RAW frame -- the one
+    reference neither arm touched:
+
+    | frame | arm | splats | cell PSNR | cell energy | out-of-cell energy |
+    |-------|-----|--------|-----------|-------------|--------------------|
+    |     0 | mc4 |  1,369 |     19.51 |       0.992 |            0.011   |
+    |     0 | NLM | 23,478 |     19.66 |       0.987 |            0.503   |
+    |    10 | mc4 |  1,809 |     20.07 |       1.002 |            0.012   |
+    |    10 | NLM | 21,398 |     19.96 |       0.997 |            0.488   |
+    |    30 | mc4 |  2,309 |     20.80 |       1.002 |            0.053   |
+    |    30 | NLM | 18,472 |     20.60 |       0.997 |            0.429   |
+
+    Equal or better cell fidelity from about a TENTH of the splats. The last
+    column says where the other nine tenths went: NLM's fits put back 43-50% of
+    the energy outside the cells, because a smeared spike is still something to
+    model and the 0.9999 amplitude retention keeps modelling it. Deleting the
+    spike instead means the budget has nothing to spend on but cells.
+
+    This is also the answer to "did we lose detail by shipping fewer splats".
+    Splat count is not detail. It is only detail once you know what the splats
+    are sitting on.
+
 THE LOD LADDER, AND A MEASUREMENT TRAP INSIDE IT:
     The stacked node carries a substitutive ladder (``levels``: 3 coarse levels,
     each 4x smaller) with ``coarsen_dims=(0, 1, 2)`` — the three SPATIAL centre
@@ -388,7 +411,8 @@ LOCAL_FIT = local_fit_path(DEMO_NAME, GSPLATS_FILE)
 #: ``seeds`` proposes and ``cull_retention`` disposes. The seed budget is a
 #: CEILING, not a target: the post-fit cull keeps splats only until 99.99% of the
 #: amplitude is accounted for, so the count that ships is whatever the frame
-#: needs — measured over the full run, 12,462 to 23,478, median 17,977. Both
+#: needs, and after the component filter that is a few thousand rather than
+#: the tens of thousands an unfiltered or NLM-smoothed frame produced. Both
 #: numbers matter, and the second is the one people forget: raising `seeds`
 #: past the plateau changes nothing, while moving `cull_retention` from the
 #: fitter's default 0.95 to 0.9999 was worth +3.4 dB of foreground on its own,
