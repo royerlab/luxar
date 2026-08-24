@@ -45,11 +45,11 @@ recur, and they generalise to any near-empty volume:
    was on, and nobody noticed from the dB.
 4. **An automatic calibration that answers at the edge of its own grid has
    told you nothing.** Widen the grid and look again; if the answer keeps
-   moving, the estimator does not apply to your data. The NLM calibrator does
-   exactly this here — its default range stops at 0.08 and it returns 0.08 —
-   and widening the range only sends it further past the useful value. The
-   ``cal`` K* sweep fails a related way: it answers the SECOND point of its own
-   grid, with a confidence margin smaller than the spacing between points.
+   moving, the estimator does not apply to your data. The ``cal`` K* sweep
+   fails this way here: it answers the SECOND point of its own grid, with a
+   confidence margin smaller than the spacing between points. The NLM
+   calibrator did too, back when this demo used NLM — default range capped at
+   0.08, answer 0.08 — which is part of why it no longer does.
 
 WHAT MAKES THIS A 4D NODE (and not 151 nodes in a trench coat):
     Every timepoint is still fitted on its own — that is what keeps each fit
@@ -137,66 +137,61 @@ FLOOR (why this demo turns off a default the house rule says to keep):
     the energy column: global PSNR barely moves at frame 0 and hides how much
     was being deleted.
 
-DENOISING (measured 2026-08-23; why h is pinned and not calibrated):
-    The shot noise here is not a nuisance at the margin. Counting connected
-    components of the non-zero voxels, at t=0 there are 16,200 ISOLATED single
-    voxels against 6,503 in components big enough to be cells, and they carry
-    **32% of the frame's total energy**. An undenoised fit spends its budget
-    accordingly: it reproduced 67% of that noise energy.
+SUPPRESSING THE SHOT NOISE (and a metric that lied about it):
+    The noise here is not a nuisance at the margin. At t=0, 32% of the frame's
+    total energy sits in isolated voxels, and the MEDIAN object in the whole
+    frame is ONE voxel -- p90 is 1-2 at every timepoint. An unfiltered fit
+    spends its budget accordingly.
 
-    So each timepoint is non-local-means filtered before it is fitted. Every arm
-    below is scored against the RAW frame, split into the two things that matter
-    — fidelity INSIDE real cells (what filtering risks) and how much of the
-    shot-noise energy the fit still reproduces (what filtering buys). Scoring a
-    denoised fit by plain PSNR against the raw frame would mark it down for not
-    reproducing the noise it was asked to remove, which is why neither column is
-    a plain PSNR.
+    So each timepoint has its sub-4-voxel connected components deleted before it
+    is fitted. Not smoothed -- deleted. Every object at or above the threshold
+    passes through bit-identical.
 
-    Each cell is ``cell PSNR / noise energy reproduced / splats``, all at a
-    fixed 32,000-seed budget:
+    HOW THIS SECTION GOT REWRITTEN, because the mistake is the lesson:
 
-    |  h   | t=0                  | t=75                 | t=150                |
-    |------|----------------------|----------------------|----------------------|
-    | none | 19.16 / .667 /  6,926| 21.42 / .620 /  9,139| 18.57 / .236 / 18,895|
-    | 0.02 | 19.93 / .377 / 14,476| 22.30 / .463 /  9,212| 18.67 / .228 / 18,870|
-    | 0.05 | 19.47 / .021 / 23,514| 21.32 / .053 / 12,777| 19.07 / .036 / 20,683|
-    | 0.08 | 19.52 / .010 / 24,811| 19.04 / .016 / 21,346| 18.68 / .020 / 25,180|
-    | 0.12 | 17.85 / .010 / 25,161| 16.08 / .017 / 21,675| 17.22 / .024 / 26,495|
-    | 0.20 | 14.13 / .011 / 25,732| 12.85 / .029 / 23,245| 13.35 / .042 / 25,616|
+    The first attempt used non-local means at h=0.05, chosen by sweeping h and
+    scoring "the share of the shot-noise voxels' energy the fit still
+    reproduces". That metric said the noise collapsed 12-30x. It was wrong, and
+    wrong in a way worth recognising: **NLM is a neighbourhood average, so it
+    SPREADS a spike rather than deleting it.** Energy that moved one voxel out
+    of its original spike left the mask the metric was watching and scored as
+    removed, while remaining perfectly visible on screen as a softer, wider
+    blob. The metric measured displacement and reported destruction.
 
-    0.05 is the knee: cell fidelity is break-even to +0.5 dB against no filtering
-    at all, while the noise the fit reproduces collapses by 12-30x. By 0.08 the
-    filter has reached the cells at the later timepoints (-2.4 dB at t=75), and
-    0.12 and 0.20 erode them visibly.
+    It took someone looking at the render and saying "that doesn't look
+    denoised" to catch it. No number in the sweep would have.
 
-    ``h`` is PINNED, not calibrated at runtime, and that is deliberate. The
-    library's Noise2Self routine (``calibrate_nlm_h``) answers 0.055 to 0.225 on
-    this stack depending on which slice it is pointed at — 4x, from one
-    estimator on one dataset — and every one of those sits at or past the knee
-    above. It is defeated by the same sparsity that inverts the ``auto``
-    background floor: on a volume that is 98.7% exact zeros, a held-out voxel is
-    best predicted by predicting zero, so more smoothing always wins its
-    cross-validation. Two practical notes for anyone re-running it: its default
-    ``h_range`` stops at 0.08, BELOW the optimum it would otherwise report here,
-    so a default call returns a pinned ceiling; and it defaults to the CENTRAL
-    z-slice, which on this stack is nearly empty at early timepoints.
+    The replacement metric -- energy outside a DILATED cell mask -- was also
+    wrong, in the opposite direction: at the busy timepoints NLM's own halo
+    pushes real cell energy past the mask boundary, scoring 1.049 (worse than no
+    filter at all) for what is actually signal. Two metrics, two directions,
+    both plausible. The general lesson is not "use this metric" but: **when a
+    filter MOVES things, any mask fixed on the unfiltered data measures the
+    movement, not the removal.** Prefer an operation that does not move
+    anything, or score by looking.
 
-    Cost: the fit budget is unchanged. Re-derived on denoised data, the plateau
-    is still 32,000 seeds (64,000 scores WORSE at t=0: 19.27 against 19.70), but
-    the same budget now delivers far MORE splats — 6,926 raw against 23,514 at
-    h=0.05 on frame 0, where the noise share is worst. That looks backwards
-    until you see why: the 0.9999 retention keeps splats until 99.99% of the
-    amplitude is accounted for, and with a third of the energy sitting in
-    isolated spikes the fit reaches that threshold early, having modelled the
-    noise and stopped. Remove the spikes and the same threshold has to be met
-    entirely out of cells, so more, smaller splats survive. Counting splats is
-    not counting detail — it is only detail once you know what they are on.
+    WHY A SIZE FILTER, measured against a cell definition (components >= 27
+    voxels) deliberately STRICTER than any threshold under test, so no arm is
+    judged against its own definition:
 
-    The three-frame sweep predicted 12,777-23,514 splats at this budget. Fitting
-    all 151 timepoints landed at 12,462-23,478 (median 17,977; 2,689,314 total,
-    against 1,590,010 undenoised). Worth stating because it is the only
-    out-of-sample check any of these tables get: a strength and a budget both
-    chosen on three frames, holding over fifty times as many.
+    | threshold | frame energy removed (t=0) | cell energy | mean cell peak |
+    |-----------|----------------------------|-------------|----------------|
+    | NLM h=.05 |                      ~0.32 |       0.953 |     **0.783**  |
+    |         2 |                     0.2959 |      1.0000 |       1.0000   |
+    |         4 |                     0.3208 |      1.0000 |       1.0000   |
+    |         8 |                     0.3225 |      1.0000 |       1.0000   |
+    |        12 |                     0.3225 |      1.0000 |       1.0000   |
+
+    There is no trade-off to tune: a component filter's cell columns are exactly
+    1.0000 at every threshold, by construction, while NLM dims the cells it is
+    supposed to protect by 6-22% depending on timepoint. The only thing the
+    threshold changes is how much noise goes, and that curve is flat past 4. So
+    4 takes essentially all of the reduction while deleting nothing larger than
+    3 voxels.
+
+    The energy removed falls with time -- 32% at t=0, 13% at t=40, 2.7% at t=150
+    -- not because the noise changes but because the specimen brightens around
+    it. A fixed filter, a moving proportion.
 
 THE LOD LADDER, AND A MEASUREMENT TRAP INSIDE IT:
     The stacked node carries a substitutive ladder (``levels``: 3 coarse levels,
@@ -256,7 +251,8 @@ REPRODUCING ANY OF THIS:
 
     The fits are cached per timepoint under a key that includes every knob that
     changes the result (seeds, iterations, patience, cull retention, floor,
-    denoise h), so re-running a sweep cannot be served a stale answer. That
+    minimum component size), so re-running a sweep cannot be served a stale
+    answer. That
     keying is not bookkeeping — an earlier version of this demo keyed only on
     the frame index, and the tables above are exactly the sort of sweep it
     would have silently invalidated.
@@ -386,8 +382,8 @@ FITS_DIR = CACHE_DIR / "fits"
 LOCAL_FIT = local_fit_path(DEMO_NAME, GSPLATS_FILE)
 
 #: Fit schedule. See the module docstring's SPLAT BUDGET table for the sweep
-#: these came from, and DENOISING for why it was re-derived once the frames are
-#: filtered (same answer: 32,000 is still the plateau).
+#: these came from. It was re-derived once the frames are filtered and did not
+#: move: 32,000 is still the plateau.
 #:
 #: ``seeds`` proposes and ``cull_retention`` disposes. The seed budget is a
 #: CEILING, not a target: the post-fit cull keeps splats only until 99.99% of the
@@ -403,22 +399,32 @@ N_ITERS = 5_000
 EARLY_STOP_PATIENCE = 500
 CULL_RETENTION = 0.9999
 
-#: NLM denoising strength, applied to each timepoint BEFORE it is fitted.
+#: Delete connected components smaller than this before fitting.
 #:
 #: This stack's shot noise is not a nuisance at the margin, it is a third of the
-#: signal: at t=0, 16,200 of its non-zero voxels are isolated single voxels
-#: against 6,503 in real cells, carrying 32% of the frame's total energy. An
-#: undenoised fit spends its budget accordingly — it reproduced 67% of that
-#: noise energy, splat by splat.
+#: signal at the dim end: at t=0, 32% of the frame's total energy sits in
+#: isolated voxels, and the MEDIAN object in the frame is ONE voxel (p90 is 1-2
+#: at every timepoint). An unfiltered fit spends its budget accordingly.
 #:
-#: 0.05 is MEASURED, not calibrated. See the module docstring's DENOISING
-#: section: Noise2Self (the library's own ``calibrate_nlm_h``) answers 0.055 to
-#: 0.225 here depending on which slice it is pointed at, and every one of those
-#: is at or past the point where the filter starts eating cells. It is gamed by
-#: the same sparsity that inverts the ``auto`` floor — on a volume that is 98.7%
-#: exact zeros, a held-out voxel is best predicted by predicting zero, so more
-#: smoothing always wins its cross-validation.
-DENOISE_H = 0.05
+#: A size filter is chosen over a smoothing one because it matches that noise
+#: model exactly. NLM was tried first and is the wrong tool here: a neighbourhood
+#: average SPREADS a single-voxel spike instead of deleting it, so the spike
+#: survives as a softer, wider blob, and the same averaging dims the cells --
+#: mean cell peak fell to 0.78 of raw at t=0. A component filter cannot do
+#: either: it removes objects below the threshold and leaves every object above
+#: it bit-identical.
+#:
+#: 4 is measured. Against a deliberately STRICTER cell definition than the
+#: threshold itself (components >= 27 voxels, so the test cannot be circular),
+#: every threshold from 2 to 12 keeps cell energy AND mean cell peak at exactly
+#: 1.0000 -- there is no signal cost to trade off. What varies is only how much
+#: noise goes, and that curve is flat past 4 (at t=0: 29.6% of frame energy
+#: removed at 2, 32.1% at 4, 32.25% at 12). So 4 takes essentially all of the
+#: available reduction while only ever deleting 1-3 voxel objects, which at
+#: p90=1-2 is unambiguously the noise population. Going higher buys ~0.2% more
+#: and starts risking genuinely small, dim cells at the early timepoints where
+#: cells are few and faint.
+MIN_COMPONENT_VOXELS = 4
 
 #: NO background floor, stated rather than defaulted. The house rule is to stay
 #: on ``auto`` unless you have measured otherwise; this is a dataset where
@@ -619,28 +625,37 @@ def select_timepoints(n_total: int, limit: Optional[int]) -> list[int]:
 def _fit_cache_path(frame: int) -> Path:
     return FITS_DIR / (
         f"f{frame:04d}_k{SEEDS}_i{N_ITERS}_p{EARLY_STOP_PATIENCE}"
-        f"_c{CULL_RETENTION}_{FLOOR}_dn{DENOISE_H}.gsplats.zarr.zip"
+        f"_c{CULL_RETENTION}_{FLOOR}_mc{MIN_COMPONENT_VOXELS}.gsplats.zarr.zip"
     )
 
 
 def denoise(volume: np.ndarray) -> np.ndarray:
-    """Non-local-means the frame before it is fitted, at the measured strength.
+    """Delete connected components below ``MIN_COMPONENT_VOXELS``, in place of a filter.
 
-    Runs on the GPU when the NLM CUDA extension is built (``make build-nlm-cuda``)
-    and falls back to a much slower PyTorch path when it is not — over 151
-    timepoints that difference is hours, so the warning the library prints is
-    worth acting on before a refit.
+    Pure deletion, not smoothing: every object at or above the threshold comes
+    through bit-identical, so cell peaks and cell energy are untouched by
+    construction rather than by measurement. That is the property a smoothing
+    filter cannot offer and the reason this replaced NLM here.
 
-    Note what this does to the DOWNSTREAM fit: it raises the splat count rather
-    than lowering it (6,926 -> 23,514 on frame 0 at a fixed seed budget). The
-    cull threshold has to be met out of cells once the spikes are gone. See the
-    module docstring's DENOISING section.
+    Cheap too -- one ``ndimage.label`` pass per frame, no GPU, against the tens
+    of seconds per frame the NLM path cost.
     """
-    if not DENOISE_H:
+    if not MIN_COMPONENT_VOXELS or MIN_COMPONENT_VOXELS < 2:
         return volume
-    from luxar.gsplats.preprocessing.denoise_pipeline import denoise_volume_array
+    from scipy import ndimage
 
-    return denoise_volume_array(volume, h=DENOISE_H, device=DEVICE or "auto")
+    labels, _ = ndimage.label(volume > 0)
+    sizes = np.bincount(labels.ravel())
+    small = np.flatnonzero(sizes < MIN_COMPONENT_VOXELS)
+    # Excluding label 0 is a COST guard, not a correctness one: background is
+    # already zero, so writing zeros over it changes nothing -- but on a volume
+    # that is 98.7% empty it would make the mask span nearly every voxel.
+    small = small[small != 0]
+    if not small.size:
+        return volume
+    out = volume.copy()
+    out[np.isin(labels, small)] = 0.0
+    return out
 
 
 def fit_timepoint(volume: np.ndarray, frame: int, acquisition: tuple):
@@ -719,7 +734,7 @@ def fit_all_timepoints(array, frames: list[int]) -> list[GSplatData]:
     fits: list[GSplatData] = []
     with asection(
         f"Fitting {len(frames)} timepoints (seeds={SEEDS:,}, {N_ITERS} iters, "
-        f"NLM h={DENOISE_H})"
+        f"min component {MIN_COMPONENT_VOXELS} voxels)"
     ):
         for i, frame in enumerate(frames):
             volume = np.asarray(array[frame]).astype(np.float32) / scale
@@ -737,13 +752,17 @@ def report_fit_quality(fits: list[GSplatData]) -> None:
     """Print what the fits actually achieved, from their own stamps.
 
     Each fit scores itself against the array it was handed, which since the
-    denoising step is the DENOISED frame — not the acquisition. So these say how
-    faithfully the fit represents what it was asked to fit, and are NOT
-    comparable to the pre-denoising archive's numbers or quotable as fidelity to
-    the microscope. The honest raw-referenced measurement is the cell-PSNR column
-    of the docstring's DENOISING table, taken against the unfiltered frames.
-    Labelled accordingly, because an unlabelled PSNR here would end up on a
-    Zenodo record meaning something it does not.
+    component filter is the FILTERED frame — not the acquisition. So these say
+    how faithfully the fit represents what it was asked to fit, and are NOT
+    quotable as fidelity to the microscope. Labelled accordingly, because an
+    unlabelled PSNR here would end up on a Zenodo record meaning something it
+    does not.
+
+    The gap is smaller than it was under NLM, though, and for a reason worth
+    knowing: a component filter only ever sets voxels to zero, so the filtered
+    frame agrees with the acquisition EXACTLY wherever a cell exists. The
+    difference between these numbers and raw-referenced ones is confined to
+    voxels that held deleted noise.
 
     Both columns are reported: on a volume this sparse, global PSNR is mostly
     the reward for predicting empty space correctly, and the foreground figure
@@ -760,7 +779,7 @@ def report_fit_quality(fits: list[GSplatData]) -> None:
         f"Splats per timepoint: median {int(np.median(counts)):,}, "
         f"range {counts.min():,}-{counts.max():,}, total {counts.sum():,}"
     )
-    vs = "vs the denoised input" if DENOISE_H else "vs the raw frame"
+    vs = "vs the filtered input" if MIN_COMPONENT_VOXELS >= 2 else "vs the raw frame"
     for label, key in (("global", "psnr_db"), ("foreground", "foreground_psnr_db")):
         col = column(key)
         if col is None:

@@ -533,7 +533,7 @@ class TestTheFitCacheKeyMovesWithEveryKnob:
         "EARLY_STOP_PATIENCE": 7,
         "CULL_RETENTION": 0.5,
         "FLOOR": "p90",
-        "DENOISE_H": 0.123,
+        "MIN_COMPONENT_VOXELS": 7,
     }
 
     #: Constants that reach the fit but deliberately stay OUT of the key, each
@@ -585,23 +585,82 @@ class TestTheFitCacheKeyMovesWithEveryKnob:
         assert not (set(self.KNOBS) & self.EXEMPT), "a knob cannot also be exempt"
 
 
-class TestDenoisingIsASwitch:
-    """``DENOISE_H`` turns the filter off by value, not by editing the call."""
+class TestTheComponentFilter:
+    """Delete small objects, leave every larger one BIT-IDENTICAL.
 
-    def test_a_zero_strength_returns_the_frame_untouched(self, monkeypatch) -> None:
-        monkeypatch.setattr(_demo, "DENOISE_H", 0.0)
-        volume = np.linspace(0, 1, 24, dtype=np.float32).reshape(2, 3, 4)
-        out = _demo.denoise(volume)
-        assert out is volume, "a disabled filter must not copy or convert"
+    That second half is the whole reason this replaced NLM, so it is the part
+    worth pinning: a smoothing filter cannot promise it, and the promise is what
+    lets the demo claim zero cell cost without re-measuring per dataset.
+    """
+
+    @staticmethod
+    def _volume() -> np.ndarray:
+        # Sizes 1 and 3 (below the threshold of 4), size 4 sitting EXACTLY on
+        # it, and an 8-voxel block well above it. The 4 is the one that matters:
+        # it is what separates `< threshold` from `<= threshold`, and without it
+        # an off-by-one changes nothing and no test notices.
+        v = np.zeros((4, 10, 10), dtype=np.float32)
+        v[0, 0, 0] = 0.9  # 1 voxel -> deleted
+        v[0, 4, 0:3] = 0.7  # 3 voxels -> deleted
+        v[0, 8, 0:4] = 0.6  # 4 voxels -> KEPT (boundary)
+        v[2, 2:4, 2:4] = 0.5  # 8 voxels -> kept
+        v[3, 2:4, 2:4] = 0.5
+        return v
+
+    def test_small_components_go_and_the_large_one_is_untouched(
+        self, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(_demo, "MIN_COMPONENT_VOXELS", 4)
+        v = self._volume()
+        out = _demo.denoise(v)
+        assert out[0, 0, 0] == 0.0, "the 1-voxel speck survived"
+        assert not out[0, 4, 0:3].any(), "the 3-voxel speck survived"
+        assert np.array_equal(out[0, 8, 0:4], v[0, 8, 0:4]), (
+            "the 4-voxel object was deleted; the threshold is exclusive, so an "
+            "object OF exactly that size must be kept (`<`, not `<=`)"
+        )
+        block = (slice(2, 4), slice(2, 4), slice(2, 4))
+        assert np.array_equal(out[block], v[block]), (
+            "the 8-voxel object changed; a size filter must never alter an "
+            "object it keeps -- that is the property NLM could not offer"
+        )
+
+    def test_the_peak_of_a_kept_object_is_exactly_preserved(self, monkeypatch) -> None:
+        # The measured claim in the docstring is `cell_pk == 1.0000`, exactly --
+        # so check every KEPT object's own peak, not just the global max, which
+        # a single surviving bright object would satisfy on its own.
+        monkeypatch.setattr(_demo, "MIN_COMPONENT_VOXELS", 4)
+        v = self._volume()
+        out = _demo.denoise(v)
+        for name, sel in (
+            ("4-voxel", (0, 8, slice(0, 4))),
+            ("8-voxel", (slice(2, 4), slice(2, 4), slice(2, 4))),
+        ):
+            assert out[sel].max() == v[sel].max(), f"{name} object lost its peak"
+
+    def test_the_input_is_not_mutated(self, monkeypatch) -> None:
+        monkeypatch.setattr(_demo, "MIN_COMPONENT_VOXELS", 4)
+        v = self._volume()
+        before = v.copy()
+        _demo.denoise(v)
+        assert np.array_equal(v, before), "denoise() edited its caller's array"
+
+    @pytest.mark.parametrize("off", [0, 1])
+    def test_a_threshold_below_two_is_a_no_op(self, off: int, monkeypatch) -> None:
+        # Below 2 there is no component small enough to delete, so the filter
+        # must hand the frame straight back rather than pay for a copy.
+        monkeypatch.setattr(_demo, "MIN_COMPONENT_VOXELS", off)
+        v = self._volume()
+        assert _demo.denoise(v) is v
 
     def test_the_off_state_is_still_distinguishable_in_the_cache_key(
         self, monkeypatch
     ) -> None:
-        # Otherwise a denoised and an undenoised run share a cache, which is
-        # the comparison the DENOISING table depends on being able to make.
-        monkeypatch.setattr(_demo, "DENOISE_H", 0.0)
+        # Otherwise a filtered and an unfiltered run share a cache, which is the
+        # comparison the docstring's threshold table depends on being able to make.
+        monkeypatch.setattr(_demo, "MIN_COMPONENT_VOXELS", 0)
         off = _demo._fit_cache_path(0)
-        monkeypatch.setattr(_demo, "DENOISE_H", 0.05)
+        monkeypatch.setattr(_demo, "MIN_COMPONENT_VOXELS", 4)
         assert off != _demo._fit_cache_path(0)
 
 
