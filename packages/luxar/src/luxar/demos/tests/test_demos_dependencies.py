@@ -486,11 +486,14 @@ class TestScannedModuleSet:
         # Not an allowlist: new helpers in either shared-helper location must be
         # picked up with no edit here, or they silently escape all 17 guards.
         demos_dir = Path(__file__).resolve().parents[1]
-        on_disk = {
-            *demos_dir.glob("*.py"),
-            *(demos_dir / "_support").glob("*.py"),
+        expected = {
+            *(p for p in demos_dir.glob("*.py") if p.name not in EXCLUDED),
+            *(
+                p
+                for p in (demos_dir / "_support").glob("*.py")
+                if p.name != "__init__.py"
+            ),
         }
-        expected = {p for p in on_disk if p.name not in {*EXCLUDED, "__init__.py"}}
         assert set(scanned_demo_modules()) == expected
 
     def test_excluded_modules_are_justified(self) -> None:

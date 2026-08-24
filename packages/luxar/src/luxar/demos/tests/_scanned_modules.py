@@ -53,8 +53,8 @@ the suite red (with a message that calls it a demo module) where the old
 untracked module in the package directory is importable and can carry the same
 defects — but put throwaway scripts in ``delme/`` rather than here.
 
-Only two modules are excluded, both because they are infrastructure rather than
-demo code, and one of them would produce a *false* positive:
+Two modules directly under ``demos/`` are excluded because they are
+infrastructure rather than demo code, and one would produce a *false* positive:
 
 ``_dependencies.py``
     IS the gate and the table. Its module docstring quotes a bare
@@ -63,6 +63,9 @@ demo code, and one of them would produce a *false* positive:
     very text that documents the rule.
 ``__init__.py``
     A pure re-export barrel; it holds no demo code and no gates.
+
+``_support/__init__.py`` is excluded for the same barrel-only reason. Every
+other module in ``_support/`` is scanned.
 
 ``registry.py`` is deliberately NOT excluded — it passes all seventeen guards, so
 there is no reason to carve it out.
@@ -86,7 +89,7 @@ from pathlib import Path
 #: ``.../luxar/demos`` — this file lives in ``.../luxar/demos/tests``.
 DEMOS_DIR = Path(__file__).resolve().parent.parent
 
-#: Modules under ``demos/`` that the guards must NOT scan. See the module
+#: Modules directly under ``demos/`` that the guards must NOT scan. See the module
 #: docstring for the justification of each; do not extend this without one.
 EXCLUDED = frozenset({"__init__.py", "_dependencies.py"})
 
