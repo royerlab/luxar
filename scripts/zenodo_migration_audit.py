@@ -379,30 +379,17 @@ def human_bytes(n: int) -> str:
     return f"{mb / 1000:.1f} GB" if mb >= 1000 else f"{mb:.1f} MB"
 
 
-def check_deposition(
-    rec: str,
-    dep: dict,
-    pins: dict[str, tuple[str, int, str]],
-    totals: dict[str, int],
-    record_meta: dict,
-) -> tuple[list[str], list[str]]:
-    """Compare one live deposition against the manifest. Returns (fails, warns).
+def _check_pins(
+    tag: str, rec: str, hosted: dict, pins: dict[str, tuple[str, int, str]]
+) -> list[str]:
+    """Pins vs hosted files, in BOTH directions.
 
-    Pure: no I/O. *dep* is the deposition dict as the API returns it.
+    One direction alone misses the two ways this actually went wrong: a
+    superseded file left on the record (which keeps a right-looking name), and a
+    pin for something never uploaded (which reads as success until the download
+    404s after publication).
     """
-    fails: list[str] = []
-    warns: list[str] = []
-    meta = dep.get("metadata") or {}
-    hosted = {f["filename"]: f for f in (dep.get("files") or [])}
-    tag = f"[{rec}]"
-
-    # 0. Publishing is a one-way door, so this is checked before anything else.
-    if dep.get("submitted"):
-        fails.append(f"{tag} ALREADY SUBMITTED — stop")
-
-    # 1. Pins and hosted files agree, in BOTH directions. One direction alone
-    #    misses the two ways this actually went wrong: a superseded file left on
-    #    the record, and a pin for something never uploaded.
+    fails = []
     for name, f in sorted(hosted.items()):
         pin = pins.get(name)
         if pin is None:
@@ -411,19 +398,36 @@ def check_deposition(
             fails.append(
                 f"{tag} {name} pinned {pin[1]:,} but hosted {f.get('filesize'):,}"
             )
-    for name, (r, _b, _s) in sorted(pins.items()):
-        if r == rec and name not in hosted:
-            fails.append(f"{tag} {name} is pinned but ABSENT from the record")
+    fails += [
+        f"{tag} {name} is pinned but ABSENT from the record"
+        for name, (r, _b, _s) in sorted(pins.items())
+        if r == rec and name not in hosted
+    ]
+    return fails
 
-    # 2. No scratch left behind. A failed multipart upload can leave a probe
-    #    object, and a published record cannot be tidied.
-    for name in sorted(hosted):
-        if name.startswith("_") or name.endswith((".corrupt", ".part", ".tmp")):
-            fails.append(f"{tag} scratch file on the record: {name}")
 
-    # 3. The description's own numbers. A record is the one place a stale number
-    #    is PUBLISHED rather than merely wrong.
-    desc = meta.get("description") or ""
+def _check_no_scratch(tag: str, hosted: dict) -> list[str]:
+    """No probe object left by a failed multipart upload.
+
+    A published record cannot be tidied afterwards.
+    """
+    return [
+        f"{tag} scratch file on the record: {name}"
+        for name in sorted(hosted)
+        if name.startswith("_") or name.endswith((".corrupt", ".part", ".tmp"))
+    ]
+
+
+def _check_description(
+    tag: str,
+    desc: str,
+    hosted: dict,
+    pins: dict[str, tuple[str, int, str]],
+    totals: dict[str, int],
+) -> tuple[list[str], list[str]]:
+    """The description's own claims. A record PUBLISHES a stale number."""
+    fails: list[str] = []
+    warns: list[str] = []
     for mt in re.finditer(r"<li><code>([^<]+)</code>\s*\(([\d.]+\s?[MG]B)", desc):
         entry, claimed = mt.group(1), mt.group(2)
         pin = pins.get(entry)
@@ -448,15 +452,44 @@ def check_deposition(
         # Zenodo's HTML sanitiser drops <thead>, so the header row vanishes on
         # the rendered page while looking correct in the payload you sent.
         warns.append(f"{tag} description contains <thead>, which Zenodo strips")
+    return fails, warns
 
-    # 4. Metadata Zenodo requires to publish at all.
-    for key in ("title", "creators", "license", "upload_type"):
-        if not meta.get(key):
-            fails.append(f"{tag} metadata missing {key}")
 
-    # 5. The manifest's publication switches are flipped BY HAND at publish time.
-    #    Finding them already set means either a premature edit or a publish that
-    #    happened without this gate running.
+def check_deposition(
+    rec: str,
+    dep: dict,
+    pins: dict[str, tuple[str, int, str]],
+    totals: dict[str, int],
+    record_meta: dict,
+) -> tuple[list[str], list[str]]:
+    """Compare one live deposition against the manifest. Returns (fails, warns).
+
+    Pure: no I/O. *dep* is the deposition dict as the API returns it.
+    """
+    meta = dep.get("metadata") or {}
+    hosted = {f["filename"]: f for f in (dep.get("files") or [])}
+    tag = f"[{rec}]"
+
+    # Publishing is a one-way door, so this is checked before anything else.
+    fails = [f"{tag} ALREADY SUBMITTED — stop"] if dep.get("submitted") else []
+    fails += _check_pins(tag, rec, hosted, pins)
+    fails += _check_no_scratch(tag, hosted)
+
+    desc_fails, warns = _check_description(
+        tag, meta.get("description") or "", hosted, pins, totals
+    )
+    fails += desc_fails
+
+    # Metadata Zenodo requires to publish at all.
+    fails += [
+        f"{tag} metadata missing {key}"
+        for key in ("title", "creators", "license", "upload_type")
+        if not meta.get(key)
+    ]
+
+    # The manifest's publication switches are flipped BY HAND at publish time.
+    # Finding them already set means a premature edit, or a publish that happened
+    # without this gate running.
     if record_meta.get("published") or record_meta.get("base_url"):
         warns.append(f"{tag} manifest already marks this published / base_url set")
     return fails, warns
