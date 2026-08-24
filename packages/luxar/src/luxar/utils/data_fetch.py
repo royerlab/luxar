@@ -328,6 +328,110 @@ def ensure_dataset(
     return resolved
 
 
+def _matches(path: Path, expected: Optional[str], verbose: bool) -> bool:
+    """True only on a POSITIVE checksum match.
+
+    ``verify_file_checksum`` returns True vacuously when given no expected hash,
+    so a missing digest is excluded here rather than left to a short-circuit that
+    a later edit could drop.
+    """
+    from .download import verify_file_checksum
+
+    return (
+        expected is not None
+        and path.is_file()
+        and verify_file_checksum(path, None, expected, verbose=verbose)
+    )
+
+
+def _accepted_contract(
+    path: Path, sha: Optional[str], hosted_sha: Optional[str], verbose: bool
+) -> Optional[str]:
+    """Which contract *path* satisfies: ``"hosted"``, ``"local"``, or None.
+
+    Hosted is tried first so the canonical answer is the one reported when both
+    would match — which is every case where the two pins agree.
+    """
+    if _matches(path, hosted_sha, verbose):
+        return "hosted"
+    if _matches(path, sha, verbose):
+        return "local"
+    return None
+
+
+def _resolve_from_cache(
+    dest: Path,
+    fname: str,
+    sha: Optional[str],
+    hosted_sha: Optional[str],
+    unverifiable: bool,
+    verbose: bool,
+) -> Optional[Path]:
+    """Step 1: reuse the cached copy, or quarantine it and return None.
+
+    Returning None carries the invariant the rest of ``_ensure_one`` depends on:
+    ``dest`` does not exist, so nothing wrong can be trusted or promoted in its
+    place (``robust_download`` would otherwise resume onto stale bytes).
+    """
+    from .download import quarantine_file
+
+    if not dest.exists():
+        return None
+    if not dest.is_file():
+        raise IsADirectoryError(
+            f"Cache entry {dest} exists but is not a regular file; remove it "
+            "(or run 'luxar demo cache clear') and retry."
+        )
+    if unverifiable and not is_lfs_pointer(dest):
+        # Unverifiable: a pending-upload entry, or a manifest predating the
+        # checksum. Reuse it — but say so. Silence is how corruption lives.
+        if verbose:
+            aprint(f"✓ Cached (UNVERIFIED — no sha256 in manifest): {fname}")
+        return dest
+    accepted = _accepted_contract(dest, sha, hosted_sha, verbose)
+    if accepted:
+        _report_contract(
+            accepted, "✓ Cached (sha256 verified):", fname, sha, hosted_sha, verbose
+        )
+        return dest
+    quarantine_file(
+        dest,
+        reason=(
+            "unpulled git-LFS pointer"
+            if is_lfs_pointer(dest)
+            else "matches neither the in-repo nor the hosted sha256 (corrupt, "
+            "or superseded by a data update)"
+        ),
+        verbose=verbose,
+    )
+    return None
+
+
+def _report_contract(
+    kind: str,
+    prefix: str,
+    fname: str,
+    sha: Optional[str],
+    hosted_sha: Optional[str],
+    verbose: bool,
+) -> None:
+    """One line about which contract was satisfied, when it is worth saying.
+
+    Only a DIVERGENCE is worth a remark: a hosted pin equal to the local one is
+    the majority case, and narrating it would train people to ignore the notice.
+    """
+    if not verbose:
+        return
+    divergent = hosted_sha is not None and sha is not None and hosted_sha != sha
+    if kind == "local" and divergent:
+        aprint(
+            f"{prefix} {fname} matches the in-repo sha256, but the record "
+            "hosts a newer build (hosted_sha256 differs)"
+        )
+    else:
+        aprint(f"{prefix} {fname}")
+
+
 def _ensure_one(
     dest: Path,
     fname: str,
@@ -385,79 +489,16 @@ def _ensure_one(
     not exist, so nothing wrong can be trusted or promoted in its place.
     """
     from .atomic_copy import atomic_copy_file
-    from .download import download_with_checksum, quarantine_file, verify_file_checksum
+    from .download import download_with_checksum, quarantine_file
 
     # The record's bytes if we know them, else the only digest we have.
     download_sha = hosted_sha or sha
-    # True only when the two contracts genuinely disagree, which is what decides
-    # whether accepting the local copy deserves a notice or is just business.
-    divergent = hosted_sha is not None and sha is not None and hosted_sha != sha
     unverifiable = sha is None and hosted_sha is None
 
-    def _matches(path: Path, expected: Optional[str]) -> bool:
-        """True only on a POSITIVE checksum match.
-
-        ``verify_file_checksum`` returns True vacuously when given no expected
-        hash, so a missing digest is excluded here rather than left to a
-        short-circuit that a later edit could drop.
-        """
-        return (
-            expected is not None
-            and path.is_file()
-            and verify_file_checksum(path, None, expected, verbose=verbose)
-        )
-
-    def _accept(path: Path) -> Optional[str]:
-        """Which contract *path* satisfies: ``"hosted"``, ``"local"``, or None.
-
-        Hosted is tried first so the canonical answer is the one reported when
-        both would match (they are the same bytes whenever the pins agree).
-        """
-        if _matches(path, hosted_sha):
-            return "hosted"
-        if _matches(path, sha):
-            return "local"
-        return None
-
-    def _report(kind: str, prefix: str) -> None:
-        """One line about which contract was satisfied, when it is worth saying."""
-        if not verbose:
-            return
-        if kind == "local" and divergent:
-            aprint(
-                f"{prefix} {fname} matches the in-repo sha256, but the record "
-                "hosts a newer build (hosted_sha256 differs)"
-            )
-        else:
-            aprint(f"{prefix} {fname}")
-
     # ── 1. Local cache ──────────────────────────────────────────────────────
-    if dest.exists():
-        if not dest.is_file():
-            raise IsADirectoryError(
-                f"Cache entry {dest} exists but is not a regular file; remove it "
-                "(or run 'luxar demo cache clear') and retry."
-            )
-        if unverifiable and not is_lfs_pointer(dest):
-            # Unverifiable: a pending-upload entry, or a manifest predating the
-            # checksum. Reuse it — but say so. Silence is how corruption lives.
-            if verbose:
-                aprint(f"✓ Cached (UNVERIFIED — no sha256 in manifest): {fname}")
-            return dest
-        accepted = _accept(dest)
-        if accepted:
-            _report(accepted, "✓ Cached (sha256 verified):")
-            return dest
-        quarantine_file(
-            dest,
-            reason=(
-                "unpulled git-LFS pointer"
-                if is_lfs_pointer(dest)
-                else "matches neither the in-repo nor the hosted sha256 (corrupt, "
-                "or superseded by a data update)"
-            ),
-            verbose=verbose,
-        )
+    cached = _resolve_from_cache(dest, fname, sha, hosted_sha, unverifiable, verbose)
+    if cached is not None:
+        return cached
 
     # INVARIANT from here on: `dest` does not exist.
 
@@ -472,13 +513,20 @@ def _ensure_one(
         atomic_copy_file(lfs_file, dest)
         if unverifiable:
             return dest
-        accepted = _accept(dest)
+        accepted = _accepted_contract(dest, sha, hosted_sha, verbose)
         if accepted:
-            _report(accepted, "✓ Copied from packaged data:")
+            _report_contract(
+                accepted,
+                "✓ Copied from packaged data:",
+                fname,
+                sha,
+                hosted_sha,
+                verbose,
+            )
             return dest
         # The copy is wrong. Hash the SOURCE to apportion blame — this second
         # pass only ever runs on this failure path.
-        source_ok = _accept(lfs_file) is not None
+        source_ok = _accepted_contract(lfs_file, sha, hosted_sha, verbose) is not None
         quarantine_file(dest, reason="sha256 mismatch after copy", verbose=verbose)
         if source_ok:
             raise RuntimeError(
