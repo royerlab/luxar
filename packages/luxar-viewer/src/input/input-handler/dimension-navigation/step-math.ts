@@ -187,8 +187,14 @@ export function calculateNextPosition(
       }
     }
   } else {
-    // Clamp to range
-    newPos = clamp(newPos, range[0], range[1]);
+    if (discrete) {
+      const grid = snapStep > 0 ? snapStep : 1;
+      const lastK = Math.floor((range[1] - range[0]) / grid + 1e-9);
+      const k = Math.round((newPos - range[0]) / grid);
+      newPos = range[0] + clamp(k, 0, lastK) * grid;
+    } else {
+      newPos = clamp(newPos, range[0], range[1]);
+    }
   }
 
   return newPos;

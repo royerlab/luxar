@@ -198,6 +198,10 @@ describe('nD Navigation Utilities', () => {
       expect(calculateNextPosition(1, -1, 5, [1, 11], true, true, 5)).toBe(11);
     });
 
+    it('clamps to the last anchored stop instead of an off-grid range maximum', () => {
+      expect(calculateNextPosition(6, 1, 5, [1, 10.5], true, false, 5)).toBe(6);
+    });
+
     it('should wrap around when enabled', () => {
       expect(calculateNextPosition(9, 1, 2, [0, 10], false, true)).toBe(1); // Wrap to start
       expect(calculateNextPosition(1, -1, 2, [0, 10], false, true)).toBe(9); // Wrap to end
