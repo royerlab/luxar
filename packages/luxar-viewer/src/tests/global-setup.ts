@@ -13,12 +13,7 @@ import { existsSync, readFileSync } from 'fs';
 import { execSync } from 'child_process';
 import { resolve } from 'path';
 import { fileURLToPath } from 'url';
-import {
-  areExpectationsStale,
-  areFixturesStale,
-  stampExpectationsInputs,
-  stampFixtureInputs,
-} from '../../tools/fixture-freshness';
+import { areFixturesStale, ensureGeneratedFixtures } from '../../tools/fixture-freshness';
 import {
   isGeneratedFixtureComplete,
   parseGeneratedFixtureNames,
@@ -80,22 +75,6 @@ function runPythonGenerator(command: string, label: string): void {
     console.error(`[test-setup] Run manually: ${command}`);
     throw new Error(`${label} generation failed. See above for details.`, { cause: err });
   }
-}
-
-/**
- * @param regeneratedFixtures whether this run rebuilt the zarr fixtures.
- *
- * That flag is load-bearing, not belt-and-braces. `generate_test_data.py` is
- * NOT byte-reproducible: rebuilding the fixtures from unchanged inputs still
- * produces stores whose encoded values differ from the ones the committed
- * expectations were computed against, and 23 round-trip tests fail. The old
- * mtime comparison coupled the two implicitly (any fixture rebuild bumped the
- * fixtures past the expectations file); keying purely on the input digest
- * decoupled them and broke that invariant. So: fixtures rebuilt => expectations
- * rebuilt, always.
- */
-function isExpectationsStale(regeneratedFixtures: boolean): boolean {
-  return areExpectationsStale(regeneratedFixtures, PROJECT_ROOT, FIXTURES_DIR);
 }
 
 /**
@@ -259,44 +238,25 @@ export async function setup(): Promise<void> {
     (name) => !isGeneratedFixtureComplete(resolve(FIXTURES_DIR, name))
   );
   const stale = areFixturesStale(PROJECT_ROOT, FIXTURES_DIR);
-  const regeneratedFixtures = missing.length > 0 || stale;
 
-  if (regeneratedFixtures) {
+  if (missing.length > 0 || stale) {
     console.log(
       missing.length > 0
         ? `\n[test-setup] ${missing.length} zarr fixture(s) missing or incomplete — generating...`
         : '\n[test-setup] fixture production sources changed — regenerating...'
     );
-    // All-or-nothing: generate_test_data.py takes no arguments, so there is no
-    // per-fixture regeneration to reach for. That is affordable now only
-    // because the content-digest check above stops this firing spuriously.
-    runPythonGenerator(
-      'hatch run fixtures:python packages/luxar-viewer/tests/fixtures/generate_test_data.py',
-      'fixtures'
-    );
   }
 
-  // Verify fixture generation succeeded before generating expectations from them.
-  //
-  // This stays a HARD failure. Letting the run continue would report a green
-  // suite whose round-trip coverage silently did not execute, which is the one
-  // outcome worse than an obvious abort.
-  const stillMissing = EXPECTED_FIXTURES.filter(
-    (name) => !isGeneratedFixtureComplete(resolve(FIXTURES_DIR, name))
-  );
-  if (stillMissing.length > 0) {
-    throw new Error(
-      `Fixture generation ran but these are still missing or incomplete: ${stillMissing.join(', ')}`
-    );
-  }
-  stampFixtureInputs(PROJECT_ROOT, FIXTURES_DIR);
-
-  if (isExpectationsStale(regeneratedFixtures)) {
-    console.log('[test-setup] Round-trip expectations missing/stale — generating...');
+  ensureGeneratedFixtures(PROJECT_ROOT, FIXTURES_DIR, (scriptPath) => {
+    const expectations = scriptPath.endsWith('generate_expectations.py');
+    if (expectations) {
+      console.log('[test-setup] Round-trip expectations missing/stale — generating...');
+    }
     runPythonGenerator(
-      'hatch run fixtures:python packages/luxar-viewer/tests/fixtures/generate_expectations.py',
-      'round-trip expectations'
+      expectations
+        ? 'hatch run fixtures:python packages/luxar-viewer/tests/fixtures/generate_expectations.py'
+        : 'hatch run fixtures:python packages/luxar-viewer/tests/fixtures/generate_test_data.py',
+      expectations ? 'round-trip expectations' : 'fixtures'
     );
-  }
-  stampExpectationsInputs(PROJECT_ROOT, FIXTURES_DIR);
+  });
 }

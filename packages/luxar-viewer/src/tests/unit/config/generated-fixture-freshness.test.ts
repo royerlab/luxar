@@ -175,6 +175,7 @@ describe('generated fixture freshness', () => {
 
   it('regenerates an incomplete fixture set before stamping it current', () => {
     const { fixturesDir, projectRoot } = writeFixtureInputs();
+    stampExpectationsInputs(projectRoot, fixturesDir);
     rmSync(join(fixturesDir, 'test.luxar.zarr'), { recursive: true });
     const generated: string[] = [];
 
