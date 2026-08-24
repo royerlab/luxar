@@ -768,6 +768,11 @@ def categorical_palette(n: int) -> np.ndarray:
     )
 
 
+def _category_label(categories: list[str], code: int) -> str:
+    index = int(code)
+    return categories[index] if 0 <= index < len(categories) else str(index)
+
+
 def build_legend_html(
     anatomy_categories: list[str],
     palette: np.ndarray,
@@ -844,8 +849,8 @@ def write_scene(
         for a in data.anatomy_codes
     ]
     cell_labels = [
-        f"{anatomy_lookup[int(a)] if int(a) < len(anatomy_lookup) else int(a)}\n"
-        f"[stage {stage_lookup[int(s)] if int(s) < len(stage_lookup) else int(s)}]"
+        f"{_category_label(anatomy_lookup, a)}\n"
+        f"[stage {_category_label(stage_lookup, s)}]"
         for a, s in zip(data.anatomy_codes, data.stage_codes, strict=True)
     ]
 

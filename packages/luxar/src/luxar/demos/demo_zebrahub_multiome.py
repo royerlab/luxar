@@ -115,6 +115,11 @@ def attr_to_colors(values):  # type: ignore[no-untyped-def]
     return colors
 
 
+def _category_label(categories: list[str], code: int) -> str:
+    index = int(code)
+    return categories[index] if 0 <= index < len(categories) else str(index)
+
+
 def main() -> None:
     """Load the integrated cells, build the two-view UMAP scene, and optionally
     launch the viewer (honors ``--no-serve``)."""
@@ -147,8 +152,8 @@ def main() -> None:
             ct_map = category_maps.get("celltype", [])
             tp_map = category_maps.get("timepoint", [])
             per_cell_labels = [
-                f"{ct_map[attrs['celltype'][i]] if 0 <= attrs['celltype'][i] < len(ct_map) else attrs['celltype'][i]}"
-                f" @ {tp_map[attrs['timepoint'][i]] if attrs['timepoint'][i] < len(tp_map) else attrs['timepoint'][i]}"
+                f"{_category_label(ct_map, attrs['celltype'][i])}"
+                f" @ {_category_label(tp_map, attrs['timepoint'][i])}"
                 for i in range(len(coords))
             ]
             labels = per_cell_labels * len(attrs)
@@ -259,8 +264,8 @@ def main() -> None:
             ct_map = category_maps.get("celltype", [])
             tp_map = category_maps.get("timepoint", [])
             per_cell_labels = [
-                f"{ct_map[attrs['celltype'][i]] if 0 <= attrs['celltype'][i] < len(ct_map) else attrs['celltype'][i]}"
-                f" @ {tp_map[attrs['timepoint'][i]] if attrs['timepoint'][i] < len(tp_map) else attrs['timepoint'][i]}"
+                f"{_category_label(ct_map, attrs['celltype'][i])}"
+                f" @ {_category_label(tp_map, attrs['timepoint'][i])}"
                 for i in range(len(coords))
             ]
             labels = per_cell_labels * len(attrs)
