@@ -159,6 +159,9 @@ def run_import(
 def _discrete_coordinate_step(coordinate: np.ndarray) -> float:
     """Return the largest zero-anchored integer grid containing every coordinate.
 
+    Viewer snapping in ``scene-dims-manager.ts`` and ``step-math.ts`` is anchored at
+    zero, so use the GCD of values, not differences: differences for ``[1, 3]`` would
+    yield step 2 and put both imported coordinates off-grid.
     A singleton carries no stride evidence, and gcd({0}) would produce a step rejected
     by ``Dimension``, so singleton dimensions retain the safe unit-step fallback.
     """
