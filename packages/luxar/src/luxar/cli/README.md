@@ -84,8 +84,8 @@ including one forgotten in another terminal, and free its ports.
 - `stop_run()`: Revalidate and terminate one run's process group; returns False
   without signalling off POSIX, where a recorded PID cannot be safely checked
   before a hard kill
-- `describe_port_holder()`: Best-effort `lsof` description for a process using
-  a requested demo port
+- `describe_port_holder()`: Best-effort `lsof` hint for `pick_port()`'s
+  busy-port warning when a requested demo port looks Luxar-owned
 
 ## Available Commands
 
