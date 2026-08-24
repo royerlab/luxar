@@ -1057,10 +1057,21 @@ def load_dataset_bundle(
         # The digest ensure_dataset just verified is the exact staleness key for
         # the extracted frames. None when the manifest entry carries no sha256
         # (a pending-upload row), which falls back to the (size, mtime) stamp.
+        #
+        # There are TWO contracts now (`sha256` = the repo's copy,
+        # `hosted_sha256` = the record's), and `ensure_dataset` accepts bytes
+        # satisfying either — so no single field is guaranteed to describe what
+        # actually landed. Both are folded into the key when they DISAGREE, so
+        # that whichever copy is in the cache, a change to it changes the stamp.
+        # When they agree, or there is no hosted pin, the key is byte-identical
+        # to before: no spurious re-extraction for the datasets that never
+        # diverged.
         files, _ = resolve_variant(name, dataset_spec(name, manifest), None)
-        sha = next(
-            (e.get("sha256") for e in files if e.get("name") == bundle_name), None
-        )
+        entry = next((e for e in files if e.get("name") == bundle_name), {})
+        sha = entry.get("sha256")
+        hosted = entry.get("hosted_sha256")
+        if sha and hosted and hosted != sha:
+            sha = f"{sha}+{hosted}"
         # ensure_dataset already verified the sha256, so an LFS-pointer check
         # would be checking the wrong thing about an already-trusted file.
         return _extract_bundle_and_load(
