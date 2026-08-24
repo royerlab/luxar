@@ -54,9 +54,9 @@ export class AnimationShortcuts {
 
   /**
    * Register the five animation-shortcut bindings on the
-   * `NAVIGATION` context. Idempotency is the InputContextManager's
-   * responsibility — the InputHandler only ever calls this once
-   * (from `initAnimationManager()`).
+   * `NAVIGATION` context. `registerAllKeyBindings()` calls this once
+   * during InputHandler startup; the handlers remain safe no-ops until
+   * a scene provides a selected dimension and animation manager.
    */
   register(): void {
     // K — Toggle play/pause

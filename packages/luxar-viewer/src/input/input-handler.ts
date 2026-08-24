@@ -425,7 +425,6 @@ export class InputHandler {
       sceneManager: this.sceneManager,
       animationController: this.animationController,
       dimensionSlidersFactory: this.dimensionSlidersFactory,
-      contextManager: this.contextManager,
       panelCoordinator: this.panelCoordinator,
       recordingPanel: this.recordingPanel,
       getSelectedDimension: () => this.selectedDimension,

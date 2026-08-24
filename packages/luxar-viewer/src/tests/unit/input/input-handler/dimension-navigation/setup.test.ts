@@ -94,7 +94,6 @@ function makeCtx(overrides: Partial<DimNavSetupCtx> = {}): DimNavSetupCtx {
     sceneManager,
     animationController: { startAnimation: vi.fn() } as never,
     dimensionSlidersFactory: undefined,
-    contextManager: { registerBinding: vi.fn() } as never,
     panelCoordinator,
     recordingPanel: undefined,
     getSelectedDimension: () => selectedDimension,

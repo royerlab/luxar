@@ -31,7 +31,6 @@ import type { SceneManager } from '../../../scene/scene-manager';
 import type { AnimationController } from '../../../scene/animation/animation-controller';
 import type { DimensionSliders, SliderConfig } from '../../../ui/dimension-sliders';
 import type { RecordingPanel } from '../../../ui/recording-panel';
-import type { InputContextManager } from '../context-manager';
 import type { PanelCoordinator } from '../commands/panel-coordinator';
 
 /**
@@ -49,7 +48,6 @@ export interface DimNavSetupCtx {
   sceneManager: SceneManager;
   animationController: AnimationController;
   dimensionSlidersFactory: DimensionSlidersFactory | undefined;
-  contextManager: InputContextManager;
   panelCoordinator: PanelCoordinator;
   recordingPanel: RecordingPanel | undefined;
   getSelectedDimension(): number;
