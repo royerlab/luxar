@@ -628,7 +628,7 @@ def denoise(volume: np.ndarray) -> np.ndarray:
     Runs through the NLM CUDA extension when it is built
     (``make build-nlm-cuda``), through PyTorch on a GPU without the extension,
     and through scikit-image on CPU. The CPU path takes roughly 15 minutes per
-    frame here, so the warning the library prints is worth acting on before a
+    frame here, so check the ``backend=`` field in the progress line before a
     151-timepoint refit.
 
     Note what this does to the DOWNSTREAM fit: it raises the splat count rather

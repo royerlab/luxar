@@ -511,6 +511,21 @@ class TestTheStackedArchiveSurvivesItsRoundTrip:
             "every scrub rather than appear at one timepoint"
         )
 
+    def test_the_scene_records_denoising_when_enabled(self, toy, monkeypatch):
+        import zarr
+
+        shape, fits, tmp = toy
+        monkeypatch.setattr(_demo, "ACQUISITION_SHAPE_ZYX", shape)
+        monkeypatch.setattr(_demo, "DEVICE", "cpu")
+        monkeypatch.setattr(_demo, "DENOISE_H", 0.05)
+
+        times = [t * _demo.AXIS_STEP_MIN for t in range(len(fits))]
+        laddered = _demo.build_lod(_demo.combine_to_4d(fits, times))
+        out = _demo.create_luxar_scene(laddered, tmp / "denoised.luxar.zarr")
+
+        root = zarr.open_group(str(out), mode="r")
+        assert "non-local-means denoised (h=0.05)" in root.attrs["description"]
+
 
 class TestTheFitCacheKeyMovesWithEveryKnob:
     """A cached fit may only be reused by a run that would have produced it.
@@ -592,6 +607,10 @@ class TestTheFitCacheKeyMovesWithEveryKnob:
             if isinstance(node, ast.Name) and node.id.isupper()
         }
         assert found == call_names, "could not find every guarded call"
+        assert set(self.KNOBS) <= passed, (
+            f"{sorted(set(self.KNOBS) - passed)} are in KNOBS but no longer reach "
+            "the fit, so the cache key advertises a distinction the fit ignores"
+        )
         assert passed <= set(self.KNOBS) | self.EXEMPT, (
             f"{sorted(passed - set(self.KNOBS) - self.EXEMPT)} reach the fit "
             "but are not in KNOBS, so nothing checks they are in the cache "
@@ -654,6 +673,43 @@ class TestRecomputeResumes:
         monkeypatch.setattr(_demo, "report_fit_quality", lambda fits: None)
         array = np.zeros((1, 2, 3, 4), dtype=np.uint8)
         assert _demo.fit_all_timepoints(array, [0]) == [sentinel]
+
+    def test_a_cold_frame_is_denoised_at_the_measured_strength(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        import luxar.gsplats
+        import luxar.gsplats.preprocessing.denoise_pipeline as denoise_pipeline
+
+        class FitReached(Exception):
+            pass
+
+        volume = np.zeros((2, 3, 4), dtype=np.float32)
+        denoised = np.ones_like(volume)
+        calls: list[tuple[np.ndarray, float, str]] = []
+        monkeypatch.setattr(_demo, "REFIT_ALL", False)
+        monkeypatch.setattr(_demo, "DEVICE", "cpu")
+        monkeypatch.setattr(
+            _demo, "_fit_cache_path", lambda frame: tmp_path / "missing.gsplats.zarr"
+        )
+
+        def fake_denoise(input_volume, *, h, device):
+            calls.append((input_volume, h, device))
+            return denoised
+
+        def stop_at_fit(input_volume, **kwargs):
+            assert input_volume is denoised
+            raise FitReached
+
+        monkeypatch.setattr(denoise_pipeline, "denoise_volume_array", fake_denoise)
+        monkeypatch.setattr(luxar.gsplats, "fit_gaussian_splats", stop_at_fit)
+
+        with pytest.raises(FitReached):
+            _demo.fit_timepoint(volume, 0, (volume.shape, str(volume.dtype)))
+        assert len(calls) == 1
+        input_volume, h, device = calls[0]
+        assert input_volume is volume
+        assert h == pytest.approx(_demo.DENOISE_H)
+        assert device == "cpu"
 
     def test_refit_all_ignores_the_cache(self, monkeypatch) -> None:
         import luxar.gsplats
