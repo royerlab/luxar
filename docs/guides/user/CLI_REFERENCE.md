@@ -401,9 +401,9 @@ extension) and must match exactly once. Captures must be integers exactly repres
 as float32 coordinates. For example:
 
 ```bash
-luxar mesh import frames out.luxar.zarr --pattern '*.ply'
-luxar mesh import frames out.luxar.zarr --index-regex 'frame_(?P<t>\d+)'
-luxar mesh import surfaces out.luxar.zarr --index-regex 't=(?P<t>\d+)-c=(?P<c>\d+)'
+luxar mesh import --pattern '*.ply' frames out.luxar.zarr
+luxar mesh import --index-regex 'frame_(?P<t>\d+)' frames out.luxar.zarr
+luxar mesh import --index-regex 't=(?P<t>\d+)-c=(?P<c>\d+)' surfaces out.luxar.zarr
 ```
 
 The resulting mesh node has no spatial index: the viewer downloads the entire stacked
