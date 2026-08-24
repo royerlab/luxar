@@ -160,7 +160,8 @@ luxar mesh import model.glb model.luxar.zarr --no-center
 ```
 
 ```python
-from luxar.mesh.interop import import_mesh
+from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.mesh.interop import import_mesh, import_mesh_directory
 
 mesh = import_mesh("bunny.ply")  # -> TriangleMesh
 scene.add_mesh(
@@ -171,6 +172,40 @@ scene.add_mesh(
     normal_dims=[0, 1, 2],
     colors=mesh.colors,
 )
+
+# P12_Ch0-registered-T0001.vtp, ... → vertices shaped (V, 5): x, y, z, t, c
+timelapse = import_mesh_directory("000_deconv.ome.zarr/meshes/cells")
+time_range = (
+    float(timelapse.vertices[:, 3].min()),
+    float(timelapse.vertices[:, 3].max()),
+)
+channel_range = (
+    float(timelapse.vertices[:, 4].min()),
+    float(timelapse.vertices[:, 4].max()),
+)
+dimensions = Dimensions(
+    [
+        Dimension("x", unit="um"),
+        Dimension("y", unit="um"),
+        Dimension("z", unit="um"),
+        Dimension(
+            "t", unit="frame", range=time_range, step=1, display=False, discrete=True
+        ),
+        Dimension(
+            "c", unit="index", range=channel_range, step=1, display=False, discrete=True
+        ),
+    ]
+)
+with LuxarZarrCompiler("cells.luxar.zarr") as compiler:
+    scene = compiler.create_scene(dimensions=dimensions)
+    scene.add_mesh(
+        "Cells",
+        timelapse.vertices,
+        timelapse.faces,
+        normals=timelapse.normals,
+        normal_dims=[0, 1, 2],
+        colors=timelapse.colors,
+    )
 ```
 
 ## Testing
