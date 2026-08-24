@@ -490,6 +490,10 @@ def _obsidian_job(name: str, status: str) -> dict[str, object]:
     return {"name": name, "status": status, "labels": ["self-hosted", "obsidian"]}
 
 
+def _hosted_job(name: str, status: str) -> dict[str, object]:
+    return {"name": name, "status": status, "labels": ["ubuntu-latest"]}
+
+
 def _heartbeat(value: str, updated_epoch: int) -> dict[str, str]:
     updated_at = (
         datetime.fromtimestamp(updated_epoch, UTC).isoformat().replace("+00:00", "Z")
@@ -516,6 +520,47 @@ def test_queue_watchdog_waits_for_obsidian_jobs_to_materialize(
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert calls == 3, "watchdog exited before obsidian-routed jobs appeared"
+    assert not cancelled
+
+
+def test_queue_watchdog_waits_past_grace_while_fanout_is_still_pending(
+    workflow: str, tmp_path: Path
+) -> None:
+    """Hosted queue delay must not consume the obsidian materialization grace."""
+    pending = [
+        _hosted_job("changes", "in_progress"),
+        _hosted_job("pick-runner", "completed"),
+        _hosted_job("queue-watchdog", "in_progress"),
+    ]
+    snapshots = [
+        pending,
+        pending,
+        pending,
+        pending,
+        [
+            _hosted_job("changes", "completed"),
+            _hosted_job("pick-runner", "completed"),
+            _hosted_job("queue-watchdog", "in_progress"),
+            _obsidian_job("python-tests (3.12)", "in_progress"),
+            _obsidian_job("python-tests (3.14)", "queued"),
+        ],
+        [
+            _hosted_job("changes", "completed"),
+            _hosted_job("pick-runner", "completed"),
+            _hosted_job("queue-watchdog", "in_progress"),
+            _obsidian_job("python-tests (3.14)", "in_progress"),
+        ],
+    ]
+    result, calls, cancelled = _run_queue_watchdog(
+        workflow,
+        tmp_path,
+        snapshots,
+        heartbeat_snapshots=[_heartbeat("0", 1300)],
+        date_step=60,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == 6, "watchdog exited while the dependent fan-out was still pending"
     assert not cancelled
 
 

@@ -302,11 +302,21 @@ jobs:
                                                       | select(.labels | index("obsidian"))
                                                       | .name] | join(", ")') \
               || { echo "running-job selection failed; retrying"; sleep 30; continue; }
+            fanout_pending=$(echo "$jobs" | jq -r '[.jobs[] | select(.status == "queued" or .status == "in_progress")
+                                                            | select((.labels | index("obsidian")) | not)
+                                                            | select(.name != "queue-watchdog")
+                                                            | .name] | join(", ")') \
+              || { echo "fan-out job selection failed; retrying"; sleep 30; continue; }
             if [ "$visible" -gt 0 ]; then seen_obsidian=1; fi
             if [ -z "$queued" ]; then
               if [ "$seen_obsidian" -eq 1 ]; then
                 echo "every obsidian-routed job has been picked up — done"
                 exit 0
+              fi
+              if [ -n "$fanout_pending" ]; then
+                materialize_end=$(( now + 3 * 60 ))
+                echo "obsidian-routed jobs are waiting on run fan-out ($fanout_pending); retrying"
+                sleep 30; continue
               fi
               if [ "$now" -ge "$materialize_end" ]; then
                 echo "obsidian-routed jobs did not appear during the startup grace — done"
