@@ -5,7 +5,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { showHelpOverlay, hideHelpOverlay } from '../../../ui/help-overlay';
 import { isTypingInInput } from '../../../input/input-handler/commands/focus-utils';
-import { InputContext } from '../../../input/input-handler/context-manager';
+import { InputContext, InputContextManager } from '../../../input/input-handler/context-manager';
+import { registerAllKeyBindings } from '../../../input/input-handler/key-bindings/register-all';
 
 /**
  * Cost, in pending 0 ms timers, of ONE focus transition in this environment.
@@ -67,6 +68,59 @@ function expectNoOverlayTimersPending(focusTransitions: number): void {
 }
 
 describe('showHelpOverlay - Memory Leak Prevention', () => {
+  it('keeps every authored keyboard row present with the real binding registry', () => {
+    const contextManager = new InputContextManager();
+    registerAllKeyBindings({
+      contextManager,
+      sceneManager: {
+        renderer: { domElement: document.createElement('canvas') },
+        controls: { getFlyControls: () => null },
+      } as never,
+      debugConsole: {} as never,
+      animationShortcuts: {
+        getSelectedDimension: () => -1,
+        getAnimationManager: () => undefined,
+      },
+      panels: {
+        getScaleBar: () => undefined,
+        getColormapLegend: () => undefined,
+        getOverlayManager: () => undefined,
+        getRecordingPanel: () => undefined,
+        getLayersPanel: () => undefined,
+      },
+      commands: {
+        navigateDimension: vi.fn(),
+        selectDimension: vi.fn(),
+        toggleHelp: vi.fn(),
+        toggleDimensionSliders: vi.fn(),
+        togglePerformanceStats: vi.fn(),
+        toggleRenderingControls: vi.fn(),
+        toggleControlMode: vi.fn(),
+        setControlMode: vi.fn(),
+        toggleInertialMode: vi.fn(),
+        toggleCinematicMode: vi.fn(),
+        toggleFullscreen: vi.fn(),
+        cycleDataMonitor: vi.fn(),
+        recenterCamera: vi.fn(),
+        exportViewerState: vi.fn(),
+        handleEscape: vi.fn(),
+        shouldHandleSpaceKey: () => true,
+      },
+    });
+    showHelpOverlay();
+    const authoredRows = Array.from(
+      document.querySelectorAll<HTMLElement>('.luxar-help-overlay__row')
+    ).map((row) => row.textContent);
+    hideHelpOverlay();
+
+    showHelpOverlay(contextManager.getRegisteredShortcutBindings());
+    const registeredRows = Array.from(
+      document.querySelectorAll<HTMLElement>('.luxar-help-overlay__row')
+    ).map((row) => row.textContent);
+
+    expect(registeredRows).toEqual(authoredRows);
+  });
+
   it('omits keyboard rows absent from the live registration snapshot', () => {
     const bindings = new Map<string, string[]>([[InputContext.NAVIGATION, ['h']]]);
     showHelpOverlay(bindings);

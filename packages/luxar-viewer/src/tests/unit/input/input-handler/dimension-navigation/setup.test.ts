@@ -58,15 +58,6 @@ vi.mock('../../../../../scene/animation/dimension-animation-manager', () => ({
   })),
 }));
 
-// AnimationShortcuts.register registers bindings — stub so the test
-// observes the lifecycle, not the register-all internals (those are
-// covered separately in key-bindings/register-all.test.ts).
-vi.mock('../../../../../input/input-handler/key-bindings/animation-shortcuts', () => ({
-  AnimationShortcuts: vi.fn().mockImplementation(() => ({
-    register: vi.fn(),
-  })),
-}));
-
 import {
   clearDimensionUI,
   updateAllNDNodes,
@@ -81,7 +72,6 @@ import {
   releasePrefetchResources,
 } from '../../../../../data';
 import { DimensionAnimationManager } from '../../../../../scene/animation/dimension-animation-manager';
-import { AnimationShortcuts } from '../../../../../input/input-handler/key-bindings/animation-shortcuts';
 import type { DimensionSliders } from '../../../../../ui/dimension-sliders';
 
 function makeCtx(overrides: Partial<DimNavSetupCtx> = {}): DimNavSetupCtx {
@@ -136,7 +126,6 @@ beforeEach(() => {
   (sceneDimsManager.reset as ReturnType<typeof vi.fn>).mockReset();
   (updateSceneForDimensions as ReturnType<typeof vi.fn>).mockReset().mockResolvedValue(undefined);
   (DimensionAnimationManager as unknown as ReturnType<typeof vi.fn>).mockClear();
-  (AnimationShortcuts as unknown as ReturnType<typeof vi.fn>).mockClear();
 });
 
 describe('clearDimensionUI', () => {
@@ -300,19 +289,6 @@ describe('initAnimationManager', () => {
     initAnimationManager(ctx);
     initAnimationManager(ctx); // second call should not re-construct
     expect(DimensionAnimationManager).toHaveBeenCalledTimes(1);
-  });
-
-  it('registers AnimationShortcuts after constructing the manager', () => {
-    const ctx = makeCtx();
-    initAnimationManager(ctx);
-    expect(AnimationShortcuts).toHaveBeenCalledTimes(1);
-  });
-
-  it('does NOT re-register shortcuts on the second call', () => {
-    const ctx = makeCtx();
-    initAnimationManager(ctx);
-    initAnimationManager(ctx);
-    expect(AnimationShortcuts).toHaveBeenCalledTimes(1);
   });
 });
 

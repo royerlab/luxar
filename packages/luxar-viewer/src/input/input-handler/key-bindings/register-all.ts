@@ -22,6 +22,7 @@ import type { OverlayManager } from '../../../ui/overlay-manager';
 import type { RecordingPanel } from '../../../ui/recording-panel';
 import type { LayersPanel } from '../../../ui/layers';
 import type { DebugConsole } from '../../../ui/debug-console';
+import { AnimationShortcuts, type AnimationShortcutsContext } from './animation-shortcuts';
 import { registerNavigationBindings } from './navigation-bindings';
 import { registerFlyControlBindings } from './fly-bindings';
 
@@ -73,6 +74,7 @@ export interface KeyBindingsDeps {
   sceneManager: SceneManager;
   /** Debug console (always present from InputHandler ctor). */
   debugConsole: DebugConsole;
+  animationShortcuts: AnimationShortcutsContext;
   panels: KeyBindingsPanelGetters;
   commands: KeyBindingsCommands;
 }
@@ -97,4 +99,5 @@ export interface KeyBindingsDeps {
 export function registerAllKeyBindings(deps: KeyBindingsDeps): void {
   registerNavigationBindings(deps);
   registerFlyControlBindings(deps);
+  new AnimationShortcuts(deps.contextManager, deps.animationShortcuts).register();
 }

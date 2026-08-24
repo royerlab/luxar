@@ -55,9 +55,9 @@ export interface KeyBinding {
     alt?: boolean;
     meta?: boolean;
   };
-  /** Return false to leave the event available to lower-priority contexts. */
+  /** Return false synchronously to leave the event available to lower-priority contexts. */
   handler: (event: KeyboardEvent) => boolean | void | Promise<void>;
-  /** Return false to leave the event available to lower-priority contexts. */
+  /** Async handlers are always handled; only a synchronous false can decline. */
   keyupHandler?: (event: KeyboardEvent) => boolean | void | Promise<void>;
   preventDefault?: boolean;
   description?: string;
@@ -470,17 +470,19 @@ export class InputContextManager {
           // On keyup: ONLY call keyupHandler if it exists
           if (binding.keyupHandler) {
             const handled = binding.keyupHandler(event) !== false;
-            if (handled && binding.preventDefault) event.preventDefault();
-            if (handled) return true;
-          } else {
-            // No keyupHandler = this binding doesn't handle keyup
-            return false;
+            if (handled) {
+              // Prevent default after dispatch so a declined binding leaves the event untouched.
+              if (binding.preventDefault) event.preventDefault();
+              return true;
+            }
           }
         } else {
           // On keydown: call main handler
           const handled = binding.handler(event) !== false;
-          if (handled && binding.preventDefault) event.preventDefault();
-          if (handled) return true;
+          if (handled) {
+            if (binding.preventDefault) event.preventDefault();
+            return true;
+          }
         }
       }
     }
@@ -554,14 +556,18 @@ export class InputContextManager {
       if (type === 'up') {
         if (binding.keyupHandler) {
           const handled = binding.keyupHandler(event) !== false;
-          if (handled && binding.preventDefault) event.preventDefault();
-          if (handled) return true;
+          if (handled) {
+            if (binding.preventDefault) event.preventDefault();
+            return true;
+          }
         }
         continue;
       }
       const handled = binding.handler(event) !== false;
-      if (handled && binding.preventDefault) event.preventDefault();
-      if (handled) return true;
+      if (handled) {
+        if (binding.preventDefault) event.preventDefault();
+        return true;
+      }
     }
 
     return false;
@@ -583,17 +589,21 @@ export class InputContextManager {
               // On keyup: only call keyupHandler if it exists
               if (binding.keyupHandler) {
                 const handled = binding.keyupHandler(event) !== false;
-                if (handled && binding.preventDefault) event.preventDefault();
-                if (handled) return true;
+                if (handled) {
+                  if (binding.preventDefault) event.preventDefault();
+                  return true;
+                }
                 continue;
               }
               // No keyupHandler = doesn't handle keyup
-              return false;
+              continue;
             } else {
               // On keydown: call main handler
               const handled = binding.handler(event) !== false;
-              if (handled && binding.preventDefault) event.preventDefault();
-              if (handled) return true;
+              if (handled) {
+                if (binding.preventDefault) event.preventDefault();
+                return true;
+              }
               continue;
             }
           }
@@ -766,13 +776,7 @@ export class InputContextManager {
 
   /** Snapshot of registered binding keys grouped by input context. */
   public getRegisteredShortcutBindings(): RegisteredShortcutBindings {
-    const registry = new Map<string, string[]>();
-
-    this.bindings.forEach((bindings, context) => {
-      registry.set(context, Array.from(bindings.keys()));
-    });
-
-    return registry;
+    return this.getDebugInfo().registeredBindings;
   }
 
   /**

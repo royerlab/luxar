@@ -354,6 +354,42 @@ describe('InputContextManager', () => {
       expect(lower).toHaveBeenCalledWith(event);
     });
 
+    it('falls through on keyup when the current binding has no keyup handler', () => {
+      const lower = vi.fn();
+      manager.registerBinding(InputContext.UI_INTERACTION, {
+        key: 'h',
+        handler: vi.fn(),
+      });
+      manager.registerBinding(InputContext.NAVIGATION, {
+        key: 'h',
+        handler: vi.fn(),
+        keyupHandler: lower,
+      });
+      manager.setContext(InputContext.UI_INTERACTION);
+
+      const event = new KeyboardEvent('keyup', { key: 'h' });
+      expect(manager.handleKeyEvent(event, 'up')).toBe(true);
+      expect(lower).toHaveBeenCalledWith(event);
+    });
+
+    it('skips lower-context bindings without keyup handlers', () => {
+      const lower = vi.fn();
+      manager.registerBinding(InputContext.UI_INTERACTION, {
+        key: 'h',
+        handler: vi.fn(),
+      });
+      manager.registerBinding(InputContext.NAVIGATION, {
+        key: 'h',
+        handler: vi.fn(),
+        keyupHandler: lower,
+      });
+      manager.setContext(InputContext.FLY_CONTROLS);
+
+      const event = new KeyboardEvent('keyup', { key: 'h' });
+      expect(manager.handleKeyEvent(event, 'up')).toBe(true);
+      expect(lower).toHaveBeenCalledWith(event);
+    });
+
     it('continues Escape routing from typing when a higher context declines', () => {
       const higher = vi.fn(() => false);
       const lower = vi.fn();

@@ -5,8 +5,7 @@
  *   - clearDimensionUI(ctx)     — dispose sliders + animation manager + listener
  *   - initDimensionSliders(ctx) — wire scene-dims manager → optional slider
  *                                 panel → animation manager → reactive listener
- *   - initAnimationManager(ctx) — construct DimensionAnimationManager + register
- *                                 AnimationShortcuts on the NAVIGATION context
+ *   - initAnimationManager(ctx) — construct DimensionAnimationManager
  *   - updateAllNDNodes(ctx)     — push current slice through the loader
  *                                 architecture and kick the animation loop
  *
@@ -28,7 +27,6 @@ import {
 import { DimensionAnimationManager } from '../../../scene/animation/dimension-animation-manager';
 import { log, Modules } from '../../../utils/log';
 import { getViewerContainer } from '../../../utils/viewer-container';
-import { AnimationShortcuts } from '../key-bindings/animation-shortcuts';
 import type { SceneManager } from '../../../scene/scene-manager';
 import type { AnimationController } from '../../../scene/animation/animation-controller';
 import type { DimensionSliders, SliderConfig } from '../../../ui/dimension-sliders';
@@ -159,22 +157,13 @@ export async function updateAllNDNodes(ctx: DimNavSetupCtx): Promise<void> {
 }
 
 /**
- * Construct DimensionAnimationManager (idempotent) and register the
- * five animation-shortcut bindings on the NAVIGATION context. Reads
- * `selectedDimension` and `animationManager` live at dispatch time so
- * subsequent dim selections / manager swaps Just Work.
+ * Construct DimensionAnimationManager (idempotent).
  */
 export function initAnimationManager(ctx: DimNavSetupCtx): void {
   if (ctx.getAnimationManager()) return;
 
   const manager = new DimensionAnimationManager(sceneDimsManager, ctx.animationController);
   ctx.setAnimationManager(manager);
-
-  const shortcuts = new AnimationShortcuts(ctx.contextManager, {
-    getSelectedDimension: () => ctx.getSelectedDimension(),
-    getAnimationManager: () => ctx.getAnimationManager(),
-  });
-  shortcuts.register();
 }
 
 /**

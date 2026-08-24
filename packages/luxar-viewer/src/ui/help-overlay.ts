@@ -164,14 +164,14 @@ const HELP_SECTIONS: HelpSection[] = [
         keys: ['1 – 9'],
         label: 'Select a non-displayed dimension (panel header shows target)',
         bindings: Array.from({ length: 9 }, (_, index) => ({
-          context: InputContext.DIMENSION_NAV,
+          context: InputContext.NAVIGATION,
           key: String(index + 1),
         })),
       },
       {
         keys: ['[', ']'],
         label: 'Step along the selected dimension',
-        bindings: ['[', ']'].map((key) => ({ context: InputContext.DIMENSION_NAV, key })),
+        bindings: ['[', ']'].map((key) => ({ context: InputContext.NAVIGATION, key })),
       },
       { keys: ['Wheel'], label: 'On a slider: step (⇧ fine, ⌃ coarse, ⌃⇧ extra-fine)' },
       {

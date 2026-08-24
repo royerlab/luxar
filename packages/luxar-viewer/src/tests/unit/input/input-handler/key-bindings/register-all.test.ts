@@ -156,6 +156,10 @@ function setup(options: { hasFlyControls?: boolean } = {}) {
     contextManager: manager,
     sceneManager,
     debugConsole,
+    animationShortcuts: {
+      getSelectedDimension: () => -1,
+      getAnimationManager: () => undefined,
+    },
     panels: panelsBundle.panels,
     commands,
   });
