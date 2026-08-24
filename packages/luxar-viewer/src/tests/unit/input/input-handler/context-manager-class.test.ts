@@ -12,6 +12,7 @@ import {
   InputContext,
   MAX_KEY_EVENT_DEPTH,
 } from '../../../../input/input-handler/context-manager';
+import { log, Modules } from '../../../../utils/log';
 
 describe('InputContextManager', () => {
   let manager: InputContextManager;
@@ -74,6 +75,23 @@ describe('InputContextManager', () => {
       const event3 = new KeyboardEvent('keydown', { key: 'h' });
       expect(manager.handleKeyEvent(event3, 'down')).toBe(true);
       expect(handler).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('binding registration', () => {
+    it('warns when a binding is unreachable under its own context filters', () => {
+      const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+
+      manager.registerBinding(InputContext.NAVIGATION, {
+        key: 'w',
+        handler: vi.fn(),
+      });
+
+      expect(warning).toHaveBeenCalledWith(
+        Modules.INPUT_CONTEXT,
+        'Key binding w in navigation is unreachable under its context filters'
+      );
+      warning.mockRestore();
     });
   });
 

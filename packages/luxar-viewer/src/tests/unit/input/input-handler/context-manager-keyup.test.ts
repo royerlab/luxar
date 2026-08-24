@@ -149,6 +149,25 @@ describe('InputContextManager - keyupHandler Feature', () => {
       manager.handleKeyEvent(keyupEvent, 'up');
       expect(keyupHandler).toHaveBeenCalledTimes(1);
     });
+
+    it('matches a modified keyup only while the modifier remains held', () => {
+      const keyupHandler = vi.fn();
+
+      manager.registerBinding(InputContext.NAVIGATION, {
+        key: 'ArrowUp',
+        modifiers: { shift: true },
+        handler: vi.fn(),
+        keyupHandler,
+      });
+
+      const releasedShiftFirst = new KeyboardEvent('keyup', { key: 'ArrowUp' });
+      expect(manager.handleKeyEvent(releasedShiftFirst, 'up')).toBe(false);
+      expect(keyupHandler).not.toHaveBeenCalled();
+
+      const shiftStillHeld = new KeyboardEvent('keyup', { key: 'ArrowUp', shiftKey: true });
+      expect(manager.handleKeyEvent(shiftStillHeld, 'up')).toBe(true);
+      expect(keyupHandler).toHaveBeenCalledWith(shiftStillHeld);
+    });
   });
 
   describe('Toggle actions should NOT double-trigger', () => {

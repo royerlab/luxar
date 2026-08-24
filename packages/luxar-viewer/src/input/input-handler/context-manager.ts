@@ -56,7 +56,8 @@ export interface KeyBinding {
     meta?: boolean;
   };
   handler: (event: KeyboardEvent) => void;
-  keyupHandler?: (event: KeyboardEvent) => void; // Optional separate handler for keyup events
+  // Modifier-aware bindings match keyup only while those modifiers remain held.
+  keyupHandler?: (event: KeyboardEvent) => void;
   preventDefault?: boolean;
   description?: string;
 }
@@ -327,6 +328,14 @@ export class InputContextManager {
 
     const bindingKey = this.getBindingKey(binding);
     const contextBindings = this.bindings.get(contextKey)!;
+    const config = this.contextConfigs.get(contextKey);
+
+    if (config && !this.isKeyAllowedInContext(binding.key, bindingKey, config)) {
+      log.warning(
+        Modules.INPUT_CONTEXT,
+        `Key binding ${bindingKey} in ${context} is unreachable under its context filters`
+      );
+    }
 
     // Check for conflicts
     if (contextBindings.has(bindingKey)) {
