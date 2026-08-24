@@ -40,6 +40,7 @@ scripts/
 | `benchmark_progressive_psnr.py` | Benchmark progressive gsplat fitting (PSNR/SSIM) |
 | `refit_gsplat_demos.sh` | Force-refit every gsplat demo (sequential) |
 | `run_demo_recompute.sh` | Sequential demo recompute from scratch |
+| `run_examples.py` | Regenerate `datasets/examples/` when the example builders or Luxar writer changed; `--check` is the E2E freshness gate |
 
 ## Demo Ladder Structural Gate
 
