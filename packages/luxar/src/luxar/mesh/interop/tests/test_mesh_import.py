@@ -1015,6 +1015,18 @@ class TestVtp:
         assert mesh.colors is not None, '<PointData Scalars="CellTint"> ignored'
         np.testing.assert_allclose(np.linalg.norm(mesh.normals, axis=1), 1.0, atol=1e-5)
 
+    def test_a_normals_array_is_not_reused_as_colour(self, tmp_path: Path) -> None:
+        p = tmp_path / "same-designation.vtp"
+        write_vtp_point_data(
+            p,
+            GT,
+            [(GT.normals, "Float32", "N", 3)],
+            pdata_attrs='Normals="N" Scalars="N"',
+        )
+        mesh = import_mesh(p)
+        assert mesh.normals is not None
+        assert mesh.colors is None, "the normals array was reused as point colour"
+
     def test_a_conventional_colour_NAME_is_enough_on_its_own(
         self, tmp_path: Path
     ) -> None:
