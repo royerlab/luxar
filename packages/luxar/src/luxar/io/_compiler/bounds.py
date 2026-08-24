@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -9,6 +10,15 @@ import zarr
 from numpy.typing import NDArray
 
 from ...typing_utils._format_contract import GEOMETRY_TYPES
+
+
+@dataclass(frozen=True)
+class WorldBoundsLeaf:
+    """One geometry leaf and its transform-expanded world-space bounds."""
+
+    path: str
+    geometry_type: str
+    bounds: dict[str, list[float]]
 
 
 def compute_position_bounds(
@@ -74,11 +84,8 @@ def update_scene_bounds(
     return scene_bounds
 
 
-def expand_bounds_with_transforms(
-    store: zarr.Group,
-    scene_bounds: Optional[Dict[str, List[float]]],
-) -> Optional[Dict[str, List[float]]]:
-    """Expand scene-level position bounds into world space.
+def collect_world_bounds(store: zarr.Group) -> list[WorldBoundsLeaf]:
+    """Collect transform-expanded world-space bounds for every geometry leaf.
 
     Walks the zarr tree, composes the world-space transform chain for
     each leaf node, applies it to the per-node (local) position bounds,
@@ -104,18 +111,13 @@ def expand_bounds_with_transforms(
     that geometry gets clipped as the camera rotates.
 
     Args:
-        store: The opened zarr store (in r+ mode)
-        scene_bounds: Current scene-level bounds, or None.
+        store: The opened zarr store.
 
     Returns:
-        The updated scene bounds (world-space union), or the input
-        ``scene_bounds`` unchanged when there is nothing to expand.
+        Geometry leaves with world-space bounds, in deterministic path order.
     """
-    # Guard: need both scene_dimensions and scene_bounds
-    if scene_bounds is None:
-        return scene_bounds
     if "scene_dimensions" not in store.attrs:
-        return scene_bounds
+        return []
 
     from ...core.dimensions import Dimensions
     from ...core.transforms import (
@@ -155,7 +157,7 @@ def expand_bounds_with_transforms(
         return {"min": min_vals, "max": max_vals}
 
     # Collect all world-space bounds from leaf nodes
-    all_world_bounds: list[dict[str, list[float]]] = []
+    leaves: list[WorldBoundsLeaf] = []
 
     def walk(
         group: zarr.Group,
@@ -199,17 +201,49 @@ def expand_bounds_with_transforms(
                     transformed = apply_matrix_to_displayed_dims(
                         transformed, node_matrix
                     )
-                all_world_bounds.append(transformed)
+                leaves.append(
+                    WorldBoundsLeaf(
+                        path=group.path,
+                        geometry_type=node_type,
+                        bounds=transformed,
+                    )
+                )
 
         # Recurse into child groups
         for child_name in sorted(group.group_keys()):
             walk(group[child_name], chain, node_matrix, node_has_matrix)
 
     walk(store, [], np.eye(4, dtype=np.float64), False)
+    return leaves
+
+
+def expand_bounds_with_transforms(
+    store: zarr.Group,
+    scene_bounds: Optional[Dict[str, List[float]]],
+) -> Optional[Dict[str, List[float]]]:
+    """Expand scene-level position bounds into world space.
+
+    Uses :func:`collect_world_bounds` as the single transform-aware leaf walk,
+    then stores the union as the scene-level ``position_bounds``.
+
+    Args:
+        store: The opened zarr store (in r+ mode)
+        scene_bounds: Current scene-level bounds, or None.
+
+    Returns:
+        The updated scene bounds (world-space union), or the input
+        ``scene_bounds`` unchanged when there is nothing to expand.
+    """
+    if scene_bounds is None:
+        return scene_bounds
+
+    leaves = collect_world_bounds(store)
 
     # If no leaf nodes found, nothing to do
-    if not all_world_bounds:
+    if not leaves:
         return scene_bounds
+
+    all_world_bounds = [leaf.bounds for leaf in leaves]
 
     # Union all world-space bounds (same logic as update_scene_bounds)
     world_scene_bounds: dict[str, list[float]] = {

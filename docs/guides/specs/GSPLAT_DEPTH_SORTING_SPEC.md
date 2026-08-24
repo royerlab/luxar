@@ -25,6 +25,21 @@ Related reading: `docs/archive/developer-archive/SPARKJS_ANALYSIS.md` (historica
     - `material.premultipliedAlpha = true` is a **trap on the TSL path**: `NodeMaterial.setup()` injects an automatic output-RGB×alpha transform when the flag is set (`three.webgpu.js:21817-21822`). A shader that already premultiplies would be premultiplied twice on TSL but not GLSL — a guaranteed parity break. Do not use the flag.
     - The known WebGPU→WebGL2-bridge `gl.getError()` issue is specifically **separate alpha-channel blend equation/factor state** (documented in `materials/gsplat/material-tsl.ts:190-212, :300-320`); `CustomBlending` itself is fine — `max` mode ships `CustomBlending + MaxEquation` through the TSL path today.
 
+### Overlapping-node authoring rule
+
+Depth sorting is exact only within one node. Cross-node `renderOrder` uses BSP
+partition order where available and a mean-view-z approximation otherwise, so
+two spatially overlapping `normal`/`volumetric` nodes can exchange relative
+order as the camera moves. Keep at most one depth-sorted node in an overlapping
+region: make the other `additive` (order-insensitive), or separate their bounds.
+
+That escape hatch must not be used against depth-writing geometry. `additive`
+is the only mode that ignores the depth buffer, so it paints through `opaque`
+geometry and through a full-opacity depth-writing `normal` Lines or Mesh layer.
+Use `luminous` for the same additive light-summing with depth testing.
+Finalization reports both hazards when co-visible world-space node bounds
+overlap; it does not rewrite authored modes or defaults.
+
 **Bandwidth argument for the architecture**: at 10M splats, re-sorting by buffer rewrite costs 520 MB/sort. With splat data in a texture and only a `Uint32` ordering attribute per instance, a re-sort uploads **40 MB** — 13× less — through the attribute `addUpdateRange` machinery that already exists.
 
 ---
