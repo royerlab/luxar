@@ -61,6 +61,7 @@ import json
 import os
 import re
 import sys
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -354,27 +355,23 @@ def hosted_size(entry: dict) -> int:
     return int(entry.get("hosted_bytes") or entry.get("bytes") or 0)
 
 
-def hosted_digest(entry: dict) -> str:
-    """The digest of the copy the RECORD serves. See :func:`hosted_size`."""
-    return str(entry.get("hosted_sha256") or entry.get("sha256") or "")
-
-
-def pins_of(datasets: dict) -> dict[str, tuple[str, int, str]]:
-    """``filename -> (record, hosted bytes, hosted sha256)`` per zenodo file.
+def pins_of(datasets: dict) -> dict[str, tuple[str, int]]:
+    """``filename -> (record, hosted bytes)`` per zenodo file.
 
     Deliberately the HOSTED side of each entry: this map exists to be compared
-    against a live deposition, and the in-repo values would answer a different
-    question. See :func:`hosted_size`.
+    against a live deposition, whose API exposes md5 rather than sha256. Content
+    identity is therefore checked by size here; a same-size swap is out of scope.
+    See :func:`hosted_size`.
 
     Uses :func:`files_of`, so a variant's files are included on the same footing
     as a dataset's own — h2afva's pinned 253tp is only reachable that way.
     """
-    pins: dict[str, tuple[str, int, str]] = {}
+    pins: dict[str, tuple[str, int]] = {}
     for spec in datasets.values():
         if spec.get("bucket") != "zenodo":
             continue
         for _var, f in files_of(spec):
-            pins[f["name"]] = (spec.get("record", ""), hosted_size(f), hosted_digest(f))
+            pins[f["name"]] = (spec.get("record", ""), hosted_size(f))
     return pins
 
 
@@ -399,7 +396,7 @@ def human_bytes(n: int) -> str:
 
 
 def _check_pins(
-    tag: str, rec: str, hosted: dict, pins: dict[str, tuple[str, int, str]]
+    tag: str, rec: str, hosted: dict, pins: dict[str, tuple[str, int]]
 ) -> list[str]:
     """Pins vs hosted files, in BOTH directions.
 
@@ -413,13 +410,15 @@ def _check_pins(
         pin = pins.get(name)
         if pin is None:
             fails.append(f"{tag} {name} is on the record but NOT pinned")
-        elif pin[1] != f.get("filesize"):
-            fails.append(
-                f"{tag} {name} pinned {pin[1]:,} but hosted {f.get('filesize'):,}"
-            )
+        elif pin[0] != rec:
+            fails.append(f"{tag} {name} is on this record but pinned to {pin[0]}")
+        elif f.get("filesize") is None:
+            fails.append(f"{tag} {name} has no filesize/size")
+        elif pin[1] != f["filesize"]:
+            fails.append(f"{tag} {name} pinned {pin[1]:,} but hosted {f['filesize']:,}")
     fails += [
         f"{tag} {name} is pinned but ABSENT from the record"
-        for name, (r, _b, _s) in sorted(pins.items())
+        for name, (r, _b) in sorted(pins.items())
         if r == rec and name not in hosted
     ]
     return fails
@@ -441,23 +440,37 @@ def _check_description(
     tag: str,
     desc: str,
     hosted: dict,
-    pins: dict[str, tuple[str, int, str]],
+    pins: dict[str, tuple[str, int]],
     totals: dict[str, int],
 ) -> tuple[list[str], list[str]]:
-    """The description's own claims. A record PUBLISHES a stale number."""
+    """The current drafts' rendered HTML claims; stale numbers get published.
+
+    This checks the HTML shape returned by the Zenodo API today, not the Markdown
+    source emitted by ``gen_zenodo_records.py``. If Zenodo changes its rendering,
+    the zero-claims warning below makes that loss of coverage visible.
+    """
     fails: list[str] = []
     warns: list[str] = []
-    for mt in re.finditer(r"<li><code>([^<]+)</code>\s*\(([\d.]+\s?[MG]B)", desc):
-        entry, claimed = mt.group(1), mt.group(2)
+    claims = list(re.finditer(r"<li><code>([^<]+)</code>\s*\(([\d.]+)\s?([MG]B)", desc))
+    for mt in claims:
+        entry = mt.group(1)
+        claimed_value = float(mt.group(2))
+        unit = mt.group(3)
+        claimed = f"{mt.group(2)} {unit}"
         pin = pins.get(entry)
         size = totals.get(entry) or (pin[1] if pin else None)
         if size is None:
             warns.append(f"{tag} description names {entry}, not resolvable to a pin")
-        elif claimed.replace(" ", "") != human_bytes(size).replace(" ", ""):
+        else:
+            actual_value = size / (1e9 if unit == "GB" else 1e6)
+            if round(claimed_value, 1) == round(actual_value, 1):
+                continue
             fails.append(
                 f"{tag} description says {entry} is {claimed}, "
                 f"actually {human_bytes(size)}"
             )
+    if hosted and not claims:
+        warns.append(f"{tag} description has 0 size claims for {len(hosted)} files")
     if "<table>" not in desc:
         fails.append(f"{tag} description has no contents table")
     else:
@@ -477,7 +490,7 @@ def _check_description(
 def check_deposition(
     rec: str,
     dep: dict,
-    pins: dict[str, tuple[str, int, str]],
+    pins: dict[str, tuple[str, int]],
     totals: dict[str, int],
     record_meta: dict,
 ) -> tuple[list[str], list[str]]:
@@ -486,11 +499,22 @@ def check_deposition(
     Pure: no I/O. *dep* is the deposition dict as the API returns it.
     """
     meta = dep.get("metadata") or {}
-    hosted = {f["filename"]: f for f in (dep.get("files") or [])}
     tag = f"[{rec}]"
+    hosted: dict[str, dict] = {}
+    malformed: list[str] = []
+    for entry in dep.get("files") or []:
+        name = entry.get("filename") or entry.get("key")
+        if not name:
+            malformed.append(f"{tag} file entry has no filename/key")
+            continue
+        size = entry.get("filesize")
+        if size is None:
+            size = entry.get("size")
+        hosted[str(name)] = {**entry, "filesize": size}
 
     # Publishing is a one-way door, so this is checked before anything else.
     fails = [f"{tag} ALREADY SUBMITTED — stop"] if dep.get("submitted") else []
+    fails += malformed
     fails += _check_pins(tag, rec, hosted, pins)
     fails += _check_no_scratch(tag, hosted)
 
@@ -541,7 +565,7 @@ def diagnose_manifest_staleness(fails: list[str], pins: dict) -> str | None:
     )
 
 
-def fetch_deposition(dep_id: int, token: str) -> dict:
+def fetch_deposition(dep_id: str, token: str) -> dict:
     """GET one deposition. The only network call in this file, and read-only.
 
     ``scripts/zenodo_upload_draft.py`` has a near-identical helper, and this is a
@@ -559,8 +583,14 @@ def fetch_deposition(dep_id: int, token: str) -> dict:
         f"{ZENODO_API}/{dep_id}", method="GET"
     )
     req.add_unredirected_header("Authorization", f"Bearer {token}")
-    with urllib.request.urlopen(req, timeout=60) as resp:  # nosec B310
-        payload: dict = json.load(resp)
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:  # nosec B310
+            payload: dict = json.load(resp)
+    except urllib.error.HTTPError as exc:
+        raise SystemExit(
+            f"Zenodo returned HTTP {exc.code} {exc.reason} for deposition {dep_id}. "
+            "Check the id and that ZENODO_TOKEN has deposit:write scope."
+        ) from exc
     return payload
 
 
@@ -576,12 +606,19 @@ def _audit_live_depositions(manifest: dict, depositions: dict[str, dict]) -> int
 
     all_fails: list[str] = []
     all_warns: list[str] = []
+    claim_counts: dict[str, int] = {}
     for rec, dep in sorted(depositions.items()):
         fails, warns = check_deposition(rec, dep, pins, totals, records.get(rec) or {})
         all_fails += fails
         all_warns += warns
+        description = (dep.get("metadata") or {}).get("description") or ""
+        claim_counts[rec] = len(
+            re.findall(r"<li><code>[^<]+</code>\s*\([\d.]+\s?[MG]B", description)
+        )
 
     print(f"  records checked: {len(depositions)}   pins: {len(pins)}")
+    for rec, count in sorted(claim_counts.items()):
+        print(f"  [{rec}] description size claims parsed: {count}")
     for w in all_warns:
         print(f"  WARN {w}")
     for f in all_fails:
@@ -603,7 +640,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     It is accepted (and ignored) here so both spellings keep working:
     ``audit.py`` and ``audit.py /path/to/repo``.
     """
-    ap = argparse.ArgumentParser(description=__doc__ or "")
+    ap = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     ap.add_argument("repo", nargs="?", help="repo root (default: this checkout)")
     ap.add_argument(
         "--live",
@@ -630,7 +667,7 @@ def main() -> int:
         token = os.environ.get("ZENODO_TOKEN")
         if not token:
             print()
-            print("  --live needs ZENODO_TOKEN in the environment; skipping")
+            print("  refusing to run --live without ZENODO_TOKEN; no live check ran")
             return 1
         # Ids come from the manifest, not a constant: a hardcoded id is how a
         # gate ends up auditing a record nothing points at any more.
@@ -639,8 +676,13 @@ def main() -> int:
             for name, r in records.items()
             if r.get("zenodo_record")
         }
+        missing = sorted(set(records) - set(wanted))
+        for name in missing:
+            print(
+                f"  FAIL [{name}] manifest has no zenodo_record; live check did not run"
+            )
         depositions = {n: fetch_deposition(i, token) for n, i in sorted(wanted.items())}
-        live_fails = _audit_live_depositions(m, depositions)
+        live_fails = len(missing) + _audit_live_depositions(m, depositions)
 
     return 1 if (undeclared or live_fails) else 0
 

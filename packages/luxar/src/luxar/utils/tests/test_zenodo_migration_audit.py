@@ -17,6 +17,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+import urllib.error
 from pathlib import Path
 from types import ModuleType
 
@@ -40,9 +41,9 @@ _LFS_POINTER = (
 def _load(repo: Path, cache: Path, monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     """Load the audit against a throwaway repo tree and cache root.
 
-    ``REPO`` comes from ``sys.argv[1]`` at import time, so the argv patch has to
-    be in place before the module body runs; ``CACHE`` is home-relative and is
-    redirected afterwards.
+    ``REPO`` comes from the first positional argument at import time, so the argv
+    patch has to be in place before the module body runs; ``CACHE`` is
+    home-relative and is redirected afterwards.
     """
     monkeypatch.setattr(sys, "argv", ["zenodo_migration_audit", str(repo)])
     spec = importlib.util.spec_from_file_location("zenodo_migration_audit", _SCRIPT)
@@ -250,14 +251,16 @@ def test_pins_include_variant_files(monkeypatch: pytest.MonkeyPatch) -> None:
             }
         }
     )
-    assert pins == {"big.zip": ("h2afva", 9, "cc")}
+    assert pins == {"big.zip": ("h2afva", 9)}
 
 
 def test_a_clean_record_produces_no_findings(monkeypatch: pytest.MonkeyPatch) -> None:
     """The happy path is silent — otherwise every real run cries wolf."""
     audit = _audit_module(monkeypatch)
     datasets = _two_file_dataset()
-    desc = "<table><tr>h</tr><tr>a</tr><tr>b</tr></table>"
+    desc = (
+        "<li><code>ds</code> (0.0 MB)</li><table><tr>h</tr><tr>a</tr><tr>b</tr></table>"
+    )
     dep = _dep(
         [
             {"filename": "a.zip", "filesize": 1024},
@@ -297,6 +300,47 @@ def test_pin_and_record_are_compared_in_both_directions(
     assert "a.zip pinned 1,024 but hosted 999" in joined
     assert "stray.zip is on the record but NOT pinned" in joined
     assert "b.zip is pinned but ABSENT from the record" in joined
+
+
+def test_a_file_on_the_wrong_record_is_named_as_misplaced(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cross-record upload must not be misreported as merely absent elsewhere."""
+    audit = _audit_module(monkeypatch)
+    pins = {"a.zip": ("cc-by", 10), "b.zip": ("cc-by-sa", 20)}
+    dep = _dep(
+        [
+            {"filename": "a.zip", "filesize": 10},
+            {"filename": "b.zip", "filesize": 20},
+        ],
+        desc="<table><tr>h</tr><tr>a</tr><tr>b</tr></table>",
+    )
+
+    fails, _ = audit.check_deposition("cc-by", dep, pins, {}, {})
+
+    assert "[cc-by] b.zip is on this record but pinned to cc-by-sa" in fails
+
+
+def test_bucket_style_and_incomplete_file_entries_are_reported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Zenodo response drift produces findings, never KeyError or formatting errors."""
+    audit = _audit_module(monkeypatch)
+    pins = {"a.zip": ("cc-by", 10), "b.zip": ("cc-by", 20)}
+    dep = _dep(
+        [
+            {"key": "a.zip", "size": 10},
+            {"filename": "b.zip"},
+            {"filesize": 30},
+        ],
+        desc="<table><tr>h</tr><tr>a</tr><tr>b</tr><tr>unknown</tr></table>",
+    )
+
+    fails, _ = audit.check_deposition("cc-by", dep, pins, {}, {})
+    joined = "\n".join(fails)
+
+    assert "b.zip has no filesize/size" in joined
+    assert "file entry has no filename/key" in joined
 
 
 def test_scratch_objects_and_submission_are_refused(
@@ -348,6 +392,51 @@ def test_a_stale_size_claim_in_the_description_fails(
     assert any("description says ds is 5.0 MB" in f for f in fails)
 
 
+def test_description_size_claims_compare_at_one_decimal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A human-written ``5 MB`` claim is equivalent to computed ``5.0 MB``."""
+    audit = _audit_module(monkeypatch)
+    datasets = {
+        "ds": {
+            "bucket": "zenodo",
+            "record": "cc-by",
+            "files": [{"name": "a.zip", "sha256": "aa", "bytes": 5_000_000}],
+        }
+    }
+    dep = _dep(
+        [{"filename": "a.zip", "filesize": 5_000_000}],
+        desc="<li><code>ds</code> (5 MB)</li><table><tr>h</tr><tr>a</tr></table>",
+    )
+
+    fails, _ = audit.check_deposition(
+        "cc-by", dep, audit.pins_of(datasets), audit.dataset_totals(datasets), {}
+    )
+
+    assert fails == []
+
+
+def test_files_with_no_description_size_claim_are_warned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A changed description shape cannot silently disable the size audit."""
+    audit = _audit_module(monkeypatch)
+    datasets = _two_file_dataset()
+    dep = _dep(
+        [
+            {"filename": "a.zip", "filesize": 1024},
+            {"filename": "b.zip", "filesize": 1024},
+        ],
+        desc="<table><tr>h</tr><tr>a</tr><tr>b</tr></table>",
+    )
+
+    _, warns = audit.check_deposition(
+        "cc-by", dep, audit.pins_of(datasets), audit.dataset_totals(datasets), {}
+    )
+
+    assert "[cc-by] description has 0 size claims for 2 files" in warns
+
+
 def test_thead_is_warned_because_zenodo_strips_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -377,7 +466,7 @@ def test_wholesale_mismatch_is_diagnosed_as_the_wrong_manifest(
     The records were ahead; the re-pin was sitting in an unmerged PR.
     """
     audit = _audit_module(monkeypatch)
-    pins = {f"f{i}.zip": ("cc-by", 10, "x") for i in range(10)}
+    pins = {f"f{i}.zip": ("cc-by", 10) for i in range(10)}
     fails = [f"[cc-by] f{i}.zip pinned 10 but hosted 20" for i in range(10)]
     note = audit.diagnose_manifest_staleness(fails, pins)
     assert note is not None
@@ -394,7 +483,7 @@ def test_a_couple_of_real_failures_are_not_diagnosed_away(
     explaining it away as "wrong manifest" would suppress the real signal.
     """
     audit = _audit_module(monkeypatch)
-    pins = {f"f{i}.zip": ("cc-by", 10, "x") for i in range(10)}
+    pins = {f"f{i}.zip": ("cc-by", 10) for i in range(10)}
     fails = [f"[cc-by] f{i}.zip pinned 10 but hosted 20" for i in range(2)]
     assert audit.diagnose_manifest_staleness(fails, pins) is None
 
@@ -411,6 +500,7 @@ def test_the_audit_can_only_read_from_zenodo() -> None:
         assert forbidden not in src, f"mutating verb {forbidden} in the audit"
     assert "/actions/publish" not in src
     assert src.count('method="GET"') >= 1
+    assert "data=" not in src
 
 
 def test_live_without_a_token_does_not_reach_the_network(
@@ -436,7 +526,46 @@ def test_live_without_a_token_does_not_reach_the_network(
 
     monkeypatch.setattr(audit, "fetch_deposition", _boom)
     assert audit.main() == 1
-    assert "needs ZENODO_TOKEN" in capsys.readouterr().out
+    assert "refusing to run --live without ZENODO_TOKEN" in capsys.readouterr().out
+
+
+def test_fetch_deposition_reports_http_errors_without_a_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    audit = _audit_module(monkeypatch)
+    error = urllib.error.HTTPError(
+        "https://example.invalid", 401, "Unauthorized", {}, None
+    )
+    monkeypatch.setattr(
+        audit.urllib.request, "urlopen", lambda *a, **k: (_ for _ in ()).throw(error)
+    )
+
+    with pytest.raises(SystemExit, match="HTTP 401 Unauthorized.*deposit:write scope"):
+        audit.fetch_deposition("21912280", "token")
+
+
+def test_live_refuses_to_skip_manifest_records_without_a_deposition_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    repo = tmp_path / "repo"
+    _write_manifest(repo, {})
+    manifest = repo / "packages/luxar/src/luxar/demos/data_manifest.json"
+    payload = json.loads(manifest.read_text())
+    payload["records"] = {
+        "cc-by": {"zenodo_record": "123"},
+        "cc-by-sa": {"zenodo_record": None},
+    }
+    manifest.write_text(json.dumps(payload))
+    monkeypatch.setenv("ZENODO_TOKEN", "token")
+    audit = _load(repo, tmp_path / "cache", monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["zenodo_migration_audit", str(repo), "--live"])
+    monkeypatch.setattr(audit, "fetch_deposition", lambda dep_id, token: _dep([]))
+
+    assert audit.main() == 1
+    assert (
+        "[cc-by-sa] manifest has no zenodo_record; live check did not run"
+        in capsys.readouterr().out
+    )
 
 
 def test_the_live_check_compares_hosted_sizes_not_in_repo_ones(
@@ -468,7 +597,10 @@ def test_the_live_check_compares_hosted_sizes_not_in_repo_ones(
     }
     dep = _dep(
         [{"filename": "blastocyst_ch0.gsplats.zarr.zip", "filesize": 186483}],
-        desc="<table><tr>h</tr><tr>1</tr></table>",
+        desc=(
+            "<li><code>gsplats_multichannel</code> (0.2 MB)</li>"
+            "<table><tr>h</tr><tr>1</tr></table>"
+        ),
     )
     fails, warns = audit.check_deposition(
         "cc-by", dep, audit.pins_of(datasets), audit.dataset_totals(datasets), {}
@@ -526,7 +658,10 @@ def test_an_entry_with_no_hosted_keys_still_uses_its_local_ones(
             {"filename": "a.zip", "filesize": 1024},
             {"filename": "b.zip", "filesize": 1024},
         ],
-        desc="<table><tr>h</tr><tr>a</tr><tr>b</tr></table>",
+        desc=(
+            "<li><code>ds</code> (0.0 MB)</li>"
+            "<table><tr>h</tr><tr>a</tr><tr>b</tr></table>"
+        ),
     )
     fails, warns = audit.check_deposition(
         "cc-by", dep, audit.pins_of(datasets), audit.dataset_totals(datasets), {}
