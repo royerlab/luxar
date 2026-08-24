@@ -9,30 +9,36 @@ Usage::
 
     hatch run python scripts/check_open_issue_pr.py 2011
     hatch run python scripts/check_open_issue_pr.py 2011 --exclude-pr 2020
+    hatch run python scripts/check_open_issue_pr.py 2011 --loose
+    hatch run python scripts/check_open_issue_pr.py 2011 --json
     hatch run python scripts/check_open_issue_pr.py 2011 \
         --exclude-pr 2020 --compare-pr 2020
 
 Exit 0 means the issue is unclaimed. Exit 1 means at least one open pull request
-declares that it closes the issue. Mentions such as ``Refs #2011`` do not count.
-``--compare-pr`` inventories unique and shared paths before a duplicate PR is
-closed; shared paths still require patch review and are never called equivalent.
+declares that it closes the issue. Exit 3 means the GitHub query failed.
+Mentions such as ``Refs #2011`` do not count unless ``--loose`` is supplied;
+loose matches are advisory and do not change the exit status. ``--compare-pr``
+inventories unique and shared paths before a duplicate PR is closed; shared
+paths still require patch review and are never called equivalent.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TextIO
 
 
 @dataclass(frozen=True)
 class PullRequest:
     number: int
     title: str
+    body: str
     url: str
     head_ref_name: str
     closing_issue_numbers: frozenset[int]
@@ -59,14 +65,46 @@ def matching_pull_requests(
     ]
 
 
+def loosely_matching_pull_requests(
+    issue: int,
+    pull_requests: Iterable[PullRequest],
+    exclude_pr: int | None = None,
+) -> list[PullRequest]:
+    """Open pull requests that mention ``issue`` without closing it."""
+    mention = re.compile(rf"(?<!\d)#{issue}(?!\d)")
+    return [
+        pull_request
+        for pull_request in pull_requests
+        if pull_request.number != exclude_pr
+        and issue not in pull_request.closing_issue_numbers
+        and mention.search(f"{pull_request.title}\n{pull_request.body}")
+    ]
+
+
 def _run_gh(args: Sequence[str]) -> Any:
-    result = subprocess.run(
-        ["gh", *args],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return json.loads(result.stdout)
+    try:
+        result = subprocess.run(
+            ["gh", *args],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        print("error: GitHub CLI 'gh' was not found", file=sys.stderr)
+        raise SystemExit(3) from None
+    except subprocess.CalledProcessError as error:
+        stderr_lines = [line.strip() for line in (error.stderr or "").splitlines()]
+        detail = next(
+            (line for line in reversed(stderr_lines) if line),
+            f"exit status {error.returncode}",
+        )
+        print(f"error: gh command failed: {detail}", file=sys.stderr)
+        raise SystemExit(3) from None
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError:
+        print("error: gh returned invalid JSON", file=sys.stderr)
+        raise SystemExit(3) from None
 
 
 def _reference_repo(reference: dict[str, Any]) -> str | None:
@@ -83,6 +121,7 @@ def pull_request_from_row(row: dict[str, Any], repo: str) -> PullRequest:
     return PullRequest(
         number=row["number"],
         title=row["title"],
+        body=str(row.get("body") or ""),
         url=row["url"],
         head_ref_name=row["headRefName"],
         closing_issue_numbers=frozenset(
@@ -106,7 +145,7 @@ def list_open_pull_requests(repo: str) -> list[PullRequest]:
             "--limit",
             "1000",
             "--json",
-            "number,title,url,headRefName,closingIssuesReferences",
+            "number,title,body,url,headRefName,closingIssuesReferences",
         ]
     )
     return [pull_request_from_row(row, repo) for row in rows]
@@ -162,12 +201,32 @@ def print_comparison(repo: str, survivor: PullRequest, duplicate_pr: int) -> Non
     )
 
 
+def print_loose_matches(
+    issue: int, matches: Iterable[PullRequest], stream: TextIO | None = None
+) -> None:
+    if stream is None:
+        stream = sys.stdout
+    ordered = list(matches)
+    print(
+        f"advisory: issue #{issue} is mentioned by {len(ordered)} open "
+        "pull request(s) without a closing reference:",
+        file=stream,
+    )
+    for pull_request in ordered:
+        print(
+            f"  #{pull_request.number} {pull_request.title} "
+            f"({pull_request.head_ref_name}) {pull_request.url}",
+            file=stream,
+        )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("issue", type=int)
     parser.add_argument("--repo", default="royerlab/luxar")
     parser.add_argument("--exclude-pr", type=int)
     parser.add_argument("--compare-pr", type=int)
+    parser.add_argument("--loose", action="store_true")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     if args.compare_pr is not None and args.exclude_pr != args.compare_pr:
@@ -175,10 +234,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.compare_pr is not None and args.json:
         parser.error("--compare-pr cannot be combined with --json")
 
+    pull_requests = list_open_pull_requests(args.repo)
     matches = matching_pull_requests(
         args.issue,
-        list_open_pull_requests(args.repo),
+        pull_requests,
         args.exclude_pr,
+    )
+    loose_matches = (
+        loosely_matching_pull_requests(args.issue, pull_requests, args.exclude_pr)
+        if args.loose
+        else []
     )
     if args.json:
         print(
@@ -197,6 +262,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ]
             )
         )
+        if loose_matches:
+            print_loose_matches(args.issue, loose_matches, sys.stderr)
     elif matches:
         print(f"issue #{args.issue} already has {len(matches)} open pull request(s):")
         for pull_request in matches:
@@ -207,6 +274,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.compare_pr is not None:
             for pull_request in matches:
                 print_comparison(args.repo, pull_request, args.compare_pr)
+    elif args.compare_pr is not None:
+        print(f"no other open PR declares it closes #{args.issue}; nothing to compare")
+    if not args.json and loose_matches:
+        print_loose_matches(args.issue, loose_matches)
     return 1 if matches else 0
 
 

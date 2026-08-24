@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -14,10 +15,16 @@ sys.path.insert(0, str(_REPO_ROOT / "scripts"))
 import check_open_issue_pr as guard  # noqa: E402
 
 
-def _pr(number: int, *closing_issues: int) -> guard.PullRequest:
+def _pr(
+    number: int,
+    *closing_issues: int,
+    title: str | None = None,
+    body: str = "",
+) -> guard.PullRequest:
     return guard.PullRequest(
         number=number,
-        title=f"PR {number}",
+        title=title or f"PR {number}",
+        body=body,
         url=f"https://example.test/{number}",
         head_ref_name=f"branch-{number}",
         closing_issue_numbers=frozenset(closing_issues),
@@ -96,6 +103,41 @@ def test_pull_request_paths_flattens_every_api_page(monkeypatch) -> None:
     }
 
 
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        subprocess.CalledProcessError(
+            4,
+            ["gh", "pr", "list"],
+            stderr="simulated gh failure\n",
+        ),
+        FileNotFoundError("gh not found"),
+        subprocess.CompletedProcess(
+            ["gh", "pr", "list"],
+            returncode=0,
+            stdout="not-json",
+            stderr="",
+        ),
+    ],
+)
+def test_run_gh_failures_exit_three_without_traceback(
+    monkeypatch, capsys, outcome
+) -> None:
+    def fake_run(*args, **kwargs):
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(guard.subprocess, "run", fake_run)
+    with pytest.raises(SystemExit) as exc_info:
+        guard._run_gh(["pr", "list"])
+    assert exc_info.value.code == 3
+    error = capsys.readouterr().err
+    assert error.startswith("error:")
+    assert "Traceback" not in error
+    assert error.count("\n") == 1
+
+
 def test_main_reports_claim_and_identifies_survivor_candidates(
     monkeypatch, capsys
 ) -> None:
@@ -140,6 +182,15 @@ def test_compare_mode_reports_unique_and_shared_paths(monkeypatch, capsys) -> No
     assert "path overlap is not equivalence" in output
 
 
+def test_compare_mode_reports_when_there_is_no_survivor(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(guard, "list_open_pull_requests", lambda repo: [])
+    assert guard.main(["2011", "--exclude-pr", "2012", "--compare-pr", "2012"]) == 0
+    assert (
+        capsys.readouterr().out
+        == "no other open PR declares it closes #2011; nothing to compare\n"
+    )
+
+
 def test_compare_mode_requires_excluding_the_duplicate_pr(monkeypatch) -> None:
     monkeypatch.setattr(guard, "list_open_pull_requests", lambda repo: [])
     with pytest.raises(SystemExit, match="2"):
@@ -154,3 +205,31 @@ def test_main_succeeds_when_issue_has_no_open_closing_pr(monkeypatch, capsys) ->
     )
     assert guard.main(["2003"]) == 0
     assert capsys.readouterr().out == ""
+
+
+def test_loose_mode_advises_on_exact_non_closing_mentions(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        guard,
+        "list_open_pull_requests",
+        lambda repo: [
+            _pr(2004, title="Part of #2003"),
+            _pr(2005, body="Refs #20030"),
+        ],
+    )
+    assert guard.main(["2003", "--loose"]) == 0
+    output = capsys.readouterr().out
+    assert "advisory" in output
+    assert "#2004 Part of #2003" in output
+    assert "#2005" not in output
+
+
+def test_loose_mode_keeps_json_stdout_machine_readable(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        guard,
+        "list_open_pull_requests",
+        lambda repo: [_pr(2004, title="Part of #2003")],
+    )
+    assert guard.main(["2003", "--loose", "--json"]) == 0
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == []
+    assert "advisory" in captured.err
