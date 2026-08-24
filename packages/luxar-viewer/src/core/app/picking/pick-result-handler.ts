@@ -128,10 +128,10 @@ export interface PickResultHandlerPorts {
  *   user-facing layer. The **queried** path — what the label / key / image
  *   loaders are handed — is the hit leaf *scene node*,
  *   `result.mainNode.name`, which is the CSR owner for a flat node and
- *   for a `part_<i>` of a partition. Using the wrapper for the lookup
- *   fails twice over: it is a bare group with no label/key CSR arrays
- *   (they are written per `part_<i>`), and
- *   `result.elementId` is an index in the leaf's own element space,
+ *   for a `part_<i>` of a partition. Using the wrapper for the lookup fails
+ *   twice over: it is a bare group with no label/key CSR arrays (they are
+ *   written per `part_<i>`), and `result.elementId` is an index in the leaf's
+ *   own element space,
  *   meaningless against a whole-node array. Before the split, every
  *   hover on a partitioned layer resolved to an empty tooltip, silently
  *   — `LabelLoader` demotes the missing array to an info log and caches
@@ -149,9 +149,9 @@ export interface PickResultHandlerPorts {
  *   Two known limits survive this fix, both outside the handler:
  *   (i) an *additive ladder* carries ONE union CSR per present labels/keys
  *   channel on its parent node (#1422), spanning the levels in
- *   `additive_<i>` order — the same node
- *   `lookupPath` names, and the same space the progressive loader
- *   produces when it concatenates the committed levels, so the lookup is
+ *   `additive_<i>` order — the same node `lookupPath` names, and the same space
+ *   the progressive loader produces when it concatenates the committed
+ *   levels, so the lookup is
  *   correct — for POINTS also under slicing, since the loader now
  *   composes each level's slot → on-disk map into that union space,
  *   offsetting level `i` by the preceding levels' on-disk `n_points`

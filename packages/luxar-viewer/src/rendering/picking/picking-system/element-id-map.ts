@@ -24,10 +24,9 @@
  *  - **Points** — `data/points/projection.ts::projectPointsTo3D`, for a node
  *    declaring `has_labels` / `has_image_labels` / `has_keys` and only on the
  *    non-identity path (a single range starting at 0 with no compaction emits
- *    nothing, so picking stays allocation-free in the common Points case). The
- *    commit
- *    (`commit-points-geometry.ts`) forwards `LoadedPointsData.elementIds` to
- *    the mesh stamp.
+ *    nothing, so picking stays allocation-free in the common Points case).
+ *    The commit (`commit-points-geometry.ts`) forwards
+ *    `LoadedPointsData.elementIds` to the mesh stamp.
  *  - **Points additive ladders** — composed as well, into the ladder's union
  *    index space. `add_points(..., labels=…, keys=…, additive_lod=True)` writes
  *    ONE union CSR per present channel on the PARENT node, keyed by
@@ -46,12 +45,11 @@
  *    missing one. Nothing is emitted when the parent declares no union
  *    string/image CSR, when the whole resident ladder is complete and unculled
  *    (slot IS the union index), or when the inputs are inconsistent. That last
- *    case
- *    is NOT a suppression: with no map this helper returns the slot, so on a
- *    sliced ladder the tooltip still shows whatever CSR row the slot hits. What
- *    refusing buys is that the wrong id is never one this code COMPOSED out of
- *    data it knows is inconsistent — no worse than the pre-#1439 behaviour —
- *    issue #1439.
+ *    case is NOT a suppression: with no map this helper returns the slot, so on
+ *    a sliced ladder the tooltip still shows whatever CSR row the slot hits.
+ *    What refusing buys is that the wrong id is never one this code COMPOSED
+ *    out of data it knows is inconsistent — no worse than the pre-#1439
+ *    behaviour — issue #1439.
  *  - **Mesh** — nothing to do: its pick shader already reports the on-disk
  *    vertex ordinal via `gl_VertexID`, so the lookup correctly no-ops.
  *  - **GSplats** — composed at PROJECTION time, not load time
@@ -60,10 +58,10 @@
  *    visible `ranges` (published only for a node declaring `has_labels` /
  *    `has_image_labels` / `has_keys`) and the surviving source indices the
  *    fused kernel now records (`project_gsplats_nd_to_3d`'s
- *    `out_source_indices`, since
- *    hidden-dim visibility compaction happens inside it). The standard-3D fast
- *    path emits every splat in order, so it records nothing and the
- *    range-offset path alone applies — issue #1423. Note the Points
+ *    `out_source_indices`, since hidden-dim visibility compaction happens
+ *    inside it). The standard-3D fast path emits every splat in order, so it
+ *    records nothing and the range-offset path alone applies — issue #1423.
+ *    Note the Points
  *    "allocation-free in the common case" framing does NOT carry over: on the
  *    general (compacting) projection path the composer's identity fast path is
  *    effectively unreachable, because whenever `ranges` is published there,
@@ -105,10 +103,10 @@
  *    channels publishes a map in the PART's local on-disk space — exactly the
  *    space that leaf's sliced CSR is keyed by. Since #1415/#1420,
  *    `core/app/picking/pick-result-handler.ts` looks string/image content up on
- *    the hit LEAF
- *    (`lookupPath = result.mainNode.name`; the outermost `kind=partition`
- *    wrapper is now the reported path only). The two halves cannot drift apart,
- *    because they name the same object: `picking-system.ts::readbackAndVote`
+ *    the hit LEAF (`lookupPath = result.mainNode.name`; the outermost
+ *    `kind=partition` wrapper is now the reported path only). The two halves
+ *    cannot drift apart, because they name the same object:
+ *    `picking-system.ts::readbackAndVote`
  *    builds the result with `elementId: resolveOnDiskElementId(nodeEntry.main,
  *    …)` and `mainNode: nodeEntry.main`, so the node this helper reads the map
  *    from is the node whose `name` becomes the CSR path. The
@@ -117,10 +115,10 @@
  *    ladder parent — which IS the part's scene node — carries one union CSR
  *    spanning its `additive_<i>` levels and declares `has_labels` or
  *    `has_keys`. For POINTS it is MAPPED as well, by exactly the ladder
- *    composition above — that
- *    composition reads the parent flags off the part group, so a partitioned
- *    ladder needs no separate path. A LINES part stays readable-but-unmapped,
- *    like any lines ladder, and resolves at the raw committed slot.
+ *    composition above — that composition reads the parent flags off the part
+ *    group, so a partitioned ladder needs no separate path. A LINES part stays
+ *    readable-but-unmapped, like any lines ladder, and resolves at the raw
+ *    committed slot.
  *
  * **Identity fallback is not always a safe answer**, so the map's lifetime is
  * decoupled from the no-op stamp's. `rendering/depth-sort-coordinator.ts::
@@ -137,11 +135,10 @@
  * silently WRONG per-element value rather than "no answer", and for LINES
  * strictly worse than for the other two, because the raw slot is a SEGMENT
  * number handed to a per-VERTEX CSR (a GRANULARITY error, not merely an offset
- * error). It
- * therefore calls `invalidateCommittedDataStamp`, which leaves this map in
- * place (the buffers it describes are untouched); only `clearCommittedData`,
- * used where the geometry is genuinely released (LOD demotion, dataset
- * teardown), drops both.
+ * error). It therefore calls `invalidateCommittedDataStamp`, which leaves this
+ * map in place (the buffers it describes are untouched); only
+ * `clearCommittedData`, used where the geometry is genuinely released (LOD
+ * demotion, dataset teardown), drops both.
  *
  * @module rendering/picking/picking-system/element-id-map
  */

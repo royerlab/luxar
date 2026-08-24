@@ -166,10 +166,11 @@ function buildLadderElementIdMap(
  * union string/image CSR) gives each level's half-open extent inside that CSR's
  * index space — CSR-style, so it holds one entry MORE than there are levels;
  * with it the per-level picking maps are composed into one union map, and
- * without it none is published at all — see {@link buildLadderElementIdMap}. `warn` is the
- * owning loader's once-per-instance fail-closed reporter (this runs on every
- * memoized concat, so an unlatched `log.warning` would spam once per level per
- * view change — tens per second under dimension-animation playback).
+ * without it none is published at all — see {@link buildLadderElementIdMap}.
+ * `warn` is the owning loader's once-per-instance fail-closed reporter (this
+ * runs on every memoized concat, so an unlatched `log.warning` would spam once
+ * per level per view change — tens per second under dimension-animation
+ * playback).
  */
 function concatenatePointsData(
   parts: LoadedPointsData[],
