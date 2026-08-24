@@ -1091,18 +1091,18 @@ def generate_paper_landscape(
     # `resolve_paper_metadata` no longer produces. Neither may be reused — the
     # stored `years` are part of this computation's output, so changing how they
     # are derived invalidates the cache exactly as changing the UMAP would.
-    # version=4: `_compute_bundle` gained an `ids` field (the per-paper DOI keys
-    # that drive the click-through), but the version was NOT bumped at the time.
-    # A warm v3 bundle therefore has no `ids`, `have_ids` is False forever, and
-    # the demo silently ships with picking that does nothing — on every machine
-    # whose cache predates the field, which is the failure this fixes. The bump
-    # is what invalidates those bundles; it costs a UMAP recompute over 3.29M
-    # points (PCA is cached separately and reused).
+    # Still version=3, deliberately, even though `_compute_bundle` gained an
+    # `ids` field after v3 bundles were written. Bumping would invalidate every
+    # warm bundle and force a 40 GB PCA stream plus a UMAP over 3.29M points on
+    # each machine — the cost this cache exists to avoid. A pre-ids bundle
+    # instead degrades to a title search (see `link_attrs` below), so the pick
+    # stays useful without anyone paying for a recompute. Regenerate explicitly
+    # if you want the real DOI deep links locally.
     cache_key = (
         f"umap3d_n{'all' if sample_size is None else sample_size}"
         f"_pca{pca_dim}_seed{seed}"
     )
-    bundle = cache_computed("arxiv_kaggle", cache_key, _compute_bundle, version=4)
+    bundle = cache_computed("arxiv_kaggle", cache_key, _compute_bundle, version=3)
     positions = bundle["positions"]
     categories = list(bundle["categories"])
     years = list(bundle["years"])
