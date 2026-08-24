@@ -74,8 +74,14 @@ describe('LineMaterial.applyBlendingMode (GLSL)', () => {
     expect(mat.transparent).toBe(false);
     expect(mat.depthWrite).toBe(true);
     expect(mat.depthTest).toBe(true);
-    expect(mat.blending).toBe(THREE.NormalBlending);
+    expect(mat.blending).toBe(THREE.CustomBlending);
+    expect(mat.blendSrc).toBe(THREE.SrcAlphaFactor);
+    expect(mat.blendDst).toBe(THREE.OneMinusSrcAlphaFactor);
+    expect(mat.defines.LUXAR_OPAQUE_RGB_CONTRIBUTION).toBe('');
     expect(mat.userData.blendingMode).toBe('opaque');
+
+    mat.applyBlendingMode('additive');
+    expect(mat.defines.LUXAR_OPAQUE_RGB_CONTRIBUTION).toBeUndefined();
   });
 
   it('luminous mode is additive but depth-tested', () => {
@@ -116,6 +122,17 @@ describe('LineMaterial.applyBlendingMode (GLSL)', () => {
     const mat = new LineMaterial({ primitive: 'screen-space' });
     expect(mat.fragmentShader).toContain('defined(LUXAR_MAX_RGB_CONTRIBUTION)');
     expect(mat.fragmentShader).toContain('gammaColor * a');
+  });
+
+  it('line opaque fragments discard by alpha-weighted RGB contribution', () => {
+    const screenSpace = new LineMaterial({ primitive: 'screen-space' }).fragmentShader;
+    const capsule = new LineMaterial({ primitive: 'capsule' }).fragmentShader;
+    for (const source of [screenSpace, capsule]) {
+      expect(source).toContain('#ifdef LUXAR_OPAQUE_RGB_CONTRIBUTION');
+      expect(source).toContain(
+        'max(adjusted.r, max(adjusted.g, adjusted.b)) * intensity * uOpacity < 1e-4'
+      );
+    }
   });
 
   it('line fragment shader contains the volumetric emission–absorption branch', () => {
@@ -225,13 +242,19 @@ describe('LineTSLMaterial.applyBlendingMode (TSL)', () => {
   });
 
   it('opaque mode disables transparency and writes depth', () => {
-    const mat = new LineTSLMaterial({ primitive: 'screen-space' });
-    mat.applyBlendingMode('opaque');
+    const mat = new LineTSLMaterial({ primitive: 'screen-space', blendingMode: 'opaque' });
     expect(mat.transparent).toBe(false);
     expect(mat.depthWrite).toBe(true);
     expect(mat.depthTest).toBe(true);
-    expect(mat.blending).toBe(THREE.NormalBlending);
+    expect(mat.blending).toBe(THREE.CustomBlending);
+    expect(mat.blendSrc).toBe(THREE.SrcAlphaFactor);
+    expect(mat.blendDst).toBe(THREE.OneMinusSrcAlphaFactor);
+    expect(mat.defines?.LUXAR_OPAQUE_RGB_CONTRIBUTION).toBe('');
     expect(mat.userData.blendingMode).toBe('opaque');
+
+    mat.applyBlendingMode('additive');
+    expect(mat.defines?.LUXAR_OPAQUE_RGB_CONTRIBUTION).toBeUndefined();
+    expect(mat.userData.blendingMode).toBe('additive');
   });
 
   it('luminous mode is additive but depth-tested', () => {

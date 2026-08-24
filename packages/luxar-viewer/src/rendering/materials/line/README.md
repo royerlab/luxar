@@ -477,17 +477,18 @@ and the existing lazy midpoint provider (see
 
 ## Variant defines (fast paths)
 
-Both backends share the same five `#define`s, set by the wrapper and
+Both backends share the same six `#define`s, set by the wrapper and
 either gated via `#ifdef` (GLSL) or read at TSL build time
 (`rebuildGraph` re-runs the factory):
 
-| Define                       | Effect                                                                                                                                                                | Set by                                                       |
-| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| `USE_COLORMAP`               | Replaces the texel2/3 per-endpoint RGB with the texel5 scalars + LUT lookup (presence rides the geometry's `userData.hasScalars` stamp)                               | `setColormapTexture(texture)` / `updateColormapTexture`      |
-| `LUXAR_GAMMA_ONE`            | Skips three per-fragment `pow()` calls when `gamma == 1.0 ± 1e-4` (the default)                                                                                       | `updateGamma` when crossing the threshold                    |
-| `LUXAR_NO_GOG`               | Skips the `vColor × uIntensity + uOffset` chain and its `max(·, 0)` clamp when `intensity==1 && offset==0`                                                            | `updateIntensity` / `updateOffset` via `_refreshNoGOGDefine` |
-| `LUXAR_MAX_RGB_CONTRIBUTION` | Premultiplies `rgb *= intensity × opacity` so `CustomBlending + MaxEquation + OneFactor/OneFactor` captures contribution-weighted colour rather than flat full-bright | `applyBlendingMode('max')`                                   |
-| `LUXAR_VOLUMETRIC`           | Switches the fragment output to the emission–absorption branch (τ = κ·alpha, `S(τ)` screening, `1 − e^(−τ)` alpha — see the volumetric section above)                 | `applyBlendingMode('volumetric')`                            |
+| Define                          | Effect                                                                                                                                                                | Set by                                                       |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `USE_COLORMAP`                  | Replaces the texel2/3 per-endpoint RGB with the texel5 scalars + LUT lookup (presence rides the geometry's `userData.hasScalars` stamp)                               | `setColormapTexture(texture)` / `updateColormapTexture`      |
+| `LUXAR_GAMMA_ONE`               | Skips three per-fragment `pow()` calls when `gamma == 1.0 ± 1e-4` (the default)                                                                                       | `updateGamma` when crossing the threshold                    |
+| `LUXAR_NO_GOG`                  | Skips the `vColor × uIntensity + uOffset` chain and its `max(·, 0)` clamp when `intensity==1 && offset==0`                                                            | `updateIntensity` / `updateOffset` via `_refreshNoGOGDefine` |
+| `LUXAR_MAX_RGB_CONTRIBUTION`    | Premultiplies `rgb *= intensity × opacity` so `CustomBlending + MaxEquation + OneFactor/OneFactor` captures contribution-weighted colour rather than flat full-bright | `applyBlendingMode('max')`                                   |
+| `LUXAR_OPAQUE_RGB_CONTRIBUTION` | Discards sub-1e-4 alpha-weighted RGB contributions before an `opaque` fragment can write depth                                                                        | `applyBlendingMode('opaque')`                                |
+| `LUXAR_VOLUMETRIC`              | Switches the fragment output to the emission–absorption branch (τ = κ·alpha, `S(τ)` screening, `1 − e^(−τ)` alpha — see the volumetric section above)                 | `applyBlendingMode('volumetric')`                            |
 
 The perpendicular falloff is **not** a define-gated fast path: the
 super-Gaussian `max(exp(−K·p^β) − C, 0)/(1 − C)` is computed unconditionally

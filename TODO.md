@@ -270,7 +270,7 @@ to ship after). Sequencing is at the bottom.
       - *Clean CC0 / CC-BY / public-domain (attribution only):* kidney (CC0),
         cmu1 (CC0), cryoem/EMDB (CC0), ct_totalsegmentator (CC BY 4.0),
         milkyway_dust (CC BY 4.0), desi (CC BY 4.0), celegans (CC BY 4.0),
-        organoid + dapi (IDR idr0062, CC BY 4.0), visible_human_head (US public
+        blastocyst + dapi (IDR idr0062, CC BY 4.0), visible_human_head (US public
         domain — NLM license gate retired Jul 2019), cells3d (skimage), census +
         multiome UMAP (our derived coords over CC-BY sources).
       - *CC BY-**SA** (derived product MUST be relicensed CC BY-SA 4.0):*
@@ -538,7 +538,7 @@ to ship after). Sequencing is at the bottom.
   orbit videos (→ `docs/images/gallery/*.{webm,webp}`, gitignored staging;
   curated picks get copied into `docs/images/readme/gallery/`).
   - **Curate a stronger gallery** from the newer/better datasets (H&E pathology
-    gsplats, 4D *C. elegans* tracking, organoid multichannel, Gaia) — decide
+    gsplats, 4D *C. elegans* tracking, blastocyst multichannel, Gaia) — decide
     which few best convey the range (volumetric splats, nD navigation, scale).
   - **Regenerate** stills + short loops via the Playwright pipeline; refresh the
     README gallery section + captions; ensure everything renders on GitHub.
@@ -553,7 +553,7 @@ to ship after). Sequencing is at the bottom.
     `make generate-gallery` (or `ONLY=id`). Output → `docs/images/gallery/`
     (gitignored staging); copy curated picks into `docs/images/readme/`. Per
     user calls: **DESI included** (astronomy), **cmu1_pathology dropped**. Next:
-    run the full sweep (incl. heavy datasets: `gaia_milky_way`/organoid/celegans need
+    run the full sweep (incl. heavy datasets: `gaia_milky_way`/blastocyst/celegans need
     generation), curate the winners, wire them into the README gallery table.
   - **LFS interaction (coordinate with R17):** README/doc images stay in-repo
     (GitHub must render them inline) — only the heavy *datasets* move to Zenodo.
@@ -734,7 +734,7 @@ to ship after). Sequencing is at the bottom.
 >   the constant background pedestal is *not real signal*, so removing it before
 >   fitting is principled, and the *correct* way to score a floor-suppressed fit
 >   is against a **floor-suppressed reference** (floor-recon vs floor-original).
-> - **The measured −5.86 dB (kidney_dapi 31.77→25.91; organoid +0.01) is a
+> - **The measured −5.86 dB (kidney_dapi 31.77→25.91; blastocyst +0.01) is a
 >   reference-mismatch artifact, NOT evidence floor is worse:** it scores a
 >   background-free reconstruction against the *original, pedestal-bearing*
 >   volume, penalising the fit for correctly dropping non-signal. Under the

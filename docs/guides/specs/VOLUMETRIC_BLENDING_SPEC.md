@@ -144,7 +144,9 @@ volume-rendering spectrum:
   is unreadable.
 - **Pure occlusion** — `normal`/`opaque`: front surfaces hide back ones
   (`normal` = premultiplied alpha-over with a clamped coverage alpha, sorted
-  back-to-front; `opaque` = depth-tested overwrite). The right model for
+  back-to-front; `opaque` = depth-writing alpha-over for Points/Lines and
+  depth-tested overwrite for GSplats/Mesh, whose fragment alpha is 1). The
+  right model for
   surfaces, but it discards the volumetric nature of the data — a splat is
   treated as a screen-aligned film, not a glowing medium with thickness.
 
@@ -179,7 +181,7 @@ smoke/ink-like medium (large κ). Together with `max` (MIP) and `normal`/`opaque
 | `max` | — (MaxEquation) | peak value | peak | yes | no | never |
 | **`volumetric`** | **physics: 1 − e^(−τ), τ = κ·∫ρ** | **ray integral × screening** | **sum** | **no** | **yes** | **never** |
 | `normal` | clamped coverage: min(intensity·opacity, 1) | peak value | peak | no | yes | gsplats & points never; lines at opacity ≥ 0.99 |
-| `opaque` | — (opaque overwrite) | peak value | peak | no (depth-tested) | no (z-buffer) | always |
+| `opaque` | Points/Lines: intensity·opacity; GSplats/Mesh: 1 (overwrite identity) | peak value | peak | no (depth-tested) | no (z-buffer; Point/Line α < 1 remains intra-draw order-dependent) | always |
 
 `volumetric` deliberately breaks the previous alignment *sum-projection ⇒
 commutative ⇒ unsorted*: it is emissive for the projection taxonomy
@@ -737,10 +739,12 @@ integral through the existing super-Gaussian radial profile
 point the math is the isotropic special case of §3.1). Per the three-geometry
 symmetry rule: same mode name, same attr, shared `needsDepthSort`.
 Showcase + exit criterion: switch the **mandelbulb demo**
-(`packages/luxar/src/luxar/demos/demo_mandelbulb.py:252-260`) to
-`blending_mode="volumetric"` — today it must dim its colors ×0.1 (L221) to keep
-the dense fractal surface from blowing out under additive; volumetric's bounded
-accumulation removes that workaround and adds real depth cueing to the surface.
+(`generate_mandelbulb_volumetric` in
+`packages/luxar/src/luxar/demos/demo_mandelbulb.py`) to
+`blending_mode="volumetric"` — before this phase it had to dim its colors ×0.1
+to keep the dense fractal surface from blowing out under additive; volumetric's
+bounded accumulation removes that workaround and adds real depth cueing to the
+surface.
 
 **Phase 4 — lines (IMPLEMENTED 2026-07-24)**: segment-midpoint depth sort
 (standard approximation; artifacts only when long segments interleave —
@@ -863,9 +867,18 @@ Invariant and behavior tests:
   overlays row-for-row (κ* ratio 0.97/1.02/1.02/1.00, was 208/34.6/8.5/3.1).
   The per-layer κ slider track (`absorptionBoundsForNode`) retires with it — it
   was a units conversion for exactly this factor and could never serve a mixed
-  points→gsplat LOD ladder. NOT addressed: peak-projection modes
-  (max/normal/opaque), where the lift's sum-only calibration leaves a separate
-  `1/(uRIF·σ)` mismatch (12–39× measured).
+  points→gsplat LOD ladder. NOT addressed: peak-projection modes, where the
+  lift's sum-only calibration leaves a separate `1/(uRIF·σ)` mismatch — but the
+  three modes do not share one number, so the earlier "12–39× measured" here was
+  imprecise: that band is the `max` crop-MEAN ratio at r=0.05 and r=0.02 alone.
+  Gsplat/points
+  PEAK ratio over the four radii: `max` 30.66/12.15/4.05/1.57 and `normal`
+  29.73/7.81/1.835/1.028, both BRIGHTER, with `normal` understating the
+  divergence because its gsplat peak is already saturating near 1.0 (0.91/0.86
+  at the two asserted radii). After #1994 restored point/line alpha-over,
+  `opaque` measures 4.386/0.720/0.219/0.055: the gsplat peak remains effect C,
+  while the points peak grows with radius under depth-tested alpha-over, so the
+  divergence changes sign and then grows toward the coarse radii.
 - **2026-07-24 (later)** — Phase 4 (lines) implemented — the plan is
   complete: transverse chord-integral rayMass through the Gaussian-profile
   ribbon (`LINE_CHORD_SCALE = √(π/ln 100)`,

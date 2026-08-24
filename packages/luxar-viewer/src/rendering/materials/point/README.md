@@ -164,8 +164,10 @@ The fragment shader runs in this order:
    `adjusted = vColor * uIntensity + uOffset` (clamped non-negative),
    then `finalColor = pow(adjusted, vec3(uInvGamma))`. Pre-computed `uInvGamma`
    moves the division out of the per-fragment path. A second discard culls
-   sub-1e-4 fragments to skip cost on offset-zeroed pixels. GOG is **per-node**;
-   global EOG (exposure) lives in the mega-shader post-processing pass.
+   sub-1e-4 RGB fragments in non-opaque modes and sub-1e-4 alpha-weighted RGB
+   contributions in `opaque`, where an undiscarded fragment writes depth. GOG
+   is **per-node**; global EOG (exposure) lives in the mega-shader
+   post-processing pass.
    The `LUXAR_GAMMA_ONE` define (set by `updateGamma` when `gamma == 1.0 ±
 1e-4`, the default) skips this `pow()` — `pow(x, 1) == x` — and also the
    pre-LUT value `pow()` in colormap mode. The `LUXAR_NO_GOG` define (set by
@@ -211,8 +213,12 @@ from `LayersPanel`). The method:
   bright RGB → max captures a flat coloured disk instead of the intended soft
   contribution. The define toggles a shader recompile and forces the
   premultiplied output.
-- Idempotent: identical state is a no-op via `userData.blendingMode` /
-  `defines.LUXAR_MAX_RGB_CONTRIBUTION` early exits.
+- Adds/removes the `LUXAR_OPAQUE_RGB_CONTRIBUTION` shader define. In `opaque`
+  mode, Points retain fragment alpha while writing depth, so the define discards
+  contributions below 1e-4 before an invisible sprite fringe can occlude later
+  geometry.
+- Idempotent: identical state is a no-op via early exits keyed by
+  `userData.blendingMode` and the mode-controlled defines.
 
 This is why the constructor's blending-mode wiring isn't done inline — the
 LayersPanel runtime-transition path needs the exact same code, and a previous
@@ -295,9 +301,10 @@ The clone path:
 2. Copies the runtime-only camera uniforms (`pointSizeFactor`, `maxPointSize`,
    `uInvGamma`, `radiusScale`) verbatim so the clone starts at
    the current camera frame, not the default.
-3. For `THREE.CustomBlending` (`max` mode), copies `blendEquation/Src/Dst` from
-   the source — the constructor would set canonical defaults, but if the source
-   had any post-construction overrides, copy carries them through.
+3. For `THREE.CustomBlending` (`max` or `opaque` mode), copies
+   `blendEquation/Src/Dst` from the source — the constructor would set canonical
+   defaults, but if the source had any post-construction overrides, copy carries
+   them through.
 
 Disposal is inherited from the base material class; `MaterialManager`
 subscribes to the synchronous `dispose` event and cleans up its registry +

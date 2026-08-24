@@ -126,6 +126,17 @@ SCENE_NAME = "gsplats_3d_drosophila_gastrulation.luxar.zarr"
 # ranges are read off the data, but the UNITS are ours to declare.
 VOXEL_UM = (1.93, 0.40625, 0.40625)
 
+# Display window: the fraction of this fit's own robust amplitude range
+# ``[min, p99.9]`` the scene opens on. These amplitudes are raw detector counts
+# (p50 ~ 70, p99.9 ~ 512), not a normalised [0, 1] signal, so the window has to
+# be derived from the data — authoring a bare ``intensity=1.0`` states the
+# window [0, 1] and puts EVERY splat past the top of the LUT. Measured on this
+# fit: 1.0 (the writer's own robust default) leaves the median splat at ~13% of
+# the window and the embryo is too dark to read, 0.2 starts clipping the
+# brightest nuclei flat, and 0.3 — about the 88th percentile — spreads the
+# nuclei across magma's violet-to-amber body with nothing saturated.
+DISPLAY_WINDOW_FRACTION = 0.30
+
 FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
@@ -149,11 +160,33 @@ def resolve_data() -> Path:
 # =============================================================================
 # Scene construction
 # =============================================================================
+def display_window(node) -> tuple[float, float]:
+    """The ``[lo, hi]`` amplitude window this scene opens on.
+
+    Mirrors the writer's own robust window — ``[min, p99.9]``, not ``[min,
+    max]``, because gsplat amplitudes are heavily right-skewed — then pulls the
+    top down by :data:`DISPLAY_WINDOW_FRACTION`. Derived from the fit that is
+    actually being loaded rather than hardcoded, so a refit (a different K, a
+    different floor) moves the window with the data instead of stranding it.
+    """
+    amps = np.concatenate(
+        [np.asarray(s.amplitudes, dtype=np.float64) for s in node.additive_sublods]
+    )
+    lo = float(amps.min())
+    hi = lo + (float(np.percentile(amps, 99.9)) - lo) * DISPLAY_WINDOW_FRACTION
+    if not hi > lo:  # degenerate (constant amplitudes) — fall back to the max
+        hi = max(float(amps.max()), lo + 1e-6)
+    return lo, hi
+
+
 def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
     """Build the 3D scene from the pre-fitted, physically-scaled gsplats."""
     with asection("Creating Drosophila gastrulation scene"):
         node, _ = load_gsplat_node(str(data_path))
         bmin, bmax = center_bounds(node)
+        win_lo, win_hi = display_window(node)
+        win_span = win_hi - win_lo
+        aprint(f"Display window: [{win_lo:.1f}, {win_hi:.1f}] counts")
         aprint(f"Scene bounds (um): min={np.round(bmin, 1)} max={np.round(bmax, 1)}")
         aprint(
             f"Embryo extent: {bmax[1] - bmin[1]:.0f} um long, "
@@ -181,7 +214,12 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
                 dimensions=dims,
-                viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="ACES"),
+                # exposure is in LOG2 STOPS. The window below is deliberately
+                # set so nothing clips, which leaves the frame a stop or so
+                # under; +1 puts it back without touching the tonal spread.
+                viewer_config=ViewerConfig(
+                    cinematic_mode=True, tone_mapping="ACES", exposure=1.0
+                ),
                 citation=DEMO_META["citation"],
             )
             scene.attrs["title"] = "GSplats: Drosophila Gastrulation (SiMView)"
@@ -197,37 +235,38 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                 scene.add_gsplats_from_file(
                     name="drosophila_nuclei",
                     path=str(data_path),
-                    # `normal` (alpha-over), not an accumulating mode. This is a
-                    # dense shell of nuclei about a bright yolk: every summing
-                    # mode integrates the far side through the near side and the
-                    # embryo reads as one flat silhouette. Measured on this
-                    # dataset — `volumetric` needs absorption >= 12 before the
-                    # far side stops bleeding through, by which point the whole
-                    # object is nearly black. Alpha-over keeps the surface nuclei
-                    # crisp.
+                    # `volumetric` emission-absorption. This is a single
+                    # fluorescence channel, which is exactly what that mode is
+                    # for, and at absorption 1.0 the near shell of nuclei still
+                    # reads in front of the far one without the object going
+                    # dark.
                     #
-                    # The Tribolium demo used to cite the same conclusion; it no
-                    # longer applies there and the two have diverged. Strong
-                    # absorption coupled with low opacity made `volumetric` work
-                    # on that stack while its specimen-wide ~675-count haze was
-                    # still in the data. The haze has since been subtracted at
-                    # fit time. THIS dataset is a different shape — a bright yolk
-                    # inside the shell, which is signal, not background — so the
-                    # absorption measurement above still stands and this stays
-                    # alpha-over.
-                    blending_mode="normal",
+                    # This used to be `normal` (alpha-over), citing a measurement
+                    # that `volumetric` needed absorption >= 12 before the far
+                    # side stopped bleeding through. That measurement was taken
+                    # while the display window below was broken and every splat
+                    # was clipped flat at the top of the LUT — with no tonal
+                    # range left, nothing but brute absorption could separate
+                    # near from far. Once the window is right the depth cue comes
+                    # back at absorption 1.0.
+                    blending_mode="volumetric",
+                    absorption=1.0,
+                    opacity=1.0,
                     colormap="magma",
-                    # `intensity` is a WINDOW whose top clips: measured here,
-                    # anything above ~1.0 drives the bulk of the splats past the
-                    # LUT's top and the embryo goes uniformly white (lowering
-                    # `opacity` to compensate does NOT undo it — it is the window
-                    # that clips, not the alpha). So leave the window alone and
-                    # shape the midtones with `gamma`, which is a curve: 2.2 lifts
-                    # the nuclei out of magma's dark-violet foot into its magenta
-                    # band without touching the highlights. Below ~1.6 the embryo
-                    # is too dark to read; above ~3 it washes out.
-                    intensity=1.0,
-                    gamma=2.2,
+                    # On a COLORMAPPED node `intensity`/`offset` are the scalar
+                    # display WINDOW, not a post-LUT gain: the viewer recovers
+                    # `[-offset/i, (1-offset)/i]` (rendering/display-range.ts
+                    # ::computeDisplayRange). These amplitudes are raw detector
+                    # counts running 5 -> 798, so the previous `intensity=1.0`
+                    # stated the window [0, 1] and drove EVERY splat past the top
+                    # of the LUT — the embryo rendered as one saturated pink
+                    # shell with no structure at all. The window is now derived
+                    # from the data (see `display_window`), and `gamma` goes back
+                    # to 1.0: with a correct window there are no midtones left to
+                    # rescue, and the 2.2 curve only flattened them.
+                    intensity=1.0 / win_span,
+                    offset=-win_lo / win_span,
+                    gamma=1.0,
                     layer=True,
                 )
 

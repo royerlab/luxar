@@ -789,7 +789,9 @@ describe('MaterialManager', () => {
         offset: 0.0,
       });
 
-      expect(material.blending).toBe(THREE.NormalBlending);
+      expect(material.blending).toBe(THREE.CustomBlending);
+      expect(material.blendSrc).toBe(THREE.SrcAlphaFactor);
+      expect(material.blendDst).toBe(THREE.OneMinusSrcAlphaFactor);
       expect(material.depthWrite).toBe(true); // Opaque writes to depth
       expect(material.transparent).toBe(false); // Not transparent
     });

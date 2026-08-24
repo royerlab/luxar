@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GSplats Demo: 3D Organoid DAPI-Stained Nuclei from Microscopy Data
+"""GSplats Demo: Mouse Blastocyst DAPI-Stained Nuclei (IDR)
 
 Demonstrates Gaussian Splatting compression of real 3D microscopy data with
 interactive web visualization.
@@ -12,8 +12,16 @@ GAUSSIAN SPLATTING FOR 3D MICROSCOPY
 ================================================================================
 
 This demo shows how Gaussian Splats can compress 3D microscopy volumes while
-preserving key structural features. We fit oriented 3D Gaussians to DAPI-stained
-cell nuclei and visualize the result in the Luxar viewer.
+preserving key structural features. We fit oriented 3D Gaussians to the
+DAPI-stained nuclei of a **mouse blastocyst at embryonic day 3.5** and visualize
+the result in the Luxar viewer.
+
+The specimen used to be called an "organoid" throughout this demo, which was
+simply wrong: IDR files image 6001240 (``B1_C1.tif``) under the dataset
+"Blastocysts", its bulk annotation reads "growth protocol - Mouse blastocysts
+(E3.5)", and it was imaged on a Leica SP8 confocal. The sibling demo
+``demo_gsplats_3d_blastocyst_multichannel`` is the SAME image with its second
+channel (Lamin B1) as well.
 
 WHY GSPLATS FOR MICROSCOPY:
 - **Compression**: 20-50x smaller than raw voxels (typical: 95%+ space savings)
@@ -97,7 +105,7 @@ Typical results for 128³ volume:
 
 USAGE:
 ======
-    python demo_gsplats_3d_organoid_dapi_nuclei.py [--recompute] [--no-serve] [--no-napari]
+    python demo_gsplats_3d_blastocyst_dapi_nuclei.py [--recompute] [--no-serve] [--no-napari]
 
 Options:
     --recompute:      Force re-fitting from scratch (download + GPU fitting)
@@ -110,7 +118,7 @@ By default, precomputed GSplats are loaded from package data (Git LFS).
 Use --recompute to re-fit from scratch (requires network + GPU).
 
 Output:
-    - Scene saved to: demos/gsplats_3d_organoid_dapi_nuclei.luxar.zarr
+    - Scene saved to: demos/gsplats_3d_blastocyst_dapi_nuclei.luxar.zarr
     - Local refit cached to: ~/.cache/luxar/gsplats_dapi/local/dapi.gsplats.zarr.zip
       (the fetched copy lands beside it, at ~/.cache/luxar/gsplats_dapi/)
     - Automatically opens in your browser on the demo's own derived port
@@ -124,9 +132,9 @@ Controls:
 """
 
 DEMO_META = {
-    "key": "gsplats_3d_organoid_dapi_nuclei",
-    "title": "3D Organoid DAPI Nuclei",
-    "description": "DAPI-stained organoid nuclei from 3D microscopy compressed as Gaussian splats.",
+    "key": "gsplats_3d_blastocyst_dapi_nuclei",
+    "title": "Mouse Blastocyst DAPI Nuclei",
+    "description": "DAPI-stained nuclei of a mouse blastocyst (IDR idr0062) compressed as Gaussian splats.",
     "category": "microscopy",
     "geometry": "gsplats",
     "requirements": {
@@ -136,7 +144,7 @@ DEMO_META = {
         "local_data": "git-lfs",
     },
     "caches": ["gsplats_dapi"],
-    "outputs": ["gsplats_3d_organoid_dapi_nuclei"],
+    "outputs": ["gsplats_3d_blastocyst_dapi_nuclei"],
     # The study that produced the image, not the repository that hosts it:
     # IDR's own record for idr0062 names Blin et al. and the PLoS Biology DOI,
     # and crediting the IDR platform paper instead would attribute someone
@@ -416,7 +424,7 @@ def create_luxar_scene(gsplats_data, output_path: Path | None = None):
     """Create Luxar scene with gsplats."""
     if output_path is None:
         output_path = (
-            get_demos_output_dir() / "gsplats_3d_organoid_dapi_nuclei.luxar.zarr"
+            get_demos_output_dir() / "gsplats_3d_blastocyst_dapi_nuclei.luxar.zarr"
         )
 
     with asection("Creating Luxar Scene"):
@@ -436,9 +444,9 @@ def create_luxar_scene(gsplats_data, output_path: Path | None = None):
             )
 
             # Add scene metadata
-            scene.attrs["title"] = "GSplats: 3D Organoid DAPI-Stained Nuclei"
+            scene.attrs["title"] = "GSplats: Mouse Blastocyst, DAPI-Stained Nuclei"
             scene.attrs["description"] = """
-3D Gaussian Splatting - Organoid Microscopy
+3D Gaussian Splatting - Mouse Blastocyst (E3.5)
 ============================================
 
 This scene demonstrates Gaussian Splat compression of DAPI-stained cell nuclei
@@ -528,7 +536,7 @@ def show_roundtrip_comparison(
         fig.colorbar(im, ax=axes[2], fraction=0.046, pad=0.04)
 
         fig.suptitle(
-            f"Organoid DAPI — Round-Trip Comparison — z-slice {mid_z}  "
+            f"Blastocyst DAPI — Round-Trip Comparison — z-slice {mid_z}  "
             f"({len(gsplats_data.amplitudes):,} splats)",
             fontsize=14,
         )
@@ -644,13 +652,15 @@ def resolve_gsplats() -> list[GSplatData] | None:
 def main():
     """Main demo execution."""
     aprint("=" * 70)
-    aprint("GSplats Demo: 3D Organoid DAPI-Stained Nuclei")
+    aprint("GSplats Demo: Mouse Blastocyst DAPI-Stained Nuclei")
     aprint("=" * 70)
     aprint("Real microscopy data + Gaussian Splatting + Web visualization")
     aprint("")
 
     # Determine output path
-    output_path = get_demos_output_dir() / "gsplats_3d_organoid_dapi_nuclei.luxar.zarr"
+    output_path = (
+        get_demos_output_dir() / "gsplats_3d_blastocyst_dapi_nuclei.luxar.zarr"
+    )
 
     # Serve only mode
     if SERVE_ONLY:

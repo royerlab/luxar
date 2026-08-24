@@ -569,7 +569,7 @@ describe('GSplatMaterial', () => {
 
       expect(material.transparent).toBe(false);
       expect(material.depthWrite).toBe(true);
-      expect(material.blending).toBe('NormalBlending');
+      expect(material.blending).toBe('CustomBlending');
       expect(material.userData.depthTest).toBe(true);
     });
   });
@@ -641,7 +641,7 @@ describe('GSplatMaterial', () => {
 
       material.applyBlendingMode('opaque');
 
-      expect(material.blending).toBe('NormalBlending');
+      expect(material.blending).toBe('CustomBlending');
       expect(material.transparent).toBe(false);
       expect(material.depthWrite).toBe(true);
       // Alpha state cleared so it doesn't haunt a future custom-blending switch.

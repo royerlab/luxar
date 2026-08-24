@@ -25,10 +25,8 @@ def run_partition_dataset(
     try:
         import math
 
-        from luxar.gsplats.gsplat_data import (
-            GSplatData,
-            stats_after_structure_change,
-        )
+        from luxar.cli.gsplat_ops.loading import load_matrix_gsplats
+        from luxar.gsplats.gsplat_data import stats_after_structure_change
         from luxar.gsplats.io.load_gsplats import read_authored_appearance
         from luxar.gsplats.io.save_gsplats import split_fitting_info, write_gsplats_tree
         from luxar.gsplats.tree import iter_leaves
@@ -44,7 +42,11 @@ def run_partition_dataset(
 
         with asection(f"Partitioning: {input_path.name}"):
             with asection("Loading dataset"):
-                data = GSplatData.load(input_path, include_stats=True)
+                data = load_matrix_gsplats(
+                    input_path,
+                    include_stats=True,
+                    command="partition",
+                )
                 aprint(f"Loaded {data.n_splats:,} splats ({data.ndim}D)")
 
             # --parts N → target ~N parts via ceil(n / N).
@@ -131,7 +133,11 @@ def run_flatten_dataset(
             with asection("Loading tree"):
                 node, stats = load_gsplat_node(input_path, include_stats=True)
 
-            n_leaves = sum(1 for _ in iter_default_leaves(node))
+            leaves = list(iter_default_leaves(node))
+            if not leaves:
+                aprint("❌ Error: input tree has no leaves")
+                raise typer.Exit(1)
+
             flat = GSplatData.from_default_selection(node).flattened()
             # The default-selection factory may preserve a matrix-shaped input's
             # stats; keep the root-level provenance/fitting stats from the source
@@ -145,7 +151,7 @@ def run_flatten_dataset(
                     stats=stats_after_structure_change(stats),
                 )
             aprint(
-                f"Flattened {n_leaves} leaf/leaves → {flat.n_splats:,} splats "
+                f"Flattened {len(leaves)} leaf/leaves → {flat.n_splats:,} splats "
                 f"({flat.ndim}D, single matrix-shaped leaf)"
             )
 

@@ -43,6 +43,8 @@ class CompositionMixin(_GSplatDataOps):
             return make.from_tree(node, stats=stats)
 
         parts = [make.from_tree(leaf).flattened() for leaf in iter_default_leaves(node)]
+        if not parts:
+            raise ValueError("GSplat tree has no default-rendered leaves")
         flat = make.concatenate(parts)
         return make.from_additive_sublods(list(flat.additive_sublods), stats=stats)
 

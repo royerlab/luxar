@@ -314,9 +314,19 @@ def create_luxar_scene(gsplats_list, output_path=None):
             # ACES, set explicitly, for the per-channel BOP LUTs
             # (ACES is the house default; it shifts LUT hues slightly, which is
             # the accepted trade for its highlight rolloff).
+            #
+            # exposure is in LOG2 STOPS. Two thin volumetric channels over a
+            # 60-slice stack integrate to very little radiance, so the scene
+            # opened far too dim and had to be pushed +2.35 EV by hand in the
+            # viewer before it read at all. That measured value is baked here.
+            # It is the right lever rather than the amplitudes: the writer
+            # derives each channel's display window FROM its amplitudes, so a
+            # global rescale cancels out on screen and changes nothing.
             scene = compiler.create_scene(
                 dimensions=Dimensions.default_3d(),
-                viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="ACES"),
+                viewer_config=ViewerConfig(
+                    cinematic_mode=True, tone_mapping="ACES", exposure=2.35
+                ),
                 citation=DEMO_META["citation"],
             )
 

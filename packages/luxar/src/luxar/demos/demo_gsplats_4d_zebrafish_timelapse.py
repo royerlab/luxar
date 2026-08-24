@@ -12,7 +12,46 @@ toggleable layer. Without it there is nothing to judge scale, depth or drift
 against — the cells float in an unmarked void, and the migration that is the
 whole point of the recording is impossible to read.
 
-WHAT MAKES THIS A 4D NODE (and not 64 nodes in a trench coat):
+================================================================================
+READ THIS FIRST: what this demo is trying to teach
+================================================================================
+
+This file is longer than a demo needs to be, on purpose. The dataset is
+**extremely sparse** — 98.7 to 99.8% of its voxels are exactly zero — and almost
+every automatic default in the fitting pipeline is calibrated for data that is
+not. Three separate defaults INVERT on it, each in the same way: an estimator
+that asks "what value best predicts a held-out voxel?" answers "zero", because
+zero is almost always right. Follow those estimators and you ship a dataset with
+the specimen filtered out of it.
+
+The general lesson, and the reason for the tables below: **on sparse data,
+measure the thing you actually care about, not the thing that is easy to
+measure.** Every number in this docstring is a measurement, each with the
+command that produced it implied by the surrounding constant. Four rules
+recur, and they generalise to any near-empty volume:
+
+1. **Global PSNR is the reward for predicting empty space.** On a 99%-empty
+   stack it barely moves when the specimen is destroyed. Always score a
+   foreground — and where the "foreground" itself contains noise, score the
+   part you care about (here: voxels inside real connected components).
+2. **Never score a preprocessed fit against its own preprocessed input.** A
+   floored or denoised fit compared to the floored or denoised volume looks
+   excellent by construction. Score against the raw acquisition, and when the
+   preprocessing was deliberate (denoising), split the score into what it
+   risked and what it bought rather than collapsing both into one number.
+3. **Reproduced ENERGY is the honest sparse-data metric.** The share of the
+   frame's intensity a fit puts back is impossible to fake and immediately
+   exposes a filter that deleted signal — it was 44% when the background floor
+   was on, and nobody noticed from the dB.
+4. **An automatic calibration that answers at the edge of its own grid has
+   told you nothing.** Widen the grid and look again; if the answer keeps
+   moving, the estimator does not apply to your data. The ``cal`` K* sweep
+   fails this way here: it answers the SECOND point of its own grid, with a
+   confidence margin smaller than the spacing between points. The NLM
+   calibrator did too, back when this demo used NLM — default range capped at
+   0.08, answer 0.08 — which is part of why it no longer does.
+
+WHAT MAKES THIS A 4D NODE (and not 151 nodes in a trench coat):
     Every timepoint is still fitted on its own — that is what keeps each fit
     small and separately cacheable — but the fits are then
     ``combine_as_new_dimension``-stacked into ONE 4D ``GSplatData`` whose fourth
@@ -22,6 +61,12 @@ WHAT MAKES THIS A 4D NODE (and not 64 nodes in a trench coat):
     the axis. The previous version of this demo instead wrote one flat gsplats
     node per timepoint with ``fill={"time": t}`` — 64 sibling nodes, no LOD, no
     shared appearance, one Layers row each.
+
+    Why it matters beyond tidiness: a stacked node is what makes a LOD ladder
+    possible at all (there is one object to coarsen), what gives the whole
+    recording one appearance to edit in the Layers panel, and what lets the
+    viewer's spatial index cull by time. The cost is that time becomes a
+    coordinate you must protect — see ``LOD_COARSEN_DIMS``.
 
 DATA SOURCE & CITATIONS:
     Zenodo record 1211599 — ``cxcr4aMO2_290112.lsm`` (Zeiss LSM, 2.1 GB),
@@ -92,15 +137,179 @@ FLOOR (why this demo turns off a default the house rule says to keep):
     the energy column: global PSNR barely moves at frame 0 and hides how much
     was being deleted.
 
+SUPPRESSING THE SHOT NOISE (and a metric that lied about it):
+    The noise here is not a nuisance at the margin. At t=0, 32% of the frame's
+    total energy sits in isolated voxels, and the MEDIAN object in the whole
+    frame is ONE voxel -- p90 is 1-2 at every timepoint. An unfiltered fit
+    spends its budget accordingly.
+
+    So each timepoint has its sub-4-voxel 6-connected components deleted before
+    it is fitted. Not smoothed -- deleted. Every 6-connected object at or above
+    the threshold passes through bit-identical.
+
+    HOW THIS SECTION GOT REWRITTEN, because the mistake is the lesson:
+
+    The first attempt used non-local means at h=0.05, chosen by sweeping h and
+    scoring "the share of the shot-noise voxels' energy the fit still
+    reproduces". That metric said the noise collapsed 12-30x. It was wrong, and
+    wrong in a way worth recognising: **NLM is a neighbourhood average, so it
+    SPREADS a spike rather than deleting it.** Energy that moved one voxel out
+    of its original spike left the mask the metric was watching and scored as
+    removed, while remaining perfectly visible on screen as a softer, wider
+    blob. The metric measured displacement and reported destruction.
+
+    It took someone looking at the render and saying "that doesn't look
+    denoised" to catch it. No number in the sweep would have.
+
+    The replacement metric -- energy outside a DILATED cell mask -- was also
+    wrong, in the opposite direction: at the busy timepoints NLM's own halo
+    pushes real cell energy past the mask boundary, scoring 1.049 (worse than no
+    filter at all) for what is actually signal. Two metrics, two directions,
+    both plausible. The general lesson is not "use this metric" but: **when a
+    filter MOVES things, any mask fixed on the unfiltered data measures the
+    movement, not the removal.** Prefer an operation that does not move
+    anything, or score by looking.
+
+    WHY A SIZE FILTER, measured with 6-connectivity against a cell definition
+    (components >= 27 voxels) deliberately STRICTER than any threshold under
+    test, so no arm is judged against its own definition:
+
+    | threshold | frame energy removed (t=0) | cell energy | mean cell peak |
+    |-----------|----------------------------|-------------|----------------|
+    | NLM h=.05 |                      ~0.32 |       0.953 |     **0.783**  |
+    |         2 |                     0.2959 |      1.0000 |       1.0000   |
+    |         4 |                     0.3208 |      1.0000 |       1.0000   |
+    |         8 |                     0.3225 |      1.0000 |       1.0000   |
+    |        12 |                     0.3225 |      1.0000 |       1.0000   |
+
+    There is no trade-off to tune: a component filter's cell columns are exactly
+    1.0000 at every threshold, by construction, while NLM dims the cells it is
+    supposed to protect by 6-22% depending on timepoint. The only thing the
+    threshold changes is how much noise goes, and that curve is flat past 4. So
+    4 takes essentially all of the reduction while deleting nothing larger than
+    3 voxels.
+
+    The energy removed falls with time -- 32% at t=0, 13% at t=40, 2.7% at t=150
+    -- not because the noise changes but because the specimen brightens around
+    it. A fixed filter, a moving proportion.
+
+    WHAT IT DOES TO THE FIT, which is the part that settles the argument. Both
+    arms rendered back and scored INSIDE the 6-connected cells of the RAW frame
+    -- the one reference neither arm touched:
+
+    | frame | arm | splats | cell PSNR | cell energy | out-of-cell energy |
+    |-------|-----|--------|-----------|-------------|--------------------|
+    |     0 | mc4 |  1,369 |     19.51 |       0.992 |            0.011   |
+    |     0 | NLM | 23,478 |     19.66 |       0.987 |            0.503   |
+    |    10 | mc4 |  1,809 |     20.07 |       1.002 |            0.012   |
+    |    10 | NLM | 21,398 |     19.96 |       0.997 |            0.488   |
+    |    75 | mc4 |  7,730 |     22.33 |       0.989 |            0.108   |
+    |    75 | NLM | 12,837 |     21.75 |       0.971 |            0.325   |
+    |   120 | mc4 | 14,090 |     20.53 |       0.965 |            0.076   |
+    |   120 | NLM | 17,740 |     20.50 |       0.962 |            0.243   |
+    |   150 | mc4 | 18,754 |     18.77 |       0.956 |            0.071   |
+    |   150 | NLM | 20,732 |     19.04 |       0.957 |            0.216   |
+
+    Equal or better cell fidelity almost everywhere, from a small fraction of
+    the splats at the early timepoints. The last column says where the rest
+    went: NLM's fits put back 22-50% of the energy OUTSIDE the cells against
+    1-11% here, because a smeared spike is still something to model and the
+    0.9999 amplitude retention keeps modelling it. Deleting the spike instead
+    leaves the budget nothing to spend on but cells.
+
+    NLM wins cell PSNR in two rows, and both are left in rather than dropped. At
+    t=0 it buys 0.15 dB (19.66 against 19.51), but uses 17x the splats and puts
+    back 46x the out-of-cell energy. At t=150 it buys 0.27 dB (19.04 against
+    18.77) with 10% more splats. By then only 2.7% of the frame's energy is
+    noise, so there is little for a size filter to remove and the comparison is
+    nearly two unfiltered fits; the gain is the cost of deleting a few small
+    real objects along with the specks. That is the honest shape of this trade,
+    next to the 3x lower out-of-cell energy in the same row.
+
+    Note how the splat count tracks the specimen rather than the noise: 1,369 at
+    t=0 where a third of the energy was noise, 18,754 at t=150 where almost none
+    of it is. The whole archive is 1,270,233 splats against NLM's 2,689,314.
+
+    This is also the answer to "did we lose detail by shipping fewer splats".
+    Splat count is not detail. It is only detail once you know what the splats
+    are sitting on.
+
+THE LOD LADDER, AND A MEASUREMENT TRAP INSIDE IT:
+    The stacked node carries a substitutive ladder (``levels``: 3 coarse levels,
+    each 4x smaller) with ``coarsen_dims=(0, 1, 2)`` — the three SPATIAL centre
+    columns. Column 3 is time, and leaving it out makes it a **hard barrier**:
+    coarsening may merge two splats that are near each other in space at the
+    same timepoint, never two at different timepoints. Without the barrier a
+    coarse level would average frame 40 into frame 41 and the migration would
+    smear into a blur that gets worse the further out you zoom. This is the
+    general rule for any stacked axis — time, channel, condition: a coarsening
+    that crosses it is mixing measurements that were never simultaneous.
+
+    The trap: when checking whether the ladder LOST anything, do not reach for
+    ``volumes()`` or the amplitude sum. A stacked axis has sigma = 0, so a
+    splat's nD "volume" is zero (or a degenerate product) and any total built
+    from it is meaningless — twice during this work it produced a convincing
+    "the coarse level lost 40% of the mass" alarm that was purely an artefact of
+    the sigma-0 axis. The check that actually works is to **render each level to
+    a volume and compare brightness**: the first coarse level holds 95.8% of the
+    finest level's, which is what conservation is supposed to look like. When a
+    derived quantity has a degenerate factor in it, measure the observable
+    instead.
+
+AUTHORING FOR THE VIEWER (three traps that only a browser reveals):
+    None of these show up in a test, a PSNR, or a scene-graph dump. All three
+    were found by loading the built scene and using it, and all three generalise
+    to any 4D demo.
+
+    1. A DISCRETE dimension's ``step`` must be exactly representable in binary.
+       The viewer turns a discrete axis into an ``<input type="range">``, whose
+       value is snapped onto ``min + k*step``. Hand it the LSM's measured
+       interval — 2.0001470947 min — and the browser computes ``150 * step`` a
+       hair above ``max`` and clamps to 149, so the FINAL timepoint cannot be
+       selected at all. The axis therefore steps by exactly 2.0 min, a nominal
+       value, at a cost of 1.3 s of drift accumulated over five hours. Nominal
+       but reachable beats recorded but not. See ``AXIS_STEP_MIN``.
+
+    2. The ORDER of the ``Dimensions`` list is what the viewer maps onto screen
+       x/y/z. It does not have to match the centre-column order — ``dim_order``
+       maps those by NAME — and here it deliberately does not: listing Z first
+       shows an 859 x 859 x 316 um slab edge-on, as a tall narrow column. The
+       two long axes go first so the opening view is the one the microscope was
+       pointed at. See ``create_luxar_scene``.
+
+    3. An additive reference layer must lose every contest for attention. The
+       cage's first colours were bright enough to bury the specimen it exists to
+       measure — 2% of the frame, drawn over by a glowing box. Roughly halving
+       them fixed it. See ``BOX_EDGE_COLOR``.
+
+REPRODUCING ANY OF THIS:
+    Every table here came from the same shape of experiment: hold everything
+    fixed, sweep one knob, and score each arm against the RAW frames. The
+    scoring helper that matters is the connected-component split. Both masks
+    use 6-connectivity: the threshold sweep calls components of >= 27 voxels
+    cells, deliberately stricter than every threshold it tests; the rendered-fit
+    table uses >= 8 voxels. Everything smaller is shot noise for that table.
+    This split separates "the filter removed noise" from "the filter removed
+    signal", which no single PSNR can do.
+
+    The fits are cached per timepoint under a key that includes every knob that
+    changes the result (seeds, iterations, patience, cull retention, floor,
+    minimum component size and connectivity), so re-running a sweep cannot be
+    served a stale answer. That keying is not bookkeeping — an earlier version
+    of this demo keyed only on the frame index, and the tables above are exactly
+    the sort of sweep it would have silently invalidated.
+
 USAGE:
     python demo_gsplats_4d_zebrafish_timelapse.py [--recompute] [--no-serve]
-        [--serve-only] [--max-timepoints=N]
+        [--refit-all] [--serve-only] [--max-timepoints=N]
 
-    --recompute:        Download the LSM and refit from scratch (needs a GPU).
-                        It bypasses the per-timepoint cache too, as the name
-                        says — so an interrupted refit of all 151 frames does
-                        NOT resume, it starts over. Drop the flag to have the
-                        cache honoured once the hosted archive is in place.
+    --recompute:        Ignore the shipped archive; download the LSM and build
+                        the 4D fit locally (needs a GPU). Per-timepoint fits are
+                        still read from the cache, so an interrupted run of all
+                        151 frames RESUMES where it stopped.
+    --refit-all:        With --recompute, also ignore the per-timepoint cache
+                        and fit every frame again. Rarely wanted: the cache key
+                        already carries every constant that changes a fit.
     --no-serve:         Build the scene without launching the viewer.
     --serve-only:       Serve an already-built scene.
     --max-timepoints=N: Fit only N evenly spaced timepoints (refit path only).
@@ -120,7 +329,7 @@ DEMO_META = {
     "category": "microscopy",
     "geometry": "mixed",
     "requirements": {
-        "download_mb": 23,  # the 22,348,280-byte archive, and nothing else
+        "download_mb": 19,  # the 19,229,817-byte archive, and nothing else
         "compute": "medium",
         "gpu": "optional",
         "local_data": "git-lfs",
@@ -215,13 +424,55 @@ FITS_DIR = CACHE_DIR / "fits"
 LOCAL_FIT = local_fit_path(DEMO_NAME, GSPLATS_FILE)
 
 #: Fit schedule. See the module docstring's SPLAT BUDGET table for the sweep
-#: these came from. ``seeds`` proposes and ``cull_retention`` disposes: 32,000
-#: seeds deliver ~9,400 splats on a busy frame and fewer on an early, near-empty
-#: one, which is the point — the budget adapts to how much embryo there is.
+#: these came from. The seed ceiling was not re-swept after filtering; retaining
+#: 32,000 is harmless because the amplitude cull, not the ceiling, sets the final
+#: count.
+#:
+#: ``seeds`` proposes and ``cull_retention`` disposes. The seed budget is a
+#: CEILING, not a target: the post-fit cull keeps splats only until 99.99% of the
+#: amplitude is accounted for, so the count that ships is whatever the frame
+#: needs, and after the component filter that is a few thousand rather than
+#: the tens of thousands an unfiltered or NLM-smoothed frame produced. Both
+#: numbers matter, and the second is the one people forget: raising `seeds`
+#: past the plateau changes nothing, while moving `cull_retention` from the
+#: fitter's default 0.95 to 0.9999 was worth +3.4 dB of foreground on its own,
+#: because on data this sparse the discarded 5% of amplitude IS the dim cells.
 SEEDS = 32_000
 N_ITERS = 5_000
 EARLY_STOP_PATIENCE = 500
 CULL_RETENTION = 0.9999
+
+#: Delete connected components smaller than this before fitting.
+#:
+#: This stack's shot noise is not a nuisance at the margin, it is a third of the
+#: signal at the dim end: at t=0, 32% of the frame's total energy sits in
+#: isolated voxels, and the MEDIAN object in the frame is ONE voxel (p90 is 1-2
+#: at every timepoint). An unfiltered fit spends its budget accordingly.
+#:
+#: A size filter is chosen over a smoothing one because it matches that noise
+#: model exactly. NLM was tried first and is the wrong tool here: a neighbourhood
+#: average SPREADS a single-voxel spike instead of deleting it, so the spike
+#: survives as a softer, wider blob, and the same averaging dims the cells --
+#: mean cell peak fell to 0.78 of raw at t=0. A component filter cannot do
+#: either: it removes objects below the threshold and leaves every object above
+#: it bit-identical.
+#:
+#: 4 is measured. Against a deliberately STRICTER cell definition than the
+#: threshold itself (components >= 27 voxels, so the test cannot be circular),
+#: every threshold from 2 to 12 keeps cell energy AND mean cell peak at exactly
+#: 1.0000 -- there is no signal cost to trade off. What varies is only how much
+#: noise goes, and that curve is flat past 4 (at t=0: 29.6% of frame energy
+#: removed at 2, 32.1% at 4, 32.25% at 12). So 4 takes essentially all of the
+#: available reduction while only ever deleting 1-3 voxel objects, which at
+#: p90=1-2 is unambiguously the noise population. Going higher buys ~0.2% more
+#: and starts risking genuinely small, dim cells at the early timepoints where
+#: cells are few and faint.
+MIN_COMPONENT_VOXELS = 4
+
+#: SciPy connectivity 1: face-connected neighbours only (6-neighbour in 3D).
+#: Connectivity changes which touching voxels form one object, so it is explicit
+#: and participates in the fit cache key rather than arriving as a library default.
+COMPONENT_CONNECTIVITY = 1
 
 #: NO background floor, stated rather than defaulted. The house rule is to stay
 #: on ``auto`` unless you have measured otherwise; this is a dataset where
@@ -271,6 +522,20 @@ FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
 RECOMPUTE = FLAGS["recompute"]
+
+#: Force every timepoint to be fitted again, ignoring the per-timepoint cache.
+#:
+#: ``--recompute`` deliberately does NOT do this. The cache key carries every
+#: constant that changes a fit (there is a test enumerating them, plus a guard
+#: that fails when a new one reaches the fitter without being added), so a
+#: cached entry under the current key IS what refitting would produce — and
+#: honouring it makes an interrupted run of all 151 timepoints RESUME instead of
+#: starting over. That is not hypothetical: this refit died at frame 37 of 151
+#: and the bypass would have thrown away forty minutes of GPU time.
+#:
+#: The escape hatch exists for the case the key cannot cover — a cache you
+#: suspect was written by a different build of the fitter itself.
+REFIT_ALL = "--refit-all" in sys.argv
 
 #: ``None`` = every timepoint in the recording. Only consulted when refitting.
 MAX_TIMEPOINTS = parse_int_arg("max-timepoints", None, sys.argv)
@@ -408,8 +673,39 @@ def select_timepoints(n_total: int, limit: Optional[int]) -> list[int]:
 def _fit_cache_path(frame: int) -> Path:
     return FITS_DIR / (
         f"f{frame:04d}_k{SEEDS}_i{N_ITERS}_p{EARLY_STOP_PATIENCE}"
-        f"_c{CULL_RETENTION}_{FLOOR}.gsplats.zarr.zip"
+        f"_c{CULL_RETENTION}_{FLOOR}_mc{MIN_COMPONENT_VOXELS}"
+        f"_conn{COMPONENT_CONNECTIVITY}.gsplats.zarr.zip"
     )
+
+
+def denoise(volume: np.ndarray) -> np.ndarray:
+    """Delete connected components below ``MIN_COMPONENT_VOXELS`` rather than smoothing.
+
+    Pure deletion, not smoothing: every object at or above the threshold comes
+    through bit-identical, so cell peaks and cell energy are untouched by
+    construction rather than by measurement. That is the property a smoothing
+    filter cannot offer and the reason this replaced NLM here.
+
+    Cheap too -- one ``ndimage.label`` pass per frame, no GPU, against the tens
+    of seconds per frame the NLM path cost.
+    """
+    if not MIN_COMPONENT_VOXELS or MIN_COMPONENT_VOXELS < 2:
+        return volume
+    from scipy import ndimage
+
+    structure = ndimage.generate_binary_structure(volume.ndim, COMPONENT_CONNECTIVITY)
+    labels, _ = ndimage.label(volume > 0, structure=structure)
+    sizes = np.bincount(labels.ravel())
+    small = np.flatnonzero(sizes < MIN_COMPONENT_VOXELS)
+    # Excluding label 0 is a COST guard, not a correctness one: background is
+    # already zero, so writing zeros over it changes nothing -- but on a volume
+    # that is 98.7% empty it would make the mask span nearly every voxel.
+    small = small[small != 0]
+    if not small.size:
+        return volume
+    out = volume.copy()
+    out[np.isin(labels, small)] = 0.0
+    return out
 
 
 def fit_timepoint(volume: np.ndarray, frame: int, acquisition: tuple):
@@ -424,7 +720,7 @@ def fit_timepoint(volume: np.ndarray, frame: int, acquisition: tuple):
     """
     global DEVICE
     cache_file = _fit_cache_path(frame)
-    if cache_file.exists() and not RECOMPUTE:
+    if cache_file.exists() and not REFIT_ALL:
         try:
             return GSplatData.load(cache_file, include_stats=True)
         except Exception as exc:  # noqa: BLE001
@@ -435,6 +731,7 @@ def fit_timepoint(volume: np.ndarray, frame: int, acquisition: tuple):
         DEVICE = detect_device()
     from luxar.gsplats import fit_gaussian_splats
 
+    volume = denoise(volume)
     src_shape, src_dtype = acquisition
     result = fit_gaussian_splats(
         volume,
@@ -484,7 +781,8 @@ def fit_all_timepoints(array, frames: list[int]) -> list[GSplatData]:
     )
     fits: list[GSplatData] = []
     with asection(
-        f"Fitting {len(frames)} timepoints (seeds={SEEDS:,}, {N_ITERS} iters)"
+        f"Fitting {len(frames)} timepoints (seeds={SEEDS:,}, {N_ITERS} iters, "
+        f"min component {MIN_COMPONENT_VOXELS} voxels)"
     ):
         for i, frame in enumerate(frames):
             volume = np.asarray(array[frame]).astype(np.float32) / scale
@@ -501,11 +799,22 @@ def fit_all_timepoints(array, frames: list[int]) -> list[GSplatData]:
 def report_fit_quality(fits: list[GSplatData]) -> None:
     """Print what the fits actually achieved, from their own stamps.
 
-    Each fit scores itself against the raw frame it was handed, so this costs
-    nothing to print and is the number the archive should be judged by. Both
-    columns are reported: on a volume this sparse, global PSNR is mostly the
-    reward for predicting empty space correctly, and the foreground figure is
-    the one that moves when the fit gets better or worse.
+    Each fit scores itself against the array it was handed, which since the
+    component filter is the FILTERED frame — not the acquisition. So these say
+    how faithfully the fit represents what it was asked to fit, and are NOT
+    quotable as fidelity to the microscope. Labelled accordingly, because an
+    unlabelled PSNR here would end up on a Zenodo record meaning something it
+    does not.
+
+    The gap is smaller than it was under NLM, though, and for a reason worth
+    knowing: a component filter only ever sets voxels to zero, so the filtered
+    frame agrees with the acquisition EXACTLY wherever a cell exists. The
+    difference between these numbers and raw-referenced ones is confined to
+    voxels that held deleted noise.
+
+    Both columns are reported: on a volume this sparse, global PSNR is mostly
+    the reward for predicting empty space correctly, and the foreground figure
+    is the one that moves when the fit gets better or worse.
     """
 
     def column(key: str) -> Optional[np.ndarray]:
@@ -518,6 +827,7 @@ def report_fit_quality(fits: list[GSplatData]) -> None:
         f"Splats per timepoint: median {int(np.median(counts)):,}, "
         f"range {counts.min():,}-{counts.max():,}, total {counts.sum():,}"
     )
+    vs = "vs the filtered input" if MIN_COMPONENT_VOXELS >= 2 else "vs the raw frame"
     for label, key in (("global", "psnr_db"), ("foreground", "foreground_psnr_db")):
         col = column(key)
         if col is None:
@@ -526,8 +836,8 @@ def report_fit_quality(fits: list[GSplatData]) -> None:
             aprint(f"{label.capitalize()} PSNR: not stamped on these fits")
         else:
             aprint(
-                f"{label.capitalize()} PSNR: median {np.median(col):.2f} dB, "
-                f"range {col.min():.2f}-{col.max():.2f} dB"
+                f"{label.capitalize()} PSNR ({vs}): median {np.median(col):.2f} "
+                f"dB, range {col.min():.2f}-{col.max():.2f} dB"
             )
 
 
@@ -821,16 +1131,22 @@ def create_luxar_scene(stacked: GSplatData, output_path: Path) -> Path:
                 citation=DEMO_META["citation"],
                 viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="ACES"),
             )
+            denoise_clause = (
+                f", with connected components smaller than {MIN_COMPONENT_VOXELS} "
+                "voxels removed from each timepoint before fitting"
+                if MIN_COMPONENT_VOXELS >= 2
+                else ""
+            )
             scene.attrs["title"] = "GSplats: Zebrafish Gastrulation, 4D Time-Lapse"
             scene.attrs["description"] = (
                 f"A living zebrafish embryo (cxcr4a morphant) imaged by confocal "
                 f"laser-scanning microscopy through gastrulation: {n_timepoints} "
                 f"timepoints over {t_max / 60:.1f} hours, {stacked.n_splats:,} "
                 f"Gaussian splats in one 4D node with time as its fourth centre "
-                f"column. The labelled endodermal cells start as a tight cluster "
-                f"and spread over the yolk; the wireframe cage is the imaged "
-                f"volume, ruled every {GRID_STEP_UM:.0f} um. Play the Time slider "
-                f"to run the recording; press L for per-layer controls. "
+                f"column{denoise_clause}. The labelled endodermal cells start as a tight "
+                f"cluster and spread over the yolk; the wireframe cage is the "
+                f"imaged volume, ruled every {GRID_STEP_UM:.0f} um. Play the Time "
+                f"slider to run the recording; press L for per-layer controls. "
                 f"Zenodo 1211599, DOI 10.5281/zenodo.1211599, CC BY-SA 4.0."
             )
 

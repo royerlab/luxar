@@ -69,10 +69,11 @@ merely redundant when it does not, because a fine integer grid gets averaged
 away by the merge and auto-detection then finds nothing on the result. The
 explicit list asserts the empty complement on either grid, which is why it is
 the honest spelling regardless of which case the data happens to be in.
-`make_substitutive_lod` still writes `None` there and carries the same
-latent fallback; it is left alone on purpose, because changing it would move the
-chunk layout of every `lod --recipe levels` build, and the divergence is recorded
-on #1600 instead.
+`make_substitutive_lod` was left writing `None` there for the moment, because
+changing it moves the chunk layout of every `lod --recipe levels` build and that
+needed a deliberate compatibility decision rather than being folded in here. It
+is settled in its own entry, *"`lod --recipe levels` publishes the barrier it
+earned, not a `null`"*, which makes the explicit list universal.
 
 The `prefix` family stamps nothing and keeps the inherited value: it merges no
 axis, every survivor is one of the input's splats at its own coordinates, so

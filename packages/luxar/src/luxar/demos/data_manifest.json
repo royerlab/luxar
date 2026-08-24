@@ -189,8 +189,8 @@
       "files": [
         {
           "name": "desi_dr1_cosmic_web.luxar.zarr.zip",
-          "sha256": "bd03e9045413c6936e952f3c1ef008ea5dba3dd97c9a2bce00645e6cc48ec69f",
-          "bytes": 76761100
+          "sha256": "411dc0ee7a57f049d7522be9822af412711d6e85ed6ba5c19616317e093e56ad",
+          "bytes": 74339924
         }
       ]
     },
@@ -273,12 +273,12 @@
       "dir": "gsplats_multichannel",
       "files": [
         {
-          "name": "organoids_ch0.gsplats.zarr.zip",
+          "name": "blastocyst_ch0.gsplats.zarr.zip",
           "sha256": "17931ca1b6c189b7f4c412ab368972f607ae2a5f685effff2b2d3f90eaf92f5f",
           "bytes": 196680
         },
         {
-          "name": "organoids_ch1.gsplats.zarr.zip",
+          "name": "blastocyst_ch1.gsplats.zarr.zip",
           "sha256": "a3e8a5c5541543425769125de0b43267e3b7bccefc053c4152b866e0b077c708",
           "bytes": 207469
         }
@@ -404,8 +404,8 @@
       "files": [
         {
           "name": "zebrafish_4d.gsplats.zarr.zip",
-          "sha256": "ec8d80d14d0216b9743f93ae1eb2aaca12fcbf79ed38e19db3bccc63dedc8a53",
-          "bytes": 22348280
+          "sha256": "b4c0cf690f6906414c449fb8c713b78ed7d5f5f88c270ab58cf741f019456f93",
+          "bytes": 19229817
         }
       ]
     },

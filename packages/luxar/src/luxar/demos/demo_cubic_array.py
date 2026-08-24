@@ -44,9 +44,44 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.core.viewer_config import ViewerConfig
+from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import add_demo_caption, launch_viewer
+from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
 from luxar.utils.paths import get_demos_output_dir
+
+# Opening framing. The star field deliberately spans +/-500 units while the
+# lattice itself is only ~50 across, so the default whole-scene camera fit backs
+# off far enough to contain the STARS and leaves the cube — the actual subject —
+# as a speck in the middle of the frame. The scene therefore authors its own
+# opening camera, solved from the lattice's own size.
+#
+# The distance is derived rather than hardcoded so it tracks `grid_size` and
+# `spacing`: a body of bounding-sphere radius R seen from distance d subtends a
+# half-angle asin(R/d). Asking for CAMERA_FILL of the FULL field of view (rather
+# than the 0.5 that would exactly circumscribe it) lets the near corners of the
+# lattice reach the edges of the frame.
+#
+# The solve is done AT the cinematic preset's own 35 mm lens
+# (`CINEMATIC_FOV_DEG`), so `fov` is deliberately NOT pinned on the
+# CameraConfig: pinning it would make the preset leave the lens alone as a unit
+# and there would be nothing left for the preset to contribute. Deriving the
+# distance from the preset's own constant is the house convention — see
+# `demos/_cinematic_camera.py`, and the `test_demos_cinematic_mode` gate.
+CAMERA_FOV_DEG = CINEMATIC_FOV_DEG
+CAMERA_FILL = 0.58
+# View direction, in units of the orbit distance. A three-quarter view so three
+# faces of the lattice are visible and it reads as a cube rather than a square.
+CAMERA_DIRECTION = (1.0, 0.62, 1.0)
+
+# Auto-rotation, on from the first frame. 0.5 — twice the viewer's own
+# presentation default — chosen live against this scene: the lattice's moire
+# interference pattern is the thing worth watching here, and it only resolves
+# as the view angle sweeps, so a slower turn just makes it look static.
+AUTO_ROTATE_SPEED = 0.5
+
+# Scene exposure, in LOG2 STOPS. A million additive points plus half a million
+# stars come up hot; -1.5 pulls the lattice back off the top of the curve.
+EXPOSURE_EV = -1.5
 
 
 def generate_background_stars(
@@ -174,9 +209,34 @@ def generate_cubic_array(
             ]
         )
 
+        # Frame the LATTICE, not the star field (see CAMERA_FILL above).
+        cube_half_extent = (grid_size - 1) * spacing / 2
+        cube_radius = float(cube_half_extent * np.sqrt(3.0))  # body half-diagonal
+        cam_distance = float(
+            cube_radius / np.sin(np.radians(CAMERA_FOV_DEG * CAMERA_FILL))
+        )
+        direction = np.asarray(CAMERA_DIRECTION, dtype=np.float64)
+        cam_pos = tuple(
+            float(v) for v in direction / np.linalg.norm(direction) * cam_distance
+        )
+        aprint(f"Camera: distance {cam_distance:.1f} at {np.round(cam_pos, 1)}")
+
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
-                dimensions=dims, viewer_config=ViewerConfig(cinematic_mode=True)
+                dimensions=dims,
+                viewer_config=ViewerConfig(
+                    cinematic_mode=True,
+                    exposure=EXPOSURE_EV,
+                    auto_rotate=True,
+                    auto_rotate_speed=AUTO_ROTATE_SPEED,
+                    camera=CameraConfig(
+                        position=cam_pos,
+                        # The lattice's own bbox centre, resolved at load time —
+                        # so the orbit pivot is the cube even though the scene
+                        # bounds are dominated by the stars.
+                        target_node="CubicArray",
+                    ),
+                ),
             )
 
             # Write main cubic array

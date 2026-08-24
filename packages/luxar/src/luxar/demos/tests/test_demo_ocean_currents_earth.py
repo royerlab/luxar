@@ -16,6 +16,7 @@ import pytest
 
 from luxar._zarr_compat import consolidate, open_group
 from luxar.demos import demo_global_rivers_earth, demo_ocean_currents_earth
+from luxar.demos._globe_common import surface_point_radius
 from luxar.demos.demo_ocean_currents_earth import (
     LINE_OPACITY,
     MAX_GLOBE_POINTS_PER_NODE,
@@ -168,6 +169,21 @@ def test_fibonacci_jitter_is_deterministic_and_perturbs() -> None:
 def test_fibonacci_sphere_rejects_empty() -> None:
     with pytest.raises(ValueError, match="n must be >= 1"):
         fibonacci_sphere(0)
+
+
+def test_surface_point_radius_tracks_spherical_sample_spacing() -> None:
+    base = surface_point_radius(500_000, 1.0, overlap=1.0)
+    assert surface_point_radius(2_000_000, 1.0, overlap=1.0) == pytest.approx(
+        base / 2.0
+    )
+    assert surface_point_radius(2_000_000, 1.0, overlap=1.0) == pytest.approx(
+        0.0025, rel=0.01
+    )
+
+
+def test_surface_point_radius_rejects_empty() -> None:
+    with pytest.raises(ValueError, match="n must be >= 1"):
+        surface_point_radius(0, 1.0)
 
 
 def test_globe_camera_looks_at_the_requested_point() -> None:

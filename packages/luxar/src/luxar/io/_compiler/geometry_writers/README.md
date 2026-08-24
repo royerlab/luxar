@@ -150,9 +150,8 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
    - This resolves the colormap LUT, prepares/validates `transform` + `nd_transform`, fills rendering defaults (`opacity`, `absorption`, `gamma`, `intensity`, `offset`, `truncation_radius` — `blending_mode` is deliberately never stamped), stamps authoritative `type="gsplats"` attrs, and adds `position_bounds` into `metadata`
    - Then `ctx.update_scene_bounds(metadata["position_bounds"])` folds the leaf's bounds into the scene extent
 
-6. **Write labels** (CSR serialization; `sort_order` derived from `ordering_data`):
-   - `write_string_channels_csr(group, labels=…, keys=…, n_elements=n_splats, compressor=ctx.compressor, sort_order=sort_order, metadata=metadata)` — both text channels through one call, so both get the SAME per-splat permutation (#1917)
-   - `write_image_labels_csr(group, image_labels, n_splats, ctx.compressor, sort_order)` — if `image_labels is not None`
+6. **Write annotations** (CSR serialization; `sort_order` derived from `ordering_data`):
+   - `_write_element_annotations(group, labels=labels, keys=keys, image_labels=image_labels, n_splats=n_splats, compressor=ctx.compressor, ordering_data=ordering_data, metadata=metadata)` — writes every present text/image channel with the same permutation
 
 7. **Return metadata**: the `metadata` dict from `write_gsplat_arrays` — `{"n_splats", "ndim", "has_colors", "amplitude_range", "center_bounds"}` plus ordering keys, `position_bounds` (added by `apply_gsplat_group_attrs`), and — all conditional — `amplitude_data_range` (when `amplitudes` is a non-empty array; note that finalize then HARMONIZES that window across the whole gsplat structure — see `finalize/amplitude_window.py`), `has_labels` / `has_image_labels` / `has_keys` (no `"type"` or `"lut_tone_mapping_warned"` key) — plus the mass statistics `amplitude_mass` / `amplitude_mass_weighted_mean`, which are **unconditional** (`compute_amplitude_mass_stats` normalizes every non-finite or mass-less case to `0.0` / `0.0`, so "present and zero" and "absent" stay distinguishable — the harmonization reads absence as a legacy store)
 
