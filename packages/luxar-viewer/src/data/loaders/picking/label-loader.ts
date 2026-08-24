@@ -1,9 +1,9 @@
 /**
  * Label Loader — Lazy CSR-style label fetching from zarr.
  *
- * Labels are stored per node as two zarr arrays:
- *   - label_offsets (uint64, N+1): byte offset of each label in label_bytes
- *   - label_bytes (uint8): concatenated UTF-8 encoded label strings
+ * Text channels are stored per node as two zarr arrays:
+ *   - labels: label_offsets + label_bytes
+ *   - keys: key_offsets + key_bytes
  *
  * Label i = label_bytes[offsets[i] : offsets[i+1]], decoded as UTF-8.
  * Empty labels (offsets[i] === offsets[i+1]) return null.
@@ -63,9 +63,20 @@ export class LabelLoader {
   /** UTF-8 text decoder (reused). */
   private decoder = new TextDecoder('utf-8');
 
+  /**
+   * @param channel Which per-element string channel to read (issue #1917).
+   *   `'labels'` (default) reads `label_offsets` / `label_bytes` — the
+   *   human-readable string a tooltip shows. `'keys'` reads
+   *   `key_offsets` / `key_bytes` — the machine-readable string a `link` /
+   *   `copy` template substitutes. Identical CSR encoding, identical laziness
+   *   and coalescing, identical spatial ordering; only the array names differ,
+   *   so one loader serves both rather than a near-copy serving each.
+   *   Mirrors `STRING_CHANNELS` in `luxar/io/_compiler/labels/text_labels.py`.
+   */
   constructor(
     _store: zarr.Readable,
-    private rootLoc: zarr.Location<zarr.Readable>
+    private rootLoc: zarr.Location<zarr.Readable>,
+    private channel: 'labels' | 'keys' = 'labels'
   ) {}
 
   /**
@@ -87,7 +98,7 @@ export class LabelLoader {
    * Check if a node has labels based on its cached .zattrs metadata.
    */
   hasLabels(nodeAttrs: Record<string, unknown>): boolean {
-    return nodeAttrs?.has_labels === true;
+    return nodeAttrs?.[this.channel === 'keys' ? 'has_keys' : 'has_labels'] === true;
   }
 
   /** Clean up caches. */
@@ -134,8 +145,9 @@ export class LabelLoader {
       const cleanPath = nodePath.startsWith('/') ? nodePath.slice(1) : nodePath;
 
       // Open the two CSR arrays
-      const offsetsLoc = this.rootLoc.resolve(`${cleanPath}/label_offsets`);
-      const bytesLoc = this.rootLoc.resolve(`${cleanPath}/label_bytes`);
+      const prefix = this.channel === 'keys' ? 'key' : 'label';
+      const offsetsLoc = this.rootLoc.resolve(`${cleanPath}/${prefix}_offsets`);
+      const bytesLoc = this.rootLoc.resolve(`${cleanPath}/${prefix}_bytes`);
 
       // Only THIS open may be absent innocently. A node with no labels at all
       // is the ordinary case, not a failure: the picker calls getLabel for
@@ -160,7 +172,7 @@ export class LabelLoader {
         offsetsArr = await zarr.open(offsetsLoc, { kind: 'array' });
       } catch (error) {
         if (!zarr.isNotFoundError(error)) throw error;
-        log.info(Modules.SCENE_LOADER, `Node carries no labels: ${nodePath}`);
+        log.info(Modules.SCENE_LOADER, `Node carries no ${this.channel}: ${nodePath}`);
         return [];
       }
       const bytesArr = await zarr.open(bytesLoc, { kind: 'array' });
@@ -207,12 +219,12 @@ export class LabelLoader {
         prevEnd = end;
       }
 
-      log.info(Modules.SCENE_LOADER, `Loaded ${nElements} labels for ${nodePath}`);
+      log.info(Modules.SCENE_LOADER, `Loaded ${nElements} ${this.channel} for ${nodePath}`);
       return labels;
     } catch (error) {
       log.warning(
         Modules.SCENE_LOADER,
-        `Failed to load labels for ${nodePath}: ${error instanceof Error ? error.message : error}`
+        `Failed to load ${this.channel} for ${nodePath}: ${error instanceof Error ? error.message : error}`
       );
       return [];
     }

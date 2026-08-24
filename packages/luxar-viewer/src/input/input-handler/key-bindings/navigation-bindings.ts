@@ -7,10 +7,11 @@
 import { config } from '../../../config';
 import { log, Modules } from '../../../utils/log';
 import { InputContext } from '../context-manager';
+import { isFocusOnSceneCanvas } from '../commands/focus-utils';
 import type { KeyBindingsDeps } from './register-all';
 
 export function registerNavigationBindings(deps: KeyBindingsDeps): void {
-  const { contextManager, debugConsole, panels, commands } = deps;
+  const { contextManager, debugConsole, panels, commands, sceneManager } = deps;
 
   // Dimension navigation
   contextManager.registerBinding(InputContext.NAVIGATION, {
@@ -37,7 +38,7 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
         }
       },
       preventDefault: false,
-      description: `Select dimension ${i}`,
+      description: `Select non-displayed dimension ${i}`,
     });
   }
 
@@ -62,7 +63,49 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
     key: config.input.keyboard.shortcuts.toggleDatasetBrowser,
     handler: () => window.dispatchEvent(new CustomEvent('open-dataset-browser')),
     preventDefault: true,
-    description: 'Open dataset browser',
+    description: 'Toggle dataset browser',
+  });
+
+  // Element context menu at the current hover (issue #1917) — the keyboard
+  // path the UI design guide requires of every context menu (§7.8).
+  //
+  // Registered on NAVIGATION, not FLY_CONTROLS: that context uses an
+  // `allowedKeys` whitelist which contains neither key, and reaches a
+  // NAVIGATION binding only through passthrough — so registering here is what
+  // makes the shortcut work in BOTH modes.
+  //
+  // Dispatches a window event rather than calling a command, because the
+  // listener is rebuilt on every dataset load while this binding lives for the
+  // app's lifetime. Same decoupling as `open-dataset-browser` above.
+  //
+  // Gated on focus being on the scene itself. The layers panel handles these
+  // same two keys on its own row listener and calls `preventDefault()` but NOT
+  // `stopPropagation()`, so the event still bubbles to the window-level
+  // handler — and `openContextMenu` is module-global, so without this guard a
+  // Shift+F10 on a focused layer row would CLOSE the layer menu and open the
+  // canvas one instead. (Reaching the panel by mouse hides the bug: leaving
+  // the canvas fires `mouseleave`, which invalidates the cached pick. Reaching
+  // it by Tab does not.) Same guard the other scene-scoped global keys use.
+  const openElementMenu = (event: KeyboardEvent): void => {
+    // Optional-chained: `renderer` is definitely-assigned in production but a
+    // stubbed SceneManager in tests need not carry one, and a missing canvas
+    // should disable the shortcut rather than throw inside a key handler.
+    if (!isFocusOnSceneCanvas(document.activeElement, sceneManager.renderer?.domElement ?? null)) {
+      return;
+    }
+    event.preventDefault();
+    window.dispatchEvent(new CustomEvent('luxar-open-element-menu'));
+  };
+  contextManager.registerBinding(InputContext.NAVIGATION, {
+    key: 'F10',
+    modifiers: { shift: true },
+    handler: openElementMenu,
+    description: 'Open the context menu for the hovered element',
+  });
+  contextManager.registerBinding(InputContext.NAVIGATION, {
+    key: 'ContextMenu',
+    handler: openElementMenu,
+    description: 'Open the context menu for the hovered element',
   });
 
   // Performance stats

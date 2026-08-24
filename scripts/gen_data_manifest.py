@@ -345,12 +345,18 @@ DATASETS: dict[str, dict] = {
         bucket="zenodo",
         record="cc-by-sa",
         license="cc-by-sa-4.0",
-        source="Zenodo 1211599 (zebrafish light-sheet)",
+        source="Zenodo 1211599 (zebrafish gastrulation, confocal timelapse)",
         attribution="Pia Aanstad — doi:10.5281/zenodo.1211599 (CC BY-SA 4.0).",
         acquisition=dict(
-            description="the LSM timelapse, every fitted timepoint's own stored bytes",
+            description=(
+                "the whole LSM timelapse: 151 timepoints of 44 x 512 x 512 uint8, "
+                "every one of which is fitted"
+            ),
             comparable=True,
-            stored_bytes=None,
+            # 151 * 44 * 512 * 512 voxels at one byte each. The .lsm FILE is
+            # 2,080,484,264 bytes, but that includes an embedded RGB thumbnail
+            # series and the LSM metadata, neither of which is fitted.
+            stored_bytes=1_741_684_736,
         ),
     ),
     # -- Heavy timelapses computed on obsidian -------------------------------

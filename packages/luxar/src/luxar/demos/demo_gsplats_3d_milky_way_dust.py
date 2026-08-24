@@ -276,7 +276,15 @@ def fit_dust(volume: np.ndarray, acquisition=None) -> GSplatData:
             compress="zip",
             zip_deflate=True,
         )
-        return result
+        # Return what was STORED, not the in-memory fit. `result` is the FLAT
+        # pre-LOD fit, so returning it gave a `--recompute` run a flat scene
+        # while the warm branch below — which loads LOCAL_FIT back — got the
+        # four-level `kind=lod` group this demo's display gain is calibrated
+        # against. Re-reading also picks up the lossy MEMORY encoding, so local
+        # refits and later cache hits agree on bytes as well as topology (same
+        # reasoning as demo_gsplats_4d_nexrad_supercell).
+        stored = load_local_fit_gsplats_at([LOCAL_FIT], label=DEMO_NAME)
+        return result if stored is None else stored[0]
 
 
 def load_or_build_gsplats() -> GSplatData:
@@ -360,9 +368,10 @@ def create_luxar_scene(gsplats_data: GSplatData, output_path: Path) -> Path:
                 # (p99.9) tops out near 0.081, so this holds the faint diffuse
                 # filaments just below clipping — brighter and the dense cores
                 # flatten into featureless white. (The gain composes onto this
-                # kind=lod GROUP while every child leaf keeps the stamped
-                # default intensity=1.0, so what the shader sees is each leaf's
-                # own window scaled by it — not a literal [0, 0.095].)
+                # kind=lod GROUP, once the archive carries levels, while every
+                # child leaf keeps the stamped default intensity=1.0, so what
+                # the shader sees is each leaf's own window scaled by it — not
+                # a literal [0, 0.095].)
                 #
                 # Calibrated on the FINEST level, which is the one this figure
                 # was measured against — and since #1691 that is also the level

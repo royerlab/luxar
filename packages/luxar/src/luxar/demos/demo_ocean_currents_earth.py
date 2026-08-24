@@ -49,7 +49,9 @@ SELF-CONTAINED / REGENERATING (no LFS asset)
 Ships only code. First run downloads ~72 MB of source data (both public, direct
 download, **no account or API key**), builds the scene, and caches the sources
 under ``~/.cache/luxar/ocean_currents_earth/``. Later runs load the built scene
-instantly; ``--recompute`` rebuilds without re-fetching.
+instantly; ``--recompute`` rebuilds without re-fetching. A scene written by an
+OLDER version of this file is rebuilt automatically (its ``builder_fingerprint``
+no longer matches); pass ``--keep-stale`` to serve it anyway.
 
 DATA SOURCES & CITATIONS
 ------------------------
@@ -69,6 +71,7 @@ USAGE
 -----
     luxar demo run ocean_currents_earth
     python demo_ocean_currents_earth.py [--recompute] [--no-serve] [--serve-only]
+                                        [--keep-stale]
 """
 
 from __future__ import annotations
@@ -103,11 +106,14 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import (
+    BUILDER_FINGERPRINT_ATTR,
     add_demo_caption,
     cached_download,
+    demo_source_fingerprint,
     launch_viewer,
     parse_demo_flags,
     require_module,
+    scene_is_current,
 )
 from luxar.demos._cinematic_camera import pull_in
 from luxar.encoding import EncodingMode
@@ -145,35 +151,39 @@ STEP_KM: Final = 14.0  # arc-length step -> ~730 km ribbons
 FIELD_STRIDE: Final = 2  # subsample the 1/12 deg grid for advection
 FLOW_LIFT: Final = 0.0015  # lift ribbons just clear of the globe shell
 LINE_WIDTH: Final = 0.026
-LINE_OPACITY: Final = 0.95
+LINE_OPACITY: Final = 0.77
 LINE_INTENSITY: Final = 1.0
 SPEED_FULL_SCALE: Final = 1.0  # m/s mapped to the top of the colour ramp
 MIN_SEED_SPEED: Final = 0.04  # skip near-still water when seeding
 STALL_SPEED: Final = 0.02  # freeze a ribbon that runs out of current
 LAT_LIMIT: Final = 79.9  # HYCOM's grid stops at +/-80
 
-# The viewer stores per-segment line data in an element texture at 6 texels
-# per segment, capped at ELEMENT_TEXTURE_MAX_WIDTH=4096 texels wide, so a
-# single Lines node holds at most 682 * maxTextureSize segments — 2,793,472
-# on a 4096-class GPU (the conservative floor). Exceeding it silently clamps
-# the tail (no error), so we partition the ribbons across nodes and keep each
-# part's vertex count below that bound. `partition=` caps VERTICES per part;
-# segments (V-1 per chain) are always fewer, so this stays under the segment
-# cap with margin.
+# A single Lines node holds at most MAX_SEGMENTS_PER_LINES_NODE (2,793,472)
+# segments on a 4096-class GPU. Exceeding it silently clamps the tail, and
+# because segments are stored in Hilbert order the lost tail is one contiguous
+# spatial lobe — that is exactly how #1957's missing North Atlantic wedge was
+# produced. So we partition the ribbons across nodes and keep each part's
+# vertex count below the bound. `partition=` caps VERTICES per part; segments
+# (V-1 per chain) are always fewer, so this stays under the segment cap with
+# margin.
 MAX_LINE_VERTICES_PER_NODE: Final = 2_500_000
 
 # Points share the element texture at 3 texels per point, so a single Points
-# node holds at most floor(4096/3) * maxTextureSize = 1365 * maxTextureSize
-# points — 5,591,040 on the same 4096-class floor. The 8M-point globe exceeds
-# that (the clamped tail is the Fibonacci lattice's southern cap), so it gets
-# the same treatment: partition into parts under the bound, each part keeping
-# its own stream ladder.
+# node holds at most MAX_POINTS_PER_POINTS_NODE (5,591,040) on the same
+# 4096-class floor. The 8M-point globe exceeds that (the clamped tail is the
+# Fibonacci lattice's southern cap), so it gets the same treatment: partition
+# into parts under the bound, each part keeping its own stream ladder.
 MAX_GLOBE_POINTS_PER_NODE: Final = 4_000_000
 
 FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
 RECOMPUTE = FLAGS["recompute"]
+KEEP_STALE = FLAGS["keep_stale"]
+
+#: Identifies the builder that wrote a scene, so a scene left on disk by an
+#: OLDER version of this file is rebuilt instead of served forever (#1957).
+FINGERPRINT: Final = demo_source_fingerprint(__file__)
 
 CACHE_DIR: Final = Path.home() / ".cache" / "luxar" / DEMO_NAME
 
@@ -494,16 +504,25 @@ def seed_ocean_points(
     return np.concatenate(lo_parts)[:n], np.concatenate(la_parts)[:n]
 
 
-def globe_camera(lon: float, lat: float, *, distance: float = 2.05) -> CameraConfig:
-    """Opening pose looking straight down at ``(lon, lat)`` on the globe."""
+def globe_camera(lon: float, lat: float, *, distance: float = 2.586) -> CameraConfig:
+    """Opening pose looking straight down at ``(lon, lat)`` on the globe.
+
+    The target is the ORIGIN — the centre of the Earth — not a point under the
+    surface. The scene is a sphere centred on the origin, so that is the only
+    target that makes the opening framing centred and makes orbiting pivot
+    about the planet's axis. Aiming at ``normal * RADIUS * 0.9`` (just below the
+    surface) instead put the pivot on the near face, so the first drag swung the
+    globe about a surface point and threw it off-centre.
+
+    ``distance=2.586`` reproduces the shipped ~1.62 R opening eye after the
+    42-degree cinematic ``framing_scale`` of approximately 0.6264.
+    """
     la, lo = np.radians(lat), np.radians(lon)
     normal = np.array(
         [np.cos(la) * np.cos(lo), np.sin(la), -np.cos(la) * np.sin(lo)],
         dtype=np.float64,
     )
-    # This pose frames the local surface patch around a 0.9R target, so the
-    # target-relative planar pull-in is the intended invariant rather than the silhouette.
-    target = tuple((normal * RADIUS * 0.9).tolist())
+    target = (0.0, 0.0, 0.0)
     return CameraConfig(
         position=pull_in(
             tuple((normal * RADIUS * distance).tolist()),
@@ -635,12 +654,18 @@ def build_scene(hycom_path: Path, marble_path: Path, output_path: Path) -> Path:
                 ),
             )
             scene.attrs["title"] = "Ocean Currents of Earth — HYCOM surface circulation"
+            scene.attrs[BUILDER_FINGERPRINT_ATTR] = FINGERPRINT
             scene.add_points(
                 "earth",
                 positions=gpos,
                 radii=GLOBE_RADII,
                 colors=gcolors,
-                blending_mode="normal",
+                # `opaque`, NOT `normal` — the globe is the BACKDROP. Opaque is
+                # the only mode that leaves the viewer's sorted transparent set
+                # and the only one that unconditionally depth-writes, so it is
+                # the only one that reliably composites *under* the translucent
+                # ribbons drawn in front of it (see `BlendingMode`'s docstring).
+                blending_mode="opaque",
                 opacity=1.0,
                 layer=True,
                 # A geometric `stream:` ladder gives a fast first paint where a
@@ -693,7 +718,9 @@ def build_scene(hycom_path: Path, marble_path: Path, output_path: Path) -> Path:
 
 def load_or_build_scene(output_path: Path) -> Path:
     """Return the built scene, regenerating it on a fresh system."""
-    if output_path.exists() and not RECOMPUTE:
+    if scene_is_current(
+        output_path, FINGERPRINT, recompute=RECOMPUTE, keep_stale=KEEP_STALE
+    ):
         aprint(f"Using existing scene: {output_path}")
         return output_path
     CACHE_DIR.mkdir(parents=True, exist_ok=True)

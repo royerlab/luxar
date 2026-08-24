@@ -7,13 +7,16 @@ A rotatable 3D globe built from two of Luxar's geometry types at once:
     spiral-sphere** (uniform, no pole clustering), each point displaced radially
     by its **ETOPO 2022** elevation and colored by a hypsometric palette (deep
     abyssal navy -> ocean blue -> coastal cyan -> green lowland -> tan -> snow).
-    Rendered near-transparent (opacity 0.05) as a subtle backdrop, with
-    additive-LOD for a fast progressive first paint.
+    Rendered **opaque** as a solid planet, with a geometric additive ladder
+    (most of the payload is in the last two levels — see the note in
+    ``build_scene``).
   * **Rivers (Lines)** — every HydroRIVERS reach (Strahler order >= 3), kept as
     **connected polylines** (so the line material renders seamless joints),
     draped just above the terrain and colored teal->white by Strahler order so
-    minor tributaries read teal and major rivers white. Additive-LOD streams the
-    biggest rivers first.
+    minor tributaries read teal and major rivers white. Blended **luminous** —
+    the glow of additive, but depth-aware, so the far-side network is occluded
+    by the globe instead of showing through it. The rivers stream via the
+    spatial-chunk index.
 
 This exercises two of Luxar's four geometry types (Points + Lines) at global
 scale with level-of-detail, in real geographic 3D.
@@ -29,8 +32,10 @@ regenerate + cache it. This demo ships ONLY code:
     parses + builds the globe scene (to the standard demos-output dir), and
     caches the source + parsed polylines under
     ``~/.cache/luxar/global_rivers_earth/``.
-  * Subsequent runs load the built scene instantly; ``--recompute`` forces a
-    rebuild (source/polylines stay cached, so it never re-fetches the ~1 GB).
+  * Subsequent runs load the built scene instantly. A source change rebuilds
+    the scene automatically; ``--keep-stale`` reuses the existing build, while
+    ``--recompute`` forces a rebuild (source/polylines stay cached, so it never
+    re-fetches the ~1 GB).
 
 Requires: ``pyshp`` (shapefile reader) and ``tifffile`` (GeoTIFF reader).
 
@@ -43,7 +48,8 @@ ETOPO 2022 Global Relief Model — NOAA NCEI (2022), doi:10.25921/fd45-gt74.
 
 USAGE
 -----
-    python demo_global_rivers_earth.py [--recompute] [--no-serve] [--serve-only]
+    python demo_global_rivers_earth.py [--recompute] [--keep-stale]
+                                       [--no-serve] [--serve-only]
 """
 
 DEMO_META = {
@@ -73,8 +79,15 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.core.viewer_config import ViewerConfig
-from luxar.demos import add_demo_caption, launch_viewer, parse_demo_flags
+from luxar.core.viewer_config import CameraConfig, ViewerConfig
+from luxar.demos import (
+    BUILDER_FINGERPRINT_ATTR,
+    add_demo_caption,
+    demo_source_fingerprint,
+    launch_viewer,
+    parse_demo_flags,
+    scene_is_current,
+)
 from luxar.encoding import EncodingMode
 from luxar.utils.paths import get_demos_output_dir
 
@@ -92,21 +105,35 @@ ETOPO_URL = (
 )
 
 N_GLOBE = 8_000_000  # Fibonacci-sphere terrain points
+# A 4096-class GPU can commit at most 5,591,040 Points from one node. Keep the
+# 8M-point globe in parts below that floor, each with its own stream ladder.
+MAX_GLOBE_POINTS_PER_NODE = 4_000_000
 MIN_ORDER = 3  # keep HydroRIVERS reaches with Strahler order >= this
 DECIMATE_DEG = 0.06  # drop river vertices closer than this (~2-3x line width)
 RADIUS = 100.0  # globe radius (scene units)
 EXAGG = 45.0  # vertical exaggeration of elevation relief
 POINT_RADII = 0.09  # terrain point size (8M points form a dense shell)
-EARTH_OPACITY = 0.05  # near-transparent backdrop; lets the rivers dominate
+EARTH_OPACITY = 1.0  # solid globe: an OPAQUE shell the rivers are occluded BY
 RIVER_LIFT = 0.004  # lift rivers barely above the terrain surface
 RIVER_WIDTH = 0.015
-RIVER_INTENSITY = 1.6
+# Display window for the rivers layer. The layers panel states appearance as a
+# display range and the shader as gain/offset: `intensity = 1 / (max - min)`
+# (`rendering/display-range.ts`). Authoring the window and inverting it here
+# keeps the number in the code the one the panel shows (0 - 0.38), instead of a
+# gain whose window has to be recomputed to be read.
+RIVER_DISPLAY_MAX = 0.38
+RIVER_INTENSITY = 1.0 / RIVER_DISPLAY_MAX
 R_EARTH = 6_371_000.0  # metres, for elevation -> relief fraction
 
 FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
 RECOMPUTE = FLAGS["recompute"]
+KEEP_STALE = FLAGS["keep_stale"]
+
+#: Identifies the builder that wrote a scene, so a scene left on disk by an
+#: OLDER version of this file is rebuilt instead of served forever (#1957).
+FINGERPRINT = demo_source_fingerprint(__file__)
 
 Arbol.max_depth = 5
 
@@ -364,24 +391,83 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
         with LuxarZarrCompiler(output_path, encoding_mode=EncodingMode.PRECISION) as c:
             scene = c.create_scene(
                 dimensions=dims,
-                viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="ACES"),
+                viewer_config=ViewerConfig(
+                    # Orbit about the CENTRE OF THE EARTH. Without an authored
+                    # target the viewer pivots on the metadata bounding-box
+                    # centre, which relief exaggeration pulls ~1 unit off the
+                    # origin (the deepest trenches and the highest peaks are not
+                    # antipodal). The globe is generated about
+                    # the origin by construction — `lonlat_to_xyz` measures every
+                    # radius from it — so (0, 0, 0) IS the planet's centre, and
+                    # stating it keeps the turntable concentric with the sphere.
+                    # A target alone does not pin the camera: the viewer still
+                    # auto-frames the distance, it just preserves this pivot.
+                    camera=CameraConfig(target=(0.0, 0.0, 0.0)),
+                    cinematic_mode=True,
+                    tone_mapping="ACES",
+                    # -1 EV. The globe went from a 0.05-opacity backdrop to an
+                    # OPAQUE full-opacity shell and the rivers from gain 1.6 to
+                    # 2.63, so the neutral 0.0 default now clips the lit
+                    # hemisphere. One stop down is what the scene actually wants;
+                    # a viewer-side tweak would not travel with the demo, and
+                    # dimming the layers instead would undo the authored
+                    # appearance above.
+                    exposure=-1.0,
+                ),
                 citation=DEMO_META["citation"],
             )
             scene.attrs["title"] = "Rivers of Earth — global topography + HydroRIVERS"
+            scene.attrs[BUILDER_FINGERPRINT_ATTR] = FINGERPRINT
             scene.add_points(
                 "terrain",
                 positions=gpos,
                 radii=POINT_RADII,
                 colors=gcolors,
-                blending_mode="normal",
+                # OPAQUE, not `normal`: this is the backdrop, and opaque is the
+                # only mode that leaves the viewer's sorted-transparent set and
+                # unconditionally writes depth — which is what gives the
+                # `luminous` rivers below a surface to be occluded by, so the
+                # far-side network is hidden instead of showing through.
+                blending_mode="opaque",
                 opacity=EARTH_OPACITY,
                 layer=True,
                 # `spatial-uniform` with n_lods=5 looked like a ladder but was
                 # not one: its stratified-grid sampler emitted 8 / 56 / 272 /
                 # 1174 / 7,998,490 points, so 99.98% of the globe still landed in
                 # a single final commit. A `stream:` ladder is geometric by
-                # construction, so every level is a bounded fraction of the whole.
+                # construction, so every level is a bounded fraction of its part.
                 additive_lod=dict(counts="stream:20000", method="random", seed=0),
+                partition=dict(max_elements=MAX_GLOBE_POINTS_PER_NODE),
+                # The terrain still appears late, well after the rivers. That is
+                # NOT a scheduling bug, so do not go looking for one: each
+                # partition's ladder above streams in geometric order.
+                #
+                # The last two levels contain 68% of the points and 62 of the
+                # terrain's 92 MB, so most of the terrain payload is still
+                # outstanding after the first eight levels. The shell is not
+                # complete until those final commits arrive. A line is visible
+                # from its FIRST chunk, which is why the rivers always win the
+                # race.
+                #
+                # Two fixes were tried and rejected, so that the data stays as it
+                # is:
+                #
+                #  * `substitutive_lod` — builds correctly (15,590 / 124,878 /
+                #    999,830 gsplat levels over the 8M-point finest, at 776 KB /
+                #    5.9 MB / 41 MB) but does not help HERE, twice over. A
+                #    whole-object `levels` ladder anchors its finest at >=0.5
+                #    screen area and steps one level per halving, so a globe that
+                #    fills the opening frame selects the 41 MB level, not the
+                #    cheap ones. And its coarse levels are calibrated by
+                #    conserved render-light (integrated emission), which needs an
+                #    integrating blend: under `opaque` (depth-writing alpha-over;
+                #    gsplats emit alpha 1.0, so it is an overwrite for them) the
+                #    Gaussian tails never accumulate, so only the dense cores
+                #    paint and the globe renders as dark specks —
+                #    identical mid-load and fully settled.
+                #  * Fewer, bigger points (2M at radius 0.18) would genuinely fix
+                #    the wait — ~23 MB, solid at ~12 MB — but trades away zoom
+                #    detail, which is the point of the demo.
             )
             # Connected polylines (indexed) so the material renders seamless
             # joints. No additive-LOD here: LOD-ing connected lines requires an
@@ -394,8 +480,15 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
                 colors=rcolors,
                 indices=rindices,
                 line_type="indexed",
-                blending_mode="additive",
-                opacity=0.95,
+                # LUMINOUS, not `additive`: same glow, but it respects depth,
+                # so rivers on the far side of the now-opaque globe are hidden
+                # rather than drawn over it. RIVER_LIFT clears the shell's own
+                # rendered thickness (0.4 world units versus a 0.36 sprite
+                # diameter). Opaque point sprites write their centre depth
+                # across that disc, though, so independently sampled higher
+                # terrain can still occlude river segments in high-relief areas.
+                blending_mode="luminous",
+                opacity=1.0,
                 intensity=RIVER_INTENSITY,
                 layer=True,
             )
@@ -423,7 +516,9 @@ def load_or_build_scene(output_path: Path) -> Path:
     the expensive source downloads + parsed polylines are cached under
     ``CACHE_DIR`` so a rebuild / ``--recompute`` never re-fetches the ~1 GB.
     """
-    if output_path.exists() and not RECOMPUTE:
+    if scene_is_current(
+        output_path, FINGERPRINT, recompute=RECOMPUTE, keep_stale=KEEP_STALE
+    ):
         aprint(f"Using existing scene: {output_path}")
         return output_path
 

@@ -50,6 +50,34 @@ LINE_JOIN_STYLES: Final[frozenset[str]] = frozenset({"none", "miter"})
 # today's default forever and the viewer could never move it. Not dead code.
 DEFAULT_LINE_JOIN: Final[str] = "miter"
 
+# Per-element interaction templates (issue #1917).
+#
+# Browsing contexts a node's `link_target` may name. Restricted to the two
+# keywords that imply `noopener`: any OTHER value is a *named* target, which
+# hands the opened page a live `window.opener` it can use to cross-origin
+# navigate the viewer tab (reverse tabnabbing). The viewer enforces the same
+# two, letter-for-letter, in `core/app/interaction/element-actions.ts`; keep them
+# in step.
+LINK_TARGETS: Final[frozenset[str]] = frozenset({"_blank", "_self"})
+DEFAULT_LINK_TARGET: Final[str] = "_blank"
+
+# URL schemes a `link` template may resolve to. An ALLOWLIST, not a denylist:
+# the viewer NAVIGATES to this URL rather than rendering it, and `.zattrs` is
+# untrusted input, so anything exotic (`javascript:`, `data:`, `blob:`,
+# `file:`, `vbscript:`) must be refused rather than enumerated.
+LINK_SCHEMES: Final[frozenset[str]] = frozenset({"http", "https"})
+
+# Ceiling on a built URL, matched by the viewer's own per-click check. Well
+# above any real link; there to bound what a hostile store can push at the
+# browser after per-element substitution.
+MAX_LINK_CHARS: Final[int] = 2048
+
+# Ceiling on a built copy string. Larger than the URL cap because a copy
+# payload is legitimately prose (a whole record, a citation) rather than an
+# address, but still bounded: it reaches the system clipboard, outliving the
+# page, and originates in untrusted `.zattrs`.
+MAX_COPY_CHARS: Final[int] = 8 * 1024
+
 # LOD selector modes — how the viewer interprets a kind=lod group's per-child
 # `coverage_fraction` thresholds (the group's `selector` attr names the units):
 #
@@ -220,3 +248,68 @@ DEFAULT_POINT_RADIUS: Final[float] = 0.5
 #: 3.0349``. Measured radial-weighted relative L2 of the lift: 1.96% at T=3.0,
 #: 16.91% at T=2.75. See ``lift.py`` for the derivation.
 DEFAULT_TRUNCATION_RADIUS: Final[float] = 2.75
+
+
+# =============================================================================
+# Per-node element-texture capacity (issue #1957)
+# =============================================================================
+#
+# The viewer stores per-element render data in an "element texture" whose width
+# is capped at ELEMENT_TEXTURE_MAX_WIDTH texels and rounded DOWN to a whole
+# number of elements, so one node holds at most
+#
+#     floor(width * maxTextureSize / texels_per_element)
+#
+# elements. Beyond that the viewer CLAMPS: ``clampElementCapacity``
+# (``packages/luxar-viewer/src/rendering/element-texture-layout.ts``) drops the
+# node's tail with a single console warning and no other signal. Because
+# geometry is stored in Hilbert order, the lost tail is one spatially
+# CONTIGUOUS lobe, so the symptom is a clean-edged wedge of missing geometry
+# rather than a scatter — see #1957, where clamping 2.3% of an ocean-current
+# Lines node erased the whole North Atlantic.
+#
+# maxTextureSize is a GPU property (16384 on modern desktop, 4096 on the
+# conservative floor), so the only bound an AUTHOR can rely on is the
+# 4096-class one below. Nodes above it must be split with
+# ``partition=dict(max_elements=...)``.
+#
+# MIRROR: ``ELEMENT_TEXTURE_MAX_WIDTH`` and the per-type ``texelsPerElement`` in
+# ``packages/luxar-viewer/src/rendering/element-texture-layout.ts``.
+ELEMENT_TEXTURE_MAX_WIDTH: Final[int] = 4096
+CONSERVATIVE_MAX_TEXTURE_SIZE: Final[int] = 4096
+
+#: Texels each geometry type consumes per element in the element texture.
+ELEMENT_TEXELS_PER_ELEMENT: Final[dict[str, int]] = {
+    "points": 3,
+    "lines": 6,
+    "gsplats": 4,
+}
+
+
+def max_elements_per_node(geometry_type: str) -> int:
+    """Elements one node of ``geometry_type`` can render on a 4096-class GPU.
+
+    The conservative floor: a node at or below this renders whole on ANY GPU;
+    above it, a 4096-class GPU silently drops the tail.
+
+    Args:
+        geometry_type: A key of :data:`ELEMENT_TEXELS_PER_ELEMENT`.
+
+    Returns:
+        The element capacity — segments for lines, points for points, splats
+        for gsplats.
+
+    Raises:
+        KeyError: ``geometry_type`` has no element-texture layout.
+    """
+    texels = ELEMENT_TEXELS_PER_ELEMENT[geometry_type]
+    width = (ELEMENT_TEXTURE_MAX_WIDTH // texels) * texels
+    return (width * CONSERVATIVE_MAX_TEXTURE_SIZE) // texels
+
+
+#: 2,793,472 segments — the conservative per-node cap for Lines.
+MAX_SEGMENTS_PER_LINES_NODE: Final[int] = max_elements_per_node("lines")
+#: 5,591,040 points — the conservative per-node cap for Points.
+MAX_POINTS_PER_POINTS_NODE: Final[int] = max_elements_per_node("points")
+#: 4,194,304 splats — the conservative per-node cap for GSplats.
+MAX_SPLATS_PER_GSPLATS_NODE: Final[int] = max_elements_per_node("gsplats")

@@ -693,8 +693,11 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
       // every non-volumetric mode (identity 1.0 for RGB data — no gate
       // needed).
       intensity *= vAlpha;
-      // Early discard for zero-contribution fragments after offset
+      #ifdef LUXAR_OPAQUE_RGB_CONTRIBUTION
+      if (max(adjusted.r, max(adjusted.g, adjusted.b)) * intensity * uOpacity < 1e-4) discard;
+      #else
       if (max(adjusted.r, max(adjusted.g, adjusted.b)) < 1e-4) discard;
+      #endif
       #endif
 
       // Gamma fast path: when gamma==1 (the default) the pow() is

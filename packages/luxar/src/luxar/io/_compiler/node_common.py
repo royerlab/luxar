@@ -19,12 +19,17 @@ from typing import Any, Dict, FrozenSet, Optional
 
 import numpy as np
 import zarr
+from arbol import aprint
 from numpy.typing import NDArray
 
 from ...core.dimensions import Dimensions
 from ...core.group.compositing import (
     IDENTITY_COMPOSITING_ATTRS,
     WRITER_STAMPED_APPEARANCE_DEFAULTS,
+)
+from ...typing_utils.constants import (
+    ELEMENT_TEXELS_PER_ELEMENT,
+    max_elements_per_node,
 )
 from ...validation.types import (
     validate_appearance_fraction,
@@ -63,6 +68,7 @@ POINTS_RESERVED_ATTRS: FrozenSet[str] = frozenset(
         "has_scalars",
         "has_labels",
         "has_image_labels",
+        "has_keys",
         "position_bounds",
         "max_radius",
         "ordering",
@@ -80,6 +86,7 @@ LINES_RESERVED_ATTRS: FrozenSet[str] = frozenset(
         "has_scalars",
         "has_labels",
         "has_image_labels",
+        "has_keys",
         "max_width",
         "position_bounds",
         "ordering",
@@ -93,6 +100,7 @@ GSPLATS_RESERVED_ATTRS: FrozenSet[str] = frozenset(
         "has_colors",
         "has_labels",
         "has_image_labels",
+        "has_keys",
         "amplitude_range",
         "amplitude_data_range",
         # Writer-derived mass statistics that drive the finalize-time
@@ -122,6 +130,7 @@ MESH_RESERVED_ATTRS: FrozenSet[str] = frozenset(
         "has_scalars",
         "has_labels",
         "has_image_labels",
+        "has_keys",
         "shading",
         "double_sided",
         "position_bounds",
@@ -147,8 +156,20 @@ KNOWN_RENDER_ATTRS: FrozenSet[str] = frozenset(
         "ambient",
         "blending_mode",
         "colormap",
+        # Per-element interaction templates (issue #1917). ``link`` builds a
+        # URL opened on left-click, ``copy`` a plain string offered by the
+        # right-click menu, both substituting the hover vocabulary
+        # (``{hover_label}`` / ``{hover_key}`` / ``{hover_node}`` /
+        # ``{hover_index}``).
+        # ``link_target`` picks the browsing context. Advertised here rather
+        # than hidden in ``_ALLOWED_NODE_ATTRS`` for the same reason as
+        # lines-only ``join``: they are real knobs a user authors, so a typo
+        # deserves to see them in the hint.
+        "copy",
         "gamma",
         "intensity",
+        "link",
+        "link_target",
         # Lines-only join style at degree-2 polyline joints (issue #790).
         # Advertised here rather than hidden in ``_ALLOWED_NODE_ATTRS``
         # because it is a real appearance knob a user authors, so it belongs
@@ -499,6 +520,70 @@ def apply_default_render_attrs(attrs: Dict[str, Any]) -> None:
             attrs[key] = WRITER_STAMPED_APPEARANCE_DEFAULTS[key]
 
 
+def warn_if_over_element_cap(
+    geometry_type: str,
+    count: int,
+    node_path: str,
+    *,
+    enabled: bool = True,
+) -> bool:
+    """Warn when a node holds more elements than one node can render (#1957).
+
+    The viewer packs per-element render data into an element texture and
+    CLAMPS a node that overflows it — ``clampElementCapacity`` drops the tail
+    with a single console warning and no other signal. Geometry is stored in
+    Hilbert order, so the lost tail is one spatially CONTIGUOUS lobe: the
+    symptom is a clean-edged wedge of missing geometry, which reads as a data
+    or masking bug rather than a capacity limit. #1957 lost the entire North
+    Atlantic to a 2.3% overflow this way.
+
+    The cap depends on the viewer's GPU, so the only bound an author can rely
+    on is the 4096-class floor in
+    :func:`~luxar.typing_utils.constants.max_elements_per_node`. Warning here
+    puts the diagnosis at the point where it is cheap to act on — while the
+    data is being authored — instead of leaving it to whoever opens the scene
+    on a smaller GPU months later.
+
+    A warning, not an error: a node above the floor still renders whole on a
+    16384-class GPU, so refusing to write it would reject data that works.
+
+    Args:
+        geometry_type: A key of ``ELEMENT_TEXELS_PER_ELEMENT`` ("points",
+            "lines", "gsplats"). Any other type is a no-op.
+        count: Elements in this node — segments for lines, points for points,
+            splats for gsplats.
+        node_path: The node's path, for the message.
+        enabled: False to suppress a redundant child warning when its parent
+            checks the aggregate count.
+
+    Returns:
+        True if a warning was emitted.
+    """
+    if not enabled or geometry_type not in ELEMENT_TEXELS_PER_ELEMENT:
+        return False
+    cap = max_elements_per_node(geometry_type)
+    if count <= cap:
+        return False
+    noun = {"points": "points", "lines": "segments", "gsplats": "splats"}[geometry_type]
+    remedy = (
+        "Run `luxar gsplat lod --recipe tiles`, or use "
+        "partition=dict(max_elements=...) from the scene API"
+        if geometry_type == "gsplats"
+        else "Split it with partition=dict(max_elements=...)"
+    )
+    aprint(
+        f"⚠️  '{node_path}' holds {count:,} {noun}, above the {cap:,} a single "
+        f"{geometry_type} node can render on a 4096-class GPU. If the whole "
+        f"node is committed at once, such a GPU can silently drop the tail — "
+        f"and because elements are stored in Hilbert "
+        f"order, that tail is one contiguous region, so it looks like a "
+        f"clean-edged hole in the data (#1957). An nD node sliced on a "
+        f"non-displayed dimension commits only its current slice. {remedy} "
+        f"to render everywhere."
+    )
+    return True
+
+
 def validate_render_attrs(
     attrs: Dict[str, Any],
     reserved_attrs: FrozenSet[str] = frozenset(),
@@ -626,9 +711,43 @@ def validate_render_attrs(
 
         validate_colormap(attrs["colormap"])
 
+    _validate_interaction_attrs(attrs)
+
 
 def _validate_mesh_appearance_attrs(attrs: Dict[str, Any]) -> None:
     """Validate the five mesh-only appearance values in the shared attr gate."""
     for key, (validator, label) in _MESH_APPEARANCE_VALIDATORS.items():
         if key in attrs:
             validator(attrs[key], label)
+
+
+def _validate_interaction_attrs(attrs: Dict[str, Any]) -> None:
+    """Validate element interaction templates in the shared attr gate."""
+    # Checked before the node exists on disk because the failure they prevent
+    # is otherwise silent: a bad link writes cleanly and simply does nothing
+    # when the user clicks it, with no file or console diagnostic (#1917).
+    if "link" in attrs:
+        from ...validation.types import validate_link
+
+        validate_link(attrs["link"])
+
+    if "copy" in attrs:
+        from ...validation.types import validate_copy_template
+
+        validate_copy_template(attrs["copy"])
+
+    if "link_target" in attrs:
+        from ...validation.types import validate_link_target
+
+        validate_link_target(attrs["link_target"])
+
+    # `link_target` alone is inert — it only says WHERE a link would open.
+    # Refuse it rather than write a node whose only interaction attr can
+    # never be read, which is a typo (`link_taget=`) far more often than a
+    # deliberate choice.
+    if "link_target" in attrs and "link" not in attrs:
+        raise ValueError(
+            "link_target was given without link. It only selects the browsing "
+            "context for a link, so on its own it has no effect. Add "
+            "link='https://...' or drop link_target."
+        )

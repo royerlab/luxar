@@ -898,9 +898,10 @@ export function elementTexelCapacity(texture: THREE.DataTexture, floatsPerElemen
  * precisely the fresh-start signal, so normalising here means a default
  * uniform is always correct and untracked nodes need no sync at all.
  *
- * The append writer ({@link writeSortedIndexIdentityRange}) deliberately
- * does NOT do this: it preserves the prefix permutation in whichever
- * buffer is live.
+ * The Points and Lines append writers deliberately differ: their adapters
+ * call {@link writeSortedIndexIdentityRange} to preserve the live prefix
+ * permutation. GSplat appends call this full writer instead, trading that
+ * prefix prior for one coherent storage-order fallback over the grown node.
  */
 export function writeSortedIndexIdentity(
   geometry: THREE.InstancedBufferGeometry,
@@ -924,13 +925,13 @@ export function writeSortedIndexIdentity(
 /**
  * Extend `aSortedIndex` with identity ordering for the appended suffix
  * `[from, count)`, preserving the existing `[0, from)` permutation
- * (depth-sorting Phase 4 Stage 2, the append fast path). The new splats
- * index themselves until the depth-sort coordinator re-sorts on a
- * subsequent frame; identity is the correct pre-resort placeholder (the
- * same value {@link writeSortedIndexIdentity} would write for them). The
- * collapse still uploads `[0, count)` — `aSortedIndex` is a tiny
- * 4-byte/instance buffer, so a full re-upload of the index is cheap; the
- * expensive splat-texel upload is the one Stage 2 restricts to the suffix.
+ * (depth-sorting Phase 4 Stage 2, the append fast path). Its two owners are
+ * `points-adapter.ts` and `lines-adapter.ts`; GSplat appends instead use
+ * {@link writeSortedIndexIdentity} so the grown node has one coherent
+ * storage-order fallback. The collapse still uploads `[0, count)` —
+ * `aSortedIndex` is a tiny 4-byte/instance buffer, so the GPU upload is the
+ * same size either way; the expensive element-texture upload is the one
+ * Stage 2 restricts to the suffix.
  */
 export function writeSortedIndexIdentityRange(
   geometry: THREE.InstancedBufferGeometry,

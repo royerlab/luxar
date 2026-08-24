@@ -19,6 +19,8 @@ import numpy as np
 import pytest
 import zarr
 
+from luxar._zarr_compat import consolidate, open_group
+
 _DEMO_PATH = Path(__file__).resolve().parents[1] / "demo_dmri_tractography.py"
 
 
@@ -249,6 +251,7 @@ class TestSceneMarker:
             tmp_path / "scene_build.json",
             json.dumps(
                 {
+                    "builder": _demo.FINGERPRINT,
                     "version": _demo.SCENE_SCHEMA_VERSION,
                     "points": 28,
                     "per_bundle": 6000,
@@ -277,6 +280,13 @@ class TestSceneMarker:
             marker, points=points, per_bundle=per_bundle
         )
 
+    def test_different_builder_forces_a_rebuild(self, tmp_path: Path) -> None:
+        marker = self._current(tmp_path)
+        record = json.loads(marker.read_text())
+        record["builder"] = "older-builder"
+        marker.write_text(json.dumps(record))
+        assert not _demo.scene_marker_matches(marker, points=28, per_bundle=6000)
+
     def test_pre_label_marker_forces_a_rebuild(self, tmp_path: Path) -> None:
         # A scene built before hover labels existed: right sizing, no version
         # key. Reusing it would serve a label-less scene while the docs (and
@@ -292,6 +302,7 @@ class TestSceneMarker:
             tmp_path / "scene_build.json",
             json.dumps(
                 {
+                    "builder": _demo.FINGERPRINT,
                     "version": _demo.SCENE_SCHEMA_VERSION - 1,
                     "points": 28,
                     "per_bundle": 6000,
@@ -303,6 +314,41 @@ class TestSceneMarker:
     def test_corrupt_marker_forces_a_rebuild(self, tmp_path: Path) -> None:
         marker = self._write(tmp_path / "scene_build.json", "{not json")
         assert not _demo.scene_marker_matches(marker, points=28, per_bundle=6000)
+
+    def test_keep_stale_reuses_an_existing_scene(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        output_path = tmp_path / "scene.luxar.zarr"
+        group = open_group(output_path, mode="w")
+        consolidate(group)
+        monkeypatch.setattr(_demo, "KEEP_STALE", True)
+        monkeypatch.setattr(_demo, "RECOMPUTE", False)
+        monkeypatch.setattr(
+            _demo, "scene_marker_matches", lambda *args, **kwargs: False
+        )
+        monkeypatch.setattr(
+            _demo,
+            "load_or_build_bundles",
+            lambda **kwargs: pytest.fail("stale scene should have been reused"),
+        )
+
+        assert _demo.load_or_build_scene(output_path) == output_path
+
+    def test_keep_stale_rebuilds_an_unfinished_scene(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        output_path = tmp_path / "scene.luxar.zarr"
+        open_group(output_path, mode="w")
+        monkeypatch.setattr(_demo, "KEEP_STALE", True)
+        monkeypatch.setattr(_demo, "RECOMPUTE", False)
+        monkeypatch.setattr(
+            _demo,
+            "load_or_build_bundles",
+            lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("rebuild reached")),
+        )
+
+        with pytest.raises(RuntimeError, match="rebuild reached"):
+            _demo.load_or_build_scene(output_path)
 
 
 class TestNodeBudget:

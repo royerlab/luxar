@@ -79,6 +79,8 @@ export class ArrayDecoder {
       // Load the single value
       const rawData = await readArray(zarrArray, undefined, abortOptions(signal));
       const rawArray = rawData.data;
+      // Changing this cast requires re-deriving the writer's
+      // positive_scalar_round_trip_slack chunk-bound allowance.
       const data =
         rawArray instanceof Float32Array
           ? rawArray
@@ -415,6 +417,8 @@ export class ArrayDecoder {
         throw new Error('[ArrayDecoder] LUT (scalar) is empty');
       }
 
+      // Changing this cast requires re-deriving the writer's
+      // positive_scalar_round_trip_slack chunk-bound allowance.
       const result = new Float32Array(n);
 
       for (let i = 0; i < n; i++) {

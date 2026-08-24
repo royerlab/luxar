@@ -764,7 +764,9 @@ Absent on datasets written before these keys existed; readers should report
 nothing rather than infer a source grid from the bounding box.
 
 **Quality metrics** (fitting/.zattrs, optional) — the round-trip score of the
-fit, measured by re-rendering the splats against the volume they were fitted to:
+fit, measured by re-rendering the splats against the fit-basis reference
+`clip(V - image_min, 0, None)`, not the raw acquisition. The PSNR `data_range`
+and relative-L2 denominator are derived from that shifted reference too:
 
 ```json
 {
@@ -909,7 +911,48 @@ rewrites a store must apply all three rules:
   `lod_kind: additive` on a `stream` output) would be a new claim rather than a
   scrub. Content-changing but structure-**preserving** ops keep the block and
   *re-stamp* the counts that moved instead: a `cull` of a substitutive pyramid is
-  still that pyramid, with refreshed `lod_n_lods` / `lod_cutpoints`.
+  still that pyramid, with refreshed `lod_n_lods` / `lod_cutpoints` — and, when
+  the store carries it, the un-prefixed `n_lods` that says the same thing (see
+  the second-spelling paragraph below). Its two siblings stay: `method` is the
+  additive *ordering*, which pruning an emptied rung does not change, and
+  `breakpoints` is the build **spec** that was requested — this rewrite built no
+  new ladder from another one, it pruned the ladder that spec produced.
+
+  A structure-preserving rewrite that REPLACES the thing a stamp summarises owes
+  the same refresh. `additive` re-ladders every leaf, so the root ladder summary
+  is rebuilt from the tree it wrote — `lod_n_lods` / `lod_cutpoints` from the
+  ladder, `lod_method` / `lod_breakpoints_kind` read back off the rebuilt leaf so
+  an `auto` request publishes the method it resolved to (and each is *deleted*
+  when the rebuilt leaf does not publish it — absence is the format's "this artifact does
+  not know", while the inherited value would describe the ladder that is gone).
+  The summary describes
+  ONE ladder: the leaf itself for a flat store, and for a `kind=lod` group the
+  level `lod_substitutive_level` names (the rule `cull` already follows).
+  `lod_substitutive_level` itself is untouched — a re-ladder moves no level. On a
+  shape where no single leaf can be the summary (a `kind=partition`, whose parts
+  hold different counts and therefore different rung counts) the block is
+  *dropped* rather than filled from an arbitrary part; that is also what the
+  `tiles` / `overview` / `adaptive` builders publish at the root. Present keys
+  only, in both directions: a store that never published a summary does not
+  acquire one.
+
+  The **same ladder has a second spelling** in the same group, and it gets the
+  same treatment: the un-prefixed `n_lods` / `method` / `breakpoints` that
+  `batch-fit merge --recipe stream` stamps for its per-part recipe, which
+  `additive` over a batch-fit partition would otherwise leave asserting the rung
+  count the drop above had just refused to assert. `n_lods` is refreshed from the
+  ladder and `method` read back off the rebuilt leaf, exactly as their prefixed
+  twins are; `breakpoints` is *dropped* rather than refreshed, because it holds
+  the build **spec** (`"stream:14000"`, `"counts:5,15,40"`) in a different
+  vocabulary from the leaf's resolved `lod_breakpoints_kind` and cannot be read
+  back off a ladder. `per_part` is left alone — a per-leaf re-ladder leaves a
+  per-part ladder per-part. The `levels` branch of that same producer stamps a
+  `method` too, but it is the *substitutive* merge method, which a re-ladder does
+  not touch; `lod_kind` is what tells the two apart. The prune-family rewrites
+  above (`cull`, `filter`, `slice`, `transform`) refresh the un-prefixed count as
+  well, for the same reason and from the same helper: a `batch-fit merge --recipe
+  stream` output that is culled until a rung empties has one fewer rung, whichever
+  spelling states it.
 
   Two things in `pipeline/` are **exempt**, which is why this is a deny-list of
   key names rather than "drop the group". The normalization block (`floor`,
@@ -918,6 +961,98 @@ rewrites a store must apply all three rules:
   read back by the writer — `write_gsplats_tree` derives the chunk-ordering
   barrier axes from its complement — so dropping it would silently change the
   output's chunk layout, not just its metadata.
+
+  That complement is taken **only from a list**. A written `null` and an absent
+  key are indistinguishable to the reader (`_barrier_from_coarsen_dims`), so both
+  mean *no provenance* and fall through to `detect_barrier_dims` auto-detection —
+  a *guess* about the stored coordinates, not "no barrier". It re-imposes a
+  barrier on an axis a reduction just blended exactly when the reduction leaves
+  that axis' grid **intact** (timepoints far enough apart that no cluster spans
+  two of them, so the coordinates stay integral); where the reduction averages
+  the grid away, auto-detection finds nothing on the levels it merged but still
+  finds the axis on a level it left alone, so a ladder comes out with a per-level
+  *mixture* of layouts. Which of the two you get is a property of the data, not
+  of the metadata, so the explicit spelling is the honest one either way.
+  "Coarsen everything" therefore has an explicit spelling and a
+  non-spelling: `[0, …, d-1]`, whose complement is the empty list (a real,
+  authoritative *no barrier*), versus `null`, which asserts nothing and lands on
+  the heuristic. **Three producers write the explicit list**, resolved through
+  one shared function (`resolved_merge_coarsen_dims`): `decimate`'s `merge`
+  family, `make_substitutive_lod` (and so every `lod --recipe levels` build),
+  and the `batch-fit merge` per-part record. `batch-fit merge` still writes
+  `null` when its manifest never recorded a `spatial_shape`: the merge cannot
+  establish the part width there and declines to invent one, since a wrong
+  explicit list is worse than an absent one — the writer acts on it.
+
+  **Three substitutive producers publish nothing at all**, and an absent key is
+  read exactly as a `null`: `lod --recipe adaptive`, `lod --recipe overview`,
+  and `fit --recipe levels`. All three write their `pipeline/` group from their
+  *input's* stats rather than from the recipe they just ran (`cli/lod.py`'s
+  composed-recipe branch and `fit_utils.save_fit_output`), so the reduction's
+  own choice never reaches the store — including a `--coarsen-dims` the user
+  passed explicitly. Measured on a 200-splat 4D fixture over three timepoints
+  spaced 1000 apart, `--parts 2 -K 4 -L 2`: `adaptive` writes no `coarsen_dims`
+  and comes out with the per-level *mixture* described above (16 groups at `[]`,
+  8 at `[3]`) whether or not `--coarsen-dims 0,1,2` was given; `overview` writes
+  none and gets `[3]` on all 12 groups, the barrier its merged coarse level
+  blended away. Fixing that means plumbing the composed recipes' own parameters
+  into the record, which is tracked on #1600 and is not what the shared resolver
+  above changed. (`flat`, `stream` and `tiles` publish nothing either, but
+  correctly: they run no substitutive reduction, so they blend no axis and the
+  inherited value — or the fallback — stays true of the result.)
+
+  Otherwise `null` appears only in stores written before this was settled
+  (#1600); it still reads correctly — as no provenance — and nothing rewrites
+  those stores in place.
+
+  Newly built `levels` pipelines that coarsen every dimension consequently get a
+  **different chunk layout** from the ones built before: the stacked axis loses
+  the barrier auto-detection used to re-impose on it, so chunks are ordered
+  purely spatially and no longer group by timepoint. That is the layout the
+  reduction earned — it blended that axis — but a store rebuilt at a *new*
+  `content_hash` cannot be served under the old URL to a warm viewer cache.
+
+  The move does **not stop at the `levels` store**. `coarsen_dims` is exempt
+  from the structure scrub (above), so the explicit list is *inherited* by every
+  downstream rewrite of that store and takes the new layout with it. Measured on
+  the same fixture: `flatten`, `additive`, `partition`, `cull`, `filter`,
+  `slice`, `transform`, `reencode`, and a `lod --recipe tiles|stream` rebuilt off
+  the `levels` store all carry `[0, 1, 2, 3]` and write `slice_dims: []` where
+  before they wrote `[3]`. Two things make that acceptable rather than merely
+  tolerated. The direction is safe: a *missing* barrier only costs over-fetch,
+  while a false one gives a spatial axis tight chunk bounds and can drop splats
+  from a query — the asymmetry `detect_barrier_dims` is written around, so no
+  splats are lost either way. And the inherited value is *true of these outputs
+  except the finest level*: none of those commands coarsens anything, so the axes
+  the `levels` build blended stay blended in their results — but a substitutive
+  ladder's finest level is the input **unreduced**, and in it that axis was never
+  blended at all.
+
+  That exception is the honest edge of the move. `flatten` of a 4D coarsen-all
+  `levels` store hands back exactly those 200 original, never-blended splats
+  while carrying `coarsen_dims: [0, 1, 2, 3]` — a claim about splats it is not
+  true of, and with it the loss of a barrier that would have been legitimate.
+  That is the price of one layout per ladder instead of a heuristic answering
+  each level separately, and it is why a `>3D` build that means to keep a
+  time/channel axis should say so with `--coarsen-dims` rather than rely on the
+  fallback to notice.
+
+  Exempt from the scrub is not exempt from being TRUE. A rewrite that coarsens
+  over its own choice of axes owes the output a fresh `coarsen_dims`, because the
+  inherited one would put the barrier on an axis this reduction just blended.
+  `decimate`'s `merge` family therefore re-stamps the set it resolved, always as
+  an explicit sorted list: the requested dims for a proper subset, and the full
+  `[0, …, d-1]` for coarsen-everything (the default, and what a request naming
+  every dim normalises to). Its `prefix` family stamps nothing: a prefix merges
+  no axis and every survivor is one of the input's splats at its own coordinates,
+  so the inherited value — and the layout derived from it — stays true.
+  `--coarsen-dims` is a merge-only knob, never published by a prefix, and
+  `decimate` warns (a `UserWarning`, displayed as an arbol line under the CLI)
+  when a run resolved to `prefix` and dropped it
+  (with `method="auto"` the family flips at the 50 %-kept crossover, taking the
+  output's chunk layout with it). The request is range-validated for both
+  families before the family is chosen, so the same argument cannot be a hard
+  error on one path and silently accepted on the other.
 
 No category subsumes another, which is why one predicate cannot serve them: an
 amplitude-threshold cull loses the scores and keeps the grid and the topology, a
@@ -1012,7 +1147,7 @@ substitutive/pyramid/recipe build round-trips its parameters:
   "coverage_inflation": 3.0,
   "refine": "l2",
   "refine_iters": 120,
-  "coarsen_dims": null,
+  "coarsen_dims": [0, 1, 2],
   "n_substitutive_levels": 4,
   "image_min": 110.0,
   "image_max": 4095.0,

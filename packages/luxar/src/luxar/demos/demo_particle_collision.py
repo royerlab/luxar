@@ -43,10 +43,10 @@ PARTICLE IDENTIFICATION BY STOPPING LOCATION
 Different particles interact differently with matter:
 
 1. ELECTRONS/POSITRONS (e⁻/e⁺):
-   - Light (0.511 MeV/c²), easily deflected
+   - Light (0.511 MeV/c²)
    - Create electromagnetic showers via bremsstrahlung
    - Completely absorbed in EM calorimeter (~20 radiation lengths)
-   - Tight helical tracks due to low mass
+   - Track curvature is determined by transverse momentum p_T, not mass
 
 2. PHOTONS (γ):
    - No charge → NO TRACK (invisible in tracker)
@@ -62,7 +62,7 @@ Different particles interact differently with matter:
    - Heavy leptons (105.7 MeV/c²), minimal ionizing
    - Penetrate ENTIRE detector (very weakly interacting)
    - Only particles reaching outermost muon chambers
-   - Gentle curves due to high mass
+   - Track curvature is determined by transverse momentum p_T, not mass
 
 5. NEUTRINOS (ν):
    - No charge, no strong interaction
@@ -136,6 +136,7 @@ from arbol import aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import add_demo_caption, launch_viewer
+from luxar.demos._particle_collision_tracks import generate_helix_points
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -163,6 +164,7 @@ DETECTOR_LENGTH = 25.0  # Half-length in z (beam direction)
 # Real ATLAS: 2 Tesla solenoid in inner detector
 # Real CMS: 3.8 Tesla (strongest at any collider)
 B_FIELD = 2.0  # Tesla (affects curvature via r = p_T / (q*B))
+TRACK_TRANSVERSE_STEP = 0.1
 
 # =============================================================================
 # Particle Properties (from Particle Data Group - PDG 2024)
@@ -247,6 +249,27 @@ PARTICLE_TYPES = {
 }
 
 
+def _legend_swatches(*particle_types: str) -> str:
+    swatches = []
+    for particle_type in particle_types:
+        red, green, blue = PARTICLE_TYPES[particle_type]["color"]
+        css_color = f"rgb({round(red * 255)} {round(green * 255)} {round(blue * 255)})"
+        swatches.append(f'<span style="color:{css_color}">\u2588</span>')
+    return "".join(swatches)
+
+
+PARTICLE_LEGEND_HTML = (
+    '<div style="font-size:1.3vh;line-height:1.6;background:rgba(0,0,0,0.5);padding:0.6vh;border-radius:3px">'
+    '<div style="font-weight:bold;color:#ccc;margin-bottom:0.4vh">Particle Tracks</div>'
+    f"<div>{_legend_swatches('electron', 'positron')} e\u207b/e\u207a (electrons)</div>"
+    f"<div>{_legend_swatches('muon_minus', 'muon_plus')} \u03bc\u207b/\u03bc\u207a (muons)</div>"
+    f"<div>{_legend_swatches('pion_plus', 'pion_minus', 'kaon')} \u03c0\u00b1/K\u207a (hadrons)</div>"
+    f"<div>{_legend_swatches('proton')} p (protons)</div>"
+    f"<div>{_legend_swatches('photon')} \u03b3 (photons)</div>"
+    "</div>"
+)
+
+
 # =============================================================================
 # Particle Track Generation
 # =============================================================================
@@ -272,8 +295,6 @@ PARTICLE_TYPES = {
 # 1. Higher p_T → larger radius → straighter track
 # 2. Positive charge → curves one way, negative → opposite
 # 3. Mass doesn't directly affect radius (only through momentum)
-# 4. Electrons curve tightly because they typically have low p_T
-# 5. Muons curve gently because they typically have high p_T
 #
 # The helix pitch (z-advance per revolution) depends on p_z/p_T ratio.
 
@@ -283,13 +304,12 @@ class Particle:
     """Represents a particle with kinematic properties.
 
     In particle physics, we typically work with:
-    - Energy E (GeV) - total relativistic energy
+    - Displayed energy E (GeV)
     - Momentum p (GeV/c) - 3-vector (px, py, pz)
-    - Mass m (GeV/c²) - rest mass
+    - Mass m (MeV/c²) - rest mass from ``PARTICLE_TYPES``
 
-    Related by: E² = (pc)² + (mc²)²
-
-    For visualization, we use natural units where c = 1.
+    For visualization, the event generators use natural units and the
+    ultrarelativistic approximation E = |p|; mass does not enter the trajectory.
     """
 
     particle_type: str
@@ -341,9 +361,10 @@ def generate_helix_track(
     The Lorentz force F = q(v × B) causes charged particles to follow
     helical paths in a uniform magnetic field:
 
-    - Radius of curvature: r = p_T / (|q| × B)
+    - Physical radius of curvature: r = p_T / (|q| × B)
       → Higher momentum = larger radius = STRAIGHTER track
       → This is how we MEASURE momentum in real detectors!
+      → Rendered radius applies the named HELIX_RADIUS_VISUAL_SCALE
 
     - Sign of charge determines direction of curvature
       → Positive particles curve clockwise (from above)
@@ -352,8 +373,8 @@ def generate_helix_track(
     - Helix pitch determined by p_z/p_T ratio
       → Forward-going particles have elongated helices
 
-    The track width in visualization represents the particle's energy -
-    higher energy particles leave "brighter" tracks (more ionization).
+    Track width uses a mild p_T-dependent visualization scale, while color
+    identifies the particle type.
 
     Args:
         particle: Particle object with kinematics
@@ -362,7 +383,7 @@ def generate_helix_track(
 
     Returns:
         points: (N, 3) array of polyline vertices (one continuous track)
-        widths: (N,) per-vertex line widths (energy visualization)
+        widths: (N,) per-vertex p_T-scaled line widths
         colors: (N, 3) per-vertex RGB colors (particle identification)
     """
     if particle.charge == 0:
@@ -371,98 +392,26 @@ def generate_helix_track(
         # They are only "seen" when they deposit energy in calorimeters
         return generate_straight_track(particle, rng, n_points)
 
-    # =========================================================================
-    # HELIX PARAMETER CALCULATION
-    # =========================================================================
-
-    pt = particle.pt  # Transverse momentum (perpendicular to B-field)
-    pz = particle.pz  # Longitudinal momentum (along beam/B-field direction)
-
-    # RADIUS OF CURVATURE: r = p_T / (|q| × B)
-    # -----------------------------------------
-    # This is THE fundamental equation of charged particle tracking!
-    # - Real detectors use r to MEASURE p_T (momentum spectroscopy)
-    # - Factor of 2.0 is a visualization scaling factor
-    # - In real units: r[m] = p_T[GeV/c] / (0.3 × |q| × B[T])
-    #   where 0.3 comes from unit conversion (c in appropriate units)
-    radius = pt / (abs(particle.charge) * B_FIELD) * 2.0
-
-    # Minimum radius to prevent visual artifacts for very soft particles
-    radius = max(radius, 0.3)
-
-    # ANGULAR VELOCITY: ω = q × B / p_T
-    # ---------------------------------
-    # This determines how quickly the particle spirals.
-    # The sign of charge determines the direction of rotation:
-    # - Positive charge → clockwise rotation (from +z looking down)
-    # - Negative charge → counter-clockwise rotation
-    omega = particle.charge * B_FIELD / pt if pt > 0.1 else 0.01
-
-    # Initial azimuthal angle (direction particle is heading in x-y plane)
-    phi0 = np.arctan2(particle.py, particle.px)
-
-    # CENTER OF HELIX CIRCLE
-    # ----------------------
-    # The particle doesn't spiral around the collision point!
-    # It spirals around a point offset perpendicular to its initial direction.
-    # The offset direction depends on charge sign.
-    cx = particle.origin[0] - radius * np.sin(phi0) * np.sign(particle.charge)
-    cy = particle.origin[1] + radius * np.cos(phi0) * np.sign(particle.charge)
-
-    # DETECTOR BOUNDARIES
-    # -------------------
-    # Track terminates when particle:
-    # 1. Exits radially (absorbed in calorimeter or escapes)
-    # 2. Exits longitudinally (beyond detector endcap)
     max_radius = particle.stops_at if particle.stops_at else MUON_OUTER
-    max_z = DETECTOR_LENGTH
-
-    # =========================================================================
-    # HELIX POINT GENERATION
-    # =========================================================================
-
-    points = []
-    t = 0  # Parametric time along helix
-    dt = 0.05  # Step size (smaller = smoother curves)
-
-    while len(points) < n_points:
-        # HELIX PARAMETRIC EQUATIONS
-        # --------------------------
-        # x(t) = cx + r × sin(φ₀ + ω×t)
-        # y(t) = cy - r × cos(φ₀ + ω×t)
-        # z(t) = z₀ + v_z × t
-        #
-        # The x-y motion is circular, z advances linearly → HELIX
-        phi = phi0 + omega * t * np.sign(particle.charge)
-        x = cx + radius * np.sin(phi) * np.sign(particle.charge)
-        y = cy - radius * np.cos(phi) * np.sign(particle.charge)
-        z = particle.origin[2] + pz * t * 0.3  # Scale z velocity for visualization
-
-        # Check if particle has exited detector volume
-        r = np.sqrt(x**2 + y**2)
-        if r > max_radius or abs(z) > max_z:
-            break
-
-        points.append([x, y, z])
-        t += dt
-
-        # ELECTROMAGNETIC SHOWER SIMULATION
-        # ----------------------------------
-        # Electrons/positrons undergo bremsstrahlung (emit photons when
-        # deflected by nuclei). This triggers an electromagnetic cascade:
-        # e → γ + e → e⁺e⁻ + e → many particles
-        # The shower develops rapidly once inside the EM calorimeter.
-        if r > ECAL_INNER and particle.stops_at == ECAL_OUTER:
-            # Track ends as particle showers
-            break
-
+    # Electrons start bremsstrahlung-driven EM cascades on entering the ECAL.
+    shower_radius = ECAL_INNER if particle.stops_at == ECAL_OUTER else None
+    points = generate_helix_points(
+        origin=particle.origin,
+        momentum=np.array([particle.px, particle.py, particle.pz]),
+        charge=particle.charge,
+        magnetic_field=B_FIELD,
+        max_radius=max_radius,
+        max_z=DETECTOR_LENGTH,
+        n_points=n_points,
+        transverse_step=TRACK_TRANSVERSE_STEP,
+        shower_radius=shower_radius,
+    )
     if len(points) < 2:
-        points = [
-            particle.origin.tolist(),
-            (particle.origin + [0.1, 0.1, 0.1]).tolist(),
-        ]
-
-    points = np.array(points, dtype=np.float32)
+        return (
+            np.empty((0, 3), dtype=np.float32),
+            np.empty(0, dtype=np.float32),
+            np.empty((0, 3), dtype=np.float32),
+        )
 
     # Per-VERTEX arrays — the track is one continuous curve, so it is
     # authored as unique vertices + an explicit edge list (line_type=
@@ -556,7 +505,7 @@ def generate_straight_track(
 #
 # 3. PARTICLE COMPOSITION (typical jet):
 #    - ~60% pions (π±, π⁰) - lightest mesons
-#    - ~25% kaons (K±, K⁰) - contain strange quarks
+#    - ~25% kaons (K±, K⁰) - contain a strange quark
 #    - ~15% protons/neutrons - baryons
 #    - Plus photons from π⁰ → γγ decay
 #
@@ -1266,14 +1215,7 @@ def generate_detector_scene(
 
         # Particle type legend (bottom-left)
         scene.add_html(
-            '<div style="font-size:1.3vh;line-height:1.6;background:rgba(0,0,0,0.5);padding:0.6vh;border-radius:3px">'
-            '<div style="font-weight:bold;color:#ccc;margin-bottom:0.4vh">Particle Tracks</div>'
-            '<div><span style="color:#6699ff">\u2588</span> e\u207b/e\u207a (electrons)</div>'
-            '<div><span style="color:#ff4466">\u2588</span> \u03bc\u207b/\u03bc\u207a (muons)</div>'
-            '<div><span style="color:#44cc44">\u2588</span> \u03c0\u00b1/K\u00b1 (hadrons)</div>'
-            '<div><span style="color:#ffaa22">\u2588</span> p/p\u0304 (protons)</div>'
-            '<div><span style="color:#ffff44">\u2588</span> \u03b3 (photons)</div>'
-            "</div>",
+            PARTICLE_LEGEND_HTML,
             position=(0.02, 0.97),
             anchor="bottom-left",
         )
@@ -1311,9 +1253,9 @@ def main() -> None:
     aprint("")
     aprint("  Physics Features:")
     aprint("    - Charged particles curve in magnetic field (Lorentz force)")
-    aprint("    - Electrons/positrons: tight spirals, stop in EM calorimeter")
-    aprint("    - Muons: gentle curves, traverse entire detector")
-    aprint("    - Hadrons: medium curves, stop in hadronic calorimeter")
+    aprint("    - Electrons/positrons: p_T-dependent curves, stop in EM calorimeter")
+    aprint("    - Muons: p_T-dependent curves, traverse entire detector")
+    aprint("    - Hadrons: p_T-dependent curves, stop in hadronic calorimeter")
     aprint("    - Jets: collimated sprays from quark/gluon fragmentation")
     aprint("")
     aprint("  Detector Layers:")
@@ -1323,7 +1265,7 @@ def main() -> None:
     aprint("    - Muon chambers: only muons reach here")
     aprint("")
     aprint("  Visualization:")
-    aprint("    - Lines: particle trajectories with energy-dependent width")
+    aprint("    - Lines: particle trajectories with p_T-dependent width")
     aprint("    - Points: calorimeter energy deposits (shower clusters)")
     aprint("    - Colors: particle type identification")
     aprint("")

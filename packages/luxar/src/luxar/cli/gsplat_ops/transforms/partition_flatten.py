@@ -25,10 +25,8 @@ def run_partition_dataset(
     try:
         import math
 
-        from luxar.gsplats.gsplat_data import (
-            GSplatData,
-            stats_after_structure_change,
-        )
+        from luxar.cli.gsplat_ops.loading import load_matrix_gsplats
+        from luxar.gsplats.gsplat_data import stats_after_structure_change
         from luxar.gsplats.io.load_gsplats import read_authored_appearance
         from luxar.gsplats.io.save_gsplats import split_fitting_info, write_gsplats_tree
         from luxar.gsplats.tree import iter_leaves
@@ -44,7 +42,11 @@ def run_partition_dataset(
 
         with asection(f"Partitioning: {input_path.name}"):
             with asection("Loading dataset"):
-                data = GSplatData.load(input_path, include_stats=True)
+                data = load_matrix_gsplats(
+                    input_path,
+                    include_stats=True,
+                    command="partition",
+                )
                 aprint(f"Loaded {data.n_splats:,} splats ({data.ndim}D)")
 
             # --parts N → target ~N parts via ceil(n / N).
@@ -131,32 +133,25 @@ def run_flatten_dataset(
             with asection("Loading tree"):
                 node, stats = load_gsplat_node(input_path, include_stats=True)
 
-            # One flat GSplatData per default-rendered leaf (finest level only,
-            # all parts). `.flattened()` collapses each leaf's additive ladder to
-            # a single full set so `concatenate` (which requires a matching
-            # substitutive depth) merges them cleanly.
-            parts = [
-                GSplatData.from_tree(leaf).flattened()
-                for leaf in iter_default_leaves(node)
-            ]
-            if not parts:
+            leaves = list(iter_default_leaves(node))
+            if not leaves:
                 aprint("❌ Error: input tree has no leaves")
                 raise typer.Exit(1)
 
-            flat = GSplatData.concatenate(parts)
-            # concatenate() builds a fresh stats dict from the first input; keep
-            # the root-level provenance/fitting stats from the source tree — minus
-            # its TOPOLOGY record, which this command has just invalidated: the
-            # output is one flat leaf, so an inherited `lod_kind: substitutive` /
-            # `n_substitutive_levels: 4` / `lod_cutpoints: [...]` describes a tree
-            # that no longer exists (#1600).
+            flat = GSplatData.from_default_selection(node).flattened()
+            # The default-selection factory may preserve a matrix-shaped input's
+            # stats; keep the root-level provenance/fitting stats from the source
+            # tree — minus its TOPOLOGY record, which this command has just
+            # invalidated: the output is one flat leaf, so an inherited
+            # `lod_kind: substitutive` / `n_substitutive_levels: 4` /
+            # `lod_cutpoints: [...]` describes a tree that no longer exists (#1600).
             if stats:
                 flat = GSplatData.from_additive_sublods(
                     list(flat.additive_sublods),
                     stats=stats_after_structure_change(stats),
                 )
             aprint(
-                f"Flattened {len(parts)} leaf/leaves → {flat.n_splats:,} splats "
+                f"Flattened {len(leaves)} leaf/leaves → {flat.n_splats:,} splats "
                 f"({flat.ndim}D, single matrix-shaped leaf)"
             )
 

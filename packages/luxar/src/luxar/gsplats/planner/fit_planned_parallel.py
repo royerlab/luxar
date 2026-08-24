@@ -30,6 +30,7 @@ from typing import Any, Callable, Optional
 from arbol import aprint, asection
 
 from luxar.gsplats.batch.task_pool import cancel_pool_on_interrupt
+from luxar.gsplats.fit_basis import fit_image_min
 from luxar.gsplats.fit_tiled_parallel import luxar_argv0
 
 from .fit_planned import (
@@ -346,8 +347,8 @@ def fit_planned_parallel(
             plan_shape=tuple(int(s) for s in plan.volume_shape),
             device=device,
             verbose=verbose,
+            image_min=fit_image_min(result.meta),
             stats=fit_stats,
-            partition=is_partition,
         )
         result.meta["fit_stats"] = fit_stats
     else:
@@ -374,6 +375,7 @@ def fit_planned_parallel(
             plan_shape=tuple(int(s) for s in plan.volume_shape),
             device=device,
             verbose=verbose,
+            image_min=fit_image_min(result.stats),
         )
 
     if not keep_boxes:

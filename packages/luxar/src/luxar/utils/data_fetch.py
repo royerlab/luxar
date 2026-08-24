@@ -704,13 +704,15 @@ def load_dataset_gsplats(
         ``list[GSplatData]``, or ``None`` when the caller should build the data.
 
     Deliberately NOT supported:
-        * **Bundle datasets.** ``gsplats_zebrafish`` / ``gsplats_celegans`` ship
-          one outer zip holding many per-frame files; the manifest addresses the
-          bundle, not its members. Those demos stay on
-          :func:`~luxar.utils.demos.load_precomputed_bundle`.
-        * **Runtime-computed file lists** that are not manifest entries (e.g.
-          zebrafish's subsampled frame names). A *subset* of the manifest's own
-          files is fine; anything else raises rather than fetching the wrong data.
+        * **Bundle datasets.** ``gsplats_celegans`` ships one outer zip holding
+          many per-frame files; the manifest addresses the bundle, not its
+          members. That demo stays on
+          :func:`~luxar.utils.demos.load_precomputed_bundle`. (``gsplats_zebrafish``
+          was one until it moved to a single stacked 4D archive, which this
+          function serves.)
+        * **Runtime-computed file lists** that are not manifest entries. A
+          *subset* of the manifest's own files is fine; anything else raises
+          rather than fetching the wrong data.
         * **Non-gsplat payloads.** Use :func:`ensure_dataset`, which returns paths
           and assumes nothing about the format.
         * **Multi-part artifacts.** A ``kind=partition`` store — what

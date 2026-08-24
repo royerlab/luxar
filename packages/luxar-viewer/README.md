@@ -85,6 +85,7 @@ group table.
 | `lodEnergyComp`    | `boolean`             | `true`          | Compensate incomplete stream ladders by their committed energy fraction to reduce brightness popping.                                                                                                        |
 | `lodFinest`        | `boolean`             | `false`         | Force the finest replacement LOD regardless of projected coverage; useful for high-quality still or video capture.                                                                                           |
 | `depthSort`        | `boolean`             | `true`          | Enable worker-based back-to-front sorting for order-dependent geometry; disable for deterministic comparisons.                                                                                               |
+| `allowLinks`       | `boolean`             | `true`          | Allow element-authored links to navigate. Set `false` to keep `element-click` / `element-contextmenu` events and copy actions while suppressing navigation and link menu items.                              |
 | `factories`        | `AppFactories`        | —               | Construction overrides for the heavy components built by `init()` (scene manager, recording panel, …). For tests and advanced embedders; omit for the production path.                                       |
 
 ### Programmatic API
@@ -121,8 +122,15 @@ const off = app.on('dataset-loaded', ({ src }) => console.log('loaded', src));
 app.on('dataset-error', ({ src, error }) => console.error(src, error));
 app.on('dimensions-changed', (dims) => updateMyUI(dims));
 app.on('selection', (sel) => console.log(sel)); // { nodeName, elementIndex, hitNodeName } | null
+app.on('element-click', (event) => console.log(event));
+app.on('element-contextmenu', (event) => console.log(event));
 // off();
 ```
+
+`element-click` and `element-contextmenu` fire after a no-drag left- or
+right-click and include the resolved element, gesture, and link. Subscribe
+before `init()` / `switchDataset()` so label-less scenes provision picking;
+pass `allowLinks: false` to observe or replace navigation without allowing it.
 
 > **Note on `selection`:** fires with the element under the cursor (or `null`
 > when the hover clears) on any dataset. What `elementIndex` counts is
@@ -132,7 +140,7 @@ app.on('selection', (sel) => console.log(sel)); // { nodeName, elementIndex, hit
 > visible-buffer slot. Subscribe **before** the dataset loads (i.e. before
 > `init()` / `switchDataset()`) — the GPU picking pipeline is provisioned at
 > load time only when a listener exists, so picking stays zero-cost for pages
-> that never consume it. Hover-driven; click-to-select is a planned follow-up.
+> that never consume it. Hover-driven; use `element-click` for click gestures.
 > `nodeName` is the user-facing layer (the outermost `kind=partition` wrapper
 > when there is one), while `elementIndex` is local to the leaf actually hit —
 > index it against `hitNodeName`, which equals `nodeName` when the node is not
@@ -244,7 +252,7 @@ Luxar Viewer supports three navigation modes:
 | **R**      | Toggle advanced rendering controls panel |
 | **P**      | Toggle performance statistics            |
 | **N**      | Toggle nD dimension panel                |
-| **O**      | Open dataset browser                     |
+| **O**      | Toggle dataset browser                   |
 | **Ctrl+L** | Toggle debug console                     |
 | **Esc**    | Exit fullscreen / Close panels           |
 
@@ -691,6 +699,7 @@ monitor.element; // the widget element (mounted by the control rail)
 - `?no-lod-energy` — Disable stream-ladder energy compensation (enabled by default)
 - `?lod-finest` — Force the finest replacement LOD regardless of projected coverage
 - `?no-blend-warmup` — Disable the WebGL blend-variant program warm-up (enabled by default): each reachable blend-mode program is otherwise pre-linked off the interaction path after a dataset load, so the first Layers-panel blend switch does not pay the link cost on the click
+- `?no-links` — Disable element-authored navigation and link menu items while preserving copy actions and `element-click` / `element-contextmenu` events
 - `?depthSort=0` — Disable worker depth sorting (`false` and `off` are also accepted)
 - `?renderer=webgpu` — Use `WebGPURenderer` (TSL `NodeMaterial`) instead of the default `WebGLRenderer`
 - `?renderer=webgpu&webgpu-force-webgl` — Keep the WebGPU/TSL API surface while Three.js routes through its internal WebGL2 backend (diagnostic)

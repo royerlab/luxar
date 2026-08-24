@@ -116,7 +116,7 @@ Viewing 4D Data
 In the viewer:
 
 1. **Initial view**: See all cells at time=0
-2. **Press 4**: Select Time dimension
+2. **Press 1**: Select Time, the first non-displayed dimension (digit keys count only non-displayed dimensions)
 3. **Press ]**: Navigate to time=1 (next timestep)
 4. **Observe**: Cells appear/disappear based on hypersphere slicing
 

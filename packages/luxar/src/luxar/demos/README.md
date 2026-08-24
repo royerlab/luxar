@@ -270,7 +270,7 @@ Stunning volumetric representation of the famous Mandelbulb 3D fractal.
 
 **Run**: `luxar demo run mandelbulb [-- --resolution=128] [-- --power=8]`
 
-**Demonstrates**: 3D fractal mathematics (extension of Mandelbrot set), distance estimation for surface detection, iteration-based coloring, adaptive point sizing, spherical coordinate transformation, escape-time algorithm in 3D.
+**Demonstrates**: 3D fractal mathematics (extension of Mandelbrot set), distance estimation for surface detection, orbit-trap coloring, distance-field normals and ambient occlusion, baked key lighting, adaptive point sizing, spherical coordinate transformation, escape-time algorithm in 3D.
 
 ---
 
@@ -446,25 +446,32 @@ luxar demo run network_performance -- --points=2000000 --profile satellite
 
 ### Embedding and UMAP Demos
 
-#### demo_arxiv_embeddings_semantic_scholar.py - arXiv Papers (Semantic Scholar)
-Visualizes scientific papers in 3D embedding space. Papers cluster by topic, colored by research field, sized by citation count.
-
-**Run**: `luxar demo run arxiv_papers_semantic_scholar`
-
-**Requires**: Internet access, `sentence-transformers` and `umap-learn` packages. Embeds abstracts with Sentence-BERT (all-MiniLM-L6-v2) and reduces to 3D with UMAP. `luxar[gsplats]` (torch + scipy) is optional — without it the scene builds as a flat, fully viewable point cloud instead of the Points LOD ladder.
-
-**Demonstrates**: Semantic embedding of text, UMAP dimensionality reduction (384D to 3D), citation-based sizing, research field clustering, Semantic Scholar API usage.
-
----
-
 #### demo_arxiv_embeddings_kaggle.py - arXiv Papers (Kaggle / OpenAI)
-Visualizes arXiv papers using pre-computed OpenAI embeddings from the Kaggle "openai-arxiv-embeddings" dataset (2M+ papers, 3072D).
+Visualizes the **whole** `tomtum/openai-arxiv-embeddings` corpus — 3,286,365 preprints
+(2,902,228 arXiv + 308,367 bioRxiv + 75,770 medRxiv, through 2025-12) with pre-computed
+`text-embedding-3-large` vectors (3072D), projected to 3D by UMAP.
 
 **Run**: `luxar demo run arxiv_papers_kaggle`
 
-**Requires**: Internet access, Kaggle account (for first download, ~30 GB cached to `~/.cache/mlcroissant/`), `mlcroissant` and `umap-learn` packages. First run takes 8-15 minutes; subsequent runs use cache. `luxar[gsplats]` (torch + scipy) is optional — without it the scene builds as a flat, fully viewable point cloud instead of the Points LOD ladder.
+**Requires**: Internet access for the one-time ~30 GB embeddings download plus the ~1.8 GB
+Cornell arXiv metadata snapshot (budget ~39 GB of disk under `~/.cache/luxar/`,
+since the metadata ZIP is also extracted), and `scikit-learn` + `umap-learn`. No
+Kaggle credentials are needed. `luxar[gsplats]` (torch + scipy) is optional
+— without it the scene builds as a flat, fully viewable point cloud instead of the Points
+LOD ladder.
 
-**Demonstrates**: Large-scale embedding visualization (2M+ papers), pre-computed OpenAI text-embedding-3-large, UMAP reduction, Kaggle dataset integration via mlcroissant.
+The 3072D vectors are never held in RAM: `vectors.dat` is streamed in blocks and projected
+through a PCA basis down to 128D (fitted on a 300k-row uniform subsample), and only that
+`(N, 128) float32` matrix is cached and handed to UMAP. Pass `--sample=N` for a *uniform
+random* subset on a smaller machine, and `--pca-dim` / `--device` to trade quality for time.
+The sample bounds UMAP, metadata, and label RAM/time; a cold run still downloads the full
+archive, streams every vector twice, and writes the corpus-wide PCA cache. When launching
+through `hatch run`, override its one-thread CPU defaults, for example with
+`OMP_NUM_THREADS=16 MKL_NUM_THREADS=16`.
+
+**Demonstrates**: Multi-million-element embedding visualization, streaming decode of a
+40 GB binary attached to a ZIP, PCA pre-reduction before UMAP, optional GPU (cuML) UMAP,
+self-calibrating point radii, Points substitutive LOD.
 
 ---
 
@@ -675,7 +682,7 @@ The large-scale structure of the Universe from the full ~9.75M-object Dark Energ
 
 **Requires**: Nothing extra when the precomputed scene is available. Otherwise it auto-downloads the ~1 GB of DR1 LSS clustering catalogs to `~/.cache/luxar/desi_galaxies/` (resumable), reads them with `astropy`, and converts (RA, Dec, z) → comoving Mpc. Adds `astropy` to the `demos` extra. The built scene (with substitutive LOD) is cached in the demos output dir, so only the first launch pays the LOD-build cost. If the DESI data host is unavailable, check `https://data.desi.lbl.gov/` and rerun without `--recompute` once the manifest-hosted precomputed scene is published. Substitutive Points LOD needs `luxar[gsplats]` (torch + scipy); without it the scene builds as a flat, fully viewable point cloud.
 
-**Demonstrates**: Real spectroscopic-survey catalogs → a 3D cosmic-web Points cloud, `(RA, Dec, redshift)` → comoving-Mpc conversion via `astropy.cosmology` (DESI fiducial ΛCDM), bounded additive streaming on every substitutive Points LOD level for the full catalog, dual coloring (categorical tracer vs. continuous redshift colormap) via layer toggles, HDR additive rendering, self-contained download → convert → cache-processed bootstrap. Data: [DESI DR1](https://data.desi.lbl.gov/doc/releases/dr1/) (DESI Collaboration 2025, arXiv:2503.14745; CC BY 4.0).
+**Demonstrates**: Real spectroscopic-survey catalogs → a 3D cosmic-web Points cloud, `(RA, Dec, redshift)` → comoving-Mpc conversion via `astropy.cosmology` (DESI fiducial ΛCDM), a spatially partitioned finest LOD with bounded additive streaming inside every part, dual coloring (categorical tracer vs. continuous redshift colormap) via layer toggles, HDR additive rendering, self-contained download → convert → cache-processed bootstrap. Data: [DESI DR1](https://data.desi.lbl.gov/doc/releases/dr1/) (DESI Collaboration 2025, arXiv:2503.14745; CC BY 4.0).
 
 ---
 
@@ -706,7 +713,7 @@ The wiring of the human brain: all 87 named white-matter tracts of the HCP-1065 
 
 **Run**: `luxar demo run dmri_tractography [-- --per-bundle 6000 --points 28]`
 
-**Requires**: Internet access on first run — downloads `hcp1065_avg_tracts_trk.zip` (588 MB) to `~/.cache/luxar/dmri_tractography/` and caches the decoded bundles as an `.npz`. Needs `nibabel` (in the `demos` extra). No GPU. Building the scene takes ~25 min because every node lifts its segments to Gaussian beads for the substitutive LOD; it is a one-time cost, paid again only on `--recompute`. Substitutive Lines LOD needs `luxar[gsplats]` (torch + scipy); without it the bundles are written flat (fully viewable, no coarse levels).
+**Requires**: Internet access on first run — downloads `hcp1065_avg_tracts_trk.zip` (588 MB) to `~/.cache/luxar/dmri_tractography/` and caches the decoded bundles as an `.npz`. Needs `nibabel` (in the `demos` extra). No GPU. Building the scene takes ~25 min because every node lifts its segments to Gaussian beads for the substitutive LOD; the cached scene rebuilds on `--recompute` or when the demo builder fingerprint changes, unless `--keep-stale` is passed. Substitutive Lines LOD needs `luxar[gsplats]` (torch + scipy); without it the bundles are written flat (fully viewable, no coarse levels).
 
 **Demonstrates**: Lines as the *native* geometry for data that is already made of curves — no conversion, unlike every volumetric demo. Arc-length resampling (the source is ~0.4 mm-sampled, ~10x finer than any rendered line width); `line_type="indexed"` with per-streamline contiguous vertices so thick tubes render seamless joints; 87 separate nodes, each sized to stay under both the un-laddered-leaf gate (200K vertices) and the per-node element-texture segment bound; per-node **substitutive LOD** at `compression_factor=256` — thin lines need a far larger K than the default, because the bead lift is driven by arc-length ÷ width rather than by segment count (at K=4 the "coarse" level comes out 5.6x heavier than the fine one, and the scene balloons to 2.1 GB); `blending_mode="additive"` at low opacity with a display window, which is order-independent and so cannot pop as the camera orbits — unlike `normal`, whose per-object transparent-pass sort flips between overlapping bundles; and per-tract **hover labels** broadcast across a node's vertices (Lines labels are per-vertex), which ride the ladder's finest level only, so the tooltip appears once a bundle is zoomed to roughly fill the view. Data: [Yeh 2022](https://doi.org/10.1038/s41467-022-32595-4), [HCP-1065 atlas](https://brain.labsolver.org/hcp_trk_atlas.html) (CC BY-SA 4.0; WU-Minn HCP data-use terms).
 
@@ -818,7 +825,7 @@ Two-channel scikit-image `cells3d` fluorescence volume (membranes + nuclei) fitt
 
 **Requires**: Git LFS data (default) or `scikit-image` + GPU (with `--recompute`).
 
-**Demonstrates**: Per-channel `layer=True` gsplats nodes with built-in BOP LUTs applied at display time (interactive colormap switching in the Layers panel, press L), shared amplitude-weighted centroid alignment, volumetric blending, ACES tone-mapping. The lightweight, no-download sibling of `organoid_multichannel` and `kidney_multichannel_layers`. Its **mesh** counterpart on the same data is `mesh_isosurface_cells3d` — run both to compare the two representations side by side.
+**Demonstrates**: Per-channel `layer=True` gsplats nodes with built-in BOP LUTs applied at display time (interactive colormap switching in the Layers panel, press L), shared amplitude-weighted centroid alignment, additive compositing for the two co-located channels, ACES tone-mapping. The lightweight, no-download sibling of `organoid_multichannel` and `kidney_multichannel_layers`. Its **mesh** counterpart on the same data is `mesh_isosurface_cells3d` — run both to compare the two representations side by side.
 
 ---
 
@@ -930,7 +937,7 @@ Gaussian-splats a real clinical CT scan — a neck-to-pelvis study (the fullest 
 
 **Requires**: Nothing extra by default — ships a precomputed fit + per-splat organ labels via Git LFS (~8 MB: a neck-to-pelvis subject at 1.5 mm, fit to ~0.66M splats, PSNR ~43 dB; colors, layers and hover tooltips are all derived from the labels at scene build). With `--recompute` (or if the LFS assets aren't pulled) it auto-downloads the 3.2 GB TotalSegmentator subset to `~/.cache/luxar/gsplats_ct_totalsegmentator/` (resumable), extracts one subject, combines its 117 organ masks with `nibabel`, windows + fits on the GPU, and samples the per-splat organ label. Adds `nibabel` to the `demos` extra.
 
-**Demonstrates**: Real *clinical CT* (neck-to-pelvis) + multi-organ segmentation → colored Gaussian splats, combining per-structure NIfTI masks into one label volume, Hounsfield windowing, per-splat organ-label sampling driving a tissue-grouped color palette + **per-splat hover tooltips** (specific structure names) + a split into **toggle-able tissue layers** (Skeleton/Organs/Vessels & heart/Nervous system/Muscles), cubic-voxel resampling, ACES tone-mapping + volumetric HDR rendering, self-contained download → combine → fit → cache-processed bootstrap. Data: [TotalSegmentator](https://zenodo.org/records/10047263) (Wasserthal et al. 2023, Radiology: AI; CC BY 4.0).
+**Demonstrates**: Real *clinical CT* (neck-to-pelvis) + multi-organ segmentation → colored Gaussian splats, combining per-structure NIfTI masks into one label volume, Hounsfield windowing, per-splat organ-label sampling driving a tissue-grouped color palette + **per-splat hover tooltips** (specific structure names) + a split into **toggle-able tissue layers** (Skeleton/Organs/Vessels & heart/Nervous system/Muscles), cubic-voxel resampling, ACES tone-mapping + additive compositing for the co-located groups, self-contained download → combine → fit → cache-processed bootstrap. Data: [TotalSegmentator](https://zenodo.org/records/10047263) (Wasserthal et al. 2023, Radiology: AI; CC BY 4.0).
 
 ---
 
@@ -1012,13 +1019,13 @@ Fetches the aerial "small city" MatrixCity scene — **13,589,514 Gaussians** �
 ---
 
 #### demo_gsplats_4d_zebrafish_timelapse.py - 4D Zebrafish Embryo Time-Lapse
-4D (3D + time) confocal recording of a living zebrafish embryo during gastrulation, with per-timepoint Gaussian splatting and a time dimension slider.
+Five hours of zebrafish gastrulation (Zenodo 1211599, confocal, 151 timepoints two minutes apart) as **one** 4D Gaussian-splat node: each timepoint is fitted separately, then the fits are stacked with `combine_as_new_dimension` so time is the fourth centre column rather than a per-timepoint sibling node. That single node carries a substitutive LOD ladder in which time is a **hard coarsening barrier**, so a coarse level never blends one frame's cells into the next. The labelled endodermal cells fill under 2% of the imaged voxels, so a second toggleable layer draws the acquisition volume as a **wireframe cage ruled every 100 µm** — without it the specimen floats in an unmarked void and its migration across the yolk cannot be read. The Time slider is in **minutes** on an exact 2-minute grid (the LSM records 120.01 s; the axis is rounded so its last stop is actually reachable). The shipped archive is 1,590,010 splats — a median of 9,144 per timepoint at a median foreground PSNR of 20.95 dB — in four substitutive levels.
 
 **Run**: `luxar demo run gsplats_4d_zebrafish_timelapse`
 
-**Requires**: Internet access (downloads ~2.1 GB LSM from Zenodo), GPU recommended.
+**Requires**: Nothing but the bundled fit to view. `--recompute` downloads the ~2.1 GB LSM from Zenodo and refits all 151 timepoints (GPU strongly recommended).
 
-**Demonstrates**: 4D Gaussian splatting (3D + time), per-timepoint independent fitting, `dim_order` + `fill` for time coordinate assignment, zebrafish gastrulation imaging, Zeiss LSM format.
+**Demonstrates**: stacking per-timepoint 3D fits into one 4D node; barrier-aware substitutive LOD over a time axis; `extend_to_all` for a static reference layer that survives every scrub; a discrete viewer dimension carrying real physical units; and reading acquisition geometry out of a Zeiss LSM instead of assuming it.
 
 ---
 
@@ -1029,7 +1036,7 @@ Fetches the aerial "small city" MatrixCity scene — **13,589,514 Gaussians** �
 
 **Requires**: The two pre-fit `.gsplats.zarr` (~220 MB) in a local store (`~/luxar_demo_data/gsplats_neuromast_2ch/`, or `$LUXAR_NEUROMAST_DATA_DIR`). ⚠️ **Not bundled, and not downloadable yet** — both channels are uploaded to the `cc-by` Zenodo record and pinned by SHA-256 in `demos/data_manifest.json`, but that record is still an unsubmitted draft (`published: false`), so nothing can be fetched until it is published; the remaining follow-up is to publish it and switch to `ensure_dataset`, like the other gsplat demos. No network/GPU needed once the store is populated.
 
-**Demonstrates**: 4D + multi-channel gsplats, per-channel `layer=True` + named colormaps (`bop_blue`/`bop_orange`) for the Layers panel, `add_gsplats_from_file` grafting of pre-fit multi-LOD (`stream`, 8 LODs) nodes, Z-anisotropy correction baked via `transform --scale`, redundancy-based culling, near-zero volumetric absorption (κ=0.05) so the two superimposed channels barely occlude each other. Options: `--no-serve`, `--serve-only`.
+**Demonstrates**: 4D + multi-channel gsplats, per-channel `layer=True` + named colormaps (`bop_blue`/`bop_orange`) for the Layers panel, `add_gsplats_from_file` grafting of pre-fit multi-LOD (`stream`, 8 LODs) nodes, Z-anisotropy correction baked via `transform --scale`, redundancy-based culling, and additive compositing because the two superimposed channels have no meaningful cross-layer order. Options: `--no-serve`, `--serve-only`.
 
 ---
 
@@ -1233,7 +1240,7 @@ from luxar.demos import (
     cache_computed,  # cache an expensive result (UMAP, field) — versioned, param-keyed
     require_local_data,  # gate LFS-tracked local data (clear "git lfs pull" message)
     require_module,  # gate an OPTIONAL dependency at its point of use (see #7)
-    parse_demo_flags,  # --recompute / --no-serve / --serve-only
+    parse_demo_flags,  # --recompute / --keep-stale / --no-serve / --serve-only
     parse_int_arg,  # --points=N / --sample N integer flags
     parse_path_arg,  # --cache-dir PATH / --data=PATH path flags (expands ~)
     hsv_to_rgb,  # vectorized rainbow / hue-ramp colouring
@@ -1458,7 +1465,6 @@ hatch run python packages/luxar/src/luxar/demos/demo_hilbert_curve_3d.py
 hatch run python packages/luxar/src/luxar/demos/demo_network_performance.py
 
 # --- Embedding / UMAP ---
-hatch run python packages/luxar/src/luxar/demos/demo_arxiv_embeddings_semantic_scholar.py
 hatch run python packages/luxar/src/luxar/demos/demo_arxiv_embeddings_kaggle.py
 hatch run python packages/luxar/src/luxar/demos/demo_protein_embeddings_cafa5.py
 hatch run python packages/luxar/src/luxar/demos/demo_esm3_protein_landscape.py

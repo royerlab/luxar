@@ -105,6 +105,35 @@ export interface SelectionPayload {
 }
 
 /**
+ * Payload for {@link LuxarEmbedderEventMap.element-click} and
+ * `element-contextmenu` (issue #1917).
+ *
+ * Extends the hover {@link SelectionPayload} fields with the gesture itself,
+ * so all of that type's caveats about `elementIndex` apply here unchanged.
+ */
+export interface ElementPointerPayload extends SelectionPayload {
+  /**
+   * Which pointer button: 0 = primary, 2 = secondary.
+   *
+   * Reports the raw DOM value, so a macOS Ctrl+primary-click — the
+   * platform's secondary gesture — arrives as `0` on an
+   * `element-contextmenu` event. Switch on the event NAME, not on this,
+   * to tell the two gestures apart.
+   */
+  button: number;
+  /** Viewport coordinates of the gesture, in CSS pixels. */
+  x: number;
+  y: number;
+  /**
+   * The URL the built-in handler resolved from the element's `link` template,
+   * or null when it has none, the template could not be made safe, or link
+   * opening is disabled. Reported so a host can mirror or override the
+   * behaviour without re-implementing template resolution.
+   */
+  link: string | null;
+}
+
+/**
  * Events an embedder can subscribe to via `LuxarApp.on(event, listener)`.
  *
  * - `dataset-loaded` / `dataset-error` — fire around every dataset load
@@ -115,11 +144,24 @@ export interface SelectionPayload {
  *   or `null` when the hover clears). Works on any dataset — the picking
  *   pipeline is provisioned when a `selection` listener exists at dataset
  *   load time, so subscribe BEFORE `init()` / `switchDataset()` (on scenes
- *   with labels it is always provisioned). Hover-driven, not click-to-select.
+ *   with labels it is always provisioned). Hover-driven: it reports what is
+ *   under the cursor, not what was clicked.
+ * - `element-click` / `element-contextmenu` — fire when the user left- or
+ *   right-clicks an element without dragging (issue #1917). Unlike
+ *   `selection`, these are gesture-driven. They fire ALONGSIDE the built-in
+ *   behaviour rather than instead of it: a host that wants exclusive control
+ *   should also pass `allowLinks: false` (or load with `?no-links`), which
+ *   suppresses navigation while still delivering the events. Like `selection`,
+ *   a listener present at dataset-load time provisions the picking pipeline,
+ *   so subscribe BEFORE `init()` / `switchDataset()` — on a scene with no
+ *   labels and no interaction templates, subscribing afterwards leaves picking
+ *   switched off and the event never fires.
  */
 export interface LuxarEmbedderEventMap {
   'dataset-loaded': { src: string };
   'dataset-error': { src: string; error: Error };
   'dimensions-changed': EmbedderDimensions;
   selection: SelectionPayload | null;
+  'element-click': ElementPointerPayload;
+  'element-contextmenu': ElementPointerPayload;
 }

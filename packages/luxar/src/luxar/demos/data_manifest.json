@@ -189,8 +189,8 @@
       "files": [
         {
           "name": "desi_dr1_cosmic_web.luxar.zarr.zip",
-          "sha256": "bd03e9045413c6936e952f3c1ef008ea5dba3dd97c9a2bce00645e6cc48ec69f",
-          "bytes": 76761100
+          "sha256": "411dc0ee7a57f049d7522be9822af412711d6e85ed6ba5c19616317e093e56ad",
+          "bytes": 74339924
         }
       ]
     },
@@ -393,19 +393,19 @@
       "bucket": "zenodo",
       "record": "cc-by-sa",
       "license": "cc-by-sa-4.0",
-      "source": "Zenodo 1211599 (zebrafish light-sheet)",
+      "source": "Zenodo 1211599 (zebrafish gastrulation, confocal timelapse)",
       "attribution": "Pia Aanstad \u2014 doi:10.5281/zenodo.1211599 (CC BY-SA 4.0).",
       "acquisition": {
-        "description": "the LSM timelapse, every fitted timepoint's own stored bytes",
+        "description": "the whole LSM timelapse: 151 timepoints of 44 x 512 x 512 uint8, every one of which is fitted",
         "comparable": true,
-        "stored_bytes": null
+        "stored_bytes": 1741684736
       },
       "dir": "gsplats_zebrafish",
       "files": [
         {
-          "name": "zebrafish.gsplats.zarr.zip",
-          "sha256": "47e238ec17b589fa6762ae91e6357b91fbbe4fd8c23c5404421fc4d0191099b7",
-          "bytes": 2055585
+          "name": "zebrafish_4d.gsplats.zarr.zip",
+          "sha256": "ec8d80d14d0216b9743f93ae1eb2aaca12fcbf79ed38e19db3bccc63dedc8a53",
+          "bytes": 22348280
         }
       ]
     },

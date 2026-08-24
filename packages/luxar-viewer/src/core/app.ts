@@ -89,6 +89,8 @@ export class LuxarApp {
   private pickingSystem?: PickingSystem;
   private labelLoader?: LabelLoader;
   private imageLabelLoader?: ImageLabelLoader;
+  /** Reads the per-element `keys` CSR — a LabelLoader on the 'keys' channel (#1917). */
+  private keyLoader?: LabelLoader;
   /**
    * Per-init EventGroup for picking-system listeners (canvas mousemove,
    * window resize, controls/scene-manager subscriptions). Re-disposed and
@@ -96,6 +98,8 @@ export class LuxarApp {
    */
   private pickingEvents = new EventGroup();
   private isInitialized = false;
+  /** True from the start of init() until routing and app-level wiring complete. */
+  private isInitializing = false;
   /**
    * Re-entrance guard for {@link dispose}. Set while a dispose is in flight
    * so a `beforeunload` callback that fires mid-dispose (or any nested call)
@@ -225,6 +229,7 @@ export class LuxarApp {
       if (partial.controlRail) this.controlRail = partial.controlRail;
     };
 
+    this.isInitializing = true;
     try {
       const result = await runInitPipeline(
         {
@@ -247,6 +252,9 @@ export class LuxarApp {
 
       // Dataset routing: subsystems are wired up, fields are assigned —
       // the orchestrator delegates can now safely read `this.*`.
+      // Install this before routing so O / the rail control can open the
+      // browser while a slow initial dataset load is still in progress.
+      this.setupDatasetBrowserShortcut();
       if (await this.shouldShowBrowser(result.sceneSrc)) {
         try {
           this.showDatasetBrowser();
@@ -262,7 +270,6 @@ export class LuxarApp {
       }
 
       this.setupDisposeOnUnload();
-      this.setupDatasetBrowserShortcut();
       this.setupFocusHandling();
       this.setupOnlineRetry();
       this.setupDebugInterface();
@@ -281,6 +288,8 @@ export class LuxarApp {
       assignFromPartial();
       this.dispose();
       throw error;
+    } finally {
+      this.isInitializing = false;
     }
   }
 
@@ -296,7 +305,7 @@ export class LuxarApp {
    */
   private showDatasetBrowser(): void {
     // Do not reopen the browser while a selected dataset is still switching.
-    // The modal closes immediately after a selection, so without this guard
+    // The modal closes immediately after an accepted selection, so without this guard
     // the O shortcut / dataset rail item could open a second modal and offer
     // another overlapping full teardown+reload.
     if (this.datasetBrowser || this.switchInFlight) return;
@@ -307,8 +316,9 @@ export class LuxarApp {
       onSrcChange: (src) => {
         this.options = { ...this.options, src };
       },
-      // Lets the selection handler skip its URL/src side effects when the
-      // guarded switch below is going to reject the selection anyway.
+      // Lets the selection handler refuse startup-time choices before any
+      // side effects or guarded switch dispatch.
+      isInitializing: () => this.isInitializing,
       isSwitchInFlight: () => this.switchInFlight !== undefined,
       // Browser selections must share the same in-flight guard as the public
       // embedder API. Calling loadDataset() directly here used to allow two
@@ -510,14 +520,22 @@ export class LuxarApp {
         pickingSystem: this.pickingSystem,
         labelLoader: this.labelLoader,
         imageLabelLoader: this.imageLabelLoader,
+        keyLoader: this.keyLoader,
       },
       getOverlayManager: () => this.overlayManager,
       onSelection: (sel) => this.embedderEvents.emit('selection', sel),
       hasSelectionConsumer: () => this.embedderEvents.hasListeners('selection'),
+      hasElementActionConsumer: () =>
+        this.embedderEvents.hasListeners('element-click') ||
+        this.embedderEvents.hasListeners('element-contextmenu'),
+      allowLinks: this.options.allowLinks ?? true,
+      onElementClick: (p) => this.embedderEvents.emit('element-click', p),
+      onElementContextMenu: (p) => this.embedderEvents.emit('element-contextmenu', p),
     });
     this.pickingSystem = result.pickingSystem;
     this.labelLoader = result.labelLoader;
     this.imageLabelLoader = result.imageLabelLoader;
+    this.keyLoader = result.keyLoader;
   }
 
   /**
@@ -535,11 +553,13 @@ export class LuxarApp {
         pickingSystem: this.pickingSystem,
         labelLoader: this.labelLoader,
         imageLabelLoader: this.imageLabelLoader,
+        keyLoader: this.keyLoader,
       },
     });
     this.pickingSystem = undefined;
     this.labelLoader = undefined;
     this.imageLabelLoader = undefined;
+    this.keyLoader = undefined;
   }
 
   /**
@@ -726,6 +746,9 @@ export class LuxarApp {
    */
   switchDataset(src: string): Promise<void> {
     if (!this.isInitialized) {
+      if (this.isInitializing) {
+        throw new Error('Luxar is still starting up; try again in a moment.');
+      }
       throw new Error('LuxarApp.switchDataset called before init()');
     }
     if (this.switchInFlight) {
@@ -890,6 +913,7 @@ export class LuxarApp {
     // sees the correct state from the first instant of teardown, even if
     // teardown throws partway through.
     this.isInitialized = false;
+    this.isInitializing = false;
 
     // Hand the page its own <title> back. The viewer overwrites document.title
     // with the scene's name, which is a mutation of a host-page global: an
@@ -917,6 +941,7 @@ export class LuxarApp {
       pickingSystem: this.pickingSystem,
       labelLoader: this.labelLoader,
       imageLabelLoader: this.imageLabelLoader,
+      keyLoader: this.keyLoader,
       datasetBrowser: this.datasetBrowser,
       clearScaleBar: () => {
         this.scaleBar = undefined;
@@ -941,6 +966,9 @@ export class LuxarApp {
       },
       clearLabelLoader: () => {
         this.labelLoader = undefined;
+      },
+      clearKeyLoader: () => {
+        this.keyLoader = undefined;
       },
       clearImageLabelLoader: () => {
         this.imageLabelLoader = undefined;

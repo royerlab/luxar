@@ -6,6 +6,7 @@ the shared ``app_gsplat`` Typer.
 
 from __future__ import annotations
 
+import math
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
     import numpy as np
 
     from luxar.gsplats.doctor import DoctorReport, Finding, StoreKind
+    from luxar.gsplats.gsplat_data import GSplatData
 
 
 _IMPORTANT_FITTING_KEYS = (
@@ -419,11 +421,11 @@ def napari_viewer(
         raise typer.Exit(1)
 
     try:
-        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.io.load_gsplats import load_default_gsplats
 
         with asection(f"Loading gsplat dataset: {path.name}"):
             # Load dataset
-            data = GSplatData.load(path, include_stats=True)
+            data = load_default_gsplats(path, include_stats=True)
 
             n_splats = len(data.amplitudes)
             ndim = data.centers.shape[1]
@@ -672,6 +674,65 @@ def _print_quality_comparison(
     aprint("=" * 50)
 
 
+def _load_gsplats_for_comparison(path: Path) -> tuple["GSplatData", int, int]:
+    """Materialize the tree selection that the renderer shows by default.
+
+    Root stats come along on both paths so the caller can resolve the
+    normalization basis (#1173). They remain unscrubbed because this temporary
+    flat dataset is never persisted.
+    """
+    from luxar.gsplats.gsplat_data import GSplatData
+    from luxar.gsplats.io.load_gsplats import load_gsplat_node
+    from luxar.gsplats.tree import iter_default_leaves, total_splats
+
+    node, stats = load_gsplat_node(path, include_stats=True)
+    n_leaves = sum(1 for _ in iter_default_leaves(node))
+    data = GSplatData.from_default_selection(node, stats=stats)
+    return data, n_leaves, total_splats(node)
+
+
+def _announce_unscored_comparison_splats(
+    *, n_stored_splats: int, n_scored_splats: int
+) -> None:
+    """Report coarse LOD splats excluded from the default-rendered selection."""
+    if n_stored_splats > n_scored_splats:
+        aprint(
+            f"Skipped {n_stored_splats - n_scored_splats:,} splats in coarse "
+            "LOD levels; compression ratio covers the whole store"
+        )
+
+
+def _validate_image_min_override(image_min: Optional[float]) -> None:
+    if image_min is not None and (not math.isfinite(image_min) or image_min < 0.0):
+        raise typer.BadParameter(
+            "must be a finite, non-negative level", param_hint="--image-min"
+        )
+
+
+def _reference_on_dataset_basis(
+    reference: "np.ndarray", stats: Any, image_min: Optional[float]
+) -> "np.ndarray":
+    from luxar.gsplats.fit_basis import (
+        MISSING_BASIS_HINT,
+        fit_image_min,
+        reference_on_fit_basis,
+    )
+
+    resolved_min = float(image_min) if image_min is not None else fit_image_min(stats)
+    if resolved_min is None:
+        aprint(f"WARNING: {MISSING_BASIS_HINT}")
+    elif resolved_min == 0.0:
+        aprint("Basis: fit removed no background (image_min=0)")
+    else:
+        source = "--image-min" if image_min is not None else "dataset"
+        reference = reference_on_fit_basis(reference, resolved_min)
+        aprint(
+            f"Basis: reference shifted by image_min={resolved_min:.6g} "
+            f"(from {source}); scores are background-relative, matching the render"
+        )
+    return reference
+
+
 def compare_quality(
     gsplats_path: Path = typer.Argument(
         ..., exists=True, help="Path to .gsplats.zarr dataset (or .zip/.tar.gz)"
@@ -695,6 +756,14 @@ def compare_quality(
         "-t",
         help="Truncation radius in sigma. Defaults to dataset's stored value.",
     ),
+    image_min: Optional[float] = typer.Option(
+        None,
+        "--image-min",
+        help="Background level the fit subtracted, for a dataset that does not "
+        "record one. A render is background-relative, so the reference is "
+        "shifted by this before scoring. Normally read from the dataset; pass it "
+        "only for stores fitted before the level was persisted.",
+    ),
     channel: Optional[int] = typer.Option(
         None, "--channel", "-c", help="Channel index for OME-Zarr reference"
     ),
@@ -715,7 +784,10 @@ def compare_quality(
 
     Renders the gsplats back to a volume and computes PSNR, SSIM, MSE,
     relative L2 error, and maximum absolute error.  All heavy computation
-    runs on GPU when available.
+    runs on GPU when available. Partition and nested stores are scored over
+    their default-rendered selection: all parts and each LOD group's finest
+    level. The compression ratio covers the whole store, including coarse
+    levels that are not scored.
 
     Examples:
         luxar gsplat compare fitted.gsplats.zarr original.tiff
@@ -723,13 +795,14 @@ def compare_quality(
         luxar gsplat compare fitted.gsplats.zarr original.zarr --output-json metrics.json
         luxar gsplat compare fitted.gsplats.zarr original.zarr -j metrics.json -q
     """
+    _validate_image_min_override(image_min)
+
     try:
         import json
 
         import torch
 
         from luxar.cli.gsplat_config import load_volume, parse_shape
-        from luxar.gsplats.gsplat_data import GSplatData
         from luxar.gsplats.metrics import compute_quality_metrics
         from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
         from luxar.gsplats.utils.device import resolve_torch_device
@@ -737,10 +810,21 @@ def compare_quality(
         with asection("Quality Comparison"):
             # Load gsplat dataset
             with asection("Loading gsplat dataset"):
-                data = GSplatData.load(gsplats_path, include_stats=False)
+                # Stats come along (`include_stats=True` inside the helper) so
+                # the normalization basis is reachable: a render is
+                # background-relative and the reference is raw, and without the
+                # stored `image_min` the two cannot be reconciled (#1173). This
+                # is metadata only — no extra array decode.
+                data, n_leaves, n_stored_splats = _load_gsplats_for_comparison(
+                    gsplats_path
+                )
                 n_splats = data.n_splats
                 ndim = data.ndim
                 aprint(f"Loaded {n_splats:,} splats ({ndim}D)")
+                aprint(f"Materialized {n_leaves:,} default-rendered leaf/leaves")
+                _announce_unscored_comparison_splats(
+                    n_stored_splats=n_stored_splats, n_scored_splats=n_splats
+                )
 
             # Resolve truncation radius from dataset if not explicitly set
             if truncate is None:
@@ -752,6 +836,11 @@ def compare_quality(
                     reference_path, channel=channel, timepoint=timepoint
                 )
                 ref_shape = ref_np.shape
+
+                # Put the reference on the render's basis before anything scores
+                # it. An explicit --image-min wins over the stored level so a
+                # pre-provenance store is still comparable.
+                ref_np = _reference_on_dataset_basis(ref_np, data.stats, image_min)
 
             # Determine rendering shape
             if shape is not None:
@@ -789,7 +878,11 @@ def compare_quality(
                         f"range [{rendered_t.min().item():.4f}, {rendered_t.max().item():.4f}]"
                     )
 
-                # Upload reference to same device
+                # Upload reference to same device, on the FIT's basis. Scoring
+                # a background-relative render against a pedestal-bearing
+                # reference charges the fit for background it never claimed to
+                # represent, which is the artifact this command most needed
+                # fixing (#1173).
                 ref_t = torch.from_numpy(ref_np).to(rendered_t.device)
 
                 # Compute metrics (all on GPU)
@@ -820,8 +913,6 @@ def compare_quality(
 
         # JSON output
         if output_json is not None:
-            import math
-
             # Replace non-finite floats (inf/nan) with None for valid JSON
             safe_metrics = {
                 k: (v if isinstance(v, (int, str)) or math.isfinite(v) else None)

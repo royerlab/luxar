@@ -23,6 +23,32 @@ class CompositionMixin(_GSplatDataOps):
     """Merge / partition / embed — the multi-dataset composition family."""
 
     @classmethod
+    def from_default_selection(
+        cls,
+        node: "GSplatNode",
+        *,
+        stats: Optional[Dict[str, Any]] = None,
+    ) -> "GSplatData":
+        """Materialize the tree selection rendered by default.
+
+        Matrix-shaped nodes are preserved verbatim, including their additive
+        and substitutive ladders. Nested trees become one flat dataset containing
+        every partition part and only each LOD group's default (finest) child.
+        Call ``flattened()`` on the result when the caller requires one rung.
+        """
+        from luxar.gsplats.tree import is_matrix_shaped, iter_default_leaves
+
+        make = cast("type[GSplatData]", cls)
+        if is_matrix_shaped(node):
+            return make.from_tree(node, stats=stats)
+
+        parts = [make.from_tree(leaf).flattened() for leaf in iter_default_leaves(node)]
+        if not parts:
+            raise ValueError("GSplat tree has no default-rendered leaves")
+        flat = make.concatenate(parts)
+        return make.from_additive_sublods(list(flat.additive_sublods), stats=stats)
+
+    @classmethod
     def concatenate(cls, datasets: list["GSplatData"]) -> "GSplatData":
         """Concatenate multiple GSplatData objects into one.
 
@@ -397,9 +423,14 @@ class CompositionMixin(_GSplatDataOps):
         def _part_node(label: int, region: "GSplatData") -> "GSplatNode":
             if recipe is None:
                 return region.tree
+            from dataclasses import replace
+
+            from luxar.gsplats.fit_basis import fit_image_min
             from luxar.gsplats.lod.recipes import RecipeParams, build_part_lod
 
             params = recipe_params if recipe_params is not None else RecipeParams()
+            if params.image_min is None:
+                params = replace(params, image_min=fit_image_min(region.stats))
             return build_part_lod(
                 region.tree, recipe, params, cell=cells.get(int(label))
             )

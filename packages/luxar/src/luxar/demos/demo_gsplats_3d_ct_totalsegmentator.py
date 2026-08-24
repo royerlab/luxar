@@ -300,8 +300,8 @@ CLASS_MAP = {
 # Tissue-group base colors (RGB in [0, 1]) — no canonical LUT exists upstream.
 # Muscle is ~26% of splats (paraspinal/gluteus/iliopsoas) and bone ~38%, so both
 # are kept as receding, low-saturation "context" tones (dim flesh, warm ivory)
-# while the organs/vessels stay vivid, preserving contrast under the volumetric
-# blend instead of drowning in a bright pink+ivory mush.
+# while the organs/vessels stay vivid, so the high-count context tissues do not
+# overwhelm the smaller structures in the composite.
 GROUP_COLORS = {
     "bone": (0.90, 0.90, 0.88),  # near-neutral white (no yellow cast)
     "muscle": (0.85, 0.45, 0.42),  # salmon flesh — visible but not garish
@@ -861,9 +861,22 @@ def create_luxar_scene(fit: GSplatData, labels: np.ndarray, output_path: Path) -
                     cholesky_factors=chol[mask],
                     colors=colors[mask].astype(np.float32),
                     labels=[name_lut[int(lid)] for lid in lids],
+                    # Left-click an organ to look it up; right-click to copy
+                    # its name. The labels here are already bare anatomy
+                    # names ("Liver", "Kidney right"), so `{hover_label}` is
+                    # the whole key and no separate id channel is needed.
+                    # `organ_label_text` returns "" for an unrecognised class
+                    # id, and an empty substitution suppresses the link rather
+                    # than opening a search for nothing.
+                    link=(
+                        "https://en.wikipedia.org/wiki/"
+                        "Special:Search?search={hover_label}"
+                    ),
+                    copy="{hover_label}",
                     opacity=float(opacity),
-                    absorption=1.0,
-                    blending_mode="volumetric",
+                    # One global order slot per node cannot interleave these
+                    # co-located volumes; additive is order-independent.
+                    blending_mode="additive",
                     layer=True,
                 )
                 aprint(

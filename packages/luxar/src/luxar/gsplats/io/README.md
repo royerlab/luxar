@@ -44,9 +44,13 @@ save_gsplats(
 )
 ```
 
-**`load_gsplats()`** - Load splats from .gsplats.zarr
+**`load_gsplats()` / `load_default_gsplats()`** - Load splats from .gsplats.zarr
 
 Transparently handles compressed formats (`.gsplats.zarr.zip`, `.gsplats.zarr.tar.gz`) by extracting to a temporary directory automatically (via the shared, hardened `_archive.extract_compressed_zarr` — it rejects links/devices, validates every member before extracting, and caps member count / total size to guard against path-traversal and archive-bomb attacks). Arrays are decoded from their stored encoding (quantization, broadcasting, etc.) to float32.
+
+`load_gsplats()` requires a flat/matrix-shaped tree. `load_default_gsplats()`
+also accepts partition and nested trees by materializing their default-rendered
+selection into one in-memory `GSplatData`.
 
 The store root is resolved from the extracted tree in three tiers: a top-level `*.gsplats.zarr` directory (what a compressed save writes); else the archive ROOT itself when a zarr group document (`zarr.json` / `.zgroup`) sits at depth 0 — the *flat* shape `zip -r x.gsplats.zarr.zip .` from inside a store produces; else the first top-level directory whatever it is called (a stray depth-0 file beside it — a `README.md`, a `.DS_Store` — must not decide the outcome, and `iterdir()` order is not a decision). The named directory deliberately keeps winning over the flat reading, matching `_zip_is_flat_store`. A flat tree is moved one level down under a store-shaped name so the returned path's parent is still a removable temp directory, which is the contract every caller relies on.
 

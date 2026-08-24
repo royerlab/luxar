@@ -48,6 +48,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 
+from luxar.gsplats.fit_basis import reference_on_fit_basis
 from luxar.gsplats.gsplat_data import GSplatData
 
 __all__ = ["VolumeRefitConfig", "volume_refine_splats"]
@@ -84,6 +85,18 @@ class VolumeRefitConfig:
     #: range, padded by this fraction of each extent. Catches physical-unit or
     #: transform-scaled coordinate frames that the MSE guard cannot.
     frame_tolerance: float = 0.5
+    #: The level the INPUT fit subtracted (``stats["image_min"]``), or ``None``
+    #: when the store does not record one.
+    #:
+    #: The seed's amplitudes are background-relative — that is the recipe's
+    #: contract and why ``seed_amps_background_relative`` is set below. The
+    #: volume handed in is NOT: it is the raw source. Left unreconciled, the
+    #: inner fit inherits ``floor="auto"`` and re-estimates a background from
+    #: this volume, so a re-fitted level can land on a different basis from the
+    #: ladder's other levels — the ``conserve_mass`` DC pinning partly hides it,
+    #: which is why it went unnoticed (#1177). Supplying the level lets the
+    #: re-fit run on the ladder's own basis instead of guessing a new one.
+    image_min: Optional[float] = None
 
 
 def _render(data: GSplatData, volume: np.ndarray, device: Optional[str]) -> np.ndarray:
@@ -225,9 +238,28 @@ def volume_refine_splats(
         stats["wall_s"] = float(time.time() - t0)
         return seed, stats
 
+    # Put the target on the ladder's basis and stop the inner fit from inventing
+    # its own. Both halves are needed: subtracting the level makes the volume
+    # background-relative like the seed, and `floor="none"` keeps `auto` from
+    # re-estimating a second (different) background on top of that. When the
+    # store recorded no level, behaviour is unchanged from before — `auto` still
+    # runs — because guessing here would be worse than the status quo.
+    # The branch is on "is the basis KNOWN", not on "is it nonzero". A recorded
+    # `image_min` of exactly 0 is a real answer — a `floor="none"` fit of a volume
+    # whose minimum is 0 — and it means the ladder's basis is the raw volume. Left
+    # to `auto` the re-fit would estimate a background that level explicitly says
+    # is not there, which is the same cross-level divergence in the other
+    # direction. The shift itself is a no-op at 0, so one branch covers both.
+    if config.image_min is not None:
+        volume = reference_on_fit_basis(volume, config.image_min)
+        inner_floor: "str | float" = "none"
+    else:
+        inner_floor = "auto"
+
     refit = fit_gaussian_splats(
         volume,
         seeds=seed,
+        floor=inner_floor,
         # The seed is TREATED AS a fit's output, i.e. its amplitudes are already
         # background-relative — the recipe's contract, since the seed is a merged
         # level of the input fit. Without this the "auto" floor the re-fit

@@ -112,6 +112,50 @@ const CROSSFADE_BAND_FRACTION = 0.4;
 const FINE_RELOAD_SETTLE_TICKS = 8;
 
 /**
+ * Milliseconds the registry will keep a STALE previously-displayed level on screen,
+ * rather than dropping to a much coarser fresh one, while the aspiration
+ * re-commits for a new slice (see ``staleHoldDisplayIndex``).
+ *
+ * The slice-aware fallback below shows the coarsest FRESH level the instant a
+ * scrub invalidates the aspiration. That is right when the aspiration is
+ * seconds away, and wrong when it is milliseconds away from a warm cache: on a
+ * 151-timepoint gsplat timelapse the coarse level re-commits in ~10 ms and the
+ * finest in ~70 ms, so every single step of the Time slider flashed 6,900
+ * splats down to 108 and back — 1.6% of the detail, for four frames. A video
+ * player holds the previous frame until the next one decodes; so does this.
+ *
+ * Bounded, because holding is only better while the wait is short. The budget
+ * is spent from when the hold STARTS and is not refreshed by further version
+ * bumps, so a continuous drag (a new version every frame, the aspiration never
+ * committing) exhausts it once and then shows live coarse geometry exactly as
+ * before.
+ *
+ * In MILLISECONDS, deliberately, unlike the frame-counted debounce above: this
+ * is a tolerance for how long a viewer may show the previous slice, which is a
+ * wall-clock judgement, not a "has the user stopped moving" one. Sizing it in
+ * frames makes it display-dependent — the first version of this fix used 8
+ * frames and worked on a 60 Hz panel while still flashing on a 165 Hz one,
+ * where 8 frames is 48 ms and the re-commit needs ~70.
+ *
+ * 250 ms is comfortably above the ~70 ms a warm re-slice takes on a 1.6 M-splat
+ * timelapse and well below the point where a frozen frame reads as a hang.
+ */
+const STALE_HOLD_MS = 250;
+
+/**
+ * How much worse the coarse fresh fallback must be, as a fraction of the held
+ * level's committed element count, before holding a STALE finer level is worth
+ * it (see ``staleHoldDisplayIndex``).
+ *
+ * Freshness normally wins: showing the right slice matters more than showing
+ * more geometry. The exception this ratio carves out is the case where the
+ * fallback is not a slightly coarser view of the new slice but a token of it —
+ * the 108-of-6,900-splat drop that made a timelapse step read as a flash. At
+ * half the detail or better the fallback is taken immediately, as before.
+ */
+const STALE_HOLD_MIN_RATIO = 0.5;
+
+/**
  * Unit anchor for the LEGACY ``selector: 'coverage'`` thresholds (older
  * stores, and explicitly authored ``coverage_fractions=[...]`` lists — derived
  * ladders now use ``selector: 'screen-area'``, whose metric is
@@ -423,8 +467,9 @@ export interface LODGroupEntry {
    * points at the coarsest fresh level while the aspiration reloads, and
    * during a never-downgrade hold it can also point at a FINER
    * previously-displayed level while a coarser streaming aspiration catches
-   * up. A per-frame transient written by ``evaluateEntry`` and read by
-   * ``enforceByteBudget`` (same synchronous ``evaluatePerFrame`` pass)
+   * up. During a stale hold it can instead remain on a finer STALE level while
+   * the next slice decodes. A per-frame transient written by ``evaluateEntry``
+   * and read by ``enforceByteBudget`` (same synchronous ``evaluatePerFrame`` pass)
    * so eviction never releases the on-screen level. ``undefined`` before the
    * first evaluation ⇒ treated as ``activeChildIndex``. Tracks what is ACTUALLY
    * on screen every frame — including the coarse level shown while the group is
@@ -433,16 +478,30 @@ export interface LODGroupEntry {
    */
   displayedChildIndex?: number;
   /**
-   * The last level displayed while the group was ON SCREEN — the
-   * never-downgrade gate's "previously-displayed level" memory. Distinct from
+   * The last level displayed while the group was ON SCREEN — shared memory for
+   * the never-downgrade gate and stale hold. Distinct from
    * ``displayedChildIndex`` because the off-screen gate transiently displays
    * (and would otherwise record) the coarsest ready level; folding that into
    * the gate memory would let a mere look-away-and-back clobber a held finer
    * level and re-pop it to chunk-1 on return. Written by ``evaluateEntry``
    * only on frames where the group is on screen. ``undefined`` before the
-   * first on-screen evaluation ⇒ the gate has no prior level to hold.
+   * first on-screen evaluation ⇒ neither hold policy has a prior level.
    */
   heldDisplayChildIndex?: number;
+  /**
+   * Wall-clock ms at which the current **stale-hold budget** started — see
+   * ``staleHoldDisplayIndex``. Set on the first eligible hold and retained when
+   * a later ratio check declines to hold, so the budget cannot restart during
+   * the same scrub. Cleared only when the aspiration recommits fresh or the
+   * budget is exhausted.
+   */
+  staleHoldSinceMs?: number;
+  /**
+   * True once a stale hold has exhausted `STALE_HOLD_MS` without the
+   * aspiration recommitting. Latches the coarse fallback for the rest of this
+   * scrub; cleared when the aspiration finally lands fresh.
+   */
+  staleHoldExhausted?: boolean;
   /**
    * Whether the auto-selector is currently holding this group at its
    * coarsest-ready level because its world bounds are outside the camera
@@ -561,6 +620,12 @@ export interface LODGroupRegistryDeps {
    * the default for unit tests that don't exercise scrubbing).
    */
   getViewVersion?: () => number;
+  /**
+   * Monotonic wall clock in milliseconds, for the stale-hold budget (see
+   * `STALE_HOLD_MS`). Injectable so tests can advance it deterministically;
+   * omitted ⇒ ``performance.now()``.
+   */
+  now?: () => number;
   /**
    * Keep the render loop alive (the viewer is on-demand and idles after ~2s).
    * Called each frame while a lazy level is loading so a deferred fine reload
@@ -1174,15 +1239,27 @@ export class LODGroupRegistry {
     // the stale subtree with no coarse fallback. Leaf aspirations are unchanged.
     const aspirationFresh =
       version == null || (!!aspiration && this.childFreshAndCount(aspiration, version).fresh);
+    // Preserve this across the fresh-aspiration branch below, which re-arms
+    // the hold state before the never-downgrade gate evaluates the handoff.
+    const staleHoldEnded = aspirationReady && aspirationFresh && entry.staleHoldSinceMs != null;
     let displayIdx: number;
     if (aspirationReady && aspirationFresh) {
       // Aspiration is committed and fresh (or freshness untracked) → show it.
+      // The wait is over, so a spent stale-hold budget is re-armed for the
+      // NEXT slice change (see ``staleHoldExhausted``).
+      entry.staleHoldSinceMs = undefined;
+      entry.staleHoldExhausted = false;
       displayIdx = entry.activeChildIndex;
     } else if (version != null) {
       // Stale or not-yet-ready aspiration, freshness tracked → display the
       // coarsest fresh level (the slice-aware fallback; falls back to the
-      // coarsest ready level if none is fresh yet, so it never goes blank).
-      displayIdx = this.coarsestFreshOrReadyIndex(entry, version);
+      // coarsest ready level if none is fresh yet, so it never goes blank)...
+      const fallbackIdx = this.coarsestFreshOrReadyIndex(entry, version);
+      // ...unless what is already on screen is far better and the aspiration
+      // is about to land, in which case hold it for a few frames instead of
+      // flashing down and back up (``staleHoldDisplayIndex``).
+      const held = this.staleHoldDisplayIndex(entry, fallbackIdx, version);
+      displayIdx = held ?? fallbackIdx;
     } else {
       // Freshness untracked and the aspiration isn't ready (a lazy level still
       // loading): keep the previously-displayed level if it's still ready,
@@ -1246,7 +1323,14 @@ export class LODGroupRegistry {
       // Read the gate's memory (last ON-SCREEN displayed level), NOT
       // ``displayedChildIndex`` — the latter is clobbered to the coarse level
       // during an off-screen excursion, which would defeat the hold on return.
-      const prevIdx = entry.heldDisplayChildIndex;
+      let prevIdx = entry.heldDisplayChildIndex;
+      // A stale hold keeps the aspiration itself in the display memory. When
+      // its first fresh prefix lands, compare that prefix against the fresh
+      // fallback the hold displaced; otherwise prevIdx === displayIdx skips
+      // the never-downgrade gate and can reveal less geometry than fallback.
+      if (prevIdx === displayIdx && staleHoldEnded && version != null) {
+        prevIdx = this.coarsestFreshOrReadyIndex(entry, version);
+      }
       if (prevIdx != null && prevIdx !== displayIdx) {
         const prev = entry.children[prevIdx];
         // Children are coarsest→finest, so displayIdx (== activeChildIndex) being
@@ -1294,6 +1378,7 @@ export class LODGroupRegistry {
       this.deps.getCrossFadeEnabled?.() === true &&
       entry.selectorMode === 'auto' &&
       !entry.offScreen &&
+      aspirationFresh &&
       displayIdx === entry.activeChildIndex &&
       coverageMetric >= 0
     ) {
@@ -1606,6 +1691,74 @@ export class LODGroupRegistry {
       if (this.childFreshAndCount(entry.children[i], version).fresh) return i;
     }
     return this.coarsestReadyIndex(entry);
+  }
+
+  /**
+   * Should a STALE previously-displayed level be kept on screen for a few more
+   * frames instead of dropping to ``fallbackIdx``, the coarsest fresh level?
+   *
+   * Returns the index to hold, or ``undefined`` to take the fallback.
+   *
+   * The slice-aware fallback exists so a scrub shows the new slice immediately
+   * at low detail. It becomes a defect when the aspiration is only a few frames
+   * behind: stepping a 4D timelapse one timepoint made the display drop from
+   * the finest level to the coarsest and climb back within ~70 ms, every step —
+   * a flash to 1.6% of the geometry while the finest level's data was already
+   * cached and decoding. What is on screen is the PREVIOUS slice, which for a
+   * timelapse step is the previous frame: the same thing a video player leaves
+   * up while the next frame decodes, and far closer to the truth than 108 of
+   * 6,900 splats.
+   *
+   * Held only when ALL of:
+   *   - the previous display is still ready and is FINER than the fallback
+   *     (holding something coarser than the fallback would be a downgrade),
+   *   - the fallback is a SEVERE downgrade — below
+   *     `STALE_HOLD_MIN_RATIO` of the held level's committed count —
+   *     so a fallback that is nearly as good is taken immediately (it is
+   *     fresh, and freshness wins whenever quality is comparable),
+   *   - the hold has not exhausted its `STALE_HOLD_MS` budget.
+   *
+   * The budget is deliberately spent from when the hold STARTS and is not
+   * refreshed by later version bumps, and once exhausted it latches until the
+   * aspiration commits fresh. So a continuous drag degrades to exactly the
+   * pre-existing behaviour after `STALE_HOLD_MS`, rather than freezing on
+   * one frame for as long as the user keeps dragging.
+   */
+  private staleHoldDisplayIndex(
+    entry: LODGroupEntry,
+    fallbackIdx: number,
+    version: number
+  ): number | undefined {
+    if (entry.selectorMode !== 'auto' || entry.offScreen) return undefined;
+    if (entry.staleHoldExhausted) return undefined;
+
+    // The gate's memory (last ON-SCREEN level), for the reason the
+    // never-downgrade gate uses it: ``displayedChildIndex`` is clobbered to the
+    // coarse level during an off-screen excursion.
+    const prevIdx = entry.heldDisplayChildIndex;
+    if (prevIdx == null || prevIdx <= fallbackIdx) return undefined;
+    const prev = entry.children[prevIdx];
+    if (!prev || !isReady(prev)) return undefined;
+
+    // Compare committed counts.
+    const prevCount = this.childFreshAndCount(prev, version).count;
+    const fallback = entry.children[fallbackIdx];
+    const fallbackCount = fallback ? this.childFreshAndCount(fallback, version).count : null;
+    // An unknown count on either side means the comparison cannot be made, so
+    // there is no evidence the fallback is severe — take it, as before.
+    if (prevCount == null || fallbackCount == null || prevCount <= 0) return undefined;
+    if (fallbackCount >= prevCount * STALE_HOLD_MIN_RATIO) return undefined;
+
+    const now = this.deps.now?.() ?? performance.now();
+    if (entry.staleHoldSinceMs == null) entry.staleHoldSinceMs = now;
+    if (now - entry.staleHoldSinceMs >= STALE_HOLD_MS) {
+      entry.staleHoldExhausted = true;
+      entry.staleHoldSinceMs = undefined;
+      return undefined;
+    }
+    // Keep the held level warm so eviction does not reclaim it mid-hold.
+    prev.lastVisibleTick = this.tick;
+    return prevIdx;
   }
 
   /**

@@ -30,6 +30,31 @@ COORDINATE_LEVELS = float(2**_COORD_BITS - 1)
 _SCALAR_LUT_PROBE_VALUES = 1024
 
 
+def _float32_cast_slack(
+    arr: np.ndarray, *, check_values: bool = False
+) -> Optional[float]:
+    """Return an upward pad for the viewer's float32 cast.
+
+    ``check_values`` measures exact stored broadcast/LUT values, falling back
+    to the conservative dtype-level bound above the float32 range; otherwise
+    that bound covers the precision-mode float32 store.
+    """
+    if np.can_cast(arr.dtype, np.float32, casting="safe"):
+        return None
+    if check_values:
+        values = arr.astype(np.float64, copy=False)
+        with np.errstate(over="ignore"):
+            upward = np.asarray(arr, dtype=np.float32).astype(np.float64) - values
+        max_upward = max(0.0, float(np.max(upward)))
+        if np.isfinite(max_upward):
+            return max_upward or None
+    max_val = float(np.max(arr))
+    return max(
+        max_val * float(np.finfo(np.float32).eps),
+        float(np.finfo(np.float32).smallest_subnormal),
+    )
+
+
 def gridded_axis_step(
     col: np.ndarray, lo: float, extent: float, levels: float
 ) -> Optional[tuple[float, int]]:
@@ -329,7 +354,9 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             and max_axis_distinct <= LUT_SCALAR_MAX_DISTINCT
             and self.encodes_as_lut(data, SemanticType.COORDINATE)
         ):
-            return None  # a LUT stores the values verbatim
+            # A coordinate LUT's float32 viewer cast is the same rounding map
+            # applied by the outward-f32 bound store, so it cannot cross that bound.
+            return None
         return slack
 
     def positive_scalar_round_trip_slack(
@@ -342,13 +369,14 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
     ) -> Optional[float]:
         """How far can encoding ``data`` as POSITIVE_SCALAR enlarge a value?
 
-        Returns ``None`` when the write is exact, otherwise one conservative
-        float64 pad for the whole array. The chunk-bounds writers add it to a
-        point radius or line width on spatial dimensions only, so a decoded
-        footprint cannot escape a bound built from the authored scalar.
+        Returns ``None`` when the write and viewer decode are exact, otherwise
+        one conservative float64 pad for the whole array. The chunk-bounds
+        writers add it to a point radius or line width on spatial dimensions
+        only, so a decoded footprint cannot escape a bound built from the
+        authored scalar.
 
-        The exits mirror :meth:`_encode_positive_scalar` plus the exact
-        broadcast/LUT paths that precede it in :meth:`ArrayEncoder.encode`.
+        The exits mirror :meth:`_encode_positive_scalar` plus the broadcast/LUT
+        paths that precede it in :meth:`ArrayEncoder.encode`.
         The answer is valid only when the matching write has deduplication
         disabled, so it cannot resolve to an ``array_ref`` with another
         array's encoding parameters.
@@ -361,9 +389,14 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         Linear quantization uses half a grid quantum; geometric-log encoding
         uses the corresponding half-step at the array maximum, capped at the
         maximum because its grid is anchored there and cannot decode above it.
-        A relative-epsilon term for the wider of float32 and the authored dtype,
-        floored at one subnormal quantum of either dtype, covers the reader's
-        cast back to ``original_dtype`` and the viewer's float32 reconstruction.
+        Broadcast and LUT values are checked directly for upward float32 cast
+        displacement. PRECISION uses a conservative authored-dtype cast term.
+        The Python reader's final cast is covered by ``max_val`` times the
+        wider epsilon of float32 and the authored dtype, floored at one
+        subnormal quantum of either dtype. The viewer additionally needs
+        ``1.5 * span * eps32`` for its staged-float32 linear affine chain, or
+        ``max_val * eps32 * max(abs(min_log), abs(max_log))`` for the rounded
+        anchors used by its otherwise-float64 geometric-log reconstruction.
 
         Args:
             data: The positive-scalar array exactly as it will be encoded.
@@ -372,8 +405,8 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             allow_lut: Whether the matching write permits exact LUT storage.
 
         Returns:
-            ``None`` when the matching write is exact, otherwise one
-            conservative array-wide outward pad.
+            ``None`` when the matching write and viewer decode are exact,
+            otherwise one conservative array-wide outward pad.
         """
         arr = np.asarray(data)
         if arr.size == 0 or not np.all(np.isfinite(arr)) or np.any(arr < 0):
@@ -391,16 +424,13 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         if self._is_uniform(arr):
             first = float(arr.flat[0])
             displacement = max(0.0, first - float(np.min(arr)))
-            return displacement or None
+            viewer_cast_slack = _float32_cast_slack(
+                np.asarray([first]), check_values=True
+            )
+            return displacement + (viewer_cast_slack or 0.0) or None
 
         if mode == EncodingMode.PRECISION:
-            if arr.dtype == np.dtype(np.float32):
-                return None
-            max_val = float(np.max(arr))
-            return max(
-                max_val * float(np.finfo(np.float32).eps),
-                float(np.finfo(np.float32).smallest_subnormal),
-            )
+            return _float32_cast_slack(arr)
 
         # A scalar LUT has at most 256 values. A small prefix with more
         # distinct values proves the full array cannot take that exit and
@@ -412,7 +442,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             and np.unique(prefix).size <= LUT_SCALAR_MAX_DISTINCT
             and self.encodes_as_lut(arr, SemanticType.POSITIVE_SCALAR)
         ):
-            return None
+            return _float32_cast_slack(np.unique(arr), check_values=True)
 
         return self._positive_scalar_quantization_slack(
             arr, mode, positive_scalar_encoding
@@ -424,7 +454,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         mode: EncodingMode,
         positive_scalar_encoding: Literal["linear", "log"],
     ) -> Optional[float]:
-        """Return the quantization plus float32 decode pad for one array."""
+        """Return a pad for quantization and the Python/viewer decode paths."""
 
         max_val = float(np.max(arr))
         if max_val == 0.0:
@@ -432,12 +462,11 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
 
         bits = self._compute_quantization_bits(arr)
         use_geolog = positive_scalar_encoding == "log" or bits == 0
+        viewer_rounding_slack = 0.0
         if use_geolog:
             nonzero = arr[arr > 0].astype(np.float64, copy=False)
             min_log = float(np.log(nonzero.min()))
             max_log = float(np.log(nonzero.max()))
-            if max_log == min_log:
-                return None
             quant_bits = 16 if mode == EncodingMode.AUTO else 8
             intervals = (1 << quant_bits) - 2
             # The grid is anchored at max_log, so no code decodes above max_val.
@@ -445,11 +474,23 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
                 float(np.expm1((max_log - min_log) / (2.0 * intervals))), 1.0
             )
             slack = max_val * half_step
+            # The viewer rounds both log anchors to f32 before its f64 affine
+            # reconstruction, perturbing the decoded exponent proportionally
+            # to the larger anchor magnitude.
+            viewer_rounding_slack = (
+                max_val
+                * float(np.finfo(np.float32).eps)
+                * max(abs(min_log), abs(max_log))
+            )
         else:
             min_val = float(np.min(arr))
             span = max_val - min_val
             if span == 0.0:
                 return None
+            # With u = eps32 / 2, the viewer's six staged f32 roundings are
+            # bounded by u * (min + max + 4 * span). The decode ULP below pays
+            # 2u * max, leaving 3u * span = 1.5 * eps32 * span here.
+            viewer_rounding_slack = 1.5 * span * float(np.finfo(np.float32).eps)
             levels = (1 << bits) - 1
             slack = span / (2.0 * levels)
 
@@ -461,7 +502,12 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
                 decode_floor, float(np.finfo(arr.dtype).smallest_subnormal)
             )
         decode_ulp = max(max_val * decode_eps, decode_floor)
-        return float(min(slack + decode_ulp, float(np.finfo(np.float64).max)))
+        return float(
+            min(
+                slack + decode_ulp + viewer_rounding_slack,
+                float(np.finfo(np.float64).max),
+            )
+        )
 
     def _encode_coordinate(
         self,

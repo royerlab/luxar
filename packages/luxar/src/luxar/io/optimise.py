@@ -106,6 +106,7 @@ from .._zarr_compat import (
     close,
     consolidate,
     create_array,
+    list_raw_keys,
     open_group,
     read_raw_bytes,
     write_raw_bytes,
@@ -118,7 +119,7 @@ from ..typing_utils.constants import (
 )
 from ._compiler.chunking import _atom_aligned_rows
 from ._compiler.finalize.hashing import (
-    _ZARR_METADATA_DOCS,
+    _ZARR_METADATA_DOCS_LOWERCASED,
     PAYLOAD_FILE_ATTRS,
     _is_safe_payload_name,
     _payload_terms,
@@ -716,27 +717,6 @@ def _copy_group(
         )
 
 
-#: zarr's metadata document names, lowercased for a CASE-INSENSITIVE test.
-#:
-#: :func:`_is_safe_payload_name` compares them exactly, which is right where it
-#: sits: it is a READ gate, and it also decides digest terms, so tightening it
-#: would move the content hash of every store carrying an affected name.
-#: Writing is the stricter direction. On a case-insensitive filesystem — macOS
-#: is first-class here — the key ``Zarr.json`` resolves to the group's own
-#: ``zarr.json``, so a payload named that would CLOBBER the node document the
-#: whole store is read through. The write side therefore treats the names
-#: case-insensitively while the read side keeps answering exactly.
-#:
-#: ``str.lower()`` rather than ``str.casefold()``. Every name in
-#: :data:`_ZARR_METADATA_DOCS` is lowercase ASCII, so the two are equally strong
-#: against the real hazard (``Zarr.json``, ``.ZAttrs``), and casefolding is
-#: strictly WIDER in a direction with no hazard in it: it maps ``ſ`` (U+017F) to
-#: ``s``, so a payload legitimately named ``.zattrſ`` — an ordinary distinct
-#: file under every filesystem's case rules — would be taken for zarr's
-#: ``.zattrs`` and refused.
-_METADATA_DOCS_LOWERCASED = frozenset(doc.lower() for doc in _ZARR_METADATA_DOCS)
-
-
 def _read_payload_or_refuse(
     group: zarr.Group, attr_key: str, filename: str
 ) -> bytes | None:
@@ -785,17 +765,35 @@ def _copy_payload_files(source: zarr.Group, dest: zarr.Group) -> None:
     a real file in the output, which is what a self-contained store needs (a
     symlink would not survive the ``.zarr.zip`` packaging either).
 
-    A name colliding case-insensitively with a zarr metadata document
-    (:data:`_METADATA_DOCS_LOWERCASED`) is decided by whether the SOURCE has
-    bytes there, not by the name alone. On a case-SENSITIVE filesystem a file
-    called ``Zarr.json`` is an ordinary distinct file: skipping it would produce
-    exactly the state this function exists to prevent — an ``image_file`` attr
-    naming a file the output does not hold — and do it under an exit code of 0.
-    So a name that resolves to real bytes REFUSES the re-chunk, because the copy
-    cannot write them faithfully: on the macOS or Windows machine the output may
-    be read on, that key IS the group's own metadata document. The way out is to
-    rename the payload file and the attr that names it. A DANGLING attr of that
-    shape is skipped with a notice, since there are no bytes to be unfaithful to.
+    The hasher's name gate remains exact: a case-shifted collision reaches a
+    listing probe, and a genuinely held key contributes its bytes. The copy is
+    stricter because it must be portable: a name colliding case-insensitively
+    with a zarr metadata document (:data:`_ZARR_METADATA_DOCS_LOWERCASED`) is
+    decided by whether the SOURCE really holds a key spelled EXACTLY that, not
+    by the name alone. On a case-SENSITIVE filesystem a file called
+    ``Zarr.json`` is an ordinary distinct file: skipping it would produce
+    exactly the state this function exists to prevent — an
+    ``image_file`` attr naming a file the output does not hold — and do it under
+    an exit code of 0. So a name that really is there REFUSES the re-chunk,
+    because the copy cannot write it faithfully: on the macOS or Windows machine
+    the output may be read on, that key IS the group's own metadata document. The
+    way out is to rename the payload file and the attr that names it. A DANGLING
+    attr of that shape is skipped with a notice, since there is nothing to be
+    unfaithful to.
+
+    Which of the two it is comes from :func:`list_raw_keys` — a directory listing
+    compared case-sensitively in Python — and not from trying to read the key.
+    An open-by-name is resolved by the OS, so on the very filesystems this branch
+    exists for, a probe for ``Zarr.json`` hands back the group's own
+    ``zarr.json``: the dangling case would be invisible, every such store would
+    be refused, and the refusal would quote the metadata document's byte count as
+    if it were the payload's. The listing therefore GATES the read rather than
+    replacing it — the bytes are still read, for the count the refusal quotes,
+    but only for a name the store really lists, so a fold can no longer make a
+    dangling attr look held. A key that lists and yet reads back nothing is not a
+    payload at all (a child group or a plain subdirectory of that name), and
+    takes the skip too: there are no bytes to be unfaithful to and no file to
+    rename.
 
     A named file that is simply ABSENT is skipped with a notice rather than
     raising, for the same reason: the source has no bytes to hand over, so
@@ -812,15 +810,26 @@ def _copy_payload_files(source: zarr.Group, dest: zarr.Group) -> None:
             # single path component, and one that IS zarr's own metadata
             # document spelled exactly (``.zattrs``), which the hasher's gate
             # rejects too. Only a CASE-shifted collision reaches the branch
-            # below, which has bytes to be unfaithful to and so refuses.
+            # below, which refuses when the source really holds that key.
             aprint(
                 f"⚠ skipping payload {filename!r}: not a plain file name, or "
                 f"one of zarr's own metadata documents"
             )
             continue
-        payload = _read_payload_or_refuse(source, attr_key, filename)
-        if filename.lower() in _METADATA_DOCS_LOWERCASED:
-            if payload is None:
+        if filename.lower() in _ZARR_METADATA_DOCS_LOWERCASED:
+            # The listing GATES the read, and a listing is not folded: a name
+            # the store does not really hold never reaches the read that would
+            # resolve onto the node document, so the dangling case stays visible
+            # on every platform. A key that lists but reads back `None` is not a
+            # payload either — a child group or a plain subdirectory of that
+            # name has no bytes to drop and nothing to rename — so it takes the
+            # same skip.
+            held = (
+                _read_payload_or_refuse(source, attr_key, filename)
+                if filename in list_raw_keys(source)
+                else None
+            )
+            if held is None:
                 aprint(
                     f"⚠ skipping payload {filename!r}: it names a zarr metadata "
                     f"document and the source holds no file there"
@@ -832,10 +841,11 @@ def _copy_payload_files(source: zarr.Group, dest: zarr.Group) -> None:
                 f"case-insensitive filesystem that name resolves to the group's "
                 f"own zarr metadata document, so writing it would replace the "
                 f"document the whole store is read through. The re-chunk is "
-                f"refused rather than dropping {len(payload)} bytes the source "
+                f"refused rather than dropping the {len(held)} bytes the source "
                 f"really holds — rename the payload file and the {attr_key!r} "
                 f"attr that names it, then run optimise again."
             )
+        payload = _read_payload_or_refuse(source, attr_key, filename)
         if payload is None:
             aprint(f"⚠ payload {filename!r} named by {attr_key!r} is missing")
             continue
@@ -1020,8 +1030,9 @@ def _verify_payloads(path: str, src: zarr.Group, dst: zarr.Group) -> int:
     site's, exactly: a name the copy skipped has no bytes in the output by
     design and must not be reported as a loss. A payload the SOURCE does not
     have is skipped for the same reason — the copy skipped it too, and the
-    output is as complete as its input. A metadata-document name only reaches
-    here in the dangling case, since the copy refuses the one that has bytes.
+    output is as complete as its input. A metadata-document name reaches here
+    only in the two cases the copy SKIPS — a dangling attr, and a name held by
+    a directory rather than a file — since the copy refuses the one with bytes.
 
     The count is what the run REPORTS, so it is the number actually compared —
     a name skipped by any of those gates is not one of them.
@@ -1034,7 +1045,7 @@ def _verify_payloads(path: str, src: zarr.Group, dst: zarr.Group) -> int:
             continue
         if not _is_safe_payload_name(filename):
             continue
-        if filename.lower() in _METADATA_DOCS_LOWERCASED:
+        if filename.lower() in _ZARR_METADATA_DOCS_LOWERCASED:
             continue
         expected = _read_payload_or_refuse(src, attr_key, filename)
         if expected is None:

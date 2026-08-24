@@ -52,7 +52,7 @@ print(result.stdout)
 - `optimise_command.py` - The `luxar optimise` command (a thin Typer layer over `luxar.io.optimise`)
 - `restamp_lod_command.py` - The `luxar restamp-lod` command (a thin Typer layer over `luxar.io.lod_restamp`)
 - `gsplat_commands.py` - Thin registration hub (~56 lines) that assembles the `gsplat` sub-app: fit, cal, render, denoise, lod, convert, migrate-format, reencode, info, napari, view, compare, annotate-quality, transform, merge, cull, filter, slice, partition, flatten, additive, benchmark; the `batch-fit` group: run/submit/status/validate/cancel/merge/denoise-calibrate/denoise-preprocess
-- `gsplat_ops/` - The gsplat subcommand implementations: 7 root modules (scene/inspect/interchange registration, `benchmark`, `recipe_shared`, `planner`, `encoding`) plus three subpackages — `fitting/` (fit/cal/render/denoise), `batch/` (`batch-fit`), `transforms/` (edit-style commands) — 30 modules across them. Each subpackage's registration surface is its `commands.py`; the `__init__.py` files are docstring-only. See `gsplat_ops/README.md`.
+- `gsplat_ops/` - The gsplat subcommand implementations: 8 root modules (scene/inspect/interchange registration, `benchmark`, `recipe_shared`, `planner`, `encoding`, `loading`) plus three subpackages — `fitting/` (fit/cal/render/denoise), `batch/` (`batch-fit`), `transforms/` (edit-style commands) — 31 modules across them. Each subpackage's registration surface is its `commands.py`; the `__init__.py` files are docstring-only. See `gsplat_ops/README.md`.
 - `lod.py` - the unified `lod --recipe {flat,stream,levels,tiles,overview,adaptive}` command (thin wrapper over `gsplats/lod/recipes.py`; registered onto the `gsplat` app)
 - `gsplat_config.py` - Config system: presets, YAML loading, volume loaders, helpers
 - `demo_commands.py` - The `luxar demo` sub-app: list/info/run/run-all/stop/deps/cache, driven entirely by the `luxar.demos` DEMO_META registry
@@ -293,14 +293,16 @@ luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --scale-intensity 0.1
 ```
 
 #### `luxar gsplat render`
-Render gsplats back to a volume for quality comparison.
+Render gsplats back to a volume for quality comparison. Partition and nested
+trees render their default-selected leaves without first flattening the store.
 ```bash
 luxar gsplat render fitted.gsplats.zarr rendered.npy --shape 128,128,128
 luxar gsplat render fitted.gsplats.zarr rendered.tiff --device cuda
 ```
 
 #### `luxar gsplat merge`
-Combine multiple gsplat datasets (concatenation, new dimension, or channel colors).
+Combine multiple flat gsplat datasets (concatenation, new dimension, or channel
+colors). Partition/nested inputs must be flattened first with `luxar gsplat flatten`.
 ```bash
 luxar gsplat merge a.zarr b.zarr -o merged.zarr
 luxar gsplat merge t0.zarr t1.zarr t2.zarr -o 4d.zarr --as-dimension --values 0,1,2
@@ -323,7 +325,8 @@ merge applies — whenever a colored input authored no palette and therefore
 relies on its per-splat RGB, and whenever any input declares a custom LUT.
 
 #### `luxar gsplat cull`
-Remove low-contribution splats to reduce dataset size while preserving visual quality.
+Remove low-contribution splats to reduce dataset size while preserving visual
+quality. Partition/nested inputs must be flattened first with `luxar gsplat flatten`.
 ```bash
 luxar gsplat cull input.gsplats.zarr culled.gsplats.zarr                            # Auto (cumulative, keep 95%)
 luxar gsplat cull input.gsplats.zarr culled.gsplats.zarr -m cumulative -r 0.90      # Keep 90% amplitude
@@ -332,7 +335,8 @@ luxar gsplat cull input.gsplats.zarr culled.gsplats.zarr --target vol.npy       
 ```
 
 #### `luxar gsplat filter`
-Filter splats by multiple criteria (AND logic).
+Filter splats by multiple criteria (AND logic). Partition/nested inputs must be
+flattened first with `luxar gsplat flatten`.
 ```bash
 luxar gsplat filter input.gsplats.zarr out.gsplats.zarr --amplitude-min 0.1 --eccentricity-max 5
 luxar gsplat filter input.gsplats.zarr out.gsplats.zarr --bbox "0,50,0,50,0,50" --volume-max 100
@@ -346,7 +350,8 @@ luxar gsplat filter input.gsplats.zarr out.gsplats.zarr --soft-highpass p90     
 
 #### `luxar gsplat partition`
 Partition a dataset into a single `kind=partition` file via spatial BSP
-(`--rule median|midpoint|sah`).
+(`--rule median|midpoint|sah`). The input must be flat (matrix-shaped); flatten
+partition or nested-tree inputs first with `luxar gsplat flatten`.
 ```bash
 luxar gsplat partition input.gsplats.zarr part.gsplats.zarr --parts 4
 luxar gsplat partition input.gsplats.zarr part.gsplats.zarr --max-elements 100000
@@ -354,14 +359,15 @@ luxar gsplat partition input.gsplats.zarr part.gsplats.zarr --parts 3 --rule sah
 ```
 
 #### `luxar gsplat slice`
-Slice splats by coordinate ranges (numpy-style syntax).
+Slice splats by coordinate ranges (numpy-style syntax). Partition/nested inputs
+must be flattened first with `luxar gsplat flatten`.
 ```bash
 luxar gsplat slice input.gsplats.zarr output.gsplats.zarr "0:50, :, 10:90"
 luxar gsplat slice input.gsplats.zarr output.gsplats.zarr ":50, 20:80, :"
 ```
 
 #### `luxar gsplat compare`
-Compare reconstruction quality against a reference volume (PSNR, SSIM, MSE).
+Compare reconstruction quality against a reference volume (PSNR, SSIM, MSE). Partition and nested stores are scored over their default-rendered selection: all parts and each LOD group's finest level. The reported compression ratio covers the whole store, including coarse levels that are not scored.
 ```bash
 luxar gsplat compare fitted.gsplats.zarr original.tiff
 luxar gsplat compare fitted.gsplats.zarr original.npy --device cuda --output-json metrics.json
@@ -502,7 +508,10 @@ luxar gsplat denoise data.zarr.zip out.zarr --channel 0 --timepoint 5 --denoise-
 **Options**: `--h` (manual NLM h value), `--patch-size` (default 3), `--search-distance` (default 5), `--backend` (auto/cuda/pytorch/skimage), `--device/-d` (auto/cpu/cuda/mps), `--denoise-2d` (slice-by-slice), `--channel`, `--timepoint`, `--array-key`.
 
 #### `luxar gsplat napari`
-Open a Gaussian splat dataset in napari for visual inspection. Renders the splats back to a volume and displays them alongside splat center points. Requires `napari` to be installed (`pip install napari[all]`).
+Open a Gaussian splat dataset in napari for visual inspection. Partition and
+nested trees use their default-selected leaves. Renders the splats back to a
+volume and displays them alongside splat center points. Requires `napari` to be
+installed (`pip install napari[all]`).
 ```bash
 luxar gsplat napari splats.gsplats.zarr
 ```

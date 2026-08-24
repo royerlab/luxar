@@ -431,7 +431,7 @@ test.describe('Error Recovery - Memory Limits', () => {
     await waitForLuxarReady(page);
 
     // Navigate several times to accumulate cache
-    await page.keyboard.press('4');
+    await page.keyboard.press('1');
     await waitForNextRender(page);
 
     for (let i = 0; i < 5; i++) {
@@ -458,7 +458,7 @@ test.describe('Error Recovery - Memory Limits', () => {
     await waitForLuxarReady(page);
 
     // Navigate to populate cache
-    await page.keyboard.press('4');
+    await page.keyboard.press('1');
     await waitForNextRender(page);
     await page.keyboard.press(']');
     await waitForSpatialQueryOrThrow(page);

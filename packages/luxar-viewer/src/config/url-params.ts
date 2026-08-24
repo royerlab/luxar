@@ -130,6 +130,17 @@ export interface UrlParams {
    */
   lodFade: boolean;
   /**
+   * Whether a picked element's authored `link` may be opened on left-click
+   * (issue #1917). **On by default**; pass `?no-links` to disable it.
+   *
+   * The switch an embedder showing third-party scenes wants: `.zattrs` is
+   * untrusted, so this guarantees no navigation can originate in the data. It
+   * suppresses the navigation, the two link items in the right-click menu and
+   * the pointer cursor; `Copy` still works, since the clipboard is not
+   * navigation.
+   */
+  allowLinks: boolean;
+  /**
    * Whether streaming brightness compensation is enabled: as a blendable
    * (additive/luminous/volumetric)
    * LOD leaf's additive ladder streams in, scale its opacity by `1/e(k)` so the
@@ -288,6 +299,7 @@ export function readUrlParams(search?: string): UrlParams {
     cacheDebug: params.has('cache-debug'),
     clearCache: params.has('clear-cache'),
     lodFade: !params.has('no-lod-fade'),
+    allowLinks: !params.has('no-links'),
     lodEnergyComp: !params.has('no-lod-energy'),
     lodFinest: params.has('lod-finest'),
     blendWarmup: !params.has('no-blend-warmup'),

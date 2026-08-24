@@ -81,6 +81,7 @@ DEMO_META = {
 }
 
 from pathlib import Path
+from typing import Final
 
 import numpy as np
 from arbol import Arbol, aprint, asection
@@ -178,6 +179,10 @@ Z_MAX = 4.0
 # Display / LOD parameters.
 POINT_RADIUS = 1.2  # Mpc (visualization scale)
 SCENE_INTENSITY = 0.05
+# Stay below the 5,591,040-point element-texture cap on a conservative
+# 4096-class GPU. The margin matches the globe demos and keeps every finest-LOD
+# partition leaf drawable without viewer-side tail clamping.
+SCENE_MAX_POINTS_PER_NODE: Final = 4_000_000
 # No row cap: the scene carries the WHOLE DR1 catalog, ~9.75M objects.
 #
 # This was briefly capped at 1.25M (#1812) because the finest child downloaded
@@ -618,6 +623,25 @@ def ensure_origin_framing(scene_path: Path) -> bool:
     return False
 
 
+def _warn_if_node_exceeds_capacity(
+    scene_path: Path, layer_name: str, max_node_points: int
+) -> None:
+    if max_node_points <= SCENE_MAX_POINTS_PER_NODE:
+        return
+
+    aprint(
+        f"  ⚠ This scene's '{layer_name}' finest level's largest single "
+        f"node contains {max_node_points:,} points, above the current "
+        f"{SCENE_MAX_POINTS_PER_NODE:,}-point demo ceiling. It lacks the "
+        "current per-node safety margin, and larger nodes can silently "
+        "lose their tail on a 4096-class GPU. Rebuild it with:\n"
+        "      luxar demo run desi_galaxies -- --recompute\n"
+        "    or delete the scene and re-run to unpack a current shipped "
+        "asset:\n"
+        f"      rm -rf {scene_path}"
+    )
+
+
 def warn_if_scene_is_stale(scene_path: Path) -> None:
     """Warn when a reused scene is incomplete or has an unsafe streaming ladder.
 
@@ -636,6 +660,32 @@ def warn_if_scene_is_stale(scene_path: Path) -> None:
         aprint(f"  ⚠ Could not inspect {scene_path} for a streaming ladder: {exc}")
         return
 
+    def streaming_stats(finest) -> tuple[int, int, int, list[int]]:
+        nodes = [finest]
+        if finest.attrs.get("kind") == "partition":
+            part_names = sorted(
+                (key for key in finest.group_keys() if key.startswith("part_")),
+                key=lambda key: int(key.split("_", 1)[1]),
+            )
+            nodes = [finest[name] for name in part_names]
+
+        sublod_counts = []
+        n_points = 0
+        max_node_points = 0
+        increments = []
+        for node in nodes:
+            n_sublods = int(node.attrs.get("n_additive_sublods", 1))
+            sublod_counts.append(n_sublods)
+            node_points = int(node.attrs.get("n_points", 0))
+            n_points += node_points
+            max_node_points = max(max_node_points, node_points)
+            increments.extend(
+                int(node[f"additive_{index}"].attrs.get("n_points", 0) or 0)
+                for index in range(n_sublods)
+                if f"additive_{index}" in node
+            )
+        return min(sublod_counts, default=1), n_points, max_node_points, increments
+
     for layer_name in ("By tracer type", "By redshift"):
         try:
             layer = root[layer_name]
@@ -651,8 +701,7 @@ def warn_if_scene_is_stale(scene_path: Path) -> None:
             # build time — see substitutive_lod_or_flat), so the layer IS the
             # finest level and still carries its own streaming ladder.
             finest = layer[child_names[-1]] if child_names else layer
-            n_sublods = int(finest.attrs.get("n_additive_sublods", 1))
-            n_points = int(finest.attrs.get("n_points", 0))
+            n_sublods, n_points, max_node_points, increments = streaming_stats(finest)
         except Exception as exc:
             aprint(
                 f"  ⚠ Could not inspect {scene_path} [{layer_name}] for a "
@@ -683,25 +732,20 @@ def warn_if_scene_is_stale(scene_path: Path) -> None:
                 f"      rm -rf {scene_path}"
             )
 
+        _warn_if_node_exceeds_capacity(scene_path, layer_name, max_node_points)
+
         # The size that matters is the biggest SINGLE commit, not the level
         # total: a geometric ladder's last increment is n/2, so an old scene can
         # carry five rungs and still hand the main thread millions of points at
         # once. Checking the total instead is what let the 1.25M cap look like a
         # fix (#1812) while the shape stayed broken.
-        try:
-            increments = [
-                int(finest[f"additive_{i}"].attrs.get("n_points", 0) or 0)
-                for i in range(n_sublods)
-            ]
-        except KeyError:
-            increments = []
         biggest = max(increments, default=0)
         if biggest > SCENE_MAX_COMMIT:
             aprint(
                 f"  ⚠ This scene's '{layer_name}' finest level commits "
                 f"{biggest:,} points in one rung, above the current "
                 f"{SCENE_MAX_COMMIT:,}-point ceiling — it was built with the old "
-                f"geometric ladder ({n_points:,} points over {n_sublods} rungs) "
+                f"geometric ladder ({n_points:,} points, {n_sublods} rungs per part) "
                 "and will stall the main thread on that rung. Rebuild it with:\n"
                 "      luxar demo run desi_galaxies -- --recompute\n"
                 "    or delete the scene and re-run to unpack a current shipped "
@@ -820,6 +864,7 @@ def create_scene(
                 blending_mode="additive",
                 intensity=scene_intensity,
                 layer=True,
+                partition=dict(max_elements=SCENE_MAX_POINTS_PER_NODE),
                 substitutive_lod=lod,
                 additive_lod=stream_lod,
             )
@@ -838,6 +883,7 @@ def create_scene(
                 intensity=scene_intensity,
                 layer=True,
                 visible=False,
+                partition=dict(max_elements=SCENE_MAX_POINTS_PER_NODE),
                 substitutive_lod=lod,
                 additive_lod=stream_lod,
             )

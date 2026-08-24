@@ -43,6 +43,7 @@ Quality falls smoothly (~3-4 dB per halving) with no knee, so there is no single
 
 from __future__ import annotations
 
+import warnings
 from typing import Literal, Optional, Sequence, Union
 
 import numpy as np
@@ -54,7 +55,14 @@ from luxar.gsplats._data.filtering import (
 )
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.lod.additive import compute_additive_order
-from luxar.gsplats.lod.substitutive import merge_to_count
+
+# `resolved_merge_coarsen_dims` is imported rather than defined here: it moved
+# next to `_normalise_coarsen_dims` (the collapse it compensates for) when
+# `make_substitutive_lod` and the `batch-fit merge` per-part record started
+# sharing it, so the three producers of the `coarsen_dims` stamp cannot drift
+# apart again. Still reachable under its original
+# `luxar.gsplats.lod.decimate` name.
+from luxar.gsplats.lod.substitutive import merge_to_count, resolved_merge_coarsen_dims
 from luxar.utils.lod_methods import AutoOrMethod as AdditiveOrdering
 
 #: Which reduction FAMILY to use — distinct from `AdditiveOrdering`, which
@@ -96,6 +104,30 @@ def resolve_target_count(target: Union[int, float], n_in: int) -> int:
     return max(1, min(n, n_in))
 
 
+def _validate_coarsen_dims(
+    coarsen_dims: Optional[Sequence[int]], data: GSplatData
+) -> None:
+    """Range-check a ``coarsen_dims`` request for EITHER family.
+
+    Reuses the merge's own validator rather than restating its rules, so the two
+    families reject exactly the same requests. Only ``merge`` reaches that
+    validator on its own (inside ``merge_to_count``), which left an out-of-range
+    index a hard error on one family and silently accepted on the other — and
+    with ``method="auto"`` which family you get depends on the kept fraction.
+
+    Validation ONLY: the merge path re-runs the same call for real, and the
+    continuous-barrier ``RuntimeWarning`` belongs to the reduction that actually
+    groups by those dims, so it is suppressed here rather than emitted twice.
+    """
+    if coarsen_dims is None:
+        return
+    from luxar.gsplats.lod.substitutive import _normalise_coarsen_dims
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        _normalise_coarsen_dims(coarsen_dims, data)
+
+
 def resolve_method(method: AutoOrMethod, n_target: int, n_in: int) -> MethodName:
     """Resolve ``"auto"`` against the measured crossover (see module docstring)."""
     if method != "auto":
@@ -135,7 +167,16 @@ def decimate(
         seed: Seed for the ``random`` ordering (prefix only; every other
             ordering, and the clustering, is deterministic).
         coarsen_dims: Center-column indices merging may combine over; the rest
-            are hard barriers (merge only). Default: all dims.
+            are hard barriers (merge only). Default: all dims. A ``merge``
+            stamps the RESOLVED set on the result (the writer turns it into the
+            chunk-ordering barrier); a ``prefix`` ignores the argument (a
+            ``UserWarning``, so the notice survives ``verbose=False``) and keeps
+            the input's stamp, having coarsened nothing. Under the ``luxar`` CLI
+            that warning renders as an arbol line like any other output.
+            The request is range-validated for BOTH families, before
+            the family is chosen — under ``method="auto"`` which one runs
+            depends on the kept fraction, and an argument may not be a hard
+            error on one path and silently accepted on the other.
         lloyd_iterations: Lloyd refinement passes (merge only).
         verbose: Narrate the reduction.
 
@@ -151,16 +192,50 @@ def decimate(
         on the console).
 
     Raises:
-        ValueError: on an out-of-range target or an unknown method.
+        ValueError: on an out-of-range target, an unknown method, or a
+            ``coarsen_dims`` index outside ``[0, data.ndim)``.
     """
     n_in = int(data.n_splats)
     n_target = resolve_target_count(target, n_in)
     chosen = resolve_method(method, n_target, n_in)
+    _validate_coarsen_dims(coarsen_dims, data)
 
     if n_target >= n_in:
         if verbose:
             aprint(f"Target {n_target:,} >= input {n_in:,} — returning input unchanged")
         return data
+
+    if coarsen_dims is not None and chosen == "prefix":
+        # The family decides whether this knob means anything, and with
+        # `method="auto"` the family flips at the measured crossover — so a
+        # request honoured at -f 0.4 is silently dropped at -f 0.5, taking the
+        # output's chunk layout with it. Say so rather than letting the caller
+        # infer it from the stamp (#1600 review).
+        #
+        # A WARNING, not an `aprint`: this is a library function, and "your
+        # argument had a surprising effect" is what `GSplatData.filter` already
+        # warns for (`_data/filtering.py`). Every other line this function
+        # writes is gated on `verbose`, so an unconditional print would put a
+        # programmatic `decimate(..., verbose=False)` on stdout unbidden. The
+        # CLI still shows it: `luxar`'s root callback installs
+        # `install_arbol_warnings`, which renders warnings as arbol lines.
+        why = (
+            f" (method='auto' resolved to prefix: the request keeps "
+            f"{100.0 * n_target / n_in:.1f}% of the input, at or above the "
+            f"{100.0 * PREFIX_ABOVE_FRACTION:.0f}% crossover — pass "
+            f"method='merge' to force a merge)"
+            if method == "auto"
+            else ""
+        )
+        warnings.warn(
+            f"coarsen_dims={sorted({int(d) for d in coarsen_dims})} is IGNORED "
+            f"by the 'prefix' family{why}: a prefix keeps whole input splats at "
+            "their own coordinates and merges no axis, so it coarsens nothing "
+            "and the input's own coarsen_dims stamp (and the chunk-ordering "
+            "barrier derived from it) stays true of the survivors",
+            UserWarning,
+            stacklevel=2,
+        )
 
     with (
         asection(
@@ -218,11 +293,41 @@ def decimate(
         # `lod_cutpoints: [...]` is false of every result it can produce — no
         # caller can want it kept. Scrubbing in the command instead left the
         # public `luxar.gsplats.lod.decimate` API publishing the defect (#1600).
-        # `coarsen_dims` is exempt (the writer reads it back to derive the
-        # chunk-ordering barrier) — see _STRUCTURE_SCOPE_EXEMPT_KEYS.
+        # `coarsen_dims` is exempt from that scrub (the writer reads it back to
+        # derive the chunk-ordering barrier) — see _STRUCTURE_SCOPE_EXEMPT_KEYS —
+        # and is RE-STAMPED just below instead.
         out = GSplatData.from_tree(
             out.tree, stats=stats_after_structure_change(data.stats)
         )
+        if chosen == "merge":
+            # The one inherited pipeline key this reduction OWNS. The writer
+            # derives the ordering barrier from its complement
+            # (`_barrier_from_coarsen_dims`), so an inherited `[0, 1, 2]` over a
+            # merge told `--coarsen-dims 1,2,3` — or over the default, which
+            # coarsens EVERYTHING — puts the barrier on an axis this merge just
+            # blended, and the absent-stamp direction silently fell back to
+            # auto-detect instead of recording the barrier the user asked for
+            # (#1600). Stamped unconditionally: the merge decides these dims
+            # whether or not the input had an opinion.
+            #
+            # Always the EXPLICIT dim list, coarsen-everything included — a
+            # written `null` is indistinguishable from an absent key to the
+            # writer and lands back on auto-detect, which re-imposes a barrier
+            # on a blended axis whenever the reduction left that axis' grid
+            # intact (and is redundant when it did not — measured both ways in
+            # `resolved_merge_coarsen_dims`). Shared with
+            # `make_substitutive_lod` and the `batch-fit merge` per-part record,
+            # which resolve their own stamp through the same function, so the
+            # producers of this key cannot spell the same choice two ways.
+            out.stats["coarsen_dims"] = resolved_merge_coarsen_dims(
+                coarsen_dims, data.ndim
+            )
+        # A `prefix` KEEPS the input's stamp. It merges nothing — every surviving
+        # splat is one of the input's, at its own coordinates — so whichever axes
+        # were hard barriers for this splat set still are, and the inherited value
+        # (and the layout the writer derives from it) stays true of the result.
+        # Stamping the request would be the lie here: `coarsen_dims` is a
+        # merge-only knob that this family ignored.
         scrub_measured_stats(out)
         from luxar.gsplats.lod.restamp import refresh_reduction_lod_stats
 

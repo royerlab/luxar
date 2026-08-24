@@ -209,11 +209,14 @@ Demo scene generators, precomputed data helpers, and viewer launch utilities.
   and shift, which is harmless — the viewer URL carries its own `?src=`);
   explicit `--port`/`--viewer-port` in `serve_args` override
 - `detect_device()`: Auto-detect the best available compute device (cuda > mps > cpu)
+- `BUILDER_FINGERPRINT_ATTR`: Scene-root attribute that identifies the demo builder
+- `demo_source_fingerprint()`: Hash a demo module's source for scene-staleness checks
+- `scene_is_current()`: Reuse only a completed scene written by the current demo builder
 - `warn_if_no_cuda_gpu()`: Print a warning if no CUDA GPU is available
 - `load_precomputed_gsplats()`: Load precomputed GSplat data from Git LFS or cache
 - `load_precomputed_bundle()`: Load a precomputed bundle zip (timelapse demos)
 - Raises `BundleMemberNotFound` (a `FileNotFoundError` subclass) when the bundle itself resolved and verified but a requested per-frame member is not inside it. That is the bundle-side counterpart of `data_fetch.DatasetUnavailable`: the member names are derived from the caller's own parameters (NEXRAD's `--dbz-floor` / `--splats` / `--grid-m`), so a non-default run legitimately asks for frames the shipped bundle cannot hold and recomputing is the right answer. A bundle name the *manifest* does not list stays a plain `FileNotFoundError` — that one is a fault
-- `parse_demo_flags()`: Parse the common demo CLI flags (`--recompute`, `--no-serve`, `--serve-only`)
+- `parse_demo_flags()`: Parse the common demo CLI flags (`--recompute`, `--keep-stale`, `--no-serve`, `--serve-only`)
 - `parse_int_arg(name, default, argv=None)`: Parse an integer `--name=VALUE` / `--name VALUE` flag; warns and falls back to `default` on a malformed value
 - `parse_path_arg(name, argv=None)`: Parse a path `--name=PATH` / `--name PATH` flag, expanding `~`; returns `None` when the flag is absent or left without a value
 - `is_lfs_pointer()`: Check if a file is a Git LFS pointer (not actual data)
@@ -240,8 +243,8 @@ SIGTERM/SIGHUP) never orphans a `luxar serve` on its port.
   provably finished — an unreaped zombie counts as gone, `EPERM` (someone
   else's group) never does
 - `can_kill_process_groups()`: Whether POSIX process-group signalling exists
-- `proc_table()`: Best-effort `(pid, pgid, state, command)` rows from `/proc`
-  — a `ps`-free process table (empty, meaning *unknown*, off Linux)
+- `proc_table()`: Best-effort `(pid, pgid, state, command)` rows from `/proc`,
+  with a `ps` fallback on POSIX systems such as macOS (empty means *unknown*)
 
 ### `demo_runs.py`
 Discovery + kill engine behind `luxar demo stop` (stdlib-only): find every
@@ -254,8 +257,8 @@ running demo — even one forgotten in another terminal — and free its ports.
 - `discover_runs()`: Live demo runs from the registry plus a `ps` sweep for
   strays — a process that *leads its own group* and is genuinely running
   `python -m luxar.demos.demo_*`; prunes dead/hijacked
-  entries, never returns the caller's own process group. Falls back to
-  `proc_table()` when `ps` is missing, so the identity check that keeps a
+  entries, never returns the caller's own process group. On Linux, falls back
+  to `proc_table()` when `ps` is missing, so the identity check that keeps a
   recycled pgid alive-and-innocent never silently disappears. Off POSIX, where
   neither exists, a pid listing (`tasklist`) still prunes a record left behind
   by a reboot or a hard-killed owner

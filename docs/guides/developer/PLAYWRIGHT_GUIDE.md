@@ -331,7 +331,7 @@ test('advanced nD navigation test', async ({ page }) => {
   const initialPoints = initialState.totalPoints;
 
   // Navigate through dimension
-  await page.keyboard.press('4');  // Select dimension 4
+  await page.keyboard.press('1');  // Select the first non-displayed dimension
   await page.waitForTimeout(300);  // Short delay for key processing
   await page.keyboard.press(']');  // Navigate forward
 
@@ -361,7 +361,7 @@ test('should navigate through dimensions', async ({ page }) => {
   await page.goto('/?src=/data/4d-dataset.luxar.zarr&debug');
   await waitForLuxarReady(page);
 
-  // Press '1' to select dimension 0
+  // Press '1' to select the first non-displayed dimension
   await page.keyboard.press('1');
 
   // Press ']' to navigate forward
@@ -590,7 +590,7 @@ re-run the spec at `--workers=1`.
 1. **Run tests before committing**: `pnpm test:e2e`
 2. **Update snapshots carefully**: Only when changes are intentional
 3. **Write focused tests**: One behavior per test
-4. **Use helper functions**: Reuse common patterns
+4. **Use helper functions**: Wait for `waitForLuxarReady(page)` before reading state or dispatching keyboard/mouse input
 5. **Test on real data**: Don't rely only on demo datasets
 
 ### For CI/CD

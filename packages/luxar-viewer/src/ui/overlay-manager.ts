@@ -10,6 +10,7 @@ import { sceneDimsManager } from '../scene/scene-dims-manager';
 import { log, Modules } from '../utils/log';
 import { getViewerContainer } from '../utils/viewer-container';
 import { escapeHtml } from '../utils/escape-html';
+import { substituteHoverTemplate } from '../utils/hover-template';
 import { MAX_OVERLAY_HTML_CHARS, type OverlayConfig } from '../data/loaders';
 
 /** Font preset mappings to CSS font-family stacks */
@@ -191,6 +192,7 @@ export class OverlayManager {
   private hoverOverlays = new Map<string, HoverOverlayEntry>();
   /** Cache last hover result to skip redundant DOM updates. */
   private _lastHoverLabel: string | null = null;
+  private _lastHoverKey: string | null = null;
   private _lastHoverImageUrl: string | null = null;
   private _lastHoverIndex: number = -1;
   private _lastHoverNode: string | null = null;
@@ -307,8 +309,8 @@ export class OverlayManager {
   /**
    * Update hover overlay content from a GPU picking result.
    *
-   * Substitutes template variables ({hover_label}, {hover_image_label},
-   * {hover_node}, {hover_index}) in all hover overlays.
+   * Substitutes template variables ({hover_label}, {hover_key},
+   * {hover_image_label}, {hover_node}, {hover_index}) in all hover overlays.
    * Fades out if result is null or has no content.
    *
    * @param result - Pick result with label text, or null to clear
@@ -316,6 +318,7 @@ export class OverlayManager {
   updateHoverContent(
     result: {
       label?: string | null;
+      key?: string | null;
       imageUrl?: string | null;
       nodeName: string;
       elementIndex: number;
@@ -323,37 +326,51 @@ export class OverlayManager {
   ): void {
     // Skip redundant DOM updates when hovering over the same element
     const newLabel = result?.label ?? null;
+    const newKey = result?.key ?? null;
     const newImageUrl = result?.imageUrl ?? null;
     const newIndex = result?.elementIndex ?? -1;
     const newNode = result?.nodeName ?? null;
     if (
       newLabel === this._lastHoverLabel &&
+      newKey === this._lastHoverKey &&
       newImageUrl === this._lastHoverImageUrl &&
       newIndex === this._lastHoverIndex &&
       newNode === this._lastHoverNode
     )
       return;
     this._lastHoverLabel = newLabel;
+    this._lastHoverKey = newKey;
     this._lastHoverImageUrl = newImageUrl;
     this._lastHoverIndex = newIndex;
     this._lastHoverNode = newNode;
 
     for (const hover of this.hoverOverlays.values()) {
-      const hasContent = result && (result.label || result.imageUrl);
+      const hasContent = result && (result.label || result.key || result.imageUrl);
       if (!hasContent) {
         // Fade out
         hover.el.style.opacity = '0';
       } else {
         const isHtml = hover.config.type === 'overlay_html';
 
-        // Substitute template variables
-        // HTML overlays: escape values to prevent XSS in innerHTML
-        // Text overlays: no escaping needed since textContent is XSS-safe
-        const esc = isHtml ? escapeHtml : (s: string) => s;
-        let text = hover.template;
-        text = text.replace(/\{hover_label\}/g, result.label ? esc(result.label) : '');
-        text = text.replace(/\{hover_node\}/g, esc(result.nodeName));
-        text = text.replace(/\{hover_index\}/g, String(result.elementIndex));
+        // Substitute the shared hover vocabulary. The escaping mode is the
+        // whole difference between this consumer and the `link` / `copy`
+        // ones: HTML overlays escape (the result reaches innerHTML), text
+        // overlays don't (textContent is inert). See utils/hover-template.ts.
+        //
+        // `hadEmptySubstitution` is deliberately ignored here: a tooltip with
+        // a gap in it is fine and visible, and this branch already only runs
+        // when the element has some content. It exists for `link`, where an
+        // empty segment silently produces a valid-looking wrong URL.
+        let text = substituteHoverTemplate(
+          hover.template,
+          {
+            label: result.label,
+            key: result.key,
+            nodeName: result.nodeName,
+            elementIndex: result.elementIndex,
+          },
+          isHtml ? 'html' : 'text'
+        ).text;
 
         // Image label: render as <img> tag (only meaningful in HTML overlays).
         // When hover_image_size is set, wrap in a fixed-size container so the
@@ -380,6 +397,10 @@ export class OverlayManager {
         // identical re-show keeps the decoded image visible. See
         // HoverOverlayEntry.lastRendered.
         const rendered = isHtml ? this.sanitizeHtml(text) : text;
+        if (rendered === '') {
+          hover.el.style.opacity = '0';
+          continue;
+        }
         if (rendered !== hover.lastRendered) {
           if (isHtml) {
             hover.el.innerHTML = rendered;

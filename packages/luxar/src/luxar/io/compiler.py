@@ -88,6 +88,7 @@ from ._compiler.labels.text_labels import (
 from ._compiler.node_common import prepare_transform_attrs as _prepare_transform_attrs
 from ._compiler.node_common import validate_node_path as _validate_node_path
 from ._compiler.node_common import validate_render_attrs as _validate_render_attrs
+from ._compiler.node_common import warn_if_over_element_cap
 
 # Ordering functions will be imported locally where needed to avoid circular imports
 
@@ -596,6 +597,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         scalars: Optional[Union[NDArray[np.float32], float]] = None,
         labels: Optional["Sequence[str]"] = None,
         image_labels: Optional[Any] = None,
+        keys: Optional[Sequence[str]] = None,
         **attrs: Any,
     ) -> PointsMetadata:
         """Write points data progressively to Zarr.
@@ -621,6 +623,10 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             image_labels: Optional per-element images for hover thumbnails.
                 Accepts List[bytes], List[PIL.Image], List[ndarray], List[Path],
                 or Dict[int, Any] for sparse assignment.
+            keys: Optional list of machine-readable strings, one per point.
+                Stored as CSR-encoded key_offsets + key_bytes arrays for
+                ``link`` / ``copy`` templates to substitute as
+                ``{hover_key}``. Independent of ``labels``.
             **attrs: Additional attributes
 
         Returns:
@@ -637,6 +643,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             scalars,
             labels,
             image_labels,
+            keys=keys,
             **attrs,
         )
         self._metadata_cache[metadata["path"]] = metadata
@@ -657,6 +664,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         line_type: str = "polyline",
         labels: Optional["Sequence[str]"] = None,
         image_labels: Optional[Any] = None,
+        keys: Optional[Sequence[str]] = None,
         **attrs: Any,
     ) -> dict[str, Any]:
         """Write lines data to Zarr with dual spatial indexing.
@@ -687,6 +695,10 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             labels: Optional list of strings, one per vertex. Stored as CSR-encoded
                 label_offsets + label_bytes arrays for hover tooltips.
             image_labels: Optional per-element images for hover thumbnails.
+            keys: Optional list of machine-readable strings, one per vertex.
+                Stored as CSR-encoded key_offsets + key_bytes arrays for
+                ``link`` / ``copy`` templates to substitute as
+                ``{hover_key}``. Independent of ``labels``.
             **attrs: Additional attributes
 
         Returns:
@@ -705,6 +717,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             line_type,
             labels,
             image_labels,
+            keys=keys,
             **attrs,
         )
         self._metadata_cache[path.lstrip("/")] = metadata
@@ -725,6 +738,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         double_sided: bool = True,
         labels: Optional["Sequence[str]"] = None,
         image_labels: Optional[Any] = None,
+        keys: Optional[Sequence[str]] = None,
         **attrs: Any,
     ) -> dict[str, Any]:
         """Write a triangle mesh to Zarr.
@@ -763,6 +777,10 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             double_sided: Whether back faces render. ``True`` by default.
             labels: Optional per-vertex strings for hover tooltips (CSR-encoded).
             image_labels: Optional per-vertex images for hover thumbnails.
+            keys: Optional list of machine-readable strings, one per vertex.
+                Stored as CSR-encoded key_offsets + key_bytes arrays for
+                ``link`` / ``copy`` templates to substitute as
+                ``{hover_key}``. Independent of ``labels``.
             **attrs: Additional attributes.
 
         Returns:
@@ -782,6 +800,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             double_sided,
             labels,
             image_labels,
+            keys=keys,
             **attrs,
         )
         self._metadata_cache[path.lstrip("/")] = metadata
@@ -840,21 +859,21 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         / ``visible``) — these inherit down to subgroups via the
         viewer's scene-graph composition at render time.
 
-        **Labels**: per-element string labels are written as ONE CSR pair on the
-        PARENT node (which therefore carries ``has_labels``); the
-        ``additive_<i>`` subgroups carry none. The parent CSR's index space is
+        **String channels**: per-element ``labels`` and ``keys`` are each written
+        as one CSR pair on the parent (stamping ``has_labels`` / ``has_keys``);
+        the ``additive_<i>`` subgroups carry neither. Each parent CSR's index space is
         the committed union — the concatenation of the levels in
         ``additive_0 … additive_{n-1}`` order, each level in its own stored
         (spatially reordered) order — because the viewer's progressive loader
-        concatenates loaded levels into one buffer. Labels are all-or-nothing
-        across the ladder.
+        concatenates loaded levels into one buffer. Each channel is independently
+        all-or-nothing across the ladder.
 
         Args:
             path: Path for the points node within the store.
             levels: List of per-level dicts with keys ``positions`` /
                 ``colors`` / ``radii`` / ``sharpness`` / ``scalars`` /
-                ``labels``. ``positions`` is required; others may be
-                ``None``. ``labels`` must be present on every level or
+                ``labels`` / ``keys``. ``positions`` is required; others may be
+                ``None``. Each string channel must be present on every level or
                 on none.
             extend_to_all: Forwarded to each per-level write. Already-resolved
                 dimension NAMES — the caller expands the ``"all"`` sentinel,
@@ -886,6 +905,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # require_group, because this gate is pure and a rejected ladder must
         # not leave an empty node behind.
         labelled = validate_ladder_labels(levels, "positions")
+        # Keys obey the same all-or-nothing rule across the ladder, and land
+        # in the same union CSR on the parent (#1917).
+        keyed = validate_ladder_labels(levels, "positions", channel="keys")
 
         # Validate every path segment (rejects empty/dot-prefixed names —
         # the F1/F5 chokepoint) + strip the leading slash.
@@ -918,11 +940,16 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 **({"lod_stats": lvl["lod_stats"]} if lvl.get("lod_stats") else {}),
                 **({"extend_to_all": extend_to_all} if extend_to_all else {}),
                 _skip_scene_bounds=True,
-                **({"_return_sort_order": True} if labelled else {}),
+                # Plain keyword rather than a conditional `**{...}` unpack:
+                # `record_forwarded_sort_order` treats False exactly as absent,
+                # and a `dict[str, bool]` unpack is checked against every typed
+                # parameter it could bind to — which now includes `keys`.
+                _skip_element_cap_warning=True,
+                _return_sort_order=labelled or keyed,
             )
             # POP, not read: the permutation is only needed to build the union
             # CSR, and the metadata dict lands in ``self._metadata_cache``.
-            if labelled:
+            if labelled or keyed:
                 level_sort_orders.append(level_meta.pop("sort_order", None))
             level_metas.append(level_meta)
 
@@ -937,6 +964,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         group.attrs["n_points"] = n_points_total
         group.attrs["n_additive_sublods"] = n_levels
         group.attrs["position_bounds"] = global_bounds
+        warn_if_over_element_cap("points", n_points_total, group.name)
         if extend_to_all:
             group.attrs["extend_to_all"] = extend_to_all
 
@@ -963,6 +991,16 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 self.compressor,
             )
             metadata["has_labels"] = True
+        if keyed:
+            write_ladder_union_labels_csr(
+                group,
+                [lvl["keys"] for lvl in levels],
+                level_sort_orders,
+                n_points_total,
+                self.compressor,
+                channel="keys",
+            )
+            metadata["has_keys"] = True
 
         self._metadata_cache[path] = metadata
         aprint(
@@ -984,17 +1022,18 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         Mirrors :meth:`write_points_multi_lod`. Each level dict carries
         ``vertices`` + ``widths`` + ``colors`` / ``sharpness`` /
-        ``scalars`` / ``labels`` + ``segments`` (local index pairs into
+        ``scalars`` / ``labels`` / ``keys`` + ``segments`` (local index pairs into
         that level's vertices) + ``n_polylines``. Each subgroup is
         written via :meth:`write_lines` with ``line_type='indexed'``
         and the local segment indices.
 
-        **Labels** (per-VERTEX for Lines) are written as ONE CSR pair on the
-        PARENT node — which therefore carries ``has_labels`` — describing the
-        committed union: the concatenation of the levels in
+        **String channels** (per-VERTEX for Lines) are written as one CSR pair
+        per present ``labels`` / ``keys`` channel on the parent, which stamps
+        ``has_labels`` / ``has_keys``. Each pair describes the committed union:
+        the concatenation of the levels in
         ``additive_0 … additive_{n-1}`` order, each level in its own stored
-        (spatially reordered) order. The ``additive_<i>`` subgroups carry none.
-        Labels are all-or-nothing across the ladder.
+        (spatially reordered) order. The ``additive_<i>`` subgroups carry neither.
+        Each channel is independently all-or-nothing across the ladder.
         """
         self._check_not_finalized("write_lines_multi_lod")
 
@@ -1015,6 +1054,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # require_group, because this gate is pure and a rejected ladder must
         # not leave an empty node behind.
         labelled = validate_ladder_labels(levels, "vertices")
+        # Keys obey the same all-or-nothing rule across the ladder, and land
+        # in the same union CSR on the parent (#1917).
+        keyed = validate_ladder_labels(levels, "vertices", channel="keys")
 
         # Validate every path segment (rejects empty/dot-prefixed names —
         # the F1/F5 chokepoint) + strip the leading slash.
@@ -1054,11 +1096,16 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 **({"lod_stats": lvl["lod_stats"]} if lvl.get("lod_stats") else {}),
                 **({"extend_to_all": extend_to_all} if extend_to_all else {}),
                 _skip_scene_bounds=True,
-                **({"_return_sort_order": True} if labelled else {}),
+                # Plain keyword rather than a conditional `**{...}` unpack:
+                # `record_forwarded_sort_order` treats False exactly as absent,
+                # and a `dict[str, bool]` unpack is checked against every typed
+                # parameter it could bind to — which now includes `keys`.
+                _skip_element_cap_warning=True,
+                _return_sort_order=labelled or keyed,
             )
             # POP, not read: the permutation is only needed to build the union
             # CSR, and the metadata dict lands in ``self._metadata_cache``.
-            if labelled:
+            if labelled or keyed:
                 level_sort_orders.append(level_meta.pop("sort_order", None))
             level_metas.append(level_meta)
 
@@ -1079,6 +1126,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         group.attrs["n_segments"] = n_segments_total
         group.attrs["n_additive_sublods"] = n_levels
         group.attrs["position_bounds"] = global_bounds
+        warn_if_over_element_cap("lines", n_segments_total, group.name)
         if extend_to_all:
             group.attrs["extend_to_all"] = extend_to_all
 
@@ -1106,6 +1154,16 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 self.compressor,
             )
             metadata["has_labels"] = True
+        if keyed:
+            write_ladder_union_labels_csr(
+                group,
+                [lvl["keys"] for lvl in levels],
+                level_sort_orders,
+                n_vertices_total,
+                self.compressor,
+                channel="keys",
+            )
+            metadata["has_keys"] = True
 
         self._metadata_cache[path] = metadata
         aprint(
@@ -1150,8 +1208,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         single source vertex on a shell boundary maps to a slot in several levels
         (and a vertex no level's faces reference maps to none): the union index
         space is ill-defined, and any CSR written over it would pair labels with
-        the wrong vertices. So the parent carries no ``has_labels`` and a level
-        carrying ``labels`` is refused outright rather than silently dropped.
+        the wrong vertices. So the parent carries no ``has_labels`` / ``has_keys``
+        and a level carrying either is refused outright rather than silently
+        dropped.
 
         Args:
             path: Path for the mesh node within the store.
@@ -1169,7 +1228,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         Raises:
             ValueError: If ``levels`` is empty, an attr is invalid, or any level
-                carries ``labels``.
+                carries ``labels`` or ``keys``.
         """
         self._check_not_finalized("write_mesh_multi_lod")
 
@@ -1189,19 +1248,25 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # for the same reason the sibling writers resolve their label situation
         # there: the gate is pure, and a rejected ladder must not leave an empty
         # node behind. See the docstring for why a union CSR is impossible here.
-        labelled = [i for i, lvl in enumerate(levels) if lvl.get("labels") is not None]
-        if labelled:
-            raise ValueError(
-                f"write_mesh_multi_lod: level(s) {labelled} carry 'labels', which a "
-                "mesh reveal ladder cannot store. The sibling ladders put one union "
-                "label CSR on the parent spanning the levels, but each mesh level "
-                "re-indexes its own vertices — one source vertex maps to a slot in "
-                "several levels — so that union index space is ill-defined and a CSR "
-                "over it would pair labels with the wrong vertices. Use "
-                "substitutive_lod= (whose finest child is the original surface and "
-                "carries the labels) or partition= (which splits the CSR per part), "
-                "or write a plain leaf."
-            )
+        # Both per-element string channels, for the same structural reason: the
+        # refusal is about the union INDEX SPACE, not about what the strings
+        # mean, so `keys` cannot be stored here any more than `labels` can.
+        for channel in ("labels", "keys"):
+            offending = [
+                i for i, lvl in enumerate(levels) if lvl.get(channel) is not None
+            ]
+            if offending:
+                raise ValueError(
+                    f"write_mesh_multi_lod: level(s) {offending} carry '{channel}', "
+                    "which a mesh reveal ladder cannot store. The sibling ladders put "
+                    f"one union {channel} CSR on the parent spanning the levels, but "
+                    "each mesh level re-indexes its own vertices — one source vertex "
+                    "maps to a slot in several levels — so that union index space is "
+                    "ill-defined and a CSR over it would pair strings with the wrong "
+                    "vertices. Use substitutive_lod= (whose finest child is the "
+                    "original surface and carries the channel) or partition= (which "
+                    "splits the CSR per part), or write a plain leaf."
+                )
 
         # Validate every path segment (rejects empty/dot-prefixed names — the
         # F1/F5 chokepoint) + strip the leading slash.
@@ -1360,6 +1425,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         ] = None,
         labels: Optional["Sequence[str]"] = None,
         image_labels: Optional[Any] = None,
+        keys: Optional[Sequence[str]] = None,
         **attrs: Any,
     ) -> dict[str, Any]:
         """Write Gaussian splats data to Zarr (single-LOD, flat layout).
@@ -1377,6 +1443,10 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             labels: Optional list of strings, one per splat. Stored as CSR-encoded
                 label_offsets + label_bytes arrays for hover tooltips.
             image_labels: Optional per-element images for hover thumbnails.
+            keys: Optional list of machine-readable strings, one per splat.
+                Stored as CSR-encoded key_offsets + key_bytes arrays for
+                ``link`` / ``copy`` templates to substitute as
+                ``{hover_key}``. Independent of ``labels``.
             **attrs: Additional attributes
 
         Returns:
@@ -1392,6 +1462,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             colors,
             labels,
             image_labels,
+            keys=keys,
             **attrs,
         )
         self._metadata_cache[path.lstrip("/")] = metadata
@@ -1415,7 +1486,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         byte-identical to a standalone one by construction.
 
         Used for ``GSplatData`` embeds, whose arrays are always full per-splat
-        (no uniform-Cholesky / scalar-amplitude / labels — those leaf-only
+        (no uniform-Cholesky / scalar-amplitude / labels / keys — those leaf-only
         scene features stay on :meth:`write_gsplats`).
 
         Args:

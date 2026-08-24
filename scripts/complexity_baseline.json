@@ -178,12 +178,6 @@
     "packages/luxar/src/luxar/demos/demo_arxiv_embeddings_kaggle.py::generate_paper_landscape": [
       16
     ],
-    "packages/luxar/src/luxar/demos/demo_arxiv_embeddings_semantic_scholar.py::generate_paper_landscape": [
-      11
-    ],
-    "packages/luxar/src/luxar/demos/demo_arxiv_embeddings_semantic_scholar.py::main": [
-      11
-    ],
     "packages/luxar/src/luxar/demos/demo_atp_synthase.py::main": [
       12
     ],

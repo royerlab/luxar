@@ -243,7 +243,7 @@ test.describe('My Feature Tests', () => {
     const initialState = await getLuxarState(page);
 
     // 3. Perform action
-    await page.keyboard.press('4');
+    await page.keyboard.press('1'); // Select the first non-displayed dimension
     await page.waitForTimeout(100); // Brief wait for key processing
     await page.keyboard.press(']');
 

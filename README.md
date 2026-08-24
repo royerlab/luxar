@@ -89,7 +89,7 @@ is the slow exception).
 git clone https://github.com/royerlab/luxar.git
 cd luxar
 make setup-dev          # Auto-installs Node.js, pnpm, Hatch (no sudo)
-luxar demo              # Browse the 86 bundled demos
+luxar demo              # Browse the 85 bundled demos
 luxar demo run lorenz   # Run one — generates the data and opens the viewer
 ```
 
@@ -103,20 +103,20 @@ That last command generates a Lorenz attractor and opens the viewer:
 geometry, what it needs, and whether you have already built it:
 
 ```
-🎬 86 Luxar demos  ·  75 built  ·  8 cached  ·  3 not generated yet
+🎬 85 Luxar demos  ·  74 built  ·  8 cached  ·  3 not generated yet
 
  ASTRONOMY ───────────────────────────────────────────────────────────── 6 demos
- ✓  3  asteroids_solar_system                  points+lines  300 MB
- ✓ 12  cosmicflows_laniakea                    points+lines  25 MB
- • 15  desi_galaxies                           points        73 MB git-lfs
+ ✓  2  asteroids_solar_system                  points+lines  300 MB
+ ✓ 11  cosmicflows_laniakea                    points+lines  25 MB
+ • 14  desi_galaxies                           points        73 MB git-lfs
 
  MEDICAL ─────────────────────────────────────────────────────────────── 4 demos
- ✓ 17  dmri_tractography                       lines         588 MB
- • 25  gsplats_2d_cmu1_pathology               gsplats       150 MB GPU? git-lfs
+ ✓ 16  dmri_tractography                       lines         588 MB
+ • 24  gsplats_2d_cmu1_pathology               gsplats       150 MB GPU? git-lfs
 
  SYNTHETIC ──────────────────────────────────────────────────────────── 19 demos
- ✓ 10  cloud                                   points
-   11  collision                               points
+ ✓  9  cloud                                   points
+   10  collision                               points
  ...
 
  ✓ built   • inputs cached   (blank) not generated yet
@@ -554,7 +554,7 @@ Points in nD space are treated as **hyperspheres**. When viewing a 3D slice:
 
 | Key | Action |
 |-----|--------|
-| `1-9` | Select dimension to navigate |
+| `1-9` | Select a non-displayed dimension to navigate |
 | `[` / `]` | Step backward/forward in selected dimension |
 | `N` | Toggle dimension panel |
 

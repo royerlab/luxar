@@ -74,12 +74,46 @@ def _prune_empty_additive_sublods(
 
 
 def _refresh_ladder_summary(stats: dict, cutpoints: list[int]) -> dict:
-    """Refresh authored ladder-size metadata after empty-rung pruning."""
+    """Refresh authored ladder-size metadata after empty-rung pruning.
+
+    BOTH spellings of the rung count, because both describe the ladder the
+    rebuild just changed: ``lod_n_lods`` / ``lod_cutpoints`` (stamped by
+    ``make_additive_lod``) and the un-prefixed ``n_lods``
+    (:func:`~luxar.gsplats.batch.merge_orchestrator._recipe_pipeline_info`, what
+    ``batch-fit merge --recipe stream`` publishes for the same ladder). A ``cull``
+    / ``filter`` that empties a rung refreshed the first and left the second
+    asserting the pre-prune count a few keys away (#1600 review). No ``lod_kind``
+    gate is needed for the count the way :func:`~luxar.gsplats.lod.restamp
+    ._recipe_ladder_keys` needs one for ``method``: that producer's ``stream``
+    branch is the only site in the codebase that stamps ``n_lods`` at all.
+
+    PRESENT KEYS ONLY — the refresh corrects a claim, it never starts making one.
+
+    The un-prefixed count's two siblings are deliberately left alone:
+
+    * ``method`` is the additive ORDERING, which dropping empty rungs does not
+      change — the ``lod_*`` half leaves ``lod_method`` untouched here for
+      exactly the same reason.
+    * ``breakpoints`` is the build SPEC that was REQUESTED (``"stream:14000"``,
+      ``"counts:5,15,40"``): provenance of how the ladder was built, not a
+      measurement of what it now holds, and this rewrite built no new ladder
+      from a different spec — it pruned the one that spec produced. (Contrast
+      :func:`~luxar.gsplats.lod.restamp._refresh_recipe_ladder`, where a
+      ``gsplat additive`` DOES replace the ladder with one built from other
+      knobs, so the old spec is dropped.) Its prefixed twin
+      ``lod_breakpoints_kind`` survives this same rewrite untouched.
+
+    A single root count is always well defined here: both callers hold ONE
+    ladder, and the ``per_part`` shape that would make it ambiguous is a
+    ``kind=partition``, which ``GSplatData`` refuses to load at all.
+    """
     refreshed = dict(stats)
     if "lod_n_lods" in refreshed:
         refreshed["lod_n_lods"] = len(cutpoints)
     if "lod_cutpoints" in refreshed:
         refreshed["lod_cutpoints"] = list(cutpoints)
+    if "n_lods" in refreshed:
+        refreshed["n_lods"] = len(cutpoints)
     return refreshed
 
 

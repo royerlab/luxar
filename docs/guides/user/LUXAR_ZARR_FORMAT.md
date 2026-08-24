@@ -159,6 +159,8 @@ scene.luxar.zarr/
 │   ├── chunk_bounds/       # Chunk bounding boxes for spatial queries (optional)
 │   ├── label_offsets/      # Per-element label byte offsets, CSR-style (optional)
 │   ├── label_bytes/        # Concatenated UTF-8 label strings (optional)
+│   ├── key_offsets/        # Per-element key byte offsets, CSR-style (optional)
+│   ├── key_bytes/          # Concatenated UTF-8 key strings (optional)
 │   ├── image_label_offsets/ # Per-element image byte offsets, CSR-style (optional)
 │   ├── image_label_bytes/  # Concatenated encoded image blobs (optional)
 │   └── <child_nodes>/      # Nested child nodes (recursive structure)
@@ -166,7 +168,7 @@ scene.luxar.zarr/
     └── <overlay_name>/     # Individual overlay
         ├── .zattrs         # Overlay metadata (type, position, style, visible_range, hover)
         ├── .zgroup
-        └── image.png       # Raw image file (image overlays only; bytes folded into content_hash at compile time)
+        └── image.png       # Raw image file (image overlays only; exact name; bytes folded into content_hash at compile time)
 ```
 
 ### Compression & the `luxar_delta_v1` filter
@@ -933,16 +935,17 @@ per-vertex arrays are reordered by the vertex sort):
   per-segment); declared via `has_scalars` / `scalar_data_range` / `colormap`
   attrs (see *Scalar Colormap Attributes* below).
 
-Per-vertex labels (`label_offsets`/`label_bytes`) and image labels
+Per-vertex labels (`label_offsets`/`label_bytes`), keys
+(`key_offsets`/`key_bytes`), and image labels
 (`image_label_offsets`/`image_label_bytes`) are supported with the same
-CSR-style layout as Points (see *Per-Element Labels*). Because the labels are
-per-vertex while the viewer picks whole *segments*, hover and selection on a
-lines node report the picked segment's **start** vertex. Two consequences follow
-from that convention: on a segment that the current slice clips only partially
-the reported start vertex may lie entirely outside the visible slab (what is
-drawn starts at the clipped position, not at the stored vertex), and **any
-vertex that is never a segment's start is unreachable by hovering** — its label
-can never be shown.
+CSR-style layout as Points (see *Per-Element Labels* and *Per-Element Keys*).
+Because the string channels are per-vertex while the viewer picks whole
+*segments*, hover and selection on a lines node report the picked segment's
+**start** vertex. Two consequences follow from that convention: on a segment
+that the current slice clips only partially the reported start vertex may lie
+entirely outside the visible slab (what is drawn starts at the clipped position,
+not at the stored vertex), and **any vertex that is never a segment's start is
+unreachable by hovering** — its label, key, or image label can never be read.
 
 Which vertices those are depends on `original_line_type` (the segment pairs are
 built by `luxar.io._ordering.lines.convert_to_indexed`):
@@ -1058,9 +1061,10 @@ they are rejected on points, lines, Gaussian splats, and groups.
 - **Shape:** `(V,)` — per-vertex colormap scalars; declared via `has_scalars` /
   `scalar_data_range` / `colormap` (see *Scalar Colormap Attributes* below).
 
-Per-vertex labels (`label_offsets`/`label_bytes`) and image labels
+Per-vertex labels (`label_offsets`/`label_bytes`), keys
+(`key_offsets`/`key_bytes`), and image labels
 (`image_label_offsets`/`image_label_bytes`) use the same CSR-style layout as
-Points (see *Per-Element Labels*).
+Points (see *Per-Element Labels* and *Per-Element Keys*).
 
 **Not written for a mesh node:** no spatial index (`ordering` is always `"none"`).
 
@@ -1073,10 +1077,11 @@ re-indexes its own gathered vertex table (so the parent's `n_vertices` exceeds t
 source count by the boundary duplication, exactly as `kind=partition` parts do);
 no level carries `energy_fraction_cum` and the parent carries no
 `reference_energy`, because a reveal prefix is a partial object at full brightness
-rather than a dim version of the whole; and `has_labels` is **not** set, because one
-source vertex maps to a slot in every level that touches it, so a union label CSR
-spanning levels has no well-defined index space. Labelled meshes take
-`substitutive_lod=` or `partition=`, both of which keep their labels. A mesh **may**
+rather than a dim version of the whole; and `has_labels`, `has_keys`, and
+`has_image_labels` are all **unset**, because one source vertex maps to a slot in
+every level that touches it, so a union annotation CSR spanning levels has no
+well-defined index space. Annotated meshes take `substitutive_lod=` or
+`partition=`, both of which keep their per-element annotations. A mesh **may**
 be a child of a `kind=partition` group;
 `add_mesh(partition=…)` writes exactly that, with each part carrying its own
 gathered-and-renumbered vertex table (vertices on a cut are duplicated between
@@ -1278,6 +1283,17 @@ The image file (PNG/JPEG/WebP) is stored directly in the overlay's zarr director
 Its bytes are folded into the `content_hash` at compile time, so two builds
 differing only in the image get different hashes; editing the file inside an
 already-finalized store restamps nothing, since nothing re-hashes on the fly.
+For a payload name that differs from a zarr metadata document only by case
+(`Zarr.json`, `.ZATTRS`, ...), the authored spelling must appear exactly in the
+store's immediate-child listing before any read. Otherwise it is not treated as
+a payload and contributes the deterministic `absent:` hash term, with no bytes
+read. Ordinary non-colliding names retain the store's native lookup semantics.
+
+The viewer fetches `overlays/<name>/<image_file>` directly. A case-insensitive
+static host may therefore return the real metadata document for a dangling
+case-shifted name even though the compiler hashes it as absent; the result is a
+broken image response, not a valid overlay. Producers should avoid all payload
+names that collide case-insensitively with zarr metadata documents.
 
 Note: the overlay `blend_mode` is a screen-space-overlay compositing concept
 (how the 2D overlay image blends over the rendered frame) — distinct from the
@@ -1426,6 +1442,40 @@ multi-additive-LOD Points / Lines node stores a single CSR on the **parent**,
 spanning its `additive_<i>` subgroups (which carry none) — see the **Labels**
 paragraph in the "Multi-additive LOD (progressive loading)" section above.
 
+#### Per-Element Keys (CSR-style)
+
+Optional per-element **machine-readable** strings, for `link` / `copy` templates
+to substitute as `{hover_key}`. Same encoding, same reordering and the same
+all-or-nothing ladder rule as **Per-Element Labels** above — only the array
+names and the presence attr differ. When present, `.zattrs` includes
+`"has_keys": true`.
+
+- **key_offsets/** Array — uint64, shape `(N+1,)`: byte offset of each key
+- **key_bytes/** Array — uint8: concatenated UTF-8 encoded key strings
+
+**Decoding:** `key_i = utf8_decode(key_bytes[offsets[i] : offsets[i+1]])`, with
+`offsets[i] == offsets[i+1]` meaning "no key for this element".
+
+Keys exist because a label and a link key are usually *different strings*. A
+label is composite prose a reader sees on hover (`"P04637 · DNA-binding
+cluster"`); a URL needs the bare id (`"P04637"`). Folding one into the other
+means either a degraded tooltip or an unusable link, and in several datasets the
+id is not present in the label at all. Keys are also far cheaper than storing a
+whole URL per element: a 6-character accession is ~7 bytes against ~45, and the
+viewer decodes the entire CSR into memory on first hover.
+
+Keys are independent of labels: a node may carry either, both, or neither. A
+`link` built purely from `{hover_index}` needs no strings at all.
+
+```python
+scene.add_points(
+    "proteins", positions,
+    labels=[f"{acc} · {cluster}" for acc, cluster in ...],  # what the tooltip shows
+    keys=accessions,                                        # what the URL uses
+    link="https://www.uniprot.org/uniprotkb/{hover_key}/entry",
+)
+```
+
 #### Per-Element Image Labels (CSR-style)
 
 Optional per-element **image** labels for hover thumbnails, written via the
@@ -1457,11 +1507,68 @@ Overlays with `"hover": true` in their `.zattrs` act as hover tooltips. Their `t
 
 | Variable | Description |
 |----------|-------------|
+| `{hover_key}` | The machine-readable key for the picked element (see *Per-Element Keys*). Empty when the node carries none. |
 | `{hover_label}` | The label string for the picked element |
 | `{hover_node}` | Zarr path of the picked layer (e.g., "/cells") |
 | `{hover_index}` | Element index within the node that was hit (on-disk index or buffer slot — see below). For a **lines** node carrying per-vertex labels it is the picked segment's start-vertex row in the stored (spatially ordered) vertex arrays — line labels are per-vertex and a segment carries a single pick id, so its start endpoint is the one reported. |
 
 When labels exist on any node but no hover overlay is explicitly defined, a default hover overlay is auto-injected at scene finalization time.
+
+### Element Interaction Templates
+
+The same substitution vocabulary — including `{hover_key}`, backed by the
+**Per-Element Keys** CSR — drives two per-**node** attrs that make a picked
+element clickable. They live on the geometry node (not on an overlay),
+because a scene has effectively one hover overlay but many layers, and the
+target is a property of the data:
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `link` | `string` | URL template. Opened on left-click (no drag). Must resolve to an absolute `http`/`https` URL. |
+| `copy` | `string` | Plain-text template offered as `Copy` in the right-click menu. Defaults to `{hover_label}` when absent and the node has labels. |
+| `link_target` | `string` | `"_blank"` (default) or `"_self"`. |
+
+```python
+scene.add_points(
+    "organs", positions, labels=organ_names,
+    link="https://en.wikipedia.org/wiki/Special:Search?search={hover_label}",
+    copy="{hover_label}",
+)
+```
+
+Right-clicking a picked element opens a menu with `Copy "<text>"` plus, when a
+`link` resolves, `Open link in new tab` and `Copy link address`. Nothing is
+shown when the element offers neither.
+
+Element actions currently require a settled hover pick, so taps on touch-only
+devices do not trigger them.
+
+**Substitution and escaping differ by consumer.** Values interpolated into a
+`link` are percent-encoded, so a label may contribute *content* to the URL but
+never *structure* — a label containing `/`, `?`, `#` or `&` cannot add a path
+segment, query or fragment. Values interpolated into `copy` are not escaped:
+plain text is the point. Tooltip escaping is unchanged.
+
+**A referenced placeholder that resolves empty suppresses the action** rather
+than leaving a hole. `https://example.org/{hover_label}` on an element with no
+label would otherwise become `https://example.org/`, a valid URL to the wrong
+place. This is the normal case at coarse levels of a `substitutive_lod=`
+ladder, whose synthesised gsplat levels inherit the node attrs but carry no
+labels.
+
+Both the Python writer and the viewer validate a `link`: the scheme must be
+`http` or `https` (an allowlist — the viewer *navigates* to this value, and
+`.zattrs` is untrusted input), the URL must be absolute (a relative one would
+resolve against whatever origin the viewer is served from), it must not embed
+credentials (`https://good.example@evil.example/` reads as one host and goes to
+another, including in `Copy link address`), and it is length-capped. `link_target` is restricted to the two keywords that imply `noopener`;
+any other value would be a *named* browsing context, which the browser opens
+with a live `window.opener` the destination could use to navigate the viewer
+tab. Links open with `noopener,noreferrer`.
+
+Viewers can refuse links entirely — `?no-links`, or `allowLinks: false` in the
+embedder options. That suppresses navigation, the two link menu items and the
+pointer cursor, while leaving `Copy` working.
 
 Under a `kind=partition` layer, `{hover_node}` and `{hover_index}` are reported
 against different nodes and are not directly joinable: `{hover_node}` is the
@@ -1472,8 +1579,8 @@ non-partitioned node both refer to the same node.
 Whether `{hover_index}` is the *on-disk* element index — the one the node's
 arrays and its label CSR are keyed by — depends on the geometry. It is the
 on-disk index for a **flat** Points, GSplats or Lines node that declares
-`has_labels` or `has_image_labels`, and for a Mesh always, since mesh picking reports the
-vertex's on-disk ordinal directly. **Lines** takes the longest route to get
+`has_labels`, `has_image_labels`, or `has_keys`, and for a Mesh always, since
+mesh picking reports the vertex's on-disk ordinal directly. **Lines** takes the longest route to get
 there: a line is drawn one instance per *segment* and picking reports that
 segment's slot, while the lines label CSR is written per *vertex*, so a labelled
 lines node resolves the slot all the way back to the picked segment's start

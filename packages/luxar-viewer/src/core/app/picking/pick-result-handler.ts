@@ -58,11 +58,19 @@ function findOutermostPartitionWrapperName(mainNode: THREE.Object3D): string | n
  */
 export interface PickResultHandlerPorts {
   labelLoader?: { getLabel: (path: string, idx: number) => Promise<string | null> };
+  /**
+   * Reads the per-element `keys` CSR (issue #1917). Same shape as
+   * `labelLoader` — it IS a `LabelLoader`, constructed on the `'keys'`
+   * channel — so the key is fetched on exactly the same terms as the
+   * label: lazily, once per node, coalesced.
+   */
+  keyLoader?: { getLabel: (path: string, idx: number) => Promise<string | null> };
   imageLabelLoader?: { getImageUrl: (path: string, idx: number) => Promise<string | null> };
   overlayManager?: {
     updateHoverContent: (
       r: {
         label?: string | null;
+        key?: string | null;
         imageUrl?: string | null;
         nodeName: string;
         elementIndex: number;
@@ -79,6 +87,28 @@ export interface PickResultHandlerPorts {
    */
   onSelection?: (
     sel: { nodeName: string; elementIndex: number; hitNodeName: string } | null
+  ) => void;
+  /**
+   * Optional sink retaining the settled pick so a click can act on it
+   * (issue #1917). Written on every non-superseded pick and cleared when the
+   * hover clears, mirroring `onSelection` exactly.
+   *
+   * Independent of whether a tooltip has content: an element with no label can
+   * still carry a `link` built from `{hover_index}`, and a right-click on it
+   * should still offer something. Inline shape (not the cache type) to keep
+   * this handler decoupled — see `core/app/interaction/picked-element-cache.ts`.
+   */
+  onPicked?: (
+    pick: {
+      mainNode: THREE.Object3D;
+      nodeName: string;
+      hitNodeName: string;
+      elementIndex: number;
+      label: string | null;
+      key: string | null;
+      screenX: number;
+      screenY: number;
+    } | null
   ) => void;
 }
 
@@ -178,6 +208,7 @@ export function buildPickResultHandler(
       if (!result) {
         ports.overlayManager?.updateHoverContent(null);
         ports.onSelection?.(null);
+        ports.onPicked?.(null);
         return;
       }
       // Partition-aware REPORTING: when the hit's leaf sits under a
@@ -189,9 +220,12 @@ export function buildPickResultHandler(
       // …but LOOK UP on the leaf. The wrapper holds no label CSR and does not
       // share the leaf's element index space (#1415).
       const lookupPath = result.mainNode.name;
-      const [label, imageUrl] = await Promise.all([
+      const [label, imageUrl, key] = await Promise.all([
         ports.labelLoader?.getLabel(lookupPath, result.elementId) ?? Promise.resolve(null),
         ports.imageLabelLoader?.getImageUrl(lookupPath, result.elementId) ?? Promise.resolve(null),
+        // Same lookup path and element id as the label: keys are written per
+        // leaf and reordered by the same permutation (#1917).
+        ports.keyLoader?.getLabel(lookupPath, result.elementId) ?? Promise.resolve(null),
       ]);
       // A newer pick result (or a fade-to-null) arrived while we were
       // fetching — drop this stale one rather than clobber fresher state.
@@ -205,10 +239,26 @@ export function buildPickResultHandler(
         elementIndex: result.elementId,
         hitNodeName: lookupPath,
       });
-      const hasContent = label || imageUrl;
+      // Retain the pick so a click can act on it (#1917). Emitted on the same
+      // terms as `onSelection` — what is picked, not what has a tooltip — so
+      // an unlabelled element carrying a `{hover_index}`-based link is still
+      // clickable. Carries `mainNode` because the interaction templates live
+      // in its `userData.attrs`, and the pick coordinate so a later click can
+      // confirm the cursor never moved.
+      ports.onPicked?.({
+        mainNode: result.mainNode,
+        nodeName: reportPath,
+        hitNodeName: lookupPath,
+        elementIndex: result.elementId,
+        label: label ?? null,
+        key: key ?? null,
+        screenX: result.screenX,
+        screenY: result.screenY,
+      });
+      const hasContent = label || key || imageUrl;
       ports.overlayManager?.updateHoverContent(
         hasContent
-          ? { label, imageUrl, nodeName: reportPath, elementIndex: result.elementId }
+          ? { label, key, imageUrl, nodeName: reportPath, elementIndex: result.elementId }
           : null
       );
     } catch (err) {
@@ -218,6 +268,7 @@ export function buildPickResultHandler(
       log.warning(Modules.APP, `Picking callback error: ${err}`);
       ports.overlayManager?.updateHoverContent(null);
       ports.onSelection?.(null);
+      ports.onPicked?.(null);
     }
   };
 }

@@ -764,7 +764,7 @@ Navigate through dimensions with keyboard:
 
 ```typescript
 // Select dimension
-'1'-'9': Select dimension 1-9
+'1'-'9': Select non-displayed dimension 1-9
 
 // Navigate selected dimension
 '[': Move backward in dimension

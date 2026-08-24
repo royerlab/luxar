@@ -17,6 +17,7 @@ import numpy as np
 import pytest
 
 from luxar._zarr_compat import consolidate, create_array, open_group
+from luxar.typing_utils.constants import MAX_POINTS_PER_POINTS_NODE
 
 _DEMO_PATH = Path(__file__).resolve().parents[1] / "demo_desi_galaxies.py"
 
@@ -41,6 +42,10 @@ dequantize_positions = _demo.dequantize_positions
 save_derived = _demo.save_derived
 load_derived = _demo.load_derived
 sample_scene_catalog = _demo.sample_scene_catalog
+
+
+def test_per_node_budget_stays_under_the_point_texture_bound() -> None:
+    assert _demo.SCENE_MAX_POINTS_PER_NODE <= MAX_POINTS_PER_POINTS_NODE
 
 
 class TestRadecToXyz:
@@ -408,6 +413,107 @@ class TestWarnIfSceneIsStale:
 
         assert "in one rung" not in capsys.readouterr().out
 
+    def test_silent_for_partitioned_finest_level(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        import zarr
+
+        scene = tmp_path / "desi.luxar.zarr"
+        root = zarr.open(str(scene), mode="w")
+        increments = [900_000, 900_000, 637_989]
+        for layer_name in ("By tracer type", "By redshift"):
+            finest = root.create_group(layer_name).create_group("child_2")
+            finest.attrs["kind"] = "partition"
+            for part_index in range(4):
+                part = finest.create_group(f"part_{part_index}")
+                part.attrs["n_additive_sublods"] = len(increments)
+                part.attrs["n_points"] = sum(increments)
+                for rung_index, count in enumerate(increments):
+                    part.create_group(f"additive_{rung_index}").attrs["n_points"] = (
+                        count
+                    )
+
+        _demo.warn_if_scene_is_stale(scene)
+
+        assert "⚠" not in capsys.readouterr().out
+
+    def test_warns_when_partitioned_rung_commits_too_much(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        import zarr
+
+        scene = tmp_path / "desi.luxar.zarr"
+        root = zarr.open(str(scene), mode="w")
+        for layer_name in ("By tracer type", "By redshift"):
+            finest = root.create_group(layer_name).create_group("child_2")
+            finest.attrs["kind"] = "partition"
+            part = finest.create_group("part_0")
+            increments = [1_000_000, 3_875_978]
+            part.attrs["n_additive_sublods"] = len(increments)
+            part.attrs["n_points"] = sum(increments)
+            for rung_index, count in enumerate(increments):
+                part.create_group(f"additive_{rung_index}").attrs["n_points"] = count
+
+        _demo.warn_if_scene_is_stale(scene)
+
+        out = capsys.readouterr().out
+        assert out.count("commits 3,875,978 points in one rung") == 2
+        assert "'By tracer type' finest level commits" in out
+        assert "'By redshift' finest level commits" in out
+
+    def test_warns_when_one_partition_leaf_exceeds_the_node_capacity(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        import zarr
+
+        scene = tmp_path / "desi.luxar.zarr"
+        root = zarr.open(str(scene), mode="w")
+        for layer_name in ("By tracer type", "By redshift"):
+            finest = root.create_group(layer_name).create_group("child_2")
+            finest.attrs["kind"] = "partition"
+            for part_index, n_points in enumerate((4_875_978, 4_875_977)):
+                part = finest.create_group(f"part_{part_index}")
+                increments = [900_000, 900_000, 900_000, 900_000, 900_000]
+                increments.append(n_points - sum(increments))
+                part.attrs["n_additive_sublods"] = len(increments)
+                part.attrs["n_points"] = n_points
+                for rung_index, count in enumerate(increments):
+                    part.create_group(f"additive_{rung_index}").attrs["n_points"] = (
+                        count
+                    )
+
+        _demo.warn_if_scene_is_stale(scene)
+
+        out = capsys.readouterr().out
+        assert out.count("single node contains 4,875,978 points") == 2
+        assert "rm -rf" in out
+
+    def test_warns_when_flat_finest_exceeds_the_node_capacity(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        scene = tmp_path / "desi.luxar.zarr"
+        increments = [
+            2_000,
+            2_000,
+            4_000,
+            8_000,
+            16_000,
+            32_000,
+            64_000,
+            128_000,
+            256_000,
+            512_000,
+            *([900_000] * 9),
+            627_955,
+        ]
+        self._write_laddered(scene, increments)
+
+        _demo.warn_if_scene_is_stale(scene)
+
+        out = capsys.readouterr().out
+        assert out.count("single node contains 9,751,955 points") == 2
+        assert "commits" not in out
+
     def test_warns_when_a_bounded_ladder_contains_only_the_old_sample(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -525,6 +631,53 @@ class TestSceneRowBudget:
             (cam_dist + float(radial.max())) * 1.5
         )
 
+    def test_partitions_both_layers_and_deduplicates_positions(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        rng = np.random.default_rng(8)
+        positions = rng.normal(size=(100, 3)).astype(np.float32)
+        redshift = np.linspace(0.01, 3.0, len(positions), dtype=np.float32)
+        tracer_ids = (np.arange(len(positions)) % 4).astype(np.uint8)
+        monkeypatch.setattr(_demo, "SCENE_MAX_POINTS_PER_NODE", 40, raising=False)
+        monkeypatch.setattr(_demo, "substitutive_lod_or_flat", lambda spec: None)
+
+        out = tmp_path / "desi_partitioned.luxar.zarr"
+        _demo.create_scene(positions, redshift, tracer_ids, out)
+
+        import zarr
+
+        root = zarr.open(str(out), mode="r")
+
+        def position_arrays(group):
+            arrays = []
+            if "positions" in group:
+                arrays.append(group["positions"])
+            for child_name in group.group_keys():
+                arrays.extend(position_arrays(group[child_name]))
+            return arrays
+
+        expected_intensity = _demo.SCENE_INTENSITY
+        tracer_layer = root["By tracer type"]
+        redshift_layer = root["By redshift"]
+        assert tracer_layer.attrs["kind"] == "partition"
+        assert redshift_layer.attrs["kind"] == "partition"
+        assert tracer_layer.attrs["intensity"] == pytest.approx(expected_intensity)
+        assert redshift_layer.attrs["intensity"] == pytest.approx(expected_intensity)
+
+        tracer_positions = position_arrays(tracer_layer)
+        redshift_positions = position_arrays(redshift_layer)
+        assert len(tracer_positions) == len(redshift_positions) > 1
+        assert sum(array.shape[0] for array in tracer_positions) == len(positions)
+        assert all(array.shape[0] <= 40 for array in tracer_positions)
+        assert all(
+            array.attrs["encoding"]["name"] != "array_ref" for array in tracer_positions
+        )
+        assert all(
+            array.attrs["encoding"]["name"] == "array_ref"
+            and array.attrs["encoding"]["target"].startswith("By tracer type/")
+            for array in redshift_positions
+        )
+
     def test_shipped_scene_carries_the_full_catalog(self) -> None:
         import json
         import zipfile
@@ -555,29 +708,68 @@ class TestSceneRowBudget:
                     for child_name in child_names
                 ]
                 assert layer_attrs["selector"] == "screen-area"
+                assert [attrs["coverage_fraction"] for attrs in child_attrs] == [
+                    0.0,
+                    0.5,
+                    1.0,
+                ]
 
-                # The finest child is the WHOLE catalog: no row cap any more.
+                # The finest child partitions the WHOLE catalog under the
+                # conservative per-node Points capacity: no row cap, and no
+                # viewer-side tail clamp on a 4096-class GPU.
+                finest_path = f"{layer_name}/{child_names[-1]}"
                 finest = child_attrs[-1]
-                n_finest = finest.get("n_splats", finest.get("n_points"))
-                assert n_finest > 9_000_000, (
-                    f"shipped finest level holds {n_finest:,} points; the row cap "
-                    "was removed, so it should carry the full ~9.75M catalog"
+                assert finest["kind"] == "partition"
+                assert finest["max_elements"] == _demo.SCENE_MAX_POINTS_PER_NODE
+                part_names = sorted(
+                    name.removeprefix(f"{finest_path}/").removesuffix("/zarr.json")
+                    for name in names
+                    if name.startswith(f"{finest_path}/part_")
+                    and name.count("/") == 3
+                    and name.endswith("/zarr.json")
                 )
+                assert part_names == ["part_0", "part_1", "part_2", "part_3"]
+                part_attrs = [
+                    read_attrs(f"{finest_path}/{part_name}") for part_name in part_names
+                ]
+                assert all(
+                    attrs["n_points"] <= _demo.SCENE_MAX_POINTS_PER_NODE
+                    for attrs in part_attrs
+                )
+                n_finest = sum(attrs["n_points"] for attrs in part_attrs)
+                assert n_finest == 9_751_955
 
                 # And no single additive rung may exceed the commit ceiling —
                 # the invariant that makes the full catalog streamable at all.
-                n_sublods = finest["n_additive_sublods"]
-                increments = [
-                    read_attrs(f"{layer_name}/{child_names[-1]}/additive_{i}").get(
-                        "n_points", 0
-                    )
-                    for i in range(n_sublods)
-                ]
+                increments = []
+                position_encodings = []
+                for part_name, attrs in zip(part_names, part_attrs):
+                    part_path = f"{finest_path}/{part_name}"
+                    part_increments = []
+                    for index in range(attrs["n_additive_sublods"]):
+                        rung_path = f"{part_path}/additive_{index}"
+                        part_increments.append(read_attrs(rung_path)["n_points"])
+                        position_encodings.append(
+                            read_attrs(f"{rung_path}/positions")["encoding"]
+                        )
+                    assert sum(part_increments) == attrs["n_points"]
+                    increments.extend(part_increments)
                 assert sum(increments) == n_finest
                 assert max(increments) <= _demo.SCENE_MAX_COMMIT, (
                     f"largest rung {max(increments):,} exceeds the "
                     f"{_demo.SCENE_MAX_COMMIT:,} ceiling"
                 )
+                if layer_name == "By tracer type":
+                    assert all(
+                        encoding["name"] != "array_ref"
+                        for encoding in position_encodings
+                    )
+                else:
+                    assert all(
+                        encoding["name"] == "array_ref"
+                        and encoding["target"].startswith("By tracer type/child_2/")
+                        for encoding in position_encodings
+                    )
 
 
 class TestEnsureOriginFraming:
