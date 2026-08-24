@@ -20,6 +20,7 @@ export function updateSceneGraphBadges(
   const root = model.getSceneGraph().root;
   if (!root) return;
 
+  // Badge tooltips read visible counts directly from the aliased tree nodes.
   model.syncVisibleCountsIntoTree();
 
   const badges = container.querySelectorAll('.luxar-scene-graph__badge[data-node-path]');
@@ -35,6 +36,7 @@ export function updateSceneGraphBadges(
     }
   });
 
+  // LOD progress changes every frame without changing tree structure.
   const lodChips = container.querySelectorAll('.luxar-scene-graph__lod[data-lod-path]');
   lodChips.forEach((chip) => {
     const path = (chip as HTMLElement).dataset.lodPath;
@@ -46,6 +48,7 @@ export function updateSceneGraphBadges(
     (chip as HTMLElement).title = content?.title ?? '';
   });
 
+  // Draw order is camera-dependent and may disappear for hidden nodes.
   const drawOrderChips = container.querySelectorAll(
     '.luxar-scene-graph__draworder[data-draworder-path]'
   );
@@ -57,6 +60,7 @@ export function updateSceneGraphBadges(
     (chip as HTMLElement).title = content?.title ?? '';
   });
 
+  // The active substitutive level can switch between structural rebuilds.
   const levelRows = container.querySelectorAll('.luxar-scene-graph__node-row[data-level-of]');
   levelRows.forEach((row) => {
     const element = row as HTMLElement;
@@ -72,6 +76,7 @@ export function updateSceneGraphBadges(
     }
   });
 
+  // Refresh the header LOD/partition summary from the same live snapshot.
   const summary = container.querySelector('[data-field="lod-summary"]') as HTMLElement | null;
   if (summary) {
     summary.textContent = summariseLodStates(lodStates, countAdditiveNodes(root));
