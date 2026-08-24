@@ -334,7 +334,7 @@ def test_the_docs_gate_names_its_own_checker_and_baselines(workflow: str) -> Non
 
 
 def test_python_matrix_leaves_an_obsidian_slot_for_typescript(workflow: str) -> None:
-    """Obsidian leaves one slot for TypeScript without throttling hosted CI."""
+    """Obsidian reserves a TypeScript slot without serializing hosted Python."""
     jobs = yaml.safe_load(workflow)["jobs"]
     assert jobs["python-tests"]["strategy"]["max-parallel"] == (
         "${{ needs.pick-runner.outputs.label == 'obsidian' && 2 || 3 }}"
