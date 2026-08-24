@@ -196,7 +196,7 @@ for is an *additive* ladder inside a single leaf.
      three are forwarded ONLY to the finest child, written last, so a wrong one used to be
      refused deep inside that child's OWN write — after its other arrays were
      already on disk — leaving every level, finest included, fully written and
-     loadable, with only that level's label channel silently missing. Either shape
+     loadable, with only that channel silently missing. Either shape
      is a strand the plain-leaf path's "nothing written" does not have. It covers:
      - `validate_positions_for_writing(vertices, context="vertices")` → `(n_vertices, n_dims)`, then `validate_vertices_for_writing(vertices)` for the `MAX_MESH_VERTICES` (2^27) ceiling. Order matters: the cap reads `shape[0]`, meaningful only once the array is known 2D
      - `validate_faces_for_writing(faces, n_vertices)` — layout `(F,3)` or flat `(3F,)`, integer dtype, `min >= 0`, `max < n_vertices`, `F >= 1`. Runs BEFORE the `uint32` cast, which is what makes the bounds check meaningful
