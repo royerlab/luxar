@@ -601,7 +601,9 @@ def fetch_deposition(dep_id: str, token: str) -> dict:
     return payload
 
 
-def _audit_live_depositions(manifest: dict, depositions: dict[str, dict]) -> int:
+def _audit_live_depositions(
+    manifest: dict, depositions: dict[str, dict], unchecked: list[str]
+) -> int:
     """Compare the manifest against fetched depositions; returns the fail count."""
     print()
     print("=" * 78)
@@ -611,7 +613,10 @@ def _audit_live_depositions(manifest: dict, depositions: dict[str, dict]) -> int
     pins = pins_of(datasets)
     totals = dataset_totals(datasets)
 
-    all_fails: list[str] = []
+    all_fails = [
+        f"[{name}] manifest has no zenodo_record; live check did not run"
+        for name in unchecked
+    ]
     all_warns: list[str] = []
     claim_counts: dict[str, int] = {}
     for rec, dep in sorted(depositions.items()):
@@ -682,12 +687,8 @@ def main() -> int:
             if r.get("zenodo_record")
         }
         missing = sorted(set(records) - set(wanted))
-        for name in missing:
-            print(
-                f"  FAIL [{name}] manifest has no zenodo_record; live check did not run"
-            )
         depositions = {n: fetch_deposition(i, token) for n, i in sorted(wanted.items())}
-        live_fails = len(missing) + _audit_live_depositions(m, depositions)
+        live_fails = _audit_live_depositions(m, depositions, missing)
 
     return 1 if (undeclared or live_fails) else 0
 

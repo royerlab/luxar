@@ -583,13 +583,18 @@ def test_live_refuses_to_skip_manifest_records_without_a_deposition_id(
     monkeypatch.setenv("ZENODO_TOKEN", "token")
     audit = _load(repo, tmp_path / "cache", monkeypatch)
     monkeypatch.setattr(sys, "argv", ["zenodo_migration_audit", str(repo), "--live"])
-    monkeypatch.setattr(audit, "fetch_deposition", lambda dep_id, token: _dep([]))
+    monkeypatch.setattr(
+        audit,
+        "fetch_deposition",
+        lambda dep_id, token: _dep([], desc="<table><tr>header</tr></table>"),
+    )
 
     assert audit.main() == 1
-    assert (
-        "[cc-by-sa] manifest has no zenodo_record; live check did not run"
-        in capsys.readouterr().out
-    )
+    output = capsys.readouterr().out
+    skipped = "[cc-by-sa] manifest has no zenodo_record; live check did not run"
+    assert skipped in output
+    assert output.index("LIVE DEPOSITIONS vs MANIFEST") < output.index(skipped)
+    assert "all pins match the live records" not in output
 
 
 def test_the_live_check_compares_hosted_sizes_not_in_repo_ones(
