@@ -2,10 +2,7 @@
  * Memory-tab templates and reuse-rate helpers.
  */
 
-import type {
-  GPUPoolStats,
-  MemoryMetrics,
-} from '../../../types/data-monitor-types';
+import type { GPUPoolStats, MemoryMetrics } from '../../../types/data-monitor-types';
 import { POOLED_GEOMETRY_TYPES } from '../../../types/data-monitor-types';
 import { formatNumber } from './format';
 import { getColorClass } from './primitives';
