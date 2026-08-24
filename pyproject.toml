@@ -740,7 +740,6 @@ omit = [
     "*/__init__.py",                          # re-export shims
     "*/demos/*",                              # demo scripts (import-smoke-tested; main() bodies aren't a coverage target)
     "*/utils/demos.py",                       # demo path/registry helpers
-    "*/utils/_umap_utils.py",                 # vendored UMAP helper
     "*/gsplats/demos/*",                      # research demos (run-on-import; compile-smoke-tested only)
     "*/gsplats/models/gsplats/cuda/*",        # hardware-gated CUDA extension
     "*/gsplats/models/gsplats/metal/*",       # hardware-gated Metal extension

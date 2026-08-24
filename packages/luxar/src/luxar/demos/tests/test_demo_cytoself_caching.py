@@ -30,7 +30,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-# The demo imports ``luxar.utils._umap_utils`` at module scope, which imports
+# The demo imports the shared UMAP helpers at module scope, which import
 # Pillow; Pillow ships in the ``demos`` extra, not core.
 pytest.importorskip("PIL")
 
