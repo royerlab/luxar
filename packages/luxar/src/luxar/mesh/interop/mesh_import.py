@@ -333,11 +333,12 @@ def _discover_indexed_files(
         if custom_pattern is not None:
             time, channel = _regex_indices(candidate, custom_pattern)
         else:
-            time = _filename_index(candidate, _TIME_INDEX, "time")
-            if time is None:
+            parsed_time = _filename_index(candidate, _TIME_INDEX, "time")
+            if parsed_time is None:
                 raise ValueError(
                     f"{candidate.name}: filename has no T<number> time index"
                 )
+            time = parsed_time
             channel = _filename_index(candidate, _CHANNEL_INDEX, "channel")
         indexed.append((time, channel, candidate))
 
