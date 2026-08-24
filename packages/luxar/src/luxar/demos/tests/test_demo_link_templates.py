@@ -193,7 +193,7 @@ def _unclaimed_link_literals(
     tree: ast.Module,
     expressions: list[tuple[int, ast.expr]],
     resolved_links: set[str],
-    placeholder_free_hosts: frozenset[str],
+    literal_backstop_domains: frozenset[str],
 ) -> list[tuple[Path, int, str]]:
     claimed_nodes = {
         id(node) for _line, expression in expressions for node in ast.walk(expression)
@@ -208,8 +208,9 @@ def _unclaimed_link_literals(
         ):
             continue
         host = urlsplit(node.value).netloc
+        domain = host.removeprefix("www.")
         has_placeholder = "{hover_key}" in node.value or "{hover_label}" in node.value
-        if host and (has_placeholder or host in placeholder_free_hosts):
+        if host and (has_placeholder or domain in literal_backstop_domains):
             unclaimed.append((path, node.lineno, node.value))
     return unclaimed
 
@@ -225,11 +226,11 @@ def _audit_links(
     """Return links, unresolved expressions, unregistered links, and stray literals."""
     links: list[tuple[Path, int, str | None]] = []
     unclaimed: list[tuple[Path, int, str]] = []
-    placeholder_free_hosts = frozenset(
-        urlsplit(link).netloc
+    literal_backstop_domains = frozenset(
+        urlsplit(link).netloc.removeprefix("www.")
         for link in canonical_links
         if "{hover_key}" not in link and "{hover_label}" not in link
-    )
+    ) | {"genecards.org"}
     for path in paths:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         constants = _static_strings(tree)
@@ -244,7 +245,7 @@ def _audit_links(
         }
         unclaimed.extend(
             _unclaimed_link_literals(
-                path, tree, expressions, resolved_links, placeholder_free_hosts
+                path, tree, expressions, resolved_links, literal_backstop_domains
             )
         )
 
@@ -375,6 +376,7 @@ def test_demo_link_audit_rejects_unclaimed_link_literal(tmp_path: Path) -> None:
     module = tmp_path / "demo_hidden.py"
     module.write_text(
         """LEGACY = "https://www.genecards.org/cgi-bin/carddisp.pl?gene={hover_key}"
+NO_WWW = "https://genecards.org/legacy"
 scene.add_points(link="https://www.genecards.org/card/{hover_key}")
 """,
         encoding="utf-8",
@@ -382,7 +384,7 @@ scene.add_points(link="https://www.genecards.org/card/{hover_key}")
 
     links, unresolved, unregistered, unclaimed = _audit_links([module], CANONICAL_LINKS)
 
-    assert links == [(module, 2, "https://www.genecards.org/card/{hover_key}")]
+    assert links == [(module, 3, "https://www.genecards.org/card/{hover_key}")]
     assert unresolved == []
     assert unregistered == []
     assert unclaimed == [
@@ -390,7 +392,8 @@ scene.add_points(link="https://www.genecards.org/card/{hover_key}")
             module,
             1,
             "https://www.genecards.org/cgi-bin/carddisp.pl?gene={hover_key}",
-        )
+        ),
+        (module, 2, "https://genecards.org/legacy"),
     ]
 
 
