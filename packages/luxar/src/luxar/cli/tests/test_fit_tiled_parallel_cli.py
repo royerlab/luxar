@@ -17,6 +17,7 @@ import pytest
 from typer.testing import CliRunner
 
 from luxar.cli import app
+from luxar.cli.tests._testing import normalized_cli_output
 
 try:
     import torch  # noqa: F401
@@ -24,10 +25,6 @@ try:
     HAS_TORCH = True
 except ImportError:
     HAS_TORCH = False
-
-# End-to-end CLI tiled fitting (seconds per test). Slow → CI runs `-m "not
-# slow"`; the full suite runs locally pre-push.
-pytestmark = pytest.mark.slow
 
 runner = CliRunner()
 
@@ -49,6 +46,7 @@ def _make_sparse_volume(path: Path) -> None:
     np.save(path, v)
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(not HAS_TORCH, reason="fitting requires torch")
 def test_tiled_parallel_cli_end_to_end(tmp_path: Path) -> None:
     from luxar.gsplats.gsplat_data import GSplatData
@@ -92,6 +90,7 @@ def test_tiled_parallel_cli_end_to_end(tmp_path: Path) -> None:
     assert list(tmp_path.glob(".par.gsplats.zarr.tiles*")) == []
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(not HAS_TORCH, reason="fitting requires torch")
 def test_tiled_parallel_partition_by_default(tmp_path: Path) -> None:
     """Without --flat, a uniform tiled fit emits a kind=partition (one part/tile)."""
@@ -128,6 +127,7 @@ def test_tiled_parallel_partition_by_default(tmp_path: Path) -> None:
     assert type(node).__name__ == "GSplatPartition"
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(not HAS_TORCH, reason="fitting requires torch")
 def test_tiled_parallel_handles_empty_tiles(tmp_path: Path) -> None:
     """Sparse input → many 0-splat tiles must NOT crash the parallel fit.
@@ -167,6 +167,7 @@ def test_tiled_parallel_handles_empty_tiles(tmp_path: Path) -> None:
     assert GSplatData.load(par).n_splats == GSplatData.load(seq).n_splats
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(not HAS_TORCH, reason="fitting requires torch")
 def test_tiled_parallel_matches_sequential(tmp_path: Path) -> None:
     """`-j 2` and the default `-j 1` produce the same splat count (flat merge)."""
@@ -211,6 +212,7 @@ def test_tiled_parallel_matches_sequential(tmp_path: Path) -> None:
     assert GSplatData.load(seq_out).n_splats == GSplatData.load(par_out).n_splats
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(not HAS_TORCH, reason="fitting requires torch")
 def test_tiled_recipe_stream_gives_partition_of_ladders(tmp_path: Path) -> None:
     """`fit --tiling uniform --recipe stream` → a kind=partition whose parts
@@ -285,7 +287,8 @@ def test_recipe_rejects_flat(tmp_path: Path) -> None:
         ],
     )
     assert result.exit_code != 0
-    assert "flat" in result.output.lower() and "partition" in result.output.lower()
+    output = normalized_cli_output(result).lower()
+    assert "flat" in output and "partition" in output
     assert not out.exists()
 
 
@@ -311,7 +314,7 @@ def test_recipe_rejects_tiling_none(tmp_path: Path) -> None:
         ],
     )
     assert result.exit_code != 0
-    assert "tiled" in result.output.lower()
+    assert "tiled" in normalized_cli_output(result).lower()
     assert not out.exists()
 
 
@@ -345,7 +348,8 @@ def test_recipe_rejects_cross_recipe_knobs(tmp_path: Path) -> None:
         ],
     )
     assert res.exit_code != 0
-    assert "--compression-factor" in res.output and "not used" in res.output.lower()
+    output = normalized_cli_output(res)
+    assert "--compression-factor" in output and "not used" in output.lower()
     assert not out.exists()
 
     # substitutive recipe + an additive-only knob → rejected
@@ -369,7 +373,8 @@ def test_recipe_rejects_cross_recipe_knobs(tmp_path: Path) -> None:
         ],
     )
     assert res2.exit_code != 0
-    assert "--n-lods" in res2.output and "not used" in res2.output.lower()
+    output = normalized_cli_output(res2)
+    assert "--n-lods" in output and "not used" in output.lower()
 
 
 @pytest.mark.skipif(not HAS_TORCH, reason="fitting requires torch")
@@ -413,7 +418,8 @@ def test_refine_volume_rejects_downscale(tmp_path: Path) -> None:
         ],
     )
     assert res.exit_code != 0
-    assert "--downscale" in res.output and "--refine volume" in res.output
+    output = normalized_cli_output(res)
+    assert "--downscale" in output and "--refine volume" in output
     assert not out.exists()
 
 
@@ -448,4 +454,5 @@ def test_recipe_short_flags_parse(tmp_path: Path) -> None:
     )
     # -r=additive + -K (a substitutive-only knob) → cross-recipe rejection
     assert res.exit_code != 0
-    assert "--compression-factor" in res.output and "not used" in res.output.lower()
+    output = normalized_cli_output(res)
+    assert "--compression-factor" in output and "not used" in output.lower()

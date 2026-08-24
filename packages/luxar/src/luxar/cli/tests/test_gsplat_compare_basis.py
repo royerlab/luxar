@@ -13,6 +13,7 @@ import pytest
 from typer.testing import CliRunner
 
 from luxar.cli.main import app
+from luxar.cli.tests._testing import normalized_cli_output
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.io.save_gsplats import write_gsplats_tree
 
@@ -84,8 +85,9 @@ def test_a_nonsensical_override_is_refused(fitted_store_and_reference, bad) -> N
     """
     store, ref = fitted_store_and_reference
     result = _run(str(store), str(ref), "--image-min", bad)
-    assert result.exit_code == 2, result.output
-    assert "finite, non-negative level" in result.output
+    output = normalized_cli_output(result)
+    assert result.exit_code == 2, output
+    assert "finite, non-negative level" in output
 
 
 def test_a_store_with_no_basis_warns_rather_than_pretending(tmp_path) -> None:
