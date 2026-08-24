@@ -353,7 +353,11 @@ jobs:
             fi
             sleep 30
           done
-          echo "watchdog window over; jobs still queued but the heartbeat stayed fresh (busy box, not a dead one) — leaving the run alone"
+          if [ "$seen_obsidian" -eq 1 ]; then
+            echo "watchdog window over; jobs still queued but the heartbeat stayed fresh (busy box, not a dead one) — leaving the run alone"
+          else
+            echo "watchdog window over before obsidian-routed jobs appeared — leaving the run alone"
+          fi
 
   docs-quality:
     needs: changes

@@ -539,16 +539,22 @@ def test_queue_watchdog_waits_past_grace_while_fanout_is_still_pending(
     workflow: str, tmp_path: Path
 ) -> None:
     """Hosted queue delay must not consume the obsidian materialization grace."""
-    pending = [
+    queued = [
+        _hosted_job("changes", "queued"),
+        _hosted_job("pick-runner", "completed"),
+        _hosted_job("queue-watchdog", "in_progress"),
+    ]
+    running = [
         _hosted_job("changes", "in_progress"),
         _hosted_job("pick-runner", "completed"),
         _hosted_job("queue-watchdog", "in_progress"),
     ]
     snapshots = [
-        pending,
-        pending,
-        pending,
-        pending,
+        queued,
+        queued,
+        queued,
+        queued,
+        running,
         [
             _hosted_job("changes", "completed"),
             _hosted_job("pick-runner", "completed"),
@@ -572,7 +578,33 @@ def test_queue_watchdog_waits_past_grace_while_fanout_is_still_pending(
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert calls == 6, "watchdog exited while the dependent fan-out was still pending"
+    assert calls == 7, "watchdog exited while the dependent fan-out was still pending"
+    assert not cancelled
+
+
+def test_queue_watchdog_rearmed_grace_stays_bounded_after_fanout_finishes(
+    workflow: str, tmp_path: Path
+) -> None:
+    """A completed fan-out must start a fresh but still bounded startup grace."""
+    snapshots = [
+        [
+            _hosted_job("changes", "queued"),
+            _hosted_job("pick-runner", "completed"),
+            _hosted_job("queue-watchdog", "in_progress"),
+        ],
+        [
+            _hosted_job("changes", "completed"),
+            _hosted_job("pick-runner", "completed"),
+            _hosted_job("queue-watchdog", "in_progress"),
+        ],
+    ]
+    result, calls, cancelled = _run_queue_watchdog(
+        workflow, tmp_path, snapshots, date_step=60
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == 4
+    assert "did not appear during the startup grace" in result.stdout
     assert not cancelled
 
 
@@ -710,4 +742,26 @@ def test_queue_watchdog_leaves_live_busy_run_alone_when_window_closes(
     assert result.returncode == 0, result.stdout + result.stderr
     assert calls == 14
     assert "watchdog window over" in result.stdout
+    assert not cancelled
+
+
+def test_queue_watchdog_reports_when_window_closes_before_jobs_materialize(
+    workflow: str, tmp_path: Path
+) -> None:
+    """Window expiry before fan-out must not claim a fresh heartbeat was observed."""
+    snapshots = [
+        [
+            _hosted_job("changes", "queued"),
+            _hosted_job("pick-runner", "completed"),
+            _hosted_job("queue-watchdog", "in_progress"),
+        ]
+    ]
+    result, calls, cancelled = _run_queue_watchdog(
+        workflow, tmp_path, snapshots, date_step=100
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == 14
+    assert "watchdog window over before obsidian-routed jobs appeared" in result.stdout
+    assert "heartbeat stayed fresh" not in result.stdout
     assert not cancelled
