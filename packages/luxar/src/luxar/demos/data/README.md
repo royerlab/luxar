@@ -23,13 +23,15 @@ The large precomputed GSplat and scene archives have moved out of Git LFS and
 are pinned in the manifest. Their three Zenodo records are still unpublished
 drafts on this branch, so the manifest intentionally builds no download URL yet.
 Publish those records and enable their manifest URLs before merging the payload
+removal.
 
-Four datasets are `local-compute` — `gsplats_tribolium`, `gsplats_acto3d_heart`,
-`gsplats_tng_cosmic_web` and `milky_way_gaia_3m`. Their licenses do not permit
-redistributing even the derived product, so do not migrate those demos to the
-manifest fetch path. **Their in-repo copies have been removed**: those demos now
-fetch the raw source and rebuild locally. Gaia's opt-in first-run path queries
-the archive with `--build-catalog` and caches the result in `~/.cache/luxar/`.
+Five datasets are `local-compute` — `gsplats_tribolium`, `gsplats_acto3d_heart`,
+`gsplats_tng_cosmic_web`, `gsplats_flylight_mcfo` and `milky_way_gaia_3m`. Their
+licenses do not permit redistributing even the derived product, so do not
+migrate those demos to the manifest fetch path. **Their in-repo copies have been
+removed**: those demos now fetch the raw source and rebuild locally. Gaia's
+opt-in first-run path queries the archive with `--build-catalog` and caches the
+result in `~/.cache/luxar/`.
 
 A `zenodo` dataset's files are fetched to `~/.cache/luxar/<dataset>/<file>`, and
 that path belongs to the fetch: it checks the manifest sha256 there and
@@ -48,7 +50,7 @@ Licenses split three ways: mostly CC0 / CC-BY / public domain; **CC BY-SA** for
 `gsplats_zebrafish` and `gsplats_opencell_map4` (the derived product must be
 relicensed CC BY-SA 4.0); and **CC BY-NC** for `milky_way_gaia_3m` (non-commercial,
 with a mandatory ESA/Gaia/DPAC acknowledgement). See the `license` field per
-removal.
+dataset in the manifest.
 
 ## Files Remaining Here
 
@@ -60,7 +62,7 @@ removal.
 | `dipc_genome/dipc_gm12878.npz` | Dip-C GM12878 bead coordinates for the 3D genome demo. |
 | `gsplats_cmu1_pathology/.gitkeep` | Placeholder for the manifest-managed pathology dataset. |
 
-The parquet files and `census_umap_1m.npz` are Git LFS objects. If one appears
+The parquet files and both `.npz` files are Git LFS objects. If one appears
 as a small pointer file, materialize only that retained asset with Git LFS. The
 removed GSplat archives cannot be restored with `git lfs pull`; once published,
 their demos resolve them through the manifest instead.
