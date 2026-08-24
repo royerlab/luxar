@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Iterable
+
+import numcodecs
+import zarr
+
+ZARR_FORMAT_ENV_VAR = "LUXAR_ZARR_FORMAT"
 
 
 def fingerprint_source_files(root: Path, paths: Iterable[Path]) -> str:
@@ -29,12 +35,24 @@ def production_source_fingerprint(package_root: Path | None = None) -> str:
         if package_root is None
         else Path(package_root).resolve()
     )
-    paths = (
+    paths = tuple(
         path
         for path in root.rglob("*.py")
-        if "tests" not in path.parts and "__pycache__" not in path.parts
+        if "tests" not in path.relative_to(root).parts
+        and "__pycache__" not in path.relative_to(root).parts
     )
+    if not paths:
+        return ""
     try:
         return fingerprint_source_files(root, paths)
     except OSError:
         return ""
+
+
+def store_writer_environment() -> dict[str, str | None]:
+    """Return installed and configured inputs that affect Zarr output."""
+    return {
+        ZARR_FORMAT_ENV_VAR: os.environ.get(ZARR_FORMAT_ENV_VAR),
+        "numcodecs": numcodecs.__version__,
+        "zarr": zarr.__version__,
+    }

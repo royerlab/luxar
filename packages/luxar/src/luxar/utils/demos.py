@@ -8,6 +8,7 @@ from Git LFS (shipped with the package) or a local cache.
 from __future__ import annotations
 
 import hashlib
+import json
 import pickle
 import re
 import shutil
@@ -26,7 +27,10 @@ from ..core.dimensions import Dimension, Dimensions
 from ..typing_utils.aliases import PathLike
 from ..typing_utils.config import check_dataset_size_warning
 from .process import run_child_process
-from .source_fingerprints import production_source_fingerprint
+from .source_fingerprints import (
+    production_source_fingerprint,
+    store_writer_environment,
+)
 
 
 def _validate_zip_member_path(member: str) -> PurePosixPath:
@@ -295,10 +299,10 @@ def demo_source_fingerprint(
     """Short content hash of a demo and the production code that writes it.
 
     Call as ``demo_source_fingerprint(__file__)``. The hash covers that demo
-    module's source and every production Python source in the Luxar package,
-    so edits to either the builder or the encoder invalidate the cached scene.
-    The package-wide component is cached so multiple demos hash it only once
-    per process.
+    module's source, every production Python source in the Luxar package, and
+    the Zarr writer environment, so edits or encoding-environment changes
+    invalidate the cached scene. The package-wide component is cached so
+    multiple demos hash it only once per process.
 
     Args:
         module_file: Path to the demo module (normally ``__file__``).
@@ -320,6 +324,7 @@ def demo_source_fingerprint(
     digest.update(len(source).to_bytes(8, "big"))
     digest.update(source)
     digest.update(bytes.fromhex(production))
+    digest.update(json.dumps(store_writer_environment(), sort_keys=True).encode())
     return digest.hexdigest()[:16]
 
 
@@ -339,9 +344,9 @@ def scene_is_current(
     never rebuilt the stale store on disk.
 
     So a scene is current only when its save finished AND it was written by
-    this exact builder and production Luxar source tree. A scene from before
-    fingerprinting carries no attr and is treated as stale — one rebuild, then
-    it stamps itself.
+    this exact builder, production Luxar source tree, and Zarr writer
+    environment. A scene from before fingerprinting carries no attr and is
+    treated as stale — one rebuild, then it stamps itself.
 
     This gates SCENE ASSEMBLY only. Downloads, gsplat fits and precomputed
     bundles keep their own caches under ``~/.cache/luxar``, so a source edit

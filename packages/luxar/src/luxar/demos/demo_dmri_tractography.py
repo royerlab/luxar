@@ -555,8 +555,8 @@ SERVE_ONLY = FLAGS["serve_only"]
 RECOMPUTE = FLAGS["recompute"]
 KEEP_STALE = FLAGS["keep_stale"]
 
-#: Identifies the builder that wrote the scene, alongside the sizing knobs and
-#: authored schema version in :data:`SCENE_MARKER` (#1957).
+#: Identifies the builder and Luxar writer that wrote the scene, alongside the
+#: sizing knobs and authored schema version in :data:`SCENE_MARKER`.
 FINGERPRINT: Final = demo_source_fingerprint(__file__)
 
 POINTS_PER_STREAMLINE = parse_int_arg("points", DEFAULT_POINTS)

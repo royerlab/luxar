@@ -721,7 +721,7 @@ RECOMPUTE = FLAGS["recompute"]
 KEEP_STALE = FLAGS["keep_stale"]
 
 #: Identifies the builder that wrote a scene; folded into the build marker
-#: so a source change invalidates it just as a flag change does (#1957).
+#: so builder or Luxar writer changes invalidate it just as flag changes do.
 FINGERPRINT: Final = demo_source_fingerprint(__file__)
 N_POINTS = parse_int_arg("n-points", DEFAULT_N_POINTS)
 N_PARTS = parse_int_arg("n-parts", 0)  # 0 -> derived from N_POINTS
