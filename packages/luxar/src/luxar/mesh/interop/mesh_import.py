@@ -8,7 +8,7 @@ validate → read → normalize.
 
 It diverges from that module in one visible way. ``classical_splats`` keeps all five
 readers inline; here each format lives in its own private module, because each is
-120–330 lines of independent parsing with no shared decode step.
+80–850 lines of independent parsing with no shared decode step.
 
 **There is no ``MeshData`` here on purpose.** ``luxar.io.reader`` already defines a
 ``MeshData`` for reading a written node back; the intermediate a reader produces is a
@@ -28,10 +28,11 @@ from ._gltf import read_gltf
 from ._obj import read_obj
 from ._ply_mesh import parse_ply_header, read_ply_mesh
 from ._stl import is_binary_stl, read_stl
+from ._vtp import read_vtp, sniff_vtk_type
 from ._weld import drop_degenerate_faces, fan_triangulate, weld_vertices
 
 #: Formats accepted by :func:`import_mesh`'s ``format`` argument.
-MESH_FORMATS = ("ply", "obj", "stl", "gltf")
+MESH_FORMATS = ("ply", "obj", "stl", "gltf", "vtp")
 
 
 @dataclass(frozen=True)
@@ -89,11 +90,18 @@ class TriangleMesh:
 def detect_mesh_format(path: Union[str, Path]) -> str:
     """Detect which classical mesh dialect ``path`` holds.
 
-    Extension-first, because four distinct extensions map to four distinct formats and
-    only ``.ply`` is genuinely ambiguous — it is shared with the Gaussian-splat
-    importer. A splat PLY has ``scale_0`` / ``rot_0`` / ``opacity`` on its vertex
-    element and no ``face`` element; a mesh PLY has the reverse. Recognising the wrong
-    one and saying so beats a parse error thirty lines deeper.
+    Extension-first, because the extensions map to distinct formats and only two are
+    genuinely ambiguous.
+
+    ``.ply`` is shared with the Gaussian-splat importer. A splat PLY has ``scale_0`` /
+    ``rot_0`` / ``opacity`` on its vertex element and no ``face`` element; a mesh PLY has
+    the reverse. Recognising the wrong one and saying so beats a parse error thirty lines
+    deeper.
+
+    ``.vtp`` shares its ``<VTKFile>`` container with every other VTK XML dataset, so the
+    extension is confirmed against the root's ``type=``. A ``.vtu`` (UnstructuredGrid)
+    renamed — or simply handed over by mistake — is a volume mesh, not a surface, and is
+    named as such rather than failing inside the PolyData parser.
     """
     path = Path(path)
     suffix = path.suffix.lower()
@@ -104,6 +112,22 @@ def detect_mesh_format(path: Union[str, Path]) -> str:
         return "obj"
     if suffix == ".stl":
         return "stl"
+    if suffix in (".vtp", ".vtu"):
+        with open(path, "rb") as handle:
+            head = handle.read(64 * 1024)
+        kind = sniff_vtk_type(head)
+        if kind == "PolyData":
+            return "vtp"
+        if not kind:
+            raise ValueError(
+                f'{path.name}: not a VTK XML file — no <VTKFile type="..."> root '
+                "element in the first 64 KB."
+            )
+        raise ValueError(
+            f"{path.name}: VTKFile type is {kind!r}, not 'PolyData' — "
+            "`luxar mesh import` reads VTK XML PolyData surfaces (.vtp). Convert the "
+            f"{kind} to a surface first (ParaView: 'Extract Surface')."
+        )
     if suffix == ".ply":
         with open(path, "rb") as handle:
             head = handle.read(64 * 1024)
@@ -125,7 +149,7 @@ def detect_mesh_format(path: Union[str, Path]) -> str:
         )
     raise ValueError(
         f"{path.name}: unrecognized extension {suffix!r} — expected .ply, .obj, .stl, "
-        ".gltf or .glb"
+        ".vtp, .gltf or .glb"
     )
 
 
@@ -134,6 +158,7 @@ _READERS: dict[str, Callable[[Path], dict]] = {
     "obj": read_obj,
     "stl": read_stl,
     "gltf": read_gltf,
+    "vtp": read_vtp,
 }
 
 
@@ -156,7 +181,7 @@ def import_mesh(
     """Read a classical mesh file into a :class:`TriangleMesh`.
 
     Args:
-        path: The file. ``.ply`` / ``.obj`` / ``.stl`` / ``.gltf`` / ``.glb``.
+        path: The file. ``.ply`` / ``.obj`` / ``.stl`` / ``.vtp`` / ``.gltf`` / ``.glb``.
         format: Source dialect, or ``"auto"`` to sniff.
         weld: Merge duplicate vertex positions and reindex. On by default because an
             unwelded surface (always, for STL; often, for glTF without indices) has no

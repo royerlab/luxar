@@ -358,7 +358,7 @@ Bring classical triangle-surface files into Luxar, and coarsen them. Both are Nu
 stdlib only, so they work on a bare `pip install luxar` with no extras.
 
 ```bash
-luxar mesh import            # Import a classical mesh file (PLY / OBJ / STL / glTF / GLB) → a .luxar.zarr scene
+luxar mesh import            # Import a classical mesh file (PLY / OBJ / STL / VTP / glTF / GLB) → a .luxar.zarr scene
 luxar mesh lod               # Build a LOD ladder for a mesh scene (levels, or a reveal)
 ```
 
@@ -369,6 +369,17 @@ merges two vertices only when their position *and* their normals and colours agr
 a hard edge — which every modelling package authors as coincident positions with
 different normals — survives the import instead of being flattened. Pass `--no-weld` to
 keep the file's exact vertex list.
+
+`.vtp` is VTK XML PolyData — what ParaView, VTK and PyVista write for a surface,
+and the usual output of a marching-cubes isosurface. Every encoding the format allows is
+read: `ascii`, inline base64 (`format="binary"`), and an appended section in either `raw`
+or `base64` form, each optionally `vtkZLibDataCompressor`-compressed, with a `UInt32` or
+`UInt64` block header and either byte order. `Polys` are fan-triangulated and `Strips`
+triangulated with the alternate winding a strip requires; `Verts` and `Lines` carry no
+surface and are dropped. `PointData` normals and colours come across. An LZ4- or
+LZMA-compressed file is refused by name — those codecs are outside the standard library
+and this importer takes no new dependency — as is a `.vtu` (UnstructuredGrid), which is a
+volume mesh: run ParaView's *Extract Surface* on it first.
 
 Draco- and meshopt-compressed glTF is refused by name rather than decoded — run the
 file through `gltf-transform` first.
