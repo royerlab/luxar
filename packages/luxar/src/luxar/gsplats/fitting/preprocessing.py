@@ -822,6 +822,24 @@ def _ensure_minimum_seeds(
     return current_seeds, grid_spacing
 
 
+def _regular_grid_coords(ranges: list[np.ndarray], ndim: int) -> np.ndarray:
+    """Cartesian product of per-axis ranges as an ``(N, ndim)`` float array.
+
+    Always ``(N, ndim)``, including when N is 0. That is the whole point: an
+    empty ``itertools.product`` fed to ``np.array`` collapses to shape ``(0,)``,
+    and the spatial-hash query rejects that with
+    "query must have shape (Q, 3); got (0,)" rather than treating it as an empty
+    point set. It is reached whenever ``spacing // 2`` lands past the end of any
+    axis — easy on an anisotropic tile, where a spacing derived from the total
+    volume can exceed the short axis outright — and it took down a whole tiled
+    fit 29 minutes in, on the last tile, after all the real work was done.
+    """
+    import itertools
+
+    coords = np.array(list(itertools.product(*ranges)), dtype=float)
+    return coords if coords.size else np.empty((0, ndim), dtype=float)
+
+
 def _add_grid_fallback_seeds(
     V: np.ndarray,
     target_count: int,
@@ -865,25 +883,11 @@ def _add_grid_fallback_seeds(
     spacing = max(spacing, 1)  # Allow minimum spacing of 1 (dense grid)
 
     # Generate grid points
-    grid_coords_list: list[tuple[Any, ...]] = []
     ranges = [np.arange(spacing // 2, s, spacing) for s in shape]
 
     import itertools
 
-    for coords in itertools.product(*ranges):
-        grid_coords_list.append(coords)
-
-    grid_coords: np.ndarray = np.array(grid_coords_list, dtype=float)
-    # An empty product collapses to shape (0,), NOT (0, ndim). That happens
-    # whenever `spacing // 2` lands past the end of any axis, which is easy to
-    # hit when `needed` is tiny: needed=1 gives target_grid_points=4, so a large
-    # tile gets a spacing wider than the tile itself and every range is empty.
-    # The spatial query then rejects the malformed array with
-    # "query must have shape (Q, 3); got (0,)" and takes the whole fit down —
-    # 29 minutes in, on the last tile, after all the real work was done.
-    # Normalise the degenerate case to a well-formed empty point set.
-    if grid_coords.size == 0:
-        grid_coords = np.empty((0, ndim), dtype=float)
+    grid_coords: np.ndarray = _regular_grid_coords(ranges, ndim)
 
     # Remove grid points too close to existing seeds (if any exist)
     # But be less aggressive about filtering to ensure we get enough
