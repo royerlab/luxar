@@ -89,8 +89,8 @@ ui/
 │       ├── image-sequence-driver.ts, exr-sequence-driver.ts,
 │       │ video-mode-driver.ts
 ├── data-loading-monitor/               # Monitor's private helpers
-│   ├── templates.ts, advisor.ts, event-queue.ts, polling-loop.ts,
-│   │ timing-panel.ts
+│   ├── templates/                      # primitives + per-tab renderers
+│   ├── advisor.ts, event-queue.ts, polling-loop.ts, timing-panel.ts
 │   ├── metrics/
 │   │   ├── cache.ts (aggregator), rates.ts
 │   └── tabs/

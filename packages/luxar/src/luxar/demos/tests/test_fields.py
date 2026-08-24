@@ -1,11 +1,11 @@
-"""Tests for luxar.utils.fields helpers."""
+"""Tests for the flow-field helpers exported by luxar.demos."""
 
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
-from luxar.utils.fields import (
+from luxar.demos import (
     FlowField,
     add_reference_cube_to_scene,
     cubic_bounds,

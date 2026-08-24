@@ -70,11 +70,18 @@ input-handler/
 1. Construct `InputContextManager` and push `InputContext.NAVIGATION`.
 2. Construct `WindowEventHandler` (`window-events/`) — installs
    `resize`, `wheel`, and `fullscreenchange` listeners.
-3. Call `registerAllKeyBindings` (`key-bindings/`) with three records:
-   `deps`, `commands`, `panelGetters`. This is the only place per-context
-   bindings are added to the manager.
+3. Call `registerAllKeyBindings` (`key-bindings/`) with four records:
+   `deps`, `commands`, `panelGetters`, and `animationShortcuts`. This is the
+   only place per-context bindings are added to the manager, including animation
+   shortcuts whose handlers decline until a selected dimension and animation
+   manager exist.
 4. Construct `PanelCoordinator` (`commands/`) so Escape and the
    panel-cycle binding have a single drain.
+
+Binding handlers consume an event by default. A synchronous `false` declines
+it so passthrough can continue to lower-priority contexts; async handlers are
+always treated as handled. `preventDefault` runs only after a handler accepts
+the event, so declining leaves browser behavior untouched.
 
 Optional setters (`setRenderingControls`, `setRecordingPanel`, etc.) are
 called by `core/app.ts` as panels are constructed; each one forwards

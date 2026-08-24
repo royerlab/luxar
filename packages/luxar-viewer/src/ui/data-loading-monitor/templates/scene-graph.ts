@@ -1,0 +1,532 @@
+/**
+ * Scene-graph tree, LOD, and draw-order templates.
+ */
+
+import type {
+  LODProgressState,
+  NodeDrawOrder,
+  SceneGraphNode,
+  SceneGraphState,
+} from '../../../types/data-monitor-types';
+import { GEOMETRY_TYPES, LOADER_TYPES } from '../../../types/format-contract';
+import { escapeHtml } from '../../../utils/escape-html';
+import { MONITOR_ICONS } from './primitives';
+import { formatNumber } from './format';
+
+// Scene graph tree rendering
+
+/**
+ * Get icon for scene graph node type
+ */
+function getNodeTypeIcon(type: string): string {
+  const icons: Record<string, string> = {
+    scene: MONITOR_ICONS.nodeScene,
+    group: MONITOR_ICONS.nodeGroup,
+    points: MONITOR_ICONS.nodePoints,
+    lines: MONITOR_ICONS.nodeLines,
+    gsplats: MONITOR_ICONS.nodeGsplats,
+    mesh: MONITOR_ICONS.nodeMesh,
+  };
+  return icons[type] || MONITOR_ICONS.dot;
+}
+
+/**
+ * Get CSS class for node type color
+ */
+function getNodeTypeColorClass(type: string): string {
+  const typeClasses: Record<string, string> = {
+    scene: 'luxar-scene-graph__name--scene',
+    group: 'luxar-scene-graph__name--group',
+    points: 'luxar-scene-graph__name--points',
+    lines: 'luxar-scene-graph__name--lines',
+    gsplats: 'luxar-scene-graph__name--gsplats',
+    mesh: 'luxar-scene-graph__name--mesh',
+  };
+  return typeClasses[type] || '';
+}
+
+/**
+ * Pick the tree icon for a node. Specialized groups (`kind=lod` /
+ * `kind=partition`) get their own glyph so they read distinctly from
+ * plain containers; everything else falls back to its geometry type.
+ */
+function getSceneGraphIcon(node: SceneGraphNode): string {
+  if (node.kind === 'lod') return MONITOR_ICONS.kindLod;
+  if (node.kind === 'partition') return MONITOR_ICONS.kindPartition;
+  return getNodeTypeIcon(node.type);
+}
+
+/**
+ * Render the kind badge (`K LODs` / `N parts`) for a specialized group.
+ * Mirrors the Layers-panel `--kind` badge so the two panels read
+ * consistently. Returns `''` for non-specialized nodes.
+ */
+function renderKindBadge(node: SceneGraphNode): string {
+  if (node.kind === 'lod' && (node.lodGroupChildCount ?? 0) > 0) {
+    const title = `Substitutive LOD group · ${node.lodGroupChildCount} levels (one rendered at a time)`;
+    return `<span class="luxar-scene-graph__badge luxar-scene-graph__badge--kind" title="${escapeHtml(title)}">${node.lodGroupChildCount} LODs</span>`;
+  }
+  if (node.kind === 'partition' && (node.partCount ?? 0) > 0) {
+    const title = `Partition group · ${node.partCount} disjoint BSP parts — all parts are rendered; the GPU frustum-culls each part at draw time`;
+    return `<span class="luxar-scene-graph__badge luxar-scene-graph__badge--kind" title="${escapeHtml(title)}">${node.partCount} parts</span>`;
+  }
+  return '';
+}
+
+/**
+ * Render the live LOD-progress chip for a node, driven by the
+ * {@link LODProgressState} snapshot:
+ *   - substitutive (`kind=lod`): "L{active+1}/{count}" active-level chip.
+ *   - additive (`additiveSublods`): "LOD {loaded}/{total}" with a ⏳ while
+ *     refinement is in progress and a residency dot (● cached / ◌ streaming).
+ * Renders a structural slot even before the first provider poll so the
+ * incremental patcher (`updateSceneGraphBadges`) can fill it in-place.
+ * Returns `''` for nodes with no LOD dimension.
+ */
+export function lodChipContent(
+  node: SceneGraphNode,
+  state: LODProgressState | undefined
+): { text: string; title: string } | null {
+  if (node.kind === 'lod') {
+    const count = state?.levelCount ?? node.lodGroupChildCount ?? 0;
+    if (count <= 0) return null;
+    // No live registry state yet: show "–" instead of guessing level 1.
+    if (!state || state.activeLevel === undefined) {
+      return {
+        text: `L–/${count}`,
+        title: `Substitutive LOD group with ${count} levels — active level not yet reported`,
+      };
+    }
+    const active = state.activeLevel + 1;
+    const sel = state.selector && state.selector !== 'auto' ? ` (${state.selector})` : '';
+    return {
+      text: `L${active}/${count}`,
+      title: `Active substitutive level ${active} of ${count}${sel} — only this level is rendered`,
+    };
+  }
+
+  if (node.additiveSublods && node.additiveSublods > 1) {
+    const total = state?.total ?? node.additiveSublods;
+    // No live loader state: the node's progressive loader isn't streaming
+    // (typically an inactive substitutive level). Show "–" rather than a
+    // fabricated 0 so "not active" doesn't read as "stalled at zero".
+    if (!state) {
+      return {
+        text: `LOD –/${total}`,
+        title: `Additive LOD — ${total} detail levels available; not streaming (level not active)`,
+      };
+    }
+    const loaded = state.loaded ?? 0;
+    const refining = state.refining === true;
+    const residency =
+      state.lastAllResident === false ? ' ◌' : state.lastAllResident === true ? ' ●' : '';
+    const spinner = refining ? ' ⏳' : '';
+    // Always spell out what the residency dot means — the ● typically
+    // appears exactly when refinement has finished, so the explanation
+    // must not be gated on `refining`.
+    const residencyNote =
+      state.lastAllResident === true
+        ? ' · ● = fully cache-resident (no network needed)'
+        : state.lastAllResident === false
+          ? ' · ◌ = streaming from network'
+          : '';
+    // Committed energy fraction e(k) — how much of the ladder's total
+    // self-energy is already on screen (quality stamps; absent on legacy
+    // unstamped datasets). Far more informative than the raw level count:
+    // energy-ordered streaming front-loads the visually important elements,
+    // so e.g. 2/6 levels can already carry ~70% of the energy.
+    const energyStr =
+      typeof state.energy === 'number' ? ` ~${Math.round(state.energy * 100)}%` : '';
+    const energyNote =
+      typeof state.energy === 'number'
+        ? ` · ~${Math.round(state.energy * 100)}% of the level's total energy already on screen (energy-ordered streaming loads the visually important elements first)`
+        : '';
+    const base = refining
+      ? `Additive LOD refining — ${loaded}/${total} levels loaded`
+      : `Additive LOD — ${loaded}/${total} levels loaded`;
+    return {
+      text: `LOD ${loaded}/${total}${energyStr}${residency}${spinner}`,
+      title: `${base}${energyNote}${residencyNote}`,
+    };
+  }
+
+  return null;
+}
+
+function renderLodChip(node: SceneGraphNode, state: LODProgressState | undefined): string {
+  const content = lodChipContent(node, state);
+  if (!content) return '';
+  return `<span class="luxar-scene-graph__lod" data-lod-path="${escapeHtml(node.path)}" title="${escapeHtml(content.title)}">${escapeHtml(content.text)}</span>`;
+}
+
+/**
+ * Chip text + tooltip for a node's live draw-order state: the blending
+ * bucket, whether it writes depth, and the resolved `renderOrder` (drawn
+ * ascending). Returns `null` when no draw-order state is known for the node
+ * (no live mesh — a group, or before the first provider poll). Shared by the
+ * initial render and the monitor's incremental patcher so both agree.
+ */
+export function drawOrderChipContent(
+  state: NodeDrawOrder | undefined
+): { text: string; title: string } | null {
+  if (!state) return null;
+  const dw = state.depthWrite ? 'depthWrite on' : 'depthWrite off';
+  return {
+    text: `#${state.renderOrder} ${state.bucket}`,
+    title:
+      `Draw order: renderOrder ${state.renderOrder} (compared ascending — lower is drawn first), ` +
+      `${state.bucket} blending bucket, ${dw}. Opaque backdrops must be 'opaque' to composite ` +
+      'under the transparent content in front of them.',
+  };
+}
+
+/**
+ * The viewer-drawable node types (the loader set) that get a draw-order chip
+ * slot. Matches the provider's classification in
+ * `data/scene-loader/monitor/draw-order-provider.ts`.
+ */
+const DRAWABLE_NODE_TYPES: ReadonlySet<string> = new Set<string>(LOADER_TYPES);
+
+function renderDrawOrderChip(node: SceneGraphNode, state: NodeDrawOrder | undefined): string {
+  const content = drawOrderChipContent(state);
+  // A drawable node gets a (possibly empty) chip slot even without live
+  // state: the per-tick updater only patches EXISTING elements, and a node
+  // hidden at structural-render time (toggled-off layer, inactive
+  // substitutive-LOD level) has no provider state yet — without the empty
+  // slot its chip could never appear once the node becomes visible.
+  if (!content && !DRAWABLE_NODE_TYPES.has(node.type)) return '';
+  const text = content ? escapeHtml(content.text) : '';
+  const title = content ? escapeHtml(content.title) : '';
+  return `<span class="luxar-scene-graph__draworder" data-draworder-path="${escapeHtml(node.path)}" title="${title}">${text}</span>`;
+}
+
+/**
+ * Role of a node that is a direct child of a substitutive `kind=lod`
+ * group: `active` = the level currently rendered, `inactive` = a level
+ * present in the file but not rendered right now. `undefined` when the
+ * node is not a substitutive level (or the active level is unknown).
+ */
+interface LevelContext {
+  parentPath: string;
+  index: number;
+  role: 'active' | 'inactive' | undefined;
+}
+
+/**
+ * Stats-badge content (element / child count + tooltip) for a tree node.
+ * Shared by the initial render and the incremental badge patcher so text
+ * and tooltip always agree. Per-type visible counts (after nD slicing)
+ * are appended symmetrically for points / lines / gsplats when known and
+ * different from the dataset count. Returns `null` for nodes with no
+ * stats badge (leaves without counts; specialized groups, whose kind
+ * badge already carries the child count).
+ */
+export function nodeStatsContent(node: SceneGraphNode): { text: string; title: string } | null {
+  const visibleSuffix = (visible: number | undefined, total: number): string =>
+    visible !== undefined && visible !== total
+      ? ` (${visible.toLocaleString()} visible after slicing)`
+      : '';
+
+  if (node.type === 'points' && node.pointCount !== undefined) {
+    return {
+      text: formatNumber(node.pointCount),
+      title: `${node.pointCount.toLocaleString()} points in this layer${visibleSuffix(node.visiblePointCount, node.pointCount)}`,
+    };
+  }
+  if (node.type === 'lines' && node.segmentCount !== undefined) {
+    let title = `${node.segmentCount.toLocaleString()} line segments`;
+    if (node.vertexCount !== undefined) {
+      title += `, ${node.vertexCount.toLocaleString()} vertices`;
+    }
+    title += visibleSuffix(node.visibleSegmentCount, node.segmentCount);
+    return { text: formatNumber(node.segmentCount), title };
+  }
+  if (node.type === 'gsplats' && node.splatCount !== undefined) {
+    return {
+      text: formatNumber(node.splatCount),
+      title: `${node.splatCount.toLocaleString()} Gaussian splats${visibleSuffix(node.visibleSplatCount, node.splatCount)}`,
+    };
+  }
+  if (node.type === 'mesh' && node.faceCount !== undefined) {
+    // Triangles, matching the drawn-primitive convention the arms above use — `lines`
+    // reports segments rather than vertices for the same reason. Vertices ride along in
+    // the tooltip exactly as they do for lines, since for a mesh both numbers are
+    // interesting (the vertex:face ratio is what tells a welded surface from a soup).
+    //
+    // No `visibleSuffix`: the converter has no per-node visible-face field to feed it.
+    // The per-type visible TOTAL is reported separately via `updateVisibleCount('mesh')`
+    // — see `monitor/visible-counts.ts`.
+    let title = `${node.faceCount.toLocaleString()} triangles`;
+    if (node.vertexCount !== undefined) {
+      title += `, ${node.vertexCount.toLocaleString()} vertices`;
+    }
+    return { text: formatNumber(node.faceCount), title };
+  }
+  if (node.type === 'group' && node.children.length > 0 && !node.kind) {
+    // Plain groups show child count. Specialized groups (kind=lod /
+    // kind=partition) skip it — their kind badge ("K LODs" / "N parts")
+    // already carries the same number.
+    return {
+      text: `${node.children.length}`,
+      title: `${node.children.length} child node${node.children.length !== 1 ? 's' : ''}`,
+    };
+  }
+  return null;
+}
+
+/** Human-readable suffix for a substitutive level's row tooltip. */
+export function levelRoleTitleSuffix(role: 'active' | 'inactive' | undefined): string {
+  if (role === 'active') return ' — active substitutive level (currently rendered)';
+  if (role === 'inactive') return ' — inactive substitutive level (not rendered)';
+  return '';
+}
+
+/**
+ * Render a single scene graph tree node
+ */
+function renderSceneGraphNode(
+  node: SceneGraphNode,
+  expandedNodes: Set<string>,
+  depth: number = 0,
+  lodStates?: Map<string, LODProgressState>,
+  drawOrderStates?: Map<string, NodeDrawOrder>,
+  levelCtx?: LevelContext
+): string {
+  const hasChildren = node.children.length > 0;
+  const isExpanded = expandedNodes.has(node.path);
+
+  // Node stats and tooltips (shared with the incremental badge patcher).
+  const stats = nodeStatsContent(node);
+  const statsText = stats?.text ?? '';
+  const statsTooltip = stats?.title ?? '';
+
+  // Build tooltip for the whole node
+  const nodeTypeDescriptions: Record<string, string> = {
+    scene: 'Root scene node',
+    group: 'Container for organizing nodes',
+    points: 'Point cloud layer',
+    lines: 'Line segments layer',
+    gsplats: 'Gaussian splats layer',
+    mesh: 'Mesh geometry',
+  };
+  const kindDescriptions: Partial<Record<string, string>> = {
+    lod: 'Substitutive LOD group (one level rendered at a time)',
+    partition: 'Partition group (disjoint BSP parts)',
+  };
+  const baseDesc = node.kind
+    ? kindDescriptions[node.kind] || node.kind
+    : nodeTypeDescriptions[node.type] || node.type;
+  const baseTooltip = `${baseDesc}${node.hasSpatialIndex ? ' (indexed)' : ''}`;
+  const nodeTooltip = `${baseTooltip}${levelRoleTitleSuffix(levelCtx?.role)}`;
+
+  const kindBadge = renderKindBadge(node);
+  const lodChip = renderLodChip(node, lodStates?.get(node.path));
+  const drawOrderChip = renderDrawOrderChip(node, drawOrderStates?.get(node.path));
+
+  // Expand/collapse toggle
+  const toggleIcon = hasChildren ? (isExpanded ? '▼' : '▶') : '•';
+  const toggleClass = hasChildren
+    ? 'luxar-scene-graph__toggle--clickable'
+    : 'luxar-scene-graph__toggle--disabled';
+
+  // Indent using CSS custom property for dynamic depth
+  const indentStyle = `style="--node-depth: ${depth}; padding-left: calc(var(--node-depth) * 16px);"`;
+
+  // Substitutive-level rows carry data attributes so the incremental
+  // patcher can re-mark active/inactive when the LOD selector switches
+  // levels between structural rebuilds (`data-base-title` lets it
+  // re-derive the tooltip without re-rendering).
+  const levelClass =
+    levelCtx?.role === 'active'
+      ? ' luxar-scene-graph__node-row--active-level'
+      : levelCtx?.role === 'inactive'
+        ? ' luxar-scene-graph__node-row--inactive-level'
+        : '';
+  const levelAttrs = levelCtx
+    ? ` data-level-of="${escapeHtml(levelCtx.parentPath)}" data-level-index="${levelCtx.index}" data-base-title="${escapeHtml(baseTooltip)}"`
+    : '';
+
+  return `
+    <div class="luxar-scene-graph__node">
+      <div class="luxar-scene-graph__node-row${levelClass}" ${indentStyle} title="${escapeHtml(nodeTooltip)}"${levelAttrs}>
+        <!-- Toggle -->
+        <span
+          class="luxar-scene-graph__toggle ${toggleClass}"
+          ${hasChildren ? `data-action="toggleNode" data-node-path="${escapeHtml(node.path)}"` : ''}
+          ${hasChildren ? `title="${isExpanded ? 'Collapse' : 'Expand'} ${escapeHtml(node.name)}"` : ''}
+        >${toggleIcon}</span>
+
+        <!-- Icon & Name -->
+        <span class="luxar-scene-graph__icon">${getSceneGraphIcon(node)}</span>
+        <span class="luxar-scene-graph__name ${getNodeTypeColorClass(node.displayType ?? node.type)}">
+          ${escapeHtml(node.name)}
+        </span>
+
+        <!-- Stats badge -->
+        ${
+          statsText
+            ? `<span class="luxar-scene-graph__badge" data-node-path="${escapeHtml(node.path)}" title="${escapeHtml(statsTooltip)}">${statsText}</span>`
+            : ''
+        }
+
+        <!-- Kind badge (K LODs / N parts) -->
+        ${kindBadge}
+
+        <!-- Live LOD-progress chip (also carries the ⏳ refining marker) -->
+        ${lodChip}
+
+        <!-- Live draw-order chip (blending bucket / depthWrite / renderOrder) -->
+        ${drawOrderChip}
+      </div>
+
+      <!-- Children (if expanded) -->
+      ${
+        isExpanded && hasChildren
+          ? node.children
+              .map((child, i) =>
+                renderSceneGraphNode(
+                  child,
+                  expandedNodes,
+                  depth + 1,
+                  lodStates,
+                  drawOrderStates,
+                  node.kind === 'lod'
+                    ? {
+                        parentPath: node.path,
+                        index: i,
+                        role: activeLevelRole(lodStates?.get(node.path), i),
+                      }
+                    : undefined
+                )
+              )
+              .join('')
+          : ''
+      }
+    </div>
+  `;
+}
+
+/**
+ * Resolve a substitutive level's role from its parent group's live state.
+ * Unknown (no state yet) → `undefined`, so rows aren't mis-marked before
+ * the first provider poll. Shared by the initial render and the monitor's
+ * incremental level-row patcher so both derive the role identically.
+ */
+export function activeLevelRole(
+  state: LODProgressState | undefined,
+  index: number
+): 'active' | 'inactive' | undefined {
+  const active = state?.kind === 'lod' ? state.activeLevel : undefined;
+  if (active === undefined) return undefined;
+  return index === active ? 'active' : 'inactive';
+}
+
+/**
+ * Render scene graph tree component
+ */
+export function renderSceneGraphTree(
+  state: SceneGraphState,
+  expandedNodes: Set<string>,
+  lodStates?: Map<string, LODProgressState>,
+  drawOrderStates?: Map<string, NodeDrawOrder>
+): string {
+  if (!state.root) {
+    return `
+      <div class="luxar-scene-graph__empty">
+        No scene loaded
+      </div>
+    `;
+  }
+
+  // Header with stats. "layers" (node counts), not element counts — the
+  // tooltip disambiguates, since "5 gsplats" otherwise reads as 5 splats.
+  const headerStats = GEOMETRY_TYPES.map((t) =>
+    state.nodesByType[t] > 0 ? `${state.nodesByType[t]} ${t}` : null
+  )
+    .filter(Boolean)
+    .join(', ');
+  const headerStatsTooltip =
+    'Layer (node) counts per geometry type — not element counts. ' +
+    'Each level of a substitutive LOD group counts as its own layer, ' +
+    'even though only one level renders at a time.';
+
+  // Summarise LOD/partition activity across the scene so the user sees it
+  // without expanding the tree: how many substitutive-LOD groups, how many
+  // additive nodes streaming/refining, out of how many additive nodes total.
+  const lodSummary = summariseLodStates(lodStates, countAdditiveNodes(state.root));
+  const lodSummaryTooltip =
+    'LOD activity: substitutive = groups that swap between K resolutions of the same data ' +
+    '(one rendered at a time) · additive = layers refined by streaming extra detail levels ' +
+    'on top of a base ("x/y active" = levels with a live streaming loader out of all additive layers) · ' +
+    'partition = groups of disjoint spatial parts (all rendered, frustum-culled per part) · ' +
+    'refining = additive layers still loading detail.';
+
+  return `
+    <div class="luxar-scene-graph">
+      <div class="luxar-scene-graph__header">
+        <h4 class="luxar-scene-graph__title" title="Hierarchy of scene nodes (groups, points, lines, gsplats) with per-node element counts">SCENE GRAPH</h4>
+        ${headerStats ? `<span class="luxar-scene-graph__stats" title="${escapeHtml(headerStatsTooltip)}">${headerStats}</span>` : ''}
+      </div>
+      ${lodSummary ? `<div class="luxar-scene-graph__lod-summary" data-field="lod-summary" title="${escapeHtml(lodSummaryTooltip)}">${lodSummary}</div>` : ''}
+      <div class="luxar-scene-graph__container">
+        ${renderSceneGraphNode(state.root, expandedNodes, 0, lodStates, drawOrderStates)}
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Count additive-LOD layers (nodes with `additiveSublods > 1`) in the tree.
+ * Used to reconcile the header summary (which counts *live* streaming
+ * loaders) with the tree (which renders a chip slot for every additive
+ * layer): "1/5 additive active" instead of a bare "1 additive" that
+ * contradicts five visible chips.
+ */
+export function countAdditiveNodes(root: SceneGraphNode | null | undefined): number {
+  if (!root) return 0;
+  let count = (root.additiveSublods ?? 0) > 1 ? 1 : 0;
+  for (const child of root.children) count += countAdditiveNodes(child);
+  return count;
+}
+
+/**
+ * One-line summary of LOD/partition activity for the scene-graph header,
+ * e.g. "2 substitutive · 1/5 additive active · refining 1". Returns `''`
+ * when no LOD/partition state is present.
+ *
+ * @param additiveTotal - total additive layers in the *tree* (see
+ *   {@link countAdditiveNodes}). The live count only covers layers with a
+ *   streaming loader attached (typically just the active substitutive
+ *   level); showing "live/total" keeps the summary consistent with the
+ *   number of additive chips visible in the tree.
+ */
+export function summariseLodStates(
+  lodStates?: Map<string, LODProgressState>,
+  additiveTotal?: number
+): string {
+  if (!lodStates || lodStates.size === 0) return '';
+  let lod = 0;
+  let additive = 0;
+  let partition = 0;
+  let refining = 0;
+  for (const s of lodStates.values()) {
+    if (s.kind === 'lod') lod++;
+    else if (s.kind === 'additive') {
+      additive++;
+      if (s.refining) refining++;
+    } else if (s.kind === 'partition') partition++;
+  }
+  const parts: string[] = [];
+  // "substitutive" (not the generic "LOD group") so it reads in parallel
+  // with "additive" — both are LOD kinds; naming only one "LOD" was the
+  // ambiguous wording.
+  if (lod > 0) parts.push(`${lod} substitutive`);
+  if (additiveTotal !== undefined && additiveTotal > additive) {
+    parts.push(`${additive}/${additiveTotal} additive active`);
+  } else if (additive > 0) {
+    parts.push(`${additive} additive`);
+  }
+  if (partition > 0) parts.push(`${partition} partition${partition !== 1 ? 's' : ''}`);
+  if (refining > 0) parts.push(`refining ${refining}`);
+  return parts.join(' · ');
+}

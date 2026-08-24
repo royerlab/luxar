@@ -49,19 +49,19 @@ function makeContextManager(): {
     context: InputContext;
     key: string;
     modifiers?: { shift?: boolean };
-    handler: () => void;
+    handler: () => boolean | void;
   }>;
 } {
   const bindings: Array<{
     context: InputContext;
     key: string;
     modifiers?: { shift?: boolean };
-    handler: () => void;
+    handler: () => boolean | void;
   }> = [];
   const registerBinding = vi.fn(
     (
       context: InputContext,
-      binding: { key: string; modifiers?: { shift?: boolean }; handler: () => void }
+      binding: { key: string; modifiers?: { shift?: boolean }; handler: () => boolean | void }
     ) => {
       bindings.push({
         context,
@@ -156,6 +156,17 @@ describe('AnimationShortcuts.register', () => {
     expect(handled).toBe(true);
     expect(increaseSpeed).toHaveBeenCalledWith(3);
   });
+
+  it('declines inert shortcuts without preventing browser defaults', () => {
+    const contextManager = new InputContextManager();
+    new AnimationShortcuts(contextManager, makeContext(-1, undefined)).register();
+
+    const event = new KeyboardEvent('keydown', { key: 'Home', cancelable: true });
+    const handled = contextManager.handleKeyEvent(event, 'down');
+
+    expect(handled).toBe(false);
+    expect(event.defaultPrevented).toBe(false);
+  });
 });
 
 describe('AnimationShortcuts handlers', () => {
@@ -182,7 +193,7 @@ describe('AnimationShortcuts handlers', () => {
   it('K: no-op when no dim is selected (selectedDim=-1)', () => {
     const { manager, togglePlay } = makeAnimationManager();
     const { findHandler } = setup(-1, manager);
-    findHandler('k')();
+    expect(findHandler('k')()).toBe(false);
     expect(togglePlay).not.toHaveBeenCalled();
   });
 
@@ -194,7 +205,7 @@ describe('AnimationShortcuts handlers', () => {
     // side-effect-free invariant — a regression that called through to
     // sceneDimsManager would survive a `.not.toThrow()` smoke check.
     const { findHandler } = setup(0, undefined);
-    findHandler('k')();
+    expect(findHandler('k')()).toBe(false);
     expect(sceneDimsManager.setDimensionValue).not.toHaveBeenCalled();
     expect(sceneDimsManager.getDimensionRanges).not.toHaveBeenCalled();
   });
@@ -209,7 +220,7 @@ describe('AnimationShortcuts handlers', () => {
     ]);
     const { manager } = makeAnimationManager();
     const { findHandler } = setup(0, manager);
-    findHandler('Home')();
+    expect(findHandler('Home')()).toBe(true);
     expect(sceneDimsManager.setDimensionValue).toHaveBeenCalledWith(3, -7);
   });
 
@@ -223,7 +234,7 @@ describe('AnimationShortcuts handlers', () => {
     ]);
     const { manager } = makeAnimationManager();
     const { findHandler } = setup(1, manager); // selectedDim=1 → actual dim 4
-    findHandler('End')();
+    expect(findHandler('End')()).toBe(true);
     expect(sceneDimsManager.setDimensionValue).toHaveBeenCalledWith(4, 50);
   });
 
@@ -231,21 +242,21 @@ describe('AnimationShortcuts handlers', () => {
     vi.mocked(sceneDimsManager.getDimensionRanges).mockReturnValue(null);
     const { manager } = makeAnimationManager();
     const { findHandler } = setup(0, manager);
-    findHandler('Home')();
+    expect(findHandler('Home')()).toBe(false);
     expect(sceneDimsManager.setDimensionValue).not.toHaveBeenCalled();
   });
 
   it('Shift+ArrowUp: increases the selected dim speed', () => {
     const { manager, increaseSpeed } = makeAnimationManager();
     const { findHandler } = setup(0, manager);
-    findHandler('ArrowUp')();
+    expect(findHandler('ArrowUp')()).toBe(true);
     expect(increaseSpeed).toHaveBeenCalledWith(3);
   });
 
   it('Shift+ArrowDown: decreases the selected dim speed', () => {
     const { manager, decreaseSpeed } = makeAnimationManager();
     const { findHandler } = setup(0, manager);
-    findHandler('ArrowDown')();
+    expect(findHandler('ArrowDown')()).toBe(true);
     expect(decreaseSpeed).toHaveBeenCalledWith(3);
   });
 
@@ -257,11 +268,11 @@ describe('AnimationShortcuts handlers', () => {
     vi.mocked(sceneDimsManager.getDims).mockReturnValue(null);
     const { manager, togglePlay, increaseSpeed, decreaseSpeed } = makeAnimationManager();
     const { findHandler } = setup(0, manager);
-    findHandler('k')();
-    findHandler('Home')();
-    findHandler('End')();
-    findHandler('ArrowUp')();
-    findHandler('ArrowDown')();
+    expect(findHandler('k')()).toBe(false);
+    expect(findHandler('Home')()).toBe(false);
+    expect(findHandler('End')()).toBe(false);
+    expect(findHandler('ArrowUp')()).toBe(false);
+    expect(findHandler('ArrowDown')()).toBe(false);
     // togglePlay / speed-up / speed-down all gated by getDims() — none fire.
     expect(togglePlay).not.toHaveBeenCalled();
     expect(increaseSpeed).not.toHaveBeenCalled();

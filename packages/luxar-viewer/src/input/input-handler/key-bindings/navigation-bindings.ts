@@ -61,7 +61,9 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
   // Dataset browser
   contextManager.registerBinding(InputContext.NAVIGATION, {
     key: config.input.keyboard.shortcuts.toggleDatasetBrowser,
-    handler: () => window.dispatchEvent(new CustomEvent('open-dataset-browser')),
+    handler: () => {
+      window.dispatchEvent(new CustomEvent('open-dataset-browser'));
+    },
     preventDefault: true,
     description: 'Toggle dataset browser',
   });

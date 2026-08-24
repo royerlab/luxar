@@ -3,7 +3,9 @@
 Before the utility split, ``luxar/demos/__init__.py`` re-exported the shared
 plumbing (``launch_viewer``, ``parse_demo_flags``, ``cached_download``, …) out
 of ``luxar/utils/demos.py`` and ``luxar/utils/data_fetch.py``, and
-``demos/README.md`` §6 documented that spelling as the way to reach it. Even so,
+also fronts selected demo-owned helpers from private modules such as
+``demos/_support/_fields.py``. ``demos/README.md`` §6 documents the barrel as
+the way to reach them. Even so,
 38 demo scripts reached *past* the barrel with ``from luxar.utils.demos import
 …``. Only 12 of them had to: 4 needed ``is_lfs_pointer`` and 8
 ``print_data_provenance``, neither of which the barrel re-exported. The other 26
@@ -13,10 +15,11 @@ style, and it then spread by copy-paste to files that never needed it (issue
 #1304, item 5).
 
 Two spellings for one surface is a maintenance tax: the barrel stops being the
-place a helper's audience can be read off, and moving ``utils/demos.py`` had to
-chase 40 call sites instead of one. So this module carries TWO invariants: no
-demo module reaches past the barrel, and the barrel really does re-export
-everything the demos ask of it — the second one because its breach is what
+place a helper's audience can be read off, and moving a helper module has to
+chase every call site instead of one. So this module carries TWO invariants: no
+demo module reaches past the barrel into a guarded helper module, including a
+private module inside ``luxar.demos``; and the barrel really does re-export
+everything the demos ask of it. The second invariant exists because its breach
 produced the second spelling in the first place, and a guard is the only thing
 that turns that gap into a failure instead of into another deep import.
 
@@ -89,6 +92,7 @@ MIN_GSPLAT_DEMO_MODULES = 25
 #: directly from a demo — under any spelling — is the drift this module fails on.
 DEEP_MODULES = frozenset(
     {
+        "luxar.demos._support._fields",
         "luxar.utils.bundles",
         "luxar.utils.cache",
         "luxar.utils.colors",
@@ -265,7 +269,7 @@ def _barrel_allowed_names() -> set[str]:
 
 
 def test_no_demo_module_reaches_past_the_barrel() -> None:
-    """No demo module may import any guarded utility module directly."""
+    """No demo module may import a shared helper module directly."""
     offenders: dict[str, list[str]] = {}
     for path in _guarded_modules():
         hits = _deep_imports(path)
@@ -299,12 +303,16 @@ def test_the_guard_detects_every_deep_spelling(tmp_path: Path) -> None:
         "import luxar.utils.viewer",
         "import luxar.utils.viewer as ud",
         "import luxar.utils.data_fetch",
+        "import luxar.demos._support._fields",
         "from luxar.utils.viewer import launch_viewer",
         "from luxar.utils.data_fetch import ensure_dataset",
+        "from luxar.demos._support._fields import FlowField",
         "from luxar.utils import viewer as ud2",
         "from luxar.utils import data_fetch",
+        "from luxar.demos._support import _fields",
         "from ..utils.viewer import parse_demo_flags",
         "from ..utils import viewer as ud3",
+        "from ._support._fields import cubic_bounds",
     ]
     fine = [
         "from luxar.demos import launch_viewer",  # the one true spelling

@@ -1286,16 +1286,16 @@ Sibling demos are importable normally
 (`from luxar.demos.demo_x import helper`) — no `importlib` file-path tricks.
 
 `luxar.demos` is the ONLY spelling for these helpers: never import
-the concern modules under `luxar.utils` or `luxar.utils.data_fetch` directly from a demo, even though
-that is where they live. `tests/test_demo_import_spelling.py` fails the build on
-every deep spelling — direct imports from `luxar.utils.bundles`, `cache`, `colors`, `device`,
-`flags`, `lfs`, `payload_agreement`, `provenance`, `scenes`, `viewer`,
-`zip_safety`, or `data_fetch`, including relative forms —
-in every demo module here and in the three `gsplats/**/demos` trees, and also on a
-name the barrel does not re-export. (Scope is the demo modules; `tests/` is out,
-since a test may legitimately need the module a private lives in.) That second gap
-(two missing symbols, which forced 12 of the 38 files that ended up deep) is what
-grew the spelling, so a helper you cannot reach through `luxar.demos` is a bug in
+the guarded concern modules under `luxar.utils`, `luxar.utils.data_fetch`, or
+private demo helpers such as `luxar.demos._support._fields` directly from a
+demo, even though that is where they live. The authoritative guarded set is
+`tests/test_demo_import_spelling.py`'s `DEEP_MODULES`. That test fails the build
+on every deep spelling, including relative forms, in every demo module here and
+in the three `gsplats/**/demos` trees, and also on a name the barrel does not
+re-export. (Scope is the demo modules; `tests/` is out, since a test may
+legitimately need the module a private lives in.) That second gap (two missing
+symbols, which forced 12 of the 38 files that ended up deep) is what grew the
+spelling, so a helper you cannot reach through `luxar.demos` is a bug in
 `demos/__init__.py`, not a licence to reach past it.
 
 ### 7. Gate optional dependencies at the point of use, never at the entry point

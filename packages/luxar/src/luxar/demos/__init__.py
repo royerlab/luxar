@@ -60,6 +60,14 @@ from ._dependencies import (
     substitutive_lod_or_flat,
     survey,
 )
+from ._support._fields import (
+    FlowField,
+    add_reference_cube_to_scene,
+    cubic_bounds,
+    rk4_step,
+    trilinear_vector,
+    unit_flow,
+)
 
 __all__ = [
     "BUILDER_FINGERPRINT_ATTR",
@@ -70,14 +78,17 @@ __all__ = [
     "DatasetUnavailable",
     "DependencySpec",
     "DependencyStatus",
+    "FlowField",
     "LocalComputeDataset",
     "MissingDependencyError",
     "add_demo_caption",
+    "add_reference_cube_to_scene",
     "cache_computed",
     "cached_download",
     "create_lorenz_attractor",
     "create_random_spheres",
     "create_time_series_demo",
+    "cubic_bounds",
     "dataset_spec",
     "demo_source_fingerprint",
     "detect_device",
@@ -102,10 +113,13 @@ __all__ = [
     "print_data_provenance",
     "require_local_data",
     "require_module",
+    "rk4_step",
     "scene_is_current",
     "stack_colorings",
     "substitutive_lod_or_flat",
     "survey",
+    "trilinear_vector",
+    "unit_flow",
     "voxel_sampled_payload_agreement",
     "warn_if_no_cuda_gpu",
 ]

@@ -14,6 +14,20 @@ import type { KeyBindingsDeps } from './register-all';
 export function registerFlyControlBindings(deps: KeyBindingsDeps): void {
   const { contextManager, sceneManager } = deps;
   const getFlyControls = () => sceneManager.controls.getFlyControls();
+  const forwardToFly = () => ({
+    handler: (event: KeyboardEvent) => {
+      const controls = getFlyControls();
+      if (!controls) return false;
+      controls.handleKeyDown(event);
+      return true;
+    },
+    keyupHandler: (event: KeyboardEvent) => {
+      const controls = getFlyControls();
+      if (!controls) return false;
+      controls.handleKeyUp(event);
+      return true;
+    },
+  });
 
   const flyMovementKeys = ['w', 'a', 's', 'd', 'q', 'e'];
   const modifierCombinations = [
@@ -28,8 +42,7 @@ export function registerFlyControlBindings(deps: KeyBindingsDeps): void {
       contextManager.registerBinding(InputContext.FLY_CONTROLS, {
         key,
         modifiers: Object.keys(modifiers).length > 0 ? modifiers : undefined,
-        handler: (event) => getFlyControls()?.handleKeyDown(event),
-        keyupHandler: (event) => getFlyControls()?.handleKeyUp(event),
+        ...forwardToFly(),
         description: `Fly: ${key.toUpperCase()}${
           modifiers.shift ? '+Shift' : ''
         }${modifiers.alt ? '+Alt' : ''}`,
@@ -42,15 +55,13 @@ export function registerFlyControlBindings(deps: KeyBindingsDeps): void {
   for (const key of arrowKeys) {
     contextManager.registerBinding(InputContext.FLY_CONTROLS, {
       key,
-      handler: (event) => getFlyControls()?.handleKeyDown(event),
-      keyupHandler: (event) => getFlyControls()?.handleKeyUp(event),
+      ...forwardToFly(),
       description: `Fly look: ${key}`,
     });
     contextManager.registerBinding(InputContext.FLY_CONTROLS, {
       key,
       modifiers: { shift: true },
-      handler: (event) => getFlyControls()?.handleKeyDown(event),
-      keyupHandler: (event) => getFlyControls()?.handleKeyUp(event),
+      ...forwardToFly(),
       description: `Fly look: ${key}+Shift`,
     });
   }
@@ -63,8 +74,7 @@ export function registerFlyControlBindings(deps: KeyBindingsDeps): void {
   // event's own shiftKey flag.)
   contextManager.registerBinding(InputContext.FLY_CONTROLS, {
     key: 'Shift',
-    handler: (event) => getFlyControls()?.handleKeyDown(event),
-    keyupHandler: (event) => getFlyControls()?.handleKeyUp(event),
+    ...forwardToFly(),
     description: 'Speed boost',
   });
 }
