@@ -1,8 +1,9 @@
 import { readdirSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-const E2E_ROOT = path.resolve(process.cwd(), 'src/tests/e2e');
+const E2E_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../e2e');
 
 function committedVisualBaselines(): string[] {
   return (readdirSync(E2E_ROOT, { recursive: true }) as string[])
