@@ -94,9 +94,10 @@ def test_partition_metrics_match_the_same_flat_splats(tmp_path: Path) -> None:
         if key not in metadata_keys
     }
     # Precision encoding makes these genuinely the same splats in a different
-    # order. Across 200 deterministic permutations the CPU renderer's SSIM
-    # spread was <= 7.8e-9; leave margin for platform-level float variation.
-    assert partition_metrics == pytest.approx(flat_metrics, rel=1e-5, abs=1e-7)
+    # order. CPU renderer SSIM varied by about 2e-8 across 200 permutations on
+    # Linux; the absolute floor gives that near-zero metric platform margin,
+    # while the relative arm remains binding for order-one metrics.
+    assert partition_metrics == pytest.approx(flat_metrics, rel=1e-5, abs=1e-6)
 
 
 def test_nested_lod_selection_and_whole_store_ratio_are_reported(
