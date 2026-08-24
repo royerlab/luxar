@@ -1,8 +1,11 @@
 import { execFileSync } from 'node:child_process';
 
-export type ExampleFixtureFreshness = 'current' | 'stale' | 'unavailable';
+const STALE_EXIT_CODE = 3;
 
-type FreshnessChecker = (projectRoot: string) => void;
+export interface ExampleFixtureFreshness {
+  status: 'current' | 'stale' | 'unavailable';
+  detail?: string;
+}
 
 function runFreshnessChecker(projectRoot: string): void {
   execFileSync('hatch', ['run', 'python', 'scripts/run_examples.py', '--check'], {
@@ -11,18 +14,24 @@ function runFreshnessChecker(projectRoot: string): void {
   });
 }
 
-export function checkExampleFixtureFreshness(
-  projectRoot: string,
-  checker: FreshnessChecker = runFreshnessChecker
-): ExampleFixtureFreshness {
+function checkerErrorDetail(error: object): string | undefined {
+  if (!('stderr' in error)) return undefined;
+  const stderr = (error as { stderr?: unknown }).stderr;
+  if (typeof stderr === 'string') return stderr.trim() || undefined;
+  if (Buffer.isBuffer(stderr)) return stderr.toString().trim() || undefined;
+  return undefined;
+}
+
+export function checkExampleFixtureFreshness(projectRoot: string): ExampleFixtureFreshness {
   try {
-    checker(projectRoot);
-    return 'current';
+    runFreshnessChecker(projectRoot);
+    return { status: 'current' };
   } catch (error: unknown) {
     if (error && typeof error === 'object' && 'status' in error) {
       const status = (error as { status?: unknown }).status;
-      if (typeof status === 'number') return 'stale';
+      if (status === STALE_EXIT_CODE) return { status: 'stale' };
+      return { status: 'unavailable', detail: checkerErrorDetail(error) };
     }
-    return 'unavailable';
+    return { status: 'unavailable' };
   }
 }

@@ -172,7 +172,9 @@ pnpm agent:debug
 
 Before running E2E tests:
 
-1. ✅ Generate example datasets: `make run-examples`
+1. ✅ Generate example datasets: `make run-examples` — the Playwright pre-flight fails
+   the whole run when the stamped examples are stale rather than letting dependent specs
+   fail later with unrelated loading errors.
 2. ✅ Generate the zarr test fixtures: `pnpm test:generate-fixtures` — 18 specs read
    `packages/luxar-viewer/tests/fixtures/`, and the Playwright pre-flight now fails the
    whole run if any of them is missing rather than letting those specs time out. `pnpm test`
