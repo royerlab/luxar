@@ -119,6 +119,52 @@ def _hover_overlays(overlays: dict[str, dict]) -> dict[str, dict]:
     return {n: a for n, a in overlays.items() if a.get("hover")}
 
 
+def _decode_keys(node: zarr.Group) -> list[str]:
+    offsets = np.asarray(node["key_offsets"][:])
+    data = np.asarray(node["key_bytes"][:])
+    return [
+        bytes(data[int(offsets[i]) : int(offsets[i + 1])]).decode("utf-8")
+        for i in range(len(offsets) - 1)
+    ]
+
+
+def test_protein_links_are_serialized_and_tiled_per_view(tmp_path: Path) -> None:
+    coordinates, attributes, category_maps = _inputs()
+    output_path = tmp_path / "cytoself_links.luxar.zarr"
+    create_cytoself_scene(
+        output_path,
+        coordinates,
+        attributes,
+        category_maps,
+        images_expected=False,
+    )
+
+    node = zarr.open_group(str(output_path), mode="r")["Images"]
+    assert node.attrs["link"] == "https://www.proteinatlas.org/search/{hover_key}"
+    assert node.attrs["copy"] == "{hover_key}"
+    assert node.attrs["has_keys"] is True
+    assert sorted(_decode_keys(node)) == sorted(["TUBB", "CDC27", "TUBB", "ACTB"] * 2)
+    assert list(node.attrs["slice_dims"]) == [0]
+
+
+def test_protein_links_are_omitted_without_category_maps(tmp_path: Path) -> None:
+    coordinates, attributes, _ = _inputs()
+    output_path = tmp_path / "cytoself_no_maps.luxar.zarr"
+    create_cytoself_scene(
+        output_path,
+        coordinates,
+        attributes,
+        None,
+        images_expected=False,
+    )
+
+    node = zarr.open_group(str(output_path), mode="r")["Images"]
+    assert "link" not in node.attrs
+    assert "copy" not in node.attrs
+    assert "has_keys" not in node.attrs
+    assert "key_offsets" not in node
+
+
 class TestHoverLayoutWithThumbnails:
     """With aligned image labels the bespoke two-panel layout is built."""
 

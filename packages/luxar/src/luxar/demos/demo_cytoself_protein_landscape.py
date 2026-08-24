@@ -1860,6 +1860,29 @@ def _resolve_image_labels(
     return None
 
 
+def _protein_link_attrs(
+    attributes: dict,
+    category_maps: dict | None,
+    available_attrs: list[str],
+    n_points: int,
+) -> dict[str, object]:
+    """Build aligned Human Protein Atlas link attributes when names exist."""
+    if not category_maps or "protein_name" not in available_attrs:
+        return {}
+    names = category_maps.get("protein_name", [])
+    if not names:
+        return {}
+    per_cell_keys = []
+    for i in range(n_points):
+        code = int(attributes["protein_name"][i])
+        per_cell_keys.append(str(names[code]) if 0 <= code < len(names) else "")
+    return {
+        "keys": per_cell_keys * len(available_attrs),
+        "link": "https://www.proteinatlas.org/search/{hover_key}",
+        "copy": "{hover_key}",
+    }
+
+
 def create_cytoself_scene(
     output_path: Path,
     coordinates: np.ndarray,
@@ -1974,19 +1997,9 @@ def create_cytoself_scene(
             # localization and protein name together — so the URL needs the bare
             # name from `keys=`. Tiled per view exactly like the labels: the
             # protein a cell shows does not change with the active attribute.
-            protein_keys = None
-            if "protein_name" in available_attrs:
-                names = category_maps.get("protein_name", [])
-                per_cell_keys = []
-                for i in range(n_points):
-                    code = int(attributes["protein_name"][i])
-                    # Out of range means the code/category map disagree; an empty
-                    # key suppresses that cell's link rather than opening a search
-                    # for a bare integer.
-                    per_cell_keys.append(
-                        str(names[code]) if 0 <= code < len(names) else ""
-                    )
-                protein_keys = per_cell_keys * len(available_attrs)
+            link_attrs = _protein_link_attrs(
+                attributes, category_maps, available_attrs, n_points
+            )
 
             all_image_labels = _resolve_image_labels(
                 image_labels,
@@ -2005,15 +2018,7 @@ def create_cytoself_scene(
                 intensity=0.18,
                 labels=labels,
                 image_labels=all_image_labels,
-                **(
-                    {
-                        "keys": protein_keys,
-                        "link": "https://www.proteinatlas.org/search/{hover_key}",
-                        "copy": "{hover_key}",
-                    }
-                    if protein_keys is not None
-                    else {}
-                ),
+                **link_attrs,
                 layer=True,
             )
 
