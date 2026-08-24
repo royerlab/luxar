@@ -787,6 +787,24 @@ ignore_imports = [
     "luxar.**.tests.** -> luxar.cli.**",
 ]
 
+[[tool.importlinter.contracts]]
+name = "Shared utils must not import leaf packages"
+type = "forbidden"
+source_modules = ["luxar.utils"]
+forbidden_modules = ["luxar.gsplats", "luxar.demos", "luxar.cli"]
+# Direct edges only: utils legitimately reaches gsplats through luxar.io and
+# luxar.typing_utils, which is the layering working rather than a back-edge.
+allow_indirect_imports = true
+# The four remaining production back-edges live in the demos.py/data_fetch.py
+# cluster that #1307 moves together; drop each exception as that lands.
+ignore_imports = [
+    "luxar.utils.tests.** -> luxar.**",
+    "luxar.utils.demos -> luxar.gsplats.utils.device",
+    "luxar.utils.demos -> luxar.gsplats.gsplat_data",
+    "luxar.utils.demos -> luxar.demos.demo_lorenz",
+    "luxar.utils.data_fetch -> luxar.gsplats.gsplat_data",
+]
+
 [tool.bandit]
 # Exclude tests and the demo scripts: demos are example programs that download
 # public datasets (urlopen B310) and load their own pickled artifacts (B301) —
