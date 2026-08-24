@@ -29,9 +29,7 @@ from ...mesh.interop import (
 )
 
 
-def _validate_directory_index_regex(
-    input_path: Path, index_regex: str | None
-) -> None:
+def _validate_directory_index_regex(input_path: Path, index_regex: str | None) -> None:
     if input_path.is_dir() and index_regex is not None:
         compile_index_regex(index_regex)
 
