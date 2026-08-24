@@ -239,6 +239,28 @@ class TestABundleIsDescribedWhole:
         _write_bundle(path, [{"psnr": 31.2}, {"psnr": 54.9}, {"psnr": 40.0}], tmp_path)
         assert gen._db(gen._read_archive(path)["psnr_db"]) == "31.2–54.9"
 
+    def test_quality_range_survives_the_committed_sidecar(
+        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        archive = tmp_path / "ds" / "movie.gsplats.zarr.zip"
+        archive.parent.mkdir()
+        _write_bundle(
+            archive,
+            [{"psnr": 31.2}, {"psnr": 54.9}, {"psnr": 40.0}],
+            tmp_path,
+        )
+        monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
+        manifest = _fake_manifest(
+            [_entry("movie.gsplats.zarr.zip", gen._sha256_of(archive))]
+        )
+
+        gen.refresh_characteristics(manifest, tmp_path)
+        chars = gen.load_characteristics()
+        (row,) = gen._dataset_rows("ds", manifest["datasets"]["ds"], chars)
+
+        assert row["file"] == "movie.gsplats.zarr.zip (3 frames)"
+        assert row["psnr"] == "31.2–54.9"
+
     def test_one_value_when_every_frame_agrees(self, gen: Any, tmp_path: Path) -> None:
         path = tmp_path / "movie.gsplats.zarr.zip"
         _write_bundle(path, [{"psnr": 40.0}] * 3, tmp_path)
@@ -275,6 +297,8 @@ class TestFiguresAreAbsentRatherThanInvented:
         assert gen._ratio(None, 100) == gen._ABSENT
         assert gen._ratio(100, None) == gen._ABSENT
         assert gen._ratio(100, 0) == gen._ABSENT, "no dividing by an empty archive"
+        assert gen._ratio("100", 10) == gen._ABSENT
+        assert gen._ratio(100, "10") == gen._ABSENT
         assert gen._ratio(35_000_000, 100_000) == "350:1"
 
     def test_an_incomparable_acquisition_states_the_reason(self, gen: Any) -> None:
@@ -423,3 +447,361 @@ class TestAnUnreadableFitIsNotCalledANonFit:
         problems, unread = gen._gaps({"datasets": {"side": entry}})
         assert unread == []
         assert problems == []
+
+
+# ---------------------------------------------------------------------------
+# The committed measurements (`scripts/demo_archive_characteristics.json`)
+#
+# Reading the archives at render time only worked while the archives were in the
+# repo. They are moving to Zenodo, so measurement had to separate from rendering
+# — and the migration had already made the old design report absent figures for
+# data that has them.
+# ---------------------------------------------------------------------------
+
+
+def _entry(name: str, sha: str, **extra: Any) -> dict[str, Any]:
+    return {"name": name, "sha256": sha, "bytes": 1024, **extra}
+
+
+def _fake_manifest(files: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "records": {"cc-by": {"license": "cc-by-4.0", "zenodo_record": 1}},
+        "datasets": {
+            "ds": {"bucket": "zenodo", "record": "cc-by", "dir": "ds", "files": files}
+        },
+    }
+
+
+def test_a_committed_measurement_beats_a_local_archive(
+    gen: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The record describes the artifact it SERVES, not whatever is on this disk.
+
+    The local copy is routinely a pre-refit generation (or a scratch fit), so
+    preferring it is how the descriptions went stale in the first place.
+    """
+    monkeypatch.setattr(
+        gen,
+        "load_characteristics",
+        lambda: {
+            "ds/a.gsplats.zarr.zip": {
+                "n_splats": 12345,
+                "topology": "single level",
+                "psnr_db": 41.5,
+                "foreground_psnr_db": 30.25,
+                "source_bytes": None,
+                "frames": None,
+            }
+        },
+    )
+    # Any local read would have to go through _locate; make it impossible.
+    monkeypatch.setattr(gen, "_locate", lambda *a, **k: None)
+
+    (row,) = gen._dataset_rows(
+        "ds", _fake_manifest([_entry("a.gsplats.zarr.zip", "a" * 64)])["datasets"]["ds"]
+    )
+    assert row["splats"] == "12,345"
+    assert "41.5" in row["psnr"]
+    assert "30.2" in row["fg_psnr"] or "30.3" in row["fg_psnr"]
+
+
+def test_a_staged_measurement_is_not_clobbered_by_a_local_refresh(
+    gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The hazard that would have silently undone the whole change.
+
+    The uploaded generation can only be measured where it is staged. Import those
+    figures, run ``--refresh`` on a laptop holding pre-refit copies, and a naive
+    merge replaces every refitted dataset's numbers with the stale ones — the
+    exact staleness this file exists to end, reintroduced by its own tool.
+    """
+    key = "ds/a.gsplats.zarr.zip"
+    staged = {
+        key: {
+            "n_splats": 999,
+            "psnr_db": 43.0,
+            "foreground_psnr_db": 30.6,
+            "topology": "single level",
+            "measured_from": "staged",
+            "measured_sha256": "s" * 64,
+        }
+    }
+    monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
+    monkeypatch.setattr(gen, "load_characteristics", lambda: staged)
+    monkeypatch.setattr(gen, "_locate", lambda *a, **k: tmp_path / "local.zip")
+    monkeypatch.setattr(gen, "_sha256_of", lambda p: "l" * 64)
+    # A local read that would look complete but carries NO foreground PSNR,
+    # which is what the pre-refit archives actually look like.
+    monkeypatch.setattr(
+        gen,
+        "_read_archive",
+        lambda p: {
+            "n_splats": 111,
+            "psnr_db": 30.0,
+            "foreground_psnr_db": None,
+            "topology": "single level",
+        },
+    )
+
+    counts = gen.refresh_characteristics(
+        _fake_manifest([_entry("a.gsplats.zarr.zip", "a" * 64)])
+    )
+
+    assert counts == (1, 1, 0)
+    written = json.loads((tmp_path / "chars.json").read_text())["archives"][key]
+    assert written["measured_from"] == "staged", "a local read outranked the staged one"
+    assert written["foreground_psnr_db"] == 30.6
+    assert written["n_splats"] == 999
+
+
+def test_refresh_preserves_entries_whose_archive_is_absent(
+    gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A partial checkout is the normal case now, so it must not delete figures.
+
+    Same rule ``gen_data_manifest`` follows for file lists: what you cannot see,
+    you do not get to erase.
+    """
+    key = "ds/a.gsplats.zarr.zip"
+    monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
+    monkeypatch.setattr(
+        gen, "load_characteristics", lambda: {key: {"n_splats": 7, "psnr_db": 1.0}}
+    )
+    monkeypatch.setattr(gen, "_locate", lambda *a, **k: None)
+
+    measured, retained, preserved = gen.refresh_characteristics(
+        _fake_manifest([_entry("a.gsplats.zarr.zip", "a" * 64)])
+    )
+
+    assert (measured, retained, preserved) == (0, 0, 1)
+    assert (
+        json.loads((tmp_path / "chars.json").read_text())["archives"][key]["n_splats"]
+        == 7
+    )
+
+
+def test_a_prefix_matching_cache_path_is_not_labelled_staged(
+    gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    staged_root = tmp_path / "lux"
+    cache_archive = tmp_path / "luxar" / "ds" / "fit.gsplats.zarr.zip"
+    cache_archive.parent.mkdir(parents=True)
+    cache_archive.write_bytes(b"archive")
+    monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
+    monkeypatch.setattr(gen, "_locate", lambda *args: cache_archive)
+    monkeypatch.setattr(gen, "_read_archive", lambda path: {"n_splats": 7})
+    monkeypatch.setattr(gen, "_sha256_of", lambda path: "digest")
+
+    gen.refresh_characteristics(
+        _fake_manifest([_entry(cache_archive.name, "a" * 64)]), staged_root
+    )
+
+    entry = gen.load_characteristics()[f"ds/{cache_archive.name}"]
+    assert entry["measured_from"] == "cache"
+
+
+def test_a_partial_sidecar_entry_renders_absent_fields(gen: Any) -> None:
+    manifest = _fake_manifest([_entry("a.gsplats.zarr.zip", "a" * 64)])
+
+    (row,) = gen._dataset_rows(
+        "ds",
+        manifest["datasets"]["ds"],
+        {"ds/a.gsplats.zarr.zip": {"n_splats": 7, "source_bytes": "2048"}},
+    )
+
+    assert row["splats"] == "7"
+    assert row["topology"] == gen._ABSENT
+    assert row["psnr"] == gen._ABSENT
+    assert row["vs_raw"] == gen._ABSENT
+
+
+def test_load_characteristics_skips_non_object_entries(
+    gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "chars.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "archives": {"good": {"n_splats": 7}, "bad": "not an object"},
+            }
+        )
+    )
+    monkeypatch.setattr(gen, "CHARACTERISTICS", path)
+
+    assert gen.load_characteristics() == {"good": {"n_splats": 7}}
+
+
+def test_load_characteristics_rejects_an_unknown_schema(
+    gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "chars.json"
+    path.write_text(json.dumps({"schema_version": 2, "archives": {}}))
+    monkeypatch.setattr(gen, "CHARACTERISTICS", path)
+
+    with pytest.raises(ValueError, match="unsupported characteristics schema"):
+        gen.load_characteristics()
+
+
+def test_a_measurement_from_superseded_bytes_is_reported(
+    gen: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stale figure is worse than an absent one: absent prints as a dash.
+
+    This is the guard the hand-written descriptions never had — a refit changes
+    the artifact without touching the measurements taken from the old one.
+    """
+    monkeypatch.setattr(
+        gen,
+        "load_characteristics",
+        lambda: {"ds/a.gsplats.zarr.zip": {"measured_sha256": "b" * 64}},
+    )
+    stale = gen._stale_characteristics(
+        _fake_manifest([_entry("a.gsplats.zarr.zip", "a" * 64)])
+    )
+    assert len(stale) == 1
+    assert "b" * 12 in stale[0] and "a" * 12 in stale[0]
+
+
+def test_check_fails_when_a_measurement_is_stale(
+    gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = {
+        "n_splats": 7,
+        "topology": "single level",
+        "psnr_db": 40.0,
+        "foreground_psnr_db": 30.0,
+        "source_bytes": 2048,
+        "measured_sha256": "b" * 64,
+    }
+    path = tmp_path / "chars.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "archives": {"ds/a.gsplats.zarr.zip": archive},
+            }
+        )
+    )
+    monkeypatch.setattr(gen, "CHARACTERISTICS", path)
+    manifest = _fake_manifest([_entry("a.gsplats.zarr.zip", "a" * 64)])
+
+    assert gen._run_check(manifest) == 1
+
+
+def test_the_hosted_digest_is_what_a_measurement_is_judged_against(gen: Any) -> None:
+    """Once the two contracts diverge, the record's copy is the relevant one.
+
+    `sha256` describes what the repo ships; `hosted_sha256` what the record
+    serves. A figure printed in a record must be judged against the latter.
+    """
+    assert gen._pinned_digest({"sha256": "a" * 64}) == "a" * 64
+    assert (
+        gen._pinned_digest({"sha256": "a" * 64, "hosted_sha256": "h" * 64}) == "h" * 64
+    )
+
+
+def test_no_measurement_is_stale_against_its_own_digest(
+    gen: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The quiet case must stay quiet, or the report is noise."""
+    monkeypatch.setattr(
+        gen,
+        "load_characteristics",
+        lambda: {"ds/a.gsplats.zarr.zip": {"measured_sha256": "a" * 64}},
+    )
+    assert (
+        gen._stale_characteristics(
+            _fake_manifest([_entry("a.gsplats.zarr.zip", "a" * 64)])
+        )
+        == []
+    )
+
+
+def test_a_record_quotes_the_size_a_reader_will_download(gen: Any) -> None:
+    """`bytes` is the repo's copy; `hosted_bytes` is the record's.
+
+    They diverge for every refitted dataset, so a record's own table quoting the
+    in-repo size tells a reader the wrong download size — 36.4 MiB against an
+    actual 80.6 MiB for cmu1_ch0.
+    """
+    assert gen.hosted_size({"bytes": 38201205}) == 38201205
+    assert gen.hosted_size({"bytes": 38201205, "hosted_bytes": 84492218}) == 84492218
+
+
+def test_the_finest_count_is_not_a_naive_sum(
+    gen: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tree's groups combine three different ways; summing them is far off.
+
+    `part_N` are disjoint tiles (SUM), `child_N` are substitutive levels that
+    REPLACE each other (MAX), and `additive_N` sum to their own parent. Summing
+    everything gives 2,574,354 for ct_atlas against a true 647,083.
+    """
+    import zipfile
+
+    # A partition of two parts, each a 2-level lod. The first finest level has no
+    # own stamp, so it must sum its additive chunks; the second has an own stamp,
+    # which must win over its deliberately different additive sum. Correct:
+    # (20 + 30) + 500 = 550, not 50 + 501.
+    groups = {
+        "part_0",
+        "part_0/child_0",
+        "part_0/child_1",
+        "part_0/child_1/additive_0",
+        "part_0/child_1/additive_1",
+        "part_1",
+        "part_1/child_0",
+        "part_1/child_1",
+        "part_1/child_1/additive_0",
+        "part_1/child_1/additive_1",
+    }
+    counts = {
+        "": {"kind": "partition"},
+        "part_0": {"kind": "lod"},
+        "part_0/child_0": {"n_splats": 5},
+        "part_0/child_1": {},
+        "part_0/child_1/additive_0": {"n_splats": 20},
+        "part_0/child_1/additive_1": {"n_splats": 30},
+        "part_1": {"kind": "lod"},
+        "part_1/child_0": {"n_splats": 7},
+        "part_1/child_1": {"n_splats": 500},
+        "part_1/child_1/additive_0": {"n_splats": 200},
+        "part_1/child_1/additive_1": {"n_splats": 301},
+    }
+    monkey = lambda zf, root, node="": counts.get(node.rstrip("/"), {})  # noqa: E731
+    monkeypatch.setattr(gen, "_attrs", monkey)
+    total = gen._finest_elements(zipfile.ZipFile.__new__(zipfile.ZipFile), "r/", groups)
+    assert total == 550, "expected sum-over-parts of max-over-levels"
+
+
+def test_a_partition_count_is_absent_if_any_part_is_unreadable(
+    gen: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    counts = {"": {"kind": "partition"}, "part_0": {"n_splats": 10}, "part_1": {}}
+    monkeypatch.setattr(
+        gen, "_attrs", lambda zf, root, node="": counts.get(node.rstrip("/"), {})
+    )
+
+    total = gen._finest_elements(
+        zipfile.ZipFile.__new__(zipfile.ZipFile), "r/", {"part_0", "part_1"}
+    )
+
+    assert total is None, "a partial sum must not be published as a total"
+
+
+def test_an_additive_count_is_absent_if_any_chunk_is_unreadable(
+    gen: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    counts = {"": {}, "additive_0": {"n_splats": 10}, "additive_1": {}}
+    monkeypatch.setattr(
+        gen, "_attrs", lambda zf, root, node="": counts.get(node.rstrip("/"), {})
+    )
+
+    total = gen._finest_elements(
+        zipfile.ZipFile.__new__(zipfile.ZipFile),
+        "r/",
+        {"additive_0", "additive_1"},
+    )
+
+    assert total is None, "a partial sum must not be published as a total"
