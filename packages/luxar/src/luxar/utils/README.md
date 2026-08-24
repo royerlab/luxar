@@ -211,8 +211,6 @@ Demo scene generators, precomputed data helpers, and viewer launch utilities.
 - `detect_device()`: Auto-detect the best available compute device (cuda > mps > cpu)
 - `BUILDER_FINGERPRINT_ATTR`: Scene-root attribute that identifies the demo builder
 - `demo_source_fingerprint()`: Hash a demo, Luxar's writer sources, and the Zarr environment for scene-staleness checks
-- `production_source_fingerprint()`: Cache a stable hash of production Luxar Python sources
-- `store_writer_environment()`: Report installed/configured inputs that affect Zarr output
 - `scene_is_current()`: Reuse only a completed scene written by the current demo producer
 - `warn_if_no_cuda_gpu()`: Print a warning if no CUDA GPU is available
 - `load_precomputed_gsplats()`: Load precomputed GSplat data from Git LFS or cache
@@ -223,6 +221,14 @@ Demo scene generators, precomputed data helpers, and viewer launch utilities.
 - `parse_path_arg(name, argv=None)`: Parse a path `--name=PATH` / `--name PATH` flag, expanding `~`; returns `None` when the flag is absent or left without a value
 - `is_lfs_pointer()`: Check if a file is a Git LFS pointer (not actual data)
 - `voxel_sampled_payload_agreement(centers, payload)`: Fraction of same-voxel splat pairs carrying an identical payload row — the correspondence check for a per-splat sidecar shipped alongside a `.gsplats.zarr` fit (`save()` reorders splats, so a sidecar sampled before saving is silently misindexed). `None` when too few splats share a voxel to judge
+
+### `source_fingerprints.py`
+Stable fingerprints for Python sources that produce Luxar stores.
+
+**Key Functions:**
+- `fingerprint_source_files()`: Hash source paths and contents in stable, boundary-safe order
+- `production_source_fingerprint()`: Cache a stable hash of production Luxar Python sources
+- `store_writer_environment()`: Report installed/configured inputs that affect Zarr output
 
 **Features:**
 - Ready-to-use demo scenes

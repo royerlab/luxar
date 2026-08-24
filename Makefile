@@ -696,13 +696,13 @@ test-all:  ## Run all tests (Python+CUDA, Rust/WASM, TypeScript, Go)
 		echo "   Run 'make install-rust' to enable full WASM testing"; \
 	fi
 	@echo ""
-	@echo "🔬 Generating TypeScript test fixtures..."
-	$(HATCH) run fixtures:python packages/luxar-viewer/tests/fixtures/generate_test_data.py
-	@echo "📘 Running TypeScript tests..."
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
 		cd packages/luxar-viewer && pnpm install; \
 	fi
+	@echo "🔬 Generating TypeScript test fixtures..."
+	cd packages/luxar-viewer && pnpm test:generate-fixtures
+	@echo "📘 Running TypeScript tests..."
 	@# When WASM artifacts are present (build above succeeded, or a prior
 	@# build is cached), require the WASM-vs-TypeScript artifact-presence
 	@# meta-test to run instead of being silently skipped via runIf().
@@ -2666,8 +2666,12 @@ test-nlm-cuda:  ## Run NLM CUDA extension tests
 	@echo "✅ NLM CUDA tests completed!"
 
 test-fixtures:  ## Generate test fixtures for TypeScript tests
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-viewer && pnpm install; \
+	fi
 	@echo "🔬 Generating test fixtures..."
-	$(HATCH) run fixtures:python packages/luxar-viewer/tests/fixtures/generate_test_data.py
+	cd packages/luxar-viewer && pnpm test:generate-fixtures
 
 test-viewer-fixtures: test-fixtures  ## Generate fixtures + run TypeScript tests
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \

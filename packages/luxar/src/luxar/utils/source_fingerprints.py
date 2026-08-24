@@ -29,7 +29,13 @@ def fingerprint_source_files(root: Path, paths: Iterable[Path]) -> str:
 
 @lru_cache(maxsize=None)
 def production_source_fingerprint(package_root: Path | None = None) -> str:
-    """Hash production Luxar Python sources once per package root and process."""
+    """Hash production Luxar Python sources once per package root and process.
+
+    This deliberately includes ``demos/``, so editing any demo invalidates every
+    fingerprinted demo scene. Shared helpers such as ``_globe_common``,
+    ``_lod_policy``, and ``_cinematic_camera`` write scene bytes, and some demos
+    import other demo modules, so excluding that tree would leave stale scenes.
+    """
     root = (
         Path(__file__).resolve().parents[1]
         if package_root is None
@@ -40,6 +46,7 @@ def production_source_fingerprint(package_root: Path | None = None) -> str:
         for path in root.rglob("*.py")
         if "tests" not in path.relative_to(root).parts
         and "__pycache__" not in path.relative_to(root).parts
+        and path.name != "conftest.py"
     )
     if not paths:
         return ""

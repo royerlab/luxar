@@ -31,7 +31,7 @@ import {
   parseGeneratedFixtureNames,
 } from '../../../tools/fixture-manifest';
 import { e2eWorkerPlan, formatE2EParallelismStamp } from '../../../tools/e2e-workers';
-import { areFixturesStale } from '../global-setup';
+import { areFixturesStale } from '../../../tools/fixture-freshness';
 
 // `package.json` declares `"type": "module"`, so the CommonJS `__dirname`
 // global is undefined at module load. Reconstruct it from `import.meta.url`.

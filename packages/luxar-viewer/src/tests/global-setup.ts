@@ -9,11 +9,15 @@
  * If any fixtures are missing, runs the generator script automatically.
  */
 
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'fs';
-import { createHash } from 'crypto';
+import { existsSync, readFileSync } from 'fs';
 import { execSync } from 'child_process';
-import { join, resolve } from 'path';
+import { resolve } from 'path';
 import { fileURLToPath } from 'url';
+import {
+  areExpectationsStale,
+  areFixturesStale,
+  stampFixtureInputs,
+} from '../../tools/fixture-freshness';
 import {
   isGeneratedFixtureComplete,
   parseGeneratedFixtureNames,
@@ -28,14 +32,6 @@ const PROJECT_ROOT = resolve(VIEWER_ROOT, '../..');
 const WASM_JS_PATH = resolve(VIEWER_ROOT, 'public/wasm/luxar_wasm.js');
 const WASM_BIN_PATH = resolve(VIEWER_ROOT, 'public/wasm/luxar_wasm_bg.wasm');
 const GENERATOR_PATH = resolve(VIEWER_ROOT, 'tests/fixtures/generate_test_data.py');
-const EXPECTATIONS_GENERATOR_PATH = resolve(VIEWER_ROOT, 'tests/fixtures/generate_expectations.py');
-const EXPECTATIONS_PATH = resolve(FIXTURES_DIR, 'roundtrip_expectations.json');
-/**
- * Sidecars recording WHICH inputs produced the current generated artifacts.
- * Both live beside the (git-ignored) fixtures they describe.
- */
-const FIXTURE_STAMP_PATH = resolve(FIXTURES_DIR, '.fixture-inputs.sha256');
-const EXPECTATIONS_STAMP_PATH = resolve(FIXTURES_DIR, '.expectations-inputs.sha256');
 const EXPECTED_FIXTURES = parseGeneratedFixtureNames(GENERATOR_PATH);
 
 /**
@@ -86,102 +82,6 @@ function runPythonGenerator(command: string, label: string): void {
 }
 
 /**
- * Every Python file whose CONTENT can change what the generator writes: the
- * generator itself plus every non-test source under the production Luxar
- * package. The wide set is deliberate: compiler behavior also depends on
- * root-level compatibility code and `core/`, not only `encoding/` and `io/`.
- *
- * `**\/tests\/**` and `conftest.py` are excluded deliberately. A Python unit
- * test cannot change a fixture byte, but 48 of them live under `encoding/` and
- * `io/`, so including them meant that editing an unrelated Python test — or
- * rebasing, or switching worktrees — invalidated all 50 fixtures and paid a
- * ~minute-long regeneration before a single TypeScript test ran.
- */
-export function fixtureInputFiles(
-  projectRoot: string = PROJECT_ROOT,
-  generatorPath: string = resolve(
-    projectRoot,
-    'packages/luxar-viewer/tests/fixtures/generate_test_data.py'
-  )
-): string[] {
-  const files = [generatorPath];
-  const sourceRoot = resolve(projectRoot, 'packages/luxar/src/luxar');
-  if (!existsSync(sourceRoot)) return files;
-  for (const entry of readdirSync(sourceRoot, { recursive: true }) as string[]) {
-    if (!entry.endsWith('.py')) continue;
-    const parts = entry.split(/[\\/]/);
-    if (parts.includes('tests') || parts.includes('__pycache__')) continue;
-    if (parts[parts.length - 1] === 'conftest.py') continue;
-    const full = join(sourceRoot, entry);
-    if (existsSync(full)) files.push(full);
-  }
-  return files.sort();
-}
-
-/** Content digest of `paths` — path names included so a rename counts as a change. */
-function hashFiles(paths: string[]): string {
-  const digest = createHash('sha256');
-  for (const path of paths) {
-    digest.update(path);
-    digest.update(readFileSync(path));
-  }
-  return digest.digest('hex');
-}
-
-function readStamp(path: string): string | null {
-  return existsSync(path) ? readFileSync(path, 'utf-8').trim() : null;
-}
-
-/**
- * Whether the generated fixtures were produced by the CURRENT inputs — the
- * generator script and the production Python sources it writes through,
- * compared by CONTENT.
- *
- * The generate-if-MISSING gate alone let #448 slip through: the fixtures all
- * existed (git-ignored, generated locally in June) but still carried the old
- * `float32` positions encoding, so five array-decoder tests failed while setup
- * regenerated nothing. So staleness must be checked — but NOT by mtime.
- *
- * mtime is wrong here in both directions. It fires spuriously, because a `git
- * checkout` or a fresh worktree rewrites source mtimes without changing a byte;
- * and content is what actually determines the output. `ensureWasmBuilt` below
- * already rejected mtime for the same reason and inspects the artifact instead.
- * This records a digest of the inputs next to the fixtures and compares against
- * it, so regeneration happens exactly when the inputs really changed.
- */
-export function fixtureInputsFingerprint(
-  projectRoot: string = PROJECT_ROOT,
-  generatorPath: string = resolve(
-    projectRoot,
-    'packages/luxar-viewer/tests/fixtures/generate_test_data.py'
-  )
-): string {
-  return hashFiles(fixtureInputFiles(projectRoot, generatorPath));
-}
-
-export function areFixturesStale(
-  projectRoot: string = PROJECT_ROOT,
-  fixturesDir: string = FIXTURES_DIR,
-  generatorPath: string = resolve(fixturesDir, 'generate_test_data.py')
-): boolean {
-  return (
-    readStamp(resolve(fixturesDir, '.fixture-inputs.sha256')) !==
-    fixtureInputsFingerprint(projectRoot, generatorPath)
-  );
-}
-
-/**
- * The expectations describe the fixtures, so they are stale when the fixture
- * inputs changed or their own generator did — no need to stat 50 zarr trees,
- * and no mtime churn.
- *
- * NOT sufficient on its own: see the `regeneratedFixtures` argument below.
- */
-function expectationsFingerprint(): string {
-  return hashFiles([...fixtureInputFiles(), EXPECTATIONS_GENERATOR_PATH]);
-}
-
-/**
  * @param regeneratedFixtures whether this run rebuilt the zarr fixtures.
  *
  * That flag is load-bearing, not belt-and-braces. `generate_test_data.py` is
@@ -194,9 +94,7 @@ function expectationsFingerprint(): string {
  * rebuilt, always.
  */
 function isExpectationsStale(regeneratedFixtures: boolean): boolean {
-  if (regeneratedFixtures) return true;
-  if (!existsSync(EXPECTATIONS_PATH)) return true;
-  return readStamp(EXPECTATIONS_STAMP_PATH) !== expectationsFingerprint();
+  return areExpectationsStale(regeneratedFixtures, PROJECT_ROOT, FIXTURES_DIR);
 }
 
 /**
@@ -391,17 +289,15 @@ export async function setup(): Promise<void> {
     );
   }
 
-  // Stamp only after the fixtures are verified complete, so a failed or
-  // interrupted generation is retried on the next run rather than recorded as
-  // current.
-  writeFileSync(FIXTURE_STAMP_PATH, `${fixtureInputsFingerprint()}\n`);
-
   if (isExpectationsStale(regeneratedFixtures)) {
     console.log('[test-setup] Round-trip expectations missing/stale — generating...');
     runPythonGenerator(
       'hatch run fixtures:python packages/luxar-viewer/tests/fixtures/generate_expectations.py',
       'round-trip expectations'
     );
-    writeFileSync(EXPECTATIONS_STAMP_PATH, `${expectationsFingerprint()}\n`);
   }
+
+  // Stamp only after every fixture is complete and expectations exist, so an
+  // interrupted generator is retried instead of recorded as current.
+  stampFixtureInputs(PROJECT_ROOT, FIXTURES_DIR);
 }
