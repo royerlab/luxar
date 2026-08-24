@@ -1990,6 +1990,34 @@ class TestMeshDirectoryImport:
         with pytest.raises(ValueError, match="duplicate time/channel"):
             import_mesh_directory(tmp_path, pattern="*.ply")
 
+    def test_custom_indices_keep_coordinate_validation(self, tmp_path: Path) -> None:
+        regex = r"frame_(?P<t>\d+)(?:-channel(?P<c>\d+))?"
+        write_ply_binary(tmp_path / "frame_1-channel0.ply", GT)
+        write_ply_binary(tmp_path / "frame_2.ply", GT)
+        with pytest.raises(ValueError, match="only some filenames"):
+            import_mesh_directory(tmp_path, pattern="*.ply", index_regex=regex)
+
+        for path in tmp_path.iterdir():
+            path.unlink()
+        write_ply_binary(tmp_path / "frame_1-first.ply", GT)
+        write_ply_binary(tmp_path / "frame_1-second.ply", GT)
+        with pytest.raises(ValueError, match="duplicate time/channel"):
+            import_mesh_directory(
+                tmp_path,
+                pattern="*.ply",
+                index_regex=r"frame_(?P<t>\d+)-.+",
+            )
+
+        for path in tmp_path.iterdir():
+            path.unlink()
+        write_ply_binary(tmp_path / "frame_16777217.ply", GT)
+        with pytest.raises(ValueError, match="too large to represent exactly"):
+            import_mesh_directory(
+                tmp_path,
+                pattern="*.ply",
+                index_regex=r"frame_(?P<t>\d+)",
+            )
+
     def test_every_matched_file_requires_a_time_index(self, tmp_path: Path) -> None:
         write_ply_binary(tmp_path / "surface.ply", GT)
         with pytest.raises(ValueError, match=r"no T<number> time index"):
