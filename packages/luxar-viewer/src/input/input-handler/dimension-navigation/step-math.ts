@@ -140,6 +140,8 @@ export function calculateNextPosition(
   if (discrete) {
     const grid = snapStep > 0 ? snapStep : 1;
     newPos = range[0] + Math.round((newPos - range[0]) / grid) * grid;
+    const lastK = Math.floor((range[1] - range[0]) / grid + 1e-9);
+    if (lastK < 0) return range[0];
   }
 
   // Handle boundaries

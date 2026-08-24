@@ -160,6 +160,8 @@ luxar mesh import model.glb model.luxar.zarr --no-center
 ```
 
 ```python
+import numpy as np
+
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.mesh.interop import import_mesh, import_mesh_directory
 
@@ -183,16 +185,37 @@ channel_range = (
     float(timelapse.vertices[:, 4].min()),
     float(timelapse.vertices[:, 4].max()),
 )
+
+
+def discrete_step(values):
+    unique_values = np.unique(values).astype(np.int64)
+    return (
+        1.0
+        if unique_values.size < 2
+        else float(np.gcd.reduce(np.diff(unique_values)))
+    )
+
+
 dimensions = Dimensions(
     [
         Dimension("x", unit="um"),
         Dimension("y", unit="um"),
         Dimension("z", unit="um"),
         Dimension(
-            "t", unit="frame", range=time_range, step=1, display=False, discrete=True
+            "t",
+            unit="frame",
+            range=time_range,
+            step=discrete_step(timelapse.vertices[:, 3]),
+            display=False,
+            discrete=True,
         ),
         Dimension(
-            "c", unit="index", range=channel_range, step=1, display=False, discrete=True
+            "c",
+            unit="index",
+            range=channel_range,
+            step=discrete_step(timelapse.vertices[:, 4]),
+            display=False,
+            discrete=True,
         ),
     ]
 )

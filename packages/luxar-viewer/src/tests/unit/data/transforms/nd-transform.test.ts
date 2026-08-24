@@ -488,6 +488,9 @@ describe('invertNdTransformForQuery — the no-preimage rule on discrete dims', 
       expect(result.slicePosition[3]).toBe(world);
     }
 
+    // A bare `.gsplats.zarr` with centers at 0.3/1.3/2.3 synthesizes this
+    // range directly from its bounds. The default position is therefore 0.3,
+    // and the inverse query must preserve every synthesized slider stop.
     const fractionalDims: QueryDimensionInfo[] = [
       { name: 'X' },
       { name: 'Y' },

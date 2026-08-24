@@ -212,6 +212,11 @@ describe('nD Navigation Utilities', () => {
       expect(calculateNextPosition(5, 1, 1, [5, 5], false, true)).toBe(5); // Wrap-around
       expect(calculateNextPosition(5, -1, 1, [5, 5], false, false)).toBe(5); // Clamp
     });
+
+    it('returns the range minimum for an inverted discrete range', () => {
+      expect(calculateNextPosition(5, 1, 1, [5, 4.5], true, true)).toBe(5);
+      expect(calculateNextPosition(5, 1, 1, [5, 4.5], true, false)).toBe(5);
+    });
   });
 
   describe('mapKeyToDimension', () => {

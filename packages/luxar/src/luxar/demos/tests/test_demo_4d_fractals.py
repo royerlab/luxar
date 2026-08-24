@@ -280,13 +280,12 @@ class TestWrittenDatasetContract:
         assert decode_err < PRODUCTION_FETCH_REACH / 10, (
             f"decode error {decode_err} too close to production fetch reach"
         )
-        # Every slider stop (k*step within range) must have decoded points
+        # Every slider stop (range_min + k*step) must have decoded points
         # within the viewer's 0.25*step fetch reach, for EVERY fractal.
-        ks = np.arange(round(axis[0] / step), round(axis[-1] / step) + 1)
+        stops = axis[0] + np.arange(len(axis)) * step
         for fid in range(6):
             wf = w[fractal_ids == fid]
-            for k in ks:
-                stop = k * step
+            for stop in stops:
                 assert (np.abs(wf - stop) <= 0.25 * step).any(), (
                     f"fractal {fid}: no decoded points at stop {stop}"
                 )
