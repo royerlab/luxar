@@ -656,13 +656,13 @@ export class InputHandler {
     if (helpOverlay) {
       notifier.hideHelp();
     } else {
-      notifier.showHelp(this.contextManager.getReachableBindingRegistry());
+      notifier.showHelp(this.contextManager.getRegisteredShortcutBindings());
     }
   }
 
-  /** Reachable bindings used to build the keyboard-shortcut overlay. */
-  public getReachableBindingRegistry() {
-    return this.contextManager.getReachableBindingRegistry();
+  /** Registered bindings used to build the keyboard-shortcut overlay. */
+  public getRegisteredShortcutBindings() {
+    return this.contextManager.getRegisteredShortcutBindings();
   }
 
   /**

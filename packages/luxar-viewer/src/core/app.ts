@@ -420,7 +420,7 @@ export class LuxarApp {
    */
   private applyViewerConfigState(viewerConfig: ZarrViewerConfig | undefined): void {
     applyViewerConfigStateHelper(viewerConfig, {
-      showHelp: () => showHelpOverlay(this.inputHandler.getReachableBindingRegistry()),
+      showHelp: () => showHelpOverlay(this.inputHandler.getRegisteredShortcutBindings()),
       renderingControls: this.renderingControls,
       performanceMonitor: this.performanceMonitor,
       inputHandler: this.inputHandler,

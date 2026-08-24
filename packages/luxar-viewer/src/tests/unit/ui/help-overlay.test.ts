@@ -67,7 +67,7 @@ function expectNoOverlayTimersPending(focusTransitions: number): void {
 }
 
 describe('showHelpOverlay - Memory Leak Prevention', () => {
-  it('omits keyboard rows whose bindings are absent from the reachable registry', () => {
+  it('omits keyboard rows absent from the live registration snapshot', () => {
     const bindings = new Map<string, string[]>([[InputContext.NAVIGATION, ['h']]]);
     showHelpOverlay(bindings);
 

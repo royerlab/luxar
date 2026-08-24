@@ -136,6 +136,17 @@ describe('InputContextManager', () => {
   });
 
   describe('key binding registration', () => {
+    it('reports canonical registered binding keys by context', () => {
+      manager.registerBinding(InputContext.NAVIGATION, {
+        key: 's',
+        modifiers: { ctrl: true, shift: true },
+        handler: vi.fn(),
+      });
+
+      expect(manager.getRegisteredShortcutBindings().get(InputContext.NAVIGATION)).toEqual([
+        'ctrl+s+shift',
+      ]);
+    });
     it('should register key bindings', () => {
       const handler = vi.fn();
 

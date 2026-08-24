@@ -27,7 +27,7 @@ import { installTypeToFilter } from './help-overlay/type-to-filter';
 import { getViewerContainer } from '../utils/viewer-container';
 import { RAIL_ICONS } from './control-rail/icons';
 import { InputContext } from '../input/input-handler/context-manager';
-import type { ShortcutBindingRegistry } from '../types/shortcut-help';
+import type { RegisteredShortcutBindings } from '../types/shortcut-help';
 
 const UI_CONFIG = config.ui;
 
@@ -41,7 +41,7 @@ interface HelpEntry {
   /** Key/gesture chips, rendered as <kbd> (e.g. ['V'] or ['⇧', 'Wheel']). */
   keys: string[];
   label: string;
-  /** Registered bindings that must all be reachable for this row to render. */
+  /** Registered bindings that must all exist in the advertised context. */
   bindings?: Array<{ context: InputContext; key: string }>;
 }
 
@@ -294,7 +294,7 @@ const HELP_TIPS: string[] = [
  * click-outside-to-dismiss handler (the delay avoids catching the same click
  * that opened it); {@link hideHelpOverlay} tears both down.
  */
-export function showHelpOverlay(bindings?: ShortcutBindingRegistry) {
+export function showHelpOverlay(bindings?: RegisteredShortcutBindings) {
   // Prevent opening multiple overlays - if one exists, do nothing
   const existingHelp = document.getElementById('luxar-help-overlay');
   if (existingHelp) {

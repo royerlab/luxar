@@ -18,7 +18,7 @@ import {
   sortContextsByPriority,
 } from './context-manager/routing-rules';
 import { isTypingInInput } from './commands/focus-utils';
-import type { ShortcutBindingRegistry } from '../../types/shortcut-help';
+import type { RegisteredShortcutBindings } from '../../types/shortcut-help';
 
 /**
  * Maximum recursion depth for {@link InputContextManager.handleKeyEvent}.
@@ -763,18 +763,12 @@ export class InputContextManager {
     };
   }
 
-  /** Snapshot of registered bindings that their own context filters admit. */
-  public getReachableBindingRegistry(): ShortcutBindingRegistry {
+  /** Snapshot of registered binding keys grouped by input context. */
+  public getRegisteredShortcutBindings(): RegisteredShortcutBindings {
     const registry = new Map<string, string[]>();
 
     this.bindings.forEach((bindings, context) => {
-      const contextConfig = this.contextConfigs.get(context as InputContext);
-      if (!contextConfig) return;
-
-      const reachable = Array.from(bindings.entries())
-        .filter(([, binding]) => this.isKeyAllowedInContext(binding.key, contextConfig))
-        .map(([bindingKey]) => bindingKey);
-      registry.set(context, reachable);
+      registry.set(context, Array.from(bindings.keys()));
     });
 
     return registry;

@@ -19,7 +19,7 @@
  */
 
 import { log, Modules } from '../log';
-import type { ShortcutBindingRegistry } from '../../types/shortcut-help';
+import type { RegisteredShortcutBindings } from '../../types/shortcut-help';
 
 /**
  * Methods a notifier backend must implement. Mirrors the exports
@@ -33,7 +33,7 @@ import type { ShortcutBindingRegistry } from '../../types/shortcut-help';
 export interface NotifierBackend {
   showError(message: string): void;
   showToast(message: string, durationMs?: number): void;
-  showHelpOverlay(bindings?: ShortcutBindingRegistry): void;
+  showHelpOverlay(bindings?: RegisteredShortcutBindings): void;
   hideHelpOverlay(): void;
   showLoadingIndicator(): HTMLElement | void;
   hideLoadingIndicator(): void;
@@ -89,7 +89,7 @@ export const notifier = {
     else warnIfMissing('toast');
   },
   /** Show the keyboard-shortcuts help overlay. */
-  showHelp(bindings?: ShortcutBindingRegistry): void {
+  showHelp(bindings?: RegisteredShortcutBindings): void {
     if (backend) backend.showHelpOverlay(bindings);
     else warnIfMissing('showHelp');
   },
