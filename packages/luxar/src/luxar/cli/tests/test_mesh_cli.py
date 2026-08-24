@@ -304,6 +304,22 @@ class TestMeshImport:
         assert result.exit_code == 0
         assert "import" in result.stdout
 
+    def test_the_group_help_names_every_dialect_it_reads(self) -> None:
+        """The `luxar mesh` blurb enumerates the formats, so it goes stale silently.
+
+        No gate catches it: `test_docs_command_coverage` checks command paths and option
+        spellings, not help PROSE. A dialect the importer supports but the blurb omits
+        reads as unsupported to anyone who looks at `--help` first.
+        """
+        result = runner.invoke(app, ["mesh", "--help"])
+        assert result.exit_code == 0
+        blurb = _plain(result.stdout).lower()
+        missing = [fmt for fmt in MESH_FORMATS if fmt not in blurb]
+        assert not missing, (
+            f"`luxar mesh --help` does not mention {missing}, which "
+            "`luxar mesh import` reads"
+        )
+
 
 def _grid_mesh(n: int = 24) -> tuple[np.ndarray, np.ndarray]:
     """A welded n×n triangulated plane — big enough to decimate twice.
