@@ -222,7 +222,7 @@ def test_main_succeeds_when_issue_has_no_open_closing_pr(monkeypatch, capsys) ->
     monkeypatch.setattr(
         guard,
         "list_open_pull_requests",
-        lambda repo: [_pr(2004)],
+        lambda repo: [_pr(2004, body="Refs #2003")],
     )
     assert guard.main(["2003"]) == 0
     assert capsys.readouterr().out == ""
@@ -249,6 +249,14 @@ def test_loose_mode_advises_on_exact_non_closing_mentions(monkeypatch, capsys) -
 def test_loose_mode_excludes_pull_requests_that_close_the_issue() -> None:
     pull_request = _pr(2004, 2003, body="Refs #2003")
     assert guard.loosely_matching_pull_requests(2003, [pull_request]) == []
+    assert (
+        guard.loosely_matching_pull_requests(
+            2003,
+            [_pr(2004, title="Part of #2003")],
+            exclude_pr=2004,
+        )
+        == []
+    )
 
 
 def test_loose_mode_keeps_json_stdout_machine_readable(monkeypatch, capsys) -> None:
