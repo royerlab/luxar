@@ -1115,6 +1115,64 @@ describe('InputContextManager', () => {
       expect(handled).toBe(false);
       expect(handler).not.toHaveBeenCalled();
     });
+
+    it('dispatches a modified NAVIGATION binding when the bare key is blocked', () => {
+      const navigationHandler = vi.fn();
+      const flyHandler = vi.fn();
+      manager.registerBinding(InputContext.NAVIGATION, {
+        key: 'ArrowUp',
+        modifiers: { shift: true },
+        handler: navigationHandler,
+      });
+      manager.registerBinding(InputContext.FLY_CONTROLS, {
+        key: 'ArrowUp',
+        modifiers: { shift: true },
+        handler: flyHandler,
+      });
+
+      const event = new KeyboardEvent('keydown', { key: 'ArrowUp', shiftKey: true });
+      const handled = manager.handleKeyEvent(event, 'down');
+
+      expect(handled).toBe(true);
+      expect(navigationHandler).toHaveBeenCalledWith(event);
+      expect(flyHandler).not.toHaveBeenCalled();
+    });
+
+    it('still routes a bare blocked key to the fly-controls binding', () => {
+      const navigationHandler = vi.fn();
+      const flyHandler = vi.fn();
+      manager.registerBinding(InputContext.NAVIGATION, {
+        key: 'ArrowUp',
+        handler: navigationHandler,
+      });
+      manager.registerBinding(InputContext.FLY_CONTROLS, {
+        key: 'ArrowUp',
+        handler: flyHandler,
+      });
+
+      const event = new KeyboardEvent('keydown', { key: 'ArrowUp' });
+      const handled = manager.handleKeyEvent(event, 'down');
+
+      expect(handled).toBe(true);
+      expect(navigationHandler).not.toHaveBeenCalled();
+      expect(flyHandler).toHaveBeenCalledWith(event);
+    });
+
+    it('allows modified variants of an allowed key in passthrough contexts', () => {
+      const flyHandler = vi.fn();
+      manager.registerBinding(InputContext.FLY_CONTROLS, {
+        key: 'ArrowUp',
+        modifiers: { shift: true },
+        handler: flyHandler,
+      });
+      manager.setContext(InputContext.UI_INTERACTION);
+
+      const event = new KeyboardEvent('keydown', { key: 'ArrowUp', shiftKey: true });
+      const handled = manager.handleKeyEvent(event, 'down');
+
+      expect(handled).toBe(true);
+      expect(flyHandler).toHaveBeenCalledWith(event);
+    });
   });
 
   describe('DIMENSION_NAV context [input.md G21]', () => {

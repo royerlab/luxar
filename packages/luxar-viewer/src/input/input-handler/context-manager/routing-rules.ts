@@ -20,26 +20,48 @@ export interface KeyFilterConfig {
 }
 
 /**
- * Decide whether a key is allowed in a context based on its filter config.
+ * Decide whether a key binding is allowed in a context based on its filter config.
  *
  * Rules (matching the existing context manager behavior):
- * - If `blockedKeys` is non-empty and contains `key`, the key is rejected.
- * - If `allowedKeys` is non-empty and does NOT contain `key`, the key is rejected.
+ * - If `blockedKeys` contains the canonical binding key, the binding is rejected.
+ * - If `allowedKeys` contains neither the base key nor canonical binding key,
+ *   the binding is rejected.
  * - Otherwise the key is allowed.
  *
  * `blockedKeys` always wins over `allowedKeys` when both are present and
  * both list the key (defense in depth).
  *
- * @param key - The key to test (use `event.key`, normalized to the case the
- *   filter arrays use; the existing manager uses lowercase consistently).
+ * Bare blocked keys do not reject modified bindings on the same key. This lets
+ * a context block bare ArrowUp for fly-control passthrough while still owning
+ * Shift+ArrowUp. Bare allowlist entries continue to admit every modifier
+ * variant so fly-control bindings such as Shift+W remain reachable.
+ *
+ * @param key - The base key to test (usually `event.key`).
  * @param config - The filter config.
+ * @param bindingKey - Canonical modifier-aware binding key. Defaults to the
+ *   normalized base key for callers that do not use modifiers.
  * @returns true if the key is allowed.
  */
-export function isKeyAllowedInContext(key: string, config: KeyFilterConfig): boolean {
-  if (config.blockedKeys && config.blockedKeys.includes(key)) {
+export function isKeyAllowedInContext(
+  key: string,
+  config: KeyFilterConfig,
+  bindingKey = key.toLowerCase()
+): boolean {
+  const normalizedKey = key.toLowerCase();
+  const normalizedBindingKey = bindingKey.toLowerCase();
+
+  if (config.blockedKeys?.some((blockedKey) => blockedKey.toLowerCase() === normalizedBindingKey)) {
     return false;
   }
-  if (config.allowedKeys && !config.allowedKeys.includes(key)) {
+  if (
+    config.allowedKeys &&
+    !config.allowedKeys.some((allowedKey) => {
+      const normalizedAllowedKey = allowedKey.toLowerCase();
+      return (
+        normalizedAllowedKey === normalizedKey || normalizedAllowedKey === normalizedBindingKey
+      );
+    })
+  ) {
     return false;
   }
   return true;

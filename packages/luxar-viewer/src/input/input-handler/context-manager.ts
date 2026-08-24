@@ -446,8 +446,10 @@ export class InputContextManager {
     const config = this.contextConfigs.get(this.currentContext);
     if (!config) return false;
 
-    // Check if this key is allowed in the current context
-    if (!this.isKeyAllowedInContext(event.key, config)) {
+    const bindingKey = this.getBindingKeyFromEvent(event);
+
+    // Check if this binding is allowed in the current context
+    if (!this.isKeyAllowedInContext(event.key, bindingKey, config)) {
       // Key not allowed in this context - try passthrough if enabled
       if (config.passthrough) {
         return this.tryLowerContexts(event, type);
@@ -458,7 +460,6 @@ export class InputContextManager {
     // Find and execute the binding
     const contextBindings = this.bindings.get(this.currentContext);
     if (contextBindings) {
-      const bindingKey = this.getBindingKeyFromEvent(event);
       const binding = contextBindings.get(bindingKey);
 
       if (binding) {
@@ -494,20 +495,22 @@ export class InputContextManager {
   }
 
   /**
-   * Check if a key is allowed in the given context based on filters.
+   * Check if a binding is allowed in the given context based on filters.
    *
    * Checks both blockedKeys and allowedKeys filters:
-   * - If key is in blockedKeys: returns false
-   * - If allowedKeys is defined and key is not in it: returns false
+   * - If the canonical binding key is in blockedKeys: returns false
+   * - If allowedKeys contains neither the base key nor canonical binding key:
+   *   returns false
    * - Otherwise: returns true
    *
-   * @param key - Key to check (lowercase string)
+   * @param key - Base key to check
+   * @param bindingKey - Canonical modifier-aware binding key
    * @param config - Context configuration with key filters
    * @returns true if key is allowed in this context, false if blocked
    * @private
    */
-  private isKeyAllowedInContext(key: string, config: ContextConfig): boolean {
-    return isKeyAllowedInContextPure(key, config);
+  private isKeyAllowedInContext(key: string, bindingKey: string, config: ContextConfig): boolean {
+    return isKeyAllowedInContextPure(key, config, bindingKey);
   }
 
   /**
@@ -569,12 +572,12 @@ export class InputContextManager {
 
   private tryLowerContexts(event: KeyboardEvent, type: 'down' | 'up'): boolean {
     const sortedContexts = sortContextsByPriority(this.contextConfigs, this.currentContext);
+    const bindingKey = this.getBindingKeyFromEvent(event);
 
     for (const [context, config] of sortedContexts) {
-      if (this.isKeyAllowedInContext(event.key, config)) {
+      if (this.isKeyAllowedInContext(event.key, bindingKey, config)) {
         const contextBindings = this.bindings.get(context);
         if (contextBindings) {
-          const bindingKey = this.getBindingKeyFromEvent(event);
           const binding = contextBindings.get(bindingKey);
 
           if (binding) {

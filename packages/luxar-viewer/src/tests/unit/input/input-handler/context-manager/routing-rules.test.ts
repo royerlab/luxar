@@ -56,6 +56,24 @@ describe('isKeyAllowedInContext', () => {
     };
     expect(isKeyAllowedInContext('y', cfg)).toBe(false);
   });
+
+  it('does not block a modified binding when only the bare key is blocked', () => {
+    expect(isKeyAllowedInContext('ArrowUp', { blockedKeys: ['ArrowUp'] }, 'arrowup+shift')).toBe(
+      true
+    );
+  });
+
+  it('allows modified variants when the base key is allowlisted', () => {
+    expect(isKeyAllowedInContext('ArrowUp', { allowedKeys: ['ArrowUp'] }, 'arrowup+shift')).toBe(
+      true
+    );
+  });
+
+  it('blocks an exact modifier-aware binding listed in blockedKeys', () => {
+    expect(
+      isKeyAllowedInContext('ArrowUp', { blockedKeys: ['arrowup+shift'] }, 'arrowup+shift')
+    ).toBe(false);
+  });
 });
 
 describe('sortContextsByPriority', () => {
