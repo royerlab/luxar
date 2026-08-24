@@ -1107,15 +1107,7 @@ def generate_paper_landscape(
     categories = list(bundle["categories"])
     years = list(bundle["years"])
     titles = bundle["titles"]
-    # `.get`, and deliberately NO version bump: `cache_computed` pickles the
-    # whole dict under `<key>_v<version>`, so an added field reads back fine and
-    # a bundle written before this simply lacks it. Bumping to v4 would force
-    # every warm cache to re-stream 40 GB of vectors through PCA and re-run UMAP
-    # over 3.29M points, and the bar for that — set by the version note above —
-    # is a change to what the computation OUTPUTS. Adding a field changes none
-    # of it, so a pre-existing bundle ships without links instead of triggering
-    # hours of recomputation.
-    paper_ids = list(bundle.get("ids") or [])
+    paper_ids = list(bundle["ids"])
     median_nn = float(bundle.get("median_nn") or 0.0)
 
     if len(positions) == 0:
@@ -1193,10 +1185,6 @@ def generate_paper_landscape(
         ]
         year_labels = [f"{_title(i)} ({_year(i)})" for i in range(n_papers)]
 
-        have_ids = len(paper_ids) == n_papers
-        if not have_ids:
-            aprint("  ⓘ Cached bundle predates stored paper ids — skipping DOI links")
-
         stacked = stack_colorings(
             positions,
             [
@@ -1207,28 +1195,13 @@ def generate_paper_landscape(
                 },
                 {"label": "Year", "colors": year_colors, "labels": year_labels},
             ],
-            keys=[paper_doi(p) for p in paper_ids] if have_ids else None,
+            keys=[paper_doi(p) for p in paper_ids],
         )
-        link_attrs = (
-            {
-                "keys": stacked.keys,
-                "link": "https://doi.org/{hover_key}",
-                "copy": "{hover_key}",
-            }
-            if stacked.keys is not None
-            # No stored ids (a cached bundle predating them) used to mean NO
-            # click-through at all, which is the worst outcome: every point
-            # already carries a title as its hover label, so the pick was
-            # actionable and silently did nothing. Fall back to a title search
-            # instead — same shape as the label-search links cellxgene
-            # (EBI OLS) and dmri_tractography (Wikipedia) already use. Scholar
-            # rather than arXiv search because this set is arXiv + bioRxiv +
-            # medRxiv, and an arXiv-only search misses the two preprint servers.
-            else {
-                "link": "https://scholar.google.com/scholar?q={hover_label}",
-                "copy": "{hover_label}",
-            }
-        )
+        link_attrs = {
+            "keys": stacked.keys,
+            "link": "https://doi.org/{hover_key}",
+            "copy": "{hover_key}",
+        }
         radii = np.tile(radii_pp, len(stacked.categories)).astype(np.float32)
 
     # Write to Zarr

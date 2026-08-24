@@ -29,6 +29,15 @@ SEQUENCES = ["MKV", "MTL", "MGG"]
 HEAVY_DEPS = ("torch", "esm", "umap")
 
 
+def _decode_strings(node, prefix: str) -> list[str]:
+    offsets = np.asarray(node[f"{prefix}_offsets"][:], dtype=int)
+    data = bytes(np.asarray(node[f"{prefix}_bytes"][:]).tobytes())
+    return [
+        data[offsets[i] : offsets[i + 1]].decode("utf-8")
+        for i in range(len(offsets) - 1)
+    ]
+
+
 @pytest.fixture
 def without_heavy_deps(monkeypatch):
     """Make torch / esm / umap-learn look uninstalled, machine-independently.
@@ -534,6 +543,33 @@ class TestCompleteCacheRunsWithoutLodDeps:
         assert not (proteins / "positions").exists(), (
             "LOD group must not write top-level positions"
         )
+
+    def test_legacy_cache_searches_by_clean_protein_name(
+        self, tmp_path, monkeypatch, capsys
+    ) -> None:
+        import zarr
+
+        cache_dir = tmp_path / "cache"
+        n = _write_instant_cache(cache_dir)
+        monkeypatch.setitem(sys.modules, "torch", None)
+
+        out_path = tmp_path / "esm3.luxar.zarr"
+        assert (
+            generate_esm3_landscape(
+                out_path, sample_size=0, model_name="esmc-300m", cache_dir=cache_dir
+            )
+            == n
+        )
+
+        node = zarr.open_group(str(out_path), mode="r")["proteins"]
+        assert node.attrs["link"] == (
+            "https://www.uniprot.org/uniprotkb?query={hover_key}"
+        )
+        assert node.attrs["has_keys"] is True
+        keys = _decode_strings(node, "key")
+        assert sorted(keys) == sorted([f"PROT_{i}" for i in range(n)] * 2)
+        assert all(" — " not in key for key in keys)
+        assert "linking by protein-name search" in capsys.readouterr().out
 
 
 class TestCitationNamesTheModelThatRan:

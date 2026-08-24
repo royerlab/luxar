@@ -44,6 +44,9 @@ CANONICAL_LINKS_BY_HOST = {
     "genome.ucsc.edu": frozenset(
         {"https://genome.ucsc.edu/cgi-bin/hgTracks?db=hg19&position={hover_key}"}
     ),
+    "ned.ipac.caltech.edu": frozenset(
+        {"https://ned.ipac.caltech.edu/byname?objname={hover_key}"}
+    ),
     # These named-star links are deliberately placeholder-free.
     "simbad.cds.unistra.fr": frozenset(
         {
@@ -67,7 +70,10 @@ CANONICAL_LINKS_BY_HOST = {
         {"https://www.proteinatlas.org/search/{hover_key}"}
     ),
     "www.uniprot.org": frozenset(
-        {"https://www.uniprot.org/uniprotkb/{hover_key}/entry"}
+        {
+            "https://www.uniprot.org/uniprotkb/{hover_key}/entry",
+            "https://www.uniprot.org/uniprotkb?query={hover_key}",
+        }
     ),
     "www.youtube.com": frozenset(
         {"https://www.youtube.com/results?search_query={hover_key}"}

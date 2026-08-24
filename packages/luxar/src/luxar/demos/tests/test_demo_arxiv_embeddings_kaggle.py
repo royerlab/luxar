@@ -1003,40 +1003,17 @@ class TestDoiLinks:
             assert attrs["link"] == "https://doi.org/{hover_key}"
             assert not attrs.get("has_keys")
 
-    def test_a_bundle_without_ids_builds_with_no_links(
-        self, monkeypatch, capsys, tmp_path
+    def test_cache_version_invalidates_bundles_without_ids(
+        self, monkeypatch, tmp_path
     ) -> None:
-        """A cache written before ids were stored must lose the links, not the
-        scene.
+        """The cache version must exclude bundles written before DOI keys."""
 
-        Rebuilding that bundle costs a 40 GB PCA stream plus a UMAP over 3.29M
-        points, so it is honoured rather than invalidated — which only works if
-        the missing field degrades instead of raising.
-        """
-        import zarr
+        def versioned_cache(_name, _key, _compute, *, version):
+            assert version == 4
+            return _fake_bundle()
 
-        legacy = _fake_bundle()
-        del legacy["ids"]
-        monkeypatch.setattr(demo, "cache_computed", lambda *a, **k: legacy)
+        monkeypatch.setattr(demo, "cache_computed", versioned_cache)
 
         out = tmp_path / "arxiv_papers_kaggle.luxar.zarr"
         assert generate_paper_landscape(out, sample_size=40) == 40
-
-        # No node anywhere may claim a link it cannot fill. Checked across the
-        # whole subtree rather than on the root, because with the LOD deps
-        # present the root is a `kind=lod` wrapper and the real nodes are its
-        # children.
-        root = zarr.open_group(str(out), mode="r")["arxiv_papers_kaggle"]
-        nodes = [("root", dict(root.attrs))] + [
-            (name, dict(root[name].attrs))
-            for name in sorted(root.keys())
-            if hasattr(root[name], "attrs")
-        ]
-        for name, attrs in nodes:
-            assert "link" not in attrs, name
-            assert "copy" not in attrs, name
-            assert not attrs.get("has_keys"), name
-
-        # The scene is otherwise intact: labels still work, points still exist.
-        assert any(attrs.get("has_labels") for _, attrs in nodes)
-        assert "skipping DOI links" in capsys.readouterr().out
+        assert self._keyed_leaf(out).attrs["link"] == "https://doi.org/{hover_key}"

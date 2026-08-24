@@ -23,6 +23,7 @@ import pytest
 from luxar.demos import demo_protein_embeddings_cafa5 as demo
 from luxar.demos.demo_protein_embeddings_cafa5 import (
     UNNAMED_CLUSTER_LABEL,
+    _uniprot_link_attrs,
     disambiguate_cluster_names,
     enriched_cluster_names,
     load_cached_umap,
@@ -39,6 +40,10 @@ CATEGORIES = {
     "Reference proteome": "Technical term",
     "3D-structure": "Technical term",
 }
+
+
+def test_synthetic_accessions_do_not_author_dead_uniprot_searches() -> None:
+    assert _uniprot_link_attrs(["Protein_123", "Protein_456"]) == {}
 
 
 def _accessions(prefix: str, n: int) -> list[str]:
