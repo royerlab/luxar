@@ -84,12 +84,13 @@ unconditionally serial.
 
 ### Which script runs which specs
 
-| Script                | Selection                                                                                                                                        |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `pnpm test:e2e`       | Everything under `src/tests/e2e/`, minus `*perf-bench.spec.ts` (`testIgnore`)                                                                    |
-| `pnpm test:e2e:ci`    | The same, minus tests tagged `@visual` — a **title grep**, not a file list                                                                       |
-| `pnpm test:e2e:smoke` | An explicit five-file allowlist: `viewer-initialization`, `url-parameters`, `dataset-switching`, `controls-interaction`, `keyboard-input-system` |
-| `pnpm test:perf:e2e`  | Only `*perf-bench.spec.ts`, under `playwright.perf.config.ts` (which shares this global setup)                                                   |
+| Script                 | Selection                                                                                                                                        |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `pnpm test:e2e`        | Everything under `src/tests/e2e/`, minus `*perf-bench.spec.ts` (`testIgnore`)                                                                    |
+| `pnpm test:e2e:ci`     | The same, minus tests tagged `@visual` — a **title grep**, not a file list                                                                       |
+| `pnpm test:e2e:visual` | Linux-only local run of tests tagged `@visual`                                                                                                   |
+| `pnpm test:e2e:smoke`  | An explicit five-file allowlist: `viewer-initialization`, `url-parameters`, `dataset-switching`, `controls-interaction`, `keyboard-input-system` |
+| `pnpm test:perf:e2e`   | Only `*perf-bench.spec.ts`, under `playwright.perf.config.ts` (which shares this global setup)                                                   |
 
 The smoke subset is deliberately narrow: its CI job generates datasets at
 runtime via `make run-examples` and pulls no Git LFS. **Do not add a spec that
@@ -527,11 +528,19 @@ centre so FXAA's edge-detection path actually triggers.
 ## Visual-Regression Snapshots
 
 Folders named `<spec>.spec.ts-snapshots/` hold per-spec PNG
-baselines used by `expect(...).toHaveScreenshot(...)`. They are
-checked in. Update them deliberately with
-`pnpm exec playwright test --update-snapshots`, then review the diff
-before committing — the baselines drive every theme / visual /
-post-processing regression check.
+baselines used by `expect(...).toHaveScreenshot(...)`. They are a
+**local developer aid, not a CI contract**: GitHub CI does not run
+Playwright, and `test:e2e:ci` deliberately excludes every `@visual`
+test. A green pull request therefore says nothing about whether these
+pixels still match.
+
+The checked-in corpus is Linux Chromium only. This is the one platform
+the project can reproduce consistently; do not add Darwin or Windows
+copies that no maintained runner refreshes. On Linux, run the visual
+subset with `pnpm test:e2e:visual`. Update its baselines deliberately
+with `pnpm test:e2e:visual:update`, then inspect every PNG diff before
+committing it. The unit suite rejects non-Linux baseline filenames so
+an unsupported platform corpus cannot silently return.
 
 ## Conventions for New Specs
 
