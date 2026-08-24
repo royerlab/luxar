@@ -116,6 +116,11 @@ from luxar.demos import (
     scene_is_current,
 )
 from luxar.demos._cinematic_camera import pull_in
+from luxar.demos._globe_common import (
+    fibonacci_sphere,
+    sample_equirect,
+)
+from luxar.demos._globe_common import lonlat_to_xyz as _lonlat_to_xyz
 from luxar.encoding import EncodingMode
 from luxar.utils.paths import get_demos_output_dir
 
@@ -144,7 +149,7 @@ R_EARTH_KM: Final = 6371.0
 RADIUS: Final = 100.0  # globe radius in scene units
 
 N_GLOBE: Final = 8_000_000  # jittered Fibonacci-sphere surface points
-GLOBE_RADII: Final = 0.098  # ~1.4x mean point spacing -> a sealed shell
+GLOBE_RADII: Final = 0.098  # ~0.78x mean point spacing -> a sealed shell
 N_SEEDS: Final = 220_000  # streamlines
 N_STEPS: Final = 52  # advection steps per streamline (-> N_STEPS + 1 vertices)
 STEP_KM: Final = 14.0  # arc-length step -> ~730 km ribbons
@@ -195,89 +200,9 @@ Arbol.max_depth = 5
 # =============================================================================
 
 
-def fibonacci_sphere(n: int, *, jitter: bool = True, seed: int = 1234) -> tuple:
-    """Return ``(lon, lat)`` degrees for ``n`` points on a Fibonacci sphere.
-
-    With ``jitter`` (the default) each point is dithered by up to half a mean
-    angular spacing. The undithered lattice shows strong moire once the rendered
-    point radius approaches the spacing; the dither trades that structure for
-    unstructured noise, which is far less visible.
-
-    Args:
-        n: Number of points (must be >= 1).
-        jitter: Dither the lattice by ~1 cell.
-        seed: RNG seed for the dither (deterministic output).
-
-    Returns:
-        ``(lon, lat)`` float64 arrays of shape ``(n,)``, degrees.
-    """
-    if n < 1:
-        raise ValueError(f"n must be >= 1, got {n}")
-    i = np.arange(n)
-    golden = (1.0 + 5.0**0.5) / 2.0
-    y = 1.0 - 2.0 * (i + 0.5) / n
-    r_xy = np.sqrt(np.maximum(0.0, 1.0 - y * y))
-    theta = 2.0 * np.pi * i / golden
-    lat = np.degrees(np.arcsin(np.clip(y, -1.0, 1.0)))
-    lon = np.degrees(np.arctan2(r_xy * np.sin(theta), r_xy * np.cos(theta)))
-    if jitter:
-        rng = np.random.default_rng(seed)
-        cell = np.degrees(np.sqrt(4.0 * np.pi / n))  # mean angular spacing
-        lat = np.clip(lat + rng.uniform(-0.5, 0.5, n) * cell, -89.999, 89.999)
-        # a degree of longitude shrinks with cos(lat), so scale the dither up
-        lon = lon + rng.uniform(-0.5, 0.5, n) * cell / np.maximum(
-            np.cos(np.radians(lat)), 1e-2
-        )
-    return lon, lat
-
-
 def lonlat_to_xyz(lon: np.ndarray, lat: np.ndarray, relief: np.ndarray) -> np.ndarray:
-    """Map geographic degrees + fractional ``relief`` to sphere xyz.
-
-    ``y`` is the north-pole axis and longitude increases eastward; the ``-z``
-    keeps the frame right-handed (East x North = outward) so the globe is not
-    mirrored. Matches ``demo_global_rivers_earth``.
-    """
-    la, lo = np.radians(lat), np.radians(lon)
-    r = RADIUS * (1.0 + relief)
-    cl = np.cos(la)
-    return np.column_stack(
-        [r * cl * np.cos(lo), r * np.sin(la), -r * cl * np.sin(lo)]
-    ).astype(np.float32)
-
-
-def sample_equirect(tex: np.ndarray, lon: np.ndarray, lat: np.ndarray) -> np.ndarray:
-    """Bilinearly sample an equirectangular RGB texture at ``lon``/``lat``.
-
-    Vectorized over all points (``demo_earthquakes_3d`` samples one point per
-    Python-loop iteration, which does not scale to millions). Longitude wraps;
-    latitude clamps.
-
-    Args:
-        tex: ``(h, w, 3)`` texture; row 0 is +90 deg latitude. Integer dtypes
-            are treated as 0..255 and rescaled; float dtypes are assumed to be
-            already normalized to [0, 1].
-        lon: Longitudes in degrees (any range; wrapped).
-        lat: Latitudes in degrees, -90..+90.
-
-    Returns:
-        ``(n, 3)`` float32 RGB in [0, 1].
-    """
-    h, w = tex.shape[:2]
-    x = np.mod((lon + 180.0) / 360.0 * w, w)
-    y = np.clip((90.0 - lat) / 180.0 * h, 0, h - 1)
-    x0 = np.floor(x).astype(np.int64)
-    y0 = np.floor(y).astype(np.int64)
-    x1 = (x0 + 1) % w
-    y1 = np.minimum(y0 + 1, h - 1)
-    wx = (x - x0)[:, None].astype(np.float32)
-    wy = (y - y0)[:, None].astype(np.float32)
-    t = tex.astype(np.float32)
-    if np.issubdtype(tex.dtype, np.integer):
-        t /= 255.0
-    c0 = t[y0, x0] * (1.0 - wx) + t[y0, x1] * wx
-    c1 = t[y1, x0] * (1.0 - wx) + t[y1, x1] * wx
-    return np.clip(c0 * (1.0 - wy) + c1 * wy, 0.0, 1.0).astype(np.float32)
+    """This demo's globe radius bound into the shared mapping (see `_globe_common`)."""
+    return _lonlat_to_xyz(lon, lat, relief, RADIUS)
 
 
 def build_lut(stops: list) -> np.ndarray:

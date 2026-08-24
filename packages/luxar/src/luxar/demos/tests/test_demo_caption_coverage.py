@@ -13,7 +13,7 @@ from ._scanned_modules import scanned_demo_modules
 # ``_interop_common.build_interop_scene``. Keep the list explicit so a new
 # indirect route cannot silently escape the direct create_scene/caption count.
 _INTEROP_DEMOS = {
-    "demo_gsplats_interop_inria_garden.py",
+    "demo_gsplats_interop_inria_bonsai.py",
     "demo_gsplats_interop_macro_clusterfly.py",
     "demo_gsplats_interop_mipnerf_garden.py",
     "demo_gsplats_interop_observatory.py",

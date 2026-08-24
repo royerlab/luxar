@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GSplats Demo: Multi-Channel 3D Organoid Microscopy - Full Compute Pipeline from IDR
+"""GSplats Demo: Multi-Channel Mouse Blastocyst (IDR) - Full Compute Pipeline
 
 Visualises multi-channel 3D microscopy data as Gaussian splats.
 By default, uses precomputed gsplats from Git LFS (fast).
@@ -58,16 +58,19 @@ WORKFLOW:
 =========
 
 1. **Load multi-channel data** from Image Data Resource (IDR)
-   - Channel 0: First fluorescent marker
-   - Channel 1: DAPI (DNA stain showing cell nuclei)
+   - Channel 0: Lamin B1 immunostain (ab16048) - the nuclear LAMINA, so it
+     draws the envelope AROUND each nucleus. This is the shell-like channel.
+   - Channel 1: DAPI (DNA stain) - FILLS each nucleus.
+   Both labels are read off the OME-Zarr's own `omero.channels` metadata and
+   IDR's protocol annotation, not inferred from the render.
 
 2. **Fit each channel independently**
    - Each channel gets its own set of Gaussian splats
    - Captures channel-specific structures
 
 3. **Add each channel as a separate layer**
-   - Channel 0: Magenta colormap
-   - Channel 1: Cyan colormap (DAPI)
+   - Magenta: Lamin B1 (nuclear envelope)
+   - Cyan: DAPI (DNA)
    - Each channel is a toggleable layer in the viewer
 
 4. **Visualize** in the Luxar viewer
@@ -77,7 +80,7 @@ WORKFLOW:
 
 USAGE:
 ======
-    python demo_gsplats_3d_organoid_multichannel.py [--recompute] [--no-serve] [--no-napari]
+    python demo_gsplats_3d_blastocyst_multichannel.py [--recompute] [--no-serve] [--no-napari]
 
 Options:
     --recompute:      Force re-fitting from scratch (download + GPU fitting)
@@ -92,9 +95,9 @@ Use --recompute to re-fit from scratch (requires network + GPU).
 """
 
 DEMO_META = {
-    "key": "gsplats_3d_organoid_multichannel",
-    "title": "Multichannel 3D Organoid",
-    "description": "Multi-channel 3D mouse intestinal-organoid microscopy (IDR idr0062) as colored Gaussian splats.",
+    "key": "gsplats_3d_blastocyst_multichannel",
+    "title": "Multichannel 3D Mouse Blastocyst",
+    "description": "Two-channel confocal mouse blastocyst (Lamin B1 + DAPI, IDR idr0062) as colored Gaussian splats.",
     "category": "microscopy",
     "geometry": "gsplats",
     "requirements": {
@@ -104,7 +107,7 @@ DEMO_META = {
         "local_data": "git-lfs",
     },
     "caches": ["gsplats_multichannel"],
-    "outputs": ["gsplats_3d_organoid_multichannel"],
+    "outputs": ["gsplats_3d_blastocyst_multichannel"],
     # The study that produced the image, not the repository that hosts it:
     # IDR's own record for idr0062 names Blin et al. and the PLoS Biology DOI,
     # and crediting the IDR platform paper instead would attribute someone
@@ -130,6 +133,7 @@ import zarr
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimensions, LuxarZarrCompiler
+from luxar.colormaps import resolve_colormap
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
     DatasetUnavailable,
@@ -158,10 +162,28 @@ TARGET_SIZE = 256  # Only used by the synthetic fallback (edge cube size when
 # the IDR load fails); the real path loads at native resolution (no resample).
 TIME_POINT = 0  # First time point
 
-# Channel configuration with colors
+# Channel configuration with colors.
+#
+# The channel identities are not guesswork: the OME-Zarr's own `omero.channels`
+# labels them `LaminB1` and `Dapi` in that order, and IDR's bulk annotation for
+# this image records the protocol — "Immunostaining: LaminB1 antibody: ab16048
+# (dilution 1:1000)". Lamin B1 is a nuclear LAMINA protein, so channel 0 outlines
+# the nuclear envelope of every cell; that is the membrane-looking channel, and
+# it is the one Nessys segments on (DAPI fills nuclei, which is exactly what
+# makes touching nuclei hard to separate — the envelope is what separates them).
 CHANNELS = [
-    {"index": 0, "name": "Channel 0", "color": (1.0, 0.0, 0.5)},  # Magenta
-    {"index": 1, "name": "DAPI", "color": (0.0, 1.0, 0.5)},  # Cyan
+    {
+        "index": 0,
+        "name": "Lamin B1",
+        "colormap": "magenta",
+        "blurb": "nuclear envelope (immunostain, ab16048)",
+    },
+    {
+        "index": 1,
+        "name": "DAPI",
+        "colormap": "cyan",
+        "blurb": "DNA — fills each nucleus",
+    },
 ]
 
 # Fit parameters (fixed-K, seeds=K*)
@@ -174,9 +196,14 @@ DEVICE = None  # Auto-detect (cuda/mps/cpu)
 # ~/.cache/luxar/<name>/<file> — the path the manifest fetch owns — got it
 # quarantined on the next launch for failing the pinned sha256 (#1618).
 DEMO_NAME = "gsplats_multichannel"
+# Renamed with the rest. These are the pinned artifact names in
+# `data_manifest.json`; the Zenodo record behind them is still an UNPUBLISHED
+# draft, so the names are ours to correct rather than a frozen external
+# identifier. Only the names change — the sha256 pins are unchanged because the
+# bytes are.
 GSPLATS_FILES = [
-    "organoids_ch0.gsplats.zarr.zip",
-    "organoids_ch1.gsplats.zarr.zip",
+    "blastocyst_ch0.gsplats.zarr.zip",
+    "blastocyst_ch1.gsplats.zarr.zip",
 ]
 
 # Parse command-line flags
@@ -200,7 +227,11 @@ def load_multichannel_data():
     """Load and preprocess multi-channel microscopy data from IDR.
 
     Returns the IDR volumes at native resolution (no zoom resample) — this
-    matches the manuscript's supp_doc dataset for organoid_ch0.  An earlier
+    matches the manuscript's supp_doc dataset, which records the same volume
+    under the old ``organoid_ch0`` id. That id is quoted rather than corrected
+    because it is what is written in a document this repo does not own; the
+    volume is a mouse BLASTOCYST channel, and the manuscript should be fixed
+    too when it is next touched.  An earlier
     version of this loader force-resampled to TARGET_SIZE^3 via bilinear
     ``scipy.ndimage.zoom``; that smoothed away high-frequency noise and
     pushed the held-out PSNR ceiling ~5 dB above the paper's reference,
@@ -408,7 +439,7 @@ def view_with_napari(volumes, gsplats_list, channel_configs):
             rendered_volumes.append(rendered)
 
         aprint("Launching napari...")
-        viewer = napari.Viewer(title="GSplats vs Original - Organoid Channels")
+        viewer = napari.Viewer(title="GSplats vs Original - Blastocyst Channels")
 
         for idx, (volume, rendered, ch_config) in enumerate(
             zip(volumes, rendered_volumes, channel_configs)
@@ -440,14 +471,21 @@ def view_with_napari(volumes, gsplats_list, channel_configs):
 # =============================================================================
 
 
-CHANNEL_COLORMAPS = ["magenta", "cyan"]
+def legend_css(colormap_name: str) -> str:
+    """The CSS colour of a colormap's top end, for a legend swatch.
+
+    Read out of the LUT the renderer will actually use rather than restated as a
+    literal, so the legend cannot drift away from the layer it labels.
+    """
+    top = np.asarray(resolve_colormap(colormap_name))[-1]
+    return f"rgb({int(top[0])},{int(top[1])},{int(top[2])})"
 
 
 def create_luxar_scene(gsplats_list, output_path: Path | None = None):
     """Create Luxar scene with per-channel gsplat layers."""
     if output_path is None:
         output_path = (
-            get_demos_output_dir() / "gsplats_3d_organoid_multichannel.luxar.zarr"
+            get_demos_output_dir() / "gsplats_3d_blastocyst_multichannel.luxar.zarr"
         )
 
     with asection("Creating Luxar Scene"):
@@ -477,25 +515,35 @@ def create_luxar_scene(gsplats_list, output_path: Path | None = None):
             )
 
             # Add scene metadata
-            scene.attrs["title"] = "GSplats: Multi-Channel 3D Organoids"
+            scene.attrs["title"] = (
+                "GSplats: Mouse Blastocyst, Two Channels (Lamin B1 + DAPI)"
+            )
             scene.attrs["description"] = """
-Multi-Channel Gaussian Splatting - Organoid Microscopy
-=======================================================
+Multi-Channel Gaussian Splatting — Mouse Blastocyst (E3.5)
+===========================================================
 
-This scene demonstrates multi-channel microscopy visualization using
-Gaussian splats with per-channel colors as separate layers.
+A wild-type mouse blastocyst at embryonic day 3.5, imaged on a Leica SP8
+confocal (HC PL APO 40x/1.30 Oil) in two channels and fitted as Gaussian
+splats, one independent fit per channel, each shown as its own toggleable
+layer.
+
+The two channels are complementary, not redundant:
+- Magenta — Lamin B1, immunostained (ab16048). Lamin B1 is a nuclear LAMINA
+  protein, so this channel draws the ENVELOPE around each nucleus. It is the
+  shell-like channel, and it is what makes touching nuclei separable.
+- Cyan — DAPI, which binds DNA and so FILLS each nucleus.
+
+That pairing is the point of the source dataset: it is a benchmark volume for
+Nessys, a nuclear-segmentation method that works from the envelope rather than
+from the DNA, precisely because densely packed nuclei merge in a DAPI channel
+but stay individually outlined in a lamina channel.
 
 Data Source:
-  - Image Data Resource (IDR) study idr0062, Image 6001240
-  - High-resolution 3D confocal microscopy of a mouse blastocyst (E3.5)
+  - Image Data Resource (IDR) study idr0062, Image 6001240 (B1_C1.tif)
   - Original research: Blin et al. (2019), PLoS Biology (Lowell lab, Edinburgh),
     doi:10.1371/journal.pbio.3000388, CC BY 4.0
 
-Each channel is a separate layer with its own colormap:
-- Magenta: Channel 0
-- Cyan: Channel 1 (DAPI - nuclear stain)
-
-Toggle layers in the viewer to inspect individual channels.
+Toggle layers in the viewer (press L) to inspect individual channels.
 
 Controls:
 - Mouse drag to rotate
@@ -509,7 +557,7 @@ Controls:
                 zip(gsplats_list, CHANNELS[: len(gsplats_list)])
             ):
                 ch_name = ch_config["name"]
-                colormap = CHANNEL_COLORMAPS[i]
+                colormap = ch_config["colormap"]
 
                 # Center using shared centroid and reduce brightness
                 centered = gsplats.translate(-shared_centroid)
@@ -532,11 +580,62 @@ Controls:
                     layer=True,
                     colormap=colormap,
                 )
+            # ── Overlays ────────────────────────────────────────────────────
+            # Canonical title (top-left) + data-source caption (bottom-right),
+            # matching the other gsplat demos. The caption used to read
+            # "Light-sheet microscopy", which is wrong for this image: IDR's
+            # protocol annotation records a Leica SP8 point-scanning confocal.
+            scene.add_text(
+                "Mouse Blastocyst • Lamin B1 + DAPI",
+                position=(0.02, 0.02),
+                font_size=0.048,
+                anchor="top-left",
+                color="rgba(255,255,255,0.6)",
+                blend_mode="difference",
+            )
             add_demo_caption(
                 scene,
-                f"Light-sheet microscopy • {len(gsplats_list)} channels",
+                f"Leica SP8 confocal • {len(gsplats_list)} channels • IDR idr0062",
                 DEMO_META.get("citation"),
             )
+
+            # Explanatory panel, placed below the title so the two don't overlap
+            # — same slot and styling as the LOD demos' panel.
+            scene.add_text(
+                "Mouse blastocyst (E3.5). Two channels, fitted\n"
+                "independently, shown as toggleable layers.\n"
+                "Lamin B1 is a nuclear LAMINA protein, so it\n"
+                "draws the envelope AROUND each nucleus; DAPI\n"
+                "binds DNA and FILLS it. Densely packed nuclei\n"
+                "merge in the DAPI channel but stay separable\n"
+                "in the envelope one — which is why this image\n"
+                "is a nuclear-segmentation benchmark.\n"
+                "Press L for the Layers panel.",
+                position=(0.02, 0.10),
+                font_size=0.020,
+                font="mono",
+                color="white",
+                width=0.46,
+                line_height=1.45,
+                background="rgba(0,0,0,0.55)",
+                padding=0.012,
+            )
+
+            # Per-channel legend, each line tinted to match its layer. Laid out
+            # upward from a fixed bottom so it stays on-screen for any channel
+            # count.
+            spacing = 0.034
+            start_y = 0.94 - spacing * (len(gsplats_list) - 1)
+            for i, ch_config in enumerate(CHANNELS[: len(gsplats_list)]):
+                scene.add_text(
+                    f"● {ch_config['name']}: {ch_config['blurb']}",
+                    position=(0.02, start_y + spacing * i),
+                    font_size=0.020,
+                    font="mono",
+                    color=legend_css(ch_config["colormap"]),
+                    stroke_color="black",
+                    stroke_width=0.0018,
+                )
 
         aprint(f"Scene saved: {output_path}")
         return output_path
@@ -574,13 +673,15 @@ def resolve_gsplats() -> list[GSplatData] | None:
 def main():
     """Main demo execution."""
     aprint("=" * 70)
-    aprint("GSplats Demo: Multi-Channel 3D Organoid Microscopy")
+    aprint("GSplats Demo: Multi-Channel Mouse Blastocyst (Lamin B1 + DAPI)")
     aprint("=" * 70)
     aprint("Per-channel fitting + colormap layers + Web visualization")
     aprint("")
 
     # Determine output path
-    output_path = get_demos_output_dir() / "gsplats_3d_organoid_multichannel.luxar.zarr"
+    output_path = (
+        get_demos_output_dir() / "gsplats_3d_blastocyst_multichannel.luxar.zarr"
+    )
 
     # Serve only mode
     if SERVE_ONLY:

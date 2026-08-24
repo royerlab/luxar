@@ -211,6 +211,18 @@ CHANNELS = [
     },
 ]
 
+# Display window: the fraction of the writer's own [min, p99.9] amplitude window
+# each channel is displayed over. The writer's robust default is right for a
+# single ADDITIVE layer, but three volumetric fluorescence channels composited
+# together read far too dark on it — the median splat sits at ~15% of that
+# window, so most of the tissue maps into the bottom fifth of the LUT. Measured
+# on this dataset: 1.0 (the writer default) is the dim render this replaces,
+# 0.25 washes the red/blue overlap out to magenta and merges structure, and 0.4
+# — roughly the 92nd percentile per channel — lifts the mid-tones while the
+# brightest cores only just begin to clip. The viewer's Layers panel (L) still
+# moves it live; this only sets where it opens.
+DISPLAY_WINDOW_FRACTION = 0.4
+
 # Precomputed data configuration (same precomputed fits, and the same cache, as
 # the toggle demo). A local refit is OUR artifact, not a copy of the hosted one,
 # so it lives in the demo's local-fit namespace (~/.cache/luxar/<name>/local/,
@@ -387,6 +399,24 @@ def fit_all_channels(volumes, source_dtype=None):
 # =============================================================================
 
 
+def display_window(amplitudes):
+    """The ``[lo, hi]`` scalar window one channel opens on.
+
+    Mirrors the writer's own robust window — ``[min, p99.9]``, not ``[min,
+    max]``, because gsplat amplitudes are heavily right-skewed — and then pulls
+    the upper end down by :data:`DISPLAY_WINDOW_FRACTION` so the composited
+    three-channel render is not dim. Derived per channel rather than hardcoded,
+    so a refit (different K, a different floor) moves the window with the data
+    instead of stranding it.
+    """
+    amps = np.asarray(amplitudes, dtype=np.float64)
+    lo = float(amps.min())
+    hi = lo + (float(np.percentile(amps, 99.9)) - lo) * DISPLAY_WINDOW_FRACTION
+    if not hi > lo:  # degenerate (constant amplitudes) — fall back to the max
+        hi = max(float(amps.max()), lo + 1e-6)
+    return lo, hi
+
+
 def create_luxar_scene(gsplats_list, output_path=None):
     """Create 3D Luxar scene with per-channel layers.
 
@@ -482,11 +512,21 @@ Controls:
                     gsplats = gsplats.scale_intensity(0.1)
 
                     n_splats = len(gsplats.amplitudes)
+                    lo, hi = display_window(gsplats.amplitudes)
+                    span = hi - lo
 
                     # KEY: colormap= replaces baked RGB colors.
                     # The viewer applies the LUT at display time, enabling
                     # interactive colormap switching in the Layers panel.
                     # layer=True exposes this node in the Layers panel.
+                    #
+                    # intensity/offset on a COLORMAPPED node are the scalar
+                    # display WINDOW, not a post-LUT gain (the viewer recovers
+                    # [-offset/i, (1-offset)/i] — see rendering/display-range.ts
+                    # ::computeDisplayRange), so this is what bakes a Layers-panel
+                    # display range into the scene. Amplitude scaling cannot do
+                    # it: the writer's own window is derived FROM the amplitudes,
+                    # so a global rescale cancels out on screen.
                     scene.add_gsplats(
                         name=f"gsplats_{ch_name.lower()}",
                         centers=gsplats.centers,
@@ -499,8 +539,13 @@ Controls:
                         blending_mode="additive",
                         layer=True,
                         colormap=colormap,
+                        intensity=1.0 / span,
+                        offset=-lo / span,
                     )
-                    aprint(f"  Added {n_splats:,} splats with colormap='{colormap}'")
+                    aprint(
+                        f"  Added {n_splats:,} splats with colormap='{colormap}', "
+                        f"display range [{lo:.4f}, {hi:.4f}]"
+                    )
 
             # Overlay annotations
             scene.add_text(

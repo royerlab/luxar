@@ -453,6 +453,20 @@ def _channel_node_name(label: str) -> str:
 
 
 # (label, permutation, note) — permutation[local_index] = world_index.
+#
+# The notes say "WORLD <channel> -> <letter>", NOT "<letter> UNDER <world>".
+#
+# The old wording was the single most confusing thing in this bench, because
+# "under" means two different things in its two halves. In the FRAME half the
+# marker is drawn at its own LOCAL ruler position, so "5 TICKS LEFT OF CURSOR"
+# is a statement about where the digit SITS. In the channel half the letter is
+# likewise drawn at its own local column — so at world RED, the SWAP row lights
+# G and draws it in the GREEN column. "G UNDER RED" was trying to say "G lights
+# when the world slider is at RED", but the reader is looking at a G sitting
+# under the word GREEN, and reasonably concludes the bench is lying.
+#
+# "WORLD RED -> G" separates the two: the world value is the condition, the
+# letter is the result, and nothing in the sentence claims a position.
 CHANNEL_ROWS: List[Tuple[str, Optional[List[int]], str]] = [
     ("IDENTITY\nPERM 0 1 2", None, "WORLD RED/GREEN/BLUE -> LOCAL R/G/B"),
     ("SWAP RED-GREEN\nPERM 1 0 2", [1, 0, 2], "WORLD GREEN -> R / RED -> G"),
@@ -953,6 +967,15 @@ def _add_overlays(scene: Any) -> None:
         "Bright digit = the LOCAL index the viewer resolved to.<br>"
         "The gap between them, in ruler ticks, IS the nd_transform.<br>"
         "Faint grey = every slot the row could light.<br>"
+        # Spelled out because the channel rows read as a contradiction without
+        # it: at world RED the SWAP row lights G and draws it in the GREEN
+        # column, which looks wrong until you know the marker sits at its OWN
+        # index, not at the cursor's.
+        # Two short lines, not one long one: the panel is sized by its
+        # longest line, and a 65-character sentence widened it far enough
+        # to sit on top of the frame rows' right-hand notes.
+        "A marker sits at its OWN local index,<br>"
+        "never under the cursor.<br>"
         '<div style="padding-top:0.6vh">'
         "Press <b>1</b> then <b>[</b> / <b>]</b> to step Frame<br>"
         "Press <b>2</b> then <b>[</b> / <b>]</b> to step Channel<br>"

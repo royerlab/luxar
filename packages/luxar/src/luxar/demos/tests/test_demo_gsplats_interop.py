@@ -188,10 +188,20 @@ class TestDemoConfig:
         assert m.BASE_URL.endswith("nianticlabs/spz/main/samples")
 
     def test_inria_member_path_and_size(self) -> None:
-        m = _load("demo_gsplats_interop_inria_garden")
-        assert m.MEMBER == "garden/point_cloud/iteration_30000/point_cloud.ply"
-        assert m.MEMBER_SIZE == 1_447_027_964
+        m = _load("demo_gsplats_interop_inria_bonsai")
+        # Pinned against the archive's LIVE central directory. Deliberately NOT
+        # the `garden` member: that one is the same trained model the
+        # antimatter15 `.splat` demo already shows (same 5,834,784 splats, same
+        # bbox, bit-identical amplitudes), so the two demos rendered one picture.
+        assert m.MEMBER == "bonsai/point_cloud/iteration_30000/point_cloud.ply"
+        assert m.MEMBER_SIZE == 308_716_644
         assert m.MODELS_ZIP.endswith("pretrained/models.zip")
+        # The two garden-capable demos must not converge on the same scene again.
+        other = _load("demo_gsplats_interop_mipnerf_garden")
+        assert "garden" not in m.MEMBER, (
+            "inria interop demo is back on the garden member, which duplicates "
+            f"demo_gsplats_interop_mipnerf_garden (scenes: {sorted(other.SCENES)})"
+        )
 
     def test_clusterfly_member_and_license(self) -> None:
         m = _load("demo_gsplats_interop_macro_clusterfly")
