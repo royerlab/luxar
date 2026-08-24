@@ -1023,7 +1023,7 @@ Five hours of zebrafish gastrulation (Zenodo 1211599, confocal, 151 timepoints t
 
 **Run**: `luxar demo run gsplats_4d_zebrafish_timelapse`
 
-**Requires**: Nothing but the bundled fit to view. `--recompute` downloads the ~2.1 GB LSM from Zenodo and refits all 151 timepoints (GPU strongly recommended).
+**Requires**: Nothing extra once the manifest-hosted fit is published. The archive is pinned in the manifest, but its `cc-by-sa` record is still an unpublished draft, so until that lands the demo falls back to the recompute path: the ~2.1 GB LSM from Zenodo, refitting all 151 timepoints (GPU strongly recommended). `--recompute` forces that path regardless.
 
 **Demonstrates**: stacking per-timepoint 3D fits into one 4D node; barrier-aware substitutive LOD over a time axis; `extend_to_all` for a static reference layer that survives every scrub; a discrete viewer dimension carrying real physical units; and reading acquisition geometry out of a Zeiss LSM instead of assuming it.
 

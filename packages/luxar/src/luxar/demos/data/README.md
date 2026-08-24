@@ -25,13 +25,15 @@ drafts on this branch, so the manifest intentionally builds no download URL yet.
 Publish those records and enable their manifest URLs before merging the payload
 removal.
 
-Five datasets are `local-compute` — `gsplats_tribolium`, `gsplats_acto3d_heart`,
-`gsplats_tng_cosmic_web`, `gsplats_flylight_mcfo` and `milky_way_gaia_3m`. Their
+Five datasets are `local-compute`. For four of them — `gsplats_tribolium`,
+`gsplats_acto3d_heart`, `gsplats_tng_cosmic_web` and `milky_way_gaia_3m` — the
 licenses do not permit redistributing even the derived product, so do not
-migrate those demos to the manifest fetch path. **Their in-repo copies have been
-removed**: those demos now fetch the raw source and rebuild locally. Gaia's
-opt-in first-run path queries the archive with `--build-catalog` and caches the
-result in `~/.cache/luxar/`.
+migrate those demos to the manifest fetch path. `gsplats_flylight_mcfo` is the
+exception: it is CC BY 4.0 and redistributable, and is `local-compute` only
+because its record does not exist yet — promote it to `zenodo` / `cc-by` once it
+does. **Their in-repo copies have been removed**: those demos now fetch the raw
+source and rebuild locally. Gaia's opt-in first-run path queries the archive
+with `--build-catalog` and caches the result in `~/.cache/luxar/`.
 
 A `zenodo` dataset's files are fetched to `~/.cache/luxar/<dataset>/<file>`, and
 that path belongs to the fetch: it checks the manifest sha256 there and

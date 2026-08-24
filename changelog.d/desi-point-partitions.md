@@ -11,6 +11,7 @@ The partition-bound screen-area ladder intentionally changes its child switch
 fractions from `[0.0, 0.25, 0.5]` to `[0.0, 0.5, 1.0]`.
 
 The partition is storage-neutral for the shared geometry: corresponding position
-arrays in the redshift layer remain `array_ref`s to the tracer layer. The shipped
-Git-LFS scene is rebuilt with the new hierarchy, so the fix applies on the demo's
-normal precomputed fast path rather than only after a local recomputation.
+arrays in the redshift layer remain `array_ref`s to the tracer layer. The
+precomputed scene is rebuilt with the new hierarchy, so the fix applies on the
+demo's normal fast path rather than only after a local recomputation — once the
+rebuilt archive reaches the `cc-by` record the manifest now pins it to.
