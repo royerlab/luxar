@@ -176,7 +176,7 @@ def cache_computed(
     if not recompute and cache_file.exists():
         try:
             with open(cache_file, "rb") as f:
-                result = pickle.load(f)  # nosec B301  # trusted local cache
+                result = pickle.load(f)  # nosec B301  # cache file is written by this process under ~/.cache/luxar; an unreadable one is quarantined below
             if verbose:
                 aprint(f"✓ Loaded cached result: {cache_file.name}")
             return result
