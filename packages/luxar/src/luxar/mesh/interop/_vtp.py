@@ -511,6 +511,10 @@ def _read_data_array(element: ET.Element, ctx: _Context, where: str) -> NDArray:
                 "<AppendedData> section"
             )
         offset = _int_attr(element, "offset", ctx, where, 0)
+        if offset < 0:
+            raise ValueError(
+                f"{ctx.name}: {where} has negative appended offset {offset}"
+            )
         payload = (
             _decode_raw(offset, ctx, where)
             if not ctx.appended_text

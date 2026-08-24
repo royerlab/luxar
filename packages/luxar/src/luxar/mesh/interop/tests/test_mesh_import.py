@@ -1516,6 +1516,16 @@ class TestVtp:
         with pytest.raises(ValueError, match=r"badoffset\.vtp"):
             import_mesh(p)
 
+    def test_a_negative_appended_base64_offset_is_refused(self, tmp_path: Path) -> None:
+        p = tmp_path / "negative-offset.vtp"
+        write_vtp(p, GT, mode="appended-base64")
+        raw = p.read_bytes()
+        patched = raw.replace(b'offset="0"', b'offset="-336"', 1)
+        assert patched != raw
+        p.write_bytes(patched)
+        with pytest.raises(ValueError, match=r"negative-offset\.vtp.*offset.*-336"):
+            import_mesh(p)
+
     def test_a_non_integer_component_count_is_named(self, tmp_path: Path) -> None:
         p = tmp_path / "badncomp.vtp"
         write_vtp(p, GT, mode="ascii")
