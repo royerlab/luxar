@@ -116,6 +116,7 @@ def attr_to_colors(values):  # type: ignore[no-untyped-def]
 
 
 def _category_label(categories: list[str], code: int) -> str:
+    """Return the mapped category label or the raw out-of-range code."""
     index = int(code)
     return categories[index] if 0 <= index < len(categories) else str(index)
 

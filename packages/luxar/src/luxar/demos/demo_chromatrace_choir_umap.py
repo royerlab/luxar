@@ -341,8 +341,9 @@ def build_scene(
         colors = np.vstack([colors_term, colors_group])
 
         # Hover labels — two lines: cell type on line 1, bio-group on line 2
-        # Click a cell to look its term up in the EBI Ontology Lookup Service,
-        # right-click to copy it (#1917). The label brackets the bio group
+        # Click a cell to look its term up in the EBI Ontology Lookup Service.
+        # Right-click falls back to copying the full label so unannotated cells
+        # keep the affordance (#1917). The label brackets the bio group
         # after the term, so the query needs the term alone; `format_label` is
         # for reading, not searching.
         # "unannotated" is a real category here, not a missing code: the loader

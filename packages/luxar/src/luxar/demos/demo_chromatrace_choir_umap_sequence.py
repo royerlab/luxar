@@ -433,8 +433,9 @@ def build_sequence_scene(
         )
 
         # Hover labels: 1 per cell, shared for both Highlight and Backdrop.
-        # Click a cell to look its term up in the EBI Ontology Lookup Service,
-        # right-click to copy it (#1917). The label brackets the bio group
+        # Click a cell to look its term up in the EBI Ontology Lookup Service.
+        # Right-click falls back to copying the full label so unannotated cells
+        # keep the affordance (#1917). The label brackets the bio group
         # after the term, so the query needs the term alone; `format_label`
         # is for reading, not for searching.
         # "unannotated" is a real term here — the loader fills NaN with that
