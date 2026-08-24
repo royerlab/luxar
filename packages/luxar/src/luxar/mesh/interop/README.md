@@ -74,10 +74,10 @@ and an `import_mesh()` that does exists-check → sniff → validate → read �
 ## Deliberate omissions
 
 - **Unreferenced vertices are pruned during the default welded import.** Only points
-  referenced by a surviving triangle can affect the rendered surface; retaining any
-  others would inflate bounds, camera framing, and the picking ordinal range with
-  geometry nothing draws. `--no-weld` preserves the reader-produced vertex list,
-  including unreferenced points, as its explicit opt-out contract requires.
+  referenced by the retained triangle index buffer belong to the imported surface;
+  keeping any others would inflate bounds, camera framing, and the picking ordinal
+  range with geometry nothing draws. `--no-weld` preserves the reader-produced vertex
+  list, including unreferenced points, as its explicit opt-out contract requires.
 
 - **`gsplats/interop/_ply.py` is not reused.** It rejects `property list` (how a `face`
   element declares its indices) and everything but binary-LE. Generalizing it would put
