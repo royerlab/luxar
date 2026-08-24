@@ -1,6 +1,6 @@
 """The set of demo-package modules the demo guards must scan.
 
-Sixteen guards across nine modules read this set: four in
+Seventeen guards across ten modules read this set: four in
 ``test_demos_dependencies.py``, one in
 ``test_no_entrypoint_dependency_preflight.py``, one in
 ``test_substitutive_lod_gated.py``, one in ``test_demo_layers.py`` (the
@@ -16,7 +16,9 @@ module carries a justified exception; it too covers shared helpers, since
 default), one in ``test_demo_fit_provenance.py`` (the fit-provenance lint —
 ``_interop_common.py`` saves gsplat stores, so an ``include_fitting_info=False``
 save could hide in a helper), one in ``test_demo_caption_coverage.py`` (the
-standard-caption lint, including shared helpers that can author overlays), and
+standard-caption lint, including shared helpers that can author overlays), one
+in ``test_demo_link_templates.py`` (the canonical click-through registry,
+including links authored in shared helpers, mapping literals and constants), and
 five in ``test_demos_cinematic_mode.py`` (each scene passes a non-None viewer
 config, every config enables the preset, authored cameras leave the FOV unpinned
 and compose for 63°, scientific-fidelity overrides stay explicit, and the Python
@@ -39,7 +41,7 @@ module-level ``def``s for such modules; the two changes only work together.
 
 The set is a DENYLIST on purpose: every ``*.py`` directly under ``demos/``
 *except* :data:`EXCLUDED`. An allowlist keyed on a filename pattern would be
-opt-in, so a future ``demos/_plot_helpers.py`` would escape all sixteen guards
+opt-in, so a future ``demos/_plot_helpers.py`` would escape all seventeen guards
 and reopen the very blind spot this module exists to close.
 
 The flip side of a denylist: ANY ``*.py`` dropped into ``demos/`` joins the
@@ -61,7 +63,7 @@ demo code, and one of them would produce a *false* positive:
 ``__init__.py``
     A pure re-export barrel; it holds no demo code and no gates.
 
-``registry.py`` is deliberately NOT excluded — it passes all sixteen guards, so
+``registry.py`` is deliberately NOT excluded — it passes all seventeen guards, so
 there is no reason to carve it out.
 
 Not a test module and not a demo (no ``test_`` / ``demo_`` prefix), so neither
