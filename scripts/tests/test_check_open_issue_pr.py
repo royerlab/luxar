@@ -247,12 +247,14 @@ def test_loose_mode_advises_on_exact_non_closing_mentions(monkeypatch, capsys) -
             _pr(2004, title="Part of #2003"),
             _pr(2005, body="Refs #20030"),
             _pr(2006, body="Refs 1#2003"),
+            _pr(2007, body="Refs #2003"),
         ],
     )
     assert guard.main(["2003", "--loose"]) == 0
     output = capsys.readouterr().out
     assert "advisory" in output
     assert "#2004 Part of #2003" in output
+    assert "#2007" in output
     assert "#2005" not in output
     assert "#2006" not in output
 
