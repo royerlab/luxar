@@ -82,7 +82,7 @@ export interface KeyBindingsDeps {
 /**
  * Wire every keyboard binding onto the provided context manager.
  *
- * Two sub-flows live here, in order:
+ * Three sub-flows live here, in order:
  *
  *   1. NAVIGATION bindings (default, orbit-mode UI shortcuts).
  *
@@ -90,6 +90,10 @@ export interface KeyBindingsDeps {
  *      keys with all 4 modifier combinations the fly controls
  *      respect (none / Shift / Alt / Shift+Alt), arrow look keys
  *      with optional Shift, and the Shift speed-boost binding.
+ *
+ *   3. Animation playback bindings (K / Home / End / Shift+↑ / Shift+↓,
+ *      registered in NAVIGATION). They decline until a dimension is selected
+ *      and the animation manager exists.
  *
  * Ctrl/⌘+wheel FOV-vs-zoom exclusivity is NOT a key binding: each
  * wheel handler reads the event's own live modifier flags (see
