@@ -379,7 +379,26 @@ def test_demo_link_extractor_rejects_function_local_shadow(tmp_path: Path) -> No
 def build():
     LINK = "https://example.org/shadow/{hover_key}"
     scene.add_points(link=LINK)
-def build_parameter(LINK):
+""",
+        encoding="utf-8",
+    )
+
+    links, unresolved, unregistered, unclaimed = _audit_links([module], CANONICAL_LINKS)
+
+    assert links == [(module, 4, None)]
+    assert unresolved == links
+    assert unregistered == []
+    assert unclaimed == [
+        (module, 1, "https://example.org/canonical/{hover_key}"),
+        (module, 3, "https://example.org/shadow/{hover_key}"),
+    ]
+
+
+def test_demo_link_extractor_rejects_parameter_shadow(tmp_path: Path) -> None:
+    module = tmp_path / "demo_parameter_shadow.py"
+    module.write_text(
+        """LINK = "https://example.org/canonical/{hover_key}"
+def build(LINK):
     scene.add_points(link=LINK)
 """,
         encoding="utf-8",
@@ -387,12 +406,11 @@ def build_parameter(LINK):
 
     links, unresolved, unregistered, unclaimed = _audit_links([module], CANONICAL_LINKS)
 
-    assert links == [(module, 4, None), (module, 6, None)]
+    assert links == [(module, 3, None)]
     assert unresolved == links
     assert unregistered == []
     assert unclaimed == [
-        (module, 1, "https://example.org/canonical/{hover_key}"),
-        (module, 3, "https://example.org/shadow/{hover_key}"),
+        (module, 1, "https://example.org/canonical/{hover_key}")
     ]
 
 
