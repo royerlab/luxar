@@ -17,8 +17,7 @@ sources:
   ``python -m luxar.demos.demo_*`` command lines catches runs that predate the
   registry or whose pidfile was lost.
 
-The implementation stays stdlib-only so process discovery and teardown remain
-independent of demo metadata and optional runtime dependencies.
+The module body imports only the standard library and :mod:`luxar._process`.
 """
 
 from __future__ import annotations
@@ -35,9 +34,8 @@ from typing import Optional
 
 from .._process import can_kill_process_groups, proc_table, terminate_process_group
 
-# Intentionally independent of the demo registry: process bookkeeping must not
-# depend on demo metadata loading successfully. A unit test pins this path to
-# luxar.demos.registry.DEMO_CACHE_ROOT so the duplicated location cannot drift.
+# A unit test pins this path to luxar.demos.registry.DEMO_CACHE_ROOT so the
+# duplicated location cannot drift.
 DEMO_RUNS_DIR = Path.home() / ".cache" / "luxar" / "running"
 
 # The L1 demo script every `demo run` spawns: `<python> -m luxar.demos.demo_X`.
