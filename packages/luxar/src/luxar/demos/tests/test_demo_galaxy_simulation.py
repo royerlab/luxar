@@ -54,12 +54,18 @@ def test_main_validates_frames_before_building(monkeypatch: pytest.MonkeyPatch) 
         _demo.main()
 
 
-def test_opening_camera_is_solved_once_at_the_cinematic_lens() -> None:
+def test_opening_camera_is_solved_once_at_the_cinematic_lens(tmp_path: Path) -> None:
+    from luxar.io.reader import LuxarScene
+
     position = _demo.galaxy_camera_position()
     distance = math.dist((0.0, 0.0, 0.0), position)
-
     assert distance == pytest.approx(35.05, rel=1e-3)
-    effective_fill = math.degrees(math.asin(_demo.R_DISC_MAX / distance)) / float(
-        _demo.CINEMATIC_FOV_DEG
-    )
-    assert effective_fill == pytest.approx(_demo.CAMERA_FILL)
+
+    output = tmp_path / "galaxy.luxar.zarr"
+    _demo.generate_galaxy(output, n_disc=50, n_frames=3)
+    viewer_config = LuxarScene.load(output).viewer_config
+    assert viewer_config is not None
+    assert viewer_config.camera is not None
+    assert viewer_config.camera.position == pytest.approx(position)
+    assert viewer_config.camera.target == (0.0, 0.0, 0.0)
+    assert viewer_config.camera.fov is None
