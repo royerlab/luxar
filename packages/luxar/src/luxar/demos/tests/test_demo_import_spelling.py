@@ -35,8 +35,8 @@ one: see :func:`test_the_guard_detects_every_deep_spelling` and
 Scope: the demo MODULES, not the whole package. The ``tests/`` subdirectories are
 out of scope as a class, and legitimately so — a test may need the module a
 private lives in (``test_demo_meta`` deep-imports ``_DEFAULT_CACHE_ROOT`` to pin
-that ``registry.DEMO_CACHE_ROOT`` duplicates it; ``utils/tests/test_viewer.py`` is
-the helper's own suite and imports it three ways on purpose), and a re-export
+that ``registry.DEMO_CACHE_ROOT`` duplicates it, while the concern suites import
+their owning utility modules directly), and a re-export
 barrel cannot serve either need. Deep imports elsewhere in the package — a few
 unit tests building a Lorenz fixture, ``utils/download.py`` reaching for a
 zip-path private, and others — are out of scope for the same reason: the barrel

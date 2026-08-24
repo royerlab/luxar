@@ -22,9 +22,9 @@ validate_array_shape(positions, (100, 3), name="positions")  # Passes
 
 # 3. Generate demo data for testing
 create_lorenz_attractor(
-    "lorenz_demo.luxar.zarr",
+    'lorenz_demo.luxar.zarr',
     n_points=10000,
-    seed=42,  # Reproducible
+    seed=42  # Reproducible
 )
 print("Demo scene created at lorenz_demo.luxar.zarr")
 ```
