@@ -220,6 +220,54 @@ def print_loose_matches(
         )
 
 
+def _print_json_results(
+    issue: int,
+    matches: Iterable[PullRequest],
+    loose_matches: Iterable[PullRequest],
+) -> None:
+    print(
+        json.dumps(
+            [
+                {
+                    "number": pull_request.number,
+                    "title": pull_request.title,
+                    "url": pull_request.url,
+                    "head_ref_name": pull_request.head_ref_name,
+                    "closing_issue_numbers": sorted(pull_request.closing_issue_numbers),
+                }
+                for pull_request in matches
+            ]
+        )
+    )
+    loose_matches = list(loose_matches)
+    if loose_matches:
+        print_loose_matches(issue, loose_matches, sys.stderr)
+
+
+def _print_human_results(
+    issue: int,
+    repo: str,
+    matches: Sequence[PullRequest],
+    compare_pr: int | None,
+    loose_matches: Iterable[PullRequest],
+) -> None:
+    if matches:
+        print(f"issue #{issue} already has {len(matches)} open pull request(s):")
+        for pull_request in matches:
+            print(
+                f"  #{pull_request.number} {pull_request.title} "
+                f"({pull_request.head_ref_name}) {pull_request.url}"
+            )
+        if compare_pr is not None:
+            for pull_request in matches:
+                print_comparison(repo, pull_request, compare_pr)
+    elif compare_pr is not None:
+        print(f"no other open PR declares it closes #{issue}; nothing to compare")
+    loose_matches = list(loose_matches)
+    if loose_matches:
+        print_loose_matches(issue, loose_matches)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("issue", type=int)
@@ -246,38 +294,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         else []
     )
     if args.json:
-        print(
-            json.dumps(
-                [
-                    {
-                        "number": pull_request.number,
-                        "title": pull_request.title,
-                        "url": pull_request.url,
-                        "head_ref_name": pull_request.head_ref_name,
-                        "closing_issue_numbers": sorted(
-                            pull_request.closing_issue_numbers
-                        ),
-                    }
-                    for pull_request in matches
-                ]
-            )
+        _print_json_results(args.issue, matches, loose_matches)
+    else:
+        _print_human_results(
+            args.issue,
+            args.repo,
+            matches,
+            args.compare_pr,
+            loose_matches,
         )
-        if loose_matches:
-            print_loose_matches(args.issue, loose_matches, sys.stderr)
-    elif matches:
-        print(f"issue #{args.issue} already has {len(matches)} open pull request(s):")
-        for pull_request in matches:
-            print(
-                f"  #{pull_request.number} {pull_request.title} "
-                f"({pull_request.head_ref_name}) {pull_request.url}"
-            )
-        if args.compare_pr is not None:
-            for pull_request in matches:
-                print_comparison(args.repo, pull_request, args.compare_pr)
-    elif args.compare_pr is not None:
-        print(f"no other open PR declares it closes #{args.issue}; nothing to compare")
-    if not args.json and loose_matches:
-        print_loose_matches(args.issue, loose_matches)
     return 1 if matches else 0
 
 
