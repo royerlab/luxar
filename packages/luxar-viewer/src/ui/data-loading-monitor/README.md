@@ -18,8 +18,7 @@ polling loop, and the hierarchical timing panel.
 | `timing-panel.ts` | Renderer + in-place updater for the collapsible per-frame timing tree, fed by `profiling/update-profiler`. Module-level `expandedState` map persists collapse state across rerenders. The footer also carries the depth-sort verdict: passed `depthSortUnavailable` (from `rendering/depth-sort-coordinator::isDepthSortAvailable`) it prints `depth sort UNAVAILABLE` in place of the sort count and suppresses the "No timing data yet" empty state, so a session drawing order-dependent geometry in storage order cannot be buried by zero timings. |
 
 `README.md` for this folder; per-subpackage READMEs live under
-`metrics/` and `tabs/`. Template modules are small enough to document
-through their file headers and concern names.
+`templates/`, `metrics/`, and `tabs/`.
 
 ## How the pieces fit together
 
