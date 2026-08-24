@@ -16,10 +16,13 @@ from typing import Any, Sequence
 import numcodecs
 import zarr
 
+import luxar
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 OUTPUT_DIR = REPO_ROOT / "datasets/examples"
 MARKER_NAME = ".fixture-build.json"
 MARKER_VERSION = 2
+STALE_EXIT_CODE = 3
 
 
 def _source_files(repo_root: Path) -> list[Path]:
@@ -56,6 +59,12 @@ def build_environment() -> dict[str, str | None]:
         "numcodecs": numcodecs.__version__,
         "zarr": zarr.__version__,
     }
+
+
+def luxar_is_from_repo(repo_root: Path = REPO_ROOT) -> bool:
+    """Return whether the imported Luxar package belongs to this checkout."""
+    package_root = (repo_root / "packages/luxar/src/luxar").resolve()
+    return Path(luxar.__file__).resolve().is_relative_to(package_root)
 
 
 def _marker_path(output_dir: Path) -> Path:
@@ -194,10 +203,6 @@ def generate_examples(
         for name, signature in after_signatures.items()
         if before_signatures.get(name) != signature
     )
-    for name in set(previous_outputs) - set(generated_outputs):
-        path = output_dir / name
-        if path.is_dir():
-            shutil.rmtree(path)
     try:
         write_marker(
             repo_root,
@@ -209,11 +214,23 @@ def generate_examples(
     except RuntimeError as error:
         print(f"❌ {error}", file=sys.stderr)
         return 1
+    for name in set(previous_outputs) - set(generated_outputs):
+        path = output_dir / name
+        if path.is_dir():
+            shutil.rmtree(path)
     print("✅ All examples completed and stamped current!")
     return 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    if not luxar_is_from_repo(REPO_ROOT):
+        print(
+            "❌ Imported Luxar does not belong to this checkout; run through this "
+            "worktree's Hatch environment.",
+            file=sys.stderr,
+        )
+        return 1
+
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--check", action="store_true", help="check fixture freshness")
@@ -228,7 +245,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             '❌ Example datasets are stale; run "make run-examples" to rebuild them.',
             file=sys.stderr,
         )
-        return 1
+        return STALE_EXIT_CODE
     return generate_examples(REPO_ROOT, OUTPUT_DIR, force=args.force)
 
 

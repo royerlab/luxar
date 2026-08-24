@@ -169,6 +169,29 @@ def test_failed_rebuild_attempts_every_example_and_leaves_no_marker(
     assert not (output_dir / run_examples.MARKER_NAME).exists()
 
 
+def test_successful_rebuild_without_outputs_preserves_previous_fixtures(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path)
+    output_dir = repo / "datasets/examples"
+    previous = output_dir / "previous_example.luxar.zarr"
+    previous.mkdir(parents=True)
+    sentinel = previous / "zarr.json"
+    sentinel.write_text("old")
+    _write_example(repo, "one", "print('no output')\n")
+    run_examples.write_marker(repo, output_dir, outputs=[previous.name])
+
+    assert (
+        run_examples.generate_examples(
+            repo, output_dir, python=sys.executable, force=True
+        )
+        == 1
+    )
+
+    assert sentinel.read_text() == "old"
+    assert not (output_dir / run_examples.MARKER_NAME).exists()
+
+
 def test_marker_uses_prebuild_fingerprint(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     output_dir = repo / "datasets/examples"
@@ -228,9 +251,24 @@ def test_check_mode_reports_stale_without_writing(
     _write_example(repo, "one", "print('one')\n")
     monkeypatch.setattr(run_examples, "REPO_ROOT", repo)  # type: ignore[attr-defined]
     monkeypatch.setattr(run_examples, "OUTPUT_DIR", output_dir)  # type: ignore[attr-defined]
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        run_examples, "luxar_is_from_repo", lambda _repo_root: True
+    )
+
+    assert run_examples.main(["--check"]) == run_examples.STALE_EXIT_CODE
+    assert list(output_dir.iterdir()) == []
+
+
+def test_main_rejects_luxar_imported_from_another_checkout(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    repo = _repo(tmp_path)
+    monkeypatch.setattr(run_examples, "REPO_ROOT", repo)  # type: ignore[attr-defined]
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        run_examples.luxar, "__file__", str(tmp_path / "other/luxar.py")
+    )
 
     assert run_examples.main(["--check"]) == 1
-    assert list(output_dir.iterdir()) == []
 
 
 def test_make_e2e_targets_require_fresh_example_fixtures() -> None:
