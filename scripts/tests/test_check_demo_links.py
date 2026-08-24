@@ -57,6 +57,85 @@ def test_pair_reports_moved_path_when_both_fail_identically() -> None:
     assert "good and bad both rejected" in result.message
 
 
+def test_status_mode_uses_http_success_as_the_discriminator() -> None:
+    checker = _load_script()
+    spec = {
+        "mode": "status",
+        "url_template": "https://example.org/{value}",
+        "good": "known",
+        "bad": "missing",
+    }
+    responses = {
+        "https://example.org/known": checker.Response(200, "", ""),
+        "https://example.org/missing": checker.Response(404, "", ""),
+    }
+
+    result = checker.audit_destination("example.org", spec, responses.__getitem__)
+
+    assert result == checker.AuditResult("OK", "good matched; bad rejected (200/404)")
+
+
+def test_redirect_mode_requires_only_the_good_key_to_reach_the_record() -> None:
+    checker = _load_script()
+    spec = {
+        "mode": "redirect",
+        "url_template": "https://example.org/search?q={value}",
+        "good": "known",
+        "bad": "missing",
+        "good_final_marker": "/record/known",
+    }
+    responses = {
+        "https://example.org/search?q=known": checker.Response(
+            200, "https://example.org/record/known", ""
+        ),
+        "https://example.org/search?q=missing": checker.Response(
+            200, "https://example.org/search?q=missing", ""
+        ),
+    }
+
+    result = checker.audit_destination("example.org", spec, responses.__getitem__)
+
+    assert result.level == "OK"
+
+
+def test_json_count_mode_and_canonical_landing_route_are_both_required() -> None:
+    checker = _load_script()
+    spec = {
+        "mode": "json-count",
+        "landing_template": "https://example.org/page/{value}",
+        "url_template": "https://api.example.org/search?q={value}",
+        "good": "known",
+        "bad": "missing",
+        "count_path": ("response", "count"),
+    }
+    responses = {
+        "https://example.org/page/known": checker.Response(200, "", ""),
+        "https://api.example.org/search?q=known": checker.Response(
+            200, "", '{"response":{"count":1}}'
+        ),
+        "https://api.example.org/search?q=missing": checker.Response(
+            200, "", '{"response":{"count":0}}'
+        ),
+    }
+
+    result = checker.audit_destination("example.org", spec, responses.__getitem__)
+
+    assert result.level == "OK"
+    responses["https://example.org/page/known"] = checker.Response(404, "", "")
+    result = checker.audit_destination("example.org", spec, responses.__getitem__)
+    assert result == checker.AuditResult(
+        "FAIL", "canonical page route rejected the good key (404)"
+    )
+
+
+def test_identifiers_are_encoded_like_viewer_url_substitutions() -> None:
+    checker = _load_script()
+
+    assert checker._format_url("https://doi.org/{value}", "10.1/example:42") == (
+        "https://doi.org/10.1%2Fexample%3A42"
+    )
+
+
 def test_request_outage_is_reported_without_raising() -> None:
     checker = _load_script()
     spec = {
