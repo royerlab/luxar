@@ -84,12 +84,13 @@ unconditionally serial.
 
 ### Which script runs which specs
 
-| Script                | Selection                                                                                                                                        |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `pnpm test:e2e`       | Everything under `src/tests/e2e/`, minus `*perf-bench.spec.ts` (`testIgnore`)                                                                    |
-| `pnpm test:e2e:ci`    | The same, minus tests tagged `@visual` — a **title grep**, not a file list                                                                       |
-| `pnpm test:e2e:smoke` | An explicit five-file allowlist: `viewer-initialization`, `url-parameters`, `dataset-switching`, `controls-interaction`, `keyboard-input-system` |
-| `pnpm test:perf:e2e`  | Only `*perf-bench.spec.ts`, under `playwright.perf.config.ts` (which shares this global setup)                                                   |
+| Script                 | Selection                                                                                                                                        |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `pnpm test:e2e`        | Everything under `src/tests/e2e/`, minus `*perf-bench.spec.ts` (`testIgnore`)                                                                    |
+| `pnpm test:e2e:ci`     | The same, minus tests tagged `@visual` — a **title grep**, not a file list                                                                       |
+| `pnpm test:e2e:visual` | Local run of tests tagged `@visual`; snapshot assertions are active on Linux                                                                     |
+| `pnpm test:e2e:smoke`  | An explicit five-file allowlist: `viewer-initialization`, `url-parameters`, `dataset-switching`, `controls-interaction`, `keyboard-input-system` |
+| `pnpm test:perf:e2e`   | Only `*perf-bench.spec.ts`, under `playwright.perf.config.ts` (which shares this global setup)                                                   |
 
 The smoke subset is deliberately narrow: its CI job generates datasets at
 runtime via `make run-examples` and pulls no Git LFS. **Do not add a spec that
@@ -529,11 +530,30 @@ centre so FXAA's edge-detection path actually triggers.
 ## Visual-Regression Snapshots
 
 Folders named `<spec>.spec.ts-snapshots/` hold per-spec PNG
-baselines used by `expect(...).toHaveScreenshot(...)`. They are
-checked in. Update them deliberately with
-`pnpm exec playwright test --update-snapshots`, then review the diff
-before committing — the baselines drive every theme / visual /
-post-processing regression check.
+baselines used by `expect(...).toHaveScreenshot(...)`. They are a
+**local developer aid, not a CI contract**: GitHub CI does not run
+Playwright, and `test:e2e:ci` deliberately excludes every `@visual`
+test. A green pull request therefore says nothing about whether these
+pixels still match.
+
+The checked-in corpus is Linux Chromium only. This is the one platform
+the project can reproduce consistently; do not add Darwin or Windows
+copies that no maintained runner refreshes. On Linux, run the visual
+subset with `pnpm test:e2e:visual`. Update its baselines deliberately
+with `pnpm test:e2e:visual:update`, then inspect every PNG diff before
+committing it. The unit suite rejects non-Linux baseline filenames so
+an unsupported platform corpus cannot silently return.
+
+The 44 baselines added with this policy were recorded on Ubuntu 24.04.4
+LTS with Playwright 1.62.1. Font configuration is not pinned, so a
+font-driven local diff is expected on another distro; re-record it for
+local inspection rather than blessing it into Git. The visual fixtures
+come from `datasets/examples/`: when their producer stamp moves and the
+examples are rebuilt, refresh and inspect the affected baselines too.
+
+Keeping one reproducible Linux corpus leaves room for a future CI job
+covering the DOM/CSS-only `@visual` specs without the WebGL rasterizer
+variability that currently keeps the full E2E job disabled.
 
 ## Conventions for New Specs
 

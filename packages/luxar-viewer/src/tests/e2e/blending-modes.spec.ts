@@ -198,6 +198,9 @@ test.describe('Blending Modes', () => {
   });
 
   test('@visual visual regression: scene renders with blending applied', async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('luxar-control-rail-hint-dismissed', '1');
+    });
     await page.goto(`/?src=${DATASET}&debug&no-opfs`);
     await waitForLuxarReady(page);
     await waitForPointsLoaded(page, 10);

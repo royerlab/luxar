@@ -477,10 +477,10 @@ later as a viewer initialization timeout.
 **Solutions**:
 - First run creates baseline (expected to fail)
 - Re-run to compare against baseline
-- If legitimate change: Update baseline with `--update-snapshots`
+- If legitimate change: Update the Linux baseline with the visual update script
 
 ```bash
-pnpm test:e2e --update-snapshots
+pnpm test:e2e:visual:update
 ```
 
 #### 3. GPU Acceleration Not Working
