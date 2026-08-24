@@ -7,6 +7,7 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 
+# Package-internal: imported by bundles and download.
 def _validate_zip_member_path(member: str) -> PurePosixPath:
     """Validate a zip member path before reading it from a bundle.
 
@@ -25,6 +26,7 @@ def _validate_zip_member_path(member: str) -> PurePosixPath:
     return path
 
 
+# Package-internal: imported by bundles.
 def _safe_extract_zip_member(
     zf: zipfile.ZipFile,
     member: str,

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Optional, Union
 
 # Directory containing precomputed data shipped with the package (via Git LFS)
+# Package-internal: imported by bundles and data_fetch.
 _DEMOS_DATA_DIR = Path(__file__).resolve().parent.parent / "demos" / "data"
 
 
@@ -27,6 +28,7 @@ def is_lfs_pointer(path: Path) -> bool:
         return False
 
 
+# Package-internal: imported by bundles.
 def _unshippable_reason(demo_name: str) -> Optional[str]:
     """Why *demo_name*'s data is not shipped, or ``None`` if it should be.
 
@@ -53,6 +55,7 @@ def _unshippable_reason(demo_name: str) -> Optional[str]:
     return str(spec.get("reason") or spec.get("strategy") or "not redistributable")
 
 
+# Package-internal: imported by bundles.
 def _validate_lfs_files(paths: list[Path]) -> None:
     """Raise a helpful error if any *paths* are missing or are LFS pointers."""
     missing = [p for p in paths if not p.exists()]

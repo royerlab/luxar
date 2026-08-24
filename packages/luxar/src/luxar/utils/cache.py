@@ -2,7 +2,8 @@
 
 ``cached_download`` downloads a file once, while ``cache_computed`` caches an
 expensive computed result. Both keep demos from hand-rolling cache paths and
-namespace their files under ``~/.cache/luxar/<name>/``.
+use ``~/.cache/luxar/<name>/`` by default; ``cache_computed`` also accepts an
+explicit cache directory.
 """
 
 from __future__ import annotations
@@ -17,9 +18,11 @@ from arbol import aprint
 from .lfs import is_lfs_pointer
 
 # Default user-level cache
+# Package-internal: imported by bundles and data_fetch.
 _DEFAULT_CACHE_ROOT = Path.home() / ".cache" / "luxar"
 
 
+# Package-internal: imported by bundles.
 def _cache_is_stale(cache_file: Path, source_file: Path) -> bool:
     """True if ``cache_file`` should be refreshed from ``source_file``.
 
@@ -176,7 +179,9 @@ def cache_computed(
     if not recompute and cache_file.exists():
         try:
             with open(cache_file, "rb") as f:
-                result = pickle.load(f)  # nosec B301  # cache file is written by this process under ~/.cache/luxar; an unreadable one is quarantined below
+                # Written by a previous run of this helper, under the default
+                # cache root or the caller's explicit cache_dir.
+                result = pickle.load(f)  # nosec B301
             if verbose:
                 aprint(f"✓ Loaded cached result: {cache_file.name}")
             return result

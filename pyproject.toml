@@ -805,8 +805,8 @@ forbidden_modules = ["luxar.gsplats", "luxar.demos", "luxar.cli"]
 # Direct edges only: utils legitimately reaches gsplats through luxar.io and
 # luxar.typing_utils, which is the layering working rather than a back-edge.
 allow_indirect_imports = true
-# The four remaining production back-edges live in the split demo-support
-# modules and data_fetch.py; drop each exception when those dependencies move.
+# The device, bundles, and data_fetch exceptions can go when those dependencies
+# move. The scenes edge is permanent: the public scene helpers stay in utils.
 ignore_imports = [
     "luxar.utils.tests.** -> luxar.**",
     "luxar.utils.device -> luxar.gsplats.utils.device",
