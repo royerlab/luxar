@@ -3,17 +3,23 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any, Sequence
+
+import numcodecs
+import zarr
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 OUTPUT_DIR = REPO_ROOT / "datasets/examples"
 MARKER_NAME = ".fixture-build.json"
-MARKER_VERSION = 1
+MARKER_VERSION = 2
 
 
 def _source_files(repo_root: Path) -> list[Path]:
@@ -43,37 +49,71 @@ def source_fingerprint(repo_root: Path = REPO_ROOT) -> str:
     return digest.hexdigest()
 
 
+def build_environment() -> dict[str, str | None]:
+    """Return environment inputs that affect the generated store encoding."""
+    return {
+        "LUXAR_ZARR_FORMAT": os.environ.get("LUXAR_ZARR_FORMAT"),
+        "numcodecs": numcodecs.__version__,
+        "zarr": zarr.__version__,
+    }
+
+
 def _marker_path(output_dir: Path) -> Path:
     return output_dir / MARKER_NAME
+
+
+def _read_marker(output_dir: Path) -> dict[str, Any] | None:
+    try:
+        marker = json.loads(_marker_path(output_dir).read_text())
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+    return marker if isinstance(marker, dict) else None
+
+
+def _marker_outputs(marker: dict[str, Any] | None) -> list[str]:
+    if marker is None:
+        return []
+    outputs = marker.get("outputs")
+    if not isinstance(outputs, list) or not all(
+        isinstance(name, str) for name in outputs
+    ):
+        return []
+    return outputs
 
 
 def fixtures_are_current(
     repo_root: Path = REPO_ROOT, output_dir: Path = OUTPUT_DIR
 ) -> bool:
     """Return whether the stamp matches and every stamped dataset still exists."""
-    try:
-        marker = json.loads(_marker_path(output_dir).read_text())
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
+    marker = _read_marker(output_dir)
+    if marker is None:
         return False
-    outputs = marker.get("outputs")
-    actual_outputs = sorted(
-        path.name for path in output_dir.glob("*.zarr") if path.is_dir()
-    )
+    outputs = _marker_outputs(marker)
     return (
         marker.get("version") == MARKER_VERSION
         and marker.get("fingerprint") == source_fingerprint(repo_root)
-        and isinstance(outputs, list)
+        and marker.get("environment") == build_environment()
         and bool(outputs)
-        and all(isinstance(name, str) for name in outputs)
-        and outputs == actual_outputs
+        and all((output_dir / name).is_dir() for name in outputs)
     )
 
 
-def write_marker(repo_root: Path = REPO_ROOT, output_dir: Path = OUTPUT_DIR) -> None:
+def write_marker(
+    repo_root: Path = REPO_ROOT,
+    output_dir: Path = OUTPUT_DIR,
+    *,
+    fingerprint: str | None = None,
+    environment: dict[str, str | None] | None = None,
+    outputs: Sequence[str] | None = None,
+) -> None:
     """Atomically stamp the source fingerprint and generated dataset inventory."""
     output_dir.mkdir(parents=True, exist_ok=True)
-    outputs = sorted(path.name for path in output_dir.glob("*.zarr") if path.is_dir())
-    if not outputs:
+    generated_outputs = (
+        sorted(path.name for path in output_dir.glob("*.zarr") if path.is_dir())
+        if outputs is None
+        else sorted(outputs)
+    )
+    if not generated_outputs:
         raise RuntimeError("example generation produced no .zarr datasets")
     marker = _marker_path(output_dir)
     temporary = marker.with_suffix(".tmp")
@@ -81,8 +121,9 @@ def write_marker(repo_root: Path = REPO_ROOT, output_dir: Path = OUTPUT_DIR) -> 
         json.dumps(
             {
                 "version": MARKER_VERSION,
-                "fingerprint": source_fingerprint(repo_root),
-                "outputs": outputs,
+                "fingerprint": fingerprint or source_fingerprint(repo_root),
+                "environment": environment or build_environment(),
+                "outputs": generated_outputs,
             },
             indent=2,
         )
@@ -91,12 +132,19 @@ def write_marker(repo_root: Path = REPO_ROOT, output_dir: Path = OUTPUT_DIR) -> 
     temporary.replace(marker)
 
 
-def _clean_generated_outputs(output_dir: Path) -> None:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    _marker_path(output_dir).unlink(missing_ok=True)
-    for path in output_dir.glob("*.zarr"):
-        if path.is_dir():
-            shutil.rmtree(path)
+def _output_signatures(output_dir: Path) -> dict[str, tuple[tuple[str, int, int], ...]]:
+    signatures: dict[str, tuple[tuple[str, int, int], ...]] = {}
+    for output in output_dir.glob("*.zarr"):
+        if not output.is_dir():
+            continue
+        entries: list[tuple[str, int, int]] = []
+        for path in sorted(output.rglob("*")):
+            stat = path.stat()
+            entries.append(
+                (path.relative_to(output).as_posix(), stat.st_size, stat.st_mtime_ns)
+            )
+        signatures[output.name] = tuple(entries)
+    return signatures
 
 
 def generate_examples(
@@ -104,9 +152,10 @@ def generate_examples(
     output_dir: Path = OUTPUT_DIR,
     *,
     python: str = sys.executable,
+    force: bool = False,
 ) -> int:
     """Build every example, continuing after failures, and stamp only success."""
-    if fixtures_are_current(repo_root, output_dir):
+    if not force and fixtures_are_current(repo_root, output_dir):
         print("✅ Example datasets are current; nothing to rebuild.")
         return 0
 
@@ -115,7 +164,12 @@ def generate_examples(
         print("❌ No example scripts found.", file=sys.stderr)
         return 1
 
-    _clean_generated_outputs(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    previous_outputs = _marker_outputs(_read_marker(output_dir))
+    before_signatures = _output_signatures(output_dir)
+    fingerprint = source_fingerprint(repo_root)
+    environment = build_environment()
+    _marker_path(output_dir).unlink(missing_ok=True)
     failures: list[str] = []
     print("🚀 Rebuilding example datasets from current producer sources...")
     print(f"📂 Output directory: {output_dir.relative_to(repo_root)}")
@@ -134,8 +188,24 @@ def generate_examples(
     if failures:
         print(f"❌ Examples FAILED: {' '.join(failures)}")
         return 1
+    after_signatures = _output_signatures(output_dir)
+    generated_outputs = sorted(
+        name
+        for name, signature in after_signatures.items()
+        if before_signatures.get(name) != signature
+    )
+    for name in set(previous_outputs) - set(generated_outputs):
+        path = output_dir / name
+        if path.is_dir():
+            shutil.rmtree(path)
     try:
-        write_marker(repo_root, output_dir)
+        write_marker(
+            repo_root,
+            output_dir,
+            fingerprint=fingerprint,
+            environment=environment,
+            outputs=generated_outputs,
+        )
     except RuntimeError as error:
         print(f"❌ {error}", file=sys.stderr)
         return 1
@@ -143,8 +213,23 @@ def generate_examples(
     return 0
 
 
-def main() -> int:
-    return generate_examples()
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--check", action="store_true", help="check fixture freshness")
+    mode.add_argument("--force", action="store_true", help="rebuild even when current")
+    args = parser.parse_args(argv)
+
+    if args.check:
+        if fixtures_are_current(REPO_ROOT, OUTPUT_DIR):
+            print("✅ Example datasets are current.")
+            return 0
+        print(
+            '❌ Example datasets are stale; run "make run-examples" to rebuild them.',
+            file=sys.stderr,
+        )
+        return 1
+    return generate_examples(REPO_ROOT, OUTPUT_DIR, force=args.force)
 
 
 if __name__ == "__main__":
