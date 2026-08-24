@@ -309,7 +309,7 @@ describe('InputHandler — optional setters', () => {
   });
 
   it('setLayersPanel stores the reference on the private layersPanel slot', () => {
-    const panel = { dispose: vi.fn() };
+    const panel = { dispose: vi.fn(), setFocusContextHandlers: vi.fn() };
     handler.setLayersPanel(panel as never);
     expect((handler as unknown as HandlerSlots).layersPanel).toBe(panel);
   });
@@ -531,7 +531,7 @@ describe('InputHandler — PanelCoordinator forwarding', () => {
       }
     ).panelCoordinator;
     const spy = vi.spyOn(coordinator, 'setRecordingPanel');
-    const panel = { dispose: vi.fn() };
+    const panel = { dispose: vi.fn(), setFocusContextHandlers: vi.fn() };
     handler.setRecordingPanel(panel as never);
     expect(spy).toHaveBeenCalledWith(panel);
   });
@@ -544,7 +544,7 @@ describe('InputHandler — PanelCoordinator forwarding', () => {
       }
     ).panelCoordinator;
     const spy = vi.spyOn(coordinator, 'setLayersPanel');
-    const panel = { dispose: vi.fn() };
+    const panel = { dispose: vi.fn(), setFocusContextHandlers: vi.fn() };
     handler.setLayersPanel(panel as never);
     expect(spy).toHaveBeenCalledWith(panel);
   });
@@ -563,6 +563,21 @@ describe('InputHandler — PanelCoordinator forwarding', () => {
     handler.setDatasetBrowser(undefined);
     expect(spy).toHaveBeenLastCalledWith(undefined);
     expect(spy).toHaveBeenCalledTimes(2);
+  });
+
+  it('setControlRail forwards to panelCoordinator and accepts undefined', () => {
+    const handler = makeHandler();
+    const coordinator = (
+      handler as unknown as {
+        panelCoordinator: { setControlRail: (rail: unknown) => void };
+      }
+    ).panelCoordinator;
+    const spy = vi.spyOn(coordinator, 'setControlRail');
+    const rail = { closeOverlay: vi.fn(), handleRoutedKeyDown: vi.fn() };
+    handler.setControlRail(rail);
+    expect(spy).toHaveBeenLastCalledWith(rail);
+    handler.setControlRail(undefined);
+    expect(spy).toHaveBeenLastCalledWith(undefined);
   });
 
   it('setScaleBar / setColormapLegend / setOverlayManager do NOT forward', () => {

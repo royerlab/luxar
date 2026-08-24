@@ -47,13 +47,16 @@ import type { DimensionSliders } from '../ui/dimension-sliders';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
 import type { DebugConsole } from '../ui/debug-console';
 import type { PerformanceMonitor } from '../ui/performance-monitor';
-import { InputContextManager } from './input-handler/context-manager';
+import { InputContext, InputContextManager } from './input-handler/context-manager';
 import {
   computeDimensionStep,
   resolveSelectedDimension,
 } from './input-handler/dimension-navigation/compute-step';
 import { describeNavigableKeys } from './input-handler/dimension-navigation/selection';
-import { PanelCoordinator } from './input-handler/commands/panel-coordinator';
+import {
+  PanelCoordinator,
+  type OverlayCloseHandle,
+} from './input-handler/commands/panel-coordinator';
 import { WindowEventHandler } from './input-handler/window-events/window-event-handler';
 import { registerAllKeyBindings } from './input-handler/key-bindings/register-all';
 import type { RegisteredShortcutBindings } from '../types/shortcut-help';
@@ -157,6 +160,7 @@ export class InputHandler {
    * once `debugConsole` and `animationController` are available.
    */
   private panelCoordinator: PanelCoordinator;
+  private controlRail?: OverlayCloseHandle & { handleRoutedKeyDown(): void };
 
   /**
    * Window-event concern: owns resize / wheel / fullscreenchange.
@@ -288,11 +292,20 @@ export class InputHandler {
 
   setLayersPanel(panel: LayersPanel): void {
     this.layersPanel = panel;
+    panel.setFocusContextHandlers({
+      activate: () => this.contextManager.pushContext(InputContext.UI_INTERACTION),
+      deactivate: () => this.contextManager.popContext(),
+    });
     // Forward to PanelCoordinator so Escape (the shortcut the panel's
     // close button advertises via aria-keyshortcuts) actually closes
     // the panel. Without this, Escape only flows through key-bindings
     // for the `L` shortcut and never reaches LayersPanel.hide().
     this.panelCoordinator.setLayersPanel(panel);
+  }
+
+  setControlRail(rail: (OverlayCloseHandle & { handleRoutedKeyDown(): void }) | undefined): void {
+    this.controlRail = rail;
+    this.panelCoordinator.setControlRail(rail);
   }
 
   /**
@@ -622,7 +635,7 @@ export class InputHandler {
     // even when focus is inside a text input — e.g. the dataset-browser
     // manual-path field, the debug-console filter input. The typing-
     // context Escape path dispatches through NAVIGATION bindings (see
-    // InputContextManager.dispatchEscapeFromTypingContext); this
+    // InputContextManager.dispatchEscapeAcrossContexts); this
     // exception is what routes Escape into the panel-close flow when
     // focus is inside an input.
     if (this.isTypingInInput() && event.key !== 'Escape') {
@@ -630,7 +643,8 @@ export class InputHandler {
     }
 
     // Route ALL keys through context manager (including Shift, fly controls, etc.)
-    this.contextManager.handleKeyEvent(event, 'down');
+    const handled = this.contextManager.handleKeyEvent(event, 'down');
+    if (handled) this.controlRail?.handleRoutedKeyDown();
   }
 
   /**

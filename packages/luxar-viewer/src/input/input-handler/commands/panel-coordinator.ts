@@ -40,6 +40,11 @@ export interface CloseableHandle {
   close(): void;
 }
 
+/** Minimal handle for transient overlays owned by a larger UI component. */
+export interface OverlayCloseHandle {
+  closeOverlay(): void;
+}
+
 /**
  * Minimal show/hide handle for the layers panel. The coordinator only
  * needs visibility-check + hide; full LayersPanel imports stay out of
@@ -76,6 +81,8 @@ export interface PanelRefs {
    * coordinator path as other panels.
    */
   layersPanel?: VisiblyHideableHandle;
+  /** Optional: control-rail flyout / popover overlay. */
+  controlRail?: OverlayCloseHandle;
 }
 
 /**
@@ -122,19 +129,26 @@ export class PanelCoordinator {
     this.refs.layersPanel = panel;
   }
 
+  /** Set or clear the control-rail overlay close handle. */
+  setControlRail(rail: OverlayCloseHandle | undefined): void {
+    this.refs.controlRail = rail;
+  }
+
   /**
    * Close all open UI panels and overlays in priority order
    * (topmost first):
    *
    *   1. Help overlay
    *   2. Error toast
-   *   3. Dataset browser (DOM lookup by id)
-   *   4. Rendering controls
-   *   5. Data loading monitor
-   *   6. Dimension sliders
-   *   7. Debug console
-   *   8. Recording panel
-   *   9. Performance stats
+   *   3. Control-rail flyout / popover
+   *   4. Dataset browser
+   *   5. Rendering controls
+   *   6. Data loading monitor
+   *   7. Dimension-slider animation menu + panel
+   *   8. Debug console
+   *   9. Recording panel
+   *  10. Layers panel
+   *  11. Performance stats
    *
    * Each step is guarded so already-hidden panels are no-ops; the
    * order matches the inline original byte-for-byte so any visual
@@ -148,6 +162,8 @@ export class PanelCoordinator {
     // Close error messages
     notifier.clearError();
 
+    this.refs.controlRail?.closeOverlay();
+
     // Close dataset browser via its own close() method so onClose fires
     // and the owner's reference (LuxarApp.datasetBrowser) is cleared;
     // otherwise the `O` reopen shortcut can see a dangling ref.
@@ -159,8 +175,11 @@ export class PanelCoordinator {
 
     eventBus.emit('panel-hide', { panelId: 'data-monitor' });
 
-    if (this.refs.dimensionSliders?.getIsVisible()) {
-      this.refs.dimensionSliders.hide();
+    if (this.refs.dimensionSliders) {
+      this.refs.dimensionSliders.closeContextMenu();
+      if (this.refs.dimensionSliders.getIsVisible()) {
+        this.refs.dimensionSliders.hide();
+      }
     }
 
     if (this.refs.debugConsole.getIsVisible()) {

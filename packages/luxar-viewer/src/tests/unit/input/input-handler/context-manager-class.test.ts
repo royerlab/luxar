@@ -322,14 +322,39 @@ describe('InputContextManager', () => {
   });
 
   describe('key event handling', () => {
+    it('blocks scene shortcuts in UI_INTERACTION but still routes Escape', () => {
+      const sceneShortcut = vi.fn();
+      const escape = vi.fn();
+      manager.registerBinding(InputContext.NAVIGATION, { key: 'Home', handler: sceneShortcut });
+      manager.registerBinding(InputContext.NAVIGATION, { key: 'Escape', handler: escape });
+      manager.pushContext(InputContext.UI_INTERACTION);
+
+      expect(manager.handleKeyEvent(new KeyboardEvent('keydown', { key: 'Home' }), 'down')).toBe(
+        false
+      );
+      expect(sceneShortcut).not.toHaveBeenCalled();
+      expect(manager.handleKeyEvent(new KeyboardEvent('keydown', { key: 'Escape' }), 'down')).toBe(
+        true
+      );
+      expect(escape).toHaveBeenCalledTimes(1);
+    });
+
     it('falls through when a matching handler explicitly declines the event', () => {
       const higher = vi.fn(() => false);
       const lower = vi.fn();
-      manager.registerBinding(InputContext.UI_INTERACTION, { key: 'h', handler: higher });
-      manager.registerBinding(InputContext.NAVIGATION, { key: 'h', handler: lower });
-      manager.setContext(InputContext.UI_INTERACTION);
+      manager.registerBinding(InputContext.FLY_CONTROLS, {
+        key: 'ArrowUp',
+        modifiers: { shift: true },
+        handler: higher,
+      });
+      manager.registerBinding(InputContext.NAVIGATION, {
+        key: 'ArrowUp',
+        modifiers: { shift: true },
+        handler: lower,
+      });
+      manager.setContext(InputContext.FLY_CONTROLS);
 
-      const event = new KeyboardEvent('keydown', { key: 'h' });
+      const event = new KeyboardEvent('keydown', { key: 'ArrowUp', shiftKey: true });
       expect(manager.handleKeyEvent(event, 'down')).toBe(true);
       expect(higher).toHaveBeenCalledWith(event);
       expect(lower).toHaveBeenCalledWith(event);
@@ -355,18 +380,20 @@ describe('InputContextManager', () => {
       const higher = vi.fn(() => false);
       const lower = vi.fn();
       manager.registerBinding(InputContext.UI_INTERACTION, {
-        key: 'h',
+        key: 'ArrowUp',
+        modifiers: { shift: true },
         handler: vi.fn(),
         keyupHandler: higher,
       });
       manager.registerBinding(InputContext.NAVIGATION, {
-        key: 'h',
+        key: 'ArrowUp',
+        modifiers: { shift: true },
         handler: vi.fn(),
         keyupHandler: lower,
       });
-      manager.setContext(InputContext.UI_INTERACTION);
+      manager.setContext(InputContext.FLY_CONTROLS);
 
-      const event = new KeyboardEvent('keyup', { key: 'h' });
+      const event = new KeyboardEvent('keyup', { key: 'ArrowUp', shiftKey: true });
       expect(manager.handleKeyEvent(event, 'up')).toBe(true);
       expect(higher).toHaveBeenCalledWith(event);
       expect(lower).toHaveBeenCalledWith(event);
@@ -374,18 +401,20 @@ describe('InputContextManager', () => {
 
     it('falls through on keyup when the current binding has no keyup handler', () => {
       const lower = vi.fn();
-      manager.registerBinding(InputContext.UI_INTERACTION, {
-        key: 'h',
+      manager.registerBinding(InputContext.FLY_CONTROLS, {
+        key: 'ArrowUp',
+        modifiers: { shift: true },
         handler: vi.fn(),
       });
       manager.registerBinding(InputContext.NAVIGATION, {
-        key: 'h',
+        key: 'ArrowUp',
+        modifiers: { shift: true },
         handler: vi.fn(),
         keyupHandler: lower,
       });
-      manager.setContext(InputContext.UI_INTERACTION);
+      manager.setContext(InputContext.FLY_CONTROLS);
 
-      const event = new KeyboardEvent('keyup', { key: 'h' });
+      const event = new KeyboardEvent('keyup', { key: 'ArrowUp', shiftKey: true });
       expect(manager.handleKeyEvent(event, 'up')).toBe(true);
       expect(lower).toHaveBeenCalledWith(event);
     });
@@ -1307,7 +1336,7 @@ describe('InputContextManager', () => {
         modifiers: { shift: true },
         handler: flyHandler,
       });
-      manager.setContext(InputContext.UI_INTERACTION);
+      manager.setContext(InputContext.FLY_CONTROLS);
 
       const event = new KeyboardEvent('keydown', { key: 'ArrowUp', shiftKey: true });
       const handled = manager.handleKeyEvent(event, 'down');
