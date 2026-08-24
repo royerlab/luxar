@@ -358,7 +358,7 @@ Bring classical triangle-surface files into Luxar, and coarsen them. Both are Nu
 stdlib only, so they work on a bare `pip install luxar` with no extras.
 
 ```bash
-luxar mesh import            # Import a classical mesh file (PLY / OBJ / STL / glTF / GLB) → a .luxar.zarr scene
+luxar mesh import            # Import one mesh file, or a T-indexed mesh directory, into a .luxar.zarr scene
 luxar mesh lod               # Build a LOD ladder for a mesh scene (levels, or a reveal)
 ```
 
@@ -372,6 +372,17 @@ keep the file's exact vertex list.
 
 Draco- and meshopt-compressed glTF is refused by name rather than decoded — run the
 file through `gltf-transform` first.
+
+A directory import defaults to `--pattern '*.vtp'`. Each filename must contain a
+`T<number>` token; if every filename also contains `Ch<number>`, channel is appended as
+a second hidden discrete dimension. Numeric values are preserved, so missing
+timepoints remain gaps instead of renumbering later files. Mixed channel naming and
+duplicate time/channel coordinates are refused rather than guessed. For example:
+
+```bash
+luxar mesh import 000_deconv.ome.zarr/meshes/cells cells.luxar.zarr
+luxar mesh import exported_frames frames.luxar.zarr --pattern '*.ply'
+```
 
 ### `luxar mesh lod`
 

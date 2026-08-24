@@ -10,6 +10,7 @@ from .mesh_import import (
     TriangleMesh,
     detect_mesh_format,
     import_mesh,
+    import_mesh_directory,
 )
 
 __all__ = [
@@ -17,4 +18,5 @@ __all__ = [
     "TriangleMesh",
     "detect_mesh_format",
     "import_mesh",
+    "import_mesh_directory",
 ]

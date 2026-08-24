@@ -17,6 +17,7 @@ different thing, so it is :class:`TriangleMesh`.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional, Union
@@ -42,7 +43,8 @@ class TriangleMesh:
     embed have exactly one shape to handle.
     """
 
-    #: ``(V, 3)`` float32 vertex positions.
+    #: ``(V, D)`` float32 vertex positions. Single-file imports are always 3D;
+    #: directory imports append discrete time and optional channel coordinates.
     vertices: NDArray[np.float32]
     #: ``(F, 3)`` uint32 triangle indices into ``vertices``.
     faces: NDArray[np.uint32]
@@ -52,11 +54,20 @@ class TriangleMesh:
     colors: Optional[NDArray[np.uint8]] = None
     #: One of :data:`MESH_FORMATS`, for provenance.
     source_format: str = ""
+    #: Names of the coordinate columns in ``vertices``.
+    dimension_names: tuple[str, ...] = ("x", "y", "z")
 
     def __post_init__(self) -> None:
         v = self.vertices.shape[0]
-        if self.vertices.ndim != 2 or self.vertices.shape[1] != 3:
-            raise ValueError(f"vertices must be (V, 3); got {self.vertices.shape}")
+        if self.vertices.ndim != 2 or self.vertices.shape[1] != len(
+            self.dimension_names
+        ):
+            raise ValueError(
+                "vertices must be (V, D) with one dimension name per column; "
+                f"got {self.vertices.shape} and {self.dimension_names}"
+            )
+        if self.dimension_names[:3] != ("x", "y", "z"):
+            raise ValueError("the first three mesh dimensions must be x, y, z")
         if self.faces.ndim != 2 or self.faces.shape[1] != 3:
             raise ValueError(f"faces must be (F, 3); got {self.faces.shape}")
         if self.faces.size and int(self.faces.max()) >= v:
@@ -214,10 +225,122 @@ def import_mesh(
     )
 
 
+_TIME_INDEX = re.compile(r"(?:^|[-_])T(?P<index>\d+)(?=$|[-_.])", re.IGNORECASE)
+_CHANNEL_INDEX = re.compile(r"(?:^|[-_])Ch(?P<index>\d+)(?=$|[-_.])", re.IGNORECASE)
+
+
+def _filename_index(path: Path, pattern: re.Pattern[str], label: str) -> int | None:
+    matches = list(pattern.finditer(path.stem))
+    if len(matches) > 1:
+        raise ValueError(f"{path.name}: filename contains more than one {label} index")
+    if not matches:
+        return None
+    return int(matches[0].group("index"))
+
+
+def _stack_optional_attribute(meshes: list[TriangleMesh], name: str) -> NDArray | None:
+    values = [getattr(mesh, name) for mesh in meshes]
+    present = [value is not None for value in values]
+    if any(present) and not all(present):
+        raise ValueError(
+            f"Cannot stack directory: {name} are present in only some input files"
+        )
+    if not any(present):
+        return None
+    widths = {value.shape[1] for value in values if value is not None}
+    if len(widths) != 1:
+        raise ValueError(
+            f"Cannot stack directory: {name} have inconsistent component counts"
+        )
+    return np.ascontiguousarray(np.concatenate(values, axis=0))
+
+
+def import_mesh_directory(
+    path: Union[str, Path],
+    *,
+    pattern: str = "*.vtp",
+    format: str = "auto",
+    weld: bool = True,
+) -> TriangleMesh:
+    """Read per-timepoint mesh files into one nD triangle mesh.
+
+    Filenames must carry ``T<number>`` and may all carry ``Ch<number>``. Numeric
+    values are preserved as coordinates, so a missing timepoint remains a gap rather
+    than shifting later data. Files are ordered by ``(time, channel, name)`` and faces
+    are rebased into the concatenated vertex array.
+    """
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"Mesh directory not found: {path}")
+    if not path.is_dir():
+        raise ValueError(f"Mesh directory is not a directory: {path}")
+
+    files = sorted(candidate for candidate in path.glob(pattern) if candidate.is_file())
+    if not files:
+        raise ValueError(f"{path}: no mesh files match pattern {pattern!r}")
+
+    indexed: list[tuple[int, int | None, Path]] = []
+    for candidate in files:
+        time = _filename_index(candidate, _TIME_INDEX, "time")
+        if time is None:
+            raise ValueError(f"{candidate.name}: filename has no T<number> time index")
+        channel = _filename_index(candidate, _CHANNEL_INDEX, "channel")
+        indexed.append((time, channel, candidate))
+
+    has_channels = [channel is not None for _, channel, _ in indexed]
+    if any(has_channels) and not all(has_channels):
+        raise ValueError(
+            "Cannot stack directory: channel indices are present in only some filenames"
+        )
+
+    coordinates = [(time, channel) for time, channel, _ in indexed]
+    if len(set(coordinates)) != len(coordinates):
+        raise ValueError("Cannot stack directory: duplicate time/channel coordinates")
+    indexed.sort(
+        key=lambda item: (item[0], -1 if item[1] is None else item[1], item[2].name)
+    )
+
+    meshes = [import_mesh(file, format=format, weld=weld) for _, _, file in indexed]
+    total_vertices = sum(mesh.n_vertices for mesh in meshes)
+    if total_vertices > np.iinfo(np.uint32).max:
+        raise ValueError(
+            f"Cannot stack {total_vertices} vertices: mesh face indices are uint32"
+        )
+
+    vertex_blocks: list[NDArray[np.float32]] = []
+    face_blocks: list[NDArray[np.uint32]] = []
+    offset = 0
+    for (time, channel, _), mesh in zip(indexed, meshes):
+        discrete = [float(time)]
+        if channel is not None:
+            discrete.append(float(channel))
+        extra = np.broadcast_to(
+            np.asarray(discrete, dtype=np.float32), (mesh.n_vertices, len(discrete))
+        )
+        vertex_blocks.append(
+            np.ascontiguousarray(np.column_stack((mesh.vertices, extra)))
+        )
+        face_blocks.append(np.ascontiguousarray(mesh.faces + np.uint32(offset)))
+        offset += mesh.n_vertices
+
+    formats = {mesh.source_format for mesh in meshes}
+    return TriangleMesh(
+        vertices=np.ascontiguousarray(np.concatenate(vertex_blocks, axis=0)),
+        faces=np.ascontiguousarray(np.concatenate(face_blocks, axis=0)),
+        normals=_stack_optional_attribute(meshes, "normals"),
+        colors=_stack_optional_attribute(meshes, "colors"),
+        source_format=formats.pop() if len(formats) == 1 else "mixed",
+        dimension_names=("x", "y", "z", "t", "c")
+        if all(has_channels)
+        else ("x", "y", "z", "t"),
+    )
+
+
 __all__ = [
     "MESH_FORMATS",
     "TriangleMesh",
     "detect_mesh_format",
     "import_mesh",
+    "import_mesh_directory",
     "is_binary_stl",
 ]

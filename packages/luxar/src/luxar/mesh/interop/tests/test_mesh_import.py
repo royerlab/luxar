@@ -9,7 +9,13 @@ import pytest
 
 from .._stl import is_binary_stl
 from .._weld import weld_vertices
-from ..mesh_import import MESH_FORMATS, TriangleMesh, detect_mesh_format, import_mesh
+from ..mesh_import import (
+    MESH_FORMATS,
+    TriangleMesh,
+    detect_mesh_format,
+    import_mesh,
+    import_mesh_directory,
+)
 from ._synthetic import (
     OBJ_MID_COLORS,
     SUFFIXES,
@@ -583,6 +589,49 @@ class TestTriangleMeshInvariants:
                 vertices=np.zeros((3, 3), dtype=np.float32),
                 faces=np.array([[0, 1, 9]], dtype=np.uint32),
             )
+
+
+class TestMeshDirectoryImport:
+    def test_stacks_numeric_time_and_channel_coordinates(self, tmp_path: Path) -> None:
+        write_ply_binary(tmp_path / "sample_Ch1-registered-T0010.ply", GT)
+        write_ply_binary(tmp_path / "sample_Ch0-registered-T0002.ply", GT)
+
+        mesh = import_mesh_directory(tmp_path, pattern="*.ply")
+
+        assert mesh.dimension_names == ("x", "y", "z", "t", "c")
+        assert mesh.vertices.shape == (8, 5)
+        assert np.array_equal(mesh.vertices[:4, 3:], [[2, 0]] * 4)
+        assert np.array_equal(mesh.vertices[4:, 3:], [[10, 1]] * 4)
+        assert np.array_equal(mesh.faces[4:], mesh.faces[:4] + 4)
+        assert mesh.normals is not None
+        assert mesh.colors is not None
+        assert np.array_equal(mesh.normals[4:], mesh.normals[:4])
+        assert np.array_equal(mesh.colors[4:], mesh.colors[:4])
+
+    def test_missing_timepoints_remain_coordinate_gaps(self, tmp_path: Path) -> None:
+        write_ply_binary(tmp_path / "surface-T0001.ply", GT)
+        write_ply_binary(tmp_path / "surface-T0003.ply", GT)
+
+        mesh = import_mesh_directory(tmp_path, pattern="*.ply")
+
+        assert mesh.dimension_names == ("x", "y", "z", "t")
+        assert np.array_equal(np.unique(mesh.vertices[:, 3]), [1, 3])
+
+    def test_mixed_or_duplicate_coordinates_are_refused(self, tmp_path: Path) -> None:
+        write_ply_binary(tmp_path / "a_Ch0-T0001.ply", GT)
+        write_ply_binary(tmp_path / "b-T0002.ply", GT)
+        with pytest.raises(ValueError, match="only some filenames"):
+            import_mesh_directory(tmp_path, pattern="*.ply")
+
+        (tmp_path / "b-T0002.ply").unlink()
+        write_ply_binary(tmp_path / "b_Ch0-T0001.ply", GT)
+        with pytest.raises(ValueError, match="duplicate time/channel"):
+            import_mesh_directory(tmp_path, pattern="*.ply")
+
+    def test_every_matched_file_requires_a_time_index(self, tmp_path: Path) -> None:
+        write_ply_binary(tmp_path / "surface.ply", GT)
+        with pytest.raises(ValueError, match=r"no T<number> time index"):
+            import_mesh_directory(tmp_path, pattern="*.ply")
 
     def test_attribute_length_must_match_vertex_count(self) -> None:
         with pytest.raises(ValueError, match="normals"):

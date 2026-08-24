@@ -20,12 +20,12 @@ import numpy as np
 import typer
 from arbol import aprint, asection
 
-from ...mesh.interop import MESH_FORMATS, TriangleMesh, import_mesh
-
-
-def _axis_names(ndim: int) -> list[str]:
-    """Names for a 3D import. Mesh files are always 3D, so this is x/y/z."""
-    return ["x", "y", "z"][:ndim]
+from ...mesh.interop import (
+    MESH_FORMATS,
+    TriangleMesh,
+    import_mesh,
+    import_mesh_directory,
+)
 
 
 def run_import(
@@ -40,8 +40,9 @@ def run_import(
     weld: bool,
     keep_normals: bool,
     overwrite: bool,
+    pattern: str = "*.vtp",
 ) -> TriangleMesh:
-    """Read a mesh file and write it as a single-node Luxar scene."""
+    """Read a mesh file or indexed directory into a single-node Luxar scene."""
     from luxar import Dimension, Dimensions, LuxarZarrCompiler
     from luxar.core.viewer_config import ViewerConfig
 
@@ -79,7 +80,11 @@ def run_import(
         shutil.rmtree(output_path) if output_path.is_dir() else output_path.unlink()
 
     with asection(f"Importing {input_path.name}"):
-        mesh = import_mesh(input_path, format=format, weld=weld)
+        mesh = (
+            import_mesh_directory(input_path, pattern=pattern, format=format, weld=weld)
+            if input_path.is_dir()
+            else import_mesh(input_path, format=format, weld=weld)
+        )
         aprint(
             f"Read {mesh.n_vertices:,} vertices / {mesh.n_faces:,} faces "
             f"({mesh.source_format})"
@@ -87,13 +92,13 @@ def run_import(
 
         vertices = mesh.vertices.astype(np.float32, copy=True)
         if scale != 1.0:
-            vertices *= scale
+            vertices[:, :3] *= scale
         if center:
             # Centre on the BOUNDING-BOX midpoint, not the vertex mean: the mean is
             # pulled toward wherever the mesh happens to be finely tessellated, which
             # for a scan with a dense region puts the model off-centre in the viewer.
-            midpoint = (vertices.min(axis=0) + vertices.max(axis=0)) * 0.5
-            vertices -= midpoint
+            midpoint = (vertices[:, :3].min(axis=0) + vertices[:, :3].max(axis=0)) * 0.5
+            vertices[:, :3] -= midpoint
             aprint(f"Centred on the bounding-box midpoint {midpoint.round(4).tolist()}")
 
         normals = mesh.normals if keep_normals else None
@@ -104,7 +109,15 @@ def run_import(
             )
 
         dims = Dimensions(
-            [Dimension(n, unit=unit, display=True) for n in _axis_names(3)]
+            [
+                Dimension(
+                    dimension_name,
+                    unit=unit if index < 3 else "",
+                    display=index < 3,
+                    discrete=index >= 3,
+                )
+                for index, dimension_name in enumerate(mesh.dimension_names)
+            ]
         )
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
@@ -166,8 +179,7 @@ def import_command(
     input_path: Path = typer.Argument(
         ...,
         exists=True,
-        help="Classical mesh file: .ply (ascii or binary), .obj, .stl (ascii or "
-        "binary), .gltf or .glb.",
+        help="Classical mesh file, or a directory of T<number>-indexed mesh files.",
     ),
     output_path: Path = typer.Argument(..., help="Output .luxar.zarr scene."),
     format: str = typer.Option(
@@ -205,6 +217,11 @@ def import_command(
     overwrite: bool = typer.Option(
         False, "--overwrite", help="Replace an existing output."
     ),
+    pattern: str = typer.Option(
+        "*.vtp",
+        "--pattern",
+        help="File glob used when INPUT_PATH is a directory.",
+    ),
 ) -> None:
     """Convert a classical mesh file into a Luxar scene.
 
@@ -231,6 +248,7 @@ def import_command(
             weld=weld,
             keep_normals=keep_normals,
             overwrite=overwrite,
+            pattern=pattern,
         )
     except (ValueError, FileNotFoundError, FileExistsError, RuntimeError) as exc:
         aprint(f"Error: {exc}")

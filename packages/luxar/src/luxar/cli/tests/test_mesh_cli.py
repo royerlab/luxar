@@ -94,6 +94,44 @@ class TestMeshImport:
         # the count here is what would catch a regression that skipped it.
         assert int(node.faces.max()) < 4
 
+    def test_imports_a_time_indexed_directory_as_one_4d_mesh(
+        self, tmp_path: Path
+    ) -> None:
+        source = tmp_path / "meshes" / "cells"
+        source.mkdir(parents=True)
+        write_ply_binary(source / "cell-T0001.ply", GT)
+        write_ply_binary(source / "cell-T0003.ply", GT)
+        out = tmp_path / "cells.luxar.zarr"
+
+        result = runner.invoke(
+            app,
+            [
+                "mesh",
+                "import",
+                str(source),
+                str(out),
+                "--pattern",
+                "*.ply",
+                "--no-center",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+
+        node = LuxarScene.load(out).get_mesh("mesh")
+        assert node.vertices.shape == (8, 4)
+        assert node.faces.shape == (8, 3)
+        assert np.array_equal(np.unique(node.vertices[:, 3]), [1, 3])
+        assert np.array_equal(node.faces[4:], node.faces[:4] + 4)
+        dimensions = zarr.open_group(out, mode="r").attrs["scene_dimensions"]
+        assert [item["name"] for item in dimensions["dimensions"]] == [
+            "x",
+            "y",
+            "z",
+            "t",
+        ]
+        assert dimensions["dimensions"][3]["discrete"] is True
+        assert dimensions["dimensions"][3]["display"] is False
+
     def test_centering_is_on_by_default_and_can_be_turned_off(
         self, fixtures: dict[str, Path], tmp_path: Path
     ) -> None:
