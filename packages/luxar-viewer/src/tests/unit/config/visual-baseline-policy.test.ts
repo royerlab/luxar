@@ -1,4 +1,5 @@
-import { readdirSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -6,8 +7,12 @@ import { describe, expect, it } from 'vitest';
 const E2E_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../e2e');
 
 function committedVisualBaselines(): string[] {
-  return (readdirSync(E2E_ROOT, { recursive: true }) as string[])
-    .filter((entry) => entry.endsWith('.png') && entry.includes('-snapshots/'))
+  return execFileSync('git', ['ls-files', '--', '*-snapshots/*.png'], {
+    cwd: E2E_ROOT,
+    encoding: 'utf8',
+  })
+    .split('\n')
+    .filter(Boolean)
     .sort();
 }
 
@@ -16,5 +21,20 @@ describe('visual baseline policy', () => {
     const baselines = committedVisualBaselines();
     expect(baselines.length).toBeGreaterThan(0);
     expect(baselines.filter((baseline) => !baseline.endsWith('-chromium-linux.png'))).toEqual([]);
+  });
+
+  it('ignores untracked platform snapshots', () => {
+    const snapshotDir = path.join(E2E_ROOT, 'visual-baseline-policy.spec.ts-snapshots');
+    const untrackedBaseline = path.join(snapshotDir, 'untracked-chromium-darwin.png');
+
+    mkdirSync(snapshotDir);
+    writeFileSync(untrackedBaseline, 'not a tracked baseline');
+    try {
+      expect(committedVisualBaselines()).not.toContain(
+        'visual-baseline-policy.spec.ts-snapshots/untracked-chromium-darwin.png'
+      );
+    } finally {
+      rmSync(snapshotDir, { recursive: true });
+    }
   });
 });
