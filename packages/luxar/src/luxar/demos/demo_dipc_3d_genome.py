@@ -35,7 +35,8 @@ WHAT THIS DEMO SHOWS
   all the chromatin Dip-C reconstructed for this cell (chr1-22 + X, both copies
   -- 46 chromosomes), which is why isolating one copy without the scaffold used
   to hide half of what is actually there.
-- Hover a strand to read its chromosome and genomic coordinate.
+- Hover a strand to read its chromosome and genomic coordinate; click a bead
+  to open its hg19 locus in the UCSC Genome Browser.
 
 DATA SOURCE & CITATION
 ----------------------
@@ -409,9 +410,10 @@ def load_or_build_polylines(recompute: bool) -> list[dict]:
 
 HAPLOTYPE_NAMES = ["Maternal", "Paternal"]
 
-# GSE117876's human GM12878 samples were processed against hg19. The Dip-C
-# repository's visualization workflow for these structures likewise uses its
-# hg19 chromosome metadata; this must not be inferred from species at link time.
+# Dip-C's GM12878 SNP coordinates fit hg19; sampled maxima on six of eight
+# chromosomes exceed hg38. The shipped beads agree: 13 of 23 chromosomes extend
+# past hg38, while only chr7 exceeds hg19, by 1.3 kb. Keep the assembly explicit
+# rather than inferring it from the species at link time.
 GENOME_ASSEMBLY = "hg19"
 
 # Dip-C samples this structure at an approximately 20 kb bead pitch, so link to
