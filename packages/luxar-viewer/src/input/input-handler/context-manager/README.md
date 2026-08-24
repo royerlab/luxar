@@ -10,7 +10,7 @@ Pure helpers used only by `../context-manager.ts`.
     chord and defaults to the normalized base key. Allowlist entries
     match either the base key or exact chord; blocklist entries match
     only the exact chord, so blocking `w` does not block `Ctrl+W`.
-    Chord spelling and modifier order are normalized. Empty/absent
+    Chord spelling and modifier order are normalized. An absent
     `allowedKeys` means "allow all"; an empty array means "allow none".
     `blockedKeys` always wins over `allowedKeys` (defense in depth).
   - `sortContextsByPriority(configs, excludeContext?)` — returns the
