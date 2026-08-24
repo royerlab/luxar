@@ -19,6 +19,11 @@ export interface KeyFilterConfig {
   blockedKeys?: string[];
 }
 
+/** Normalize a binding chord to the registry's case-insensitive sorted form. */
+export function canonicalizeBindingKey(bindingKey: string): string {
+  return bindingKey.toLowerCase().split('+').sort().join('+');
+}
+
 /**
  * Decide whether a key binding is allowed in a context based on its filter config.
  *
@@ -48,15 +53,19 @@ export function isKeyAllowedInContext(
   bindingKey = key.toLowerCase()
 ): boolean {
   const normalizedKey = key.toLowerCase();
-  const normalizedBindingKey = bindingKey.toLowerCase();
+  const normalizedBindingKey = canonicalizeBindingKey(bindingKey);
 
-  if (config.blockedKeys?.some((blockedKey) => blockedKey.toLowerCase() === normalizedBindingKey)) {
+  if (
+    config.blockedKeys?.some(
+      (blockedKey) => canonicalizeBindingKey(blockedKey) === normalizedBindingKey
+    )
+  ) {
     return false;
   }
   if (
     config.allowedKeys &&
     !config.allowedKeys.some((allowedKey) => {
-      const normalizedAllowedKey = allowedKey.toLowerCase();
+      const normalizedAllowedKey = canonicalizeBindingKey(allowedKey);
       return (
         normalizedAllowedKey === normalizedKey || normalizedAllowedKey === normalizedBindingKey
       );

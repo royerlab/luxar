@@ -14,6 +14,7 @@
 import { config } from '../../config';
 import { log, Modules, LogEmoji } from '../../utils/log';
 import {
+  canonicalizeBindingKey,
   isKeyAllowedInContext as isKeyAllowedInContextPure,
   sortContextsByPriority,
 } from './context-manager/routing-rules';
@@ -673,7 +674,7 @@ export class InputContextManager {
       if (binding.modifiers.meta) parts.push('meta');
     }
 
-    return parts.sort().join('+');
+    return canonicalizeBindingKey(parts.join('+'));
   }
 
   /**
@@ -711,7 +712,7 @@ export class InputContextManager {
     if (event.altKey && key !== 'alt') parts.push('alt');
     if (event.metaKey && key !== 'meta') parts.push('meta');
 
-    return parts.sort().join('+');
+    return canonicalizeBindingKey(parts.join('+'));
   }
 
   /**

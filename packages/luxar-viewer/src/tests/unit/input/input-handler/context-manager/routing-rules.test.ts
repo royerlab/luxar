@@ -8,6 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
 import {
+  canonicalizeBindingKey,
   isKeyAllowedInContext,
   sortContextsByPriority,
   type KeyFilterConfig,
@@ -73,6 +74,20 @@ describe('isKeyAllowedInContext', () => {
     expect(
       isKeyAllowedInContext('ArrowUp', { blockedKeys: ['arrowup+shift'] }, 'arrowup+shift')
     ).toBe(false);
+  });
+
+  it('normalizes hand-written modifier order in blockedKeys', () => {
+    expect(
+      isKeyAllowedInContext('ArrowUp', { blockedKeys: ['Shift+ArrowUp'] }, 'arrowup+shift')
+    ).toBe(false);
+    expect(
+      isKeyAllowedInContext('ArrowUp', { blockedKeys: ['ArrowUp+Shift'] }, 'arrowup+shift')
+    ).toBe(false);
+  });
+
+  it('canonicalizes the literal plus key without losing it', () => {
+    expect(canonicalizeBindingKey('Ctrl++')).toBe('++ctrl');
+    expect(isKeyAllowedInContext('+', { blockedKeys: ['Ctrl++'] }, '++ctrl')).toBe(false);
   });
 });
 
