@@ -25,3 +25,8 @@ Extracted so they can be unit-tested without setting up a full
 `InputContextManager` instance with bindings, listeners, and an event
 source. The matching suite lives at
 `tests/unit/input/input-handler/context-manager/routing-rules.test.ts`.
+
+The parent dispatcher treats handlers as accepting an event unless they return
+`false` synchronously. A declined event continues through passthrough without
+calling `preventDefault`; async handlers are always accepted. Keyup routing
+likewise skips bindings without a `keyupHandler` and keeps searching.

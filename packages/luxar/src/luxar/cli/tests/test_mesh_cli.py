@@ -147,6 +147,60 @@ class TestMeshImport:
         assert dimensions["dimensions"][4]["range"] == [0.0, 2.0]
         assert dimensions["dimensions"][4]["step"] == 2.0
 
+    @pytest.mark.parametrize("axis", ["t", "c"])
+    @pytest.mark.parametrize(
+        ("coordinates", "expected_step"),
+        [
+            ([0, 1, 2], 1.0),
+            ([0, 5, 10], 5.0),
+            ([0, 6, 10], 2.0),
+            ([1, 6, 11], 5.0),
+            ([0], 1.0),
+            ([7], 1.0),
+        ],
+        ids=[
+            "consecutive",
+            "strided",
+            "irregular",
+            "offset-stride",
+            "singleton-zero",
+            "singleton-nonzero",
+        ],
+    )
+    def test_directory_dimension_step_follows_coordinate_stride(
+        self,
+        tmp_path: Path,
+        axis: str,
+        coordinates: list[int],
+        expected_step: float,
+    ) -> None:
+        source = tmp_path / "frames"
+        source.mkdir()
+        for coordinate in coordinates:
+            filename = (
+                f"surface-T{coordinate:04d}.vtp"
+                if axis == "t"
+                else f"surface-Ch{coordinate}-T0001.vtp"
+            )
+            WRITERS["vtp"](source / filename, GT)
+        out = tmp_path / "frames.luxar.zarr"
+
+        result = runner.invoke(
+            app, ["mesh", "import", str(source), str(out), "--no-center"]
+        )
+
+        assert result.exit_code == 0, result.output
+        node = LuxarScene.load(out).get_mesh("mesh")
+        dimensions = zarr.open_group(out, mode="r").attrs["scene_dimensions"]
+        dimension_names = [item["name"] for item in dimensions["dimensions"]]
+        dimension_index = dimension_names.index(axis)
+        assert np.array_equal(np.unique(node.vertices[:, dimension_index]), coordinates)
+        dimension = next(
+            item for item in dimensions["dimensions"] if item["name"] == axis
+        )
+        assert dimension["range"] == [float(coordinates[0]), float(coordinates[-1])]
+        assert dimension["step"] == expected_step
+
     def test_directory_pattern_rebases_heterogeneous_ply_meshes(
         self, tmp_path: Path
     ) -> None:

@@ -3,15 +3,16 @@
 Private helpers behind the `M`-key data-loading monitor. The public
 facade lives at `../data-loading-monitor.ts` and owns the panel
 lifecycle, event subscription, and three-state UI (hidden → mini →
-expanded). This folder holds the helpers it coordinates each tick,
-including the stateful provider registry, HTML templates, loading
-advisor, event queue, polling loop, and hierarchical timing panel.
+expanded). This folder holds the focused helpers it coordinates each
+tick: the stateful provider registry, HTML templates, the loading
+advisor, the event queue, the polling loop, and the hierarchical
+timing panel.
 
 ## Files
 
 | File              | Role                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `templates.ts`    | HTML-string template functions for every cell, card, progress bar, status badge, tab content, scene-graph tree, and memory section the monitor paints. Also re-exports `MemoryMetrics` and friends. The scene-graph tree renders LOD/partition kind badges (`K LODs` / `N parts`) and a live LOD chip (`L{i}/{n}` active level, or `LOD {loaded}/{total}` + refining/residency) via `renderKindBadge` / `lodChipContent`; `summariseLodStates` builds the header summary.                                                                               |
+| `templates/`      | HTML-string templates split by concern: shared primitives and formatting, Overview, Cache, Memory, Insights, and scene-graph rendering.                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `advisor.ts`      | `LoadingAdvisor` — consumes `MonitorEvent`s and rolled-up `LoaderMetrics` / `MemoryMetrics` and emits `Recommendation`s (slow query, slow load, high query time, low query efficiency, high error rate, low GPU reuse rate, excessive accumulator growth, …).                                                                                                                                                                                                                                                                                           |
 | `event-queue.ts`  | Generic `EventQueue<T>` — bounded ring buffer with non-blocking `push` and atomic `drain()` used to decouple loader event producers from the polling consumer.                                                                                                                                                                                                                                                                                                                                                                                          |
 | `polling-loop.ts` | `PollingLoop` — restartable interval timer. Errors thrown from `onTick` are logged via `utils/log` and never stop the loop.                                                                                                                                                                                                                                                                                                                                                                                                                             |
@@ -19,7 +20,7 @@ advisor, event queue, polling loop, and hierarchical timing panel.
 | `timing-panel.ts` | Renderer + in-place updater for the collapsible per-frame timing tree, fed by `profiling/update-profiler`. Module-level `expandedState` map persists collapse state across rerenders. The footer also carries the depth-sort verdict: passed `depthSortUnavailable` (from `rendering/depth-sort-coordinator::isDepthSortAvailable`) it prints `depth sort UNAVAILABLE` in place of the sort count and suppresses the "No timing data yet" empty state, so a session drawing order-dependent geometry in storage order cannot be buried by zero timings. |
 
 `README.md` for this folder; per-subpackage READMEs live under
-`metrics/` and `tabs/`.
+`templates/`, `metrics/`, and `tabs/`.
 
 ## How the pieces fit together
 
@@ -31,7 +32,7 @@ LoaderMonitor events ──► EventQueue ──► PollingLoop.onTick ─┐
      metrics/rates.ts + metrics/cache.ts   (roll up rates & cache state)
                 │
                 ▼
-   templates.ts (full repaint)  ◄──┐
+   templates/* (full repaint)   ◄──┐
                 │                  │ structure missing
                 ▼                  │
    tabs/cache.ts (incremental)  ───┘ patch-by-`data-field`
@@ -57,7 +58,7 @@ The orchestrator at `../data-loading-monitor.ts` owns:
 
 ## Status badges and color classes
 
-`templates.ts` is the single source of truth for the cache-status
+`templates/cache.ts` is the single source of truth for the cache-status
 pills surfaced in the Cache tab. `CACHE_BADGE_COLOR` maps each
 `CacheStatusBadge` (`cache-enabled`, `no-cache`, `disabled-config`,
 `opfs-unavailable`, `quota-constrained`, `cache-errors-detected`,
@@ -96,11 +97,11 @@ timing panel's per-operation explanations live in the `TOOLTIPS` map in
 ## Contracts and invariants
 
 - **Templates produce structure, updaters patch values.**
-  `templates.ts` paints the full HTML on a tab switch or a structural
+  The concern modules under `templates/` paint the full HTML on a tab switch or a structural
   change; `tabs/cache.ts` (and the per-tick updaters in the
   orchestrator) only rewrite values via `data-field` selectors. If a
   selector misses, the updater returns `false` and the orchestrator
-  rebuilds via `templates.ts`.
+  rebuilds via the matching template module.
 - **`EventQueue.drain()` is atomic** — the internal array is
   reassigned in one step so producers pushing concurrently never
   observe a half-drained queue.
@@ -151,7 +152,7 @@ timing panel's per-operation explanations live in the `TOOLTIPS` map in
 ## Failed-load recovery surface
 
 The Overview tab shows a warning banner while the SceneLoader has recorded
-load failures (`renderFailedLoadsBanner` in `templates.ts`), fed by the
+load failures (`renderFailedLoadsBanner` in `templates/overview.ts`), fed by the
 `FailedLoadsProviderPort` injected through `setFailedLoadsProvider` (wired in
 `data/scene-loader/monitor/monitor-wiring.ts`). Its Retry button
 (`data-action="retryFailedLoads"`) runs `SceneLoader.retryAllFailedLoaders`
@@ -170,11 +171,14 @@ no external module imports it directly, including the provider registry.
 
 ## Subpackages
 
+- [`templates/`](./templates/README.md) — HTML-string renderers split
+  by concern, their dependency direction, and the Cache tab's stable
+  incremental-update markup contract.
 - [`metrics/`](./metrics/README.md) — Pure roll-up helpers for cache
   metrics and per-second event rates (`aggregateCacheMetrics`,
   `calculateRates`).
 - [`tabs/`](./tabs/README.md) — Per-tick tab updaters that patch the
-  static structure painted by `templates.ts` (currently
+  static structure painted by `templates/` (currently
   `updateCacheTab` plus `dom-helpers`).
 
 ## See Also

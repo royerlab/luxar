@@ -2,7 +2,7 @@
  * Incremental Cache-tab updater. The Cache tab paints the SliceCache
  * ("S-cache") + L0/L1/L2 stats + total cache memory bar + eviction
  * counts using the data-field selector pattern. The renderer (in
- * `../templates.ts`) paints the static structure once; this module
+ * `../templates/cache.ts`) paints the static structure once; this module
  * handles per-tick value patching.
  *
  * Inputs are the container element and the pre-aggregated
@@ -13,12 +13,6 @@
 
 import type { CacheMetrics } from '../../../types/data-monitor-types';
 import {
-  formatNumber as templateFormatNumber,
-  formatBytes as templateFormatBytes,
-  getColorClass,
-  getCacheHitRateColorClassWithGuard,
-  getCacheMemoryColorClass,
-  countColorClass,
   renderCacheStatusBadges,
   formatValidationMode,
   formatLastValidated,
@@ -26,7 +20,14 @@ import {
   lastValidatedTooltip,
   lastValidatedLabel,
   l2ErrorTotal,
-} from '../templates';
+  getCacheHitRateColorClassWithGuard,
+} from '../templates/cache';
+import {
+  formatNumber as templateFormatNumber,
+  formatBytes as templateFormatBytes,
+  getCacheMemoryColorClass,
+} from '../templates/format';
+import { countColorClass, getColorClass } from '../templates/primitives';
 import { patchField, updateColorClass, updateColorClassByField } from './dom-helpers';
 
 /**
