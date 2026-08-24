@@ -740,6 +740,12 @@ def build_scene(
                     opacity=0.08,
                     intensity=0.08,
                     labels=nt_labels,
+                    # Copy, but deliberately no link: a connection names a PAIR
+                    # of neurons ("orn va3 → va3 adpn [41 synapses]"), and the
+                    # Codex cell_details URL takes a single root_id — the neuron
+                    # nodes already link individually. Copying the pair beats a
+                    # pick that silently does nothing.
+                    copy="{hover_label}",
                     layer=True,
                 )
 

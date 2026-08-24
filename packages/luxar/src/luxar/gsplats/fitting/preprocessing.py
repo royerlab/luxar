@@ -874,10 +874,22 @@ def _add_grid_fallback_seeds(
         grid_coords_list.append(coords)
 
     grid_coords: np.ndarray = np.array(grid_coords_list, dtype=float)
+    # An empty product collapses to shape (0,), NOT (0, ndim). That happens
+    # whenever `spacing // 2` lands past the end of any axis, which is easy to
+    # hit when `needed` is tiny: needed=1 gives target_grid_points=4, so a large
+    # tile gets a spacing wider than the tile itself and every range is empty.
+    # The spatial query then rejects the malformed array with
+    # "query must have shape (Q, 3); got (0,)" and takes the whole fit down —
+    # 29 minutes in, on the last tile, after all the real work was done.
+    # Normalise the degenerate case to a well-formed empty point set.
+    if grid_coords.size == 0:
+        grid_coords = np.empty((0, ndim), dtype=float)
 
     # Remove grid points too close to existing seeds (if any exist)
     # But be less aggressive about filtering to ensure we get enough
-    if len(existing_seeds) > 0:
+    # (skip entirely when there is nothing to filter — querying an empty set is
+    # both wasteful and, historically, fatal).
+    if len(existing_seeds) > 0 and len(grid_coords) > 0:
         from luxar.gsplats.spatial_hash import BatchedSpatialHashGrid
 
         # Use smaller min_distance to be more permissive
