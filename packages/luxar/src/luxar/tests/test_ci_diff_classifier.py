@@ -389,6 +389,19 @@ def _run_queue_watchdog(
 ) -> tuple[subprocess.CompletedProcess[str], int, bool]:
     """Run the real inline watchdog against deterministic GitHub API snapshots."""
     watchdog = yaml.safe_load(workflow)["jobs"]["queue-watchdog"]["steps"][0]["run"]
+    hosted_jobs = [
+        _hosted_job("changes", "completed"),
+        _hosted_job("pick-runner", "completed"),
+        _hosted_job("queue-watchdog", "in_progress"),
+        _hosted_job("docs-quality", "queued"),
+    ]
+    job_snapshots = [
+        snapshot
+        if isinstance(snapshot, str)
+        or any(job["name"] == "queue-watchdog" for job in snapshot)
+        else [*hosted_jobs, *snapshot]
+        for snapshot in job_snapshots
+    ]
     snapshots_path = tmp_path / "snapshots.json"
     counter_path = tmp_path / "jobs-api-calls"
     heartbeat_counter_path = tmp_path / "heartbeat-api-calls"
@@ -422,15 +435,14 @@ if "/jobs?" in endpoint:
         raise SystemExit(0)
     print(json.dumps({"jobs": jobs}))
 elif "/variables/LUXAR_CI_HEARTBEAT" in endpoint:
+    if "--jq" in sys.argv:
+        raise SystemExit(f"unexpected --jq for heartbeat endpoint: {sys.argv!r}")
     counter = Path(os.environ["WATCHDOG_HEARTBEAT_COUNTER"])
     call = int(counter.read_text() or "0") if counter.exists() else 0
     counter.write_text(str(call + 1))
     snapshots = json.loads(Path(os.environ["WATCHDOG_HEARTBEATS"]).read_text())
     heartbeat = snapshots[min(call, len(snapshots) - 1)]
-    if "--jq" in sys.argv:
-        print(heartbeat["value"])
-    else:
-        print(json.dumps(heartbeat))
+    print(json.dumps(heartbeat))
 elif endpoint.endswith("/cancel"):
     Path(os.environ["WATCHDOG_CANCELLED"]).write_text("yes")
 else:
@@ -471,7 +483,7 @@ print(1000 + call * int(os.environ["WATCHDOG_DATE_STEP"]))
         "WATCHDOG_CANCELLED": str(cancel_path),
     }
     result = subprocess.run(
-        ["bash", "-euo", "pipefail", "-c", watchdog],
+        ["bash", "-e", "-c", watchdog],
         text=True,
         capture_output=True,
         check=False,
@@ -487,7 +499,7 @@ print(1000 + call * int(os.environ["WATCHDOG_DATE_STEP"]))
 
 
 def _obsidian_job(name: str, status: str) -> dict[str, object]:
-    return {"name": name, "status": status, "labels": ["self-hosted", "obsidian"]}
+    return {"name": name, "status": status, "labels": ["obsidian"]}
 
 
 def _hosted_job(name: str, status: str) -> dict[str, object]:

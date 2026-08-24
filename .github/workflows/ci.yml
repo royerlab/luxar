@@ -302,9 +302,8 @@ jobs:
                                                       | select(.labels | index("obsidian"))
                                                       | .name] | join(", ")') \
               || { echo "running-job selection failed; retrying"; sleep 30; continue; }
-            fanout_pending=$(echo "$jobs" | jq -r '[.jobs[] | select(.status == "queued" or .status == "in_progress")
-                                                            | select((.labels | index("obsidian")) | not)
-                                                            | select(.name != "queue-watchdog")
+            fanout_pending=$(echo "$jobs" | jq -r '[.jobs[] | select(.name == "changes")
+                                                            | select(.status == "queued" or .status == "in_progress")
                                                             | .name] | join(", ")') \
               || { echo "fan-out job selection failed; retrying"; sleep 30; continue; }
             if [ "$visible" -gt 0 ]; then seen_obsidian=1; fi
