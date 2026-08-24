@@ -136,7 +136,7 @@ def test_second_interrupt_jumps_to_sigkill(monkeypatch) -> None:
     state = {"sigint_raised": False, "dead": False}
 
     def fake_killpg(pgid: int, sig: int) -> None:
-        """Raise a second interrupt during the first liveness probe."""
+        """Raise a second interrupt while the SIGINT rung is being sent."""
         calls.append(sig)
         if sig == 0:  # liveness probe
             if state["dead"]:
