@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 from .._stl import is_binary_stl
-from .._weld import weld_vertices
+from .._weld import prune_unreferenced_vertices, weld_vertices
 from ..mesh_import import MESH_FORMATS, TriangleMesh, detect_mesh_format, import_mesh
 from ._synthetic import (
     OBJ_MID_COLORS,
@@ -1883,6 +1883,20 @@ class TestTriangleMeshInvariants:
 
 
 class TestWelding:
+    def test_pruning_an_already_compact_mesh_reuses_its_arrays(self) -> None:
+        vertices = np.ascontiguousarray(GT.vertices, dtype=np.float32)
+        faces = np.ascontiguousarray(GT.faces, dtype=np.uint32)
+        normals = np.ascontiguousarray(GT.normals, dtype=np.float32)
+
+        compact_vertices, compact_faces, extras = prune_unreferenced_vertices(
+            vertices, faces, extras={"normals": normals, "colors": None}
+        )
+
+        assert compact_vertices is vertices
+        assert compact_faces is faces
+        assert extras["normals"] is normals
+        assert extras["colors"] is None
+
     """The weld key is position PLUS every per-vertex attribute, not position alone.
 
     The two ``write_ply_crease`` arms are each other's sensitivity control, so neither
