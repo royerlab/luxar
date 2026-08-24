@@ -308,12 +308,13 @@ def _stack_optional_attribute(
         )
     if not any(present):
         return None
-    widths = {value.shape[1] for value in values if value is not None}
+    arrays = [value for value in values if value is not None]
+    widths = {value.shape[1] for value in arrays}
     if len(widths) != 1:
         raise ValueError(
             f"Cannot stack directory: {name} have inconsistent component counts"
         )
-    return np.concatenate(values, axis=0)
+    return np.concatenate(arrays, axis=0)
 
 
 def import_mesh_directory(
