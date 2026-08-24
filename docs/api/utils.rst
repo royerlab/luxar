@@ -18,7 +18,7 @@ Array Utilities
 Demo Generators
 ---------------
 
-.. automodule:: luxar.utils.demos
+.. automodule:: luxar.utils.scenes
    :members:
    :undoc-members:
 

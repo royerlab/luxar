@@ -1286,10 +1286,11 @@ Sibling demos are importable normally
 (`from luxar.demos.demo_x import helper`) — no `importlib` file-path tricks.
 
 `luxar.demos` is the ONLY spelling for these helpers: never import
-`luxar.utils.demos` or `luxar.utils.data_fetch` directly from a demo, even though
+the concern modules under `luxar.utils` or `luxar.utils.data_fetch` directly from a demo, even though
 that is where they live. `tests/test_demo_import_spelling.py` fails the build on
-every deep spelling — `from luxar.utils.demos import …`, `import
-luxar.utils.demos`, `from luxar.utils import demos`, and their relative forms —
+every deep spelling — direct imports from `luxar.utils.bundles`, `cache`, `colors`, `device`,
+`flags`, `lfs`, `payload_agreement`, `provenance`, `scenes`, `viewer`,
+`zip_safety`, or `data_fetch`, including relative forms —
 in every demo module here and in the three `gsplats/**/demos` trees, and also on a
 name the barrel does not re-export. (Scope is the demo modules; `tests/` is out,
 since a test may legitimately need the module a private lives in.) That second gap

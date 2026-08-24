@@ -11,6 +11,14 @@ To run a demo:
 See demos/README.md for more information on creating new demos.
 """
 
+from ..utils.bundles import (
+    BundleMemberNotFound,
+    load_dataset_bundle,
+    load_precomputed_bundle,
+    load_precomputed_gsplats,
+)
+from ..utils.cache import cache_computed, cached_download
+from ..utils.colors import hsv_to_rgb, stack_colorings
 from ..utils.data_fetch import (
     LOCAL_FIT_DIRNAME,
     DatasetNotFound,
@@ -24,32 +32,22 @@ from ..utils.data_fetch import (
     load_manifest,
     local_fit_path,
 )
-from ..utils.demos import (
+from ..utils.device import detect_device, warn_if_no_cuda_gpu
+from ..utils.flags import parse_demo_flags, parse_int_arg, parse_path_arg
+from ..utils.lfs import is_lfs_pointer, require_local_data
+from ..utils.payload_agreement import voxel_sampled_payload_agreement
+from ..utils.provenance import (
     BUILDER_FINGERPRINT_ATTR,
-    BundleMemberNotFound,
-    cache_computed,
-    cached_download,
+    demo_source_fingerprint,
+    print_data_provenance,
+    scene_is_current,
+)
+from ..utils.scenes import (
     create_lorenz_attractor,
     create_random_spheres,
     create_time_series_demo,
-    demo_source_fingerprint,
-    detect_device,
-    hsv_to_rgb,
-    is_lfs_pointer,
-    launch_viewer,
-    load_dataset_bundle,
-    load_precomputed_bundle,
-    load_precomputed_gsplats,
-    parse_demo_flags,
-    parse_int_arg,
-    parse_path_arg,
-    print_data_provenance,
-    require_local_data,
-    scene_is_current,
-    stack_colorings,
-    voxel_sampled_payload_agreement,
-    warn_if_no_cuda_gpu,
 )
+from ..utils.viewer import launch_viewer
 from ._caption import add_demo_caption, format_demo_caption
 from ._dependencies import (
     INSTALL_SPECS,

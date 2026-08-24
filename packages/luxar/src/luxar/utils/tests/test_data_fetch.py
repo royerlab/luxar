@@ -685,7 +685,7 @@ def test_a_bad_in_repo_copy_is_a_fault_not_an_absence(fake_repo):
     Every demo that falls back to a multi-minute refit when its manifest fetch
     comes up empty catches this narrowly — eleven of them ``except
     DatasetUnavailable``, and ``nexrad_supercell`` that plus
-    :class:`~luxar.utils.demos.BundleMemberNotFound`, the bundle-side routable
+    :class:`~luxar.utils.bundles.BundleMemberNotFound`, the bundle-side routable
     absence (its per-frame member names carry ``--dbz-floor`` and friends, so a
     non-default run legitimately asks the shipped bundle for frames it cannot
     hold). This must not be one of the things any of them swallow: it would
@@ -1272,7 +1272,7 @@ def test_load_dataset_bundle_verifies_the_outer_zip_then_extracts(
     unit that is actually downloaded -- gets verified. Members are covered by
     verifying the container, so they are not pinned individually.
     """
-    from luxar.utils import demos as demos_utils
+    from luxar.utils import bundles as demos_utils
 
     inner = {
         "frame0.gsplats.zarr.zip": b"PK-not-really",
@@ -1340,7 +1340,7 @@ def test_load_dataset_bundle_rejects_a_bundle_that_is_not_a_manifest_file(
     tmp_path, monkeypatch
 ):
     """Naming a bundle the manifest does not list must raise, not fetch something else."""
-    from luxar.utils import demos as demos_utils
+    from luxar.utils import bundles as demos_utils
 
     lfs_dir = tmp_path / "repo" / "bundle_ds"
     lfs_dir.mkdir(parents=True)
@@ -1379,7 +1379,7 @@ def test_load_dataset_bundle_rejects_a_bundle_that_is_not_a_manifest_file(
 
 def test_load_dataset_bundle_returns_none_for_a_local_compute_dataset():
     """A non-hosted dataset hands control back so the demo builds it itself."""
-    from luxar.utils import demos as demos_utils
+    from luxar.utils import bundles as demos_utils
 
     manifest = {
         "schema_version": 1,
@@ -1402,7 +1402,7 @@ def test_load_dataset_bundle_returns_none_for_a_local_compute_dataset():
 
 
 def test_load_dataset_bundle_honours_recompute():
-    from luxar.utils import demos as demos_utils
+    from luxar.utils import bundles as demos_utils
 
     assert (
         demos_utils.load_dataset_bundle(

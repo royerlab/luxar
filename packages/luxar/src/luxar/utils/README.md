@@ -22,9 +22,9 @@ validate_array_shape(positions, (100, 3), name="positions")  # Passes
 
 # 3. Generate demo data for testing
 create_lorenz_attractor(
-    'lorenz_demo.luxar.zarr',
+    "lorenz_demo.luxar.zarr",
     n_points=10000,
-    seed=42  # Reproducible
+    seed=42,  # Reproducible
 )
 print("Demo scene created at lorenz_demo.luxar.zarr")
 ```
@@ -158,14 +158,22 @@ sha256.
 - `load_local_fit_gsplats_at(paths)`: The same door for paths the caller already holds. A demo that publishes a module-level `LOCAL_FIT` constant and writes its refit through it must READ through it too, or the two halves can be pointed at different files
 - Raises `DatasetNotFound` for an unknown key and `LocalComputeDataset` for data we cannot redistribute (the caller builds it locally). `DatasetUnavailable` (a `FileNotFoundError` subclass) is the narrow "not obtainable from anywhere yet" case a demo may route around by computing its own stand-in; every other `FileNotFoundError` here is a fault (unknown file name, missing packaged manifest, an in-repo copy matching neither pinned digest) and must propagate
 
-### `demos.py`
-Demo scene generators, precomputed data helpers, and viewer launch utilities.
+### Demo support modules
+Concern-owned scene, data, cache, CLI, and viewer helpers re-exported through
+``luxar.demos`` for demo authors. Reusable scene generators remain public through
+``luxar.utils``.
 
 **Key Functions:**
-- `create_lorenz_attractor()`: Generate Lorenz attractor visualization
-- `create_random_spheres()`: Create random spherical points
-- `create_time_series_demo()`: Generate time-varying data
-- `launch_viewer()`: Launch the Luxar viewer for a given dataset path
+- `scenes.py`: `create_lorenz_attractor()`, `create_random_spheres()`, and
+  `create_time_series_demo()` reusable scene generators
+- `viewer.py`: `launch_viewer()` and stable `demo_ports()` allocation
+- `bundles.py`: Precomputed GSplat and bundle loading
+- `cache.py`, `lfs.py`, `zip_safety.py`: Cache and packaged-data plumbing
+- `flags.py`, `device.py`, `provenance.py`: Demo CLI/runtime helpers
+- `colors.py`, `payload_agreement.py`: Color assembly and fit-QA helpers
+
+**Public barrel highlights:**
+
 - `demo_ports()`: Stable per-dataset (data, viewer) port pair derived from the
   dataset name — demos never contend for 8000/5173, and no two of them share a
   full port PAIR, so a browser tab left over from one demo can never silently
