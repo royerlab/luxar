@@ -44,6 +44,7 @@ from ._synthetic import (
     write_ply_binary,
     write_ply_crease,
     write_ply_face_extras,
+    write_ply_orphan_vertices,
     write_ply_quads,
     write_ply_truncated_ascii,
     write_stl_ascii,
@@ -111,6 +112,49 @@ class TestReaderParity:
         write_stl_binary(path, GT)
         assert import_mesh(path, weld=False).n_vertices == 12  # 4 faces × 3 corners
         assert import_mesh(path, weld=True).n_vertices == 4
+
+    def test_welding_prunes_vertices_outside_the_surviving_surface(
+        self, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "orphan.ply"
+        write_ply_orphan_vertices(path)
+
+        mesh = import_mesh(path)
+
+        assert mesh.n_vertices == 3
+        assert mesh.n_faces == 1
+        assert {tuple(vertex) for vertex in mesh.vertices} == {
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+        }
+        assert float(mesh.vertices.max()) == 1.0
+        assert int(mesh.faces.max()) == 2
+        assert mesh.normals is not None
+        assert mesh.colors is not None
+        expected = {
+            (0.0, 0.0, 0.0): ((0.0, 1.0, 0.0), (40, 50, 60)),
+            (1.0, 0.0, 0.0): ((0.0, 0.0, 1.0), (70, 80, 90)),
+            (0.0, 1.0, 0.0): ((-1.0, 0.0, 0.0), (100, 110, 120)),
+        }
+        for vertex, normal, color in zip(mesh.vertices, mesh.normals, mesh.colors):
+            expected_normal, expected_color = expected[tuple(vertex)]
+            np.testing.assert_array_equal(normal, expected_normal)
+            np.testing.assert_array_equal(color, expected_color)
+
+    def test_weld_false_keeps_vertices_outside_the_surface(
+        self, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "orphan.ply"
+        write_ply_orphan_vertices(path)
+
+        mesh = import_mesh(path, weld=False)
+
+        assert mesh.n_vertices == 5
+        assert mesh.n_faces == 1
+        assert float(mesh.vertices.max()) == 200.0
+        assert mesh.normals is not None and mesh.normals.shape == (5, 3)
+        assert mesh.colors is not None and mesh.colors.shape == (5, 3)
 
 
 class TestPly:

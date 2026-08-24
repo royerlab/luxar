@@ -2,9 +2,9 @@
 
 Classical mesh formats disagree about whether vertices are shared. PLY and glTF are
 indexed, OBJ is indexed but 1-based and may use polygons, and STL is a pure triangle
-soup with no index at all. :func:`weld_vertices` and :func:`fan_triangulate` bring all
-four to the one representation ``add_mesh`` wants: a shared vertex array plus a
-``(F, 3)`` index array.
+soup with no index at all. :func:`weld_vertices`, :func:`drop_degenerate_faces`, and
+:func:`prune_unreferenced_vertices` bring all four to the one representation
+``add_mesh`` wants: a compact shared vertex array plus a ``(F, 3)`` index array.
 
 Welding matters beyond tidiness. An unwelded surface has no shared vertices, so
 per-vertex normals cannot be averaged across faces, the writer's authoring lint flags
@@ -127,3 +127,24 @@ def drop_degenerate_faces(faces: NDArray[np.uint32]) -> NDArray[np.uint32]:
     keep = (a != b) & (b != c) & (a != c)
     kept: NDArray[np.uint32] = faces[keep]
     return kept
+
+
+def prune_unreferenced_vertices(
+    vertices: NDArray[np.float32],
+    faces: NDArray[np.uint32],
+    *,
+    extras: dict[str, NDArray | None] | None = None,
+) -> tuple[NDArray[np.float32], NDArray[np.uint32], dict[str, NDArray | None]]:
+    """Remove vertices no surviving face references and reindex per-vertex data."""
+    referenced = np.zeros(vertices.shape[0], dtype=bool)
+    referenced[faces.reshape(-1)] = True
+    survivors = np.flatnonzero(referenced)
+
+    remap = np.empty(vertices.shape[0], dtype=np.uint32)
+    remap[survivors] = np.arange(survivors.shape[0], dtype=np.uint32)
+    compact_faces = remap[faces]
+    compact_extras = {
+        key: arr[survivors] if arr is not None else None
+        for key, arr in (extras or {}).items()
+    }
+    return vertices[survivors], compact_faces, compact_extras

@@ -218,6 +218,38 @@ def write_ply_truncated_ascii(path: Path, gt: GroundTruth) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="ascii")
 
 
+def write_ply_orphan_vertices(path: Path) -> None:
+    """A surface plus vertices referenced only by no face or a degenerate face."""
+    rows = [
+        ((200, 200, 200), (1, 0, 0), (10, 20, 30)),
+        ((0, 0, 0), (0, 1, 0), (40, 50, 60)),
+        ((1, 0, 0), (0, 0, 1), (70, 80, 90)),
+        ((0, 1, 0), (-1, 0, 0), (100, 110, 120)),
+        ((100, 100, 100), (0, -1, 0), (130, 140, 150)),
+    ]
+    lines = [
+        "ply",
+        "format ascii 1.0",
+        f"element vertex {len(rows)}",
+        "property float x",
+        "property float y",
+        "property float z",
+        "property float nx",
+        "property float ny",
+        "property float nz",
+        "property uchar red",
+        "property uchar green",
+        "property uchar blue",
+        "element face 2",
+        "property list uchar int vertex_indices",
+        "end_header",
+    ]
+    for vertex, normal, color in rows:
+        lines.append(" ".join(map(str, (*vertex, *normal, *color))))
+    lines += ["3 1 2 3", "3 4 4 2"]
+    path.write_text("\n".join(lines) + "\n", encoding="ascii")
+
+
 def write_obj(path: Path, gt: GroundTruth) -> None:
     """OBJ with 1-BASED indices and `v//vn` face triples."""
     lines = ["# synthetic tetrahedron"]

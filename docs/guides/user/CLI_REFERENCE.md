@@ -368,7 +368,9 @@ and makes picking report a different vertex per triangle for the same corner. We
 merges two vertices only when their position *and* their normals and colours agree, so
 a hard edge — which every modelling package authors as coincident positions with
 different normals — survives the import instead of being flattened. Pass `--no-weld` to
-keep the file's exact vertex list.
+keep the reader-produced vertex list. The default welded path also removes vertices no
+surviving triangle references, so non-surface points cannot inflate the scene bounds or
+picking ordinal range.
 
 Draco- and meshopt-compressed glTF is refused by name rather than decoded — run the
 file through `gltf-transform` first.
