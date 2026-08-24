@@ -550,7 +550,7 @@ export class InputContextManager {
    * @private
    */
   /**
-   * Dispatch Escape from a typing context.
+   * Dispatch Escape from a non-passthrough text/UI context.
    *
    * Walks all contexts in priority order (including the current one)
    * and fires the first matching Escape binding. Mirrors the dispatch

@@ -466,8 +466,8 @@ export class ControlRail {
     this.container.appendChild(hint);
     this.hint = hint;
     // The hint is a nudge, not a modal: if the user never interacts it fades
-    // away on its own (and any pointer/keyboard interaction dismisses it
-    // immediately — see onDocPointerDown / onDocKeyDown).
+    // away on its own (and any pointer/routed-keyboard interaction dismisses it
+    // immediately — see onDocPointerDown / handleRoutedKeyDown).
     this.hintAutoHideTimer = window.setTimeout(() => this.fadeOutHint(), HINT_AUTO_HIDE_MS);
   }
 

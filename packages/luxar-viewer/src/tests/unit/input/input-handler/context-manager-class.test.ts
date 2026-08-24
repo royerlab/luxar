@@ -801,11 +801,11 @@ describe('InputContextManager', () => {
   });
 
   // input.md G6 fix: Escape from a typing context is routed through
-  // dispatchEscapeFromTypingContext, which fires the first matching Escape
+  // dispatchEscapeAcrossContexts, which fires the first matching Escape
   // binding across every context (including the current one) so a panel can
   // close. This pins that post-refactor contract.
   describe('Escape in typing context (post-refactor contract)', () => {
-    it('dispatches Escape through dispatchEscapeFromTypingContext to the navigation binding', () => {
+    it('dispatches Escape through dispatchEscapeAcrossContexts to the navigation binding', () => {
       const escapeHandler = vi.fn();
       manager.registerBinding(InputContext.NAVIGATION, {
         key: 'Escape',
@@ -857,7 +857,7 @@ describe('InputContextManager', () => {
       });
 
       // TYPING context has passthrough: false, allowedKeys: [].
-      // The "Escape special-case" routes through dispatchEscapeFromTypingContext;
+      // The "Escape special-case" routes through dispatchEscapeAcrossContexts;
       // for any non-Escape key, the typing branch returns true without
       // dispatching to other contexts.
       manager.setContext(InputContext.TYPING);
@@ -1130,7 +1130,7 @@ describe('InputContextManager', () => {
   // would fall through to `return false` instead of looking up
   // additional contexts for a keyupHandler match.
   // ─────────────────────────────────────────────────────────────────────
-  describe('MED-3: dispatchEscapeFromTypingContext routes keyupHandler', () => {
+  describe('MED-3: dispatchEscapeAcrossContexts routes keyupHandler', () => {
     afterEach(() => {
       document.body.innerHTML = '';
     });
@@ -1205,7 +1205,7 @@ describe('InputContextManager', () => {
     });
   });
 
-  describe('dispatchEscapeFromTypingContext fallback [input.md G19]', () => {
+  describe('dispatchEscapeAcrossContexts fallback [input.md G19]', () => {
     // input.md G19[P5]: when called from a typing context with NO matching
     // Escape binding in any context, the dispatch must return false (no
     // handler ran, swallowing skipped). Prior tests always registered at
@@ -1213,7 +1213,7 @@ describe('InputContextManager', () => {
     it('[G19] Escape from TYPING context with NO Escape binding registered: handleKeyEvent returns false', () => {
       manager.setContext(InputContext.TYPING);
       // No bindings at all — TYPING allowedKeys is [] so nothing fires
-      // from current context; dispatchEscapeFromTypingContext walks the
+      // from current context; dispatchEscapeAcrossContexts walks the
       // priority-ordered list and finds nothing.
       const event = new KeyboardEvent('keydown', { key: 'Escape' });
       const handled = manager.handleKeyEvent(event, 'down');

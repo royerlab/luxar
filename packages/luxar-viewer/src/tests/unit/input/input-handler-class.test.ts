@@ -28,6 +28,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { InputHandler } from '../../../input/input-handler';
+import { InputContext } from '../../../input/input-handler/context-manager';
 import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import type { SceneManager } from '../../../scene/scene-manager';
 import type { AnimationController } from '../../../scene/animation/animation-controller';
@@ -309,9 +310,30 @@ describe('InputHandler — optional setters', () => {
   });
 
   it('setLayersPanel stores the reference on the private layersPanel slot', () => {
-    const panel = { dispose: vi.fn(), setFocusContextHandlers: vi.fn() };
+    const setFocusContextHandlers = vi.fn();
+    const panel = { dispose: vi.fn(), setFocusContextHandlers };
     handler.setLayersPanel(panel as never);
     expect((handler as unknown as HandlerSlots).layersPanel).toBe(panel);
+    const handlers = setFocusContextHandlers.mock.calls[0][0] as {
+      activate(): void;
+      deactivate(): void;
+    };
+    handlers.activate();
+    expect(
+      (
+        handler as unknown as {
+          contextManager: { getContext(): InputContext };
+        }
+      ).contextManager.getContext()
+    ).toBe(InputContext.UI_INTERACTION);
+    handlers.deactivate();
+    expect(
+      (
+        handler as unknown as {
+          contextManager: { getContext(): InputContext };
+        }
+      ).contextManager.getContext()
+    ).toBe(InputContext.NAVIGATION);
   });
 
   it('setDatasetBrowser forwards (undefined → browser → undefined) to panelCoordinator', () => {
