@@ -168,6 +168,9 @@ no external module imports it directly.
 
 ## Subpackages
 
+- [`templates/`](./templates/README.md) — HTML-string renderers split
+  by concern, their dependency direction, and the Cache tab's stable
+  incremental-update markup contract.
 - [`metrics/`](./metrics/README.md) — Pure roll-up helpers for cache
   metrics and per-second event rates (`aggregateCacheMetrics`,
   `calculateRates`).
