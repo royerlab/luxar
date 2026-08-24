@@ -24,8 +24,13 @@ import {
 } from '../../../../../input/input-handler/key-bindings/register-all';
 import {
   InputContext,
-  type InputContextManager,
+  InputContextManager,
+  type ContextConfig,
 } from '../../../../../input/input-handler/context-manager';
+import {
+  canonicalizeBindingKey,
+  isKeyAllowedInContext,
+} from '../../../../../input/input-handler/context-manager/routing-rules';
 import type { SceneManager } from '../../../../../scene/scene-manager';
 import type { DebugConsole } from '../../../../../ui/debug-console';
 
@@ -174,6 +179,36 @@ function setup(options: { hasFlyControls?: boolean } = {}) {
   };
 }
 
+function setupRealContextManager() {
+  const contextManager = new InputContextManager();
+  const { sceneManager, flyHandleKeyDown, flyHandleKeyUp } = makeSceneManager();
+  const { console: debugConsole } = makeDebugConsole();
+  const commands = makeCommands();
+  const { panels } = makePanels();
+  registerAllKeyBindings({
+    contextManager,
+    sceneManager,
+    debugConsole,
+    animationShortcuts: {
+      getSelectedDimension: () => -1,
+      getAnimationManager: () => undefined,
+    },
+    panels,
+    commands,
+  });
+  return { contextManager, commands, flyHandleKeyDown, flyHandleKeyUp };
+}
+
+function bindingKey(binding: CapturedBinding): string {
+  const modifiers = binding.modifiers ?? {};
+  const parts = [binding.key];
+  if (modifiers.ctrl) parts.push('ctrl');
+  if (modifiers.shift) parts.push('shift');
+  if (modifiers.alt) parts.push('alt');
+  if (modifiers.meta) parts.push('meta');
+  return canonicalizeBindingKey(parts.join('+'));
+}
+
 function findBinding(
   bindings: CapturedBinding[],
   context: InputContext,
@@ -214,6 +249,24 @@ function findBinding(
 // (covered in controls-manager.test.ts and the orbit pointer tests).
 
 describe('registerAllKeyBindings — structure', () => {
+  it('registers only bindings admitted by their stock context filters', () => {
+    const { bindings } = setup();
+    const contextManager = new InputContextManager();
+    const configs = (
+      contextManager as unknown as {
+        contextConfigs: Map<InputContext, ContextConfig>;
+      }
+    ).contextConfigs;
+
+    for (const binding of bindings) {
+      const config = configs.get(binding.context)!;
+      expect(
+        isKeyAllowedInContext(binding.key, config, bindingKey(binding)),
+        `${binding.context}:${bindingKey(binding)}`
+      ).toBe(true);
+    }
+  });
+
   it('registers no Control/Meta hold bindings (wheel routing is stateless)', () => {
     const { bindings } = setup();
     const modifierHolds = bindings.filter((b) => b.key === 'Control' || b.key === 'Meta');
@@ -398,6 +451,39 @@ describe('registerAllKeyBindings — FLY_CONTROLS dispatch', () => {
     expect(w.handler(new KeyboardEvent('keydown', { key: 'w' }))).toBe(false);
     expect(w.keyupHandler!(new KeyboardEvent('keyup', { key: 'w' }))).toBe(false);
   });
+
+  it.each([InputContext.NAVIGATION, InputContext.FLY_CONTROLS])(
+    'routes Ctrl+Shift+S to viewer-state export from %s',
+    (context) => {
+      const { contextManager, commands } = setupRealContextManager();
+      contextManager.setContext(context);
+
+      const handled = contextManager.handleKeyEvent(
+        new KeyboardEvent('keydown', { key: 's', ctrlKey: true, shiftKey: true }),
+        'down'
+      );
+
+      expect(handled).toBe(true);
+      expect(commands.exportViewerState).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('keeps Shift+ArrowUp on fly look controls while FLY_CONTROLS is active', () => {
+    const { contextManager, flyHandleKeyDown } = setupRealContextManager();
+    const navigationHandler = vi.fn();
+    contextManager.registerBinding(InputContext.NAVIGATION, {
+      key: 'ArrowUp',
+      modifiers: { shift: true },
+      handler: navigationHandler,
+    });
+    contextManager.setContext(InputContext.FLY_CONTROLS);
+
+    const event = new KeyboardEvent('keydown', { key: 'ArrowUp', shiftKey: true });
+    expect(contextManager.handleKeyEvent(event, 'down')).toBe(true);
+    expect(flyHandleKeyDown).toHaveBeenCalledWith(event);
+    expect(navigationHandler).not.toHaveBeenCalled();
+  });
+
   it('forwards WASD keydown / keyup to the fly-controls handlers', () => {
     const { bindings, flyHandleKeyDown, flyHandleKeyUp } = setup();
     const w = findBinding(bindings, InputContext.FLY_CONTROLS, 'w');

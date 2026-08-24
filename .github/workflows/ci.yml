@@ -751,8 +751,8 @@ jobs:
 
       - name: Generate test fixtures
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
-        working-directory: .
-        run: hatch run fixtures:python packages/luxar-viewer/tests/fixtures/generate_test_data.py
+        working-directory: packages/luxar-viewer
+        run: pnpm test:generate-fixtures
 
       - name: Check (overrides + typecheck + lint + layers + knip + coverage)
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')

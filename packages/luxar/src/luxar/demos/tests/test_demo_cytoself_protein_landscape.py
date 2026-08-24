@@ -38,7 +38,7 @@ import numpy as np
 import pytest
 import zarr
 
-# ``demo_cytoself_protein_landscape`` imports ``luxar.utils._umap_utils`` at
+# ``demo_cytoself_protein_landscape`` imports the shared UMAP helpers at
 # module scope, which imports PIL. Pillow also encodes the fixture thumbnails.
 pytest.importorskip("PIL")
 

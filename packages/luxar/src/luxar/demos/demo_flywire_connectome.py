@@ -118,7 +118,7 @@ from luxar.demos import (
     parse_int_arg,
     parse_path_arg,
 )
-from luxar.utils._umap_utils import format_label, get_categorical_color
+from luxar.demos._support._umap_utils import format_label, get_categorical_color
 from luxar.utils.paths import get_demos_output_dir
 
 # -----------------------------------------------------------------------------

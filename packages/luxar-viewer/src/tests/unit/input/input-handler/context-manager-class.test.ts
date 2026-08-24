@@ -12,6 +12,7 @@ import {
   InputContext,
   MAX_KEY_EVENT_DEPTH,
 } from '../../../../input/input-handler/context-manager';
+import { log, Modules } from '../../../../utils/log';
 
 describe('InputContextManager', () => {
   let manager: InputContextManager;
@@ -74,6 +75,23 @@ describe('InputContextManager', () => {
       const event3 = new KeyboardEvent('keydown', { key: 'h' });
       expect(manager.handleKeyEvent(event3, 'down')).toBe(true);
       expect(handler).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('binding registration', () => {
+    it('warns when a binding is unreachable under its own context filters', () => {
+      const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+
+      manager.registerBinding(InputContext.NAVIGATION, {
+        key: 'w',
+        handler: vi.fn(),
+      });
+
+      expect(warning).toHaveBeenCalledWith(
+        Modules.INPUT_CONTEXT,
+        'Key binding w in navigation is unreachable under its context filters'
+      );
+      warning.mockRestore();
     });
   });
 
@@ -1238,6 +1256,64 @@ describe('InputContextManager', () => {
       const handled = manager.handleKeyEvent(event, 'down');
       expect(handled).toBe(false);
       expect(handler).not.toHaveBeenCalled();
+    });
+
+    it('dispatches a modified NAVIGATION binding when the bare key is blocked', () => {
+      const navigationHandler = vi.fn();
+      const flyHandler = vi.fn();
+      manager.registerBinding(InputContext.NAVIGATION, {
+        key: 'ArrowUp',
+        modifiers: { shift: true },
+        handler: navigationHandler,
+      });
+      manager.registerBinding(InputContext.FLY_CONTROLS, {
+        key: 'ArrowUp',
+        modifiers: { shift: true },
+        handler: flyHandler,
+      });
+
+      const event = new KeyboardEvent('keydown', { key: 'ArrowUp', shiftKey: true });
+      const handled = manager.handleKeyEvent(event, 'down');
+
+      expect(handled).toBe(true);
+      expect(navigationHandler).toHaveBeenCalledWith(event);
+      expect(flyHandler).not.toHaveBeenCalled();
+    });
+
+    it('still routes a bare blocked key to the fly-controls binding', () => {
+      const navigationHandler = vi.fn();
+      const flyHandler = vi.fn();
+      manager.registerBinding(InputContext.NAVIGATION, {
+        key: 'ArrowUp',
+        handler: navigationHandler,
+      });
+      manager.registerBinding(InputContext.FLY_CONTROLS, {
+        key: 'ArrowUp',
+        handler: flyHandler,
+      });
+
+      const event = new KeyboardEvent('keydown', { key: 'ArrowUp' });
+      const handled = manager.handleKeyEvent(event, 'down');
+
+      expect(handled).toBe(true);
+      expect(navigationHandler).not.toHaveBeenCalled();
+      expect(flyHandler).toHaveBeenCalledWith(event);
+    });
+
+    it('allows modified variants of an allowed key in passthrough contexts', () => {
+      const flyHandler = vi.fn();
+      manager.registerBinding(InputContext.FLY_CONTROLS, {
+        key: 'ArrowUp',
+        modifiers: { shift: true },
+        handler: flyHandler,
+      });
+      manager.setContext(InputContext.UI_INTERACTION);
+
+      const event = new KeyboardEvent('keydown', { key: 'ArrowUp', shiftKey: true });
+      const handled = manager.handleKeyEvent(event, 'down');
+
+      expect(handled).toBe(true);
+      expect(flyHandler).toHaveBeenCalledWith(event);
     });
   });
 

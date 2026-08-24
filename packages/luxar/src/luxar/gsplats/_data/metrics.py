@@ -245,7 +245,7 @@ class _SplatArrayMixin:
         """
         if self.n_splats == 0:
             return np.empty(0, dtype=np.float64)
-        from luxar.utils.spatial_hash import BatchedSpatialHashGrid
+        from luxar.gsplats.spatial_hash import BatchedSpatialHashGrid
 
         spatial, group_ids = self._grouped_spatial(spatial_axes, group_axes)
         out = np.full(self.n_splats, np.inf, dtype=np.float64)
@@ -273,7 +273,7 @@ class _SplatArrayMixin:
         """
         if self.n_splats == 0:
             return np.empty(0, dtype=np.int64)
-        from luxar.utils.spatial_hash import BatchedSpatialHashGrid
+        from luxar.gsplats.spatial_hash import BatchedSpatialHashGrid
 
         spatial, group_ids = self._grouped_spatial(spatial_axes, group_axes)
         out = np.zeros(self.n_splats, dtype=np.int64)

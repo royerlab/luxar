@@ -358,7 +358,7 @@ Bring classical triangle-surface files into Luxar, and coarsen them. Both are Nu
 stdlib only, so they work on a bare `pip install luxar` with no extras.
 
 ```bash
-luxar mesh import            # Import a classical mesh file (PLY / OBJ / STL / VTP / glTF / GLB) → a .luxar.zarr scene
+luxar mesh import            # Import one mesh file (PLY / OBJ / STL / VTP / glTF / GLB), or a T-indexed directory
 luxar mesh lod               # Build a LOD ladder for a mesh scene (levels, or a reveal)
 ```
 
@@ -385,6 +385,23 @@ volume mesh: run ParaView's *Extract Surface* on it first.
 
 Draco- and meshopt-compressed glTF is refused by name rather than decoded — run the
 file through `gltf-transform` first.
+
+A directory import defaults to `--pattern '*.vtp'`. Each filename must contain an
+uppercase `T<number>` token; if every filename also contains `Ch<number>`, channel is
+appended as a second hidden discrete dimension. Numeric values are preserved, so
+missing timepoints remain gaps instead of renumbering later files. Mixed channel naming
+and duplicate time/channel coordinates are refused rather than guessed. Pass the
+directory and output scene as the two positional arguments, e.g.
+`luxar mesh import 000_deconv.ome.zarr/meshes/cells cells.luxar.zarr`. Use `--pattern`
+for another mesh format:
+
+```bash
+luxar mesh import --pattern '*.ply'  # import a directory of T-indexed frames
+```
+
+The resulting mesh node has no spatial index: the viewer downloads the entire stacked
+directory even when it draws only one timepoint. Use this path for stacks that fit
+comfortably in memory, not as a streaming representation for very large timelapses.
 
 ### `luxar mesh lod`
 

@@ -47,6 +47,18 @@ def test_fingerprint_covers_builders_and_production_writer_code(tmp_path: Path) 
     assert after_writer_change != after_builder_change
 
 
+def test_fingerprint_covers_writer_when_checkout_path_contains_tests(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path / "tests")
+    writer = repo / "packages/luxar/src/luxar/io/writer.py"
+
+    initial = run_examples.source_fingerprint(repo)
+    writer.write_text("FORMAT = 3\n")
+
+    assert run_examples.source_fingerprint(repo) != initial
+
+
 def test_current_marker_requires_every_recorded_output(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     _write_example(repo, "one", "print('one')\n")

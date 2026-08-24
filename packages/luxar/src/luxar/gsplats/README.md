@@ -1174,6 +1174,7 @@ gsplats/
 │                                  #   estimate_noise_floor, build_k_grid, find_k_star, calibrate)
 ├── calibration_report.py          # Optional matplotlib PDF report for `luxar gsplat cal --pdf`
 ├── gpu_profile.py                 # GPU benchmark profile management
+├── spatial_hash.py                # Online and batched nD proximity-query grids
 │
 ├── lod/                            # Level-of-Detail post-processing (additive + substitutive)
 │   ├── additive.py                 # compute_additive_order, make_additive_lod
@@ -1281,6 +1282,26 @@ gsplats/
     ├── test_progressive_fitting.py # Progressive fitting tests
     ├── test_batch.py               # Batch fitting tests
     └── ...                         # Additional test files
+```
+
+### Spatial Hash Queries
+
+`spatial_hash.py` provides an online `SpatialHashGrid` for incremental
+deduplication and a batched `BatchedSpatialHashGrid` for repeated k-NN and
+radius queries. The module docstring records the query guarantees and backend
+fallback contract.
+
+```python
+import numpy as np
+
+from luxar.gsplats.spatial_hash import BatchedSpatialHashGrid
+
+points = np.random.randn(10_000, 3).astype(np.float32)
+queries = np.random.randn(1_000, 3).astype(np.float32)
+
+grid = BatchedSpatialHashGrid.from_points(points, cell_size=0.5, device="auto")
+distances, indices = grid.query_knn(queries, k=8)
+neighbours = grid.query_radius(queries, radius=0.4)
 ```
 
 ### Modular Fitting Architecture

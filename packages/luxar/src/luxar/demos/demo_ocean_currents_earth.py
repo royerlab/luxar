@@ -50,7 +50,7 @@ Ships only code. First run downloads ~72 MB of source data (both public, direct
 download, **no account or API key**), builds the scene, and caches the sources
 under ``~/.cache/luxar/ocean_currents_earth/``. Later runs load the built scene
 instantly; ``--recompute`` rebuilds without re-fetching. A scene written by an
-OLDER version of this file is rebuilt automatically (its ``builder_fingerprint``
+older demo or Luxar writer is rebuilt automatically (its ``builder_fingerprint``
 no longer matches); pass ``--keep-stale`` to serve it anyway.
 
 DATA SOURCES & CITATIONS
@@ -186,8 +186,8 @@ SERVE_ONLY = FLAGS["serve_only"]
 RECOMPUTE = FLAGS["recompute"]
 KEEP_STALE = FLAGS["keep_stale"]
 
-#: Identifies the builder that wrote a scene, so a scene left on disk by an
-#: OLDER version of this file is rebuilt instead of served forever (#1957).
+#: Identifies the builder and Luxar writer that wrote a scene, so stale output
+#: is rebuilt instead of served forever (#1957, #2037).
 FINGERPRINT: Final = demo_source_fingerprint(__file__)
 
 CACHE_DIR: Final = Path.home() / ".cache" / "luxar" / DEMO_NAME

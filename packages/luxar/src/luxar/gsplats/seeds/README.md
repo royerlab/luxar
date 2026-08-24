@@ -507,7 +507,7 @@ hatch run pytest packages/luxar/src/luxar/gsplats/seeds/tests/test_generate_seed
 | `grid.py` | `seed_from_grid()` |
 | `edges.py` | `seed_from_edges()`, plus shared `_compute_nd_sobel_magnitude()` and `_sample_amplitudes()` helpers |
 | `peaks.py` | `seed_from_peaks()` (PyTorch, GPU-accelerated multinomial sampling) |
-| `utils.py` | `local_maxima()`, `dedupe_farthest_first()`, `combine_seeds()`, `sigmas_to_cholesky_isotropic()`, `SEED_AMPLITUDE_SCALE`; re-exports `SpatialHashGrid` from `luxar.utils.spatial_hash` |
+| `utils.py` | `local_maxima()`, `dedupe_farthest_first()`, `combine_seeds()`, `sigmas_to_cholesky_isotropic()`, `SEED_AMPLITUDE_SCALE`; re-exports `SpatialHashGrid` from `luxar.gsplats.spatial_hash` |
 | `gpu_ops.py` | PyTorch GPU kernels (`_get_device()`, `should_use_gpu()`, Sobel/grid-sample) shared by the CPU/GPU dispatch paths |
 
 ## References

@@ -1,4 +1,4 @@
-"""Tests for :mod:`luxar.utils.spatial_hash`.
+"""Tests for :mod:`luxar.gsplats.spatial_hash`.
 
 Coverage:
 
@@ -18,7 +18,7 @@ import pytest
 import torch
 from scipy.spatial import cKDTree
 
-from luxar.utils.spatial_hash import (
+from luxar.gsplats.spatial_hash import (
     BatchedSpatialHashGrid,
     SpatialHashGrid,
     _is_oom_error,
