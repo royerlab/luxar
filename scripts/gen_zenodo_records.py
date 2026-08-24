@@ -515,7 +515,7 @@ def _ratio(numerator: Optional[int], denominator: Optional[int]) -> str:
 
 def _db(value: Any) -> str:
     """A dB figure, a ``lo–hi`` range for a per-frame one, or absent."""
-    if isinstance(value, tuple):
+    if isinstance(value, (list, tuple)) and len(value) == 2:
         lo, hi = value
         if not (_finite(lo) and _finite(hi)):
             return _ABSENT

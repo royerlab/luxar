@@ -239,6 +239,28 @@ class TestABundleIsDescribedWhole:
         _write_bundle(path, [{"psnr": 31.2}, {"psnr": 54.9}, {"psnr": 40.0}], tmp_path)
         assert gen._db(gen._read_archive(path)["psnr_db"]) == "31.2–54.9"
 
+    def test_quality_range_survives_the_committed_sidecar(
+        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        archive = tmp_path / "ds" / "movie.gsplats.zarr.zip"
+        archive.parent.mkdir()
+        _write_bundle(
+            archive,
+            [{"psnr": 31.2}, {"psnr": 54.9}, {"psnr": 40.0}],
+            tmp_path,
+        )
+        monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
+        manifest = _fake_manifest(
+            [_entry("movie.gsplats.zarr.zip", gen._sha256_of(archive))]
+        )
+
+        gen.refresh_characteristics(manifest, tmp_path)
+        chars = gen.load_characteristics()
+        (row,) = gen._dataset_rows("ds", manifest["datasets"]["ds"], chars)
+
+        assert row["file"] == "movie.gsplats.zarr.zip (3 frames)"
+        assert row["psnr"] == "31.2–54.9"
+
     def test_one_value_when_every_frame_agrees(self, gen: Any, tmp_path: Path) -> None:
         path = tmp_path / "movie.gsplats.zarr.zip"
         _write_bundle(path, [{"psnr": 40.0}] * 3, tmp_path)
