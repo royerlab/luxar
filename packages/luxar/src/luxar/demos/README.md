@@ -686,7 +686,7 @@ The large-scale structure of the Universe from the full ~9.75M-object Dark Energ
 
 **Run**: `luxar demo run desi_galaxies [-- --recompute]`
 
-**Requires**: Nothing extra when the precomputed scene is available. Otherwise it auto-downloads the ~1 GB of DR1 LSS clustering catalogs to `~/.cache/luxar/desi_galaxies/` (resumable), reads them with `astropy`, and converts (RA, Dec, z) → comoving Mpc. Adds `astropy` to the `demos` extra. The built scene (with substitutive LOD) is cached in the demos output dir, so only the first launch pays the LOD-build cost. If the DESI data host is unavailable, check `https://data.desi.lbl.gov/` and rerun without `--recompute` once the manifest-hosted precomputed scene is published. Substitutive Points LOD needs `luxar[gsplats]` (torch + scipy); without it the scene builds as a flat, fully viewable point cloud.
+**Requires**: Nothing extra by default — ships a compact precomputed point cloud (quantized XYZ + redshift + tracer id) via Git LFS. With `--recompute` (or if the LFS asset isn't pulled) it auto-downloads the ~1 GB of DR1 LSS clustering catalogs to `~/.cache/luxar/desi_galaxies/` (resumable), reads them with `astropy`, and converts (RA, Dec, z) → comoving Mpc. Adds `astropy` to the `demos` extra. The built scene (with substitutive LOD) is cached in the demos output dir, so only the first launch pays the LOD-build cost. If the DESI data host is unavailable, check `https://data.desi.lbl.gov/`, run `git lfs pull`, and rerun without `--recompute` to use the shipped scene without downloading the source catalogs. Substitutive Points LOD needs `luxar[gsplats]` (torch + scipy); without it the scene builds as a flat, fully viewable point cloud.
 
 **Demonstrates**: Real spectroscopic-survey catalogs → a 3D cosmic-web Points cloud, `(RA, Dec, redshift)` → comoving-Mpc conversion via `astropy.cosmology` (DESI fiducial ΛCDM), a spatially partitioned finest LOD with bounded additive streaming inside every part, dual coloring (categorical tracer vs. continuous redshift colormap) via layer toggles, HDR additive rendering, self-contained download → convert → cache-processed bootstrap. Data: [DESI DR1](https://data.desi.lbl.gov/doc/releases/dr1/) (DESI Collaboration 2025, arXiv:2503.14745; CC BY 4.0).
 
@@ -1030,7 +1030,7 @@ Five hours of zebrafish gastrulation (Zenodo 1211599, confocal, 151 timepoints t
 
 **Run**: `luxar demo run gsplats_4d_zebrafish_timelapse`
 
-**Requires**: Nothing extra once the manifest-hosted fit is published. The archive is pinned in the manifest, but its `cc-by-sa` record is still an unpublished draft, so until that lands the demo falls back to the recompute path: the ~2.1 GB LSM from Zenodo, refitting all 151 timepoints (GPU strongly recommended). `--recompute` forces that path regardless.
+**Requires**: Nothing but the bundled fit to view. The same archive is pinned on the still-unpublished `cc-by-sa` record for the future hosted path. `--recompute` downloads the ~2.1 GB LSM from Zenodo and refits all 151 timepoints (GPU strongly recommended).
 
 **Demonstrates**: stacking per-timepoint 3D fits into one 4D node; barrier-aware substitutive LOD over a time axis; `extend_to_all` for a static reference layer that survives every scrub; a discrete viewer dimension carrying real physical units; and reading acquisition geometry out of a Zeiss LSM instead of assuming it.
 

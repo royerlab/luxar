@@ -55,10 +55,10 @@ _demo = _load_demo_module()
 def test_the_manifest_pins_the_component_filtered_build() -> None:
     """The pin is what a user downloads, and it can rot without anyone noticing.
 
-    The archive itself is manifest-hosted, so the read-back below only runs where
-    a copy is on disk. This half runs everywhere: reverting the pin to the
+    The read-back below only runs where the Git LFS payload is hydrated or a
+    fetched copy is cached. This half runs everywhere: reverting the pin to the
     deposition's pre-component-filter upload would hand the NLM build to every
-    user and fail nothing else.
+    hosted-path user and fail nothing else.
     """
     entry = json.loads(_MANIFEST_PATH.read_text())["datasets"][_demo.DEMO_NAME]
     pins = {f["name"]: (f["sha256"], f["bytes"]) for f in entry["files"]}
@@ -82,8 +82,8 @@ def test_the_shipped_archive_is_the_component_filtered_build() -> None:
         "the shipped archive was fitted at these values, and the README, changelog "
         "and docstring tables quote them; changing one means refitting and reshipping"
     )
-    # In-repo first, then the fetch cache: the payload is manifest-hosted now, so
-    # on a machine that has run the demo the fetched copy is the only one there is.
+    # In-repo first, then the fetch cache: source checkouts normally use the Git
+    # LFS payload, while installed users will eventually use the hosted copy.
     # Both arms are matched on the pinned SIZE — a wrong copy staged by hand into
     # the hosted slot would otherwise be read back and fail as a splat-count
     # mismatch, which reads like a bad fit rather than the wrong file. (The demo's
@@ -99,7 +99,7 @@ def test_the_shipped_archive_is_the_component_filtered_build() -> None:
     if archive_path is None:
         pytest.skip(
             "no copy of the pinned zebrafish archive on disk — it is "
-            "manifest-hosted, and nothing has fetched it here"
+            "neither hydrated from Git LFS nor present in the fetch cache"
         )
 
     from luxar.gsplats.gsplat_data import GSplatData

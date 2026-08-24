@@ -46,12 +46,10 @@ def test_the_refused_set_matches_the_datasets_that_ship_an_npz() -> None:
     """Spell out the coupling, so a NEW sidecar-bearing dataset cannot slip in.
 
     The pairing is read from the MANIFEST, which lists every dataset's files
-    whether or not the archives are in the repository — the GSplat payloads are
-    manifest-hosted, so an on-disk enumeration alone would compare the constant
-    against an empty set and pass vacuously. Anything actually on disk is folded
-    in as well, so a locally-added sidecar still trips this. Only ``gsplats_*``
-    directories count — the shape the script's own glob visits — so a dataset it
-    could never reach cannot redden this. That is wider than what is *currently*
+    even when a hosted-only dataset has no in-repo archive. Anything actually on
+    disk is folded in as well, so a locally-added sidecar still trips this. Only
+    ``gsplats_*`` directories count — the shape the script's own glob visits — so
+    a dataset it could never reach cannot redden this. That is wider than what is *currently*
     fetchable (a ``local-compute`` dataset builds into the same directory), and
     deliberately so: the refusal keys on the directory name, not on the bucket.
     The assertion is bidirectional, as the name says: a refused dir that ships no

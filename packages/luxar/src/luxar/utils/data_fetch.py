@@ -597,10 +597,12 @@ def _ensure_one(
         )
     raise DatasetUnavailable(
         f"{fname} is not cached (any cached copy failed its checksum and was "
-        "quarantined), not present in-repo, and the demo-data manifest builds no "
-        "Zenodo URL for it yet — its record has no id, or is still an unpublished "
-        "draft. Publish the record and populate its manifest URL, or rerun the "
-        "demo with --recompute when that demo provides a build path."
+        "quarantined), not available from the in-repo Git LFS copy, and the "
+        "demo-data manifest builds no Zenodo URL for it yet — its record has no "
+        "id, or is still an unpublished draft. In a source checkout, run "
+        "`git lfs pull`. Otherwise, publish the record and populate its manifest "
+        "URL, or rerun the demo with --recompute when that demo provides a build "
+        "path."
     )
 
 

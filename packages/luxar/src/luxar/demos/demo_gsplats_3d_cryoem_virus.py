@@ -261,7 +261,7 @@ def load_or_build_gsplats() -> GSplatData:
             if precomputed is not None:
                 return precomputed[0]
         except DatasetUnavailable:
-            aprint("Precomputed fit is not available from the manifest cache.")
+            aprint("Precomputed fit not available (Git LFS asset not pulled).")
         # A fit this machine built earlier, in its own namespace — checked
         # BEFORE refitting, which is what makes the refit below one-time. Read
         # through LOCAL_FIT, the same constant `fit_map` writes through: a door

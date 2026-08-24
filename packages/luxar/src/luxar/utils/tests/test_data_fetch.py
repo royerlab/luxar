@@ -797,12 +797,15 @@ def test_corrupt_cache_without_a_source_raises_and_still_quarantines(
     assert find_quarantined_files(good)
 
 
-def test_missing_unpublished_dataset_names_the_available_remedies(
-    fake_repo, monkeypatch
-):
-    """A removed hosted payload must not send users looking for deleted LFS data."""
+def test_unpulled_lfs_pointer_names_the_available_remedies(fake_repo):
+    """An unhydrated source checkout must name Git LFS and fallback remedies."""
     manifest, cache = fake_repo
-    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", cache / "does-not-exist")
+    payload = data_fetch._DEMOS_DATA_DIR / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+    payload.write_text(
+        "version https://git-lfs.github.com/spec/v1\n"
+        f"oid sha256:{'0' * 64}\n"
+        "size 15\n"
+    )
 
     with pytest.raises(FileNotFoundError) as exc_info:
         ensure_dataset(
@@ -811,9 +814,9 @@ def test_missing_unpublished_dataset_names_the_available_remedies(
 
     message = str(exc_info.value)
     assert "unpublished draft" in message
-    assert "Publish the record" in message
+    assert "publish the record" in message.lower()
     assert "--recompute" in message
-    assert "git lfs pull" not in message
+    assert "git lfs pull" in message
 
 
 def test_inrepo_source_failing_its_own_checksum_is_never_used(fake_repo):
