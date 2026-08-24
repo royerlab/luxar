@@ -307,7 +307,9 @@ the materialized demo/example/fixture corpus found pairwise partial overlap too
 noisy for a warning authors would keep reading. Discrete slider dimensions use
 inclusive interval overlap, while displayed dimensions require positive extent;
 different children of one `kind=lod` group are mutually exclusive and are never
-compared.
+compared. Candidate pairs are sweep-pruned on a displayed axis, and repeated
+pairwise hits are rolled up to one warning per offending node so large
+partitions do not turn finalization into quadratic work or log floods.
 
 ### `validation.prune_childless_wrappers(store) -> None`
 

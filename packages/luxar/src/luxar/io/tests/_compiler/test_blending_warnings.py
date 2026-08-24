@@ -11,7 +11,12 @@ import zarr
 
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar.conftest import find_repo_relative_file
-from luxar.io._compiler.finalize.blending_warnings import warn_overlapping_blending
+from luxar.io._compiler.bounds import WorldBoundsLeaf
+from luxar.io._compiler.finalize.blending_warnings import (
+    _BlendLeaf,
+    _candidate_pairs,
+    warn_overlapping_blending,
+)
 from luxar.typing_utils.constants import DEFAULT_BLENDING_MODE_BY_GEOMETRY
 
 
@@ -170,6 +175,18 @@ def test_normal_points_and_gsplats_never_count_as_depth_writers(
     assert capsys.readouterr().out == ""
 
 
+def test_set_but_unknown_mode_matches_viewer_normal_fallback(capsys) -> None:
+    root = _root()
+    _leaf(root, "additive", "points")
+    _leaf(root, "malformed", "lines", blending_mode="", opacity=1.0)
+
+    warn_overlapping_blending(root)
+
+    output = capsys.readouterr().out
+    assert "'malformed' (normal)" in output
+    assert "mix depth-ignoring and depth-writing geometry" in output
+
+
 def test_overlapping_sorted_nodes_warn_but_lod_alternatives_do_not(capsys) -> None:
     root = _root()
     _leaf(root, "surface", "points", blending_mode="normal")
@@ -182,7 +199,8 @@ def test_overlapping_sorted_nodes_warn_but_lod_alternatives_do_not(capsys) -> No
     warn_overlapping_blending(root)
 
     output = capsys.readouterr().out
-    assert "'surface' (normal) and 'volume' (volumetric)" in output
+    assert "'surface' (normal)" in output
+    assert "'volume' (volumetric)" in output
     assert "'lod/coarse' (normal) and 'lod/fine' (normal)" not in output
 
 
@@ -261,6 +279,38 @@ def test_spatial_boundary_contact_is_not_reported_as_overlap(capsys) -> None:
     warn_overlapping_blending(root)
 
     assert capsys.readouterr().out == ""
+
+
+def test_spatial_sweep_prunes_disjoint_leaf_pairs() -> None:
+    leaves = [
+        _BlendLeaf(
+            WorldBoundsLeaf(
+                path=f"leaf_{index}",
+                geometry_type="points",
+                bounds={
+                    "min": [float(index * 2), 0.0, 0.0],
+                    "max": [float(index * 2 + 1), 1.0, 1.0],
+                },
+            ),
+            mode="normal",
+            opacity=1.0,
+            lod_branches=(),
+        )
+        for index in range(1000)
+    ]
+
+    assert list(_candidate_pairs(leaves, {0, 1, 2})) == []
+
+
+def test_each_additive_offender_warns_only_once(capsys) -> None:
+    root = _root()
+    _leaf(root, "points", "points")
+    _leaf(root, "mesh_a", "mesh")
+    _leaf(root, "mesh_b", "mesh")
+
+    warn_overlapping_blending(root)
+
+    assert capsys.readouterr().out.count("⚠️") == 1
 
 
 def test_world_transforms_decide_overlap(capsys) -> None:

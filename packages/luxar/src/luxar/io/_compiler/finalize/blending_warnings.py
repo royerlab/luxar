@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 
 import zarr
@@ -9,7 +10,10 @@ from arbol import aprint
 
 from ....core.dimensions import Dimensions
 from ....typing_utils.constants import DEFAULT_BLENDING_MODE_BY_GEOMETRY
+from ....typing_utils.enums import BlendingMode
 from ..bounds import WorldBoundsLeaf, collect_world_bounds
+
+_BLENDING_MODES = frozenset(mode.value for mode in BlendingMode)
 
 
 @dataclass(frozen=True)
@@ -42,7 +46,13 @@ def _effective_leaf(store: zarr.Group, leaf: WorldBoundsLeaf) -> _BlendLeaf:
         opacity *= float(attrs.get("opacity", 1.0))
 
     opacity = min(1.0, max(0.0, opacity))
-    resolved = mode or DEFAULT_BLENDING_MODE_BY_GEOMETRY[leaf.geometry_type]
+    resolved = (
+        mode
+        if mode is not None
+        else DEFAULT_BLENDING_MODE_BY_GEOMETRY[leaf.geometry_type]
+    )
+    if resolved not in _BLENDING_MODES:
+        resolved = "normal"
     if leaf.geometry_type == "mesh" and resolved == "volumetric":
         resolved = "opaque"
     return _BlendLeaf(leaf, resolved, opacity, tuple(lod_branches))
@@ -101,48 +111,85 @@ def _internally_sorted(node: _BlendLeaf) -> bool:
     return node.mode in {"normal", "volumetric"}
 
 
+def _candidate_pairs(
+    leaves: list[_BlendLeaf], displayed_dimensions: set[int]
+) -> Iterator[tuple[_BlendLeaf, _BlendLeaf]]:
+    """Yield spatial candidates with a sweep on one displayed dimension."""
+    sweep_axis = next(
+        (
+            axis
+            for axis in sorted(displayed_dimensions)
+            if all(axis < len(node.leaf.bounds["min"]) for node in leaves)
+        ),
+        None,
+    )
+    if sweep_axis is None:
+        for index, left in enumerate(leaves):
+            for right in leaves[index + 1 :]:
+                yield left, right
+        return
+
+    ordered = sorted(
+        leaves,
+        key=lambda node: (node.leaf.bounds["min"][sweep_axis], node.leaf.path),
+    )
+    for index, left in enumerate(ordered):
+        left_max = left.leaf.bounds["max"][sweep_axis]
+        for right in ordered[index + 1 :]:
+            if right.leaf.bounds["min"][sweep_axis] >= left_max:
+                break
+            yield left, right
+
+
 def warn_overlapping_blending(store: zarr.Group) -> None:
-    """Warn once per co-visible overlapping pair with unsafe blend semantics."""
+    """Warn once per co-visible node with unsafe overlapping blend semantics."""
     if "scene_dimensions" not in store.attrs:
         return
     dimensions = Dimensions.from_dict(store.attrs["scene_dimensions"])
     displayed_dimensions = set(dimensions.displayed[:3])
     leaves = [_effective_leaf(store, leaf) for leaf in collect_world_bounds(store)]
-    for index, left in enumerate(leaves):
-        for right in leaves[index + 1 :]:
-            if not _can_coexist(left, right) or not _intersects(
-                left.leaf, right.leaf, displayed_dimensions
-            ):
-                continue
+    warned_additive: set[str] = set()
+    warned_sorted: set[str] = set()
+    for left, right in _candidate_pairs(leaves, displayed_dimensions):
+        if not _can_coexist(left, right) or not _intersects(
+            left.leaf, right.leaf, displayed_dimensions
+        ):
+            continue
 
-            left_writes = _depth_writes(left)
-            right_writes = _depth_writes(right)
-            if (left.mode == "additive" and right_writes) or (
-                right.mode == "additive" and left_writes
-            ):
-                additive = left if left.mode == "additive" else right
-                writer = right if additive is left else left
-                aprint(
-                    f"  ⚠️  overlapping nodes '{additive.leaf.path}' ({additive.mode}) and "
-                    f"'{writer.leaf.path}' ({writer.mode}) mix depth-ignoring and "
-                    "depth-writing geometry; use blending_mode='luminous' on the "
-                    "additive node unless X-ray rendering is intentional."
-                )
+        left_writes = _depth_writes(left)
+        right_writes = _depth_writes(right)
+        if (left.mode == "additive" and right_writes) or (
+            right.mode == "additive" and left_writes
+        ):
+            additive = left if left.mode == "additive" else right
+            if additive.leaf.path in warned_additive:
                 continue
+            writer = right if additive is left else left
+            warned_additive.add(additive.leaf.path)
+            aprint(
+                f"  ⚠️  overlapping nodes '{additive.leaf.path}' ({additive.mode}) and "
+                f"'{writer.leaf.path}' ({writer.mode}) mix depth-ignoring and "
+                "depth-writing geometry; use blending_mode='luminous' on the "
+                "additive node unless X-ray rendering is intentional."
+            )
+            continue
 
-            if (
-                _depth_tests(left)
-                and _depth_tests(right)
-                and not left_writes
-                and not right_writes
-                and _internally_sorted(left)
-                and _internally_sorted(right)
-                and (
-                    _contains(left.leaf, right.leaf) or _contains(right.leaf, left.leaf)
-                )
-            ):
-                aprint(
-                    f"  ⚠️  overlapping depth-sorted nodes '{left.leaf.path}' ({left.mode}) "
-                    f"and '{right.leaf.path}' ({right.mode}) have view-dependent cross-node "
-                    "order; make one node additive or separate their bounds."
-                )
+        if (
+            _depth_tests(left)
+            and _depth_tests(right)
+            and not left_writes
+            and not right_writes
+            and _internally_sorted(left)
+            and _internally_sorted(right)
+            and (_contains(left.leaf, right.leaf) or _contains(right.leaf, left.leaf))
+            and (
+                left.leaf.path not in warned_sorted
+                or right.leaf.path not in warned_sorted
+            )
+        ):
+            warned_sorted.update((left.leaf.path, right.leaf.path))
+            aprint(
+                f"  ⚠️  overlapping depth-sorted nodes '{left.leaf.path}' ({left.mode}) "
+                f"and '{right.leaf.path}' ({right.mode}) have view-dependent cross-node "
+                "order; make one node additive or separate their bounds."
+            )
