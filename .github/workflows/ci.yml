@@ -2,13 +2,14 @@ name: CI
 
 on:
   push:
-    # `main` is FAST-FORWARD-ONLY from `dev` (see the promotion daemons), so every
-    # commit main receives has already run this whole workflow on its dev push and
-    # carries the passing statuses on the very same SHA — a main push would only
-    # re-run the identical suite on the identical commit. Branch protection is
-    # still satisfied by those carried statuses (that is how promote-ff already
-    # fast-forwards), and the deploy/publish workflows keep their own main
-    # triggers. So test on dev, not twice. (#cost)
+    # This relies on `main` staying FAST-FORWARD-ONLY from `dev` (see the promotion
+    # daemons): every commit main receives has already run this whole workflow on
+    # its dev push and carries the passing statuses on the very same SHA. A main
+    # push would only re-run the identical suite on the identical commit. Branch
+    # protection is still satisfied by those carried statuses (that is how
+    # promote-ff already fast-forwards), and the deploy/publish workflows keep
+    # their own main triggers. A commit that exists only on main gets NO CI here.
+    # So test on dev, not twice. (#cost)
     branches: [dev]
   pull_request:
     branches: [main, dev]
@@ -24,8 +25,8 @@ on:
     - cron: '17 9 * * *'
 
 concurrency:
-  # `github.event_name` is in the key ONLY to keep the nightly and push-to-main
-  # in separate groups. A scheduled run's ref is `refs/heads/main`, the same as a
+  # `github.event_name` is in the key ONLY to keep the nightly and push-to-dev
+  # in separate groups. A scheduled run's ref is `refs/heads/dev`, the same as a
   # merge's, so under one shared group whichever of the two starts SECOND cancels
   # the other -- and they collide constantly: over the 31 days before this was
   # written a merge landed inside the nightly's ~30min window on 17 days, and
@@ -33,7 +34,7 @@ concurrency:
   #
   # The expensive direction is the cron killing a merge's push run: a push run
   # has no PR base either, so like the nightly it selects the WHOLE suite, and it
-  # is the only place the new `main` commit gets that treatment. A cron has no
+  # is the only place the new `dev` commit gets that treatment. A cron has no
   # business discarding it. The reverse is milder -- a merge that cancels the
   # nightly runs the full suite itself -- but it still leaves "did every job pass
   # today?" unanswerable at a glance.
@@ -61,7 +62,7 @@ jobs:
   # Heavy jobs still RUN when their domain is untouched (checkout + skipped
   # steps), so every required context reports green rather than relying on grey
   # "skipped" semantics. The docs-quality job follows the same rule when
-  # docs_relevant is false. A push to main has no PR base, so it runs both full
+  # docs_relevant is false. A push to dev has no PR base, so it runs both full
   # CI and docs checks.
   #
   # FAIL-SAFE: every dependent job carries `if: ${{ !cancelled() }}`. Without
@@ -391,7 +392,7 @@ jobs:
       # you need when the legs genuinely differ.
       fail-fast: false
       matrix:
-        # FLOOR on every PR, floor + NEWEST on push-to-main and the nightly.
+        # FLOOR on every PR, floor + NEWEST on push-to-dev and the nightly.
         #
         # 3.12 is the floor (`requires-python = ">=3.12"`, what zarr 3.2+ needs)
         # and is the required status context under branch protection, so it runs
