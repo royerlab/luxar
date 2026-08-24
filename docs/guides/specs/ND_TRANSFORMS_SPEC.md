@@ -270,8 +270,13 @@ function invertNdTransformForQuery(
   tolerance: number[],        // world space
   ndTransform: NdTransformMap,
   // Per-dimension metadata: `name` matches the ndTransform keys,
-  // `discrete`/`step` drive the no-preimage rule (§9.2.1).
-  dimensions: readonly { name?: string; discrete?: boolean; step?: number }[],
+  // `discrete`/`step`/`range` drive the no-preimage rule (§9.2.1).
+  dimensions: readonly {
+    name?: string;
+    discrete?: boolean;
+    step?: number;
+    range?: readonly [number, number];
+  }[],
   displayDims: number[]
 ): { slicePosition: number[]; tolerance: number[]; noPreimage: boolean }
 ```
@@ -299,8 +304,9 @@ local 2.
 
 The test is the forward rule itself, not exact inverse-grid alignment — the two
 agree only for integer `scale`/`offset`, and §11.3 blesses fractional scale.
-`resolveDiscretePreimage` walks the local grid candidates bracketing the exact
-inverse and keeps the one whose forward image rounds to the queried world value:
+`resolveDiscretePreimage` walks the `range[0] + k · step` local grid candidates
+bracketing the exact inverse and keeps the one whose forward image rounds to
+the queried world value on the same anchored grid:
 
 | transform     | world | resolves to | why                              |
 | ------------- | ----- | ----------- | -------------------------------- |

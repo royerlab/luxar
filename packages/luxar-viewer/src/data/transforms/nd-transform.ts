@@ -41,6 +41,7 @@ export interface QueryDimensionInfo {
   name?: string;
   discrete?: boolean;
   step?: number;
+  range?: readonly [number, number];
 }
 
 /**
@@ -81,9 +82,9 @@ const PREIMAGE_EPSILON = 1e-6;
  *
  * ## The no-preimage rule
  *
- * A DISCRETE dimension's values live on the `k · step` grid — that is the
- * format's discrete contract, and the whole slicing stack leans on it: the
- * navigation UI snaps slice targets to that grid, and the per-element
+ * A DISCRETE dimension's values live on the `range[0] + k · step` grid — that
+ * is the format's discrete contract, and the whole slicing stack leans on it:
+ * the navigation UI snaps slice targets to that grid, and the per-element
  * MEMBERSHIP gates therefore use a half-step window (`|value − target| ≤ 0.5 ×
  * step`; see `tolerance-computer.ts` and `effective-radius-calculator.ts`),
  * which selects exactly one category *for an on-grid target*.
@@ -130,7 +131,8 @@ const PREIMAGE_EPSILON = 1e-6;
  * @param tolerance - Per-dimension tolerance in world space
  * @param ndTransform - Composed world nD transform for this node
  * @param dimensions - Per-dimension metadata (length = ndim). `name` is matched
- *   against `ndTransform` keys; `discrete`/`step` drive the no-preimage rule.
+ *   against `ndTransform` keys; `discrete`/`step`/`range` drive the
+ *   no-preimage rule.
  * @param displayDims - Indices of displayed dimensions (to skip)
  * @param extendDims - The node's `extend_to_all` dimension NAMES. Authoritative
  *   exemption list: the tolerance sentinel is absent on every Lines path, so it
@@ -207,7 +209,13 @@ export function invertNdTransformForQuery(
       }
 
       if (dim.discrete && !isExtended) {
-        const resolved = resolveDiscretePreimage(world, scale, offset, dim.step);
+        const resolved = resolveDiscretePreimage(
+          world,
+          scale,
+          offset,
+          dim.step,
+          dim.range?.[0] ?? 0
+        );
         if (resolved === null) {
           noPreimage = true;
         } else {
@@ -241,19 +249,21 @@ function resolveDiscretePreimage(
   world: number,
   scale: number,
   offset: number,
-  step: number | undefined
+  step: number | undefined,
+  anchor: number
 ): number | null {
   const gridStep = step !== undefined && step !== null && step > 0 ? step : 1;
   const exact = (world - offset) / scale;
-  const ratio = exact / gridStep;
+  const ratio = (exact - anchor) / gridStep;
   const tol = gridStep * PREIMAGE_EPSILON;
 
   let best: number | null = null;
   let bestDist = Infinity;
   for (const k of [Math.floor(ratio), Math.ceil(ratio)]) {
-    const candidate = k * gridStep;
+    const candidate = anchor + k * gridStep;
     // The forward rule rounds to the nearest WORLD grid point.
-    const image = Math.round((scale * candidate + offset) / gridStep) * gridStep;
+    const image =
+      anchor + Math.round((scale * candidate + offset - anchor) / gridStep) * gridStep;
     if (Math.abs(image - world) > tol) continue;
     // Both candidates can qualify at |scale| < 1 — keep the one nearest the
     // exact inverse.
