@@ -84,18 +84,22 @@ def test_the_shipped_archive_is_the_component_filtered_build() -> None:
     )
     # In-repo first, then the fetch cache: the payload is manifest-hosted now, so
     # on a machine that has run the demo the fetched copy is the only one there is.
+    # Both arms are matched on the pinned SIZE — a wrong copy staged by hand into
+    # the hosted slot would otherwise be read back and fail as a splat-count
+    # mismatch, which reads like a bad fit rather than the wrong file. (The demo's
+    # own refits live in the sibling `local/` namespace and are never seen here.)
     archive_path = next(
         (
             p
             for p in (_SHIPPED_ARCHIVE, _demo.CACHE_DIR / _demo.GSPLATS_FILE)
-            if p.exists() and p.stat().st_size >= 1024
+            if p.exists() and p.stat().st_size == _ARCHIVE_BYTES
         ),
         None,
     )
     if archive_path is None:
         pytest.skip(
-            "no zebrafish archive on disk — it is manifest-hosted, an in-repo copy "
-            "is an unhydrated Git LFS pointer, and nothing has fetched it here"
+            "no copy of the pinned zebrafish archive on disk — it is "
+            "manifest-hosted, and nothing has fetched it here"
         )
 
     from luxar.gsplats.gsplat_data import GSplatData

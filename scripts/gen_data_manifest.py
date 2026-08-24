@@ -434,7 +434,7 @@ DATASETS: dict[str, dict] = {
         # agree splat-for-splat on the frames they share, where the previous
         # independent fits differed (2.50M vs 2.38M per timepoint at the finest
         # level). Shipped as the default because pulling ~1.9 GB is far easier
-        # than ~11.4 GB over Zenodo's best-effort bandwidth.
+        # than ~9.3 GB over Zenodo's best-effort bandwidth.
         variants={
             "51tp": dict(
                 default=True,
