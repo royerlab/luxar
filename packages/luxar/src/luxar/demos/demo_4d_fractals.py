@@ -392,9 +392,11 @@ def materialised_w_planes(grid_size: int, stride: int) -> np.ndarray:
     geometry inside every slice is at full resolution; only the number of
     SLIDER STOPS is reduced. At the default grid 200 / stride 4 that is 50
     stops — the same slider the demo has always had — with four times the
-    linear detail in each one.
+    linear detail in each one. The starting phase keeps those stops on the
+    zero-anchored snap grid for every supported grid size.
     """
-    return np.arange(0, grid_size, stride, dtype=np.int64)
+    phase = grid_size // 2 % stride
+    return np.arange(phase, grid_size, stride, dtype=np.int64)
 
 
 def generate_4d_fractal(

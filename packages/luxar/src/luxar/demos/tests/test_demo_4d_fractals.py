@@ -76,6 +76,18 @@ class TestAxisWorldValues:
             assert (np.diff(axis) > 0).all()
             assert axis[0] >= -1.0 and axis[-1] < 1.0
 
+    def test_materialised_planes_are_on_the_declared_stride_grid(self) -> None:
+        for grid in (12, 16, 50, 100, 150, 200):
+            planes = materialised_w_planes(grid, _demo.W_STRIDE)
+            values = axis_world_values(grid)[planes]
+            step = _demo.W_STRIDE * 2.0 / grid
+            assert np.allclose(values / step, np.round(values / step), atol=1e-12), (
+                f"grid={grid}: materialised planes miss the viewer snap grid"
+            )
+
+        assert np.array_equal(materialised_w_planes(16, 4), [0, 4, 8, 12])
+        assert np.array_equal(materialised_w_planes(12, 4), [2, 6, 10])
+
 
 class TestEveryWPlanePopulated:
     """Every slider stop must show points, for every fractal type."""
@@ -230,14 +242,15 @@ class TestWrittenDatasetContract:
     """The zarr the demo actually ships must satisfy the slider contract
     after the encode→decode round-trip (quantized position storage)."""
 
-    def test_dimension_metadata_and_decoded_planes(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("grid", [12, 16])
+    def test_dimension_metadata_and_decoded_planes(
+        self, tmp_path: Path, grid: int
+    ) -> None:
         from luxar.io.reader import LuxarScene
 
-        # 16, not 8: only every W_STRIDE-th plane is materialised, so the grid
-        # has to be a comfortable multiple of the stride for the written slider
-        # to have more than a couple of stops.
-        grid = 16
-        out = tmp_path / "fractals_4d_test.luxar.zarr"
+        # 12 exercises phase alignment when grid//2 is not divisible by the
+        # stride; 16 proves the already-aligned case does not move.
+        out = tmp_path / f"fractals_4d_test_{grid}.luxar.zarr"
         _demo.generate_4d_fractal_dataset(out, grid_size=grid)
 
         scene = LuxarScene.load(out)
