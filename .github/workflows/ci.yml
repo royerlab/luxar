@@ -260,7 +260,7 @@ jobs:
         run: |
           # Self-bounded below the job timeout. If jobs are STILL queued when
           # the window closes but the heartbeat stayed fresh the whole time,
-          # the box is busy, not dead (5 slots; 6 obsidian-routed test jobs on a
+          # the box is busy, not dead (3 slots; 6 obsidian-routed test jobs on a
           # push or the nightly, 4 on a PR — and a merge landing during the
           # nightly now queues both sets at once, since the two no longer cancel
           # each other — draining) — leave the run alone.
@@ -395,6 +395,12 @@ jobs:
       # siblings on the first red leg, losing precisely the per-version information
       # you need when the legs genuinely differ.
       fail-fast: false
+      # Obsidian exposes three runner slots. Keep one available for
+      # `typescript-tests`, whose slowest numerical sweep is the first unit test
+      # to time out when three xdist legs consume the whole host at once. PRs have
+      # one Python leg and are unaffected; push/nightly runs execute two legs,
+      # then the third, while TypeScript starts immediately alongside them.
+      max-parallel: 2
       matrix:
         # FLOOR on every PR, floor + NEWEST on push-to-main and the nightly.
         #
@@ -413,7 +419,8 @@ jobs:
         # "declared" and "tested" cannot drift apart: 3.13 was claimed but never
         # exercised, which is the same species of lie as an untested 3.10 claim.
         # Three legs off-PR is also what this job carried before the floor moved
-        # (3.10/3.11/3.12), so it costs the runner pool nothing new.
+        # (3.10/3.11/3.12). `max-parallel` above controls their fan-out without
+        # weakening the version coverage.
         python-version: ${{ (github.event_name == 'pull_request') && fromJSON('["3.12"]') || fromJSON('["3.12", "3.13", "3.14"]') }}
     env:
       # Pin BLAS/OpenMP to one thread per leg. This suite runs SERIALLY, yet each

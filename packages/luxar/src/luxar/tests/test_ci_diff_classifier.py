@@ -35,6 +35,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 REPO = Path(__file__).resolve().parents[5]
 WORKFLOW = REPO / ".github/workflows/ci.yml"
@@ -330,3 +331,9 @@ def test_the_docs_gate_names_its_own_checker_and_baselines(workflow: str) -> Non
             f"{path} no longer triggers docs-quality, so a change to the docs "
             "gate's own input would skip the gate"
         )
+
+
+def test_python_matrix_leaves_an_obsidian_slot_for_typescript(workflow: str) -> None:
+    """The off-PR Python matrix must not consume all three runner slots."""
+    jobs = yaml.safe_load(workflow)["jobs"]
+    assert jobs["python-tests"]["strategy"]["max-parallel"] == 2
