@@ -17,9 +17,10 @@ default), one in ``test_demo_fit_provenance.py`` (the fit-provenance lint —
 ``_interop_common.py`` saves gsplat stores, so an ``include_fitting_info=False``
 save could hide in a helper), one in ``test_demo_caption_coverage.py`` (the
 standard-caption lint, including shared helpers that can author overlays), one
-in ``test_demo_link_templates.py`` (the canonical click-through registry,
-including links authored in shared helpers, mappings and constants; unlike the
-collection-time consumers below, it calls this function inside its test), and
+in ``test_demo_link_templates.py`` (the canonical click-through registry and
+its unclaimed-literal backstop, including links authored in shared helpers,
+mappings and constants; unlike the collection-time consumers below, it calls
+this function inside its test), and
 five in ``test_demos_cinematic_mode.py`` (each scene passes a non-None viewer
 config, every config enables the preset, authored cameras leave the FOV unpinned
 and compose for 63°, scientific-fidelity overrides stay explicit, and the

@@ -6,6 +6,9 @@ invalid symbols. This offline guard records the canonical templates established
 by hand review of each destination's current URL scheme and rejects any
 unreviewed path or host.
 
+The guard runs two passes: registry resolution for supported link forms, then a
+backstop over unclaimed link-like literals that subsumes the GeneCards lint.
+
 The rule is destination-specific, not a blanket ban on legacy-looking paths.
 For example, ``genome.ucsc.edu/cgi-bin/hgTracks`` is UCSC's canonical URL.
 """
@@ -188,11 +191,20 @@ def _demo_links(path: Path) -> list[tuple[Path, int, str | None]]:
     ]
 
 
+def _url_domain(value: str) -> str | None:
+    try:
+        host = urlsplit(value).netloc
+    except ValueError:
+        return None
+    return host.removeprefix("www.") or None
+
+
 def _unclaimed_link_literals(
     path: Path,
     tree: ast.Module,
     expressions: list[tuple[int, ast.expr]],
     resolved_links: set[str],
+    canonical_links: frozenset[str],
     literal_backstop_domains: frozenset[str],
 ) -> list[tuple[Path, int, str]]:
     claimed_nodes = {
@@ -205,12 +217,12 @@ def _unclaimed_link_literals(
             and isinstance(node.value, str)
             and id(node) not in claimed_nodes
             and node.value not in resolved_links
+            and node.value not in canonical_links
         ):
             continue
-        host = urlsplit(node.value).netloc
-        domain = host.removeprefix("www.")
+        domain = _url_domain(node.value)
         has_placeholder = "{hover_key}" in node.value or "{hover_label}" in node.value
-        if host and (has_placeholder or domain in literal_backstop_domains):
+        if domain and (has_placeholder or domain in literal_backstop_domains):
             unclaimed.append((path, node.lineno, node.value))
     return unclaimed
 
@@ -227,10 +239,14 @@ def _audit_links(
     links: list[tuple[Path, int, str | None]] = []
     unclaimed: list[tuple[Path, int, str]] = []
     literal_backstop_domains = frozenset(
-        urlsplit(link).netloc.removeprefix("www.")
+        domain
         for link in canonical_links
+        if (domain := _url_domain(link)) is not None
         if "{hover_key}" not in link and "{hover_label}" not in link
-    ) | {"genecards.org"}
+    )
+    # Preserve #2019's GeneCards-wide net; widening it flags citations and
+    # non-link endpoints on other registered hosts.
+    literal_backstop_domains |= {"genecards.org"}
     for path in paths:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         constants = _static_strings(tree)
@@ -245,7 +261,12 @@ def _audit_links(
         }
         unclaimed.extend(
             _unclaimed_link_literals(
-                path, tree, expressions, resolved_links, literal_backstop_domains
+                path,
+                tree,
+                expressions,
+                resolved_links,
+                canonical_links,
+                literal_backstop_domains,
             )
         )
 
@@ -288,6 +309,7 @@ def test_demo_links_use_registered_canonical_templates() -> None:
 
 
 def test_demo_link_guard_collects_by_module_with_doctests_enabled() -> None:
+    # Regression guard: doctest discovery changes pytest's module collection path.
     result = subprocess.run(
         [
             sys.executable,
@@ -395,6 +417,43 @@ scene.add_points(link="https://www.genecards.org/card/{hover_key}")
         ),
         (module, 2, "https://genecards.org/legacy"),
     ]
+
+
+def test_demo_link_audit_ignores_malformed_url_literals(tmp_path: Path) -> None:
+    module = tmp_path / "demo_malformed.py"
+    module.write_text(
+        """MIRROR = "https://[hover_key].example.org/x"
+scene.add_points(link="https://www.uniprot.org/uniprotkb/{hover_key}/entry")
+""",
+        encoding="utf-8",
+    )
+    malformed_canonical = "https://[dead:beef/query"
+
+    links, unresolved, unregistered, unclaimed = _audit_links(
+        [module], CANONICAL_LINKS | {malformed_canonical}
+    )
+
+    assert links == [(module, 2, "https://www.uniprot.org/uniprotkb/{hover_key}/entry")]
+    assert unresolved == []
+    assert unregistered == []
+    assert unclaimed == []
+
+
+def test_demo_link_audit_allows_canonical_helper_literal(tmp_path: Path) -> None:
+    module = tmp_path / "demo_helper.py"
+    module.write_text(
+        """UNIPROT_LINK = "https://www.uniprot.org/uniprotkb/{hover_key}/entry"
+build_protein_layer(scene, link_template=UNIPROT_LINK)
+""",
+        encoding="utf-8",
+    )
+
+    links, unresolved, unregistered, unclaimed = _audit_links([module], CANONICAL_LINKS)
+
+    assert links == []
+    assert unresolved == []
+    assert unregistered == []
+    assert unclaimed == []
 
 
 def test_demo_link_registry_rejects_wrong_path_shape(tmp_path: Path) -> None:
