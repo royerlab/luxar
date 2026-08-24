@@ -26,6 +26,12 @@ import pytest
 _DEMO_PATH = (
     Path(__file__).resolve().parents[1] / "demo_gsplats_4d_zebrafish_timelapse.py"
 )
+_SHIPPED_ARCHIVE = (
+    Path(__file__).resolve().parents[1]
+    / "data"
+    / "gsplats_zebrafish"
+    / "zebrafish_4d.gsplats.zarr.zip"
+)
 
 
 def _load_demo_module(name: str = "_luxar_demo_zebrafish_for_tests"):
@@ -39,6 +45,37 @@ def _load_demo_module(name: str = "_luxar_demo_zebrafish_for_tests"):
 
 
 _demo = _load_demo_module()
+
+
+def test_the_shipped_archive_is_the_component_filtered_build() -> None:
+    """Catch a stale precomputed archive whose preprocessing disagrees with code."""
+    assert (
+        _demo.SEEDS,
+        _demo.FLOOR,
+        _demo.MIN_COMPONENT_VOXELS,
+        _demo.COMPONENT_CONNECTIVITY,
+    ) == (32_000, "none", 4, 1), (
+        "the shipped archive was fitted at these values, and the README, changelog "
+        "and docstring tables quote them; changing one means refitting and reshipping"
+    )
+    if not _SHIPPED_ARCHIVE.exists() or _SHIPPED_ARCHIVE.stat().st_size < 1024:
+        pytest.skip(
+            "zebrafish archive is not on disk here — it is manifest-hosted, and an "
+            "in-repo copy is an unhydrated Git LFS pointer"
+        )
+
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    archive = GSplatData.load(_SHIPPED_ARCHIVE, include_stats=False)
+    finest = archive.substitutive_levels[0]
+    frame_zero_splats = sum(
+        int(np.count_nonzero(np.isclose(sublod.centers[:, 3], 0.0)))
+        for sublod in finest.additive_sublods
+    )
+    assert frame_zero_splats == 1_369, (
+        f"shipped frame 0 has {frame_zero_splats:,} splats, not the measured "
+        "component-filtered 1,369; the archive may still contain the NLM build"
+    )
 
 
 class TestTimepointSelection:
@@ -468,6 +505,7 @@ class TestTheStackedArchiveSurvivesItsRoundTrip:
         monkeypatch.setattr(_demo, "ACQUISITION_SHAPE_ZYX", shape)
         monkeypatch.setattr(_demo, "GRID_STEP_UM", 10.0)
         monkeypatch.setattr(_demo, "DEVICE", "cpu")
+        monkeypatch.setattr(_demo, "MIN_COMPONENT_VOXELS", 0)
 
         times = [t * _demo.AXIS_STEP_MIN for t in range(len(fits))]
         laddered = _demo.build_lod(_demo.combine_to_4d(fits, times))
@@ -475,6 +513,7 @@ class TestTheStackedArchiveSurvivesItsRoundTrip:
 
         root = zarr.open_group(str(out), mode="r")
         assert {"endoderm", "acquisition cage"} <= set(root.group_keys())
+        assert "connected components" not in root.attrs["description"]
 
         dims = {
             d["name"]: d for d in dict(root.attrs)["scene_dimensions"]["dimensions"]
@@ -508,3 +547,339 @@ class TestTheStackedArchiveSurvivesItsRoundTrip:
             "the cage is the instrument, not the specimen: it must survive "
             "every scrub rather than appear at one timepoint"
         )
+
+    def test_the_scene_records_the_filter_when_enabled(self, toy, monkeypatch):
+        import zarr
+
+        shape, fits, tmp = toy
+        monkeypatch.setattr(_demo, "ACQUISITION_SHAPE_ZYX", shape)
+        monkeypatch.setattr(_demo, "DEVICE", "cpu")
+        monkeypatch.setattr(_demo, "MIN_COMPONENT_VOXELS", 4)
+
+        times = [t * _demo.AXIS_STEP_MIN for t in range(len(fits))]
+        laddered = _demo.build_lod(_demo.combine_to_4d(fits, times))
+        out = _demo.create_luxar_scene(laddered, tmp / "denoised.luxar.zarr")
+
+        root = zarr.open_group(str(out), mode="r")
+        assert (
+            "connected components smaller than 4 voxels removed"
+            in root.attrs["description"]
+        )
+
+
+class TestTheFitCacheKeyMovesWithEveryKnob:
+    """A cached fit may only be reused by a run that would have produced it.
+
+    An earlier version of this demo keyed its per-timepoint cache on the frame
+    index alone. That is silent and expensive in exactly the wrong way: every
+    sweep in the module docstring — the seed budget, the floor, the denoising
+    strength — would have been served the first arm's fits and reported it as
+    the answer for all of them.
+
+    So this enumerates the knobs rather than spot-checking one, because the
+    failure is introduced by ADDING a knob and forgetting the key, and a
+    spot-check on the knobs that already exist cannot see that.
+    """
+
+    #: Every module constant the fit result depends on. A new one belongs here
+    #: at the same time it starts being passed to ``fit_gaussian_splats``.
+    KNOBS = {
+        "SEEDS": 12_345,
+        "N_ITERS": 999,
+        "EARLY_STOP_PATIENCE": 7,
+        "CULL_RETENTION": 0.5,
+        "FLOOR": "p90",
+        "MIN_COMPONENT_VOXELS": 7,
+        "COMPONENT_CONNECTIVITY": 3,
+    }
+
+    #: Constants that reach the fit but deliberately stay OUT of the key, each
+    #: for a reason that has to be written down. ``device`` is a *how*, not a
+    #: *what*: the same config on CPU and on CUDA is meant to describe the same
+    #: fit, and if it does not, the answer is to fix the fitter rather than to
+    #: refit an entire timelapse per machine.
+    EXEMPT = {
+        # `device` is a *how*, not a *what*: the same config on CPU and on CUDA
+        # is meant to describe the same fit, and if it does not, the answer is
+        # to fix the fitter rather than refit a timelapse per machine.
+        "DEVICE",
+        # REFIT_ALL decides whether the cache is READ at all. Keying on it would
+        # mean a forced refit writes to a different path than the run it is
+        # meant to replace, so the stale entry would survive forever.
+        "REFIT_ALL",
+    }
+
+    def test_the_frame_index_is_in_the_key(self) -> None:
+        assert _demo._fit_cache_path(3) != _demo._fit_cache_path(4)
+
+    @pytest.mark.parametrize("knob", sorted(KNOBS))
+    def test_changing_a_knob_changes_the_path(self, knob: str, monkeypatch) -> None:
+        before = _demo._fit_cache_path(0)
+        monkeypatch.setattr(_demo, knob, self.KNOBS[knob])
+        after = _demo._fit_cache_path(0)
+        assert before != after, (
+            f"{knob} does not appear in the fit cache key, so a run that "
+            f"changes it silently reuses fits made with the old value"
+        )
+
+    def test_every_fitting_knob_is_covered_by_this_test(self) -> None:
+        """The list above must not drift behind the call it mirrors.
+
+        Reads the actual fitting and preprocessing calls and requires that each
+        module constant they pass is one this test varies. Without this the
+        parametrization silently stops covering new knobs.
+        """
+        import ast
+        import inspect
+
+        # Scan the whole fit path for module-level constants rather than only
+        # the arguments of a named call. The previous version keyed on
+        # `denoise_volume_array`, which vanished when NLM was replaced by a
+        # component filter -- and a guard that silently stops finding its own
+        # anchor guards nothing. A constant referenced ANYWHERE on this path can
+        # change the result, so that is what has to be enumerated.
+        module_consts = {
+            name for name in vars(_demo) if name.isupper() and not name.startswith("_")
+        }
+        passed = {
+            node.id
+            for function in (
+                _demo.fit_all_timepoints,
+                _demo.fit_timepoint,
+                _demo.denoise,
+            )
+            for node in ast.walk(ast.parse(inspect.getsource(function).lstrip()))
+            if isinstance(node, ast.Name) and node.id in module_consts
+        }
+        assert passed, "found no constants on the fit path; this test has gone stale"
+        assert set(self.KNOBS) <= passed, (
+            f"{sorted(set(self.KNOBS) - passed)} are in KNOBS but no longer reach "
+            "the fit, so the cache key advertises a distinction the fit ignores"
+        )
+        assert passed <= set(self.KNOBS) | self.EXEMPT, (
+            f"{sorted(passed - set(self.KNOBS) - self.EXEMPT)} reach the fit "
+            "but are not in KNOBS, so nothing checks they are in the cache "
+            "key. Add them there, or to EXEMPT with a reason."
+        )
+        assert not (set(self.KNOBS) & self.EXEMPT), "a knob cannot also be exempt"
+
+
+class TestTheComponentFilter:
+    """Delete small objects, leave every larger one BIT-IDENTICAL.
+
+    That second half is the whole reason this replaced NLM, so it is the part
+    worth pinning: a smoothing filter cannot promise it, and the promise is what
+    lets the demo claim zero cell cost without re-measuring per dataset.
+    """
+
+    @staticmethod
+    def _volume() -> np.ndarray:
+        # Sizes 1 and 3 (below the threshold of 4), size 4 sitting EXACTLY on
+        # it, and an 8-voxel block well above it. The 4 is the one that matters:
+        # it is what separates `< threshold` from `<= threshold`, and without it
+        # an off-by-one changes nothing and no test notices.
+        v = np.zeros((4, 10, 10), dtype=np.float32)
+        v[0, 0, 0] = 0.9  # 1 voxel -> deleted
+        v[0, 4, 0:3] = 0.7  # 3 voxels -> deleted
+        v[0, 8, 0:4] = 0.6  # 4 voxels -> KEPT (boundary)
+        v[2, 2:4, 2:4] = 0.5  # 8 voxels -> kept
+        v[3, 2:4, 2:4] = 0.5
+        return v
+
+    def test_small_components_go_and_the_large_one_is_untouched(
+        self, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(_demo, "MIN_COMPONENT_VOXELS", 4)
+        v = self._volume()
+        out = _demo.denoise(v)
+        assert out[0, 0, 0] == 0.0, "the 1-voxel speck survived"
+        assert not out[0, 4, 0:3].any(), "the 3-voxel speck survived"
+        assert np.array_equal(out[0, 8, 0:4], v[0, 8, 0:4]), (
+            "the 4-voxel object was deleted; the threshold is exclusive, so an "
+            "object OF exactly that size must be kept (`<`, not `<=`)"
+        )
+        block = (slice(2, 4), slice(2, 4), slice(2, 4))
+        assert np.array_equal(out[block], v[block]), (
+            "the 8-voxel object changed; a size filter must never alter an "
+            "object it keeps -- that is the property NLM could not offer"
+        )
+
+    def test_the_peak_of_a_kept_object_is_exactly_preserved(self, monkeypatch) -> None:
+        # The measured claim in the docstring is `cell_pk == 1.0000`, exactly --
+        # so check every KEPT object's own peak, not just the global max, which
+        # a single surviving bright object would satisfy on its own.
+        monkeypatch.setattr(_demo, "MIN_COMPONENT_VOXELS", 4)
+        v = self._volume()
+        out = _demo.denoise(v)
+        for name, sel in (
+            ("4-voxel", (0, 8, slice(0, 4))),
+            ("8-voxel", (slice(2, 4), slice(2, 4), slice(2, 4))),
+        ):
+            assert out[sel].max() == v[sel].max(), f"{name} object lost its peak"
+
+    def test_connectivity_is_explicit_and_changes_diagonal_membership(
+        self, monkeypatch
+    ) -> None:
+        volume = np.zeros((5, 5, 5), dtype=np.float32)
+        diagonal = np.arange(5)
+        volume[diagonal, diagonal, diagonal] = 1.0
+        monkeypatch.setattr(_demo, "MIN_COMPONENT_VOXELS", 4)
+
+        monkeypatch.setattr(_demo, "COMPONENT_CONNECTIVITY", 1)
+        assert not _demo.denoise(volume).any(), (
+            "6-connectivity must treat a corner-touching diagonal as five specks"
+        )
+
+        monkeypatch.setattr(_demo, "COMPONENT_CONNECTIVITY", 3)
+        assert np.array_equal(_demo.denoise(volume), volume), (
+            "26-connectivity must treat the same diagonal as one 5-voxel object"
+        )
+
+    def test_the_input_is_not_mutated(self, monkeypatch) -> None:
+        monkeypatch.setattr(_demo, "MIN_COMPONENT_VOXELS", 4)
+        v = self._volume()
+        before = v.copy()
+        _demo.denoise(v)
+        assert np.array_equal(v, before), "denoise() edited its caller's array"
+
+    @pytest.mark.parametrize("off", [0, 1])
+    def test_a_threshold_below_two_is_a_no_op(self, off: int, monkeypatch) -> None:
+        # Below 2 there is no component small enough to delete, so the filter
+        # must hand the frame straight back rather than pay for a copy.
+        monkeypatch.setattr(_demo, "MIN_COMPONENT_VOXELS", off)
+        v = self._volume()
+        assert _demo.denoise(v) is v
+
+    def test_the_off_state_is_still_distinguishable_in_the_cache_key(
+        self, monkeypatch
+    ) -> None:
+        # Otherwise a filtered and an unfiltered run share a cache, which is the
+        # comparison the docstring's threshold table depends on being able to make.
+        monkeypatch.setattr(_demo, "MIN_COMPONENT_VOXELS", 0)
+        off = _demo._fit_cache_path(0)
+        monkeypatch.setattr(_demo, "MIN_COMPONENT_VOXELS", 4)
+        assert off != _demo._fit_cache_path(0)
+
+
+class TestRecomputeResumes:
+    """``--recompute`` rebuilds the archive but must not refit cached frames.
+
+    The distinction is worth a test because it is invisible until a long run is
+    interrupted, and then it costs the whole run. It is only safe because the
+    cache key covers every knob that changes a fit — see
+    ``TestTheFitCacheKeyMovesWithEveryKnob``, which is what this leans on.
+    """
+
+    def test_a_cached_frame_is_reused_under_recompute(self, monkeypatch) -> None:
+        monkeypatch.setattr(_demo, "RECOMPUTE", True)
+        monkeypatch.setattr(_demo, "REFIT_ALL", False)
+        sentinel = object()
+        monkeypatch.setattr(
+            _demo.GSplatData, "load", staticmethod(lambda *a, **k: sentinel)
+        )
+        monkeypatch.setattr(_demo, "_fit_cache_path", lambda frame: _Exists())
+        assert _demo.fit_timepoint(None, 0, (None, None)) is sentinel
+
+    def test_a_cached_frame_is_not_denoised(self, monkeypatch) -> None:
+        monkeypatch.setattr(_demo, "REFIT_ALL", False)
+        sentinel = _CachedFit()
+        monkeypatch.setattr(
+            _demo.GSplatData, "load", staticmethod(lambda *a, **k: sentinel)
+        )
+        monkeypatch.setattr(_demo, "_fit_cache_path", lambda frame: _Exists())
+        monkeypatch.setattr(
+            _demo,
+            "denoise",
+            lambda volume: pytest.fail("a cached frame was denoised"),
+        )
+        monkeypatch.setattr(_demo, "report_fit_quality", lambda fits: None)
+        array = np.zeros((1, 2, 3, 4), dtype=np.uint8)
+        assert _demo.fit_all_timepoints(array, [0]) == [sentinel]
+
+    def test_a_cold_frame_is_filtered_before_it_reaches_the_fitter(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """A cache MISS must filter; the sibling test covers the hit skipping it.
+
+        Asserted on the array the fitter actually receives, not on a call
+        record, so it survives the filter being reimplemented.
+        """
+        import luxar.gsplats
+
+        class FitReached(Exception):
+            pass
+
+        # One 1-voxel speck (must be gone) and one 8-voxel block (must remain).
+        volume = np.zeros((2, 6, 6), dtype=np.float32)
+        volume[0, 0, 0] = 0.9
+        volume[0, 2:4, 2:4] = 0.5
+        volume[1, 2:4, 2:4] = 0.5
+        seen: list[np.ndarray] = []
+
+        monkeypatch.setattr(_demo, "REFIT_ALL", False)
+        monkeypatch.setattr(_demo, "DEVICE", "cpu")
+        monkeypatch.setattr(_demo, "MIN_COMPONENT_VOXELS", 4)
+        monkeypatch.setattr(
+            _demo, "_fit_cache_path", lambda frame: tmp_path / "missing.gsplats.zarr"
+        )
+
+        def stop_at_fit(input_volume, **kwargs):
+            seen.append(np.asarray(input_volume).copy())
+            raise FitReached
+
+        monkeypatch.setattr(luxar.gsplats, "fit_gaussian_splats", stop_at_fit)
+        with pytest.raises(FitReached):
+            _demo.fit_timepoint(volume, 0, (volume.shape, str(volume.dtype)))
+
+        assert len(seen) == 1
+        got = seen[0]
+        assert got[0, 0, 0] == 0.0, "the speck reached the fitter unfiltered"
+        assert got[0, 2:4, 2:4].sum() == volume[0, 2:4, 2:4].sum(), (
+            "the kept block was altered on its way to the fitter"
+        )
+
+    def test_refit_all_ignores_the_cache(self, monkeypatch) -> None:
+        import luxar.gsplats
+
+        class FitReached(Exception):
+            pass
+
+        read: list[str] = []
+        fitted: list[str] = []
+        monkeypatch.setattr(_demo, "REFIT_ALL", True)
+        monkeypatch.setattr(_demo, "DEVICE", "cpu")
+        monkeypatch.setattr(
+            _demo.GSplatData,
+            "load",
+            staticmethod(lambda *a, **k: read.append("hit")),
+        )
+        monkeypatch.setattr(_demo, "_fit_cache_path", lambda frame: _Exists())
+        monkeypatch.setattr(_demo, "denoise", lambda volume: volume)
+
+        def stop_at_fit(*args, **kwargs):
+            fitted.append("fit")
+            raise FitReached
+
+        monkeypatch.setattr(
+            luxar.gsplats,
+            "fit_gaussian_splats",
+            stop_at_fit,
+        )
+        with pytest.raises(FitReached):
+            _demo.fit_timepoint(None, 0, (None, None))
+        assert read == [], "the cache was read despite --refit-all"
+        assert fitted == ["fit"]
+
+
+class _Exists:
+    """A Path stand-in that is always present and never actually touched."""
+
+    def exists(self) -> bool:
+        return True
+
+    def unlink(self, missing_ok: bool = False) -> None:
+        pass
+
+
+class _CachedFit:
+    n_splats = 1

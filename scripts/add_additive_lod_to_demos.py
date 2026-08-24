@@ -95,7 +95,7 @@ class BundleDemo:
 
 
 PLAIN_DEMOS: List[PlainDemo] = [
-    PlainDemo("organoid_dapi", "gsplats_dapi", ["dapi.gsplats.zarr.zip"]),
+    PlainDemo("blastocyst_dapi", "gsplats_dapi", ["dapi.gsplats.zarr.zip"]),
     PlainDemo(
         "kidney",
         "gsplats_kidney",
@@ -115,11 +115,11 @@ PLAIN_DEMOS: List[PlainDemo] = [
         ],
     ),
     PlainDemo(
-        "organoid_multichannel",
+        "blastocyst_multichannel",
         "gsplats_multichannel",
         [
-            "organoids_ch0.gsplats.zarr.zip",
-            "organoids_ch1.gsplats.zarr.zip",
+            "blastocyst_ch0.gsplats.zarr.zip",
+            "blastocyst_ch1.gsplats.zarr.zip",
         ],
     ),
     PlainDemo(

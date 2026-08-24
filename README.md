@@ -112,7 +112,7 @@ geometry, what it needs, and whether you have already built it:
 
  MEDICAL ─────────────────────────────────────────────────────────────── 4 demos
  ✓ 16  dmri_tractography                       lines         588 MB
- • 24  gsplats_2d_cmu1_pathology               gsplats       150 MB GPU? git-lfs
+ • 25  gsplats_2d_cmu1_pathology               gsplats       150 MB GPU? git-lfs
 
  SYNTHETIC ──────────────────────────────────────────────────────────── 19 demos
  ✓  9  cloud                                   points
@@ -217,9 +217,9 @@ A cross-section of Luxar's built-in demos — all four geometry types (**Points*
 
 ### Gaussian splats — microscopy, medical & astronomy
 
-| [![Cells3D — multichannel fluorescence](docs/images/readme/gallery/gsplats_3d_cells3d_multichannel.webp)](docs/images/readme/gallery/gsplats_3d_cells3d_multichannel.webm) | [![3D Organoid — multichannel nuclei](docs/images/readme/gallery/gsplats_3d_organoid_multichannel.webp)](docs/images/readme/gallery/gsplats_3d_organoid_multichannel.webm) | [![Zebrafish Neuromast — 4D timelapse](docs/images/readme/gallery/gsplats_4d_neuromast_2ch.webp)](docs/images/readme/gallery/gsplats_4d_neuromast_2ch.webm) |
+| [![Cells3D — multichannel fluorescence](docs/images/readme/gallery/gsplats_3d_cells3d_multichannel.webp)](docs/images/readme/gallery/gsplats_3d_cells3d_multichannel.webm) | [![Mouse Blastocyst — multichannel nuclei](docs/images/readme/gallery/gsplats_3d_blastocyst_multichannel.webp)](docs/images/readme/gallery/gsplats_3d_blastocyst_multichannel.webm) | [![Zebrafish Neuromast — 4D timelapse](docs/images/readme/gallery/gsplats_4d_neuromast_2ch.webp)](docs/images/readme/gallery/gsplats_4d_neuromast_2ch.webm) |
 |:--:|:--:|:--:|
-| **Cells3D**<br>multichannel fluorescence | **3D Organoid**<br>multichannel nuclei | **Zebrafish Neuromast**<br>4D timelapse |
+| **Cells3D**<br>multichannel fluorescence | **Mouse Blastocyst**<br>Lamin B1 + DAPI | **Zebrafish Neuromast**<br>4D timelapse |
 | [![Tribolium Embryo — light-sheet](docs/images/readme/gallery/gsplats_3d_tribolium_embryo.webp)](docs/images/readme/gallery/gsplats_3d_tribolium_embryo.webm) | [![CT Anatomy Atlas — TotalSegmentator](docs/images/readme/gallery/gsplats_3d_ct_totalsegmentator.webp)](docs/images/readme/gallery/gsplats_3d_ct_totalsegmentator.webm) | [![Milky Way Dust — galactic dust clouds](docs/images/readme/gallery/gsplats_3d_milky_way_dust.webp)](docs/images/readme/gallery/gsplats_3d_milky_way_dust.webm) |
 | **Tribolium Embryo**<br>light-sheet | **CT Anatomy Atlas**<br>TotalSegmentator | **Milky Way Dust**<br>galactic dust clouds |
 
@@ -252,8 +252,8 @@ A cross-section of Luxar's built-in demos — all four geometry types (**Points*
 | [![Lorenz Attractor — chaotic dynamics](docs/images/readme/gallery/lorenz.webp)](docs/images/readme/gallery/lorenz.webm) | [![Rainbow Sphere — HDR Fibonacci sphere](docs/images/readme/gallery/rainbow_sphere.webp)](docs/images/readme/gallery/rainbow_sphere.webm) | [![Quantum Orbitals — hydrogen 2p_z](docs/images/readme/gallery/quantum_orbitals.webp)](docs/images/readme/gallery/quantum_orbitals.webm) |
 |:--:|:--:|:--:|
 | **Lorenz Attractor**<br>chaotic dynamics | **Rainbow Sphere**<br>HDR Fibonacci sphere | **Quantum Orbitals**<br>hydrogen 2p_z |
-| [![Spiral Galaxy — barred multi-armed disk](docs/images/readme/gallery/spiral_galaxy.webp)](docs/images/readme/gallery/spiral_galaxy.webm) | [![Spiral Galaxy — 5D navigable](docs/images/readme/gallery/spiral_galaxy_5d.webp)](docs/images/readme/gallery/spiral_galaxy_5d.webm) | [![Hilbert Curve — 3D space-filling](docs/images/readme/gallery/hilbert_curve_3d.webp)](docs/images/readme/gallery/hilbert_curve_3d.webm) |
-| **Spiral Galaxy**<br>barred multi-armed disk | **Spiral Galaxy**<br>5D navigable | **Hilbert Curve**<br>3D space-filling |
+| [![Spiral Galaxy — barred multi-armed disk](docs/images/readme/gallery/spiral_galaxy.webp)](docs/images/readme/gallery/spiral_galaxy.webm) | [![Galaxy Simulation — density-wave spiral](docs/images/readme/gallery/galaxy_simulation.webp)](docs/images/readme/gallery/galaxy_simulation.webm) | [![Hilbert Curve — 3D space-filling](docs/images/readme/gallery/hilbert_curve_3d.webp)](docs/images/readme/gallery/hilbert_curve_3d.webm) |
+| **Spiral Galaxy**<br>barred multi-armed disk | **Galaxy Simulation**<br>density-wave spiral | **Hilbert Curve**<br>3D space-filling |
 | [![Particle Collision — physics event](docs/images/readme/gallery/collision.webp)](docs/images/readme/gallery/collision.webm) | [![Ocean — bioluminescent jellyfish](docs/images/readme/gallery/ocean.webp)](docs/images/readme/gallery/ocean.webm) |
 | **Particle Collision**<br>physics event | **Ocean**<br>bioluminescent jellyfish |
 
@@ -268,7 +268,7 @@ Each tile is a bundled demo — run it by key with the
 
 ```bash
 luxar demo                          # Find the key for any tile above
-luxar demo run spiral_galaxy_5d     # Build and view one
+luxar demo run galaxy_simulation    # Build and view one
 luxar demo run-all                  # Build every eligible demo (skips manual/Kaggle, GPU-required, >200MB, already-built)
 
 make generate-gallery               # Regenerate the stills + orbit videos above
@@ -1003,7 +1003,7 @@ the full citation.
 
 **Microscopy & cell biology**
 - **Cells3D** — fluorescence microscopy provided by the [Allen Institute for Cell Science](https://www.allencell.org/), distributed as scikit-image sample data (`skimage.data.cells3d`); scikit-image itself: van der Walt et al. (2014), *PeerJ* 2:e453, [doi:10.7717/peerj.453](https://doi.org/10.7717/peerj.453).
-- **3D Organoid** — Blin et al. (2019), via the [Image Data Resource](https://idr.openmicroscopy.org/) (IDR; Williams et al. 2017, *Nat. Methods*, [doi:10.1038/nmeth.4326](https://doi.org/10.1038/nmeth.4326)).
+- **Mouse Blastocyst** — Blin et al. (2019), via the [Image Data Resource](https://idr.openmicroscopy.org/) (IDR; Williams et al. 2017, *Nat. Methods*, [doi:10.1038/nmeth.4326](https://doi.org/10.1038/nmeth.4326)).
 - **Zebrafish Neuromast** — Adrian Jacobo lab (CZ Biohub SF / Rockefeller); iSIM, deconvolved 4D timelapse.
 - **Tribolium Embryo** — [Cell Tracking Challenge](https://celltrackingchallenge.net/) ([Zenodo](https://zenodo.org/records/5270323)); Barry et al. (2022), *J. Cell Sci.* 135, jcs259511, [doi:10.1242/jcs.259511](https://doi.org/10.1242/jcs.259511); Maška et al. (2023), *Nat. Methods*.
 - **C. elegans nuclei tracking** — Hirsch et al. (2022), 3D+time confocal nuclei dataset, [Zenodo 6460303](https://doi.org/10.5281/zenodo.6460303).

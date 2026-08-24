@@ -30,7 +30,7 @@ The manifest records, per dataset:
   * ``dir``     — the in-repo subdir relative to ``demos/data/`` (empty string =
                   top level; the in-repo LFS fallback in data_fetch honours it).
 
-Curated metadata (license/source/citation) lives here; checksums come from the data
+Curated metadata (license/source/citation) lives here; the ``sha256`` comes from the data
 tree itself, so the manifest stays reproducible on any checkout — see
 :func:`_checksum` for why neither ``git`` nor the ``git-lfs`` binary is needed.
 Re-run after any dataset re-encode:
@@ -597,6 +597,10 @@ def _checksum(path: Path) -> dict:
     exactly what CI has, since CI deliberately checks out without ``lfs: true``
     (see the checkout note in .github/workflows/ci.yml).
 
+    This describes the copy IN THIS REPO, and only ever that: what a Zenodo
+    record serves has no source on disk, so ``hosted_sha256`` is carried forward
+    from the committed manifest instead (see ``_carry_hosted``).
+
     For a *pulled* LFS file the LFS oid IS the sha256 of the content, so hashing
     the bytes reproduces what ``git lfs ls-files --json`` would report (~0.2 s for
     the whole ~450 MB tree). For an unpulled one the pointer already carries both
@@ -651,6 +655,48 @@ def _prev_files(prev: dict, name: str, variant: Optional[str] = None) -> list[di
     return d.get("files", []) or []
 
 
+#: Per-file keys that describe the HOSTED artifact rather than the in-repo copy.
+#:
+#: Both must be carried, and for the same reason: `bytes` is as ambiguous as
+#: `sha256` was once the two copies differ. Keeping the digest and size paired
+#: preserves a complete description of the hosted artifact for consumers that
+#: need to compare it with the in-repo copy.
+#:
+#: Named explicitly rather than matched as a `hosted_*` prefix, so a typo'd key
+#: is dropped loudly by the drift gate instead of carried forever.
+_HOSTED_KEYS = ("hosted_sha256", "hosted_bytes")
+
+
+def _carry_hosted(found: list[dict], committed: list[dict]) -> list[dict]:
+    """Re-attach each entry's hosted-artifact keys from the committed manifest.
+
+    The generator can only ever compute the digest of the copy IN THIS REPO —
+    ``_checksum`` reads the git-LFS pointer's oid or hashes the bytes. What the
+    Zenodo record serves has no source on disk at all, so ``hosted_sha256`` is
+    carried forward (or edited in by hand, or written by the upload tool) and
+    must survive a regeneration that rebuilds every entry from scratch.
+
+    Without this, any dataset whose data dir happens to be VISIBLE would silently
+    lose its hosted pin on the next ``make gen-data-manifest`` — while datasets
+    with no dir on disk kept theirs, because those keep the committed list whole.
+    A field that survives in some rows and evaporates in others is worse than one
+    that never worked.
+
+    Absent stays absent: the key is only added when the committed entry had one,
+    which is what keeps a regeneration byte-identical for the datasets that have
+    no hosted pin.
+    """
+    hosted = {
+        e["name"]: {k: e[k] for k in _HOSTED_KEYS if e.get(k) is not None}
+        for e in committed
+        if e.get("name")
+    }
+    hosted = {name: keys for name, keys in hosted.items() if keys}
+    if not hosted:
+        return found
+    return [{**e, **hosted[e["name"]]} if e.get("name") in hosted else e for e in found]
+
+
 def _files_for(name: str, spec: dict, prev: dict, *, prune: bool) -> list[dict]:
     """A (non-variant) dataset's files: disk when visible, else the committed list.
 
@@ -667,7 +713,7 @@ def _files_for(name: str, spec: dict, prev: dict, *, prune: bool) -> list[dict]:
         if subdir
         else _files_in(DATA_DIR, f"{name}.*", prune=prune)  # top-level single file
     )
-    return committed if found is None else found
+    return committed if found is None else _carry_hosted(found, committed)
 
 
 def _variants_for(name: str, spec: dict, prev: dict, *, prune: bool) -> dict:
@@ -688,7 +734,7 @@ def _variants_for(name: str, spec: dict, prev: dict, *, prune: bool) -> dict:
             subdir = spec.get("dir", name)
             base = DATA_DIR.joinpath(*[p for p in (subdir, vname) if p])
             found = _files_in(base, "*", prune=prune)
-            v["files"] = committed if found is None else found
+            v["files"] = committed if found is None else _carry_hosted(found, committed)
         out[vname] = v
     return out
 

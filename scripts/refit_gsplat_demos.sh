@@ -22,11 +22,11 @@ echo "=========================================="
 #   - large downloads last (in case of issues)
 DEMOS_DIR=packages/luxar/src/luxar/demos
 declare -a DEMOS=(
-    "organoid_dapi:$DEMOS_DIR/demo_gsplats_3d_organoid_dapi_nuclei.py"
+    "blastocyst_dapi:$DEMOS_DIR/demo_gsplats_3d_blastocyst_dapi_nuclei.py"
     "cells3d_multichannel:$DEMOS_DIR/demo_gsplats_3d_cells3d_multichannel.py"
     "kidney_layers:$DEMOS_DIR/demo_gsplats_3d_kidney_multichannel_layers.py"
     "kidney_toggles:$DEMOS_DIR/demo_gsplats_3d_kidney_multichannel_toggles.py"
-    "organoid_multi:$DEMOS_DIR/demo_gsplats_3d_organoid_multichannel.py"
+    "blastocyst_multi:$DEMOS_DIR/demo_gsplats_3d_blastocyst_multichannel.py"
     "opencell_map4:$DEMOS_DIR/demo_gsplats_3d_opencell_map4.py"
     "tribolium_embryo:$DEMOS_DIR/demo_gsplats_3d_tribolium_embryo.py"
     "acto3d_heart:$DEMOS_DIR/demo_gsplats_3d_acto3d_heart.py"

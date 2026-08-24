@@ -53,6 +53,11 @@ def test_the_refused_set_matches_the_datasets_that_ship_an_npz() -> None:
     if not rg.DATA_DIR.exists():  # pragma: no cover - source checkouts have it
         pytest.skip(f"packaged demo data absent at {rg.DATA_DIR}")
     visited = {z.parent for z in rg.DATA_DIR.glob("gsplats_*/*.zip")}
+    if not visited:
+        # The GSplat archives are manifest-hosted rather than in-repo, so there is
+        # no on-disk set to compare the constant against. The coupling itself stays
+        # covered by the synthetic-tree tests below.
+        pytest.skip("no in-repo GSplat archives to enumerate")
     with_sidecar = {d.name for d in visited if any(d.glob("*.npz"))}
     assert with_sidecar == set(rg.SIDECAR_PAIRED_DIRS), (
         "SIDECAR_PAIRED_DIRS must name exactly the visited datasets that ship a "

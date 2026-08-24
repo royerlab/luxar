@@ -1,12 +1,14 @@
 # labels
 
-Private compiler support for serializing **per-element labels** — both string
-labels and image labels — into a Luxar Zarr archive using CSR-style storage.
+Private compiler support for serializing **per-element annotations** — string
+labels, string keys, and image labels — into a Luxar Zarr archive using CSR-style
+storage.
 
 ## Overview
 
-Points, lines, and gsplats can each carry one optional string label and one
-optional image per element. Rather than store these as fixed-width arrays
+Points, lines, gsplats, and meshes can each carry two optional string channels
+(a display label and machine-readable key) and one optional image per element.
+Rather than store these as fixed-width arrays
 (wasteful, since most labels are short or absent), this module packs them into
 two arrays per label kind:
 

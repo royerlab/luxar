@@ -433,6 +433,20 @@ def build_sequence_scene(
         )
 
         # Hover labels: 1 per cell, shared for both Highlight and Backdrop.
+        # Click a cell to look its term up in the EBI Ontology Lookup Service.
+        # Right-click falls back to copying the full label so unannotated cells
+        # keep the affordance (#1917). The label brackets the bio group
+        # after the term, so the query needs the term alone; `format_label`
+        # is for reading, not for searching.
+        # "unannotated" is a real term here — the loader fills NaN with that
+        # string before categorising — and searching an ontology for the word
+        # finds nothing, so those cells get an empty key and no link.
+        per_cell_keys = [
+            ""
+            if str(term_name_of_cell[i]) == "unannotated"
+            else str(term_name_of_cell[i])
+            for i in range(n_cells)
+        ]
         per_cell_hover = [
             f"{format_label(term_name_of_cell[i])}\n"
             f"[{group_cats[attributes['bio_group'][i]]}]"
@@ -502,6 +516,8 @@ def build_sequence_scene(
                 opacity=0.95,
                 intensity=0.3,
                 labels=per_cell_hover,
+                keys=per_cell_keys,
+                link="https://www.ebi.ac.uk/ols4/search?q={hover_key}",
                 layer=True,
             )
 
