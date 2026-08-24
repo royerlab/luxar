@@ -386,19 +386,18 @@ volume mesh: run ParaView's *Extract Surface* on it first.
 Draco- and meshopt-compressed glTF is refused by name rather than decoded — run the
 file through `gltf-transform` first.
 
-A directory import defaults to `--pattern '*.vtp'`. Each filename must contain a
-`T<number>` token; if every filename also contains `Ch<number>`, channel is appended as
-a second hidden discrete dimension. Numeric values are preserved, so missing
-timepoints remain gaps instead of renumbering later files. Mixed channel naming and
-duplicate time/channel coordinates are refused rather than guessed. For example:
+A directory import defaults to `--pattern '*.vtp'`. Each filename must contain an
+uppercase `T<number>` token; if every filename also contains `Ch<number>`, channel is
+appended as a second hidden discrete dimension. Numeric values are preserved, so
+missing timepoints remain gaps instead of renumbering later files. Mixed channel naming
+and duplicate time/channel coordinates are refused rather than guessed. Pass the
+directory and output scene as the two positional arguments, e.g.
+`luxar mesh import 000_deconv.ome.zarr/meshes/cells cells.luxar.zarr`. Use `--pattern`
+for another mesh format:
 
 ```bash
 luxar mesh import --pattern '*.ply'  # import a directory of T-indexed frames
 ```
-
-For example, pass `000_deconv.ome.zarr/meshes/cells` as the input directory and
-`cells.luxar.zarr` as the output. Use `--pattern '*.ply'` for a directory such as
-`exported_frames` containing PLY files.
 
 The resulting mesh node has no spatial index: the viewer downloads the entire stacked
 directory even when it draws only one timepoint. Use this path for stacks that fit

@@ -12,7 +12,7 @@ from `luxar.core.gsplats`.
 |---|---|
 | [`decimate.py`](decimate.py) | Dispatch mesh decimation and provide the vectorized `cluster` tier, which snaps vertices to a grid, collapses each occupied cell to its centroid, reindexes faces, and drops collapsed triangles. |
 | [`qem.py`](qem.py) | Topology-preserving Garland-Heckbert edge-collapse decimation with a link-condition veto. |
-| [`interop/`](interop/README.md) | Import classical mesh files — PLY, OBJ, STL, VTK XML PolyData (`.vtp`), glTF/GLB — into a `TriangleMesh`, the intermediate the CLI writes into a scene. NumPy + stdlib only, no new dependencies. |
+| [`interop/`](interop/README.md) | Import classical mesh files — PLY, OBJ, STL, VTK XML PolyData (`.vtp`), glTF/GLB — or indexed file directories into a `TriangleMesh`, the intermediate the CLI writes into a scene. NumPy + stdlib only, no new dependencies. |
 | `split.py` | Split a mesh into spatially disjoint, independently drawable parts by face. The bookkeeping behind `add_mesh(partition=…)` and behind the per-level re-indexing of `add_mesh(additive_lod=…)`. |
 
 ## Why this is not `luxar.core.mesh`
@@ -29,7 +29,7 @@ names are distinct fully-qualified modules and stay that way.
 ## Quick Start
 
 ```python
-from luxar.mesh import import_mesh
+from luxar.mesh import import_mesh, import_mesh_directory
 
 mesh = import_mesh("bunny.ply")  # -> TriangleMesh (welded, triangulated)
 scene.add_mesh(
@@ -41,6 +41,8 @@ scene.add_mesh(
     colors=mesh.colors,
 )
 ```
+
+Use `import_mesh_directory(...)` to stack `T<number>`-indexed files into one nD mesh.
 
 ```bash
 luxar mesh import bunny.ply bunny.luxar.zarr

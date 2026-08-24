@@ -145,8 +145,8 @@ def run_import(
                 vertices,
                 mesh.faces,
                 normals=normals,
-                # Required whenever normals are passed: in nD there is no implicit
-                # "first three dimensions", and an imported mesh is always plain 3D.
+                # Normals always describe x/y/z, including when directory imports
+                # append discrete time and channel coordinates to each vertex.
                 normal_dims=[0, 1, 2] if normals is not None else None,
                 colors=mesh.colors,
             )
@@ -213,7 +213,9 @@ def import_command(
         "origin, which fights the viewer's default framing.",
     ),
     scale: float = typer.Option(
-        1.0, "--scale", help="Uniform scale applied to vertices."
+        1.0,
+        "--scale",
+        help="Uniform scale applied to spatial (x/y/z) coordinates.",
     ),
     weld: bool = typer.Option(
         True,
