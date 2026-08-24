@@ -458,6 +458,23 @@ class TestBuildDimensions:
         assert z_dim.range is not None
         assert z_dim.range[0] < z_dim.range[1]
 
+    def test_nd_hidden_dimension_infers_offset_integer_stride(self) -> None:
+        centers = np.array(
+            [[0, 0, 0, 1], [1, 1, 1, 6], [2, 2, 2, 11]], dtype=np.float32
+        )
+        dims = build_dimensions_from_data(centers)
+
+        hidden = dims.dimensions[3]
+        assert hidden.range == (1.0, 11.0)
+        assert hidden.step == 5.0
+        assert hidden.discrete is True
+
+    def test_nd_hidden_dimension_rejects_inexact_float32_integer(self) -> None:
+        centers = np.array([[0, 0, 0, 0], [1, 1, 1, (1 << 24) + 2]], dtype=np.float64)
+
+        with pytest.raises(ValueError, match=r"within ±2\^24"):
+            build_dimensions_from_data(centers)
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # Command integration tests

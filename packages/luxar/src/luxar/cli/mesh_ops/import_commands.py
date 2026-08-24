@@ -20,6 +20,7 @@ import numpy as np
 import typer
 from arbol import aprint, asection
 
+from ...core.dimension_inference import infer_discrete_step
 from ...mesh.interop import (
     MESH_FORMATS,
     TriangleMesh,
@@ -127,7 +128,7 @@ def run_import(
                     dimension_name,
                     unit="frame" if dimension_name == "t" else "index",
                     range=(float(coordinate.min()), float(coordinate.max())),
-                    step=1.0,
+                    step=infer_discrete_step(coordinate),
                     display=False,
                     discrete=True,
                 )

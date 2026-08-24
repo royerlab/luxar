@@ -247,7 +247,7 @@ describe('computeDimensionStep', () => {
     expect(result!.changed).toBe(true);
   });
 
-  it('traverses every k*step stop of a fractional-step discrete dim', () => {
+  it('traverses every range-min-anchored stop of a fractional-step discrete dim', () => {
     const step = 2.0 / 50;
     const metadata = [
       makeMetadata({ name: 'X', display: true }),
@@ -264,15 +264,15 @@ describe('computeDimensionStep', () => {
       [0, 100],
     ];
     let pos = -1.0;
-    for (let k = -25; k < 24; k++) {
+    for (let k = 0; k < 49; k++) {
       const dims = makeDims({ currentStep: [0, 0, 0, pos, 0], metadata });
       const result = computeDimensionStep(1, 0, dims, ranges);
       expect(result!.changed).toBe(true);
-      expect(result!.newValue).toBe((k + 1) * step);
+      expect(result!.newValue).toBeCloseTo(-1 + (k + 1) * step, 12);
       pos = result!.newValue;
     }
     // 49 presses from the first stop land exactly on the last stop
-    expect(pos).toBe(24 * step);
+    expect(pos).toBeCloseTo(0.96, 12);
   });
 
   it('reports changed for a discrete dim with a grid finer than 1e-6', () => {

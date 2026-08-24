@@ -192,6 +192,12 @@ describe('nD Navigation Utilities', () => {
       expect(next).toBe(7); // 5.2 + 1.3 = 6.5, rounded to 7
     });
 
+    it('anchors discrete stepping and wrapping at the range minimum', () => {
+      expect(calculateNextPosition(1, 1, 5, [1, 11], true, false, 5)).toBe(6);
+      expect(calculateNextPosition(11, 1, 5, [1, 11], true, true, 5)).toBe(1);
+      expect(calculateNextPosition(1, -1, 5, [1, 11], true, true, 5)).toBe(11);
+    });
+
     it('should wrap around when enabled', () => {
       expect(calculateNextPosition(9, 1, 2, [0, 10], false, true)).toBe(1); // Wrap to start
       expect(calculateNextPosition(1, -1, 2, [0, 10], false, true)).toBe(9); // Wrap to end

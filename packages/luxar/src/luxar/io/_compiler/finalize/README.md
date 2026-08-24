@@ -304,13 +304,14 @@ when the data itself sits off the viewer's navigation grid. Catches three
 authoring mistakes: a range that starts before any data exists (e.g. range
 starts at frame 0 but data starts at frame 1), a range that extends beyond the
 data — either of which lets the viewer initialise or navigate to a slice with
-nothing in it — and discrete data more than a quarter-step off the `k·step`
-grid (the viewer snaps navigation to that grid and its chunk query reaches
-only a quarter-step around it, so off-grid data can silently never display).
+nothing in it — and discrete data more than a quarter-step off the
+`range[0] + k·step` grid (the viewer snaps navigation to that grid and its
+chunk query reaches only a quarter-step around it, so off-grid data can
+silently never display).
 Comparisons use a quarter-step tolerance (`dim.step / 4`, default `0.25`),
 mirroring the viewer's `DISCRETE_TOLERANCE_FRACTION`. A dimension without a
-declared step is checked against the integer grid (the viewer defaults a
-missing step to `1.0`). The on-grid check inspects the data min/max only —
+declared step is checked against the unit grid anchored at `range[0]` (the
+viewer defaults a missing step to `1.0`). The on-grid check inspects the data min/max only —
 interior off-grid values on an otherwise on-grid extent are not scanned.
 No-ops when `scene_bounds` is `None` or the store has no `scene_dimensions`
 attr.

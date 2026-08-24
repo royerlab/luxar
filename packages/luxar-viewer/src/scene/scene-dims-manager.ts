@@ -4,11 +4,9 @@ import { log, Modules } from '../utils/log';
 import { clamp } from '../utils/clamp';
 
 /**
- * Snap an (already range-clamped) value to a discrete dimension's 0-anchored
- * k·step grid, keeping the result inside [min, max]: an off-grid range end
- * must not snap outside the range (10.5 on a step-1 grid rounds to 11 —
- * past the data when max is 10.5). When the range spans no grid point at
- * all, the nearest range end wins.
+ * Snap an (already range-clamped) value to a discrete dimension's
+ * `min + k·step` grid, keeping the result inside [min, max]. Anchoring at the
+ * declared minimum makes offset exports such as 1/6/11 reachable with step 5.
  *
  * The range comparisons carry the SAME step-relative epsilon as
  * {@link SceneDimsManager.defaultPosition}, and for the same reason: an
@@ -28,12 +26,16 @@ import { clamp } from '../utils/clamp';
 export function snapDiscreteValue(value: number, step: number, min: number, max: number): number {
   const s = step > 0 ? step : 1.0;
   const eps = s * 1e-9;
-  let snapped = Math.round(value / s) * s;
+  const anchor = Number.isFinite(min) ? min : 0;
+  let snapped = anchor + Math.round((value - anchor) / s) * s;
   // Re-snap after stepping a cell inward: `k*s - s` can differ from
   // `(k-1)*s` by an ulp, and every grid value must be reproducible.
-  if (snapped > max + eps) snapped = Math.round((snapped - s) / s) * s;
-  if (snapped < min - eps) snapped = Math.round((snapped + s) / s) * s;
-  // Only a genuine excursion is clamped (a range narrower than one cell).
+  if (snapped > max + eps) {
+    snapped = anchor + Math.round((snapped - s - anchor) / s) * s;
+  }
+  if (snapped < min - eps) {
+    snapped = anchor + Math.round((snapped + s - anchor) / s) * s;
+  }
   if (snapped > max + eps || snapped < min - eps) return clamp(snapped, min, max);
   return snapped;
 }
@@ -324,36 +326,15 @@ export class SceneDimsManager {
    * The default position policy — shared by {@link initFromScene} and
    * {@link resetPositions} so the two can never diverge:
    * - Displayed dimensions (X, Y, Z): 0 (camera-controlled)
-   * - Discrete/categorical dimensions (time, channels, frames): FIRST ON-GRID
-   *   position at or above the range minimum. Snapping matters: every later
-   *   navigation snaps to the k·step grid ({@link setDimensionValue}), and the
-   *   discrete chunk query only reaches a quarter-step around the position —
-   *   a raw off-grid `min` (e.g. 1.3 with step 1) would make the INITIAL view
-   *   silently empty until the first user navigation snapped it.
+   * - Discrete/categorical dimensions (time, channels, frames): range minimum,
+   *   which is the anchor of the `min + k·step` navigation grid.
    * - Continuous non-displayed dimensions (4th+ spatial dims): CENTER (no natural "first")
    */
   private static defaultPosition(meta: DimensionMetadata, range: [number, number]): number {
     if (meta.display === true) return 0;
     const [min, max] = range;
     if (meta.discrete || meta.categories) {
-      const step = meta.step || 1.0;
-      // Step-relative epsilon: for FP-hostile fractional steps an EXACTLY
-      // on-grid min can round an ulp low (e.g. Math.round(2.1/0.7)*0.7 =
-      // 2.0999999999999996 < 2.1) — a strict `< min` bump would then skip
-      // the whole first category. Tolerate sub-epsilon undershoot.
-      const eps = step * 1e-9;
-      let snapped = Math.round(min / step) * step;
-      if (snapped < min - eps) {
-        // Bump to the next grid point, then RE-SNAP: `k*step + step` can
-        // differ from `(k+1)*step` by an ulp, and the initial position must
-        // be byte-identical to what setDimensionValue's own snap produces
-        // for the same target (viewStatesEqual / S-cache keys compare
-        // exact floats).
-        snapped = Math.round((snapped + step) / step) * step;
-      }
-      // Pathological range narrower than one step with no on-grid point:
-      // fall back to the raw min rather than leaving the range entirely.
-      return snapped <= max + eps ? snapped : min;
+      return snapDiscreteValue(min, meta.step || 1.0, min, max);
     }
     return (min + max) / 2;
   }

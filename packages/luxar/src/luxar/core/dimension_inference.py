@@ -11,7 +11,28 @@ from typing import Any
 
 import numpy as np
 
-__all__ = ["build_dimensions_from_data"]
+__all__ = ["build_dimensions_from_data", "infer_discrete_step"]
+
+_MAX_EXACT_FLOAT32_INTEGER = 1 << 24
+
+
+def infer_discrete_step(coordinates: np.ndarray) -> float:
+    """Infer an integer coordinate stride for a range-min-anchored grid."""
+    values = np.unique(np.asarray(coordinates))
+    if values.size < 2:
+        return 1.0
+    if not np.all(np.isfinite(values)):
+        raise ValueError("Discrete dimension coordinates must be finite")
+    rounded = np.rint(values)
+    if not np.array_equal(values, rounded):
+        return 1.0
+    if np.max(np.abs(rounded)) > _MAX_EXACT_FLOAT32_INTEGER:
+        raise ValueError(
+            "Discrete dimension coordinates must be within ±2^24 for exact "
+            "float32 representation"
+        )
+    differences = np.diff(rounded.astype(np.int64))
+    return float(np.gcd.reduce(differences))
 
 
 def build_dimensions_from_data(centers: np.ndarray) -> Any:
@@ -54,7 +75,7 @@ def build_dimensions_from_data(centers: np.ndarray) -> Any:
                 name=f"dim{i}",
                 unit="voxel",
                 range=(float(mins[i]), float(maxs[i])),
-                step=1.0,
+                step=infer_discrete_step(centers[:, i]) if i >= 3 else 1.0,
                 display=(i < 3),
             )
         )

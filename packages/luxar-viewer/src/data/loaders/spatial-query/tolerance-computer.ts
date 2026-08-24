@@ -238,8 +238,8 @@ const DISPLAYED_TOLERANCE = 1e10;
  * gate but its chunk is not fetched — remains open on the barrier arm, and is
  * unreachable for a CORRECTLY authored axis: discrete-dim navigation snaps the slice
  * position to exact category values (see `SceneDimsManager.setDimensionValue`), so an
- * axis whose stored values ARE multiples of its declared step is queried on-grid
- * (offset 0) and its target cell always matches. An axis whose stored values are
+ * axis whose stored values ARE `range[0] + k·step` is queried on-grid and its
+ * target cell always matches. An axis whose stored values are
  * off-grid is a write-time authoring fault, which the compiler already reports —
  * `io/_compiler/finalize/validation.py::validate_discrete_dimension_ranges` warns
  * when a scene-declared discrete axis's declared range sits more than a quarter step
@@ -798,7 +798,7 @@ function computeLinesHiddenTolerance(
  *   half is a write-side pad-budget constraint — `DISCRETE_TOLERANCE_FRACTION` argues
  *   it. Be clear about what that leaves open: against the renderer's own half-cell
  *   gate this arm keeps a `(0.25, 0.5] × step` gap, unreachable for an axis whose
- *   stored values are multiples of its declared step and reachable for one whose are
+ *   stored values follow its range-min-anchored step grid and reachable for one whose are
  *   not. This function does not close it — the pad budget is real, and off-grid
  *   values on a scene-declared discrete axis are a write-time authoring fault the
  *   compiler already reports (`validate_discrete_dimension_ranges`).

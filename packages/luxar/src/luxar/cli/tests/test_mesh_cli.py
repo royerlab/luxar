@@ -102,7 +102,7 @@ class TestMeshImport:
         source = tmp_path / "meshes" / "cells"
         source.mkdir(parents=True)
         WRITERS["vtp"](source / "P12_Ch0-registered-T0001.vtp", GT)
-        WRITERS["vtp"](source / "P12_Ch2-registered-T0003.vtp", GT)
+        WRITERS["vtp"](source / "P12_Ch2-registered-T0006.vtp", GT)
         out = tmp_path / "cells.luxar.zarr"
 
         result = runner.invoke(
@@ -118,12 +118,12 @@ class TestMeshImport:
         )
         assert result.exit_code == 0, result.output
         assert "Reading 1/2: P12_Ch0-registered-T0001.vtp" in result.output
-        assert "Reading 2/2: P12_Ch2-registered-T0003.vtp" in result.output
+        assert "Reading 2/2: P12_Ch2-registered-T0006.vtp" in result.output
 
         node = LuxarScene.load(out).get_mesh("mesh")
         assert node.vertices.shape == (8, 5)
         assert node.faces.shape == (8, 3)
-        assert np.array_equal(np.unique(node.vertices[:, 3]), [1, 3])
+        assert np.array_equal(np.unique(node.vertices[:, 3]), [1, 6])
         assert np.array_equal(np.unique(node.vertices[:, 4]), [0, 2])
         assert np.array_equal(node.vertices[:, :3].min(axis=0), [-1.5, -1.5, -1.5])
         assert np.array_equal(node.vertices[:, :3].max(axis=0), [1.5, 1.5, 1.5])
@@ -139,13 +139,13 @@ class TestMeshImport:
         assert dimensions["dimensions"][3]["discrete"] is True
         assert dimensions["dimensions"][3]["display"] is False
         assert dimensions["dimensions"][3]["unit"] == "frame"
-        assert dimensions["dimensions"][3]["range"] == [1.0, 3.0]
-        assert dimensions["dimensions"][3]["step"] == 1.0
+        assert dimensions["dimensions"][3]["range"] == [1.0, 6.0]
+        assert dimensions["dimensions"][3]["step"] == 5.0
         assert dimensions["dimensions"][4]["discrete"] is True
         assert dimensions["dimensions"][4]["display"] is False
         assert dimensions["dimensions"][4]["unit"] == "index"
         assert dimensions["dimensions"][4]["range"] == [0.0, 2.0]
-        assert dimensions["dimensions"][4]["step"] == 1.0
+        assert dimensions["dimensions"][4]["step"] == 2.0
 
     def test_directory_pattern_rebases_heterogeneous_ply_meshes(
         self, tmp_path: Path
