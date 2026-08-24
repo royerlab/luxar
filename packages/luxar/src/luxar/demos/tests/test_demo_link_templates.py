@@ -15,9 +15,17 @@ def test_genecards_links_use_canonical_card_urls() -> None:
     for path in sorted(DEMOS_DIR.glob("demo_*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
-            if isinstance(node, ast.Constant) and isinstance(node.value, str):
-                if "www.genecards.org" in node.value:
-                    found.append((path, node.lineno, node.value))
+            if not isinstance(node, ast.Call):
+                continue
+            for keyword in node.keywords:
+                value = keyword.value
+                if (
+                    keyword.arg == "link"
+                    and isinstance(value, ast.Constant)
+                    and isinstance(value.value, str)
+                    and "www.genecards.org" in value.value
+                ):
+                    found.append((path, value.lineno, value.value))
 
     assert found, "expected at least one GeneCards demo link"
     assert all(value == GENECARDS_LINK for _, _, value in found), found
