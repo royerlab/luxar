@@ -32,6 +32,7 @@ describe('updateSceneGraphBadges', () => {
       <span data-field="lod-summary"></span>
     `;
 
+    model.syncVisibleCountsIntoTree();
     updateSceneGraphBadges(container, model, new Map(), new Map());
 
     const badge = container.querySelector('[data-node-path="/points"]') as HTMLElement;
@@ -40,5 +41,10 @@ describe('updateSceneGraphBadges', () => {
     expect(container.querySelector('[data-lod-path="/points"]')!.textContent).toBe('');
     expect(container.querySelector('[data-draworder-path="/points"]')!.textContent).toBe('');
     expect(container.querySelector('[data-field="lod-summary"]')!.textContent).toBe('');
+
+    model.updateVisibleCountsByPath(new Map());
+    model.syncVisibleCountsIntoTree();
+    updateSceneGraphBadges(container, model, new Map(), new Map());
+    expect(badge.title).not.toContain('visible');
   });
 });

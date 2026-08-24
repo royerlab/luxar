@@ -1,5 +1,9 @@
-import type { LODProgressState, NodeDrawOrder } from '../../../types/data-monitor-types';
-import { SceneGraphModel } from '../scene-graph-model';
+import type {
+  LODProgressState,
+  NodeDrawOrder,
+  SceneGraphNode,
+  SceneGraphState,
+} from '../../../types/data-monitor-types';
 import {
   activeLevelRole,
   countAdditiveNodes,
@@ -10,18 +14,20 @@ import {
   summariseLodStates,
 } from '../templates/scene-graph';
 
+interface SceneGraphBadgeSource {
+  getSceneGraph(): SceneGraphState;
+  getSceneGraphNodeByPath(path: string): SceneGraphNode | null;
+}
+
 /** Patch live scene-graph badges and row state without rebuilding the tree DOM. */
 export function updateSceneGraphBadges(
   container: HTMLElement,
-  model: SceneGraphModel,
+  model: SceneGraphBadgeSource,
   lodStates: ReadonlyMap<string, LODProgressState>,
   drawOrderStates: ReadonlyMap<string, NodeDrawOrder>
 ): void {
   const root = model.getSceneGraph().root;
   if (!root) return;
-
-  // Badge tooltips read visible counts directly from the aliased tree nodes.
-  model.syncVisibleCountsIntoTree();
 
   const badges = container.querySelectorAll('.luxar-scene-graph__badge[data-node-path]');
   badges.forEach((badge) => {
