@@ -9,11 +9,11 @@ import {
   type DrawOrderProvider,
   type LODProgressProvider,
   type LODProgressState,
+  type MemoryMetrics,
   type NodeDrawOrder,
   type PooledGeometryType,
 } from '../../types/data-monitor-types';
 import { log, Modules } from '../../utils/log';
-import type { MemoryMetrics } from './templates';
 
 type CacheProvider<T> = { getStats: () => T; clear: () => void };
 type GPUBufferPoolProvider = { getStats: () => MemoryMetrics['gpuPool'] };

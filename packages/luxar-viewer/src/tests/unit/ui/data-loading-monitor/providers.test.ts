@@ -73,6 +73,12 @@ describe('MonitorProviderRegistry', () => {
     providers.setDrawOrderProvider({ getDrawOrderStates: vi.fn() } as never);
     providers.drawOrderStates.set('/node', {} as never);
     providers.setAccumulatorProvider('lines', { getStats: vi.fn() } as never);
+    providers.setCacheStatsProvider({ getStats: vi.fn() } as never);
+    providers.setL0CacheProvider({ getStats: vi.fn(), clear: vi.fn() } as never);
+    providers.setSliceCacheProvider({ getStats: vi.fn(), clear: vi.fn() } as never);
+    providers.setGPUBufferPoolProvider({ getStats: vi.fn() } as never);
+    providers.setProfiler({ getTimings: vi.fn() } as never);
+    providers.setFailedLoadsProvider({ getFailedPaths: vi.fn(), retryAll: vi.fn() } as never);
     providers.setCacheTelemetryState({ kind: 'enabled' });
     markStructureDirty.mockClear();
 
@@ -89,13 +95,20 @@ describe('MonitorProviderRegistry', () => {
     });
     expect(providers.accumulatorProviders).not.toBe(previousAccumulatorProviders);
     expect(providers.cacheTelemetryState).toBeUndefined();
+    expect(providers.cacheStatsProvider).toBeNull();
+    expect(providers.l0CacheProvider).toBeNull();
+    expect(providers.sliceCacheProvider).toBeNull();
+    expect(providers.gpuBufferPoolProvider).toBeNull();
+    expect(providers.profiler).toBeNull();
     expect(providers.lodProgressProvider).toBeNull();
+    expect(providers.failedLoadsProvider).toBeNull();
     expect(providers.drawOrderProvider).toBeNull();
     expect(markStructureDirty).toHaveBeenCalledOnce();
   });
 
   it('drops provider snapshots when live providers are disconnected', () => {
-    const providers = new MonitorProviderRegistry(vi.fn());
+    const markStructureDirty = vi.fn();
+    const providers = new MonitorProviderRegistry(markStructureDirty);
     providers.lodStates.set('/node', {} as never);
     providers.drawOrderStates.set('/node', {} as never);
 
@@ -104,5 +117,6 @@ describe('MonitorProviderRegistry', () => {
 
     expect(providers.lodStates).toEqual(new Map());
     expect(providers.drawOrderStates).toEqual(new Map());
+    expect(markStructureDirty).not.toHaveBeenCalled();
   });
 });
