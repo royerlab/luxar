@@ -194,8 +194,8 @@ SUPPRESSING THE SHOT NOISE (and a metric that lied about it):
     it. A fixed filter, a moving proportion.
 
     WHAT IT DOES TO THE FIT, which is the part that settles the argument. Both
-    arms rendered back and scored INSIDE the cells of the RAW frame -- the one
-    reference neither arm touched:
+    arms rendered back and scored INSIDE the 6-connected cells of the RAW frame
+    -- the one reference neither arm touched:
 
     | frame | arm | splats | cell PSNR | cell energy | out-of-cell energy |
     |-------|-----|--------|-----------|-------------|--------------------|
@@ -326,7 +326,7 @@ DEMO_META = {
     "category": "microscopy",
     "geometry": "mixed",
     "requirements": {
-        "download_mb": 40,  # the 41,262,407-byte archive, and nothing else
+        "download_mb": 19,  # the 19,229,817-byte archive, and nothing else
         "compute": "medium",
         "gpu": "optional",
         "local_data": "git-lfs",

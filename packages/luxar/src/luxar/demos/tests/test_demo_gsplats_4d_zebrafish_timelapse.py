@@ -26,6 +26,12 @@ import pytest
 _DEMO_PATH = (
     Path(__file__).resolve().parents[1] / "demo_gsplats_4d_zebrafish_timelapse.py"
 )
+_SHIPPED_ARCHIVE = (
+    Path(__file__).resolve().parents[1]
+    / "data"
+    / "gsplats_zebrafish"
+    / "zebrafish_4d.gsplats.zarr.zip"
+)
 
 
 def _load_demo_module(name: str = "_luxar_demo_zebrafish_for_tests"):
@@ -39,6 +45,25 @@ def _load_demo_module(name: str = "_luxar_demo_zebrafish_for_tests"):
 
 
 _demo = _load_demo_module()
+
+
+def test_the_shipped_archive_is_the_component_filtered_build() -> None:
+    """Catch a stale precomputed archive whose preprocessing disagrees with code."""
+    if _SHIPPED_ARCHIVE.stat().st_size < 1024:
+        pytest.skip("zebrafish Git LFS artifact is not hydrated")
+
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    archive = GSplatData.load(_SHIPPED_ARCHIVE, include_stats=False)
+    finest = archive.substitutive_levels[0]
+    frame_zero_splats = sum(
+        int(np.count_nonzero(np.isclose(sublod.centers[:, 3], 0.0)))
+        for sublod in finest.additive_sublods
+    )
+    assert frame_zero_splats == 1_369, (
+        f"shipped frame 0 has {frame_zero_splats:,} splats, not the measured "
+        "component-filtered 1,369; the archive may still contain the NLM build"
+    )
 
 
 class TestTimepointSelection:
