@@ -43,9 +43,11 @@ checkerboard_4d = _demo.checkerboard_4d
 
 GRID = 24  # small but structurally representative (fast: 24^4 = 331K samples)
 N_FRACTALS = 6
-# The shipped demo runs at grid=50; precision assertions below are made
-# against ITS fetch reach so a coarser test grid can't mask a regression.
-PRODUCTION_FETCH_REACH = 0.25 * (2.0 / 50)
+# Precision assertions below use the shipped slider's fetch reach so the
+# coarser test grid cannot mask a production regression.
+PRODUCTION_FETCH_REACH = 0.25 * (
+    _demo.W_STRIDE * 2.0 / _demo.GRID_SIZE_DEFAULT
+)
 
 
 class TestAxisWorldValues:
