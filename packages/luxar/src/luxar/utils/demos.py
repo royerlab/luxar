@@ -382,7 +382,7 @@ def scene_is_current(
         return True
 
     aprint(
-        f"Demo source changed since this scene was built "
+        f"Demo producer changed since this scene was built "
         f"({stored or 'unstamped'} -> {fingerprint}); rebuilding. "
         f"Pass --keep-stale to reuse it instead."
     )

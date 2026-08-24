@@ -2935,7 +2935,7 @@ def _build_params() -> Dict[str, Any]:
         "marginal_cap": MARGINAL_CELL_CAP,
         "joint_cap": JOINT_CELL_CAP,
         # The marker already catches a FLAG change (--n-points and friends);
-        # this catches a SOURCE change, which is the other way a scene on disk
+        # this catches a PRODUCER change, which is the other way a scene on disk
         # goes stale. #1957 was reported against a scene whose bug had been
         # fixed weeks earlier, because nothing noticed the builder had moved on.
         "builder": FINGERPRINT,

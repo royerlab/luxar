@@ -50,7 +50,7 @@ Ships only code. First run downloads ~72 MB of source data (both public, direct
 download, **no account or API key**), builds the scene, and caches the sources
 under ``~/.cache/luxar/ocean_currents_earth/``. Later runs load the built scene
 instantly; ``--recompute`` rebuilds without re-fetching. A scene written by an
-OLDER version of this file is rebuilt automatically (its ``builder_fingerprint``
+older demo or Luxar writer is rebuilt automatically (its ``builder_fingerprint``
 no longer matches); pass ``--keep-stale`` to serve it anyway.
 
 DATA SOURCES & CITATIONS

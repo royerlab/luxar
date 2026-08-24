@@ -213,7 +213,7 @@ Demo scene generators, precomputed data helpers, and viewer launch utilities.
 - `demo_source_fingerprint()`: Hash a demo, Luxar's writer sources, and the Zarr environment for scene-staleness checks
 - `production_source_fingerprint()`: Cache a stable hash of production Luxar Python sources
 - `store_writer_environment()`: Report installed/configured inputs that affect Zarr output
-- `scene_is_current()`: Reuse only a completed scene written by the current demo builder
+- `scene_is_current()`: Reuse only a completed scene written by the current demo producer
 - `warn_if_no_cuda_gpu()`: Print a warning if no CUDA GPU is available
 - `load_precomputed_gsplats()`: Load precomputed GSplat data from Git LFS or cache
 - `load_precomputed_bundle()`: Load a precomputed bundle zip (timelapse demos)

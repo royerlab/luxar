@@ -32,7 +32,7 @@ regenerate + cache it. This demo ships ONLY code:
     parses + builds the globe scene (to the standard demos-output dir), and
     caches the source + parsed polylines under
     ``~/.cache/luxar/global_rivers_earth/``.
-  * Subsequent runs load the built scene instantly. A source change rebuilds
+  * Subsequent runs load the built scene instantly. A producer change rebuilds
     the scene automatically; ``--keep-stale`` reuses the existing build, while
     ``--recompute`` forces a rebuild (source/polylines stay cached, so it never
     re-fetches the ~1 GB).

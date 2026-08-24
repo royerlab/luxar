@@ -36,27 +36,6 @@ const EXPECTATIONS_PATH = resolve(FIXTURES_DIR, 'roundtrip_expectations.json');
  */
 const FIXTURE_STAMP_PATH = resolve(FIXTURES_DIR, '.fixture-inputs.sha256');
 const EXPECTATIONS_STAMP_PATH = resolve(FIXTURES_DIR, '.expectations-inputs.sha256');
-/**
- * The Python packages the fixtures are generated THROUGH. A change in any of
- * these alters what the generator writes without touching the generator
- * script itself, so fixture staleness must be measured against them too:
- *   - `encoding/` — array encodings (e.g. #448's uint16 per-axis fixed-point
- *     for COORDINATE positions, the miss that motivated this check);
- *   - `io/` — the LuxarZarrCompiler machinery (`io/_compiler` chunking,
- *     spatial ordering, gsplat assembly/tree) every fixture byte flows through;
- *   - `typing_utils/` — the constants those two READ, so a one-line edit there
- *     silently changes the bytes (`TARGET_CHUNK_BYTES` sets every chunk shape,
- *     `DEFAULT_POINT_RADIUS` the pad on a no-radii chunk's stored bounds).
- * Deliberately NOT the whole `luxar/` package: fitting/CLI/demo code does not
- * affect compiled-fixture bytes, and over-widening would regenerate the
- * ~minute-long fixture set on every unrelated Python edit.
- */
-const FIXTURE_INPUT_SOURCE_DIRS = [
-  resolve(PROJECT_ROOT, 'packages/luxar/src/luxar/encoding'),
-  resolve(PROJECT_ROOT, 'packages/luxar/src/luxar/io'),
-  resolve(PROJECT_ROOT, 'packages/luxar/src/luxar/typing_utils'),
-];
-
 const EXPECTED_FIXTURES = parseGeneratedFixtureNames(GENERATOR_PATH);
 
 /**
@@ -108,7 +87,9 @@ function runPythonGenerator(command: string, label: string): void {
 
 /**
  * Every Python file whose CONTENT can change what the generator writes: the
- * generator itself plus the non-test sources under FIXTURE_INPUT_SOURCE_DIRS.
+ * generator itself plus every non-test source under the production Luxar
+ * package. The wide set is deliberate: compiler behavior also depends on
+ * root-level compatibility code and `core/`, not only `encoding/` and `io/`.
  *
  * `**\/tests\/**` and `conftest.py` are excluded deliberately. A Python unit
  * test cannot change a fixture byte, but 48 of them live under `encoding/` and
@@ -116,17 +97,20 @@ function runPythonGenerator(command: string, label: string): void {
  * rebasing, or switching worktrees — invalidated all 50 fixtures and paid a
  * ~minute-long regeneration before a single TypeScript test ran.
  */
-function fixtureInputFiles(): string[] {
-  const files = [GENERATOR_PATH];
-  for (const dir of FIXTURE_INPUT_SOURCE_DIRS) {
-    if (!existsSync(dir)) continue;
-    for (const entry of readdirSync(dir, { recursive: true }) as string[]) {
-      if (!entry.endsWith('.py')) continue;
-      const parts = entry.split(/[\\/]/);
-      if (parts.includes('tests') || parts[parts.length - 1] === 'conftest.py') continue;
-      const full = join(dir, entry);
-      if (existsSync(full)) files.push(full);
-    }
+export function fixtureInputFiles(
+  projectRoot: string = PROJECT_ROOT,
+  generatorPath: string = GENERATOR_PATH
+): string[] {
+  const files = [generatorPath];
+  const sourceRoot = resolve(projectRoot, 'packages/luxar/src/luxar');
+  if (!existsSync(sourceRoot)) return files;
+  for (const entry of readdirSync(sourceRoot, { recursive: true }) as string[]) {
+    if (!entry.endsWith('.py')) continue;
+    const parts = entry.split(/[\\/]/);
+    if (parts.includes('tests') || parts.includes('__pycache__')) continue;
+    if (parts[parts.length - 1] === 'conftest.py') continue;
+    const full = join(sourceRoot, entry);
+    if (existsSync(full)) files.push(full);
   }
   return files.sort();
 }
@@ -147,8 +131,8 @@ function readStamp(path: string): string | null {
 
 /**
  * Whether the generated fixtures were produced by the CURRENT inputs — the
- * generator script and the Python encoder/compiler sources it writes through
- * (see FIXTURE_INPUT_SOURCE_DIRS), compared by CONTENT.
+ * generator script and the production Python sources it writes through,
+ * compared by CONTENT.
  *
  * The generate-if-MISSING gate alone let #448 slip through: the fixtures all
  * existed (git-ignored, generated locally in June) but still carried the old
@@ -162,8 +146,22 @@ function readStamp(path: string): string | null {
  * This records a digest of the inputs next to the fixtures and compares against
  * it, so regeneration happens exactly when the inputs really changed.
  */
-function areFixturesStale(): boolean {
-  return readStamp(FIXTURE_STAMP_PATH) !== hashFiles(fixtureInputFiles());
+export function fixtureInputsFingerprint(
+  projectRoot: string = PROJECT_ROOT,
+  generatorPath: string = GENERATOR_PATH
+): string {
+  return hashFiles(fixtureInputFiles(projectRoot, generatorPath));
+}
+
+export function areFixturesStale(
+  projectRoot: string = PROJECT_ROOT,
+  fixturesDir: string = FIXTURES_DIR,
+  generatorPath: string = GENERATOR_PATH
+): boolean {
+  return (
+    readStamp(resolve(fixturesDir, '.fixture-inputs.sha256')) !==
+    fixtureInputsFingerprint(projectRoot, generatorPath)
+  );
 }
 
 /**
@@ -390,7 +388,7 @@ export async function setup(): Promise<void> {
   // Stamp only after the fixtures are verified complete, so a failed or
   // interrupted generation is retried on the next run rather than recorded as
   // current.
-  writeFileSync(FIXTURE_STAMP_PATH, `${hashFiles(fixtureInputFiles())}\n`);
+  writeFileSync(FIXTURE_STAMP_PATH, `${fixtureInputsFingerprint()}\n`);
 
   if (isExpectationsStale(regeneratedFixtures)) {
     console.log('[test-setup] Round-trip expectations missing/stale — generating...');

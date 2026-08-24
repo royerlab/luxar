@@ -31,6 +31,7 @@ import {
   parseGeneratedFixtureNames,
 } from '../../../tools/fixture-manifest';
 import { e2eWorkerPlan, formatE2EParallelismStamp } from '../../../tools/e2e-workers';
+import { areFixturesStale } from '../global-setup';
 
 // `package.json` declares `"type": "module"`, so the CommonJS `__dirname`
 // global is undefined at module load. Reconstruct it from `import.meta.url`.
@@ -114,6 +115,14 @@ async function assertGeneratedFixtures(projectRoot: string, dataBaseURL: string)
     );
   }
 
+  if (areFixturesStale(projectRoot, fixturesDir)) {
+    throw new Error(
+      `Generated zarr fixtures are stale in ${fixturesDir}.\n\nRegenerate them with:\n` +
+        '  pnpm test:generate-fixtures\n' +
+        '(Playwright checks freshness but deliberately does not run the 1-2 minute generator.)'
+    );
+  }
+
   // The serving-root probe. `assertHTTPResource` names the URL, which is the diagnostic:
   // seeing the full `/packages/luxar-viewer/tests/fixtures/...` path 404 is what tells you
   // the data server is rooted at the wrong directory.
@@ -122,7 +131,7 @@ async function assertGeneratedFixtures(projectRoot: string, dataBaseURL: string)
     dataBaseURL
   ).toString();
   await assertHTTPResource(`Generated fixture ${expected[0]}`, probeURL);
-  console.log(`✅ ${expected.length} generated zarr fixtures present and served`);
+  console.log(`✅ ${expected.length} generated zarr fixtures current and served`);
 }
 
 export default async function globalSetup(config: FullConfig) {
