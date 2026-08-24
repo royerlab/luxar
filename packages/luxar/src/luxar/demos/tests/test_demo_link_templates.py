@@ -76,6 +76,7 @@ CANONICAL_LINKS_BY_HOST = {
 CANONICAL_LINKS = frozenset(
     template for templates in CANONICAL_LINKS_BY_HOST.values() for template in templates
 )
+LINK_PLACEHOLDERS = ("hover_key", "hover_label", "hover_node", "hover_index")
 
 
 def _static_strings(tree: ast.Module) -> dict[str, str]:
@@ -199,6 +200,10 @@ def _url_domain(value: str) -> str | None:
     return host.removeprefix("www.") or None
 
 
+def _has_link_placeholder(value: str) -> bool:
+    return any(f"{{{placeholder}}}" in value for placeholder in LINK_PLACEHOLDERS)
+
+
 def _unclaimed_link_literals(
     path: Path,
     tree: ast.Module,
@@ -222,8 +227,9 @@ def _unclaimed_link_literals(
         ):
             continue
         domain = _url_domain(node.value)
-        has_placeholder = "{hover_key}" in node.value or "{hover_label}" in node.value
-        if domain and (has_placeholder or domain in literal_backstop_domains):
+        if domain and (
+            _has_link_placeholder(node.value) or domain in literal_backstop_domains
+        ):
             unclaimed.append((path, node.lineno, node.value))
     return unclaimed
 
@@ -243,7 +249,7 @@ def _audit_links(
         domain
         for link in canonical_links
         if (domain := _url_domain(link)) is not None
-        if "{hover_key}" not in link and "{hover_label}" not in link
+        if not _has_link_placeholder(link)
     )
     # Preserve #2019's GeneCards-wide net; widening it flags citations and
     # non-link endpoints on other registered hosts.
@@ -417,7 +423,9 @@ def build(LINK):
 def test_demo_link_audit_rejects_unclaimed_link_literal(tmp_path: Path) -> None:
     module = tmp_path / "demo_hidden.py"
     module.write_text(
-        """LEGACY = "https://www.genecards.org/cgi-bin/carddisp.pl?gene={hover_key}"
+        """NODE = "https://www.uniprot.org/uniprot/{hover_node}"
+INDEX = "https://www.proteinatlas.org/legacy/{hover_index}"
+LEGACY = "https://www.genecards.org/cgi-bin/carddisp.pl?gene={hover_key}"
 NO_WWW = "https://genecards.org/legacy"
 scene.add_points(link="https://www.genecards.org/card/{hover_key}")
 """,
@@ -426,16 +434,18 @@ scene.add_points(link="https://www.genecards.org/card/{hover_key}")
 
     links, unresolved, unregistered, unclaimed = _audit_links([module], CANONICAL_LINKS)
 
-    assert links == [(module, 3, "https://www.genecards.org/card/{hover_key}")]
+    assert links == [(module, 5, "https://www.genecards.org/card/{hover_key}")]
     assert unresolved == []
     assert unregistered == []
     assert unclaimed == [
+        (module, 1, "https://www.uniprot.org/uniprot/{hover_node}"),
+        (module, 2, "https://www.proteinatlas.org/legacy/{hover_index}"),
         (
             module,
-            1,
+            3,
             "https://www.genecards.org/cgi-bin/carddisp.pl?gene={hover_key}",
         ),
-        (module, 2, "https://genecards.org/legacy"),
+        (module, 4, "https://genecards.org/legacy"),
     ]
 
 
