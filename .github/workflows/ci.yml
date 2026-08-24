@@ -709,7 +709,10 @@ jobs:
         run: pnpm run check:ci
 
   release-readiness:
-    needs: [changes, pick-runner]
+    # Keep the third obsidian slot for TypeScript while the two Python matrix
+    # legs start. `!cancelled()` below still runs this after a TypeScript failure,
+    # so the required release check never disappears behind a failed dependency.
+    needs: [changes, pick-runner, typescript-tests]
     # Fail-safe fallback to full CI if `changes` fails — see the note on the
     # `changes` job.
     if: ${{ !cancelled() }}
@@ -798,7 +801,10 @@ jobs:
   # jobs separate prevents their `emptyOutDir` Vite builds from clobbering one
   # another and gives branch protection an unambiguous wheel-viewer signal.
   wheel-viewer:
-    needs: [changes, pick-runner]
+    # Same three-slot admission rule as release-readiness. The fail-safe
+    # `!cancelled()` condition keeps this required context explicit even when
+    # TypeScript fails.
+    needs: [changes, pick-runner, typescript-tests]
     # Required checks must report explicitly even for docs-only changes, and a
     # failed change detector must fall back to the full build rather than skip.
     if: ${{ !cancelled() }}

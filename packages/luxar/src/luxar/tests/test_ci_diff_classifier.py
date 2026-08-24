@@ -339,3 +339,5 @@ def test_python_matrix_leaves_an_obsidian_slot_for_typescript(workflow: str) -> 
     assert jobs["python-tests"]["strategy"]["max-parallel"] == (
         "${{ needs.pick-runner.outputs.label == 'obsidian' && 2 || 3 }}"
     )
+    for deferred_job in ("release-readiness", "wheel-viewer"):
+        assert "typescript-tests" in jobs[deferred_job]["needs"]
