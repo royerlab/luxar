@@ -99,7 +99,10 @@ function runPythonGenerator(command: string, label: string): void {
  */
 export function fixtureInputFiles(
   projectRoot: string = PROJECT_ROOT,
-  generatorPath: string = GENERATOR_PATH
+  generatorPath: string = resolve(
+    projectRoot,
+    'packages/luxar-viewer/tests/fixtures/generate_test_data.py'
+  )
 ): string[] {
   const files = [generatorPath];
   const sourceRoot = resolve(projectRoot, 'packages/luxar/src/luxar');
@@ -148,7 +151,10 @@ function readStamp(path: string): string | null {
  */
 export function fixtureInputsFingerprint(
   projectRoot: string = PROJECT_ROOT,
-  generatorPath: string = GENERATOR_PATH
+  generatorPath: string = resolve(
+    projectRoot,
+    'packages/luxar-viewer/tests/fixtures/generate_test_data.py'
+  )
 ): string {
   return hashFiles(fixtureInputFiles(projectRoot, generatorPath));
 }
@@ -156,7 +162,7 @@ export function fixtureInputsFingerprint(
 export function areFixturesStale(
   projectRoot: string = PROJECT_ROOT,
   fixturesDir: string = FIXTURES_DIR,
-  generatorPath: string = GENERATOR_PATH
+  generatorPath: string = resolve(fixturesDir, 'generate_test_data.py')
 ): boolean {
   return (
     readStamp(resolve(fixturesDir, '.fixture-inputs.sha256')) !==

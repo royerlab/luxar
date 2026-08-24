@@ -39,21 +39,21 @@ function writeFixtureInputs(): {
 
 describe('generated fixture freshness', () => {
   it('becomes stale when production writer source changes', () => {
-    const { fixturesDir, generatorPath, projectRoot, writerPath } = writeFixtureInputs();
-    expect(areFixturesStale(projectRoot, fixturesDir, generatorPath)).toBe(false);
+    const { fixturesDir, projectRoot, writerPath } = writeFixtureInputs();
+    expect(areFixturesStale(projectRoot, fixturesDir)).toBe(false);
 
     writeFileSync(writerPath, 'WRITER_VERSION = 2\n');
 
-    expect(areFixturesStale(projectRoot, fixturesDir, generatorPath)).toBe(true);
+    expect(areFixturesStale(projectRoot, fixturesDir)).toBe(true);
   });
 
   it('ignores Python test-only changes', () => {
-    const { fixturesDir, generatorPath, projectRoot } = writeFixtureInputs();
+    const { fixturesDir, projectRoot } = writeFixtureInputs();
     writeFileSync(
       join(projectRoot, 'packages/luxar/src/luxar/core/tests/test_writer.py'),
       'def test_writer(): assert False\n'
     );
 
-    expect(areFixturesStale(projectRoot, fixturesDir, generatorPath)).toBe(false);
+    expect(areFixturesStale(projectRoot, fixturesDir)).toBe(false);
   });
 });
