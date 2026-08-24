@@ -197,6 +197,21 @@ def test_compare_mode_requires_excluding_the_duplicate_pr(monkeypatch) -> None:
         guard.main(["2003", "--compare-pr", "2005"])
 
 
+def test_compare_mode_rejects_json_output(monkeypatch) -> None:
+    monkeypatch.setattr(guard, "list_open_pull_requests", lambda repo: [])
+    with pytest.raises(SystemExit, match="2"):
+        guard.main(
+            [
+                "2003",
+                "--exclude-pr",
+                "2005",
+                "--compare-pr",
+                "2005",
+                "--json",
+            ]
+        )
+
+
 def test_main_succeeds_when_issue_has_no_open_closing_pr(monkeypatch, capsys) -> None:
     monkeypatch.setattr(
         guard,
@@ -214,6 +229,7 @@ def test_loose_mode_advises_on_exact_non_closing_mentions(monkeypatch, capsys) -
         lambda repo: [
             _pr(2004, title="Part of #2003"),
             _pr(2005, body="Refs #20030"),
+            _pr(2006, body="Refs 1#2003"),
         ],
     )
     assert guard.main(["2003", "--loose"]) == 0
@@ -221,6 +237,12 @@ def test_loose_mode_advises_on_exact_non_closing_mentions(monkeypatch, capsys) -
     assert "advisory" in output
     assert "#2004 Part of #2003" in output
     assert "#2005" not in output
+    assert "#2006" not in output
+
+
+def test_loose_mode_excludes_pull_requests_that_close_the_issue() -> None:
+    pull_request = _pr(2004, 2003, body="Refs #2003")
+    assert guard.loosely_matching_pull_requests(2003, [pull_request]) == []
 
 
 def test_loose_mode_keeps_json_stdout_machine_readable(monkeypatch, capsys) -> None:
