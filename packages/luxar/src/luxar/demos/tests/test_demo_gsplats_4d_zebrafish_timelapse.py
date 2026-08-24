@@ -49,6 +49,15 @@ _demo = _load_demo_module()
 
 def test_the_shipped_archive_is_the_component_filtered_build() -> None:
     """Catch a stale precomputed archive whose preprocessing disagrees with code."""
+    assert (
+        _demo.SEEDS,
+        _demo.FLOOR,
+        _demo.MIN_COMPONENT_VOXELS,
+        _demo.COMPONENT_CONNECTIVITY,
+    ) == (32_000, "none", 4, 1), (
+        "the shipped archive was fitted at these values, and the README, changelog "
+        "and docstring tables quote them; changing one means refitting and reshipping"
+    )
     if _SHIPPED_ARCHIVE.stat().st_size < 1024:
         pytest.skip("zebrafish Git LFS artifact is not hydrated")
 
