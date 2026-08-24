@@ -16,7 +16,7 @@ describe('checkExampleFixtureFreshness', () => {
     expect(mockedExecFileSync).toHaveBeenCalledWith(
       'hatch',
       ['run', 'python', 'scripts/run_examples.py', '--check'],
-      { cwd: '/checkout', stdio: 'pipe' }
+      { cwd: '/checkout', stdio: 'pipe', timeout: 120_000 }
     );
   });
 

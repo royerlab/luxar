@@ -313,3 +313,12 @@ def test_make_e2e_targets_require_fresh_example_fixtures() -> None:
 
     for target in ("test-e2e", "test-e2e-smoke", "test-perf-e2e"):
         assert f"{target}: run-examples " in makefile
+
+
+def test_typescript_checker_uses_python_stale_exit_code() -> None:
+    checker = (
+        _MOD_PATH.parent.parent
+        / "packages/luxar-viewer/tools/example-fixture-freshness.ts"
+    ).read_text()
+
+    assert f"STALE_EXIT_CODE = {run_examples.STALE_EXIT_CODE}" in checker

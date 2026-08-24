@@ -22,6 +22,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 OUTPUT_DIR = REPO_ROOT / "datasets/examples"
 MARKER_NAME = ".fixture-build.json"
 MARKER_VERSION = 2
+# Keep synchronized with packages/luxar-viewer/tools/example-fixture-freshness.ts.
 STALE_EXIT_CODE = 3
 
 
