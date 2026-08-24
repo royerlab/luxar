@@ -11,7 +11,7 @@ import sys
 from collections.abc import Callable, Mapping
 from typing import Any, NamedTuple
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
 
 from luxar.demos.tests.test_demo_link_templates import DEMO_LINK_AUDITS_BY_HOST
@@ -35,9 +35,11 @@ Fetch = Callable[[str], Response]
 
 
 def fetch_url(url: str) -> Response:
+    if urlsplit(url).scheme != "https":
+        raise ValueError("demo link audits only allow HTTPS URLs")
     request = Request(url, headers={"User-Agent": USER_AGENT})
     try:
-        with urlopen(request, timeout=TIMEOUT_SECONDS) as response:  # noqa: S310
+        with urlopen(request, timeout=TIMEOUT_SECONDS) as response:  # nosec B310
             return Response(
                 response.status,
                 response.url,
@@ -78,7 +80,11 @@ def _accepted(response: Response, spec: Mapping[str, Any]) -> bool:
 def audit_destination(host: str, spec: Mapping[str, Any], fetch: Fetch) -> AuditResult:
     if spec["mode"] == "human":
         return AuditResult(
-            "HUMAN", f"{spec['reason']}; last checked {spec['last_checked']}"
+            "HUMAN",
+            (
+                f"{spec['reason']}; last checked by {spec['checked_by']} "
+                f"on {spec['last_checked']}"
+            ),
         )
 
     good_url = _format_url(str(spec["url_template"]), str(spec["good"]))

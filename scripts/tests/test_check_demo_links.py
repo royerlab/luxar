@@ -136,6 +136,17 @@ def test_identifiers_are_encoded_like_viewer_url_substitutions() -> None:
     )
 
 
+def test_fetch_rejects_non_https_urls_before_opening_them() -> None:
+    checker = _load_script()
+
+    try:
+        checker.fetch_url("file:///etc/passwd")
+    except ValueError as error:
+        assert str(error) == "demo link audits only allow HTTPS URLs"
+    else:
+        raise AssertionError("non-HTTPS URL was accepted")
+
+
 def test_request_outage_is_reported_without_raising() -> None:
     checker = _load_script()
     spec = {
@@ -159,6 +170,7 @@ def test_human_only_destination_reports_review_state() -> None:
     spec = {
         "mode": "human",
         "reason": "Cloudflare returns the same response for every identifier",
+        "checked_by": "@maintainer",
         "last_checked": "2026-08-24",
     }
 
@@ -167,7 +179,7 @@ def test_human_only_destination_reports_review_state() -> None:
     assert result.level == "HUMAN"
     assert result.message == (
         "Cloudflare returns the same response for every identifier; "
-        "last checked 2026-08-24"
+        "last checked by @maintainer on 2026-08-24"
     )
 
 
@@ -177,6 +189,7 @@ def test_main_reports_every_destination_and_always_returns_zero(capsys) -> None:
         "manual.example": {
             "mode": "human",
             "reason": "browser-only",
+            "checked_by": "@maintainer",
             "last_checked": "never",
         },
         "broken.example": {
@@ -193,5 +206,5 @@ def test_main_reports_every_destination_and_always_returns_zero(capsys) -> None:
     assert exit_code == 0
     assert capsys.readouterr().out.splitlines() == [
         "[FAIL]  broken.example: good and bad both rejected (404/404)",
-        "[HUMAN] manual.example: browser-only; last checked never",
+        "[HUMAN] manual.example: browser-only; last checked by @maintainer on never",
     ]

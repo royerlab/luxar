@@ -93,6 +93,7 @@ DEMO_LINK_AUDITS_BY_HOST: dict[str, dict[str, Any]] = {
     "codex.flywire.ai": {
         "mode": "human",
         "reason": "the app shell does not expose cell validity to a plain request",
+        "checked_by": "@royerloic",
         "last_checked": "2026-08-24",
     },
     "doi.org": {
@@ -123,6 +124,7 @@ DEMO_LINK_AUDITS_BY_HOST: dict[str, dict[str, Any]] = {
     "genome.ucsc.edu": {
         "mode": "human",
         "reason": "Cloudflare Turnstile returns the same interstitial for both loci",
+        "checked_by": "@royerloic",
         "last_checked": "2026-08-24",
     },
     "simbad.cds.unistra.fr": {
@@ -137,6 +139,7 @@ DEMO_LINK_AUDITS_BY_HOST: dict[str, dict[str, Any]] = {
     "ssd.jpl.nasa.gov": {
         "mode": "human",
         "reason": "the identifier is URL-fragment state and is never sent in HTTP",
+        "checked_by": "@royerloic",
         "last_checked": "2026-08-24",
     },
     "www.ebi.ac.uk": {
@@ -150,6 +153,7 @@ DEMO_LINK_AUDITS_BY_HOST: dict[str, dict[str, Any]] = {
     "www.genecards.org": {
         "mode": "human",
         "reason": "Cloudflare returns 403 for both valid and invalid genes",
+        "checked_by": "@royerloic",
         "last_checked": "2026-08-24",
     },
     "www.proteinatlas.org": {
@@ -169,6 +173,7 @@ DEMO_LINK_AUDITS_BY_HOST: dict[str, dict[str, Any]] = {
     "www.youtube.com": {
         "mode": "human",
         "reason": "search accepts every query and bogus text still returns results",
+        "checked_by": "@royerloic",
         "last_checked": "2026-08-24",
     },
 }
@@ -413,6 +418,23 @@ def test_demo_links_use_registered_canonical_templates() -> None:
 
 def test_demo_link_audits_cover_every_registered_destination() -> None:
     assert DEMO_LINK_AUDITS_BY_HOST.keys() == CANONICAL_LINKS_BY_HOST.keys()
+    for host, audit in DEMO_LINK_AUDITS_BY_HOST.items():
+        assert audit["mode"] in {
+            "body-marker",
+            "human",
+            "json-count",
+            "redirect",
+            "status",
+        }
+        if audit["mode"] == "human":
+            assert audit["reason"]
+            assert audit["checked_by"]
+            assert audit["last_checked"]
+            continue
+        assert audit["good"] != audit["bad"]
+        assert str(audit["url_template"]).startswith("https://")
+        landing_template = str(audit.get("landing_template", audit["url_template"]))
+        assert urlsplit(landing_template).netloc == host
 
 
 def test_demo_link_guard_collects_by_module_with_doctests_enabled() -> None:
