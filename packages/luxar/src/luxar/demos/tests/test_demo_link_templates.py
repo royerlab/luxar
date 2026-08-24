@@ -7,14 +7,25 @@ was verified for each destination and rejects any unreviewed path or host.
 
 The rule is destination-specific, not a blanket ban on legacy-looking paths.
 For example, ``genome.ucsc.edu/cgi-bin/hgTracks`` is UCSC's canonical URL.
+
+The registry check reads ``link=`` keywords and ``"link"`` mapping entries, so a
+GeneCards URL written anywhere else — a caption, a docstring, a helper constant
+that never reaches a link argument — would slip past it. A second, narrower rule
+therefore scans every string literal for the GeneCards host and pins its shape,
+and asserts the corpus still carries at least one such link so the coverage
+cannot quietly disappear.
 """
 
 from __future__ import annotations
 
 import ast
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from ._scanned_modules import scanned_demo_modules
+
+GENECARDS_LINK = "https://www.genecards.org/card/{hover_key}"
+GENECARDS_DOMAIN = urlsplit(GENECARDS_LINK).netloc.removeprefix("www.")
 
 CANONICAL_LINKS = frozenset(
     {
@@ -31,7 +42,7 @@ CANONICAL_LINKS = frozenset(
         "https://ssd.jpl.nasa.gov/tools/sbdb_lookup.html#/?sstr={hover_key}",
         "https://www.ebi.ac.uk/ols4/search?q={hover_key}",
         "https://www.ebi.ac.uk/ols4/search?q={hover_label}",
-        "https://www.genecards.org/card/{hover_key}",
+        GENECARDS_LINK,
         "https://www.proteinatlas.org/search/{hover_key}",
         "https://www.uniprot.org/uniprotkb/{hover_key}/entry",
         "https://www.youtube.com/results?search_query={hover_key}",
@@ -189,3 +200,23 @@ def test_demo_link_registry_rejects_wrong_path_shape(tmp_path: Path) -> None:
     assert links == [(module, 1, "https://www.uniprot.org/legacy/{hover_key}")]
     assert unresolved == []
     assert unregistered == links
+
+
+def test_genecards_links_use_canonical_card_urls() -> None:
+    found: list[tuple[Path, int, str]] = []
+    offenders: list[tuple[Path, int, str]] = []
+    for path in scanned_demo_modules():
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and GENECARDS_DOMAIN in node.value
+            ):
+                match = (path, node.lineno, node.value)
+                found.append(match)
+                if node.value != GENECARDS_LINK:
+                    offenders.append(match)
+
+    assert found, "expected at least one GeneCards demo link"
+    assert not offenders, offenders

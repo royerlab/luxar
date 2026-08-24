@@ -70,13 +70,13 @@ export interface PickResult {
   nodeId: number;
   /**
    * The ON-DISK element index within the node (point index, segment
-   * instance, splat instance) — i.e. the index the per-element label CSR is
-   * keyed by, resolved through the node's published slot → on-disk map (see
-   * `picking-system/element-id-map.ts`). Falls back to the raw
-   * visible-buffer storage slot when the node published no map — which is
-   * NOT a guarantee that the two index spaces coincide: an unlabelled
-   * range-loaded points node publishes no map yet still diverges, and reports
-   * the slot (as it did before the map existed).
+   * instance, splat instance) — i.e. the index the per-element string/image
+   * CSRs are keyed by, resolved through the node's published slot → on-disk
+   * map (see `picking-system/element-id-map.ts`). Falls back to the raw
+   * visible-buffer storage slot when the node published no map — which is NOT
+   * a guarantee that the two index spaces coincide: a range-loaded points
+   * node with no per-element string/image channel publishes no map yet still
+   * diverges, and reports the slot (as it did before the map existed).
    */
   elementId: number;
   /** Brightness weight of the winning vote */

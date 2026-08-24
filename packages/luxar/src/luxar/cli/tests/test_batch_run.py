@@ -11,6 +11,7 @@ import typer
 from typer.testing import CliRunner
 
 from luxar.cli.gsplat_commands import app_gsplat
+from luxar.cli.tests._testing import normalized_cli_output
 
 runner = CliRunner()
 
@@ -141,9 +142,10 @@ def test_run_rejects_npy_input_with_clear_message(tmp_path: Path) -> None:
         ["batch-fit", "run", str(npy), str(tmp_path / "o"), "--gpus", "cpu"],
     )
     assert res.exit_code != 0
-    assert "OME-Zarr" in res.output and "gsplat fit" in res.output
+    output = normalized_cli_output(res)
+    assert "OME-Zarr" in output and "gsplat fit" in output
     # Clean usage-error rendering (typer.BadParameter), not a raw traceback.
-    assert "Traceback" not in res.output
+    assert "Traceback" not in output
 
 
 def test_run_rejects_bad_tiling(tmp_path: Path) -> None:
@@ -180,7 +182,8 @@ def test_run_uniform_auto_tile_without_profile_errors(tmp_path: Path) -> None:
     # crash, and any error must name --tile-size / the profile.
     assert res.exit_code in (0, 1, 2)
     if res.exit_code != 0:
-        assert "tile-size" in res.output.lower() or "profile" in res.output.lower()
+        output = normalized_cli_output(res).lower()
+        assert "tile-size" in output or "profile" in output
 
 
 def _blob_field(shape: "tuple[int, int, int]" = (16, 24, 24), seed: int = 0):
@@ -939,8 +942,9 @@ def test_run_bad_floor_spec_is_a_clean_cli_error(tmp_path: Path) -> None:
         # fmt: on
     )
     assert res.exit_code != 0
-    assert "Traceback" not in res.output
-    assert "floor" in res.output.lower()
+    output = normalized_cli_output(res)
+    assert "Traceback" not in output
+    assert "floor" in output.lower()
 
 
 def test_manifest_predating_shared_normalization_loads_and_keeps_its_specs(
@@ -1306,9 +1310,10 @@ def test_run_and_submit_reject_a_config_downscale(tmp_path: Path) -> None:
     ]
     for argv in invocations:
         res = runner.invoke(app_gsplat, ["batch-fit", *argv])
-        assert res.exit_code != 0, res.output
-        assert "downscale" in res.output, res.output
-        assert "Traceback" not in res.output
+        output = normalized_cli_output(res)
+        assert res.exit_code != 0, output
+        assert "downscale" in output, output
+        assert "Traceback" not in output
         # Nothing was planned into existence, let alone submitted.
         assert not (Path(argv[2]) / "manifest.json").exists()
 

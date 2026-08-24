@@ -126,7 +126,10 @@ so those demos have to build their data themselves.
 
 **That manifest is GENERATED — never hand-edit it.** Declare the dataset in
 `scripts/gen_data_manifest.py` (bucket, record, license, source, attribution) and
-run `make gen-data-manifest`; the checksums and byte counts are read off the tree.
+run `make gen-data-manifest`; the `sha256` and byte counts are read off the tree.
+A `hosted_sha256` (present only where the Zenodo artifact differs from the
+in-repo copy) cannot be derived from the tree and is carried forward instead, so
+hand-editing one is safe across a regeneration.
 A hand-edited metadata field always fails
 `test_committed_manifest_matches_generator`; a hand-edited checksum does not when
 the payload directory is absent or empty in your checkout, since the generator

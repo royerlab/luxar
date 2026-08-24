@@ -130,7 +130,7 @@ export function buildElementUrl(template: string, values: HoverTemplateValues): 
   // `https://uniprot.org/{hover_label}` with no label becomes
   // `https://uniprot.org/`, which is a perfectly valid URL pointing at
   // entirely the wrong thing. Under substitutive LOD this is the NORMAL case
-  // at coarse levels, which carry the attrs but no labels — so it must be
+  // at coarse levels, which carry the attrs but no labels/keys — so it must be
   // suppression, not a best guess.
   if (hadEmptySubstitution) return null;
 

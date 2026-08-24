@@ -7,7 +7,7 @@ zarr, on demand, and cache the result.
 
 ## Overview
 
-Labels and image labels are stored per node as **CSR-style** pairs of
+Labels, keys, and image labels are stored per node as **CSR-style** pairs of
 zarr arrays — an offsets array plus a concatenated bytes blob:
 
 | Label kind | Offsets array         | Bytes array         | `.zattrs` flag     |
