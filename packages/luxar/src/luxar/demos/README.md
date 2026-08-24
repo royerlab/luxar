@@ -135,6 +135,9 @@ the AS graph keys on `asn_a`/`asn_b` and the protein networks on
 `sym_a`/`sym_b`; the HuRI loaders hardcode `sym_a`/`sym_b`, being
 protein-specific by construction.
 
+Leaf implementation utilities shared by demos live under `_support/`; the flat
+`_*_common.py` modules remain the home for broader scene and dataset workflows.
+
 ## Optional dependencies
 
 The core install deliberately excludes the heavyweight packages some demos need

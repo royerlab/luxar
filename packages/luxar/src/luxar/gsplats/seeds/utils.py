@@ -6,7 +6,7 @@ This module contains common utilities used by multiple seed generation methods,
 including peak detection, spatial deduplication algorithms, and Cholesky
 factor construction for Gaussian initialization. The spatial hash grid for
 proximity queries lives in :mod:`luxar.gsplats.spatial_hash` and is re-exported
-here for backwards compatibility.
+here for intra-package convenience.
 """
 
 from typing import Optional, cast

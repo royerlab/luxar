@@ -143,7 +143,6 @@ Path utilities for Luxar dataset generation.
 - `get_examples_output_dir()`: Resolve the centralized `datasets/examples/` output directory
 - `get_demos_output_dir()`: Resolve the centralized `datasets/demos/` output directory
 
-
 ### `data_fetch.py`
 Manifest-driven demo-dataset resolution (R17: retiring in-repo Git LFS in favour
 of fetch-on-demand from Zenodo). Reads `demos/data_manifest.json` — the single
@@ -371,6 +370,5 @@ Internal:
 External:
 - `numpy`: Array operations
 - `arbol`: Progress display in demos and downloads
-- `torch`: PyTorch backend for `BatchedSpatialHashGrid` (GPU k-NN / radius queries)
+- `torch`: Device availability probing in `demos.py`
 - `requests` / `urllib3`: HTTP downloads with retry (lazily imported in `download.py`)
-- `Pillow (PIL)`: Legend image rendering in `_umap_utils.py`
