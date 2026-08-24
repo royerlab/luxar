@@ -20,6 +20,7 @@ from luxar.utils.demos import (
     parse_demo_flags,
     scene_is_current,
 )
+from luxar.utils.source_fingerprints import production_source_fingerprint
 
 
 def _write_scene(path: Path, fingerprint: str | None, *, finished: bool = True) -> Path:
@@ -53,6 +54,38 @@ def test_fingerprint_changes_when_the_source_changes(tmp_path: Path) -> None:
     before = demo_source_fingerprint(source)
     source.write_text("LINE_OPACITY = 0.77\n")
     assert demo_source_fingerprint(source) != before
+
+
+def test_fingerprint_changes_when_production_writer_changes(tmp_path: Path) -> None:
+    package_root = tmp_path / "luxar"
+    source = package_root / "demos/demo_thing.py"
+    writer = package_root / "encoding/writer.py"
+    source.parent.mkdir(parents=True)
+    writer.parent.mkdir(parents=True)
+    source.write_text("LINE_OPACITY = 0.95\n")
+    writer.write_text("ENCODING_VERSION = 1\n")
+
+    production_source_fingerprint.cache_clear()
+    before = demo_source_fingerprint(source, package_root=package_root)
+    writer.write_text("ENCODING_VERSION = 2\n")
+    production_source_fingerprint.cache_clear()
+
+    assert demo_source_fingerprint(source, package_root=package_root) != before
+
+
+def test_production_fingerprint_is_cached_across_demos(tmp_path: Path) -> None:
+    package_root = tmp_path / "luxar"
+    writer = package_root / "encoding/writer.py"
+    writer.parent.mkdir(parents=True)
+    writer.write_text("ENCODING_VERSION = 1\n")
+
+    production_source_fingerprint.cache_clear()
+    first = production_source_fingerprint(package_root)
+    second = production_source_fingerprint(package_root)
+
+    assert second == first
+    assert production_source_fingerprint.cache_info().hits == 1
+    assert production_source_fingerprint.cache_info().misses == 1
 
 
 def test_fingerprint_of_an_unreadable_source_is_empty(tmp_path: Path) -> None:

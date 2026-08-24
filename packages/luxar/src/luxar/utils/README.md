@@ -210,7 +210,8 @@ Demo scene generators, precomputed data helpers, and viewer launch utilities.
   explicit `--port`/`--viewer-port` in `serve_args` override
 - `detect_device()`: Auto-detect the best available compute device (cuda > mps > cpu)
 - `BUILDER_FINGERPRINT_ATTR`: Scene-root attribute that identifies the demo builder
-- `demo_source_fingerprint()`: Hash a demo module's source for scene-staleness checks
+- `demo_source_fingerprint()`: Hash a demo and Luxar's production writer sources for scene-staleness checks
+- `production_source_fingerprint()`: Cache a stable hash of production Luxar Python sources
 - `scene_is_current()`: Reuse only a completed scene written by the current demo builder
 - `warn_if_no_cuda_gpu()`: Print a warning if no CUDA GPU is available
 - `load_precomputed_gsplats()`: Load precomputed GSplat data from Git LFS or cache

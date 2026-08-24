@@ -26,6 +26,7 @@ from ..core.dimensions import Dimension, Dimensions
 from ..typing_utils.aliases import PathLike
 from ..typing_utils.config import check_dataset_size_warning
 from .process import run_child_process
+from .source_fingerprints import production_source_fingerprint
 
 
 def _validate_zip_member_path(member: str) -> PurePosixPath:
@@ -288,26 +289,38 @@ def parse_demo_flags() -> dict:
 BUILDER_FINGERPRINT_ATTR: Final[str] = "builder_fingerprint"
 
 
-def demo_source_fingerprint(module_file: Union[str, Path]) -> str:
-    """Short content hash of a demo module's source, for staleness checks.
+def demo_source_fingerprint(
+    module_file: Union[str, Path], *, package_root: Path | None = None
+) -> str:
+    """Short content hash of a demo and the production code that writes it.
 
     Call as ``demo_source_fingerprint(__file__)``. The hash covers that demo
-    module's SOURCE TEXT, so an edit to the file produces a different
-    fingerprint, while re-running an unchanged demo produces the same one.
+    module's source and every production Python source in the Luxar package,
+    so edits to either the builder or the encoder invalidate the cached scene.
+    The package-wide component is cached so multiple demos hash it only once
+    per process.
 
     Args:
         module_file: Path to the demo module (normally ``__file__``).
+        package_root: Luxar package root. The installed package is used by default.
 
     Returns:
-        16 hex characters, or ``""`` if the source cannot be read (in which case
-        :func:`scene_is_current` degrades to a plain existence check rather than
-        rebuilding a large scene on every run).
+        16 hex characters, or ``""`` if any source cannot be read (in which
+        case :func:`scene_is_current` degrades to a plain existence check rather
+        than rebuilding a large scene on every run).
     """
     try:
         source = Path(module_file).read_bytes()
     except OSError:
         return ""
-    return hashlib.sha256(source).hexdigest()[:16]
+    production = production_source_fingerprint(package_root)
+    if not production:
+        return ""
+    digest = hashlib.sha256()
+    digest.update(len(source).to_bytes(8, "big"))
+    digest.update(source)
+    digest.update(bytes.fromhex(production))
+    return digest.hexdigest()[:16]
 
 
 def scene_is_current(
@@ -326,8 +339,9 @@ def scene_is_current(
     never rebuilt the stale store on disk.
 
     So a scene is current only when its save finished AND it was written by
-    this exact builder. A scene from before fingerprinting carries no attr and
-    is treated as stale — one rebuild, then it stamps itself.
+    this exact builder and production Luxar source tree. A scene from before
+    fingerprinting carries no attr and is treated as stale — one rebuild, then
+    it stamps itself.
 
     This gates SCENE ASSEMBLY only. Downloads, gsplat fits and precomputed
     bundles keep their own caches under ``~/.cache/luxar``, so a source edit
