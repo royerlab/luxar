@@ -1,0 +1,480 @@
+{
+  "schema_version": 1,
+  "description": "Measured characteristics of the demo gsplat archives, read from each archive's own fitting/ stamps by scripts/gen_zenodo_records.py --refresh. Committed so the record text does not require holding the archives, which are hosted on Zenodo rather than in this repository. measured_sha256 records WHICH bytes each figure came from; --check reports any that no longer match the manifest pin.",
+  "archives": {
+    "gsplats_3d_drosophila_gastrulation/droso_gastrulation.gsplats.zarr.zip": {
+      "n_splats": 200155,
+      "ndim": 3,
+      "format_version": "3.3",
+      "topology": "progressive ladder, 3 steps",
+      "psnr_db": 40.17464637756348,
+      "foreground_psnr_db": null,
+      "foreground_fraction": null,
+      "source_shape": null,
+      "source_dtype": null,
+      "source_bytes": null,
+      "frames": null,
+      "measured_from": "cache",
+      "measured_sha256": "64367624736b06e4cd26a2578809f142716affad68ce3df1cbbbb802c8afa1af"
+    },
+    "gsplats_3d_h2afva_decimation/h2afva_full.gsplats.zarr.zip": {
+      "n_splats": 1653405,
+      "ndim": 3,
+      "format_version": "3.3",
+      "topology": "single level",
+      "psnr_db": null,
+      "foreground_psnr_db": null,
+      "foreground_fraction": null,
+      "source_shape": null,
+      "source_dtype": null,
+      "source_bytes": null,
+      "frames": null,
+      "measured_from": "cache",
+      "measured_sha256": "1d5ac0077db38de43807e4e303d275dffe6c98b48e539a096dc4972067db44bf"
+    },
+    "gsplats_3d_h2afva_decimation/h2afva_quarter.gsplats.zarr.zip": {
+      "n_splats": 411180,
+      "ndim": 3,
+      "format_version": "3.3",
+      "topology": "single level",
+      "psnr_db": null,
+      "foreground_psnr_db": null,
+      "foreground_fraction": null,
+      "source_shape": null,
+      "source_dtype": null,
+      "source_bytes": null,
+      "frames": null,
+      "measured_from": "cache",
+      "measured_sha256": "3727b6194202fb43527928c967429bf2e1ba42f9aa50877a44b9c5bacd29c0a6"
+    },
+    "gsplats_3d_h2afva_decimation/h2afva_tenth.gsplats.zarr.zip": {
+      "n_splats": 165276,
+      "ndim": 3,
+      "format_version": "3.3",
+      "topology": "single level",
+      "psnr_db": null,
+      "foreground_psnr_db": null,
+      "foreground_fraction": null,
+      "source_shape": null,
+      "source_dtype": null,
+      "source_bytes": null,
+      "frames": null,
+      "measured_from": "cache",
+      "measured_sha256": "6851f6585149b02d5e7f955e9c7501140fccb512f37d3e2ec20ec36024e34a47"
+    },
+    "gsplats_3d_h2afva_decimation/h2afva_twentieth.gsplats.zarr.zip": {
+      "n_splats": 82660,
+      "ndim": 3,
+      "format_version": "3.3",
+      "topology": "single level",
+      "psnr_db": null,
+      "foreground_psnr_db": null,
+      "foreground_fraction": null,
+      "source_shape": null,
+      "source_dtype": null,
+      "source_bytes": null,
+      "frames": null,
+      "measured_from": "cache",
+      "measured_sha256": "8f13588289145d92a24423215b5896b679a286c52d04a9854b61b9be1d8e004a"
+    },
+    "gsplats_3d_h2afva_stack/h2afva_tp234.gsplats.zarr.zip": {
+      "n_splats": 1653405,
+      "ndim": null,
+      "format_version": "3.3",
+      "topology": "41 spatial tiles",
+      "psnr_db": null,
+      "foreground_psnr_db": null,
+      "foreground_fraction": null,
+      "source_shape": null,
+      "source_dtype": null,
+      "source_bytes": null,
+      "frames": null,
+      "measured_from": "cache",
+      "measured_sha256": "abc4f8731824b8e2c9767e8e517357db19b998cb5299c9c9197ce1b4bea41dbd"
+    },
+    "gsplats_celegans/celegans_s1.gsplats.zarr.zip": {
+      "n_splats": 5485103,
+      "ndim": 3,
+      "format_version": "3.3",
+      "topology": "progressive ladder, 4 steps",
+      "psnr_db": [
+        31.153621861396918,
+        54.93537770877594
+      ],
+      "foreground_psnr_db": null,
+      "foreground_fraction": null,
+      "source_shape": null,
+      "source_dtype": null,
+      "source_bytes": null,
+      "frames": 400,
+      "measured_from": "repo",
+      "measured_sha256": "5b40ed7ff550fb140d4dc882b3b4afb609edfcc77bc7b195b368780b20a36b18"
+    },
+    "gsplats_cells3d/cells3d_ch0.gsplats.zarr.zip": {
+      "n_splats": 41975,
+      "ndim": 3,
+      "format_version": "3.4",
+      "topology": "progressive ladder, 4 steps",
+      "psnr_db": 32.75357723236084,
+      "foreground_psnr_db": 32.01914012429728,
+      "foreground_fraction": 0.11325658162434896,
+      "source_shape": [
+        60,
+        256,
+        256
+      ],
+      "source_dtype": "uint16",
+      "source_bytes": 7864320,
+      "frames": null,
+      "measured_from": "staged",
+      "measured_sha256": "6d482dffa06c349ded2e526057d8547b35ecc5a9083e8a73cef9f66c6448bf7f"
+    },
+    "gsplats_cells3d/cells3d_ch1.gsplats.zarr.zip": {
+      "n_splats": 57946,
+      "ndim": 3,
+      "format_version": "3.4",
+      "topology": "progressive ladder, 4 steps",
+      "psnr_db": 22.442033290863037,
+      "foreground_psnr_db": 21.698948203285706,
+      "foreground_fraction": 0.15304234822591145,
+      "source_shape": [
+        60,
+        256,
+        256
+      ],
+      "source_dtype": "uint16",
+      "source_bytes": 7864320,
+      "frames": null,
+      "measured_from": "staged",
+      "measured_sha256": "d4fa0452413961f08a3711cbccc154b08b749ba70e9ed371b12070dc79839569"
+    },
+    "gsplats_cmu1_pathology/cmu1_ch0.gsplats.zarr.zip": {
+      "n_splats": 8823953,
+      "ndim": null,
+      "format_version": "3.4",
+      "topology": "64 spatial tiles, each with its own detail levels",
+      "psnr_db": 23.49538803100586,
+      "foreground_psnr_db": 16.55348583608274,
+      "foreground_fraction": 0.11160033724251078,
+      "source_shape": [
+        32914,
+        46000
+      ],
+      "source_dtype": "uint8",
+      "source_bytes": 1514044000,
+      "frames": null,
+      "measured_from": "staged",
+      "measured_sha256": "29faffc18cb59f054dd2c4fdfca43103ab02127c2bbc649b4a9e2bdb80e3a496"
+    },
+    "gsplats_cmu1_pathology/cmu1_ch1.gsplats.zarr.zip": {
+      "n_splats": 9924486,
+      "ndim": null,
+      "format_version": "3.4",
+      "topology": "64 spatial tiles, each with its own detail levels",
+      "psnr_db": 24.318435192108154,
+      "foreground_psnr_db": 18.700670684187166,
+      "foreground_fraction": 0.16244613564731275,
+      "source_shape": [
+        32914,
+        46000
+      ],
+      "source_dtype": "uint8",
+      "source_bytes": 1514044000,
+      "frames": null,
+      "measured_from": "staged",
+      "measured_sha256": "b63397f62d50b42bd4831bbad1e4f7d4acb587cd7347543b0033e364aa20d00b"
+    },
+    "gsplats_cmu1_pathology/cmu1_ch2.gsplats.zarr.zip": {
+      "n_splats": 10830790,
+      "ndim": null,
+      "format_version": "3.4",
+      "topology": "64 spatial tiles, each with its own detail levels",
+      "psnr_db": 26.08574390411377,
+      "foreground_psnr_db": 22.28069177135022,
+      "foreground_fraction": 0.1582571662382335,
+      "source_shape": [
+        32914,
+        46000
+      ],
+      "source_dtype": "uint8",
+      "source_bytes": 1514044000,
+      "frames": null,
+      "measured_from": "staged",
+      "measured_sha256": "32f37b1420479e59ed6a84c959fda43f3315d6ce966bfb972705552bc61a9dac"
+    },
+    "gsplats_cryoem_virus/cryoem_virus.gsplats.zarr.zip": {
+      "n_splats": 1016482,
+      "ndim": null,
+      "format_version": "3.4",
+      "topology": "4 coarse-to-fine levels, each progressively streamed",
+      "psnr_db": 28.15963331601402,
+      "foreground_psnr_db": 19.160196891355966,
+      "foreground_fraction": 0.05823051184415817,
+      "source_shape": [
+        700,
+        700,
+        700
+      ],
+      "source_dtype": "float32",
+      "source_bytes": 1372000000,
+      "frames": null,
+      "measured_from": "staged",
+      "measured_sha256": "84387e0c5cc6bbb0f472f92a22f0e7cd62cf8ea328c63f277610176f4567c373"
+    },
+    "gsplats_ct_totalsegmentator/ct_atlas.gsplats.zarr.zip": {
+      "n_splats": 647083,
+      "ndim": null,
+      "format_version": "3.4",
+      "topology": "4 coarse-to-fine levels, each progressively streamed",
+      "psnr_db": 42.967820256676305,
+      "foreground_psnr_db": 30.585385424392157,
+      "foreground_fraction": 0.029363671230055326,
+      "source_shape": [
+        307,
+        307,
+        445
+      ],
+      "source_dtype": "int16",
+      "source_bytes": 83881610,
+      "frames": null,
+      "measured_from": "staged",
+      "measured_sha256": "f4348cab764ddccf85ee8b8e8fa6efcfb08d97aaf5650cc3e77dbc709c6fa399"
+    },
+    "gsplats_dapi/dapi.gsplats.zarr.zip": {
+      "n_splats": 7740,
+      "ndim": 3,
+      "format_version": "3.4",
+      "topology": "progressive ladder, 4 steps",
+      "psnr_db": 43.77545356750488,
+      "foreground_psnr_db": 34.82663203491783,
+      "foreground_fraction": 0.06726741790771484,
+      "source_shape": [
+        236,
+        275,
+        271
+      ],
+      "source_dtype": "uint16",
+      "source_bytes": 35175800,
+      "frames": null,
+      "measured_from": "staged",
+      "measured_sha256": "fadb070081f3deb5018c80951b0b42109647f059ea8897a9bfad9fd1d13b7d00"
+    },
+    "gsplats_flylight_mcfo_63x/flylight_mcfo_63x.gsplats.zarr.zip": {
+      "n_splats": 653759,
+      "ndim": 3,
+      "format_version": "3.4",
+      "topology": "progressive ladder, 5 steps",
+      "psnr_db": null,
+      "foreground_psnr_db": null,
+      "foreground_fraction": null,
+      "source_shape": null,
+      "source_dtype": null,
+      "source_bytes": null,
+      "frames": null,
+      "measured_from": "repo",
+      "measured_sha256": "167461b170c40295cba791616e480b8d80de39df6b532f06bb2c877b7f5b382d"
+    },
+    "gsplats_kidney/kidney_ch0.gsplats.zarr.zip": {
+      "n_splats": 51015,
+      "ndim": 3,
+      "format_version": "3.4",
+      "topology": "progressive ladder, 4 steps",
+      "psnr_db": 25.7773494720459,
+      "foreground_psnr_db": 24.089938491662316,
+      "foreground_fraction": 0.14526700973510742,
+      "source_shape": [
+        16,
+        512,
+        512
+      ],
+      "source_dtype": "uint16",
+      "source_bytes": 8388608,
+      "frames": null,
+      "measured_from": "staged",
+      "measured_sha256": "77abd5d1407f801cfac0cc1e9dc57f44e4a506aee498f921a118697ce5091853"
+    },
+    "gsplats_kidney/kidney_ch1.gsplats.zarr.zip": {
+      "n_splats": 52278,
+      "ndim": 3,
+      "format_version": "3.4",
+      "topology": "progressive ladder, 4 steps",
+      "psnr_db": 35.63950300216675,
+      "foreground_psnr_db": 30.556422737107862,
+      "foreground_fraction": 0.08493947982788086,
+      "source_shape": [
+        16,
+        512,
+        512
+      ],
+      "source_dtype": "uint16",
+      "source_bytes": 8388608,
+      "frames": null,
+      "measured_from": "staged",
+      "measured_sha256": "794936b25ab8d120b6a38677e549f068ab01d722720da218cc38ef06acdbf486"
+    },
+    "gsplats_kidney/kidney_ch2.gsplats.zarr.zip": {
+      "n_splats": 53827,
+      "ndim": 3,
+      "format_version": "3.4",
+      "topology": "progressive ladder, 4 steps",
+      "psnr_db": 31.95864200592041,
+      "foreground_psnr_db": 26.298553552300724,
+      "foreground_fraction": 0.11990213394165039,
+      "source_shape": [
+        16,
+        512,
+        512
+      ],
+      "source_dtype": "uint16",
+      "source_bytes": 8388608,
+      "frames": null,
+      "measured_from": "staged",
+      "measured_sha256": "90db97a160f67e3968630ca355c70c9c7ea94348a08c6fd00e0df64097f776bf"
+    },
+    "gsplats_milkyway_dust/milkyway_dust.gsplats.zarr.zip": {
+      "n_splats": 677741,
+      "ndim": null,
+      "format_version": "3.4",
+      "topology": "4 coarse-to-fine levels, each progressively streamed",
+      "psnr_db": 34.83152982461492,
+      "foreground_psnr_db": 21.07441543004947,
+      "foreground_fraction": 0.02675597218840462,
+      "source_shape": [
+        740,
+        740,
+        540
+      ],
+      "source_dtype": "float32",
+      "source_bytes": 1182816000,
+      "frames": null,
+      "measured_from": "staged",
+      "measured_sha256": "b4cf131a85e35a356187fd606f9af917080b06dc7de010ff0448ef5982cc90e9"
+    },
+    "gsplats_multichannel/organoids_ch0.gsplats.zarr.zip": {
+      "n_splats": 12916,
+      "ndim": 3,
+      "format_version": "3.4",
+      "topology": "progressive ladder, 4 steps",
+      "psnr_db": 38.60224485397339,
+      "foreground_psnr_db": 27.00837174759361,
+      "foreground_fraction": 0.03584373347585556,
+      "source_shape": [
+        236,
+        275,
+        271
+      ],
+      "source_dtype": "uint16",
+      "source_bytes": 35175800,
+      "frames": null,
+      "measured_from": "staged",
+      "measured_sha256": "763d4eff6b307e6a200a8e33611a168a0906d88e80a680b0303f8c3d2dff53c8"
+    },
+    "gsplats_multichannel/organoids_ch1.gsplats.zarr.zip": {
+      "n_splats": 13941,
+      "ndim": 3,
+      "format_version": "3.4",
+      "topology": "progressive ladder, 4 steps",
+      "psnr_db": 38.555803298950195,
+      "foreground_psnr_db": 28.901298208375714,
+      "foreground_fraction": 0.06681656138595284,
+      "source_shape": [
+        236,
+        275,
+        271
+      ],
+      "source_dtype": "uint16",
+      "source_bytes": 35175800,
+      "frames": null,
+      "measured_from": "staged",
+      "measured_sha256": "a3122f86ed8aa5a14e815ad9770cd4a5e55d8d0b4cc4fd0947d6b3b0de980441"
+    },
+    "gsplats_nexrad_supercell/nexrad_supercell.gsplats.zarr.zip": {
+      "n_splats": 817963,
+      "ndim": 3,
+      "format_version": "3.3",
+      "topology": "single level",
+      "psnr_db": null,
+      "foreground_psnr_db": null,
+      "foreground_fraction": null,
+      "source_shape": null,
+      "source_dtype": null,
+      "source_bytes": null,
+      "frames": 82,
+      "measured_from": "repo",
+      "measured_sha256": "950a4a2eff4ec35c4fa2fef00ac357e214f7e8395568d8b8322f4e9e8dc67d94"
+    },
+    "gsplats_opencell_map4/opencell_map4_ch0.gsplats.zarr.zip": {
+      "n_splats": 59609,
+      "ndim": 3,
+      "format_version": "3.4",
+      "topology": "progressive ladder, 4 steps",
+      "psnr_db": 27.449982166290283,
+      "foreground_psnr_db": 20.80322788937396,
+      "foreground_fraction": 0.07655479302832244,
+      "source_shape": [
+        51,
+        600,
+        600
+      ],
+      "source_dtype": "uint16",
+      "source_bytes": 36720000,
+      "frames": null,
+      "measured_from": "staged",
+      "measured_sha256": "6bca5accbe8dc8e2a729432b4ddbe5a33eb6f211c44f24b680700a39e0d8de91"
+    },
+    "gsplats_opencell_map4/opencell_map4_ch1.gsplats.zarr.zip": {
+      "n_splats": 59478,
+      "ndim": 3,
+      "format_version": "3.4",
+      "topology": "progressive ladder, 4 steps",
+      "psnr_db": 24.779038429260254,
+      "foreground_psnr_db": 17.977107318660167,
+      "foreground_fraction": 0.09421764705882353,
+      "source_shape": [
+        51,
+        600,
+        600
+      ],
+      "source_dtype": "uint16",
+      "source_bytes": 36720000,
+      "frames": null,
+      "measured_from": "staged",
+      "measured_sha256": "550286d3a0f14eab08cd41edb28bfe380f0c078d9eb9381c99aa36e64e749a61"
+    },
+    "gsplats_visible_human_head/vh_head.gsplats.zarr.zip": {
+      "n_splats": 1908888,
+      "ndim": null,
+      "format_version": "3.4",
+      "topology": "4 coarse-to-fine levels, each progressively streamed",
+      "psnr_db": 38.2259461041381,
+      "foreground_psnr_db": 32.59072160202537,
+      "foreground_fraction": 0.15559520354338865,
+      "source_shape": [
+        377,
+        1216,
+        2048,
+        3
+      ],
+      "source_dtype": "uint8",
+      "source_bytes": 2816606208,
+      "frames": null,
+      "measured_from": "staged",
+      "measured_sha256": "859830d8af8873beef48cf12e1ad8d2707b000495facc777683b14f92be90065"
+    },
+    "gsplats_zebrafish/zebrafish_4d.gsplats.zarr.zip": {
+      "n_splats": 1590010,
+      "ndim": null,
+      "format_version": "3.4",
+      "topology": "4 coarse-to-fine levels, each progressively streamed",
+      "psnr_db": null,
+      "foreground_psnr_db": null,
+      "foreground_fraction": null,
+      "source_shape": null,
+      "source_dtype": null,
+      "source_bytes": null,
+      "frames": null,
+      "measured_from": "repo",
+      "measured_sha256": "ec8d80d14d0216b9743f93ae1eb2aaca12fcbf79ed38e19db3bccc63dedc8a53"
+    }
+  }
+}
