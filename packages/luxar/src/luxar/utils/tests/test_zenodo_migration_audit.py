@@ -572,7 +572,16 @@ def test_live_refuses_to_skip_manifest_records_without_a_deposition_id(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
     repo = tmp_path / "repo"
-    _write_manifest(repo, {})
+    _write_manifest(
+        repo,
+        {
+            "unchecked": {
+                "bucket": "zenodo",
+                "record": "cc-by-sa",
+                "files": [{"name": "unchecked.zip", "bytes": 1024}],
+            }
+        },
+    )
     manifest = repo / "packages/luxar/src/luxar/demos/data_manifest.json"
     payload = json.loads(manifest.read_text())
     payload["records"] = {
@@ -594,6 +603,7 @@ def test_live_refuses_to_skip_manifest_records_without_a_deposition_id(
     skipped = "[cc-by-sa] manifest has no zenodo_record; live check did not run"
     assert skipped in output
     assert output.index("LIVE DEPOSITIONS vs MANIFEST") < output.index(skipped)
+    assert "no fetched deposition for pinned files" not in output
     assert "all pins match the live records" not in output
 
 
@@ -612,7 +622,10 @@ def test_live_fails_when_a_pin_names_an_unknown_record(
             "typo": {
                 "bucket": "zenodo",
                 "record": "cc-by-40",
-                "files": [{"name": "b.zip", "bytes": 2048}],
+                "files": [
+                    {"name": "b.zip", "bytes": 2048},
+                    {"name": "c.zip", "bytes": 4096},
+                ],
             },
         },
     }
@@ -629,7 +642,9 @@ def test_live_fails_when_a_pin_names_an_unknown_record(
     assert audit._audit_live_depositions(manifest, depositions, []) == 1
     output = capsys.readouterr().out
     assert "records checked: 1   pins: 1" in output
-    assert "FAIL [cc-by-40] no fetched deposition for pinned files: b.zip" in output
+    assert (
+        "FAIL [cc-by-40] no fetched deposition for pinned files: b.zip, c.zip" in output
+    )
     assert "all pins match the live records" not in output
 
 
