@@ -24,6 +24,7 @@ import type {
   GeometryCounters,
   LODProgressProvider,
   DrawOrderProvider,
+  MemoryMetrics,
 } from '../types/data-monitor-types';
 
 import { aggregateCacheMetrics } from './data-loading-monitor/metrics/cache';
@@ -56,9 +57,15 @@ import {
   renderLoaderItem,
   renderOverviewContent,
   renderFailedLoadsBanner,
-  renderCacheContent,
+} from './data-loading-monitor/templates/overview';
+import { renderCacheContent, CACHE_SECTION_KEYS } from './data-loading-monitor/templates/cache';
+import {
   renderMemoryContent,
-  renderInsightsContent,
+  calculateReuseRate,
+  getReuseRateColorClass,
+} from './data-loading-monitor/templates/memory';
+import { renderInsightsContent } from './data-loading-monitor/templates/insights';
+import {
   renderSceneGraphTree,
   summariseLodStates,
   lodChipContent,
@@ -67,17 +74,17 @@ import {
   countAdditiveNodes,
   levelRoleTitleSuffix,
   activeLevelRole,
+} from './data-loading-monitor/templates/scene-graph';
+import {
   formatNumber as templateFormatNumber,
   formatBytes as templateFormatBytes,
-  getColorClass,
   getCacheMemoryColorClass,
-  calculateReuseRate,
-  getReuseRateColorClass,
-  CACHE_SECTION_KEYS,
+} from './data-loading-monitor/templates/format';
+import {
+  getColorClass,
   MONITOR_ICONS,
   countColorClass,
-  type MemoryMetrics,
-} from './data-loading-monitor/templates';
+} from './data-loading-monitor/templates/primitives';
 
 import {
   renderHierarchicalTimingPanel,
@@ -1973,7 +1980,7 @@ export class DataLoadingMonitor {
     // label, unit noun and DOM id), so this is where the kind-keyed aggregation
     // model is projected onto them. Only three are projected here: mesh has no
     // headline field of its own — its triangle counts are shown per node in the
-    // scene-graph tree (`templates.ts`, `faceCount`).
+    // scene-graph tree (`templates/scene-graph.ts`, `faceCount`).
     const { totalByType, visibleByType } = this.sceneGraphState;
     const datasetSize = totalByType.points;
     const visiblePoints = visibleByType.points;
