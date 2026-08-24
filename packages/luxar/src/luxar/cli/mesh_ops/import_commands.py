@@ -29,6 +29,13 @@ from ...mesh.interop import (
 )
 
 
+def _validate_directory_index_regex(
+    input_path: Path, index_regex: str | None
+) -> None:
+    if input_path.is_dir() and index_regex is not None:
+        compile_index_regex(index_regex)
+
+
 def run_import(
     *,
     input_path: Path,
@@ -64,8 +71,7 @@ def run_import(
             "normals and triangle winding untouched, so it would light and cull from "
             "the wrong side."
         )
-    if input_path.is_dir() and index_regex is not None:
-        compile_index_regex(index_regex)
+    _validate_directory_index_regex(input_path, index_regex)
 
     source = input_path.resolve()
     destination = output_path.resolve()
