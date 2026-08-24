@@ -218,6 +218,7 @@ def _unclaimed_link_literals(
             and id(node) not in claimed_nodes
             and node.value not in resolved_links
             and node.value not in canonical_links
+            and not any(link.startswith(node.value) for link in resolved_links)
         ):
             continue
         domain = _url_domain(node.value)
@@ -451,6 +452,23 @@ build_protein_layer(scene, link_template=UNIPROT_LINK)
     links, unresolved, unregistered, unclaimed = _audit_links([module], CANONICAL_LINKS)
 
     assert links == []
+    assert unresolved == []
+    assert unregistered == []
+    assert unclaimed == []
+
+
+def test_demo_link_audit_allows_resolved_link_prefix_literal(tmp_path: Path) -> None:
+    module = tmp_path / "demo_host_constant.py"
+    module.write_text(
+        '''HOST = "https://www.genecards.org"
+scene.add_points(link=f"{HOST}/card/{{hover_key}}")
+''',
+        encoding="utf-8",
+    )
+
+    links, unresolved, unregistered, unclaimed = _audit_links([module], CANONICAL_LINKS)
+
+    assert links == [(module, 2, "https://www.genecards.org/card/{hover_key}")]
     assert unresolved == []
     assert unregistered == []
     assert unclaimed == []
