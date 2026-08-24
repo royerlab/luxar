@@ -83,7 +83,8 @@ test.describe('SliceCache (S-cache)', () => {
     // Revisit a stored frame: it must produce a cache HIT.
     await goToFrame(page, 1);
     const afterBack = await getSliceStats(page);
-    expect(afterBack!.hits).toBeGreaterThan(0);
+    expect(afterBack).not.toBeNull();
+    expect(afterBack!.hits).toBeGreaterThan(afterForward!.hits);
 
     // A revisited frame renders data (the restore path produces geometry).
     const state = await getLuxarState(page);
