@@ -30,9 +30,11 @@ workflow still skipped.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -220,17 +222,20 @@ def _classifies(pattern: str, path: str) -> bool:
 
 
 @pytest.fixture(scope="module", autouse=True)
-def _require_grep() -> None:
-    """A real ``grep`` must be on PATH; Python's ``re`` is not a substitute.
+def _require_cli_tools() -> None:
+    """The real CLI tools used by the workflow must be on PATH.
 
-    Only the presence of an executable named ``grep`` is checked — which flavour
-    it is (GNU here and in CI, BSD on macOS) is not, and does not need to be: what
-    matters is that the verdict comes from a POSIX ``grep -E`` rather than from
-    ``re``, whose ERE dialect differs in escapes, intervals and backreferences.
+    For ``grep``, only the executable's presence is checked — which flavour it is
+    (GNU here and in CI, BSD on macOS) is not, and does not need to be: what matters
+    is that the verdict comes from a POSIX ``grep -E`` rather than from ``re``, whose
+    ERE dialect differs in escapes, intervals and backreferences.
     """
     assert shutil.which("grep"), (
         "a POSIX `grep -E` is required to evaluate the CI patterns the way the "
         "workflow does; Python's `re` is a different dialect"
+    )
+    assert shutil.which("jq"), (
+        "`jq` is required to execute the queue watchdog exactly as the workflow does"
     )
 
 
@@ -368,3 +373,395 @@ def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
         assert jobs[hosted_job]["needs"] == ["changes"], (
             f"{hosted_job} must not wait for unrelated runner-selected jobs"
         )
+
+    assert jobs["queue-watchdog"]["needs"] == ["pick-runner"], (
+        "queue-watchdog must still run when diff classification fails"
+    )
+
+
+def _run_queue_watchdog(
+    workflow: str,
+    tmp_path: Path,
+    job_snapshots: list[list[dict[str, object]] | str],
+    *,
+    heartbeat_snapshots: list[dict[str, str]] | None = None,
+    date_step: int = 0,
+) -> tuple[subprocess.CompletedProcess[str], int, bool]:
+    """Run the real inline watchdog against deterministic GitHub API snapshots."""
+    watchdog = yaml.safe_load(workflow)["jobs"]["queue-watchdog"]["steps"][0]["run"]
+    hosted_jobs = [
+        _hosted_job("changes", "completed"),
+        _hosted_job("pick-runner", "completed"),
+        _hosted_job("queue-watchdog", "in_progress"),
+        _hosted_job("docs-quality", "queued"),
+    ]
+    job_snapshots = [
+        snapshot
+        if isinstance(snapshot, str)
+        or any(job["name"] == "queue-watchdog" for job in snapshot)
+        else [*hosted_jobs, *snapshot]
+        for snapshot in job_snapshots
+    ]
+    snapshots_path = tmp_path / "snapshots.json"
+    counter_path = tmp_path / "jobs-api-calls"
+    heartbeat_counter_path = tmp_path / "heartbeat-api-calls"
+    date_counter_path = tmp_path / "date-calls"
+    cancel_path = tmp_path / "cancelled"
+    snapshots_path.write_text(json.dumps(job_snapshots), encoding="utf-8")
+    heartbeats_path = tmp_path / "heartbeats.json"
+    heartbeats_path.write_text(
+        json.dumps(heartbeat_snapshots or [_heartbeat("0", 1000)]), encoding="utf-8"
+    )
+
+    fake_gh = tmp_path / "gh"
+    fake_gh.write_text(
+        """#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+
+endpoint = next((arg for arg in sys.argv if "/actions/" in arg), "")
+if "/jobs?" in endpoint:
+    if "--jq" in sys.argv:
+        raise SystemExit(f"unexpected --jq for jobs endpoint: {sys.argv!r}")
+    counter = Path(os.environ["WATCHDOG_COUNTER"])
+    call = int(counter.read_text() or "0") if counter.exists() else 0
+    counter.write_text(str(call + 1))
+    snapshots = json.loads(Path(os.environ["WATCHDOG_SNAPSHOTS"]).read_text())
+    jobs = snapshots[min(call, len(snapshots) - 1)]
+    if jobs == "invalid-json":
+        print("{")
+        raise SystemExit(0)
+    print(json.dumps({"jobs": jobs}))
+elif "/variables/LUXAR_CI_HEARTBEAT" in endpoint:
+    if "--jq" in sys.argv:
+        raise SystemExit(f"unexpected --jq for heartbeat endpoint: {sys.argv!r}")
+    counter = Path(os.environ["WATCHDOG_HEARTBEAT_COUNTER"])
+    call = int(counter.read_text() or "0") if counter.exists() else 0
+    counter.write_text(str(call + 1))
+    snapshots = json.loads(Path(os.environ["WATCHDOG_HEARTBEATS"]).read_text())
+    heartbeat = snapshots[min(call, len(snapshots) - 1)]
+    print(json.dumps(heartbeat))
+elif endpoint.endswith("/cancel"):
+    Path(os.environ["WATCHDOG_CANCELLED"]).write_text("yes")
+else:
+    raise SystemExit(f"unexpected gh invocation: {sys.argv!r}")
+""",
+        encoding="utf-8",
+    )
+    fake_gh.chmod(0o755)
+    fake_date = tmp_path / "date"
+    fake_date.write_text(
+        """#!/usr/bin/env python3
+import os
+from pathlib import Path
+
+counter = Path(os.environ["WATCHDOG_DATE_COUNTER"])
+call = int(counter.read_text() or "0") if counter.exists() else 0
+counter.write_text(str(call + 1))
+print(1000 + call * int(os.environ["WATCHDOG_DATE_STEP"]))
+""",
+        encoding="utf-8",
+    )
+    fake_date.chmod(0o755)
+    for name, body in (("sleep", "#!/bin/sh\nexit 0\n"),):
+        command = tmp_path / name
+        command.write_text(body, encoding="utf-8")
+        command.chmod(0o755)
+
+    env = os.environ | {
+        "PATH": f"{tmp_path}:{os.environ['PATH']}",
+        "GITHUB_REPOSITORY": "royerlab/luxar",
+        "GITHUB_RUN_ID": "2038",
+        "WATCHDOG_SNAPSHOTS": str(snapshots_path),
+        "WATCHDOG_COUNTER": str(counter_path),
+        "WATCHDOG_HEARTBEATS": str(heartbeats_path),
+        "WATCHDOG_HEARTBEAT_COUNTER": str(heartbeat_counter_path),
+        "WATCHDOG_DATE_COUNTER": str(date_counter_path),
+        "WATCHDOG_DATE_STEP": str(date_step),
+        "WATCHDOG_CANCELLED": str(cancel_path),
+    }
+    result = subprocess.run(
+        ["bash", "-e", "-c", watchdog],
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=30,
+        env=env,
+    )
+    calls = (
+        int(counter_path.read_text(encoding="utf-8") or "0")
+        if counter_path.exists()
+        else 0
+    )
+    return result, calls, cancel_path.exists()
+
+
+def _obsidian_job(name: str, status: str) -> dict[str, object]:
+    return {"name": name, "status": status, "labels": ["obsidian"]}
+
+
+def _hosted_job(name: str, status: str) -> dict[str, object]:
+    return {"name": name, "status": status, "labels": ["ubuntu-latest"]}
+
+
+def _heartbeat(value: str, updated_epoch: int) -> dict[str, str]:
+    updated_at = (
+        datetime.fromtimestamp(updated_epoch, UTC).isoformat().replace("+00:00", "Z")
+    )
+    return {"value": value, "updated_at": updated_at}
+
+
+def test_queue_watchdog_waits_for_obsidian_jobs_to_materialize(
+    workflow: str, tmp_path: Path
+) -> None:
+    """The hosted watchdog must not win its startup race with dependent jobs."""
+    snapshots = [
+        [],
+        [
+            _obsidian_job("python-tests (3.12)", "in_progress"),
+            _obsidian_job("python-tests (3.14)", "queued"),
+        ],
+        [
+            _obsidian_job("python-tests (3.12)", "completed"),
+            _obsidian_job("python-tests (3.14)", "in_progress"),
+        ],
+    ]
+    result, calls, cancelled = _run_queue_watchdog(workflow, tmp_path, snapshots)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == 3, "watchdog exited before obsidian-routed jobs appeared"
+    assert not cancelled
+
+
+def test_queue_watchdog_waits_past_grace_while_fanout_is_still_pending(
+    workflow: str, tmp_path: Path
+) -> None:
+    """Hosted queue delay must not consume the obsidian materialization grace."""
+    queued = [
+        _hosted_job("changes", "queued"),
+        _hosted_job("pick-runner", "completed"),
+        _hosted_job("queue-watchdog", "in_progress"),
+    ]
+    running = [
+        _hosted_job("changes", "in_progress"),
+        _hosted_job("pick-runner", "completed"),
+        _hosted_job("queue-watchdog", "in_progress"),
+    ]
+    snapshots = [
+        queued,
+        queued,
+        queued,
+        queued,
+        running,
+        [
+            _hosted_job("changes", "completed"),
+            _hosted_job("pick-runner", "completed"),
+            _hosted_job("queue-watchdog", "in_progress"),
+            _obsidian_job("python-tests (3.12)", "in_progress"),
+            _obsidian_job("python-tests (3.14)", "queued"),
+        ],
+        [
+            _hosted_job("changes", "completed"),
+            _hosted_job("pick-runner", "completed"),
+            _hosted_job("queue-watchdog", "in_progress"),
+            _obsidian_job("python-tests (3.14)", "in_progress"),
+        ],
+    ]
+    result, calls, cancelled = _run_queue_watchdog(
+        workflow,
+        tmp_path,
+        snapshots,
+        heartbeat_snapshots=[_heartbeat("0", 1300)],
+        date_step=60,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == 7, "watchdog exited while the dependent fan-out was still pending"
+    assert not cancelled
+
+
+def test_queue_watchdog_rearmed_grace_stays_bounded_after_fanout_finishes(
+    workflow: str, tmp_path: Path
+) -> None:
+    """A completed fan-out must start a fresh but still bounded startup grace."""
+    snapshots = [
+        [
+            _hosted_job("changes", "queued"),
+            _hosted_job("pick-runner", "completed"),
+            _hosted_job("queue-watchdog", "in_progress"),
+        ],
+        [
+            _hosted_job("changes", "completed"),
+            _hosted_job("pick-runner", "completed"),
+            _hosted_job("queue-watchdog", "in_progress"),
+        ],
+    ]
+    result, calls, cancelled = _run_queue_watchdog(
+        workflow, tmp_path, snapshots, date_step=60
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == 4
+    assert "did not appear during the startup grace" in result.stdout
+    assert not cancelled
+
+
+def test_queue_watchdog_keeps_held_matrix_leg_covered_while_siblings_run(
+    workflow: str, tmp_path: Path
+) -> None:
+    """A zero capacity heartbeat is expected after the three slots are admitted."""
+    snapshots = [
+        [
+            _obsidian_job("typescript-tests", "in_progress"),
+            _obsidian_job("python-tests (3.12)", "in_progress"),
+            _obsidian_job("python-tests (3.13)", "in_progress"),
+            _obsidian_job("python-tests (3.14)", "queued"),
+        ],
+        [
+            _obsidian_job("typescript-tests", "completed"),
+            _obsidian_job("python-tests (3.14)", "in_progress"),
+        ],
+    ]
+    result, calls, cancelled = _run_queue_watchdog(workflow, tmp_path, snapshots)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == 2
+    assert not cancelled, "busy capacity was mistaken for a dead obsidian host"
+
+
+def test_queue_watchdog_accepts_fresh_positive_heartbeat_without_running_sibling(
+    workflow: str, tmp_path: Path
+) -> None:
+    """An idle live host may have queued work before a runner picks it up."""
+    snapshots = [
+        [_obsidian_job("python-tests (3.12)", "queued")],
+        [_obsidian_job("python-tests (3.12)", "in_progress")],
+    ]
+    result, calls, cancelled = _run_queue_watchdog(
+        workflow,
+        tmp_path,
+        snapshots,
+        heartbeat_snapshots=[_heartbeat("1000", 1000)],
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == 2
+    assert "still queued on a live box" in result.stdout
+    assert not cancelled
+
+
+@pytest.mark.parametrize("heartbeat", [_heartbeat("0", 1), _heartbeat("1", 1000)])
+def test_queue_watchdog_cancels_stale_heartbeat_despite_running_sibling(
+    workflow: str, tmp_path: Path, heartbeat: dict[str, str]
+) -> None:
+    """A frozen runner state must not make either stale heartbeat form look live."""
+    snapshots = [
+        [
+            _obsidian_job("python-tests (3.12)", "in_progress"),
+            _obsidian_job("python-tests (3.14)", "queued"),
+        ]
+    ]
+    result, calls, cancelled = _run_queue_watchdog(
+        workflow, tmp_path, snapshots, heartbeat_snapshots=[heartbeat]
+    )
+
+    assert result.returncode == 1
+    assert calls == 1
+    assert "heartbeat went stale" in result.stdout
+    assert cancelled
+
+
+def test_queue_watchdog_stops_waiting_for_jobs_that_never_materialize(
+    workflow: str, tmp_path: Path
+) -> None:
+    """The jobs API startup grace must not consume the full watchdog window."""
+    result, calls, cancelled = _run_queue_watchdog(
+        workflow, tmp_path, [[]], date_step=60
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == 3
+    assert "did not appear during the startup grace" in result.stdout
+    assert not cancelled
+
+
+def test_queue_watchdog_retries_unparseable_jobs_response(
+    workflow: str, tmp_path: Path
+) -> None:
+    """A transient malformed API response must not red or cancel a healthy run."""
+    snapshots: list[list[dict[str, object]] | str] = [
+        "invalid-json",
+        [
+            _obsidian_job("python-tests (3.12)", "in_progress"),
+            _obsidian_job("python-tests (3.14)", "queued"),
+        ],
+        [_obsidian_job("python-tests (3.14)", "in_progress")],
+    ]
+    result, calls, cancelled = _run_queue_watchdog(workflow, tmp_path, snapshots)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == 3
+    assert "not parseable; retrying" in result.stdout
+    assert not cancelled
+
+
+def test_queue_watchdog_still_cancels_when_every_obsidian_job_is_queued(
+    workflow: str, tmp_path: Path
+) -> None:
+    """No active sibling plus zero heartbeat retains the fail-closed behavior."""
+    snapshots = [[_obsidian_job("python-tests (3.12)", "queued")]]
+    result, calls, cancelled = _run_queue_watchdog(workflow, tmp_path, snapshots)
+
+    assert result.returncode == 1
+    assert calls == 1
+    assert "heartbeat went stale" in result.stdout
+    assert cancelled
+
+
+def test_queue_watchdog_leaves_live_busy_run_alone_when_window_closes(
+    workflow: str, tmp_path: Path
+) -> None:
+    """A continuously refreshed busy host may outlive the hosted watchdog window."""
+    snapshots = [
+        [
+            _obsidian_job("python-tests (3.12)", "in_progress"),
+            _obsidian_job("python-tests (3.14)", "queued"),
+        ]
+    ]
+    heartbeats = [_heartbeat("0", epoch) for epoch in range(1100, 2500, 100)]
+    result, calls, cancelled = _run_queue_watchdog(
+        workflow,
+        tmp_path,
+        snapshots,
+        heartbeat_snapshots=heartbeats,
+        date_step=100,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == 14
+    assert "watchdog window over" in result.stdout
+    assert not cancelled
+
+
+def test_queue_watchdog_reports_when_window_closes_before_jobs_materialize(
+    workflow: str, tmp_path: Path
+) -> None:
+    """Window expiry before fan-out must not claim a fresh heartbeat was observed."""
+    snapshots = [
+        [
+            _hosted_job("changes", "queued"),
+            _hosted_job("pick-runner", "completed"),
+            _hosted_job("queue-watchdog", "in_progress"),
+        ]
+    ]
+    result, calls, cancelled = _run_queue_watchdog(
+        workflow, tmp_path, snapshots, date_step=100
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == 14
+    assert "watchdog window over before obsidian-routed jobs appeared" in result.stdout
+    assert "heartbeat stayed fresh" not in result.stdout
+    assert not cancelled
