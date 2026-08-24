@@ -29,12 +29,12 @@
 
 import type { SceneManager } from '../../../scene/scene-manager';
 import type { AnimationController } from '../../../scene/animation/animation-controller';
-import type { RenderingControls } from '../../../ui/rendering-controls';
+import type { RenderingControlsHandle } from '../panel-capabilities';
 import { isDocumentFullscreen } from '../../../utils/fullscreen';
 import { isPerspectiveCamera } from '../../../utils/camera-utils';
 
 export class WindowEventHandler {
-  private renderingControls?: RenderingControls;
+  private renderingControls?: RenderingControlsHandle;
 
   /**
    * The canvas `style` attribute as it was just before we entered
@@ -55,7 +55,7 @@ export class WindowEventHandler {
    * window listeners are already registered, so we accept the late
    * wiring instead of forcing the caller to re-attach.
    */
-  setRenderingControls(rc: RenderingControls | undefined): void {
+  setRenderingControls(rc: RenderingControlsHandle | undefined): void {
     this.renderingControls = rc;
   }
 

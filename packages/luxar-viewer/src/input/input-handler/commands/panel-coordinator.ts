@@ -18,10 +18,12 @@
 import { notifier } from '../../../utils/cross-layer/notifier';
 import { eventBus } from '../../../utils/cross-layer/event-bus';
 import { isDocumentFullscreen } from '../../../utils/fullscreen';
-import type { RenderingControls } from '../../../ui/rendering-controls';
-import type { RecordingPanel } from '../../../ui/recording-panel';
-import type { DimensionSliders } from '../../../ui/dimension-sliders';
-import type { DebugConsole } from '../../../ui/debug-console';
+import type {
+  DebugConsoleHandle,
+  DimensionSlidersHandle,
+  RecordingPanelHandle,
+  RenderingControlsHandle,
+} from '../panel-capabilities';
 
 // Avoid a hard dependency on Stats.js — only the visible/hide surface we
 // touch is captured here.
@@ -53,15 +55,15 @@ export interface VisiblyHideableHandle {
 /** Optional / always-present panel handles the coordinator manages. */
 export interface PanelRefs {
   /** Always present: the debug console — owned by InputHandler from construction. */
-  debugConsole: DebugConsole;
+  debugConsole: DebugConsoleHandle;
   /** Always present: the animation controller's performance-stats handle. */
   performanceStats: PerformanceStatsHandle;
   /** Optional: rendering controls panel. */
-  renderingControls?: RenderingControls;
+  renderingControls?: RenderingControlsHandle;
   /** Optional: dimension sliders. */
-  dimensionSliders?: DimensionSliders;
+  dimensionSliders?: DimensionSlidersHandle;
   /** Optional: recording panel. */
-  recordingPanel?: RecordingPanel;
+  recordingPanel?: RecordingPanelHandle;
   /**
    * Optional: dataset browser, exposed only as a close handle so the
    * Escape path runs the panel's `close()` method (which fires
@@ -96,15 +98,15 @@ export class PanelCoordinator {
     this.refs = refs;
   }
 
-  setRenderingControls(rc: RenderingControls | undefined): void {
+  setRenderingControls(rc: RenderingControlsHandle | undefined): void {
     this.refs.renderingControls = rc;
   }
 
-  setDimensionSliders(sliders: DimensionSliders | undefined): void {
+  setDimensionSliders(sliders: DimensionSlidersHandle | undefined): void {
     this.refs.dimensionSliders = sliders;
   }
 
-  setRecordingPanel(panel: RecordingPanel | undefined): void {
+  setRecordingPanel(panel: RecordingPanelHandle | undefined): void {
     this.refs.recordingPanel = panel;
   }
 

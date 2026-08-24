@@ -26,7 +26,7 @@ import { trapFocus } from './help-overlay/focus-trap';
 import { installTypeToFilter } from './help-overlay/type-to-filter';
 import { getViewerContainer } from '../utils/viewer-container';
 import { RAIL_ICONS } from './control-rail/icons';
-import { InputContext } from '../input/input-handler/context-manager';
+import { InputContext } from '../input';
 import type { RegisteredShortcutBindings } from '../types/shortcut-help';
 
 const UI_CONFIG = config.ui;

@@ -11,7 +11,7 @@
 import { log, Modules, LogEmoji } from '../../../utils/log';
 import { InputContext, type InputContextManager } from '../context-manager';
 import type { SceneManager } from '../../../scene/scene-manager';
-import type { RenderingControls } from '../../../ui/rendering-controls';
+import type { RenderingControlsHandle } from '../panel-capabilities';
 
 // Camera control modes the V key cycles through. Re-exported from the canonical
 // domain definition (controls/types.ts) so there is a single source of truth.
@@ -39,7 +39,7 @@ export function nextControlType(current: ControlType | string): ControlType {
 export interface ControlModeCtx {
   sceneManager: SceneManager;
   contextManager: InputContextManager;
-  renderingControls: RenderingControls | undefined;
+  renderingControls: RenderingControlsHandle | undefined;
 }
 
 /**

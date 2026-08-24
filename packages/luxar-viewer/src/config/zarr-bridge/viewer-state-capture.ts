@@ -9,7 +9,7 @@
 import type { ZarrViewerConfig } from '../../types/zarr';
 import { REVERSE_SETTINGS_MAP } from './viewer-config-utils';
 import type { SceneManager } from '../../scene/scene-manager';
-import type { RenderingControls } from '../../ui/rendering-controls';
+import type { RenderingSettings } from '../sections/rendering-controls/types';
 import type { SceneDimsManager } from '../../scene/scene-dims-manager';
 import type { DimensionAnimationManager } from '../../scene/animation/dimension-animation-manager';
 import { ThemeManager } from '../../themes/theme-manager';
@@ -36,7 +36,7 @@ const _warnedUnknownStateKeys = new Set<string>();
  */
 export function captureViewerState(
   sceneManager: SceneManager,
-  renderingControls: RenderingControls,
+  renderingControls: { readonly settings: RenderingSettings },
   sceneDimsManager: SceneDimsManager,
   animationManager?: DimensionAnimationManager,
   themeManager?: ThemeManager

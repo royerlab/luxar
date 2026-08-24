@@ -29,9 +29,12 @@ import { log, Modules } from '../../../utils/log';
 import { getViewerContainer } from '../../../utils/viewer-container';
 import type { SceneManager } from '../../../scene/scene-manager';
 import type { AnimationController } from '../../../scene/animation/animation-controller';
-import type { DimensionSliders, SliderConfig } from '../../../ui/dimension-sliders';
-import type { RecordingPanel } from '../../../ui/recording-panel';
 import type { PanelCoordinator } from '../commands/panel-coordinator';
+import type {
+  DimensionSlidersFactory,
+  DimensionSlidersHandle,
+  RecordingPanelHandle,
+} from '../panel-capabilities';
 
 /**
  * Factory used by `initDimensionSliders` to construct the slider panel.
@@ -42,20 +45,18 @@ import type { PanelCoordinator } from '../commands/panel-coordinator';
  *
  * Re-exported from `input/input-handler.ts` as the public name.
  */
-export type DimensionSlidersFactory = (config: SliderConfig) => DimensionSliders;
-
 export interface DimNavSetupCtx {
   sceneManager: SceneManager;
   animationController: AnimationController;
   dimensionSlidersFactory: DimensionSlidersFactory | undefined;
   panelCoordinator: PanelCoordinator;
-  recordingPanel: RecordingPanel | undefined;
+  recordingPanel: RecordingPanelHandle | undefined;
   getSelectedDimension(): number;
   setSelectedDimension(value: number): void;
   getAnimationManager(): DimensionAnimationManager | undefined;
   setAnimationManager(manager: DimensionAnimationManager | undefined): void;
-  getDimensionSliders(): DimensionSliders | undefined;
-  setDimensionSliders(sliders: DimensionSliders | undefined): void;
+  getDimensionSliders(): DimensionSlidersHandle | undefined;
+  setDimensionSliders(sliders: DimensionSlidersHandle | undefined): void;
   getSceneDimsListener(): (() => Promise<void>) | undefined;
   setSceneDimsListener(listener: (() => Promise<void>) | undefined): void;
 }

@@ -16,9 +16,9 @@ import { buildSettingsPopover } from '../../../ui/rail-panels/settings-popover';
 import { buildNavigationPopover } from '../../../ui/rail-panels/navigation-popover';
 import { buildPerformancePopover } from '../../../ui/rail-panels/performance-popover';
 import { buildHomePopover } from '../../../ui/rail-panels/home-popover';
-import { nextControlType } from '../../../input/input-handler/commands/control-mode';
 import { getSceneLoader } from '../../../data/scene-loader-manager';
-import type { InputHandler } from '../../../input/input-handler';
+import type { InputHandler } from '../../../input';
+import type { ControlType } from '../../../controls/types';
 import type { SceneManager } from '../../../scene/scene-manager';
 import type { SceneDimsManager } from '../../../scene/scene-dims-manager';
 import type { RenderingControls } from '../../../ui/rendering-controls';
@@ -44,6 +44,12 @@ export interface RailItemsDeps {
   debugConsole: DebugConsole;
   recordingPanel: RecordingPanel;
 }
+
+const NEXT_CONTROL_TYPE: Record<ControlType, ControlType> = {
+  orbit: 'fly',
+  fly: 'ortho',
+  ortho: 'orbit',
+};
 
 /**
  * Build the ordered list of control-rail items. Pure assembly of object
@@ -128,7 +134,7 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
       title: 'Navigation',
       shortcut: 'V',
       icon: RAIL_ICONS.navOrbit,
-      activate: () => ui.commands.toggleControlMode(),
+      activate: () => ui.commands.setControlMode(NEXT_CONTROL_TYPE[sceneManager.getControlType()]),
       render: (btn) => {
         const type = sceneManager.getControlType();
         if (btn.dataset.navMode === type) return;
@@ -143,7 +149,7 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
         if (svg) svg.outerHTML = icon;
         // `type` is a fixed enum (orbit|fly|ortho) — safe to interpolate.
         const modeLabel = type.charAt(0).toUpperCase() + type.slice(1);
-        const next = nextControlType(type); // next mode a click would select
+        const next = NEXT_CONTROL_TYPE[type];
         btn.setAttribute(
           'aria-label',
           `Navigation: ${modeLabel} — click for ${next} (V), right-click for options`

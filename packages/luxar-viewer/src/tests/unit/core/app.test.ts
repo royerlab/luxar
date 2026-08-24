@@ -136,7 +136,7 @@ vi.stubGlobal('fetch', mockFetch);
 // Import mocked classes
 import { SceneManager } from '../../../scene/scene-manager';
 import { AnimationController } from '../../../scene/animation/animation-controller';
-import { InputHandler } from '../../../input/input-handler';
+import { InputHandler } from '../../../input';
 import { RenderingControls } from '../../../ui/rendering-controls';
 import { DatasetBrowser } from '../../../ui/dataset-browser';
 import { cleanupUI as mockCleanupUI } from '../../../ui/ui-cleanup';

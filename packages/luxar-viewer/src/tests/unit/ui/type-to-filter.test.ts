@@ -11,7 +11,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { installTypeToFilter } from '../../../ui/help-overlay/type-to-filter';
-import { isTypingInInput } from '../../../input/input-handler/commands/focus-utils';
+import { isTypingInInput } from '../../../utils/dom/focus';
 
 interface Harness {
   container: HTMLElement;

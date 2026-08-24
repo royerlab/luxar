@@ -166,7 +166,7 @@ vi.mock('../../../../../rendering/depth-sort-coordinator', () => ({
   evaluateDepthSortPerFrame: vi.fn(),
 }));
 
-import { InputHandler } from '../../../../../input/input-handler';
+import { InputHandler } from '../../../../../input';
 import { getSceneLoader } from '../../../../../data/scene-loader-manager';
 import {
   configureDepthSort,

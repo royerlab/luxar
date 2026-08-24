@@ -4,7 +4,7 @@ import { showToast } from '../../../ui/toast';
 import { replaceBrowserDataSourceUrl } from '../../../config/url-params';
 import { log, Modules } from '../../../utils/log';
 import { getViewerContainer } from '../../../utils/viewer-container';
-import type { InputHandler } from '../../../input/input-handler';
+import type { InputHandler } from '../../../input';
 
 /**
  * Open the dataset browser modal. Returns the new instance so the

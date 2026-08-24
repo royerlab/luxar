@@ -17,11 +17,11 @@ import {
   getNonDisplayedDimensions,
   mapKeyToDimension,
   getNextDimensionIndex,
-} from '../../../input/input-handler/dimension-navigation/selection';
+} from '../../../scene/dims/selection';
 import {
   calculateStepSize,
   calculateNextPosition,
-} from '../../../input/input-handler/dimension-navigation/step-math';
+} from '../../../scene/dims/step-math';
 
 // Helper to create SimpleDims test objects
 function createDims(ndim: number, displayed: number[], metadata?: any[]): SimpleDims {

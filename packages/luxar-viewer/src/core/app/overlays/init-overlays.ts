@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OverlayManager } from '../../../ui/overlay-manager';
 import type { SceneManager } from '../../../scene/scene-manager';
-import type { InputHandler } from '../../../input/input-handler';
+import type { InputHandler } from '../../../input';
 import type { RecordingPanel } from '../../../ui/recording-panel';
 
 /**

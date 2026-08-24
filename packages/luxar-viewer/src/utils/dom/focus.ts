@@ -8,7 +8,7 @@
  * DOM context and tests don't have to programmatically focus elements
  * to assert behaviour.
  *
- * @module input/handlers/focus-utils
+ * @module utils/dom/focus
  */
 
 /**
