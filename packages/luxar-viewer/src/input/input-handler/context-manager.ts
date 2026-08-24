@@ -19,6 +19,7 @@ import {
   sortContextsByPriority,
 } from './context-manager/routing-rules';
 import { isTypingInInput } from './commands/focus-utils';
+import type { RegisteredShortcutBindings } from '../../types/shortcut-help';
 
 /**
  * Maximum recursion depth for {@link InputContextManager.handleKeyEvent}.
@@ -55,9 +56,13 @@ export interface KeyBinding {
     alt?: boolean;
     meta?: boolean;
   };
-  handler: (event: KeyboardEvent) => void;
-  // Modifier-aware bindings match keyup only while those modifiers remain held.
-  keyupHandler?: (event: KeyboardEvent) => void;
+  /** Return false synchronously to leave the event available to lower-priority contexts. */
+  handler: (event: KeyboardEvent) => boolean | void | Promise<void>;
+  /**
+   * Modifier-aware bindings match keyup only while those modifiers remain held.
+   * Async handlers are always handled; only a synchronous false can decline.
+   */
+  keyupHandler?: (event: KeyboardEvent) => boolean | void | Promise<void>;
   preventDefault?: boolean;
   description?: string;
 }
@@ -478,21 +483,20 @@ export class InputContextManager {
         if (type === 'up') {
           // On keyup: ONLY call keyupHandler if it exists
           if (binding.keyupHandler) {
-            if (binding.preventDefault) {
-              event.preventDefault();
+            const handled = binding.keyupHandler(event) !== false;
+            if (handled) {
+              // Prevent default after dispatch so a declined binding leaves the event untouched.
+              if (binding.preventDefault) event.preventDefault();
+              return true;
             }
-            binding.keyupHandler(event);
-            return true;
           }
-          // No keyupHandler = this binding doesn't handle keyup
-          return false;
         } else {
           // On keydown: call main handler
-          if (binding.preventDefault) {
-            event.preventDefault();
+          const handled = binding.handler(event) !== false;
+          if (handled) {
+            if (binding.preventDefault) event.preventDefault();
+            return true;
           }
-          binding.handler(event);
-          return true;
         }
       }
     }
@@ -567,15 +571,19 @@ export class InputContextManager {
       // route from a typing context.
       if (type === 'up') {
         if (binding.keyupHandler) {
-          if (binding.preventDefault) event.preventDefault();
-          binding.keyupHandler(event);
-          return true;
+          const handled = binding.keyupHandler(event) !== false;
+          if (handled) {
+            if (binding.preventDefault) event.preventDefault();
+            return true;
+          }
         }
         continue;
       }
-      if (binding.preventDefault) event.preventDefault();
-      binding.handler(event);
-      return true;
+      const handled = binding.handler(event) !== false;
+      if (handled) {
+        if (binding.preventDefault) event.preventDefault();
+        return true;
+      }
     }
 
     return false;
@@ -596,21 +604,23 @@ export class InputContextManager {
             if (type === 'up') {
               // On keyup: only call keyupHandler if it exists
               if (binding.keyupHandler) {
-                if (binding.preventDefault) {
-                  event.preventDefault();
+                const handled = binding.keyupHandler(event) !== false;
+                if (handled) {
+                  if (binding.preventDefault) event.preventDefault();
+                  return true;
                 }
-                binding.keyupHandler(event);
-                return true;
+                continue;
               }
               // No keyupHandler = doesn't handle keyup
-              return false;
+              continue;
             } else {
               // On keydown: call main handler
-              if (binding.preventDefault) {
-                event.preventDefault();
+              const handled = binding.handler(event) !== false;
+              if (handled) {
+                if (binding.preventDefault) event.preventDefault();
+                return true;
               }
-              binding.handler(event);
-              return true;
+              continue;
             }
           }
         }
@@ -778,6 +788,11 @@ export class InputContextManager {
       contextStack: [...this.contextStack],
       registeredBindings,
     };
+  }
+
+  /** Snapshot of registered binding keys grouped by input context. */
+  public getRegisteredShortcutBindings(): RegisteredShortcutBindings {
+    return this.getDebugInfo().registeredBindings;
   }
 
   /**

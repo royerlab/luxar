@@ -56,6 +56,7 @@ import { describeNavigableKeys } from './input-handler/dimension-navigation/sele
 import { PanelCoordinator } from './input-handler/commands/panel-coordinator';
 import { WindowEventHandler } from './input-handler/window-events/window-event-handler';
 import { registerAllKeyBindings } from './input-handler/key-bindings/register-all';
+import type { RegisteredShortcutBindings } from '../types/shortcut-help';
 import type {
   KeyBindingsCommands,
   KeyBindingsPanelGetters,
@@ -424,7 +425,6 @@ export class InputHandler {
       sceneManager: this.sceneManager,
       animationController: this.animationController,
       dimensionSlidersFactory: this.dimensionSlidersFactory,
-      contextManager: this.contextManager,
       panelCoordinator: this.panelCoordinator,
       recordingPanel: this.recordingPanel,
       getSelectedDimension: () => this.selectedDimension,
@@ -592,6 +592,10 @@ export class InputHandler {
       debugConsole: this.debugConsole,
       panels,
       commands,
+      animationShortcuts: {
+        getSelectedDimension: () => this.selectedDimension,
+        getAnimationManager: () => this.animationManager,
+      },
     });
   }
 
@@ -656,8 +660,13 @@ export class InputHandler {
     if (helpOverlay) {
       notifier.hideHelp();
     } else {
-      notifier.showHelp();
+      notifier.showHelp(this.contextManager.getRegisteredShortcutBindings());
     }
+  }
+
+  /** Registered bindings used to build the keyboard-shortcut overlay. */
+  public getRegisteredShortcutBindings(): RegisteredShortcutBindings {
+    return this.contextManager.getRegisteredShortcutBindings();
   }
 
   /**

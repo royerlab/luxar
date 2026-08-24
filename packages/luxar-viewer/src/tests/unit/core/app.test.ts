@@ -142,6 +142,7 @@ import { DatasetBrowser } from '../../../ui/dataset-browser';
 import { cleanupUI as mockCleanupUI } from '../../../ui/ui-cleanup';
 import { clearError as mockClearError } from '../../../ui/error-overlay';
 import { showToast as mockShowToast } from '../../../ui/toast';
+import { showHelpOverlay } from '../../../ui/help-overlay';
 
 // Import LuxarApp after all mocks are set up
 import { LuxarApp } from '../../../core/app';
@@ -204,6 +205,7 @@ describe('LuxarApp', () => {
       setColormapLegend: vi.fn(),
       clearDimensionUI: vi.fn(),
       initDimensionSliders: vi.fn(),
+      getRegisteredShortcutBindings: vi.fn(),
       dispose: vi.fn(),
     };
 
@@ -246,6 +248,20 @@ describe('LuxarApp', () => {
     // ordering between tests could flip the assertions for the spied
     // call counts (the spies persist across vi.clearAllMocks).
     vi.restoreAllMocks();
+  });
+
+  it('passes the registered shortcut snapshot when viewer config opens help', () => {
+    const bindings = new Map([['navigation', ['h']]]);
+    mockInputHandler.getRegisteredShortcutBindings.mockReturnValue(bindings);
+    (app as unknown as { inputHandler: typeof mockInputHandler }).inputHandler = mockInputHandler;
+
+    (
+      app as unknown as {
+        applyViewerConfigState(config: { ui: { show_help: boolean } }): void;
+      }
+    ).applyViewerConfigState({ ui: { show_help: true } });
+
+    expect(showHelpOverlay).toHaveBeenCalledWith(bindings);
   });
 
   describe('initialization sequence', () => {
