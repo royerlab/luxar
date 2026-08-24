@@ -199,9 +199,9 @@ def generate_fibonacci_sphere(
     budget there; the Fibonacci lattice does not.
 
     Delegates to :mod:`luxar.demos._globe_common`, which is also what
-    ``demo_ocean_currents_earth`` and the rivers globe use — the previous local
-    copy iterated in Python, at roughly 90 us a point, which is why this demo
-    was stuck at a point count too low to render a surface.
+    ``demo_ocean_currents_earth`` uses — the previous local copy iterated in
+    Python, at roughly 90 us a point, which is why this demo was stuck at a
+    point count too low to render a surface.
 
     Args:
         n_points: Number of points to generate.
@@ -306,67 +306,6 @@ def download_and_prepare_earth_texture() -> np.ndarray:
         img.close()
 
     return texture
-
-
-def sample_texture_at_latlon(
-    lat: float,
-    lon: float,
-    texture: np.ndarray,
-) -> np.ndarray:
-    """Sample RGB color from Earth texture at given latitude/longitude.
-
-    Uses bilinear interpolation for smooth color sampling.
-
-    Equirectangular projection mapping:
-    - lon ∈ [-180, +180] → x ∈ [0, width]
-    - lat ∈ [+90, -90] → y ∈ [0, height]
-
-    Note: latitude is inverted (top of image = +90°, bottom = -90°)
-
-    Args:
-        lat: Latitude in degrees (-90 to +90)
-        lon: Longitude in degrees (-180 to +180)
-        texture: RGB texture array (height, width, 3)
-
-    Returns:
-        RGB color as float32 array [0, 1]
-    """
-    height, width = texture.shape[:2]
-
-    # Convert lat/lon to texture coordinates
-    # lon: -180 to +180 → 0 to width
-    x = (lon + 180.0) / 360.0 * width
-
-    # lat: +90 to -90 → 0 to height (inverted!)
-    y = (90.0 - lat) / 180.0 * height
-
-    # Clamp to valid range
-    x = np.clip(x, 0, width - 1)
-    y = np.clip(y, 0, height - 1)
-
-    # Bilinear interpolation for smooth sampling
-    x0 = int(np.floor(x))
-    x1 = min(x0 + 1, width - 1)
-    y0 = int(np.floor(y))
-    y1 = min(y0 + 1, height - 1)
-
-    # Interpolation weights
-    wx = x - x0
-    wy = y - y0
-
-    # Sample four nearest pixels
-    c00 = texture[y0, x0].astype(np.float32)
-    c01 = texture[y0, x1].astype(np.float32)
-    c10 = texture[y1, x0].astype(np.float32)
-    c11 = texture[y1, x1].astype(np.float32)
-
-    # Bilinear interpolation
-    c0 = c00 * (1 - wx) + c01 * wx
-    c1 = c10 * (1 - wx) + c11 * wx
-    color = c0 * (1 - wy) + c1 * wy
-
-    # Normalize to [0, 1]
-    return color / 255.0
 
 
 def compute_earth_colors_from_texture(

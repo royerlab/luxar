@@ -110,8 +110,8 @@ Four dimensions: three spatial plus **T** (time). Stellar age is exposed as
 five LAYERS rather than as a fifth dimension — see ``AGE_BIN_LABELS`` for why.
 
 * Press **1**, then **[** / **]** — step time over 480 Myr in 20 Myr frames.
-  (The digit keys index the NAVIGABLE dimensions, so time is 1 and Age is 2,
-  regardless of their position in the dimension list — see issue #1974.)
+  (The digit keys index the NAVIGABLE dimensions, so time is 1. Age is exposed
+  as layers, not as a dimension.)
 * Press **L** — the Layers panel: disc, HII regions, bulge, halo, globulars.
 
 Usage:
@@ -194,9 +194,9 @@ OMEGA_P = 23.0
 #: Pitch angle of the arms in degrees. 13 deg is a typical Sb; smaller is more
 #: tightly wound (Sa), larger is flocculent (Sc).
 PITCH_DEG = 13.0
-#: Strength of the spiral forcing, as the radial displacement amplitude in kpc
-#: that a cold star would take at the reference radius. A few percent of R is
-#: the linear regime the response formula below is valid in.
+#: Spiral forcing coefficient in kpc·(km/s/kpc)^2. After division by the
+#: resonant denominator it produces a 0.18 kpc displacement at the reference
+#: radius, and 4-6% of R across the disc: visible but still in the linear regime.
 SPIRAL_FORCING = 620.0
 #: Resonance softening: the forced-response denominator is never allowed below
 #: this fraction of kappa^2. Linear theory diverges at the Lindblad resonances
@@ -997,10 +997,21 @@ def _int_arg(flag: str, default: int) -> int:
     return default
 
 
+def validate_frame_count(n_frames: int) -> int:
+    """Reject frame grids that cannot contain the viewer's opening midpoint."""
+    if n_frames < 3:
+        raise ValueError("--frames must be at least 3 to define a time step")
+    if n_frames % 2 == 0:
+        raise ValueError(
+            "--frames must be odd so the viewer's opening midpoint is a frame"
+        )
+    return n_frames
+
+
 def main() -> None:
     """Simulate the galaxy and open it in the viewer."""
     n_disc = _int_arg("stars", 400_000)
-    n_frames = _int_arg("frames", T_FRAMES)
+    n_frames = validate_frame_count(_int_arg("frames", T_FRAMES))
 
     aprint("=" * 70)
     aprint("GALAXY SIMULATION — density-wave spiral")

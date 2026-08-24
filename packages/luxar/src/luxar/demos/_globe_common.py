@@ -1,11 +1,10 @@
 """Shared globe-surface construction for the Earth-based demos.
 
-Three demos build a textured planet out of Points — ``demo_earthquakes_3d``,
-``demo_ocean_currents_earth`` and ``demo_global_rivers_earth`` — and they kept
-their own copies of the same three primitives. The copies drifted: the ocean
-demo learned to dither its lattice and to sample the texture vectorized, and the
-earthquake demo did not, so the same planet came out visibly worse in one of
-them. These are the shared versions.
+The earthquake and ocean-current demos build a textured planet out of Points
+and kept their own copies of the same three primitives. The copies drifted: the
+ocean demo learned to dither its lattice and to sample the texture vectorized,
+and the earthquake demo did not, so the same planet came out visibly worse in
+one of them. These are the shared versions.
 
 The three primitives, and why each is shaped the way it is:
 

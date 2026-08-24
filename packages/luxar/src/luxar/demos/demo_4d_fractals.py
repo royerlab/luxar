@@ -27,9 +27,8 @@ Mathematical Background:
     - Diamond Fractal: thin concentric L1-distance (taxicab) shells
 
 Performance:
-    - INSTANT generation - simple conditions, no iteration
-    - Fully vectorized numpy operations
-    - All 6 fractals generated and written in ~10-30 seconds
+    - Per-w-plane vectorized NumPy generation bounds peak memory at grid^3
+    - All 6 fractals generate and write in about 7 minutes at the default grid
 
 Usage:
     python demo_4d_fractals.py [--grid=N]
@@ -48,7 +47,7 @@ DEMO_META = {
     "geometry": "points",
     "requirements": {
         "download_mb": 0,
-        "compute": "light",
+        "compute": "medium",
         "gpu": "none",
         "local_data": None,
     },
@@ -85,7 +84,7 @@ W_STRIDE = 4
 #: SPARSER — the opposite of the intended effect. 150k covers about half the
 #: surface voxels of the densest fractal at grid 200; at 80k the flat faces
 #: still read as stippled. The store compresses well (lattice coordinates), so
-#: the cost is ~160 MB on disk rather than anything proportional.
+#: the measured default output is about 89 MB on disk.
 TARGET_MAX_POINTS_PER_PLANE = 150_000
 
 
@@ -599,9 +598,6 @@ def generate_4d_fractal_dataset(
 
     # Write to Zarr
     with asection("Writing to Zarr"):
-        # The w Dimension must mirror the data exactly: planes sit at
-        # k × step (step = 2/grid_size), the viewer's discrete-dim snap
-        # grid, and the range ends on the first/last data plane.
         # The w Dimension must mirror the MATERIALISED planes, not the full
         # lattice: only every W_STRIDE-th plane is written, so the slider's snap
         # grid is `stride x 2/grid_size` and its range ends on the first and
@@ -741,9 +737,6 @@ def generate_4d_fractal_dataset(
 def main() -> None:
     """Main demo entry point."""
     # Parse arguments
-    # NOTE: output size is capped by the 1.5M-per-fractal budget regardless
-    # of grid, but generation RAM scales as grid^4 (grid=100 allocates
-    # several 100M-element arrays). grid=50 keeps generation light.
     grid_size = GRID_SIZE_DEFAULT
 
     if len(sys.argv) > 1:
