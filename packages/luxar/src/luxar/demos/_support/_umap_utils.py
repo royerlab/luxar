@@ -324,8 +324,8 @@ def generate_all_legends(
         attr_display_names: Optional dict mapping attribute names to display names.
             If None, uses a default mapping covering common attributes.
     """
-    # Store legends alongside the demos, not in utils/
-    legends_dir = Path(__file__).parent.parent / "demos" / "legends"
+    # Store legends alongside the demo modules.
+    legends_dir = Path(__file__).parent.parent / "legends"
     legends_dir.mkdir(exist_ok=True)
 
     # Default display names covering all known attributes
