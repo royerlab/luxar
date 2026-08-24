@@ -237,13 +237,13 @@ Two habits that make any such comparison trustworthy:
 
 Set `--h` on `denoise` or `--denoise-h` on `fit --denoise` explicitly: without it,
 both commands auto-calibrate a selected 3D volume on its central Z slice. Beware
-`calibrate_nlm_h` (Noise2Self) on very sparse data: the same sparsity can make
-an `auto` floor land inside the specimen on a near-all-zero stack. Where a volume
-is ~99% exact zeros,
-a held-out voxel is best predicted by predicting zero, so maximal smoothing wins
-its cross-validation. It answered 0.055–0.225 on one stack depending on which slice
-it was pointed at, every value at or past the point where the filter ate signal —
-and its default `h_range` stops at 0.08, so a default call returns a pinned ceiling.
+`calibrate_nlm_h` (Noise2Self) on very sparse data: it is defeated by the same
+sparsity that makes an `auto` floor land inside the specimen on a near-all-zero
+stack. Where a volume is ~99% exact zeros, a held-out voxel is best predicted by
+predicting zero, so maximal smoothing wins its cross-validation. With the grid
+widened, it answered 0.055–0.225 on one stack depending on which slice it was
+pointed at, every value at or past the point where the filter ate signal — and
+its default `h_range` stops at 0.08, so a default call returns a pinned ceiling.
 **An estimator that answers at the edge of its own grid has told you nothing.**
 
 ### Symptom → knob
