@@ -293,6 +293,46 @@ describe('InputContextManager', () => {
   });
 
   describe('key event handling', () => {
+    it('falls through when a matching handler explicitly declines the event', () => {
+      const higher = vi.fn(() => false);
+      const lower = vi.fn();
+      manager.registerBinding(InputContext.UI_INTERACTION, { key: 'h', handler: higher });
+      manager.registerBinding(InputContext.NAVIGATION, { key: 'h', handler: lower });
+      manager.setContext(InputContext.UI_INTERACTION);
+
+      const event = new KeyboardEvent('keydown', { key: 'h' });
+      expect(manager.handleKeyEvent(event, 'down')).toBe(true);
+      expect(higher).toHaveBeenCalledWith(event);
+      expect(lower).toHaveBeenCalledWith(event);
+    });
+
+    it('continues through lower contexts when an intermediate handler declines', () => {
+      const intermediate = vi.fn(() => false);
+      const lower = vi.fn();
+      manager.registerBinding(InputContext.UI_INTERACTION, {
+        key: 'h',
+        handler: intermediate,
+      });
+      manager.registerBinding(InputContext.NAVIGATION, { key: 'h', handler: lower });
+      manager.setContext(InputContext.FLY_CONTROLS);
+
+      const event = new KeyboardEvent('keydown', { key: 'h' });
+      expect(manager.handleKeyEvent(event, 'down')).toBe(true);
+      expect(intermediate).toHaveBeenCalledWith(event);
+      expect(lower).toHaveBeenCalledWith(event);
+    });
+
+    it('does not prevent default when a handler declines the event', () => {
+      manager.registerBinding(InputContext.NAVIGATION, {
+        key: 'h',
+        handler: () => false,
+        preventDefault: true,
+      });
+      const event = new KeyboardEvent('keydown', { key: 'h', cancelable: true });
+
+      expect(manager.handleKeyEvent(event, 'down')).toBe(false);
+      expect(event.defaultPrevented).toBe(false);
+    });
     it('should handle registered key events', () => {
       const handler = vi.fn();
 

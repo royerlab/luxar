@@ -26,6 +26,8 @@ import { trapFocus } from './help-overlay/focus-trap';
 import { installTypeToFilter } from './help-overlay/type-to-filter';
 import { getViewerContainer } from '../utils/viewer-container';
 import { RAIL_ICONS } from './control-rail/icons';
+import { InputContext } from '../input/input-handler/context-manager';
+import type { ShortcutBindingRegistry } from '../types/shortcut-help';
 
 const UI_CONFIG = config.ui;
 
@@ -39,6 +41,8 @@ interface HelpEntry {
   /** Key/gesture chips, rendered as <kbd> (e.g. ['V'] or ['⇧', 'Wheel']). */
   keys: string[];
   label: string;
+  /** Registered bindings that must all be reachable for this row to render. */
+  bindings?: Array<{ context: InputContext; key: string }>;
 }
 
 interface HelpSection {
@@ -67,12 +71,36 @@ const HELP_SECTIONS: HelpSection[] = [
       { keys: ['⇧', 'Wheel'], label: 'Roll around the view axis' },
       { keys: ['Click'], label: 'Open the hovered element link' },
       { keys: ['Right click'], label: 'Actions for the hovered element' },
-      { keys: ['Space'], label: 'Toggle fullscreen' },
-      { keys: ['F'], label: 'Fit scene (recenter camera)' },
-      { keys: ['V'], label: 'View mode: orbit / fly / ortho' },
-      { keys: ['O'], label: 'Toggle dataset browser' },
-      { keys: ['H'], label: 'Toggle this help' },
-      { keys: ['Esc'], label: 'Exit fullscreen / close panels' },
+      {
+        keys: ['Space'],
+        label: 'Toggle fullscreen',
+        bindings: [{ context: InputContext.NAVIGATION, key: ' ' }],
+      },
+      {
+        keys: ['F'],
+        label: 'Fit scene (recenter camera)',
+        bindings: [{ context: InputContext.NAVIGATION, key: 'f' }],
+      },
+      {
+        keys: ['V'],
+        label: 'View mode: orbit / fly / ortho',
+        bindings: [{ context: InputContext.NAVIGATION, key: 'v' }],
+      },
+      {
+        keys: ['O'],
+        label: 'Toggle dataset browser',
+        bindings: [{ context: InputContext.NAVIGATION, key: 'o' }],
+      },
+      {
+        keys: ['H'],
+        label: 'Toggle this help',
+        bindings: [{ context: InputContext.NAVIGATION, key: 'h' }],
+      },
+      {
+        keys: ['Esc'],
+        label: 'Exit fullscreen / close panels',
+        bindings: [{ context: InputContext.NAVIGATION, key: 'escape' }],
+      },
     ],
   },
   {
@@ -80,15 +108,42 @@ const HELP_SECTIONS: HelpSection[] = [
     icon: RAIL_ICONS.navFly,
     note: 'Press V until the fly icon shows',
     entries: [
-      { keys: ['W', 'A', 'S', 'D'], label: 'Move forward / left / back / right' },
-      { keys: ['⌥', 'W / S'], label: 'Move up / down' },
-      { keys: ['⇧'], label: 'Hold for 2× speed boost' },
-      { keys: ['↑ ↓ ← →'], label: 'Look around' },
-      { keys: ['Q / E'], label: 'Roll left / right' },
+      {
+        keys: ['W', 'A', 'S', 'D'],
+        label: 'Move forward / left / back / right',
+        bindings: ['w', 'a', 's', 'd'].map((key) => ({ context: InputContext.FLY_CONTROLS, key })),
+      },
+      {
+        keys: ['⌥', 'W / S'],
+        label: 'Move up / down',
+        bindings: ['alt+w', 'alt+s'].map((key) => ({ context: InputContext.FLY_CONTROLS, key })),
+      },
+      {
+        keys: ['⇧'],
+        label: 'Hold for 2× speed boost',
+        bindings: [{ context: InputContext.FLY_CONTROLS, key: 'shift' }],
+      },
+      {
+        keys: ['↑ ↓ ← →'],
+        label: 'Look around',
+        bindings: ['arrowup', 'arrowdown', 'arrowleft', 'arrowright'].map((key) => ({
+          context: InputContext.FLY_CONTROLS,
+          key,
+        })),
+      },
+      {
+        keys: ['Q / E'],
+        label: 'Roll left / right',
+        bindings: ['q', 'e'].map((key) => ({ context: InputContext.FLY_CONTROLS, key })),
+      },
       { keys: ['Drag'], label: 'Strafe (pan camera)' },
       { keys: ['Right drag'], label: 'Free look' },
       { keys: ['Wheel'], label: 'Move forward / backward' },
-      { keys: ['I'], label: 'Toggle inertial mode (smooth coasting)' },
+      {
+        keys: ['I'],
+        label: 'Toggle inertial mode (smooth coasting)',
+        bindings: [{ context: InputContext.NAVIGATION, key: 'i' }],
+      },
     ],
   },
   {
@@ -108,34 +163,117 @@ const HELP_SECTIONS: HelpSection[] = [
       {
         keys: ['1 – 9'],
         label: 'Select a non-displayed dimension (panel header shows target)',
+        bindings: Array.from({ length: 9 }, (_, index) => ({
+          context: InputContext.DIMENSION_NAV,
+          key: String(index + 1),
+        })),
       },
-      { keys: ['[', ']'], label: 'Step along the selected dimension' },
+      {
+        keys: ['[', ']'],
+        label: 'Step along the selected dimension',
+        bindings: ['[', ']'].map((key) => ({ context: InputContext.DIMENSION_NAV, key })),
+      },
       { keys: ['Wheel'], label: 'On a slider: step (⇧ fine, ⌃ coarse, ⌃⇧ extra-fine)' },
-      { keys: ['N'], label: 'Dimension sliders panel' },
-      { keys: ['K'], label: 'Play / pause dimension animation' },
-      { keys: ['Home', 'End'], label: 'Jump to dimension start / end' },
-      { keys: ['⇧', '↑ / ↓'], label: 'Animation speed up / down' },
+      {
+        keys: ['N'],
+        label: 'Dimension sliders panel',
+        bindings: [{ context: InputContext.NAVIGATION, key: 'n' }],
+      },
+      {
+        keys: ['K'],
+        label: 'Play / pause dimension animation',
+        bindings: [{ context: InputContext.NAVIGATION, key: 'k' }],
+      },
+      {
+        keys: ['Home', 'End'],
+        label: 'Jump to dimension start / end',
+        bindings: ['home', 'end'].map((key) => ({ context: InputContext.NAVIGATION, key })),
+      },
+      {
+        keys: ['⇧', '↑ / ↓'],
+        label: 'Animation speed up / down',
+        bindings: ['arrowup+shift', 'arrowdown+shift'].map((key) => ({
+          context: InputContext.NAVIGATION,
+          key,
+        })),
+      },
     ],
   },
   {
     title: 'Panels & tools',
     icon: RAIL_ICONS.settings,
     entries: [
-      { keys: ['R'], label: 'Rendering controls' },
-      { keys: ['L'], label: 'Layers panel' },
-      { keys: ['N'], label: 'Dimension sliders' },
-      { keys: ['M'], label: 'Data monitor (mini / expanded / off)' },
-      { keys: ['P'], label: 'Performance monitor' },
-      { keys: ['T'], label: 'Recording panel (screenshot / video)' },
-      { keys: ['G'], label: 'Quick screenshot' },
-      { keys: ['B'], label: 'Scale bar' },
-      { keys: ['J'], label: 'Colormap legend' },
-      { keys: ['U'], label: 'Overlays' },
-      { keys: ['C'], label: 'Cinematic mode (bloom / noise / vignette / lens)' },
+      {
+        keys: ['R'],
+        label: 'Rendering controls',
+        bindings: [{ context: InputContext.NAVIGATION, key: 'r' }],
+      },
+      {
+        keys: ['L'],
+        label: 'Layers panel',
+        bindings: [{ context: InputContext.NAVIGATION, key: 'l' }],
+      },
+      {
+        keys: ['N'],
+        label: 'Dimension sliders',
+        bindings: [{ context: InputContext.NAVIGATION, key: 'n' }],
+      },
+      {
+        keys: ['M'],
+        label: 'Data monitor (mini / expanded / off)',
+        bindings: [{ context: InputContext.NAVIGATION, key: 'm' }],
+      },
+      {
+        keys: ['P'],
+        label: 'Performance monitor',
+        bindings: [{ context: InputContext.NAVIGATION, key: 'p' }],
+      },
+      {
+        keys: ['T'],
+        label: 'Recording panel (screenshot / video)',
+        bindings: [{ context: InputContext.NAVIGATION, key: 't' }],
+      },
+      {
+        keys: ['G'],
+        label: 'Quick screenshot',
+        bindings: [{ context: InputContext.NAVIGATION, key: 'g' }],
+      },
+      {
+        keys: ['B'],
+        label: 'Scale bar',
+        bindings: [{ context: InputContext.NAVIGATION, key: 'b' }],
+      },
+      {
+        keys: ['J'],
+        label: 'Colormap legend',
+        bindings: [{ context: InputContext.NAVIGATION, key: 'j' }],
+      },
+      {
+        keys: ['U'],
+        label: 'Overlays',
+        bindings: [{ context: InputContext.NAVIGATION, key: 'u' }],
+      },
+      {
+        keys: ['C'],
+        label: 'Cinematic mode (bloom / noise / vignette / lens)',
+        bindings: [{ context: InputContext.NAVIGATION, key: 'c' }],
+      },
       { keys: ['Ctrl/⌘', 'Wheel'], label: 'Adjust field of view (perspective)' },
-      { keys: ['Ctrl', 'L'], label: 'Debug console' },
-      { keys: ['Ctrl', '⇧', 'S'], label: 'Export viewer state to clipboard' },
-      { keys: ['⇧', 'F10'], label: 'Context menu for the hovered element' },
+      {
+        keys: ['Ctrl', 'L'],
+        label: 'Debug console',
+        bindings: [{ context: InputContext.NAVIGATION, key: 'ctrl+l' }],
+      },
+      {
+        keys: ['Ctrl', '⇧', 'S'],
+        label: 'Export viewer state to clipboard',
+        bindings: [{ context: InputContext.NAVIGATION, key: 'ctrl+s+shift' }],
+      },
+      {
+        keys: ['⇧', 'F10'],
+        label: 'Context menu for the hovered element',
+        bindings: [{ context: InputContext.NAVIGATION, key: 'f10+shift' }],
+      },
     ],
   },
 ];
@@ -156,7 +294,7 @@ const HELP_TIPS: string[] = [
  * click-outside-to-dismiss handler (the delay avoids catching the same click
  * that opened it); {@link hideHelpOverlay} tears both down.
  */
-export function showHelpOverlay() {
+export function showHelpOverlay(bindings?: ShortcutBindingRegistry) {
   // Prevent opening multiple overlays - if one exists, do nothing
   const existingHelp = document.getElementById('luxar-help-overlay');
   if (existingHelp) {
@@ -232,6 +370,12 @@ export function showHelpOverlay() {
     }
 
     for (const entry of section.entries) {
+      if (
+        bindings &&
+        entry.bindings?.some(({ context, key }) => !bindings.get(context)?.includes(key))
+      ) {
+        continue;
+      }
       const row = document.createElement('div');
       row.className = 'luxar-help-overlay__row';
 

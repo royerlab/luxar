@@ -5,6 +5,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { showHelpOverlay, hideHelpOverlay } from '../../../ui/help-overlay';
 import { isTypingInInput } from '../../../input/input-handler/commands/focus-utils';
+import { InputContext } from '../../../input/input-handler/context-manager';
 
 /**
  * Cost, in pending 0 ms timers, of ONE focus transition in this environment.
@@ -66,6 +67,15 @@ function expectNoOverlayTimersPending(focusTransitions: number): void {
 }
 
 describe('showHelpOverlay - Memory Leak Prevention', () => {
+  it('omits keyboard rows whose bindings are absent from the reachable registry', () => {
+    const bindings = new Map<string, string[]>([[InputContext.NAVIGATION, ['h']]]);
+    showHelpOverlay(bindings);
+
+    const text = document.getElementById('luxar-help-overlay')?.textContent ?? '';
+    expect(text).toContain('Toggle this help');
+    expect(text).not.toContain('Export viewer state to clipboard');
+    expect(text).not.toContain('Animation speed up / down');
+  });
   it('explains that digit keys address non-displayed dimensions', () => {
     showHelpOverlay();
 

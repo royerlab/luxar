@@ -18,6 +18,7 @@ import {
   sortContextsByPriority,
 } from './context-manager/routing-rules';
 import { isTypingInInput } from './commands/focus-utils';
+import type { ShortcutBindingRegistry } from '../../types/shortcut-help';
 
 /**
  * Maximum recursion depth for {@link InputContextManager.handleKeyEvent}.
@@ -54,8 +55,10 @@ export interface KeyBinding {
     alt?: boolean;
     meta?: boolean;
   };
-  handler: (event: KeyboardEvent) => void;
-  keyupHandler?: (event: KeyboardEvent) => void; // Optional separate handler for keyup events
+  /** Return false to leave the event available to lower-priority contexts. */
+  handler: (event: KeyboardEvent) => boolean | void | Promise<void>;
+  /** Return false to leave the event available to lower-priority contexts. */
+  keyupHandler?: (event: KeyboardEvent) => boolean | void | Promise<void>;
   preventDefault?: boolean;
   description?: string;
 }
@@ -466,21 +469,17 @@ export class InputContextManager {
         if (type === 'up') {
           // On keyup: ONLY call keyupHandler if it exists
           if (binding.keyupHandler) {
-            if (binding.preventDefault) {
-              event.preventDefault();
-            }
-            binding.keyupHandler(event);
-            return true;
+            const handled = binding.keyupHandler(event) !== false;
+            if (handled && binding.preventDefault) event.preventDefault();
+            if (handled) return true;
           }
           // No keyupHandler = this binding doesn't handle keyup
           return false;
         } else {
           // On keydown: call main handler
-          if (binding.preventDefault) {
-            event.preventDefault();
-          }
-          binding.handler(event);
-          return true;
+          const handled = binding.handler(event) !== false;
+          if (handled && binding.preventDefault) event.preventDefault();
+          if (handled) return true;
         }
       }
     }
@@ -553,15 +552,15 @@ export class InputContextManager {
       // route from a typing context.
       if (type === 'up') {
         if (binding.keyupHandler) {
-          if (binding.preventDefault) event.preventDefault();
-          binding.keyupHandler(event);
-          return true;
+          const handled = binding.keyupHandler(event) !== false;
+          if (handled && binding.preventDefault) event.preventDefault();
+          if (handled) return true;
         }
         continue;
       }
-      if (binding.preventDefault) event.preventDefault();
-      binding.handler(event);
-      return true;
+      const handled = binding.handler(event) !== false;
+      if (handled && binding.preventDefault) event.preventDefault();
+      if (handled) return true;
     }
 
     return false;
@@ -582,21 +581,19 @@ export class InputContextManager {
             if (type === 'up') {
               // On keyup: only call keyupHandler if it exists
               if (binding.keyupHandler) {
-                if (binding.preventDefault) {
-                  event.preventDefault();
-                }
-                binding.keyupHandler(event);
-                return true;
+                const handled = binding.keyupHandler(event) !== false;
+                if (handled && binding.preventDefault) event.preventDefault();
+                if (handled) return true;
+                continue;
               }
               // No keyupHandler = doesn't handle keyup
               return false;
             } else {
               // On keydown: call main handler
-              if (binding.preventDefault) {
-                event.preventDefault();
-              }
-              binding.handler(event);
-              return true;
+              const handled = binding.handler(event) !== false;
+              if (handled && binding.preventDefault) event.preventDefault();
+              if (handled) return true;
+              continue;
             }
           }
         }
@@ -764,6 +761,23 @@ export class InputContextManager {
       contextStack: [...this.contextStack],
       registeredBindings,
     };
+  }
+
+  /** Snapshot of registered bindings that their own context filters admit. */
+  public getReachableBindingRegistry(): ShortcutBindingRegistry {
+    const registry = new Map<string, string[]>();
+
+    this.bindings.forEach((bindings, context) => {
+      const contextConfig = this.contextConfigs.get(context as InputContext);
+      if (!contextConfig) return;
+
+      const reachable = Array.from(bindings.entries())
+        .filter(([, binding]) => this.isKeyAllowedInContext(binding.key, contextConfig))
+        .map(([bindingKey]) => bindingKey);
+      registry.set(context, reachable);
+    });
+
+    return registry;
   }
 
   /**

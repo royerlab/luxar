@@ -656,8 +656,13 @@ export class InputHandler {
     if (helpOverlay) {
       notifier.hideHelp();
     } else {
-      notifier.showHelp();
+      notifier.showHelp(this.contextManager.getReachableBindingRegistry());
     }
+  }
+
+  /** Reachable bindings used to build the keyboard-shortcut overlay. */
+  public getReachableBindingRegistry() {
+    return this.contextManager.getReachableBindingRegistry();
   }
 
   /**

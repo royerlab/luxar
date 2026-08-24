@@ -108,7 +108,7 @@ function makePanels(): {
   };
 }
 
-function makeSceneManager(): {
+function makeSceneManager(hasFlyControls = true): {
   sceneManager: SceneManager;
   canvas: HTMLCanvasElement;
   flyHandleKeyDown: ReturnType<typeof vi.fn>;
@@ -120,10 +120,13 @@ function makeSceneManager(): {
   const sceneManager = {
     renderer: { domElement: canvas },
     controls: {
-      getFlyControls: () => ({
-        handleKeyDown: flyHandleKeyDown,
-        handleKeyUp: flyHandleKeyUp,
-      }),
+      getFlyControls: () =>
+        hasFlyControls
+          ? {
+              handleKeyDown: flyHandleKeyDown,
+              handleKeyUp: flyHandleKeyUp,
+            }
+          : null,
     },
   } as unknown as SceneManager;
   return { sceneManager, canvas, flyHandleKeyDown, flyHandleKeyUp };
@@ -141,9 +144,11 @@ function makeDebugConsole(initiallyVisible = false): {
   };
 }
 
-function setup() {
+function setup(options: { hasFlyControls?: boolean } = {}) {
   const { manager, bindings } = makeContextManager();
-  const { sceneManager, canvas, flyHandleKeyDown, flyHandleKeyUp } = makeSceneManager();
+  const { sceneManager, canvas, flyHandleKeyDown, flyHandleKeyUp } = makeSceneManager(
+    options.hasFlyControls
+  );
   const { console: debugConsole, toggle: debugToggle } = makeDebugConsole();
   const commands = makeCommands();
   const panelsBundle = makePanels();
@@ -383,6 +388,12 @@ describe('registerAllKeyBindings — NAVIGATION command dispatch', () => {
 });
 
 describe('registerAllKeyBindings — FLY_CONTROLS dispatch', () => {
+  it('declines fly events when no fly controls are active', () => {
+    const { bindings } = setup({ hasFlyControls: false });
+    const w = findBinding(bindings, InputContext.FLY_CONTROLS, 'w');
+    expect(w.handler(new KeyboardEvent('keydown', { key: 'w' }))).toBe(false);
+    expect(w.keyupHandler!(new KeyboardEvent('keyup', { key: 'w' }))).toBe(false);
+  });
   it('forwards WASD keydown / keyup to the fly-controls handlers', () => {
     const { bindings, flyHandleKeyDown, flyHandleKeyUp } = setup();
     const w = findBinding(bindings, InputContext.FLY_CONTROLS, 'w');
