@@ -389,8 +389,11 @@ file through `gltf-transform` first.
 A directory import defaults to `--pattern '*.vtp'`. Each filename must contain an
 uppercase `T<number>` token; if every filename also contains `Ch<number>`, channel is
 appended as a second hidden discrete dimension. Numeric values are preserved, so
-missing timepoints remain gaps instead of renumbering later files. Mixed channel naming
-and duplicate time/channel coordinates are refused rather than guessed. Pass the
+missing timepoints remain gaps instead of renumbering later files. For a hidden dimension
+with multiple distinct values, the step is the largest integer spacing whose zero-anchored
+grid contains every imported coordinate; a single-valued dimension keeps a step of 1. Thus
+aligned strided exports navigate directly between populated slices. Mixed channel
+naming and duplicate time/channel coordinates are refused rather than guessed. Pass the
 directory and output scene as the two positional arguments, e.g.
 `luxar mesh import 000_deconv.ome.zarr/meshes/cells cells.luxar.zarr`. Use `--pattern`
 for another mesh format:
