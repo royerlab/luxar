@@ -28,6 +28,13 @@ from ...mesh.interop import (
 )
 
 
+def _discrete_coordinate_step(coordinate: np.ndarray) -> float:
+    unique_coordinates = np.unique(coordinate).astype(np.int64)
+    if unique_coordinates.size < 2:
+        return 1.0
+    return float(np.gcd.reduce(unique_coordinates))
+
+
 def run_import(
     *,
     input_path: Path,
@@ -127,7 +134,7 @@ def run_import(
                     dimension_name,
                     unit="frame" if dimension_name == "t" else "index",
                     range=(float(coordinate.min()), float(coordinate.max())),
-                    step=1.0,
+                    step=_discrete_coordinate_step(coordinate),
                     display=False,
                     discrete=True,
                 )
