@@ -6,6 +6,7 @@ from typing import Optional
 
 import numpy as np
 
+# |center| at or above this has no int64 voxel index (the cast would overflow),
 # so such a row is excluded from the agreement rather than cast.
 _VOXEL_KEY_LIMIT = 2.0**62
 

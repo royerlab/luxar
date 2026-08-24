@@ -11,6 +11,16 @@ from arbol import aprint
 
 from .process import run_child_process
 
+# Derived demo port ranges. Deliberately DISJOINT from the bare `luxar serve`
+# defaults (8000 data / 5173 viewer): a demo must never contend with a manually
+# started server, and two different demos must never share a URL — a browser
+# tab left over from demo A would otherwise silently front demo B's server
+# later (the "I started demo B and got demo A" trap). 499 slots (prime, so
+# stems spread well); `pick_port` inside `serve` still resolves the rare
+# same-slot collision by shifting up with a warning. Note the guarantee is at
+# the PAIR level: two demos may still land on the same DATA port (15 such
+# pairs among today's bundled outputs) and merely shift, which is harmless —
+# the wrong-scene trap needs BOTH ports to match, since the viewer URL carries
 # its own `?src=` data URL.
 _DEMO_DATA_PORT_BASE = 8001
 _DEMO_VIEWER_PORT_BASE = 5200

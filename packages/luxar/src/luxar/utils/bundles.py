@@ -5,7 +5,7 @@ from __future__ import annotations
 import shutil
 import zipfile
 from contextlib import nullcontext
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Optional
 
 from arbol import aprint, asection
@@ -283,7 +283,7 @@ def _frames_needing_extraction(
 
 def _bundle_member_for(
     safe_members: list[str], fname: str, bundle_name: str
-) -> tuple[str, Path]:
+) -> tuple[str, PurePosixPath]:
     """Locate the archive member holding *fname*, as ``(member, requested_path)``.
 
     Frames may sit at the top level of the bundle or inside a directory, so the
@@ -299,7 +299,7 @@ def _bundle_member_for(
         except ValueError:
             continue
         if member_path.name == requested_path.name:
-            return member, requested_path  # type: ignore[return-value]
+            return member, requested_path
     raise BundleMemberNotFound(
         f"{fname} not found in bundle {bundle_name}. Available: {safe_members[:5]}..."
     )

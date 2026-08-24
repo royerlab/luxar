@@ -24,8 +24,8 @@ from ..core.citation import validate_citation
 
 _DEMOS_DIR = Path(__file__).parent
 
-# Mirror of luxar.utils.cache._DEFAULT_CACHE_ROOT, duplicated so this module
-# never imports luxar.utils.cache (which pulls numpy). A unit test pins the
+# Mirror of luxar.utils.cache._DEFAULT_CACHE_ROOT, duplicated to keep this
+# lightweight registry off the luxar.utils import chain. A unit test pins the
 # two constants equal.
 DEMO_CACHE_ROOT = Path.home() / ".cache" / "luxar"
 

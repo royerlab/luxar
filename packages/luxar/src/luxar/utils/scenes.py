@@ -72,7 +72,7 @@ def create_lorenz_attractor(
         # NOTE: radii must be scaled by same factor as positions!
         compiler.write_points(
             "LorenzAttractor",
-            positions * 100.0 - 50.0,  # type: ignore[arg-type]  # Scale for visibility
+            positions * 100.0 - 50.0,  # type: ignore[arg-type]  # Scale up for better visibility
             colors=colors,
             radii=2.0,  # Uniform radius for visibility
             opacity=0.9,

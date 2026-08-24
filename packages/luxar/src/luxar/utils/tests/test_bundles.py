@@ -51,13 +51,13 @@ class TestCacheStaleness:
         """A stale cached copy is replaced by the (changed) packaged source."""
         import os
 
-        import luxar.utils.bundles as demos
+        import luxar.utils.bundles as bundles
         from luxar.gsplats.gsplat_data import GSplatData
 
         data_root = tmp_path / "data"
         cache_root = tmp_path / "cache"
-        monkeypatch.setattr(demos, "_DEMOS_DATA_DIR", data_root)
-        monkeypatch.setattr(demos, "_DEFAULT_CACHE_ROOT", cache_root)
+        monkeypatch.setattr(bundles, "_DEMOS_DATA_DIR", data_root)
+        monkeypatch.setattr(bundles, "_DEFAULT_CACHE_ROOT", cache_root)
 
         n = 8
         chol = np.zeros((n, 6), dtype=np.float32)
@@ -77,7 +77,7 @@ class TestCacheStaleness:
         stale.write_bytes(b"stale-not-a-zarr")
         os.utime(stale, (0, 0))  # far in the past → source is newer
 
-        out = demos.load_precomputed_gsplats("gsplats_x", ["x.gsplats.zarr.zip"])
+        out = bundles.load_precomputed_gsplats("gsplats_x", ["x.gsplats.zarr.zip"])
         # Refreshed from source and loaded (would raise on the stale bytes).
         assert out is not None and out[0].n_splats == n
 
@@ -93,14 +93,14 @@ class TestUnshippableData:
     def test_local_compute_dataset_returns_none_instead_of_raising(
         self, tmp_path: Path, monkeypatch
     ) -> None:
-        import luxar.utils.bundles as demos
+        import luxar.utils.bundles as bundles
 
         # Neither an in-repo copy nor a cached one — the post-removal state of
         # every `local-compute` dataset on a fresh clone.
-        monkeypatch.setattr(demos, "_DEMOS_DATA_DIR", tmp_path / "data")
-        monkeypatch.setattr(demos, "_DEFAULT_CACHE_ROOT", tmp_path / "cache")
+        monkeypatch.setattr(bundles, "_DEMOS_DATA_DIR", tmp_path / "data")
+        monkeypatch.setattr(bundles, "_DEFAULT_CACHE_ROOT", tmp_path / "cache")
 
-        out = demos.load_precomputed_gsplats(
+        out = bundles.load_precomputed_gsplats(
             "gsplats_tribolium", ["tribolium.gsplats.zarr.zip"]
         )
         assert out is None
@@ -109,26 +109,26 @@ class TestUnshippableData:
         self, tmp_path: Path, monkeypatch
     ) -> None:
         """A `zenodo` dataset that is merely unpulled must NOT be excused."""
-        import luxar.utils.bundles as demos
+        import luxar.utils.bundles as bundles
 
-        monkeypatch.setattr(demos, "_DEMOS_DATA_DIR", tmp_path / "data")
-        monkeypatch.setattr(demos, "_DEFAULT_CACHE_ROOT", tmp_path / "cache")
+        monkeypatch.setattr(bundles, "_DEMOS_DATA_DIR", tmp_path / "data")
+        monkeypatch.setattr(bundles, "_DEFAULT_CACHE_ROOT", tmp_path / "cache")
 
         with pytest.raises(FileNotFoundError):
-            demos.load_precomputed_gsplats("gsplats_dapi", ["dapi.gsplats.zarr.zip"])
+            bundles.load_precomputed_gsplats("gsplats_dapi", ["dapi.gsplats.zarr.zip"])
 
     def test_unknown_dataset_is_treated_as_shippable(
         self, tmp_path: Path, monkeypatch
     ) -> None:
         """No manifest entry → no excuse; the ordinary missing-file error wins."""
-        import luxar.utils.bundles as demos
+        import luxar.utils.bundles as bundles
 
-        monkeypatch.setattr(demos, "_DEMOS_DATA_DIR", tmp_path / "data")
-        monkeypatch.setattr(demos, "_DEFAULT_CACHE_ROOT", tmp_path / "cache")
+        monkeypatch.setattr(bundles, "_DEMOS_DATA_DIR", tmp_path / "data")
+        monkeypatch.setattr(bundles, "_DEFAULT_CACHE_ROOT", tmp_path / "cache")
 
         assert _unshippable_reason("not_a_dataset") is None
         with pytest.raises(FileNotFoundError):
-            demos.load_precomputed_gsplats("not_a_dataset", ["x.gsplats.zarr.zip"])
+            bundles.load_precomputed_gsplats("not_a_dataset", ["x.gsplats.zarr.zip"])
 
 
 class TestExtractBundleAndLoad:

@@ -1,10 +1,10 @@
 """One spelling for the shared demo helpers: ``from luxar.demos import …``.
 
-``luxar/demos/__init__.py`` is the barrel that re-exports the shared plumbing
-(``launch_viewer``, ``parse_demo_flags``, ``cached_download``, …) out of
-``luxar/utils/demos.py`` and ``luxar/utils/data_fetch.py``, and
-``demos/README.md`` §6 documents that spelling as the way to reach it. Even so,
-38 demo scripts reached *past* the barrel with ``from luxar.utils.viewer import
+Before the utility split, ``luxar/demos/__init__.py`` re-exported the shared
+plumbing (``launch_viewer``, ``parse_demo_flags``, ``cached_download``, …) out
+of ``luxar/utils/demos.py`` and ``luxar/utils/data_fetch.py``, and
+``demos/README.md`` §6 documented that spelling as the way to reach it. Even so,
+38 demo scripts reached *past* the barrel with ``from luxar.utils.demos import
 …``. Only 12 of them had to: 4 needed ``is_lfs_pointer`` and 8
 ``print_data_provenance``, neither of which the barrel re-exported. The other 26
 deep-imported names the barrel already had — which is the point. One forced
@@ -13,7 +13,7 @@ style, and it then spread by copy-paste to files that never needed it (issue
 #1304, item 5).
 
 Two spellings for one surface is a maintenance tax: the barrel stops being the
-place a helper's audience can be read off, and moving ``utils/demos.py`` has to
+place a helper's audience can be read off, and moving ``utils/demos.py`` had to
 chase 40 call sites instead of one. So this module carries TWO invariants: no
 demo module reaches past the barrel, and the barrel really does re-export
 everything the demos ask of it — the second one because its breach is what
@@ -35,9 +35,9 @@ one: see :func:`test_the_guard_detects_every_deep_spelling` and
 Scope: the demo MODULES, not the whole package. The ``tests/`` subdirectories are
 out of scope as a class, and legitimately so — a test may need the module a
 private lives in (``test_demo_meta`` deep-imports ``_DEFAULT_CACHE_ROOT`` to pin
-that ``registry.DEMO_CACHE_ROOT`` duplicates it, while the concern suites import
-their owning utility modules directly), and a re-export
-barrel cannot serve either need. Deep imports elsewhere in the package — a few
+that ``registry.DEMO_CACHE_ROOT`` duplicates it, while the concern suites
+import their owning utility modules directly), and a re-export barrel cannot
+serve either need. Deep imports elsewhere in the package — a few
 unit tests building a Lorenz fixture, ``utils/download.py`` reaching for a
 zip-path private, and others — are out of scope for the same reason: the barrel
 is a demo-authoring convenience, not a package-wide facade.
@@ -265,7 +265,7 @@ def _barrel_allowed_names() -> set[str]:
 
 
 def test_no_demo_module_reaches_past_the_barrel() -> None:
-    """No demo module may import ``luxar.utils.viewer`` / ``.data_fetch`` directly."""
+    """No demo module may import any guarded utility module directly."""
     offenders: dict[str, list[str]] = {}
     for path in _guarded_modules():
         hits = _deep_imports(path)
@@ -361,7 +361,7 @@ def test_relative_spellings_resolve(tmp_path: Path) -> None:
         "from ..utils.viewer import launch_viewer\n"
         "from ..utils.data_fetch import ensure_dataset\n"
         "from .registry import iter_demos\n"
-        "from luxar.utils.viewer import parse_demo_flags\n"
+        "from luxar.utils.flags import parse_demo_flags\n"
     )
     fake.write_text(source, encoding="utf-8")
 
@@ -375,7 +375,7 @@ def test_relative_spellings_resolve(tmp_path: Path) -> None:
         "luxar.utils.viewer",
         "luxar.utils.data_fetch",
         "luxar.demos.registry",
-        "luxar.utils.viewer",
+        "luxar.utils.flags",
     ]
     assert sum(module in DEEP_MODULES for module in resolved) == 3
 
