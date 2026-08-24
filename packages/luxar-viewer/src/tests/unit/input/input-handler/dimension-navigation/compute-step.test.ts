@@ -218,7 +218,7 @@ describe('computeDimensionStep', () => {
   });
 
   // Discrete dims with a FRACTIONAL declared step (e.g. a 4th spatial axis
-  // sampled every 0.04 units) must step cell-by-cell on the k*step grid,
+  // sampled every 0.04 units) must step cell-by-cell on the min + k*step grid,
   // not collapse to whole units. Historically the step was forced to
   // max(1, round(step)) and the position rounded to integers, so [/]
   // could only reach 3 of the 50 planes of such a dim.
@@ -242,8 +242,8 @@ describe('computeDimensionStep', () => {
       [0, 100],
     ];
     const result = computeDimensionStep(1, 0, dims, ranges);
-    // Bit-identical to the manager's own snap: round(v/step)*step
-    expect(result!.newValue).toBe(-24 * step);
+    // Bit-identical to the manager's own range-min-anchored snap.
+    expect(result!.newValue).toBe(-1 + step);
     expect(result!.changed).toBe(true);
   });
 

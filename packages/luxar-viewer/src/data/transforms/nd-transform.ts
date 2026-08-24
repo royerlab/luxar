@@ -122,10 +122,11 @@ const PREIMAGE_EPSILON = 1e-6;
  * exactly one preimage).
  *
  * KNOWN LIMITATION: the local grid is taken to be the dimension's declared
- * `step`, which is a WORLD-space quantity. For a unit-converting transform the
- * local data may sit on a different grid, and there is no metadata describing
- * it. This matches what the downstream membership window already assumes (it
- * applies the same `step` as a LOCAL half-width), so the two stay consistent.
+ * `range[0]` anchor and `step`, which are WORLD-space quantities. For a
+ * unit-converting transform the local data may sit on a different grid, and
+ * there is no metadata describing it. This matches what the downstream
+ * membership window already assumes (it applies the same `step` as a LOCAL
+ * half-width), so the two stay consistent.
  *
  * @param slicePosition - Current slice position in world (transformed) space
  * @param tolerance - Per-dimension tolerance in world space

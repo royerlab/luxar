@@ -330,9 +330,9 @@ preimage), and `extend_to_all` dimensions — keyed off the node's `extend_to_al
 **name list**, not the tolerance sentinel, because every Lines call site derives
 with `applyPartialExtendTolerance: false` and so never carries it.
 
-Known limitation: the local grid is taken to be the dimension's declared `step`
-(a world-space quantity); no metadata describes the local grid, and the
-downstream membership window makes the same assumption.
+Known limitation: the local grid is taken to use the dimension's declared
+`range[0]` anchor and `step` (both world-space quantities); no metadata describes
+the local grid, and the downstream membership window makes the same assumption.
 
 The `nd_transforms` demo (`demos/demo_nd_transforms.py`) is the visual
 regression harness: one row per transform, markers that print their own local
