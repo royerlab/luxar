@@ -722,6 +722,20 @@ class TestVtp:
             "cannot distinguish the right decode from the wrong one"
         )
 
+    def test_non_base64_characters_cannot_shorten_an_appended_block(
+        self, tmp_path: Path
+    ) -> None:
+        p = tmp_path / "short-base64.vtp"
+        write_vtp(p, GT, mode="appended-base64")
+        raw = p.read_bytes()
+        tag = raw.index(b"<AppendedData")
+        start = raw.index(b"_", tag) + 1
+        p.write_bytes(raw[:start] + b"<<<<" + raw[start + 4 :])
+        with pytest.raises(
+            ValueError, match=r"short-base64\.vtp.*base64 stream decoded to 3 bytes"
+        ):
+            import_mesh(p)
+
     def test_multi_block_compression_decodes(self, tmp_path: Path) -> None:
         """`nblocks > 1` — the case that makes the block header's LENGTH variable.
 
