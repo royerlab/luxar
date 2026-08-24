@@ -19,7 +19,7 @@ Keyboard binding table split per context.
   modifier combinations, arrow look keys ± Shift, Shift speed-boost).
 - `animation-shortcuts.ts` — `AnimationShortcuts` class for K / Home /
   End / Shift+↑ / Shift+↓ on NAVIGATION. They register at startup and
-  remain no-ops until a selected dimension and animation manager exist.
+  decline until a selected dimension and animation manager exist.
 
 The split is structural — `registerAllKeyBindings` wires the
 navigation, fly, and animation bindings at startup.

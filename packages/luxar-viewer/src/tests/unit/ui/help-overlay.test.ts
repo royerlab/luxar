@@ -130,6 +130,39 @@ describe('showHelpOverlay - Memory Leak Prevention', () => {
     expect(text).not.toContain('Export viewer state to clipboard');
     expect(text).not.toContain('Animation speed up / down');
   });
+
+  it('keeps only pointer and wheel gestures when the binding registry is empty', () => {
+    showHelpOverlay(new Map());
+
+    const rows = Array.from(document.querySelectorAll<HTMLElement>('.luxar-help-overlay__row')).map(
+      (row) => ({
+        keys: Array.from(row.querySelectorAll('kbd')).map((key) => key.textContent),
+        label: row.querySelector('.luxar-help-overlay__desc')?.textContent,
+      })
+    );
+
+    expect(rows).toEqual([
+      { keys: ['Drag'], label: 'Pan camera' },
+      { keys: ['Right drag'], label: 'Rotate view' },
+      { keys: ['⇧', 'Drag'], label: 'Rotate view (alternative)' },
+      { keys: ['Wheel'], label: 'Zoom in / out' },
+      { keys: ['⇧', 'Wheel'], label: 'Roll around the view axis' },
+      { keys: ['Click'], label: 'Open the hovered element link' },
+      { keys: ['Right click'], label: 'Actions for the hovered element' },
+      { keys: ['Drag'], label: 'Strafe (pan camera)' },
+      { keys: ['Right drag'], label: 'Free look' },
+      { keys: ['Wheel'], label: 'Move forward / backward' },
+      { keys: ['Drag'], label: 'Pan camera' },
+      { keys: ['Wheel'], label: 'Zoom in / out' },
+      { keys: ['⇧', 'Wheel'], label: 'Roll around the view axis' },
+      {
+        keys: ['Wheel'],
+        label: 'On a slider: step (⇧ fine, ⌃ coarse, ⌃⇧ extra-fine)',
+      },
+      { keys: ['Ctrl/⌘', 'Wheel'], label: 'Adjust field of view (perspective)' },
+    ]);
+  });
+
   it('explains that digit keys address non-displayed dimensions', () => {
     showHelpOverlay();
 
