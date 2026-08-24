@@ -13,12 +13,25 @@ import numpy as np
 
 # The ``luxar.demos`` package is now importable directly (the sys.modules alias
 # that used to shadow it was removed).
+from luxar.demos.demo_zebrahub_multiome import _category_label as _multiome_label
 from luxar.demos.demo_zebrahub_velocity_streamlines import (
     ZebrahubData,
     _array_hash,
     _select_seeds,
     _stabilize_3d,
 )
+from luxar.demos.demo_zebrahub_velocity_streamlines import (
+    _category_label as _velocity_label,
+)
+
+
+def test_category_labels_do_not_alias_negative_codes() -> None:
+    categories = ["first", "last"]
+    for label in (_multiome_label, _velocity_label):
+        assert label(categories, 0) == "first"
+        assert label(categories, 1) == "last"
+        assert label(categories, -1) == "-1"
+        assert label(categories, 2) == "2"
 
 
 class TestArrayHash:

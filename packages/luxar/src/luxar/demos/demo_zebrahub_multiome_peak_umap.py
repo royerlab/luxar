@@ -178,6 +178,31 @@ def load_zebrahub_umap_data(
         return cache_computed("zebrahub_multiome_peak", cache_key, _fetch, version=1)
 
 
+def _celltype_link_attrs(
+    attributes: dict,
+    category_maps: dict | None,
+    available_attrs: list[str],
+    n_points: int,
+) -> dict[str, object]:
+    """Build aligned OLS link attributes when cell-type names exist."""
+    if not category_maps or "celltype" not in available_attrs:
+        return {}
+    categories = category_maps.get("celltype", [])
+    if not categories:
+        return {}
+    per_cell_keys = []
+    for i in range(n_points):
+        code = int(attributes["celltype"][i])
+        per_cell_keys.append(
+            str(categories[code]) if 0 <= code < len(categories) else ""
+        )
+    return {
+        "keys": per_cell_keys * len(available_attrs),
+        "link": "https://www.ebi.ac.uk/ols4/search?q={hover_key}",
+        "copy": "{hover_key}",
+    }
+
+
 def create_zebrahub_scene(
     output_path: Path,
     coordinates: np.ndarray,
@@ -283,10 +308,23 @@ def create_zebrahub_scene(
                     for attr_name in available_attrs:
                         code = int(attributes[attr_name][i])
                         cats = category_maps.get(attr_name, [])
-                        name = str(cats[code]) if code < len(cats) else str(code)
+                        name = str(cats[code]) if 0 <= code < len(cats) else str(code)
                         parts.append(name)
                     per_cell_labels.append("\n".join(parts))
             labels = per_cell_labels * len(available_attrs) if per_cell_labels else None
+
+            # Click a cell to look its type up in the EBI Ontology Lookup
+            # Service, right-click to copy the term (#1917). The label joins
+            # every attribute view with newlines — chromosome and peak type
+            # among them — so the query needs the bare cell type from `keys=`,
+            # tiled per view exactly like the labels.
+            #
+            # A SEARCH, not a term page: these annotations are each paper's own
+            # clustering, so a value may be an ontology term or free text.
+            # Search resolves either.
+            link_attrs = _celltype_link_attrs(
+                attributes, category_maps, available_attrs, n_points
+            )
 
             scene.add_points(
                 "Cells",
@@ -297,6 +335,7 @@ def create_zebrahub_scene(
                 opacity=0.8,
                 intensity=0.067,
                 labels=labels,
+                **link_attrs,
                 layer=True,
                 # Substitutive Points LOD (coarsen x/y/z, group by the attribute
                 # barrier) — same wiring as the census demo.
