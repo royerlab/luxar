@@ -189,7 +189,7 @@ NLM (and any smoothing filter) is a neighbourhood average: it SPREADS a spike
 rather than deleting it. If you score "share of the noise voxels' energy still
 present", energy that moved one voxel out has left the mask you are watching and
 counts as removed — while remaining plainly visible as a softer, wider blob. On a
-sparse light-sheet timelapse this reported a 12–30x noise reduction where the real
+sparse confocal timelapse this reported a 12–30x noise reduction where the real
 out-of-cell reduction was ~2x.
 
 The obvious repair — energy outside a *dilated* signal mask — fails the other way:
@@ -207,8 +207,8 @@ this, do not assume: on the zebrafish demo the MEDIAN object in a frame was ONE
 voxel, p90 was 1–2 — then a connected-component SIZE filter beats a smoothing one
 outright, because it cannot damage what it keeps:
 
-| arm | frame energy removed | signal energy | mean signal peak |
-|-----|---------------------|---------------|------------------|
+| arm | frame energy removed (t=0) | signal energy | mean signal peak |
+|-----|---------------------------|---------------|------------------|
 | NLM h=0.05 | ~0.32 | 0.953 | **0.783** |
 | drop components < 2 vox | 0.2959 | 1.0000 | 1.0000 |
 | **drop components < 4 vox** | **0.3208** | **1.0000** | **1.0000** |
@@ -217,9 +217,10 @@ outright, because it cannot damage what it keeps:
 There is no trade-off to tune: the signal columns are exactly 1.0000 at every
 threshold *by construction*, while NLM dimmed peaks by 6–22%. Only the noise
 column moves, and it plateaus quickly — so take the knee. Downstream the size
-filter gave equal-or-better foreground PSNR from ~1/10 the splats at the noisiest
-timepoints, and the fitted result reproduced 1–11% of out-of-signal energy against
-NLM's 22–50%. Scipy: `ndimage.label(v > 0, structure=generate_binary_structure(v.ndim, 1))`
+filter gave equal or better foreground PSNR almost everywhere from ~1/10 the
+splats — NLM edged it 19.66 vs 19.51 at t=0 and 19.04 vs 18.77 at t=150 — and the
+fitted result reproduced 1–11% of out-of-signal energy against NLM's 22–50%.
+Scipy: `ndimage.label(v > 0, structure=generate_binary_structure(v.ndim, 1))`
 then zero the labels whose `bincount` is below the threshold — set connectivity
 EXPLICITLY, it changes what counts as one object.
 
