@@ -8,7 +8,7 @@ the rest of :mod:`luxar.mesh.interop`.
 **Trap 1 — ``<AppendedData encoding="raw">`` makes the document invalid XML.** The bytes
 after the ``_`` marker are arbitrary binary: they contain ``<``, ``&`` and sequences that
 are not UTF-8, so ``ElementTree`` refuses the *whole* file, header included. The stream is
-therefore split on the literal ``<AppendedData`` first; only the leading portion is fed to
+therefore split at the ``<AppendedData`` start tag first; only the leading portion is fed to
 a pull parser, which hands back a usable tree even though the closing tags never arrive,
 and each appended ``DataArray`` is indexed into the tail by its own ``offset=``.
 
@@ -24,7 +24,7 @@ starting at the character the first one ended on. Uncompressed data has no such 
 single ``header_type``-wide byte count precedes the payload inside one stream.
 
 **Trap 3 — ``offsets`` are cumulative END offsets.** There is no leading ``0`` in the VTK
-XML form (unlike the legacy legacy-``.vtk`` and unlike ``vtkCellArray``'s in-memory
+XML form (unlike the legacy ``.vtk`` and unlike ``vtkCellArray``'s in-memory
 layout), so cell *i* spans ``connectivity[offsets[i - 1] : offsets[i]]`` with an implied
 0 for *i* = 0. Reading them as start offsets shifts every polygon by one cell and still
 produces a plausible-looking surface.
@@ -33,11 +33,14 @@ Per-array widths come from each ``DataArray``'s own ``type=`` attribute, never a
 ``connectivity`` is ``Int64`` from modern VTK and ``Int32`` from older writers, and
 ``offsets`` need not match it.
 
-Colour rule (documented because the format does not settle it): an array is taken as
-per-vertex colour when ``<PointData Scalars="...">`` names it, when its ``Name`` is one of
-the conventional colour spellings, or when it is ``UInt8`` with 3–4 components — VTK's own
-unsigned-char colour convention. A *nameless* float 3-vector is left alone, because in a
-VTK surface that is far more often a displacement or velocity field than a colour. Values
+Colour rule (documented because the format does not settle it): only 3- or 4-component
+arrays are candidates at all, and one is taken as per-vertex colour when
+``<PointData Scalars="...">`` names it, when its ``Name`` is one of the conventional
+colour spellings, or when it is ``UInt8`` — VTK's own unsigned-char colour convention. A
+``Scalars=`` naming a 1-component field (a segmentation label, a curvature scalar — the
+commonest thing it points at in real VTK output) is therefore ignored, not painted on.
+A *nameless* float 3-vector is left alone too, because in a VTK surface that is far more
+often a displacement or velocity field than a colour. Values
 are converted by observed range, the same rule :mod:`._ply_mesh` applies: peak ``<= 1``
 means the 0..1 convention and is scaled by 255, anything else is clipped into 0..255.
 """
@@ -112,6 +115,13 @@ _VTKFILE_TAG = re.compile(rb"<(?:[\w.-]+:)?VTKFile\b[^>]*>", re.S)
 #: latter makes the sniffer disagree with the parser about the very same file. The value
 #: is group 2; group 1 is the quote the backreference matches.
 _TYPE_ATTR = re.compile(rb'\btype\s*=\s*(["\'])(.*?)\1', re.S)
+#: The same optional `ns:` as `_VTKFILE_TAG`, for the same reason: a document whose tags
+#: are ALL prefixed (`<vtk:VTKFile>` … `<vtk:AppendedData>`) sniffs as PolyData and every
+#: tag is matched by local name, so a literal `<AppendedData` here would never cut the
+#: stream and the reader would report "no <AppendedData> section" about a file that has
+#: one. A default `xmlns=` needs nothing — the tag spelling stays unprefixed. The `\b`
+#: keeps a hypothetical `<AppendedDataFoo>` from matching.
+_APPENDED_TAG = re.compile(rb"<(?:[\w.-]+:)?AppendedData\b")
 _ENCODING_ATTR = re.compile(r'\bencoding\s*=\s*(["\'])(.*?)\1', re.S)
 
 
@@ -209,9 +219,10 @@ def _split_appended(raw: bytes, filename: str) -> tuple[bytes, bytes, str]:
     the data, on a file that is perfectly valid. Every VTK writer emits the attribute, so
     refusing by name costs nothing real and never mis-diagnoses.
     """
-    marker = raw.find(b"<AppendedData")
-    if marker < 0:
+    found = _APPENDED_TAG.search(raw)
+    if found is None:
         return raw, b"", ""
+    marker = found.start()
     tag_end = raw.find(b">", marker)
     if tag_end < 0:
         raise ValueError(f"{filename}: <AppendedData> tag is never closed")
@@ -257,6 +268,15 @@ def _parse_header_document(head: bytes, filename: str, *, cut: bool) -> ET.Eleme
     not, the whole file is here and is required to be a COMPLETE document, so the parser
     is closed and an unbalanced tag is reported rather than quietly tolerated.
 
+    The event queue is DRAINED rather than broken out of at the first event, and that is
+    load-bearing rather than tidiness. :meth:`XMLPullParser.feed` *catches* the parser's
+    ``SyntaxError`` and appends it to the event queue; :meth:`read_events` re-raises it
+    only when the iteration reaches that position. Stopping at the first ``start`` event
+    therefore buries every markup error after the root tag — and on the appended arm
+    nothing else ever surfaces it, because ``close()`` (which would) is deliberately not
+    called. The result was a file whose second ``<Piece>`` the parser had rejected being
+    imported as a smaller surface, with no error at all.
+
     ``xml.etree`` is used directly — bandit's B314; the waiver rationale is on the import
     at the top of this module.
     """
@@ -267,8 +287,8 @@ def _parse_header_document(head: bytes, filename: str, *, cut: bool) -> ET.Eleme
         parser.feed(head)
         root: Optional[ET.Element] = None
         for _event, element in parser.read_events():
-            root = element
-            break
+            if root is None:
+                root = element
         if root is None:
             # No element started at all. `close()` raises ElementTree's own
             # "no element found", which names the position; the raise below is
@@ -278,7 +298,12 @@ def _parse_header_document(head: bytes, filename: str, *, cut: bool) -> ET.Eleme
         if not cut:
             parser.close()
         return root
-    except ET.ParseError as exc:
+    except (ET.ParseError, LookupError) as exc:
+        # `LookupError`, not a parse error: expat delegates an unrecognised `encoding=`
+        # in the XML declaration to Python's codec registry, and `<?xml version="1.0"
+        # encoding="x-mac-roman"?>` on an otherwise perfect file raises "unknown
+        # encoding" from there. Uncaught it escapes `import_mesh`'s documented
+        # `ValueError` contract and the CLI's error funnel with it.
         raise ValueError(f"{filename}: malformed VTK XML header — {exc}") from exc
 
 

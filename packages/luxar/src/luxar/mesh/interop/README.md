@@ -67,11 +67,14 @@ bar with `xml.etree` + `base64` + `zlib`.
 - **A `.vtp` with `<AppendedData encoding="raw">` is not well-formed XML.** The bytes
   after the `_` marker are arbitrary binary — NUL bytes, `<`, `&`, invalid UTF-8 — so
   `ElementTree` refuses the *whole* document, header included. The byte stream is split
-  on the literal `<AppendedData` first, the leading portion is fed to a *pull* parser —
-  whose first `start` event already carries the root with every element that completed
-  before the cut hanging off it, so nothing has to be synthesised to replace the closing
-  tags that never arrive — and each appended `DataArray` is indexed into the tail by its
-  own `offset=`. That is ParaView's default output, so it is the common case rather than
+  at the `<AppendedData` start tag first (prefix-tolerant, so a fully namespace-prefixed
+  document still splits), the leading portion is fed to a *pull* parser — whose first
+  `start` event already carries the root with every element that completed before the cut
+  hanging off it, so nothing has to be synthesised to replace the closing tags that never
+  arrive — and each appended `DataArray` is indexed into the tail by its own `offset=`.
+  The pull parser's event queue is then drained to the end: `feed()` *stores* a markup
+  error rather than raising it, so stopping at the first event would import whatever the
+  parser managed before the error and silently drop the rest. That is ParaView's default output, so it is the common case rather than
   an exotic one. `encoding=` itself is *required*, not defaulted: raw bytes and base64
   text cannot be told apart from the payload, and a wrong guess reports a valid file as
   corrupt instead of failing honestly.
@@ -131,9 +134,11 @@ bar with `xml.etree` + `base64` + `zlib`.
   extracting its boundary is a filter, not a read. The sniffer names the actual type and
   points at ParaView's *Extract Surface* rather than failing inside the PolyData parser.
 - **A nameless float 3-vector in VTP `PointData` is not taken as colour.** In a VTK
-  surface that is far more often a displacement or velocity field. Colour is the array
+  surface that is far more often a displacement or velocity field. Only 3- or
+  4-component arrays are candidates: colour is the 3/4-component array
   `<PointData Scalars="…">` names, one carrying a conventional colour name, or a `UInt8`
-  3/4-component array — VTK's own unsigned-char colour convention.
+  one — VTK's own unsigned-char colour convention. A `Scalars=` naming a 1-component
+  field (a label, a curvature scalar) is ignored rather than painted on.
 - **OBJ materials, glTF textures/animations/skins/morph targets.** Luxar meshes carry
   geometry plus per-vertex colour; a per-*face* material model would need vertex
   splitting at material boundaries, which is a different feature.
@@ -172,10 +177,12 @@ face is compared as its three sorted corner positions.
 
 **The VTP fixtures are entirely self-attesting, and that is a real limit.** Neither VTK,
 meshio nor PyVista is a dependency of this package or of its test environment, so every
-`.vtp` byte the suite ever sees was produced by `_synthetic.py`'s own `_VtpWriter`. **No
-arm carries external corroboration** — not one file from a real writer is checked against,
-in any encoding. Where the reader and that writer share a misreading of the format, the
-tests agree with themselves and say nothing.
+`.vtp` the suite reads starts life as `_synthetic.py`'s own `_VtpWriter` output. (A few
+tests then edit those bytes by hand — respelling an attribute, or corrupting one field to
+check the error names the file — and one hand-writes a stub document outright, but none
+of that is an independent encoder.) **No arm carries external corroboration** — not one
+file from a real writer is checked against, in any encoding. Where the reader and that
+writer share a misreading of the format, the tests agree with themselves and say nothing.
 
 Two things stand in for a real file. First, the format claims the whole decoder rests on
 were reasoned out against the VTK XML specification and re-derived independently, rather
@@ -188,8 +195,8 @@ raw element text, and the cumulative-ends rule by a fixture (a quad beside a tri
 which the wrong reading changes the face *count* rather than merely rotating the cell
 list.
 
-Neither substitutes for a byte from ParaView. In practice the least-corroborated arms are
-the ones no writer in common use emits, since a misreading there would also be the last to
+Neither substitutes for a byte from ParaView. In practice the highest-risk arms are the
+ones no writer in common use emits, since a misreading there would also be the last to
 surface in the field: big-endian (`byte_order="BigEndian"`), which no mainstream writer
 produces today, and appended base64, which VTK writes far less often than appended raw.
 Checking `_VtpWriter` against real ParaView output remains worth doing the first time a

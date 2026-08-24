@@ -8,7 +8,7 @@ validate → read → normalize.
 
 It diverges from that module in one visible way. ``classical_splats`` keeps all five
 readers inline; here each format lives in its own private module, because each is
-120–330 lines of independent parsing with no shared decode step.
+80–850 lines of independent parsing with no shared decode step.
 
 **There is no ``MeshData`` here on purpose.** ``luxar.io.reader`` already defines a
 ``MeshData`` for reading a written node back; the intermediate a reader produces is a

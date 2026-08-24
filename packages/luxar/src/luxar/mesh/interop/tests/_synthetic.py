@@ -1503,7 +1503,8 @@ def write_glb_mirrored(path: Path, gt: GroundTruth) -> None:
     _glb_with_nodes(path, gt, [{"mesh": 0, "scale": [-1.0, 1.0, 1.0]}], [0])
 
 
-#: A MID-RANGE palette for the OBJ colour-convention fixtures.
+#: A MID-RANGE palette for the colour-CONVENTION fixtures — the OBJ ones it is named for,
+#: and the VTP float-colour arm, which turns on the same 0..1-versus-0..255 question.
 #:
 #: Deliberately not :attr:`GroundTruth.colors`, whose channels are all 0 or 255. Under
 #: the bug these fixtures exist to catch — scaling a 0..255 file by 255 and clipping —

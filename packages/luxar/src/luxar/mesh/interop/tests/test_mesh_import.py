@@ -608,6 +608,9 @@ def _shifted_faces(shift: float) -> set[tuple[float, ...]]:
     }
 
 
+#: A namespace URI to hang the VTP namespace fixtures on. Any URI does; this is VTK's.
+_VTK_NS = "http://www.kitware.com/vtk"
+
 #: (mode, compressed, header_type, big_endian) — the arms of the VTP encoding matrix.
 #:
 #: Every combination is a file a real writer emits: ParaView defaults to appended-raw,
@@ -615,9 +618,6 @@ def _shifted_faces(shift: float) -> set[tuple[float, ...]]:
 #: UInt64 header, and legacy files are UInt32. Big-endian is synthetic — no common
 #: writer emits it today — but the format allows it and `byte_order=` is a one-line
 #: thing to ignore.
-#: A namespace URI to hang the VTP namespace fixtures on. Any URI does; this is VTK's.
-_VTK_NS = "http://www.kitware.com/vtk"
-
 _VTP_MATRIX = [
     ("appended-raw", False, "UInt32", False),
     ("appended-raw", True, "UInt32", False),
@@ -1157,10 +1157,13 @@ class TestVtp:
     ) -> None:
         """A namespaced `<VTKFile>` — legal, and what `_localname` exists for.
 
-        The appended path is the one that breaks. Its closing tags are SYNTHESISED, and
-        building them from ElementTree's Clark notation emits `</{uri}Piece>`, which is
-        not well-formed at all — so the file fails on markup the reader wrote itself,
-        while the inline path (no synthesis) sails through.
+        Both paths are exercised because they reach the tree by different routes and a
+        namespace can break either one. The inline path parses a complete document; the
+        appended path parses only the cut prefix through a pull parser and takes the root
+        off its first `start` event. Every tag arrives in Clark notation (`{uri}Piece`)
+        on both, so a single literal tag comparison anywhere in the reader turns a
+        perfectly ordinary ParaView-with-a-namespace file into "no `<Points>`" — and the
+        two paths would not fail together.
         """
         p = tmp_path / "ns.vtp"
         write_vtp(p, GT, mode=mode, xmlns="http://www.kitware.com/vtk")
@@ -1266,6 +1269,154 @@ class TestVtp:
         with pytest.raises(ValueError, match=r"cut\.vtp: malformed VTK XML header"):
             import_mesh(p)
 
+    @pytest.mark.parametrize(
+        "find,replace",
+        [
+            pytest.param(
+                b'Name="offsets"', b'Name="off&sets"', id="unescaped-ampersand"
+            ),
+            pytest.param(b"<Polys>", b"</Points><Polys>", id="stray-closing-tag"),
+            pytest.param(b'Name="offsets"', b'Name="&nope;"', id="undefined-entity"),
+        ],
+    )
+    def test_markup_broken_after_the_root_tag_is_refused(
+        self, find: bytes, replace: bytes, tmp_path: Path
+    ) -> None:
+        """`XMLPullParser.feed` STORES a markup error; only iteration re-raises it.
+
+        `feed` catches the parser's `SyntaxError` and appends it to the event queue, so
+        the only thing that can surface an error past the root start tag is draining that
+        queue — `close()`, which would also raise it, is deliberately not called on the
+        appended arm because the prefix is legitimately unterminated. Taking the root off
+        the FIRST `start` event and breaking therefore buried it, and the reader went on
+        to import whatever elements the parser had already handed over: here the first
+        `<Piece>` of two, i.e. half the surface, reported as a successful import.
+
+        Each corruption is applied inside the SECOND `<Piece>` so the swallowed-error
+        outcome is a plausible smaller mesh rather than an obvious empty one.
+        """
+        p = tmp_path / "broken.vtp"
+        write_vtp_two_pieces(p, GT, mode="appended-raw")
+        assert import_mesh(p).n_faces == 2 * len(GT.faces), (
+            "the intact fixture must carry BOTH pieces, or a swallowed error is invisible"
+        )
+
+        raw = p.read_bytes()
+        marker = raw.index(b"<AppendedData")
+        head, tail = raw[:marker], raw[marker:]
+        second = head.rindex(b"<Polys>")  # inside the second <Piece>
+        patched = head[:second] + head[second:].replace(find, replace, 1)
+        assert patched != head, "the corruption must actually apply"
+        p.write_bytes(patched + tail)
+
+        with pytest.raises(ValueError, match=r"broken\.vtp: malformed VTK XML header"):
+            import_mesh(p)
+
+    def test_an_entity_bomb_is_refused_as_a_malformed_header(
+        self, tmp_path: Path
+    ) -> None:
+        """What the module's bandit waiver actually rests on, on the appended arm.
+
+        `defusedxml` is not a dependency, and the waiver's argument is that libexpat's
+        own input-amplification cap contains a billion-laughs expansion and that
+        `_parse_header_document` then reports it as a malformed header. The second half
+        of that is not free: the cap fires DURING `feed`, which stores the error instead
+        of raising it, so a reader that stopped at the first `start` event reported this
+        file as a decode failure somewhere in the data — a true-but-useless diagnosis
+        that also stops attesting the waiver.
+        """
+        p = tmp_path / "bomb.vtp"
+        write_vtp(p, GT, mode="appended-raw")
+        raw = p.read_bytes()
+        levels = ['<!ENTITY a0 "aaaaaaaaaa">']
+        levels += [
+            f'<!ENTITY a{i} "{"".join(f"&a{i - 1};" for _ in range(10))}">'
+            for i in range(1, 7)
+        ]
+        dtd = ("<!DOCTYPE VTKFile [" + "".join(levels) + "]>\n").encode("ascii")
+        root = raw.index(b"<VTKFile")
+        p.write_bytes(
+            raw[:root] + dtd + raw[root:].replace(b'Name="colors"', b'Name="&a6;"', 1)
+        )
+        with pytest.raises(ValueError, match=r"bomb\.vtp: malformed VTK XML header"):
+            import_mesh(p)
+
+    @pytest.mark.parametrize("encoding", ["x-mac-roman", "utf-42"])
+    def test_an_unknown_declared_encoding_is_named(
+        self, encoding: str, tmp_path: Path
+    ) -> None:
+        """An encoding expat does not know natively goes to Python's codec registry.
+
+        Which raises `LookupError`, not `ParseError` — so on a file that is otherwise
+        perfectly well-formed the failure walks straight past a `ParseError`-only handler
+        and out of `import_mesh`, whose contract is `ValueError`, and out of the CLI's
+        error funnel with it.
+        """
+        p = tmp_path / "badenc.vtp"
+        write_vtp(p, GT, mode="ascii")
+        raw = p.read_bytes()
+        patched = raw.replace(
+            b'<?xml version="1.0"?>',
+            f'<?xml version="1.0" encoding="{encoding}"?>'.encode("ascii"),
+            1,
+        )
+        assert patched != raw
+        p.write_bytes(patched)
+        with pytest.raises(ValueError, match=r"badenc\.vtp: malformed VTK XML header"):
+            import_mesh(p)
+
+    def test_a_declared_encoding_the_registry_knows_is_still_read(
+        self, tmp_path: Path
+    ) -> None:
+        """The other half of the previous test: `cp1252` is a real codec, not an error.
+
+        `LookupError` is caught, not encoding declarations in general — refusing every
+        declared encoding would trade an escaped exception for a refused valid file.
+        """
+        p = tmp_path / "cp1252.vtp"
+        write_vtp(p, GT, mode="ascii")
+        raw = p.read_bytes()
+        patched = raw.replace(
+            b'<?xml version="1.0"?>', b'<?xml version="1.0" encoding="cp1252"?>', 1
+        )
+        assert patched != raw
+        p.write_bytes(patched)
+        assert _sorted_face_set(import_mesh(p)) == EXPECTED_FACES
+
+    def test_a_prefixed_appended_data_tag_is_still_split_off(
+        self, tmp_path: Path
+    ) -> None:
+        """`<vtk:AppendedData>` — the appended counterpart of a prefixed root.
+
+        The sniffer accepts `<vtk:VTKFile>` and the reader matches every tag by local
+        name, so this document is one it can decode. Searching for the LITERAL
+        `<AppendedData` never cuts it: the whole file — binary payload included — reaches
+        the XML parser, and what comes back is "no `<AppendedData>` section" about a file
+        that plainly has one.
+        """
+        p = tmp_path / "pfxapp.vtp"
+        write_vtp(
+            p,
+            GT,
+            mode="appended-raw",
+            root_decls=f'xmlns:vtk="{_VTK_NS}"',
+            root_prefix="vtk:",
+        )
+        raw = p.read_bytes()
+        patched = raw.replace(b"<AppendedData", b"<vtk:AppendedData", 1)
+        close = patched.rindex(b"</AppendedData>")
+        patched = (
+            patched[:close]
+            + b"</vtk:AppendedData>"
+            + patched[close + len(b"</AppendedData>") :]
+        )
+        assert b"<vtk:AppendedData" in patched
+        p.write_bytes(patched)
+        assert detect_mesh_format(p) == "vtp"
+        mesh = import_mesh(p)
+        assert _sorted_face_set(mesh) == EXPECTED_FACES
+        assert mesh.normals is not None and mesh.colors is not None
+
     @pytest.mark.parametrize("attr", ["byte_order", "header_type"])
     def test_an_omitted_root_attribute_takes_the_documented_default(
         self, attr: str, tmp_path: Path
@@ -1334,14 +1485,14 @@ class TestVtp:
         the prefix) and not recoverable from a uri → prefix map either, because that map
         inverts a relation which is not one-to-one.
 
-        The first two cases are the ones that were actually refused as "mismatched tag":
-        the root's own prefix is the one a synthesised `</…VTKFile>` has to get right, and
-        with two prefixes bound to one URI a first-wins map gets it wrong in EITHER order.
-        The last two — declarations added at the `<Piece>` level — happen to survive a
-        prefix map because a real writer closes `</Piece></PolyData>` before
-        `<AppendedData>`, so those tags are never synthesised; they are here because that
-        is an accident of where VTK puts the appended section, not a property anything
-        checks.
+        Historical note, since it is why the cases are spelled this way. An earlier
+        implementation SYNTHESISED the missing closing tags from a uri → prefix map and
+        re-parsed; the first two cases were refused outright as "mismatched tag", because
+        the root's own prefix was the one `</…VTKFile>` had to reproduce and a first-wins
+        map picks wrong in one order or the other. The last two only escaped because a
+        real writer closes `</Piece></PolyData>` before `<AppendedData>`, so those tags
+        never needed synthesising — an accident of where VTK puts the appended section.
+        Nothing is synthesised now, and all four are here to keep it that way.
         """
         p = tmp_path / "ns.vtp"
         write_vtp(p, GT, mode="appended-raw", **kwargs)
