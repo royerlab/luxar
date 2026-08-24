@@ -2,67 +2,101 @@
 
 HTTP success is not enough for these links: search endpoints often return 200
 for nonsense, while GeneCards returns the same Cloudflare 403 for valid and
-invalid symbols. This offline guard instead records the canonical template that
-was verified for each destination and rejects any unreviewed path or host.
+invalid symbols. This offline guard records the canonical templates established
+by hand review of each destination's current URL scheme and rejects any
+unreviewed path or host.
 
 The rule is destination-specific, not a blanket ban on legacy-looking paths.
 For example, ``genome.ucsc.edu/cgi-bin/hgTracks`` is UCSC's canonical URL.
-
-The registry check reads ``link=`` keywords and ``"link"`` mapping entries, so a
-GeneCards URL written anywhere else — a caption, a docstring, a helper constant
-that never reaches a link argument — would slip past it. A second, narrower rule
-therefore scans every string literal for the GeneCards host and pins its shape,
-and asserts the corpus still carries at least one such link so the coverage
-cannot quietly disappear.
 """
 
 from __future__ import annotations
 
 import ast
+import subprocess
+import sys
+from collections import Counter
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from ._scanned_modules import scanned_demo_modules
 
-GENECARDS_LINK = "https://www.genecards.org/card/{hover_key}"
-GENECARDS_DOMAIN = urlsplit(GENECARDS_LINK).netloc.removeprefix("www.")
-
+CANONICAL_LINKS_BY_HOST = {
+    "bgp.he.net": frozenset({"https://bgp.he.net/AS{hover_key}"}),
+    "codex.flywire.ai": frozenset(
+        {"https://codex.flywire.ai/app/cell_details?root_id={hover_key}"}
+    ),
+    "doi.org": frozenset({"https://doi.org/{hover_key}"}),
+    "earthquake.usgs.gov": frozenset(
+        {"https://earthquake.usgs.gov/earthquakes/eventpage/{hover_key}"}
+    ),
+    # Both placeholders intentionally drive the same Wikipedia search endpoint.
+    "en.wikipedia.org": frozenset(
+        {
+            "https://en.wikipedia.org/wiki/Special:Search?search={hover_label}",
+            "https://en.wikipedia.org/wiki/Special:Search?search={hover_key}",
+        }
+    ),
+    # Keep this literal aligned with demo_dipc_3d_genome.GENOME_ASSEMBLY.
+    "genome.ucsc.edu": frozenset(
+        {"https://genome.ucsc.edu/cgi-bin/hgTracks?db=hg19&position={hover_key}"}
+    ),
+    # These named-star links are deliberately placeholder-free.
+    "simbad.cds.unistra.fr": frozenset(
+        {
+            "https://simbad.cds.unistra.fr/simbad/sim-basic?Ident=Betelgeuse",
+            "https://simbad.cds.unistra.fr/simbad/sim-basic?Ident=Rigel",
+            "https://simbad.cds.unistra.fr/simbad/sim-basic?Ident=Sun",
+        }
+    ),
+    "ssd.jpl.nasa.gov": frozenset(
+        {"https://ssd.jpl.nasa.gov/tools/sbdb_lookup.html#/?sstr={hover_key}"}
+    ),
+    # OLS supports either the key or the display label as its search query.
+    "www.ebi.ac.uk": frozenset(
+        {
+            "https://www.ebi.ac.uk/ols4/search?q={hover_key}",
+            "https://www.ebi.ac.uk/ols4/search?q={hover_label}",
+        }
+    ),
+    "www.genecards.org": frozenset({"https://www.genecards.org/card/{hover_key}"}),
+    "www.proteinatlas.org": frozenset(
+        {"https://www.proteinatlas.org/search/{hover_key}"}
+    ),
+    "www.uniprot.org": frozenset(
+        {"https://www.uniprot.org/uniprotkb/{hover_key}/entry"}
+    ),
+    "www.youtube.com": frozenset(
+        {"https://www.youtube.com/results?search_query={hover_key}"}
+    ),
+}
 CANONICAL_LINKS = frozenset(
-    {
-        "https://bgp.he.net/AS{hover_key}",
-        "https://codex.flywire.ai/app/cell_details?root_id={hover_key}",
-        "https://doi.org/{hover_key}",
-        "https://earthquake.usgs.gov/earthquakes/eventpage/{hover_key}",
-        "https://en.wikipedia.org/wiki/Special:Search?search={hover_label}",
-        "https://en.wikipedia.org/wiki/Special:Search?search={hover_key}",
-        "https://genome.ucsc.edu/cgi-bin/hgTracks?db=hg19&position={hover_key}",
-        "https://simbad.cds.unistra.fr/simbad/sim-basic?Ident=Betelgeuse",
-        "https://simbad.cds.unistra.fr/simbad/sim-basic?Ident=Rigel",
-        "https://simbad.cds.unistra.fr/simbad/sim-basic?Ident=Sun",
-        "https://ssd.jpl.nasa.gov/tools/sbdb_lookup.html#/?sstr={hover_key}",
-        "https://www.ebi.ac.uk/ols4/search?q={hover_key}",
-        "https://www.ebi.ac.uk/ols4/search?q={hover_label}",
-        GENECARDS_LINK,
-        "https://www.proteinatlas.org/search/{hover_key}",
-        "https://www.uniprot.org/uniprotkb/{hover_key}/entry",
-        "https://www.youtube.com/results?search_query={hover_key}",
-    }
+    template for templates in CANONICAL_LINKS_BY_HOST.values() for template in templates
 )
 
 
 def _static_strings(tree: ast.Module) -> dict[str, str]:
-    """Resolve module-level string constants used to compose link templates."""
+    """Resolve unambiguous module-level strings used in link templates."""
+    binding_counts = Counter(
+        node.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+    )
+    binding_counts.update(
+        argument.arg for node in ast.walk(tree) for argument in _arguments(node)
+    )
+
     values: dict[str, str] = {}
     pending: list[tuple[str, ast.expr]] = []
     for statement in tree.body:
         if isinstance(statement, ast.Assign) and len(statement.targets) == 1:
             target = statement.targets[0]
-            if isinstance(target, ast.Name):
+            if isinstance(target, ast.Name) and binding_counts[target.id] == 1:
                 pending.append((target.id, statement.value))
         elif isinstance(statement, ast.AnnAssign) and isinstance(
             statement.target, ast.Name
         ):
-            if statement.value is not None:
+            if statement.value is not None and binding_counts[statement.target.id] == 1:
                 pending.append((statement.target.id, statement.value))
 
     changed = True
@@ -76,6 +110,19 @@ def _static_strings(tree: ast.Module) -> dict[str, str]:
                 values[name] = value
                 changed = True
     return values
+
+
+def _arguments(node: ast.AST) -> list[ast.arg]:
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+        arguments = node.args
+        return [
+            *arguments.posonlyargs,
+            *arguments.args,
+            *arguments.kwonlyargs,
+            *([arguments.vararg] if arguments.vararg is not None else []),
+            *([arguments.kwarg] if arguments.kwarg is not None else []),
+        ]
+    return []
 
 
 def _resolve_string(expression: ast.expr, constants: dict[str, str]) -> str | None:
@@ -104,8 +151,16 @@ def _resolve_string(expression: ast.expr, constants: dict[str, str]) -> str | No
     return None
 
 
+def _is_link_subscript(target: ast.expr) -> bool:
+    return (
+        isinstance(target, ast.Subscript)
+        and isinstance(target.slice, ast.Constant)
+        and target.slice.value == "link"
+    )
+
+
 def _link_expressions(tree: ast.Module) -> list[tuple[int, ast.expr]]:
-    """Find link values authored as kwargs or mapping entries."""
+    """Find link values authored as kwargs, mapping entries, or assignments."""
     expressions: list[tuple[int, ast.expr]] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.keyword) and node.arg == "link":
@@ -114,7 +169,14 @@ def _link_expressions(tree: ast.Module) -> list[tuple[int, ast.expr]]:
             for key, value in zip(node.keys, node.values, strict=True):
                 if isinstance(key, ast.Constant) and key.value == "link":
                     expressions.append((value.lineno, value))
-    return expressions
+        elif isinstance(node, ast.Assign) and any(
+            _is_link_subscript(target) for target in node.targets
+        ):
+            expressions.append((node.value.lineno, node.value))
+        elif isinstance(node, ast.AnnAssign) and _is_link_subscript(node.target):
+            if node.value is not None:
+                expressions.append((node.value.lineno, node.value))
+    return sorted(expressions, key=lambda match: match[0])
 
 
 def _demo_links(path: Path) -> list[tuple[Path, int, str | None]]:
@@ -126,35 +188,123 @@ def _demo_links(path: Path) -> list[tuple[Path, int, str | None]]:
     ]
 
 
+def _unclaimed_link_literals(
+    path: Path,
+    tree: ast.Module,
+    expressions: list[tuple[int, ast.expr]],
+    resolved_links: set[str],
+    placeholder_free_hosts: frozenset[str],
+) -> list[tuple[Path, int, str]]:
+    claimed_nodes = {
+        id(node) for _line, expression in expressions for node in ast.walk(expression)
+    }
+    unclaimed: list[tuple[Path, int, str]] = []
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and id(node) not in claimed_nodes
+            and node.value not in resolved_links
+        ):
+            continue
+        host = urlsplit(node.value).netloc
+        has_placeholder = "{hover_key}" in node.value or "{hover_label}" in node.value
+        if host and (has_placeholder or host in placeholder_free_hosts):
+            unclaimed.append((path, node.lineno, node.value))
+    return unclaimed
+
+
 def _audit_links(
     paths: list[Path], canonical_links: frozenset[str]
 ) -> tuple[
     list[tuple[Path, int, str | None]],
     list[tuple[Path, int, str | None]],
     list[tuple[Path, int, str]],
+    list[tuple[Path, int, str]],
 ]:
-    """Return all links, unresolved expressions, and unregistered templates."""
-    links = [match for path in paths for match in _demo_links(path)]
+    """Return links, unresolved expressions, unregistered links, and stray literals."""
+    links: list[tuple[Path, int, str | None]] = []
+    unclaimed: list[tuple[Path, int, str]] = []
+    placeholder_free_hosts = frozenset(
+        urlsplit(link).netloc
+        for link in canonical_links
+        if "{hover_key}" not in link and "{hover_label}" not in link
+    )
+    for path in paths:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        constants = _static_strings(tree)
+        expressions = _link_expressions(tree)
+        path_links = [
+            (path, line, _resolve_string(expression, constants))
+            for line, expression in expressions
+        ]
+        links.extend(path_links)
+        resolved_links = {
+            value for _path, _line, value in path_links if value is not None
+        }
+        unclaimed.extend(
+            _unclaimed_link_literals(
+                path, tree, expressions, resolved_links, placeholder_free_hosts
+            )
+        )
+
     unresolved = [match for match in links if match[2] is None]
     unregistered = [
         (path, line, value)
         for path, line, value in links
         if value is not None and value not in canonical_links
     ]
-    return links, unresolved, unregistered
+    return links, unresolved, unregistered, unclaimed
+
+
+def _locations(matches: list[tuple[Path, int, object]]) -> str:
+    return ", ".join(f"{path.name}:{line}" for path, line, _value in matches)
 
 
 def test_demo_links_use_registered_canonical_templates() -> None:
-    links, unresolved, unregistered = _audit_links(
+    links, unresolved, unregistered, unclaimed = _audit_links(
         scanned_demo_modules(), CANONICAL_LINKS
     )
-    assert len(links) >= 15, (
-        f"expected at least 15 demo link call sites, found {len(links)}"
-    )
+    # Low extractor tripwire; exact template equality below enforces registry coverage.
+    assert len(links) >= 15, f"demo link extractor found only {len(links)} call sites"
     assert not unresolved, (
-        f"demo link templates must be statically resolvable: {unresolved}"
+        "demo link templates must be statically resolvable; hoist each template to "
+        f"one unshadowed module-level constant: {_locations(unresolved)}"
     )
-    assert not unregistered, f"unregistered demo link templates: {unregistered}"
+    assert not unregistered, (
+        "verify each destination and add its canonical template to the registry: "
+        f"{_locations(unregistered)}"
+    )
+    assert not unclaimed, (
+        "link-like literals must be authored through a supported link form: "
+        f"{_locations(unclaimed)}"
+    )
+    resolved_templates = {value for _path, _line, value in links if value is not None}
+    assert resolved_templates == CANONICAL_LINKS, (
+        f"unused canonical templates: {sorted(CANONICAL_LINKS - resolved_templates)}; "
+        f"unregistered templates: {sorted(resolved_templates - CANONICAL_LINKS)}"
+    )
+
+
+def test_demo_link_guard_collects_by_module_with_doctests_enabled() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "--pyargs",
+            __name__,
+            "--doctest-modules",
+            "--collect-only",
+            "-q",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "test_demo_links_use_registered_canonical_templates" in result.stdout
 
 
 def test_demo_link_extractor_covers_supported_authoring_forms(tmp_path: Path) -> None:
@@ -168,6 +318,8 @@ DIRECT = HOST + PATH + "{hover_key}"
 attrs = {"link": DIRECT}
 other = dict(link=f"https://example.org/view?db={ASSEMBLY}&q={{hover_label}}")
 scene.add_points(link=("https://example.org/" "fixed"))
+attrs["link"] = "https://example.org/assigned/{hover_key}"
+attrs["link"]: str = "https://example.org/annotated/{hover_label}"
 """,
         encoding="utf-8",
     )
@@ -176,16 +328,70 @@ scene.add_points(link=("https://example.org/" "fixed"))
         (module, 6, "https://example.org/entry/{hover_key}"),
         (module, 7, "https://example.org/view?db=hg19&q={hover_label}"),
         (module, 8, "https://example.org/fixed"),
+        (module, 9, "https://example.org/assigned/{hover_key}"),
+        (module, 10, "https://example.org/annotated/{hover_label}"),
     ]
 
 
-def test_demo_link_extractor_rejects_runtime_templates(tmp_path: Path) -> None:
+def test_demo_link_extractor_rejects_runtime_and_ambiguous_templates(
+    tmp_path: Path,
+) -> None:
     module = tmp_path / "demo_dynamic.py"
     module.write_text(
-        'scene.add_points(link=make_link("{hover_key}"))\n', encoding="utf-8"
+        """LINK = "https://example.org/canonical/{hover_key}"
+LINK = "https://example.org/rebound/{hover_key}"
+scene.add_points(link=LINK)
+scene.add_points(link=make_link("{hover_key}"))
+""",
+        encoding="utf-8",
     )
 
-    assert _demo_links(module) == [(module, 1, None)]
+    assert _demo_links(module) == [(module, 3, None), (module, 4, None)]
+
+
+def test_demo_link_extractor_rejects_function_local_shadow(tmp_path: Path) -> None:
+    module = tmp_path / "demo_shadow.py"
+    module.write_text(
+        """LINK = "https://example.org/canonical/{hover_key}"
+def build():
+    LINK = "https://example.org/shadow/{hover_key}"
+    scene.add_points(link=LINK)
+""",
+        encoding="utf-8",
+    )
+
+    links, unresolved, unregistered, unclaimed = _audit_links([module], CANONICAL_LINKS)
+
+    assert links == [(module, 4, None)]
+    assert unresolved == links
+    assert unregistered == []
+    assert unclaimed == [
+        (module, 1, "https://example.org/canonical/{hover_key}"),
+        (module, 3, "https://example.org/shadow/{hover_key}"),
+    ]
+
+
+def test_demo_link_audit_rejects_unclaimed_link_literal(tmp_path: Path) -> None:
+    module = tmp_path / "demo_hidden.py"
+    module.write_text(
+        """LEGACY = "https://www.genecards.org/cgi-bin/carddisp.pl?gene={hover_key}"
+scene.add_points(link="https://www.genecards.org/card/{hover_key}")
+""",
+        encoding="utf-8",
+    )
+
+    links, unresolved, unregistered, unclaimed = _audit_links([module], CANONICAL_LINKS)
+
+    assert links == [(module, 2, "https://www.genecards.org/card/{hover_key}")]
+    assert unresolved == []
+    assert unregistered == []
+    assert unclaimed == [
+        (
+            module,
+            1,
+            "https://www.genecards.org/cgi-bin/carddisp.pl?gene={hover_key}",
+        )
+    ]
 
 
 def test_demo_link_registry_rejects_wrong_path_shape(tmp_path: Path) -> None:
@@ -195,28 +401,9 @@ def test_demo_link_registry_rejects_wrong_path_shape(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    links, unresolved, unregistered = _audit_links([module], CANONICAL_LINKS)
+    links, unresolved, unregistered, unclaimed = _audit_links([module], CANONICAL_LINKS)
 
     assert links == [(module, 1, "https://www.uniprot.org/legacy/{hover_key}")]
     assert unresolved == []
     assert unregistered == links
-
-
-def test_genecards_links_use_canonical_card_urls() -> None:
-    found: list[tuple[Path, int, str]] = []
-    offenders: list[tuple[Path, int, str]] = []
-    for path in scanned_demo_modules():
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.Constant)
-                and isinstance(node.value, str)
-                and GENECARDS_DOMAIN in node.value
-            ):
-                match = (path, node.lineno, node.value)
-                found.append(match)
-                if node.value != GENECARDS_LINK:
-                    offenders.append(match)
-
-    assert found, "expected at least one GeneCards demo link"
-    assert not offenders, offenders
+    assert unclaimed == []
