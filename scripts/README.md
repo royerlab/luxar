@@ -26,7 +26,7 @@ scripts/
 | `release.sh` | Run release preflight checks, then create and push the release tag |
 | `gen_format_contract.py` | Generate the Python and TypeScript format-contract projections from `format-contract/contract.yaml` |
 | `gen_data_manifest.py` | Regenerate the demo-data manifest (`demos/data_manifest.json`); `--check` is the CI drift gate |
-| `gen_zenodo_records.py` | Generate the Zenodo record descriptions from the manifest and the archives' own stamps; `--check` lists rows that would publish incomplete (never contacts Zenodo) |
+| `gen_zenodo_records.py` | Generate Zenodo record descriptions from the manifest and committed `demo_archive_characteristics.json`; `--refresh` updates the measurements and `--check` lists incomplete rows (never contacts Zenodo) |
 | `generate_galaxy_simple.py` | Fetch Gaia DR3 stars → raw zarr table for demos |
 | `gen_census_umap.py` | Build the large CELLxGENE Census scVI/UMAP cache on a CUDA/RAPIDS environment |
 | `generate_builtin_colormaps.py` | Regenerate built-in colormap LUTs (Python + TS) |
