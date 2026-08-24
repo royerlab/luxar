@@ -11,7 +11,11 @@ Editing this file or Luxar's production Python sources makes every existing
 fixture store stale. Vitest regenerates stale fixtures automatically; Playwright
 fails fast with the regeneration command rather than serving old writer output.
 
-Run from project root:
+These direct commands run only the generators; record the input stamps afterward
+from ``packages/luxar-viewer/`` with
+``pnpm exec tsx tools/fixture-freshness.ts``.
+
+Run the generators from project root:
     hatch run fixtures:python packages/luxar-viewer/tests/fixtures/generate_test_data.py
 """
 

@@ -36,13 +36,16 @@ its data — individual specs do not need their own existence guards.
 
 ```bash
 # Preferred — from packages/luxar-viewer/:
-pnpm test:generate-fixtures       # runs both scripts in order
+pnpm test:generate-fixtures       # runs both generators, verifies outputs, and records input stamps
 pnpm test:with-fixtures           # generate then run unit tests
 pnpm test                         # global-setup regenerates missing/stale ones automatically
 
-# Equivalent direct invocations (from repo root):
+# Generator-only direct invocations (from repo root):
 hatch run fixtures:python packages/luxar-viewer/tests/fixtures/generate_test_data.py
 hatch run fixtures:python packages/luxar-viewer/tests/fixtures/generate_expectations.py
+
+# Then record the input stamps (from packages/luxar-viewer/):
+pnpm exec tsx tools/fixture-freshness.ts
 ```
 
 The first of these commands creates a dedicated Hatch environment of roughly
