@@ -115,7 +115,7 @@ const CASES: Case[] = [
   },
 ];
 
-describe('E2E typing-surface predicate matches focus-utils::isTypingInInput', () => {
+describe('E2E typing-surface predicate matches utils/dom/focus::isTypingInInput', () => {
   afterEach(() => {
     document.body.innerHTML = '';
   });

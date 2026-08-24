@@ -49,7 +49,7 @@ module.exports = {
         'Modules outside src/input/ must import through src/input/index.ts, ' +
         'not reach into the private input/input-handler/ implementation tree.',
       from: { path: '^src/(?!input/)' },
-      to: { path: '^src/input/input-handler/' },
+      to: { path: '^src/input/input-handler(?:\\.ts|/)' },
     },
     // ─── Layer order ──────────────────────────────────────────────
     // Each rule says: "if `from` matches src/X/, `to` must NOT match

@@ -43,7 +43,7 @@ import type {
  * knows the shape via `import type`. Closes the input → ui layer-cruiser
  * exception (see `.dependency-cruiser.cjs`'s `KNOWN_LAYER_EXCEPTIONS`).
  *
- * Re-exported from `input/input-handler.ts` as the public name.
+ * Re-exported from `input/index.ts` as the public name.
  */
 export interface DimNavSetupCtx {
   sceneManager: SceneManager;

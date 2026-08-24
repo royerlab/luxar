@@ -18,10 +18,7 @@ import {
   mapKeyToDimension,
   getNextDimensionIndex,
 } from '../../../scene/dims/selection';
-import {
-  calculateStepSize,
-  calculateNextPosition,
-} from '../../../scene/dims/step-math';
+import { calculateStepSize, calculateNextPosition } from '../../../scene/dims/step-math';
 
 // Helper to create SimpleDims test objects
 function createDims(ndim: number, displayed: number[], metadata?: any[]): SimpleDims {
@@ -488,7 +485,7 @@ describe('InputHandler Type Definitions', () => {
     // The import pulls in the full dependency graph (THREE.js, scene managers,
     // UI components). It finishes in ~6s alone but can exceed 15s while the
     // full parallel suite is transforming the rest of the viewer graph.
-    const module = await import('../../../input/input-handler');
+    const module = await import('../../../input');
     expect(module.InputHandler).toBeDefined();
     expect(typeof module.InputHandler).toBe('function');
     // input.md G12 fix: pin the actual class shape — the prototype

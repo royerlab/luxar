@@ -717,7 +717,7 @@ const experimentMetadata: DimensionMetadata[] = [
 
 ```typescript
 // Navigation is handled by the InputHandler class in the input package
-import { InputHandler } from '../input/input-handler';
+import { InputHandler } from '../input';
 
 // InputHandler provides dimension navigation methods:
 // - navigateDimension(dimIndex, direction): Navigate forward/backward

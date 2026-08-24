@@ -69,6 +69,7 @@ describe('element-menu keybinding ↔ canvas-actions listener', () => {
     );
 
     expect(listener).not.toHaveBeenCalled();
+    window.removeEventListener(OPEN_ELEMENT_MENU_EVENT, listener);
   });
 
   it('registers both shortcuts on the navigation context', () => {

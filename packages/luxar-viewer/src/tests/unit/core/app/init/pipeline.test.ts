@@ -120,7 +120,7 @@ vi.mock('../../../../../ui/resolution-indicator', () => ({
     reset: vi.fn(),
   })),
 }));
-vi.mock('../../../../../input/input-handler', () => ({
+vi.mock('../../../../../input', () => ({
   InputHandler: vi.fn(),
 }));
 vi.mock('../../../../../ui/dimension-sliders', () => ({

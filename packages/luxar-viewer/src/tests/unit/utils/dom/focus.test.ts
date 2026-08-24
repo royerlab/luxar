@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * Unit tests for the pure DOM-focus helpers in input/handlers/focus-utils.
+ * Unit tests for the pure DOM-focus helpers in utils/dom/focus.
  *
  * These tests run in jsdom against real DOM elements — no mocks. The
  * helpers take an `Element | null` so the test can construct elements
