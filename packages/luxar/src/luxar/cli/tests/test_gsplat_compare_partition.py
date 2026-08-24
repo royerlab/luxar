@@ -10,6 +10,7 @@ import pytest
 from typer.testing import CliRunner
 
 from luxar.cli import app
+from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.io.save_gsplats import write_gsplats_tree
 from luxar.gsplats.tree import GSplatLodGroup, GSplatPartition
@@ -47,11 +48,16 @@ def test_partition_metrics_match_the_same_flat_splats(tmp_path: Path) -> None:
     data = _data(40, seed=0)
     flat_path = tmp_path / "flat.gsplats.zarr"
     partition_path = tmp_path / "partition.gsplats.zarr"
-    data.save(flat_path, include_fitting_info=True)
+    data.save(
+        flat_path,
+        encoding_mode=EncodingMode.PRECISION,
+        include_fitting_info=True,
+    )
     write_gsplats_tree(
         partition_path,
         data.to_spatial_partition(max_elements=10),
         ordering="none",
+        encoding_mode=EncodingMode.PRECISION,
         pipeline_info=data.stats,
     )
 
@@ -87,7 +93,10 @@ def test_partition_metrics_match_the_same_flat_splats(tmp_path: Path) -> None:
         for key, value in partition_payload.items()
         if key not in metadata_keys
     }
-    assert partition_metrics == pytest.approx(flat_metrics, rel=1e-3)
+    # Precision encoding makes these genuinely the same splats in a different
+    # order. Across 200 deterministic permutations the CPU renderer's SSIM
+    # spread was <= 7.8e-9; leave margin for platform-level float variation.
+    assert partition_metrics == pytest.approx(flat_metrics, rel=1e-5, abs=1e-7)
 
 
 def test_nested_lod_selection_and_whole_store_ratio_are_reported(
