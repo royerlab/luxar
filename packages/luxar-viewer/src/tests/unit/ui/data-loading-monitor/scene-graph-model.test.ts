@@ -26,6 +26,7 @@ describe('SceneGraphModel', () => {
       type: 'scene',
       children: [
         leaf('/points', 'points', 10),
+        leaf('/mesh', 'mesh', 12),
         {
           path: '/lod',
           name: 'lod',
@@ -40,9 +41,9 @@ describe('SceneGraphModel', () => {
 
     const state = model.getSceneGraph();
     expect(state.root).toBe(root);
-    expect(state.totalNodes).toBe(5);
-    expect(state.nodesByType).toEqual({ points: 1, lines: 0, gsplats: 2, mesh: 0 });
-    expect(state.totalByType).toEqual({ points: 10, lines: 0, gsplats: 80, mesh: 0 });
+    expect(state.totalNodes).toBe(6);
+    expect(state.nodesByType).toEqual({ points: 1, lines: 0, gsplats: 2, mesh: 1 });
+    expect(state.totalByType).toEqual({ points: 10, lines: 0, gsplats: 80, mesh: 12 });
     expect(state.visibleByType).toEqual(state.totalByType);
   });
 
@@ -81,6 +82,13 @@ describe('SceneGraphModel', () => {
     const markStructureDirty = vi.fn();
     const model = new SceneGraphModel(markStructureDirty);
     const initialExpanded = model.expandedNodes;
+    model.setSceneGraph({
+      path: '/',
+      name: 'Scene',
+      type: 'scene',
+      children: [leaf('/child', 'points', 10)],
+    });
+    model.getSceneGraphNodeByPath('/child');
     model.toggleNodeExpansion('/child');
     expect(model.expandedNodes.has('/child')).toBe(true);
 
@@ -89,8 +97,14 @@ describe('SceneGraphModel', () => {
     expect(model.getSceneGraph().root).toBeNull();
     expect(model.expandedNodes).not.toBe(initialExpanded);
     expect(model.expandedNodes).toEqual(new Set(['/']));
+    const indexState = model as unknown as {
+      sceneGraphNodeIndex: Map<string, SceneGraphNode>;
+      sceneGraphNodeIndexRoot: SceneGraphNode | null;
+    };
+    expect(indexState.sceneGraphNodeIndex.size).toBe(0);
+    expect(indexState.sceneGraphNodeIndexRoot).toBeNull();
     model.clearExpandedNodes();
     expect(model.expandedNodes.size).toBe(0);
-    expect(markStructureDirty).toHaveBeenCalledTimes(2);
+    expect(markStructureDirty).toHaveBeenCalledTimes(3);
   });
 });

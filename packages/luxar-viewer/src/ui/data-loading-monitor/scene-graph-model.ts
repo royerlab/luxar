@@ -92,6 +92,8 @@ export class SceneGraphModel {
     this.sceneGraphState = emptySceneGraphState();
     this.mutableExpandedNodes = new Set<string>(['/']);
     this.visibleCountsByPath = new Map();
+    this.sceneGraphNodeIndex.clear();
+    this.sceneGraphNodeIndexRoot = null;
     this.markStructureDirty();
   }
 
