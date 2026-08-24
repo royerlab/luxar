@@ -18,13 +18,15 @@ Keyboard binding table split per context.
 - `fly-bindings.ts` — FLY_CONTROLS-context fly-mode bindings (W/A/S/D/Q/E ×
   modifier combinations, arrow look keys ± Shift, Shift speed-boost).
 - `animation-shortcuts.ts` — `AnimationShortcuts` class for K / Home /
-  End / Shift+↑ / Shift+↓ (registered on NAVIGATION context after the
-  animation manager is constructed; not wired by `registerAllKeyBindings`).
+  End / Shift+↑ / Shift+↓ on NAVIGATION. They register at startup and
+  decline until a selected dimension and animation manager exist.
 
 The split is structural — `registerAllKeyBindings` wires the
-navigation bindings and the fly bindings at startup;
-`AnimationShortcuts.register()` is called separately from the
-`InputHandler` once the animation manager exists.
+navigation, fly, and animation bindings at startup.
+
+Handlers consume their event unless they return `false` synchronously, which
+allows routing to continue to a lower-priority context. Async handlers cannot
+decline. This is used by fly bindings when fly controls are inactive.
 
 Ctrl/⌘+wheel FOV-vs-zoom exclusivity is not a key binding: each wheel
 handler reads the wheel event's own live modifier flags
