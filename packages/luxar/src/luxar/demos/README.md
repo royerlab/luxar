@@ -136,7 +136,7 @@ the AS graph keys on `asn_a`/`asn_b` and the protein networks on
 protein-specific by construction.
 
 Leaf implementation utilities shared by demos live under `_support/`; the flat
-`_*_common.py` modules remain the home for broader scene and dataset workflows.
+`_*.py` helpers remain at the package root.
 
 ## Optional dependencies
 
