@@ -27,9 +27,9 @@ describe('visual baseline policy', () => {
     const snapshotDir = path.join(E2E_ROOT, 'visual-baseline-policy.spec.ts-snapshots');
     const untrackedBaseline = path.join(snapshotDir, 'untracked-chromium-darwin.png');
 
-    mkdirSync(snapshotDir);
-    writeFileSync(untrackedBaseline, 'not a tracked baseline');
     try {
+      mkdirSync(snapshotDir, { recursive: true });
+      writeFileSync(untrackedBaseline, 'not a tracked baseline');
       expect(committedVisualBaselines()).not.toContain(
         'visual-baseline-policy.spec.ts-snapshots/untracked-chromium-darwin.png'
       );
