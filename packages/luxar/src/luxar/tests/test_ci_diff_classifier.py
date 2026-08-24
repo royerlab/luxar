@@ -542,6 +542,27 @@ def test_queue_watchdog_keeps_held_matrix_leg_covered_while_siblings_run(
     assert not cancelled, "busy capacity was mistaken for a dead obsidian host"
 
 
+def test_queue_watchdog_accepts_fresh_positive_heartbeat_without_running_sibling(
+    workflow: str, tmp_path: Path
+) -> None:
+    """An idle live host may have queued work before a runner picks it up."""
+    snapshots = [
+        [_obsidian_job("python-tests (3.12)", "queued")],
+        [_obsidian_job("python-tests (3.12)", "in_progress")],
+    ]
+    result, calls, cancelled = _run_queue_watchdog(
+        workflow,
+        tmp_path,
+        snapshots,
+        heartbeat_snapshots=[_heartbeat("1000", 1000)],
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == 2
+    assert "still queued on a live box" in result.stdout
+    assert not cancelled
+
+
 @pytest.mark.parametrize("heartbeat", [_heartbeat("0", 1), _heartbeat("1", 1000)])
 def test_queue_watchdog_cancels_stale_heartbeat_despite_running_sibling(
     workflow: str, tmp_path: Path, heartbeat: dict[str, str]

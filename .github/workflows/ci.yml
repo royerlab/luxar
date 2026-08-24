@@ -253,8 +253,10 @@ jobs:
   # that held leg as `queued` with the `obsidian` label (observed 2026-08-24).
   # The machine heartbeat is an admission signal, not pure liveness: it drops
   # to 0 as soon as any slot is busy so later runs spill to hosted. Therefore a
-  # queued leg plus an in-progress obsidian sibling is healthy draining, not a
-  # dead box. The watchdog stays alive until the queue drains and fails every
+  # queued leg plus an in-progress obsidian sibling is healthy draining only
+  # while the variable's `updated_at` is still moving. The publisher PATCHes
+  # once a minute even when the value remains 0, so that write cadence supplies
+  # liveness. The watchdog stays alive until the queue drains and fails every
   # error in its own plumbing toward NOT cancelling.
   queue-watchdog:
     needs: [pick-runner]
