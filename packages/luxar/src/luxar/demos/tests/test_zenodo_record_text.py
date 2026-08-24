@@ -297,6 +297,8 @@ class TestFiguresAreAbsentRatherThanInvented:
         assert gen._ratio(None, 100) == gen._ABSENT
         assert gen._ratio(100, None) == gen._ABSENT
         assert gen._ratio(100, 0) == gen._ABSENT, "no dividing by an empty archive"
+        assert gen._ratio("100", 10) == gen._ABSENT
+        assert gen._ratio(100, "10") == gen._ABSENT
         assert gen._ratio(35_000_000, 100_000) == "350:1"
 
     def test_an_incomparable_acquisition_states_the_reason(self, gen: Any) -> None:
@@ -578,6 +580,26 @@ def test_refresh_preserves_entries_whose_archive_is_absent(
     )
 
 
+def test_a_prefix_matching_cache_path_is_not_labelled_staged(
+    gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    staged_root = tmp_path / "lux"
+    cache_archive = tmp_path / "luxar" / "ds" / "fit.gsplats.zarr.zip"
+    cache_archive.parent.mkdir(parents=True)
+    cache_archive.write_bytes(b"archive")
+    monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
+    monkeypatch.setattr(gen, "_locate", lambda *args: cache_archive)
+    monkeypatch.setattr(gen, "_read_archive", lambda path: {"n_splats": 7})
+    monkeypatch.setattr(gen, "_sha256_of", lambda path: "digest")
+
+    gen.refresh_characteristics(
+        _fake_manifest([_entry(cache_archive.name, "a" * 64)]), staged_root
+    )
+
+    entry = gen.load_characteristics()[f"ds/{cache_archive.name}"]
+    assert entry["measured_from"] == "cache"
+
+
 def test_a_partial_sidecar_entry_renders_absent_fields(gen: Any) -> None:
     manifest = _fake_manifest([_entry("a.gsplats.zarr.zip", "a" * 64)])
 
@@ -762,6 +784,23 @@ def test_a_partition_count_is_absent_if_any_part_is_unreadable(
 
     total = gen._finest_elements(
         zipfile.ZipFile.__new__(zipfile.ZipFile), "r/", {"part_0", "part_1"}
+    )
+
+    assert total is None, "a partial sum must not be published as a total"
+
+
+def test_an_additive_count_is_absent_if_any_chunk_is_unreadable(
+    gen: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    counts = {"": {}, "additive_0": {"n_splats": 10}, "additive_1": {}}
+    monkeypatch.setattr(
+        gen, "_attrs", lambda zf, root, node="": counts.get(node.rstrip("/"), {})
+    )
+
+    total = gen._finest_elements(
+        zipfile.ZipFile.__new__(zipfile.ZipFile),
+        "r/",
+        {"additive_0", "additive_1"},
     )
 
     assert total is None, "a partial sum must not be published as a total"

@@ -419,9 +419,9 @@ def refresh_characteristics(
             info = _read_archive(path) if path else None
             if info is None:
                 continue
-            if extra_root and str(path).startswith(str(extra_root)):
+            if extra_root and path.is_relative_to(extra_root):
                 root = "staged"
-            elif str(path).startswith(str(DATA_DIR)):
+            elif path.is_relative_to(DATA_DIR):
                 root = "repo"
             else:
                 root = "cache"
@@ -518,7 +518,11 @@ def _mib(n: Optional[int]) -> str:
 
 
 def _ratio(numerator: Optional[int], denominator: Optional[int]) -> str:
-    if not numerator or not denominator:
+    if (
+        not (_finite(numerator) and _finite(denominator))
+        or not numerator
+        or not denominator
+    ):
         return _ABSENT
     return f"{numerator / denominator:.0f}:1"
 
