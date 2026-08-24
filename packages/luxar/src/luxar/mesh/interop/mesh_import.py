@@ -29,7 +29,12 @@ from ._obj import read_obj
 from ._ply_mesh import parse_ply_header, read_ply_mesh
 from ._stl import is_binary_stl, read_stl
 from ._vtp import read_vtp, sniff_vtk_type
-from ._weld import drop_degenerate_faces, fan_triangulate, weld_vertices
+from ._weld import (
+    drop_degenerate_faces,
+    fan_triangulate,
+    prune_unreferenced_vertices,
+    weld_vertices,
+)
 
 #: Formats accepted by :func:`import_mesh`'s ``format`` argument.
 MESH_FORMATS = ("ply", "obj", "stl", "gltf", "vtp")
@@ -183,15 +188,16 @@ def import_mesh(
     Args:
         path: The file. ``.ply`` / ``.obj`` / ``.stl`` / ``.vtp`` / ``.gltf`` / ``.glb``.
         format: Source dialect, or ``"auto"`` to sniff.
-        weld: Merge duplicate vertex positions and reindex. On by default because an
-            unwelded surface (always, for STL; often, for glTF without indices) has no
-            shared vertices, which defeats per-vertex normals, trips the writer's
-            authoring lint, and gives picking a different vertex ordinal for the same
-            corner depending on which triangle was hit. Pass False to keep the vertex
-            list the reader produced. That is not always the file's own list: an OBJ
-            that indexes normals independently of positions has no per-vertex normal
-            array to begin with, so the reader splits vertices per distinct
-            (position, normal) pair and welding is what merges them back.
+        weld: Merge duplicate vertex positions, remove vertices no surviving triangle
+            references, and reindex. On by default because an unwelded surface (always,
+            for STL; often, for glTF without indices) has no shared vertices, which
+            defeats per-vertex normals, trips the writer's authoring lint, and gives
+            picking a different vertex ordinal for the same corner depending on which
+            triangle was hit. Pass False to keep the vertex list the reader produced.
+            That is not always the file's own list: an OBJ that indexes normals
+            independently of positions has no per-vertex normal array to begin with,
+            so the reader splits vertices per distinct (position, normal) pair and
+            welding is what merges them back.
 
     Raises:
         FileNotFoundError: If ``path`` does not exist.
@@ -227,6 +233,12 @@ def import_mesh(
             f"{path.name}: no non-degenerate triangles survived import "
             f"({vertices.shape[0]} vertices read)"
         )
+    if weld:
+        extras = {"normals": normals, "colors": colors}
+        vertices, faces, compacted = prune_unreferenced_vertices(
+            vertices, faces, extras=extras
+        )
+        normals, colors = compacted.get("normals"), compacted.get("colors")
 
     return TriangleMesh(
         vertices=vertices,

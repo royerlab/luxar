@@ -194,7 +194,9 @@ def import_command(
         "default because STL (always), index-free glTF, and any OBJ that indexes "
         "normals independently of positions arrive with unshared vertices, which "
         "defeat per-vertex normals and give picking a different id per corner per "
-        "triangle. Hard edges survive: they differ in normal.",
+        "triangle. Vertices no surviving triangle references are also removed. Hard "
+        "edges survive: they differ in normal. --no-weld keeps the reader-produced "
+        "vertex list unchanged.",
     ),
     keep_normals: bool = typer.Option(
         True,
