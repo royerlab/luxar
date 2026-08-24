@@ -17,7 +17,7 @@ bar with `xml.etree` + `base64` + `zlib`.
 | PLY | `.ply` | ascii, binary LE **and** binary BE; faces as `property list`; optional `nx/ny/nz` normals and `red/green/blue[/alpha]` colours |
 | OBJ | `.obj` | 1-based **and** negative indices; polygons fan-triangulated; `v x y z r g b` vertex colours; materials ignored |
 | STL | `.stl` | ascii and binary; always welded (STL is a triangle soup); per-facet normals dropped |
-| VTK XML PolyData | `.vtp` | `ascii` / inline base64 (`binary`) / appended `raw` **and** `base64`; `vtkZLibDataCompressor`; `UInt32` and `UInt64` headers; either byte order; `Polys` (fan-triangulated) and `Strips`; `Verts`/`Lines` dropped; `PointData` normals and colours; several `<Piece>`s concatenated into one surface; XML namespaces, prefixed or default |
+| VTK XML PolyData | `.vtp` | `ascii` / inline base64 (`binary`) / appended `raw` **and** `base64`; `vtkZLibDataCompressor`; `UInt32` and `UInt64` headers; either byte order; `Polys` (fan-triangulated) and `Strips`; `Verts`/`Lines` and per-cell `CellData` dropped; `PointData` normals and colours; several `<Piece>`s concatenated into one surface; XML namespaces, prefixed or default |
 | glTF 2.0 | `.gltf`, `.glb` | GLB chunks, external and data-URI buffers, interleaved accessors (`byteStride`), full node-transform composition, `COLOR_0` |
 
 ## What the readers normalize, and why
