@@ -38,13 +38,14 @@ def _load_demo_module():
 _demo = _load_demo_module()
 axis_world_values = _demo.axis_world_values
 generate_4d_fractal = _demo.generate_4d_fractal
+materialised_w_planes = _demo.materialised_w_planes
 checkerboard_4d = _demo.checkerboard_4d
 
 GRID = 24  # small but structurally representative (fast: 24^4 = 331K samples)
 N_FRACTALS = 6
-# The shipped demo runs at grid=50; precision assertions below are made
-# against ITS fetch reach so a coarser test grid can't mask a regression.
-PRODUCTION_FETCH_REACH = 0.25 * (2.0 / 50)
+# Precision assertions below use the shipped slider's fetch reach so the
+# coarser test grid cannot mask a production regression.
+PRODUCTION_FETCH_REACH = 0.25 * (_demo.W_STRIDE * 2.0 / _demo.GRID_SIZE_DEFAULT)
 
 
 class TestAxisWorldValues:
@@ -75,36 +76,84 @@ class TestAxisWorldValues:
             assert (np.diff(axis) > 0).all()
             assert axis[0] >= -1.0 and axis[-1] < 1.0
 
+    def test_materialised_planes_are_on_the_declared_stride_grid(self) -> None:
+        for grid in (12, 16, 50, 100, 150, 200):
+            planes = materialised_w_planes(grid, _demo.W_STRIDE)
+            values = axis_world_values(grid)[planes]
+            step = _demo.W_STRIDE * 2.0 / grid
+            assert np.allclose(values / step, np.round(values / step), atol=1e-12), (
+                f"grid={grid}: materialised planes miss the viewer snap grid"
+            )
+
+        assert np.array_equal(materialised_w_planes(16, 4), [0, 4, 8, 12])
+        assert np.array_equal(materialised_w_planes(12, 4), [2, 6, 10])
+
 
 class TestEveryWPlanePopulated:
     """Every slider stop must show points, for every fractal type."""
 
     @pytest.mark.parametrize("fractal_type", range(N_FRACTALS))
     def test_no_empty_w_plane(self, fractal_type: int) -> None:
+        """Every MATERIALISED plane (= every slider stop) has points.
+
+        Only every ``W_STRIDE``-th plane of the lattice is written, so the
+        contract is about the stops the slider actually offers, not about the
+        full lattice.
+        """
         positions, values = generate_4d_fractal(fractal_type, grid_size=GRID)
         assert len(positions) > 0
         assert len(values) == len(positions)
 
         axis = axis_world_values(GRID).astype(np.float32)
+        planes = materialised_w_planes(GRID, _demo.W_STRIDE)
         w = positions[:, 0]
-        # Every one of the GRID planes (= slider stops) has points
-        for plane_w in axis:
+        for plane_w in axis[planes]:
             n = int((w == plane_w).sum())
             assert n > 0, f"fractal {fractal_type}: empty w-plane at {plane_w:.4f}"
+
+    @pytest.mark.parametrize("fractal_type", range(N_FRACTALS))
+    def test_no_empty_w_plane_at_full_stride(self, fractal_type: int) -> None:
+        """With ``w_stride=1`` EVERY lattice plane must be populated.
+
+        The stronger of the two: it is the property the strided default relies
+        on, so a rule that empties an interior plane must fail here even though
+        the shipped stride would skip that plane.
+        """
+        positions, _ = generate_4d_fractal(fractal_type, grid_size=GRID, w_stride=1)
+        axis = axis_world_values(GRID).astype(np.float32)
+        w = positions[:, 0]
+        for plane_w in axis:
+            assert (w == plane_w).any(), (
+                f"fractal {fractal_type}: empty w-plane at {plane_w:.4f}"
+            )
 
     @pytest.mark.parametrize("fractal_type", range(N_FRACTALS))
     def test_positions_on_snap_grid(self, fractal_type: int) -> None:
         """All 4 coordinates take only the declared axis values."""
         positions, _ = generate_4d_fractal(fractal_type, grid_size=GRID)
-        axis = set(axis_world_values(GRID).astype(np.float32).tolist())
-        for col in range(4):
+        full = axis_world_values(GRID).astype(np.float32)
+        axis = set(full.tolist())
+        planes = materialised_w_planes(GRID, _demo.W_STRIDE)
+        # w is restricted to the MATERIALISED stops; x/y/z use the full lattice.
+        assert set(np.unique(positions[:, 0]).tolist()) <= set(full[planes].tolist())
+        for col in range(1, 4):
             unique = set(np.unique(positions[:, col]).tolist())
             assert unique <= axis
 
     @pytest.mark.parametrize("fractal_type", range(N_FRACTALS))
     def test_within_budget(self, fractal_type: int) -> None:
+        """The budget is PER PLANE, so the total is bounded by planes x budget.
+
+        Checked per plane rather than only in total: a global-only check passes
+        even when the cap has silently become a whole-dataset budget again,
+        which is the regression that made a finer grid render SPARSER.
+        """
         positions, _ = generate_4d_fractal(fractal_type, grid_size=GRID)
-        assert len(positions) <= _demo.TARGET_MAX_POINTS
+        planes = materialised_w_planes(GRID, _demo.W_STRIDE)
+        budget = _demo.TARGET_MAX_POINTS_PER_PLANE
+        assert len(positions) <= len(planes) * budget
+        counts = np.unique(positions[:, 0], return_counts=True)[1]
+        assert counts.max() <= budget
 
     @pytest.mark.parametrize("grid_size", [0, 1, 2])
     def test_too_small_grid_rejected(self, grid_size: int) -> None:
@@ -118,18 +167,37 @@ class TestEveryWPlanePopulated:
             positions, _ = generate_4d_fractal(fractal_type, grid_size=3)
             assert len(positions) > 0
 
+    def test_empty_plane_error_reports_lattice_plane(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        empty_plane = int(materialised_w_planes(GRID, _demo.W_STRIDE)[1])
+
+        def rule(iw, ix, iy, iz, grid_size):
+            del ix, iy, iz, grid_size
+            keep = iw != empty_plane
+            return keep, np.ones(iw.shape, dtype=np.float32)
+
+        monkeypatch.setattr(
+            _demo, "_fractal_rule", lambda fractal_type, rng: ("test", rule)
+        )
+
+        with pytest.raises(RuntimeError, match=rf"empty w-planes \[{empty_plane}\]"):
+            generate_4d_fractal(0, grid_size=GRID, surface_only=False)
+
     def test_subsample_branch_preserves_every_plane(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """At the production grid the dense fractals exceed the budget and
         take the subsample branch; at the test grid they don't. Shrink the
         budget so that branch (and the post-subsample plane check) runs."""
-        monkeypatch.setattr(_demo, "TARGET_MAX_POINTS", 5_000)
-        positions, _ = generate_4d_fractal(0, grid_size=GRID)  # XOR is dense
-        assert len(positions) == 5_000
+        planes = materialised_w_planes(GRID, _demo.W_STRIDE)
+        positions, _ = generate_4d_fractal(
+            0, grid_size=GRID, max_points_per_plane=200
+        )  # XOR is dense
+        assert len(positions) == 200 * len(planes)
         axis = axis_world_values(GRID).astype(np.float32)
         w = positions[:, 0]
-        for plane_w in axis:
+        for plane_w in axis[planes]:
             assert (w == plane_w).any(), f"subsample emptied plane {plane_w}"
 
 
@@ -174,22 +242,32 @@ class TestWrittenDatasetContract:
     """The zarr the demo actually ships must satisfy the slider contract
     after the encode→decode round-trip (quantized position storage)."""
 
-    def test_dimension_metadata_and_decoded_planes(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("grid", [12, 16])
+    def test_dimension_metadata_and_decoded_planes(
+        self, tmp_path: Path, grid: int
+    ) -> None:
         from luxar.io.reader import LuxarScene
 
-        grid = 8
-        out = tmp_path / "fractals_4d_test.luxar.zarr"
+        # 12 exercises phase alignment when grid//2 is not divisible by the
+        # stride; 16 proves the already-aligned case does not move.
+        out = tmp_path / f"fractals_4d_test_{grid}.luxar.zarr"
         _demo.generate_4d_fractal_dataset(out, grid_size=grid)
 
         scene = LuxarScene.load(out)
         dims = scene.root_attrs["scene_dimensions"]["dimensions"]
         wdim = dims[1]
-        step = 2.0 / grid
-        axis = axis_world_values(grid)
+        # The slider's snap grid is the MATERIALISED spacing — stride lattice
+        # steps — not the lattice step. Declaring the lattice step here would
+        # put three out of every four slider stops on empty space, which is
+        # exactly the class of bug this test exists to catch.
+        step = _demo.W_STRIDE * 2.0 / grid
+        planes = materialised_w_planes(grid, _demo.W_STRIDE)
+        axis = axis_world_values(grid)[planes]
         assert wdim["name"] == "w"
         assert wdim["discrete"] is True
         assert wdim["step"] == step
         assert wdim["range"] == [float(axis[0]), float(axis[-1])]
+        assert len(planes) > 2, "test grid too small to exercise the slider"
 
         pos = scene.get_points("Fractals4D")["positions"]
         w = pos[:, 1]

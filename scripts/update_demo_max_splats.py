@@ -25,7 +25,7 @@ SUMMARIES = REPO_ROOT / "scripts" / "calibration_results" / "_all_summaries.json
 # Mapping: calibration summary "name" → demo filename + variable to update.
 # Some demos share a calibration (alias_of); each still gets its file updated.
 DEMO_FILE_MAP = {
-    "organoid_dapi": ("demo_gsplats_3d_organoid_dapi_nuclei.py", "MAX_SPLATS"),
+    "blastocyst_dapi": ("demo_gsplats_3d_blastocyst_dapi_nuclei.py", "MAX_SPLATS"),
     "cells3d_multichannel": (
         "demo_gsplats_3d_cells3d_multichannel.py",
         "MAX_SPLATS",
@@ -39,8 +39,8 @@ DEMO_FILE_MAP = {
         "MAX_SPLATS",
     ),
     "acto3d_heart": ("demo_gsplats_3d_acto3d_heart.py", "MAX_SPLATS"),
-    "organoid_multichannel": (
-        "demo_gsplats_3d_organoid_multichannel.py",
+    "blastocyst_multichannel": (
+        "demo_gsplats_3d_blastocyst_multichannel.py",
         "MAX_SPLATS",
     ),
     "opencell_map4": ("demo_gsplats_3d_opencell_map4.py", "MAX_SPLATS"),

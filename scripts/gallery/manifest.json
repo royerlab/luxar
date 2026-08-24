@@ -164,12 +164,12 @@
       "note": "the first SHADED tile. EXPOSURE: the offset-key capture's frame 0 measures p10 0.378, p50 0.506, p99 0.597, spread 0.219 over 32,845 lit pixels. The p50 landing on TARGET_MID confirms the auto-exposure flat-subject pass still fired under the wider asymmetric lighting distribution. This tile deliberately carries NO exposure override because the policy already puts its median on target; the final-frame spread is an outcome measurement, not the post-phase-1 gate input used to calibrate NARROW_SPREAD_MAX. ORBITUP+VIEWANGLE: the orbit hard-sets cam.up to the orbitUp axis, and the default WAS world-y at the time, which silently discarded this demo's baked up=(1,0,0) - the shipped animation was rolled ~90deg away from its own poster AND tumbled, subject aspect swinging 0.40..0.92 (130pct) over one rock. orbitUp x matches the baked up and makes the rock a real turntable, but positionForOrbitUp then parks the camera edge-on to this thin slab (aspect ~4.5, lit fraction 0.09, a sliver), so viewAngle 45/40 is REQUIRED alongside it, not optional; together they hold aspect at 1.46..1.50 (2.5pct swing). The default now derives from the camera's own up-vector and would reach x unaided, but orbitUp x is retained deliberately because it also triggers positionForOrbitUp, and the viewAngle 45/40 is calibrated against that parked pose. FILLTARGET: the fill loop closes on an OUTLIER-ROBUST percentile bbox, but what reaches the frame edge is exactly the outliers - detached membrane specks and the slab's far corners - so the robust metric reports a fit while the true extent is cropped. Measured over EVERY orbit frame (the README embeds the animation, not the still), border-lit pixels: 0.84 -> 3389, 0.75 -> 1256, 0.69 -> 0 across all 120 frames. Captured on an NVIDIA RTX PRO 6000; a macOS/Metal run reproduced the same three numbers within 1pct"
     },
     {
-      "id": "gsplats_3d_organoid_multichannel",
-      "title": "Multichannel 3D Organoid",
+      "id": "gsplats_3d_blastocyst_multichannel",
+      "title": "Multichannel Mouse Blastocyst",
       "geometry": "gsplats",
       "category": "microscopy",
-      "script": "demo_gsplats_3d_organoid_multichannel.py",
-      "dataset": "datasets/demos/gsplats_3d_organoid_multichannel.luxar.zarr",
+      "script": "demo_gsplats_3d_blastocyst_multichannel.py",
+      "dataset": "datasets/demos/gsplats_3d_blastocyst_multichannel.luxar.zarr",
       "citation": "Blin et al. 2019",
       "distance": 400,
       "note": "the +2.5 exposure override was calibrated against the old occluding volumetric look; the scene now composites additive (brighter), so auto-exposure recalibrates"
@@ -358,12 +358,12 @@
       "note": "Calibrated against a PRE-#842 fractals_4d store, where `w` was continuous over [-2.5, 2.5] with step 0.1 and only ~1 position in 10 held a slice — hence 15 steps to reach the first populated one, and the zoom/exposure that frame a thin sparse slice. Since #842 the generator declares `w` discrete on the grid it writes (step = 2/grid_size), so a REGENERATED store is populated at its default slice and needs no dimensionNav: re-derive these three values (or drop them) after rebuilding the dataset."
     },
     {
-      "id": "spiral_galaxy_5d",
-      "title": "Spiral Galaxy 5D",
+      "id": "galaxy_simulation",
+      "title": "Galaxy Simulation",
       "geometry": "points",
       "category": "synthetic",
-      "script": "demo_5d_spiral_galaxy.py",
-      "dataset": "datasets/demos/spiral_galaxy_5d.luxar.zarr"
+      "script": "demo_galaxy_simulation.py",
+      "dataset": "datasets/demos/galaxy_simulation.luxar.zarr"
     },
     {
       "id": "atp_synthase",
@@ -458,12 +458,12 @@
       "citation": "Cho et al. 2022"
     },
     {
-      "id": "gsplats_3d_organoid_dapi_nuclei",
-      "title": "3D Organoid Dapi Nuclei",
+      "id": "gsplats_3d_blastocyst_dapi_nuclei",
+      "title": "Mouse Blastocyst DAPI Nuclei",
       "geometry": "gsplats",
       "category": "microscopy",
-      "script": "demo_gsplats_3d_organoid_dapi_nuclei.py",
-      "dataset": "datasets/demos/gsplats_3d_organoid_dapi_nuclei.luxar.zarr",
+      "script": "demo_gsplats_3d_blastocyst_dapi_nuclei.py",
+      "dataset": "datasets/demos/gsplats_3d_blastocyst_dapi_nuclei.luxar.zarr",
       "citation": "Blin et al. 2019"
     },
     {
@@ -715,12 +715,12 @@
       "citation": "Barry 2021 (GIANI, Zenodo 5270323); Cell Tracking Challenge (Maška et al. 2023)"
     },
     {
-      "id": "gsplats_interop_inria_garden",
-      "title": "INRIA Garden (3D Gaussian Splatting)",
+      "id": "gsplats_interop_inria_bonsai",
+      "title": "INRIA Bonsai (3D Gaussian Splatting)",
       "geometry": "gsplats",
       "category": "photogrammetry",
-      "script": "demo_gsplats_interop_inria_garden.py",
-      "dataset": "datasets/demos/gsplats_interop_inria_garden.luxar.zarr",
+      "script": "demo_gsplats_interop_inria_bonsai.py",
+      "dataset": "datasets/demos/gsplats_interop_inria_bonsai.luxar.zarr",
       "citation": "Kerbl et al. 2023 (3D Gaussian Splatting); Barron et al. 2022 (Mip-NeRF 360)"
     },
     {

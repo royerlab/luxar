@@ -37,8 +37,8 @@ class TestListAndTable:
         assert "lorenz" in result.stdout
         # NO non-synthetic demo key may appear in a synthetic-filtered table.
         # Token-level match (ANSI stripped) rather than substring: keys nest
-        # ("spiral_galaxy" ⊂ "spiral_galaxy_5d", "chromatrace_choir_umap" ⊂
-        # "chromatrace_choir_umap_sequence"), and a substring check breaks on a
+        # ("chromatrace_choir_umap" ⊂ "chromatrace_choir_umap_sequence",
+        # "ocean" ⊂ "ocean_currents_earth"), and a substring check breaks on a
         # nested pair whose SHORTER key is non-synthetic and whose LONGER one is
         # synthetic — the printed long row would spell the short key. Only one
         # pair straddles this filter today and it is the harmless direction

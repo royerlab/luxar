@@ -377,16 +377,18 @@ Interactive exploration of 6 different 4D geometric fractals with categorical di
 
 **Run**: `luxar demo run fractals_4d [-- --grid=64]`
 
-**Demonstrates**: 4D spatial navigation (XYZ + W dimension, every W slider stop shows structure), categorical dimension (select between 6 fractal types), large dataset (~7M points, up to ~1.5M per fractal), XOR Fractal, Menger Sponge 4D, Sierpinski 4D, Cantor Dust 4D, Checkerboard and Diamond patterns.
+**Demonstrates**: 4D spatial navigation (XYZ + W dimension, every W slider stop shows structure), categorical dimension (select between 6 fractal types), large dataset (~44.5M points, up to ~7.5M per fractal), XOR Fractal, Menger Sponge 4D, Sierpinski 4D, Cantor Dust 4D, Checkerboard and Diamond patterns.
 
 ---
 
-#### demo_5d_spiral_galaxy.py - 5D Spiral Galaxy with Time Evolution
-Large-scale 5D data with millions of points: multiple spiral arms evolving over time with channel-based coloring.
+#### demo_galaxy_simulation.py - Galaxy Simulation (density-wave spiral)
+A spiral galaxy integrated from its own mass model rather than drawn along logarithmic curves. Hernquist bulge + Miyamoto-Nagai disc + NFW halo give a flat rotation curve (260 km/s out past 30 kpc); `Omega` and the epicyclic frequency `kappa` are differentiated off it; each star rides a forced epicycle whose spiral response carries the resonant denominator `kappa^2 - m^2 (Omega - Omega_p)^2`. Because every star turns at its OWN `Omega(R)` while the pattern turns rigidly at `Omega_p`, stars visibly **overtake** the arms inside corotation (11.4 kpc) and lag outside it — and the arms do not wind up over the 480 Myr span, which is the point. Ages drive the rest: `sigma_R ~ age^0.33` heats old stars out of the arms, and colour is the blackbody colour of each population's effective temperature integrated through the CIE 1931 observer. Dust lanes on the upstream arm edge redden as well as dim; HII regions mark the shock.
 
-**Run**: `luxar demo run spiral_galaxy_5d [-- --points=N]`
+Replaces the former `demo_5d_spiral_galaxy.py`, which scattered points along fixed logarithmic curves and rotated the whole picture rigidly — the material-arm model the winding problem rules out.
 
-**Demonstrates**: 5D data (X, Y, Z, Time, Channel), continuous and discrete dimension navigation, time-based animation of spiral arm rotation, channel variation representing different wavelengths, logarithmic spiral arm mathematics.
+**Run**: `luxar demo run galaxy_simulation [-- --stars=N] [-- --frames=N]`
+
+**Demonstrates**: 4D data (X, Y, Z, Time) with the stellar-age split exposed as five toggleable layers rather than a slicing dimension, `extend_to_all` for the time-independent halo, physically derived rotation curves and orbit frequencies, and blackbody colour synthesis.
 
 ---
 
@@ -796,10 +798,10 @@ Gigapixel H&E-stained whole-slide pathology image as 2D Gaussian splats with per
 
 ---
 
-#### demo_gsplats_3d_organoid_dapi_nuclei.py - 3D Organoid DAPI Nuclei
+#### demo_gsplats_3d_blastocyst_dapi_nuclei.py - Mouse Blastocyst DAPI Nuclei
 Gaussian splatting compression of real 3D confocal microscopy data (DAPI-stained cell nuclei) from Image Data Resource (IDR).
 
-**Run**: `luxar demo run gsplats_3d_organoid_dapi_nuclei`
+**Run**: `luxar demo run gsplats_3d_blastocyst_dapi_nuclei`
 
 **Requires**: Internet access (downloads OME-ZARR from IDR). Supports Metal (MPS) acceleration on Apple Silicon.
 
@@ -807,10 +809,10 @@ Gaussian splatting compression of real 3D confocal microscopy data (DAPI-stained
 
 ---
 
-#### demo_gsplats_3d_organoid_multichannel.py - Multi-Channel 3D Organoid (IDR Pipeline)
+#### demo_gsplats_3d_blastocyst_multichannel.py - Multi-Channel Mouse Blastocyst (IDR Pipeline)
 Multi-channel 3D microscopy data as Gaussian splats, with full compute pipeline from Image Data Resource (IDR). Uses precomputed gsplats from Git LFS by default.
 
-**Run**: `luxar demo run gsplats_3d_organoid_multichannel [-- --recompute]`
+**Run**: `luxar demo run gsplats_3d_blastocyst_multichannel [-- --recompute]`
 
 **Requires**: Git LFS data (default) or internet access + GPU (with `--recompute`).
 
@@ -825,7 +827,7 @@ Two-channel scikit-image `cells3d` fluorescence volume (membranes + nuclei) fitt
 
 **Requires**: Git LFS data (default) or `scikit-image` + GPU (with `--recompute`).
 
-**Demonstrates**: Per-channel `layer=True` gsplats nodes with built-in BOP LUTs applied at display time (interactive colormap switching in the Layers panel, press L), shared amplitude-weighted centroid alignment, additive compositing for the two co-located channels, ACES tone-mapping. The lightweight, no-download sibling of `organoid_multichannel` and `kidney_multichannel_layers`. Its **mesh** counterpart on the same data is `mesh_isosurface_cells3d` — run both to compare the two representations side by side.
+**Demonstrates**: Per-channel `layer=True` gsplats nodes with built-in BOP LUTs applied at display time (interactive colormap switching in the Layers panel, press L), shared amplitude-weighted centroid alignment, additive compositing for the two co-located channels, ACES tone-mapping. The lightweight, no-download sibling of `blastocyst_multichannel` and `kidney_multichannel_layers`. Its **mesh** counterpart on the same data is `mesh_isosurface_cells3d` — run both to compare the two representations side by side.
 
 ---
 
@@ -996,10 +998,11 @@ Downloads a Gaussian-splat capture of the Vera C. Rubin Observatory (`--scene ge
 **Requires**: Network (~41/83 MB). No GPU.
 **Data**: [khyron/Gaussian-Splatting](https://github.com/khyron/Gaussian-Splatting) — **CC BY 4.0**.
 
-##### demo_gsplats_interop_inria_garden.py - Full-quality INRIA garden (HTTP-Range zip extraction)
-Extracts just the ~1.45 GB `point_cloud.ply` member from INRIA's 14.7 GB `models.zip` over **HTTP Range requests** (Zip64 central-directory parsing — the member sits at byte offset ~5.6 GB), then imports it with a tiled LOD. The full-training-fidelity counterpart of the `.splat` demo.
-**Run**: `luxar demo run gsplats_interop_inria_garden`
-**Requires**: Network (~1.45 GB range-extracted from a 14.7 GB archive; server must honor byte ranges — INRIA's does). No GPU.
+##### demo_gsplats_interop_inria_bonsai.py - Full-quality INRIA bonsai (HTTP-Range Zip64 extraction)
+Extracts just the ~309 MB `bonsai/.../point_cloud.ply` member — 2% of the file — from INRIA's 14.7 GB `models.zip` over **HTTP Range requests**, then imports it with a tiled LOD. The archive is above 4 GiB, so locating any member at all goes through the **Zip64** end-of-central-directory path; this is the only demo that exercises it (the cluster-fly demo's ~1 GB archive takes the classic path). Opens framed on the bonsai tree itself, whose position is derived from the data — the blossoms are the only strongly pink splats in the room.
+Previously pulled the *garden* member, which made it a near-duplicate of the Mip-NeRF demo: the antimatter15 `garden.splat` was produced from this very checkpoint, and the two stores came out at the same 5,834,784 splats with bit-identical amplitudes.
+**Run**: `luxar demo run gsplats_interop_inria_bonsai`
+**Requires**: Network (~309 MB range-extracted from a 14.7 GB archive; server must honor byte ranges — INRIA's does). No GPU.
 **Data**: [INRIA 3DGS pretrained models](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/); INRIA Gaussian-Splatting license (**research / non-commercial**); Mip-NeRF 360 scenes (Google research use). Fetched at runtime, not redistributed.
 
 ##### demo_gsplats_interop_macro_clusterfly.py - Macro cluster fly (Dany Bittel)
@@ -1455,7 +1458,7 @@ hatch run python packages/luxar/src/luxar/demos/demo_particle_collision_animated
 
 # --- nD and Multi-Dimensional ---
 hatch run python packages/luxar/src/luxar/demos/demo_4d_fractals.py
-hatch run python packages/luxar/src/luxar/demos/demo_5d_spiral_galaxy.py
+hatch run python packages/luxar/src/luxar/demos/demo_galaxy_simulation.py
 hatch run python packages/luxar/src/luxar/demos/demo_nd_transforms.py
 
 # --- Feature Showcases ---
@@ -1500,8 +1503,8 @@ hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_milky_way_dust.p
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_visible_human_head.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_cryoem_virus.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_ct_totalsegmentator.py
-hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_organoid_dapi_nuclei.py
-hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_organoid_multichannel.py
+hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_blastocyst_dapi_nuclei.py
+hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_blastocyst_multichannel.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_cells3d_multichannel.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_kidney_multichannel_toggles.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_kidney_multichannel_layers.py

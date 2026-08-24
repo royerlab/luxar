@@ -27,9 +27,8 @@ Mathematical Background:
     - Diamond Fractal: thin concentric L1-distance (taxicab) shells
 
 Performance:
-    - INSTANT generation - simple conditions, no iteration
-    - Fully vectorized numpy operations
-    - All 6 fractals generated and written in ~10-30 seconds
+    - Per-w-plane vectorized NumPy generation bounds peak memory at grid^3
+    - All 6 fractals generate and write in about 7 minutes at the default grid
 
 Usage:
     python demo_4d_fractals.py [--grid=N]
@@ -48,7 +47,7 @@ DEMO_META = {
     "geometry": "points",
     "requirements": {
         "download_mb": 0,
-        "compute": "light",
+        "compute": "medium",
         "gpu": "none",
         "local_data": None,
     },
@@ -70,9 +69,21 @@ from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import add_demo_caption, launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
-# Per-fractal point budget. Rules that keep more than this are uniformly
-# subsampled (seeded), which preserves the per-w-plane density profile.
-TARGET_MAX_POINTS = 1_500_000
+#: Lattice resolution per axis. Four times the former 50 — the resolution bump
+#: this demo was asked for. Affordable only because generation is now per
+#: w-plane and only surface voxels are kept; the old whole-lattice generator
+#: would need 26 GB here.
+GRID_SIZE_DEFAULT = 200
+#: Materialise every Nth w-plane. 200/4 = 50 slider stops, the same slider the
+#: demo has always had, with four times the detail inside each slice.
+W_STRIDE = 4
+#: PER-PLANE point budget. Deliberately per-plane: the global cap it replaces
+#: spread a fixed total across every plane, so a finer grid made each slice
+#: SPARSER — the opposite of the intended effect. 150k covers about half the
+#: surface voxels of the densest fractal at grid 200; at 80k the flat faces
+#: still read as stippled. The store compresses well (lattice coordinates), so
+#: the measured default output is about 89 MB on disk.
+TARGET_MAX_POINTS_PER_PLANE = 150_000
 
 
 def axis_world_values(grid_size: int) -> np.ndarray:
@@ -325,39 +336,9 @@ def diamond_fractal_4d(
     return keep, values
 
 
-def generate_4d_fractal(
-    fractal_type: int,
-    grid_size: int = 50,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Generate one 4D geometric fractal on a grid (FAST - no iteration!).
-
-    Args:
-        fractal_type: 0-5 indicating which fractal
-        grid_size: Grid resolution (N^4 points)
-
-    Returns:
-        Tuple of (positions, values) for points in the fractal
-
-    Raises:
-        ValueError: If grid_size < 3 (below that, some fractal rules have
-            no odd-parity cells and cannot populate every w-plane).
-        RuntimeError: If any w-plane of the fractal is empty (every slider
-            stop must show structure — this is the demo's core contract).
-    """
-    if grid_size < 3:
-        raise ValueError(f"grid_size must be >= 3, got {grid_size}")
-
-    aprint(f"  Grid: {grid_size}^4 = {grid_size**4:,} points")
-
-    aprint("  Creating 4D integer grid...")
-    coords_int = np.arange(grid_size, dtype=np.int32)
-    IW, IX, IY, IZ = np.meshgrid(
-        coords_int, coords_int, coords_int, coords_int, indexing="ij"
-    )
-
-    rng = np.random.default_rng(42 + fractal_type)
-
-    fractal_funcs = {
+def _fractal_rule(fractal_type: int, rng: np.random.Generator):
+    """``(name, fn)`` for one fractal type. ``fn(IW, IX, IY, IZ, n) -> (keep, values)``."""
+    rules = {
         0: ("XOR Fractal", xor_fractal_4d),
         1: (
             "Menger Sponge 4D",
@@ -374,55 +355,145 @@ def generate_4d_fractal(
         ),
         5: ("Diamond Fractal", diamond_fractal_4d),
     }
+    return rules[fractal_type]
 
-    fractal_name, fractal_func = fractal_funcs[fractal_type]
-    aprint(f"  Computing {fractal_name}...")
 
-    keep_mask, values = fractal_func(IW, IX, IY, IZ, grid_size)
+def surface_of(mask: np.ndarray) -> np.ndarray:
+    """The boundary voxels of a 3D solid: kept, with a 6-neighbour outside it.
 
-    # Uniform seeded subsample above the budget: preserves the per-w-plane
-    # density profile (unlike value/coordinate thresholds, which can empty
-    # entire regions of the w axis).
-    n_kept = int(np.sum(keep_mask))
-    if n_kept > TARGET_MAX_POINTS:
-        flat_idx = np.flatnonzero(keep_mask)
-        selected = rng.choice(flat_idx, size=TARGET_MAX_POINTS, replace=False)
-        keep_mask = np.zeros(keep_mask.shape, dtype=bool)
-        keep_mask.ravel()[selected] = True
-        aprint(f"    Subsampled {n_kept:,} → {TARGET_MAX_POINTS:,} points")
+    Interior voxels of a solid are never visible and are what made these
+    fractals read as fuzzy: with a 25%-filling set, every ray summed dozens of
+    hidden points into a haze that buried the surface it was sitting behind.
+    Dropping them sharpens the render AND is what makes a 4x finer grid
+    affordable — measured at grid 200 it removes 85% of the XOR set, 86% of the
+    hypercheckerboard and 82% of the diamond, while leaving the already-thin
+    Sierpinski and Cantor sets almost untouched (they are nearly all surface).
 
-    # Contract check: every w-plane (= every slider stop) must be non-empty.
-    per_plane = np.bincount(IW[keep_mask].ravel(), minlength=grid_size)
-    if (per_plane == 0).any():
-        empty_planes = np.flatnonzero(per_plane == 0).tolist()
+    Voxels on the array's own face count as exposed: a solid cut by the edge of
+    the grid has a real boundary there.
+    """
+    interior = np.ones_like(mask)
+    for axis in range(3):
+        for shift in (1, -1):
+            neighbour = np.roll(mask, shift, axis=axis)
+            face = [slice(None)] * 3
+            face[axis] = 0 if shift == 1 else -1
+            neighbour[tuple(face)] = False
+            interior &= neighbour
+    return mask & ~interior
+
+
+def materialised_w_planes(grid_size: int, stride: int) -> np.ndarray:
+    """Indices of the w-planes actually written, as a strided subset.
+
+    The fractal RULE is evaluated on the full ``grid_size`` lattice, so the
+    geometry inside every slice is at full resolution; only the number of
+    SLIDER STOPS is reduced. At the default grid 200 / stride 4 that is 50
+    stops — the same slider the demo has always had — with four times the
+    linear detail in each one. The starting phase keeps those stops on the
+    zero-anchored snap grid for every supported grid size.
+    """
+    phase = grid_size // 2 % stride
+    return np.arange(phase, grid_size, stride, dtype=np.int64)
+
+
+def generate_4d_fractal(
+    fractal_type: int,
+    grid_size: int = GRID_SIZE_DEFAULT,
+    *,
+    w_stride: int = W_STRIDE,
+    surface_only: bool = True,
+    max_points_per_plane: int = TARGET_MAX_POINTS_PER_PLANE,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Generate one 4D geometric fractal, one w-plane at a time.
+
+    Evaluated PER W-PLANE rather than over the whole 4D lattice at once. The
+    old version built four ``grid_size**4`` meshgrids up front, which is 100 MB
+    at grid 50 and 26 GB at grid 200 — the reason the grid was stuck at 50 and
+    the slices came out coarse. Per-plane the working set is ``grid_size**3``,
+    so a four-times-finer grid costs a few hundred MB instead of being
+    impossible.
+
+    Args:
+        fractal_type: 0-5 indicating which fractal.
+        grid_size: Lattice resolution per axis.
+        w_stride: Materialise every ``w_stride``-th w-plane (slider stops).
+        surface_only: Keep only boundary voxels (see :func:`surface_of`).
+        max_points_per_plane: Per-plane budget. A PER-PLANE cap, not a global
+            one: the global cap it replaces divided a fixed budget across every
+            plane, so raising the grid made each individual slice sparser —
+            exactly backwards for "make it less fuzzy".
+
+    Returns:
+        ``(positions, values)`` for points in the fractal.
+
+    Raises:
+        ValueError: If ``grid_size < 3`` (below that, some fractal rules have
+            no odd-parity cells and cannot populate every w-plane).
+        RuntimeError: If any materialised w-plane is empty (every slider stop
+            must show structure — this is the demo's core contract).
+    """
+    if grid_size < 3:
+        raise ValueError(f"grid_size must be >= 3, got {grid_size}")
+
+    rng = np.random.default_rng(42 + fractal_type)
+    fractal_name, fractal_func = _fractal_rule(fractal_type, rng)
+    planes = materialised_w_planes(grid_size, w_stride)
+    aprint(f"  Grid: {grid_size}^4, {len(planes)} materialised w-planes")
+    aprint(f"  Computing {fractal_name} (surface_only={surface_only})...")
+
+    axis = axis_world_values(grid_size).astype(np.float32)
+    coords = np.arange(grid_size, dtype=np.int32)
+    IX, IY, IZ = np.meshgrid(coords, coords, coords, indexing="ij")
+
+    per_plane_counts: list[int] = []
+    chunks_pos: list[np.ndarray] = []
+    chunks_val: list[np.ndarray] = []
+
+    for w_index in planes:
+        IW = np.full_like(IX, w_index)
+        keep, values = fractal_func(IW, IX, IY, IZ, grid_size)
+        if surface_only:
+            keep = surface_of(keep)
+
+        n_kept = int(keep.sum())
+        if n_kept > max_points_per_plane:
+            flat = np.flatnonzero(keep)
+            chosen = rng.choice(flat, size=max_points_per_plane, replace=False)
+            keep = np.zeros(keep.shape, dtype=bool)
+            keep.ravel()[chosen] = True
+            n_kept = max_points_per_plane
+        per_plane_counts.append(n_kept)
+        if n_kept == 0:
+            continue
+
+        chunks_pos.append(
+            np.column_stack(
+                [
+                    np.full(n_kept, axis[w_index], dtype=np.float32),
+                    axis[IX[keep]],
+                    axis[IY[keep]],
+                    axis[IZ[keep]],
+                ]
+            )
+        )
+        chunks_val.append(values[keep])
+
+    counts = np.asarray(per_plane_counts)
+    if (counts == 0).any():
+        empty = planes[np.flatnonzero(counts == 0)].tolist()
         raise RuntimeError(
-            f"{fractal_name}: empty w-planes {empty_planes} — every slider "
+            f"{fractal_name}: empty w-planes {empty} — every slider "
             f"stop must show structure"
         )
     aprint(
-        f"    Per-w-plane points: min={per_plane.min():,} "
-        f"median={int(np.median(per_plane)):,} max={per_plane.max():,}"
+        f"    Per-w-plane points: min={counts.min():,} "
+        f"median={int(np.median(counts)):,} max={counts.max():,}"
     )
 
-    n_points_final = int(np.sum(keep_mask))
-    aprint(
-        f"    ✓ Kept: {n_points_final:,} points "
-        f"({n_points_final / grid_size**4 * 100:.2f}% density)"
-    )
-
-    # Convert to world coordinates — the SAME mapping the w Dimension
-    # declares, so slider stops land exactly on data planes.
-    axis = axis_world_values(grid_size).astype(np.float32)
-    w_coords = axis[IW[keep_mask]]
-    x_coords = axis[IX[keep_mask]]
-    y_coords = axis[IY[keep_mask]]
-    z_coords = axis[IZ[keep_mask]]
-
-    positions = np.column_stack([w_coords, x_coords, y_coords, z_coords])
-    pattern_values = values[keep_mask]
-
+    positions = np.vstack(chunks_pos)
+    pattern_values = np.concatenate(chunks_val)
     aprint(f"  ✓ {fractal_name}: {len(positions):,} points")
-
     return positions, pattern_values
 
 
@@ -460,13 +531,14 @@ def pattern_values_to_colors(values: np.ndarray) -> np.ndarray:
 
 def generate_4d_fractal_dataset(
     output_path: Path,
-    grid_size: int = 50,
+    grid_size: int = GRID_SIZE_DEFAULT,
 ) -> int:
     """Generate complete 4D fractal dataset with multiple types.
 
     Args:
         output_path: Where to write zarr
-        grid_size: Grid resolution (default 50 → up to 1.5M points per fractal)
+        grid_size: Grid resolution (default 200; every W_STRIDE-th w-plane is
+            materialised, at up to TARGET_MAX_POINTS_PER_PLANE points each)
 
     Returns:
         Total points generated
@@ -526,11 +598,15 @@ def generate_4d_fractal_dataset(
 
     # Write to Zarr
     with asection("Writing to Zarr"):
-        # The w Dimension must mirror the data exactly: planes sit at
-        # k × step (step = 2/grid_size), the viewer's discrete-dim snap
-        # grid, and the range ends on the first/last data plane.
+        # The w Dimension must mirror the MATERIALISED planes, not the full
+        # lattice: only every W_STRIDE-th plane is written, so the slider's snap
+        # grid is `stride x 2/grid_size` and its range ends on the first and
+        # last plane that actually holds data. Declaring the full-lattice step
+        # here would put most slider stops on empty space.
         axis = axis_world_values(grid_size)
-        w_step = 2.0 / grid_size
+        planes = materialised_w_planes(grid_size, W_STRIDE)
+        axis = axis[planes]
+        w_step = W_STRIDE * 2.0 / grid_size
 
         dims = Dimensions(
             [
@@ -565,12 +641,24 @@ def generate_4d_fractal_dataset(
 
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
-                dimensions=dims, viewer_config=ViewerConfig(cinematic_mode=True)
+                dimensions=dims,
+                viewer_config=ViewerConfig(cinematic_mode=True, tone_mapping="ACES"),
             )
 
-            # Add all points with small uniform radius
-            radii = np.full(len(positions_5d), 0.025, dtype=np.float32)
-            sharpnesses = np.full(len(positions_5d), 0.55, dtype=np.float32)
+            # Point radius DERIVED from the lattice step (2/grid_size), not
+            # pinned. The old constant 0.025 was 62% of the step at grid 50; at
+            # grid 200 the step is 0.01 and the same constant would draw each
+            # voxel two and a half times oversized — the exact "fuzzy" the
+            # higher resolution is meant to remove. 0.62 of a step keeps the
+            # surface closed without smearing it.
+            voxel_step = 2.0 / grid_size
+            point_radius = 0.62 * voxel_step
+            aprint(f"Point radius: {point_radius:.5f} (step {voxel_step:.5f})")
+            radii = np.full(len(positions_5d), point_radius, dtype=np.float32)
+            # Crisper profile than the old 0.55: with the interior voxels gone
+            # there is nothing behind a surface point that a soft edge is
+            # helping to blend into.
+            sharpnesses = np.full(len(positions_5d), 0.75, dtype=np.float32)
 
             scene.add_points(
                 "Fractals4D",
@@ -578,8 +666,24 @@ def generate_4d_fractal_dataset(
                 colors=colors,
                 radii=radii,
                 sharpness=sharpnesses,
-                opacity=0.8,
-                intensity=0.0625,
+                # Dialled in live in the Layers panel and copied back here, so
+                # the demo OPENS on the settings someone actually chose rather
+                # than on defaults they then have to rediscover.
+                #
+                # `volumetric` (emission-absorption) rather than the previous
+                # additive default: these are dense solid shells, and summing
+                # along the ray flattened the near and far faces of a slice into
+                # one silhouette. With absorption the near surface occludes and
+                # the fractal reads as a SOLID.
+                blending_mode="volumetric",
+                opacity=0.43,
+                absorption=1.23,
+                gamma=1.0,
+                # `intensity` is the display WINDOW, not a gain: the viewer
+                # recovers [-offset/i, (1-offset)/i]. The old 0.0625 stated the
+                # window [0, 16]. 1/1.971 states the authored [0, 1.971] window
+                # left by the Layers-panel appearance pass.
+                intensity=1.0 / 1.971,
                 layer=True,
             )
 
@@ -632,10 +736,7 @@ def generate_4d_fractal_dataset(
 def main() -> None:
     """Main demo entry point."""
     # Parse arguments
-    # NOTE: output size is capped by the 1.5M-per-fractal budget regardless
-    # of grid, but generation RAM scales as grid^4 (grid=100 allocates
-    # several 100M-element arrays). grid=50 keeps generation light.
-    grid_size = 50
+    grid_size = GRID_SIZE_DEFAULT
 
     if len(sys.argv) > 1:
         for arg in sys.argv[1:]:
@@ -658,8 +759,8 @@ def main() -> None:
     aprint("  4: 4D Hypercheckerboard - Alternating parity cells")
     aprint("  5: 4D Diamond Fractal - Concentric taxicab shells")
     aprint("")
-    aprint("⏱️  Generation time: ~10-30 seconds for all 6 fractals")
-    aprint("   (No iteration - instant geometric computation!)")
+    aprint("⏱️  Generation time: ~7 minutes at the default grid")
+    aprint("   (Use a smaller --grid for a faster build.)")
     aprint("")
 
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
