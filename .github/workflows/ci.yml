@@ -172,12 +172,13 @@ jobs:
   # way it is. Nothing in this file works without that kit deployed.
   #
   # obsidian publishes the repo variable LUXAR_CI_HEARTBEAT (epoch seconds) once a
-  # minute via its `luxar-ci-heartbeat.timer`. It publishes a live timestamp only
-  # when GitHub can see an online runner AND obsidian can see a container backing
-  # it AND the disk has headroom; otherwise it publishes 0. Both halves of that
-  # check are load-bearing: a crash-looping slot still reads "active" to systemd,
-  # and a runner that was killed before it could de-register still reads "online"
-  # to GitHub. Either one alone would report healthy while jobs pile up unrun.
+  # minute via its `luxar-ci-heartbeat.timer`. It is a CAPACITY heartbeat: a live
+  # timestamp requires all three GitHub runners online and idle, a backing
+  # container present locally, and disk headroom; otherwise it publishes 0. The
+  # cross-checks are load-bearing: a crash-looping slot still reads "active" to
+  # systemd, and a runner killed before de-registration still reads "online" to
+  # GitHub. Requiring an idle full-run fleet makes later runs spill to hosted
+  # instead of queueing behind a busy box.
   #
   # We route to obsidian only while that value is FRESH, so every way the box can
   # go away — clean stop, hard crash, power loss, network partition — degrades to
@@ -248,13 +249,17 @@ jobs:
   # reuses the previous pick-runner output.)
   #
   # On push/nightly, max-parallel deliberately holds one Python leg queued
-  # while two Python legs and TypeScript occupy the three slots. The watchdog
-  # stays alive until a slot frees, spending hosted minutes to keep that queued
-  # leg covered. Every failure of its own plumbing (jobs API blip, unreadable
-  # heartbeat variable) fails toward NOT cancelling — the watchdog must never
-  # take down a healthy run.
+  # while two Python legs and TypeScript occupy the three slots. GitHub reports
+  # that held leg as `queued` with the `obsidian` label (observed 2026-08-24).
+  # The machine heartbeat is an admission signal, not pure liveness: it drops
+  # to 0 as soon as any slot is busy so later runs spill to hosted. Therefore a
+  # queued leg plus an in-progress obsidian sibling is healthy draining only
+  # while the variable's `updated_at` is still moving. The publisher PATCHes
+  # once a minute even when the value remains 0, so that write cadence supplies
+  # liveness. The watchdog stays alive until the queue drains and fails every
+  # error in its own plumbing toward NOT cancelling.
   queue-watchdog:
-    needs: pick-runner
+    needs: [pick-runner]
     if: needs.pick-runner.outputs.label == 'obsidian'
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -274,32 +279,72 @@ jobs:
           # push or the nightly, 2 on a PR — and a merge landing during the
           # nightly now queues both sets at once, since the two no longer cancel
           # each other — draining) — leave the run alone.
-          end=$(( $(date +%s) + 25 * 60 ))
-          while [ "$(date +%s)" -lt "$end" ]; do
-            queued=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?per_page=100" \
-              --jq '[.jobs[] | select(.status == "queued")
-                            | select(.labels | index("obsidian"))
-                            | .name] | join(", ")') || queued=__api_error__
-            if [ "$queued" = "__api_error__" ]; then
+          start=$(date +%s)
+          end=$(( start + 25 * 60 ))
+          materialize_end=$(( start + 3 * 60 ))
+          seen_obsidian=0
+          while true; do
+            now=$(date +%s)
+            if [ "$now" -ge "$end" ]; then break; fi
+            jobs=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?per_page=100") \
+              || jobs=__api_error__
+            if [ "$jobs" = "__api_error__" ]; then
               echo "jobs API read failed; retrying"
               sleep 30; continue
             fi
+            visible=$(echo "$jobs" | jq '[.jobs[] | select(.labels | index("obsidian"))] | length') \
+              || { echo "jobs API response was not parseable; retrying"; sleep 30; continue; }
+            queued=$(echo "$jobs" | jq -r '[.jobs[] | select(.status == "queued")
+                                                     | select(.labels | index("obsidian"))
+                                                     | .name] | join(", ")') \
+              || { echo "queued-job selection failed; retrying"; sleep 30; continue; }
+            running=$(echo "$jobs" | jq -r '[.jobs[] | select(.status == "in_progress")
+                                                      | select(.labels | index("obsidian"))
+                                                      | .name] | join(", ")') \
+              || { echo "running-job selection failed; retrying"; sleep 30; continue; }
+            fanout_pending=$(echo "$jobs" | jq -r '[.jobs[] | select(.name == "changes")
+                                                            | select(.status == "queued" or .status == "in_progress")
+                                                            | .name] | join(", ")') \
+              || { echo "fan-out job selection failed; retrying"; sleep 30; continue; }
+            if [ "$visible" -gt 0 ]; then seen_obsidian=1; fi
             if [ -z "$queued" ]; then
-              echo "every obsidian-routed job has been picked up — done"
-              exit 0
-            fi
-            hb=$(gh api "repos/${GITHUB_REPOSITORY}/actions/variables/LUXAR_CI_HEARTBEAT" \
-              --jq .value 2>/dev/null) || hb=""
-            if ! echo "$hb" | grep -qE '^[0-9]+$'; then
-              echo "heartbeat unreadable ('$hb'); not cancelling on a fluke — retrying"
+              if [ "$seen_obsidian" -eq 1 ]; then
+                echo "every obsidian-routed job has been picked up — done"
+                exit 0
+              fi
+              if [ -n "$fanout_pending" ]; then
+                materialize_end=$(( now + 3 * 60 ))
+                echo "obsidian-routed jobs are waiting on run fan-out ($fanout_pending); retrying"
+                sleep 30; continue
+              fi
+              if [ "$now" -ge "$materialize_end" ]; then
+                echo "obsidian-routed jobs did not appear during the startup grace — done"
+                exit 0
+              fi
+              # The jobs API can lag the newly eligible matrix after pick-runner.
+              echo "obsidian-routed jobs are not visible yet; retrying"
               sleep 30; continue
             fi
-            age=$(( $(date +%s) - hb ))
+            heartbeat=$(gh api "repos/${GITHUB_REPOSITORY}/actions/variables/LUXAR_CI_HEARTBEAT" \
+              2>/dev/null) || heartbeat=""
+            hb=$(echo "$heartbeat" | jq -r '.value // empty') || hb=""
+            hb_updated=$(echo "$heartbeat" | jq -r 'try (.updated_at | fromdateiso8601) catch empty') \
+              || hb_updated=""
+            if ! echo "$hb" | grep -qE '^[0-9]+$' \
+              || ! echo "$hb_updated" | grep -qE '^[0-9]+$'; then
+              echo "heartbeat unreadable ('$heartbeat'); not cancelling on a fluke — retrying"
+              sleep 30; continue
+            fi
+            age=$(( now - hb ))
+            update_age=$(( now - hb_updated ))
             # Same freshness window as pick-runner, for the same reasons.
             if [ "$hb" -gt 0 ] && [ "$age" -ge -30 ] && [ "$age" -lt 180 ]; then
               echo "still queued on a live box (heartbeat ${age}s old): $queued"
+            elif [ "$hb" -eq 0 ] && [ "$update_age" -ge -30 ] \
+              && [ "$update_age" -lt 180 ] && [ -n "$running" ]; then
+              echo "capacity heartbeat is 0 but was refreshed ${update_age}s ago while obsidian jobs are running ($running); still queued: $queued"
             else
-              echo "::error::obsidian heartbeat went stale (age ${age}s, hb=$hb) with jobs still queued ($queued) — cancelling the run; re-run all jobs to route to GitHub-hosted"
+              echo "::error::obsidian heartbeat went stale (value age ${age}s, update age ${update_age}s, hb=$hb) with jobs still queued ($queued) — cancelling the run; re-run all jobs to route to GitHub-hosted"
               gh api -X POST "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/cancel"
               # The cancel sweeps this job too; don't fall through to success
               # while it lands.
@@ -308,7 +353,11 @@ jobs:
             fi
             sleep 30
           done
-          echo "watchdog window over; jobs still queued but the heartbeat stayed fresh (busy box, not a dead one) — leaving the run alone"
+          if [ "$seen_obsidian" -eq 1 ]; then
+            echo "watchdog window over; jobs still queued but the heartbeat stayed fresh (busy box, not a dead one) — leaving the run alone"
+          else
+            echo "watchdog window over before obsidian-routed jobs appeared — leaving the run alone"
+          fi
 
   docs-quality:
     needs: changes
