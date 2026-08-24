@@ -415,9 +415,7 @@ def build(LINK):
     assert links == [(module, 3, None)]
     assert unresolved == links
     assert unregistered == []
-    assert unclaimed == [
-        (module, 1, "https://example.org/canonical/{hover_key}")
-    ]
+    assert unclaimed == [(module, 1, "https://example.org/canonical/{hover_key}")]
 
 
 def test_demo_link_audit_rejects_unclaimed_link_literal(tmp_path: Path) -> None:
