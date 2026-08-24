@@ -5,10 +5,14 @@ Pure helpers used only by `../context-manager.ts`.
 - `routing-rules.ts` — two pure functions plus the minimal structural
   interfaces (`KeyFilterConfig`, `PriorityConfig`) they consume. The
   full `ContextConfig` in the parent satisfies both shapes.
-  - `isKeyAllowedInContext(key, config)` — allow/block filter
-    evaluation. Empty/absent `allowedKeys` means "allow all"; an empty
-    array means "allow none". `blockedKeys` always wins over
-    `allowedKeys` (defense in depth).
+  - `isKeyAllowedInContext(key, config, bindingKey?)` — allow/block
+    filter evaluation. `bindingKey` is the canonical modifier-aware
+    chord and defaults to the normalized base key. Allowlist entries
+    match either the base key or exact chord; blocklist entries match
+    only the exact chord, so blocking `w` does not block `Ctrl+W`.
+    Chord spelling and modifier order are normalized. An absent
+    `allowedKeys` means "allow all"; an empty array means "allow none".
+    `blockedKeys` always wins over `allowedKeys` (defense in depth).
   - `sortContextsByPriority(configs, excludeContext?)` — returns the
     context map's entries sorted by descending `priority` (missing
     priority treated as 0), optionally skipping the currently-active

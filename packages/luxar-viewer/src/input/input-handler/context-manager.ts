@@ -14,6 +14,7 @@
 import { config } from '../../config';
 import { log, Modules, LogEmoji } from '../../utils/log';
 import {
+  canonicalizeBindingKey,
   isKeyAllowedInContext as isKeyAllowedInContextPure,
   sortContextsByPriority,
 } from './context-manager/routing-rules';
@@ -55,7 +56,8 @@ export interface KeyBinding {
     meta?: boolean;
   };
   handler: (event: KeyboardEvent) => void;
-  keyupHandler?: (event: KeyboardEvent) => void; // Optional separate handler for keyup events
+  // Modifier-aware bindings match keyup only while those modifiers remain held.
+  keyupHandler?: (event: KeyboardEvent) => void;
   preventDefault?: boolean;
   description?: string;
 }
@@ -66,8 +68,8 @@ export interface KeyBinding {
 export interface ContextConfig {
   name: string;
   priority: number; // Higher priority contexts override lower ones
-  allowedKeys?: string[]; // If specified, only these keys are handled
-  blockedKeys?: string[]; // These keys are never handled in this context
+  allowedKeys?: string[]; // Base or canonical binding keys handled by this context
+  blockedKeys?: string[]; // Canonical binding keys never handled by this context
   passthrough?: boolean; // If true, unhandled keys pass to lower contexts
 }
 
@@ -145,14 +147,15 @@ export class InputContextManager {
    */
   private initializeContexts(): void {
     // Navigation context - default mode
-    // Block WASD keys but NOT Shift (Shift needed for FOV control in orbit mode)
+    // Block bare fly-control keys but allow modified NAVIGATION bindings on them.
+    // Shift itself remains available for FOV control in orbit mode.
     const flyModeKeysWithoutShift = config.input.keyboard.flyModeKeys.filter((k) => k !== 'Shift');
 
     this.contextConfigs.set(InputContext.NAVIGATION, {
       name: 'Navigation',
       priority: 0,
       passthrough: true,
-      blockedKeys: [...flyModeKeysWithoutShift], // Block WASD but allow Shift
+      blockedKeys: [...flyModeKeysWithoutShift],
     });
 
     // Fly controls context - WASD movement active
@@ -325,6 +328,14 @@ export class InputContextManager {
 
     const bindingKey = this.getBindingKey(binding);
     const contextBindings = this.bindings.get(contextKey)!;
+    const config = this.contextConfigs.get(contextKey);
+
+    if (config && !this.isKeyAllowedInContext(binding.key, bindingKey, config)) {
+      log.warning(
+        Modules.INPUT_CONTEXT,
+        `Key binding ${bindingKey} in ${context} is unreachable under its context filters`
+      );
+    }
 
     // Check for conflicts
     if (contextBindings.has(bindingKey)) {
@@ -446,8 +457,10 @@ export class InputContextManager {
     const config = this.contextConfigs.get(this.currentContext);
     if (!config) return false;
 
-    // Check if this key is allowed in the current context
-    if (!this.isKeyAllowedInContext(event.key, config)) {
+    const bindingKey = this.getBindingKeyFromEvent(event);
+
+    // Check if this binding is allowed in the current context
+    if (!this.isKeyAllowedInContext(event.key, bindingKey, config)) {
       // Key not allowed in this context - try passthrough if enabled
       if (config.passthrough) {
         return this.tryLowerContexts(event, type);
@@ -458,7 +471,6 @@ export class InputContextManager {
     // Find and execute the binding
     const contextBindings = this.bindings.get(this.currentContext);
     if (contextBindings) {
-      const bindingKey = this.getBindingKeyFromEvent(event);
       const binding = contextBindings.get(bindingKey);
 
       if (binding) {
@@ -494,20 +506,22 @@ export class InputContextManager {
   }
 
   /**
-   * Check if a key is allowed in the given context based on filters.
+   * Check if a binding is allowed in the given context based on filters.
    *
    * Checks both blockedKeys and allowedKeys filters:
-   * - If key is in blockedKeys: returns false
-   * - If allowedKeys is defined and key is not in it: returns false
+   * - If the canonical binding key is in blockedKeys: returns false
+   * - If allowedKeys contains neither the base key nor canonical binding key:
+   *   returns false
    * - Otherwise: returns true
    *
-   * @param key - Key to check (lowercase string)
+   * @param key - Base key to check
+   * @param bindingKey - Canonical modifier-aware binding key
    * @param config - Context configuration with key filters
    * @returns true if key is allowed in this context, false if blocked
    * @private
    */
-  private isKeyAllowedInContext(key: string, config: ContextConfig): boolean {
-    return isKeyAllowedInContextPure(key, config);
+  private isKeyAllowedInContext(key: string, bindingKey: string, config: ContextConfig): boolean {
+    return isKeyAllowedInContextPure(key, config, bindingKey);
   }
 
   /**
@@ -569,12 +583,12 @@ export class InputContextManager {
 
   private tryLowerContexts(event: KeyboardEvent, type: 'down' | 'up'): boolean {
     const sortedContexts = sortContextsByPriority(this.contextConfigs, this.currentContext);
+    const bindingKey = this.getBindingKeyFromEvent(event);
 
     for (const [context, config] of sortedContexts) {
-      if (this.isKeyAllowedInContext(event.key, config)) {
+      if (this.isKeyAllowedInContext(event.key, bindingKey, config)) {
         const contextBindings = this.bindings.get(context);
         if (contextBindings) {
-          const bindingKey = this.getBindingKeyFromEvent(event);
           const binding = contextBindings.get(bindingKey);
 
           if (binding) {
@@ -669,7 +683,7 @@ export class InputContextManager {
       if (binding.modifiers.meta) parts.push('meta');
     }
 
-    return parts.sort().join('+');
+    return canonicalizeBindingKey(parts.join('+'));
   }
 
   /**
@@ -707,7 +721,7 @@ export class InputContextManager {
     if (event.altKey && key !== 'alt') parts.push('alt');
     if (event.metaKey && key !== 'meta') parts.push('meta');
 
-    return parts.sort().join('+');
+    return canonicalizeBindingKey(parts.join('+'));
   }
 
   /**
