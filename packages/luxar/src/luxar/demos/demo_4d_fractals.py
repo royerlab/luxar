@@ -69,8 +69,6 @@ from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import add_demo_caption, launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
-# Per-fractal point budget. Rules that keep more than this are uniformly
-# subsampled (seeded), which preserves the per-w-plane density profile.
 #: Lattice resolution per axis. Four times the former 50 — the resolution bump
 #: this demo was asked for. Affordable only because generation is now per
 #: w-plane and only surface voxels are kept; the old whole-lattice generator
@@ -761,8 +759,8 @@ def main() -> None:
     aprint("  4: 4D Hypercheckerboard - Alternating parity cells")
     aprint("  5: 4D Diamond Fractal - Concentric taxicab shells")
     aprint("")
-    aprint("⏱️  Generation time: ~10-30 seconds for all 6 fractals")
-    aprint("   (No iteration - instant geometric computation!)")
+    aprint("⏱️  Generation time: ~7 minutes at the default grid")
+    aprint("   (Use a smaller --grid for a faster build.)")
     aprint("")
 
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
