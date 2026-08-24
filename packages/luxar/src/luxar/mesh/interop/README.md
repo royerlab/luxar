@@ -128,7 +128,6 @@ bar with `xml.etree` + `base64` + `zlib`.
   keeping any others would inflate bounds, camera framing, and the picking ordinal
   range with geometry nothing draws. `--no-weld` preserves the reader-produced vertex
   list, including unreferenced points, as its explicit opt-out contract requires.
-
 - **`gsplats/interop/_ply.py` is not reused.** It rejects `property list` (how a `face`
   element declares its indices) and everything but binary-LE. Generalizing it would put
   list handling and three format branches into a module whose only other consumer is a

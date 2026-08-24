@@ -1883,6 +1883,13 @@ class TestTriangleMeshInvariants:
 
 
 class TestWelding:
+    """The weld key is position PLUS every per-vertex attribute, not position alone.
+
+    The two ``write_ply_crease`` arms are each other's sensitivity control, so neither
+    can pass vacuously: keying on position alone passes ``hard=False`` and fails
+    ``hard=True``; refusing to merge anything does the reverse.
+    """
+
     def test_pruning_an_already_compact_mesh_reuses_its_arrays(self) -> None:
         vertices = np.ascontiguousarray(GT.vertices, dtype=np.float32)
         faces = np.ascontiguousarray(GT.faces, dtype=np.uint32)
@@ -1896,13 +1903,6 @@ class TestWelding:
         assert compact_faces is faces
         assert extras["normals"] is normals
         assert extras["colors"] is None
-
-    """The weld key is position PLUS every per-vertex attribute, not position alone.
-
-    The two ``write_ply_crease`` arms are each other's sensitivity control, so neither
-    can pass vacuously: keying on position alone passes ``hard=False`` and fails
-    ``hard=True``; refusing to merge anything does the reverse.
-    """
 
     def test_a_crease_survives_welding(self, tmp_path: Path) -> None:
         path = tmp_path / "crease.ply"

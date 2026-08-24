@@ -220,7 +220,7 @@ def write_ply_truncated_ascii(path: Path, gt: GroundTruth) -> None:
 
 
 def write_ply_orphan_vertices(path: Path) -> None:
-    """A surface plus vertices referenced only by no face or a degenerate face."""
+    """A surface plus one unreferenced vertex and one used only by a degenerate face."""
     rows = [
         ((200, 200, 200), (1, 0, 0), (10, 20, 30)),
         ((0, 0, 0), (0, 1, 0), (40, 50, 60)),
