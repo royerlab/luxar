@@ -87,7 +87,23 @@ def test_partition_metrics_match_the_same_flat_splats(tmp_path: Path) -> None:
         for key, value in partition_payload.items()
         if key not in metadata_keys
     }
-    assert partition_metrics == pytest.approx(flat_metrics, rel=1e-3)
+    # `rel` alone cannot bound a metric that sits near zero. SSIM here is
+    # -0.0114 (the reference volume and its splat rendering are essentially
+    # uncorrelated at this size), so rel=1e-3 asks for agreement to 1.14e-05 —
+    # and the flat-vs-partition difference is float SUMMATION ORDER, which is
+    # stable per platform but differs across them. Measured 1.154e-05 locally:
+    # a 1.011x overshoot, i.e. the budget and the error agree to within 1%,
+    # which is why this reads as a coin flip across machines rather than a bug.
+    #
+    # `pytest.approx` passes on EITHER bound, so adding `abs` gives near-zero
+    # metrics a floor while leaving `rel` binding for everything of order 1
+    # (psnr, max_abs_error). Note it does also relax `mse` (0.0032, so likewise
+    # near-zero) from 3.2e-06 to 1e-4 — still ~3% of its value, and orders of
+    # magnitude tighter than any real partition/flat divergence would be.
+    #
+    # Do NOT fix this by raising `rel`: that weakens the well-scaled metrics,
+    # which are the ones actually carrying the equality claim.
+    assert partition_metrics == pytest.approx(flat_metrics, rel=1e-3, abs=1e-4)
 
 
 def test_nested_lod_selection_and_whole_store_ratio_are_reported(
