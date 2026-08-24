@@ -1061,11 +1061,10 @@ def load_dataset_bundle(
         # There are TWO contracts now (`sha256` = the repo's copy,
         # `hosted_sha256` = the record's), and `ensure_dataset` accepts bytes
         # satisfying either — so no single field is guaranteed to describe what
-        # actually landed. Both are folded into the key when they DISAGREE, so
-        # that whichever copy is in the cache, a change to it changes the stamp.
-        # When they agree, or there is no hosted pin, the key is byte-identical
-        # to before: no spurious re-extraction for the datasets that never
-        # diverged.
+        # actually landed. Both are folded into the key when they DISAGREE, so a
+        # change to either manifest contract changes the extraction stamp. When
+        # they agree, or there is no hosted pin, the key is byte-identical to
+        # before: no spurious re-extraction for datasets that never diverged.
         files, _ = resolve_variant(name, dataset_spec(name, manifest), None)
         entry = next((e for e in files if e.get("name") == bundle_name), {})
         sha = entry.get("sha256")

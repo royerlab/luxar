@@ -48,6 +48,7 @@ namespace, ``<dataset>/local/<file>``, which the fetch never looks at (#1618).
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from functools import lru_cache
 from pathlib import Path
@@ -352,11 +353,37 @@ def _accepted_contract(
     Hosted is tried first so the canonical answer is the one reported when both
     would match — which is every case where the two pins agree.
     """
-    if _matches(path, hosted_sha, verbose):
-        return "hosted"
-    if _matches(path, sha, verbose):
-        return "local"
-    return None
+    if hosted_sha is None:
+        return "local" if _matches(path, sha, verbose) else None
+    if sha is None or hosted_sha == sha:
+        return "hosted" if _matches(path, hosted_sha, verbose) else None
+    if not path.is_file():
+        return None
+
+    with asection(f"Verifying {path.name}") if verbose else _null_ctx():
+        if verbose:
+            aprint("Computing SHA256...")
+        digest = hashlib.sha256()
+        with open(path, "rb") as file:
+            for chunk in iter(lambda: file.read(8192 * 128), b""):
+                digest.update(chunk)
+        actual = digest.hexdigest()
+
+        if actual == hosted_sha:
+            accepted = "hosted"
+        elif actual == sha:
+            accepted = "local"
+        else:
+            if verbose:
+                aprint("❌ SHA256 mismatch!")
+                aprint(f"   Expected hosted:  {hosted_sha}")
+                aprint(f"   Expected in-repo: {sha}")
+                aprint(f"   Actual:           {actual}")
+            return None
+
+        if verbose:
+            aprint(f"✓ SHA256 verified: {actual}")
+        return accepted
 
 
 def _resolve_from_cache(

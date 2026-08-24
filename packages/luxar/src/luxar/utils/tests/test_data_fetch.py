@@ -1263,8 +1263,9 @@ def _write_bundle(path: Path, members: dict[str, bytes]) -> None:
             zf.writestr(name, blob)
 
 
+@pytest.mark.parametrize("hosted_mode", ["agree", "diverge"])
 def test_load_dataset_bundle_verifies_the_outer_zip_then_extracts(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, hosted_mode
 ):
     """The bundle is checksum-verified, then its members are extracted and loaded.
 
@@ -1283,6 +1284,7 @@ def test_load_dataset_bundle_verifies_the_outer_zip_then_extracts(
     bundle = lfs_dir / "b.gsplats.zarr.zip"
     _write_bundle(bundle, inner)
     sha = hashlib.sha256(bundle.read_bytes()).hexdigest()
+    hosted_sha = sha if hosted_mode == "agree" else "f" * 64
 
     manifest = {
         "schema_version": 1,
@@ -1297,6 +1299,7 @@ def test_load_dataset_bundle_verifies_the_outer_zip_then_extracts(
                     {
                         "name": "b.gsplats.zarr.zip",
                         "sha256": sha,
+                        "hosted_sha256": hosted_sha,
                         "bytes": bundle.stat().st_size,
                     }
                 ],
@@ -1327,7 +1330,12 @@ def test_load_dataset_bundle_verifies_the_outer_zip_then_extracts(
     assert loaded[0][0].read_bytes() == bundle.read_bytes()
     # The extracted frames are keyed on the digest that was just verified, not on
     # a (size, mtime) guess a same-size re-upload could reproduce.
-    assert loaded[0][1]["stamp"] == f"sha256:{sha}"
+    expected_stamp = (
+        f"sha256:{sha}"
+        if hosted_sha == sha
+        else f"sha256:{sha}+{hosted_sha}"
+    )
+    assert loaded[0][1]["stamp"] == expected_stamp
 
 
 def test_load_dataset_bundle_rejects_a_bundle_that_is_not_a_manifest_file(
@@ -1564,14 +1572,27 @@ def test_a_divergent_pin_does_not_churn_the_cache_on_the_second_call(fake_repo):
     assert second.stat().st_mtime == stat_before.st_mtime, "file was rewritten"
 
 
-def test_a_divergent_pin_is_reported_not_silently_accepted(fake_repo, capsys):
+def test_a_divergent_pin_is_reported_not_silently_accepted(
+    fake_repo, capsys, monkeypatch
+):
     """Serving the older generation is allowed, but it has to be said out loud."""
     manifest, cache = fake_repo
     _diverge(manifest)
+    real_sha256 = hashlib.sha256
+    hash_passes = 0
+
+    def _counting_sha256(*args, **kwargs):
+        nonlocal hash_passes
+        hash_passes += 1
+        return real_sha256(*args, **kwargs)
+
+    monkeypatch.setattr(hashlib, "sha256", _counting_sha256)
 
     ensure_dataset("gsplats_toy", manifest=manifest, cache_root=cache, verbose=True)
 
     out = capsys.readouterr().out
+    assert hash_passes == 1, out
+    assert "SHA256 mismatch" not in out, out
     assert "hosted_sha256 differs" in out, out
 
 
