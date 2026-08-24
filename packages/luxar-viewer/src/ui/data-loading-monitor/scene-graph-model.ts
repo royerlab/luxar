@@ -41,9 +41,14 @@ function emptySceneGraphState(): SceneGraphState {
  * here — a plain `return 0` would leave the new type's elements out of every
  * dataset total with nothing to explain why.
  *
- * The integer check is deliberate: these counts come straight from zarr attrs,
- * so only a non-negative integer may enter the totals. This rejects `NaN`,
- * infinity, negative/fractional counts, and truthy non-numbers.
+ * The tail still returns 0 rather than the unhandled value: breaking at compile
+ * time is the point, but at runtime a count must stay a number or it poisons
+ * every total it is summed into.
+ *
+ * The integer check and not `?? 0` / `|| 0`: these counts are read straight
+ * off zarr attrs with a bare cast (`scene-graph-converter.ts`), so only a
+ * non-negative integer may enter the totals. This rejects `NaN`, infinity,
+ * negative/fractional counts, and truthy non-numbers.
  */
 function elementCountOf(node: SceneGraphNode, type: GeometryTypeName): number {
   if (node.type !== type) return 0;
@@ -133,6 +138,7 @@ export class SceneGraphModel {
   /**
    * Merge the latest path counts into geometry nodes in place. Paths absent
    * from the latest walk are reset to `undefined`, preventing stale tooltips.
+   * Mesh is skipped because it loads whole and has no per-node visible-face field.
    */
   syncVisibleCountsIntoTree(): void {
     const index = this.ensureSceneGraphNodeIndex();
