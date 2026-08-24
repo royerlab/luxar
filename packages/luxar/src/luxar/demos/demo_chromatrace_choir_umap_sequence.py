@@ -72,7 +72,7 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import add_demo_caption, launch_viewer, parse_path_arg
 from luxar.demos._cinematic_camera import pull_in
-from luxar.utils._umap_utils import format_label
+from luxar.demos._support._umap_utils import format_label
 from luxar.utils.paths import get_demos_output_dir
 
 CACHE_DIR = Path.home() / ".cache" / "luxar" / "chromatrace"
