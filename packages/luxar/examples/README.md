@@ -21,6 +21,9 @@ luxar serve <generated_zarr_path> --viewer
 
 Each script prints the absolute output path on completion. Defaults to
 `datasets/examples/` via `luxar.utils.paths.get_examples_output_dir()`.
+`make run-examples` fingerprints these builders together with Luxar's production
+Python writer code, so repeated runs are no-ops until the fixture producer
+changes. The Makefile E2E targets invoke this check automatically.
 
 ## Index
 
