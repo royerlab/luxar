@@ -83,7 +83,8 @@ therefore background-relative. `--floor` is ON by default (`auto`):
   with no pedestal).
 - `pNN` — subtract that percentile of non-zero voxels, e.g. `--floor p10`.
 - a plain number — subtract a fixed value, e.g. `--floor 110`.
-- `none` or `0` — disable (legacy hard-min behaviour; use to reproduce old numbers).
+- `none` or `0` — disable (legacy hard-min behaviour; use to reproduce old numbers
+  or when `auto` lands inside the specimen on a near-all-zero stack; see below).
 
 `cal` applies the same `--floor` up front so K* is measured on floor-suppressed
 data, matching how you fit.
@@ -220,7 +221,7 @@ outright, because it cannot damage what it keeps:
 There is no trade-off to tune: the signal columns are exactly 1.0000 at every
 threshold *by construction*, while NLM dimmed peaks by 6–22%. Only the noise
 column moves, and it plateaus quickly — so take the knee. Downstream the size
-filter gave equal or better foreground PSNR almost everywhere — NLM edged it
+filter gave equal or better in-signal PSNR almost everywhere — NLM edged it
 19.66 vs 19.51 at t=0 and 19.04 vs 18.77 at t=150 — while using ~1/10 the
 splats at early timepoints and about half over the whole archive. The fitted
 result reproduced 1–11% of out-of-signal energy against NLM's 22–50%.
@@ -246,7 +247,8 @@ stack. Where a volume is ~99% exact zeros, a held-out voxel is best predicted by
 predicting zero, so maximal smoothing wins its cross-validation. With the grid
 widened, it answered 0.055–0.225 on one stack depending on which slice it was
 pointed at, every value at or past the point where the filter ate signal — and
-its default `h_range` stops at 0.08, so a default call returns a pinned ceiling.
+its default `h_range` stops at 0.08, so a default call pins at the ceiling wherever
+the answer is above it.
 **An estimator that answers at the edge of its own grid has told you nothing.**
 
 ### Symptom → knob
