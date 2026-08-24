@@ -1179,6 +1179,11 @@ def write_scene(
                     opacity=0.18,
                     intensity=0.38 * NODE_INTENSITY_SCALE,
                     labels=edge_labels,
+                    # Copy, but deliberately no link: an edge names a PAIR
+                    # ("HSPA4 → POU6F2"), and no single UniProt URL addresses a
+                    # pair — the protein node already links each one. Copying
+                    # beats a pick that silently does nothing.
+                    copy="{hover_label}",
                     layer=True,
                     visible=False,
                 )

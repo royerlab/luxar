@@ -806,6 +806,12 @@ def build_scene(
                     opacity=0.40,
                     intensity=0.5,
                     labels=edge_labels,
+                    # Copy, but deliberately no link: an edge is a PAIR
+                    # ("EXOC3L2 ⇄ TNFSF18"), and no single GeneCards or UniProt
+                    # URL addresses a pair — the Proteins node already links each
+                    # gene individually. Copying the pair is the honest action,
+                    # and beats a pick that silently does nothing.
+                    copy="{hover_label}",
                     layer=True,
                 )
 

@@ -1422,6 +1422,11 @@ def build_scene(
                     opacity=0.05,
                     intensity=0.55,
                     labels=edge_labels,
+                    # Copy, but deliberately no link: a relationship names a
+                    # PAIR of autonomous systems, and bgp.he.net/AS<n> takes a
+                    # single AS — the Autonomous Systems node already links each
+                    # one. Copying the pair beats a pick that does nothing.
+                    copy="{hover_label}",
                     layer=True,
                 )
 
