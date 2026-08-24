@@ -1872,6 +1872,21 @@ class TestErrors:
 
 
 class TestTriangleMeshInvariants:
+    def test_dimension_names_must_match_vertex_columns(self) -> None:
+        with pytest.raises(ValueError, match="one dimension name per column"):
+            TriangleMesh(
+                vertices=np.zeros((3, 4), dtype=np.float32),
+                faces=np.array([[0, 1, 2]], dtype=np.uint32),
+            )
+
+    def test_first_three_dimensions_must_be_spatial(self) -> None:
+        with pytest.raises(ValueError, match="must be x, y, z"):
+            TriangleMesh(
+                vertices=np.zeros((3, 3), dtype=np.float32),
+                faces=np.array([[0, 1, 2]], dtype=np.uint32),
+                dimension_names=("a", "b", "c"),
+            )
+
     def test_out_of_range_face_index_is_named(self) -> None:
         with pytest.raises(ValueError, match="out of range"):
             TriangleMesh(

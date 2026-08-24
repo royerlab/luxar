@@ -6,17 +6,18 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Sequence
 
-import numcodecs
-import zarr
-
 import luxar
+from luxar.utils.source_fingerprints import (
+    fingerprint_production_sources,
+    fingerprint_source_files,
+    store_writer_environment,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 OUTPUT_DIR = REPO_ROOT / "datasets/examples"
@@ -26,40 +27,24 @@ MARKER_VERSION = 2
 STALE_EXIT_CODE = 3
 
 
-def _source_files(repo_root: Path) -> list[Path]:
-    examples = (repo_root / "packages/luxar/examples").glob("*.py")
-    production = (
-        path
-        for path in (repo_root / "packages/luxar/src/luxar").rglob("*.py")
-        if "tests" not in path.parts and "__pycache__" not in path.parts
-    )
-    fixed = [repo_root / "pyproject.toml", repo_root / "scripts/run_examples.py"]
-    return sorted(
-        (path for path in [*examples, *production, *fixed] if path.is_file()),
-        key=lambda path: path.relative_to(repo_root).as_posix(),
-    )
-
-
 def source_fingerprint(repo_root: Path = REPO_ROOT) -> str:
     """Hash example builders and the production Python code that writes them."""
+    package_root = repo_root / "packages/luxar/src/luxar"
+    production = fingerprint_production_sources(package_root)
+    examples = (repo_root / "packages/luxar/examples").glob("*.py")
+    fixed = [repo_root / "pyproject.toml", repo_root / "scripts/run_examples.py"]
+    supplemental = fingerprint_source_files(
+        repo_root,
+        (path for path in [*examples, *fixed] if path.is_file()),
+    )
     digest = hashlib.sha256()
-    for path in _source_files(repo_root):
-        relative = path.relative_to(repo_root).as_posix().encode()
-        digest.update(len(relative).to_bytes(4, "big"))
-        digest.update(relative)
-        payload = path.read_bytes()
-        digest.update(len(payload).to_bytes(8, "big"))
-        digest.update(payload)
+    if production:
+        digest.update(bytes.fromhex(production))
+    digest.update(bytes.fromhex(supplemental))
     return digest.hexdigest()
 
 
-def build_environment() -> dict[str, str | None]:
-    """Return environment inputs that affect the generated store encoding."""
-    return {
-        "LUXAR_ZARR_FORMAT": os.environ.get("LUXAR_ZARR_FORMAT"),
-        "numcodecs": numcodecs.__version__,
-        "zarr": zarr.__version__,
-    }
+build_environment = store_writer_environment
 
 
 def luxar_is_from_repo(repo_root: Path = REPO_ROOT) -> bool:
