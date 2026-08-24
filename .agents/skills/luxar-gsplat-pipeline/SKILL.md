@@ -121,10 +121,13 @@ the **unfloored** original:
 | p95   | 39,859 | 40.33  | 27.04 dB   | 23.0% |
 | p99   | 15,483 | 35.81  | **18.86 dB** | **0.6%** |
 
-`auto` is within 0.25 dB of no floor at all, so pedestal removal is essentially
-free; all the damage comes from raising the floor. `p99` also produced a third of
-the splats from the same seeds — the structure was clipped to zero before fitting
-began.
+On this light-sheet crop, `auto` is within 0.25 dB of no floor at all, so pedestal
+removal is essentially free; all the damage comes from raising the floor. `p99`
+also produced a third of the splats from the same seeds — the structure was
+clipped to zero before fitting began. The exception is a near-all-zero stack:
+`auto` estimates the histogram mode of the **non-zero** voxels, so when that
+population is signal the floor lands inside it. On the sparse confocal timelapse,
+turning it off gained up to 10.7 dB foreground PSNR; see "Denoising before a fit".
 
 A high floor **looks better in a MIP** (the haze is gone and the render is
 crisper than its own source). That is the trap: judge a floor on foreground /
@@ -252,7 +255,7 @@ An index into the measured sections, not a substitute for them.
 
 | Symptom | Reach for |
 | --- | --- |
-| Thin/faint structure missing | `--floor auto`, never a higher floor — "Background floor suppression" above — then raise K |
+| Thin/faint structure missing | start with `--floor auto`, never a higher floor; on a near-all-zero stack also test `--floor none` — "Background floor suppression" above — then raise K |
 | Noise survives a denoising pass that measured well | you measured displacement, not removal — "Denoising before a fit"; on isolated-voxel noise use a component-size filter |
 | Background haze survives | the viewer's display window and opacity — same section; or `filter --soft-highpass p90` (the `luxar-gsplat-edit` skill) |
 | Thin filaments render as chains of beads | the six-knob schedule under "BOTH entry points default to 1000 iters" below. NOT more seeds (measured *worse*), and NOT a preset: a preset moves `n_iters`, `early_stop_patience` and `max_eccentricity` — but nothing on this schedule, so `enable_dynamic_ops`, `patience` (the plateau LR-decay one, default 15, NOT `early_stop_patience`) and `l1_diag` all stay where they are and you must set them yourself |
