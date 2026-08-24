@@ -511,7 +511,7 @@ class TestMeshLod:
                 ],
             )
             assert old.exit_code != 0
-            pointer = _plain(normalized_cli_output(old))
+            pointer = normalized_cli_output(old)
             assert "--subst-method cluster" in pointer, pointer
             # A bare "No such option" would also be a non-zero exit, so assert the
             # replacement AND that typer never got to reject the flag itself.
@@ -2103,7 +2103,7 @@ class TestMeshLodRecipeGateThroughTheRealCLI:
             f"{flag} {value} was accepted under --recipe reveal; the gate is "
             "inferring 'given' from the value again"
         )
-        message = _plain(normalized_cli_output(result))
+        message = normalized_cli_output(result)
         assert "--recipe levels" in message, message
         assert not out.exists(), "a refused invocation must write nothing"
 
@@ -2124,7 +2124,7 @@ class TestMeshLodRecipeGateThroughTheRealCLI:
         assert result.exit_code != 0, (
             f"{flag} {value} was accepted under the default recipe"
         )
-        message = _plain(normalized_cli_output(result))
+        message = normalized_cli_output(result)
         assert "--recipe reveal" in message or "--subst-method" in message
         assert not out.exists()
 

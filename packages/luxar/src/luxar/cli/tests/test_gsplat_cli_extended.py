@@ -8854,7 +8854,7 @@ class TestRefineVolumeRejectsARescaledFrame:
         result, out = self._invoke(runner, tmp_path, "voxel_size: [4.0, 1.0]\n", "real")
         output = normalized_cli_output(result)
         assert result.exit_code != 0, output
-        plain = _plain(output)
+        plain = output
         assert "--refine volume" in plain and "voxel_size" in plain
         # Refused BEFORE any fitting, like its --downscale sibling.
         assert not out.exists()
