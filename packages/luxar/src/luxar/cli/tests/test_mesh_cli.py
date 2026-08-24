@@ -94,13 +94,13 @@ class TestMeshImport:
         # the count here is what would catch a regression that skipped it.
         assert int(node.faces.max()) < 4
 
-    def test_imports_a_time_indexed_directory_as_one_4d_mesh(
+    def test_imports_a_time_and_channel_indexed_vtp_directory_as_one_5d_mesh(
         self, tmp_path: Path
     ) -> None:
         source = tmp_path / "meshes" / "cells"
         source.mkdir(parents=True)
-        write_ply_binary(source / "cell-T0001.ply", GT)
-        write_ply_binary(source / "cell-T0003.ply", GT)
+        WRITERS["vtp"](source / "P12_Ch0-registered-T0001.vtp", GT)
+        WRITERS["vtp"](source / "P12_Ch0-registered-T0003.vtp", GT)
         out = tmp_path / "cells.luxar.zarr"
 
         result = runner.invoke(
@@ -110,17 +110,16 @@ class TestMeshImport:
                 "import",
                 str(source),
                 str(out),
-                "--pattern",
-                "*.ply",
                 "--no-center",
             ],
         )
         assert result.exit_code == 0, result.output
 
         node = LuxarScene.load(out).get_mesh("mesh")
-        assert node.vertices.shape == (8, 4)
+        assert node.vertices.shape == (8, 5)
         assert node.faces.shape == (8, 3)
         assert np.array_equal(np.unique(node.vertices[:, 3]), [1, 3])
+        assert np.array_equal(np.unique(node.vertices[:, 4]), [0])
         assert np.array_equal(node.faces[4:], node.faces[:4] + 4)
         dimensions = zarr.open_group(out, mode="r").attrs["scene_dimensions"]
         assert [item["name"] for item in dimensions["dimensions"]] == [
@@ -128,9 +127,12 @@ class TestMeshImport:
             "y",
             "z",
             "t",
+            "c",
         ]
         assert dimensions["dimensions"][3]["discrete"] is True
         assert dimensions["dimensions"][3]["display"] is False
+        assert dimensions["dimensions"][4]["discrete"] is True
+        assert dimensions["dimensions"][4]["display"] is False
 
     def test_centering_is_on_by_default_and_can_be_turned_off(
         self, fixtures: dict[str, Path], tmp_path: Path
@@ -299,6 +301,22 @@ class TestMeshImport:
         result = runner.invoke(app, ["mesh", "--help"])
         assert result.exit_code == 0
         assert "import" in result.stdout
+
+    def test_the_group_help_names_every_dialect_it_reads(self) -> None:
+        """The `luxar mesh` blurb enumerates the formats, so it goes stale silently.
+
+        No gate catches it: `test_docs_command_coverage` checks command paths and option
+        spellings, not help PROSE. A dialect the importer supports but the blurb omits
+        reads as unsupported to anyone who looks at `--help` first.
+        """
+        result = runner.invoke(app, ["mesh", "--help"])
+        assert result.exit_code == 0
+        blurb = _plain(result.stdout).lower()
+        missing = [fmt for fmt in MESH_FORMATS if fmt not in blurb]
+        assert not missing, (
+            f"`luxar mesh --help` does not mention {missing}, which "
+            "`luxar mesh import` reads"
+        )
 
 
 def _grid_mesh(n: int = 24) -> tuple[np.ndarray, np.ndarray]:
