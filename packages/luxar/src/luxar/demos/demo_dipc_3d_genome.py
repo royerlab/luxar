@@ -414,9 +414,11 @@ HAPLOTYPE_NAMES = ["Maternal", "Paternal"]
 # hg19 chromosome metadata; this must not be inferred from species at link time.
 GENOME_ASSEMBLY = "hg19"
 
-# The hover label rounds a bead coordinate to 0.1 Mb, so link to one explicit
-# 100 kb browser window around that bead. UCSC ranges are 1-based and inclusive.
-UCSC_WINDOW_BP = 100_000
+# Dip-C samples this structure at an approximately 20 kb bead pitch, so link to
+# one bead-wide browser window centered on the selected bead. UCSC ranges are
+# 1-based and inclusive.
+BEAD_PITCH_BP = 20_000
+UCSC_WINDOW_BP = BEAD_PITCH_BP
 
 #: Colour of the always-visible "all DNA" scaffold. Deliberately neutral grey
 #: and slightly cool, so it never competes with a chromosome hue: every
@@ -432,7 +434,10 @@ def _position_gradient(base: np.ndarray, n: int) -> np.ndarray:
 
 
 def _ucsc_region(chrom: str, position: int | float) -> str:
-    """Return an exact-width UCSC region containing one Dip-C bead."""
+    """Return an exact-width UCSC region containing one Dip-C bead.
+
+    Windows crossing a chromosome end are left for UCSC to clip.
+    """
     center = int(position)
     start = max(1, center - UCSC_WINDOW_BP // 2)
     end = start + UCSC_WINDOW_BP - 1

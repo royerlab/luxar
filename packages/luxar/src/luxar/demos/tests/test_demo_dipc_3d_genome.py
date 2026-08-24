@@ -37,6 +37,7 @@ load_polylines_npz = _demo.load_polylines_npz
 build_scene = _demo.build_scene
 MIN_BEADS_PER_ARM = _demo.MIN_BEADS_PER_ARM
 GENOME_ASSEMBLY = _demo.GENOME_ASSEMBLY
+BEAD_PITCH_BP = _demo.BEAD_PITCH_BP
 UCSC_WINDOW_BP = _demo.UCSC_WINDOW_BP
 _ucsc_region = _demo._ucsc_region
 _haplotype_geometry = _demo._haplotype_geometry
@@ -91,11 +92,14 @@ class TestChromosomeColor:
 class TestUcscRegion:
     def test_records_source_assembly_and_exact_window(self) -> None:
         assert GENOME_ASSEMBLY == "hg19"
-        assert UCSC_WINDOW_BP == 100_000
-        assert _ucsc_region("1", 12_340_000) == "chr1:12290000-12389999"
+        assert UCSC_WINDOW_BP == BEAD_PITCH_BP
+        assert _ucsc_region("1", 12_340_000) == "chr1:12330000-12349999"
 
     def test_shifts_window_at_chromosome_start(self) -> None:
-        assert _ucsc_region("X", 20_000) == "chrX:1-100000"
+        assert _ucsc_region("X", 5_000) == "chrX:1-20000"
+
+    def test_leaves_chromosome_end_clipping_to_ucsc(self) -> None:
+        assert _ucsc_region("7", 159_140_000) == "chr7:159130000-159149999"
 
     def test_haplotypes_share_browser_locus_but_not_label(self) -> None:
         base = {
