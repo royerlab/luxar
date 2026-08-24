@@ -76,6 +76,7 @@ export class MonitorProviderRegistry {
   setCacheTelemetryState(state: CacheTelemetryState): void {
     this.cacheTelemetryState = state;
     log.info(Modules.DATA_MONITOR, `Cache telemetry state: ${state.kind}`);
+    // Cache tab structure may change between disabled/enabled states.
     this.markStructureDirty();
   }
 
@@ -97,6 +98,8 @@ export class MonitorProviderRegistry {
     this.gpuBufferPoolProvider = provider;
     if (provider) {
       log.info(Modules.DATA_MONITOR, 'GPU buffer pool provider connected');
+      // Provider availability changes the memory tab structure
+      // (from "Not initialized" to full table)
       this.markStructureDirty();
     }
   }
@@ -105,6 +108,7 @@ export class MonitorProviderRegistry {
     this.profiler = profiler;
     if (profiler) {
       log.info(Modules.DATA_MONITOR, 'Update profiler connected');
+      // Profiler availability changes the performance tab structure
       this.markStructureDirty();
     }
   }
