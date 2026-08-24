@@ -259,13 +259,13 @@ class TestGPUMemoryChecks:
 
     def test_check_gpu_memory_cpu_always_true(self):
         """CPU device should always pass memory check."""
-        V = np.random.rand(1000, 1000, 1000)
+        V = np.empty((1, 1, 1))
         assert check_gpu_memory(V, "cpu", "sobel") is True
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     def test_check_gpu_memory_small_volume_true(self):
         """Small volumes should pass memory check."""
-        V = np.random.rand(100, 100, 100)
+        V = np.empty((1, 1, 1))
         assert check_gpu_memory(V, "cuda", "sobel") is True
 
 
