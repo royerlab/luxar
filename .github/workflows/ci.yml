@@ -257,7 +257,7 @@ jobs:
   # dead box. The watchdog stays alive until the queue drains and fails every
   # error in its own plumbing toward NOT cancelling.
   queue-watchdog:
-    needs: [changes, pick-runner]
+    needs: [pick-runner]
     if: needs.pick-runner.outputs.label == 'obsidian'
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -277,9 +277,13 @@ jobs:
           # push or the nightly, 2 on a PR — and a merge landing during the
           # nightly now queues both sets at once, since the two no longer cancel
           # each other — draining) — leave the run alone.
-          end=$(( $(date +%s) + 25 * 60 ))
+          start=$(date +%s)
+          end=$(( start + 25 * 60 ))
+          materialize_end=$(( start + 3 * 60 ))
           seen_obsidian=0
-          while [ "$(date +%s)" -lt "$end" ]; do
+          while true; do
+            now=$(date +%s)
+            if [ "$now" -ge "$end" ]; then break; fi
             jobs=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?per_page=100") \
               || jobs=__api_error__
             if [ "$jobs" = "__api_error__" ]; then
@@ -302,25 +306,34 @@ jobs:
                 echo "every obsidian-routed job has been picked up — done"
                 exit 0
               fi
-              # `changes` and this hosted job complete independently; even with
-              # both in `needs`, the jobs API can lag the newly eligible matrix.
+              if [ "$now" -ge "$materialize_end" ]; then
+                echo "obsidian-routed jobs did not appear during the startup grace — done"
+                exit 0
+              fi
+              # The jobs API can lag the newly eligible matrix after pick-runner.
               echo "obsidian-routed jobs are not visible yet; retrying"
               sleep 30; continue
             fi
-            hb=$(gh api "repos/${GITHUB_REPOSITORY}/actions/variables/LUXAR_CI_HEARTBEAT" \
-              --jq .value 2>/dev/null) || hb=""
-            if ! echo "$hb" | grep -qE '^[0-9]+$'; then
-              echo "heartbeat unreadable ('$hb'); not cancelling on a fluke — retrying"
+            heartbeat=$(gh api "repos/${GITHUB_REPOSITORY}/actions/variables/LUXAR_CI_HEARTBEAT" \
+              2>/dev/null) || heartbeat=""
+            hb=$(echo "$heartbeat" | jq -r '.value // empty') || hb=""
+            hb_updated=$(echo "$heartbeat" | jq -r 'try (.updated_at | fromdateiso8601) catch empty') \
+              || hb_updated=""
+            if ! echo "$hb" | grep -qE '^[0-9]+$' \
+              || ! echo "$hb_updated" | grep -qE '^[0-9]+$'; then
+              echo "heartbeat unreadable ('$heartbeat'); not cancelling on a fluke — retrying"
               sleep 30; continue
             fi
-            age=$(( $(date +%s) - hb ))
+            age=$(( now - hb ))
+            update_age=$(( now - hb_updated ))
             # Same freshness window as pick-runner, for the same reasons.
             if [ "$hb" -gt 0 ] && [ "$age" -ge -30 ] && [ "$age" -lt 180 ]; then
               echo "still queued on a live box (heartbeat ${age}s old): $queued"
-            elif [ "$hb" -eq 0 ] && [ -n "$running" ]; then
-              echo "capacity heartbeat is 0 while obsidian jobs are running ($running); still queued: $queued"
+            elif [ "$hb" -eq 0 ] && [ "$update_age" -ge -30 ] \
+              && [ "$update_age" -lt 180 ] && [ -n "$running" ]; then
+              echo "capacity heartbeat is 0 but was refreshed ${update_age}s ago while obsidian jobs are running ($running); still queued: $queued"
             else
-              echo "::error::obsidian heartbeat went stale (age ${age}s, hb=$hb) with jobs still queued ($queued) — cancelling the run; re-run all jobs to route to GitHub-hosted"
+              echo "::error::obsidian heartbeat went stale (value age ${age}s, update age ${update_age}s, hb=$hb) with jobs still queued ($queued) — cancelling the run; re-run all jobs to route to GitHub-hosted"
               gh api -X POST "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/cancel"
               # The cancel sweeps this job too; don't fall through to success
               # while it lands.
