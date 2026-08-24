@@ -359,9 +359,9 @@ def pins_of(datasets: dict) -> dict[str, tuple[str, int]]:
     """``filename -> (record, hosted bytes)`` per zenodo file.
 
     Deliberately the HOSTED side of each entry: this map exists to be compared
-    against a live deposition, whose API exposes md5 rather than sha256. Content
-    identity is therefore checked by size here; a same-size swap is out of scope.
-    See :func:`hosted_size`.
+    against a live deposition, whose API exposes md5 rather than sha256. Only
+    size can therefore be compared here; a same-size swap is out of scope. See
+    :func:`hosted_size`.
 
     Uses :func:`files_of`, so a variant's files are included on the same footing
     as a dataset's own — h2afva's pinned 253tp is only reachable that way.
@@ -393,6 +393,11 @@ def human_bytes(n: int) -> str:
     """Match the units the record descriptions are written in (MB, then GB)."""
     mb = n / 1e6
     return f"{mb / 1000:.1f} GB" if mb >= 1000 else f"{mb:.1f} MB"
+
+
+def _description_size_claims(desc: str) -> list[re.Match[str]]:
+    """Rendered ``<li><code>name</code> (N MB)</li>`` size claims."""
+    return list(re.finditer(r"<li><code>([^<]+)</code>\s*\(([\d.]+)\s?([MG]B)", desc))
 
 
 def _check_pins(
@@ -451,7 +456,7 @@ def _check_description(
     """
     fails: list[str] = []
     warns: list[str] = []
-    claims = list(re.finditer(r"<li><code>([^<]+)</code>\s*\(([\d.]+)\s?([MG]B)", desc))
+    claims = _description_size_claims(desc)
     for mt in claims:
         entry = mt.group(1)
         claimed_value = float(mt.group(2))
@@ -462,8 +467,10 @@ def _check_description(
         if size is None:
             warns.append(f"{tag} description names {entry}, not resolvable to a pin")
         else:
-            actual_value = size / (1e9 if unit == "GB" else 1e6)
-            if round(claimed_value, 1) == round(actual_value, 1):
+            actual_value_text, actual_unit = human_bytes(size).split()
+            if unit == actual_unit and round(claimed_value, 1) == round(
+                float(actual_value_text), 1
+            ):
                 continue
             fails.append(
                 f"{tag} description says {entry} is {claimed}, "
@@ -612,9 +619,7 @@ def _audit_live_depositions(manifest: dict, depositions: dict[str, dict]) -> int
         all_fails += fails
         all_warns += warns
         description = (dep.get("metadata") or {}).get("description") or ""
-        claim_counts[rec] = len(
-            re.findall(r"<li><code>[^<]+</code>\s*\([\d.]+\s?[MG]B", description)
-        )
+        claim_counts[rec] = len(_description_size_claims(description))
 
     print(f"  records checked: {len(depositions)}   pins: {len(pins)}")
     for rec, count in sorted(claim_counts.items()):

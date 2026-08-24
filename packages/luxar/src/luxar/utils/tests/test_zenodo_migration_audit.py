@@ -416,6 +416,30 @@ def test_description_size_claims_compare_at_one_decimal(
     assert fails == []
 
 
+def test_description_size_claim_still_has_to_use_the_canonical_unit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Numeric equivalence cannot hide a stale MB/GB presentation."""
+    audit = _audit_module(monkeypatch)
+    datasets = {
+        "ds": {
+            "bucket": "zenodo",
+            "record": "cc-by",
+            "files": [{"name": "a.zip", "sha256": "aa", "bytes": 5_000_000_000}],
+        }
+    }
+    dep = _dep(
+        [{"filename": "a.zip", "filesize": 5_000_000_000}],
+        desc="<li><code>ds</code> (5000 MB)</li><table><tr>h</tr><tr>a</tr></table>",
+    )
+
+    fails, _ = audit.check_deposition(
+        "cc-by", dep, audit.pins_of(datasets), audit.dataset_totals(datasets), {}
+    )
+
+    assert any("description says ds is 5000 MB, actually 5.0 GB" in f for f in fails)
+
+
 def test_files_with_no_description_size_claim_are_warned(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
