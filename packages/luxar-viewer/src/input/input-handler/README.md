@@ -73,7 +73,7 @@ input-handler/
 3. Call `registerAllKeyBindings` (`key-bindings/`) with three records:
    `deps`, `commands`, `panelGetters`. This is the only place per-context
    bindings are added to the manager, including animation shortcuts whose
-   handlers remain no-ops until an animation manager exists.
+   handlers decline until a selected dimension and animation manager exist.
 4. Construct `PanelCoordinator` (`commands/`) so Escape and the
    panel-cycle binding have a single drain.
 

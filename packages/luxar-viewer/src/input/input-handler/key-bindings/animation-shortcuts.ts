@@ -16,9 +16,8 @@
  * handler bodies so the InputHandler can wire the registration
  * before scene load (the bindings decline until both sides are ready).
  *
- * Behavior is identical to the inlined `registerAnimationShortcuts`
- * — same key codes, same NAVIGATION context, same log emojis +
- * messages, same preventDefault setting.
+ * The bindings retain the inlined `registerAnimationShortcuts` key codes,
+ * NAVIGATION context, logging, and preventDefault settings.
  *
  * @module input/handlers/animation-shortcuts
  */
