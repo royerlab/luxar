@@ -217,13 +217,14 @@ SUPPRESSING THE SHOT NOISE (and a metric that lied about it):
     0.9999 amplitude retention keeps modelling it. Deleting the spike instead
     leaves the budget nothing to spend on but cells.
 
-    NLM does win one square -- 19.04 against 18.77 at t=150, with 10% more
-    splats -- and it is left in rather than dropped. By that timepoint only 2.7%
-    of the frame's energy is noise, so there is little for a size filter to
-    remove and the comparison is nearly two unfiltered fits; the 0.27 dB is the
-    cost of having deleted a few small real objects along with the specks. That
-    is the honest shape of this trade, and it is worth seeing next to the 3x
-    lower out-of-cell energy in the same row.
+    NLM wins cell PSNR in two rows, and both are left in rather than dropped. At
+    t=0 it buys 0.15 dB (19.66 against 19.51), but uses 17x the splats and puts
+    back 46x the out-of-cell energy. At t=150 it buys 0.27 dB (19.04 against
+    18.77) with 10% more splats. By then only 2.7% of the frame's energy is
+    noise, so there is little for a size filter to remove and the comparison is
+    nearly two unfiltered fits; the gain is the cost of deleting a few small
+    real objects along with the specks. That is the honest shape of this trade,
+    next to the 3x lower out-of-cell energy in the same row.
 
     Note how the splat count tracks the specimen rather than the noise: 1,369 at
     t=0 where a third of the energy was noise, 18,754 at t=150 where almost none
@@ -284,10 +285,12 @@ AUTHORING FOR THE VIEWER (three traps that only a browser reveals):
 REPRODUCING ANY OF THIS:
     Every table here came from the same shape of experiment: hold everything
     fixed, sweep one knob, and score each arm against the RAW frames. The
-    scoring helper that matters is the connected-component split — cells are
-    components of >= 8 voxels, shot noise is everything else — because it is
-    what separates "the filter removed noise" from "the filter removed signal",
-    which no single PSNR can do.
+    scoring helper that matters is the connected-component split. Both masks
+    use 6-connectivity: the threshold sweep calls components of >= 27 voxels
+    cells, deliberately stricter than every threshold it tests; the rendered-fit
+    table uses >= 8 voxels. Everything smaller is shot noise for that table.
+    This split separates "the filter removed noise" from "the filter removed
+    signal", which no single PSNR can do.
 
     The fits are cached per timepoint under a key that includes every knob that
     changes the result (seeds, iterations, patience, cull retention, floor,
