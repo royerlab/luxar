@@ -169,6 +169,18 @@ def test_present_zenodo_files_have_checksums():
                 assert len(hosted) == 64 and all(
                     c in "0123456789abcdef" for c in hosted
                 ), f"{name}/{f['name']}: {hosted!r} is not a lowercase hex sha256"
+            # `hosted_bytes` travels with it: a hosted digest without a hosted
+            # size leaves the pre-publish gate comparing the LOCAL size against
+            # the record's, which false-fails on every diverged dataset.
+            hosted_bytes = f.get("hosted_bytes")
+            if hosted_bytes is not None:
+                assert isinstance(hosted_bytes, int) and hosted_bytes > 0, (
+                    f"{name}/{f['name']}: hosted_bytes {hosted_bytes!r} is not a "
+                    "positive int"
+                )
+                assert hosted is not None, (
+                    f"{name}/{f['name']}: hosted_bytes without hosted_sha256"
+                )
 
 
 def _file_lists(dataset: dict) -> list[tuple[str, list[dict]]]:
@@ -1675,6 +1687,7 @@ def test_a_hosted_pin_survives_regeneration_when_the_data_is_visible(
                         "sha256": "a" * 64,  # deliberately NOT the on-disk digest
                         "bytes": 1,
                         "hosted_sha256": hosted,
+                        "hosted_bytes": 4242,
                     }
                 ]
             }
@@ -1683,6 +1696,9 @@ def test_a_hosted_pin_survives_regeneration_when_the_data_is_visible(
     entry = mod.build(committed, prune=False)["datasets"]["gsplats_kidney"]["files"][0]
 
     assert entry["hosted_sha256"] == hosted, "hosted pin lost on regeneration"
+    # The SIZE has to survive too — a digest without its size leaves the
+    # pre-publish gate comparing the local size against the record's.
+    assert entry["hosted_bytes"] == 4242, "hosted size lost on regeneration"
     # The local digest is still re-derived from disk — that is the whole point of
     # the split, and it must not be frozen along with the hosted one.
     assert entry["sha256"] == hashlib.sha256(b"kidney-bytes").hexdigest()

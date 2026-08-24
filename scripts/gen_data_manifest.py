@@ -653,8 +653,21 @@ def _prev_files(prev: dict, name: str, variant: Optional[str] = None) -> list[di
     return d.get("files", []) or []
 
 
+#: Per-file keys that describe the HOSTED artifact rather than the in-repo copy.
+#:
+#: Both must be carried, and for the same reason: `bytes` is as ambiguous as
+#: `sha256` was once the two copies differ. Splitting only the digest leaves the
+#: pre-publish gate comparing the LOCAL size against the record's, which reports
+#: a mismatch for every diverged dataset — a confident wrong answer, and enough
+#: of them to trip the gate's own "wrong manifest" heuristic.
+#:
+#: Named explicitly rather than matched as a `hosted_*` prefix, so a typo'd key
+#: is dropped loudly by the drift gate instead of carried forever.
+_HOSTED_KEYS = ("hosted_sha256", "hosted_bytes")
+
+
 def _carry_hosted(found: list[dict], committed: list[dict]) -> list[dict]:
-    """Re-attach each entry's ``hosted_sha256`` from the committed manifest.
+    """Re-attach each entry's hosted-artifact keys from the committed manifest.
 
     The generator can only ever compute the digest of the copy IN THIS REPO —
     ``_checksum`` reads the git-LFS pointer's oid or hashes the bytes. What the
@@ -673,16 +686,14 @@ def _carry_hosted(found: list[dict], committed: list[dict]) -> list[dict]:
     no hosted pin.
     """
     hosted = {
-        e["name"]: e["hosted_sha256"]
+        e["name"]: {k: e[k] for k in _HOSTED_KEYS if e.get(k) is not None}
         for e in committed
-        if e.get("name") and e.get("hosted_sha256")
+        if e.get("name")
     }
+    hosted = {name: keys for name, keys in hosted.items() if keys}
     if not hosted:
         return found
-    return [
-        {**e, "hosted_sha256": hosted[e["name"]]} if e.get("name") in hosted else e
-        for e in found
-    ]
+    return [{**e, **hosted[e["name"]]} if e.get("name") in hosted else e for e in found]
 
 
 def _files_for(name: str, spec: dict, prev: dict, *, prune: bool) -> list[dict]:
