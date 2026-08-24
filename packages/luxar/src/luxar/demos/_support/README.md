@@ -10,14 +10,14 @@ math belong here.
 
 ## Quick Start
 
-Demo modules import shared helpers through the public demo barrel rather than
-reaching into this private package:
+Demo modules import the shared flow-field helpers through the public demo barrel
+rather than reaching into this private package:
 
 ```python
 from luxar.demos import FlowField, cubic_bounds, rk4_step
 ```
 
-`fields.py` provides the frozen `FlowField` dataclass, symmetric cubic bounds,
+`_fields.py` provides the frozen `FlowField` dataclass, symmetric cubic bounds,
 trilinear sampling, normalized flow directions, vectorized RK4 advection, and a
 reference-cube scene helper. The PPI flow-field and zebrahub velocity demos keep
 their own binning, smoothing, caching, and streamline-seeding policies.

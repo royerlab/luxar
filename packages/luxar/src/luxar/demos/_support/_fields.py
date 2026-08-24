@@ -4,7 +4,7 @@ Used by demos that build a smoothed Cartesian vector field over a cubic
 domain and integrate streamlines through it (currently the PPI flow-field
 demo and the zebrahub RNA-velocity-streamlines demo).
 
-The helpers here are deliberately demo-agnostic — they operate on
+The helpers in this private module are deliberately demo-agnostic — they operate on
 ``FlowField`` plus raw points/scenes — so each demo can keep its own
 binning, smoothing, caching, and streamline-seeding policy.
 

@@ -1,6 +1,6 @@
 # Utils Package
 
-The `utils` package provides utility functions for common operations in Luxar, including array manipulation, atomic directory copies, robust downloads, spatial hashing, vector-field helpers, and demo data generation.
+The `utils` package provides utility functions for common operations in Luxar, including array manipulation, atomic directory copies, robust downloads, and demo data generation.
 
 ## Quick Start
 

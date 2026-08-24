@@ -62,7 +62,7 @@ from ._dependencies import (
     substitutive_lod_or_flat,
     survey,
 )
-from ._support.fields import (
+from ._support._fields import (
     FlowField,
     add_reference_cube_to_scene,
     cubic_bounds,
