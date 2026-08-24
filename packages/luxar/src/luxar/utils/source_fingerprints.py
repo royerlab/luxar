@@ -27,9 +27,8 @@ def fingerprint_source_files(root: Path, paths: Iterable[Path]) -> str:
     return digest.hexdigest()
 
 
-@lru_cache(maxsize=None)
-def production_source_fingerprint(package_root: Path | None = None) -> str:
-    """Hash production Luxar Python sources once per package root and process.
+def fingerprint_production_sources(package_root: Path | None = None) -> str:
+    """Hash production Luxar Python sources under one package root.
 
     This deliberately includes ``demos/``, so editing any demo invalidates every
     fingerprinted demo scene. Shared helpers such as ``_globe_common``,
@@ -54,6 +53,12 @@ def production_source_fingerprint(package_root: Path | None = None) -> str:
         return fingerprint_source_files(root, paths)
     except OSError:
         return ""
+
+
+@lru_cache(maxsize=None)
+def production_source_fingerprint(package_root: Path | None = None) -> str:
+    """Hash production sources once per package root and process."""
+    return fingerprint_production_sources(package_root)
 
 
 def store_writer_environment() -> dict[str, str | None]:
