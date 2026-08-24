@@ -676,11 +676,12 @@ export function projectPointsTo3D(
   // Gated on the node declaring a per-element string/image CSR: those are the
   // readers the map exists for, and it costs 4 B/point on the zero-allocation
   // accumulator path. `LabelLoader.hasLabels()` keys on the same attrs.
-  // NOT "no possible reader": picking is also provisioned for a label-less
-  // scene when an embedder `selection` listener exists at load time
-  // (`core/app/picking/init-picking.ts`), and that payload's `elementIndex`
-  // keeps reporting the storage slot — exactly what it reported before this
-  // change, but still a slot, not an on-disk index.
+  // NOT "no possible reader": picking is also provisioned when an interaction
+  // template or an embedder `selection` / element-action listener needs picks
+  // (`core/app/picking/init-picking.ts`). Without a per-element string/image
+  // channel, that payload's `elementIndex` keeps reporting the storage slot —
+  // exactly what it reported before this change, but still a slot, not an
+  // on-disk index.
   const wantsElementIds =
     ctx.nodeAttrs.has_labels === true ||
     ctx.nodeAttrs.has_image_labels === true ||
