@@ -188,6 +188,60 @@ def _span(frames: list[dict[str, Any]], key: str) -> Optional[tuple[float, float
     return (min(values), max(values))  # type: ignore[type-var]
 
 
+def _immediate_children(groups: set[str], path: str) -> list[str]:
+    """Group paths exactly one level below *path* (``""`` for the root)."""
+    depth = 0 if not path else path.count("/") + 1
+    prefix = (path + "/") if path else ""
+    return sorted(
+        g for g in groups if g and g.startswith(prefix) and g.count("/") == depth
+    )
+
+
+def _finest_elements(
+    zf: zipfile.ZipFile, root: str, groups: set[str], path: str = ""
+) -> Optional[int]:
+    """Element count of the FINEST representation, walking the tree's semantics.
+
+    A tree's root carries no ``n_splats`` — the counts live on the groups — and
+    the three group families combine differently, so a naive sum is wrong by a
+    lot: over ct_atlas it gives 2,574,354 against a true 647,083.
+
+    * ``part_N``     disjoint spatial tiles      -> SUM
+    * ``child_N``    substitutive LOD levels     -> MAX (they REPLACE each other)
+    * ``additive_N`` disjoint streaming chunks   -> SUM to their own parent, so
+                                                   the parent's stamp wins
+
+    Verified against three archives whose counts were established independently:
+    ct_atlas 647,083, cmu1_ch0 8,823,953, dapi 7,740.
+    """
+    attrs = _attrs(zf, root, (path + "/") if path else "")
+    kids = _immediate_children(groups, path)
+    kind = attrs.get("kind")
+    if kind == "partition":
+        vals = [
+            _finest_elements(zf, root, groups, k)
+            for k in kids
+            if k.rsplit("/", 1)[-1].startswith("part_")
+        ]
+        return sum(v for v in vals if v) or None
+    if kind == "lod":
+        vals = [
+            _finest_elements(zf, root, groups, k)
+            for k in kids
+            if k.rsplit("/", 1)[-1].startswith("child_")
+        ]
+        return max((v for v in vals if v is not None), default=None)
+    own = _as_int(attrs.get("n_splats"))
+    if own is not None:
+        return own
+    vals = [
+        _as_int(_attrs(zf, root, k + "/").get("n_splats"))
+        for k in kids
+        if k.rsplit("/", 1)[-1].startswith("additive_")
+    ]
+    return sum(v for v in vals if v) or None
+
+
 def _read_store(zf: zipfile.ZipFile) -> Optional[dict[str, Any]]:
     names = zf.namelist()
     if not names:
@@ -210,7 +264,11 @@ def _read_store(zf: zipfile.ZipFile) -> Optional[dict[str, Any]]:
         if n.endswith((("/.zgroup"), "/zarr.json"))
     }
     return {
-        "n_splats": root_attrs.get("n_splats"),
+        # A tree root has no count of its own; derive it from the groups rather
+        # than publishing a dash for an archive that plainly knows its size.
+        "n_splats": _as_int(root_attrs.get("n_splats"))
+        if _as_int(root_attrs.get("n_splats")) is not None
+        else _finest_elements(zf, root, groups),
         "ndim": root_attrs.get("ndim"),
         "format_version": root_attrs.get("format_version"),
         "topology": _describe_topology(root_attrs, groups),
@@ -300,6 +358,16 @@ def load_characteristics() -> dict[str, Any]:
     if not CHARACTERISTICS.exists():
         return {}
     return json.loads(CHARACTERISTICS.read_text()).get("archives", {}) or {}
+
+
+def hosted_size(spec: dict[str, Any]) -> Optional[int]:
+    """The size of the copy the RECORD serves, not the one this repo ships.
+
+    ``bytes`` describes the in-repo copy and ``hosted_bytes`` the hosted one; they
+    diverge for every refitted dataset. A record's own table must quote the size
+    of the file a reader will download, so the hosted value wins where it exists.
+    """
+    return spec.get("hosted_bytes") or spec.get("bytes")
 
 
 def _pinned_digest(spec: dict[str, Any]) -> Optional[str]:
@@ -475,7 +543,7 @@ def _dataset_rows(
         if info is None:
             path = _locate(dataset, entry, variant, spec["name"])
             info = _read_archive(path) if path else None
-        stored = spec.get("bytes")
+        stored = hosted_size(spec)
         name = f"{variant}/{spec['name']}" if variant else spec["name"]
         if info and info.get("frames"):
             name += f" ({info['frames']} frames)"
@@ -560,7 +628,9 @@ def render_record(key: str, manifest: dict[str, Any]) -> str:
         rows = _dataset_rows(name, entry)
         variants = entry.get("variants") or {}
         total = (
-            None if variants else sum(f.get("bytes", 0) for f in entry.get("files", []))
+            None
+            if variants
+            else sum(hosted_size(f) or 0 for f in entry.get("files", []))
         )
         out.append(f"\n## `{name}`\n")
         out.append(f"\n{entry.get('source', '')}\n")

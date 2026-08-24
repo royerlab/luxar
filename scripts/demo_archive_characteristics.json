@@ -78,7 +78,7 @@
       "measured_sha256": "8f13588289145d92a24423215b5896b679a286c52d04a9854b61b9be1d8e004a"
     },
     "gsplats_3d_h2afva_stack/h2afva_tp234.gsplats.zarr.zip": {
-      "n_splats": null,
+      "n_splats": 1653405,
       "ndim": null,
       "format_version": "3.3",
       "topology": "41 spatial tiles",
@@ -149,7 +149,7 @@
       "measured_sha256": "d4fa0452413961f08a3711cbccc154b08b749ba70e9ed371b12070dc79839569"
     },
     "gsplats_cmu1_pathology/cmu1_ch0.gsplats.zarr.zip": {
-      "n_splats": null,
+      "n_splats": 8823953,
       "ndim": null,
       "format_version": "3.4",
       "topology": "64 spatial tiles, each with its own detail levels",
@@ -167,7 +167,7 @@
       "measured_sha256": "29faffc18cb59f054dd2c4fdfca43103ab02127c2bbc649b4a9e2bdb80e3a496"
     },
     "gsplats_cmu1_pathology/cmu1_ch1.gsplats.zarr.zip": {
-      "n_splats": null,
+      "n_splats": 9924486,
       "ndim": null,
       "format_version": "3.4",
       "topology": "64 spatial tiles, each with its own detail levels",
@@ -185,7 +185,7 @@
       "measured_sha256": "b63397f62d50b42bd4831bbad1e4f7d4acb587cd7347543b0033e364aa20d00b"
     },
     "gsplats_cmu1_pathology/cmu1_ch2.gsplats.zarr.zip": {
-      "n_splats": null,
+      "n_splats": 10830790,
       "ndim": null,
       "format_version": "3.4",
       "topology": "64 spatial tiles, each with its own detail levels",
@@ -203,7 +203,7 @@
       "measured_sha256": "32f37b1420479e59ed6a84c959fda43f3315d6ce966bfb972705552bc61a9dac"
     },
     "gsplats_cryoem_virus/cryoem_virus.gsplats.zarr.zip": {
-      "n_splats": null,
+      "n_splats": 1016482,
       "ndim": null,
       "format_version": "3.4",
       "topology": "4 coarse-to-fine levels, each progressively streamed",
@@ -222,7 +222,7 @@
       "measured_sha256": "84387e0c5cc6bbb0f472f92a22f0e7cd62cf8ea328c63f277610176f4567c373"
     },
     "gsplats_ct_totalsegmentator/ct_atlas.gsplats.zarr.zip": {
-      "n_splats": null,
+      "n_splats": 647083,
       "ndim": null,
       "format_version": "3.4",
       "topology": "4 coarse-to-fine levels, each progressively streamed",
@@ -332,7 +332,7 @@
       "measured_sha256": "90db97a160f67e3968630ca355c70c9c7ea94348a08c6fd00e0df64097f776bf"
     },
     "gsplats_milkyway_dust/milkyway_dust.gsplats.zarr.zip": {
-      "n_splats": null,
+      "n_splats": 677741,
       "ndim": null,
       "format_version": "3.4",
       "topology": "4 coarse-to-fine levels, each progressively streamed",
@@ -442,7 +442,7 @@
       "measured_sha256": "550286d3a0f14eab08cd41edb28bfe380f0c078d9eb9381c99aa36e64e749a61"
     },
     "gsplats_visible_human_head/vh_head.gsplats.zarr.zip": {
-      "n_splats": null,
+      "n_splats": 1908888,
       "ndim": null,
       "format_version": "3.4",
       "topology": "4 coarse-to-fine levels, each progressively streamed",
@@ -462,7 +462,7 @@
       "measured_sha256": "859830d8af8873beef48cf12e1ad8d2707b000495facc777683b14f92be90065"
     },
     "gsplats_zebrafish/zebrafish_4d.gsplats.zarr.zip": {
-      "n_splats": null,
+      "n_splats": 1590010,
       "ndim": null,
       "format_version": "3.4",
       "topology": "4 coarse-to-fine levels, each progressively streamed",

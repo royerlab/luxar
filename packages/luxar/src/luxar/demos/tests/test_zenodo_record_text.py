@@ -596,3 +596,62 @@ def test_no_measurement_is_stale_against_its_own_digest(gen: Any, monkeypatch) -
         )
         == []
     )
+
+
+def test_a_record_quotes_the_size_a_reader_will_download(gen: Any) -> None:
+    """`bytes` is the repo's copy; `hosted_bytes` is the record's.
+
+    They diverge for every refitted dataset, so a record's own table quoting the
+    in-repo size tells a reader the wrong download size — 36.4 MiB against an
+    actual 80.6 MiB for cmu1_ch0.
+    """
+    assert gen.hosted_size({"bytes": 38201205}) == 38201205
+    assert gen.hosted_size({"bytes": 38201205, "hosted_bytes": 84492218}) == 84492218
+
+
+def test_the_finest_count_is_not_a_naive_sum(gen: Any) -> None:
+    """A tree's groups combine three different ways; summing them is far off.
+
+    `part_N` are disjoint tiles (SUM), `child_N` are substitutive levels that
+    REPLACE each other (MAX), and `additive_N` sum to their own parent. Summing
+    everything gives 2,574,354 for ct_atlas against a true 647,083.
+    """
+    import zipfile
+
+    # A partition of two parts, each a 2-level lod whose finest level is
+    # additively chunked. Correct answer: (20+30) + (200+300) = 550.
+    groups = {
+        "part_0",
+        "part_0/child_0",
+        "part_0/child_1",
+        "part_0/child_1/additive_0",
+        "part_0/child_1/additive_1",
+        "part_1",
+        "part_1/child_0",
+        "part_1/child_1",
+        "part_1/child_1/additive_0",
+        "part_1/child_1/additive_1",
+    }
+    counts = {
+        "": {"kind": "partition"},
+        "part_0": {"kind": "lod"},
+        "part_0/child_0": {"n_splats": 5},
+        "part_0/child_1": {"n_splats": 50},
+        "part_0/child_1/additive_0": {"n_splats": 20},
+        "part_0/child_1/additive_1": {"n_splats": 30},
+        "part_1": {"kind": "lod"},
+        "part_1/child_0": {"n_splats": 7},
+        "part_1/child_1": {"n_splats": 500},
+        "part_1/child_1/additive_0": {"n_splats": 200},
+        "part_1/child_1/additive_1": {"n_splats": 300},
+    }
+    monkey = lambda zf, root, node="": counts.get(node.rstrip("/"), {})  # noqa: E731
+    saved = gen._attrs
+    gen._attrs = monkey
+    try:
+        total = gen._finest_elements(
+            zipfile.ZipFile.__new__(zipfile.ZipFile), "r/", groups
+        )
+    finally:
+        gen._attrs = saved
+    assert total == 550, "expected sum-over-parts of max-over-levels"
