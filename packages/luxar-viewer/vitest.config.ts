@@ -32,8 +32,9 @@ export default defineConfig({
     // heavier jsdom + zarr/scene-loader suites under whole-suite execution,
     // where worker contention stretches individual tests; a too-tight ceiling
     // turned transient slowness into hard `Test timed out` / `Hook timed out`
-    // failures. 15s gives headroom without masking genuine hangs.
-    testTimeout: 15000,
+    // failures. Keep the local 15s test ceiling strict, but allow SCHED_IDLE CI
+    // workers 60s so host contention does not turn deterministic tests red.
+    testTimeout: process.env.CI ? 60_000 : 15_000,
     hookTimeout: 15000,
     // Worker threads, not forked processes. A thread reuses the host process's
     // heap and module machinery instead of paying a full V8 + Vite-runtime
