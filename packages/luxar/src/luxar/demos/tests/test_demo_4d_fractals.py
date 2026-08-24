@@ -50,12 +50,11 @@ PRODUCTION_FETCH_REACH = 0.25 * (_demo.W_STRIDE * 2.0 / _demo.GRID_SIZE_DEFAULT)
 
 class TestAxisWorldValues:
     def test_values_are_exact_step_multiples(self) -> None:
-        """The viewer snaps to k×step anchored at 0 — data must sit there.
+        """The declared step must reproduce every materialised plane.
 
-        The load-bearing invariant is the snap round-trip the viewer
-        computes (``Math.round(v/step)*step``): it must reproduce every
-        axis value BIT-EXACTLY, so a snapped slider stop equals the data
-        plane it targets.
+        The load-bearing invariant is that ``axis[0] + k*step`` reproduces
+        every axis value BIT-EXACTLY, so each slider stop equals the data plane
+        it targets.
         """
         for grid in (24, 50, 51):
             axis = axis_world_values(grid)

@@ -217,6 +217,8 @@ export class SceneDimsManager {
         // Last resort: unit range
         range = [0, 1];
       }
+      // Share the resolved range so snapshots and transform preimages use the
+      // same discrete-grid anchor as navigation.
       metadata[i].range = range;
       return range;
     });

@@ -264,7 +264,7 @@ describe('SceneDimsManager', () => {
       expect(dims!.currentStep[4]).toBe(2); // Rounded to nearest step
     });
 
-    // M5: the discrete quantizer is Math.round(value/step)*step. With an
+    // M5: the discrete quantizer rounds relative to range[0]. With an
     // integer step (1) and value 1.7, both round and ceil give 2, so the
     // earlier test cannot distinguish them. Use a fractional step where
     // round ≠ ceil ≠ floor to pin the rounding rule precisely.
@@ -330,8 +330,8 @@ describe('SceneDimsManager', () => {
     });
 
     it('snapDiscreteValue reproduces the initial position for a fractional step', () => {
-      // resetPositions()/initFromScene park a discrete dim on the first
-      // on-grid point at or above min; navigating back to that exact value
+      // resetPositions()/initFromScene park a discrete dim on min itself;
+      // navigating back to that exact value
       // must land on it byte-identically (S-cache keys compare exact floats),
       // not a whole cell away.
       const scene = new THREE.Scene();

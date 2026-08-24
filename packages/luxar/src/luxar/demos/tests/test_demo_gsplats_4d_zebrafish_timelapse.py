@@ -493,6 +493,33 @@ class TestTheStackedArchiveSurvivesItsRoundTrip:
         with pytest.raises(ValueError, match="at least 2 timepoints"):
             _demo.create_luxar_scene(one, tmp / "one.luxar.zarr")
 
+    def test_a_uniform_time_grid_may_start_off_the_zero_anchor(self, tmp_path) -> None:
+        """The declared minimum, not zero, anchors discrete time navigation."""
+        import zarr
+
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        centers = np.zeros((64, 4), dtype=np.float32)
+        centers[:, 0] = np.arange(64) % 4
+        centers[:, 1] = (np.arange(64) // 4) % 4
+        centers[:, 2] = (np.arange(64) // 16) % 4
+        centers[:, 3] = np.repeat([5.0, 15.0, 25.0, 35.0], 16)
+        cholesky = np.zeros((64, 10), dtype=np.float32)
+        cholesky[:, [0, 2, 5, 9]] = 1.0
+        stacked = _demo.build_lod(
+            GSplatData(
+                centers=centers,
+                amplitudes=np.ones(64, dtype=np.float32),
+                cholesky_factors=cholesky,
+            )
+        )
+
+        out = _demo.create_luxar_scene(stacked, tmp_path / "offset-time.luxar.zarr")
+        root = zarr.open_group(str(out), mode="r")
+        time = dict(root.attrs)["scene_dimensions"]["dimensions"][3]
+        assert time["range"] == pytest.approx([5.0, 35.0])
+        assert time["step"] == pytest.approx(10.0)
+
     def test_the_scene_declares_the_cage_box_and_a_gridded_time_axis(
         self, toy, monkeypatch
     ):
