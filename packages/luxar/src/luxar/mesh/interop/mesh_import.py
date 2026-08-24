@@ -290,7 +290,7 @@ def _filename_index(path: Path, pattern: re.Pattern[str], label: str) -> int | N
     return _exact_filename_index(path, matches[0].group("index"), label)
 
 
-def _compile_index_regex(index_regex: str) -> re.Pattern[str]:
+def compile_index_regex(index_regex: str) -> re.Pattern[str]:
     try:
         pattern = re.compile(index_regex)
     except re.error as exc:
@@ -303,9 +303,15 @@ def _compile_index_regex(index_regex: str) -> re.Pattern[str]:
 def _regex_indices(path: Path, pattern: re.Pattern[str]) -> tuple[int, int | None]:
     matches = list(pattern.finditer(path.stem))
     if len(matches) > 1:
-        raise ValueError(f"{path.name}: index regex matches more than once")
+        raise ValueError(
+            f"{path.name}: index regex matches more than once; anchor it with ^ and $, "
+            "or make it more specific"
+        )
     if not matches:
-        raise ValueError(f"{path.name}: filename does not match the index regex")
+        raise ValueError(
+            f"{path.name}: filename does not match the index regex; narrow --pattern "
+            "or widen --index-regex"
+        )
     match = matches[0]
     time_value = match.group("t")
     if time_value is None:
@@ -323,7 +329,7 @@ def _regex_indices(path: Path, pattern: re.Pattern[str]) -> tuple[int, int | Non
 def _discover_indexed_files(
     path: Path, pattern: str, index_regex: str | None
 ) -> list[tuple[int, int | None, Path]]:
-    custom_pattern = None if index_regex is None else _compile_index_regex(index_regex)
+    custom_pattern = None if index_regex is None else compile_index_regex(index_regex)
     files = sorted(candidate for candidate in path.glob(pattern) if candidate.is_file())
     if not files:
         raise ValueError(f"{path}: no mesh files match pattern {pattern!r}")
@@ -443,6 +449,7 @@ def import_mesh_directory(
 __all__ = [
     "MESH_FORMATS",
     "TriangleMesh",
+    "compile_index_regex",
     "detect_mesh_format",
     "import_mesh",
     "import_mesh_directory",

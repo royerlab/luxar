@@ -9,6 +9,7 @@ Everything here is NumPy + stdlib — no new dependency, matching
 from .mesh_import import (
     MESH_FORMATS,
     TriangleMesh,
+    compile_index_regex,
     detect_mesh_format,
     import_mesh,
     import_mesh_directory,
@@ -17,6 +18,7 @@ from .mesh_import import (
 __all__ = [
     "MESH_FORMATS",
     "TriangleMesh",
+    "compile_index_regex",
     "detect_mesh_format",
     "import_mesh",
     "import_mesh_directory",

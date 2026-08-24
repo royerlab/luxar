@@ -23,6 +23,7 @@ from arbol import aprint, asection
 from ...mesh.interop import (
     MESH_FORMATS,
     TriangleMesh,
+    compile_index_regex,
     import_mesh,
     import_mesh_directory,
 )
@@ -63,6 +64,8 @@ def run_import(
             "normals and triangle winding untouched, so it would light and cull from "
             "the wrong side."
         )
+    if input_path.is_dir() and index_regex is not None:
+        compile_index_regex(index_regex)
 
     source = input_path.resolve()
     destination = output_path.resolve()

@@ -373,6 +373,40 @@ class TestMeshImport:
         )
         assert result.exit_code == 0, result.stdout
 
+    @pytest.mark.parametrize(
+        ("index_regex", "message"),
+        [
+            (r"frame_(?P<t>\d+", "Invalid index regex"),
+            (r"frame_(?P<c>\d+)", "named 't' capture"),
+        ],
+    )
+    def test_a_rejected_index_regex_leaves_existing_output_intact(
+        self, tmp_path: Path, index_regex: str, message: str
+    ) -> None:
+        source = tmp_path / "frames"
+        source.mkdir()
+        out = tmp_path / "existing.luxar.zarr"
+        out.mkdir()
+        marker = out / "keep.me"
+        marker.write_text("existing output")
+
+        result = runner.invoke(
+            app,
+            [
+                "mesh",
+                "import",
+                str(source),
+                str(out),
+                "--index-regex",
+                index_regex,
+                "--overwrite",
+            ],
+        )
+
+        assert result.exit_code == 1
+        assert message in result.stdout
+        assert marker.read_text() == "existing output"
+
     @pytest.mark.parametrize("as_parent", [False, True])
     def test_an_output_that_would_destroy_the_input_is_refused(
         self, as_parent: bool, tmp_path: Path

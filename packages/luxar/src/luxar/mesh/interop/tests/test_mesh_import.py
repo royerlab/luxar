@@ -1969,8 +1969,8 @@ class TestMeshDirectoryImport:
                 r"frame_(?:(?P<t>\d+)|first)",
                 "did not capture a time value",
             ),
-            ("frame_42.vtp", r"(?P<t>\d)", "matches more than once"),
-            ("surface.vtp", r"frame_(?P<t>\d+)", "does not match"),
+            ("frame_42.vtp", r"(?P<t>\d)", "anchor it with"),
+            ("surface.vtp", r"frame_(?P<t>\d+)", "narrow --pattern"),
         ],
     )
     def test_invalid_index_regexes_fail_before_mesh_reading(
@@ -2032,6 +2032,26 @@ class TestMeshDirectoryImport:
                 pattern="*.ply",
                 index_regex=r"frame_(?P<t>\d+)",
             )
+
+        for path in tmp_path.iterdir():
+            path.unlink()
+        write_ply_binary(tmp_path / "frame_-16777217.ply", GT)
+        with pytest.raises(ValueError, match="too large to represent exactly"):
+            import_mesh_directory(
+                tmp_path,
+                pattern="*.ply",
+                index_regex=r"frame_(?P<t>-?\d+)",
+            )
+
+        for path in tmp_path.iterdir():
+            path.unlink()
+        write_ply_binary(tmp_path / "frame_-16777216.ply", GT)
+        mesh = import_mesh_directory(
+            tmp_path,
+            pattern="*.ply",
+            index_regex=r"frame_(?P<t>-?\d+)",
+        )
+        assert np.array_equal(mesh.vertices[:, 3], [-16777216] * GT.vertices.shape[0])
 
     def test_every_matched_file_requires_a_time_index(self, tmp_path: Path) -> None:
         write_ply_binary(tmp_path / "surface.ply", GT)
