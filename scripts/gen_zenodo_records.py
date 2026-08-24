@@ -223,7 +223,7 @@ def _finest_elements(
             for k in kids
             if k.rsplit("/", 1)[-1].startswith("part_")
         ]
-        return sum(v for v in vals if v) or None
+        return sum(vals) if vals and all(v is not None for v in vals) else None
     if kind == "lod":
         vals = [
             _finest_elements(zf, root, groups, k)
@@ -239,7 +239,7 @@ def _finest_elements(
         for k in kids
         if k.rsplit("/", 1)[-1].startswith("additive_")
     ]
-    return sum(v for v in vals if v) or None
+    return sum(vals) if vals and all(v is not None for v in vals) else None
 
 
 def _read_store(zf: zipfile.ZipFile) -> Optional[dict[str, Any]]:
@@ -258,6 +258,7 @@ def _read_store(zf: zipfile.ZipFile) -> Optional[dict[str, Any]]:
     ):
         return None
     fit = _attrs(zf, root, "fitting/")
+    n_splats = _as_int(root_attrs.get("n_splats"))
     groups = {
         n[len(root) :].rsplit("/", 1)[0]
         for n in names
@@ -266,8 +267,8 @@ def _read_store(zf: zipfile.ZipFile) -> Optional[dict[str, Any]]:
     return {
         # A tree root has no count of its own; derive it from the groups rather
         # than publishing a dash for an archive that plainly knows its size.
-        "n_splats": _as_int(root_attrs.get("n_splats"))
-        if _as_int(root_attrs.get("n_splats")) is not None
+        "n_splats": n_splats
+        if n_splats is not None
         else _finest_elements(zf, root, groups),
         "ndim": root_attrs.get("ndim"),
         "format_version": root_attrs.get("format_version"),
@@ -320,7 +321,7 @@ def _locate(
     PSNR) while the artifacts the records actually serve are fully stamped. Point
     it at the staging tree holding the uploaded generation.
     """
-    roots = [(base, sub) for base, sub in ((extra_root, dataset),) if base]
+    roots = [(extra_root, dataset)] if extra_root else []
     roots += [(DATA_DIR, entry.get("dir", dataset)), (CACHE_DIR, dataset)]
     for base, subdir in roots:
         parts = [p for p in (subdir, variant, file_name) if p]
@@ -357,7 +358,13 @@ def load_characteristics() -> dict[str, Any]:
     """The committed measurements, or an empty map when none exist yet."""
     if not CHARACTERISTICS.exists():
         return {}
-    return json.loads(CHARACTERISTICS.read_text()).get("archives", {}) or {}
+    payload = json.loads(CHARACTERISTICS.read_text())
+    if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+        raise ValueError(f"unsupported characteristics schema in {CHARACTERISTICS}")
+    archives = payload.get("archives", {})
+    if not isinstance(archives, dict):
+        raise ValueError(f"invalid archives map in {CHARACTERISTICS}")
+    return {key: value for key, value in archives.items() if isinstance(value, dict)}
 
 
 def hosted_size(spec: dict[str, Any]) -> Optional[int]:
@@ -391,8 +398,8 @@ def _sha256_of(path: Path) -> str:
 
 def refresh_characteristics(
     manifest: dict[str, Any], extra_root: Optional[Path] = None
-) -> tuple[int, int]:
-    """Re-measure every archive present here; returns (measured, preserved).
+) -> tuple[int, int, int]:
+    """Re-measure archives present here; returns (read, retained, preserved).
 
     PRESERVES entries whose archive is not on this machine, for the same reason
     ``gen_data_manifest`` preserves committed file lists: a refresh run from a
@@ -439,9 +446,12 @@ def refresh_characteristics(
             old_entry.get("measured_from"), 0
         )
 
+    read = len(measured)
+    retained = 0
     for key, old_entry in existing.items():
         if key in measured and not _outranks(measured[key], old_entry):
             measured[key] = old_entry
+            retained += 1
     preserved = {k: v for k, v in existing.items() if k in seen and k not in measured}
     archives = dict(sorted({**preserved, **measured}.items()))
     CHARACTERISTICS.write_text(
@@ -463,7 +473,7 @@ def refresh_characteristics(
         )
         + "\n"
     )
-    return len(measured), len(preserved)
+    return read, retained, len(preserved)
 
 
 def _stale_characteristics(manifest: dict[str, Any]) -> list[str]:
@@ -560,7 +570,7 @@ def _dataset_rows(
                 if info and isinstance(info.get("n_splats"), int)
                 else _ABSENT,
                 "size": _mib(stored),
-                "topology": info["topology"] if info else _ABSENT,
+                "topology": info.get("topology") or _ABSENT if info else _ABSENT,
                 "psnr": _db(info.get("psnr_db")) if info else _ABSENT,
                 "fg_psnr": _db(info.get("foreground_psnr_db")) if info else _ABSENT,
                 "vs_raw": _ratio(info.get("source_bytes"), stored) if info else _ABSENT,
@@ -623,9 +633,10 @@ def render_record(key: str, manifest: dict[str, Any]) -> str:
         "terms are listed below and may be more permissive (several are public "
         "domain or CC0).\n"
     )
+    chars = load_characteristics()
 
     for name, entry in sorted(datasets.items()):
-        rows = _dataset_rows(name, entry)
+        rows = _dataset_rows(name, entry, chars)
         variants = entry.get("variants") or {}
         total = (
             None
@@ -732,7 +743,7 @@ def main() -> int:
     ap.add_argument(
         "--archives-root",
         type=Path,
-        help="search this tree for archives BEFORE the repo copy and the cache "
+        help="with --refresh, search this tree BEFORE the repo copy and the cache "
         "(namespaced <dataset>/[<variant>/]<file>). Use it to measure the "
         "uploaded generation rather than the pre-refit copies on this machine.",
     )
@@ -747,10 +758,13 @@ def main() -> int:
 
     manifest = json.loads(MANIFEST.read_text())
     if args.refresh:
-        measured, preserved = refresh_characteristics(manifest, args.archives_root)
+        measured, retained, preserved = refresh_characteristics(
+            manifest, args.archives_root
+        )
         print(
-            f"measured {measured} archive(s) here, preserved {preserved} not on "
-            f"this machine -> {CHARACTERISTICS.relative_to(REPO_ROOT)}"
+            f"measured {measured} archive(s) here, kept {retained} committed "
+            f"measurement(s) that outrank the local copy, preserved {preserved} "
+            f"not on this machine -> {CHARACTERISTICS.relative_to(REPO_ROOT)}"
         )
         return 0
     if args.check:
@@ -783,7 +797,7 @@ def _run_check(manifest: dict[str, Any]) -> int:
         )
         for item in unread:
             print(f"  {item}")
-    return 1 if problems else 0
+    return 1 if problems or stale else 0
 
 
 def _run_render(manifest: dict[str, Any], args: argparse.Namespace) -> int:

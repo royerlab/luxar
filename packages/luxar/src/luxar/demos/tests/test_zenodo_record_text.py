@@ -470,7 +470,9 @@ def _fake_manifest(files: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def test_a_committed_measurement_beats_a_local_archive(gen: Any, monkeypatch) -> None:
+def test_a_committed_measurement_beats_a_local_archive(
+    gen: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The record describes the artifact it SERVES, not whatever is on this disk.
 
     The local copy is routinely a pre-refit generation (or a scratch fit), so
@@ -502,7 +504,7 @@ def test_a_committed_measurement_beats_a_local_archive(gen: Any, monkeypatch) ->
 
 
 def test_a_staged_measurement_is_not_clobbered_by_a_local_refresh(
-    gen: Any, tmp_path: Path, monkeypatch
+    gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The hazard that would have silently undone the whole change.
 
@@ -539,10 +541,11 @@ def test_a_staged_measurement_is_not_clobbered_by_a_local_refresh(
         },
     )
 
-    gen.refresh_characteristics(
+    counts = gen.refresh_characteristics(
         _fake_manifest([_entry("a.gsplats.zarr.zip", "a" * 64)])
     )
 
+    assert counts == (1, 1, 0)
     written = json.loads((tmp_path / "chars.json").read_text())["archives"][key]
     assert written["measured_from"] == "staged", "a local read outranked the staged one"
     assert written["foreground_psnr_db"] == 30.6
@@ -550,7 +553,7 @@ def test_a_staged_measurement_is_not_clobbered_by_a_local_refresh(
 
 
 def test_refresh_preserves_entries_whose_archive_is_absent(
-    gen: Any, tmp_path: Path, monkeypatch
+    gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A partial checkout is the normal case now, so it must not delete figures.
 
@@ -564,18 +567,62 @@ def test_refresh_preserves_entries_whose_archive_is_absent(
     )
     monkeypatch.setattr(gen, "_locate", lambda *a, **k: None)
 
-    measured, preserved = gen.refresh_characteristics(
+    measured, retained, preserved = gen.refresh_characteristics(
         _fake_manifest([_entry("a.gsplats.zarr.zip", "a" * 64)])
     )
 
-    assert (measured, preserved) == (0, 1)
+    assert (measured, retained, preserved) == (0, 0, 1)
     assert (
         json.loads((tmp_path / "chars.json").read_text())["archives"][key]["n_splats"]
         == 7
     )
 
 
-def test_a_measurement_from_superseded_bytes_is_reported(gen: Any, monkeypatch) -> None:
+def test_a_partial_sidecar_entry_renders_absent_fields(gen: Any) -> None:
+    manifest = _fake_manifest([_entry("a.gsplats.zarr.zip", "a" * 64)])
+
+    (row,) = gen._dataset_rows(
+        "ds",
+        manifest["datasets"]["ds"],
+        {"ds/a.gsplats.zarr.zip": {"n_splats": 7}},
+    )
+
+    assert row["splats"] == "7"
+    assert row["topology"] == gen._ABSENT
+    assert row["psnr"] == gen._ABSENT
+
+
+def test_load_characteristics_skips_non_object_entries(
+    gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "chars.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "archives": {"good": {"n_splats": 7}, "bad": "not an object"},
+            }
+        )
+    )
+    monkeypatch.setattr(gen, "CHARACTERISTICS", path)
+
+    assert gen.load_characteristics() == {"good": {"n_splats": 7}}
+
+
+def test_load_characteristics_rejects_an_unknown_schema(
+    gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "chars.json"
+    path.write_text(json.dumps({"schema_version": 2, "archives": {}}))
+    monkeypatch.setattr(gen, "CHARACTERISTICS", path)
+
+    with pytest.raises(ValueError, match="unsupported characteristics schema"):
+        gen.load_characteristics()
+
+
+def test_a_measurement_from_superseded_bytes_is_reported(
+    gen: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A stale figure is worse than an absent one: absent prints as a dash.
 
     This is the guard the hand-written descriptions never had — a refit changes
@@ -593,6 +640,32 @@ def test_a_measurement_from_superseded_bytes_is_reported(gen: Any, monkeypatch) 
     assert "b" * 12 in stale[0] and "a" * 12 in stale[0]
 
 
+def test_check_fails_when_a_measurement_is_stale(
+    gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = {
+        "n_splats": 7,
+        "topology": "single level",
+        "psnr_db": 40.0,
+        "foreground_psnr_db": 30.0,
+        "source_bytes": 2048,
+        "measured_sha256": "b" * 64,
+    }
+    path = tmp_path / "chars.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "archives": {"ds/a.gsplats.zarr.zip": archive},
+            }
+        )
+    )
+    monkeypatch.setattr(gen, "CHARACTERISTICS", path)
+    manifest = _fake_manifest([_entry("a.gsplats.zarr.zip", "a" * 64)])
+
+    assert gen._run_check(manifest) == 1
+
+
 def test_the_hosted_digest_is_what_a_measurement_is_judged_against(gen: Any) -> None:
     """Once the two contracts diverge, the record's copy is the relevant one.
 
@@ -605,7 +678,9 @@ def test_the_hosted_digest_is_what_a_measurement_is_judged_against(gen: Any) -> 
     )
 
 
-def test_no_measurement_is_stale_against_its_own_digest(gen: Any, monkeypatch) -> None:
+def test_no_measurement_is_stale_against_its_own_digest(
+    gen: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The quiet case must stay quiet, or the report is noise."""
     monkeypatch.setattr(
         gen,
@@ -631,7 +706,9 @@ def test_a_record_quotes_the_size_a_reader_will_download(gen: Any) -> None:
     assert gen.hosted_size({"bytes": 38201205, "hosted_bytes": 84492218}) == 84492218
 
 
-def test_the_finest_count_is_not_a_naive_sum(gen: Any) -> None:
+def test_the_finest_count_is_not_a_naive_sum(
+    gen: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A tree's groups combine three different ways; summing them is far off.
 
     `part_N` are disjoint tiles (SUM), `child_N` are substitutive levels that
@@ -640,8 +717,10 @@ def test_the_finest_count_is_not_a_naive_sum(gen: Any) -> None:
     """
     import zipfile
 
-    # A partition of two parts, each a 2-level lod whose finest level is
-    # additively chunked. Correct answer: (20+30) + (200+300) = 550.
+    # A partition of two parts, each a 2-level lod. The first finest level has no
+    # own stamp, so it must sum its additive chunks; the second has an own stamp,
+    # which must win over its deliberately different additive sum. Correct:
+    # (20 + 30) + 500 = 550, not 50 + 501.
     groups = {
         "part_0",
         "part_0/child_0",
@@ -658,22 +737,31 @@ def test_the_finest_count_is_not_a_naive_sum(gen: Any) -> None:
         "": {"kind": "partition"},
         "part_0": {"kind": "lod"},
         "part_0/child_0": {"n_splats": 5},
-        "part_0/child_1": {"n_splats": 50},
+        "part_0/child_1": {},
         "part_0/child_1/additive_0": {"n_splats": 20},
         "part_0/child_1/additive_1": {"n_splats": 30},
         "part_1": {"kind": "lod"},
         "part_1/child_0": {"n_splats": 7},
         "part_1/child_1": {"n_splats": 500},
         "part_1/child_1/additive_0": {"n_splats": 200},
-        "part_1/child_1/additive_1": {"n_splats": 300},
+        "part_1/child_1/additive_1": {"n_splats": 301},
     }
     monkey = lambda zf, root, node="": counts.get(node.rstrip("/"), {})  # noqa: E731
-    saved = gen._attrs
-    gen._attrs = monkey
-    try:
-        total = gen._finest_elements(
-            zipfile.ZipFile.__new__(zipfile.ZipFile), "r/", groups
-        )
-    finally:
-        gen._attrs = saved
+    monkeypatch.setattr(gen, "_attrs", monkey)
+    total = gen._finest_elements(zipfile.ZipFile.__new__(zipfile.ZipFile), "r/", groups)
     assert total == 550, "expected sum-over-parts of max-over-levels"
+
+
+def test_a_partition_count_is_absent_if_any_part_is_unreadable(
+    gen: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    counts = {"": {"kind": "partition"}, "part_0": {"n_splats": 10}, "part_1": {}}
+    monkeypatch.setattr(
+        gen, "_attrs", lambda zf, root, node="": counts.get(node.rstrip("/"), {})
+    )
+
+    total = gen._finest_elements(
+        zipfile.ZipFile.__new__(zipfile.ZipFile), "r/", {"part_0", "part_1"}
+    )
+
+    assert total is None, "a partial sum must not be published as a total"
