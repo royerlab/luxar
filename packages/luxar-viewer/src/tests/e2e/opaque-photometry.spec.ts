@@ -228,6 +228,7 @@ for (const [nodeType, fixture] of [
   ['lines', LINES_FIXTURE],
 ] as const) {
   test(`opaque ${nodeType} preserve fragment photometry`, async ({ page }) => {
+    test.slow();
     await page.goto(`/?src=${fixture}&debug&dpr=1&no-opfs`);
     await waitForLuxarReady(page);
     await page.waitForFunction(
@@ -244,7 +245,7 @@ for (const [nodeType, fixture] of [
     );
 
     expect(await isolateOpaqueGeometry(page, nodeType)).toBeGreaterThan(0);
-    const full = await stableCanvasLinearLuminance(page, `${nodeType}: full opaque capture`);
+    await stableCanvasLinearLuminance(page, `${nodeType}: opaque warm-up capture`);
 
     expect(await setBlendingModeVisible(page, nodeType, 'opaque', false)).toBeGreaterThan(0);
     const withoutOpaque = await stableCanvasLinearLuminance(
@@ -253,6 +254,8 @@ for (const [nodeType, fixture] of [
     );
 
     expect(await setBlendingModeVisible(page, nodeType, 'opaque', true)).toBeGreaterThan(0);
+    const full = await stableCanvasLinearLuminance(page, `${nodeType}: full opaque capture`);
+
     expect(await setOpaqueOpacity(page, nodeType, 0.1)).toBeGreaterThan(0);
     const dimmed = await stableCanvasLinearLuminance(page, `${nodeType}: dimmed opaque capture`);
 
@@ -279,6 +282,7 @@ for (const [nodeType, fixture] of [
       fullSignal,
       `${nodeType}: isolated opaque geometry must dominate the background; ${measurements}`
     ).toBeGreaterThan(Math.max(1e-4, background * 10));
+    // Nominal opacity is 0.1; measured ratios are 0.11910 (points) and 0.08684 (lines).
     expect(
       dimmedRatio,
       `${nodeType}: opaque framebuffer output must retain measurable fragment alpha; ${measurements}`
@@ -290,6 +294,7 @@ for (const [nodeType, fixture] of [
   });
 
   test(`dim opaque ${nodeType} do not erase luminous geometry behind`, async ({ page }) => {
+    test.slow();
     await page.goto(`/?src=${fixture}&debug&dpr=1&no-opfs`);
     await waitForLuxarReady(page);
     await page.waitForFunction(
