@@ -437,7 +437,15 @@ def build_sequence_scene(
         # right-click to copy it (#1917). The label brackets the bio group
         # after the term, so the query needs the term alone; `format_label`
         # is for reading, not for searching.
-        per_cell_keys = [str(term_name_of_cell[i]) for i in range(n_cells)]
+        # "unannotated" is a real term here — the loader fills NaN with that
+        # string before categorising — and searching an ontology for the word
+        # finds nothing, so those cells get an empty key and no link.
+        per_cell_keys = [
+            ""
+            if str(term_name_of_cell[i]) == "unannotated"
+            else str(term_name_of_cell[i])
+            for i in range(n_cells)
+        ]
         per_cell_hover = [
             f"{format_label(term_name_of_cell[i])}\n"
             f"[{group_cats[attributes['bio_group'][i]]}]"

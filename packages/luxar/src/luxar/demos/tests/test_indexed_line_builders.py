@@ -180,8 +180,21 @@ def test_dipc_haplotype_builder_preserves_arm_boundaries() -> None:
     # Keys are the UCSC locus for the same particle the label names (#1917), so
     # they are per-vertex like everything else and must stay aligned with it.
     assert len(keys) == len(vertices)
-    assert keys[0].startswith("chr")
-    assert "-" in keys[0] and ":" in keys[0]
+
+    # The locus itself, not merely its shape. The fixture's first bead sits at
+    # bp 0, which is the clamp case: UCSC is 1-based and rejects a start below
+    # 1, so the window has to open at 1 rather than -10000.
+    assert keys[0] == "chr1:1-10000"
+    # Away from the boundary the window is the documented 20 kb — Dip-C's own
+    # resolution — centred on the bead.
+    assert keys[1] == "chr1:990000-1010000"
+    # The second arm keeps its own chromosome.
+    assert keys[-1].startswith("chr2:")
+    for locus in keys:
+        span = locus.rsplit(":", 1)[1]
+        start, end = (int(x) for x in span.split("-"))
+        assert start >= 1, f"{locus} starts below 1"
+        assert end > start
 
 
 def test_lsystem_turtle_reuses_branch_hub() -> None:

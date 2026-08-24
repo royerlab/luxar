@@ -345,13 +345,16 @@ def build_scene(
         # right-click to copy it (#1917). The label brackets the bio group
         # after the term, so the query needs the term alone; `format_label` is
         # for reading, not searching.
+        # "unannotated" is a real category here, not a missing code: the loader
+        # fills NaN with that string BEFORE categorising, so `bio_term` never
+        # carries pandas' -1. Searching an ontology for the word "unannotated"
+        # finds nothing, so those cells get an empty key and no link at all —
+        # the bound check is then only defence against a code and map that
+        # disagree.
         per_cell_keys = [
             str(term_cats[attributes["bio_term"][i]])
-            # `bio_term` is a pandas categorical code, so an unannotated cell is
-            # -1. Guarding only the upper bound would let that index from the
-            # END and hand the cell a real, wrong term — a link that opens
-            # confidently on the wrong page. Empty instead, which suppresses it.
             if 0 <= attributes["bio_term"][i] < len(term_cats)
+            and str(term_cats[attributes["bio_term"][i]]) != "unannotated"
             else ""
             for i in range(n_cells)
         ]

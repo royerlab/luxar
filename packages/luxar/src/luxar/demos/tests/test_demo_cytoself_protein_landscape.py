@@ -311,3 +311,77 @@ class TestMainWiring:
         out = capfd.readouterr().out
         assert "localization and protein" in out
         assert "fluorescence image" not in out
+
+
+class TestProteinLinkKeys:
+    """The UniProt-ish click-through, and the code that must not become a link.
+
+    `protein_name` is a pandas categorical code, so an unannotated cell carries
+    -1. Guarding only the upper bound let `names[-1]` return the LAST protein —
+    a real one — so that cell linked confidently to the wrong page. This is the
+    regression test for the lower bound; it is here rather than beside the demo
+    because `_inputs` is the only seam that can fabricate a -1.
+    """
+
+    @staticmethod
+    def _keys(scene_path) -> list[str]:
+        import zarr
+
+        root = zarr.open_group(str(scene_path), mode="r")["Images"]
+        node = root
+        if not dict(root.attrs).get("has_keys"):
+            for name in sorted(root.keys()):
+                child = root[name]
+                if hasattr(child, "attrs") and dict(child.attrs).get("has_keys"):
+                    node = child
+                    break
+        offsets = np.asarray(node["key_offsets"][:]).astype(int)
+        data = bytes(np.asarray(node["key_bytes"][:]).tobytes())
+        return [
+            data[offsets[i] : offsets[i + 1]].decode("utf-8")
+            for i in range(len(offsets) - 1)
+        ]
+
+    def test_keys_are_the_bare_protein_name(self, tmp_path: Path) -> None:
+        coordinates, attributes, category_maps = _inputs()
+        out = tmp_path / "cytoself_keys.luxar.zarr"
+        create_cytoself_scene(
+            out,
+            coordinates,
+            attributes,
+            category_maps,
+            image_labels=None,
+            images_expected=False,
+        )
+        keys = self._keys(out)
+        # One per point per attribute view, and each is a protein name alone —
+        # the label joins localization onto it, which no search wants.
+        assert set(keys) <= set(category_maps["protein_name"])
+        assert "TUBB" in keys
+
+    def test_a_missing_code_yields_no_key_rather_than_the_last_protein(
+        self, tmp_path: Path
+    ) -> None:
+        coordinates, attributes, category_maps = _inputs()
+        # -1 is what pandas stores for an unannotated cell.
+        attributes["protein_name"] = np.array([1, -1, 1, 2], dtype=np.int32)
+        out = tmp_path / "cytoself_missing.luxar.zarr"
+        create_cytoself_scene(
+            out,
+            coordinates,
+            attributes,
+            category_maps,
+            image_labels=None,
+            images_expected=False,
+        )
+        keys = self._keys(out)
+        # The empty one suppresses that element's link. Before the lower bound
+        # it was "ACTB" — the last category — and the cell linked to a protein
+        # it has nothing to do with.
+        assert "" in keys, "a -1 code must produce an empty key"
+        # Four points, two attribute views, one unannotated point: its key is
+        # empty in each view and nothing else is.
+        assert keys.count("") == 2, keys
+        # And specifically NOT the last category, which is what the upper-bound
+        # guard used to return for -1.
+        assert keys.count("ACTB") == 2, "only the genuinely-ACTB point, per view"
