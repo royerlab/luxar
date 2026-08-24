@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit tests for AnimationShortcuts.
  *
@@ -37,7 +38,7 @@ import {
 } from '../../../../../input/input-handler/key-bindings/animation-shortcuts';
 import {
   InputContext,
-  type InputContextManager,
+  InputContextManager,
 } from '../../../../../input/input-handler/context-manager';
 import type { DimensionAnimationManager } from '../../../../../scene/animation/dimension-animation-manager';
 import type { SimpleDims } from '../../../../../types/dims';
@@ -142,6 +143,18 @@ describe('AnimationShortcuts.register', () => {
       { key: 'ArrowUp', shift: true },
       { key: 'ArrowDown', shift: true },
     ]);
+  });
+
+  it('routes Shift+ArrowUp through NAVIGATION to increase animation speed', () => {
+    const contextManager = new InputContextManager();
+    const { manager, increaseSpeed } = makeAnimationManager();
+    new AnimationShortcuts(contextManager, makeContext(0, manager)).register();
+
+    const event = new KeyboardEvent('keydown', { key: 'ArrowUp', shiftKey: true });
+    const handled = contextManager.handleKeyEvent(event, 'down');
+
+    expect(handled).toBe(true);
+    expect(increaseSpeed).toHaveBeenCalledWith(3);
   });
 });
 

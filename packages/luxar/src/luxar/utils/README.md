@@ -210,8 +210,8 @@ Demo scene generators, precomputed data helpers, and viewer launch utilities.
   explicit `--port`/`--viewer-port` in `serve_args` override
 - `detect_device()`: Auto-detect the best available compute device (cuda > mps > cpu)
 - `BUILDER_FINGERPRINT_ATTR`: Scene-root attribute that identifies the demo builder
-- `demo_source_fingerprint()`: Hash a demo module's source for scene-staleness checks
-- `scene_is_current()`: Reuse only a completed scene written by the current demo builder
+- `demo_source_fingerprint()`: Hash a demo, Luxar's writer sources, and the Zarr environment for scene-staleness checks
+- `scene_is_current()`: Reuse only a completed scene written by the current demo producer
 - `warn_if_no_cuda_gpu()`: Print a warning if no CUDA GPU is available
 - `load_precomputed_gsplats()`: Load precomputed GSplat data from Git LFS or cache
 - `load_precomputed_bundle()`: Load a precomputed bundle zip (timelapse demos)
@@ -227,6 +227,15 @@ Demo scene generators, precomputed data helpers, and viewer launch utilities.
 - Configurable parameters
 - Git LFS data loading with local cache fallback
 - Educational examples of Luxar features
+
+### `source_fingerprints.py`
+Stable fingerprints for Python sources that produce Luxar stores.
+
+**Key Functions:**
+- `fingerprint_source_files()`: Hash source paths and contents in stable, boundary-safe order
+- `fingerprint_production_sources()`: Hash production Luxar Python sources without caching
+- `production_source_fingerprint()`: Cache that production-source hash per package root and process
+- `store_writer_environment()`: Report installed/configured inputs that affect Zarr output
 
 ### `process.py`
 Deterministic teardown for long-lived child processes (stdlib-only). Owns the

@@ -13,8 +13,14 @@ import numpy as np
 import pytest
 
 from .._stl import is_binary_stl
-from .._weld import weld_vertices
-from ..mesh_import import MESH_FORMATS, TriangleMesh, detect_mesh_format, import_mesh
+from .._weld import prune_unreferenced_vertices, weld_vertices
+from ..mesh_import import (
+    MESH_FORMATS,
+    TriangleMesh,
+    detect_mesh_format,
+    import_mesh,
+    import_mesh_directory,
+)
 from ._synthetic import (
     OBJ_MID_COLORS,
     SUFFIXES,
@@ -49,6 +55,7 @@ from ._synthetic import (
     write_ply_binary,
     write_ply_crease,
     write_ply_face_extras,
+    write_ply_orphan_vertices,
     write_ply_quads,
     write_ply_truncated_ascii,
     write_stl_ascii,
@@ -136,6 +143,49 @@ class TestReaderParity:
         write_stl_binary(path, GT)
         assert import_mesh(path, weld=False).n_vertices == 12  # 4 faces × 3 corners
         assert import_mesh(path, weld=True).n_vertices == 4
+
+    def test_welding_prunes_vertices_outside_the_surviving_surface(
+        self, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "orphan.ply"
+        write_ply_orphan_vertices(path)
+
+        mesh = import_mesh(path)
+
+        assert mesh.n_vertices == 3
+        assert mesh.n_faces == 1
+        assert {tuple(vertex) for vertex in mesh.vertices} == {
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+        }
+        assert float(mesh.vertices.max()) == 1.0
+        assert int(mesh.faces.max()) == 2
+        assert mesh.normals is not None
+        assert mesh.colors is not None
+        expected = {
+            (0.0, 0.0, 0.0): ((0.0, 1.0, 0.0), (40, 50, 60)),
+            (1.0, 0.0, 0.0): ((0.0, 0.0, 1.0), (70, 80, 90)),
+            (0.0, 1.0, 0.0): ((-1.0, 0.0, 0.0), (100, 110, 120)),
+        }
+        for vertex, normal, color in zip(mesh.vertices, mesh.normals, mesh.colors):
+            expected_normal, expected_color = expected[tuple(vertex)]
+            np.testing.assert_array_equal(normal, expected_normal)
+            np.testing.assert_array_equal(color, expected_color)
+
+    def test_weld_false_keeps_vertices_outside_the_surface(
+        self, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "orphan.ply"
+        write_ply_orphan_vertices(path)
+
+        mesh = import_mesh(path, weld=False)
+
+        assert mesh.n_vertices == 5
+        assert mesh.n_faces == 1
+        assert float(mesh.vertices.max()) == 200.0
+        assert mesh.normals is not None and mesh.normals.shape == (5, 3)
+        assert mesh.colors is not None and mesh.colors.shape == (5, 3)
 
 
 class TestPly:
@@ -831,8 +881,13 @@ class TestVtp:
         plain, mixed = tmp_path / "plain.vtp", tmp_path / "mixed.vtp"
         write_vtp(plain, GT)
         write_vtp(mixed, GT, with_verts_and_lines=True)
-        assert import_mesh(mixed).n_faces == import_mesh(plain).n_faces == 4
-        assert _sorted_face_set(import_mesh(mixed)) == EXPECTED_FACES
+        plain_mesh = import_mesh(plain)
+        mixed_mesh = import_mesh(mixed)
+        assert mixed_mesh.n_faces == plain_mesh.n_faces == 4
+        assert mixed_mesh.n_vertices == plain_mesh.n_vertices == len(GT.vertices)
+        assert _sorted_face_set(mixed_mesh) == EXPECTED_FACES
+        np.testing.assert_array_equal(mixed_mesh.vertices.min(axis=0), [0, 0, 0])
+        np.testing.assert_array_equal(mixed_mesh.vertices.max(axis=0), [1, 1, 1])
 
     def test_a_surface_less_polydata_is_a_clean_error(self, tmp_path: Path) -> None:
         p = tmp_path / "cloud.vtp"
@@ -1817,6 +1872,21 @@ class TestErrors:
 
 
 class TestTriangleMeshInvariants:
+    def test_dimension_names_must_match_vertex_columns(self) -> None:
+        with pytest.raises(ValueError, match="one dimension name per column"):
+            TriangleMesh(
+                vertices=np.zeros((3, 4), dtype=np.float32),
+                faces=np.array([[0, 1, 2]], dtype=np.uint32),
+            )
+
+    def test_first_three_dimensions_must_be_spatial(self) -> None:
+        with pytest.raises(ValueError, match="must be x, y, z"):
+            TriangleMesh(
+                vertices=np.zeros((3, 3), dtype=np.float32),
+                faces=np.array([[0, 1, 2]], dtype=np.uint32),
+                dimension_names=("a", "b", "c"),
+            )
+
     def test_out_of_range_face_index_is_named(self) -> None:
         with pytest.raises(ValueError, match="out of range"):
             TriangleMesh(
@@ -1833,6 +1903,120 @@ class TestTriangleMeshInvariants:
             )
 
 
+class TestMeshDirectoryImport:
+    def test_stacks_numeric_time_and_channel_coordinates(self, tmp_path: Path) -> None:
+        write_vtp(tmp_path / "a_Ch1-registered-T0010.vtp", GT, compressed=True)
+        write_vtp(tmp_path / "z_Ch0-registered-T0002.vtp", GT, compressed=True)
+        progress: list[tuple[int, int, str]] = []
+
+        mesh = import_mesh_directory(
+            tmp_path,
+            progress=lambda index, total, path: progress.append(
+                (index, total, path.name)
+            ),
+        )
+
+        assert mesh.dimension_names == ("x", "y", "z", "t", "c")
+        assert mesh.vertices.shape == (8, 5)
+        assert np.array_equal(mesh.vertices[:4, 3:], [[2, 0]] * 4)
+        assert np.array_equal(mesh.vertices[4:, 3:], [[10, 1]] * 4)
+        assert np.array_equal(mesh.faces[4:], mesh.faces[:4] + 4)
+        assert mesh.normals is not None
+        assert mesh.colors is not None
+        assert np.array_equal(mesh.normals[4:], mesh.normals[:4])
+        assert np.array_equal(mesh.colors[4:], mesh.colors[:4])
+        assert progress == [
+            (1, 2, "z_Ch0-registered-T0002.vtp"),
+            (2, 2, "a_Ch1-registered-T0010.vtp"),
+        ]
+
+    def test_missing_timepoints_remain_coordinate_gaps(self, tmp_path: Path) -> None:
+        write_vtp(tmp_path / "z-T0001.vtp", GT)
+        write_vtp(tmp_path / "a-T0003.vtp", GT)
+
+        mesh = import_mesh_directory(tmp_path)
+
+        assert mesh.dimension_names == ("x", "y", "z", "t")
+        assert np.array_equal(np.unique(mesh.vertices[:, 3]), [1, 3])
+
+    def test_mixed_or_duplicate_coordinates_are_refused(self, tmp_path: Path) -> None:
+        write_ply_binary(tmp_path / "a_Ch0-T0001.ply", GT)
+        write_ply_binary(tmp_path / "b-T0002.ply", GT)
+        with pytest.raises(ValueError, match="only some filenames"):
+            import_mesh_directory(tmp_path, pattern="*.ply")
+
+        (tmp_path / "b-T0002.ply").unlink()
+        write_ply_binary(tmp_path / "b_Ch0-T0001.ply", GT)
+        with pytest.raises(ValueError, match="duplicate time/channel"):
+            import_mesh_directory(tmp_path, pattern="*.ply")
+
+    def test_every_matched_file_requires_a_time_index(self, tmp_path: Path) -> None:
+        write_ply_binary(tmp_path / "surface.ply", GT)
+        with pytest.raises(ValueError, match=r"no T<number> time index"):
+            import_mesh_directory(tmp_path, pattern="*.ply")
+
+    def test_lowercase_or_multiple_time_indices_are_refused(
+        self, tmp_path: Path
+    ) -> None:
+        write_ply_binary(tmp_path / "surface-t0001.ply", GT)
+        with pytest.raises(ValueError, match=r"no T<number> time index"):
+            import_mesh_directory(tmp_path, pattern="*.ply")
+
+        (tmp_path / "surface-t0001.ply").unlink()
+        write_ply_binary(tmp_path / "run-T0001-T0002.ply", GT)
+        with pytest.raises(ValueError, match="more than one time index"):
+            import_mesh_directory(tmp_path, pattern="*.ply")
+
+    @pytest.mark.parametrize(
+        ("missing_name", "arrays", "attrs"),
+        [
+            ("colors", [(GT.normals, "Float32", "Normals", 3)], 'Normals="Normals"'),
+            ("normals", [(GT.colors, "UInt8", "colors", 3)], 'Scalars="colors"'),
+        ],
+    )
+    def test_attributes_must_be_present_in_every_file(
+        self,
+        tmp_path: Path,
+        missing_name: str,
+        arrays: list[tuple[np.ndarray, str, str, int]],
+        attrs: str,
+    ) -> None:
+        write_vtp(tmp_path / "a-T0001.vtp", GT)
+        write_vtp_point_data(tmp_path / "b-T0002.vtp", GT, arrays, pdata_attrs=attrs)
+
+        with pytest.raises(
+            ValueError, match=rf"{missing_name} are present in only some"
+        ):
+            import_mesh_directory(tmp_path)
+
+    def test_attribute_component_counts_must_match(self, tmp_path: Path) -> None:
+        rgba = np.column_stack(
+            (GT.colors, np.full(GT.colors.shape[0], 255, dtype=np.uint8))
+        )
+        write_vtp(tmp_path / "a-T0001.vtp", GT)
+        write_vtp_point_data(
+            tmp_path / "b-T0002.vtp",
+            GT,
+            [
+                (GT.normals, "Float32", "Normals", 3),
+                (rgba, "UInt8", "colors", 4),
+            ],
+            pdata_attrs='Normals="Normals" Scalars="colors"',
+        )
+
+        with pytest.raises(
+            ValueError, match="colors have inconsistent component counts"
+        ):
+            import_mesh_directory(tmp_path)
+
+    def test_indices_must_remain_exact_float32_coordinates(
+        self, tmp_path: Path
+    ) -> None:
+        write_ply_binary(tmp_path / "surface-T16777217.ply", GT)
+        with pytest.raises(ValueError, match="too large to represent exactly"):
+            import_mesh_directory(tmp_path, pattern="*.ply")
+
+
 class TestWelding:
     """The weld key is position PLUS every per-vertex attribute, not position alone.
 
@@ -1840,6 +2024,20 @@ class TestWelding:
     can pass vacuously: keying on position alone passes ``hard=False`` and fails
     ``hard=True``; refusing to merge anything does the reverse.
     """
+
+    def test_pruning_an_already_compact_mesh_reuses_its_arrays(self) -> None:
+        vertices = np.ascontiguousarray(GT.vertices, dtype=np.float32)
+        faces = np.ascontiguousarray(GT.faces, dtype=np.uint32)
+        normals = np.ascontiguousarray(GT.normals, dtype=np.float32)
+
+        compact_vertices, compact_faces, extras = prune_unreferenced_vertices(
+            vertices, faces, extras={"normals": normals, "colors": None}
+        )
+
+        assert compact_vertices is vertices
+        assert compact_faces is faces
+        assert extras["normals"] is normals
+        assert extras["colors"] is None
 
     def test_a_crease_survives_welding(self, tmp_path: Path) -> None:
         path = tmp_path / "crease.ply"

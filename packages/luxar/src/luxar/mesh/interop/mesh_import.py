@@ -17,6 +17,7 @@ different thing, so it is :class:`TriangleMesh`.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional, Union
@@ -29,7 +30,12 @@ from ._obj import read_obj
 from ._ply_mesh import parse_ply_header, read_ply_mesh
 from ._stl import is_binary_stl, read_stl
 from ._vtp import read_vtp, sniff_vtk_type
-from ._weld import drop_degenerate_faces, fan_triangulate, weld_vertices
+from ._weld import (
+    drop_degenerate_faces,
+    fan_triangulate,
+    prune_unreferenced_vertices,
+    weld_vertices,
+)
 
 #: Formats accepted by :func:`import_mesh`'s ``format`` argument.
 MESH_FORMATS = ("ply", "obj", "stl", "gltf", "vtp")
@@ -37,13 +43,14 @@ MESH_FORMATS = ("ply", "obj", "stl", "gltf", "vtp")
 
 @dataclass(frozen=True)
 class TriangleMesh:
-    """A decoded triangle mesh in the source file's own coordinate frame.
+    """A decoded triangle mesh in its source coordinate frame.
 
     Every reader returns this, welded and triangulated, so the CLI and the scene
     embed have exactly one shape to handle.
     """
 
-    #: ``(V, 3)`` float32 vertex positions.
+    #: ``(V, D)`` float32 vertex positions. Single-file imports are always 3D;
+    #: directory imports append discrete time and optional channel coordinates.
     vertices: NDArray[np.float32]
     #: ``(F, 3)`` uint32 triangle indices into ``vertices``.
     faces: NDArray[np.uint32]
@@ -51,13 +58,22 @@ class TriangleMesh:
     normals: Optional[NDArray[np.float32]] = None
     #: ``(V, 3)`` or ``(V, 4)`` uint8 per-vertex colour, or None.
     colors: Optional[NDArray[np.uint8]] = None
-    #: One of :data:`MESH_FORMATS`, for provenance.
+    #: One of :data:`MESH_FORMATS`, or ``"mixed"`` for a mixed-format directory.
     source_format: str = ""
+    #: Names of the coordinate columns in ``vertices``.
+    dimension_names: tuple[str, ...] = ("x", "y", "z")
 
     def __post_init__(self) -> None:
         v = self.vertices.shape[0]
-        if self.vertices.ndim != 2 or self.vertices.shape[1] != 3:
-            raise ValueError(f"vertices must be (V, 3); got {self.vertices.shape}")
+        if self.vertices.ndim != 2 or self.vertices.shape[1] != len(
+            self.dimension_names
+        ):
+            raise ValueError(
+                "vertices must be (V, D) with one dimension name per column; "
+                f"got {self.vertices.shape} and {self.dimension_names}"
+            )
+        if self.dimension_names[:3] != ("x", "y", "z"):
+            raise ValueError("the first three mesh dimensions must be x, y, z")
         if self.faces.ndim != 2 or self.faces.shape[1] != 3:
             raise ValueError(f"faces must be (F, 3); got {self.faces.shape}")
         if self.faces.size and int(self.faces.max()) >= v:
@@ -183,15 +199,16 @@ def import_mesh(
     Args:
         path: The file. ``.ply`` / ``.obj`` / ``.stl`` / ``.vtp`` / ``.gltf`` / ``.glb``.
         format: Source dialect, or ``"auto"`` to sniff.
-        weld: Merge duplicate vertex positions and reindex. On by default because an
-            unwelded surface (always, for STL; often, for glTF without indices) has no
-            shared vertices, which defeats per-vertex normals, trips the writer's
-            authoring lint, and gives picking a different vertex ordinal for the same
-            corner depending on which triangle was hit. Pass False to keep the vertex
-            list the reader produced. That is not always the file's own list: an OBJ
-            that indexes normals independently of positions has no per-vertex normal
-            array to begin with, so the reader splits vertices per distinct
-            (position, normal) pair and welding is what merges them back.
+        weld: Merge duplicate vertex positions, remove vertices no surviving triangle
+            references, and reindex. On by default because an unwelded surface (always,
+            for STL; often, for glTF without indices) has no shared vertices, which
+            defeats per-vertex normals, trips the writer's authoring lint, and gives
+            picking a different vertex ordinal for the same corner depending on which
+            triangle was hit. Pass False to keep the vertex list the reader produced.
+            That is not always the file's own list: an OBJ that indexes normals
+            independently of positions has no per-vertex normal array to begin with,
+            so the reader splits vertices per distinct (position, normal) pair and
+            welding is what merges them back.
 
     Raises:
         FileNotFoundError: If ``path`` does not exist.
@@ -227,6 +244,12 @@ def import_mesh(
             f"{path.name}: no non-degenerate triangles survived import "
             f"({vertices.shape[0]} vertices read)"
         )
+    if weld:
+        extras = {"normals": normals, "colors": colors}
+        vertices, faces, compacted = prune_unreferenced_vertices(
+            vertices, faces, extras=extras
+        )
+        normals, colors = compacted.get("normals"), compacted.get("colors")
 
     return TriangleMesh(
         vertices=vertices,
@@ -239,10 +262,141 @@ def import_mesh(
     )
 
 
+_TIME_INDEX = re.compile(r"(?:^|[-_])T(?P<index>\d+)(?=$|[-_.])")
+_CHANNEL_INDEX = re.compile(r"(?:^|[-_])Ch(?P<index>\d+)(?=$|[-_.])")
+
+
+def _filename_index(path: Path, pattern: re.Pattern[str], label: str) -> int | None:
+    matches = list(pattern.finditer(path.stem))
+    if len(matches) > 1:
+        raise ValueError(f"{path.name}: filename contains more than one {label} index")
+    if not matches:
+        return None
+    value = int(matches[0].group("index"))
+    if value > 1 << 24:
+        raise ValueError(
+            f"{path.name}: {label} index {value} is too large to represent exactly "
+            "in float32 mesh coordinates"
+        )
+    return value
+
+
+def _discover_indexed_files(
+    path: Path, pattern: str
+) -> list[tuple[int, int | None, Path]]:
+    files = sorted(candidate for candidate in path.glob(pattern) if candidate.is_file())
+    if not files:
+        raise ValueError(f"{path}: no mesh files match pattern {pattern!r}")
+
+    indexed: list[tuple[int, int | None, Path]] = []
+    for candidate in files:
+        time = _filename_index(candidate, _TIME_INDEX, "time")
+        if time is None:
+            raise ValueError(f"{candidate.name}: filename has no T<number> time index")
+        indexed.append(
+            (time, _filename_index(candidate, _CHANNEL_INDEX, "channel"), candidate)
+        )
+
+    has_channels = [channel is not None for _, channel, _ in indexed]
+    if any(has_channels) and not all(has_channels):
+        raise ValueError(
+            "Cannot stack directory: channel indices are present in only some filenames"
+        )
+
+    coordinates = [(time, channel) for time, channel, _ in indexed]
+    if len(set(coordinates)) != len(coordinates):
+        raise ValueError("Cannot stack directory: duplicate time/channel coordinates")
+    indexed.sort(key=lambda item: (item[0], -1 if item[1] is None else item[1]))
+    return indexed
+
+
+def _stack_optional_attribute(
+    values: list[NDArray | None], name: str
+) -> NDArray | None:
+    present = [value is not None for value in values]
+    if any(present) and not all(present):
+        raise ValueError(
+            f"Cannot stack directory: {name} are present in only some input files"
+        )
+    if not any(present):
+        return None
+    arrays = [value for value in values if value is not None]
+    widths = {value.shape[1] for value in arrays}
+    if len(widths) != 1:
+        raise ValueError(
+            f"Cannot stack directory: {name} have inconsistent component counts"
+        )
+    return np.concatenate(arrays, axis=0)
+
+
+def import_mesh_directory(
+    path: Union[str, Path],
+    *,
+    pattern: str = "*.vtp",
+    format: str = "auto",
+    weld: bool = True,
+    progress: Callable[[int, int, Path], None] | None = None,
+) -> TriangleMesh:
+    """Read per-timepoint mesh files into one nD triangle mesh.
+
+    Filenames must carry ``T<number>`` and may all carry ``Ch<number>``. Numeric
+    values are preserved as coordinates, so a missing timepoint remains a gap rather
+    than shifting later data. Files are ordered by ``(time, channel)`` and faces are
+    rebased into the concatenated vertex array. ``progress``, when provided, is called
+    before each file with ``(one_based_index, total_files, path)``.
+    """
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"Mesh directory not found: {path}")
+    if not path.is_dir():
+        raise ValueError(f"Mesh directory is not a directory: {path}")
+
+    indexed = _discover_indexed_files(path, pattern)
+    vertex_blocks: list[NDArray[np.float32]] = []
+    face_blocks: list[NDArray[np.uint32]] = []
+    normal_blocks: list[NDArray | None] = []
+    color_blocks: list[NDArray | None] = []
+    formats: set[str] = set()
+    offset = 0
+    for file_index, (time, channel, file) in enumerate(indexed, start=1):
+        if progress is not None:
+            progress(file_index, len(indexed), file)
+        mesh = import_mesh(file, format=format, weld=weld)
+        next_offset = offset + mesh.n_vertices
+        if next_offset > np.iinfo(np.uint32).max:
+            raise ValueError(
+                f"Cannot stack {next_offset} vertices: mesh face indices are uint32"
+            )
+        discrete = [float(time)]
+        if channel is not None:
+            discrete.append(float(channel))
+        extra = np.broadcast_to(
+            np.asarray(discrete, dtype=np.float32), (mesh.n_vertices, len(discrete))
+        )
+        vertex_blocks.append(np.column_stack((mesh.vertices, extra)))
+        face_blocks.append(mesh.faces + np.uint32(offset))
+        normal_blocks.append(mesh.normals)
+        color_blocks.append(mesh.colors)
+        formats.add(mesh.source_format)
+        offset = next_offset
+
+    return TriangleMesh(
+        vertices=np.concatenate(vertex_blocks, axis=0),
+        faces=np.concatenate(face_blocks, axis=0),
+        normals=_stack_optional_attribute(normal_blocks, "normals"),
+        colors=_stack_optional_attribute(color_blocks, "colors"),
+        source_format=formats.pop() if len(formats) == 1 else "mixed",
+        dimension_names=("x", "y", "z", "t", "c")
+        if indexed[0][1] is not None
+        else ("x", "y", "z", "t"),
+    )
+
+
 __all__ = [
     "MESH_FORMATS",
     "TriangleMesh",
     "detect_mesh_format",
     "import_mesh",
+    "import_mesh_directory",
     "is_binary_stl",
 ]

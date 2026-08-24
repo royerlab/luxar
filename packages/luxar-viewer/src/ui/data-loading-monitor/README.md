@@ -3,9 +3,10 @@
 Private helpers behind the `M`-key data-loading monitor. The public
 facade lives at `../data-loading-monitor.ts` and owns the panel
 lifecycle, event subscription, and three-state UI (hidden → mini →
-expanded). This folder holds the focused helpers it pulls in each
-tick: HTML templates, the loading advisor, the event queue, the
-polling loop, and the hierarchical timing panel.
+expanded). This folder holds the focused helpers it coordinates each
+tick: the stateful provider registry, HTML templates, the loading
+advisor, the event queue, the polling loop, and the hierarchical
+timing panel.
 
 ## Files
 
@@ -15,6 +16,7 @@ polling loop, and the hierarchical timing panel.
 | `advisor.ts`      | `LoadingAdvisor` — consumes `MonitorEvent`s and rolled-up `LoaderMetrics` / `MemoryMetrics` and emits `Recommendation`s (slow query, slow load, high query time, low query efficiency, high error rate, low GPU reuse rate, excessive accumulator growth, …).                                                                                                                                                                                                                                                                                           |
 | `event-queue.ts`  | Generic `EventQueue<T>` — bounded ring buffer with non-blocking `push` and atomic `drain()` used to decouple loader event producers from the polling consumer.                                                                                                                                                                                                                                                                                                                                                                                          |
 | `polling-loop.ts` | `PollingLoop` — restartable interval timer. Errors thrown from `onTick` are logged via `utils/log` and never stop the loop.                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `providers.ts`    | `MonitorProviderRegistry` — stateful owner of the scene-scoped provider slots and live LOD/draw-order snapshots. It remains private to the parent monitor and marks the orchestrator's structure dirty when provider changes require a repaint.                                                                                                                                                                                                                                                                                                         |
 | `timing-panel.ts` | Renderer + in-place updater for the collapsible per-frame timing tree, fed by `profiling/update-profiler`. Module-level `expandedState` map persists collapse state across rerenders. The footer also carries the depth-sort verdict: passed `depthSortUnavailable` (from `rendering/depth-sort-coordinator::isDepthSortAvailable`) it prints `depth sort UNAVAILABLE` in place of the sort count and suppresses the "No timing data yet" empty state, so a session drawing order-dependent geometry in storage order cannot be buried by zero timings. |
 
 `README.md` for this folder; per-subpackage READMEs live under
@@ -48,6 +50,8 @@ The orchestrator at `../data-loading-monitor.ts` owns:
   drains it on each tick,
 - a `LoadingAdvisor` instance that sees every drained event plus
   rolled-up metrics,
+- a `MonitorProviderRegistry` that owns the provider slots and live
+  snapshots while reporting structural changes back to the orchestrator,
 - the painted-once-then-patched tab DOM (templates for structure;
   `tabs/` for per-tick value patches),
 - the timing panel's container and its expand/collapse state.
@@ -163,7 +167,7 @@ event loop, multi-tab DOM, scene-graph viewer, and timing tree. Each
 helper here was extracted to keep that orchestrator focused on
 coordination rather than HTML strings, rate math, or advisory logic.
 Everything in this folder is reachable only via the parent monitor;
-no external module imports it directly.
+no external module imports it directly, including the provider registry.
 
 ## Subpackages
 

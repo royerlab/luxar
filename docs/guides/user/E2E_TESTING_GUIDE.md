@@ -156,8 +156,8 @@ pnpm test:e2e:ui
 # Run with headed browser (see it run)
 pnpm test:e2e --headed
 
-# Update visual regression baselines
-pnpm test:e2e --grep "Visual" --update-snapshots
+# Update Linux visual regression baselines
+pnpm test:e2e:visual:update
 
 # View HTML report
 pnpm test:e2e:report
@@ -177,9 +177,10 @@ Before running E2E tests:
    fail later with unrelated loading errors.
 2. ✅ Generate the zarr test fixtures: `pnpm test:generate-fixtures` — 18 specs read
    `packages/luxar-viewer/tests/fixtures/`, and the Playwright pre-flight now fails the
-   whole run if any of them is missing rather than letting those specs time out. `pnpm test`
-   (vitest) regenerates them for you; Playwright deliberately does not, because the
-   generator takes 1–2 minutes. For a one-off run of specs you know read no fixtures, set
+   whole run if any of them is missing or stale rather than letting those specs time out.
+   `make test-e2e` and `pnpm test` (vitest) regenerate them for you; direct `pnpm test:e2e`
+   deliberately does not, because the generator takes 1–2 minutes. For a one-off run of
+   specs you know read no fixtures, set
    `LUXAR_E2E_NO_FIXTURES=1` to skip the check (`pnpm test:e2e:smoke` and
    `pnpm test:perf:e2e` already do).
 3. ✅ Install Playwright browsers: `pnpm exec playwright install chromium`
@@ -298,7 +299,7 @@ make run-examples  # Generate datasets
 ### Issue: Visual regression tests fail
 **Solution**: GPU rendering varies. Update baselines:
 ```bash
-pnpm test:e2e --grep "Visual" --update-snapshots
+pnpm test:e2e:visual:update
 ```
 
 ### Issue: "Executable doesn't exist" error

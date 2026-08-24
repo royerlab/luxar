@@ -23,9 +23,7 @@ import type {
   SceneGraphState,
   GeometryCounters,
   LODProgressProvider,
-  LODProgressState,
   DrawOrderProvider,
-  NodeDrawOrder,
   MemoryMetrics,
 } from '../types/data-monitor-types';
 
@@ -36,6 +34,7 @@ import { patchField, updateColorClass } from './data-loading-monitor/tabs/dom-he
 import { LoadingAdvisor } from './data-loading-monitor/advisor';
 import { EventQueue } from './data-loading-monitor/event-queue';
 import { PollingLoop } from './data-loading-monitor/polling-loop';
+import { MonitorProviderRegistry } from './data-loading-monitor/providers';
 import { log, Modules } from '../utils/log';
 import { config } from '../config';
 import { notifier } from '../utils/cross-layer/notifier';
@@ -100,14 +99,6 @@ import { isDepthSortAvailable } from '../rendering/depth-sort-coordinator';
 import { POOLED_GEOMETRY_TYPES } from '../types/data-monitor-types';
 import type { PooledGeometryType, AccumulatorProvider } from '../types/data-monitor-types';
 import { GEOMETRY_TYPES, type GeometryTypeName } from '../types/format-contract';
-
-/** Empty accumulator slots — one per {@link POOLED_GEOMETRY_TYPES} entry. */
-function emptyAccumulatorSlots(): Record<PooledGeometryType, AccumulatorProvider | null> {
-  return Object.fromEntries(POOLED_GEOMETRY_TYPES.map((t) => [t, null])) as Record<
-    PooledGeometryType,
-    AccumulatorProvider | null
-  >;
-}
 
 /**
  * A fresh all-zero per-type counter record, one slot per geometry type.
@@ -235,48 +226,16 @@ export class DataLoadingMonitor {
   // UI event handler bound to this instance
   private uiEventHandler = this.handleUIEvent.bind(this);
 
-  // Cache stats provider for L1/L2 cache metrics
-  private cacheStatsProvider: CacheStatsProvider | null = null;
+  private readonly providers = new MonitorProviderRegistry(() => {
+    this.structureDirty = true;
+  });
 
-  // L0 decompressed chunk cache provider
-  private l0CacheProvider: { getStats: () => CacheMetrics['l0']; clear: () => void } | null = null;
-  private sliceCacheProvider: { getStats: () => CacheMetrics['slice']; clear: () => void } | null =
-    null;
-
-  // Explicit cache telemetry state (set by SceneLoader.cache-setup).
-  // Pre-wiring this defaults to undefined so the aggregator falls back
-  // to provider-presence inference; once setCacheTelemetryState() is
-  // called, the explicit state wins.
-  private cacheTelemetryState: CacheTelemetryState | undefined;
-
-  // GPU buffer pool reference for dynamic stats retrieval
-  private gpuBufferPoolProvider: { getStats: () => MemoryMetrics['gpuPool'] } | null = null;
-
-  // Update profiler reference for hierarchical timing display
-  private profiler: UpdateProfiler | null = null;
-
-  // Live LOD / progressive-refinement / cache-residency state provider.
-  // Polled each tick; the snapshot drives the scene-graph tree's kind
-  // badges, "LOD x/N" chips, refining indicator, and header summary.
-  private lodProgressProvider: LODProgressProvider | null = null;
-  /** Failed-load records + retry-all, from the SceneLoader (overview banner). */
-  private failedLoadsProvider: FailedLoadsProviderPort | null = null;
   /** In-flight guard so the banner's Retry button can't stack batches. */
   private retryFailedLoadsInFlight = false;
   /** Last-rendered failed-loads state; a change marks the overview structure dirty. */
   private lastFailedLoadsSignature = '';
-  private lodStates: Map<string, LODProgressState> = new Map();
   /** Per-path visible counts pushed by the SceneLoader's visible-counts walk. */
   private visibleCountsByPath: ReadonlyMap<string, number> = new Map();
-  // Live per-mesh draw-order provider (blending bucket / depthWrite /
-  // renderOrder). Polled each tick — renderOrder is camera-dependent — to
-  // drive the scene-graph tree's draw-order chip.
-  private drawOrderProvider: DrawOrderProvider | null = null;
-  private drawOrderStates: Map<string, NodeDrawOrder> = new Map();
-
-  // Accumulator providers for dynamic stats retrieval
-  private accumulatorProviders: Record<PooledGeometryType, AccumulatorProvider | null> =
-    emptyAccumulatorSlots();
 
   // DOM element references for efficient updates (avoids full innerHTML replacement)
   private contentContainer: HTMLElement | null = null;
@@ -409,10 +368,7 @@ export class DataLoadingMonitor {
    * (count/paths + retry-all; see `FailedLoadsProviderPort`).
    */
   public setFailedLoadsProvider(provider: FailedLoadsProviderPort | null): void {
-    this.failedLoadsProvider = provider;
-    if (provider) {
-      log.info(Modules.DATA_MONITOR, 'Failed-loads provider connected');
-    }
+    this.providers.setFailedLoadsProvider(provider);
   }
 
   /**
@@ -420,10 +376,7 @@ export class DataLoadingMonitor {
    * This enables the monitor to display actual cache statistics.
    */
   public setCacheStatsProvider(provider: CacheStatsProvider | null): void {
-    this.cacheStatsProvider = provider;
-    if (provider) {
-      log.info(Modules.DATA_MONITOR, 'Cache stats provider connected');
-    }
+    this.providers.setCacheStatsProvider(provider);
   }
 
   /**
@@ -435,10 +388,7 @@ export class DataLoadingMonitor {
    * as `not-wired`.
    */
   public setCacheTelemetryState(state: CacheTelemetryState): void {
-    this.cacheTelemetryState = state;
-    log.info(Modules.DATA_MONITOR, `Cache telemetry state: ${state.kind}`);
-    // Cache tab structure may change between disabled/enabled states.
-    this.structureDirty = true;
+    this.providers.setCacheTelemetryState(state);
   }
 
   /**
@@ -448,10 +398,7 @@ export class DataLoadingMonitor {
   public setL0CacheProvider(
     provider: { getStats: () => CacheMetrics['l0']; clear: () => void } | null
   ): void {
-    this.l0CacheProvider = provider;
-    if (provider) {
-      log.info(Modules.DATA_MONITOR, 'L0 cache provider connected');
-    }
+    this.providers.setL0CacheProvider(provider);
   }
 
   /**
@@ -461,10 +408,7 @@ export class DataLoadingMonitor {
   public setSliceCacheProvider(
     provider: { getStats: () => CacheMetrics['slice']; clear: () => void } | null
   ): void {
-    this.sliceCacheProvider = provider;
-    if (provider) {
-      log.info(Modules.DATA_MONITOR, 'SliceCache provider connected');
-    }
+    this.providers.setSliceCacheProvider(provider);
   }
 
   /**
@@ -474,13 +418,7 @@ export class DataLoadingMonitor {
   public setGPUBufferPoolProvider(
     provider: { getStats: () => MemoryMetrics['gpuPool'] } | null
   ): void {
-    this.gpuBufferPoolProvider = provider;
-    if (provider) {
-      log.info(Modules.DATA_MONITOR, 'GPU buffer pool provider connected');
-      // Provider availability changes the memory tab structure
-      // (from "Not initialized" to full table)
-      this.structureDirty = true;
-    }
+    this.providers.setGPUBufferPoolProvider(provider);
   }
 
   /**
@@ -488,12 +426,7 @@ export class DataLoadingMonitor {
    * The profiler tracks hierarchical timing of scene updates.
    */
   public setProfiler(profiler: UpdateProfiler | null): void {
-    this.profiler = profiler;
-    if (profiler) {
-      log.info(Modules.DATA_MONITOR, 'Update profiler connected');
-      // Profiler availability changes the performance tab structure
-      this.structureDirty = true;
-    }
+    this.providers.setProfiler(profiler);
   }
 
   /**
@@ -502,13 +435,7 @@ export class DataLoadingMonitor {
    * marks the structure dirty so the tree re-renders with chip slots.
    */
   public setLODProgressProvider(provider: LODProgressProvider | null): void {
-    this.lodProgressProvider = provider;
-    if (provider) {
-      log.info(Modules.DATA_MONITOR, 'LOD progress provider connected');
-      this.structureDirty = true;
-    } else {
-      this.lodStates = new Map();
-    }
+    this.providers.setLODProgressProvider(provider);
   }
 
   /**
@@ -518,13 +445,7 @@ export class DataLoadingMonitor {
    * with the draw-order chip slot.
    */
   public setDrawOrderProvider(provider: DrawOrderProvider | null): void {
-    this.drawOrderProvider = provider;
-    if (provider) {
-      log.info(Modules.DATA_MONITOR, 'Draw-order provider connected');
-      this.structureDirty = true;
-    } else {
-      this.drawOrderStates = new Map();
-    }
+    this.providers.setDrawOrderProvider(provider);
   }
 
   /**
@@ -536,10 +457,7 @@ export class DataLoadingMonitor {
     type: PooledGeometryType,
     provider: AccumulatorProvider | null
   ): void {
-    this.accumulatorProviders[type] = provider;
-    if (provider) {
-      log.info(Modules.DATA_MONITOR, `${type} accumulator provider connected`);
-    }
+    this.providers.setAccumulatorProvider(type, provider);
   }
 
   /**
@@ -555,24 +473,7 @@ export class DataLoadingMonitor {
    * stale closures live until tab close.
    */
   public resetSceneProviders(): void {
-    this.cacheStatsProvider = null;
-    this.l0CacheProvider = null;
-    this.sliceCacheProvider = null;
-    this.gpuBufferPoolProvider = null;
-    this.accumulatorProviders = emptyAccumulatorSlots();
-    this.profiler = null;
-    this.lodProgressProvider = null;
-    this.failedLoadsProvider = null;
-    this.lodStates = new Map();
-    this.drawOrderProvider = null;
-    this.drawOrderStates = new Map();
-    // Reset to undefined (not 'not-wired') so the next scene's
-    // setCacheTelemetryState call lands cleanly. If the next setup
-    // doesn't call the setter, the aggregator falls back to
-    // provider-presence inference.
-    this.cacheTelemetryState = undefined;
-    this.structureDirty = true;
-    log.info(Modules.DATA_MONITOR, 'Scene providers reset');
+    this.providers.resetSceneProviders();
   }
 
   /**
@@ -591,7 +492,7 @@ export class DataLoadingMonitor {
     this.sceneGraphState = emptySceneGraphState();
     this.expandedNodes = new Set<string>(['/']);
     this.visibleCountsByPath = new Map();
-    this.drawOrderStates = new Map();
+    this.providers.clearDrawOrderStates();
     this.structureDirty = true;
   }
 
@@ -599,8 +500,8 @@ export class DataLoadingMonitor {
    * Clear L0 decompressed chunk cache.
    */
   public clearL0Cache(): void {
-    if (this.l0CacheProvider) {
-      this.l0CacheProvider.clear();
+    if (this.providers.l0CacheProvider) {
+      this.providers.l0CacheProvider.clear();
       log.info(Modules.DATA_MONITOR, 'L0 cache cleared');
       this.updateUI();
     }
@@ -610,8 +511,8 @@ export class DataLoadingMonitor {
    * Clear the SliceCache ("S-cache").
    */
   public clearSliceCache(): void {
-    if (this.sliceCacheProvider) {
-      this.sliceCacheProvider.clear();
+    if (this.providers.sliceCacheProvider) {
+      this.providers.sliceCacheProvider.clear();
       log.info(Modules.DATA_MONITOR, 'SliceCache cleared');
       this.updateUI();
     }
@@ -621,8 +522,8 @@ export class DataLoadingMonitor {
    * Clear L1 memory cache.
    */
   public clearL1Cache(): void {
-    if (this.cacheStatsProvider) {
-      this.cacheStatsProvider.clearL1();
+    if (this.providers.cacheStatsProvider) {
+      this.providers.cacheStatsProvider.clearL1();
       log.info(Modules.DATA_MONITOR, 'L1 cache cleared');
       this.updateUI();
     }
@@ -636,12 +537,12 @@ export class DataLoadingMonitor {
    * confirmed intent.
    */
   public async clearL2Cache(opts?: { skipConfirm?: boolean }): Promise<void> {
-    if (!this.cacheStatsProvider) return;
+    if (!this.providers.cacheStatsProvider) return;
     if (!opts?.skipConfirm && !this.confirmDestructiveCacheAction('Clear L2 (persistent) cache?')) {
       return;
     }
-    const sizeBefore = this.cacheStatsProvider.getStats().l2.size;
-    await this.cacheStatsProvider.clearL2();
+    const sizeBefore = this.providers.cacheStatsProvider.getStats().l2.size;
+    await this.providers.cacheStatsProvider.clearL2();
     log.info(Modules.DATA_MONITOR, 'L2 cache cleared');
     if (sizeBefore > 0) {
       const mb = (sizeBefore / 1024 / 1024).toFixed(1);
@@ -664,15 +565,15 @@ export class DataLoadingMonitor {
       return;
     }
     // Clear L0 + SliceCache first (synchronous)
-    if (this.l0CacheProvider) {
-      this.l0CacheProvider.clear();
+    if (this.providers.l0CacheProvider) {
+      this.providers.l0CacheProvider.clear();
     }
-    if (this.sliceCacheProvider) {
-      this.sliceCacheProvider.clear();
+    if (this.providers.sliceCacheProvider) {
+      this.providers.sliceCacheProvider.clear();
     }
     // Clear L1 + L2 (L2 is async)
-    if (this.cacheStatsProvider) {
-      await this.cacheStatsProvider.clearAll();
+    if (this.providers.cacheStatsProvider) {
+      await this.providers.cacheStatsProvider.clearAll();
     }
     log.info(Modules.DATA_MONITOR, 'All caches cleared (S-cache + L0 + L1 + L2)');
     notifier.toast('All caches cleared');
@@ -830,14 +731,8 @@ export class DataLoadingMonitor {
       this.lastEventCleanup = now;
     }
 
-    // 3. Refresh the live LOD / refinement / residency snapshot so the
-    // scene-graph tree's chips and header summary reflect this frame.
-    if (this.lodProgressProvider) {
-      this.lodStates = this.lodProgressProvider.getLODStates();
-    }
-    if (this.drawOrderProvider) {
-      this.drawOrderStates = this.drawOrderProvider.getDrawOrderStates();
-    }
+    // 3. Refresh the live LOD / refinement / residency and draw-order snapshots.
+    this.providers.refreshLiveSnapshots();
 
     // 4. Update UI (this also pulls fresh stats from providers)
     this.updateUI();
@@ -1347,7 +1242,7 @@ export class DataLoadingMonitor {
     // retry-in-flight flag must mark the structure dirty, or the banner
     // appears/disappears/disables only on the next unrelated rebuild.
     const failedLoadsSignature =
-      (this.failedLoadsProvider?.getFailedPaths() ?? []).join('|') +
+      (this.providers.failedLoadsProvider?.getFailedPaths() ?? []).join('|') +
       (this.retryFailedLoadsInFlight ? '#retrying' : '');
     if (failedLoadsSignature !== this.lastFailedLoadsSignature) {
       this.lastFailedLoadsSignature = failedLoadsSignature;
@@ -1388,10 +1283,10 @@ export class DataLoadingMonitor {
           updated = this.updateMemoryTabValues();
           break;
         case 'performance':
-          if (this.profiler) {
-            const timingData = this.profiler.getTimings();
-            const refinementData = this.profiler.getRefinementTimings();
-            const depthSortData = this.profiler.getDepthSortTimings();
+          if (this.providers.profiler) {
+            const timingData = this.providers.profiler.getTimings();
+            const refinementData = this.providers.profiler.getRefinementTimings();
+            const depthSortData = this.providers.profiler.getDepthSortTimings();
             if (timingData.count > 0 || refinementData.count > 0 || depthSortData.count > 0) {
               updated = updateTimingPanelValues(
                 this.contentContainer,
@@ -1550,7 +1445,7 @@ export class DataLoadingMonitor {
       if (!path) return;
       const node = this.getSceneGraphNodeByPath(path);
       if (!node) return;
-      const content = lodChipContent(node, this.lodStates.get(path));
+      const content = lodChipContent(node, this.providers.lodStates.get(path));
       if (content) {
         chip.textContent = content.text;
         (chip as HTMLElement).title = content.title;
@@ -1570,7 +1465,7 @@ export class DataLoadingMonitor {
     drawOrderChips.forEach((chip) => {
       const path = (chip as HTMLElement).dataset.draworderPath;
       if (!path) return;
-      const content = drawOrderChipContent(this.drawOrderStates.get(path));
+      const content = drawOrderChipContent(this.providers.drawOrderStates.get(path));
       if (content) {
         chip.textContent = content.text;
         (chip as HTMLElement).title = content.title;
@@ -1594,7 +1489,7 @@ export class DataLoadingMonitor {
       const indexRaw = el.dataset.levelIndex;
       if (!parentPath || indexRaw === undefined) return;
       // Same helper as the initial render so both derive the role identically.
-      const role = activeLevelRole(this.lodStates.get(parentPath), Number(indexRaw));
+      const role = activeLevelRole(this.providers.lodStates.get(parentPath), Number(indexRaw));
       el.classList.toggle('luxar-scene-graph__node-row--active-level', role === 'active');
       el.classList.toggle('luxar-scene-graph__node-row--inactive-level', role === 'inactive');
       const baseTitle = el.dataset.baseTitle;
@@ -1609,7 +1504,7 @@ export class DataLoadingMonitor {
     ) as HTMLElement | null;
     if (summaryEl) {
       summaryEl.textContent = summariseLodStates(
-        this.lodStates,
+        this.providers.lodStates,
         countAdditiveNodes(this.sceneGraphState.root)
       );
     }
@@ -1852,7 +1747,7 @@ export class DataLoadingMonitor {
    * a batch is in flight and refreshes the banner on completion.
    */
   private retryFailedLoads(): void {
-    const provider = this.failedLoadsProvider;
+    const provider = this.providers.failedLoadsProvider;
     if (!provider || this.retryFailedLoadsInFlight) return;
     if (provider.getFailedPaths().length === 0) return;
 
@@ -1906,7 +1801,7 @@ export class DataLoadingMonitor {
 
     // Failed-load warning banner (with a Retry action) ahead of the metrics —
     // failures otherwise surface only as transient toasts.
-    const failedPaths = this.failedLoadsProvider?.getFailedPaths() ?? [];
+    const failedPaths = this.providers.failedLoadsProvider?.getFailedPaths() ?? [];
     const banner = renderFailedLoadsBanner(failedPaths, this.retryFailedLoadsInFlight);
 
     // Use the template function for the main content
@@ -1919,8 +1814,8 @@ export class DataLoadingMonitor {
         renderSceneGraphTree(
           this.sceneGraphState,
           this.expandedNodes,
-          this.lodStates,
-          this.drawOrderStates
+          this.providers.lodStates,
+          this.providers.drawOrderStates
         )
       );
     } else {
@@ -1956,9 +1851,12 @@ export class DataLoadingMonitor {
    */
   private getMemoryMetrics(): MemoryMetrics {
     return {
-      gpuPool: this.gpuBufferPoolProvider?.getStats() ?? null,
+      gpuPool: this.providers.gpuBufferPoolProvider?.getStats() ?? null,
       accumulators: Object.fromEntries(
-        POOLED_GEOMETRY_TYPES.map((t) => [t, this.accumulatorProviders[t]?.getStats() ?? null])
+        POOLED_GEOMETRY_TYPES.map((t) => [
+          t,
+          this.providers.accumulatorProviders[t]?.getStats() ?? null,
+        ])
       ) as MemoryMetrics['accumulators'],
     };
   }
@@ -1968,7 +1866,7 @@ export class DataLoadingMonitor {
    */
   private renderPerformanceTab(): string {
     // Get timing data from profiler
-    const timingData = this.profiler?.getTimings();
+    const timingData = this.providers.profiler?.getTimings();
 
     if (!timingData) {
       return `
@@ -1986,8 +1884,8 @@ export class DataLoadingMonitor {
       <div class="luxar-performance-content">
         ${renderHierarchicalTimingPanel(
           timingData,
-          this.profiler?.getRefinementTimings(),
-          this.profiler?.getDepthSortTimings(),
+          this.providers.profiler?.getRefinementTimings(),
+          this.providers.profiler?.getDepthSortTimings(),
           !isDepthSortAvailable()
         )}
       </div>
@@ -2055,7 +1953,7 @@ export class DataLoadingMonitor {
     // from over-subtracting `activeSpatial`.
     let lodLoaderExcess = 0;
     let lodSpatialExcess = 0;
-    for (const [path, s] of this.lodStates) {
+    for (const [path, s] of this.providers.lodStates) {
       if (s.kind !== 'lod') continue;
       let present = 0;
       let presentSpatial = 0;
@@ -2122,13 +2020,13 @@ export class DataLoadingMonitor {
   private getCacheMetrics(): CacheMetrics {
     this.calculateRates();
     return aggregateCacheMetrics({
-      l0Provider: this.l0CacheProvider,
-      sliceProvider: this.sliceCacheProvider,
-      cacheStatsProvider: this.cacheStatsProvider,
+      l0Provider: this.providers.l0CacheProvider,
+      sliceProvider: this.providers.sliceCacheProvider,
+      cacheStatsProvider: this.providers.cacheStatsProvider,
       loaders: this.loaders,
       metricsCache: this.metrics,
       rates: this.cachedRates,
-      telemetryState: this.cacheTelemetryState,
+      telemetryState: this.providers.cacheTelemetryState,
     });
   }
 
