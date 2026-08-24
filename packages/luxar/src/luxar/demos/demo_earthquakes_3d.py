@@ -1280,8 +1280,8 @@ def generate_earthquake_scene(
             # (`surface_point_radius`), not pinned: a constant is tuned once at
             # one point count and then silently stipples the globe when the
             # count changes. At EARTH_POINTS the spacing is ~0.0025 Earth radii,
-            # so the old hardcoded 0.003 happened to be roughly right only at
-            # the count it was chosen for.
+            # close to the old hardcoded 0.003 only by coincidence; at the 120k
+            # count it was chosen for, that radius was a third of the spacing.
             earth_point_radius = surface_point_radius(
                 len(earth_positions), EARTH_RADIUS, overlap=1.0
             )
