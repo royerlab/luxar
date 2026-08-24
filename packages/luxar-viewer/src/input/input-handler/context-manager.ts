@@ -66,8 +66,8 @@ export interface KeyBinding {
 export interface ContextConfig {
   name: string;
   priority: number; // Higher priority contexts override lower ones
-  allowedKeys?: string[]; // If specified, only these keys are handled
-  blockedKeys?: string[]; // These keys are never handled in this context
+  allowedKeys?: string[]; // Base or canonical binding keys handled by this context
+  blockedKeys?: string[]; // Canonical binding keys never handled by this context
   passthrough?: boolean; // If true, unhandled keys pass to lower contexts
 }
 
@@ -145,14 +145,15 @@ export class InputContextManager {
    */
   private initializeContexts(): void {
     // Navigation context - default mode
-    // Block WASD keys but NOT Shift (Shift needed for FOV control in orbit mode)
+    // Block bare fly-control keys but allow modified NAVIGATION bindings on them.
+    // Shift itself remains available for FOV control in orbit mode.
     const flyModeKeysWithoutShift = config.input.keyboard.flyModeKeys.filter((k) => k !== 'Shift');
 
     this.contextConfigs.set(InputContext.NAVIGATION, {
       name: 'Navigation',
       priority: 0,
       passthrough: true,
-      blockedKeys: [...flyModeKeysWithoutShift], // Block WASD but allow Shift
+      blockedKeys: [...flyModeKeysWithoutShift],
     });
 
     // Fly controls context - WASD movement active
