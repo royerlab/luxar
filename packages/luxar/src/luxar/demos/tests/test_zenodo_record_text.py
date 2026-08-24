@@ -423,3 +423,176 @@ class TestAnUnreadableFitIsNotCalledANonFit:
         problems, unread = gen._gaps({"datasets": {"side": entry}})
         assert unread == []
         assert problems == []
+
+
+# ---------------------------------------------------------------------------
+# The committed measurements (`scripts/demo_archive_characteristics.json`)
+#
+# Reading the archives at render time only worked while the archives were in the
+# repo. They are moving to Zenodo, so measurement had to separate from rendering
+# — and the migration had already made the old design report absent figures for
+# data that has them.
+# ---------------------------------------------------------------------------
+
+
+def _entry(name: str, sha: str, **extra: Any) -> dict[str, Any]:
+    return {"name": name, "sha256": sha, "bytes": 1024, **extra}
+
+
+def _fake_manifest(files: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "records": {"cc-by": {"license": "cc-by-4.0", "zenodo_record": 1}},
+        "datasets": {
+            "ds": {"bucket": "zenodo", "record": "cc-by", "dir": "ds", "files": files}
+        },
+    }
+
+
+def test_a_committed_measurement_beats_a_local_archive(gen: Any, monkeypatch) -> None:
+    """The record describes the artifact it SERVES, not whatever is on this disk.
+
+    The local copy is routinely a pre-refit generation (or a scratch fit), so
+    preferring it is how the descriptions went stale in the first place.
+    """
+    monkeypatch.setattr(
+        gen,
+        "load_characteristics",
+        lambda: {
+            "ds/a.gsplats.zarr.zip": {
+                "n_splats": 12345,
+                "topology": "single level",
+                "psnr_db": 41.5,
+                "foreground_psnr_db": 30.25,
+                "source_bytes": None,
+                "frames": None,
+            }
+        },
+    )
+    # Any local read would have to go through _locate; make it impossible.
+    monkeypatch.setattr(gen, "_locate", lambda *a, **k: None)
+
+    (row,) = gen._dataset_rows(
+        "ds", _fake_manifest([_entry("a.gsplats.zarr.zip", "a" * 64)])["datasets"]["ds"]
+    )
+    assert row["splats"] == "12,345"
+    assert "41.5" in row["psnr"]
+    assert "30.2" in row["fg_psnr"] or "30.3" in row["fg_psnr"]
+
+
+def test_a_staged_measurement_is_not_clobbered_by_a_local_refresh(
+    gen: Any, tmp_path: Path, monkeypatch
+) -> None:
+    """The hazard that would have silently undone the whole change.
+
+    The uploaded generation can only be measured where it is staged. Import those
+    figures, run ``--refresh`` on a laptop holding pre-refit copies, and a naive
+    merge replaces every refitted dataset's numbers with the stale ones — the
+    exact staleness this file exists to end, reintroduced by its own tool.
+    """
+    key = "ds/a.gsplats.zarr.zip"
+    staged = {
+        key: {
+            "n_splats": 999,
+            "psnr_db": 43.0,
+            "foreground_psnr_db": 30.6,
+            "topology": "single level",
+            "measured_from": "staged",
+            "measured_sha256": "s" * 64,
+        }
+    }
+    monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
+    monkeypatch.setattr(gen, "load_characteristics", lambda: staged)
+    monkeypatch.setattr(gen, "_locate", lambda *a, **k: tmp_path / "local.zip")
+    monkeypatch.setattr(gen, "_sha256_of", lambda p: "l" * 64)
+    # A local read that would look complete but carries NO foreground PSNR,
+    # which is what the pre-refit archives actually look like.
+    monkeypatch.setattr(
+        gen,
+        "_read_archive",
+        lambda p: {
+            "n_splats": 111,
+            "psnr_db": 30.0,
+            "foreground_psnr_db": None,
+            "topology": "single level",
+        },
+    )
+
+    gen.refresh_characteristics(
+        _fake_manifest([_entry("a.gsplats.zarr.zip", "a" * 64)])
+    )
+
+    written = json.loads((tmp_path / "chars.json").read_text())["archives"][key]
+    assert written["measured_from"] == "staged", "a local read outranked the staged one"
+    assert written["foreground_psnr_db"] == 30.6
+    assert written["n_splats"] == 999
+
+
+def test_refresh_preserves_entries_whose_archive_is_absent(
+    gen: Any, tmp_path: Path, monkeypatch
+) -> None:
+    """A partial checkout is the normal case now, so it must not delete figures.
+
+    Same rule ``gen_data_manifest`` follows for file lists: what you cannot see,
+    you do not get to erase.
+    """
+    key = "ds/a.gsplats.zarr.zip"
+    monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
+    monkeypatch.setattr(
+        gen, "load_characteristics", lambda: {key: {"n_splats": 7, "psnr_db": 1.0}}
+    )
+    monkeypatch.setattr(gen, "_locate", lambda *a, **k: None)
+
+    measured, preserved = gen.refresh_characteristics(
+        _fake_manifest([_entry("a.gsplats.zarr.zip", "a" * 64)])
+    )
+
+    assert (measured, preserved) == (0, 1)
+    assert (
+        json.loads((tmp_path / "chars.json").read_text())["archives"][key]["n_splats"]
+        == 7
+    )
+
+
+def test_a_measurement_from_superseded_bytes_is_reported(gen: Any, monkeypatch) -> None:
+    """A stale figure is worse than an absent one: absent prints as a dash.
+
+    This is the guard the hand-written descriptions never had — a refit changes
+    the artifact without touching the measurements taken from the old one.
+    """
+    monkeypatch.setattr(
+        gen,
+        "load_characteristics",
+        lambda: {"ds/a.gsplats.zarr.zip": {"measured_sha256": "b" * 64}},
+    )
+    stale = gen._stale_characteristics(
+        _fake_manifest([_entry("a.gsplats.zarr.zip", "a" * 64)])
+    )
+    assert len(stale) == 1
+    assert "b" * 12 in stale[0] and "a" * 12 in stale[0]
+
+
+def test_the_hosted_digest_is_what_a_measurement_is_judged_against(gen: Any) -> None:
+    """Once the two contracts diverge, the record's copy is the relevant one.
+
+    `sha256` describes what the repo ships; `hosted_sha256` what the record
+    serves. A figure printed in a record must be judged against the latter.
+    """
+    assert gen._pinned_digest({"sha256": "a" * 64}) == "a" * 64
+    assert (
+        gen._pinned_digest({"sha256": "a" * 64, "hosted_sha256": "h" * 64}) == "h" * 64
+    )
+
+
+def test_no_measurement_is_stale_against_its_own_digest(gen: Any, monkeypatch) -> None:
+    """The quiet case must stay quiet, or the report is noise."""
+    monkeypatch.setattr(
+        gen,
+        "load_characteristics",
+        lambda: {"ds/a.gsplats.zarr.zip": {"measured_sha256": "a" * 64}},
+    )
+    assert (
+        gen._stale_characteristics(
+            _fake_manifest([_entry("a.gsplats.zarr.zip", "a" * 64)])
+        )
+        == []
+    )

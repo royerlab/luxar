@@ -7,9 +7,18 @@ by hand that drifts from the data within one refit, and a record is the one plac
 where a stale number is published rather than merely wrong.
 
 So the text is derived: dataset disposition and licensing come from
-``data_manifest.json``, and the per-dataset characteristics are read out of the
-archives' own ``fitting/`` stamps. A figure that is not stamped is reported as
-absent rather than guessed at.
+``data_manifest.json``, and the per-dataset characteristics come from
+``scripts/demo_archive_characteristics.json`` — measured out of each archive's
+own ``fitting/`` stamps by ``--refresh`` and committed. A figure that is not
+stamped is reported as absent rather than guessed at.
+
+Measurement is separate from rendering because the archives are LEAVING the
+repository. Reading them at render time meant the text could only be generated
+on a machine holding ~400 MB of demo data, and on a partial checkout it reported
+"no PSNR" for archives whose hosted copies are stamped — publishing an absent
+figure for data that has one. The committed measurements carry a
+``measured_sha256`` so ``--check`` can say when a figure was taken from bytes the
+manifest no longer pins, which is the drift a refit causes.
 
 This script NEVER talks to Zenodo. It writes markdown for a human to paste into
 a draft, and publication stays a manual act.
@@ -18,6 +27,7 @@ a draft, and publication stays a manual act.
     python scripts/gen_zenodo_records.py --record cc-by  # just one
     python scripts/gen_zenodo_records.py --outdir docs/zenodo/
     python scripts/gen_zenodo_records.py --check         # report gaps, exit 1
+    python scripts/gen_zenodo_records.py --refresh       # re-measure the archives
 """
 
 from __future__ import annotations
@@ -34,6 +44,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = REPO_ROOT / "packages/luxar/src/luxar/demos/data_manifest.json"
 DATA_DIR = REPO_ROOT / "packages/luxar/src/luxar/demos/data"
 CACHE_DIR = Path.home() / ".cache/luxar"
+#: Measured characteristics, committed so the record text does not depend on
+#: holding 400 MB of archives. See `load_characteristics`.
+CHARACTERISTICS = REPO_ROOT / "scripts/demo_archive_characteristics.json"
 
 _ABSENT = "—"
 
@@ -231,19 +244,185 @@ def _files_of(entry: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
 
 
 def _locate(
-    dataset: str, entry: dict[str, Any], variant: str, file_name: str
+    dataset: str,
+    entry: dict[str, Any],
+    variant: str,
+    file_name: str,
+    extra_root: Optional[Path] = None,
 ) -> Optional[Path]:
-    """Find an archive in the repo copy or the local cache.
+    """Find an archive in *extra_root*, the repo copy, or the local cache.
 
-    The two roots namespace differently, as ``ensure_dataset`` does: in-repo by
-    the manifest ``dir``, the cache by the DATASET NAME, and both by the variant.
+    The roots namespace differently, as ``ensure_dataset`` does: in-repo by the
+    manifest ``dir``, the cache by the DATASET NAME, and both by the variant.
+
+    *extra_root* is searched FIRST and is namespaced like the cache. It exists
+    because the repo and cache copies are the PRE-REFIT generation for every
+    dataset the refit campaign touched — measuring those gives figures that are
+    stale or absent (8 of 27 local archives carry a PSNR, none carry a foreground
+    PSNR) while the artifacts the records actually serve are fully stamped. Point
+    it at the staging tree holding the uploaded generation.
     """
-    for base, subdir in ((DATA_DIR, entry.get("dir", dataset)), (CACHE_DIR, dataset)):
+    roots = [(base, sub) for base, sub in ((extra_root, dataset),) if base]
+    roots += [(DATA_DIR, entry.get("dir", dataset)), (CACHE_DIR, dataset)]
+    for base, subdir in roots:
         parts = [p for p in (subdir, variant, file_name) if p]
         candidate = base.joinpath(*parts)
         if candidate.exists():
             return candidate
     return None
+
+
+# ---------------------------------------------------------------------------
+# Measured characteristics, committed
+#
+# Reading the archives directly was the original design and it does not survive
+# contact with the migration. The figures come out of each archive's `fitting/`
+# stamps, so they can only be read where the bytes are — and the bytes are
+# leaving: `demos/data/` is being emptied onto Zenodo. On a machine holding a
+# partial set the generator reported "no PSNR" for archives whose HOSTED copies
+# are stamped (ct_atlas 43.0/30.6 dB among them), which is the failure this whole
+# tool exists to prevent, in its own output.
+#
+# So measurement is separated from rendering. `--refresh` reads whatever archives
+# are present and records what it measured; rendering reads the committed record.
+# It is small text, so it survives payload removal, needs no network and no LFS
+# content, and the next refit re-stamps it as part of the upload step.
+# ---------------------------------------------------------------------------
+
+
+def _char_key(dataset: str, variant: str, file_name: str) -> str:
+    """Stable identity for one archive: ``dataset[/variant]/file``."""
+    return "/".join(p for p in (dataset, variant, file_name) if p)
+
+
+def load_characteristics() -> dict[str, Any]:
+    """The committed measurements, or an empty map when none exist yet."""
+    if not CHARACTERISTICS.exists():
+        return {}
+    return json.loads(CHARACTERISTICS.read_text()).get("archives", {}) or {}
+
+
+def _pinned_digest(spec: dict[str, Any]) -> Optional[str]:
+    """The digest the manifest expects for the copy a record serves.
+
+    Prefers ``hosted_sha256`` where the hosted artifact and the in-repo copy have
+    diverged; falls back to ``sha256``, which described both before they did.
+    """
+    return spec.get("hosted_sha256") or spec.get("sha256")
+
+
+def _sha256_of(path: Path) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def refresh_characteristics(
+    manifest: dict[str, Any], extra_root: Optional[Path] = None
+) -> tuple[int, int]:
+    """Re-measure every archive present here; returns (measured, preserved).
+
+    PRESERVES entries whose archive is not on this machine, for the same reason
+    ``gen_data_manifest`` preserves committed file lists: a refresh run from a
+    partial checkout would otherwise silently delete the measurements for every
+    dataset it cannot see, and a partial checkout is the normal case now.
+    """
+    existing = load_characteristics()
+    measured: dict[str, Any] = {}
+    seen: set[str] = set()
+    for dataset, entry in sorted(manifest["datasets"].items()):
+        if entry.get("bucket") != "zenodo":
+            continue
+        for variant, spec in _files_of(entry):
+            key = _char_key(dataset, variant, spec["name"])
+            seen.add(key)
+            path = _locate(dataset, entry, variant, spec["name"], extra_root)
+            info = _read_archive(path) if path else None
+            if info is None:
+                continue
+            if extra_root and str(path).startswith(str(extra_root)):
+                root = "staged"
+            elif str(path).startswith(str(DATA_DIR)):
+                root = "repo"
+            else:
+                root = "cache"
+            measured[key] = {
+                **info,
+                # Which copy was read, and what it hashed to. Without the digest a
+                # stale measurement is indistinguishable from a current one, which
+                # is precisely the state the hand-edited descriptions were in.
+                "measured_from": root,
+                "measured_sha256": _sha256_of(path) if path else None,
+            }
+
+    # An entry measured from the STAGED (uploaded) generation outranks one read
+    # from the repo or the cache, and a later local refresh must not clobber it.
+    # Without this, importing the staged measurements and then running --refresh
+    # here silently replaces every refitted dataset's figures with the pre-refit
+    # ones — the exact staleness this file exists to end, reintroduced by the
+    # tool meant to prevent it.
+    def _outranks(new_entry: dict[str, Any], old_entry: dict[str, Any]) -> bool:
+        rank = {"staged": 2, "repo": 1, "cache": 1}
+        return rank.get(new_entry.get("measured_from"), 0) >= rank.get(
+            old_entry.get("measured_from"), 0
+        )
+
+    for key, old_entry in existing.items():
+        if key in measured and not _outranks(measured[key], old_entry):
+            measured[key] = old_entry
+    preserved = {k: v for k, v in existing.items() if k in seen and k not in measured}
+    archives = dict(sorted({**preserved, **measured}.items()))
+    CHARACTERISTICS.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "description": (
+                    "Measured characteristics of the demo gsplat archives, read "
+                    "from each archive's own fitting/ stamps by "
+                    "scripts/gen_zenodo_records.py --refresh. Committed so the "
+                    "record text does not require holding the archives, which are "
+                    "hosted on Zenodo rather than in this repository. "
+                    "measured_sha256 records WHICH bytes each figure came from; "
+                    "--check reports any that no longer match the manifest pin."
+                ),
+                "archives": archives,
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+    return len(measured), len(preserved)
+
+
+def _stale_characteristics(manifest: dict[str, Any]) -> list[str]:
+    """Measurements taken from bytes the manifest no longer pins.
+
+    This is the drift guard the hand-written descriptions never had: a figure is
+    only trustworthy if it was measured from the artifact the record actually
+    serves, and a refit changes that artifact without touching this file.
+    """
+    chars = load_characteristics()
+    stale = []
+    for dataset, entry in sorted(manifest["datasets"].items()):
+        if entry.get("bucket") != "zenodo":
+            continue
+        for variant, spec in _files_of(entry):
+            key = _char_key(dataset, variant, spec["name"])
+            got = chars.get(key)
+            if not got:
+                continue
+            measured, pinned = got.get("measured_sha256"), _pinned_digest(spec)
+            if measured and pinned and measured != pinned:
+                stale.append(
+                    f"  {key}: measured from {measured[:12]}… but the manifest "
+                    f"pins {pinned[:12]}… — re-run --refresh against the "
+                    "current archive"
+                )
+    return stale
 
 
 # ---------------------------------------------------------------------------
@@ -278,11 +457,24 @@ def _db(value: Any) -> str:
     return f"{value:.1f}"
 
 
-def _dataset_rows(dataset: str, entry: dict[str, Any]) -> list[dict[str, Any]]:
+def _dataset_rows(
+    dataset: str, entry: dict[str, Any], chars: Optional[dict[str, Any]] = None
+) -> list[dict[str, Any]]:
+    """Rows for one dataset, from the committed measurements.
+
+    The committed record WINS over a local archive, deliberately: a record
+    describes the artifact it serves, and the local copy may be a pre-refit
+    generation or a local scratch fit. Reading an archive is the fallback for
+    something not measured yet, so a fresh dataset still renders before its first
+    ``--refresh``.
+    """
+    chars = load_characteristics() if chars is None else chars
     rows = []
     for variant, spec in _files_of(entry):
-        path = _locate(dataset, entry, variant, spec["name"])
-        info = _read_archive(path) if path else None
+        info = chars.get(_char_key(dataset, variant, spec["name"]))
+        if info is None:
+            path = _locate(dataset, entry, variant, spec["name"])
+            info = _read_archive(path) if path else None
         stored = spec.get("bytes")
         name = f"{variant}/{spec['name']}" if variant else spec["name"]
         if info and info.get("frames"):
@@ -425,10 +617,11 @@ def _gaps(manifest: dict[str, Any]) -> tuple[list[str], list[str]]:
     """Figures a record would print as absent, and the rows nothing was read for."""
     problems: list[str] = []
     unread: list[str] = []
+    chars = load_characteristics()
     for name, entry in sorted(manifest["datasets"].items()):
         if entry.get("bucket") != "zenodo":
             continue
-        for row in _dataset_rows(name, entry):
+        for row in _dataset_rows(name, entry, chars):
             # Companion sidecars (label maps, colour arrays) and the tabular /
             # point-cloud datasets are not fits, so they owe no splat count or
             # reconstruction quality. Demanding one would make this list
@@ -466,25 +659,65 @@ def main() -> int:
         action="store_true",
         help="list characteristics that are not yet stamped, and exit 1 if any",
     )
+    ap.add_argument(
+        "--archives-root",
+        type=Path,
+        help="search this tree for archives BEFORE the repo copy and the cache "
+        "(namespaced <dataset>/[<variant>/]<file>). Use it to measure the "
+        "uploaded generation rather than the pre-refit copies on this machine.",
+    )
+    ap.add_argument(
+        "--refresh",
+        action="store_true",
+        help="re-measure every archive present on this machine and rewrite "
+        "scripts/demo_archive_characteristics.json (preserves entries whose "
+        "archive is absent here)",
+    )
     args = ap.parse_args()
 
     manifest = json.loads(MANIFEST.read_text())
+    if args.refresh:
+        measured, preserved = refresh_characteristics(manifest, args.archives_root)
+        print(
+            f"measured {measured} archive(s) here, preserved {preserved} not on "
+            f"this machine -> {CHARACTERISTICS.relative_to(REPO_ROOT)}"
+        )
+        return 0
     if args.check:
-        problems, unread = _gaps(manifest)
-        for problem in problems:
-            print(problem)
-        print(f"\n{len(problems)} archive(s) would publish an incomplete row.")
-        if unread:
-            # Saying so is the point: without it the count above reads as a
-            # clean bill of health on a machine that holds none of the data.
-            print(
-                f"{len(unread)} declared archive(s) are not on this machine, so "
-                "nothing was read for them (`git lfs pull`, or fetch the demo):"
-            )
-            for item in unread:
-                print(f"  {item}")
-        return 1 if problems else 0
+        return _run_check(manifest)
+    return _run_render(manifest, args)
 
+
+def _run_check(manifest: dict[str, Any]) -> int:
+    """``--check``: report figures a record would print as absent, or as stale."""
+    problems, unread = _gaps(manifest)
+    for problem in problems:
+        print(problem)
+    print(f"\n{len(problems)} archive(s) would publish an incomplete row.")
+    stale = _stale_characteristics(manifest)
+    if stale:
+        # A stale figure is worse than an absent one: absent prints as "—",
+        # stale prints as a number that is simply wrong.
+        print(
+            f"\n{len(stale)} measurement(s) were taken from bytes the "
+            "manifest no longer pins:"
+        )
+        for line in stale:
+            print(line)
+    if unread:
+        # Saying so is the point: without it the count above reads as a
+        # clean bill of health on a machine that holds none of the data.
+        print(
+            f"{len(unread)} declared archive(s) are not on this machine, so "
+            "nothing was read for them (`git lfs pull`, or fetch the demo):"
+        )
+        for item in unread:
+            print(f"  {item}")
+    return 1 if problems else 0
+
+
+def _run_render(manifest: dict[str, Any], args: argparse.Namespace) -> int:
+    """Render one record or all of them, to stdout or to ``--outdir``."""
     keys = [args.record] if args.record else list(manifest["records"])
     for key in keys:
         if key not in manifest["records"]:
