@@ -188,15 +188,30 @@ def test_compare_mode_reports_unique_and_shared_paths(monkeypatch, capsys) -> No
         lambda repo: [_pr(2004, 2003)],
     )
     paths = {
-        2004: {"viewer/shared.ts", "viewer/survivor.ts"},
-        2005: {"viewer/shared.ts", "python/unique.md"},
+        2004: {
+            "docs/survivor.md",
+            "viewer/shared.ts",
+            "viewer/survivor.ts",
+        },
+        2005: {
+            "docs/duplicate.md",
+            "python/unique.md",
+            "viewer/shared.ts",
+        },
     }
     monkeypatch.setattr(guard, "pull_request_paths", lambda repo, number: paths[number])
     assert guard.main(["2003", "--exclude-pr", "2005", "--compare-pr", "2005"]) == 1
     output = capsys.readouterr().out
-    assert "python/unique.md" in output
-    assert "viewer/survivor.ts" in output
-    assert "path overlap is not equivalence" in output
+    assert (
+        "duplicate-only paths (must be transferred or explained) (2):\n"
+        "  docs/duplicate.md\n"
+        "  python/unique.md\n"
+        "survivor-only paths (2):\n"
+        "  docs/survivor.md\n"
+        "  viewer/survivor.ts\n"
+        "shared paths (inspect both patches; path overlap is not equivalence) (1):\n"
+        "  viewer/shared.ts\n"
+    ) in output
 
 
 def test_compare_mode_reports_when_there_is_no_survivor(monkeypatch, capsys) -> None:
