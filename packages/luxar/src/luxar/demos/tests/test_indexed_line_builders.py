@@ -174,14 +174,9 @@ def test_dipc_haplotype_builder_preserves_arm_boundaries() -> None:
             "haplotype": 0,
         },
     ]
-    vertices, colors, labels, keys, edges = dipc._haplotype_geometry(polylines, 0)
-    _assert_indexed_geometry(vertices, edges, colors, labels, keys)
+    vertices, colors, labels, edges = dipc._haplotype_geometry(polylines, 0)
+    _assert_indexed_geometry(vertices, edges, colors, labels)
     _assert_edges_stay_within_chains(edges, [4, 3])
-    # Keys are the UCSC locus for the same particle the label names (#1917), so
-    # they are per-vertex like everything else and must stay aligned with it.
-    assert len(keys) == len(vertices)
-    assert keys[0].startswith("chr")
-    assert "-" in keys[0] and ":" in keys[0]
 
 
 def test_lsystem_turtle_reuses_branch_hub() -> None:
