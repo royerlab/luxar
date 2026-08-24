@@ -118,8 +118,8 @@ Both demos on that image are renamed accordingly —
 `gsplats_3d_organoid_dapi_nuclei` → `gsplats_3d_blastocyst_dapi_nuclei` — module
 filenames, keys, output names, titles, scene attributes, gallery manifest and
 media, calibration artefacts, helper-script slugs and the pinned data-artifact
-filenames included. The sha256 pins are untouched: only names changed, the bytes
-did not. The legend swatches are read out of the LUT the renderer actually uses,
+filenames included. Only names changed here, not bytes — the pins were later
+re-pointed at the record's re-encoded copies (#1734). The legend swatches are read out of the LUT the renderer actually uses,
 so they cannot drift from the layers they label.
 
 #### The two "garden" demos were showing the same picture; the INRIA one moves to bonsai

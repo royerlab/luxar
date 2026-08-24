@@ -50,9 +50,12 @@ def test_the_refused_set_matches_the_datasets_that_ship_an_npz() -> None:
     manifest-hosted, so an on-disk enumeration alone would compare the constant
     against an empty set and pass vacuously. Anything actually on disk is folded
     in as well, so a locally-added sidecar still trips this. Only ``gsplats_*``
-    directories count, the set the script's own glob will visit, so an unrelated
-    dataset can never redden it. The assertion is bidirectional, as the name
-    says: a refused dir that ships no sidecar has no reason to be excluded.
+    directories count — the shape the script's own glob visits — so a dataset it
+    could never reach cannot redden this. That is wider than what is *currently*
+    fetchable (a ``local-compute`` dataset builds into the same directory), and
+    deliberately so: the refusal keys on the directory name, not on the bucket.
+    The assertion is bidirectional, as the name says: a refused dir that ships no
+    sidecar has no reason to be excluded.
     """
     if not rg.DATA_DIR.exists():  # pragma: no cover - source checkouts have it
         pytest.skip(f"packaged demo data absent at {rg.DATA_DIR}")

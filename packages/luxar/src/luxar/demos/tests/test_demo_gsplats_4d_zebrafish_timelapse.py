@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import importlib.util
 import itertools
+import json
 import sys
 from pathlib import Path
 
@@ -26,12 +27,16 @@ import pytest
 _DEMO_PATH = (
     Path(__file__).resolve().parents[1] / "demo_gsplats_4d_zebrafish_timelapse.py"
 )
+_MANIFEST_PATH = _DEMO_PATH.parent / "data_manifest.json"
 _SHIPPED_ARCHIVE = (
     Path(__file__).resolve().parents[1]
     / "data"
     / "gsplats_zebrafish"
     / "zebrafish_4d.gsplats.zarr.zip"
 )
+# The component-filtered build, as pinned in the manifest.
+_ARCHIVE_SHA256 = "b4c0cf690f6906414c449fb8c713b78ed7d5f5f88c270ab58cf741f019456f93"
+_ARCHIVE_BYTES = 19_229_817
 
 
 def _load_demo_module(name: str = "_luxar_demo_zebrafish_for_tests"):
@@ -47,6 +52,25 @@ def _load_demo_module(name: str = "_luxar_demo_zebrafish_for_tests"):
 _demo = _load_demo_module()
 
 
+def test_the_manifest_pins_the_component_filtered_build() -> None:
+    """The pin is what a user downloads, and it can rot without anyone noticing.
+
+    The archive itself is manifest-hosted, so the read-back below only runs where
+    a copy is on disk. This half runs everywhere: reverting the pin to the
+    deposition's pre-component-filter upload would hand the NLM build to every
+    user and fail nothing else.
+    """
+    entry = json.loads(_MANIFEST_PATH.read_text())["datasets"][_demo.DEMO_NAME]
+    pins = {f["name"]: (f["sha256"], f["bytes"]) for f in entry["files"]}
+    assert pins.get(_demo.GSPLATS_FILE) == (_ARCHIVE_SHA256, _ARCHIVE_BYTES), (
+        f"{_demo.GSPLATS_FILE} is pinned as {pins.get(_demo.GSPLATS_FILE)}, not the "
+        f"component-filtered build ({_ARCHIVE_SHA256[:8]}…/{_ARCHIVE_BYTES:,} "
+        "bytes); the fetch verifies downloads against this pin, so a stale one "
+        "serves the old archive. A deliberate refit updates the manifest and both "
+        "constants here together, plus the demo's `download_mb`."
+    )
+
+
 def test_the_shipped_archive_is_the_component_filtered_build() -> None:
     """Catch a stale precomputed archive whose preprocessing disagrees with code."""
     assert (
@@ -58,34 +82,25 @@ def test_the_shipped_archive_is_the_component_filtered_build() -> None:
         "the shipped archive was fitted at these values, and the README, changelog "
         "and docstring tables quote them; changing one means refitting and reshipping"
     )
-    # The archive itself is manifest-hosted, so the read-back below cannot run on
-    # an ordinary checkout. The pin still can, and it is the half that can rot
-    # unnoticed: reverting it to the deposition's pre-component-filter upload
-    # would make the fetch serve the NLM build to every user.
-    import json
-
-    entry = json.loads(
-        (Path(_DEMO_PATH).resolve().parents[0] / "data_manifest.json").read_text()
-    )["datasets"][_demo.DEMO_NAME]
-    pin = next(f for f in entry["files"] if f["name"] == _demo.GSPLATS_FILE)
-    assert (pin["sha256"], pin["bytes"]) == (
-        "b4c0cf690f6906414c449fb8c713b78ed7d5f5f88c270ab58cf741f019456f93",
-        19_229_817,
-    ), (
-        f"{_demo.GSPLATS_FILE} is pinned to {pin['sha256'][:8]}…/{pin['bytes']:,} "
-        "bytes, which is not the component-filtered build; the fetch verifies "
-        "downloads against this pin, so a stale one ships the old archive"
+    # In-repo first, then the fetch cache: the payload is manifest-hosted now, so
+    # on a machine that has run the demo the fetched copy is the only one there is.
+    archive_path = next(
+        (
+            p
+            for p in (_SHIPPED_ARCHIVE, _demo.CACHE_DIR / _demo.GSPLATS_FILE)
+            if p.exists() and p.stat().st_size >= 1024
+        ),
+        None,
     )
-
-    if not _SHIPPED_ARCHIVE.exists() or _SHIPPED_ARCHIVE.stat().st_size < 1024:
+    if archive_path is None:
         pytest.skip(
-            "zebrafish archive is not on disk here — it is manifest-hosted, and an "
-            "in-repo copy is an unhydrated Git LFS pointer"
+            "no zebrafish archive on disk — it is manifest-hosted, an in-repo copy "
+            "is an unhydrated Git LFS pointer, and nothing has fetched it here"
         )
 
     from luxar.gsplats.gsplat_data import GSplatData
 
-    archive = GSplatData.load(_SHIPPED_ARCHIVE, include_stats=False)
+    archive = GSplatData.load(archive_path, include_stats=False)
     finest = archive.substitutive_levels[0]
     frame_zero_splats = sum(
         int(np.count_nonzero(np.isclose(sublod.centers[:, 3], 0.0)))
