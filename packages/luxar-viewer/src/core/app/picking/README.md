@@ -47,18 +47,18 @@ Three.js EventDispatcher sources are registered via `pickingEvents.add(() => …
 
 ## `pick-result-handler.ts`
 
-`buildPickResultHandler({ labelLoader, imageLabelLoader, overlayManager })` returns the `(result: PickResult | null) => Promise<void>` callback handed to `PickingSystem`. Branch contract:
+`buildPickResultHandler({ labelLoader, keyLoader, imageLabelLoader, overlayManager })` returns the `(result: PickResult | null) => Promise<void>` callback handed to `PickingSystem`. Branch contract:
 
 - `null` result → `overlayManager.updateHoverContent(null)`; no loader calls.
-- Non-null → `Promise.all` on `labelLoader.getLabel(lookupPath, elementId)` and `imageLabelLoader.getImageUrl(lookupPath, elementId)`. Emit `{ label, imageUrl, nodeName: reportPath, elementIndex }` only when at least one is truthy; otherwise clear hover.
-- Either fetch rejects → `log.warning` and clear hover. Errors must not kill the hover loop.
+- Non-null → `Promise.all` on `labelLoader.getLabel(lookupPath, elementId)`, `keyLoader.getLabel(lookupPath, elementId)`, and `imageLabelLoader.getImageUrl(lookupPath, elementId)`. Emit `{ label, key, imageUrl, nodeName: reportPath, elementIndex }` only when at least one is truthy; otherwise clear hover.
+- Any fetch rejects → `log.warning` and clear hover. Errors must not kill the hover loop.
 
 **Partition-aware node path — reported vs queried.** The handler resolves two paths, and they differ under a partition:
 
-| Path         | Value                                             | Used for                                            |
-| ------------ | ------------------------------------------------- | --------------------------------------------------- |
-| `reportPath` | outermost `kind=partition` wrapper, else the leaf | selection `nodeName`, overlay title                 |
-| `lookupPath` | the hit leaf scene node, `result.mainNode.name`   | `getLabel` / `getImageUrl`, selection `hitNodeName` |
+| Path         | Value                                             | Used for                                                      |
+| ------------ | ------------------------------------------------- | ------------------------------------------------------------- |
+| `reportPath` | outermost `kind=partition` wrapper, else the leaf | selection `nodeName`, overlay title                           |
+| `lookupPath` | the hit leaf scene node, `result.mainNode.name`   | label/key `getLabel` / `getImageUrl`, selection `hitNodeName` |
 
 `findOutermostPartitionWrapperName(result.mainNode)` walks the hit leaf's parent chain and returns the `name` of the **outermost** ancestor whose `userData.kind === 'partition'`. Reporting that wrapper mirrors how the layers panel treats a `kind=partition` wrapper — the wrapper is the layer the user sees — so a hit inside a nested `kind=partition` group names the topmost wrapper rather than the inner `part_<i>`. It is not a general outermost-ancestor rule: `ui/layers/layer-state.ts` also admits `kind=lod` wrappers as layers, and those are deliberately not matched, so a substitutive-LOD layer still reports its internal level path.
 
