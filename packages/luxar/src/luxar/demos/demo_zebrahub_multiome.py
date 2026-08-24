@@ -147,7 +147,7 @@ def main() -> None:
             ct_map = category_maps.get("celltype", [])
             tp_map = category_maps.get("timepoint", [])
             per_cell_labels = [
-                f"{ct_map[attrs['celltype'][i]] if attrs['celltype'][i] < len(ct_map) else attrs['celltype'][i]}"
+                f"{ct_map[attrs['celltype'][i]] if 0 <= attrs['celltype'][i] < len(ct_map) else attrs['celltype'][i]}"
                 f" @ {tp_map[attrs['timepoint'][i]] if attrs['timepoint'][i] < len(tp_map) else attrs['timepoint'][i]}"
                 for i in range(len(coords))
             ]
@@ -259,7 +259,7 @@ def main() -> None:
             ct_map = category_maps.get("celltype", [])
             tp_map = category_maps.get("timepoint", [])
             per_cell_labels = [
-                f"{ct_map[attrs['celltype'][i]] if attrs['celltype'][i] < len(ct_map) else attrs['celltype'][i]}"
+                f"{ct_map[attrs['celltype'][i]] if 0 <= attrs['celltype'][i] < len(ct_map) else attrs['celltype'][i]}"
                 f" @ {tp_map[attrs['timepoint'][i]] if attrs['timepoint'][i] < len(tp_map) else attrs['timepoint'][i]}"
                 for i in range(len(coords))
             ]

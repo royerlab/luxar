@@ -431,3 +431,48 @@ class TestProteinLinkKeys:
         # And specifically NOT the last category, which is what the upper-bound
         # guard used to return for -1.
         assert keys.count("ACTB") == 2, "only the genuinely-ACTB point, per view"
+
+    def test_a_missing_code_does_not_show_the_last_protein_on_hover(
+        self, tmp_path: Path
+    ) -> None:
+        """The same -1 hazard on the LABEL side.
+
+        The key was fixed first because a wrong link navigates somewhere; but a
+        wrong label is still a confident false statement about the cell — it
+        named a real protein the cell has nothing to do with. -1 now falls to
+        the file's existing else branch, which prints the unresolvable code
+        rather than a neighbour's name.
+        """
+        coordinates, attributes, category_maps = _inputs()
+        attributes["protein_name"] = np.array([1, -1, 1, 2], dtype=np.int32)
+        out = tmp_path / "cytoself_label_missing.luxar.zarr"
+        create_cytoself_scene(
+            out,
+            coordinates,
+            attributes,
+            category_maps,
+            image_labels=None,
+            images_expected=False,
+        )
+
+        root = zarr.open_group(str(out), mode="r")["Images"]
+        node = root
+        if not dict(root.attrs).get("has_labels"):
+            for name in sorted(root.keys()):
+                child = root[name]
+                if hasattr(child, "attrs") and dict(child.attrs).get("has_labels"):
+                    node = child
+                    break
+        offsets = np.asarray(node["label_offsets"][:]).astype(int)
+        data = bytes(np.asarray(node["label_bytes"][:]).tobytes())
+        labels = [
+            data[offsets[i] : offsets[i + 1]].decode("utf-8")
+            for i in range(len(offsets) - 1)
+        ]
+
+        # "ACTB" is `names[-1]`, what the old guard produced for the -1 cell.
+        # It must appear only for the cell whose code really is 2.
+        actb_lines = sum(1 for lab in labels if "ACTB" in lab)
+        assert actb_lines == 2, f"ACTB leaked onto the unannotated cell: {labels}"
+        # And the unresolvable code is shown honestly instead.
+        assert any("-1" in lab for lab in labels), labels
