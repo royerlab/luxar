@@ -157,7 +157,11 @@ def run_import(
 
 
 def _discrete_coordinate_step(coordinate: np.ndarray) -> float:
-    """Return the largest zero-anchored integer grid containing every coordinate."""
+    """Return the largest zero-anchored integer grid containing every coordinate.
+
+    A singleton carries no stride evidence, and gcd({0}) would produce a step rejected
+    by ``Dimension``, so singleton dimensions retain the safe unit-step fallback.
+    """
     unique_coordinates = np.unique(coordinate).astype(np.int64)
     if unique_coordinates.size < 2:
         return 1.0

@@ -155,9 +155,17 @@ class TestMeshImport:
             ([0, 5, 10], 5.0),
             ([0, 6, 10], 2.0),
             ([1, 6, 11], 1.0),
+            ([0], 1.0),
             ([7], 1.0),
         ],
-        ids=["consecutive", "strided", "irregular", "offset-stride", "singleton"],
+        ids=[
+            "consecutive",
+            "strided",
+            "irregular",
+            "offset-stride",
+            "singleton-zero",
+            "singleton-nonzero",
+        ],
     )
     def test_directory_dimension_step_follows_coordinate_stride(
         self,
