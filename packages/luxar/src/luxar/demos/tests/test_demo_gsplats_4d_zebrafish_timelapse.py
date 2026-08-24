@@ -15,7 +15,6 @@ The demo is loaded by file path, like its cell-tracking sibling.
 
 from __future__ import annotations
 
-import contextlib
 import importlib.util
 import itertools
 import sys
@@ -469,6 +468,7 @@ class TestTheStackedArchiveSurvivesItsRoundTrip:
         monkeypatch.setattr(_demo, "ACQUISITION_SHAPE_ZYX", shape)
         monkeypatch.setattr(_demo, "GRID_STEP_UM", 10.0)
         monkeypatch.setattr(_demo, "DEVICE", "cpu")
+        monkeypatch.setattr(_demo, "MIN_COMPONENT_VOXELS", 0)
 
         times = [t * _demo.AXIS_STEP_MIN for t in range(len(fits))]
         laddered = _demo.build_lod(_demo.combine_to_4d(fits, times))
@@ -476,6 +476,7 @@ class TestTheStackedArchiveSurvivesItsRoundTrip:
 
         root = zarr.open_group(str(out), mode="r")
         assert {"endoderm", "acquisition cage"} <= set(root.group_keys())
+        assert "connected components" not in root.attrs["description"]
 
         dims = {
             d["name"]: d for d in dict(root.attrs)["scene_dimensions"]["dimensions"]
@@ -510,6 +511,24 @@ class TestTheStackedArchiveSurvivesItsRoundTrip:
             "every scrub rather than appear at one timepoint"
         )
 
+    def test_the_scene_records_the_filter_when_enabled(self, toy, monkeypatch):
+        import zarr
+
+        shape, fits, tmp = toy
+        monkeypatch.setattr(_demo, "ACQUISITION_SHAPE_ZYX", shape)
+        monkeypatch.setattr(_demo, "DEVICE", "cpu")
+        monkeypatch.setattr(_demo, "MIN_COMPONENT_VOXELS", 4)
+
+        times = [t * _demo.AXIS_STEP_MIN for t in range(len(fits))]
+        laddered = _demo.build_lod(_demo.combine_to_4d(fits, times))
+        out = _demo.create_luxar_scene(laddered, tmp / "denoised.luxar.zarr")
+
+        root = zarr.open_group(str(out), mode="r")
+        assert (
+            "connected components smaller than 4 voxels removed"
+            in root.attrs["description"]
+        )
+
 
 class TestTheFitCacheKeyMovesWithEveryKnob:
     """A cached fit may only be reused by a run that would have produced it.
@@ -541,7 +560,16 @@ class TestTheFitCacheKeyMovesWithEveryKnob:
     #: *what*: the same config on CPU and on CUDA is meant to describe the same
     #: fit, and if it does not, the answer is to fix the fitter rather than to
     #: refit an entire timelapse per machine.
-    EXEMPT = {"DEVICE"}
+    EXEMPT = {
+        # `device` is a *how*, not a *what*: the same config on CPU and on CUDA
+        # is meant to describe the same fit, and if it does not, the answer is
+        # to fix the fitter rather than refit a timelapse per machine.
+        "DEVICE",
+        # REFIT_ALL decides whether the cache is READ at all. Keying on it would
+        # mean a forced refit writes to a different path than the run it is
+        # meant to replace, so the stale entry would survive forever.
+        "REFIT_ALL",
+    }
 
     def test_the_frame_index_is_in_the_key(self) -> None:
         assert _demo._fit_cache_path(3) != _demo._fit_cache_path(4)
@@ -559,24 +587,33 @@ class TestTheFitCacheKeyMovesWithEveryKnob:
     def test_every_fitting_knob_is_covered_by_this_test(self) -> None:
         """The list above must not drift behind the call it mirrors.
 
-        Reads the actual ``fit_gaussian_splats`` call in ``fit_timepoint`` and
-        requires that each module constant it passes is one this test varies.
-        Without this the parametrization silently stops covering new knobs.
+        Reads the actual fitting and preprocessing calls and requires that each
+        module constant they pass is one this test varies. Without this the
+        parametrization silently stops covering new knobs.
         """
         import ast
         import inspect
 
-        tree = ast.parse(inspect.getsource(_demo.fit_timepoint).lstrip())
+        # Scan the whole fit path for module-level constants rather than only
+        # the arguments of a named call. The previous version keyed on
+        # `denoise_volume_array`, which vanished when NLM was replaced by a
+        # component filter -- and a guard that silently stops finding its own
+        # anchor guards nothing. A constant referenced ANYWHERE on this path can
+        # change the result, so that is what has to be enumerated.
+        module_consts = {
+            name for name in vars(_demo) if name.isupper() and not name.startswith("_")
+        }
         passed = {
             node.id
-            for call in ast.walk(tree)
-            if isinstance(call, ast.Call)
-            and getattr(call.func, "id", None) == "fit_gaussian_splats"
-            for kw in call.keywords
-            for node in ast.walk(kw.value)
-            if isinstance(node, ast.Name) and node.id.isupper()
+            for function in (_demo.fit_timepoint, _demo.denoise)
+            for node in ast.walk(ast.parse(inspect.getsource(function).lstrip()))
+            if isinstance(node, ast.Name) and node.id in module_consts
         }
-        assert passed, "could not find the fit call; this test has gone stale"
+        assert passed, "found no constants on the fit path; this test has gone stale"
+        assert set(self.KNOBS) <= passed, (
+            f"{sorted(set(self.KNOBS) - passed)} are in KNOBS but no longer reach "
+            "the fit, so the cache key advertises a distinction the fit ignores"
+        )
         assert passed <= set(self.KNOBS) | self.EXEMPT, (
             f"{sorted(passed - set(self.KNOBS) - self.EXEMPT)} reach the fit "
             "but are not in KNOBS, so nothing checks they are in the cache "
@@ -683,21 +720,95 @@ class TestRecomputeResumes:
         monkeypatch.setattr(_demo, "_fit_cache_path", lambda frame: _Exists())
         assert _demo.fit_timepoint(None, 0, (None, None)) is sentinel
 
+    def test_a_cached_frame_is_not_denoised(self, monkeypatch) -> None:
+        monkeypatch.setattr(_demo, "REFIT_ALL", False)
+        sentinel = _CachedFit()
+        monkeypatch.setattr(
+            _demo.GSplatData, "load", staticmethod(lambda *a, **k: sentinel)
+        )
+        monkeypatch.setattr(_demo, "_fit_cache_path", lambda frame: _Exists())
+        monkeypatch.setattr(
+            _demo,
+            "denoise",
+            lambda volume: pytest.fail("a cached frame was denoised"),
+        )
+        monkeypatch.setattr(_demo, "report_fit_quality", lambda fits: None)
+        array = np.zeros((1, 2, 3, 4), dtype=np.uint8)
+        assert _demo.fit_all_timepoints(array, [0]) == [sentinel]
+
+    def test_a_cold_frame_is_filtered_before_it_reaches_the_fitter(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """A cache MISS must filter; the sibling test covers the hit skipping it.
+
+        Asserted on the array the fitter actually receives, not on a call
+        record, so it survives the filter being reimplemented.
+        """
+        import luxar.gsplats
+
+        class FitReached(Exception):
+            pass
+
+        # One 1-voxel speck (must be gone) and one 8-voxel block (must remain).
+        volume = np.zeros((2, 6, 6), dtype=np.float32)
+        volume[0, 0, 0] = 0.9
+        volume[0, 2:4, 2:4] = 0.5
+        volume[1, 2:4, 2:4] = 0.5
+        seen: list[np.ndarray] = []
+
+        monkeypatch.setattr(_demo, "REFIT_ALL", False)
+        monkeypatch.setattr(_demo, "DEVICE", "cpu")
+        monkeypatch.setattr(_demo, "MIN_COMPONENT_VOXELS", 4)
+        monkeypatch.setattr(
+            _demo, "_fit_cache_path", lambda frame: tmp_path / "missing.gsplats.zarr"
+        )
+
+        def stop_at_fit(input_volume, **kwargs):
+            seen.append(np.asarray(input_volume).copy())
+            raise FitReached
+
+        monkeypatch.setattr(luxar.gsplats, "fit_gaussian_splats", stop_at_fit)
+        with pytest.raises(FitReached):
+            _demo.fit_timepoint(volume, 0, (volume.shape, str(volume.dtype)))
+
+        assert len(seen) == 1
+        got = seen[0]
+        assert got[0, 0, 0] == 0.0, "the speck reached the fitter unfiltered"
+        assert got[0, 2:4, 2:4].sum() == volume[0, 2:4, 2:4].sum(), (
+            "the kept block was altered on its way to the fitter"
+        )
+
     def test_refit_all_ignores_the_cache(self, monkeypatch) -> None:
+        import luxar.gsplats
+
+        class FitReached(Exception):
+            pass
+
         read: list[str] = []
+        fitted: list[str] = []
         monkeypatch.setattr(_demo, "REFIT_ALL", True)
+        monkeypatch.setattr(_demo, "DEVICE", "cpu")
         monkeypatch.setattr(
             _demo.GSplatData,
             "load",
             staticmethod(lambda *a, **k: read.append("hit")),
         )
         monkeypatch.setattr(_demo, "_fit_cache_path", lambda frame: _Exists())
-        # Past the cache branch it reaches the real fitter with a None volume
-        # and blows up. WHICH exception is not the point — that it got there at
-        # all is, so this asserts on the cache probe rather than on the error.
-        with contextlib.suppress(Exception):
+        monkeypatch.setattr(_demo, "denoise", lambda volume: volume)
+
+        def stop_at_fit(*args, **kwargs):
+            fitted.append("fit")
+            raise FitReached
+
+        monkeypatch.setattr(
+            luxar.gsplats,
+            "fit_gaussian_splats",
+            stop_at_fit,
+        )
+        with pytest.raises(FitReached):
             _demo.fit_timepoint(None, 0, (None, None))
         assert read == [], "the cache was read despite --refit-all"
+        assert fitted == ["fit"]
 
 
 class _Exists:
@@ -708,3 +819,7 @@ class _Exists:
 
     def unlink(self, missing_ok: bool = False) -> None:
         pass
+
+
+class _CachedFit:
+    n_splats = 1
