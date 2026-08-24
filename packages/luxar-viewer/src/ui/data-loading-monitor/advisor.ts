@@ -6,7 +6,7 @@
  */
 
 import type { MonitorEvent, Recommendation, LoaderMetrics } from '../../types/data-monitor-types';
-import type { MemoryMetrics } from './templates';
+import type { MemoryMetrics } from './templates/memory';
 import { config } from '../../config';
 import { POOLED_GEOMETRY_TYPES } from '../../types/data-monitor-types';
 

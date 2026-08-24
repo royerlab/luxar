@@ -57,9 +57,16 @@ import {
   renderLoaderItem,
   renderOverviewContent,
   renderFailedLoadsBanner,
-  renderCacheContent,
+} from './data-loading-monitor/templates/overview';
+import { renderCacheContent, CACHE_SECTION_KEYS } from './data-loading-monitor/templates/cache';
+import {
   renderMemoryContent,
-  renderInsightsContent,
+  calculateReuseRate,
+  getReuseRateColorClass,
+  type MemoryMetrics,
+} from './data-loading-monitor/templates/memory';
+import { renderInsightsContent } from './data-loading-monitor/templates/insights';
+import {
   renderSceneGraphTree,
   summariseLodStates,
   lodChipContent,
@@ -68,17 +75,17 @@ import {
   countAdditiveNodes,
   levelRoleTitleSuffix,
   activeLevelRole,
+} from './data-loading-monitor/templates/scene-graph';
+import {
   formatNumber as templateFormatNumber,
   formatBytes as templateFormatBytes,
-  getColorClass,
   getCacheMemoryColorClass,
-  calculateReuseRate,
-  getReuseRateColorClass,
-  CACHE_SECTION_KEYS,
+} from './data-loading-monitor/templates/format';
+import {
+  getColorClass,
   MONITOR_ICONS,
   countColorClass,
-  type MemoryMetrics,
-} from './data-loading-monitor/templates';
+} from './data-loading-monitor/templates/primitives';
 
 import {
   renderHierarchicalTimingPanel,

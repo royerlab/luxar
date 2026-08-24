@@ -14,7 +14,7 @@
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { DataLoadingMonitor } from '../../../ui/data-loading-monitor';
-import { nodeStatsContent } from '../../../ui/data-loading-monitor/templates';
+import { nodeStatsContent } from '../../../ui/data-loading-monitor/templates/scene-graph';
 import { POOLED_GEOMETRY_TYPES } from '../../../types/data-monitor-types';
 import type {
   MonitorEvent,

@@ -10,7 +10,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { LoadingAdvisor } from '../../../../ui/data-loading-monitor/advisor';
 import type { LoaderMetrics, MonitorEvent } from '../../../../types/data-monitor-types';
-import type { MemoryMetrics } from '../../../../ui/data-loading-monitor/templates';
+import type { MemoryMetrics } from '../../../../ui/data-loading-monitor/templates/memory';
 
 const baseMetrics: LoaderMetrics = {
   type: 'point-spatial-index',

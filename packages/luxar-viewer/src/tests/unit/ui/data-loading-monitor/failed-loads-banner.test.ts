@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { renderFailedLoadsBanner } from '../../../../ui/data-loading-monitor/templates';
+import { renderFailedLoadsBanner } from '../../../../ui/data-loading-monitor/templates/overview';
 
 describe('renderFailedLoadsBanner', () => {
   it('renders nothing when no loads have failed (the common case)', () => {

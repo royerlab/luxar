@@ -1,5 +1,5 @@
 /**
- * Unit tests for the pure helpers in data-loading-monitor/templates.ts.
+ * Unit tests for the pure helpers in data-loading-monitor/templates/.
  *
  * Targets the small zero-dependency utilities (formatters, color
  * classifiers, percentage math) that live alongside the larger
@@ -13,24 +13,30 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  calculateReuseRate,
-  formatBytes,
-  formatNumber,
-  getCacheHitRateColorClass,
-  getCacheMemoryColorClass,
   getColorClass,
-  getReuseRateColorClass,
   renderMetricCard,
   renderProgressBar,
   renderStatGrid,
+} from '../../../ui/data-loading-monitor/templates/primitives';
+import {
+  formatBytes,
+  formatNumber,
+  getCacheMemoryColorClass,
+} from '../../../ui/data-loading-monitor/templates/format';
+import {
+  calculateReuseRate,
+  getReuseRateColorClass,
+} from '../../../ui/data-loading-monitor/templates/memory';
+import { getCacheHitRateColorClass } from '../../../ui/data-loading-monitor/templates/cache';
+import { renderSecondaryMetrics } from '../../../ui/data-loading-monitor/templates/overview';
+import {
   renderSceneGraphTree,
-  renderSecondaryMetrics,
   summariseLodStates,
   lodChipContent,
   countAdditiveNodes,
   nodeStatsContent,
   activeLevelRole,
-} from '../../../ui/data-loading-monitor/templates';
+} from '../../../ui/data-loading-monitor/templates/scene-graph';
 import type {
   SceneGraphState,
   SceneGraphNode,

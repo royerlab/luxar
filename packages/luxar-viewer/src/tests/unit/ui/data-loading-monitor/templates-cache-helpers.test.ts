@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /**
  * R3: focused unit tests for the cache-tab helper functions exported
- * from `data-loading-monitor/templates.ts`. These guard the small pure
+ * from `data-loading-monitor/templates/cache.ts`. These guard the small pure
  * helpers used by both the initial render and the per-tick patcher so
  * changes to the cache-tab UI stay in sync across both paths.
  *
@@ -27,7 +27,7 @@ import {
   CACHE_WARMUP_ACCESSES,
   renderCacheContent,
   CACHE_SECTION_KEYS,
-} from '../../../../ui/data-loading-monitor/templates';
+} from '../../../../ui/data-loading-monitor/templates/cache';
 import type {
   CacheMetrics,
   CacheStatusBadge,
