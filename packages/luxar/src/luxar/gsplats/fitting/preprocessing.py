@@ -864,26 +864,7 @@ def _add_grid_fallback_seeds(
     spacing = int(np.ceil((volume / target_grid_points) ** (1.0 / ndim)))
     spacing = max(spacing, 1)  # Allow minimum spacing of 1 (dense grid)
 
-    # Generate grid points
-    grid_coords_list: list[tuple[Any, ...]] = []
-    ranges = [np.arange(spacing // 2, s, spacing) for s in shape]
-
-    import itertools
-
-    for coords in itertools.product(*ranges):
-        grid_coords_list.append(coords)
-
-    grid_coords: np.ndarray = np.array(grid_coords_list, dtype=float)
-    # An empty product collapses to shape (0,), NOT (0, ndim). That happens
-    # whenever `spacing // 2` lands past the end of any axis, which is easy to
-    # hit when `needed` is tiny: needed=1 gives target_grid_points=4, so a large
-    # tile gets a spacing wider than the tile itself and every range is empty.
-    # The spatial query then rejects the malformed array with
-    # "query must have shape (Q, 3); got (0,)" and takes the whole fit down —
-    # 29 minutes in, on the last tile, after all the real work was done.
-    # Normalise the degenerate case to a well-formed empty point set.
-    if grid_coords.size == 0:
-        grid_coords = np.empty((0, ndim), dtype=float)
+    grid_coords = _uniform_grid_points(shape, spacing, start=spacing // 2)
 
     # Remove grid points too close to existing seeds (if any exist)
     # But be less aggressive about filtering to ensure we get enough
@@ -919,11 +900,7 @@ def _add_grid_fallback_seeds(
         # Dense grid without filtering
         spacing_dense = max(1, int((volume / (needed * 2)) ** (1.0 / ndim)))
         final_spacing = float(spacing_dense)  # Update to denser spacing
-        ranges_dense = [np.arange(0, s, spacing_dense) for s in shape]
-        grid_coords_dense: list[tuple[Any, ...]] = []
-        for coords in itertools.product(*ranges_dense):
-            grid_coords_dense.append(coords)
-        grid_coords = np.array(grid_coords_dense, dtype=float)
+        grid_coords = _uniform_grid_points(shape, spacing_dense, start=0)
 
     # Sort by intensity and take top N
     if len(grid_coords) > 0:
@@ -944,6 +921,15 @@ def _add_grid_fallback_seeds(
         if verbose:
             aprint("Warning: Could not add grid seeds, using existing only")
         return existing_seeds, 0.0
+
+
+def _uniform_grid_points(shape: np.ndarray, spacing: int, *, start: int) -> np.ndarray:
+    """Return an ``(N, ndim)`` uniform grid, including when ``N == 0``."""
+    import itertools
+
+    ranges = [np.arange(start, size, spacing) for size in shape]
+    points = np.asarray(list(itertools.product(*ranges)), dtype=float)
+    return points.reshape(-1, len(shape))
 
 
 def _resolve_floor(V: np.ndarray, floor: "str | float | None") -> "float | None":

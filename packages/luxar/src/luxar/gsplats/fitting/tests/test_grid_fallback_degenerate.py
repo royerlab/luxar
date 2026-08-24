@@ -30,7 +30,7 @@ THIN_SHAPE = (4, 256, 256)
 
 
 def _grid_point_count(shape: tuple[int, ...], needed: int) -> int:
-    """Mirror the sizing the implementation does, to assert the fixture bites."""
+    """Mirror preprocessing.py's fallback spacing to assert the fixture bites."""
     volume = int(np.prod(shape))
     ndim = len(shape)
     spacing = max(int(np.ceil((volume / (needed * 4)) ** (1.0 / ndim))), 1)
@@ -57,8 +57,8 @@ def test_single_seed_shortfall_on_thin_volume_does_not_raise() -> None:
 
     assert seeds.ndim == 2
     assert seeds.shape[1] == len(THIN_SHAPE)
-    assert len(seeds) >= len(existing)  # the fallback only ever adds
-    assert np.isfinite(spacing)
+    assert len(seeds) == len(existing) + 1
+    assert spacing > 0
 
 
 def test_thin_volume_with_no_existing_seeds() -> None:
@@ -66,11 +66,13 @@ def test_thin_volume_with_no_existing_seeds() -> None:
     volume = np.zeros(THIN_SHAPE, dtype=np.float32)
     empty = np.empty((0, 3), dtype=float)
 
-    seeds, _ = _add_grid_fallback_seeds(
+    seeds, spacing = _add_grid_fallback_seeds(
         volume, target_count=1, existing_seeds=empty, verbose=False
     )
     assert seeds.ndim == 2
     assert seeds.shape[1] == len(THIN_SHAPE)
+    assert len(seeds) == 1
+    assert spacing > 0
 
 
 def test_large_shortfall_still_fills() -> None:
