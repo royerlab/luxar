@@ -177,7 +177,7 @@ scene.add_mesh(
 timelapse = import_mesh_directory("000_deconv.ome.zarr/meshes/cells")
 
 # Override filename parsing when frames do not use T<number>/Ch<number> tokens.
-timelapse = import_mesh_directory(
+frames = import_mesh_directory(
     "exported_frames",
     index_regex=r"frame_(?P<t>\d+)",
 )
