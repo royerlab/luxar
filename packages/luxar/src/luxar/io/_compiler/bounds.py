@@ -25,6 +25,9 @@ class WorldBoundsLeaf:
     path: str
     geometry_type: str
     bounds: dict[str, list[float]]
+    blending_mode: str | None = None
+    opacity: float = 1.0
+    lod_branches: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass
@@ -58,8 +61,13 @@ class _WorldBoundsCollector:
         nd_chain: list[dict],
         world_matrix: NDArray[np.float64],
         has_matrix: bool,
+        blending_mode: str | None,
+        opacity: float,
+        lod_branches: tuple[tuple[str, str], ...],
     ) -> None:
         node_type = attrs.get("type")
+        # Keep this keyed to the format contract: a newly authorable geometry
+        # must reach scene bounds rather than being silently skipped here.
         if node_type not in GEOMETRY_TYPES:
             return
         local_bounds = attrs.get("position_bounds")
@@ -74,7 +82,16 @@ class _WorldBoundsCollector:
             )
         if has_matrix:
             transformed = self._apply_matrix(transformed, world_matrix)
-        self.leaves.append(WorldBoundsLeaf(group.path, node_type, transformed))
+        self.leaves.append(
+            WorldBoundsLeaf(
+                group.path,
+                node_type,
+                transformed,
+                blending_mode,
+                min(1.0, max(0.0, opacity)),
+                lod_branches,
+            )
+        )
 
     def walk(
         self,
@@ -82,8 +99,19 @@ class _WorldBoundsCollector:
         nd_chain: list[dict],
         world_matrix: NDArray[np.float64],
         has_matrix: bool,
+        blending_mode: str | None,
+        opacity: float,
+        lod_branches: tuple[tuple[str, str], ...],
+        is_root: bool = False,
     ) -> None:
         attrs = dict(group.attrs)
+        node_blending_mode = blending_mode
+        node_opacity = opacity
+        if not (is_root and attrs.get("type") == "scene"):
+            if "blending_mode" in attrs:
+                node_blending_mode = str(attrs["blending_mode"])
+            node_opacity *= float(attrs.get("opacity", 1.0))
+
         chain = list(nd_chain)
         nd_transform = attrs.get("nd_transform")
         if nd_transform:
@@ -93,12 +121,33 @@ class _WorldBoundsCollector:
         node_has_matrix = has_matrix
         raw_transform = attrs.get("transform")
         if raw_transform is not None:
+            # world = ancestors @ this (child transform applied first)
             node_matrix = world_matrix @ read_transform_from_zarr(list(raw_transform))
             node_has_matrix = True
 
-        self._append_geometry(group, attrs, chain, node_matrix, node_has_matrix)
+        self._append_geometry(
+            group,
+            attrs,
+            chain,
+            node_matrix,
+            node_has_matrix,
+            node_blending_mode,
+            node_opacity,
+            lod_branches,
+        )
         for child_name in sorted(group.group_keys()):
-            self.walk(group[child_name], chain, node_matrix, node_has_matrix)
+            child_lod_branches = lod_branches
+            if attrs.get("kind") == "lod":
+                child_lod_branches += ((group.path, child_name),)
+            self.walk(
+                group[child_name],
+                chain,
+                node_matrix,
+                node_has_matrix,
+                node_blending_mode,
+                node_opacity,
+                child_lod_branches,
+            )
 
 
 def compute_position_bounds(
@@ -167,10 +216,10 @@ def update_scene_bounds(
 def collect_world_bounds(store: zarr.Group) -> list[WorldBoundsLeaf]:
     """Collect transform-expanded world-space bounds for every geometry leaf.
 
-    Walks the zarr tree, composes the world-space transform chain for
-    each leaf node, applies it to the per-node (local) position bounds,
-    and stores the union of all world-space bounds as the scene-level
-    ``position_bounds``.
+    Walks the zarr tree, composes the world-space transform chain for each leaf
+    node, and applies it to the per-node (local) position bounds. The same pass
+    carries effective compositing attrs and LOD branch ancestry for finalize
+    consumers that need them.
 
     Two independent transform families are composed down the hierarchy
     and applied together:
@@ -204,22 +253,35 @@ def collect_world_bounds(store: zarr.Group) -> list[WorldBoundsLeaf]:
     # dimensions — matching how the viewer projects nD positions to the
     # mesh's x/y/z before applying the node transform.
     collector = _WorldBoundsCollector(dimensions, dimensions.displayed[:3], [])
-    collector.walk(store, [], np.eye(4, dtype=np.float64), False)
+    collector.walk(
+        store,
+        [],
+        np.eye(4, dtype=np.float64),
+        False,
+        None,
+        1.0,
+        (),
+        is_root=True,
+    )
     return collector.leaves
 
 
 def expand_bounds_with_transforms(
     store: zarr.Group,
     scene_bounds: Optional[Dict[str, List[float]]],
+    leaves: list[WorldBoundsLeaf] | None = None,
 ) -> Optional[Dict[str, List[float]]]:
     """Expand scene-level position bounds into world space.
 
     Uses :func:`collect_world_bounds` as the single transform-aware leaf walk,
-    then stores the union as the scene-level ``position_bounds``.
+    then stores the union as the scene-level ``position_bounds``. A caller that
+    has already collected the leaves may pass them to share the snapshot with
+    other finalize consumers.
 
     Args:
         store: The opened zarr store (in r+ mode)
         scene_bounds: Current scene-level bounds, or None.
+        leaves: Optional pre-collected world-space leaves.
 
     Returns:
         The updated scene bounds (world-space union), or the input
@@ -228,7 +290,8 @@ def expand_bounds_with_transforms(
     if scene_bounds is None:
         return scene_bounds
 
-    leaves = collect_world_bounds(store)
+    if leaves is None:
+        leaves = collect_world_bounds(store)
 
     # If no leaf nodes found, nothing to do
     if not leaves:

@@ -13,15 +13,18 @@ from luxar import Dimensions, LuxarZarrCompiler
 from luxar.conftest import find_repo_relative_file
 from luxar.io._compiler.bounds import WorldBoundsLeaf
 from luxar.io._compiler.finalize.blending_warnings import (
+    _MESH_SUPPORTED_BLENDING_MODES,
     _BlendLeaf,
     _candidate_pairs,
     warn_overlapping_blending,
 )
+from luxar.typing_utils._format_contract import GEOMETRY_TYPES
 from luxar.typing_utils.constants import DEFAULT_BLENDING_MODE_BY_GEOMETRY
 
 
 def _root(n_dims: int = 3) -> zarr.Group:
     root = zarr.group()
+    root.attrs["type"] = "scene"
     root.attrs["scene_dimensions"] = {
         "dimensions": [
             {
@@ -61,6 +64,7 @@ def _leaf(
 
 
 def test_viewer_default_modes_match_python_contract() -> None:
+    assert set(DEFAULT_BLENDING_MODE_BY_GEOMETRY) == set(GEOMETRY_TYPES)
     files = {
         "points": ("create-points-node.ts", r"blendingMode:.*\?\? '([^']+)'"),
         "lines": ("create-lines-node.ts", r"blendingMode:.*\?\? '([^']+)'"),
@@ -104,6 +108,52 @@ def test_viewer_normal_depth_write_contract_matches_warning_logic() -> None:
         source,
         re.DOTALL,
     )
+    assert re.search(
+        r"function needsDepthSort\([^)]*\).*?return isNormalMode\(mode\)"
+        r" \|\| isVolumetricMode\(mode\)",
+        source,
+        re.DOTALL,
+    )
+    assert re.search(
+        r"function normalizeBlendingMode\([^)]*\).*?return 'normal'",
+        source,
+        re.DOTALL,
+    )
+
+
+def test_viewer_scene_root_and_mesh_mode_contracts_match_warning_logic() -> None:
+    attrs_source = find_repo_relative_file(
+        Path("packages/luxar-viewer/src/data/attrs-composer.ts"),
+        Path(__file__).resolve(),
+    )
+    mesh_source = find_repo_relative_file(
+        Path("packages/luxar-viewer/src/rendering/materials/mesh/appearance.ts"),
+        Path(__file__).resolve(),
+    )
+    assert attrs_source is not None, "cannot locate viewer attrs-composer.ts"
+    assert mesh_source is not None, "cannot locate viewer mesh appearance.ts"
+    assert "if (root.type !== 'scene') chain.push(root);" in attrs_source.read_text(
+        encoding="utf-8"
+    )
+
+    source = mesh_source.read_text(encoding="utf-8")
+    match = re.search(
+        r"MESH_SUPPORTED_BLENDING_MODES = \[(.*?)\] as const",
+        source,
+        re.DOTALL,
+    )
+    assert match is not None
+    assert (
+        set(re.findall(r"'([^']+)'", match.group(1)))
+        == set(_MESH_SUPPORTED_BLENDING_MODES)
+        == {
+            "opaque",
+            "normal",
+            "additive",
+            "luminous",
+            "max",
+        }
+    )
 
 
 def test_default_additive_points_over_opaque_mesh_warns(capsys) -> None:
@@ -118,6 +168,43 @@ def test_default_additive_points_over_opaque_mesh_warns(capsys) -> None:
     assert "'points' (additive)" in output
     assert "'nuclei' (opaque)" in output
     assert "blending_mode='luminous'" in output
+
+
+def test_explicit_additive_is_treated_as_intentional(capsys) -> None:
+    root = _root()
+    holder = root.create_group("holder")
+    holder.attrs["blending_mode"] = "additive"
+    _leaf(holder, "points", "points")
+    _leaf(root, "mesh", "mesh")
+
+    warn_overlapping_blending(root)
+
+    assert capsys.readouterr().out == ""
+
+
+def test_scene_root_blending_mode_does_not_compose(capsys) -> None:
+    root = _root()
+    root.attrs["blending_mode"] = "normal"
+    _leaf(root, "points", "points")
+    _leaf(root, "gsplats", "gsplats")
+
+    warn_overlapping_blending(root)
+
+    assert capsys.readouterr().out == ""
+
+
+def test_scene_root_opacity_does_not_hide_depth_writer(capsys) -> None:
+    root = _root()
+    root.attrs["opacity"] = 0.5
+    _leaf(root, "points", "points")
+    _leaf(root, "line", "lines", blending_mode="normal", opacity=1.0)
+
+    warn_overlapping_blending(root)
+
+    output = capsys.readouterr().out
+    assert output.count("⚠️") == 1
+    assert "'points' (additive)" in output
+    assert "'line' (normal)" in output
 
 
 def test_compiler_finalize_reports_default_points_mesh_hazard(
@@ -146,20 +233,21 @@ def test_compiler_finalize_reports_default_points_mesh_hazard(
 
 def test_effective_opacity_and_nearest_blend_setter_drive_depth_writes(capsys) -> None:
     root = _root()
-    root.attrs["blending_mode"] = "normal"
-    root.attrs["opacity"] = 0.9
     holder = root.create_group("holder")
-    holder.attrs["opacity"] = 0.5
-    _leaf(holder, "dim_line", "lines")
-    _leaf(root, "opaque_line", "lines", opacity=1.0)
+    holder.attrs["blending_mode"] = "normal"
+    holder.attrs["opacity"] = 0.9
+    nested = holder.create_group("nested")
+    nested.attrs["opacity"] = 0.5
+    _leaf(nested, "dim_line", "lines")
+    _leaf(holder, "opaque_line", "lines", opacity=1.0)
 
     warn_overlapping_blending(root)
 
     output = capsys.readouterr().out
     assert output.count("⚠️") == 1
-    assert "overlapping depth-sorted nodes" in output
-    assert "holder/dim_line" in output
-    assert "opaque_line" in output
+    assert "overlapping order-dependent nodes" in output
+    assert "holder/nested/dim_line" in output
+    assert "holder/opaque_line" in output
 
 
 @pytest.mark.parametrize("geometry_type", ["points", "gsplats"])
@@ -185,6 +273,20 @@ def test_set_but_unknown_mode_matches_viewer_normal_fallback(capsys) -> None:
     output = capsys.readouterr().out
     assert "'malformed' (normal)" in output
     assert "mix depth-ignoring and depth-writing geometry" in output
+
+
+def test_inherited_unsupported_mesh_mode_falls_back_to_opaque(capsys) -> None:
+    root = _root()
+    holder = root.create_group("holder")
+    holder.attrs["blending_mode"] = "volumetric"
+    _leaf(holder, "mesh", "mesh")
+    _leaf(root, "points", "points")
+
+    warn_overlapping_blending(root)
+
+    output = capsys.readouterr().out
+    assert "'holder/mesh' (opaque)" in output
+    assert "'points' (additive)" in output
 
 
 def test_overlapping_sorted_nodes_warn_but_lod_alternatives_do_not(capsys) -> None:
@@ -311,6 +413,33 @@ def test_each_additive_offender_warns_only_once(capsys) -> None:
     warn_overlapping_blending(root)
 
     assert capsys.readouterr().out.count("⚠️") == 1
+
+
+def test_each_sorted_offender_warns_only_once(capsys) -> None:
+    root = _root()
+    _leaf(
+        root,
+        "envelope",
+        "points",
+        minimum=[0.0, 0.0, 0.0],
+        maximum=[10.0, 10.0, 10.0],
+        blending_mode="normal",
+    )
+    for index in range(3):
+        _leaf(
+            root,
+            f"contained_{index}",
+            "points",
+            minimum=[float(index + 1), 1.0, 1.0],
+            maximum=[float(index + 2), 2.0, 2.0],
+            blending_mode="normal",
+        )
+
+    warn_overlapping_blending(root)
+
+    output = capsys.readouterr().out
+    assert output.count("⚠️") == 1
+    assert "'envelope'" in output
 
 
 def test_world_transforms_decide_overlap(capsys) -> None:

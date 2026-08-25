@@ -294,22 +294,26 @@ on the topology they were written in (measured 222.34 vs 160.50 on one dataset).
 ### `blending_warnings.warn_overlapping_blending(store) -> None`
 
 Read-only authoring diagnostics over transform-expanded leaf bounds. Effective
-`blending_mode` uses nearest-setter-wins root→leaf composition; effective
-opacity multiplies down the same chain. Per-type defaults mirror the viewer
-(`additive` for Points/Lines/GSplats, `opaque` for Mesh), and the source-lock
-tests fail if those factories drift.
+`blending_mode` uses nearest-setter-wins ancestor→leaf composition; effective
+opacity multiplies down the same chain. The scene root is a carrier and does not
+contribute rendering attrs, matching the viewer. Per-type defaults mirror the
+viewer (`additive` for Points/Lines/GSplats, `opaque` for Mesh), and source-lock
+tests fail if those factories or blend-state predicates drift.
 
-Two hazards are reported: any positive spatial overlap between an `additive`
-node and a depth-writing node, and containment between two internally sorted,
-depth-testing nodes that do not write depth. The second rule intentionally uses
-containment rather than every partial AABB intersection: an empirical scan of
-the materialized demo/example/fixture corpus found pairwise partial overlap too
-noisy for a warning authors would keep reading. Discrete slider dimensions use
-inclusive interval overlap, while displayed dimensions require positive extent;
-different children of one `kind=lod` group are mutually exclusive and are never
-compared. Candidate pairs are sweep-pruned on a displayed axis, and repeated
-pairwise hits are rolled up to one warning per offending node so large
-partitions do not turn finalization into quadratic work or log floods.
+Two hazards are reported: any positive spatial overlap between a node whose
+`additive` mode came from its per-type default and a depth-writing node, and
+containment between two internally order-dependent, depth-testing nodes that do
+not write depth. An explicit `additive` anywhere on the node's ancestry is
+treated as intentional X-ray rendering and suppresses the first warning. The
+second rule intentionally uses containment rather than every partial AABB
+intersection: an empirical scan found pairwise partial overlap too noisy for a
+warning authors would keep reading. The final rule set produced one rolled-up
+order warning in `multiple_objects_example.luxar.zarr` across 56 materialized
+demo/example stores. Discrete slider dimensions use inclusive interval overlap,
+while displayed dimensions require positive extent; different children of one
+`kind=lod` group are mutually exclusive and are never compared. Candidate pairs
+are sweep-pruned on a displayed axis, and repeated pairwise hits are rolled up
+when either node was already reported so enveloping nodes cannot flood the log.
 
 ### `validation.prune_childless_wrappers(store) -> None`
 

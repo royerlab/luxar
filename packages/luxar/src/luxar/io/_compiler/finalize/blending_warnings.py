@@ -9,11 +9,17 @@ import zarr
 from arbol import aprint
 
 from ....core.dimensions import Dimensions
-from ....typing_utils.constants import DEFAULT_BLENDING_MODE_BY_GEOMETRY
+from ....typing_utils.constants import (
+    DEFAULT_BLENDING_MODE,
+    DEFAULT_BLENDING_MODE_BY_GEOMETRY,
+)
 from ....typing_utils.enums import BlendingMode
 from ..bounds import WorldBoundsLeaf, collect_world_bounds
 
 _BLENDING_MODES = frozenset(mode.value for mode in BlendingMode)
+_MESH_SUPPORTED_BLENDING_MODES = frozenset(
+    {"opaque", "normal", "additive", "luminous", "max"}
+)
 
 
 @dataclass(frozen=True)
@@ -22,40 +28,29 @@ class _BlendLeaf:
     mode: str
     opacity: float
     lod_branches: tuple[tuple[str, str], ...]
+    mode_explicit: bool = False
 
 
-def _effective_leaf(store: zarr.Group, leaf: WorldBoundsLeaf) -> _BlendLeaf:
-    mode: str | None = None
-    opacity = 1.0
-    lod_branches: list[tuple[str, str]] = []
-    group = store
-    parts = leaf.path.split("/") if leaf.path else []
-
-    attrs = dict(group.attrs)
-    if "blending_mode" in attrs:
-        mode = str(attrs["blending_mode"])
-    opacity *= float(attrs.get("opacity", 1.0))
-
-    for part in parts:
-        if dict(group.attrs).get("kind") == "lod":
-            lod_branches.append((group.path, part))
-        group = group[part]
-        attrs = dict(group.attrs)
-        if "blending_mode" in attrs:
-            mode = str(attrs["blending_mode"])
-        opacity *= float(attrs.get("opacity", 1.0))
-
-    opacity = min(1.0, max(0.0, opacity))
+def _effective_leaf(leaf: WorldBoundsLeaf) -> _BlendLeaf:
+    mode = leaf.blending_mode
     resolved = (
         mode
         if mode is not None
-        else DEFAULT_BLENDING_MODE_BY_GEOMETRY[leaf.geometry_type]
+        else DEFAULT_BLENDING_MODE_BY_GEOMETRY.get(
+            leaf.geometry_type, DEFAULT_BLENDING_MODE
+        )
     )
     if resolved not in _BLENDING_MODES:
         resolved = "normal"
-    if leaf.geometry_type == "mesh" and resolved == "volumetric":
+    if leaf.geometry_type == "mesh" and resolved not in _MESH_SUPPORTED_BLENDING_MODES:
         resolved = "opaque"
-    return _BlendLeaf(leaf, resolved, opacity, tuple(lod_branches))
+    return _BlendLeaf(
+        leaf,
+        resolved,
+        leaf.opacity,
+        leaf.lod_branches,
+        mode_explicit=mode is not None,
+    )
 
 
 def _can_coexist(left: _BlendLeaf, right: _BlendLeaf) -> bool:
@@ -141,13 +136,17 @@ def _candidate_pairs(
             yield left, right
 
 
-def warn_overlapping_blending(store: zarr.Group) -> None:
+def warn_overlapping_blending(
+    store: zarr.Group, world_leaves: list[WorldBoundsLeaf] | None = None
+) -> None:
     """Warn once per co-visible node with unsafe overlapping blend semantics."""
     if "scene_dimensions" not in store.attrs:
         return
     dimensions = Dimensions.from_dict(store.attrs["scene_dimensions"])
     displayed_dimensions = set(dimensions.displayed[:3])
-    leaves = [_effective_leaf(store, leaf) for leaf in collect_world_bounds(store)]
+    if world_leaves is None:
+        world_leaves = collect_world_bounds(store)
+    leaves = [_effective_leaf(leaf) for leaf in world_leaves]
     warned_additive: set[str] = set()
     warned_sorted: set[str] = set()
     for left, right in _candidate_pairs(leaves, displayed_dimensions):
@@ -158,8 +157,8 @@ def warn_overlapping_blending(store: zarr.Group) -> None:
 
         left_writes = _depth_writes(left)
         right_writes = _depth_writes(right)
-        if (left.mode == "additive" and right_writes) or (
-            right.mode == "additive" and left_writes
+        if (left.mode == "additive" and not left.mode_explicit and right_writes) or (
+            right.mode == "additive" and not right.mode_explicit and left_writes
         ):
             additive = left if left.mode == "additive" else right
             if additive.leaf.path in warned_additive:
@@ -182,14 +181,12 @@ def warn_overlapping_blending(store: zarr.Group) -> None:
             and _internally_sorted(left)
             and _internally_sorted(right)
             and (_contains(left.leaf, right.leaf) or _contains(right.leaf, left.leaf))
-            and (
-                left.leaf.path not in warned_sorted
-                or right.leaf.path not in warned_sorted
-            )
         ):
+            if left.leaf.path in warned_sorted or right.leaf.path in warned_sorted:
+                continue
             warned_sorted.update((left.leaf.path, right.leaf.path))
             aprint(
-                f"  ⚠️  overlapping depth-sorted nodes '{left.leaf.path}' ({left.mode}) "
+                f"  ⚠️  overlapping order-dependent nodes '{left.leaf.path}' ({left.mode}) "
                 f"and '{right.leaf.path}' ({right.mode}) have view-dependent cross-node "
                 "order; make one node additive or separate their bounds."
             )
