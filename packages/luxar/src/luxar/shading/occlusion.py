@@ -57,9 +57,18 @@ A windowed Beer-Lambert column integral over a spherical direction set:
    along the sampled direction.
 2. Integrate density along that axis over a **finite** window of ``radius`` world
    units, exclusive of the element's own cell.
-3. Transmittance along that direction is ``exp(-tau)``; the ambient term is the
-   mean transmittance over all directions — cosine-weighted into the hemisphere a
-   normal faces, when normals are supplied.
+3. Map that column to a per-direction transmittance — ``exp(-tau)`` for a medium,
+   or a saturating ``max(0, 1 - tau)`` for an opaque surface (see ``occluder``).
+   The ambient term is the mean over all directions, cosine-weighted into the
+   hemisphere a normal faces when normals are supplied.
+
+Which mapping matters more than it sounds. Under Beer-Lambert a one-cell-thick
+shell — what a surface sampled as points is made of — attenuates only by
+``exp(-k)``, so at any ``k`` gentle enough to keep solid regions readable a WALL
+passes about half the light, and raising ``k`` until walls block properly
+over-darkens everywhere thick. Saturation has no such trade: it reaches full
+occlusion at one wall and stops. So volumetric data wants ``"density"`` and
+surfaces want ``"opaque"``.
 
 The finite window is what makes this occlusion rather than a depth map. An
 unbounded integral (correct when you are chasing a real light, as
@@ -371,6 +380,7 @@ def bake_ambient_occlusion(
     *,
     mass: Optional[np.ndarray] = None,
     normals: Optional[np.ndarray] = None,
+    occluder: str = "density",
     radius: Optional[float] = None,
     n_directions: int = DEFAULT_N_DIRECTIONS,
     grid_cells: int = DEFAULT_GRID_CELLS,
@@ -440,6 +450,26 @@ def bake_ambient_occlusion(
             where there is no surface to orient to, and it is deliberately not
             papered over with an estimate: normals from a local PCA of a
             volumetric point cloud are meaningless.
+        occluder: What the material is taken to BE, which decides how a column
+            maps to transmittance.
+
+            ``"density"`` (default) is Beer-Lambert, ``exp(-depth)`` — correct for
+            a medium, where twice the material attenuates twice as much without
+            limit. Right for a light-sheet fit, a cloud, a filled molecular
+            complex.
+
+            ``"opaque"`` is saturating, ``max(0, 1 - depth)`` — correct for a
+            surface, where once a direction is blocked it cannot become more
+            blocked, so a thick wall darkens exactly as much as a thin one. Prefer
+            it whenever the subject is a **surface sampled as points**.
+
+            The distinction is not cosmetic. Under Beer-Lambert a one-cell-thick
+            shell — which is what a surface-sampled point cloud is made of — only
+            attenuates by ``exp(-k)``, so at any ``k`` gentle enough to keep solid
+            regions readable a WALL passes about half the light, and raising ``k``
+            until walls block properly over-darkens everywhere thick. Saturation
+            has no such trade. Measured on the gyroid shell at a matched median,
+            ``"opaque"`` carries about a quarter more contrast than ``"density"``.
         radius: World-space occlusion radius — the scale of structure AO
             responds to. Defaults to :data:`DEFAULT_RADIUS_FRACTION` of the
             bounding-box diagonal, and is the first thing to tune.
@@ -470,16 +500,14 @@ def bake_ambient_occlusion(
         ``(N,)`` float32 in ``[floor, 1]``.
     """
     pos = np.asarray(positions)
-    if pos.ndim != 2:
-        raise ValueError(f"positions must have shape (N, D), got {pos.shape}")
-    if not 0.0 <= floor <= 1.0:
-        raise ValueError(f"floor must be in [0, 1], got {floor}")
-    if strength < 0.0:
-        raise ValueError(f"strength must be >= 0, got {strength}")
-    if grid_cells < 4:
-        raise ValueError(f"grid_cells must be >= 4, got {grid_cells}")
-    if radius is not None and radius <= 0.0:
-        raise ValueError(f"radius must be > 0, got {radius}")
+    _validate_look_args(
+        pos,
+        occluder=occluder,
+        radius=radius,
+        grid_cells=grid_cells,
+        strength=strength,
+        floor=floor,
+    )
 
     n_elements = pos.shape[0]
     mass_arr = _validated_mass(mass, n_elements)
@@ -495,6 +523,7 @@ def bake_ambient_occlusion(
             _spatial_positions(pos, spatial_dims),
             mass_arr,
             normals_arr,
+            occluder=occluder,
             radius=radius,
             n_directions=n_directions,
             grid_cells=grid_cells,
@@ -516,6 +545,7 @@ def bake_ambient_occlusion(
             local_all[where],
             mass_arr[where],
             None if normals_arr is None else normals_arr[where],
+            occluder=occluder,
             radius=radius,
             n_directions=n_directions,
             grid_cells=grid_cells,
@@ -531,6 +561,7 @@ def _bake_group(
     mass: np.ndarray,
     normals: Optional[np.ndarray],
     *,
+    occluder: str,
     radius: Optional[float],
     n_directions: int,
     grid_cells: int,
@@ -579,16 +610,76 @@ def _bake_group(
             raise ValueError(
                 f"extinction must be a float or 'auto', got {extinction!r}"
             )
-        resolved = _auto_extinction(columns, weights)
+        resolved = _auto_extinction(columns, weights, occluder)
     else:
         if extinction < 0.0:
             raise ValueError(f"extinction must be >= 0, got {extinction}")
         resolved = float(extinction)
 
-    transmittance = _combine(np.exp(-resolved * columns.astype(np.float64)), weights)
+    depth = resolved * columns.astype(np.float64)
+    transmittance = _combine(_transmittance(depth, occluder), weights)
     return np.clip(1.0 - strength * (1.0 - transmittance), floor, 1.0).astype(
         np.float32
     )
+
+
+def _validate_look_args(
+    positions: np.ndarray,
+    *,
+    occluder: str,
+    radius: Optional[float],
+    grid_cells: int,
+    strength: float,
+    floor: float,
+) -> None:
+    """Reject bad arguments up front, before any grid pass runs.
+
+    Split out of :func:`bake_ambient_occlusion` to keep that function under the
+    repo's complexity gate, and because failing fast matters here: a typo in
+    ``occluder`` caught only where it is consumed would surface after paying for
+    every direction's grid build.
+    """
+    if positions.ndim != 2:
+        raise ValueError(f"positions must have shape (N, D), got {positions.shape}")
+    if occluder not in ("density", "opaque"):
+        raise ValueError(f"occluder must be 'density' or 'opaque', got {occluder!r}")
+    if not 0.0 <= floor <= 1.0:
+        raise ValueError(f"floor must be in [0, 1], got {floor}")
+    if strength < 0.0:
+        raise ValueError(f"strength must be >= 0, got {strength}")
+    if grid_cells < 4:
+        raise ValueError(f"grid_cells must be >= 4, got {grid_cells}")
+    if radius is not None and radius <= 0.0:
+        raise ValueError(f"radius must be > 0, got {radius}")
+
+
+def _transmittance(depth: np.ndarray, occluder: str) -> np.ndarray:
+    """Map a scaled column integral to per-direction transmittance.
+
+    Both models take the SAME scaled column and differ only in the mapping, which
+    is what lets one ``extinction`` knob serve both:
+
+    ``"density"``
+        ``exp(-depth)`` — Beer-Lambert. Correct for a medium: twice the material
+        attenuates twice as much, without limit.
+    ``"opaque"``
+        ``max(0, 1 - depth)`` — saturating. Correct for a surface: once a
+        direction is blocked it cannot become more blocked, so a thick wall
+        darkens exactly as much as a thin one.
+
+    The saturation is the whole point of the second mode, not an approximation of
+    the first. Under Beer-Lambert a one-cell-thick shell — which is what a
+    surface-sampled point cloud is made of — only attenuates by ``exp(-k)``, so
+    at any ``k`` gentle enough to keep thick regions readable a WALL passes
+    roughly half the light. Raising ``k`` until walls block properly then
+    over-darkens everywhere the geometry is solid. A saturating mapping has no
+    such trade: it reaches full occlusion at one wall and stops.
+    """
+    if occluder == "density":
+        return np.exp(-depth)
+    if occluder == "opaque":
+        return np.maximum(1.0 - depth, 0.0)
+    raise ValueError(f"occluder must be 'density' or 'opaque', got {occluder!r}")
 
 
 def _direction_weights(
@@ -620,22 +711,34 @@ def _combine(per_direction: np.ndarray, weights: Optional[np.ndarray]) -> np.nda
     return np.asarray((per_direction * weights).sum(axis=1) / weights.sum(axis=1))
 
 
-def _auto_extinction(columns: np.ndarray, weights: Optional[np.ndarray]) -> float:
+def _auto_extinction(
+    columns: np.ndarray, weights: Optional[np.ndarray], occluder: str
+) -> float:
     """Extinction placing the median element at :data:`AUTO_TARGET_TRANSMITTANCE`.
 
     Calibrated on each element's mean column over directions — under the SAME
     weighting the final combination uses, so a hemisphere-weighted bake is not
-    calibrated against a full-sphere population it never evaluates. The exact
-    median transmittance lands slightly above the target (Jensen's inequality on
-    the exponential). Close enough for a look parameter, and it is what makes the
-    same call work unchanged on a 50k-point sketch and a 3M-splat fit.
+    calibrated against a full-sphere population it never evaluates. The realized
+    median lands a little above the target, by Jensen's inequality on whichever
+    mapping is in play; less so for ``"opaque"``, which is linear until it
+    saturates. Close enough for a look parameter, and it is what makes the same
+    call work unchanged on a 50k-point sketch and a 3M-splat fit.
+
+    Inverted per mode, so both land on the same declared target rather than one
+    of them silently aiming somewhere else.
     """
     median_column = float(np.median(_combine(columns.astype(np.float64), weights)))
     if median_column <= 0.0:
         # Every element sees an empty window: the data is sparser than `radius`,
         # so there is genuinely nothing to occlude with.
         return 0.0
-    return float(-np.log(AUTO_TARGET_TRANSMITTANCE) / median_column)
+    if occluder == "density":
+        # exp(-k * col) == target
+        return float(-np.log(AUTO_TARGET_TRANSMITTANCE) / median_column)
+    if occluder == "opaque":
+        # 1 - k * col == target
+        return float((1.0 - AUTO_TARGET_TRANSMITTANCE) / median_column)
+    raise ValueError(f"occluder must be 'density' or 'opaque', got {occluder!r}")
 
 
 def _validated_normals(

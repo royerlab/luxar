@@ -85,6 +85,7 @@ loader and shader work that does not exist yet.
 | Argument | Why you would touch it |
 |---|---|
 | `radius` | **The** knob. The scale of structure AO responds to; defaults to 5% of the bounding-box diagonal. Too small and only the tightest creases darken; too large and the integral degenerates into a depth map. |
+| `occluder` | `"density"` for a medium, `"opaque"` for a surface. **The second knob to reach for on surface data**, alongside `normals` — see below. |
 | `normals` | **Pass these if the data is a surface and you have them.** Switches from the full sphere to a cosine-weighted hemisphere. Roughly doubles the discrimination on shells — see below. |
 | `mass` | Occluding material per element — **the only channel through which an element's own appearance enters** (see below). Defaults to ones, i.e. pure count density. |
 | `group_by` | **Required for nD data.** Pass the timepoint index for a timelapse, or occlusion crosses the time axis and the whole sequence shades as one solid. The same hazard `--coarsen-dims` exists for on the LOD side. |
@@ -145,6 +146,29 @@ A windowed Beer–Lambert column integral over a spherical direction set. For ea
 direction: splat mass onto a grid aligned to it, integrate density along that axis
 over a finite `radius` window (exclusive of the element's own cell), and take
 `exp(-tau)`. The ambient term is the mean transmittance over all directions.
+
+### Is the material a medium or a surface? (`occluder`)
+
+Both modes integrate the same column and differ only in how it becomes
+transmittance:
+
+| `occluder` | mapping | correct for |
+|---|---|---|
+| `"density"` (default) | `exp(-depth)` — Beer–Lambert, unbounded | a medium: light-sheet fit, cloud, filled molecular complex |
+| `"opaque"` | `max(0, 1 - depth)` — saturating | a **surface** sampled as points |
+
+The distinction is not cosmetic. Under Beer–Lambert a one-cell-thick shell —
+which is what a surface sampled as points is made of — attenuates only by
+`exp(-k)`. So at any `k` gentle enough to keep solid regions readable, a *wall*
+passes about half the light; and raising `k` until walls block properly
+over-darkens everywhere thick. There is no `k` that serves both. Saturation has
+no such trade — it reaches full occlusion at one wall and stops, so a thick wall
+darkens exactly as much as a thin one.
+
+Measured on the gyroid shell at a matched median, `"opaque"` carries about a
+quarter more contrast than `"density"`. Auto calibration is inverted per mode, so
+both land on `AUTO_TARGET_TRANSMITTANCE` rather than one of them quietly aiming
+elsewhere.
 
 ### Volumetric or surface? Pass `normals` if you have them
 

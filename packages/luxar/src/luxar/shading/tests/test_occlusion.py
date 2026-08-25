@@ -267,6 +267,139 @@ def test_normals_are_grouped_alongside_positions():
 
 
 # ---------------------------------------------------------------------------
+# Occluder model: medium vs surface
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "occluder, expected",
+    [
+        # Beer-Lambert: never reaches zero, always keeps falling.
+        ("density", [1.0, np.exp(-1.0), np.exp(-1.5), np.exp(-15.0)]),
+        # Saturating: hits zero at one wall's worth and stays there.
+        ("opaque", [1.0, 0.0, 0.0, 0.0]),
+    ],
+)
+def test_transmittance_mapping_is_the_defining_difference(occluder, expected):
+    """The invariant the mode exists for, tested where it actually lives.
+
+    Asserted on the mapping rather than through a scene, because geometry cannot
+    isolate it: in any real arrangement some grazing directions reach the far
+    material WITHOUT passing the near material, so even the saturating mode keeps
+    a little sensitivity. Here the claim is exact.
+    """
+    got = occlusion_module._transmittance(np.array([0.0, 1.0, 1.5, 15.0]), occluder)
+    np.testing.assert_allclose(got, expected, atol=1e-12)
+
+
+def test_opaque_is_far_less_sensitive_to_added_depth_than_density():
+    """The same difference as it survives into a real bake.
+
+    One thin sheet against a stack of ten identical ones, probed from just below.
+    Opaque does not go fully insensitive — grazing directions enter the stack from
+    the side without crossing the first sheet, so they are not saturated by it —
+    but it must move markedly less. Measured: density 0.188, opaque 0.109.
+    """
+    step = 0.02
+    # Directly beneath the stack, so roughly a whole hemisphere is blocked and
+    # the two mappings are compared where they actually differ. Held far enough
+    # below the first sheet to clear the own-slice exclusion.
+    probe = np.array([[0.0, 0.0, -0.06]])
+
+    def sheets(count):
+        stack = [
+            _grid_plane((-0.6, 0.6), (-0.6, 0.6), step, z=0.02 * i)
+            for i in range(count)
+        ]
+        return np.vstack([*stack, probe])
+
+    thin, thick = sheets(1), sheets(10)
+    kwargs = dict(radius=0.4, grid_cells=96, n_directions=12, strength=1.0)
+
+    d_thin = bake_ambient_occlusion(thin, extinction=1.0, **kwargs)[-1]
+    d_thick = bake_ambient_occlusion(thick, extinction=1.0, **kwargs)[-1]
+    o_thin = bake_ambient_occlusion(thin, occluder="opaque", extinction=1.0, **kwargs)[
+        -1
+    ]
+    o_thick = bake_ambient_occlusion(
+        thick, occluder="opaque", extinction=1.0, **kwargs
+    )[-1]
+
+    # Density: ten walls are markedly darker than one.
+    assert d_thin - d_thick > 0.15
+    # Opaque: substantially less sensitive to the nine it cannot see past.
+    assert abs(o_thin - o_thick) < 0.75 * (d_thin - d_thick)
+
+
+def test_opaque_transmittance_never_goes_negative():
+    """`max(0, 1 - depth)` must clamp, not wrap into negative light."""
+    positions = _ball(15_000, seed=28)
+    shade = bake_ambient_occlusion(
+        positions,
+        occluder="opaque",
+        extinction=50.0,
+        radius=0.4,
+        grid_cells=48,
+        n_directions=6,
+        strength=1.0,
+    )
+    assert shade.min() >= 0.0
+    assert np.all(np.isfinite(shade))
+
+
+def test_both_occluders_hit_the_same_auto_target():
+    """Auto calibration is inverted per mode, so neither aims somewhere else."""
+    positions = _truncated_ball(20_000, seed=29)
+    kwargs = dict(radius=0.3, grid_cells=48, n_directions=12, strength=1.0)
+
+    for occluder in ("density", "opaque"):
+        shade = bake_ambient_occlusion(positions, occluder=occluder, **kwargs)
+        median = float(np.median(shade))
+        assert (
+            AUTO_TARGET_TRANSMITTANCE - 0.05
+            < median
+            < (AUTO_TARGET_TRANSMITTANCE + 0.25)
+        ), f"{occluder} median {median:.3f}"
+
+
+def test_opaque_carries_more_contrast_on_a_thin_shell():
+    """Why a surface should prefer it: matched median, more spread.
+
+    Both modes are auto-calibrated to the same median here, so this compares the
+    SHAPE of the two mappings rather than their exposure.
+    """
+    positions, sheet_index, trench_index = _sheet_and_trench()
+    kwargs = dict(radius=0.4, grid_cells=96, n_directions=12, strength=1.0)
+
+    density = bake_ambient_occlusion(positions, **kwargs)
+    opaque = bake_ambient_occlusion(positions, occluder="opaque", **kwargs)
+
+    assert opaque.std() > density.std()
+    # And the trench still reads as more enclosed than the open sheet.
+    assert opaque[trench_index] < opaque[sheet_index]
+
+
+def test_rejects_an_unknown_occluder():
+    positions = _ball(200, seed=30)
+    with pytest.raises(ValueError, match="occluder must be"):
+        bake_ambient_occlusion(positions, occluder="opake")
+
+
+def test_occluder_is_validated_before_the_grid_passes(monkeypatch):
+    """A typo must fail fast, not after paying for every direction."""
+    called = []
+    real = occlusion_module._mass_grid
+    monkeypatch.setattr(
+        occlusion_module,
+        "_mass_grid",
+        lambda *a, **k: (called.append(1), real(*a, **k))[1],
+    )
+    with pytest.raises(ValueError, match="occluder must be"):
+        bake_ambient_occlusion(_ball(500, seed=31), occluder="nope")
+    assert not called, "grid passes ran before the argument was rejected"
+
+
+# ---------------------------------------------------------------------------
 # Auto calibration
 # ---------------------------------------------------------------------------
 

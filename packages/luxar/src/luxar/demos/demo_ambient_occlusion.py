@@ -146,6 +146,14 @@ AO_STRENGTH = 1.0
 #: headroom for the estimate below being approximate.
 TARGET_PEAK = 0.7
 
+#: The gyroid is a SURFACE, so its material is opaque rather than a medium: one
+#: wall blocks a direction and a second wall behind it changes nothing. Under the
+#: default Beer-Lambert reading a one-cell-thick shell only attenuates by
+#: exp(-k), so a wall would pass roughly half the light — measured, the
+#: saturating mapping carries about a quarter more contrast here at a matched
+#: median.
+OCCLUDER = "opaque"
+
 #: Additive, not volumetric, and that is the whole point. Volumetric blending
 #: self-occludes, which would supply depth cueing of its own and make the
 #: control copy look partly shaded — the comparison would then be measuring two
@@ -285,14 +293,18 @@ def generate_ambient_occlusion_demo(
         # laid out side by side would let each copy occlude its neighbours, which
         # is not what any of the three panels is meant to show.
         sphere_ao = bake_ambient_occlusion(
-            positions, radius=ao_radius, strength=AO_STRENGTH
+            positions, radius=ao_radius, strength=AO_STRENGTH, occluder=OCCLUDER
         )
         aprint(
             f"✓ Full sphere:      [{sphere_ao.min():.3f}, {sphere_ao.max():.3f}] "
             f"mean {sphere_ao.mean():.3f}"
         )
         hemisphere_ao = bake_ambient_occlusion(
-            positions, normals=normals, radius=ao_radius, strength=AO_STRENGTH
+            positions,
+            normals=normals,
+            radius=ao_radius,
+            strength=AO_STRENGTH,
+            occluder=OCCLUDER,
         )
         aprint(
             f"✓ Cosine hemisphere: [{hemisphere_ao.min():.3f}, "

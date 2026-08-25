@@ -88,3 +88,19 @@ the dark end rather than from revealing structure. Points then take a higher
 one element in each pixel while a point cloud blends soft overlapping sprites,
 and an additive one shows the ray-averaged shade, costing about 30% of the
 contrast. Mesh was measured and deliberately left where it was.
+
+`occluder` selects what the material is taken to BE, because the two cases want
+different mappings of the same column integral. `"density"` (default) is
+Beer-Lambert, `exp(-depth)` — correct for a medium, where twice the material
+attenuates twice as much without limit. `"opaque"` saturates, `max(0, 1 - depth)`
+— correct for a surface, where once a direction is blocked it cannot become more
+blocked, so a thick wall darkens exactly as much as a thin one.
+
+That distinction is not cosmetic. Under Beer-Lambert a one-cell-thick shell —
+which is what a surface sampled as points is made of — attenuates only by
+`exp(-k)`, so at any `k` gentle enough to keep solid regions readable a *wall*
+passes about half the light, and raising `k` until walls block properly
+over-darkens everywhere thick. There is no `k` that serves both. Auto calibration
+is inverted per mode so both land on the same declared target. The gyroid demo,
+being a surface, now uses it: hemisphere contrast 0.147 -> 0.168 with the dark end
+reaching 0.
