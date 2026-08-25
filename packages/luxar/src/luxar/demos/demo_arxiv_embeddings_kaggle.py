@@ -1095,9 +1095,9 @@ def generate_paper_landscape(
     # `ids` field after v3 bundles were written. Bumping would invalidate every
     # warm bundle and force a 40 GB PCA stream plus a UMAP over 3.29M points on
     # each machine — the cost this cache exists to avoid. A pre-ids bundle
-    # instead degrades to a decorated-label search (see `link_attrs` below), so the pick
-    # stays useful without anyone paying for a recompute. Regenerate explicitly
-    # if you want the real DOI deep links locally.
+    # instead degrades to a decorated-label search (see `link_attrs` below), so
+    # the pick stays useful without anyone paying for a recompute. Regenerate
+    # explicitly if you want the real DOI deep links locally.
     cache_key = (
         f"umap3d_n{'all' if sample_size is None else sample_size}"
         f"_pca{pca_dim}_seed{seed}"

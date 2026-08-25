@@ -100,7 +100,7 @@ DEFAULT_SAMPLE_SIZE = 0  # 0 = all (~572K)
 
 
 def _linkable_accessions(accessions: list[str], n_proteins: int) -> list[str] | None:
-    """Return aligned accessions, or preserve an old cache without links."""
+    """Return aligned accessions, or preserve an old cache with search fallback."""
     if len(accessions) == n_proteins:
         return accessions
     aprint("  ⓘ Cached metadata has no accessions — using protein-name search")
