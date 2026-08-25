@@ -595,11 +595,15 @@ def _ensure_one(
             "good copy to fall back to. Re-pull the LFS object, or regenerate the "
             "manifest if the data was intentionally updated."
         )
-    source_remedy = (
-        "In a source checkout, run `git lfs pull`."
-        if lfs_file.exists()
-        else "This archive is hosted-only and has no in-repo Git LFS copy."
-    )
+    if lfs_file.exists():
+        source_remedy = "In a source checkout, run `git lfs pull`."
+    elif not _DEMOS_DATA_DIR.exists():
+        source_remedy = (
+            "This installed package ships no demo payloads. If this archive has "
+            "an in-repo copy, use a source checkout and run `git lfs pull`."
+        )
+    else:
+        source_remedy = "This archive is hosted-only and has no in-repo Git LFS copy."
     raise DatasetUnavailable(
         f"{fname} is not cached (any cached copy failed its checksum and was "
         "quarantined), not available from the in-repo Git LFS copy, and the "

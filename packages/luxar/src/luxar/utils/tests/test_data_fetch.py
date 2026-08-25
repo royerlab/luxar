@@ -12,6 +12,7 @@ import importlib.util
 import json
 import os
 import runpy
+import shutil
 import sys
 from pathlib import Path
 
@@ -832,6 +833,23 @@ def test_hosted_only_archive_does_not_recommend_git_lfs(fake_repo):
     assert "hosted-only" in message
     assert "unpublished draft" in message
     assert "git lfs pull" not in message
+
+
+def test_installed_package_recommends_source_checkout_git_lfs(fake_repo):
+    """A wheel has no data tree, even when the source checkout has the archive."""
+    manifest, cache = fake_repo
+    shutil.rmtree(data_fetch._DEMOS_DATA_DIR)
+
+    with pytest.raises(DatasetUnavailable) as exc_info:
+        ensure_dataset(
+            "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+        )
+
+    message = str(exc_info.value)
+    assert "installed package ships no demo payloads" in message
+    assert "source checkout" in message
+    assert "git lfs pull" in message
+    assert "hosted-only" not in message
 
 
 def test_inrepo_source_failing_its_own_checksum_is_never_used(fake_repo):
