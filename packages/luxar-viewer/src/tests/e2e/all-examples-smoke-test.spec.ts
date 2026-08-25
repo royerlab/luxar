@@ -172,7 +172,9 @@ test.describe('ALL Examples - Systematic Smoke Tests', () => {
         });
       }
 
-      // Verify data loaded (allow 0 points for datasets that may legitimately have none)
+      // Verify data loaded. The allowance covers datasets with no point node at
+      // all; a dataset that HAS point nodes still has to fill them, because the
+      // per-type loop below is unconditional.
       if (!allowZeroPoints) {
         expect(state.totalPoints).toBeGreaterThan(0);
       }
