@@ -95,7 +95,9 @@ scene.add_gsplats_from_volume(name, volume, seeds=None, n_iters=1000,
                               device=None, progressive=False, **fit_kwargs)
 ```
 
-Isotropic Gaussian of std σ in 3D: `cholesky_factors = [1/σ, 0, 1/σ, 0, 0, 1/σ]`.
+`cholesky_factors` is the packed lower-triangular factor **L of the covariance**
+(Σ = L·Lᵀ), so the diagonal is **scale-like**. Isotropic Gaussian of std σ in 3D:
+`cholesky_factors = [σ, 0, σ, 0, 0, σ]` (the diagonal carries σ, not `1/σ`).
 
 ## Groups & transforms
 

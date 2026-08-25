@@ -489,8 +489,10 @@ with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
     # (c) Fit in one step from a volume:
     scene.add_gsplats_from_volume("embryo", volume, seeds=8000, n_iters=5000, device="cuda")
 
-    # (d) From raw arrays — cholesky_factors packed lower-triangular; 3D = (N,6):
-    #     [L00, L10, L11, L20, L21, L22]; isotropic std σ -> [1/σ,0,1/σ,0,0,1/σ]
+    # (d) From raw arrays — cholesky_factors is the packed lower-triangular factor L
+    #     of the COVARIANCE (Σ = L·Lᵀ); 3D = (N,6):
+    #     [L00, L10, L11, L20, L21, L22]. Diagonal is scale-like:
+    #     isotropic std σ -> [σ,0,σ,0,0,σ]  (NOT 1/σ)
     scene.add_gsplats("trio", centers=c, amplitudes=a, cholesky_factors=L, colors=rgb)
 ```
 

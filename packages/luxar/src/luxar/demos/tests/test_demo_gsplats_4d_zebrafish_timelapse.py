@@ -218,7 +218,7 @@ class TestVoxelToMicrons:
 
         shape = (8, 16, 16)
         monkeypatch.setattr(_demo, "ACQUISITION_SHAPE_ZYX", shape)
-        # One isotropic unit-sigma splat: inverse-Cholesky diag of 1 per axis.
+        # One isotropic unit-sigma splat: Cholesky diag of 1 per axis (Σ = L·Lᵀ).
         fit = GSplatData(
             centers=np.zeros((1, 3), dtype=np.float32),
             amplitudes=np.ones(1, dtype=np.float32),
