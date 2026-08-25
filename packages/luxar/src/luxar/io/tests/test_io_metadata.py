@@ -4,7 +4,7 @@ import zarr
 
 from luxar._zarr_compat import ZARR_FORMAT
 from luxar.typing_utils.config import DEFAULT_COMP
-from luxar.utils.demos import create_lorenz_attractor
+from luxar.utils.scenes import create_lorenz_attractor
 
 
 def test_compressor_and_format(tmp_path) -> None:
