@@ -38,7 +38,7 @@ CHANNEL_STEP = 1.0
 
 
 def create_dimensions() -> Dimensions:
-    """Create the dimension metadata shared with cluster generation."""
+    """Create authored dimension metadata from shared constants."""
     return Dimensions(
         [
             Dimension("x", unit="um", display=True, range=(-60, 60)),
@@ -85,11 +85,8 @@ def create_5d_clusters(n_clusters: int = 10, points_per_cluster: int = 500) -> t
     cluster_centers = np.random.uniform(-50, 50, (n_clusters, 5)).astype(np.float32)
 
     # Ensure clusters are distributed across time and channel dimensions
-    cluster_centers[:, 3] = np.linspace(*TIME_RANGE, n_clusters)
-    channel_values = np.arange(
-        CHANNEL_RANGE[0], CHANNEL_RANGE[1] + CHANNEL_STEP, CHANNEL_STEP
-    )
-    cluster_centers[:, 4] = np.random.choice(channel_values, n_clusters)
+    cluster_centers[:, 3] = np.linspace(0, 10, n_clusters)
+    cluster_centers[:, 4] = np.random.choice([0, 1, 2], n_clusters)
 
     for i, center in enumerate(cluster_centers):
         # Create points around this cluster center
