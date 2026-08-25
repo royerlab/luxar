@@ -2,16 +2,18 @@
 
 Pure helpers that the data-loading monitor's main file calls each
 poll tick to turn raw event streams and provider snapshots into the
-`CacheMetrics` / `RatesSnapshot` shapes its tabs render. Keeping the
-math here makes the monitor's main file a thin dispatcher and lets
+`CacheMetrics`, `GlobalStats`, `MemoryMetrics`, and `RatesSnapshot`
+shapes its tabs render. Keeping the math here makes the monitor's main file a thin dispatcher and lets
 these helpers be unit-tested without DOM, timers, or tab state.
 
 ## Files
 
-| File       | Role                                                                                                                    |
-| ---------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `cache.ts` | Aggregates L0 / L1 / L2 / network stats from optional provider ports and refreshes the per-loader metrics snapshot map. |
-| `rates.ts` | Walks the monitor's event ring buffer once per call to compute per-second rolling rates (queries, loads) and bandwidth. |
+| File              | Role                                                                                                                    |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `cache.ts`        | Aggregates L0 / L1 / L2 / network stats from optional provider ports and refreshes the per-loader metrics snapshot map. |
+| `global-stats.ts` | Aggregates loader snapshots, LOD state, rates, and scene-graph counts into the monitor's public `GlobalStats`.          |
+| `memory.ts`       | Reads the optional GPU-pool and per-geometry accumulator providers into `MemoryMetrics`.                                |
+| `rates.ts`        | Walks the monitor's event ring buffer once per call to compute per-second rolling rates (queries, loads) and bandwidth. |
 
 ## Public surface
 

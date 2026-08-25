@@ -175,12 +175,11 @@ no external module imports it directly, including the provider registry.
 - [`templates/`](./templates/README.md) — HTML-string renderers split
   by concern, their dependency direction, and the Cache tab's stable
   incremental-update markup contract.
-- [`metrics/`](./metrics/README.md) — Pure roll-up helpers for cache
-  metrics and per-second event rates (`aggregateCacheMetrics`,
-  `calculateRates`).
+- [`metrics/`](./metrics/README.md) — Pure roll-up helpers for cache,
+  global, and memory metrics plus per-second event rates.
 - [`tabs/`](./tabs/README.md) — Per-tick tab updaters that patch the
-  static structure painted by `templates/` (currently
-  `updateCacheTab` plus `dom-helpers`).
+  static structure painted by `templates/` (`updateOverviewTab`,
+  `updateCacheTab`, `updateMemoryTab`, badge patching, and DOM helpers).
 
 ## See Also
 
