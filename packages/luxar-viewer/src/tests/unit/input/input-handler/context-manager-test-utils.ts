@@ -1,9 +1,16 @@
+/**
+ * Shared binding fixtures for InputContextManager unit tests.
+ *
+ * @module tests/unit/input/input-handler/context-manager-test-utils
+ */
+
 import {
   InputContext,
   InputContextManager,
   type KeyBinding,
 } from '../../../../input/input-handler/context-manager';
 
+/** Register a binding with stable test defaults for required registry metadata. */
 export function registerTestBinding(
   manager: InputContextManager,
   context: InputContext,
