@@ -854,14 +854,28 @@ def graft_gsplat_node(
     if isinstance(node, GSplatPartition):
         # Local import: the sibling `GSplatLodGroup` branch above imports this
         # too, but that branch does not run on this path.
-        from luxar.gsplats.tree import total_splats
+        from luxar.core.group.partition import (
+            reconstruct_serialized_bsp_tree,
+            serialized_bsp_tree_separates,
+        )
+        from luxar.gsplats.tree import center_bounds, total_splats
 
         partition_attrs = dict(wrapper_attrs)
         # Carry the BSP split planes into the scene so the viewer keeps its
-        # exact back-to-front part ordering (the standalone file has it; the
-        # graft must not drop it). Absent for non-BSP (streamed) partitions.
-        if node.bsp_tree is not None:
-            partition_attrs["bsp_tree"] = node.bsp_tree
+        # exact back-to-front part ordering. Legacy partitions may predate the
+        # stored tree; recover one only when the child bounds admit an exact
+        # separating BSP. Overlapping/interlocking parts keep the viewer's
+        # centroid fallback rather than receiving an invented ordering.
+        bsp_tree = node.bsp_tree
+        if bsp_tree is None:
+            child_bounds = [center_bounds(child) for child in node.children]
+            if all(bounds is not None for bounds in child_bounds):
+                boxes = [bounds for bounds in child_bounds if bounds is not None]
+                recovered = reconstruct_serialized_bsp_tree(boxes)
+                if serialized_bsp_tree_separates(recovered, boxes):
+                    bsp_tree = recovered
+        if bsp_tree is not None:
+            partition_attrs["bsp_tree"] = bsp_tree
         # `max_elements` is a per-part CAP, so only a capped splitter sets it
         # (uniform tiling, BSP `--parts`/`--max-elements`). A CONTENT-tiled fit
         # balances its boxes by feature density instead and leaves the field at

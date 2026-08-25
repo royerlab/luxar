@@ -242,6 +242,59 @@ def test_partition_file_grafts_into_a_scene():
         assert _bsp_leaf_order(dict(root.attrs["bsp_tree"])) == list(range(n_parts))
 
 
+def test_partition_graft_recovers_missing_bsp_tree_from_disjoint_parts():
+    """A legacy partition without stored planes recovers an exact scene tree."""
+    from dataclasses import replace
+
+    from luxar import Dimensions, LuxarZarrCompiler
+    from luxar.core.group.partition import serialized_bsp_tree_separates
+    from luxar.gsplats.tree import center_bounds
+
+    source = _clustered(40).to_spatial_partition(max_elements=40)
+    legacy = replace(source, bsp_tree=None)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        part = Path(tmp) / "legacy.gsplats.zarr"
+        write_gsplats_tree(part, legacy, ordering="none")
+        assert "bsp_tree" not in zarr.open_group(str(part), mode="r").attrs
+
+        scene_path = Path(tmp) / "scene.luxar.zarr"
+        with LuxarZarrCompiler(scene_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_gsplats_from_file(name="g", path=part)
+
+        grafted = zarr.open_group(str(scene_path), mode="r")["g"]
+        recovered = dict(grafted.attrs["bsp_tree"])
+        boxes = [center_bounds(child) for child in legacy.children]
+        assert all(box is not None for box in boxes)
+        assert serialized_bsp_tree_separates(
+            recovered, [box for box in boxes if box is not None]
+        )
+
+
+def test_partition_graft_leaves_overlapping_parts_without_bsp_tree():
+    """Intersecting parts keep the honest centroid-order fallback."""
+    from luxar import Dimensions, LuxarZarrCompiler
+
+    data = _clustered(20)
+    overlapping = GSplatPartition(
+        children=[data.tree, data.tree],
+        max_elements=data.n_splats,
+    )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        part = Path(tmp) / "overlapping.gsplats.zarr"
+        write_gsplats_tree(part, overlapping, ordering="none")
+
+        scene_path = Path(tmp) / "scene.luxar.zarr"
+        with LuxarZarrCompiler(scene_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_gsplats_from_file(name="g", path=part)
+
+        grafted = zarr.open_group(str(scene_path), mode="r")["g"]
+        assert "bsp_tree" not in grafted.attrs
+
+
 def test_grafting_a_partition_rejects_dim_order():
     """A graft preserves the file's own coordinates — dim_order/fill cannot be
     applied to a partition/nested file, and must raise clearly (not silently
