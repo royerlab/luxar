@@ -1336,7 +1336,7 @@ export class DimensionSliders {
     }
     // Commit once, on Enter or on blur (blur also fires when the
     // click-outside close removes the menu, so a typed value is not lost).
-    // Escape closes the menu without committing (document-level handler).
+    // Routed Escape closes the menu without committing via PanelCoordinator.
     // Only an actually-edited value commits: the input is seeded with the
     // 3-significant-digit display form, so committing it untouched would
     // silently truncate a full-precision override (0.123456 → 0.123).
