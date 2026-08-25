@@ -104,3 +104,28 @@ over-darkens everywhere thick. There is no `k` that serves both. Auto calibratio
 is inverted per mode so both land on the same declared target. The gyroid demo,
 being a surface, now uses it: hemisphere contrast 0.147 -> 0.168 with the dark end
 reaching 0.
+
+The A/B demo is recast and renamed. `ambient_occlusion` became `exotic_surfaces`:
+a subject-centric demo like the rest of the catalogue, where the occlusion is
+what makes the subject legible rather than the thing being advertised. Eighteen
+surfaces on a 3x3 grid, split across a hidden two-category `family` axis — nine
+triply-periodic minimal surfaces (Schwarz P and D, gyroid, Neovius, Schoen I-WP
+and F-RD, lidinoid, split P, Fischer-Koch S) and nine algebraic surfaces, most of
+them extremal (Barth's sextic with its record 65 nodes, the Clebsch cubic with
+all 27 lines real, Kummer's 16-nodal quartic, Cayley, Steiner's Roman surface,
+Chmutov, the Whitney umbrella, Taubin's heart, the tanglecube). Stepping the axis
+swaps the whole wall and the explanatory overlay with it, via `visible_range`.
+
+`family` is CATEGORICAL, so it is discrete with exactly two stops and an integer
+step; a continuous hidden axis would give a thousand-position slider whose stops
+are nearly all empty. Every surface is credited to its discoverer on screen, and
+the demo carries the citation for the nodal-approximation technique the nine TPMS
+actually use — they are short trigonometric series resembling the minimal
+surface, not the minimal surface itself, and the docstring says so rather than
+letting anyone measure curvature off them.
+
+Normals come from one validated central-difference routine rather than eighteen
+hand-derived gradients, which would have been eighteen chances at a silent error;
+a test checks it against the gyroid's closed-form gradient. Each surface is
+parametrized-tested for a non-empty, non-space-filling zero set, since a mistyped
+coefficient renders a different plausible surface rather than crashing.
