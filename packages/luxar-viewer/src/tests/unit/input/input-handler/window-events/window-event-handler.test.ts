@@ -16,6 +16,10 @@ import type { SceneManager } from '../../../../../scene/scene-manager';
 import type { AnimationController } from '../../../../../scene/animation/animation-controller';
 import type { RenderingControls } from '../../../../../ui/rendering-controls';
 import type { LuxarCamera } from '../../../../../utils/camera-utils';
+import {
+  resetViewerContainer,
+  setViewerContainer,
+} from '../../../../../utils/viewer-container';
 
 function makeSceneManager(camera?: LuxarCamera): {
   sceneManager: SceneManager;
@@ -53,6 +57,7 @@ function dispatchWheel(target: EventTarget, init: WheelEventInit): WheelEvent {
   const event = new WheelEvent('wheel', {
     bubbles: true,
     cancelable: true,
+    composed: true,
     ...init,
   });
   target.dispatchEvent(event);
@@ -69,10 +74,12 @@ function setFullscreen(fullscreen: boolean): void {
 describe('WindowEventHandler', () => {
   beforeEach(() => {
     document.body.innerHTML = '';
+    resetViewerContainer();
     setFullscreen(false);
   });
 
   afterEach(() => {
+    resetViewerContainer();
     document.body.innerHTML = '';
   });
 
@@ -141,21 +148,74 @@ describe('WindowEventHandler', () => {
   });
 
   describe('wheel', () => {
-    it('ignores Ctrl+wheel originating from viewer UI instead of the scene canvas', () => {
+    it('suppresses Ctrl+wheel from viewer UI without changing FOV or starting animation', () => {
       const { sceneManager, updateFOV } = makeSceneManager();
       const { animationController, startAnimation } = makeAnimationController();
       const handler = new WindowEventHandler(sceneManager, animationController);
       handler.attach([]);
+      const viewer = document.createElement('div');
       const control = document.createElement('input');
-      document.body.appendChild(control);
+      viewer.appendChild(control);
+      document.body.appendChild(viewer);
+      setViewerContainer(viewer);
       const event = dispatchWheel(control, {
         ctrlKey: true,
         deltaY: 75,
       });
 
+      expect(event.defaultPrevented).toBe(true);
+      expect(startAnimation).not.toHaveBeenCalled();
+      expect(updateFOV).not.toHaveBeenCalled();
+    });
+
+    it('leaves Ctrl+wheel from host-page UI outside the viewer untouched', () => {
+      const { sceneManager, updateFOV } = makeSceneManager();
+      const { animationController, startAnimation } = makeAnimationController();
+      const handler = new WindowEventHandler(sceneManager, animationController);
+      handler.attach([]);
+      const viewer = document.createElement('div');
+      const hostControl = document.createElement('input');
+      document.body.append(viewer, hostControl);
+      setViewerContainer(viewer);
+
+      const event = dispatchWheel(hostControl, { ctrlKey: true, deltaY: 75 });
+
       expect(event.defaultPrevented).toBe(false);
       expect(startAnimation).not.toHaveBeenCalled();
       expect(updateFOV).not.toHaveBeenCalled();
+    });
+
+    it('handles Ctrl+wheel from a canvas outside the configured viewer container', () => {
+      const { sceneManager, updateFOV, canvas } = makeSceneManager();
+      const { animationController, startAnimation } = makeAnimationController();
+      const handler = new WindowEventHandler(sceneManager, animationController);
+      handler.attach([]);
+      const viewer = document.createElement('div');
+      document.body.appendChild(viewer);
+      setViewerContainer(viewer);
+
+      const event = dispatchWheel(canvas, { ctrlKey: true, deltaY: 75 });
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(startAnimation).toHaveBeenCalledTimes(1);
+      expect(updateFOV).toHaveBeenCalledWith(75);
+    });
+
+    it('handles Ctrl+wheel from the canvas across a shadow boundary', () => {
+      const { sceneManager, updateFOV, canvas } = makeSceneManager();
+      const { animationController, startAnimation } = makeAnimationController();
+      const handler = new WindowEventHandler(sceneManager, animationController);
+      handler.attach([]);
+      const host = document.createElement('div');
+      const shadowRoot = host.attachShadow({ mode: 'open' });
+      document.body.appendChild(host);
+      shadowRoot.appendChild(canvas);
+
+      const event = dispatchWheel(canvas, { ctrlKey: true, deltaY: 75 });
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(startAnimation).toHaveBeenCalledTimes(1);
+      expect(updateFOV).toHaveBeenCalledWith(75);
     });
 
     it('plain wheel: only kicks the animation loop (no FOV change)', () => {

@@ -21,8 +21,8 @@
  * model. There's no separate `dispose()` — the InputHandler runs the
  * cleanup array on its own dispose path.
  *
- * The global wheel listener only handles events from the scene canvas;
- * wheel-sensitive viewer UI remains responsible for its own local behavior.
+ * The global wheel listener applies rendering behavior only to events from the
+ * scene canvas, while still suppressing modifier-wheel page zoom over viewer UI.
  *
  * @module input/handlers/window-event-handler
  */
@@ -32,6 +32,7 @@ import type { AnimationController } from '../../../scene/animation/animation-con
 import type { RenderingControlsHandle } from '../panel-capabilities';
 import { isDocumentFullscreen } from '../../../utils/fullscreen';
 import { isPerspectiveCamera } from '../../../utils/camera-utils';
+import { getViewerContainer } from '../../../utils/viewer-container';
 
 export class WindowEventHandler {
   private renderingControls?: RenderingControlsHandle;
@@ -154,8 +155,8 @@ export class WindowEventHandler {
    * zoom math (they listen for `wheel` on the canvas separately). All
    * we do here is:
    *
-   *   - Always poke the animation loop (so the scene keeps rendering
-   *     during continuous wheel input).
+   *   - For canvas-originated events, poke the animation loop so the
+   *     scene keeps rendering during continuous wheel input.
    *   - On Ctrl+wheel / Cmd+wheel, intercept the event for FOV
    *     control and `preventDefault` so the page doesn't also try to
    *     zoom. The FOV wheel path is gated to a perspective camera: in
@@ -167,16 +168,24 @@ export class WindowEventHandler {
    *     "Custom" so the panel value matches the slider.
    */
   private onWheel(event: WheelEvent): void {
-    if (event.target !== this.sceneManager.renderer.domElement) return;
+    const eventPath = event.composedPath();
+    const canvas = this.sceneManager.renderer.domElement;
+    const isCanvasEvent = eventPath[0] === canvas;
+
+    if (
+      (event.ctrlKey || event.metaKey) &&
+      (isCanvasEvent || eventPath.includes(getViewerContainer()))
+    ) {
+      // Suppress browser page zoom for modifier-wheel events over the viewer,
+      // including panels. An embedder's host-page UI remains untouched.
+      event.preventDefault();
+    }
+
+    if (!isCanvasEvent) return;
 
     this.animationController.startAnimation();
 
     if (event.ctrlKey || event.metaKey) {
-      // preventDefault unconditionally — even when FOV doesn't apply
-      // (ortho camera), browser page zoom must stay suppressed over
-      // the viewer.
-      event.preventDefault();
-
       // FOV only applies to a perspective camera; in ortho the orbit controls
       // own modifier-wheel zoom. Gate the interactive wheel path here (the
       // deliberate reset/zarr/panel-apply paths still persist the stash via
