@@ -6,9 +6,14 @@ plain ``.zarr`` still produces a canonically-named scene, and exposes the final
 path via ``store_path``.
 """
 
+import zipfile
+from pathlib import Path
+
 import numpy as np
+import pytest
 
 from luxar import Dimensions, LuxarScene, LuxarZarrCompiler
+from luxar.io import optimise as optimise_mod
 
 
 def _write_minimal_scene(compiler) -> None:
@@ -44,3 +49,83 @@ class TestSceneExtensionNormalization:
 
         scene = LuxarScene.load(written)
         assert scene.get_points("pts")["positions"].shape == (1, 3)
+
+    def test_zarr_zip_is_packaged_flat_and_round_trips(self, tmp_path):
+        requested = tmp_path / "scene.luxar.zarr.zip"
+
+        with LuxarZarrCompiler(requested) as compiler:
+            _write_minimal_scene(compiler)
+            assert Path(compiler.store_path).is_dir()
+
+        assert compiler.store_path == str(requested)
+        assert requested.is_file()
+        assert not (tmp_path / "scene.luxar.zarr.zip.luxar.zarr").exists()
+        with zipfile.ZipFile(requested) as archive:
+            assert archive.namelist() == sorted(archive.namelist())
+            assert "zarr.json" in archive.namelist()
+            assert all(
+                info.compress_type == zipfile.ZIP_STORED for info in archive.infolist()
+            )
+
+        scene = LuxarScene.load(requested)
+        np.testing.assert_array_equal(
+            scene.get_points("pts")["positions"],
+            np.array([[1.0, 2.0, 3.0]], dtype=np.float32),
+        )
+
+    def test_plain_zarr_zip_gets_canonical_inner_suffix(self, tmp_path):
+        requested = tmp_path / "scene.zarr.zip"
+
+        with LuxarZarrCompiler(requested) as compiler:
+            _write_minimal_scene(compiler)
+
+        assert compiler.store_path == str(tmp_path / "scene.luxar.zarr.zip")
+        assert (tmp_path / "scene.luxar.zarr.zip").is_file()
+        assert not requested.exists()
+
+    def test_existing_zarr_zip_is_replaced_without_stale_members(self, tmp_path):
+        requested = tmp_path / "scene.luxar.zarr.zip"
+        with LuxarZarrCompiler(requested) as compiler:
+            _write_minimal_scene(compiler)
+
+        with LuxarZarrCompiler(requested) as compiler:
+            compiler.create_scene(dimensions=Dimensions.default_3d())
+            compiler.write_points(
+                "replacement",
+                np.array([[4.0, 5.0, 6.0]], dtype=np.float32),
+            )
+
+        scene = LuxarScene.load(requested)
+        with zipfile.ZipFile(requested) as archive:
+            assert not any(name.startswith("pts/") for name in archive.namelist())
+            assert any(name.startswith("replacement/") for name in archive.namelist())
+        assert scene.get_points("replacement")["positions"].shape == (1, 3)
+
+    def test_failed_packaging_preserves_previous_archive_and_cleans_staging(
+        self, tmp_path, monkeypatch
+    ):
+        requested = tmp_path / "scene.luxar.zarr.zip"
+        requested.write_bytes(b"previous archive")
+
+        def fail_packaging(staging, artifact):
+            artifact.write_bytes(b"partial archive")
+            raise OSError("disk full")
+
+        monkeypatch.setattr(optimise_mod, "_package", fail_packaging)
+        with pytest.raises(ValueError, match="disk full"):
+            with LuxarZarrCompiler(requested) as compiler:
+                _write_minimal_scene(compiler)
+
+        assert requested.read_bytes() == b"previous archive"
+        assert sorted(path.name for path in tmp_path.iterdir()) == [requested.name]
+
+    def test_body_failure_does_not_publish_or_leave_staging(self, tmp_path):
+        requested = tmp_path / "scene.luxar.zarr.zip"
+
+        with pytest.raises(RuntimeError, match="authoring failed"):
+            with LuxarZarrCompiler(requested) as compiler:
+                _write_minimal_scene(compiler)
+                raise RuntimeError("authoring failed")
+
+        assert not requested.exists()
+        assert list(tmp_path.iterdir()) == []

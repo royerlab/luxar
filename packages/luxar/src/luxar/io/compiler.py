@@ -7,7 +7,10 @@ memory constraints.
 
 from __future__ import annotations
 
+import os
+import shutil
 import tempfile
+import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from typing import (
@@ -177,25 +180,42 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # Handle store path. Full scenes use the canonical ``.luxar.zarr``
         # extension; the path is normalized so callers that pass a bare name or
         # a plain ``.zarr`` still produce a canonically-named scene. Callers
-        # should read back the final path via the ``store_path`` property.
+        # should read back the final path via the ``store_path`` property. A
+        # ``.zarr.zip`` request writes to a hidden directory while active and
+        # publishes the archive only after finalization succeeds.
         # Local import to avoid a module-load cycle
         # (luxar.utils.__init__ → demos → io.compiler).
         from ..utils.paths import normalize_zarr_path
 
         self._tmpdir: Optional[tempfile.TemporaryDirectory[str]] = None
+        self._archive_path: Optional[Path] = None
+        self._archive_artifact_path: Optional[Path] = None
         if store_path is None:
             self._tmpdir = tempfile.TemporaryDirectory()
             self._store_path = Path(self._tmpdir.name) / "scene.luxar.zarr"
             aprint(f"📁 Using temporary directory: {self._store_path}")
         else:
             requested = Path(store_path)
-            self._store_path = normalize_zarr_path(requested, ".luxar.zarr")
-            if self._store_path.name != requested.name:
+            if requested.name.lower().endswith(".zarr.zip"):
+                inner_path = requested.with_name(requested.name[:-4])
+                normalized = normalize_zarr_path(inner_path, ".luxar.zarr")
+                self._archive_path = Path(f"{normalized}.zip")
+                self._archive_path.parent.mkdir(parents=True, exist_ok=True)
+                self._store_path = self._archive_path.parent / (
+                    f".{self._archive_path.name}.compile-"
+                    f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
+                )
+                self._archive_artifact_path = Path(f"{self._store_path}.zip")
+                final_path = self._archive_path
+            else:
+                self._store_path = normalize_zarr_path(requested, ".luxar.zarr")
+                final_path = self._store_path
+            if final_path.name != requested.name:
                 aprint(
                     f"📁 Normalized scene path to canonical extension: "
-                    f"{requested.name} → {self._store_path.name}"
+                    f"{requested.name} → {final_path.name}"
                 )
-            aprint(f"📁 Creating scene at: {self._store_path}")
+            aprint(f"📁 Creating scene at: {final_path}")
 
         # Store spatial ordering configuration
         self.enable_spatial_index = enable_spatial_index
@@ -316,9 +336,35 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                         pass
                     raise
         finally:
+            self._cleanup_archive_staging()
             # Clean up temporary directory if used (every path).
             if self._tmpdir is not None:
                 self._tmpdir.cleanup()
+
+    def _cleanup_archive_staging(self) -> None:
+        """Remove compiler-owned archive staging paths, if any."""
+        if self._archive_artifact_path is not None:
+            try:
+                self._archive_artifact_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        if self._archive_path is not None:
+            shutil.rmtree(self._store_path, ignore_errors=True)
+
+    def _publish_archive(self) -> None:
+        """Package the finalized directory store and atomically publish it."""
+        if self._archive_path is None or self._archive_artifact_path is None:
+            return
+        from .optimise import _package
+
+        try:
+            _package(self._store_path, self._archive_artifact_path)
+            os.replace(self._archive_artifact_path, self._archive_path)
+        finally:
+            try:
+                self._archive_artifact_path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     @arbol_warnings()
     def create_scene(
@@ -1797,6 +1843,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             # Close the store again
             zarr_close(store)
 
+            self._publish_archive()
+
         except BaseException as e:
             # ANY failure (marker clearing, hover injection, or a finalize
             # phase) leaves the store half-finalized; mark it so
@@ -1818,7 +1866,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             # Preserve the historical wrapping for ordinary Exceptions, but let
             # a KeyboardInterrupt / SystemExit propagate unchanged.
             if isinstance(e, Exception):
+                self._cleanup_archive_staging()
                 raise ValueError(f"Could not finalize Zarr store: {e}") from e
+            self._cleanup_archive_staging()
             raise
 
         # Finalization is complete. The flag flips OUTSIDE the failure
@@ -1826,8 +1876,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # which would stamp `incomplete` on a complete store that a repeat
         # finalize() (early return) could never un-mark.
         self._is_finalized = True
+        self._cleanup_archive_staging()
         try:
-            aprint(f"✅ Zarr store finalized at {self._store_path}")
+            aprint(f"✅ Zarr store finalized at {self.store_path}")
         except Exception:
             # Purely informational — a broken stdout (e.g. BrokenPipeError)
             # must not fail an already-complete finalization. A
@@ -1841,5 +1892,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
     @property
     def store_path(self) -> str:
-        """Get the path to the Zarr store."""
+        """Get the live directory store, or the finalized archive path."""
+        if self._archive_path is not None and self._is_finalized:
+            return str(self._archive_path)
         return str(self._store_path)
