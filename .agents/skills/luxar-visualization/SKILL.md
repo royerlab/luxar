@@ -144,7 +144,7 @@ sha256/bytes lines.
 
 The Layers panel (press `L`) is where you dial a scene in — but it rewrites the
 node's uniforms at every load, so whatever you tune there must be written back into
-the `add_*` call or it is lost. Four things about that round-trip surprise people:
+the `add_*` call or it is lost. Five things about that round-trip surprise people:
 
 - **The display window is stored as an `intensity`/`offset` PAIR, not a gain.** For
   a window `[lo, hi]`: `intensity = 1/(hi-lo)`, `offset = -lo/(hi-lo)`. Passing the
@@ -154,14 +154,15 @@ the `add_*` call or it is lost. Four things about that round-trip surprise peopl
 - **`opacity` is the exposure lever, and it wants to be tiny** (1e-2 is normal).
   Scaling the amplitudes instead does nothing — the viewer normalises by the stored
   maximum.
-- **The display window is NOT an exposure lever, and reaching for it first is the
-  classic wrong turn.** Under `volumetric` (or any sum projection) a pixel
-  accumulates along the ray, so brightness is a sum over every element behind it
-  while the window only picks each element's LUT index — it cannot govern the sum.
-  The symptom that tells the two apart: if widening the window *dims the whole
-  object toward the colormap's dark foot and shrinks its footprint* rather than
-  spreading it across the LUT, you are over-accumulated and want `opacity`. A frame
-  whose bright regions are genuinely clipped flat is the window's problem.
+- **For a colormapped node, the display window is NOT an exposure lever, and
+  reaching for it first is the classic wrong turn.** Under `volumetric` (or any sum
+  projection) a pixel accumulates along the ray, while the window only picks each
+  element's LUT index. The symptom that tells the two apart: if widening the window
+  *dims the whole object toward the colormap's dark foot and shrinks its footprint*
+  rather than spreading it across the LUT, you are over-accumulated and want
+  `opacity`. A frame whose bright regions are genuinely clipped flat is the
+  window's problem. With explicit `colors=`, the pair is a direct color gain and
+  offset, but using it for exposure also shifts the authored colors; use `opacity`.
 - **`absorption` (volumetric blending) is optical depth and ACCUMULATES along the
   ray**, so the right value depends on how deep the object is, not on how bright it
   is. It is not portable between datasets: a value tuned on a 170 µm brain will
