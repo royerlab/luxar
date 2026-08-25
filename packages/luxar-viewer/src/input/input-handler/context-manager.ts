@@ -250,6 +250,7 @@ export class InputContextManager {
    * ```
    */
   public pushContext(context: string): void {
+    this.requireRegisteredContext(context);
     if (this.currentContext !== context) {
       this.contextStack.push(this.currentContext);
       this.setContext(context);

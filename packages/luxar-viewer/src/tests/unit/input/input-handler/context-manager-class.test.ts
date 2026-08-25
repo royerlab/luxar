@@ -188,6 +188,14 @@ describe('InputContextManager', () => {
       expect(() => manager.registerContext('annotation', { priority: 5 })).not.toThrow();
     });
 
+    it('leaves the context stack unchanged when an unknown push is rejected', () => {
+      expect(() => manager.pushContext('missing')).toThrow(
+        'Input context "missing" is not registered'
+      );
+      expect(manager.getDebugInfo().contextStack).toEqual([]);
+      expect(manager.getContext()).toBe(InputContext.NAVIGATION);
+    });
+
     it('unregisters custom bindings and rejects later activation', () => {
       manager.registerContext('annotation', { priority: 5 });
       registerTestBinding(manager, 'annotation', { key: 'x', handler: vi.fn() });
