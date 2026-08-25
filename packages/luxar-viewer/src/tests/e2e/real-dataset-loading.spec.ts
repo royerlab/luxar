@@ -131,22 +131,12 @@ test.describe('Real Dataset Loading', () => {
     // May see broadcasting logs if navigating through broadcast dims
   });
 
-  test('should handle dataset without spatial index', async ({ page }) => {
-    const consoleLogs: string[] = [];
-    page.on('console', (msg) => {
-      const text = msg.text();
-      if (text.includes('spatial index') || text.includes('3D dataset')) {
-        consoleLogs.push(text);
-      }
-    });
-
-    // Use a simple 3D dataset
+  test('should load manual 3D scene', async ({ page }) => {
     await page.goto(`/?src=${DATASETS.buildManual}&debug`);
     await waitForLuxarReady(page);
 
     const state = await getLuxarState(page);
     expect(state.initialized).toBe(true);
-
     expect(state.totalPoints).toBeGreaterThan(0);
   });
 
