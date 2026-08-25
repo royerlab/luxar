@@ -143,7 +143,7 @@ export class ViewStateManager {
 
         if (metadata[i].discrete || metadata[i].categories) {
           // Discrete/categorical: start at minimum (first frame, first category)
-          currentStep[i] = metadata[i].discrete ? Math.floor(rangeMin) : rangeMin;
+          currentStep[i] = rangeMin;
         } else {
           // Continuous: start at center (no natural "first" position)
           currentStep[i] = (rangeMin + rangeMax) / 2;

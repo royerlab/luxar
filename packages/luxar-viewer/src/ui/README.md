@@ -89,8 +89,8 @@ ui/
 │       ├── image-sequence-driver.ts, exr-sequence-driver.ts,
 │       │ video-mode-driver.ts
 ├── data-loading-monitor/               # Monitor's private helpers
-│   ├── templates.ts, advisor.ts, event-queue.ts, polling-loop.ts,
-│   │ timing-panel.ts
+│   ├── templates/                      # primitives + per-tab renderers
+│   ├── advisor.ts, event-queue.ts, polling-loop.ts, timing-panel.ts
 │   ├── metrics/
 │   │   ├── cache.ts (aggregator), rates.ts
 │   └── tabs/
@@ -151,8 +151,9 @@ Performance open rail popovers (see [`rail-panels/`](./rail-panels/README.md)).
   keyboard shortcut, via `InputHandler.getUiActions()` (the command/panel surface
   the key bindings dispatch into). The rail never re-implements panel logic.
 - **Live active-state** — a button highlights while its panel is open. Refreshed
-  event-driven (on document click / keydown, rAF-debounced), so it also clears
-  when a panel is closed via its own × button.
+  event-driven (on document click, on a keydown the input router reports as
+  handled, on fullscreen change, and on a layer / control-mode change —
+  rAF-debounced), so it also clears when a panel is closed via its own × button.
 - **Idle-dim** — recedes when the pointer is idle; wakes on movement (expanded)
   or hover (collapsed / fullscreen).
 - **Collapse** — a chevron handle collapses the rail into the lower-left corner
@@ -735,6 +736,10 @@ Napari-inspired per-layer control panel. See [`./layers/README.md`](./layers/REA
 - Multi-select: Click, Ctrl+Click, Shift+Click
 
 **Keyboard Shortcut:** `L` to toggle
+
+The panel contains navigation and menu keys used by its own controls so they do
+not also trigger scene actions. Because it is non-modal, unrelated viewer
+shortcuts continue to work while a panel control has focus; Escape still closes.
 
 ---
 

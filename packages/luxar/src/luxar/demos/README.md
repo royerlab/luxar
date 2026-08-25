@@ -135,6 +135,9 @@ the AS graph keys on `asn_a`/`asn_b` and the protein networks on
 `sym_a`/`sym_b`; the HuRI loaders hardcode `sym_a`/`sym_b`, being
 protein-specific by construction.
 
+Leaf implementation utilities shared by demos live under `_support/`; the flat
+`_*.py` helpers remain at the package root.
+
 ## Optional dependencies
 
 The core install deliberately excludes the heavyweight packages some demos need
@@ -170,11 +173,12 @@ one in `tests/test_substitutive_lod_gated.py` and the fit-provenance one in
 `tests/test_demo_fit_provenance.py`, which forbids saving a real fit with
 `include_fitting_info=False` — read the set defined by
 `tests/_scanned_modules.py`: every `*.py` directly under `demos/` **except**
-`__init__.py` and `_dependencies.py`. It is a denylist, not a `demo_*.py` glob or
-a `_*_common.py` pattern, so a gate that moves out of a demo into a shared helper
-cannot escape the guards — and any new module dropped in here is covered without
-an edit there. The flip side: a scratch `.py` file left in `demos/` is scanned
-too, so keep throwaway scripts out of this directory.
+`__init__.py` and `_dependencies.py`, plus every non-barrel helper in
+`demos/_support/`. It is a denylist, not a `demo_*.py` glob or a `_*_common.py`
+pattern, so a gate that moves out of a demo into a shared helper cannot escape
+the guards — and any new module dropped in either location is covered without an
+edit there. The flip side: a scratch `.py` file left in either directory is
+scanned too, so keep throwaway scripts out of the package tree.
 
 Installing everything:
 
@@ -377,16 +381,18 @@ Interactive exploration of 6 different 4D geometric fractals with categorical di
 
 **Run**: `luxar demo run fractals_4d [-- --grid=64]`
 
-**Demonstrates**: 4D spatial navigation (XYZ + W dimension, every W slider stop shows structure), categorical dimension (select between 6 fractal types), large dataset (~7M points, up to ~1.5M per fractal), XOR Fractal, Menger Sponge 4D, Sierpinski 4D, Cantor Dust 4D, Checkerboard and Diamond patterns.
+**Demonstrates**: 4D spatial navigation (XYZ + W dimension, every W slider stop shows structure), categorical dimension (select between 6 fractal types), large dataset (~44.5M points, up to ~7.5M per fractal), XOR Fractal, Menger Sponge 4D, Sierpinski 4D, Cantor Dust 4D, Checkerboard and Diamond patterns.
 
 ---
 
-#### demo_5d_spiral_galaxy.py - 5D Spiral Galaxy with Time Evolution
-Large-scale 5D data with millions of points: multiple spiral arms evolving over time with channel-based coloring.
+#### demo_galaxy_simulation.py - Galaxy Simulation (density-wave spiral)
+A spiral galaxy integrated from its own mass model rather than drawn along logarithmic curves. Hernquist bulge + Miyamoto-Nagai disc + NFW halo give a flat rotation curve (260 km/s out past 30 kpc); `Omega` and the epicyclic frequency `kappa` are differentiated off it; each star rides a forced epicycle whose spiral response carries the resonant denominator `kappa^2 - m^2 (Omega - Omega_p)^2`. Because every star turns at its OWN `Omega(R)` while the pattern turns rigidly at `Omega_p`, stars visibly **overtake** the arms inside corotation (11.4 kpc) and lag outside it — and the arms do not wind up over the 480 Myr span, which is the point. Ages drive the rest: `sigma_R ~ age^0.33` heats old stars out of the arms, and colour is the blackbody colour of each population's effective temperature integrated through the CIE 1931 observer. Dust lanes on the upstream arm edge redden as well as dim; HII regions mark the shock.
 
-**Run**: `luxar demo run spiral_galaxy_5d [-- --points=N]`
+Replaces the former `demo_5d_spiral_galaxy.py`, which scattered points along fixed logarithmic curves and rotated the whole picture rigidly — the material-arm model the winding problem rules out.
 
-**Demonstrates**: 5D data (X, Y, Z, Time, Channel), continuous and discrete dimension navigation, time-based animation of spiral arm rotation, channel variation representing different wavelengths, logarithmic spiral arm mathematics.
+**Run**: `luxar demo run galaxy_simulation [-- --stars=N] [-- --frames=N]` — 100k disc stars over 241 frames of 2 Myr by default (29.7M points, 218 MB, ~1.3 min). Radii and per-point gain track the sample density, so `--stars` changes the weight of the scene rather than how bright it looks.
+
+**Demonstrates**: 4D data (X, Y, Z, Time) with the stellar-age split exposed as five toggleable layers rather than a slicing dimension, a **discrete** time axis so the slider snaps to the 2 Myr frame grid instead of stranding the view between frames, `extend_to_all` for the time-independent halo, physically derived rotation curves and orbit frequencies, and blackbody colour synthesis.
 
 ---
 
@@ -796,10 +802,10 @@ Gigapixel H&E-stained whole-slide pathology image as 2D Gaussian splats with per
 
 ---
 
-#### demo_gsplats_3d_organoid_dapi_nuclei.py - 3D Organoid DAPI Nuclei
+#### demo_gsplats_3d_blastocyst_dapi_nuclei.py - Mouse Blastocyst DAPI Nuclei
 Gaussian splatting compression of real 3D confocal microscopy data (DAPI-stained cell nuclei) from Image Data Resource (IDR).
 
-**Run**: `luxar demo run gsplats_3d_organoid_dapi_nuclei`
+**Run**: `luxar demo run gsplats_3d_blastocyst_dapi_nuclei`
 
 **Requires**: Internet access (downloads OME-ZARR from IDR). Supports Metal (MPS) acceleration on Apple Silicon.
 
@@ -807,10 +813,10 @@ Gaussian splatting compression of real 3D confocal microscopy data (DAPI-stained
 
 ---
 
-#### demo_gsplats_3d_organoid_multichannel.py - Multi-Channel 3D Organoid (IDR Pipeline)
+#### demo_gsplats_3d_blastocyst_multichannel.py - Multi-Channel Mouse Blastocyst (IDR Pipeline)
 Multi-channel 3D microscopy data as Gaussian splats, with full compute pipeline from Image Data Resource (IDR). Uses precomputed gsplats from Git LFS by default.
 
-**Run**: `luxar demo run gsplats_3d_organoid_multichannel [-- --recompute]`
+**Run**: `luxar demo run gsplats_3d_blastocyst_multichannel [-- --recompute]`
 
 **Requires**: Git LFS data (default) or internet access + GPU (with `--recompute`).
 
@@ -825,7 +831,7 @@ Two-channel scikit-image `cells3d` fluorescence volume (membranes + nuclei) fitt
 
 **Requires**: Git LFS data (default) or `scikit-image` + GPU (with `--recompute`).
 
-**Demonstrates**: Per-channel `layer=True` gsplats nodes with built-in BOP LUTs applied at display time (interactive colormap switching in the Layers panel, press L), shared amplitude-weighted centroid alignment, additive compositing for the two co-located channels, ACES tone-mapping. The lightweight, no-download sibling of `organoid_multichannel` and `kidney_multichannel_layers`. Its **mesh** counterpart on the same data is `mesh_isosurface_cells3d` — run both to compare the two representations side by side.
+**Demonstrates**: Per-channel `layer=True` gsplats nodes with built-in BOP LUTs applied at display time (interactive colormap switching in the Layers panel, press L), shared amplitude-weighted centroid alignment, additive compositing for the two co-located channels, ACES tone-mapping. The lightweight, no-download sibling of `blastocyst_multichannel` and `kidney_multichannel_layers`. Its **mesh** counterpart on the same data is `mesh_isosurface_cells3d` — run both to compare the two representations side by side.
 
 ---
 
@@ -996,10 +1002,11 @@ Downloads a Gaussian-splat capture of the Vera C. Rubin Observatory (`--scene ge
 **Requires**: Network (~41/83 MB). No GPU.
 **Data**: [khyron/Gaussian-Splatting](https://github.com/khyron/Gaussian-Splatting) — **CC BY 4.0**.
 
-##### demo_gsplats_interop_inria_garden.py - Full-quality INRIA garden (HTTP-Range zip extraction)
-Extracts just the ~1.45 GB `point_cloud.ply` member from INRIA's 14.7 GB `models.zip` over **HTTP Range requests** (Zip64 central-directory parsing — the member sits at byte offset ~5.6 GB), then imports it with a tiled LOD. The full-training-fidelity counterpart of the `.splat` demo.
-**Run**: `luxar demo run gsplats_interop_inria_garden`
-**Requires**: Network (~1.45 GB range-extracted from a 14.7 GB archive; server must honor byte ranges — INRIA's does). No GPU.
+##### demo_gsplats_interop_inria_bonsai.py - Full-quality INRIA bonsai (HTTP-Range Zip64 extraction)
+Extracts just the ~309 MB `bonsai/.../point_cloud.ply` member — 2% of the file — from INRIA's 14.7 GB `models.zip` over **HTTP Range requests**, then imports it with a tiled LOD. The archive is above 4 GiB, so locating any member at all goes through the **Zip64** end-of-central-directory path; this is the only demo that exercises it (the cluster-fly demo's ~1 GB archive takes the classic path). Opens framed on the bonsai tree itself, whose position is derived from the data — the blossoms are the only strongly pink splats in the room.
+Previously pulled the *garden* member, which made it a near-duplicate of the Mip-NeRF demo: the antimatter15 `garden.splat` was produced from this very checkpoint, and the two stores came out at the same 5,834,784 splats with bit-identical amplitudes.
+**Run**: `luxar demo run gsplats_interop_inria_bonsai`
+**Requires**: Network (~309 MB range-extracted from a 14.7 GB archive; server must honor byte ranges — INRIA's does). No GPU.
 **Data**: [INRIA 3DGS pretrained models](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/); INRIA Gaussian-Splatting license (**research / non-commercial**); Mip-NeRF 360 scenes (Google research use). Fetched at runtime, not redistributed.
 
 ##### demo_gsplats_interop_macro_clusterfly.py - Macro cluster fly (Dany Bittel)
@@ -1019,11 +1026,11 @@ Fetches the aerial "small city" MatrixCity scene — **13,589,514 Gaussians** �
 ---
 
 #### demo_gsplats_4d_zebrafish_timelapse.py - 4D Zebrafish Embryo Time-Lapse
-Five hours of zebrafish gastrulation (Zenodo 1211599, confocal, 151 timepoints two minutes apart) as **one** 4D Gaussian-splat node: each timepoint is fitted separately, then the fits are stacked with `combine_as_new_dimension` so time is the fourth centre column rather than a per-timepoint sibling node. That single node carries a substitutive LOD ladder in which time is a **hard coarsening barrier**, so a coarse level never blends one frame's cells into the next. The labelled endodermal cells fill under 2% of the imaged voxels, so a second toggleable layer draws the acquisition volume as a **wireframe cage ruled every 100 µm** — without it the specimen floats in an unmarked void and its migration across the yolk cannot be read. The Time slider is in **minutes** on an exact 2-minute grid (the LSM records 120.01 s; the axis is rounded so its last stop is actually reachable). The shipped archive is 1,590,010 splats — a median of 9,144 per timepoint at a median foreground PSNR of 20.95 dB — in four substitutive levels.
+Five hours of zebrafish gastrulation (Zenodo 1211599, confocal, 151 timepoints two minutes apart) as **one** 4D Gaussian-splat node: each timepoint is fitted separately, then the fits are stacked with `combine_as_new_dimension` so time is the fourth centre column rather than a per-timepoint sibling node. That single node carries a substitutive LOD ladder in which time is a **hard coarsening barrier**, so a coarse level never blends one frame's cells into the next. The labelled endodermal cells fill under 2% of the imaged voxels, so a second toggleable layer draws the acquisition volume as a **wireframe cage ruled every 100 µm** — without it the specimen floats in an unmarked void and its migration across the yolk cannot be read. The Time slider is in **minutes** on an exact 2-minute grid (the LSM records 120.01 s; the axis is rounded so its last stop is actually reachable). Each timepoint has its **connected components smaller than 4 voxels deleted before it is fitted**: a third of the early frames' energy is shot noise, and it is unusually literal — the median object in a frame is *one voxel*. A size filter is used rather than a smoothing one because it cannot damage what it keeps: measured against a stricter cell definition than the threshold itself, every threshold from 2 to 12 holds cell energy and mean cell peak at exactly 1.0000, whereas non-local means (tried first) dimmed cell peaks to 0.78 of raw. The shipped archive is 1,270,233 splats — a median of 7,730 per timepoint, ranging 1,312–18,783 as the specimen grows — in four substitutive levels, every one of which still carries all 151 timepoints. (No dB here on purpose: these fits are scored against their filtered input, so that figure is not fidelity to the microscope. The demo's module docstring records the method, including why the metric that originally chose NLM was measuring the wrong thing.)
 
 **Run**: `luxar demo run gsplats_4d_zebrafish_timelapse`
 
-**Requires**: Nothing but the bundled fit to view. `--recompute` downloads the ~2.1 GB LSM from Zenodo and refits all 151 timepoints (GPU strongly recommended).
+**Requires**: Nothing but the bundled fit to view. The same archive is pinned on the still-unpublished `cc-by-sa` record for the future hosted path. `--recompute` downloads the ~2.1 GB LSM from Zenodo and refits all 151 timepoints (GPU strongly recommended).
 
 **Demonstrates**: stacking per-timepoint 3D fits into one 4D node; barrier-aware substitutive LOD over a time axis; `extend_to_all` for a static reference layer that survives every scrub; a discrete viewer dimension carrying real physical units; and reading acquisition geometry out of a Zeiss LSM instead of assuming it.
 
@@ -1237,6 +1244,9 @@ from luxar.demos import (
     add_demo_caption,  # standard bottom-right caption + DEMO_META credit
     launch_viewer,  # serve + open viewer (serve_args=[...] to pass e.g. --profile)
     cached_download,  # download once into ~/.cache/luxar/<name>/, skip-if-present
+    robust_download,  # retry/resume a direct download to a chosen path
+    download_with_checksum,  # direct download plus sha256 verification
+    download_zip_member,  # fetch one member from a remote zip via HTTP ranges
     cache_computed,  # cache an expensive result (UMAP, field) — versioned, param-keyed
     require_local_data,  # gate LFS-tracked local data (clear "git lfs pull" message)
     require_module,  # gate an OPTIONAL dependency at its point of use (see #7)
@@ -1267,27 +1277,29 @@ Pass `cache_dir=` when the demo takes a `--cache-dir` override and the result
 belongs beside the raw downloads it came from (`demo_caida_as_topology` does
 this) — that directory is then used verbatim and `name` is unused.
 
-`cache_computed` writes atomically and quarantines a corrupt cache to `.corrupt`
-instead of crashing. A quarantined file is never reused, so
-`luxar.utils.download.warn_if_quarantined()` (called from `robust_download()`,
-the shared download chokepoint) reports its path and size before a re-fetch
-starts — a demo that pulls a multi-gigabyte artifact should not silently restart
-the download. Use `find_quarantined_files()` / `format_quarantine_notice()` when
-a demo needs the same information inside its own error message.
+`cache_computed` writes atomically and quarantines a corrupt cache to
+`.corrupt` instead of crashing. A quarantined file is never reused, so
+`warn_if_quarantined()` (called from `robust_download()`, the shared download
+chokepoint) reports its path and size before a re-fetch starts — a demo that
+pulls a multi-gigabyte artifact should not silently restart the download. Use
+`find_quarantined_files()` / `format_quarantine_notice()` when a demo needs the
+same information inside its own error message.
 
 Sibling demos are importable normally
 (`from luxar.demos.demo_x import helper`) — no `importlib` file-path tricks.
 
-`luxar.demos` is the ONLY spelling for these helpers: never import
-`luxar.utils.demos` or `luxar.utils.data_fetch` directly from a demo, even though
-that is where they live. `tests/test_demo_import_spelling.py` fails the build on
-every deep spelling — `from luxar.utils.demos import …`, `import
-luxar.utils.demos`, `from luxar.utils import demos`, and their relative forms —
-in every demo module here and in the three `gsplats/**/demos` trees, and also on a
-name the barrel does not re-export. (Scope is the demo modules; `tests/` is out,
-since a test may legitimately need the module a private lives in.) That second gap
-(two missing symbols, which forced 12 of the 38 files that ended up deep) is what
-grew the spelling, so a helper you cannot reach through `luxar.demos` is a bug in
+`luxar.demos` is the ONLY spelling for these helpers: never import the guarded
+concern modules under `luxar.utils` (including `luxar.utils.data_fetch`,
+`luxar.utils.download`, and `luxar.utils.remote_zip`) or private demo helpers
+such as `luxar.demos._support._fields` directly from a demo, even though that is
+where they live. The authoritative guarded set is
+`tests/test_demo_import_spelling.py`'s `DEEP_MODULES`. That test fails the build
+on every deep spelling, including relative forms, in every demo module here and
+in the three `gsplats/**/demos` trees, and also on a name the barrel does not
+re-export. (Scope is the demo modules; `tests/` is out, since a test may
+legitimately need the module a private lives in.) That second gap (two missing
+symbols, which forced 12 of the 38 files that ended up deep) is what grew the
+spelling, so a helper you cannot reach through `luxar.demos` is a bug in
 `demos/__init__.py`, not a licence to reach past it.
 
 ### 7. Gate optional dependencies at the point of use, never at the entry point
@@ -1455,7 +1467,7 @@ hatch run python packages/luxar/src/luxar/demos/demo_particle_collision_animated
 
 # --- nD and Multi-Dimensional ---
 hatch run python packages/luxar/src/luxar/demos/demo_4d_fractals.py
-hatch run python packages/luxar/src/luxar/demos/demo_5d_spiral_galaxy.py
+hatch run python packages/luxar/src/luxar/demos/demo_galaxy_simulation.py
 hatch run python packages/luxar/src/luxar/demos/demo_nd_transforms.py
 
 # --- Feature Showcases ---
@@ -1500,8 +1512,8 @@ hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_milky_way_dust.p
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_visible_human_head.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_cryoem_virus.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_ct_totalsegmentator.py
-hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_organoid_dapi_nuclei.py
-hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_organoid_multichannel.py
+hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_blastocyst_dapi_nuclei.py
+hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_blastocyst_multichannel.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_cells3d_multichannel.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_kidney_multichannel_toggles.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_kidney_multichannel_layers.py

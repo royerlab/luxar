@@ -4,6 +4,8 @@ Tests for the Luxar CLI package.
 
 ## Test Files
 
+- `_testing.py` - Shared `normalized_cli_output()` helper; use it for assertions
+  on CLI output
 - `test_cli.py` - Core CLI command tests (demo, serve, viewer, info, profiles)
 - `test_cli_enhanced.py` - Enhanced CLI tests with extended coverage
 - `test_cli_integration.py` - Integration tests for full CLI workflows,

@@ -16,7 +16,7 @@ prefetch/
 
 ## How it works
 
-1. **Prediction** — `input/.../setup.ts::updateAllNDNodes` fires after the
+1. **Prediction** — `scene/dimension-loading.ts::updateAllNDNodes` fires after the
    awaited foreground pass (which resolves at COMMIT — the pass-waiter
    contract). It peeks the next value per playing dimension via
    `DimensionAnimationManager.peekNextValue` (pure

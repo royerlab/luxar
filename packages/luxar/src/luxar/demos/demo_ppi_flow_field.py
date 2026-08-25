@@ -72,7 +72,15 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, UIConfig, ViewerConfig
-from luxar.demos import add_demo_caption, launch_viewer, require_module
+from luxar.demos import (
+    FlowField,
+    add_demo_caption,
+    add_reference_cube_to_scene,
+    cubic_bounds,
+    launch_viewer,
+    require_module,
+    rk4_step,
+)
 from luxar.demos._cinematic_camera import pull_in
 from luxar.demos._graph_common import (
     compute_communities as louvain_communities,
@@ -83,13 +91,7 @@ from luxar.demos._graph_common import (
     load_hgnc,
     load_huri_edges,
 )
-from luxar.utils._umap_utils import get_categorical_color
-from luxar.utils.fields import (
-    FlowField,
-    add_reference_cube_to_scene,
-    cubic_bounds,
-    rk4_step,
-)
+from luxar.demos._support._umap_utils import get_categorical_color
 from luxar.utils.paths import get_demos_output_dir
 
 # -----------------------------------------------------------------------------
@@ -699,7 +701,7 @@ def compute_vector_field(
 # -----------------------------------------------------------------------------
 
 
-# Streamline integration uses rk4_step from luxar.utils.fields (imported above).
+# Streamline integration uses rk4_step from the luxar.demos barrel (imported above).
 
 
 def _select_streamline_seeds(pagerank: np.ndarray, max_seeds: int | None) -> np.ndarray:
@@ -902,8 +904,8 @@ def build_node_geometry(
     degrees: np.ndarray,
     pagerank: np.ndarray,
     palette: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[str]]:
-    """Build protein point positions/colors/radii/labels."""
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[str], list[str]]:
+    """Build protein point positions/colors/radii/labels/keys."""
     pr_norm = _normalized_log(pagerank)
     deg_norm = _normalized_log(degrees.astype(np.float64) + 1.0)
     colors = palette[communities].astype(np.float32)
@@ -918,7 +920,13 @@ def build_node_geometry(
             nodes, chroms, pagerank, degrees, communities, strict=True
         )
     ]
-    return coords.astype(np.float32), colors, radii, labels
+    # Click a protein to open its GeneCards entry, right-click to copy the gene
+    # symbol (#1917). The symbol opens the label but the label runs on into
+    # chromosome, PageRank, degree and community across two lines, so the URL
+    # comes from `keys=`.
+    keys = [str(symbol) for symbol in nodes]
+
+    return coords.astype(np.float32), colors, radii, labels, keys
 
 
 def build_attractor_points(
@@ -927,7 +935,7 @@ def build_attractor_points(
     pagerank: np.ndarray,
     degrees: np.ndarray,
     top_n: int = 64,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[str]]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[str], list[str]]:
     """Build a small highlight layer for the highest-PageRank proteins."""
     count = min(top_n, len(nodes))
     top = np.argsort(-pagerank)[:count]
@@ -939,7 +947,11 @@ def build_attractor_points(
         f"Hub #{rank}: {nodes[int(idx)]}\n[PageRank {pagerank[idx]:.2e} · deg {int(degrees[idx])}]"
         for rank, idx in enumerate(top, start=1)
     ]
-    return positions, colors, radii, labels
+    # Same link, and the hub label buries the symbol even deeper — behind a
+    # "Hub #<rank>: " prefix.
+    keys = [str(nodes[int(idx)]) for idx in top]
+
+    return positions, colors, radii, labels, keys
 
 
 def build_oriented_edge_lines(
@@ -1038,10 +1050,12 @@ def write_scene(
     """Write the final Luxar scene."""
     n_comms = int(communities.max()) + 1
     palette = community_palette(n_comms)
-    node_positions, node_colors, node_radii, node_labels = build_node_geometry(
-        nodes, node_df, coords, communities, degrees, pagerank, palette
+    node_positions, node_colors, node_radii, node_labels, node_keys = (
+        build_node_geometry(
+            nodes, node_df, coords, communities, degrees, pagerank, palette
+        )
     )
-    hub_positions, hub_colors, hub_radii, hub_labels = build_attractor_points(
+    hub_positions, hub_colors, hub_radii, hub_labels, hub_keys = build_attractor_points(
         coords, nodes, pagerank, degrees
     )
     (
@@ -1133,6 +1147,9 @@ def write_scene(
                 opacity=0.94,
                 intensity=0.30 * NODE_INTENSITY_SCALE,
                 labels=node_labels,
+                keys=node_keys,
+                link="https://www.genecards.org/card/{hover_key}",
+                copy="{hover_key}",
                 layer=True,
             )
 
@@ -1146,6 +1163,9 @@ def write_scene(
                 intensity=0.85 * NODE_INTENSITY_SCALE,
                 blending_mode="additive",
                 labels=hub_labels,
+                keys=hub_keys,
+                link="https://www.genecards.org/card/{hover_key}",
+                copy="{hover_key}",
                 layer=True,
             )
 

@@ -23,8 +23,9 @@ values are `text-primary`; the raw `rgba(0, 0, 0, …)` control fills in
 - `gui.css` — Root panel chrome. Defines `.luxar-gui` (outer fixed
   container, no overflow so liquid-glass pseudo-elements can paint
   outside the box), `.luxar-gui__scroll` (inner scrollable container
-  with custom thin scrollbar), and the header / title / close-button /
-  children-container subblocks. Deliberately does **not** override
+  with custom thin scrollbar), and the title / children-container
+  subblocks. The shared header and close-button recipes live in
+  `src/styles/base/utilities.css`. Deliberately does **not** override
   `--luxar-shadow-lg` per theme — it uses the same shadow token the control
   rail does; the only `[data-theme]` block here is a light-theme background
   override, and the glass themes live in `src/styles/themes/`.
@@ -47,7 +48,8 @@ The library does not import its own CSS — the application stylesheet
 does. `src/styles/index.css` pulls all three files in via
 `@import '../ui/gui/styles/<file>.css'`, so they ship as part of the
 embed-safe library bundle alongside `components/*.css` and the theme
-overrides.
+overrides. Any HTML page that mounts `GUI` must load `src/styles/index.css`
+rather than linking these component files directly.
 
 ## BEM-ish class naming
 

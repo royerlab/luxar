@@ -21,6 +21,10 @@ luxar serve <generated_zarr_path> --viewer
 
 Each script prints the absolute output path on completion. Defaults to
 `datasets/examples/` via `luxar.utils.paths.get_examples_output_dir()`.
+`make run-examples` fingerprints these builders together with Luxar's production
+Python writer code, so repeated runs are no-ops until the fixture producer
+changes. Playwright's global setup checks the marker even when E2E is launched
+directly with `pnpm` or `npx`.
 
 ## Index
 
@@ -48,6 +52,12 @@ Each script prints the absolute output path on completion. Defaults to
 |---|---|
 | `lines_basic_example.py` | `add_lines` with `line_type` of `polyline`, `segments`, `loop`. |
 | `lines_indexed_example.py` | `line_type='indexed'` with an explicit `indices` array. |
+
+### Mesh
+
+| File | What it teaches |
+|---|---|
+| `mesh_basic_example.py` | `add_mesh` with triangle faces, flat shading, and per-vertex colours. |
 
 ### Rendering attributes
 

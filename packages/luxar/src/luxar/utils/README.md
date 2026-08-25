@@ -1,6 +1,6 @@
 # Utils Package
 
-The `utils` package provides utility functions for common operations in Luxar, including array manipulation, atomic directory copies, robust downloads, spatial hashing, vector-field helpers, and demo data generation.
+The `utils` package provides utility functions for common operations in Luxar, including array manipulation, atomic directory copies, robust downloads, and demo data generation.
 
 ## Quick Start
 
@@ -87,20 +87,14 @@ Robust download utilities with retry logic, resume capability, and progress trac
 - `warn_if_quarantined(target, ...)`: Print that notice and return the paths. Called from `robust_download()` so a user about to re-fetch a multi-gigabyte artifact is told that a rejected earlier copy is sitting next to it — instead of watching a huge download silently start over
 - `QUARANTINE_SUFFIX`: The `.corrupt` suffix used when a cached artifact fails validation (see `demos.cache_computed`). A quarantined file is never reused
 
-### `fields.py`
-Shared 3D vector-field helpers for flow-field demos (the PPI flow-field demo
-and the zebrahub RNA-velocity-streamlines demo). Deliberately demo-agnostic —
-each demo keeps its own binning, smoothing, caching, and seeding policy.
-
-**Key Class:**
-- `FlowField`: Frozen dataclass — a cubic vector field on a regular grid (`vectors` `(n,n,n,3)`, `grid_min`/`grid_max`, `spacing`, `cache_key`)
+### `remote_zip.py`
+HTTP-range ZIP access for extracting one remote archive member without downloading
+the entire archive. `download_zip_member()` reads the end record and central
+directory, streams only the selected member, and verifies its size and CRC before
+atomically promoting the completed output.
 
 **Key Functions:**
-- `cubic_bounds()`: Symmetric cubic AABB around a point cloud, with fractional padding
-- `trilinear_vector()`: Trilinearly sample a `FlowField` at world points (NaN rows for out-of-bounds)
-- `unit_flow()`: Direction-only sample (NaN where the field is zero or out-of-bounds)
-- `rk4_step()`: Vectorized 4-stage Runge-Kutta advection step (NaN-fills streamlines that leave the domain)
-- `add_reference_cube_to_scene()`: Add the field's cubic domain as a 12-edge wire cube (Lines geometry) to a Luxar scene
+- `download_zip_member(url, member, output_path, ...)`: Validate the member path with `zip_safety._validate_zip_member_path`, then extract it through HTTP Range requests. A 64 MiB central-directory ceiling blocks forged metadata from buffering an entire archive, while the default 256 GiB uncompressed-member ceiling bounds decompression output
 
 ### `lod_breakpoints.py`
 Streaming-ladder breakpoint math, shared by all three geometries (Points, Lines,
@@ -143,42 +137,6 @@ Path utilities for Luxar dataset generation.
 - `get_examples_output_dir()`: Resolve the centralized `datasets/examples/` output directory
 - `get_demos_output_dir()`: Resolve the centralized `datasets/demos/` output directory
 
-### `spatial_hash.py`
-Spatial hash grids for fast nD proximity queries. Two complementary classes for two access patterns:
-
-**Key Classes:**
-- `SpatialHashGrid`: **online** insert + `has_neighbor_within` (CPU, dict-backed). Used by Poisson-disk seeding where each accept depends on previous accepts.
-- `BatchedSpatialHashGrid`: **batched** build + many radius / k-NN queries. Two backends share the same hash scheme: NumPy (`np.argsort` + `np.searchsorted`) and PyTorch (CUDA / MPS / CPU; pad-and-prune GPU k-NN). With `device='auto'` (default) the GPU backend is preferred and falls back to NumPy on **out-of-memory or device-unavailable conditions only** — generic exceptions propagate so real bugs aren't masked.
-
-**Correctness guarantee** (both classes): radius queries find all hits within the requested radius provided `cell_size >= radius`. The 3^D neighbour-cell scan is then exhaustive. k-NN queries auto-expand the cell shell until the kth-nearest candidate's distance is within the guaranteed-coverage radius (`shell_radius * cell_size`); past 3 shells the entire stored set is brute-forced.
-
-**Quick example:**
-```python
-from luxar.utils.spatial_hash import BatchedSpatialHashGrid
-import numpy as np
-
-points = np.random.randn(10_000, 3).astype(np.float32)
-queries = np.random.randn(1_000, 3).astype(np.float32)
-
-# Auto-select GPU when available, else CPU
-grid = BatchedSpatialHashGrid.from_points(points, cell_size=0.5, device='auto')
-print(grid.backend, grid.device)  # e.g. "torch", cuda:0
-
-# k-NN: (Q, k) distances + indices
-distances, indices = grid.query_knn(queries, k=8)
-
-# Radius: jagged list of indices per query (require radius <= cell_size)
-neighbours = grid.query_radius(queries, radius=0.4)
-```
-
-### `_umap_utils.py`
-Shared utilities for UMAP demo scripts (internal module).
-
-**Key Features:**
-- Color palettes and colormap functions for UMAP visualizations
-- Legend generation utilities
-- Attribute-to-color mapping used by multiome UMAP demos (human, mouse, zebrahub)
-
 ### `data_fetch.py`
 Manifest-driven demo-dataset resolution (R17: retiring in-repo Git LFS in favour
 of fetch-on-demand from Zenodo). Reads `demos/data_manifest.json` — the single
@@ -186,22 +144,30 @@ source of truth for how each dataset is obtained, its license, and its per-file
 sha256.
 
 **Key Functions:**
-- `ensure_dataset(name, ...)`: Resolve a dataset's files to local paths, cache -> in-repo Git LFS -> Zenodo. The manifest sha256 is authoritative at every step: a copy that fails it is quarantined (`.corrupt`) and never returned, so a stale download can never be resumed onto corrupt bytes
+- `ensure_dataset(name, ...)`: Resolve a dataset's files to local paths, cache -> in-repo Git LFS -> Zenodo. Two live contracts describe current bytes: `sha256` for the copy this repo ships and optional `hosted_sha256` for what the Zenodo record serves. Bytes already in hand prefer hosted, then local (reported when they differ); only the download leg is strict on the hosted digest. A cached copy matching the newest `superseded_sha256` is a third, weaker verdict, reused only when no in-repo copy or download route can replace it and reported as out of date. Bytes matching none of these are quarantined (`.corrupt`) and never returned, so a stale download can never resume onto corrupt bytes. Splitting the live contracts is what keeps a truthful hosted pin from breaking a working checkout — which is what used to force Zenodo publication onto the critical path of every demo-data PR
 - `load_dataset_gsplats(name, ...)`: Mirror of `demos.load_precomputed_gsplats` (returns `GSplatData`, `None` on recompute) sourced through `ensure_dataset` — the one-line swap for migrating a demo. Only `zenodo`-bucket datasets are eligible
 - `load_manifest()` / `dataset_spec(name)`: Read the packaged manifest. The parse is memoised but each call returns an independent copy, so mutating the result (or a nested spec) cannot poison later readers; `clear_manifest_cache()` drops the parse after the manifest is rewritten on disk
-- `local_fit_path(name, filename)`: Where a demo's OWN locally computed stand-in belongs — `~/.cache/luxar/<name>/local/<filename>`. The cache dir is shared with the fetch but the two namespaces are not: `<name>/<filename>` is the manifest's destination, and `ensure_dataset` quarantines anything there that fails the pinned sha256 — which a local refit never matches, so one stored under the hosted name is destroyed and recomputed on every launch (#1618)
+- `local_fit_path(name, filename)`: Where a demo's OWN locally computed stand-in belongs — `~/.cache/luxar/<name>/local/<filename>`. The cache dir is shared with the fetch but the two namespaces are not: `<name>/<filename>` is the manifest's destination, and `ensure_dataset` quarantines anything there that matches neither pinned digest — which a local refit never does, so one stored under the hosted name is destroyed and recomputed on every launch (#1618)
 - `load_local_fit_gsplats(name, file_names)`: Load a previous run's own local fit from that namespace, or `None` when the caller must (re)build it — `None` also when a requested file is missing or unreadable, reported loudly since the only recovery for unchecksummed local bytes is the refit. Two things raise instead: a multi-part store (`kind=partition`), because rebuilding would write the same unloadable shape and refit on every launch, and an empty `file_names`, because `[]` is neither a loaded set nor "rebuild it" and would sail through the caller's `is not None` test
 - `load_local_fit_gsplats_at(paths)`: The same door for paths the caller already holds. A demo that publishes a module-level `LOCAL_FIT` constant and writes its refit through it must READ through it too, or the two halves can be pointed at different files
-- Raises `DatasetNotFound` for an unknown key and `LocalComputeDataset` for data we cannot redistribute (the caller builds it locally). `DatasetUnavailable` (a `FileNotFoundError` subclass) is the narrow "not obtainable from anywhere yet" case a demo may route around by computing its own stand-in; every other `FileNotFoundError` here is a fault (unknown file name, missing packaged manifest, an in-repo copy failing its sha256) and must propagate
+- Raises `DatasetNotFound` for an unknown key and `LocalComputeDataset` for data we cannot redistribute (the caller builds it locally). `DatasetUnavailable` (a `FileNotFoundError` subclass) is the narrow "not obtainable from anywhere yet" case a demo may route around by computing its own stand-in; every other `FileNotFoundError` here is a fault (unknown file name, missing packaged manifest, an in-repo copy matching neither pinned digest) and must propagate
 
-### `demos.py`
-Demo scene generators, precomputed data helpers, and viewer launch utilities.
+### Demo support modules
+Concern-owned scene, data, cache, CLI, and viewer helpers re-exported through
+``luxar.demos`` for demo authors. Reusable scene generators remain public through
+``luxar.utils``.
 
 **Key Functions:**
-- `create_lorenz_attractor()`: Generate Lorenz attractor visualization
-- `create_random_spheres()`: Create random spherical points
-- `create_time_series_demo()`: Generate time-varying data
-- `launch_viewer()`: Launch the Luxar viewer for a given dataset path
+- `scenes.py`: `create_lorenz_attractor()`, `create_random_spheres()`, and
+  `create_time_series_demo()` reusable scene generators
+- `viewer.py`: `launch_viewer()` and stable `demo_ports()` allocation
+- `bundles.py`: Precomputed GSplat and bundle loading
+- `cache.py`, `lfs.py`, `zip_safety.py`: Cache and packaged-data plumbing
+- `flags.py`, `device.py`, `provenance.py`: Demo CLI/runtime helpers
+- `colors.py`, `payload_agreement.py`: Color assembly and fit-QA helpers
+
+**Public barrel highlights:**
+
 - `demo_ports()`: Stable per-dataset (data, viewer) port pair derived from the
   dataset name — demos never contend for 8000/5173, and no two of them share a
   full port PAIR, so a browser tab left over from one demo can never silently
@@ -210,8 +176,8 @@ Demo scene generators, precomputed data helpers, and viewer launch utilities.
   explicit `--port`/`--viewer-port` in `serve_args` override
 - `detect_device()`: Auto-detect the best available compute device (cuda > mps > cpu)
 - `BUILDER_FINGERPRINT_ATTR`: Scene-root attribute that identifies the demo builder
-- `demo_source_fingerprint()`: Hash a demo module's source for scene-staleness checks
-- `scene_is_current()`: Reuse only a completed scene written by the current demo builder
+- `demo_source_fingerprint()`: Hash a demo, Luxar's writer sources, and the Zarr environment for scene-staleness checks
+- `scene_is_current()`: Reuse only a completed scene written by the current demo producer
 - `warn_if_no_cuda_gpu()`: Print a warning if no CUDA GPU is available
 - `load_precomputed_gsplats()`: Load precomputed GSplat data from Git LFS or cache
 - `load_precomputed_bundle()`: Load a precomputed bundle zip (timelapse demos)
@@ -228,46 +194,19 @@ Demo scene generators, precomputed data helpers, and viewer launch utilities.
 - Git LFS data loading with local cache fallback
 - Educational examples of Luxar features
 
-### `process.py`
-Deterministic teardown for long-lived child processes (stdlib-only). Owns the
-lifecycle of the subprocess trees `luxar demo run` spawns so Ctrl-C (or
-SIGTERM/SIGHUP) never orphans a `luxar serve` on its port.
+### `source_fingerprints.py`
+Stable fingerprints for Python sources that produce Luxar stores.
 
 **Key Functions:**
-- `run_child_process()`: Spawn a command, wait for it, and tear it (and its
-  whole process group, when isolated) down on every exit path via a
-  SIGINT → SIGTERM → SIGKILL escalation; optional `on_spawn` hook receives the
-  child PID (= new pgid when isolated)
-- `terminate_process_group()`: The same escalation for a group discovered
-  after the fact (used by `luxar demo stop`); True only once the group is
-  provably finished — an unreaped zombie counts as gone, `EPERM` (someone
-  else's group) never does
-- `can_kill_process_groups()`: Whether POSIX process-group signalling exists
-- `proc_table()`: Best-effort `(pid, pgid, state, command)` rows from `/proc`,
-  with a `ps` fallback on POSIX systems such as macOS (empty means *unknown*)
+- `fingerprint_source_files()`: Hash source paths and contents in stable, boundary-safe order
+- `fingerprint_production_sources()`: Hash production Luxar Python sources without caching
+- `production_source_fingerprint()`: Cache that production-source hash per package root and process
+- `store_writer_environment()`: Report installed/configured inputs that affect Zarr output
 
-### `demo_runs.py`
-Discovery + kill engine behind `luxar demo stop` (stdlib-only): find every
-running demo — even one forgotten in another terminal — and free its ports.
+### Process lifecycle
 
-**Key Functions:**
-- `register_run()` / `unregister_run()`: JSON pidfile per launch under
-  `~/.cache/luxar/running/`, written by `demo run`'s `on_spawn` hook and
-  removed on exit (so the registry only ever names survivors)
-- `discover_runs()`: Live demo runs from the registry plus a `ps` sweep for
-  strays — a process that *leads its own group* and is genuinely running
-  `python -m luxar.demos.demo_*`; prunes dead/hijacked
-  entries, never returns the caller's own process group. On Linux, falls back
-  to `proc_table()` when `ps` is missing, so the identity check that keeps a
-  recycled pgid alive-and-innocent never silently disappears. Off POSIX, where
-  neither exists, a pid listing (`tasklist`) still prunes a record left behind
-  by a reboot or a hard-killed owner
-- `stop_run()`: Tear one run's process group down via `terminate_process_group`,
-  re-validating the group at kill time; returns False without signalling
-  anything off POSIX, where a recorded pid cannot be checked before a hard
-  terminate
-- `describe_port_holder()`: Best-effort "port N is held by demo 'X'" hint
-  for `pick_port`'s busy-port warning
+Process lifecycle support used by `viewer.py` lives in the package-root
+`../_process.py`; see `../README.md` for its API and teardown guarantees.
 
 ## Usage Examples
 
@@ -406,6 +345,5 @@ Internal:
 External:
 - `numpy`: Array operations
 - `arbol`: Progress display in demos and downloads
-- `torch`: PyTorch backend for `BatchedSpatialHashGrid` (GPU k-NN / radius queries)
-- `requests` / `urllib3`: HTTP downloads with retry (lazily imported in `download.py`)
-- `Pillow (PIL)`: Legend image rendering in `_umap_utils.py`
+- `torch`: Device availability probing in `device.py`
+- `requests` / `urllib3`: HTTP downloads with retry (lazily imported in `download.py` and `remote_zip.py`)

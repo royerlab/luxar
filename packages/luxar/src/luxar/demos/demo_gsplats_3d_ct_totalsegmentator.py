@@ -531,7 +531,7 @@ def _labels_match_fit(fit: GSplatData, labels: np.ndarray, source: str) -> bool:
 
 def download_subset() -> Path:
     """Download the 3.2 GB TotalSegmentator subset (resumable)."""
-    from luxar.utils.download import robust_download
+    from luxar.demos import robust_download
 
     with asection("Downloading TotalSegmentator subset (~3.2 GB)"):
         CACHE_DIR.mkdir(parents=True, exist_ok=True)

@@ -1,9 +1,11 @@
 """One spelling for the shared demo helpers: ``from luxar.demos import …``.
 
-``luxar/demos/__init__.py`` is the barrel that re-exports the shared plumbing
-(``launch_viewer``, ``parse_demo_flags``, ``cached_download``, …) out of
-``luxar/utils/demos.py`` and ``luxar/utils/data_fetch.py``, and
-``demos/README.md`` §6 documents that spelling as the way to reach it. Even so,
+``luxar/demos/__init__.py`` is the barrel that re-exports shared plumbing from
+the guarded concern modules under ``luxar/utils`` (historically a single
+``luxar/utils/demos.py``), ``luxar/utils/data_fetch.py``,
+``luxar/utils/download.py``, and ``luxar/utils/remote_zip.py``, and selected
+demo-owned helpers from private modules such as ``demos/_support/_fields.py``.
+``demos/README.md`` §6 documents the barrel as the way to reach them. Even so,
 38 demo scripts reached *past* the barrel with ``from luxar.utils.demos import
 …``. Only 12 of them had to: 4 needed ``is_lfs_pointer`` and 8
 ``print_data_provenance``, neither of which the barrel re-exported. The other 26
@@ -13,18 +15,19 @@ style, and it then spread by copy-paste to files that never needed it (issue
 #1304, item 5).
 
 Two spellings for one surface is a maintenance tax: the barrel stops being the
-place a helper's audience can be read off, and moving ``utils/demos.py`` has to
-chase 40 call sites instead of one. So this module carries TWO invariants: no
-demo module reaches past the barrel, and the barrel really does re-export
-everything the demos ask of it — the second one because its breach is what
+place a helper's audience can be read off, and moving a helper module has to
+chase every call site instead of one. So this module carries TWO invariants: no
+demo module reaches past the barrel into a guarded helper module, including a
+private module inside ``luxar.demos``; and the barrel really does re-export
+everything the demos ask of it. The second invariant exists because its breach
 produced the second spelling in the first place, and a guard is the only thing
 that turns that gap into a failure instead of into another deep import.
 
 Every deep *spelling* counts, not just the one the demos happened to use:
-``import luxar.utils.demos``, ``… as ud`` and ``from luxar.utils import demos``
+``import luxar.utils.viewer``, ``… as ud`` and ``from luxar.utils import viewer``
 reach the same module and are checked too (see
 :func:`test_the_guard_detects_every_deep_spelling`). The boundary is import
-STATEMENTS — a dynamic ``importlib.import_module("luxar.utils.demos")`` is out
+STATEMENTS — a dynamic ``importlib.import_module("luxar.utils.viewer")`` is out
 of scope, as it is for every AST lint in this directory.
 
 BOTH detectors are exercised against synthetic trees as well as against the real
@@ -35,10 +38,10 @@ one: see :func:`test_the_guard_detects_every_deep_spelling` and
 Scope: the demo MODULES, not the whole package. The ``tests/`` subdirectories are
 out of scope as a class, and legitimately so — a test may need the module a
 private lives in (``test_demo_meta`` deep-imports ``_DEFAULT_CACHE_ROOT`` to pin
-that ``registry.DEMO_CACHE_ROOT`` duplicates it; ``utils/tests/test_demos.py`` is
-the helper's own suite and imports it three ways on purpose), and a re-export
-barrel cannot serve either need. Deep imports elsewhere in the package — a few
-unit tests building a Lorenz fixture, ``utils/download.py`` reaching for a
+that ``registry.DEMO_CACHE_ROOT`` duplicates it, while the concern suites
+import their owning utility modules directly), and a re-export barrel cannot
+serve either need. Deep imports elsewhere in the package — a few
+unit tests building a Lorenz fixture, ``utils/remote_zip.py`` reaching for a
 zip-path private, and others — are out of scope for the same reason: the barrel
 is a demo-authoring convenience, not a package-wide facade.
 """
@@ -47,6 +50,7 @@ from __future__ import annotations
 
 import ast
 import re
+import tomllib
 from pathlib import Path
 
 import luxar.demos as demos_barrel
@@ -85,12 +89,32 @@ GSPLAT_TREES_PRESENT = (
 MIN_GSPLAT_DEMO_TREES = 1
 MIN_GSPLAT_DEMO_MODULES = 25
 
-#: The two helper modules the barrel exists to front. Importing either one
+#: The helper modules the barrel exists to front. Importing any one
 #: directly from a demo — under any spelling — is the drift this module fails on.
-DEEP_MODULES = frozenset({"luxar.utils.demos", "luxar.utils.data_fetch"})
+SPLIT_DEMO_UTILITY_MODULES = frozenset(
+    {
+        "luxar.utils.bundles",
+        "luxar.utils.cache",
+        "luxar.utils.colors",
+        "luxar.utils.device",
+        "luxar.utils.flags",
+        "luxar.utils.lfs",
+        "luxar.utils.payload_agreement",
+        "luxar.utils.provenance",
+        "luxar.utils.scenes",
+        "luxar.utils.viewer",
+        "luxar.utils.zip_safety",
+    }
+)
+DEEP_MODULES = SPLIT_DEMO_UTILITY_MODULES | {
+    "luxar.demos._support._fields",
+    "luxar.utils.data_fetch",
+    "luxar.utils.download",
+    "luxar.utils.remote_zip",
+}
 
-#: ``(package, leaf)`` PAIRS, so ``from luxar.utils import demos`` is recognised
-#: (it binds the same module object as ``import luxar.utils.demos``) without a
+#: ``(package, leaf)`` PAIRS, so ``from luxar.utils import viewer`` is recognised
+#: (it binds the same module object as ``import luxar.utils.viewer``) without a
 #: cross product: were a deep module added in another package, this must not turn
 #: ``from luxar.io import demos`` into a false positive.
 DEEP_PAIRS = frozenset(tuple(m.rsplit(".", 1)) for m in DEEP_MODULES)
@@ -157,7 +181,7 @@ def _resolved_module(node: ast.ImportFrom, path: Path) -> str:
     """Absolute dotted name of what ``node`` imports *from*.
 
     Relative spellings must resolve, or the guard would pass vacuously against
-    ``from ..utils.demos import …`` — the form a module inside the package is
+    ``from ..utils.viewer import …`` — the form a module inside the package is
     most likely to reach for.
     """
     if not node.level:
@@ -201,7 +225,7 @@ def _deep_imports(path: Path) -> list[str]:
             if module in DEEP_MODULES:
                 hits.append((node.lineno, f"from {module} import …"))
             elif module in DEEP_PARENTS:
-                # `from luxar.utils import demos` — the module itself is the
+                # `from luxar.utils import viewer` — the module itself is the
                 # imported NAME here, so the check has to look at the names.
                 hits += [
                     (node.lineno, f"from {module} import {a.name}")
@@ -249,8 +273,30 @@ def _barrel_allowed_names() -> set[str]:
     return bound | {p.stem for p in barrel_dir.glob("*.py")}
 
 
+def test_coverage_omits_only_the_split_demo_utilities() -> None:
+    """Coverage exclusions must not hide same-named production utilities."""
+    from coverage.files import GlobMatcher
+
+    pyproject = LUXAR_DIR.parents[3] / "pyproject.toml"
+    config = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    omit = config["tool"]["coverage"]["run"]["omit"]
+
+    split_modules = {
+        f"{module.removeprefix('luxar.utils.')}.py"
+        for module in SPLIT_DEMO_UTILITY_MODULES
+    }
+    split_patterns = {f"*/luxar/utils/{module}" for module in split_modules}
+    assert split_patterns <= set(omit)
+    assert {pattern for pattern in omit if "/utils/" in pattern} == split_patterns
+
+    matcher = GlobMatcher(omit)
+    for module in split_modules:
+        assert matcher.match(str(LUXAR_DIR / "utils" / module))
+        assert not matcher.match(str(LUXAR_DIR / "gsplats" / "utils" / module))
+
+
 def test_no_demo_module_reaches_past_the_barrel() -> None:
-    """No demo module may import ``luxar.utils.demos`` / ``.data_fetch`` directly."""
+    """No demo module may import a shared helper module directly."""
     offenders: dict[str, list[str]] = {}
     for path in _guarded_modules():
         hits = _deep_imports(path)
@@ -276,20 +322,24 @@ def test_the_guard_detects_every_deep_spelling(tmp_path: Path) -> None:
     The real trees pass, so this is the only thing standing between the guard
     and a silent regression in its own detector. It caught a real one: an
     earlier version walked ``ast.ImportFrom`` alone, which let ``import
-    luxar.utils.demos`` and ``from luxar.utils import demos`` through.
+    luxar.utils.viewer`` and ``from luxar.utils import viewer`` through.
     """
     fake = tmp_path / "luxar" / "demos" / "demo_fake.py"
     fake.parent.mkdir(parents=True)
     deep = [
-        "import luxar.utils.demos",
-        "import luxar.utils.demos as ud",
+        "import luxar.utils.viewer",
+        "import luxar.utils.viewer as ud",
         "import luxar.utils.data_fetch",
-        "from luxar.utils.demos import launch_viewer",
+        "import luxar.demos._support._fields",
+        "from luxar.utils.viewer import launch_viewer",
         "from luxar.utils.data_fetch import ensure_dataset",
-        "from luxar.utils import demos as ud2",
+        "from luxar.demos._support._fields import FlowField",
+        "from luxar.utils import viewer as ud2",
         "from luxar.utils import data_fetch",
-        "from ..utils.demos import parse_demo_flags",
-        "from ..utils import demos as ud3",
+        "from luxar.demos._support import _fields",
+        "from ..utils.viewer import parse_demo_flags",
+        "from ..utils import viewer as ud3",
+        "from ._support._fields import cubic_bounds",
     ]
     fine = [
         "from luxar.demos import launch_viewer",  # the one true spelling
@@ -343,10 +393,10 @@ def test_relative_spellings_resolve(tmp_path: Path) -> None:
     fake = tmp_path / "luxar" / "demos" / "demo_fake.py"
     fake.parent.mkdir(parents=True)
     source = (
-        "from ..utils.demos import launch_viewer\n"
+        "from ..utils.viewer import launch_viewer\n"
         "from ..utils.data_fetch import ensure_dataset\n"
         "from .registry import iter_demos\n"
-        "from luxar.utils.demos import parse_demo_flags\n"
+        "from luxar.utils.flags import parse_demo_flags\n"
     )
     fake.write_text(source, encoding="utf-8")
 
@@ -357,18 +407,18 @@ def test_relative_spellings_resolve(tmp_path: Path) -> None:
         if isinstance(node, ast.ImportFrom)
     ]
     assert resolved == [
-        "luxar.utils.demos",
+        "luxar.utils.viewer",
         "luxar.utils.data_fetch",
         "luxar.demos.registry",
-        "luxar.utils.demos",
+        "luxar.utils.flags",
     ]
     assert sum(module in DEEP_MODULES for module in resolved) == 3
 
     # An over-deep `level` (more dots than packages) must not wrap: unclamped,
     # `package[: len(package) - (level - 1)]` truncated from the END and made
-    # `from ....utils.demos import …` resolve to the deep module it cannot
+    # `from ....utils.viewer import …` resolve to the deep module it cannot
     # possibly reach, i.e. reported an unreachable import as a real offender.
-    over_deep = ast.parse("from ....utils.demos import launch_viewer\n").body[0]
+    over_deep = ast.parse("from ....utils.viewer import launch_viewer\n").body[0]
     assert isinstance(over_deep, ast.ImportFrom)
     assert _resolved_module(over_deep, fake) not in DEEP_MODULES
 
@@ -377,7 +427,7 @@ def test_resolver_refuses_a_path_outside_the_package(tmp_path: Path) -> None:
     """A verdict or an explanation — never a bare ``tuple.index`` ValueError."""
     stray = tmp_path / "not_a_package" / "demo_stray.py"
     stray.parent.mkdir(parents=True)
-    stray.write_text("from ..utils.demos import launch_viewer\n", encoding="utf-8")
+    stray.write_text("from ..utils.viewer import launch_viewer\n", encoding="utf-8")
 
     node = next(
         n

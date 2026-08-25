@@ -308,15 +308,15 @@ describe('ViewStateManager', () => {
       expect(viewState.slicePosition[0]).toBe(-75); // Continuous: starts at center of [-100, -50]
     });
 
-    it('should handle fractional discrete dimension ranges', () => {
+    it('starts fractional discrete dimensions at the anchored range minimum', () => {
       const sceneDims: SceneDimensions = {
         dimensions: [
-          // Weird but valid: discrete with non-integer range
           {
             name: 'weird',
             unit: '',
             scale: 1.0,
-            range: [0.5, 5.5],
+            range: [1.4, 10.5],
+            step: 1,
             display: false,
             discrete: true,
           },
@@ -326,7 +326,7 @@ describe('ViewStateManager', () => {
 
       const viewState = ViewStateManager.initializeFromDimensions(sceneDims);
 
-      expect(viewState.slicePosition[0]).toBe(0); // floor(0.5) = 0 (starts at minimum, floored)
+      expect(viewState.slicePosition[0]).toBe(1.4);
     });
   });
 

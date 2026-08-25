@@ -4,7 +4,7 @@ import { PerformanceMonitor } from '../../../ui/performance-monitor';
 import { DebugConsole } from '../../../ui/debug-console';
 import { AdaptiveDPRManager } from '../../../rendering/adaptive-dpr-manager';
 import { ResolutionIndicator } from '../../../ui/resolution-indicator';
-import { InputHandler } from '../../../input/input-handler';
+import { InputHandler } from '../../../input';
 import { DimensionSliders } from '../../../ui/dimension-sliders';
 import { RenderingControls } from '../../../ui/rendering-controls';
 import { RecordingPanel } from '../../../ui/recording-panel';
@@ -565,6 +565,7 @@ export async function runInitPipeline(
   const ui = inputHandler.getUiActions();
   const railItems = buildRailItems({
     ui,
+    shortcutForAction: (actionId) => inputHandler.getShortcutLabel(actionId),
     sceneManager,
     sceneDims: sceneDimsManager,
     renderingControls,
@@ -578,6 +579,7 @@ export async function runInitPipeline(
   // Dock the perf readout as the rail's footer; the gauge above toggles it.
   const controlRail = new ControlRail(railItems, performanceMonitor.element);
   partial.controlRail = controlRail;
+  inputHandler.setControlRail(controlRail);
 
   // Start animation loop first to ensure background is rendered
   animationController.startAnimation();

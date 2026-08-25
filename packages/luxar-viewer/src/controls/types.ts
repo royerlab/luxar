@@ -8,6 +8,20 @@ import type { LuxarFlyControls } from './luxar-fly-controls';
 /** Available control types. */
 export type ControlType = 'orbit' | 'fly' | 'ortho';
 
+/** Return the next camera control type, resetting unknown values to orbit. */
+export function nextControlType(current: ControlType | string): ControlType {
+  switch (current) {
+    case 'orbit':
+      return 'fly';
+    case 'fly':
+      return 'ortho';
+    case 'ortho':
+      return 'orbit';
+    default:
+      return 'orbit';
+  }
+}
+
 /** Union type for control instances. */
 export type ControlInstance = LuxarOrbitControls | LuxarFlyControls;
 

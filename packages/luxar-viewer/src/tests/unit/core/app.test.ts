@@ -48,7 +48,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 // Mock all dependencies before importing LuxarApp
 vi.mock('../../../scene/scene-manager');
 vi.mock('../../../scene/animation/animation-controller');
-vi.mock('../../../input/input-handler');
+vi.mock('../../../input');
 vi.mock('../../../ui/rendering-controls');
 vi.mock('../../../ui/recording-panel');
 vi.mock('../../../ui/scale-bar');
@@ -136,12 +136,13 @@ vi.stubGlobal('fetch', mockFetch);
 // Import mocked classes
 import { SceneManager } from '../../../scene/scene-manager';
 import { AnimationController } from '../../../scene/animation/animation-controller';
-import { InputHandler } from '../../../input/input-handler';
+import { InputHandler } from '../../../input';
 import { RenderingControls } from '../../../ui/rendering-controls';
 import { DatasetBrowser } from '../../../ui/dataset-browser';
 import { cleanupUI as mockCleanupUI } from '../../../ui/ui-cleanup';
 import { clearError as mockClearError } from '../../../ui/error-overlay';
 import { showToast as mockShowToast } from '../../../ui/toast';
+import { showHelpOverlay } from '../../../ui/help-overlay';
 
 // Import LuxarApp after all mocks are set up
 import { LuxarApp } from '../../../core/app';
@@ -195,15 +196,18 @@ describe('LuxarApp', () => {
     mockInputHandler = {
       init: vi.fn(),
       getUiActions: vi.fn(() => ({ commands: {}, panels: {} })),
+      getShortcutLabel: vi.fn(() => undefined),
       setRenderingControls: vi.fn(),
       setScaleBar: vi.fn(),
       setRecordingPanel: vi.fn(),
       setLayersPanel: vi.fn(),
+      setControlRail: vi.fn(),
       setDatasetBrowser: vi.fn(),
       setOverlayManager: vi.fn(),
       setColormapLegend: vi.fn(),
       clearDimensionUI: vi.fn(),
       initDimensionSliders: vi.fn(),
+      getRegisteredShortcutBindings: vi.fn(),
       dispose: vi.fn(),
     };
 
@@ -246,6 +250,20 @@ describe('LuxarApp', () => {
     // ordering between tests could flip the assertions for the spied
     // call counts (the spies persist across vi.clearAllMocks).
     vi.restoreAllMocks();
+  });
+
+  it('passes the registered shortcut snapshot when viewer config opens help', () => {
+    const bindings = new Map([['navigation', ['h']]]);
+    mockInputHandler.getRegisteredShortcutBindings.mockReturnValue(bindings);
+    (app as unknown as { inputHandler: typeof mockInputHandler }).inputHandler = mockInputHandler;
+
+    (
+      app as unknown as {
+        applyViewerConfigState(config: { ui: { show_help: boolean } }): void;
+      }
+    ).applyViewerConfigState({ ui: { show_help: true } });
+
+    expect(showHelpOverlay).toHaveBeenCalledWith(bindings);
   });
 
   describe('initialization sequence', () => {
@@ -311,10 +329,10 @@ describe('LuxarApp', () => {
       );
     });
 
-    it('cross-links every documented orchestrator pair (full eight-edge graph)', async () => {
-      // core.md C3 fix: previous version asserted only 2 of the 8 cross-link
-      // edges the orchestrator wires. Mutations dropping any of the other
-      // six would have slipped through silently. Pin them all here.
+    it('cross-links every documented orchestrator pair', async () => {
+      // core.md C3 fix: previous coverage asserted only two orchestrator
+      // cross-links. Mutations dropping any remaining edge would have slipped
+      // through silently. Pin the complete graph here.
       mockFetch.mockResolvedValue({ ok: true });
       await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
 
@@ -336,6 +354,7 @@ describe('LuxarApp', () => {
       if (mockInputHandler.setLayersPanel) {
         expect(mockInputHandler.setLayersPanel).toHaveBeenCalled();
       }
+      expect(mockInputHandler.setControlRail).toHaveBeenCalled();
 
       // RecordingPanel receives panel-state callbacks and (when present)
       // the adaptive-DPR manager.

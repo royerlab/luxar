@@ -14,7 +14,6 @@
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { DataLoadingMonitor } from '../../../ui/data-loading-monitor';
-import { nodeStatsContent } from '../../../ui/data-loading-monitor/templates';
 import { POOLED_GEOMETRY_TYPES } from '../../../types/data-monitor-types';
 import type {
   MonitorEvent,
@@ -25,6 +24,18 @@ import type {
   SceneGraphNode,
 } from '../../../types/data-monitor-types';
 import type { TimingEntry, UpdateProfiler } from '../../../profiling/update-profiler';
+
+function seedLODStates(monitor: DataLoadingMonitor, states: Map<string, LODProgressState>): void {
+  monitor.setLODProgressProvider({ getLODStates: () => states });
+  const internals = monitor as unknown as {
+    uiState: { isVisible: boolean };
+    onPollingTick(): void;
+  };
+  const wasVisible = internals.uiState.isVisible;
+  internals.uiState.isVisible = true;
+  internals.onPollingTick();
+  internals.uiState.isVisible = wasVisible;
+}
 
 /**
  * The depth-sort verdict the monitor reads, drivable from a test. Only
@@ -83,6 +94,24 @@ describe('DataLoadingMonitor', () => {
       expect(cfg.maxEvents).toBe(500);
       // Sanity: dispose is wired even for the custom-constructed instance.
       expect(() => customMonitor.dispose()).not.toThrow();
+    });
+
+    it('marks its own structure dirty when provider structure changes', () => {
+      const internals = monitor as unknown as { structureDirty: boolean };
+      const expectStructureDirty = (register: () => void): void => {
+        internals.structureDirty = false;
+        register();
+        expect(internals.structureDirty).toBe(true);
+      };
+
+      expectStructureDirty(() => monitor.setCacheTelemetryState({ kind: 'enabled' }));
+      expectStructureDirty(() => monitor.setGPUBufferPoolProvider({ getStats: vi.fn() }));
+      expectStructureDirty(() => monitor.setProfiler({} as UpdateProfiler));
+      expectStructureDirty(() => monitor.setLODProgressProvider({ getLODStates: () => new Map() }));
+      expectStructureDirty(() =>
+        monitor.setDrawOrderProvider({ getDrawOrderStates: () => new Map() })
+      );
+      expectStructureDirty(() => monitor.resetSceneProviders());
     });
   });
 
@@ -364,9 +393,7 @@ describe('DataLoadingMonitor', () => {
       monitor.connectLoader('/points', spatialLoader('/points'));
 
       // Provider reports the group with levelCount=3 (the OLD basis).
-      (
-        monitor as unknown as { lodStates: Map<string, { kind: string; levelCount: number }> }
-      ).lodStates = new Map([['/lod', { kind: 'lod', levelCount: 3 }]]);
+      seedLODStates(monitor, new Map([['/lod', { kind: 'lod', levelCount: 3 }]]));
 
       const stats = monitor.getGlobalStats();
       // 5 loaders − (4 present under /lod − 1) = 2 logical layers.
@@ -408,9 +435,7 @@ describe('DataLoadingMonitor', () => {
       monitor.connectLoader('/lod/aux', nonSpatialLoader('/lod/aux'));
       monitor.connectLoader('/points', spatialLoader('/points'));
 
-      (
-        monitor as unknown as { lodStates: Map<string, { kind: string; levelCount: number }> }
-      ).lodStates = new Map([['/lod', { kind: 'lod', levelCount: 2 }]]);
+      seedLODStates(monitor, new Map([['/lod', { kind: 'lod', levelCount: 2 }]]));
 
       const stats = monitor.getGlobalStats();
       // totalLoaders: 4 − (3 present − 1) = 2.
@@ -1199,67 +1224,9 @@ describe('DataLoadingMonitor', () => {
       expect(stats.visiblePoints).toBe(50000);
     });
 
-    it('clears per-node visible counts for paths absent from the latest walk', () => {
-      // The SceneLoader's visible-counts walk prunes non-visible subtrees,
-      // so a hidden layer or switched-away substitutive level simply stops
-      // appearing in the pushed map. Its previously merged count must be
-      // cleared (back to unknown) — not left as a stale
-      // "(N visible after slicing)" tooltip forever.
-      const sceneGraph = {
-        path: '/',
-        name: 'Scene',
-        type: 'scene' as const,
-        children: [
-          {
-            path: '/points1',
-            name: 'points1',
-            type: 'points' as const,
-            pointCount: 1000,
-            children: [],
-          },
-          {
-            path: '/splats1',
-            name: 'splats1',
-            type: 'gsplats' as const,
-            splatCount: 2000,
-            children: [],
-          },
-        ],
-      };
-      monitor.setSceneGraph(sceneGraph);
-
-      const sync = () =>
-        (monitor as unknown as { syncVisibleCountsIntoTree(): void }).syncVisibleCountsIntoTree();
-
-      // First walk: both layers rendered with partial visibility.
-      monitor.updateVisibleCountsByPath(
-        new Map([
-          ['/points1', 250],
-          ['/splats1', 700],
-        ])
-      );
-      sync();
-      const root = monitor.getSceneGraph().root!;
-      const points = root.children[0];
-      const splats = root.children[1];
-      expect(points.visiblePointCount).toBe(250);
-      expect(splats.visibleSplatCount).toBe(700);
-      expect(nodeStatsContent(points)!.title).toContain('250 visible after slicing');
-      expect(nodeStatsContent(splats)!.title).toContain('700 visible after slicing');
-
-      // Second walk: the gsplats layer was hidden (pruned from the walk).
-      // Its count must read as unknown (no suffix), not the stale 700.
-      monitor.updateVisibleCountsByPath(new Map([['/points1', 100]]));
-      sync();
-      expect(points.visiblePointCount).toBe(100);
-      expect(splats.visibleSplatCount).toBeUndefined();
-      expect(nodeStatsContent(points)!.title).toContain('100 visible after slicing');
-      expect(nodeStatsContent(splats)!.title).not.toContain('visible');
-    });
-
     it('re-marks active/inactive substitutive level rows per tick (shared activeLevelRole derivation)', () => {
       // The per-tick patcher must derive each level row's role exactly like
-      // the initial render (both call templates.ts's exported
+      // the initial render (both call templates/scene-graph.ts's exported
       // activeLevelRole) and flip the marks in place when the LOD selector
       // switches levels between structural rebuilds.
       monitor.show();

@@ -21,20 +21,21 @@
  * model. There's no separate `dispose()` — the InputHandler runs the
  * cleanup array on its own dispose path.
  *
- * Behavior is identical to the inline originals byte-for-byte
- * (same Ctrl/Meta gating, same rAF, same style set).
+ * The global wheel listener applies rendering behavior only to events from the
+ * scene canvas, while still suppressing modifier-wheel page zoom over viewer UI.
  *
  * @module input/handlers/window-event-handler
  */
 
 import type { SceneManager } from '../../../scene/scene-manager';
 import type { AnimationController } from '../../../scene/animation/animation-controller';
-import type { RenderingControls } from '../../../ui/rendering-controls';
+import type { RenderingControlsHandle } from '../panel-capabilities';
 import { isDocumentFullscreen } from '../../../utils/fullscreen';
 import { isPerspectiveCamera } from '../../../utils/camera-utils';
+import { getViewerContainer } from '../../../utils/viewer-container';
 
 export class WindowEventHandler {
-  private renderingControls?: RenderingControls;
+  private renderingControls?: RenderingControlsHandle;
 
   /**
    * The canvas `style` attribute as it was just before we entered
@@ -55,7 +56,7 @@ export class WindowEventHandler {
    * window listeners are already registered, so we accept the late
    * wiring instead of forcing the caller to re-attach.
    */
-  setRenderingControls(rc: RenderingControls | undefined): void {
+  setRenderingControls(rc: RenderingControlsHandle | undefined): void {
     this.renderingControls = rc;
   }
 
@@ -154,11 +155,11 @@ export class WindowEventHandler {
    * zoom math (they listen for `wheel` on the canvas separately). All
    * we do here is:
    *
-   *   - Always poke the animation loop (so the scene keeps rendering
-   *     during continuous wheel input).
-   *   - On Ctrl+wheel / Cmd+wheel, intercept the event for FOV
-   *     control and `preventDefault` so the page doesn't also try to
-   *     zoom. The FOV wheel path is gated to a perspective camera: in
+   *   - For canvas-originated events, poke the animation loop so the
+   *     scene keeps rendering during continuous wheel input.
+   *   - On Ctrl+wheel / Cmd+wheel, suppress page zoom across the viewer
+   *     container, but apply FOV control only to canvas-originated events.
+   *     The FOV wheel path is gated to a perspective camera: in
    *     ortho the orbit controls own modifier-wheel (and trackpad-pinch)
    *     zoom. `updateFOV` now persists the perspective FOV stash even in
    *     ortho for DELIBERATE reset/zarr/panel applies, so the interactive
@@ -167,14 +168,24 @@ export class WindowEventHandler {
    *     "Custom" so the panel value matches the slider.
    */
   private onWheel(event: WheelEvent): void {
+    const eventPath = event.composedPath();
+    const canvas = this.sceneManager.renderer.domElement;
+    const isCanvasEvent = eventPath[0] === canvas;
+
+    if (
+      (event.ctrlKey || event.metaKey) &&
+      (isCanvasEvent || eventPath.includes(getViewerContainer()))
+    ) {
+      // Suppress browser page zoom for modifier-wheel events over the viewer,
+      // including panels. An embedder's host-page UI remains untouched.
+      event.preventDefault();
+    }
+
+    if (!isCanvasEvent) return;
+
     this.animationController.startAnimation();
 
     if (event.ctrlKey || event.metaKey) {
-      // preventDefault unconditionally — even when FOV doesn't apply
-      // (ortho camera), browser page zoom must stay suppressed over
-      // the viewer.
-      event.preventDefault();
-
       // FOV only applies to a perspective camera; in ortho the orbit controls
       // own modifier-wheel zoom. Gate the interactive wheel path here (the
       // deliberate reset/zarr/panel-apply paths still persist the stash via

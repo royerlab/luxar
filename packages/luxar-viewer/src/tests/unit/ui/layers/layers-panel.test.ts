@@ -3322,6 +3322,141 @@ describe('LayersPanel — filter + context-menu lifecycle across dataset reloads
     panel.dispose();
   });
 
+  it.each([['Home'], ['ArrowUp']])(
+    'contains consumed %s row navigation before it reaches window',
+    (key) => {
+      const panel = new LayersPanel(container, animationController);
+      panel.initFromScene(new THREE.Group(), makeManyLayerSceneGraph());
+      panel.show();
+
+      const rows = Array.from(container.querySelectorAll<HTMLElement>('.luxar-layer-row'));
+      const row = rows[1];
+      row.focus();
+      const globalHandler = vi.fn();
+      window.addEventListener('keydown', globalHandler);
+
+      row.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+
+      expect(document.activeElement).toBe(rows[0]);
+      expect(globalHandler).not.toHaveBeenCalled();
+      window.removeEventListener('keydown', globalHandler);
+      panel.dispose();
+    }
+  );
+
+  // Named, because ' ' renders as an invisible test title.
+  it.each([
+    ['Enter', 'Enter'],
+    ['Space', ' '],
+  ])(
+    'contains a consumed %s row selection before it reaches window',
+    (_label: string, key: string) => {
+      const panel = new LayersPanel(container, animationController);
+      panel.initFromScene(new THREE.Group(), makeManyLayerSceneGraph());
+      panel.show();
+
+      const rows = Array.from(container.querySelectorAll<HTMLElement>('.luxar-layer-row'));
+      const row = rows[1];
+      row.focus();
+      const globalHandler = vi.fn();
+      window.addEventListener('keydown', globalHandler);
+
+      row.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+
+      expect(row.getAttribute('aria-selected')).toBe('true');
+      expect(rows[0].getAttribute('aria-selected')).toBe('false');
+      // Space especially: uncontained, it also toggles window-level fullscreen.
+      expect(globalHandler).not.toHaveBeenCalled();
+      window.removeEventListener('keydown', globalHandler);
+      panel.dispose();
+    }
+  );
+
+  it.each([
+    ['F10', { shiftKey: true }],
+    ['ContextMenu', {}],
+  ])('contains the consumed %s menu key before it reaches window', (key, init) => {
+    // The narrative case: these are the same two chords the global
+    // element-menu shortcut binds, so a leaked event would close the row menu
+    // we just opened and open the canvas one instead.
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeManyLayerSceneGraph());
+    panel.show();
+
+    const row = container.querySelectorAll<HTMLElement>('.luxar-layer-row')[1];
+    row.focus();
+    const globalHandler = vi.fn();
+    window.addEventListener('keydown', globalHandler);
+
+    row.dispatchEvent(
+      new KeyboardEvent('keydown', { key, ...init, bubbles: true, cancelable: true })
+    );
+
+    const labels = Array.from(document.querySelectorAll('.luxar-context-menu__label')).map(
+      (el) => el.textContent
+    );
+    expect(labels).toContain('Copy layer path'); // the ROW menu, not the eye's
+    expect(globalHandler).not.toHaveBeenCalled();
+    window.removeEventListener('keydown', globalHandler);
+    panel.dispose();
+  });
+
+  it('contains panel-control keys while unrelated viewer shortcuts still bubble', () => {
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeManyLayerSceneGraph());
+    panel.show();
+
+    const opacitySlider = container.querySelector<HTMLInputElement>('.luxar-layers-panel__slider');
+    const rangeSlider = container.querySelector<HTMLInputElement>('.luxar-range-slider__input');
+    const closeButton = container.querySelector<HTMLButtonElement>('.luxar-layers-panel__close');
+    const eyeButton = container.querySelector<HTMLButtonElement>('.luxar-layer-row__eye');
+    expect(opacitySlider).not.toBeNull();
+    expect(rangeSlider).not.toBeNull();
+    expect(closeButton).not.toBeNull();
+    expect(eyeButton).not.toBeNull();
+
+    const controls = [opacitySlider!, rangeSlider!, closeButton!, eyeButton!];
+
+    const globalHandler = vi.fn();
+    window.addEventListener('keydown', globalHandler);
+    try {
+      for (const slider of [opacitySlider!, rangeSlider!]) {
+        for (const event of [
+          new KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }),
+          new KeyboardEvent('keydown', {
+            key: 'ArrowDown',
+            shiftKey: true,
+            bubbles: true,
+            cancelable: true,
+          }),
+        ]) {
+          slider!.dispatchEvent(event);
+          expect(event.defaultPrevented).toBe(false);
+        }
+      }
+
+      for (const control of controls) {
+        control.dispatchEvent(new KeyboardEvent('keydown', { key: 'PageDown', bubbles: true }));
+      }
+      expect(globalHandler).not.toHaveBeenCalled();
+
+      for (const control of controls) {
+        control.dispatchEvent(new KeyboardEvent('keydown', { key: ']', bubbles: true }));
+      }
+      opacitySlider!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      expect(globalHandler.mock.calls.map(([event]) => (event as KeyboardEvent).key)).toEqual([
+        ']',
+        ']',
+        ']',
+        ']',
+        'Escape',
+      ]);
+    } finally {
+      window.removeEventListener('keydown', globalHandler);
+      panel.dispose();
+    }
+  });
+
   it('right-clicking a text field inside the panel leaves the native menu alone', () => {
     // The delegated handler suppresses the native menu everywhere on the
     // glass surface, but a text field has no replacement verbs of ours —

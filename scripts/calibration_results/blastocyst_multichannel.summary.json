@@ -1,0 +1,41 @@
+{
+  "name": "blastocyst_multichannel",
+  "status": "ok",
+  "k_min": 1000,
+  "k_max": 256000,
+  "n_grid": 10,
+  "preset": "n2s",
+  "aggregate": "max",
+  "recommended_k_star": 21773,
+  "per_sample": [
+    {
+      "label": "blastocyst_multichannel__ch0",
+      "k_star": 21773,
+      "type": "peak",
+      "confidence_db": 0.011320608041508251,
+      "volume_shape": [
+        236,
+        275,
+        271
+      ],
+      "elapsed_seconds": 2895.143052510917,
+      "json_path": "scripts/calibration_results/blastocyst_multichannel/blastocyst_multichannel__ch0.json",
+      "noise_floor_psnr_db": 53.566643982397366
+    },
+    {
+      "label": "blastocyst_multichannel__ch1",
+      "k_star": 21773,
+      "type": "peak",
+      "confidence_db": 0.021674697926933106,
+      "volume_shape": [
+        236,
+        275,
+        271
+      ],
+      "elapsed_seconds": 4926.801274930127,
+      "json_path": "scripts/calibration_results/blastocyst_multichannel/blastocyst_multichannel__ch1.json",
+      "noise_floor_psnr_db": 50.413994476888895
+    }
+  ],
+  "comment": "256^3 2-channel blastocyst"
+}

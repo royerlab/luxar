@@ -197,7 +197,7 @@ def _download_snapshot() -> list[Path]:
     """Download the TNG300-3-Dark snapshot HDF5 chunks (resumable). Returns paths."""
     import h5py
 
-    from luxar.utils.download import robust_download
+    from luxar.demos import robust_download
 
     key = os.environ.get("TNG_API_KEY")
     if not key:
@@ -309,7 +309,7 @@ def load_or_build_gsplats() -> GSplatData:
                 return precomputed[0]
         except FileNotFoundError:
             aprint(
-                "Precomputed fit not available (Git LFS asset not pulled). "
+                "Precomputed fit is not available locally. "
                 "Re-run with --recompute (needs TNG_API_KEY + a CUDA GPU) to "
                 "download the snapshot and refit."
             )

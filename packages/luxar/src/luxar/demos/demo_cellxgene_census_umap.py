@@ -75,7 +75,7 @@ from luxar.demos import (
     require_local_data,
     substitutive_lod_or_flat,
 )
-from luxar.utils._umap_utils import attribute_to_color
+from luxar.demos._support._umap_utils import attribute_to_color
 from luxar.utils.paths import get_demos_output_dir
 
 # (code-field, display label) for the categorical `coloring` dimension.
@@ -223,6 +223,17 @@ def build_scene(
                 radii=radii,
                 sharpness=np.full(len(positions), 0.6, np.float32),
                 labels=hover_labels,
+                # Click a cell to look its term up in the EBI Ontology Lookup
+                # Service, right-click to copy the term (#1917).
+                #
+                # No `keys=` here, unlike the sibling demos: this label is
+                # ALREADY the bare ontology term with nothing appended, and it
+                # is the right term per block — cell type, tissue or disease,
+                # whichever the active coloring is. All three are OLS
+                # vocabularies (CL / UBERON / MONDO), so one search URL serves
+                # every block and the cloud pays no second CSR for 3 x N cells.
+                link="https://www.ebi.ac.uk/ols4/search?q={hover_label}",
+                copy="{hover_label}",
                 # Appearance tuned in the viewer's Layers panel and baked back
                 # here. Volumetric emission-absorption is what makes a cloud
                 # this dense readable: its compositing is order-dependent, so

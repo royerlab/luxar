@@ -82,7 +82,7 @@ from luxar.gsplats.lod._kernels import (
     sqrt_det_from_cholesky,
 )
 from luxar.gsplats.models.utils.inverse_softplus import stable_inverse_softplus_torch
-from luxar.utils.spatial_hash import BatchedSpatialHashGrid
+from luxar.gsplats.spatial_hash import BatchedSpatialHashGrid
 
 __all__ = ["L2RefineConfig", "l2_refine_mixture"]
 

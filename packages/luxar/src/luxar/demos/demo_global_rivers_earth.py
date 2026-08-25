@@ -32,7 +32,7 @@ regenerate + cache it. This demo ships ONLY code:
     parses + builds the globe scene (to the standard demos-output dir), and
     caches the source + parsed polylines under
     ``~/.cache/luxar/global_rivers_earth/``.
-  * Subsequent runs load the built scene instantly. A source change rebuilds
+  * Subsequent runs load the built scene instantly. A producer change rebuilds
     the scene automatically; ``--keep-stale`` reuses the existing build, while
     ``--recompute`` forces a rebuild (source/polylines stay cached, so it never
     re-fetches the ~1 GB).
@@ -131,8 +131,8 @@ SERVE_ONLY = FLAGS["serve_only"]
 RECOMPUTE = FLAGS["recompute"]
 KEEP_STALE = FLAGS["keep_stale"]
 
-#: Identifies the builder that wrote a scene, so a scene left on disk by an
-#: OLDER version of this file is rebuilt instead of served forever (#1957).
+#: Identifies the builder and Luxar writer that wrote a scene, so stale output
+#: is rebuilt instead of served forever (#1957, #2037).
 FINGERPRINT = demo_source_fingerprint(__file__)
 
 Arbol.max_depth = 5
@@ -249,7 +249,7 @@ def _download_sources() -> tuple[Path, Path]:
     """Download HydroRIVERS + ETOPO into the cache (resumable). Returns their paths."""
     import zipfile
 
-    from luxar.utils.download import robust_download
+    from luxar.demos import robust_download
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     etopo = CACHE_DIR / "etopo_2022_60s.tif"

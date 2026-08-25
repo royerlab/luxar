@@ -14,12 +14,13 @@ from pathlib import Path
 import pytest
 
 from luxar._zarr_compat import consolidate, open_group
-from luxar.utils.demos import (
+from luxar.utils.flags import parse_demo_flags
+from luxar.utils.provenance import (
     BUILDER_FINGERPRINT_ATTR,
     demo_source_fingerprint,
-    parse_demo_flags,
     scene_is_current,
 )
+from luxar.utils.source_fingerprints import production_source_fingerprint
 
 
 def _write_scene(path: Path, fingerprint: str | None, *, finished: bool = True) -> Path:
@@ -53,6 +54,82 @@ def test_fingerprint_changes_when_the_source_changes(tmp_path: Path) -> None:
     before = demo_source_fingerprint(source)
     source.write_text("LINE_OPACITY = 0.77\n")
     assert demo_source_fingerprint(source) != before
+
+
+def test_fingerprint_changes_when_production_writer_changes(tmp_path: Path) -> None:
+    package_root = tmp_path / "luxar"
+    source = package_root / "demos/demo_thing.py"
+    writer = package_root / "encoding/writer.py"
+    source.parent.mkdir(parents=True)
+    writer.parent.mkdir(parents=True)
+    source.write_text("LINE_OPACITY = 0.95\n")
+    writer.write_text("ENCODING_VERSION = 1\n")
+
+    production_source_fingerprint.cache_clear()
+    before = demo_source_fingerprint(source, package_root=package_root)
+    writer.write_text("ENCODING_VERSION = 2\n")
+    production_source_fingerprint.cache_clear()
+
+    assert demo_source_fingerprint(source, package_root=package_root) != before
+
+
+def test_production_fingerprint_is_cached_across_demos(tmp_path: Path) -> None:
+    package_root = tmp_path / "luxar"
+    writer = package_root / "encoding/writer.py"
+    writer.parent.mkdir(parents=True)
+    writer.write_text("ENCODING_VERSION = 1\n")
+
+    production_source_fingerprint.cache_clear()
+    first = production_source_fingerprint(package_root)
+    second = production_source_fingerprint(package_root)
+
+    assert second == first
+    assert production_source_fingerprint.cache_info().hits == 1
+    assert production_source_fingerprint.cache_info().misses == 1
+
+
+def test_production_fingerprint_excludes_test_only_sources(tmp_path: Path) -> None:
+    package_root = tmp_path / "luxar"
+    writer = package_root / "encoding/writer.py"
+    test = package_root / "encoding/tests/test_writer.py"
+    conftest = package_root / "conftest.py"
+    writer.parent.mkdir(parents=True)
+    test.parent.mkdir(parents=True)
+    writer.write_text("ENCODING_VERSION = 1\n")
+    test.write_text("def test_writer(): pass\n")
+    conftest.write_text("PYTEST_ONLY = 1\n")
+
+    production_source_fingerprint.cache_clear()
+    before = production_source_fingerprint(package_root)
+    test.write_text("def test_writer(): assert False\n")
+    conftest.write_text("PYTEST_ONLY = 2\n")
+    production_source_fingerprint.cache_clear()
+
+    assert production_source_fingerprint(package_root) == before
+
+
+def test_missing_production_tree_has_no_fingerprint(tmp_path: Path) -> None:
+    production_source_fingerprint.cache_clear()
+    assert production_source_fingerprint(tmp_path / "missing") == ""
+
+
+def test_fingerprint_changes_with_zarr_format_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package_root = tmp_path / "luxar"
+    source = package_root / "demos/demo_thing.py"
+    writer = package_root / "encoding/writer.py"
+    source.parent.mkdir(parents=True)
+    writer.parent.mkdir(parents=True)
+    source.write_text("LINE_OPACITY = 0.95\n")
+    writer.write_text("ENCODING_VERSION = 1\n")
+
+    monkeypatch.delenv("LUXAR_ZARR_FORMAT", raising=False)
+    production_source_fingerprint.cache_clear()
+    before = demo_source_fingerprint(source, package_root=package_root)
+    monkeypatch.setenv("LUXAR_ZARR_FORMAT", "2")
+
+    assert demo_source_fingerprint(source, package_root=package_root) != before
 
 
 def test_fingerprint_of_an_unreadable_source_is_empty(tmp_path: Path) -> None:

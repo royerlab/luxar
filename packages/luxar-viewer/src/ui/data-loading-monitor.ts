@@ -21,20 +21,25 @@ import type {
   CacheTelemetryState,
   SceneGraphNode,
   SceneGraphState,
-  GeometryCounters,
   LODProgressProvider,
-  LODProgressState,
   DrawOrderProvider,
-  NodeDrawOrder,
+  MemoryMetrics,
 } from '../types/data-monitor-types';
 
 import { aggregateCacheMetrics } from './data-loading-monitor/metrics/cache';
+import { aggregateGlobalStats } from './data-loading-monitor/metrics/global-stats';
+import { aggregateMemoryMetrics } from './data-loading-monitor/metrics/memory';
 import { calculateRates } from './data-loading-monitor/metrics/rates';
+import { createCacheActions } from './data-loading-monitor/cache-actions';
 import { updateCacheTab } from './data-loading-monitor/tabs/cache';
-import { patchField, updateColorClass } from './data-loading-monitor/tabs/dom-helpers';
+import { updateMemoryTab } from './data-loading-monitor/tabs/memory';
+import { updateOverviewTab } from './data-loading-monitor/tabs/overview';
 import { LoadingAdvisor } from './data-loading-monitor/advisor';
 import { EventQueue } from './data-loading-monitor/event-queue';
 import { PollingLoop } from './data-loading-monitor/polling-loop';
+import { MonitorProviderRegistry } from './data-loading-monitor/providers';
+import { SceneGraphModel } from './data-loading-monitor/scene-graph-model';
+import { updateSceneGraphBadges } from './data-loading-monitor/tabs/scene-graph-badges';
 import { log, Modules } from '../utils/log';
 import { config } from '../config';
 import { notifier } from '../utils/cross-layer/notifier';
@@ -57,28 +62,16 @@ import {
   renderLoaderItem,
   renderOverviewContent,
   renderFailedLoadsBanner,
-  renderCacheContent,
-  renderMemoryContent,
-  renderInsightsContent,
-  renderSceneGraphTree,
-  summariseLodStates,
-  lodChipContent,
-  drawOrderChipContent,
-  nodeStatsContent,
-  countAdditiveNodes,
-  levelRoleTitleSuffix,
-  activeLevelRole,
+} from './data-loading-monitor/templates/overview';
+import { renderCacheContent, CACHE_SECTION_KEYS } from './data-loading-monitor/templates/cache';
+import { renderMemoryContent } from './data-loading-monitor/templates/memory';
+import { renderInsightsContent } from './data-loading-monitor/templates/insights';
+import { renderSceneGraphTree } from './data-loading-monitor/templates/scene-graph';
+import {
   formatNumber as templateFormatNumber,
   formatBytes as templateFormatBytes,
-  getColorClass,
-  getCacheMemoryColorClass,
-  calculateReuseRate,
-  getReuseRateColorClass,
-  CACHE_SECTION_KEYS,
-  MONITOR_ICONS,
-  countColorClass,
-  type MemoryMetrics,
-} from './data-loading-monitor/templates';
+} from './data-loading-monitor/templates/format';
+import { MONITOR_ICONS } from './data-loading-monitor/templates/primitives';
 
 import {
   renderHierarchicalTimingPanel,
@@ -90,93 +83,8 @@ import type { UpdateProfiler } from '../profiling/update-profiler';
 // A session whose SortWorker never came up draws every order-dependent
 // layer in storage order; without this the only trace is one console error.
 import { isDepthSortAvailable } from '../rendering/depth-sort-coordinator';
-import { POOLED_GEOMETRY_TYPES } from '../types/data-monitor-types';
 import type { PooledGeometryType, AccumulatorProvider } from '../types/data-monitor-types';
-import { GEOMETRY_TYPES, type GeometryTypeName } from '../types/format-contract';
-
-/** Empty accumulator slots — one per {@link POOLED_GEOMETRY_TYPES} entry. */
-function emptyAccumulatorSlots(): Record<PooledGeometryType, AccumulatorProvider | null> {
-  return Object.fromEntries(POOLED_GEOMETRY_TYPES.map((t) => [t, null])) as Record<
-    PooledGeometryType,
-    AccumulatorProvider | null
-  >;
-}
-
-/**
- * A fresh all-zero per-type counter record, one slot per geometry type.
- *
- * Written as a plain loop, not `Object.fromEntries(GEOMETRY_TYPES.map(...))`:
- * `calculateSceneGraphStats` calls this twice per scene-graph node, and the
- * `fromEntries` form allocates an intermediate array of `[key, 0]` pairs on every
- * call. Measured on a 5000-node tree that shape cost ~6-10 ms per
- * `setSceneGraph` against ~0.4-1.3 ms for the loop — a 5-15x difference for no
- * behavioural gain.
- */
-function zeroCounters(): GeometryCounters {
-  const counters = {} as GeometryCounters;
-  for (const t of GEOMETRY_TYPES) counters[t] = 0;
-  return counters;
-}
-
-/** The empty scene-graph state (no scene loaded / scene torn down). */
-function emptySceneGraphState(): SceneGraphState {
-  return {
-    root: null,
-    totalNodes: 0,
-    nodesByType: zeroCounters(),
-    totalByType: zeroCounters(),
-    visibleByType: zeroCounters(),
-  };
-}
-
-/**
- * This node's own element count for `type`, or 0 when it is not that type.
- *
- * The per-type count fields are named after each type's ELEMENT (points have
- * points, lines have segments, gsplats have splats), so a table cannot key them
- * by type name. The `never` tail makes adding a geometry type a compile error
- * here — a plain `return 0` would leave the new type's elements out of every
- * dataset total with nothing to explain why.
- *
- * The tail still returns 0 rather than the unhandled value: breaking at compile
- * time is the point, but at runtime a count must stay a number (returning the
- * type string would poison every total it is summed into).
- *
- * The integer check and not `?? 0` / `|| 0`: these counts are read
- * straight off zarr `.zattrs` with a bare cast (`scene-graph-converter.ts`), so
- * a hand-edited or third-party store can put anything there. `?? 0` would let
- * `NaN` through and turn the whole HUD into `NaN`; `|| 0` would still admit
- * truthy non-numbers (`'1000'` string-concatenates into every downstream sum),
- * `Infinity`, and impossible negative or fractional "counts". Only a
- * non-negative integer may enter the totals.
- */
-function elementCountOf(node: SceneGraphNode, type: GeometryTypeName): number {
-  if (node.type !== type) return 0;
-  let count: number | undefined;
-  switch (type) {
-    case 'points':
-      count = node.pointCount;
-      break;
-    case 'lines':
-      count = node.segmentCount;
-      break;
-    case 'gsplats':
-      count = node.splatCount;
-      break;
-    case 'mesh':
-      // Faces, matching the drawn-primitive convention above (`lines` counts
-      // segments, not vertices, for the same reason). Populated by
-      // `scene-graph-converter.ts` from the node's `n_faces` attr now that the mesh
-      // loader has landed; still optional, so a store omitting the attr reads as 0
-      // via the integer check below rather than NaN.
-      count = node.faceCount;
-      break;
-    default:
-      void (type satisfies never);
-      return 0;
-  }
-  return typeof count === 'number' && Number.isInteger(count) && count >= 0 ? count : 0;
-}
+import type { GeometryTypeName } from '../types/format-contract';
 
 /**
  * Main Data Loading Monitor class
@@ -228,57 +136,20 @@ export class DataLoadingMonitor {
   // UI event handler bound to this instance
   private uiEventHandler = this.handleUIEvent.bind(this);
 
-  // Cache stats provider for L1/L2 cache metrics
-  private cacheStatsProvider: CacheStatsProvider | null = null;
+  private readonly providers = new MonitorProviderRegistry(() => {
+    this.structureDirty = true;
+  });
+  private readonly cacheActions = createCacheActions(this.providers, () => this.updateUI());
+  private readonly sceneGraphModel = new SceneGraphModel(() => {
+    this.structureDirty = true;
+  });
 
-  // L0 decompressed chunk cache provider
-  private l0CacheProvider: { getStats: () => CacheMetrics['l0']; clear: () => void } | null = null;
-  private sliceCacheProvider: { getStats: () => CacheMetrics['slice']; clear: () => void } | null =
-    null;
-
-  // Explicit cache telemetry state (set by SceneLoader.cache-setup).
-  // Pre-wiring this defaults to undefined so the aggregator falls back
-  // to provider-presence inference; once setCacheTelemetryState() is
-  // called, the explicit state wins.
-  private cacheTelemetryState: CacheTelemetryState | undefined;
-
-  // GPU buffer pool reference for dynamic stats retrieval
-  private gpuBufferPoolProvider: { getStats: () => MemoryMetrics['gpuPool'] } | null = null;
-
-  // Update profiler reference for hierarchical timing display
-  private profiler: UpdateProfiler | null = null;
-
-  // Live LOD / progressive-refinement / cache-residency state provider.
-  // Polled each tick; the snapshot drives the scene-graph tree's kind
-  // badges, "LOD x/N" chips, refining indicator, and header summary.
-  private lodProgressProvider: LODProgressProvider | null = null;
-  /** Failed-load records + retry-all, from the SceneLoader (overview banner). */
-  private failedLoadsProvider: FailedLoadsProviderPort | null = null;
   /** In-flight guard so the banner's Retry button can't stack batches. */
   private retryFailedLoadsInFlight = false;
   /** Last-rendered failed-loads state; a change marks the overview structure dirty. */
   private lastFailedLoadsSignature = '';
-  private lodStates: Map<string, LODProgressState> = new Map();
-  /** Per-path visible counts pushed by the SceneLoader's visible-counts walk. */
-  private visibleCountsByPath: ReadonlyMap<string, number> = new Map();
-  // Live per-mesh draw-order provider (blending bucket / depthWrite /
-  // renderOrder). Polled each tick — renderOrder is camera-dependent — to
-  // drive the scene-graph tree's draw-order chip.
-  private drawOrderProvider: DrawOrderProvider | null = null;
-  private drawOrderStates: Map<string, NodeDrawOrder> = new Map();
-
-  // Accumulator providers for dynamic stats retrieval
-  private accumulatorProviders: Record<PooledGeometryType, AccumulatorProvider | null> =
-    emptyAccumulatorSlots();
-
   // DOM element references for efficient updates (avoids full innerHTML replacement)
   private contentContainer: HTMLElement | null = null;
-
-  // Scene graph state
-  private sceneGraphState: SceneGraphState = emptySceneGraphState();
-
-  // Track expanded nodes in scene graph tree (by path)
-  private expandedNodes = new Set<string>(['/']);
 
   // Cache-tab sections currently collapsed to their compact one-line
   // summary. All sections start collapsed — 4 stacked full sections
@@ -291,13 +162,6 @@ export class DataLoadingMonitor {
   // rebuilds (scene-tree toggles, failed-loads banner), which would replay
   // the staggered reveal as visible flicker.
   private animateNextBuild = false;
-
-  // Memoized path→node index over the current scene-graph tree, rebuilt
-  // only when the root reference changes (a wholesale `setSceneGraph`).
-  // Makes per-frame LOD-chip patching O(1) per chip instead of a full DFS
-  // per chip (previously O(chips × nodes)).
-  private sceneGraphNodeIndex = new Map<string, SceneGraphNode>();
-  private sceneGraphNodeIndexRoot: SceneGraphNode | null = null;
 
   // Flag to force a full DOM rebuild on next update (set by structural changes like
   // tree node toggle, scene graph mutation). Cleared after rebuild.
@@ -402,10 +266,7 @@ export class DataLoadingMonitor {
    * (count/paths + retry-all; see `FailedLoadsProviderPort`).
    */
   public setFailedLoadsProvider(provider: FailedLoadsProviderPort | null): void {
-    this.failedLoadsProvider = provider;
-    if (provider) {
-      log.info(Modules.DATA_MONITOR, 'Failed-loads provider connected');
-    }
+    this.providers.setFailedLoadsProvider(provider);
   }
 
   /**
@@ -413,10 +274,7 @@ export class DataLoadingMonitor {
    * This enables the monitor to display actual cache statistics.
    */
   public setCacheStatsProvider(provider: CacheStatsProvider | null): void {
-    this.cacheStatsProvider = provider;
-    if (provider) {
-      log.info(Modules.DATA_MONITOR, 'Cache stats provider connected');
-    }
+    this.providers.setCacheStatsProvider(provider);
   }
 
   /**
@@ -428,10 +286,7 @@ export class DataLoadingMonitor {
    * as `not-wired`.
    */
   public setCacheTelemetryState(state: CacheTelemetryState): void {
-    this.cacheTelemetryState = state;
-    log.info(Modules.DATA_MONITOR, `Cache telemetry state: ${state.kind}`);
-    // Cache tab structure may change between disabled/enabled states.
-    this.structureDirty = true;
+    this.providers.setCacheTelemetryState(state);
   }
 
   /**
@@ -441,10 +296,7 @@ export class DataLoadingMonitor {
   public setL0CacheProvider(
     provider: { getStats: () => CacheMetrics['l0']; clear: () => void } | null
   ): void {
-    this.l0CacheProvider = provider;
-    if (provider) {
-      log.info(Modules.DATA_MONITOR, 'L0 cache provider connected');
-    }
+    this.providers.setL0CacheProvider(provider);
   }
 
   /**
@@ -454,10 +306,7 @@ export class DataLoadingMonitor {
   public setSliceCacheProvider(
     provider: { getStats: () => CacheMetrics['slice']; clear: () => void } | null
   ): void {
-    this.sliceCacheProvider = provider;
-    if (provider) {
-      log.info(Modules.DATA_MONITOR, 'SliceCache provider connected');
-    }
+    this.providers.setSliceCacheProvider(provider);
   }
 
   /**
@@ -467,13 +316,7 @@ export class DataLoadingMonitor {
   public setGPUBufferPoolProvider(
     provider: { getStats: () => MemoryMetrics['gpuPool'] } | null
   ): void {
-    this.gpuBufferPoolProvider = provider;
-    if (provider) {
-      log.info(Modules.DATA_MONITOR, 'GPU buffer pool provider connected');
-      // Provider availability changes the memory tab structure
-      // (from "Not initialized" to full table)
-      this.structureDirty = true;
-    }
+    this.providers.setGPUBufferPoolProvider(provider);
   }
 
   /**
@@ -481,12 +324,7 @@ export class DataLoadingMonitor {
    * The profiler tracks hierarchical timing of scene updates.
    */
   public setProfiler(profiler: UpdateProfiler | null): void {
-    this.profiler = profiler;
-    if (profiler) {
-      log.info(Modules.DATA_MONITOR, 'Update profiler connected');
-      // Profiler availability changes the performance tab structure
-      this.structureDirty = true;
-    }
+    this.providers.setProfiler(profiler);
   }
 
   /**
@@ -495,13 +333,7 @@ export class DataLoadingMonitor {
    * marks the structure dirty so the tree re-renders with chip slots.
    */
   public setLODProgressProvider(provider: LODProgressProvider | null): void {
-    this.lodProgressProvider = provider;
-    if (provider) {
-      log.info(Modules.DATA_MONITOR, 'LOD progress provider connected');
-      this.structureDirty = true;
-    } else {
-      this.lodStates = new Map();
-    }
+    this.providers.setLODProgressProvider(provider);
   }
 
   /**
@@ -511,28 +343,19 @@ export class DataLoadingMonitor {
    * with the draw-order chip slot.
    */
   public setDrawOrderProvider(provider: DrawOrderProvider | null): void {
-    this.drawOrderProvider = provider;
-    if (provider) {
-      log.info(Modules.DATA_MONITOR, 'Draw-order provider connected');
-      this.structureDirty = true;
-    } else {
-      this.drawOrderStates = new Map();
-    }
+    this.providers.setDrawOrderProvider(provider);
   }
 
   /**
    * Set an accumulator provider for Memory tab stats.
-   * @param type - Which accumulator, one of {@link POOLED_GEOMETRY_TYPES}
+   * @param type - Which accumulator, one of `POOLED_GEOMETRY_TYPES`
    * @param provider - The accumulator with a getStats() method
    */
   public setAccumulatorProvider(
     type: PooledGeometryType,
     provider: AccumulatorProvider | null
   ): void {
-    this.accumulatorProviders[type] = provider;
-    if (provider) {
-      log.info(Modules.DATA_MONITOR, `${type} accumulator provider connected`);
-    }
+    this.providers.setAccumulatorProvider(type, provider);
   }
 
   /**
@@ -548,24 +371,7 @@ export class DataLoadingMonitor {
    * stale closures live until tab close.
    */
   public resetSceneProviders(): void {
-    this.cacheStatsProvider = null;
-    this.l0CacheProvider = null;
-    this.sliceCacheProvider = null;
-    this.gpuBufferPoolProvider = null;
-    this.accumulatorProviders = emptyAccumulatorSlots();
-    this.profiler = null;
-    this.lodProgressProvider = null;
-    this.failedLoadsProvider = null;
-    this.lodStates = new Map();
-    this.drawOrderProvider = null;
-    this.drawOrderStates = new Map();
-    // Reset to undefined (not 'not-wired') so the next scene's
-    // setCacheTelemetryState call lands cleanly. If the next setup
-    // doesn't call the setter, the aggregator falls back to
-    // provider-presence inference.
-    this.cacheTelemetryState = undefined;
-    this.structureDirty = true;
-    log.info(Modules.DATA_MONITOR, 'Scene providers reset');
+    this.providers.resetSceneProviders();
   }
 
   /**
@@ -581,44 +387,29 @@ export class DataLoadingMonitor {
    * collapsed tree (the root '/' marker preserves the previous default).
    */
   private resetSceneGraphState(): void {
-    this.sceneGraphState = emptySceneGraphState();
-    this.expandedNodes = new Set<string>(['/']);
-    this.visibleCountsByPath = new Map();
-    this.drawOrderStates = new Map();
-    this.structureDirty = true;
+    this.sceneGraphModel.resetSceneGraphState();
+    this.providers.clearDrawOrderStates();
   }
 
   /**
    * Clear L0 decompressed chunk cache.
    */
   public clearL0Cache(): void {
-    if (this.l0CacheProvider) {
-      this.l0CacheProvider.clear();
-      log.info(Modules.DATA_MONITOR, 'L0 cache cleared');
-      this.updateUI();
-    }
+    this.cacheActions.clearL0Cache();
   }
 
   /**
    * Clear the SliceCache ("S-cache").
    */
   public clearSliceCache(): void {
-    if (this.sliceCacheProvider) {
-      this.sliceCacheProvider.clear();
-      log.info(Modules.DATA_MONITOR, 'SliceCache cleared');
-      this.updateUI();
-    }
+    this.cacheActions.clearSliceCache();
   }
 
   /**
    * Clear L1 memory cache.
    */
   public clearL1Cache(): void {
-    if (this.cacheStatsProvider) {
-      this.cacheStatsProvider.clearL1();
-      log.info(Modules.DATA_MONITOR, 'L1 cache cleared');
-      this.updateUI();
-    }
+    this.cacheActions.clearL1Cache();
   }
 
   /**
@@ -629,20 +420,7 @@ export class DataLoadingMonitor {
    * confirmed intent.
    */
   public async clearL2Cache(opts?: { skipConfirm?: boolean }): Promise<void> {
-    if (!this.cacheStatsProvider) return;
-    if (!opts?.skipConfirm && !this.confirmDestructiveCacheAction('Clear L2 (persistent) cache?')) {
-      return;
-    }
-    const sizeBefore = this.cacheStatsProvider.getStats().l2.size;
-    await this.cacheStatsProvider.clearL2();
-    log.info(Modules.DATA_MONITOR, 'L2 cache cleared');
-    if (sizeBefore > 0) {
-      const mb = (sizeBefore / 1024 / 1024).toFixed(1);
-      notifier.toast(`L2 cache cleared (${mb} MB freed)`);
-    } else {
-      notifier.toast('L2 cache cleared');
-    }
-    this.updateUI();
+    await this.cacheActions.clearL2Cache(opts);
   }
 
   /**
@@ -650,37 +428,7 @@ export class DataLoadingMonitor {
    * skipped via `{ skipConfirm: true }`.
    */
   public async clearAllCaches(opts?: { skipConfirm?: boolean }): Promise<void> {
-    if (
-      !opts?.skipConfirm &&
-      !this.confirmDestructiveCacheAction('Clear ALL caches (L0 + L1 + L2)?')
-    ) {
-      return;
-    }
-    // Clear L0 + SliceCache first (synchronous)
-    if (this.l0CacheProvider) {
-      this.l0CacheProvider.clear();
-    }
-    if (this.sliceCacheProvider) {
-      this.sliceCacheProvider.clear();
-    }
-    // Clear L1 + L2 (L2 is async)
-    if (this.cacheStatsProvider) {
-      await this.cacheStatsProvider.clearAll();
-    }
-    log.info(Modules.DATA_MONITOR, 'All caches cleared (S-cache + L0 + L1 + L2)');
-    notifier.toast('All caches cleared');
-    this.updateUI();
-  }
-
-  /**
-   * Show a confirmation dialog for destructive cache actions. Falls
-   * back to `true` if `window.confirm` is unavailable (jsdom test env).
-   */
-  private confirmDestructiveCacheAction(message: string): boolean {
-    if (typeof window === 'undefined' || typeof window.confirm !== 'function') {
-      return true;
-    }
-    return window.confirm(message);
+    await this.cacheActions.clearAllCaches(opts);
   }
 
   /**
@@ -688,18 +436,12 @@ export class DataLoadingMonitor {
    * Called by SceneLoader after loading scene.
    */
   public setSceneGraph(root: SceneGraphNode): void {
-    // Calculate stats from scene graph
-    const stats = this.calculateSceneGraphStats(root);
-    this.sceneGraphState = {
-      root,
-      ...stats,
-    };
+    this.sceneGraphModel.setSceneGraph(root);
+    const stats = this.sceneGraphModel.getSceneGraph();
     log.info(
       Modules.DATA_MONITOR,
       `Scene graph updated: ${stats.totalNodes} nodes, ${stats.totalByType.points} points, ${stats.totalByType.lines} segments`
     );
-    // Scene graph structure changed — need full rebuild on next update
-    this.structureDirty = true;
     if (this.uiState.isVisible) {
       this.updateUI();
     }
@@ -709,19 +451,14 @@ export class DataLoadingMonitor {
    * Get current scene graph state.
    */
   public getSceneGraph(): SceneGraphState {
-    return this.sceneGraphState;
+    return this.sceneGraphModel.getSceneGraph();
   }
 
   /**
    * Toggle expansion state of a node in the scene graph tree.
    */
   public toggleNodeExpansion(path: string): void {
-    if (this.expandedNodes.has(path)) {
-      this.expandedNodes.delete(path);
-    } else {
-      this.expandedNodes.add(path);
-    }
-    this.structureDirty = true;
+    this.sceneGraphModel.toggleNodeExpansion(path);
     this.updateUI();
   }
 
@@ -729,48 +466,7 @@ export class DataLoadingMonitor {
    * Check if a node is expanded in the tree view.
    */
   public isNodeExpanded(path: string): boolean {
-    return this.expandedNodes.has(path);
-  }
-
-  /**
-   * Calculate statistics from scene graph tree.
-   */
-  private calculateSceneGraphStats(node: SceneGraphNode): Omit<SceneGraphState, 'root'> {
-    let totalNodes = 1;
-    const nodesByType = zeroCounters();
-    const totalByType = zeroCounters();
-    for (const t of GEOMETRY_TYPES) {
-      if (node.type === t) nodesByType[t] = 1;
-      totalByType[t] = elementCountOf(node, t);
-    }
-
-    const childStats = node.children.map((child) => this.calculateSceneGraphStats(child));
-
-    // Structural counters (node + per-type node counts) always reflect the
-    // real tree — a kind=lod group genuinely contains K child nodes.
-    for (const cs of childStats) {
-      totalNodes += cs.totalNodes;
-      for (const t of GEOMETRY_TYPES) nodesByType[t] += cs.nodesByType[t];
-    }
-
-    // Geometry TOTALS: a substitutive kind=lod group's children are
-    // mutually-exclusive representations of the SAME data at different
-    // resolutions — summing them would inflate the dataset total ~K×. Use
-    // the finest level (the last child; the Python writer guarantees
-    // coarsest→finest order, see load-lod-group-node.ts) so the total
-    // reflects true full-detail size. Partition parts are disjoint and
-    // additive children are skipped from the scene graph, so both keep the
-    // straight sum.
-    const contributing =
-      node.kind === 'lod' && childStats.length > 0
-        ? [childStats[childStats.length - 1]]
-        : childStats;
-    for (const cs of contributing) {
-      for (const t of GEOMETRY_TYPES) totalByType[t] += cs.totalByType[t];
-    }
-
-    // Initialize visible counts to totals (will be updated by scene loader)
-    return { totalNodes, nodesByType, totalByType, visibleByType: { ...totalByType } };
+    return this.sceneGraphModel.isNodeExpanded(path);
   }
 
   /**
@@ -783,7 +479,7 @@ export class DataLoadingMonitor {
    * identical apart from the field each wrote.
    */
   public updateVisibleCount(type: GeometryTypeName, count: number): void {
-    this.sceneGraphState.visibleByType[type] = count;
+    this.sceneGraphModel.updateVisibleCount(type, count);
   }
 
   /**
@@ -791,12 +487,13 @@ export class DataLoadingMonitor {
    * Pushed by the SceneLoader's visible-counts walk (only rendered meshes
    * contribute). Merged into the tree nodes so badge tooltips can show
    * "(N visible after slicing)" per layer; the merge happens in
-   * `updateSceneGraphBadges` on the next poll tick. Nodes whose path is
-   * absent from the latest map (the walk prunes non-visible subtrees)
-   * have their count cleared so tooltips never show a stale number.
+   * `SceneGraphModel.syncVisibleCountsIntoTree()`, run on the poll tick
+   * immediately before the incremental badge patch. Nodes whose path is
+   * absent from the latest map (the walk prunes non-visible subtrees) have
+   * their count cleared so tooltips never show a stale number.
    */
   public updateVisibleCountsByPath(counts: ReadonlyMap<string, number>): void {
-    this.visibleCountsByPath = counts;
+    this.sceneGraphModel.updateVisibleCountsByPath(counts);
   }
 
   /**
@@ -823,14 +520,8 @@ export class DataLoadingMonitor {
       this.lastEventCleanup = now;
     }
 
-    // 3. Refresh the live LOD / refinement / residency snapshot so the
-    // scene-graph tree's chips and header summary reflect this frame.
-    if (this.lodProgressProvider) {
-      this.lodStates = this.lodProgressProvider.getLODStates();
-    }
-    if (this.drawOrderProvider) {
-      this.drawOrderStates = this.drawOrderProvider.getDrawOrderStates();
-    }
+    // 3. Refresh the live LOD / refinement / residency and draw-order snapshots.
+    this.providers.refreshLiveSnapshots();
 
     // 4. Update UI (this also pulls fresh stats from providers)
     this.updateUI();
@@ -1340,7 +1031,7 @@ export class DataLoadingMonitor {
     // retry-in-flight flag must mark the structure dirty, or the banner
     // appears/disappears/disables only on the next unrelated rebuild.
     const failedLoadsSignature =
-      (this.failedLoadsProvider?.getFailedPaths() ?? []).join('|') +
+      (this.providers.failedLoadsProvider?.getFailedPaths() ?? []).join('|') +
       (this.retryFailedLoadsInFlight ? '#retrying' : '');
     if (failedLoadsSignature !== this.lastFailedLoadsSignature) {
       this.lastFailedLoadsSignature = failedLoadsSignature;
@@ -1381,10 +1072,10 @@ export class DataLoadingMonitor {
           updated = this.updateMemoryTabValues();
           break;
         case 'performance':
-          if (this.profiler) {
-            const timingData = this.profiler.getTimings();
-            const refinementData = this.profiler.getRefinementTimings();
-            const depthSortData = this.profiler.getDepthSortTimings();
+          if (this.providers.profiler) {
+            const timingData = this.providers.profiler.getTimings();
+            const refinementData = this.providers.profiler.getRefinementTimings();
+            const depthSortData = this.providers.profiler.getDepthSortTimings();
             if (timingData.count > 0 || refinementData.count > 0 || depthSortData.count > 0) {
               updated = updateTimingPanelValues(
                 this.contentContainer,
@@ -1421,237 +1112,25 @@ export class DataLoadingMonitor {
   // ─── Per-tab incremental value update functions ───────────────────────
 
   /**
-   * Helper: update a single element's textContent by data-field
-   * attribute. Delegates to the shared DOM helper module so per-tab
-   * updaters use the same patch contract.
-   */
-  private patchField(field: string, text: string): boolean {
-    return patchField(this.contentContainer, field, text);
-  }
-
-  /**
    * Incrementally update overview tab values without rebuilding DOM.
    * Updates primary metric cards, secondary metrics, and scene graph badges.
    */
   private updateOverviewTabValues(): boolean {
-    if (!this.contentContainer) return false;
-
-    const stats = this.getGlobalStats();
-    const cacheMetrics = this.getCacheMetrics();
-
-    // Update primary metric card values
-    const hasPoints = stats.datasetSize > 0 || stats.visiblePoints > 0;
-    const hasLines = stats.datasetSegments > 0 || stats.visibleSegments > 0;
-    const hasGSplats = stats.datasetSplats > 0 || stats.visibleSplats > 0;
-
-    // Check at least one primary metric exists in DOM (structure validation)
-    const anyPrimaryField =
-      this.contentContainer.querySelector('[data-field="visible-points"]') ||
-      this.contentContainer.querySelector('[data-field="visible-lines"]') ||
-      this.contentContainer.querySelector('[data-field="visible-splats"]');
-    if (!anyPrimaryField) return false; // Structure not built yet
-
-    // Single-type layouts use " total" suffix in subtitle (matches template rendering)
-    const dataTypeCount = [hasPoints, hasLines, hasGSplats].filter(Boolean).length;
-    const suffix = dataTypeCount === 1 ? ' total' : '';
-
-    // Count cards: value text plus the state color (neutral with data,
-    // dimmed at zero — matches `countColorClass` in the initial render,
-    // so a card doesn't stay dimmed after points scroll into view).
-    const patchCount = (field: string, visible: number, dataset: number) => {
-      const pct = dataset > 0 ? ((visible / dataset) * 100).toFixed(1) : '0';
-      this.patchField(field, templateFormatNumber(visible));
-      this.patchField(`${field}-sub`, `${pct}% of ${templateFormatNumber(dataset)}${suffix}`);
-      const el = this.contentContainer?.querySelector(`[data-field="${field}"]`);
-      if (el) this.updateColorClass(el as HTMLElement, countColorClass(visible));
-    };
-    if (hasPoints) patchCount('visible-points', stats.visiblePoints, stats.datasetSize);
-    if (hasLines) patchCount('visible-lines', stats.visibleSegments, stats.datasetSegments);
-    if (hasGSplats) patchCount('visible-splats', stats.visibleSplats, stats.datasetSplats);
-
-    // Update secondary metrics
-    this.patchField('memory-used', templateFormatBytes(cacheMetrics.totalCacheMemory));
-    this.patchField('query-speed', `${stats.avgQueryTime.toFixed(0)}ms`);
-    this.patchField('query-rate', `${stats.queriesPerSecond.toFixed(1)}/sec`);
-    // "DATA LOADED" card: cumulative bytes delivered across all tiers
-    // (L1 + L2 + network), so it stays informative on a warm/cache-served
-    // reload where `bytesTransferred` is legitimately 0. The subtitle
-    // breaks out how much of that came over the network plus live bandwidth.
-    const net = cacheMetrics.network;
-    const dataLoaded = net ? (net.totalBytesServed ?? net.bytesTransferred) : 0;
-    this.patchField('network-bytes', net ? templateFormatBytes(dataLoaded) : '0B');
-    this.patchField(
-      'network-detail',
-      net
-        ? `${templateFormatBytes(net.bytesTransferred)} net · ${templateFormatBytes(net.bandwidth)}/s`
-        : '0B net'
-    );
-
-    // Update secondary metrics memory progress bar
-    const memoryPercent =
-      cacheMetrics.memoryLimit > 0
-        ? (cacheMetrics.totalCacheMemory / cacheMetrics.memoryLimit) * 100
-        : 0;
-    const overviewBarFill = this.contentContainer.querySelector(
-      '.luxar-secondary-metrics .luxar-progress-bar__fill'
-    ) as HTMLElement | null;
-    if (overviewBarFill) {
-      overviewBarFill.style.width = `${Math.min(100, memoryPercent)}%`;
-      this.updateColorClass(overviewBarFill, getCacheMemoryColorClass(memoryPercent));
-    }
-
-    // Update scene graph badges (by data-node-path)
-    this.updateSceneGraphBadges();
-
-    return true;
-  }
-
-  /**
-   * Update scene graph tree badge values without rebuilding the tree DOM.
-   */
-  private updateSceneGraphBadges(): void {
-    if (!this.contentContainer || !this.sceneGraphState.root) return;
-
-    // Merge the latest per-path visible counts into the tree nodes so the
-    // badge tooltips (via nodeStatsContent) reflect post-slicing visibility.
-    this.syncVisibleCountsIntoTree();
-
-    const badges = this.contentContainer.querySelectorAll(
-      '.luxar-scene-graph__badge[data-node-path]'
-    );
-    badges.forEach((badge) => {
-      const path = (badge as HTMLElement).dataset.nodePath;
-      if (!path) return;
-      const node = this.getSceneGraphNodeByPath(path);
-      if (!node) return;
-
-      // Same helper as the initial render so text + tooltip stay in sync.
-      const stats = nodeStatsContent(node);
-      if (stats) {
-        badge.textContent = stats.text;
-        (badge as HTMLElement).title = stats.title;
+    return updateOverviewTab(
+      this.contentContainer,
+      this.getGlobalStats(),
+      this.getCacheMetrics(),
+      () => {
+        // Badge tooltips read visible counts directly from the aliased tree nodes.
+        this.sceneGraphModel.syncVisibleCountsIntoTree();
+        updateSceneGraphBadges(
+          this.contentContainer!,
+          this.sceneGraphModel,
+          this.providers.lodStates,
+          this.providers.drawOrderStates
+        );
       }
-    });
-
-    // Patch live LOD chips (active level / loaded-of-total / refining) in
-    // place — these change every frame without altering tree structure.
-    const lodChips = this.contentContainer.querySelectorAll(
-      '.luxar-scene-graph__lod[data-lod-path]'
     );
-    lodChips.forEach((chip) => {
-      const path = (chip as HTMLElement).dataset.lodPath;
-      if (!path) return;
-      const node = this.getSceneGraphNodeByPath(path);
-      if (!node) return;
-      const content = lodChipContent(node, this.lodStates.get(path));
-      if (content) {
-        chip.textContent = content.text;
-        (chip as HTMLElement).title = content.title;
-      } else {
-        // Node no longer has LOD content (e.g. state vanished on reload):
-        // clear rather than leaving a stale value on screen.
-        chip.textContent = '';
-        (chip as HTMLElement).title = '';
-      }
-    });
-
-    // Patch live draw-order chips (bucket / depthWrite / renderOrder) in
-    // place — renderOrder is recomputed per frame from the camera pose.
-    const drawOrderChips = this.contentContainer.querySelectorAll(
-      '.luxar-scene-graph__draworder[data-draworder-path]'
-    );
-    drawOrderChips.forEach((chip) => {
-      const path = (chip as HTMLElement).dataset.draworderPath;
-      if (!path) return;
-      const content = drawOrderChipContent(this.drawOrderStates.get(path));
-      if (content) {
-        chip.textContent = content.text;
-        (chip as HTMLElement).title = content.title;
-      } else {
-        // No live mesh for this node right now (hidden layer / reload):
-        // clear rather than leaving a stale value on screen.
-        chip.textContent = '';
-        (chip as HTMLElement).title = '';
-      }
-    });
-
-    // Re-mark active/inactive substitutive-level rows: the LOD selector can
-    // switch levels between structural rebuilds, so classes + tooltips are
-    // patched each tick from the parent group's live state.
-    const levelRows = this.contentContainer.querySelectorAll(
-      '.luxar-scene-graph__node-row[data-level-of]'
-    );
-    levelRows.forEach((row) => {
-      const el = row as HTMLElement;
-      const parentPath = el.dataset.levelOf;
-      const indexRaw = el.dataset.levelIndex;
-      if (!parentPath || indexRaw === undefined) return;
-      // Same helper as the initial render so both derive the role identically.
-      const role = activeLevelRole(this.lodStates.get(parentPath), Number(indexRaw));
-      el.classList.toggle('luxar-scene-graph__node-row--active-level', role === 'active');
-      el.classList.toggle('luxar-scene-graph__node-row--inactive-level', role === 'inactive');
-      const baseTitle = el.dataset.baseTitle;
-      if (baseTitle !== undefined) {
-        el.title = `${baseTitle}${levelRoleTitleSuffix(role)}`;
-      }
-    });
-
-    // Refresh the header LOD/partition summary line.
-    const summaryEl = this.contentContainer.querySelector(
-      '[data-field="lod-summary"]'
-    ) as HTMLElement | null;
-    if (summaryEl) {
-      summaryEl.textContent = summariseLodStates(
-        this.lodStates,
-        countAdditiveNodes(this.sceneGraphState.root)
-      );
-    }
-  }
-
-  /**
-   * Sync the latest per-path visible counts (from the SceneLoader's
-   * visible-counts walk) onto every geometry node in the tree. The walk
-   * prunes non-visible subtrees, so a path ABSENT from the latest map
-   * (hidden layer, switched-away substitutive level) has its count reset
-   * to `undefined` — the tooltip then omits the "(N visible after
-   * slicing)" suffix (unknown) instead of showing a stale number.
-   */
-  private syncVisibleCountsIntoTree(): void {
-    const index = this.ensureSceneGraphNodeIndex();
-    if (!index) return;
-    for (const node of index.values()) {
-      const visible = this.visibleCountsByPath.get(node.path);
-      if (node.type === 'points') node.visiblePointCount = visible;
-      else if (node.type === 'lines') node.visibleSegmentCount = visible;
-      else if (node.type === 'gsplats') node.visibleSplatCount = visible;
-    }
-  }
-
-  /**
-   * Build (or reuse) the memoized path→node index for the current tree.
-   * Rebuilt only when the tree root reference changes (a wholesale
-   * `setSceneGraph`), so repeated per-frame lookups and full-tree sweeps
-   * are O(1)/O(N) rather than a fresh DFS each.
-   */
-  private ensureSceneGraphNodeIndex(): Map<string, SceneGraphNode> | null {
-    const root = this.sceneGraphState.root;
-    if (!root) return null;
-    if (this.sceneGraphNodeIndexRoot !== root) {
-      this.sceneGraphNodeIndex.clear();
-      const stack: SceneGraphNode[] = [root];
-      while (stack.length > 0) {
-        const node = stack.pop()!;
-        this.sceneGraphNodeIndex.set(node.path, node);
-        for (const child of node.children) stack.push(child);
-      }
-      this.sceneGraphNodeIndexRoot = root;
-    }
-    return this.sceneGraphNodeIndex;
-  }
-
-  /** Resolve a scene-graph node by path via the memoized path→node index. */
-  private getSceneGraphNodeByPath(path: string): SceneGraphNode | null {
-    return this.ensureSceneGraphNodeIndex()?.get(path) ?? null;
   }
 
   /**
@@ -1666,94 +1145,7 @@ export class DataLoadingMonitor {
    * Incrementally update memory tab values without rebuilding DOM.
    */
   private updateMemoryTabValues(): boolean {
-    if (!this.contentContainer) return false;
-
-    const metrics = this.getMemoryMetrics();
-
-    // Structure validation
-    if (!this.contentContainer.querySelector('[data-field="memory-total"]')) return false;
-
-    // GPU pool table
-    if (metrics.gpuPool) {
-      for (const type of POOLED_GEOMETRY_TYPES) {
-        const typeStats = metrics.gpuPool.byType[type];
-        const reuseRate = calculateReuseRate(typeStats.allocations, typeStats.reuses);
-        const hasData =
-          typeStats.allocations > 0 || typeStats.reuses > 0 || typeStats.activeBuffers > 0;
-
-        const reuseEl = this.contentContainer.querySelector(`[data-field="gpu-${type}-reuse"]`);
-        if (reuseEl) {
-          reuseEl.textContent = hasData ? `${reuseRate.toFixed(0)}%` : '—';
-          this.updateColorClass(
-            reuseEl as HTMLElement,
-            hasData ? getReuseRateColorClass(reuseRate) : getColorClass('dimmed')
-          );
-        }
-        this.patchField(`gpu-${type}-active`, hasData ? `${typeStats.activeBuffers}` : '—');
-        this.patchField(`gpu-${type}-pooled`, hasData ? `${typeStats.pooledBuffers}` : '—');
-        this.patchField(`gpu-${type}-allocs`, hasData ? `${typeStats.allocations}` : '—');
-      }
-      this.patchField(
-        'gpu-summary',
-        `Total: ${metrics.gpuPool.allocations} allocs · ${metrics.gpuPool.reuses} reuses · ${metrics.gpuPool.evictions} evicted`
-      );
-    }
-
-    // Accumulator table
-    for (const type of POOLED_GEOMETRY_TYPES) {
-      const stats = metrics.accumulators[type];
-      const hasData = stats !== null && stats.capacity > 0;
-
-      this.patchField(
-        `acc-${type}-capacity`,
-        hasData ? templateFormatNumber(stats!.capacity) : '—'
-      );
-      this.patchField(`acc-${type}-memory`, hasData ? `${stats!.memoryMB.toFixed(1)}MB` : '—');
-
-      const growsEl = this.contentContainer.querySelector(`[data-field="acc-${type}-grows"]`);
-      if (growsEl) {
-        growsEl.textContent = hasData ? `${stats!.growthEvents}` : '—';
-        // Update warning class for high growth events (clear when <= 5)
-        if (hasData && stats!.growthEvents > 5) {
-          this.updateColorClass(growsEl as HTMLElement, getColorClass('warning'));
-        } else {
-          this.updateColorClass(growsEl as HTMLElement, '');
-        }
-      }
-    }
-
-    // Accumulator summary
-    const totalAccMemory =
-      (metrics.accumulators.points?.memoryMB ?? 0) +
-      (metrics.accumulators.lines?.memoryMB ?? 0) +
-      (metrics.accumulators.gsplats?.memoryMB ?? 0);
-    const totalAccAllocs =
-      (metrics.accumulators.points?.allocations ?? 0) +
-      (metrics.accumulators.lines?.allocations ?? 0) +
-      (metrics.accumulators.gsplats?.allocations ?? 0);
-    this.patchField(
-      'acc-summary',
-      `Total: ${totalAccMemory.toFixed(1)}MB · ${totalAccAllocs} allocations`
-    );
-
-    // Overall total
-    const totalAllocations = metrics.gpuPool ? metrics.gpuPool.allocations : 0;
-    const totalReuses = metrics.gpuPool ? metrics.gpuPool.reuses : 0;
-    const overallReuseRate = calculateReuseRate(totalAllocations, totalReuses);
-    this.patchField(
-      'memory-total',
-      `${totalAllocations} allocs · ${overallReuseRate.toFixed(0)}% reuse · ${totalAccMemory.toFixed(1)}MB`
-    );
-
-    return true;
-  }
-
-  /**
-   * Update CSS color classes on an element, replacing any existing
-   * `luxar-color--*` class. Delegates to the shared DOM helper.
-   */
-  private updateColorClass(el: HTMLElement, newColorClass: string): void {
-    updateColorClass(el, newColorClass);
+    return updateMemoryTab(this.contentContainer, this.getMemoryMetrics());
   }
 
   /**
@@ -1845,7 +1237,7 @@ export class DataLoadingMonitor {
    * a batch is in flight and refreshes the banner on completion.
    */
   private retryFailedLoads(): void {
-    const provider = this.failedLoadsProvider;
+    const provider = this.providers.failedLoadsProvider;
     if (!provider || this.retryFailedLoadsInFlight) return;
     if (provider.getFailedPaths().length === 0) return;
 
@@ -1899,21 +1291,22 @@ export class DataLoadingMonitor {
 
     // Failed-load warning banner (with a Retry action) ahead of the metrics —
     // failures otherwise surface only as transient toasts.
-    const failedPaths = this.failedLoadsProvider?.getFailedPaths() ?? [];
+    const failedPaths = this.providers.failedLoadsProvider?.getFailedPaths() ?? [];
     const banner = renderFailedLoadsBanner(failedPaths, this.retryFailedLoadsInFlight);
 
     // Use the template function for the main content
     const content = banner + renderOverviewContent(stats, cacheMetrics);
 
     // Replace the loader list placeholder with scene graph tree (or compact loader list if no scene graph)
-    if (this.sceneGraphState.root) {
+    const sceneGraphState = this.sceneGraphModel.getSceneGraph();
+    if (sceneGraphState.root) {
       return content.replace(
         '<div id="loader-list-content"></div>',
         renderSceneGraphTree(
-          this.sceneGraphState,
-          this.expandedNodes,
-          this.lodStates,
-          this.drawOrderStates
+          sceneGraphState,
+          this.sceneGraphModel.expandedNodes,
+          this.providers.lodStates,
+          this.providers.drawOrderStates
         )
       );
     } else {
@@ -1948,12 +1341,7 @@ export class DataLoadingMonitor {
    * Get memory metrics from providers
    */
   private getMemoryMetrics(): MemoryMetrics {
-    return {
-      gpuPool: this.gpuBufferPoolProvider?.getStats() ?? null,
-      accumulators: Object.fromEntries(
-        POOLED_GEOMETRY_TYPES.map((t) => [t, this.accumulatorProviders[t]?.getStats() ?? null])
-      ) as MemoryMetrics['accumulators'],
-    };
+    return aggregateMemoryMetrics(this.providers);
   }
 
   /**
@@ -1961,7 +1349,7 @@ export class DataLoadingMonitor {
    */
   private renderPerformanceTab(): string {
     // Get timing data from profiler
-    const timingData = this.profiler?.getTimings();
+    const timingData = this.providers.profiler?.getTimings();
 
     if (!timingData) {
       return `
@@ -1979,8 +1367,8 @@ export class DataLoadingMonitor {
       <div class="luxar-performance-content">
         ${renderHierarchicalTimingPanel(
           timingData,
-          this.profiler?.getRefinementTimings(),
-          this.profiler?.getDepthSortTimings(),
+          this.providers.profiler?.getRefinementTimings(),
+          this.providers.profiler?.getDepthSortTimings(),
           !isDepthSortAvailable()
         )}
       </div>
@@ -1999,110 +1387,15 @@ export class DataLoadingMonitor {
    * Get global statistics
    */
   public getGlobalStats(): GlobalStats {
-    let totalElementsLoaded = 0;
-    let totalMemory = 0;
-    let totalQueries = 0;
-    let totalLoads = 0;
-    let totalQueryTime = 0;
-    let activeSpatial = 0;
-
-    // Per-loader metrics drive genuine per-loader throughput only
-    // (cumulative loaded, memory, query stats). Dataset totals and visible
-    // counts are sourced from the scene graph below — symmetric across all
-    // four geometry types. Progressive multi-LOD nodes connect as a single
-    // loader (their adapter re-paths inner events to the node path), so each
-    // node contributes exactly one entry here — no per-LOD double-counting.
-    const isSpatialType = (t: string | undefined): boolean =>
-      t === 'point-spatial-index' || t === 'lines-spatial-index' || t === 'gsplats-spatial-index';
-
-    for (const metrics of this.metrics.values()) {
-      totalElementsLoaded += metrics.elementsLoaded;
-      totalMemory += metrics.memoryUsed;
-      totalQueries += metrics.queries;
-      totalLoads += metrics.loads;
-      totalQueryTime += metrics.avgQueryTime * metrics.queries;
-
-      if (isSpatialType(metrics.type)) {
-        activeSpatial++;
-      }
-    }
-
-    // Substitutive kind=lod groups connect one loader per leaf level (eager
-    // AND lazy levels are cheap-attached + connected up front, each reporting
-    // a `*-spatial-index` metric), but only one level renders at a time.
-    // Collapse each group's loaders to a single logical layer so the headline
-    // counts don't read K× too high. The excess is derived from the loaders
-    // *actually present under each group path* — not from the LOD level count
-    // — so a level that is itself a multi-leaf subtree (>1 loader per level)
-    // is collapsed correctly rather than under-subtracted. Child loaders are
-    // registered at scene-graph paths nested under the group path. Excess is 0
-    // unless the provider reports kind=lod groups, so plain scenes are
-    // unaffected.
-    //
-    // Two excesses are tracked from matching populations: `lodLoaderExcess`
-    // counts *all* loaders under each group (subtracted from `totalLoaders`,
-    // which counts all loaders), while `lodSpatialExcess` counts only the
-    // spatial-index–typed loaders (subtracted from `activeSpatial`, which is
-    // built from spatial-typed metrics only). Drawing each from its own
-    // population keeps a future non-spatial loader nested under a LOD group
-    // from over-subtracting `activeSpatial`.
-    let lodLoaderExcess = 0;
-    let lodSpatialExcess = 0;
-    for (const [path, s] of this.lodStates) {
-      if (s.kind !== 'lod') continue;
-      let present = 0;
-      let presentSpatial = 0;
-      for (const lp of this.loaders.keys()) {
-        if (lp === path || lp.startsWith(`${path}/`)) {
-          present++;
-          if (isSpatialType(this.metrics.get(lp)?.type)) presentSpatial++;
-        }
-      }
-      if (present > 1) lodLoaderExcess += present - 1;
-      if (presentSpatial > 1) lodSpatialExcess += presentSpatial - 1;
-    }
-    const totalLoaders = Math.max(0, this.loaders.size - lodLoaderExcess);
-    activeSpatial = Math.max(0, activeSpatial - lodSpatialExcess);
-
-    // Use cached QPS calculation instead of filtering events again
     this.calculateRates();
-    const qps = this.cachedRates.queriesPerSec;
-
-    // Dataset totals + visible counts come from the scene graph, identically
-    // for every geometry type. Visible counts are refreshed each update
-    // cycle by `updateVisibleCountsInMonitor` after nD clipping / LOD refine.
-    // The display layer keeps per-type NAMED fields (each rendered with its own
-    // label, unit noun and DOM id), so this is where the kind-keyed aggregation
-    // model is projected onto them. Only three are projected here: mesh has no
-    // headline field of its own — its triangle counts are shown per node in the
-    // scene-graph tree (`templates.ts`, `faceCount`).
-    const { totalByType, visibleByType } = this.sceneGraphState;
-    const datasetSize = totalByType.points;
-    const visiblePoints = visibleByType.points;
-
-    const datasetSegments = totalByType.lines;
-    const visibleSegments = visibleByType.lines;
-
-    const datasetSplats = totalByType.gsplats;
-    const visibleSplats = visibleByType.gsplats;
-
-    return {
-      totalLoaders,
-      activeSpatialLoaders: activeSpatial,
-      totalElementsLoaded,
-      totalMemory,
-      datasetSize, // Total points in all datasets (from zarr metadata)
-      visiblePoints, // Currently visible/rendered points
-      datasetSegments, // Total segments in all line datasets
-      visibleSegments, // Currently visible segments (for lines, typically equals total)
-      datasetSplats, // Total splats in all gsplats datasets
-      visibleSplats, // Currently visible splats
-      totalQueries,
-      totalLoads,
-      avgQueryTime: totalQueries > 0 ? totalQueryTime / totalQueries : 0,
-      queriesPerSecond: qps,
+    return aggregateGlobalStats({
+      metrics: this.metrics,
+      loaders: this.loaders,
+      lodStates: this.providers.lodStates,
+      rates: this.cachedRates,
+      sceneGraph: this.sceneGraphModel.getSceneGraph(),
       recommendations: this.advisor.getRecommendations(),
-    };
+    });
   }
 
   /**
@@ -2115,13 +1408,13 @@ export class DataLoadingMonitor {
   private getCacheMetrics(): CacheMetrics {
     this.calculateRates();
     return aggregateCacheMetrics({
-      l0Provider: this.l0CacheProvider,
-      sliceProvider: this.sliceCacheProvider,
-      cacheStatsProvider: this.cacheStatsProvider,
+      l0Provider: this.providers.l0CacheProvider,
+      sliceProvider: this.providers.sliceCacheProvider,
+      cacheStatsProvider: this.providers.cacheStatsProvider,
       loaders: this.loaders,
       metricsCache: this.metrics,
       rates: this.cachedRates,
-      telemetryState: this.cacheTelemetryState,
+      telemetryState: this.providers.cacheTelemetryState,
     });
   }
 
@@ -2413,7 +1706,7 @@ export class DataLoadingMonitor {
       this.uiState.isVisible = false;
       this.uiState.isExpanded = false;
       this.contentContainer = null;
-      this.expandedNodes.clear();
+      this.sceneGraphModel.clearExpandedNodes();
     } catch (error) {
       errors.push(new Error(`Failed to clear internal state: ${error}`));
     }

@@ -64,11 +64,13 @@ function makeRenderingControls(initiallyVisible = true): {
 function makeDimensionSliders(initiallyVisible = true): {
   sliders: DimensionSliders;
   hide: ReturnType<typeof vi.fn>;
+  closeContextMenu: ReturnType<typeof vi.fn>;
 } {
   const hide = vi.fn();
+  const closeContextMenu = vi.fn();
   const getIsVisible = vi.fn(() => initiallyVisible);
-  const sliders = { hide, getIsVisible } as unknown as DimensionSliders;
-  return { sliders, hide };
+  const sliders = { hide, getIsVisible, closeContextMenu } as unknown as DimensionSliders;
+  return { sliders, hide, closeContextMenu };
 }
 
 function makeDebugConsole(initiallyVisible = true): {
@@ -154,6 +156,19 @@ describe('PanelCoordinator.closeAll', () => {
     }).closeAll();
 
     expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes the control-rail overlay when one is registered', () => {
+    const closeOverlay = vi.fn();
+    const { console: debugConsole } = makeDebugConsole(false);
+    const { stats } = makePerformanceStats(false);
+    new PanelCoordinator({
+      debugConsole,
+      performanceStats: stats,
+      controlRail: { closeOverlay },
+    }).closeAll();
+
+    expect(closeOverlay).toHaveBeenCalledTimes(1);
   });
 
   it('does NOT crash when no datasetBrowser is registered, but still runs the unconditional cleanup', () => {
@@ -252,6 +267,7 @@ describe('PanelCoordinator.closeAll', () => {
 
     expect(rc.hide).not.toHaveBeenCalled();
     expect(ds.hide).not.toHaveBeenCalled();
+    expect(ds.closeContextMenu).toHaveBeenCalledTimes(1);
     expect(rp.hide).not.toHaveBeenCalled();
     expect(dcHide).not.toHaveBeenCalled();
     expect(psHide).not.toHaveBeenCalled();
@@ -275,6 +291,7 @@ describe('PanelCoordinator.closeAll', () => {
 
     expect(rc.hide).toHaveBeenCalledTimes(1);
     expect(ds.hide).toHaveBeenCalledTimes(1);
+    expect(ds.closeContextMenu).toHaveBeenCalledTimes(1);
     expect(rp.hide).toHaveBeenCalledTimes(1);
     expect(dcHide).toHaveBeenCalledTimes(1);
     expect(psHide).toHaveBeenCalledTimes(1);
@@ -334,17 +351,20 @@ describe('PanelCoordinator.handleEscape', () => {
 
   it('calls stopVideoRecording and short-circuits when recording', () => {
     const rp = makeRecordingPanel({ isRecording: true });
+    const closeOverlay = vi.fn();
     const { console: debugConsole } = makeDebugConsole(false);
     const { stats } = makePerformanceStats(false);
     const coord = new PanelCoordinator({
       debugConsole,
       performanceStats: stats,
       recordingPanel: rp.panel,
+      controlRail: { closeOverlay },
     });
 
     coord.handleEscape();
 
     expect(rp.stopVideoRecording).toHaveBeenCalledTimes(1);
+    expect(closeOverlay).not.toHaveBeenCalled();
     // Recording short-circuit means no closeAll cascade.
     expect(hideHelpOverlay).not.toHaveBeenCalled();
   });
@@ -356,10 +376,16 @@ describe('PanelCoordinator.handleEscape', () => {
     });
     const { console: debugConsole } = makeDebugConsole(false);
     const { stats } = makePerformanceStats(false);
-    const coord = new PanelCoordinator({ debugConsole, performanceStats: stats });
+    const closeOverlay = vi.fn();
+    const coord = new PanelCoordinator({
+      debugConsole,
+      performanceStats: stats,
+      controlRail: { closeOverlay },
+    });
 
     coord.handleEscape();
     expect(hideHelpOverlay).not.toHaveBeenCalled();
+    expect(closeOverlay).not.toHaveBeenCalled();
   });
 
   it('calls closeAll when not recording and not in fullscreen', () => {

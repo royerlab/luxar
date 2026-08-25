@@ -7,11 +7,15 @@ that the TypeScript ArrayDecoder can correctly read Python-encoded data.
 IMPORTANT: Uses NO compression (compressor=None) to avoid blosc/numcodecs
 WASM binding issues in Node.js test environment.
 
-Editing this file makes every existing fixture store stale, and only `pnpm test`
-notices — the Playwright pre-flight checks presence, not staleness — so run
-`pnpm test` or `pnpm test:generate-fixtures` before `pnpm test:e2e`.
+Editing this file or Luxar's production Python sources makes every existing
+fixture store stale. Vitest regenerates stale fixtures automatically; Playwright
+fails fast with the regeneration command rather than serving old writer output.
 
-Run from project root:
+These direct commands run only the generators; record the input stamps afterward
+from ``packages/luxar-viewer/`` with
+``pnpm exec tsx tools/fixture-freshness.ts``.
+
+Run the generators from project root:
     hatch run fixtures:python packages/luxar-viewer/tests/fixtures/generate_test_data.py
 """
 

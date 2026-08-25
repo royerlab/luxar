@@ -21,7 +21,5 @@ export interface InputConfig {
       toggleCinematicMode: string;
       toggleOverlays: string;
     };
-    flyModeKeys: string[];
-    dimensionKeys: string[];
   };
 }

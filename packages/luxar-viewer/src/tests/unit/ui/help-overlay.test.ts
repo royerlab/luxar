@@ -4,7 +4,9 @@
 // helpers (`ui/error-overlay`) live in `error-overlay.test.ts`.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { showHelpOverlay, hideHelpOverlay } from '../../../ui/help-overlay';
-import { isTypingInInput } from '../../../input/input-handler/commands/focus-utils';
+import { isTypingInInput } from '../../../utils/dom/focus';
+import { InputContext, InputContextManager } from '../../../input/input-handler/context-manager';
+import { registerAllKeyBindings } from '../../../input/input-handler/key-bindings/register-all';
 
 /**
  * Cost, in pending 0 ms timers, of ONE focus transition in this environment.
@@ -66,8 +68,201 @@ function expectNoOverlayTimersPending(focusTransitions: number): void {
 }
 
 describe('showHelpOverlay - Memory Leak Prevention', () => {
+  it('renders every help-visible registered binding group exactly once', () => {
+    const contextManager = new InputContextManager();
+    registerAllKeyBindings({
+      contextManager,
+      sceneManager: {
+        renderer: { domElement: document.createElement('canvas') },
+        controls: { getFlyControls: () => null },
+      } as never,
+      debugConsole: {} as never,
+      animationShortcuts: {
+        getSelectedDimension: () => -1,
+        getAnimationManager: () => undefined,
+      },
+      panels: {
+        getScaleBar: () => undefined,
+        getColormapLegend: () => undefined,
+        getOverlayManager: () => undefined,
+        getRecordingPanel: () => undefined,
+        getLayersPanel: () => undefined,
+      },
+      commands: {
+        navigateDimension: vi.fn(),
+        selectDimension: vi.fn(),
+        toggleHelp: vi.fn(),
+        toggleDimensionSliders: vi.fn(),
+        toggleDatasetBrowser: vi.fn(),
+        openElementMenu: vi.fn(),
+        togglePerformanceStats: vi.fn(),
+        toggleRenderingControls: vi.fn(),
+        toggleControlMode: vi.fn(),
+        setControlMode: vi.fn(),
+        toggleInertialMode: vi.fn(),
+        toggleCinematicMode: vi.fn(),
+        toggleFullscreen: vi.fn(),
+        cycleDataMonitor: vi.fn(),
+        recenterCamera: vi.fn(),
+        exportViewerState: vi.fn(),
+        handleEscape: vi.fn(),
+        shouldHandleSpaceKey: () => true,
+      },
+    });
+    const bindings = contextManager.getRegisteredShortcutBindings();
+    const groups = Array.from(bindings.values())
+      .flat()
+      .flatMap((binding) => (binding.help ? [binding.help.group] : []));
+    expect(new Set(groups)).toEqual(
+      new Set([
+        'dimension-step',
+        'dimension-select',
+        'toggle-help',
+        'toggle-dimensions',
+        'dataset-browser',
+        'element-menu',
+        'performance',
+        'rendering',
+        'scale-bar',
+        'colormap-legend',
+        'overlays',
+        'recording',
+        'screenshot',
+        'layers',
+        'debug-console',
+        'data-monitor',
+        'recenter-camera',
+        'control-mode',
+        'inertial-mode',
+        'cinematic',
+        'fullscreen',
+        'escape',
+        'export-viewer-state',
+        'fly-move',
+        'fly-roll',
+        'fly-vertical',
+        'fly-look',
+        'fly-speed',
+        'animation-toggle',
+        'animation-bounds',
+        'animation-speed',
+      ])
+    );
+    showHelpOverlay(bindings);
+    const text = Array.from(
+      document.querySelectorAll<HTMLElement>('.luxar-help-overlay__desc')
+    ).map((row) => row.textContent);
+    const expected = new Map<string, string>();
+    for (const contextBindings of bindings.values()) {
+      for (const binding of contextBindings) {
+        if (binding.help) expected.set(binding.help.group, binding.description);
+      }
+    }
+
+    for (const description of expected.values()) {
+      expect(text.filter((entry) => entry === description)).toHaveLength(1);
+    }
+  });
+
+  it('derives a single-chord help chip from a rebound action', () => {
+    const contextManager = new InputContextManager();
+    contextManager.registerBinding(InputContext.NAVIGATION, {
+      actionId: 'help.toggle',
+      key: 'h',
+      handler: vi.fn(),
+      description: 'Toggle help overlay',
+      help: { section: 'basics', group: 'toggle-help', order: 1 },
+    });
+    contextManager.registerBinding(InputContext.NAVIGATION, {
+      actionId: 'help.toggle',
+      key: 'z',
+      handler: vi.fn(),
+      description: 'Toggle help overlay',
+      help: { section: 'basics', group: 'toggle-help', order: 1 },
+    });
+
+    showHelpOverlay(contextManager.getRegisteredShortcutBindings());
+    const keys = Array.from(document.querySelectorAll('kbd')).map((key) => key.textContent);
+    expect(keys).toContain('Z');
+    expect(keys).not.toContain('H');
+  });
+
+  it('omits keyboard rows absent from the live registration snapshot', () => {
+    const bindings = new Map([
+      [
+        InputContext.NAVIGATION,
+        [
+          {
+            actionId: 'help.toggle',
+            key: 'h',
+            description: 'Toggle this help',
+            help: { section: 'basics' as const, group: 'help', keys: ['H'], order: 1 },
+          },
+        ],
+      ],
+    ]);
+    showHelpOverlay(bindings);
+
+    const text = document.getElementById('luxar-help-overlay')?.textContent ?? '';
+    expect(text).toContain('Toggle this help');
+    expect(text).not.toContain('Export viewer state to clipboard');
+    expect(text).not.toContain('Animation speed up / down');
+  });
+
+  it('keeps only pointer and wheel gestures when the binding registry is empty', () => {
+    showHelpOverlay(new Map());
+
+    const rows = Array.from(document.querySelectorAll<HTMLElement>('.luxar-help-overlay__row')).map(
+      (row) => ({
+        keys: Array.from(row.querySelectorAll('kbd')).map((key) => key.textContent),
+        label: row.querySelector('.luxar-help-overlay__desc')?.textContent,
+      })
+    );
+
+    expect(rows).toEqual([
+      { keys: ['Drag'], label: 'Pan camera' },
+      { keys: ['Right drag'], label: 'Rotate view' },
+      { keys: ['⇧', 'Drag'], label: 'Rotate view (alternative)' },
+      { keys: ['Wheel'], label: 'Zoom in / out' },
+      { keys: ['⇧', 'Wheel'], label: 'Roll around the view axis' },
+      { keys: ['Click'], label: 'Open the hovered element link' },
+      { keys: ['Right click'], label: 'Actions for the hovered element' },
+      { keys: ['Drag'], label: 'Strafe (pan camera)' },
+      { keys: ['Right drag'], label: 'Free look' },
+      { keys: ['Wheel'], label: 'Move forward / backward' },
+      { keys: ['Drag'], label: 'Pan camera' },
+      { keys: ['Wheel'], label: 'Zoom in / out' },
+      { keys: ['⇧', 'Wheel'], label: 'Roll around the view axis' },
+      {
+        keys: ['Wheel'],
+        label: 'On a slider: step (⇧ fine, ⌃ coarse, ⌃⇧ extra-fine)',
+      },
+      { keys: ['Ctrl/⌘', 'Wheel'], label: 'Adjust field of view (perspective)' },
+    ]);
+  });
+
   it('explains that digit keys address non-displayed dimensions', () => {
-    showHelpOverlay();
+    showHelpOverlay(
+      new Map([
+        [
+          InputContext.NAVIGATION,
+          [
+            {
+              actionId: 'dimension.select',
+              actionParameter: 0,
+              key: '1',
+              description: 'Select a non-displayed dimension (panel header shows target)',
+              help: {
+                section: 'dimensions' as const,
+                group: 'dimension-select',
+                keys: ['1 – 9'],
+                order: 1,
+              },
+            },
+          ],
+        ],
+      ])
+    );
 
     expect(document.getElementById('luxar-help-overlay')?.textContent).toContain(
       'Select a non-displayed dimension (panel header shows target)'
@@ -75,7 +270,7 @@ describe('showHelpOverlay - Memory Leak Prevention', () => {
   });
 
   it('should not create multiple overlays when called repeatedly', () => {
-    showHelpOverlay();
+    showHelpOverlay(new Map());
     const firstOverlay = document.getElementById('luxar-help-overlay');
     // Audit W3 fix: pin id + role so a mutant that returns the wrong
     // element from getElementById would surface here.
@@ -83,7 +278,7 @@ describe('showHelpOverlay - Memory Leak Prevention', () => {
     expect(firstOverlay?.getAttribute('role')).toBe('dialog');
 
     // Try to create another one
-    showHelpOverlay();
+    showHelpOverlay(new Map());
     const allOverlays = document.querySelectorAll('#luxar-help-overlay');
 
     // Should still be only one
@@ -104,7 +299,7 @@ describe('showHelpOverlay - Memory Leak Prevention', () => {
   // 'mousedown' / 'pointerdown' would NOT slip through here the way the
   // previous removeEventListener('click', ...) spy allowed.
   it('hideHelpOverlay cancels delayed listener registration', () => {
-    showHelpOverlay();
+    showHelpOverlay(new Map());
     hideHelpOverlay();
 
     // Two focus transitions: onto the overlay container, then back to the
@@ -113,7 +308,7 @@ describe('showHelpOverlay - Memory Leak Prevention', () => {
   });
 
   it('close button cancels delayed listener registration', () => {
-    showHelpOverlay();
+    showHelpOverlay(new Map());
     const closeBtn = document.querySelector('button[title="Close (Escape)"]') as HTMLButtonElement;
 
     closeBtn.click();
@@ -123,11 +318,11 @@ describe('showHelpOverlay - Memory Leak Prevention', () => {
   });
 
   it('rapid hide then show cannot attach the stale overlay listener', () => {
-    showHelpOverlay();
+    showHelpOverlay(new Map());
     vi.advanceTimersByTime(20);
     hideHelpOverlay();
 
-    showHelpOverlay();
+    showHelpOverlay(new Map());
     const reopened = document.getElementById('luxar-help-overlay');
     expect(reopened).toBeTruthy();
 
@@ -141,7 +336,7 @@ describe('showHelpOverlay - Memory Leak Prevention', () => {
   });
 
   it('only outside clicks dismiss the current overlay after the delay', () => {
-    showHelpOverlay();
+    showHelpOverlay(new Map());
     const overlay = document.getElementById('luxar-help-overlay');
     expect(overlay).toBeTruthy();
     vi.advanceTimersByTime(150);
@@ -154,7 +349,7 @@ describe('showHelpOverlay - Memory Leak Prevention', () => {
   });
 
   it('hideHelpOverlay removes the outside-click listener (observable contract)', () => {
-    showHelpOverlay();
+    showHelpOverlay(new Map());
     // Audit W3 fix: pin id so a wrong-element bug surfaces here.
     expect(document.getElementById('luxar-help-overlay')?.id).toBe('luxar-help-overlay');
     vi.advanceTimersByTime(150); // Listener for overlay-1 installed.
@@ -165,7 +360,7 @@ describe('showHelpOverlay - Memory Leak Prevention', () => {
     // Open a fresh overlay. If overlay-1's listener leaked, the next
     // body click (before overlay-2's own delayed listener installs)
     // will invoke overlay-1's `closeHelp` and remove overlay-2 by id.
-    showHelpOverlay();
+    showHelpOverlay(new Map());
     expect(document.getElementById('luxar-help-overlay')).toBeTruthy();
 
     // Click BEFORE the 150ms delay so overlay-2's own listener is not
@@ -177,7 +372,7 @@ describe('showHelpOverlay - Memory Leak Prevention', () => {
   });
 
   it('close-button click removes the outside-click listener (observable contract)', () => {
-    showHelpOverlay();
+    showHelpOverlay(new Map());
     vi.advanceTimersByTime(150); // Listener installed for overlay-1.
 
     const closeBtn = document.querySelector('button[title="Close (Escape)"]') as HTMLButtonElement;
@@ -189,14 +384,14 @@ describe('showHelpOverlay - Memory Leak Prevention', () => {
     expect(document.getElementById('luxar-help-overlay')).toBeNull();
 
     // Fresh overlay; same leakage probe as above.
-    showHelpOverlay();
+    showHelpOverlay(new Map());
     expect(document.getElementById('luxar-help-overlay')).toBeTruthy();
     document.body.click();
     expect(document.getElementById('luxar-help-overlay')).toBeTruthy();
   });
 
   it('should have proper ARIA attributes', () => {
-    showHelpOverlay();
+    showHelpOverlay(new Map());
     const overlay = document.getElementById('luxar-help-overlay');
 
     expect(overlay?.getAttribute('role')).toBe('dialog');
@@ -211,7 +406,26 @@ describe('showHelpOverlay - Memory Leak Prevention', () => {
   });
 
   it('lists the pointer and keyboard element actions', () => {
-    showHelpOverlay();
+    showHelpOverlay(
+      new Map([
+        [
+          InputContext.NAVIGATION,
+          [
+            {
+              actionId: 'element-menu.open',
+              key: 'f10+shift',
+              description: 'Context menu for the hovered element',
+              help: {
+                section: 'panels' as const,
+                group: 'element-menu',
+                keys: ['⇧', 'F10'],
+                order: 1,
+              },
+            },
+          ],
+        ],
+      ])
+    );
     const text = document.getElementById('luxar-help-overlay')?.textContent ?? '';
 
     expect(text).toContain('Open the hovered element link');
@@ -236,7 +450,7 @@ describe('showHelpOverlay - initial focus and type-to-filter (#1922)', () => {
   }
 
   it('parks focus on the overlay container, never on the filter field', () => {
-    showHelpOverlay();
+    showHelpOverlay(new Map());
     // Run out every pending timer: a focus timer (the old autofocus, or the
     // focus trap's own first-focusable one) would move focus here.
     vi.advanceTimersByTime(200);
@@ -249,7 +463,7 @@ describe('showHelpOverlay - initial focus and type-to-filter (#1922)', () => {
   });
 
   it('the first printable keystroke lands in the filter and narrows the list', () => {
-    showHelpOverlay();
+    showHelpOverlay(new Map());
     const rowsBefore = visibleRowText().length;
     expect(rowsBefore).toBeGreaterThan(1);
 
@@ -273,7 +487,7 @@ describe('showHelpOverlay - initial focus and type-to-filter (#1922)', () => {
     const listener = (e: KeyboardEvent) => seen.push(e.key);
     document.addEventListener('keydown', listener);
     try {
-      showHelpOverlay();
+      showHelpOverlay(new Map());
 
       const event = pressOnOverlay({ key: 'h' });
 
@@ -293,7 +507,7 @@ describe('showHelpOverlay - initial focus and type-to-filter (#1922)', () => {
     const listener = (e: KeyboardEvent) => seen.push(e.key);
     document.addEventListener('keydown', listener);
     try {
-      showHelpOverlay();
+      showHelpOverlay(new Map());
 
       // `v` cycles the camera mode globally. Typing it into the filter must
       // not also switch to fly mode behind the overlay.
@@ -311,7 +525,7 @@ describe('showHelpOverlay - initial focus and type-to-filter (#1922)', () => {
     const listener = (e: KeyboardEvent) => seen.push(e.key);
     document.addEventListener('keydown', listener);
     try {
-      showHelpOverlay();
+      showHelpOverlay(new Map());
 
       // `Home`/`End` jump the selected dimension and Shift+arrows change the
       // animation speed (`animation-shortcuts.ts`). No panel pushes an
@@ -331,7 +545,7 @@ describe('showHelpOverlay - initial focus and type-to-filter (#1922)', () => {
   });
 
   it('does not double-insert once the filter holds focus', () => {
-    showHelpOverlay();
+    showHelpOverlay(new Map());
     pressOnOverlay({ key: 'r' });
     expect(document.activeElement).toBe(filterEl());
 
@@ -344,7 +558,7 @@ describe('showHelpOverlay - initial focus and type-to-filter (#1922)', () => {
   });
 
   it('types Shift+H into the filter instead of dropping it', () => {
-    showHelpOverlay();
+    showHelpOverlay(new Map());
 
     // The global lookup spells this "h+shift", which no binding registers, so
     // passing it through would make Shift+H a dead key.
@@ -356,7 +570,7 @@ describe('showHelpOverlay - initial focus and type-to-filter (#1922)', () => {
   });
 
   it('hideHelpOverlay releases the type-to-filter listener', () => {
-    showHelpOverlay();
+    showHelpOverlay(new Map());
     const overlay = overlayEl();
     const filter = filterEl();
 
@@ -370,12 +584,12 @@ describe('showHelpOverlay - initial focus and type-to-filter (#1922)', () => {
   });
 
   it('a re-opened overlay starts type-to-filter fresh', () => {
-    showHelpOverlay();
+    showHelpOverlay(new Map());
     pressOnOverlay({ key: 'r' });
     expect(filterEl().value).toBe('r');
 
     hideHelpOverlay();
-    showHelpOverlay();
+    showHelpOverlay(new Map());
 
     expect(document.activeElement).toBe(overlayEl());
     expect(filterEl().value).toBe('');
@@ -386,7 +600,7 @@ describe('showHelpOverlay - initial focus and type-to-filter (#1922)', () => {
 
 describe('hideHelpOverlay', () => {
   it('should remove help overlay', () => {
-    showHelpOverlay();
+    showHelpOverlay(new Map());
     // Audit W3 fix: assert the element is the expected element by id
     // before tearing it down — a wrong-element bug would surface.
     const opened = document.getElementById('luxar-help-overlay');

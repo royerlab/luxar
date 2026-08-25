@@ -42,6 +42,24 @@ module.exports = {
       from: {},
       to: { circular: true },
     },
+    {
+      name: 'input-private-modules',
+      severity: 'error',
+      comment:
+        'Modules outside src/input/ must import through src/input/index.ts, ' +
+        'not reach into the private input/input-handler/ implementation tree.',
+      from: { path: '^src/(?!input/)' },
+      to: { path: '^src/input/input-handler(?:\\.ts|/)' },
+    },
+    {
+      name: 'input-no-data-runtime',
+      severity: 'error',
+      comment:
+        'The input package owns interaction wiring, not data loading. ' +
+        'Runtime loading orchestration belongs in the scene or data layer.',
+      from: { path: '^src/input/' },
+      to: { path: '^src/data/' },
+    },
     // ─── Layer order ──────────────────────────────────────────────
     // Each rule says: "if `from` matches src/X/, `to` must NOT match
     // src/{higher_layer}/". dependencyTypes filter excludes type-only
@@ -50,16 +68,7 @@ module.exports = {
     // Severity is `error` — the build fails on any new violation.
     // Paths listed in KNOWN_LAYER_EXCEPTIONS are exempt; add a
     // matching warn-only rule below for each reviewed exception.
-    layerRule('types', [
-      'config',
-      'cache',
-      'rendering',
-      'data',
-      'scene',
-      'input',
-      'ui',
-      'core',
-    ]),
+    layerRule('types', ['config', 'cache', 'rendering', 'data', 'scene', 'input', 'ui', 'core']),
     layerRule('config', ['cache', 'rendering', 'data', 'scene', 'input', 'ui', 'core']),
     layerRule('cache', ['rendering', 'data', 'scene', 'input', 'ui', 'core']),
     layerRule('rendering', ['data', 'scene', 'input', 'ui', 'core']),

@@ -255,7 +255,7 @@ def download_kaggle_dataset(
     Returns:
         Path to downloaded file
     """
-    from luxar.utils.download import robust_download
+    from luxar.demos import robust_download
 
     with asection("Downloading Kaggle ArXiv Embeddings Dataset"):
         aprint("URL: https://www.kaggle.com/datasets/tomtum/openai-arxiv-embeddings")
@@ -1091,6 +1091,13 @@ def generate_paper_landscape(
     # `resolve_paper_metadata` no longer produces. Neither may be reused — the
     # stored `years` are part of this computation's output, so changing how they
     # are derived invalidates the cache exactly as changing the UMAP would.
+    # Still version=3, deliberately, even though `_compute_bundle` gained an
+    # `ids` field after v3 bundles were written. Bumping would invalidate every
+    # warm bundle and force a 40 GB PCA stream plus a UMAP over 3.29M points on
+    # each machine — the cost this cache exists to avoid. A pre-ids bundle
+    # instead degrades to a decorated-label search (see `link_attrs` below), so
+    # the pick stays useful without anyone paying for a recompute. Regenerate
+    # explicitly if you want the real DOI deep links locally.
     cache_key = (
         f"umap3d_n{'all' if sample_size is None else sample_size}"
         f"_pca{pca_dim}_seed{seed}"
@@ -1188,7 +1195,10 @@ def generate_paper_landscape(
 
         have_ids = len(paper_ids) == n_papers
         if not have_ids:
-            aprint("  ⓘ Cached bundle predates stored paper ids — skipping DOI links")
+            aprint(
+                "  ⓘ Cached bundle predates stored paper ids — "
+                "using Scholar label search"
+            )
 
         stacked = stack_colorings(
             positions,
@@ -1209,7 +1219,18 @@ def generate_paper_landscape(
                 "copy": "{hover_key}",
             }
             if stacked.keys is not None
-            else {}
+            # No stored ids (a cached bundle predating them) used to mean NO
+            # click-through at all, which is the worst outcome: every point
+            # already carries a title as its hover label, so the pick was
+            # actionable and silently did nothing. Fall back to a label search
+            # instead — same shape as the label-search links cellxgene
+            # (EBI OLS) and dmri_tractography (Wikipedia) already use. Scholar
+            # rather than arXiv search because this set is arXiv + bioRxiv +
+            # medRxiv, and an arXiv-only search misses the two preprint servers.
+            else {
+                "link": "https://scholar.google.com/scholar?q={hover_label}",
+                "copy": "{hover_label}",
+            }
         )
         radii = np.tile(radii_pp, len(stacked.categories)).astype(np.float32)
 

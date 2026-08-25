@@ -16,12 +16,13 @@
 import type { InputContextManager } from '../context-manager';
 import type { SceneManager } from '../../../scene/scene-manager';
 import type { ControlType } from '../../../controls/types';
-import type { ScaleBar } from '../../../ui/scale-bar';
-import type { ColormapLegend } from '../../../ui/colormap-legend';
-import type { OverlayManager } from '../../../ui/overlay-manager';
-import type { RecordingPanel } from '../../../ui/recording-panel';
-import type { LayersPanel } from '../../../ui/layers';
-import type { DebugConsole } from '../../../ui/debug-console';
+import type {
+  DebugConsoleHandle,
+  LayersPanelHandle,
+  RecordingPanelHandle,
+  ToggleableHandle,
+} from '../panel-capabilities';
+import { AnimationShortcuts, type AnimationShortcutsContext } from './animation-shortcuts';
 import { registerNavigationBindings } from './navigation-bindings';
 import { registerFlyControlBindings } from './fly-bindings';
 
@@ -36,6 +37,8 @@ export interface KeyBindingsCommands {
   selectDimension(index: number): void;
   toggleHelp(): void;
   toggleDimensionSliders(): void;
+  toggleDatasetBrowser(): void;
+  openElementMenu(event: KeyboardEvent): void;
   togglePerformanceStats(): void;
   toggleRenderingControls(): void;
   toggleControlMode(): void;
@@ -58,11 +61,11 @@ export interface KeyBindingsCommands {
  * are called at dispatch time so the latest reference always wins.
  */
 export interface KeyBindingsPanelGetters {
-  getScaleBar(): ScaleBar | undefined;
-  getColormapLegend(): ColormapLegend | undefined;
-  getOverlayManager(): OverlayManager | undefined;
-  getRecordingPanel(): RecordingPanel | undefined;
-  getLayersPanel(): LayersPanel | undefined;
+  getScaleBar(): ToggleableHandle | undefined;
+  getColormapLegend(): ToggleableHandle | undefined;
+  getOverlayManager(): ToggleableHandle | undefined;
+  getRecordingPanel(): RecordingPanelHandle | undefined;
+  getLayersPanel(): LayersPanelHandle | undefined;
 }
 
 /** Everything `registerAllKeyBindings` needs to wire up the table. */
@@ -72,7 +75,8 @@ export interface KeyBindingsDeps {
   /** SceneManager — needed for the fly-controls key forwarding. */
   sceneManager: SceneManager;
   /** Debug console (always present from InputHandler ctor). */
-  debugConsole: DebugConsole;
+  debugConsole: DebugConsoleHandle;
+  animationShortcuts: AnimationShortcutsContext;
   panels: KeyBindingsPanelGetters;
   commands: KeyBindingsCommands;
 }
@@ -80,7 +84,7 @@ export interface KeyBindingsDeps {
 /**
  * Wire every keyboard binding onto the provided context manager.
  *
- * Two sub-flows live here, in order:
+ * Three sub-flows live here, in order:
  *
  *   1. NAVIGATION bindings (default, orbit-mode UI shortcuts).
  *
@@ -88,6 +92,10 @@ export interface KeyBindingsDeps {
  *      keys with all 4 modifier combinations the fly controls
  *      respect (none / Shift / Alt / Shift+Alt), arrow look keys
  *      with optional Shift, and the Shift speed-boost binding.
+ *
+ *   3. Animation playback bindings (K / Home / End / Shift+↑ / Shift+↓,
+ *      registered in NAVIGATION). They decline until a dimension is selected
+ *      and the animation manager exists.
  *
  * Ctrl/⌘+wheel FOV-vs-zoom exclusivity is NOT a key binding: each
  * wheel handler reads the event's own live modifier flags (see
@@ -97,4 +105,5 @@ export interface KeyBindingsDeps {
 export function registerAllKeyBindings(deps: KeyBindingsDeps): void {
   registerNavigationBindings(deps);
   registerFlyControlBindings(deps);
+  new AnimationShortcuts(deps.contextManager, deps.animationShortcuts).register();
 }

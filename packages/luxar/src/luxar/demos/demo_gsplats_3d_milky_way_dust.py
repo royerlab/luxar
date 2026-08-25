@@ -183,7 +183,7 @@ def load_dust_volume(target_size: int = TARGET_SIZE) -> tuple:
     """
     h5py = require_module("h5py")
 
-    from luxar.utils.download import robust_download
+    from luxar.demos import robust_download
 
     with asection("Downloading 3D dust reconstruction (Leike & Enßlin 2020)"):
         aprint("Source: https://doi.org/10.5281/zenodo.3993082  (mean_std.h5, 2.4 GB)")
@@ -302,7 +302,10 @@ def load_or_build_gsplats() -> GSplatData:
                 return precomputed[0]
         except DatasetUnavailable:
             aprint("")
-            aprint("Precomputed fit not available (Git LFS asset not pulled).")
+            aprint(
+                "Precomputed fit not available (Git LFS asset not pulled, and no "
+                "published record to fetch from yet)."
+            )
         # A fit this machine built earlier, in its own namespace — checked
         # BEFORE refitting, which is what makes the refit below one-time. Read
         # through LOCAL_FIT, the same constant `fit_dust` writes through: a door

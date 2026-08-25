@@ -30,7 +30,7 @@ The manifest records, per dataset:
   * ``dir``     — the in-repo subdir relative to ``demos/data/`` (empty string =
                   top level; the in-repo LFS fallback in data_fetch honours it).
 
-Curated metadata (license/source/citation) lives here; checksums come from the data
+Curated metadata (license/source/citation) lives here; the ``sha256`` comes from the data
 tree itself, so the manifest stays reproducible on any checkout — see
 :func:`_checksum` for why neither ``git`` nor the ``git-lfs`` binary is needed.
 Re-run after any dataset re-encode:
@@ -418,30 +418,40 @@ DATASETS: dict[str, dict] = {
         license="cc-by-4.0",
         source="h2afva zebrafish histone light-sheet timelapse (Royer lab)",
         attribution="Royer lab, CZ Biohub SF (CC BY 4.0).",
-        # Still pending: the 253tp variant is uploaded and pinned, but the 51tp
-        # file in the record is a SUPERSEDED build and must not be pinned. It
-        # predates the isotropic correction (z extent 405 raw voxels instead of
-        # 1620), carries no substitutive LOD levels at all, is format 3.2, and
-        # keeps the acquisition time numbering 0..250 rather than 0..50. Pinning
-        # it would make the demo fetch a dataset that renders squashed 4x in z.
-        # Replacement build is verified; upload is held pending the zarr-v3
-        # landing and the wider gsplat dataset audit.
-        pending_upload=True,
-        # The 51tp variant covers every FIFTH timepoint of the same acquisition
-        # (frames 0, 5, ... 250 — measured, 51 clusters spaced 5.0000), renumbered
-        # 0..50. It is a temporal subsample, but an INDEPENDENT fit rather than a
-        # decimation of the full one: per-timepoint splat counts differ (2.50M vs
-        # 2.38M at the finest level). Shipped as the default because pulling
-        # ~2.1 GB is far easier than ~11.4 GB over Zenodo's best-effort bandwidth.
+        acquisition=dict(
+            description=(
+                "the full 253-timepoint h2afva light-sheet timelapse; the 51tp "
+                "variant is every fifth frame from the same fit"
+            ),
+            comparable=True,
+            stored_bytes=None,
+        ),
+        # Both variants are uploaded and pinned, so there is no `pending_upload`
+        # here. The 51tp file that used to be a SUPERSEDED build — pre-isotropic
+        # (z extent 405 raw voxels instead of 1620), no substitutive LOD levels,
+        # format 3.2 — has been replaced.
+        #
+        # The 51tp variant is now a strided SLICE of the 253tp fit rather than an
+        # independent fit: every 5th frame (source frames 0, 5, ... 250, recorded
+        # in the archive's own `source_timepoints`), renumbered to a dense 0..50.
+        # The renumbering is load-bearing, not cosmetic — it puts the stacked axis
+        # back on a regular grid so the encoder's gridded-axis snap stores it
+        # EXACTLY. The old build's frame values were quantization-smeared off
+        # their integers, which left four of every five slider positions
+        # rendering an empty scene. Because it is a slice, the two variants now
+        # agree splat-for-splat on the frames they share, where the previous
+        # independent fits differed (2.50M vs 2.38M per timepoint at the finest
+        # level). Shipped as the default because pulling ~1.9 GB is far easier
+        # than ~9.3 GB over Zenodo's best-effort bandwidth.
         variants={
             "51tp": dict(
                 default=True,
-                approx_bytes=2_134_212_223,
+                approx_bytes=1_873_559_527,
                 note="51-timepoint fit (every 5th frame) — lighter default for the demo.",
             ),
             "253tp": dict(
                 default=False,
-                approx_bytes=11_428_060_091,
+                approx_bytes=9_253_211_541,
                 note="Full 253-timepoint timelapse — opt-in (large download).",
             ),
         },
@@ -595,6 +605,10 @@ def _checksum(path: Path) -> dict:
     exactly what CI has, since CI deliberately checks out without ``lfs: true``
     (see the checkout note in .github/workflows/ci.yml).
 
+    This describes the copy IN THIS REPO, and only ever that: what a Zenodo
+    record serves has no source on disk, so ``hosted_sha256`` is carried forward
+    from the committed manifest instead (see ``_carry_hosted``).
+
     For a *pulled* LFS file the LFS oid IS the sha256 of the content, so hashing
     the bytes reproduces what ``git lfs ls-files --json`` would report (~0.2 s for
     the whole ~450 MB tree). For an unpulled one the pointer already carries both
@@ -649,6 +663,77 @@ def _prev_files(prev: dict, name: str, variant: Optional[str] = None) -> list[di
     return d.get("files", []) or []
 
 
+#: Per-file keys that describe the HOSTED artifact rather than the in-repo copy.
+#:
+#: Both must be carried, and for the same reason: `bytes` is as ambiguous as
+#: `sha256` was once the two copies differ. Keeping the digest and size paired
+#: preserves a complete description of the hosted artifact for consumers that
+#: need to compare it with the in-repo copy.
+#:
+#: Named explicitly rather than matched as a `hosted_*` prefix, so a typo'd key
+#: is dropped loudly by the drift gate instead of carried forever.
+_HOSTED_KEYS = ("hosted_sha256", "hosted_bytes")
+
+#: Digests this project pinned in an EARLIER generation, newest last.
+#:
+#: When an in-repo pin changes, regeneration records the outgoing digest while
+#: the old bytes are still knowable. A hosted-only re-pin has no bytes on disk to
+#: compare, so its outgoing digest must be appended by hand as part of the edit.
+#: Without that history, `data_fetch` cannot tell "out of date" from "corrupt"
+#: and must quarantine the cache. That is what #1734 did to
+#: `gsplats_3d_drosophila_gastrulation`.
+#:
+#: Unbounded and ordered newest-last: a flat list of 64-char hashes is a few
+#: hundred bytes even after many re-pins. Reverting a pin moves that digest to
+#: the end so the runtime's one-generation fallback remains correct.
+_SUPERSEDED_KEY = "superseded_sha256"
+
+
+def _carry_hosted(found: list[dict], committed: list[dict]) -> list[dict]:
+    """Re-attach hosted keys, and record a changed pin as superseded.
+
+    The generator can only ever compute the digest of the copy IN THIS REPO —
+    ``_checksum`` reads the git-LFS pointer's oid or hashes the bytes. What the
+    Zenodo record serves has no source on disk at all, so ``hosted_sha256`` is
+    carried forward (or edited in by hand, or written by the upload tool) and
+    must survive a regeneration that rebuilds every entry from scratch.
+
+    Without this, any dataset whose data dir happens to be VISIBLE would silently
+    lose its hosted pin on the next ``make gen-data-manifest`` — while datasets
+    with no dir on disk kept theirs, because those keep the committed list whole.
+    A field that survives in some rows and evaporates in others is worse than one
+    that never worked.
+
+    Absent stays absent: the key is only added when the committed entry had one,
+    which is what keeps a regeneration byte-identical for the datasets that have
+    no hosted pin.
+    """
+    prev = {e["name"]: e for e in committed if e.get("name")}
+    out = []
+    for entry in found:
+        old_entry = prev.get(entry.get("name"))
+        if old_entry is None:
+            out.append(entry)
+            continue
+        merged = dict(entry)
+        for key in _HOSTED_KEYS:
+            if old_entry.get(key) is not None:
+                merged[key] = old_entry[key]
+        # Carry the history forward, and EXTEND it when this regeneration changes
+        # the pin: the outgoing digest is what every existing cache holds, and it
+        # is the only thing that later distinguishes superseded from corrupt.
+        history = list(old_entry.get(_SUPERSEDED_KEY) or ())
+        outgoing = old_entry.get("sha256")
+        if outgoing and merged.get("sha256") and outgoing != merged["sha256"]:
+            if outgoing in history:
+                history.remove(outgoing)
+            history.append(outgoing)
+        if history:
+            merged[_SUPERSEDED_KEY] = history
+        out.append(merged)
+    return out
+
+
 def _files_for(name: str, spec: dict, prev: dict, *, prune: bool) -> list[dict]:
     """A (non-variant) dataset's files: disk when visible, else the committed list.
 
@@ -665,7 +750,7 @@ def _files_for(name: str, spec: dict, prev: dict, *, prune: bool) -> list[dict]:
         if subdir
         else _files_in(DATA_DIR, f"{name}.*", prune=prune)  # top-level single file
     )
-    return committed if found is None else found
+    return committed if found is None else _carry_hosted(found, committed)
 
 
 def _variants_for(name: str, spec: dict, prev: dict, *, prune: bool) -> dict:
@@ -686,7 +771,7 @@ def _variants_for(name: str, spec: dict, prev: dict, *, prune: bool) -> dict:
             subdir = spec.get("dir", name)
             base = DATA_DIR.joinpath(*[p for p in (subdir, vname) if p])
             found = _files_in(base, "*", prune=prune)
-            v["files"] = committed if found is None else found
+            v["files"] = committed if found is None else _carry_hosted(found, committed)
         out[vname] = v
     return out
 

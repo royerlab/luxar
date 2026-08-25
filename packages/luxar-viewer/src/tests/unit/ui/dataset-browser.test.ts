@@ -10,7 +10,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { DirectoryEntry } from '../../../data';
 import { DatasetBrowser } from '../../../ui/dataset-browser';
-import { isTypingInInput } from '../../../input/input-handler/commands/focus-utils';
+import { isTypingInInput } from '../../../utils/dom/focus';
 
 const navigateMock = vi.fn();
 const getFullUrlMock = vi.fn();

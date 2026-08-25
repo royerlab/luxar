@@ -83,7 +83,11 @@ export interface SimpleDims {
    */
   displayed: number[];
 
-  /** Optional metadata providing semantic information for each dimension */
+  /**
+   * Metadata providing semantic information for each dimension. SceneDimsManager
+   * resolves every range (declared, position bounds, then [0, 1]) before exposing
+   * a snapshot, so discrete consumers read range[0] as the navigation-grid anchor.
+   */
   metadata?: DimensionMetadata[];
 }
 

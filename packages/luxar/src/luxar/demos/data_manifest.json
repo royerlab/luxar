@@ -44,17 +44,23 @@
         {
           "name": "kidney_ch0.gsplats.zarr.zip",
           "sha256": "6a784b8637881822c45b80c72a464d03a09c1eda78d9c3eab9c99e693ee6b694",
-          "bytes": 678591
+          "bytes": 678591,
+          "hosted_sha256": "77abd5d1407f801cfac0cc1e9dc57f44e4a506aee498f921a118697ce5091853",
+          "hosted_bytes": 672844
         },
         {
           "name": "kidney_ch1.gsplats.zarr.zip",
           "sha256": "a2b6d5825657cace874d9197aba8cf6fdce110f4cef2085c771936dc2b151404",
-          "bytes": 696418
+          "bytes": 696418,
+          "hosted_sha256": "794936b25ab8d120b6a38677e549f068ab01d722720da218cc38ef06acdbf486",
+          "hosted_bytes": 690725
         },
         {
           "name": "kidney_ch2.gsplats.zarr.zip",
           "sha256": "02e60df6076a2e51f81eda09fe32e673f7d66db76477e95b5fa4e6019b8f8785",
-          "bytes": 724146
+          "bytes": 724146,
+          "hosted_sha256": "90db97a160f67e3968630ca355c70c9c7ea94348a08c6fd00e0df64097f776bf",
+          "hosted_bytes": 713919
         }
       ]
     },
@@ -74,12 +80,16 @@
         {
           "name": "cells3d_ch0.gsplats.zarr.zip",
           "sha256": "19d5a8e3accaff150851faabaa05c3dd3dcc5447a39733955942adfb420ee0af",
-          "bytes": 285791
+          "bytes": 285791,
+          "hosted_sha256": "6d482dffa06c349ded2e526057d8547b35ecc5a9083e8a73cef9f66c6448bf7f",
+          "hosted_bytes": 538361
         },
         {
           "name": "cells3d_ch1.gsplats.zarr.zip",
           "sha256": "35125c771e911ba069119ce4fd6539d667b3434b4aec93d908c64841cf58906a",
-          "bytes": 288919
+          "bytes": 288919,
+          "hosted_sha256": "d4fa0452413961f08a3711cbccc154b08b749ba70e9ed371b12070dc79839569",
+          "hosted_bytes": 754264
         }
       ]
     },
@@ -99,17 +109,23 @@
         {
           "name": "cmu1_ch0.gsplats.zarr.zip",
           "sha256": "cd22645f393174ea1d853ae213f751cc1e270a2f290706d388116676060b03e8",
-          "bytes": 38201205
+          "bytes": 38201205,
+          "hosted_sha256": "29faffc18cb59f054dd2c4fdfca43103ab02127c2bbc649b4a9e2bdb80e3a496",
+          "hosted_bytes": 84492218
         },
         {
           "name": "cmu1_ch1.gsplats.zarr.zip",
           "sha256": "c1d44d51917cd2b98630eabcc22db07484bf59f98e4fce0d77dba2955c4ce03f",
-          "bytes": 39178730
+          "bytes": 39178730,
+          "hosted_sha256": "b63397f62d50b42bd4831bbad1e4f7d4acb587cd7347543b0033e364aa20d00b",
+          "hosted_bytes": 93189978
         },
         {
           "name": "cmu1_ch2.gsplats.zarr.zip",
           "sha256": "61bf0aa74ebf60464cff45e1b8ed5a9126018e61fa51f669e995b61af629d59e",
-          "bytes": 36430084
+          "bytes": 36430084,
+          "hosted_sha256": "32f37b1420479e59ed6a84c959fda43f3315d6ce966bfb972705552bc61a9dac",
+          "hosted_bytes": 100336780
         }
       ]
     },
@@ -129,7 +145,9 @@
         {
           "name": "cryoem_virus.gsplats.zarr.zip",
           "sha256": "57554b5514c73e4e35bb94d9054150a8eca279edd99bfb8f5951651bd6f55eae",
-          "bytes": 11112371
+          "bytes": 11112371,
+          "hosted_sha256": "84387e0c5cc6bbb0f472f92a22f0e7cd62cf8ea328c63f277610176f4567c373",
+          "hosted_bytes": 15971992
         }
       ]
     },
@@ -149,12 +167,16 @@
         {
           "name": "ct_atlas.gsplats.zarr.zip",
           "sha256": "0ec44cb0f599f5660f82c8cfb55c41b514ffce56b8bf1ddf02c05c500824a839",
-          "bytes": 7117626
+          "bytes": 7117626,
+          "hosted_sha256": "f4348cab764ddccf85ee8b8e8fa6efcfb08d97aaf5650cc3e77dbc709c6fa399",
+          "hosted_bytes": 10116328
         },
         {
           "name": "ct_atlas_labels.npz",
           "sha256": "9ee20f8f5a3ec10ab26aa6029c872eba7ddcfa2e4283add4c26f0df87132d966",
-          "bytes": 33487
+          "bytes": 33487,
+          "hosted_sha256": "71a1315146272263c75c92d554dbf49f18e90222e7d7a5b5bef44a34a5efa11d",
+          "hosted_bytes": 53096
         }
       ]
     },
@@ -175,7 +197,9 @@
         {
           "name": "milkyway_dust.gsplats.zarr.zip",
           "sha256": "d15e4483414cb9e2e7309df575ea2489443dc152a6519b027cde11943d34694e",
-          "bytes": 7822168
+          "bytes": 7822168,
+          "hosted_sha256": "b4cf131a85e35a356187fd606f9af917080b06dc7de010ff0448ef5982cc90e9",
+          "hosted_bytes": 10647985
         }
       ]
     },
@@ -190,7 +214,9 @@
         {
           "name": "desi_dr1_cosmic_web.luxar.zarr.zip",
           "sha256": "411dc0ee7a57f049d7522be9822af412711d6e85ed6ba5c19616317e093e56ad",
-          "bytes": 74339924
+          "bytes": 74339924,
+          "hosted_sha256": "bd03e9045413c6936e952f3c1ef008ea5dba3dd97c9a2bce00645e6cc48ec69f",
+          "hosted_bytes": 76761100
         }
       ]
     },
@@ -210,7 +236,9 @@
         {
           "name": "celegans_s1.gsplats.zarr.zip",
           "sha256": "5b40ed7ff550fb140d4dc882b3b4afb609edfcc77bc7b195b368780b20a36b18",
-          "bytes": 71986071
+          "bytes": 71986071,
+          "hosted_sha256": "7e0e7c170b9619f865bd15b8b71301854a3cc1edfaf0482c2021155d36494e76",
+          "hosted_bytes": 80820824
         }
       ]
     },
@@ -230,12 +258,16 @@
         {
           "name": "vh_head.gsplats.zarr.zip",
           "sha256": "c6ebbab8c2d1bdff0d5fd35f7032c6a375724b5fe5e6d33e8ca4e6af6ab139f6",
-          "bytes": 20572128
+          "bytes": 20572128,
+          "hosted_sha256": "859830d8af8873beef48cf12e1ad8d2707b000495facc777683b14f92be90065",
+          "hosted_bytes": 29378476
         },
         {
           "name": "vh_head_colors.npz",
           "sha256": "63bce184e56d6d3b5f8f6817100c66310984c45da65fd94cdbc0a42ac05abb44",
-          "bytes": 5010117
+          "bytes": 5010117,
+          "hosted_sha256": "82990426778d245e5195334a41eaf5f5b865a532e295444696b94401856ea2c1",
+          "hosted_bytes": 5127220
         }
       ]
     },
@@ -255,7 +287,9 @@
         {
           "name": "nexrad_supercell.gsplats.zarr.zip",
           "sha256": "950a4a2eff4ec35c4fa2fef00ac357e214f7e8395568d8b8322f4e9e8dc67d94",
-          "bytes": 10060822
+          "bytes": 10060822,
+          "hosted_sha256": "299288a14d8563c610fe01650ab04b694b6b8f3895122e88be8a5c1573f8b53d",
+          "hosted_bytes": 12884501
         }
       ]
     },
@@ -273,14 +307,18 @@
       "dir": "gsplats_multichannel",
       "files": [
         {
-          "name": "organoids_ch0.gsplats.zarr.zip",
+          "name": "blastocyst_ch0.gsplats.zarr.zip",
           "sha256": "17931ca1b6c189b7f4c412ab368972f607ae2a5f685effff2b2d3f90eaf92f5f",
-          "bytes": 196680
+          "bytes": 196680,
+          "hosted_sha256": "763d4eff6b307e6a200a8e33611a168a0906d88e80a680b0303f8c3d2dff53c8",
+          "hosted_bytes": 186483
         },
         {
-          "name": "organoids_ch1.gsplats.zarr.zip",
+          "name": "blastocyst_ch1.gsplats.zarr.zip",
           "sha256": "a3e8a5c5541543425769125de0b43267e3b7bccefc053c4152b866e0b077c708",
-          "bytes": 207469
+          "bytes": 207469,
+          "hosted_sha256": "a3122f86ed8aa5a14e815ad9770cd4a5e55d8d0b4cc4fd0947d6b3b0de980441",
+          "hosted_bytes": 198719
         }
       ]
     },
@@ -300,7 +338,9 @@
         {
           "name": "dapi.gsplats.zarr.zip",
           "sha256": "cb1471c0c5fdd7d9d9ae404272d8c8f770489ffc12fd2108881e1f90edb552a6",
-          "bytes": 98930
+          "bytes": 98930,
+          "hosted_sha256": "fadb070081f3deb5018c80951b0b42109647f059ea8897a9bfad9fd1d13b7d00",
+          "hosted_bytes": 121106
         }
       ]
     },
@@ -365,12 +405,16 @@
         {
           "name": "opencell_map4_ch0.gsplats.zarr.zip",
           "sha256": "1001734215d49cac6040691e1e237a1bebce3d33e8aa7dae680f3ddf631da5b5",
-          "bytes": 819778
+          "bytes": 819778,
+          "hosted_sha256": "6bca5accbe8dc8e2a729432b4ddbe5a33eb6f211c44f24b680700a39e0d8de91",
+          "hosted_bytes": 755681
         },
         {
           "name": "opencell_map4_ch1.gsplats.zarr.zip",
           "sha256": "37e576e5f076bd464d2337130b275c0ae4556b3515f9594fcb18c818a2345eaf",
-          "bytes": 819772
+          "bytes": 819772,
+          "hosted_sha256": "550286d3a0f14eab08cd41edb28bfe380f0c078d9eb9381c99aa36e64e749a61",
+          "hosted_bytes": 765483
         }
       ]
     },
@@ -385,7 +429,9 @@
         {
           "name": "flylight_mcfo_63x.gsplats.zarr.zip",
           "sha256": "167461b170c40295cba791616e480b8d80de39df6b532f06bb2c877b7f5b382d",
-          "bytes": 8150095
+          "bytes": 8150095,
+          "hosted_sha256": "1356c696ec346c313215d647561b983f86dfe9844c10620e6b2fb528a74d6201",
+          "hosted_bytes": 8163618
         }
       ]
     },
@@ -404,8 +450,8 @@
       "files": [
         {
           "name": "zebrafish_4d.gsplats.zarr.zip",
-          "sha256": "ec8d80d14d0216b9743f93ae1eb2aaca12fcbf79ed38e19db3bccc63dedc8a53",
-          "bytes": 22348280
+          "sha256": "b4c0cf690f6906414c449fb8c713b78ed7d5f5f88c270ab58cf741f019456f93",
+          "bytes": 19229817
         }
       ]
     },
@@ -419,13 +465,19 @@
       "files": [
         {
           "name": "neuromast_membranes.gsplats.zarr.zip",
-          "sha256": "160f19215921c0dff8728477f8a8fd3a433ae5cce50735e7c5c11113e9a2ec31",
-          "bytes": 72926598
+          "sha256": "ceaa9a41feb872d6ee7698a18742d36a26c9b7bf5e5b7c77b5c762fc90445e18",
+          "bytes": 71081858,
+          "superseded_sha256": [
+            "160f19215921c0dff8728477f8a8fd3a433ae5cce50735e7c5c11113e9a2ec31"
+          ]
         },
         {
           "name": "neuromast_nuclei.gsplats.zarr.zip",
-          "sha256": "726c580619288a227bb02ad5c12a5ae52ee16ededd335f0be4407307bba0a5f1",
-          "bytes": 66778833
+          "sha256": "89e3be6eb19b2b3bce322403b1f18bfeba2313dc354bd710a42048068b095677",
+          "bytes": 65289118,
+          "superseded_sha256": [
+            "726c580619288a227bb02ad5c12a5ae52ee16ededd335f0be4407307bba0a5f1"
+          ]
         }
       ]
     },
@@ -450,24 +502,37 @@
       "license": "cc-by-4.0",
       "source": "h2afva zebrafish histone light-sheet timelapse (Royer lab)",
       "attribution": "Royer lab, CZ Biohub SF (CC BY 4.0).",
-      "pending_upload": true,
+      "acquisition": {
+        "description": "the full 253-timepoint h2afva light-sheet timelapse; the 51tp variant is every fifth frame from the same fit",
+        "comparable": true,
+        "stored_bytes": null
+      },
       "dir": "h2afva",
       "variants": {
         "51tp": {
           "default": true,
-          "approx_bytes": 2134212223,
+          "approx_bytes": 1873559527,
           "note": "51-timepoint fit (every 5th frame) \u2014 lighter default for the demo.",
-          "files": []
+          "files": [
+            {
+              "name": "h2afva_51tp.gsplats.zarr.zip",
+              "sha256": "c5e14be93c3e5626697bb12b9f9729050985dd9c65e8aece09394358e5874c11",
+              "bytes": 1873559527
+            }
+          ]
         },
         "253tp": {
           "default": false,
-          "approx_bytes": 11428060091,
+          "approx_bytes": 9253211541,
           "note": "Full 253-timepoint timelapse \u2014 opt-in (large download).",
           "files": [
             {
               "name": "h2afva_253tp.gsplats.zarr.zip",
-              "sha256": "46621b393d4a49421987ee400ce0be08b73d4da03441230bc6f59ff31917214e",
-              "bytes": 11428060091
+              "sha256": "77d42e8478e6ac581c801915ef31c94eba736fe0560f60cf4356462c3eb2db35",
+              "bytes": 9253211541,
+              "superseded_sha256": [
+                "46621b393d4a49421987ee400ce0be08b73d4da03441230bc6f59ff31917214e"
+              ]
             }
           ]
         }
@@ -483,8 +548,11 @@
       "files": [
         {
           "name": "droso_gastrulation.gsplats.zarr.zip",
-          "sha256": "64367624736b06e4cd26a2578809f142716affad68ce3df1cbbbb802c8afa1af",
-          "bytes": 2377880
+          "sha256": "7e0b6ba49d763e298d833d80b1cff11134480c6b3d8a2b392e63d4a745eae68b",
+          "bytes": 2286979,
+          "superseded_sha256": [
+            "64367624736b06e4cd26a2578809f142716affad68ce3df1cbbbb802c8afa1af"
+          ]
         }
       ]
     },
@@ -498,8 +566,11 @@
       "files": [
         {
           "name": "h2afva_tp234.gsplats.zarr.zip",
-          "sha256": "abc4f8731824b8e2c9767e8e517357db19b998cb5299c9c9197ce1b4bea41dbd",
-          "bytes": 25607491
+          "sha256": "db5df445beee4f44eb4bb350c4b70b1d8ecb1eeb5828e32445a35a2020a01678",
+          "bytes": 20810618,
+          "superseded_sha256": [
+            "abc4f8731824b8e2c9767e8e517357db19b998cb5299c9c9197ce1b4bea41dbd"
+          ]
         }
       ]
     },
@@ -513,23 +584,35 @@
       "files": [
         {
           "name": "h2afva_full.gsplats.zarr.zip",
-          "sha256": "1d5ac0077db38de43807e4e303d275dffe6c98b48e539a096dc4972067db44bf",
-          "bytes": 18070045
+          "sha256": "e9591d7ca35639fa549054e5ef63af69bacae97ef0b9d02d42f946f939de6a00",
+          "bytes": 17812123,
+          "superseded_sha256": [
+            "1d5ac0077db38de43807e4e303d275dffe6c98b48e539a096dc4972067db44bf"
+          ]
         },
         {
           "name": "h2afva_quarter.gsplats.zarr.zip",
-          "sha256": "3727b6194202fb43527928c967429bf2e1ba42f9aa50877a44b9c5bacd29c0a6",
-          "bytes": 4689769
+          "sha256": "34678b87e542713b8cc3057328c10067ce8386d9c2ffb75d55f96e1c14b30077",
+          "bytes": 4615935,
+          "superseded_sha256": [
+            "3727b6194202fb43527928c967429bf2e1ba42f9aa50877a44b9c5bacd29c0a6"
+          ]
         },
         {
           "name": "h2afva_tenth.gsplats.zarr.zip",
-          "sha256": "6851f6585149b02d5e7f955e9c7501140fccb512f37d3e2ec20ec36024e34a47",
-          "bytes": 1984957
+          "sha256": "907223cfad01db2a50a7610b67faa43b06b4a29afc44ecb892db504d065290dc",
+          "bytes": 1947537,
+          "superseded_sha256": [
+            "6851f6585149b02d5e7f955e9c7501140fccb512f37d3e2ec20ec36024e34a47"
+          ]
         },
         {
           "name": "h2afva_twentieth.gsplats.zarr.zip",
-          "sha256": "8f13588289145d92a24423215b5896b679a286c52d04a9854b61b9be1d8e004a",
-          "bytes": 1036456
+          "sha256": "038fb96024d8160e1214ebde3bb0d227e2d60d0622bdfb13f3edd73d6a24bd9d",
+          "bytes": 1010680,
+          "superseded_sha256": [
+            "8f13588289145d92a24423215b5896b679a286c52d04a9854b61b9be1d8e004a"
+          ]
         }
       ]
     },

@@ -47,6 +47,7 @@ from luxar.gsplats.lod._kernels import (
     gaussian_self_energy_numpy,
     truncation_radii_numpy,
 )
+from luxar.gsplats.spatial_hash import BatchedSpatialHashGrid
 from luxar.gsplats.utils.alpha import effective_amplitudes
 from luxar.gsplats.utils.trils import unpack_tril
 from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
@@ -66,7 +67,6 @@ from luxar.utils.lod_methods import GSPLAT_ADDITIVE_CHOICES, GSPLAT_ADDITIVE_MET
 from luxar.utils.lod_methods import AutoOrMethod as AutoOrMethod
 from luxar.utils.lod_methods import MethodName as MethodName
 from luxar.utils.lod_methods import is_reveal_method as _is_reveal_method
-from luxar.utils.spatial_hash import BatchedSpatialHashGrid
 from luxar.validation.types import (
     validate_finite_reveal_coords,
     validate_integral_axis_indices,

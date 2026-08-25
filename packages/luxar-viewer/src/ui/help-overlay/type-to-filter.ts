@@ -70,13 +70,13 @@
  * `elp` first, or by pressing any other key first.
  */
 
-import { isTypingInInput } from '../../input/input-handler/commands/focus-utils';
+import { isTypingInInput } from '../../utils/dom/focus';
 
 /**
- * Keys that must always reach the document-level handler, even while the
- * modal holds focus: `Escape` closes the panel, `Tab` drives the focus trap.
+ * Keys shared containment sites always leave global: `Escape` reaches panel
+ * dismissal, while modal consumers need `Tab` to reach their focus trap.
  */
-const ALWAYS_GLOBAL_KEYS: ReadonlySet<string> = new Set(['Escape', 'Tab']);
+export const ALWAYS_GLOBAL_KEYS: ReadonlySet<string> = new Set(['Escape', 'Tab']);
 
 /** Options for {@link installTypeToFilter}. */
 export interface TypeToFilterOptions {

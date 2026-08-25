@@ -305,6 +305,15 @@ class DocumentationChecker:
 
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(
+                    (isinstance(decorator, ast.Name) and decorator.id == "overload")
+                    or (
+                        isinstance(decorator, ast.Attribute)
+                        and decorator.attr == "overload"
+                    )
+                    for decorator in node.decorator_list
+                ):
+                    continue
                 func_class_count += 1
                 if ast.get_docstring(node) is not None:
                     docstring_count += 1

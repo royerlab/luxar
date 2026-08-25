@@ -158,7 +158,7 @@ def pick_port(
         # user's browser quietly shows the OLD scene on the original port.
         # Pure decoration — a failure here must never break serving.
         try:
-            from ..utils.demo_runs import describe_port_holder
+            from .demo_runs import describe_port_holder
 
             holder = describe_port_holder(requested)
         except Exception:
