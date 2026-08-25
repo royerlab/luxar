@@ -81,10 +81,6 @@ def _intersects(
     return True
 
 
-def _depth_tests(node: _BlendLeaf) -> bool:
-    return node.mode != "additive"
-
-
 def _contains(left: WorldBoundsLeaf, right: WorldBoundsLeaf) -> bool:
     dimensions = min(len(left.bounds["min"]), len(right.bounds["min"]))
     return dimensions > 0 and all(
@@ -174,9 +170,7 @@ def warn_overlapping_blending(
             continue
 
         if (
-            _depth_tests(left)
-            and _depth_tests(right)
-            and not left_writes
+            not left_writes
             and not right_writes
             and _internally_sorted(left)
             and _internally_sorted(right)
