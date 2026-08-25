@@ -13,11 +13,12 @@ four splat budgets, this is the recording as a TIMELAPSE — the axis the other
 two hold fixed.
 
 STRUCTURE:
-    ``kind=partition`` of 44 spatial parts, each carrying its own progressive
-    (stream) ladder, exactly like the single-stack companion. The viewer
-    frustum-culls whole parts you are not looking at and refines the rest
-    progressively; the stacked time axis is a hard coarsening barrier, so no
-    coarse splat ever blends two timepoints together.
+    ``kind=partition`` of 44 spatial parts. Each part is an adaptive LOD group
+    with four substitutive levels (64x, 16x, 4x, and full resolution), and each
+    level carries a four-step stream ladder. The viewer frustum-culls whole
+    parts, selects coarser or finer levels by screen coverage, and progressively
+    streams the selected level; the stacked time axis is a hard coarsening
+    barrier, so no coarse splat ever blends two timepoints together.
 
 DATA SOURCE & CITATIONS:
     Royer lab, CZ Biohub San Francisco (zebrahub). Raw acquisition:
@@ -55,8 +56,8 @@ PIPELINE (provenance of the bundled gsplats — NOT re-run here):
     1. Fit the full 253-timepoint ``h2afva/fused`` timelapse
        (``h2afva_253tp.gsplats.zarr``).
     2. Slice every fifth timepoint and renumber the stacked axis
-       -> ``h2afva_51tp.gsplats.zarr``, 44 content-balanced parts, each with a
-       stream ladder.
+       -> ``h2afva_51tp.gsplats.zarr``, 44 content-balanced parts with four
+       substitutive LOD levels and a four-step stream ladder inside each level.
     3. ``gsplat transform --scale 4,1,1,1`` -> isotropic proportions.
 
     The 51-frame fit is the manifest's default variant precisely because the
@@ -74,8 +75,8 @@ DEMO_META = {
     "title": "4D Zebrafish Embryogenesis (h2afva timelapse)",
     "description": (
         "Zebrafish embryogenesis as a 4D Gaussian-splat timelapse: 51 timepoints "
-        "of histone-labelled nuclei in 44 frustum-culled, progressively-streamed "
-        "spatial parts."
+        "of histone-labelled nuclei in 44 frustum-culled spatial parts with "
+        "adaptive coarse-to-fine LOD and per-level streaming."
     ),
     "category": "microscopy",
     "geometry": "gsplats",
@@ -223,11 +224,11 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                 f"Zebrafish embryo nuclei (histone H2A variant label) across "
                 f"{n_frames} timepoints of the zebrahub h2afva light-sheet "
                 f"recording — every {SOURCE_STRIDE}th frame of 253 — fitted as "
-                "Gaussian splats in 44 spatial parts. Each part carries a "
-                "progressive ladder and is frustum-culled independently; the time "
-                "axis is a coarsening barrier, so no coarse splat blends two "
-                "timepoints. Step Time to watch the body axis form. Press L for "
-                "the Layers panel."
+                "Gaussian splats in 44 spatial parts. Each part has adaptive "
+                "coarse-to-fine LOD with a stream ladder inside every level and is "
+                "frustum-culled independently; the time axis is a coarsening "
+                "barrier, so no coarse splat blends two timepoints. Step Time to "
+                "watch the body axis form. Press L for the Layers panel."
             )
 
             with asection(f"Adding gsplats (44-part partition, {n_frames} frames)"):
