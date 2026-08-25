@@ -214,17 +214,14 @@ def _request_urls(
 def _landing_failure(
     spec: Mapping[str, Any], canonical_probes: tuple[str, ...], fetch: Fetch
 ) -> AuditResult | None:
-    landing_templates = canonical_probes
-    if explicit_landing := spec.get("landing_template"):
-        landing_templates = (str(explicit_landing),)
-    if "url_template" not in spec or not landing_templates:
+    if "url_template" not in spec or not canonical_probes:
         return None
     landing_values = spec["good"]
     if isinstance(landing_values, (tuple, list)):
         landing_values = landing_values[:1]
     else:
         landing_values = (landing_values,)
-    for landing_template in landing_templates:
+    for landing_template in canonical_probes:
         for value in landing_values:
             landing_url = (
                 _format_url(landing_template, str(value))
