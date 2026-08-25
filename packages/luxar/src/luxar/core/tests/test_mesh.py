@@ -8,6 +8,8 @@ must be refused from. The pure validators live in
 
 from __future__ import annotations
 
+import re
+
 import numpy as np
 import pytest
 import zarr
@@ -880,6 +882,33 @@ def test_dim_order_winding_warning_is_silent_without_a_winding_frame(
     """
     _write_tri(tmp_path, "m", dim_order=["z", "y", "x"], double_sided=False)
     assert "reverses handedness" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "normal_dims,expected",
+    [
+        (
+            ["a", "b", "c"],
+            "normal_dims: Entry 0 must be an integer dimension index, got 'a' (str)",
+        ),
+        (
+            3,
+            "normal_dims: Expected a sequence of 3 dimension indices, got int",
+        ),
+    ],
+)
+def test_dim_order_winding_lint_defers_malformed_normal_dims_to_validator(
+    tmp_path, normal_dims, expected
+) -> None:
+    """The advisory lint must not replace the writer's actionable refusal."""
+    with pytest.raises(ValueError, match=re.escape(expected)):
+        _write_tri(
+            tmp_path,
+            "m",
+            normals=_TRI_N,
+            normal_dims=normal_dims,
+            dim_order=["z", "y", "x"],
+        )
 
 
 def test_reveal_ladder_budget_is_charged_as_a_sum(tmp_path, monkeypatch) -> None:

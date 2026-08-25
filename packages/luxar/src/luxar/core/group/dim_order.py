@@ -193,7 +193,14 @@ def dim_order_reverses_winding(
         ``True`` when the caller's authored column order and the scene frame
         disagree about handedness.
     """
-    if dim_order is None or normal_dims is None or len(list(normal_dims)) != 3:
+    if dim_order is None or normal_dims is None:
+        return False
+    try:
+        raw_normal_dims = list(normal_dims)
+        scene_indices = sorted(int(d) for d in raw_normal_dims)
+    except (TypeError, ValueError):
+        return False
+    if len(raw_normal_dims) != 3:
         return False
 
     scene_names = scene._dimensions.names
@@ -205,7 +212,7 @@ def dim_order_reverses_winding(
     # each axis came from. If those columns are not themselves ascending, the
     # restricted map is an odd permutation and handedness flips.
     preimage: List[int] = []
-    for scene_index in sorted(int(d) for d in normal_dims):
+    for scene_index in scene_indices:
         if scene_index not in dim_mapping:
             return False  # filled dimension: no preimage, nothing to decide
         preimage.append(dim_mapping.index(scene_index))
