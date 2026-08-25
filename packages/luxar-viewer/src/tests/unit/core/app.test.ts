@@ -197,6 +197,13 @@ describe('LuxarApp', () => {
       init: vi.fn(),
       getUiActions: vi.fn(() => ({ commands: {}, panels: {} })),
       getShortcutLabel: vi.fn(() => undefined),
+      registerContext: vi.fn(),
+      unregisterContext: vi.fn(),
+      registerBinding: vi.fn(),
+      unregisterBinding: vi.fn(),
+      pushContext: vi.fn(),
+      popContext: vi.fn(),
+      setEnabled: vi.fn(),
       setRenderingControls: vi.fn(),
       setScaleBar: vi.fn(),
       setRecordingPanel: vi.fn(),
@@ -553,8 +560,47 @@ describe('LuxarApp', () => {
 
       expect(components.sceneManager).toBe(mockSceneManager);
       expect(components.animationController).toBe(mockAnimationController);
-      expect(components.inputHandler).toBe(mockInputHandler);
+      expect(components).not.toHaveProperty('inputHandler');
       expect(components.renderingControls).toBe(mockRenderingControls);
+    });
+
+    it('should expose the narrow keyboard-input surface without exposing InputHandler', () => {
+      const context = 'annotation';
+      const config = { priority: 100, passthrough: true };
+      const binding = {
+        actionId: 'annotation.accept',
+        key: 'x',
+        handler: vi.fn(),
+        description: 'Accept annotation',
+        help: false as const,
+      };
+
+      app.registerContext(context, config);
+      app.registerBinding(context, binding);
+      app.pushContext(context);
+      app.popContext();
+      app.unregisterBinding(context, binding.key);
+      app.unregisterContext(context);
+      app.setInputEnabled(false);
+
+      expect(mockInputHandler.registerContext).toHaveBeenCalledWith(context, config);
+      expect(mockInputHandler.registerBinding).toHaveBeenCalledWith(context, binding);
+      expect(mockInputHandler.pushContext).toHaveBeenCalledWith(context);
+      expect(mockInputHandler.popContext).toHaveBeenCalledOnce();
+      expect(mockInputHandler.unregisterBinding).toHaveBeenCalledWith(
+        context,
+        binding.key,
+        undefined
+      );
+      expect(mockInputHandler.unregisterContext).toHaveBeenCalledWith(context);
+      expect(mockInputHandler.setEnabled).toHaveBeenCalledWith(false);
+    });
+
+    it('should resolve registered action labels through the input facade', () => {
+      mockInputHandler.getShortcutLabel.mockReturnValue('Shift+X');
+
+      expect(app.shortcutForAction('annotation.accept')).toBe('Shift+X');
+      expect(mockInputHandler.getShortcutLabel).toHaveBeenCalledWith('annotation.accept');
     });
 
     it('should initialize dimension sliders after loading', async () => {

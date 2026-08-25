@@ -28,6 +28,76 @@ currently exempt, so they must still follow the documented boundary by review.
 It also rejects runtime imports from `input/` into `data/` at severity `error`;
 type-only imports are exempt, and loading orchestration belongs in `scene/`.
 
+## LuxarApp keyboard surface
+
+Embedders use the flat `LuxarApp` methods after `await app.init(...)`:
+
+```typescript
+app.registerContext('annotation', {
+  priority: 100,
+  passthrough: true,
+  fallbackContexts: [InputContext.NAVIGATION],
+  allowRegisteredBindings: true,
+});
+app.registerBinding('annotation', {
+  actionId: 'annotation.accept',
+  key: 'a',
+  handler: acceptAnnotation,
+  description: 'Accept annotation',
+  help: false,
+});
+app.pushContext('annotation');
+// later
+app.popContext();
+app.unregisterBinding('annotation', 'a');
+app.unregisterContext('annotation');
+```
+
+The surface also provides `setInputEnabled()` and `shortcutForAction()`. It
+does not expose `InputHandler` or `InputContextManager`; `app.components`
+deliberately omits the input handler so those implementation classes can
+change without becoming embedder API.
+
+The active context owns a matching chord before any fallback is considered.
+Priority orders the active context's declared fallback candidates; it does not
+globally arbitrate two bindings. Consequently, an active custom context may
+deliberately shadow a built-in chord. Its `blockedKeys` may also suppress viewer
+keys in that context; whether a declined key reaches the viewer depends on
+`passthrough` plus `fallbackContexts`. Built-in Escape handling retains first
+claim while focus is in a typing surface.
+
+At the current built-in keymap, `x`, `y`, and `z` are the only unclaimed letter
+keys. They are not globally free: while the help overlay or dataset browser is
+open, its type-to-filter field consumes printable characters before viewer
+bindings run.
+
+`setInputEnabled(false)` suspends routed viewer keyboard input without deleting
+contexts or bindings; re-enabling restores the same registrations. The internal
+`reset()` lifecycle is stronger: it clears every binding and custom context,
+empties the context stack, and returns to `InputContext.NAVIGATION`.
+
+The router is keyboard-only. Luxar registers its `window` `keydown`/`keyup`
+listeners in the bubble phase. A host that must preempt a chord independently
+of the context API may register a capture-phase listener and call
+`stopImmediatePropagation()` when it owns the event:
+
+```typescript
+window.addEventListener(
+  'keydown',
+  (event) => {
+    if (annotationIsActive && event.key === 'a') {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      acceptAnnotation(event);
+    }
+  },
+  { capture: true }
+);
+```
+
+Pointer and camera-control preemption remains the embedder's responsibility;
+it is not part of this public context surface.
+
 ## Custom contexts
 
 `InputHandler` exposes `registerContext()`, `unregisterContext()`,

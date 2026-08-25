@@ -34,6 +34,7 @@ export interface ShowDatasetBrowserPorts {
    */
   isSwitchInFlight: () => boolean;
   loadDataset: (src: string) => Promise<void>;
+  shortcutForAction: (actionId: string) => string | undefined;
   onClose: () => void;
 }
 
@@ -82,7 +83,7 @@ export function showDatasetBrowser(ports: ShowDatasetBrowserPorts): DatasetBrows
       return ports.loadDataset(cleanUrl).catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
         log.error(Modules.LUXAR, `loadDataset failed for ${cleanUrl}: ${message}`, error);
-        showError(`Failed to load dataset: ${message}`);
+        showError(`Failed to load dataset: ${message}`, ports.shortcutForAction);
         throw error;
       });
     },

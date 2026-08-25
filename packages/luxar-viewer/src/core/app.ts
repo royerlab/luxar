@@ -16,7 +16,7 @@ import type {
 } from './app/embedder/events';
 import { captureScreenshot } from './app/embedder/screenshot';
 import type { AnimationController } from '../scene/animation/animation-controller';
-import type { InputHandler } from '../input';
+import type { ContextConfig, InputContextId, InputHandler, KeyBinding } from '../input';
 import type { RenderingControls } from '../ui/rendering-controls';
 import { showHelpOverlay } from '../ui/help-overlay';
 import type { DatasetBrowser } from '../ui/dataset-browser';
@@ -324,6 +324,7 @@ export class LuxarApp {
       // embedder API. Calling loadDataset() directly here used to allow two
       // full teardown+reload passes to interleave.
       loadDataset: (src) => this.switchDataset(src),
+      shortcutForAction: (actionId) => this.shortcutForAction(actionId),
       onClose: () => {
         this.datasetBrowser = undefined;
       },
@@ -645,7 +646,6 @@ export class LuxarApp {
     return {
       sceneManager: this.sceneManager,
       animationController: this.animationController,
-      inputHandler: this.inputHandler,
       renderingControls: this.renderingControls,
       adaptiveDPRManager: this.adaptiveDPRManager,
     };
@@ -698,6 +698,57 @@ export class LuxarApp {
   // ==================== Programmatic embedder API ====================
   // Flat, additive methods so a host page can drive the viewer without the
   // built-in UI. All guard on `isInitialized` (mirroring captureSnapshot).
+
+  /** Register a custom keyboard-routing context. */
+  registerContext(context: InputContextId, config: ContextConfig): void {
+    this.requireInputHandler('registerContext').registerContext(context, config);
+  }
+
+  /** Remove a custom keyboard-routing context and all of its bindings. */
+  unregisterContext(context: InputContextId): void {
+    this.requireInputHandler('unregisterContext').unregisterContext(context);
+  }
+
+  /** Register a keyboard binding in a built-in or custom context. */
+  registerBinding(context: InputContextId, binding: KeyBinding): void {
+    this.requireInputHandler('registerBinding').registerBinding(context, binding);
+  }
+
+  /** Remove a keyboard binding. Missing bindings are ignored. */
+  unregisterBinding(
+    context: InputContextId,
+    key: string,
+    modifiers?: KeyBinding['modifiers']
+  ): void {
+    this.requireInputHandler('unregisterBinding').unregisterBinding(context, key, modifiers);
+  }
+
+  /** Activate a nested keyboard-routing context. */
+  pushContext(context: InputContextId): void {
+    this.requireInputHandler('pushContext').pushContext(context);
+  }
+
+  /** Restore the context active before the latest {@link pushContext}. */
+  popContext(): void {
+    this.requireInputHandler('popContext').popContext();
+  }
+
+  /** Enable or disable all viewer keyboard shortcuts. */
+  setInputEnabled(enabled: boolean): void {
+    this.requireInputHandler('setInputEnabled').setEnabled(enabled);
+  }
+
+  /** Resolve the active chord label for a registered action, if available. */
+  shortcutForAction(actionId: string): string | undefined {
+    return this.inputHandler?.getShortcutLabel(actionId);
+  }
+
+  private requireInputHandler(method: string): InputHandler {
+    if (!this.isInitialized) {
+      throw new Error(`LuxarApp.${method} called before init()`);
+    }
+    return this.inputHandler;
+  }
 
   /**
    * Subscribe to a public embedder event. Returns an unsubscribe function.

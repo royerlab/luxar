@@ -200,7 +200,7 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
     // visual-regression specs render the dialog directly without going
     // through URL-routing failure paths (whose semantics evolve
     // independently of the dialog's appearance).
-    showError,
+    showError: (message) => showError(message, (actionId) => ports.app.shortcutForAction(actionId)),
 
     // Debug-only synthetic-scene injector for the perf bench. Builds
     // a large lines / points / gsplats payload purely in JS, wires it

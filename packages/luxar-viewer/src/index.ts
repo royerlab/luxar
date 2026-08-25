@@ -37,6 +37,17 @@
 // Core API.
 export { LuxarApp, type LuxarAppOptions } from './core/app';
 export { bootstrapStandalone, type BootstrapOptions } from './core/bootstrap';
+export { InputContext, KeyAction } from './input';
+export type {
+  ContextConfig,
+  InputContextId,
+  KeyActionId,
+  KeyBinding,
+  RegisteredShortcutBinding,
+  RegisteredShortcutBindings,
+  ShortcutHelpMetadata,
+  ShortcutHelpSectionId,
+} from './input';
 
 /**
  * Programmatic embedder API — value/event types for the LuxarApp methods

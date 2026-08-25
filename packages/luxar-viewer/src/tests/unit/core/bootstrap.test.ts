@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   patch: vi.fn(),
   validateAndLog: vi.fn().mockReturnValue(true),
   showError: vi.fn(),
+  shortcutForAction: vi.fn().mockReturnValue('F1'),
   bloscThunk: vi.fn().mockResolvedValue({}),
 }));
 
@@ -29,6 +30,7 @@ vi.mock('../../../core/app', () => ({
   LuxarApp: vi.fn().mockImplementation(() => ({
     init: mocks.init,
     initialized: true,
+    shortcutForAction: mocks.shortcutForAction,
     dispose: vi.fn(),
   })),
 }));
@@ -478,6 +480,7 @@ describe('bootstrapStandalone', () => {
 
       expect(mocks.showError).toHaveBeenCalledTimes(1);
       expect(mocks.showError.mock.calls[0][0]).toMatch(/Failed to start the application/i);
+      expect(mocks.showError.mock.calls[0][1]('help.toggle')).toBe('F1');
     });
   });
 

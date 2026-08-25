@@ -434,7 +434,6 @@ get components() {
   return {
     sceneManager: this.sceneManager,
     animationController: this.animationController,
-    inputHandler: this.inputHandler,
     renderingControls: this.renderingControls,
     adaptiveDPRManager: this.adaptiveDPRManager,
   };
