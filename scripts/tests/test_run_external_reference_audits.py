@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import ast
 import importlib.util
 import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 SCRIPT = Path(__file__).parents[1] / "run_external_reference_audits.py"
@@ -22,6 +24,22 @@ def test_all_external_reference_audits_are_declared() -> None:
         "Zenodo manifest pins",
     ]
     assert audit_module.AUDITS[2].required_env == ("ZENODO_TOKEN",)
+    assert audit_module.AUDITS[2].command == ("make", "check-zenodo-live")
+
+
+def test_make_targets_use_the_intended_python_environments() -> None:
+    makefile = (SCRIPT.parents[1] / "Makefile").read_text()
+
+    assert (
+        "check-external-references:  ## Run all network-backed reference audits"
+        " (report-only)\n\t$(HATCH) run python scripts/run_external_reference_audits.py"
+        in makefile
+    )
+    assert (
+        "check-zenodo-live:  ## Opt-in live Zenodo manifest-pin audit"
+        " (not a required CI gate)\n\tpython3 scripts/zenodo_migration_audit.py --live"
+        in makefile
+    )
 
 
 def test_demo_levels_are_normalized_to_the_worst_finding(monkeypatch) -> None:
@@ -51,7 +69,30 @@ def test_demo_audit_cannot_silently_report_no_destinations(monkeypatch) -> None:
     assert result.level is audit_module.Level.ERROR
 
 
-def test_missing_configuration_is_an_error_without_running(monkeypatch) -> None:
+def test_unknown_demo_marker_does_not_override_known_levels() -> None:
+    output = "[INFO] nothing wrong here\n[OK] fine\n"
+
+    assert audit_module._level_from_output(output) is audit_module.Level.PASS
+
+
+def test_demo_level_contract_matches_the_producer() -> None:
+    producer = SCRIPT.with_name("check_demo_links.py")
+    if not producer.exists():
+        pytest.skip("check-demo-links is introduced by PR #2091")
+    tree = ast.parse(producer.read_text())
+    producer_levels = {
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node.value.isupper()
+        and node.value.isalpha()
+    }
+
+    assert producer_levels == set(audit_module._DEMO_LEVELS)
+
+
+def test_missing_configuration_is_a_notice_without_running(monkeypatch) -> None:
     def unexpected_run(*args, **kwargs):
         raise AssertionError("command must not run without its required secret")
 
@@ -59,8 +100,8 @@ def test_missing_configuration_is_an_error_without_running(monkeypatch) -> None:
 
     result = audit_module.run_audit(audit_module.AUDITS[2], env={})
 
-    assert result.level is audit_module.Level.ERROR
-    assert result.detail == "missing required environment: ZENODO_TOKEN"
+    assert result.level is audit_module.Level.NOTICE
+    assert result.detail == "not configured; leg skipped: ZENODO_TOKEN"
 
 
 def test_secret_is_only_exposed_to_the_audit_that_requires_it(monkeypatch) -> None:
@@ -119,6 +160,69 @@ def test_command_traceback_is_a_configuration_error(monkeypatch) -> None:
     result = audit_module.run_audit(audit_module.AUDITS[0], env={})
 
     assert result.level is audit_module.Level.ERROR
+
+
+def test_missing_make_target_is_not_available_on_this_checkout(monkeypatch) -> None:
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], 2, "", "make: *** No rule to make target 'check-demo-links'. Stop."
+        ),
+    )
+
+    result = audit_module.run_audit(audit_module.AUDITS[1], env={})
+
+    assert result.level is audit_module.Level.NOTICE
+    assert result.detail == "not available on this checkout"
+
+
+def test_missing_established_make_target_is_a_configuration_error(monkeypatch) -> None:
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0],
+            2,
+            "",
+            "make: *** No rule to make target 'check-zenodo-live'. Stop.",
+        ),
+    )
+    audit = audit_module.Audit("Zenodo", ("make", "check-zenodo-live"))
+
+    result = audit_module.run_audit(audit, env={})
+
+    assert result.level is audit_module.Level.ERROR
+
+
+def test_timeout_is_warning_with_partial_output(monkeypatch) -> None:
+    def timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(
+            args[0], kwargs["timeout"], output=b"partial-progress\n", stderr=None
+        )
+
+    monkeypatch.setattr(subprocess, "run", timeout)
+
+    result = audit_module.run_audit(audit_module.AUDITS[0], env={}, timeout_seconds=1)
+
+    assert result.level is audit_module.Level.WARNING
+    assert result.detail == "timed out after 1 seconds"
+    assert result.output == "partial-progress"
+
+
+def test_audits_run_from_the_repository_root(monkeypatch) -> None:
+    seen_cwd = None
+
+    def run(*args, **kwargs):
+        nonlocal seen_cwd
+        seen_cwd = kwargs["cwd"]
+        return subprocess.CompletedProcess(args[0], 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", run)
+
+    audit_module.run_audit(audit_module.AUDITS[0], env={})
+
+    assert seen_cwd == SCRIPT.parents[1]
 
 
 def test_main_writes_the_same_visible_summary_and_always_exits_zero(

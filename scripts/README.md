@@ -28,6 +28,7 @@ scripts/
 | `gen_format_contract.py` | Generate the Python and TypeScript format-contract projections from `format-contract/contract.yaml` |
 | `gen_data_manifest.py` | Regenerate the demo-data manifest (`demos/data_manifest.json`); `--check` is the CI drift gate |
 | `gen_zenodo_records.py` | Generate Zenodo record descriptions from the manifest and committed `demo_archive_characteristics.json`; `--refresh` updates the measurements and `--check` lists incomplete rows (never contacts Zenodo) |
+| `zenodo_migration_audit.py --live` | Compare the demo manifest pins with live Zenodo depositions when `ZENODO_TOKEN` is configured; `make check-zenodo-live` is the lean report-only entry point |
 | `run_external_reference_audits.py` | Run the documentation, demo click-through, and live Zenodo-pin audits independently; normalize them to PASS/NOTICE/WARNING/ERROR and write a non-gating GitHub job summary |
 | `generate_galaxy_simple.py` | Fetch Gaia DR3 stars → raw zarr table for demos |
 | `gen_census_umap.py` | Build the large CELLxGENE Census scVI/UMAP cache on a CUDA/RAPIDS environment |

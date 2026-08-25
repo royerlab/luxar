@@ -58,11 +58,12 @@ AUDITS = (
     Audit("Demo click-throughs", ("make", "check-demo-links"), parse_levels=True),
     Audit(
         "Zenodo manifest pins",
-        ("hatch", "run", "python", "scripts/zenodo_migration_audit.py", "--live"),
+        ("make", "check-zenodo-live"),
         required_env=("ZENODO_TOKEN",),
     ),
 )
 MAX_SUMMARY_OUTPUT_CHARS = 20_000
+REPO_ROOT = Path(__file__).resolve().parents[1]
 _SENSITIVE_ENV = frozenset(name for audit in AUDITS for name in audit.required_env)
 
 _DEMO_LEVELS = {
@@ -73,7 +74,9 @@ _DEMO_LEVELS = {
     "ERROR": Level.WARNING,
     "CONFIG": Level.ERROR,
 }
-_LEVEL_PATTERN = re.compile(r"^\[([A-Z]+)]", re.MULTILINE)
+_LEVEL_PATTERN = re.compile(
+    rf"^\[({'|'.join(re.escape(level) for level in _DEMO_LEVELS)})]", re.MULTILINE
+)
 _COMMAND_ERROR_MARKERS = (
     "No rule to make target",
     "Traceback (most recent call last):",
@@ -82,10 +85,18 @@ _COMMAND_ERROR_MARKERS = (
 
 
 def _level_from_output(output: str) -> Level:
-    levels = [
-        _DEMO_LEVELS.get(match, Level.ERROR) for match in _LEVEL_PATTERN.findall(output)
-    ]
+    levels = [_DEMO_LEVELS[match] for match in _LEVEL_PATTERN.findall(output)]
     return max(levels, default=Level.ERROR)
+
+
+def _captured_output(*parts: str | bytes | None) -> str:
+    decoded = []
+    for part in parts:
+        if isinstance(part, bytes):
+            part = part.decode("utf-8", errors="replace")
+        if part:
+            decoded.append(part.rstrip())
+    return "\n".join(decoded)
 
 
 def run_audit(
@@ -97,7 +108,7 @@ def run_audit(
     missing = [name for name in audit.required_env if not env.get(name)]
     if missing:
         names = ", ".join(missing)
-        return Result(audit, Level.ERROR, f"missing required environment: {names}", "")
+        return Result(audit, Level.NOTICE, f"not configured; leg skipped: {names}", "")
 
     try:
         command_env = dict(env)
@@ -113,14 +124,30 @@ def run_audit(
             errors="replace",
             timeout=timeout_seconds,
             env=command_env,
+            cwd=REPO_ROOT,
         )  # nosec B603
-    except (OSError, subprocess.TimeoutExpired) as error:
+    except subprocess.TimeoutExpired as error:
+        output = _captured_output(error.stdout, error.stderr)
+        return Result(
+            audit,
+            Level.WARNING,
+            f"timed out after {timeout_seconds} seconds",
+            output,
+        )
+    except OSError as error:
         return Result(audit, Level.ERROR, str(error), "")
 
-    output = "\n".join(
-        part.rstrip() for part in (completed.stdout, completed.stderr) if part
-    )
+    output = _captured_output(completed.stdout, completed.stderr)
     if completed.returncode != 0:
+        if audit.command == ("make", "check-demo-links") and (
+            "No rule to make target" in output
+        ):
+            return Result(
+                audit,
+                Level.NOTICE,
+                "not available on this checkout",
+                output,
+            )
         command_error = any(marker in output for marker in _COMMAND_ERROR_MARKERS)
         level = Level.ERROR if command_error else Level.WARNING
         return Result(audit, level, f"exited {completed.returncode}", output)

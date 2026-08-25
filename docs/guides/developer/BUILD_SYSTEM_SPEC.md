@@ -335,6 +335,7 @@ MIN_NODE_MINOR := 22
 | `make check-docs` | Run the PR documentation gate locally: pnpm-override guard, completeness ratchet, TypeDoc warning ratchet, and the warning-fatal Sphinx build (mirrors the required `docs-quality` CI job) |
 | `make check-docs-verbose` | Same gate with verbose completeness output |
 | `make check-docs-external-links` | Opt-in external HTTP link audit (`sphinx-build -b linkcheck`); deliberately not a required CI gate |
+| `make check-zenodo-live` | Opt-in live Zenodo manifest-pin audit using the system Python; requires `ZENODO_TOKEN` and is deliberately not a required CI gate |
 | `make check-external-references` | Run all network-backed reference audits and emit one PASS/NOTICE/WARNING/ERROR report; always non-gating |
 | `make build-typedoc` | Generate TypeScript API documentation with TypeDoc |
 
