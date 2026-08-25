@@ -477,7 +477,7 @@ def test_level_subset_is_deterministic_sorted_and_a_real_subset() -> None:
     b = level_subset(2000, 200, seed=7)
     assert np.array_equal(a, b)  # deterministic: rebuilds are reproducible
     assert a.size == 200
-    assert np.array_equal(a, np.sort(a))  # keeps chunk-coherent ordering
+    assert np.array_equal(a, np.sort(a))  # deterministic and cheap to index
     assert len(set(a.tolist())) == 200  # no repeats
     assert level_subset(2000, 5000, seed=7).size == 2000  # count >= n keeps all
 
@@ -682,7 +682,8 @@ def test_globe_coarse_levels_seal_the_shell_with_a_sqrt_radius(
         level = part[name]
         n = _payload_count(level, "positions")
         r = _payload_scalar(level, "radii")
-        assert r == pytest.approx(r_finest * seal_margin(n, n_finest), rel=1e-5)
+        expected = r_finest * SHELL_SEAL_MARGIN * (n_finest / n) ** 0.5
+        assert r == pytest.approx(expected, rel=1e-5)
         assert r > r_finest  # coarser really is fatter
 
 

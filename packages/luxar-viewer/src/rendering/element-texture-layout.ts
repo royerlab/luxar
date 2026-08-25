@@ -163,8 +163,8 @@ let configuredMaxTextureSize: number | null = null;
  * silent DATA LOSS, and a per-layout flag reports only the FIRST offender: a
  * scene with two oversized Lines nodes announced one of them and dropped the
  * other's tail without a word. Keying on the requested count reports each
- * distinct offender once, while still collapsing the per-frame repeats from the
- * same node (every commit re-clamps the same number).
+ * distinct clamped size once, while still collapsing per-frame repeats. Nodes
+ * with the same label and requested size intentionally fold into one line.
  */
 const warnedCapacityClamp = new Set<string>();
 
@@ -220,9 +220,9 @@ export function getMaxElementCapacityPerNode(layout: ElementTextureLayout): numb
 
 /**
  * Clamp a requested element capacity to the per-node texture bound,
- * reporting each distinct offender once (data loss — the tail of the
+ * reporting each distinct clamped size once (data loss — the tail of the
  * node's elements will never render; the layout's `clampHint` names the
- * fix).
+ * fix). Identically sized offenders of one geometry type share that report.
  *
  * Reported at ERROR level, not warning. A clamp means part of the scene the
  * author asked for is not on screen and never will be, and because elements

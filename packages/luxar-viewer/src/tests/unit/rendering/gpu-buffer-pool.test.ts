@@ -77,14 +77,19 @@ describe('GPUBufferPool', () => {
   describe('Points Geometry', () => {
     it('reports only element loss, not clamped allocation headroom', () => {
       configureElementTextureLayout(16); // point cap = 15*16/3 = 80
+      __setMinInstanceCapacityForTesting(1);
       const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        pool.acquirePointsGeometry('healthy', 60); // 1.5x headroom clamps from 90 to 80
+        expect(errors).not.toHaveBeenCalled();
 
-      pool.acquirePointsGeometry('healthy', 60); // 1.5x headroom clamps from 90 to 80
-      expect(errors).not.toHaveBeenCalled();
-
-      pool.acquirePointsGeometry('oversized', 100); // real loss: 20 points
-      expect(errors).toHaveBeenCalledTimes(1);
-      expect(String(errors.mock.calls[0][0])).toContain('last 20 points');
+        pool.acquirePointsGeometry('oversized', 100); // real loss: 20 points
+        expect(errors).toHaveBeenCalledTimes(1);
+        expect(String(errors.mock.calls[0][0])).toContain('last 20 points');
+      } finally {
+        errors.mockRestore();
+        __setMinInstanceCapacityForTesting(0);
+      }
     });
 
     it('should allocate new geometry on first request', () => {
