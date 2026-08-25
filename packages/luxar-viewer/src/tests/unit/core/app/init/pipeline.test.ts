@@ -674,5 +674,28 @@ describe('runInitPipeline', () => {
         inputHandler.getShortcutLabel.mock.invocationCallOrder[0]
       );
     });
+
+    it('hands the rail it built to inputHandler.setControlRail', async () => {
+      // The rail is also an input-handler collaborator: a handled keydown
+      // notifies it, and Escape closes its overlay through PanelCoordinator.
+      // Passing anything but this instance (or nothing) silently kills both
+      // routes while the buttons keep working — so assert IDENTITY, not that
+      // the setter was merely called.
+      const { factories } = makeFactoryOverrides();
+      const ports = makePorts();
+      ports.options.factories = factories as never;
+      const partial: Partial<InitPipelineResult> = {};
+
+      await runInitPipeline(ports, partial);
+
+      const rail = vi.mocked(ControlRail).mock.results[0].value;
+      const inputHandler = partial.inputHandler as unknown as {
+        setControlRail: ReturnType<typeof vi.fn>;
+      };
+      expect(inputHandler.setControlRail.mock.calls.length).toBe(1);
+      expect(inputHandler.setControlRail.mock.calls[0][0]).toBe(rail);
+      // …and the app keeps the very same instance for its dispose path.
+      expect(partial.controlRail).toBe(rail);
+    });
   });
 });
