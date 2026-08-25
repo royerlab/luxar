@@ -42,8 +42,16 @@
  * slash without first auditing every consumer of
  * `rootGroup.userData.zarrBaseUrl` and every `ctx.normalizeURL` call site.
  *
+ * EXCEPTION — zipped stores. A `.zarr.zip` is a single file, so it gets NO
+ * trailing slash: the rationale above is about making directory children
+ * concatenable, and an archive has no URL-addressable children (its members are
+ * read through the store). `overlays/…` concatenation therefore does not apply
+ * to zipped stores and is handled separately.
+ *
  * @module data/scene-loader/lifecycle/url-normalization
  */
+
+import { isZippedStoreUrl } from '../../zip/entries';
 
 /**
  * Normalize a dataset URL to absolute, slash-terminated form.
@@ -63,6 +71,15 @@
  * Pure given an explicit origin.
  */
 export function normalizeURL(url: string, windowOrigin: string): string {
+  // A zipped store is a FILE, not a directory: `scene.luxar.zarr.zip/` is a
+  // different resource that 404s, and the trailing-slash contract below exists
+  // only to make directory children concatenable. Archives have no such
+  // children — members are read through the store, never by URL — so the slash
+  // is both wrong and unnecessary here.
+  if (isZippedStoreUrl(url)) {
+    if (/^https?:\/\//i.test(url)) return url;
+    return windowOrigin + (url.startsWith('/') ? url : '/' + url);
+  }
   if (/^https?:\/\//i.test(url)) {
     return url.endsWith('/') ? url : url + '/';
   }
