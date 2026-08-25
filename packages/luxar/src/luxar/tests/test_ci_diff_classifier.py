@@ -342,7 +342,7 @@ def test_the_docs_gate_names_its_own_checker_and_baselines(workflow: str) -> Non
 def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
     workflow: str,
 ) -> None:
-    """Obsidian reserves a TypeScript slot without delaying required checks."""
+    """Obsidian reserves a TypeScript slot and Python memory headroom."""
     jobs = yaml.safe_load(workflow)["jobs"]
     max_parallel = re.sub(r"\s+", "", jobs["python-tests"]["strategy"]["max-parallel"])
     branches = re.fullmatch(
@@ -363,6 +363,18 @@ def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
     largest_matrix_size = max(len(json.loads(matrix)) for matrix in matrix_lists)
     assert hosted_cap >= largest_matrix_size, (
         "the hosted max-parallel branch must not throttle the off-PR Python matrix"
+    )
+
+    pytest_addopts = re.sub(r"\s+", "", jobs["python-tests"]["env"]["PYTEST_ADDOPTS"])
+    worker_branches = re.fullmatch(
+        r"\$\{\{needs\.pick-runner\.outputs\.label=='obsidian'&&'-n(\d+)'\|\|''\}\}",
+        pytest_addopts,
+    )
+    assert worker_branches is not None, (
+        "python-tests must enable xdist only on pick-runner's obsidian label"
+    )
+    assert int(worker_branches.group(1)) == 3, (
+        "python-tests must leave memory headroom in obsidian's 12 GiB runner slot"
     )
 
     for hosted_job in ("release-readiness", "wheel-viewer"):
