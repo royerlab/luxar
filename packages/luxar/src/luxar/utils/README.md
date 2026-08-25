@@ -196,7 +196,7 @@ Stable fingerprints for Python sources that produce Luxar stores.
 
 ### Process lifecycle
 
-Process lifecycle support used by `demos.py` lives in the package-root
+Process lifecycle support used by `viewer.py` lives in the package-root
 `../_process.py`; see `../README.md` for its API and teardown guarantees.
 
 ## Usage Examples
@@ -336,5 +336,5 @@ Internal:
 External:
 - `numpy`: Array operations
 - `arbol`: Progress display in demos and downloads
-- `torch`: Device availability probing in `demos.py`
+- `torch`: Device availability probing in `device.py`
 - `requests` / `urllib3`: HTTP downloads with retry (lazily imported in `download.py`)
