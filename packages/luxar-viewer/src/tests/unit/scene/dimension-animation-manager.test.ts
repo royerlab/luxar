@@ -909,15 +909,14 @@ describe('DimensionAnimationManager', () => {
       expect(sceneDimsManager.getDims()!.currentStep[3]).toBe(start + 1);
     });
 
-    it('loop wrap to an off-grid range min: prefetch and playhead land on the SAME value', () => {
+    it('loop wrap to an offset range min: prefetch and playhead land on the SAME value', () => {
       const scene = new THREE.Scene();
       scene.userData.sceneDimensions = {
         dimensions: [
           { name: 'x', unit: '', range: [0, 1], step: 1, display: true },
           { name: 'y', unit: '', range: [0, 1], step: 1, display: true },
           { name: 'z', unit: '', range: [0, 1], step: 1, display: true },
-          // Off-grid ends on a step-1 grid: the loop wrap targets min 0.5
-          // raw, which setDimensionValue snaps to 1 — peek must predict 1.
+          // The step-1 grid is anchored at min 0.5.
           { name: 't', unit: '', range: [0.5, 10.5], step: 1, display: false, discrete: true },
         ],
       };
@@ -935,13 +934,12 @@ describe('DimensionAnimationManager', () => {
         }
       );
       const localManager = new DimensionAnimationManager(dims, controller);
-      dims.setDimensionValue(3, 10); // last on-grid point before max 10.5
+      dims.setDimensionValue(3, 10.5);
       localManager.play(3, { targetFPS: 10, direction: 'forward', loopMode: 'loop' });
-      // 10 + 1 = 11 ≥ max 10.5 → loop wraps to raw min 0.5 → snapped to 1.
-      expect(localManager.peekNextValue(3)).toBe(1);
+      expect(localManager.peekNextValue(3)).toBe(0.5);
       mockTime += 1000;
       captured.fn?.();
-      expect(dims.getDims()!.currentStep[3]).toBe(1);
+      expect(dims.getDims()!.currentStep[3]).toBe(0.5);
       localManager.dispose();
     });
 

@@ -195,7 +195,11 @@ channel_range = (
 
 def discrete_step(values):
     unique_values = np.unique(values).astype(np.int64)
-    return 1.0 if unique_values.size < 2 else float(np.gcd.reduce(unique_values))
+    return (
+        1.0
+        if unique_values.size < 2
+        else float(np.gcd.reduce(np.diff(unique_values)))
+    )
 
 
 dimensions = Dimensions(

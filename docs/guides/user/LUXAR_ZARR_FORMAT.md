@@ -1856,6 +1856,14 @@ Each dimension in `scene_dimensions` contains:
 - `categories`: (Optional) List of string labels for categorical dimensions
 - `description`: (Optional) Human-readable description
 
+For a discrete dimension, numeric stops are anchored at the declared range
+minimum: `range[0] + k * step`. This keeps offset exports such as
+`range=[1, 11], step=5` directly navigable at `1, 6, 11`; `step` is not an
+absolute zero-anchored modulus. This changes the interpretation of existing
+stores whose `range[0]` is not on their authored data grid: recompile those
+stores, or update `range[0]` to an on-grid value, before serving them with a
+viewer that uses this contract.
+
 #### Categorical Dimensions
 Categorical dimensions allow string labels instead of numeric coordinates, useful for channels, cell types, experimental conditions, or time-lapse phases.
 

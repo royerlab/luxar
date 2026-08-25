@@ -205,9 +205,9 @@ function synthesizeSceneDimensionsFromNode(
     // The first up-to-3 axes are the displayed spatial dims. Any axis >= 3 on
     // a bare-node file is almost always a discrete index (time / channel), so
     // mark it discrete with step 1 — that routes it through the "start at the
-    // floor with zero tolerance" slice path instead of being treated as a
-    // continuous axis centered at the range midpoint with a 0.1 window (which
-    // would silently miss integer frames and render a thin / empty slice).
+    // range minimum with zero tolerance" slice path instead of treating it as
+    // a continuous axis centered at the range midpoint with a 0.1 window
+    // (which would silently miss integer frames and render a thin / empty slice).
     const isSpatial = i < 3;
     return {
       name: i < SPATIAL_NAMES.length ? SPATIAL_NAMES[i] : `dim${i}`,

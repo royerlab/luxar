@@ -38,6 +38,7 @@ from luxar.cli.gsplat_config import (
 )
 from luxar.cli.tests._testing import normalized_cli_output
 from luxar.conftest import confine_temp_dirs
+from luxar.core.dimension_inference import infer_discrete_step
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -457,6 +458,40 @@ class TestBuildDimensions:
         z_dim = dims.dimensions[2]
         assert z_dim.range is not None
         assert z_dim.range[0] < z_dim.range[1]
+
+    @pytest.mark.parametrize(
+        ("coordinates", "expected_step"),
+        [([1, 6, 11], 5.0), ([-9, -4, 1], 5.0), ([1, 7, 11], 2.0)],
+    )
+    def test_nd_hidden_dimension_infers_offset_integer_stride(
+        self, coordinates: list[int], expected_step: float
+    ) -> None:
+        centers = np.column_stack(
+            (np.arange(3), np.arange(3), np.arange(3), coordinates)
+        ).astype(np.float32)
+        dims = build_dimensions_from_data(centers)
+
+        hidden = dims.dimensions[3]
+        assert hidden.range == (float(min(coordinates)), float(max(coordinates)))
+        assert hidden.step == expected_step
+        assert hidden.discrete is True
+
+    def test_nd_hidden_dimension_falls_back_for_inexact_float32_integer(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        centers = np.array([[0, 0, 0, 0], [1, 1, 1, (1 << 24) + 2]], dtype=np.float64)
+
+        dims = build_dimensions_from_data(centers)
+
+        assert dims.dimensions[3].step == 1.0
+        assert "within ±2^24" in capsys.readouterr().out
+
+    @pytest.mark.parametrize("coordinates", [[0.0, np.inf], [np.nan]])
+    def test_discrete_step_falls_back_for_non_finite_coordinates(
+        self, coordinates: list[float], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        assert infer_discrete_step(np.asarray(coordinates)) == 1.0
+        assert "must be finite" in capsys.readouterr().out
 
 
 # ═══════════════════════════════════════════════════════════════════════

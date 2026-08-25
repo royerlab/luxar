@@ -1065,12 +1065,13 @@ def create_luxar_scene(stacked: GSplatData, output_path: Path) -> Path:
     t_min, t_max = float(times.min()), float(times.max())
     step_min = (t_max - t_min) / (n_timepoints - 1)
 
-    # Time is a DISCRETE viewer dimension: navigation snaps to multiples of
-    # `step` anchored at 0 and a chunk is only fetched within a quarter-step of
-    # the snapped position, so a timepoint sitting off that grid produces a
-    # slider stop that renders nothing at all — silently. Cheap to check here,
+    # Time is a DISCRETE viewer dimension: navigation snaps to
+    # `t_min + k * step`, and a chunk is only fetched within a quarter-step of
+    # the snapped position. A timepoint sitting off that grid produces a slider
+    # stop that renders nothing at all — silently. Cheap to check here,
     # invisible if it ever stops holding.
-    off_grid = np.abs(times - np.round(times / step_min) * step_min).max()
+    offsets = times - t_min
+    off_grid = np.abs(offsets - np.round(offsets / step_min) * step_min).max()
     if off_grid > 0.01 * step_min:
         raise RuntimeError(
             f"timepoints are not uniformly spaced (worst offset {off_grid:.4g} "
@@ -1105,8 +1106,8 @@ def create_luxar_scene(stacked: GSplatData, output_path: Path) -> Path:
                 ),
                 # Real minutes, not a frame index: the LSM records a 120.01 s
                 # interval, so the slider can read in the unit the biology
-                # happens in. Values sit exactly on multiples of `step`, which
-                # the viewer's discrete navigation snaps to.
+                # happens in. Values sit exactly on `t_min + k * step`, which
+                # is the viewer's discrete navigation grid.
                 Dimension(
                     "Time",
                     unit="min",
