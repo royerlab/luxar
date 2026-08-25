@@ -859,7 +859,7 @@ runs everything. The same trade as the per-PR Python matrix below: found on
 | `pull_request` | `3.12` — the floor, and the one required status context |
 | `push` to `dev` | `3.12`, `3.13`, `3.14` |
 | daily `schedule` (`09:17` UTC) | `3.12`, `3.13`, `3.14` |
-| other `schedule` windows (every three hours at `:17`) | `3.12` — the promotion-required context |
+| remaining `:17` windows (`00,03,06,12,15,18,21` UTC) | `3.12` — the promotion-required context |
 
 3.12 is the FLOOR (`requires-python = ">=3.12"`, what zarr 3.2+ requires) and is
 what the required `python-tests (3.12)` status context names, so it runs on every

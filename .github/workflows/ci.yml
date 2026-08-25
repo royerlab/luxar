@@ -295,8 +295,8 @@ jobs:
   #
   # On a push or the daily full-matrix schedule, max-parallel deliberately holds
   # one Python leg queued while two Python legs and TypeScript occupy the three
-  # slots. GitHub reports
-  # that held leg as `queued` with the `obsidian` label (observed 2026-08-24).
+  # slots. GitHub reports that held leg as `queued` with the `obsidian` label
+  # (observed 2026-08-24).
   # The current run's active obsidian jobs keep the held leg covered. When this
   # run is wholly queued, a periodic repository-wide scan looks for work on other
   # runs. Two scans with no active obsidian work are required before cancellation.

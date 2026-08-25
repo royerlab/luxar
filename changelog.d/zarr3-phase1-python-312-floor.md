@@ -17,7 +17,7 @@ spatial hash, an unnarrowed `np.squeeze` result in `load_volume`, and a
 `min(int, np.signedinteger)` in gsplat culling.
 
 The CI Python matrix is rebased on the new floor rather than shrunk: a pull request
-and the frequent promotion schedules run 3.12 (the floor, and the required status
+and the three-hourly scheduled runs use 3.12 (the floor, and the required status
 context), while push-to-dev and one daily scheduled run exercise 3.12, 3.13 and
 3.14. `requires-python = ">=3.12"` has no ceiling — 3.13 and 3.14 are supported,
 `install-hatch` prefers them, and a developer's Hatch environment picks the newest

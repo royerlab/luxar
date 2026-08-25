@@ -403,7 +403,12 @@ def test_scheduled_ci_supplies_a_green_window_every_three_hours(
     # BaseLoader preserves the YAML 1.1 ``on`` key instead of coercing it to True.
     parsed = yaml.load(workflow, Loader=yaml.BaseLoader)
     schedules = [entry["cron"] for entry in parsed["on"]["schedule"]]
-    assert "17 9 * * *" in schedules, (
+    matrix_line = next(
+        line for line in workflow.splitlines() if "python-version: ${{" in line
+    )
+    match = re.search(r"github\.event\.schedule == '([^']+)'", matrix_line)
+    assert match is not None, "the full Python matrix must name a daily schedule"
+    assert match.group(1) in schedules, (
         "one scheduled window must retain the full daily Python matrix"
     )
 
