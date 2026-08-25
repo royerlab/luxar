@@ -16,6 +16,10 @@ export interface CacheActions {
   clearAllCaches(opts?: { skipConfirm?: boolean }): Promise<void>;
 }
 
+/**
+ * Show a confirmation dialog for destructive cache actions. Falls
+ * back to `true` if `window.confirm` is unavailable (jsdom test env).
+ */
 function confirmDestructiveCacheAction(message: string): boolean {
   if (typeof window === 'undefined' || typeof window.confirm !== 'function') return true;
   return window.confirm(message);
@@ -66,8 +70,10 @@ export function createCacheActions(
       ) {
         return;
       }
+      // Clear L0 + SliceCache first (synchronous)
       providers.l0CacheProvider?.clear();
       providers.sliceCacheProvider?.clear();
+      // Clear L1 + L2 (L2 is async)
       await providers.cacheStatsProvider?.clearAll();
       log.info(Modules.DATA_MONITOR, 'All caches cleared (S-cache + L0 + L1 + L2)');
       notifier.toast('All caches cleared');
