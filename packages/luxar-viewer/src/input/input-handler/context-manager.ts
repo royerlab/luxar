@@ -206,10 +206,16 @@ export class InputContextManager {
     if (this.contextConfigs.has(context)) {
       throw new Error(`Input context "${context}" is already registered`);
     }
+    if (config.allowedKeys && config.allowRegisteredBindings) {
+      throw new Error(
+        `Input context "${context}" cannot define allowedKeys with allowRegisteredBindings`
+      );
+    }
     for (const fallback of config.fallbackContexts ?? []) {
       this.requireRegisteredContext(fallback);
     }
     this.contextConfigs.set(context, this.copyContextConfig(context, config));
+    this.recomputeContextFilters();
   }
 
   /** Remove a custom context and all bindings registered under it. */
@@ -396,6 +402,7 @@ export class InputContextManager {
     contextActions.set(actionKey, bindingKey);
     this.recomputeContextFilters();
     const config = this.contextConfigs.get(context)!;
+    // Derived allowlists already contain every live registration after recomputation.
     if (!this.isKeyAllowedInContext(binding.key, bindingKey, config)) {
       log.warning(
         Modules.INPUT_CONTEXT,
@@ -585,7 +592,7 @@ export class InputContextManager {
   /**
    * Dispatch Escape from a typing context.
    *
-   * Walks all contexts in priority order (including the current one)
+   * Walks built-in contexts plus the active context in priority order
    * and fires the first matching Escape binding. Mirrors the dispatch
    * shape of {@link tryLowerContexts} but does not exclude the current
    * context — Escape is most often registered in NAVIGATION (the
@@ -593,11 +600,14 @@ export class InputContextManager {
    * `tryLowerContexts` does would skip it.
    */
   private dispatchEscapeFromTypingContext(event: KeyboardEvent, type: 'down' | 'up'): boolean {
-    const sortedContexts = Array.from(this.contextConfigs.entries()).sort((a, b) => {
-      const builtInOrder =
-        Number(this.builtInContexts.has(b[0])) - Number(this.builtInContexts.has(a[0]));
-      return builtInOrder || (b[1].priority ?? 0) - (a[1].priority ?? 0);
-    });
+    const sortedContexts = Array.from(this.contextConfigs.entries())
+      .filter(([context]) => this.builtInContexts.has(context) || context === this.currentContext)
+      .sort((a, b) => {
+        // Built-in Escape handlers retain viewer ownership before an active custom context.
+        const builtInOrder =
+          Number(this.builtInContexts.has(b[0])) - Number(this.builtInContexts.has(a[0]));
+        return builtInOrder || (b[1].priority ?? 0) - (a[1].priority ?? 0);
+      });
 
     for (const [context] of sortedContexts) {
       const contextBindings = this.bindings.get(context);

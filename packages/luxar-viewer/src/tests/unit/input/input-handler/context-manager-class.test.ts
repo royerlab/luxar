@@ -177,6 +177,18 @@ describe('InputContextManager', () => {
       );
     });
 
+    it('rejects authored and derived allowed-key filters together', () => {
+      expect(() =>
+        manager.registerContext('annotation', {
+          priority: 5,
+          allowedKeys: ['x'],
+          allowRegisteredBindings: true,
+        })
+      ).toThrow(
+        'Input context "annotation" cannot define allowedKeys with allowRegisteredBindings'
+      );
+    });
+
     it('rejects unknown fallback contexts but allows built-in priority ties', () => {
       expect(() =>
         manager.registerContext('annotation', {
@@ -251,7 +263,7 @@ describe('InputContextManager', () => {
       expect(customEscape).not.toHaveBeenCalled();
     });
 
-    it('falls back to a custom Escape binding when built-in handlers decline', () => {
+    it('ignores inactive custom Escape bindings when built-in handlers decline', () => {
       const customEscape = vi.fn();
       manager.registerContext('annotation', { priority: 100 });
       registerTestBinding(manager, InputContext.NAVIGATION, {
@@ -259,12 +271,35 @@ describe('InputContextManager', () => {
         handler: () => false,
       });
       registerTestBinding(manager, 'annotation', { key: 'Escape', handler: customEscape });
-      manager.setContext(InputContext.TYPING);
+      const input = document.createElement('input');
+      document.body.appendChild(input);
+      input.focus();
+
+      expect(manager.handleKeyEvent(new KeyboardEvent('keydown', { key: 'Escape' }), 'down')).toBe(
+        false
+      );
+      expect(customEscape).not.toHaveBeenCalled();
+      input.remove();
+    });
+
+    it('uses the active custom Escape binding when built-in handlers decline', () => {
+      const customEscape = vi.fn();
+      manager.registerContext('annotation', { priority: 100 });
+      registerTestBinding(manager, InputContext.NAVIGATION, {
+        key: 'Escape',
+        handler: () => false,
+      });
+      registerTestBinding(manager, 'annotation', { key: 'Escape', handler: customEscape });
+      manager.pushContext('annotation');
+      const input = document.createElement('input');
+      document.body.appendChild(input);
+      input.focus();
 
       expect(manager.handleKeyEvent(new KeyboardEvent('keydown', { key: 'Escape' }), 'down')).toBe(
         true
       );
       expect(customEscape).toHaveBeenCalledOnce();
+      input.remove();
     });
 
     it('warns after registration when an authored filter makes the binding unreachable', () => {
