@@ -112,10 +112,13 @@ describe('element-menu keybinding ↔ canvas-actions listener', () => {
   });
 
   it('does not route when focus is on a panel control', () => {
-    // Layer rows bind these same two keys, but the guard matters beyond that:
-    // when the panel is reached by mouse, a cached scene pick can remain while
-    // focus sits outside the canvas, and `openContextMenu` is module-global —
-    // so an ungated route would open a canvas menu over unrelated UI.
+    // Layer rows bind these same two keys and stop propagation, so the guard is
+    // for the other focusable controls outside the canvas: Tab-reaching a panel
+    // keeps the cached scene pick alive (the pointer never left the canvas, so
+    // no `mouseleave` advanced `pickGeneration`) while `openContextMenu` is
+    // module-global — an ungated route would open a canvas menu over unrelated
+    // UI. Body focus is deliberately NOT gated: `isFocusOnSceneCanvas` counts
+    // `document.body` as scene focus.
     const openElementMenu = vi.fn();
     const contextManager = registerBindings(canvas, openElementMenu);
     const button = document.createElement('button');

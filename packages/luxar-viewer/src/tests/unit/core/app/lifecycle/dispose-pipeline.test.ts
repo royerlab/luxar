@@ -333,11 +333,15 @@ describe('runDisposePipeline', () => {
       // DOM, button map, overlay, hint) so a disposed-but-retained app cannot
       // pin it. It must run before the rail's own dispose(): the block is one
       // safeDispose closure, so a throwing dispose() would otherwise strand a
-      // half-disposed rail on the handler. Pinning the FULL block sequence (not
-      // just an interval before input-dispose) is what fails if the statement
-      // drifts into the datasetBrowser or inputHandler block instead.
+      // half-disposed rail on the handler. The sequence is bracketed on BOTH
+      // sides so the statement cannot drift out of the block unnoticed: the
+      // preceding recordingPanel teardown catches an upstream move (into
+      // recordingPanel, overlayManager, scaleBar, animationController, …) and
+      // `input-dispose` catches a downstream one (into datasetBrowser or
+      // inputHandler).
       const s = makeStubs();
       const order: string[] = [];
+      s.recordingPanel.dispose.mockImplementation(() => order.push('recording-dispose'));
       s.inputHandler.setControlRail.mockImplementation(() => order.push('clear-rail-ref'));
       s.controlRail.dispose.mockImplementation(() => order.push('rail-dispose'));
       s.clears.controlRail.mockImplementation(() => order.push('clear-rail-field'));
@@ -349,6 +353,7 @@ describe('runDisposePipeline', () => {
       // satisfies toHaveBeenCalledWith(undefined), so pin the arity too.
       expect(s.inputHandler.setControlRail.mock.calls).toEqual([[undefined]]);
       expect(order).toEqual([
+        'recording-dispose',
         'clear-rail-ref',
         'rail-dispose',
         'clear-rail-field',
