@@ -87,6 +87,13 @@ Robust download utilities with retry logic, resume capability, and progress trac
 - `warn_if_quarantined(target, ...)`: Print that notice and return the paths. Called from `robust_download()` so a user about to re-fetch a multi-gigabyte artifact is told that a rejected earlier copy is sitting next to it — instead of watching a huge download silently start over
 - `QUARANTINE_SUFFIX`: The `.corrupt` suffix used when a cached artifact fails validation (see `demos.cache_computed`). A quarantined file is never reused
 
+### `remote_zip.py`
+
+HTTP-range ZIP access for extracting one remote archive member without downloading
+the entire archive. `download_zip_member()` reads the end record and central
+directory, streams only the selected member, and verifies its size and CRC before
+atomically promoting the completed output.
+
 ### `lod_breakpoints.py`
 Streaming-ladder breakpoint math, shared by all three geometries (Points, Lines,
 GSplats). An additive (streaming) ladder cuts an importance-ordered element
@@ -337,4 +344,4 @@ External:
 - `numpy`: Array operations
 - `arbol`: Progress display in demos and downloads
 - `torch`: Device availability probing in `device.py`
-- `requests` / `urllib3`: HTTP downloads with retry (lazily imported in `download.py`)
+- `requests` / `urllib3`: HTTP downloads with retry (lazily imported in `download.py` and `remote_zip.py`)

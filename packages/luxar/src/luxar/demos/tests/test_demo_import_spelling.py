@@ -109,6 +109,7 @@ DEEP_MODULES = SPLIT_DEMO_UTILITY_MODULES | {
     "luxar.demos._support._fields",
     "luxar.utils.data_fetch",
     "luxar.utils.download",
+    "luxar.utils.remote_zip",
 }
 
 #: ``(package, leaf)`` PAIRS, so ``from luxar.utils import viewer`` is recognised

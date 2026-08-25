@@ -36,7 +36,6 @@ from ..utils.device import detect_device, warn_if_no_cuda_gpu
 from ..utils.download import (
     QUARANTINE_SUFFIX,
     download_with_checksum,
-    download_zip_member,
     find_quarantined_files,
     format_quarantine_notice,
     quarantine_file,
@@ -52,6 +51,7 @@ from ..utils.provenance import (
     print_data_provenance,
     scene_is_current,
 )
+from ..utils.remote_zip import download_zip_member
 from ..utils.scenes import (
     create_lorenz_attractor,
     create_random_spheres,
