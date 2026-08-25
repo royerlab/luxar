@@ -34,7 +34,6 @@ import os
 import re
 import shutil
 import subprocess
-from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -387,13 +386,6 @@ def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
     )
 
 
-def _heartbeat(value: str, updated_epoch: int) -> dict[str, str]:
-    updated_at = (
-        datetime.fromtimestamp(updated_epoch, UTC).isoformat().replace("+00:00", "Z")
-    )
-    return {"value": value, "updated_at": updated_at}
-
-
 def _run_pick_runner(
     workflow: str,
     tmp_path: Path,
@@ -542,6 +534,8 @@ def _run_queue_watchdog(
     run_api_error: bool = False,
     run_api_error_once: bool = False,
     job_api_error: bool = False,
+    own_job_api_error_call: int = 0,
+    other_job_api_error_call: int = 0,
 ) -> tuple[subprocess.CompletedProcess[str], int, bool]:
     """Run the real inline watchdog against deterministic GitHub API snapshots."""
     watchdog = yaml.safe_load(workflow)["jobs"]["queue-watchdog"]["steps"][0]["run"]
@@ -561,6 +555,7 @@ def _run_queue_watchdog(
     snapshots_path = tmp_path / "snapshots.json"
     counter_path = tmp_path / "jobs-api-calls"
     run_counter_path = tmp_path / "runs-api-calls"
+    other_job_counter_path = tmp_path / "other-jobs-api-calls"
     date_counter_path = tmp_path / "date-calls"
     cancel_path = tmp_path / "cancelled"
     snapshots_path.write_text(json.dumps(job_snapshots), encoding="utf-8")
@@ -590,7 +585,11 @@ if "/actions/runs?" in endpoint:
     run_ids = [2038, 9999] if active else [2038]
     print(json.dumps({"workflow_runs": [{"id": run_id} for run_id in run_ids]}))
 elif "/runs/9999/jobs?" in endpoint:
-    if os.environ["WATCHDOG_JOB_API_ERROR"] == "1":
+    counter = Path(os.environ["WATCHDOG_OTHER_JOB_COUNTER"])
+    call = int(counter.read_text() or "0") if counter.exists() else 0
+    counter.write_text(str(call + 1))
+    error_call = int(os.environ["WATCHDOG_OTHER_JOB_API_ERROR_CALL"])
+    if os.environ["WATCHDOG_JOB_API_ERROR"] == "1" or error_call == call + 1:
         raise SystemExit(1)
     print(json.dumps({"jobs": [{"name": "other-python", "status": "in_progress", "labels": ["obsidian"]}]}))
 elif "/jobs?" in endpoint:
@@ -599,6 +598,8 @@ elif "/jobs?" in endpoint:
     counter = Path(os.environ["WATCHDOG_COUNTER"])
     call = int(counter.read_text() or "0") if counter.exists() else 0
     counter.write_text(str(call + 1))
+    if int(os.environ["WATCHDOG_OWN_JOB_API_ERROR_CALL"]) == call + 1:
+        raise SystemExit(1)
     snapshots = json.loads(Path(os.environ["WATCHDOG_SNAPSHOTS"]).read_text())
     jobs = snapshots[min(call, len(snapshots) - 1)]
     if jobs == "invalid-json":
@@ -639,11 +640,14 @@ print(1000 + call * int(os.environ["WATCHDOG_DATE_STEP"]))
         "WATCHDOG_SNAPSHOTS": str(snapshots_path),
         "WATCHDOG_COUNTER": str(counter_path),
         "WATCHDOG_RUN_COUNTER": str(run_counter_path),
+        "WATCHDOG_OTHER_JOB_COUNTER": str(other_job_counter_path),
         "WATCHDOG_OTHER_ACTIVE": str(other_active_path),
         "WATCHDOG_RUN_API_ERROR": (
             "once" if run_api_error_once else "1" if run_api_error else "0"
         ),
         "WATCHDOG_JOB_API_ERROR": "1" if job_api_error else "0",
+        "WATCHDOG_OWN_JOB_API_ERROR_CALL": str(own_job_api_error_call),
+        "WATCHDOG_OTHER_JOB_API_ERROR_CALL": str(other_job_api_error_call),
         "WATCHDOG_DATE_COUNTER": str(date_counter_path),
         "WATCHDOG_DATE_STEP": str(date_step),
         "WATCHDOG_CANCELLED": str(cancel_path),
@@ -923,22 +927,49 @@ def test_queue_watchdog_api_error_breaks_no_activity_streak(
     assert cancelled
 
 
-def test_queue_watchdog_cross_run_activity_breaks_no_activity_streak(
-    workflow: str, tmp_path: Path
+@pytest.mark.parametrize(
+    ("interruption", "expected_calls", "expected_message"),
+    [
+        ("cross-run activity", 12, "other runs have active obsidian jobs"),
+        ("own-run activity", 10, "this run has active obsidian jobs"),
+        ("own-jobs API error", 10, "jobs API read failed"),
+        ("other-jobs API error", 12, "job liveness unreadable"),
+    ],
+)
+def test_queue_watchdog_interruption_breaks_no_activity_streak(
+    workflow: str,
+    tmp_path: Path,
+    interruption: str,
+    expected_calls: int,
+    expected_message: str,
 ) -> None:
-    """Observed activity must break consecutive no-activity evidence."""
+    """Activity or an unreadable signal must break consecutive clean scans."""
     queued = [_obsidian_job("python-tests (3.12)", "queued")]
+    snapshots = [queued] * 12
+    kwargs: dict[str, object] = {}
+    if interruption == "cross-run activity":
+        kwargs["other_run_active_snapshots"] = [False, True, False, False]
+    elif interruption == "own-run activity":
+        snapshots[3] = [
+            _obsidian_job("python-tests (3.12)", "queued"),
+            _obsidian_job("typescript-tests", "in_progress"),
+        ]
+    elif interruption == "own-jobs API error":
+        kwargs["own_job_api_error_call"] = 4
+    else:
+        kwargs["other_run_active_snapshots"] = [False, True, False, False]
+        kwargs["other_job_api_error_call"] = 1
     result, calls, cancelled = _run_queue_watchdog(
         workflow,
         tmp_path,
-        [queued] * 12,
-        other_run_active_snapshots=[False, True, False, False],
+        snapshots,
         date_step=30,
+        **kwargs,
     )
 
     assert result.returncode == 1
-    assert calls == 12
-    assert "other runs have active obsidian jobs" in result.stdout
+    assert calls == expected_calls
+    assert expected_message in result.stdout
     assert cancelled
 
 
@@ -968,7 +999,7 @@ def test_queue_watchdog_leaves_live_busy_run_alone_when_window_closes(
 def test_queue_watchdog_reports_when_window_closes_before_jobs_materialize(
     workflow: str, tmp_path: Path
 ) -> None:
-    """Window expiry before fan-out must not claim a fresh heartbeat was observed."""
+    """Window expiry before fan-out must report that no routed jobs appeared."""
     snapshots = [
         [
             _hosted_job("changes", "queued"),
@@ -983,5 +1014,5 @@ def test_queue_watchdog_reports_when_window_closes_before_jobs_materialize(
     assert result.returncode == 0, result.stdout + result.stderr
     assert calls == 5
     assert "watchdog window over before obsidian-routed jobs appeared" in result.stdout
-    assert "heartbeat stayed fresh" not in result.stdout
+    assert "GitHub still reports active obsidian work" not in result.stdout
     assert not cancelled

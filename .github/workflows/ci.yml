@@ -163,7 +163,7 @@ jobs:
           fi
 
   # Runner routing: send the heavy test legs to the self-hosted `obsidian` box
-  # while its heartbeat publisher is live, and fall back to GitHub-hosted when
+  # while its capacity heartbeat is fresh, and fall back to GitHub-hosted when
   # it is not. MUST run on ubuntu-latest — a router that needs obsidian to be up
   # could never route around obsidian being down.
   #
@@ -200,7 +200,7 @@ jobs:
       label: ${{ steps.pick.outputs.label }}
     steps:
       - id: pick
-        name: Pick runner from obsidian publisher liveness
+        name: Pick runner from obsidian capacity and activity
         env:
           FORCE_HOSTED: ${{ vars.LUXAR_CI_FORCE_HOSTED }}
           GH_TOKEN: ${{ github.token }}
