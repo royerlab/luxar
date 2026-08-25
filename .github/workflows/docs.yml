@@ -15,8 +15,8 @@ permissions:
 
 jobs:
   build:
-    # A newer main promotion makes an older build obsolete, so do not serialize
-    # paid runners behind stale work.
+    # A newer publication run makes an older build obsolete, so do not
+    # serialize paid runners behind stale work.
     concurrency:
       group: pages-build
       cancel-in-progress: true

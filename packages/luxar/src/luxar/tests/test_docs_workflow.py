@@ -96,7 +96,7 @@ def test_pages_fetches_only_the_lfs_assets_published_by_sphinx() -> None:
     assert fetch_index < build_index
 
 
-def test_pages_cancels_deployments_superseded_by_newer_main_promotions() -> None:
+def test_pages_cancels_builds_superseded_by_newer_publication_runs() -> None:
     """Cancel stale builds without interrupting an in-flight deployment."""
     workflow = _workflow()
     jobs = workflow["jobs"]
