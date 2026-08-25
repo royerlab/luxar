@@ -988,6 +988,47 @@ def test_dim_order_winding_warning_is_silent_when_frame_has_no_preimage(
     assert "reverses handedness" not in capsys.readouterr().out
 
 
+@pytest.mark.parametrize(
+    "route_kwargs,test_id",
+    [
+        ({}, "flat_leaf"),
+        ({"partition": {"max_elements": 2}}, "partition"),
+        ({"substitutive_lod": {"levels": 2}}, "substitutive_lod"),
+        ({"additive_lod": {"n_lods": 2}}, "additive_lod"),
+    ],
+)
+def test_dim_order_winding_lint_reaches_every_structural_route(
+    tmp_path, capsys, route_kwargs, test_id
+) -> None:
+    """One call site serves all four routes — this is what proves it.
+
+    `add_mesh_impl` runs the lint once, above the structural branches, and relies
+    on every recursive re-entry passing `dim_order=None` so it fires exactly once.
+    That is an argument, not a guarantee: a regression that moved the call below a
+    branch would leave `partition=`, `substitutive_lod=` and `additive_lod=`
+    authoring in silence while the flat leaf stayed green — a lint that is absent
+    on three quarters of the API and looks fine in every other test.
+
+    Uses the closed tetrahedron rather than the single triangle: `partition=`
+    needs enough faces to split and the LOD routes need something to coarsen.
+    """
+    store = tmp_path / f"{test_id}.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_mesh(
+            "m",
+            _V,
+            _F,
+            normals=_N,
+            normal_dims=[0, 1, 2],
+            dim_order=["z", "y", "x"],
+            **route_kwargs,
+        )
+    assert "reverses handedness" in capsys.readouterr().out, (
+        f"{test_id}: the winding lint did not fire on this route"
+    )
+
+
 def test_dim_order_scene_semantics_hold_for_normal_dims(tmp_path) -> None:
     """`normal_dims` indexes the SCENE dimensions, so it may exceed the authored width.
 
