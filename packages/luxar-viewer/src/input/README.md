@@ -90,6 +90,8 @@ trackball rotations — they all live in `controls/`, not here.
 
 Panels own their own buttons + form controls. Slider drags, range-input
 typing, modal close buttons — they live with the panel that needs them.
+Non-modal panels may contain keys their controls own while allowing unrelated
+viewer shortcuts to continue through the global router.
 
 ## Orchestrator surface
 

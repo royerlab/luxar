@@ -3401,21 +3401,26 @@ describe('LayersPanel — filter + context-menu lifecycle across dataset reloads
     panel.dispose();
   });
 
-  it('contains slider keydowns at the panel boundary except Escape and Tab', () => {
+  it('contains panel-control keys while unrelated viewer shortcuts still bubble', () => {
     const panel = new LayersPanel(container, animationController);
     panel.initFromScene(new THREE.Group(), makeManyLayerSceneGraph());
     panel.show();
 
-    const sliders = [
-      container.querySelector<HTMLInputElement>('.luxar-layers-panel__slider'),
-      container.querySelector<HTMLInputElement>('.luxar-range-slider__input'),
-    ];
-    expect(sliders.every((slider) => slider !== null)).toBe(true);
+    const opacitySlider = container.querySelector<HTMLInputElement>('.luxar-layers-panel__slider');
+    const rangeSlider = container.querySelector<HTMLInputElement>('.luxar-range-slider__input');
+    const closeButton = container.querySelector<HTMLButtonElement>('.luxar-layers-panel__close');
+    const eyeButton = container.querySelector<HTMLButtonElement>('.luxar-layer-row__eye');
+    expect(opacitySlider).not.toBeNull();
+    expect(rangeSlider).not.toBeNull();
+    expect(closeButton).not.toBeNull();
+    expect(eyeButton).not.toBeNull();
+
+    const controls = [opacitySlider!, rangeSlider!, closeButton!, eyeButton!];
 
     const globalHandler = vi.fn();
     window.addEventListener('keydown', globalHandler);
     try {
-      for (const slider of sliders) {
+      for (const slider of [opacitySlider!, rangeSlider!]) {
         for (const event of [
           new KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }),
           new KeyboardEvent('keydown', {
@@ -3429,14 +3434,22 @@ describe('LayersPanel — filter + context-menu lifecycle across dataset reloads
           expect(event.defaultPrevented).toBe(false);
         }
       }
+
+      for (const control of controls) {
+        control.dispatchEvent(new KeyboardEvent('keydown', { key: 'PageDown', bubbles: true }));
+      }
       expect(globalHandler).not.toHaveBeenCalled();
 
-      for (const key of ['Escape', 'Tab']) {
-        sliders[0]!.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+      for (const control of controls) {
+        control.dispatchEvent(new KeyboardEvent('keydown', { key: ']', bubbles: true }));
       }
+      opacitySlider!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
       expect(globalHandler.mock.calls.map(([event]) => (event as KeyboardEvent).key)).toEqual([
+        ']',
+        ']',
+        ']',
+        ']',
         'Escape',
-        'Tab',
       ]);
     } finally {
       window.removeEventListener('keydown', globalHandler);
