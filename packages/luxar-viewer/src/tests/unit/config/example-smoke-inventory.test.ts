@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -31,6 +31,7 @@ describe('discoverExampleDatasets', () => {
     addDataset(root, 'alpha_example.luxar.zarr');
     addDataset(root, 'beta_example.luxar.zarr');
     addDataset(root, 'ignored-directory');
+    writeFileSync(join(root, 'stray_example.luxar.zarr'), 'not a dataset');
 
     expect(
       discoverExampleDatasets(root, {
