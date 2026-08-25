@@ -15,6 +15,8 @@ from luxar.shading import (
     directional_optical_depth,
     sphere_directions,
 )
+from luxar.shading import occlusion as occlusion_module
+from luxar.shading.occlusion import AUTO_TARGET_TRANSMITTANCE
 
 
 def _ball(n: int, seed: int = 0, radius: float = 1.0) -> np.ndarray:
@@ -299,14 +301,43 @@ def test_auto_extinction_is_independent_of_mass_units():
     assert np.abs(shade - shade_scaled).max() < 0.02
 
 
-def test_auto_extinction_puts_median_mid_range():
+def test_auto_extinction_hits_its_declared_target():
+    """The realized median must track :data:`AUTO_TARGET_TRANSMITTANCE`.
+
+    Derived from the constant rather than hardcoded, so retuning the target
+    cannot leave this test silently asserting the old value. Jensen's inequality
+    on the exponential puts the realized median somewhat ABOVE the target, so the
+    band is one-sided-ish and generous; what it pins is that the calibration is
+    aimed at the declared number and lands nowhere near either rail.
+    """
     positions = _ball(20_000, seed=7)
     shade = bake_ambient_occlusion(
         positions, radius=0.3, grid_cells=48, n_directions=12, strength=1.0
     )
-    # Jensen's inequality on the exponential puts the realized median slightly
-    # above the 0.5 target; the point is that it lands mid-range, not at either rail.
-    assert 0.45 < float(np.median(shade)) < 0.75
+
+    median = float(np.median(shade))
+    assert AUTO_TARGET_TRANSMITTANCE - 0.05 < median < AUTO_TARGET_TRANSMITTANCE + 0.25
+    assert 0.05 < median < 0.95
+
+
+def test_lowering_the_auto_target_raises_contrast(monkeypatch):
+    """The lever the target exists to provide, and its failure mode.
+
+    Contrast must rise as the target falls — that is the whole point of the
+    constant — but the 5th percentile must not be what is paying for it. A target
+    low enough to crush the dark end to black shows more "contrast" while showing
+    less structure, so both are asserted together.
+    """
+    positions = _truncated_ball(20_000, seed=27)
+    kwargs = dict(radius=0.3, grid_cells=48, n_directions=12, strength=1.0)
+
+    monkeypatch.setattr(occlusion_module, "AUTO_TARGET_TRANSMITTANCE", 0.5)
+    timid = bake_ambient_occlusion(positions, **kwargs)
+    monkeypatch.setattr(occlusion_module, "AUTO_TARGET_TRANSMITTANCE", 0.25)
+    bold = bake_ambient_occlusion(positions, **kwargs)
+
+    assert bold.std() / bold.mean() > 1.3 * (timid.std() / timid.mean())
+    assert float(np.percentile(bold, 5)) > 0.1
 
 
 def test_auto_extinction_on_data_sparser_than_the_radius():

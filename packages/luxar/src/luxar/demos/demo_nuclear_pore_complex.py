@@ -385,11 +385,18 @@ AO_GRID_CELLS = 128
 #: colour IS the emission term, and for matter lit from outside that term is
 #: albedo x incident irradiance.
 #:
-#: Kept moderate for a second reason here: the colours are a CATEGORICAL element
-#: encoding (C grey, N blue, O red, S yellow), and multiplying by a scalar
-#: preserves hue while changing only lightness, so element identity survives — but
-#: it is still a real cost to the encoding.
-AO_STRENGTH = 0.55
+#: 0.85 rather than the library default, because points need more of it than a
+#: mesh does: a shaded surface puts ONE element in each pixel, while a
+#: depth-sorted point cloud shows a sprite whose soft falloff blends with its
+#: neighbours, muting per-element contrast. Measured contrast (std/mean of the
+#: normalized multiplier) 0.103 at 0.55 against 0.214 at 0.85, with the 5th
+#: percentile still at 0.39 — visibly darker, nowhere near crushed.
+#:
+#: Not pushed to 1.0 because the colours are a CATEGORICAL element encoding (C
+#: grey, N blue, O red, S yellow). A scalar multiplier preserves hue and changes
+#: only lightness, so element identity survives either way, but 1.0 takes the
+#: darkest atoms to 0.15 and there is no reason to spend that.
+AO_STRENGTH = 0.85
 
 
 def _apply_burial_shading(

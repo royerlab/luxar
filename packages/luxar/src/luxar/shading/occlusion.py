@@ -111,9 +111,30 @@ DEFAULT_GRID_CELLS = 64
 DEFAULT_N_DIRECTIONS = 12
 
 #: ``extinction="auto"`` solves for the scale that puts the *median* element at
-#: this transmittance, so the population lands mid-range whatever the mass units
-#: and however densely the object was sampled.
-AUTO_TARGET_TRANSMITTANCE = 0.5
+#: this transmittance, so the population lands in a useful range whatever the
+#: mass units and however densely the object was sampled.
+#:
+#: Chosen by measurement, against two deliberately different regimes — a thin
+#: gyroid shell read through the hemisphere path and a solid ball read through the
+#: full sphere — since a target tuned on one shape would not be a general default.
+#: Contrast is std/mean of the multiplier at ``strength=1.0``; p5 is the guard,
+#: because contrast that climbs while p5 collapses is climbing by CRUSHING the
+#: dark end to black rather than by revealing anything:
+#:
+#: ===============  ==================  ==================
+#: target           shell contrast/p5   ball contrast/p5
+#: ===============  ==================  ==================
+#: 0.50             0.198 / 0.398       0.150 / 0.454
+#: 0.35             0.273 / 0.273       0.247 / 0.304
+#: **0.25**         **0.335 / 0.195**   **0.351 / 0.209**
+#: 0.15             0.417 / 0.120       0.531 / 0.119
+#: 0.10             0.474 / 0.083       0.688 / 0.076
+#: ===============  ==================  ==================
+#:
+#: 0.25 roughly doubles the contrast of the original 0.5 in BOTH regimes while
+#: holding p5 near 0.2 — dark but still carrying colour. Below it the gain comes
+#: from clipping.
+AUTO_TARGET_TRANSMITTANCE = 0.25
 
 
 def sphere_directions(n_directions: int) -> np.ndarray:

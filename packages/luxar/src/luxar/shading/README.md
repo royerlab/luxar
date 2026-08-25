@@ -97,8 +97,24 @@ Two things worth knowing before judging a result:
   `shade.mean()` is the factor to compensate for. A frame that merely looks
   crisper may just be darker; compare against the unshaded original.
 - `extinction="auto"` (the default) solves for the value that puts the median
-  element mid-range, which makes the same call work unchanged on a 50k-point
-  sketch and a 3M-splat fit, whatever the mass units.
+  element at `AUTO_TARGET_TRANSMITTANCE`, which makes the same call work
+  unchanged on a 50k-point sketch and a 3M-splat fit, whatever the mass units.
+  That constant is the global contrast dial, and it was picked by measurement
+  against two deliberately different shapes — see its docstring for the table.
+  **Judge a lower target on the 5th percentile, not on the contrast number**: a
+  target low enough to crush the dark end to black reports more contrast while
+  showing less structure.
+
+### Points need more of it than a mesh does
+
+Worth knowing before copying a strength between geometry types. A shaded,
+depth-tested surface puts **one** element in each pixel, so the full per-element
+multiplier reaches the screen. A point cloud blends soft overlapping sprites, and
+an additive one sums along the ray — a pixel then shows the *ray-averaged* shade,
+which costs about 30% of the contrast (measured 0.280 additive against 0.403
+nearest-element on the gyroid). So the same value that looks right on a mesh reads
+as barely-there on points. The bundled demos land at `0.45` for mesh and `0.85`
+for the point clouds for exactly this reason.
 
 ## Method
 

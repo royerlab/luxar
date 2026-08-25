@@ -108,10 +108,11 @@ BASE_COLOR = np.array([0.62, 0.72, 0.95], dtype=np.float32)
 #: resolution so the surface reads as continuous rather than as a dot screen.
 POINT_RADIUS = 0.035
 
-#: Occlusion strength. Full strength rather than the library's 0.7 default,
-#: because this scene exists to show the term as clearly as possible and has an
-#: auto-exposure to absorb the extra darkening. Measured contrast (std of the
-#: multiplier) at the default radius: 0.060 full-sphere, 0.119 hemisphere.
+#: Occlusion strength: all of the ambient treated as direct, so none of it is
+#: left as an indirect floor. Full strength rather than the library's 0.7 default
+#: because this scene exists to show the term as clearly as it can be shown, and
+#: the auto-exposure below absorbs the extra darkening. Measured contrast (std of
+#: the multiplier) at the default radius: 0.070 full-sphere, 0.147 hemisphere.
 AO_STRENGTH = 1.0
 
 #: Target peak accumulation for the auto-exposure, in linear light. Additive

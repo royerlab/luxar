@@ -77,3 +77,14 @@ available today. Carrying it as a per-element attribute so the viewer could scal
 it live is the better contract, and needs format, loader and shader work that does
 not exist yet — the new demo sidesteps that entirely, since a fixed side-by-side
 wants each panel's answer baked in anyway.
+
+The auto calibration's target sits at 0.25 rather than a timider 0.5, picked by
+measuring contrast and the 5th percentile across two deliberately different
+regimes (a thin shell read through the hemisphere path, a solid ball read through
+the full sphere) so the default is not tuned to one shape. It roughly doubles
+contrast in both while keeping p5 near 0.2; below it the gain comes from clipping
+the dark end rather than from revealing structure. Points then take a higher
+`strength` than mesh — 0.85 against 0.45 — because a depth-tested surface puts
+one element in each pixel while a point cloud blends soft overlapping sprites,
+and an additive one shows the ray-averaged shade, costing about 30% of the
+contrast. Mesh was measured and deliberately left where it was.

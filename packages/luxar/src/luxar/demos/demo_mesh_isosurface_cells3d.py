@@ -196,6 +196,13 @@ AO_RADIUS_UM = 4.0
 #: type that ALREADY has a direct light: the material's key term supplies its own
 #: directional component, so this stands in only for the ambient part of the
 #: illumination rather than for all of it. At full strength the contacts go black.
+#:
+#: Left alone when the library's auto target was retuned for stronger contrast,
+#: which is a checked decision rather than an oversight: because this demo
+#: normalizes against the term's own maximum, the retune moved its measured
+#: contrast by only ~12% (membranes 0.115 -> 0.140), and every LOWER strength
+#: moved it further from the appearance that was already reviewed. Points needed
+#: the extra push; a shaded surface, which puts one element in each pixel, did not.
 AO_STRENGTH = 0.45
 
 FLAGS = parse_demo_flags()

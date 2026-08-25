@@ -304,7 +304,13 @@ AO_GRID_CELLS = 128
 #: stacked. Volumetric alone answers "what is in front of what", which changes as
 #: the camera moves; the occlusion term answers "how much sky can reach here",
 #: which does not.
-AO_STRENGTH = 0.6
+#:
+#: 0.85 rather than something timider: points need more of the term than a mesh
+#: does, because a shaded surface puts ONE element in each pixel while a point
+#: cloud blends soft overlapping sprites and mutes per-element contrast. Measured
+#: contrast (std/mean of the normalized multiplier) 0.135 at 0.6 against 0.262 at
+#: 0.85, with the 5th percentile still at 0.32.
+AO_STRENGTH = 0.85
 
 
 def _apply_burial_shading(
