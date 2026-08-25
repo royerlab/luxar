@@ -479,6 +479,12 @@ def test_capture_only_entries_have_no_runnable_demo_on_disk() -> None:
             )
 
 
+def test_manifest_does_not_duplicate_readme_gallery_selection() -> None:
+    """README media references, not stale manifest flags, select front-page tiles."""
+    flagged = [entry["id"] for entry in gen.load_manifest() if "readme" in entry]
+    assert not flagged, f"obsolete readme flags remain on: {flagged}"
+
+
 def test_gallery_git_lfs_caches_resolve_to_manifest_files() -> None:
     """Keep the generator's cache-to-payload probe valid for the real tree."""
     from luxar.demos.registry import extract_demo_meta

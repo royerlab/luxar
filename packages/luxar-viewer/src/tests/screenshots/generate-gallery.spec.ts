@@ -214,7 +214,6 @@ interface DemoEntry {
   // software-GL frame take minutes: the viewport-relative coverage LOD then
   // picks a lighter level sized to the framing, so the orbit video is feasible.
   lodFinest?: boolean;
-  readme?: boolean;
   // Free-text human annotation carried in the manifest (why a demo is framed a
   // certain way, what still needs tuning). Declared so the manifest and this
   // interface agree; the capture code never reads it.
