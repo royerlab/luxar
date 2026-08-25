@@ -56,7 +56,8 @@ input-handler/
 - **`dimension-navigation/`** — `computeDimensionStep` /
   `resolveSelectedDimension` for the `[`/`]` and digit bindings, plus
   the four lifecycle bodies (`initDimensionSliders`, `initAnimationManager`,
-  `clearDimensionUI`, `updateAllNDNodes`). Pure step and selection helpers
+  `clearDimensionUI`). Current-slice loading lives in
+  `scene/dimension-loading.ts`. Pure step and selection helpers
   live under `scene/dims/`.
 - **`commands/`** — command bodies the orchestrator delegates to:
   `PanelCoordinator` (Escape priority flow + recording short-circuit +

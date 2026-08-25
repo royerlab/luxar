@@ -28,6 +28,7 @@ scene/
 ├── animation/                      # animation-controller, dimension-animation-manager
 ├── dims/                           # Pure nD step and dimension-selection helpers
 ├── scene-dims-manager.ts           # nD dimension coordination
+├── dimension-loading.ts            # Current-slice loading + playback prefetch
 ├── lod-group-registry.ts           # Per-frame LOD-group selector (policy/state machine)
 ├── lod-selector-math.ts            # Selector math: world-box fold, box→area/diagonal projections, hysteresis pick
 ├── lod-blend.ts                    # Pure opacity math: coverage cross-fade + energy compensation

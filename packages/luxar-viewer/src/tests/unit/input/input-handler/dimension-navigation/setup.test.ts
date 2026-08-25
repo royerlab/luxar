@@ -60,11 +60,11 @@ vi.mock('../../../../../scene/animation/dimension-animation-manager', () => ({
 
 import {
   clearDimensionUI,
-  updateAllNDNodes,
   initAnimationManager,
   initDimensionSliders,
   type DimNavSetupCtx,
 } from '../../../../../input/input-handler/dimension-navigation/setup';
+import { updateAllNDNodes } from '../../../../../scene/dimension-loading';
 import { sceneDimsManager } from '../../../../../scene/scene-dims-manager';
 import {
   updateSceneForDimensions,
