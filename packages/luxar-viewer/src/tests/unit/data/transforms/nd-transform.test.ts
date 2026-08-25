@@ -475,6 +475,35 @@ describe('invertNdTransformForQuery — the no-preimage rule on discrete dims', 
     expect(invert(6.5, { scale: 2 }, stepped).noPreimage).toBe(true);
   });
 
+  it('anchors discrete preimages at the dimension range minimum', () => {
+    const offsetDims: QueryDimensionInfo[] = [
+      { name: 'X' },
+      { name: 'Y' },
+      { name: 'Z' },
+      { name: 'Frame', discrete: true, step: 5, range: [1, 11] },
+    ];
+    for (const world of [1, 6, 11]) {
+      const result = invert(world, { scale: 1 }, offsetDims);
+      expect(result.noPreimage).toBe(false);
+      expect(result.slicePosition[3]).toBe(world);
+    }
+
+    // A bare `.gsplats.zarr` with centers at 0.3/1.3/2.3 synthesizes this
+    // range directly from its bounds. The default position is therefore 0.3,
+    // and the inverse query must preserve every synthesized slider stop.
+    const fractionalDims: QueryDimensionInfo[] = [
+      { name: 'X' },
+      { name: 'Y' },
+      { name: 'Z' },
+      { name: 'Frame', discrete: true, step: 1, range: [0.3, 2.3] },
+    ];
+    for (const world of [0.3, 1.3, 2.3]) {
+      const result = invert(world, { scale: 1 }, fractionalDims);
+      expect(result.noPreimage).toBe(false);
+      expect(result.slicePosition[3]).toBeCloseTo(world, 9);
+    }
+  });
+
   it('never fires on a CONTINUOUS dimension (fractional slices are legitimate)', () => {
     // Same name so the transform still applies — only `discrete` differs.
     const continuousDims = [{ name: 'X' }, { name: 'Y' }, { name: 'Z' }, { name: 'Frame' }];

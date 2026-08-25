@@ -43,6 +43,20 @@ def test_import_luxar_does_not_import_torch() -> None:
     assert "ok" in result.stdout
 
 
+def test_demo_utilities_do_not_import_cli_dependencies() -> None:
+    """Shared demo helpers must not pull in the eager CLI package."""
+    result = _run(
+        "import sys; "
+        "import luxar.utils.demos; "
+        "assert 'luxar.cli' not in sys.modules, 'luxar.cli imported by demo utilities'; "
+        "assert 'typer' not in sys.modules, 'typer imported by demo utilities'; "
+        "assert 'click' not in sys.modules, 'click imported by demo utilities'; "
+        "print('ok')"
+    )
+    assert result.returncode == 0, result.stderr
+    assert "ok" in result.stdout
+
+
 def test_lazy_gsplat_export_is_accessible() -> None:
     """Accessing luxar.GSplatData resolves it lazily (and only then loads gsplats)."""
     result = _run(

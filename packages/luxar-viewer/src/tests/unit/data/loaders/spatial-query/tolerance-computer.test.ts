@@ -458,9 +458,9 @@ describe('computeTolerance — barrierDims overrides the discrete flag (issue #1
       // (`?src=….gsplats.zarr`, which `gsplats/io/save_gsplats.py` enables by stamping
       // `layer` on the root). With no `scene_dimensions`,
       // `load-scene.ts::synthesizeSceneDimensionsFromNode` marks every axis >= 3
-      // `discrete: true, step: 1` regardless of the stored values, while the store's own
-      // `detect_barrier_dims` published `[]` for an off-grid stacked axis. That exact
-      // pair — synthesized dims + an authoritative empty set — is the fixture here.
+      // `discrete: true, step: 1` and anchors its range at the stored bounds, while the
+      // store's own `detect_barrier_dims` published `[]` for a non-integer stacked axis.
+      // That exact pair — synthesized dims + an authoritative empty set — is the fixture.
       const synthesized: DimensionInfo[] = [
         { discrete: false }, // X  (isSpatial: no discrete/step stamped)
         { discrete: false }, // Y

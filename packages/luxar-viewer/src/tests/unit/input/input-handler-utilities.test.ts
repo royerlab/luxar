@@ -322,44 +322,37 @@ describe('InputHandler Utilities', () => {
         });
       });
 
-      describe('range whose min is OFF the zero-anchored snap grid', () => {
-        // The snap rounds to the ZERO-anchored k·step grid — the same
-        // convention as SceneDimsManager's setDimensionValue, whose
-        // defaultPosition explicitly supports an off-grid range min (1.3 with
-        // step 1 starts at 2). So the reachable positions of `[0.15, 0.75]`
-        // with step 0.2 are 0.2, 0.4, 0.6 — range[0] itself is not one of
-        // them. Anchoring the wrap period at range[0] instead of the first
-        // ON-GRID position wrapped a forward step off 0.6 to 0.8 and clamped
-        // it to the off-grid 0.75.
+      describe('range-min-anchored offset grid', () => {
         const RANGE: [number, number] = [0.15, 0.75];
 
         it('wraps forward off the last on-grid position to the FIRST on-grid one', () => {
-          expect(calculateNextPosition(0.6, 1, 0.2, RANGE, true, true, 0.2)).toBeCloseTo(0.2, 10);
+          expect(calculateNextPosition(0.75, 1, 0.2, RANGE, true, true, 0.2)).toBeCloseTo(0.15, 10);
         });
 
         it('wraps backward off the first on-grid position to the LAST on-grid one', () => {
-          expect(calculateNextPosition(0.2, -1, 0.2, RANGE, true, true, 0.2)).toBeCloseTo(0.6, 10);
+          expect(calculateNextPosition(0.15, -1, 0.2, RANGE, true, true, 0.2)).toBeCloseTo(
+            0.75,
+            10
+          );
         });
 
         it('a full forward cycle visits exactly the on-grid positions', () => {
           const seen: number[] = [];
-          let pos = 0.2;
-          for (let i = 0; i < 3; i++) {
-            seen.push(Math.round(pos * 10) / 10);
+          let pos = 0.15;
+          for (let i = 0; i < 4; i++) {
+            seen.push(Math.round(pos * 100) / 100);
             pos = calculateNextPosition(pos, 1, 0.2, RANGE, true, true, 0.2);
           }
-          expect(seen).toEqual([0.2, 0.4, 0.6]);
-          expect(pos).toBeCloseTo(0.2, 10); // and closes the loop
+          expect(seen).toEqual([0.15, 0.35, 0.55, 0.75]);
+          expect(pos).toBeCloseTo(0.15, 10); // and closes the loop
         });
 
-        it('an integer dim starting off-grid (min 1.3, step 1) wraps 5 → 2 and 2 → 5', () => {
-          // defaultPosition starts such a dim at 2, the first on-grid
-          // position at or above the min.
-          expect(calculateNextPosition(5, 1, 1, [1.3, 5], true, true, 1)).toBe(2);
-          expect(calculateNextPosition(2, -1, 1, [1.3, 5], true, true, 1)).toBe(5);
+        it('an offset integer dim wraps between its anchored endpoints', () => {
+          expect(calculateNextPosition(4.3, 1, 1, [1.3, 4.3], true, true, 1)).toBe(1.3);
+          expect(calculateNextPosition(1.3, -1, 1, [1.3, 4.3], true, true, 1)).toBe(4.3);
         });
 
-        it('a range narrower than one step with NO on-grid point falls back to min', () => {
+        it('a range narrower than one step contains only its anchored minimum', () => {
           expect(calculateNextPosition(0.2, 1, 0.2, [0.25, 0.35], true, true, 0.2)).toBe(0.25);
         });
       });
