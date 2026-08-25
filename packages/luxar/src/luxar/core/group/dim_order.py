@@ -132,11 +132,11 @@ def permutation_parity_is_odd(order: Sequence[int]) -> bool:
     """Whether sorting ``order`` ascending takes an odd number of transpositions.
 
     Counts inversions rather than composing cycles: for three elements that is
-    three comparisons and it stays obviously correct. The Python twin of
-    ``permutationParityIsOdd`` in
-    ``packages/luxar-viewer/src/data/mesh/projection.ts`` — the viewer asks the
-    same question of ``displayDims`` that the writer asks of ``dim_order``, and
-    both answers have to agree about what "front-facing" means.
+    three comparisons and it stays obviously correct. The viewer's
+    ``permutationParityIsOdd`` helper in
+    ``packages/luxar-viewer/src/data/mesh/projection.ts`` uses the same inversion-
+    parity rule after ranking its frame; both sides have to agree about what
+    "front-facing" means.
 
     Args:
         order: A sequence of distinct comparable indices.

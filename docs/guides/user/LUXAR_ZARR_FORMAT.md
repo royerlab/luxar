@@ -1000,12 +1000,13 @@ Two structural differences from the other three types:
   // ... plus the standard render attrs (opacity, gamma, intensity, offset,
   //     absorption, blending_mode, colormap, layer, transform, nd_transform,
   //     extend_to_all) and mesh-only appearance attrs (ambient, shade_exponent,
-  //     specular, shininess, alpha_cutoff)
+  //     specular, shininess, alpha_cutoff), plus slab_tolerance
 }
 ```
 
 The five mesh-only appearance attrs control the view-anchored shading model;
-they are rejected on points, lines, Gaussian splats, and groups.
+`slab_tolerance` controls nD membership loading. All six mesh-only authored attrs
+are rejected on points, lines, Gaussian splats, and groups.
 
 #### vertices/ (Required)
 - **Shape:** `(V, D)` — nD vertex positions, exactly like `Lines.vertices`.

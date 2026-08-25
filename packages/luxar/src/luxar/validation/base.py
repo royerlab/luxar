@@ -804,8 +804,10 @@ def validate_mesh_decode_budget(
       ``array_ref`` dedup choices would all have to be replicated here, coupling
       this validator to encoder internals for the sake of a term the loader adds
       on top anyway); the largest per-chunk allocation (bounded by the ~64 KB
-      chunk policy, negligible against 512 MiB); and the label / image-label CSR
-      arrays.
+      chunk policy, negligible against 512 MiB); the label / image-label CSR
+      arrays; and the sum of every additive reveal-ladder level, because this
+      validator sees one authored mesh at a time while the viewer concatenates
+      all levels into one resident node buffer.
 
     Every omission is a term the loader ADDS, so this is a strict lower bound on
     the loader's accounting: anything refused here is certainly refused there. The

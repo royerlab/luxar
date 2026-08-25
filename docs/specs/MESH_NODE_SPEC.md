@@ -575,7 +575,7 @@ Mesh therefore adds a fourth arm to `computeHiddenDimTolerance`:
   MEMBERSHIP gate, exactly like the lines projection-clipping slab, but unlike lines it does not
   *request* that role: mesh has no spatial index and issues no range query, so membership is the
   only rule it has and `computeMeshHiddenTolerance` deliberately IGNORES `discreteRole`
-  (`data-processor-mesh.ts` accordingly passes no options at all). Honouring a `'query'` role here
+  (`data-processor-mesh.ts` passes only the authored `meshSlabTolerance`, never a role). Honouring a `'query'` role here
   would hand back the *fetch reach* (deliberately `< 0.5 × step`) to the one caller that is asking
   about visibility, and drop on-grid geometry. **This is the dominant real case** —
   a mesh's hidden dimensions are almost always time or channel.

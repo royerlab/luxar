@@ -882,6 +882,44 @@ def test_dim_order_winding_warning_is_silent_without_a_winding_frame(
     assert "reverses handedness" not in capsys.readouterr().out
 
 
+def test_dim_order_winding_warning_is_silent_when_frame_has_no_preimage(
+    tmp_path, capsys
+) -> None:
+    """A constant-filled frame axis is undecidable, not an authoring failure."""
+    from luxar.core.dimensions import Dimension, Dimensions
+
+    dims = Dimensions(
+        [
+            Dimension(
+                name="t",
+                unit="s",
+                range=(0, 0),
+                step=1.0,
+                display=False,
+                discrete=True,
+            ),
+            Dimension(name="x", unit="um", range=(0, 30), step=1.0, display=True),
+            Dimension(name="y", unit="um", range=(0, 30), step=1.0, display=True),
+            Dimension(name="z", unit="um", range=(0, 30), step=1.0, display=True),
+        ]
+    )
+    store = tmp_path / "filled_frame.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=dims)
+        scene.add_mesh(
+            "m",
+            _TRI_V,
+            _TRI_F,
+            normals=_TRI_N,
+            normal_dims=[0, 1, 2],
+            dim_order=["x", "y", "z"],
+            fill={"t": 0.0},
+            double_sided=False,
+        )
+    assert LuxarScene.load(store).get_mesh("m").normal_dims == [0, 1, 2]
+    assert "reverses handedness" not in capsys.readouterr().out
+
+
 def test_dim_order_scene_semantics_hold_for_normal_dims(tmp_path) -> None:
     """`normal_dims` indexes the SCENE dimensions, so it may exceed the authored width.
 
