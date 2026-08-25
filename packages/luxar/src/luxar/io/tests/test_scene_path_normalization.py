@@ -100,6 +100,48 @@ class TestSceneExtensionNormalization:
             3,
         )
 
+    def test_scene_to_zarr_is_idempotent_for_finalized_archive(self, tmp_path):
+        requested = tmp_path / "scene.luxar.zarr.zip"
+
+        with LuxarZarrCompiler(requested) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            compiler.write_points("pts", np.zeros((1, 3), dtype=np.float32))
+            scene.to_zarr(requested)
+
+        scene.to_zarr(requested)
+
+        assert requested.is_file()
+        assert compiler.store_path == str(requested)
+
+    def test_scene_to_zarr_rejects_destination_after_archive_relocation(self, tmp_path):
+        requested = tmp_path / "scene.luxar.zarr.zip"
+        copy = tmp_path / "copy.luxar.zarr"
+
+        with LuxarZarrCompiler(requested) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            compiler.write_points("pts", np.zeros((1, 3), dtype=np.float32))
+            with pytest.raises(
+                ValueError, match="relocated the store during finalization"
+            ):
+                scene.to_zarr(copy)
+
+        assert requested.is_file()
+        assert not copy.exists()
+
+    def test_scene_to_zarr_archive_log_uses_public_path(self, tmp_path, capsys):
+        requested = tmp_path / "scene.luxar.zarr.zip"
+
+        with LuxarZarrCompiler(requested) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            compiler.write_points("pts", np.zeros((1, 3), dtype=np.float32))
+            capsys.readouterr()
+            scene.to_zarr(requested)
+            output = capsys.readouterr().out
+
+        assert f"Finalized scene at {requested}" in output
+        assert "Exporting scene from" not in output
+        assert ".compile-" not in output
+
     def test_existing_zarr_zip_is_replaced_without_stale_members(self, tmp_path):
         requested = tmp_path / "scene.luxar.zarr.zip"
         with LuxarZarrCompiler(requested) as compiler:

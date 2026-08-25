@@ -641,12 +641,15 @@ class Scene(Group):
         Args:
             path: Destination path for the copied Zarr store. The destination
                 must not already exist unless it is the current backing store.
+                For an archive-backed scene, the only supported destination is
+                the archive path selected when the writer was created.
 
         Raises:
             FileExistsError: If ``path`` already exists and is not the current
                 backing store.
-            ValueError: If the destination is inside the source store or the
-                source store is unavailable.
+            ValueError: If the destination is inside the source store, the
+                source store is unavailable, or finalization relocates the
+                backing store to a different destination.
         """
         writer = self._writer
         if writer is None:
@@ -655,16 +658,18 @@ class Scene(Group):
         source = Path(self.get_store_path()).resolve()
         destination = Path(path).expanduser().resolve()
 
+        # Same-location export is useful as an explicit finalize operation.
+        if destination == source:
+            if not source.exists():
+                raise ValueError(f"Scene backing store does not exist: {source}")
+            aprint(f"Finalizing scene at {source}")
+            writer.finalize()
+            return
+
         if not source.exists() or not source.is_dir():
             raise ValueError(
                 f"Scene backing store is not an existing directory: {source}"
             )
-
-        # Same-location export is useful as an explicit finalize operation.
-        if destination == source:
-            aprint(f"Finalizing scene at {source}")
-            writer.finalize()
-            return
 
         if destination.exists():
             raise FileExistsError(
@@ -677,18 +682,17 @@ class Scene(Group):
                 f"Destination {destination} cannot be inside source Zarr store {source}"
             )
 
-        aprint(f"Exporting scene from {source} to {destination}")
         writer.finalize()
         finalized_source = Path(self.get_store_path()).resolve()
         if destination == finalized_source:
+            aprint(f"Finalized scene at {destination}")
             return
         if finalized_source != source:
-            if not finalized_source.is_dir():
-                raise ValueError(
-                    "Scene backing store finalized to an archive and cannot be "
-                    f"copied as a directory: {finalized_source}"
-                )
-            source = finalized_source
+            raise ValueError(
+                "Scene backing writer relocated the store during finalization; "
+                f"use the finalized destination instead: {finalized_source}"
+            )
+        aprint(f"Exporting scene from {source} to {destination}")
         # CL-1: atomic copy — a failure mid-copy leaves no half-written
         # zarr store at `destination`.
         atomic_copytree(source, destination)
