@@ -85,8 +85,8 @@ def create_5d_clusters(n_clusters: int = 10, points_per_cluster: int = 500) -> t
     cluster_centers = np.random.uniform(-50, 50, (n_clusters, 5)).astype(np.float32)
 
     # Ensure clusters are distributed across time and channel dimensions
-    cluster_centers[:, 3] = np.linspace(0, 10, n_clusters)
-    cluster_centers[:, 4] = np.random.choice([0, 1, 2], n_clusters)
+    cluster_centers[:, 3] = np.linspace(0, 10, n_clusters)  # Time: 0-10
+    cluster_centers[:, 4] = np.random.choice([0, 1, 2], n_clusters)  # Channel: 0-2
 
     for i, center in enumerate(cluster_centers):
         # Create points around this cluster center
