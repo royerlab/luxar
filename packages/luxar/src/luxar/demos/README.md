@@ -49,7 +49,7 @@ never deleted by `demo cache clear`, by key, under `--all` or under `--orphans`.
 
 A `local/` subdirectory inside a cache dir holds artifacts **this machine
 computed for itself** — a demo's own refit, when its hosted data could not be
-reached — written there by `luxar.demos._support.datasets.data_fetch.local_fit_path`. That is a
+reached — written there by `luxar.demos.local_fit_path`. That is a
 separate namespace from the manifest's own `~/.cache/luxar/<dataset>/<file>`,
 which the fetch checksums and quarantines; a local fit stored under the hosted
 name is destroyed and recomputed on every launch (#1618). `demo cache clear`
@@ -1289,8 +1289,8 @@ Sibling demos are importable normally
 (`from luxar.demos.demo_x import helper`) — no `importlib` file-path tricks.
 
 `luxar.demos` is the ONLY spelling for these helpers: never import the guarded
-concern modules under `luxar.utils` (including `luxar.demos._support.datasets.data_fetch`,
-`luxar.demos._support.downloads.download`, and `luxar.demos._support.downloads.remote_zip`) or private demo helpers
+concern modules behind the `luxar.demos` barrel (including dataset, download,
+and remote-ZIP support) or private demo helpers
 such as `luxar.demos._support._fields` directly from a demo, even though that is
 where they live. The authoritative guarded set is
 `tests/test_demo_import_spelling.py`'s `DEEP_MODULES`. That test fails the build

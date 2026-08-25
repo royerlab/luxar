@@ -81,7 +81,7 @@ def download_file(
     Staging inside ``dest.parent`` keeps that promotion a same-filesystem
     rename.
 
-    Not :func:`luxar.demos._support.datasets.cache.cached_download`, which is the richer
+    Not :func:`luxar.demos.cached_download`, which is the richer
     downloader (retry, resume, checksum, quarantine) but owns its destination:
     it always writes ``~/.cache/luxar/<name>/<filename>``. All three demos here
     accept a ``--cache-dir`` override and pass an explicit ``dest``, so they

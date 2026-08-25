@@ -51,7 +51,7 @@ DemoRecipe = Literal["stream", "levels", "adaptive"]
 #:
 #: This is not a detail of the writer — it decides how the demo READS its own
 #: cache back. ``GSplatData.load`` (and therefore
-#: :func:`luxar.demos._support.datasets.data_fetch.load_dataset_gsplats`) refuses a
+#: :func:`luxar.demos.load_dataset_gsplats`) refuses a
 #: ``kind=partition`` store outright, so a demo choosing one of these must graft
 #: the PATH with :meth:`~luxar.core.group.Group.add_gsplats_from_file` instead.
 #: Getting this wrong breaks the demo's DEFAULT path while leaving the
