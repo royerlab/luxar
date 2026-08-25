@@ -255,7 +255,7 @@ def download_kaggle_dataset(
     Returns:
         Path to downloaded file
     """
-    from luxar.utils.download import robust_download
+    from luxar.demos import robust_download
 
     with asection("Downloading Kaggle ArXiv Embeddings Dataset"):
         aprint("URL: https://www.kaggle.com/datasets/tomtum/openai-arxiv-embeddings")

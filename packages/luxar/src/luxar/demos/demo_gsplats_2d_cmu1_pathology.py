@@ -149,7 +149,7 @@ from luxar.demos import (
 from luxar.demos._lod_policy import save_with_lod
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
-from luxar.utils.download import download_with_checksum
+from luxar.demos import download_with_checksum
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================

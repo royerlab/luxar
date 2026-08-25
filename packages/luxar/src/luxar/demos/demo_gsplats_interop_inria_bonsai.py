@@ -23,7 +23,7 @@ different scene, and costs 309 MB instead of 1.45 GB.
 RANGE-EXTRACTED INRIA PLY → LUXAR, TILED PARTITION (BSP-ORDERED)
 ================================================================================
 
-``luxar.utils.download.download_zip_member`` reads the remote zip's central
+``luxar.demos.download_zip_member`` reads the remote zip's central
 directory (Zip64-aware — the archive is >4 GB) via Range requests, then streams
 and inflates only the requested member. The INRIA PLY is then imported (SH DC
 term baked to color) and built as a ``tiles`` spatial BSP partition (per-tile
@@ -151,7 +151,7 @@ Arbol.max_depth = 5
 
 def fetch_member() -> Path:
     """Range-extract the bonsai PLY member from the remote models.zip."""
-    from luxar.utils.download import download_zip_member
+    from luxar.demos import download_zip_member
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     with asection("Range-extracting bonsai PLY from models.zip"):

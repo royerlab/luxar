@@ -177,7 +177,7 @@ def load_map_volume(target_size: int = TARGET_SIZE) -> tuple:
     """
     mrcfile = require_module("mrcfile")
 
-    from luxar.utils.download import robust_download
+    from luxar.demos import robust_download
 
     with asection(f"Downloading cryo-EM map ({EMDB_ID})"):
         aprint(f"Source: {MAP_URL}")

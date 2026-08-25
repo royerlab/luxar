@@ -1244,6 +1244,9 @@ from luxar.demos import (
     add_demo_caption,  # standard bottom-right caption + DEMO_META credit
     launch_viewer,  # serve + open viewer (serve_args=[...] to pass e.g. --profile)
     cached_download,  # download once into ~/.cache/luxar/<name>/, skip-if-present
+    robust_download,  # retry/resume a direct download to a chosen path
+    download_with_checksum,  # direct download plus sha256 verification
+    download_zip_member,  # fetch one member from a remote zip via HTTP ranges
     cache_computed,  # cache an expensive result (UMAP, field) — versioned, param-keyed
     require_local_data,  # gate LFS-tracked local data (clear "git lfs pull" message)
     require_module,  # gate an OPTIONAL dependency at its point of use (see #7)
@@ -1276,7 +1279,7 @@ this) — that directory is then used verbatim and `name` is unused.
 
 `cache_computed` writes atomically and quarantines a corrupt cache to `.corrupt`
 instead of crashing. A quarantined file is never reused, so
-`luxar.utils.download.warn_if_quarantined()` (called from `robust_download()`,
+`warn_if_quarantined()` (called from `robust_download()`,
 the shared download chokepoint) reports its path and size before a re-fetch
 starts — a demo that pulls a multi-gigabyte artifact should not silently restart
 the download. Use `find_quarantined_files()` / `format_quarantine_notice()` when

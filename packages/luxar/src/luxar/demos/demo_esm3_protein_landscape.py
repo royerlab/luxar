@@ -83,7 +83,7 @@ from luxar.demos import (
     stack_colorings,
     substitutive_lod_or_flat,
 )
-from luxar.utils.download import (
+from luxar.demos import (
     QUARANTINE_SUFFIX,
     find_quarantined_files,
     format_quarantine_notice,
@@ -733,7 +733,7 @@ def generate_esm3_landscape(
         # --- Step 1: Download Swiss-Prot ---
         fasta_path = cache_dir / "uniprot_sprot.fasta.gz"
         if not fasta_path.exists():
-            from luxar.utils.download import robust_download
+            from luxar.demos import robust_download
 
             with asection("Downloading Swiss-Prot FASTA (~90 MB)"):
                 for url in SWISSPROT_FASTA_URLS:

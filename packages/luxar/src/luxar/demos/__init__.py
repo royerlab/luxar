@@ -33,6 +33,16 @@ from ..utils.data_fetch import (
     local_fit_path,
 )
 from ..utils.device import detect_device, warn_if_no_cuda_gpu
+from ..utils.download import (
+    QUARANTINE_SUFFIX,
+    download_with_checksum,
+    download_zip_member,
+    find_quarantined_files,
+    format_quarantine_notice,
+    quarantine_file,
+    robust_download,
+    warn_if_quarantined,
+)
 from ..utils.flags import parse_demo_flags, parse_int_arg, parse_path_arg
 from ..utils.lfs import is_lfs_pointer, require_local_data
 from ..utils.payload_agreement import voxel_sampled_payload_agreement
@@ -81,6 +91,7 @@ __all__ = [
     "FlowField",
     "LocalComputeDataset",
     "MissingDependencyError",
+    "QUARANTINE_SUFFIX",
     "add_demo_caption",
     "add_reference_cube_to_scene",
     "cache_computed",
@@ -92,9 +103,13 @@ __all__ = [
     "dataset_spec",
     "demo_source_fingerprint",
     "detect_device",
+    "download_with_checksum",
+    "download_zip_member",
     "ensure_dataset",
     "extras_for",
+    "find_quarantined_files",
     "format_demo_caption",
+    "format_quarantine_notice",
     "hsv_to_rgb",
     "is_installed",
     "is_lfs_pointer",
@@ -111,9 +126,11 @@ __all__ = [
     "parse_int_arg",
     "parse_path_arg",
     "print_data_provenance",
+    "quarantine_file",
     "require_local_data",
     "require_module",
     "rk4_step",
+    "robust_download",
     "scene_is_current",
     "stack_colorings",
     "substitutive_lod_or_flat",
@@ -121,5 +138,6 @@ __all__ = [
     "trilinear_vector",
     "unit_flow",
     "voxel_sampled_payload_agreement",
+    "warn_if_quarantined",
     "warn_if_no_cuda_gpu",
 ]

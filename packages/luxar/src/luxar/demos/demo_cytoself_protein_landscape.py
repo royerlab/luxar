@@ -111,7 +111,7 @@ from luxar.demos._support._umap_utils import (
     build_legend_html,
     generate_all_legends,
 )
-from luxar.utils.download import quarantine_file
+from luxar.demos import quarantine_file
 from luxar.utils.paths import get_demos_output_dir
 
 _T = TypeVar("_T")

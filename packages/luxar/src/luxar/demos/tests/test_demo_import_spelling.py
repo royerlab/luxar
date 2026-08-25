@@ -108,6 +108,7 @@ SPLIT_DEMO_UTILITY_MODULES = frozenset(
 DEEP_MODULES = SPLIT_DEMO_UTILITY_MODULES | {
     "luxar.demos._support._fields",
     "luxar.utils.data_fetch",
+    "luxar.utils.download",
 }
 
 #: ``(package, leaf)`` PAIRS, so ``from luxar.utils import viewer`` is recognised

@@ -359,7 +359,7 @@ def _extract_one_3dg(tar_path: Path) -> list[str]:
 
 def build_from_geo() -> list[dict]:
     """Download the GEO archive, extract one cell, build + cache the polylines."""
-    from luxar.utils.download import robust_download
+    from luxar.demos import robust_download
 
     with asection("Downloading Dip-C data from GEO (GSE117876, 4.7 GB)"):
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
