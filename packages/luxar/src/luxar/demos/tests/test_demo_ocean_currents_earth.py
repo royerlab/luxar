@@ -38,6 +38,7 @@ from luxar.demos.demo_ocean_currents_earth import (
     sample_equirect,
     seed_ocean_points,
     shared_globe_partitions,
+    tile_lod_coverage_fractions,
 )
 from luxar.typing_utils.constants import (
     MAX_POINTS_PER_POINTS_NODE,
@@ -460,6 +461,20 @@ def test_lod_scaling_preserves_surface_coverage_and_ribbon_ink() -> None:
             GLOBE_RADII * np.sqrt(thinning / finest)
         )
         assert (1.0 / thinning) * (LINE_WIDTH * thinning) == pytest.approx(LINE_WIDTH)
+
+
+def test_tile_lod_thresholds_clear_the_measured_opening_pose() -> None:
+    from luxar.demos.demo_ocean_currents_earth import OPENING_TILE_COVERAGE
+
+    assert len(OPENING_TILE_COVERAGE) == 32
+    for part_index, measured in enumerate(OPENING_TILE_COVERAGE):
+        thresholds = tile_lod_coverage_fractions(part_index)
+        assert thresholds[0] == 0.0
+        assert thresholds[1] == pytest.approx(measured * 1.3)
+        assert thresholds[1] >= measured * 1.3
+        assert thresholds == tuple(sorted(thresholds))
+        assert len(set(thresholds)) == len(thresholds)
+        assert thresholds[-1] == 1.0
 
 
 def test_per_node_budget_stays_under_the_segment_texture_bound() -> None:

@@ -644,7 +644,9 @@ HYCOM surface-current streamlines (220k connected ribbons, coloured by speed) dr
 
 **Requires**: Internet access on first run (~72 MB: HYCOM GLBy0.08 surface u/v + Blue Marble texture; cached under `~/.cache/luxar/ocean_currents_earth/`).
 
-**Demonstrates**: Mixed Points+Lines geometry, fixed-arc-length RK4 streamline advection with along-segment land masking, per-vertex RGBA comet-tail fading, indexed Lines topology under the viewer's per-node vertex ceiling, `stream:` additive LOD for fast first paint on an 8M-point globe.
+**Demonstrates**: Mixed Points+Lines geometry, fixed-arc-length RK4 streamline advection with along-segment land masking, per-vertex RGBA comet-tail fading, and a shared 32-tile median-BSP partition whose tiles each carry independent substitutive Points and Lines LOD. The opening pose loads 1,215,536 elements instead of 19,440,000, then promotes only the tiles enlarged by the camera.
+
+**Build cost**: The full five-level scene is 551.6 MB on disk (526 MiB); its scene-writing phase took 6 min 25 s on the reference host (7 min 8 s including first-run downloads, peak RSS 1.49 GiB). Set `DEMO_DENSITY_SCALE = 0.5` in the module to halve both source populations and approximately halve build time and disk usage without changing the LOD topology.
 
 ---
 

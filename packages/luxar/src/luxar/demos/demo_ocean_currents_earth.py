@@ -67,6 +67,14 @@ This demo uses **HYCOM**, an equivalent eddy-resolving ocean model that is
 reachable without credentials. It is the same *kind* of visualization, not a
 reproduction of that specific product.
 
+BUILD COST AND DENSITY KNOB
+---------------------------
+The full five-level scene is 551.6 MB on disk (526 MiB) and the scene-writing
+phase took 6 min 25 s on the reference build host (7 min 8 s including the
+first source download, peak RSS 1.49 GiB). Set ``DEMO_DENSITY_SCALE = 0.5`` to
+halve both source populations; that approximately halves build time and disk
+usage while preserving the shared partition-of-LOD structure.
+
 USAGE
 -----
     luxar demo run ocean_currents_earth
@@ -153,13 +161,52 @@ BLUE_MARBLE_URL: Final = (
 R_EARTH_KM: Final = 6371.0
 RADIUS: Final = 100.0  # globe radius in scene units
 
-N_GLOBE: Final = 8_000_000  # jittered Fibonacci-sphere surface points
+DEMO_DENSITY_SCALE: Final = 1.0
+N_GLOBE: Final = int(8_000_000 * DEMO_DENSITY_SCALE)
 GLOBE_RADII: Final = 0.098  # ~0.78x mean point spacing -> a sealed shell
-N_SEEDS: Final = 220_000  # streamlines
+N_SEEDS: Final = int(220_000 * DEMO_DENSITY_SCALE)
 N_STEPS: Final = 52  # advection steps per streamline (-> N_STEPS + 1 vertices)
 N_PARTITIONS: Final = 32
 LOD_THINNING: Final = (16, 8, 4, 2, 1)
-LOD_COVERAGE_FRACTIONS: Final = (0.0, 0.08, 0.20, 0.45, 0.90)
+# Measured at the 1280x720 opening pose with the viewer's literal screen-area
+# selector. These are per tile because identically sized BSP populations do not
+# occupy identical projected areas on a sphere. The first non-zero threshold is
+# placed 30% above the larger earth/current measurement for that tile; the
+# remaining thresholds span toward a tile-fills-screen finest anchor.
+OPENING_TILE_COVERAGE: Final = (
+    0.045170,
+    0.057172,
+    0.058355,
+    0.052149,
+    0.046422,
+    0.068059,
+    0.074332,
+    0.081209,
+    0.024111,
+    0.065147,
+    0.042264,
+    0.066613,
+    0.028026,
+    0.101342,
+    0.184098,
+    0.221512,
+    0.090941,
+    0.177358,
+    0.065773,
+    0.087828,
+    0.163551,
+    0.252588,
+    0.172421,
+    0.321923,
+    0.050625,
+    0.137854,
+    0.073541,
+    0.172578,
+    0.522476,
+    0.343799,
+    0.243166,
+    0.188821,
+)
 STEP_KM: Final = 14.0  # arc-length step -> ~730 km ribbons
 FIELD_STRIDE: Final = 2  # subsample the 1/12 deg grid for advection
 # Clear the coarsest globe shell, whose point radius is enlarged by
@@ -470,6 +517,13 @@ def shared_globe_partitions(
     return point_parts, [part for part in ribbon_parts if part is not None], tree
 
 
+def tile_lod_coverage_fractions(part_index: int) -> tuple[float, ...]:
+    """Return measured, opening-safe screen-area thresholds for one tile."""
+    first = OPENING_TILE_COVERAGE[part_index] * 1.3
+    remaining = 1.0 - first
+    return (0.0, first, first + remaining / 3, first + 2 * remaining / 3, 1.0)
+
+
 def seed_ocean_points(
     field: LonLatField, n: int, *, seed: int = 0, min_speed: float = MIN_SEED_SPEED
 ) -> tuple:
@@ -687,6 +741,7 @@ def build_scene(hycom_path: Path, marble_path: Path, output_path: Path) -> Path:
             for part_index, (globe_ids, ribbon_ids) in enumerate(
                 zip(globe_parts, ribbon_parts, strict=True)
             ):
+                coverage_fractions = tile_lod_coverage_fractions(part_index)
                 earth_lod = earth.add_lod_group(
                     f"part_{part_index}", selector="screen-area"
                 )
@@ -694,7 +749,7 @@ def build_scene(hycom_path: Path, marble_path: Path, output_path: Path) -> Path:
                     f"part_{part_index}", selector="screen-area"
                 )
                 for level, (thinning, coverage) in enumerate(
-                    zip(LOD_THINNING, LOD_COVERAGE_FRACTIONS, strict=True)
+                    zip(LOD_THINNING, coverage_fractions, strict=True)
                 ):
                     level_globe_ids = globe_ids[::thinning]
                     earth_lod.add_points(
