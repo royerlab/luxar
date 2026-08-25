@@ -53,6 +53,11 @@ WORKFLOW = REPO / ".github/workflows/ci.yml"
 #: of narrow escapes.
 GATE_INPUTS: list[tuple[str, str, str]] = [
     (
+        ".gitattributes",
+        "py",
+        "test_docs_workflow.py derives the published LFS candidate set from it",
+    ),
+    (
         ".github/workflows/docs.yml",
         "py",
         "test_docs_workflow.py guards the Pages workflow itself",
