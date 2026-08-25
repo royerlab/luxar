@@ -30,6 +30,7 @@ import sys
 from pathlib import Path
 from typing import Iterable
 
+import numpy as np
 import pytest
 
 import luxar.utils.paths as luxar_paths
@@ -97,6 +98,62 @@ def _parametrize_stems(stems: Iterable[str]) -> list[pytest.param]:
             marks = (pytest.mark.slow,)
         params.append(pytest.param(stem, marks=marks))
     return params
+
+
+@pytest.mark.parametrize("n_clusters", [8, 19, 20, 40])
+def test_spatial_index_demo_discrete_coordinates_stay_navigable(n_clusters):
+    """Discrete values stay navigable and large radii span every channel."""
+    module = _load_example("spatial_index_demo_example")
+
+    positions, colors, radii = module.create_5d_clusters(n_clusters, 100)
+    repeated = module.create_5d_clusters(n_clusters, 100)
+
+    for actual, expected in zip((positions, colors, radii), repeated, strict=True):
+        np.testing.assert_array_equal(actual, expected)
+
+    time_offset = np.abs(
+        positions[:, 3]
+        - (
+            module.TIME_RANGE[0]
+            + np.round((positions[:, 3] - module.TIME_RANGE[0]) / module.TIME_STEP)
+            * module.TIME_STEP
+        )
+    )
+    channel_offset = np.abs(
+        positions[:, 4]
+        - (
+            module.CHANNEL_RANGE[0]
+            + np.round(
+                (positions[:, 4] - module.CHANNEL_RANGE[0]) / module.CHANNEL_STEP
+            )
+            * module.CHANNEL_STEP
+        )
+    )
+    initial_slice = (
+        np.abs(positions[:, 3] - module.TIME_RANGE[0]) <= module.TIME_STEP / 4
+    ) & (np.abs(positions[:, 4] - module.CHANNEL_RANGE[0]) <= module.CHANNEL_STEP / 4)
+
+    assert np.all(time_offset <= module.TIME_STEP / 4)
+    assert np.all(channel_offset <= module.CHANNEL_STEP / 4)
+    assert positions[:, 3].min() >= module.TIME_RANGE[0]
+    assert positions[:, 3].max() <= module.TIME_RANGE[1]
+    assert positions[:, 4].min() >= module.CHANNEL_RANGE[0]
+    assert positions[:, 4].max() <= module.CHANNEL_RANGE[1]
+    assert np.count_nonzero(initial_slice) > 0
+
+    large_radius_channels = (
+        module.CHANNEL_RANGE[0]
+        + np.round(
+            (positions[radii >= 3.0, 4] - module.CHANNEL_RANGE[0]) / module.CHANNEL_STEP
+        )
+        * module.CHANNEL_STEP
+    )
+    expected_channels = np.arange(
+        module.CHANNEL_RANGE[0],
+        module.CHANNEL_RANGE[1] + module.CHANNEL_STEP,
+        module.CHANNEL_STEP,
+    )
+    np.testing.assert_array_equal(np.unique(large_radius_channels), expected_channels)
 
 
 _ALL_STEMS = [s for s in _discover_example_stems() if s not in HEAVY_EXAMPLES]
