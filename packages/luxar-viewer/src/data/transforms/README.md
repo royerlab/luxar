@@ -59,6 +59,7 @@ export interface QueryDimensionInfo {
   name?: string;
   discrete?: boolean;
   step?: number;
+  range?: readonly [number, number];
 }
 
 // Compose a root-first chain. Affines: s = s_p·s_c, o = s_p·o_c + o_p.
@@ -94,9 +95,10 @@ export function computeWorldNdTransform(sceneGraph: SceneNode, targetPath: strin
 
 ## The no-preimage rule
 
-A DISCRETE dimension's values live on the `k · step` grid. The slicing stack
-relies on that: navigation snaps slice targets to the grid, so the per-element
-MEMBERSHIP gates can use a half-step window (`|value − target| ≤ 0.5 × step` —
+A DISCRETE dimension's values live on the `range[0] + k · step` grid. The
+slicing stack relies on that: navigation snaps slice targets to the grid, so
+the per-element MEMBERSHIP gates can use a half-step window
+(`|value − target| ≤ 0.5 × step` —
 `../loaders/spatial-query/tolerance-computer.ts`,
 `../points/effective-radius-calculator.ts`) and still select exactly one
 category.
@@ -119,9 +121,9 @@ lossy"). Testing inverse-on-grid instead would blank valid data — with
 `offset: 0.4`, `round(k + 0.4) = k` gives every world value a preimage, yet the
 inverse `w − 0.4` is never on the grid, so the node would go permanently dark.
 
-So `resolveDiscretePreimage` walks the local grid candidates bracketing the
-exact inverse and keeps the one whose forward image rounds to the queried world
-value:
+So `resolveDiscretePreimage` walks the range-min-anchored local grid candidates
+bracketing the exact inverse and keeps the one whose forward image rounds to
+the queried world value on the same anchored grid:
 
 | transform     | world | resolves to | why                            |
 | ------------- | ----- | ----------- | ------------------------------ |
