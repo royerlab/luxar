@@ -9,25 +9,8 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import {
-  InputContextManager,
-  InputContext,
-  type KeyBinding,
-} from '../../../../input/input-handler/context-manager';
-
-function registerTestBinding(
-  manager: InputContextManager,
-  context: InputContext,
-  binding: Omit<KeyBinding, 'actionId' | 'description' | 'help'> &
-    Partial<Pick<KeyBinding, 'actionId' | 'description' | 'help'>>
-): void {
-  manager.registerBinding(context, {
-    ...binding,
-    actionId: binding.actionId ?? `test.${binding.key}.${JSON.stringify(binding.modifiers ?? {})}`,
-    description: binding.description ?? 'Test binding',
-    help: binding.help ?? false,
-  });
-}
+import { InputContextManager, InputContext } from '../../../../input/input-handler/context-manager';
+import { registerTestBinding } from './context-manager-test-utils';
 
 describe('InputContextManager - keyupHandler Feature', () => {
   let manager: InputContextManager;

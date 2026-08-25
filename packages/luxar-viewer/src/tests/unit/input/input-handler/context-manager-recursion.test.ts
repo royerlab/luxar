@@ -12,29 +12,15 @@ import {
   InputContext,
   InputContextManager,
   MAX_KEY_EVENT_DEPTH,
-  type KeyBinding,
 } from '../../../../input/input-handler/context-manager';
 import { log } from '../../../../utils/log';
+import { registerTestBinding } from './context-manager-test-utils';
 
 function makeKeyEvent(key = 'p'): KeyboardEvent {
   // jsdom doesn't ship KeyboardEvent('keydown', ...) with a key property
   // populated for synthetic events constructed bare; we patch a minimal
   // shape that satisfies the manager's needs.
   return new KeyboardEvent('keydown', { key });
-}
-
-function registerTestBinding(
-  manager: InputContextManager,
-  context: InputContext,
-  binding: Omit<KeyBinding, 'actionId' | 'description' | 'help'> &
-    Partial<Pick<KeyBinding, 'actionId' | 'description' | 'help'>>
-): void {
-  manager.registerBinding(context, {
-    ...binding,
-    actionId: binding.actionId ?? `test.${binding.key}.${JSON.stringify(binding.modifiers ?? {})}`,
-    description: binding.description ?? 'Test binding',
-    help: binding.help ?? false,
-  });
 }
 
 describe('InputContextManager re-entrance guard', () => {

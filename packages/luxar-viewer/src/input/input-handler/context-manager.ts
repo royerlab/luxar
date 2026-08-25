@@ -96,8 +96,9 @@ export interface ContextConfig {
  * Manages context-aware keyboard input routing to prevent conflicts.
  *
  * Provides a hierarchical context system where different parts of the UI
- * can register key bindings without conflicting. For example, WASD keys
- * are blocked in navigation mode but enabled in fly control mode.
+ * can register key bindings without conflicting. FLY_CONTROLS derives its
+ * allowlist from its own registrations and falls back to NAVIGATION, while
+ * NAVIGATION reserves no chords globally.
  *
  * Key features:
  * - Priority-based context system (higher priority contexts take precedence)
@@ -540,19 +541,6 @@ export class InputContextManager {
   }
 
   /**
-   * Try to handle an event in the active context's declared fallbacks.
-   *
-   * When current context doesn't handle a key and has passthrough enabled,
-   * this method tries other contexts in descending priority order. Enables
-   * fallback behavior - e.g., navigation shortcuts work in FLY_CONTROLS
-   * because that context explicitly falls back to NAVIGATION.
-   *
-   * @param event - Keyboard event to handle
-   * @param type - Event type ('down' or 'up')
-   * @returns true if any lower context handled the event, false otherwise
-   * @private
-   */
-  /**
    * Dispatch Escape from a typing context.
    *
    * Walks all contexts in priority order (including the current one)
@@ -599,6 +587,19 @@ export class InputContextManager {
     return false;
   }
 
+  /**
+   * Try to handle an event in the active context's declared fallbacks.
+   *
+   * When current context doesn't handle a key and has passthrough enabled,
+   * this method tries its declared fallback contexts in descending priority
+   * order. For example, navigation shortcuts work in FLY_CONTROLS because
+   * that context explicitly falls back to NAVIGATION.
+   *
+   * @param event - Keyboard event to handle
+   * @param type - Event type ('down' or 'up')
+   * @returns true if a declared fallback handled the event, false otherwise
+   * @private
+   */
   private tryLowerContexts(event: KeyboardEvent, type: 'down' | 'up'): boolean {
     const currentConfig = this.contextConfigs.get(this.currentContext);
     const fallbackContexts = new Set(currentConfig?.fallbackContexts ?? []);

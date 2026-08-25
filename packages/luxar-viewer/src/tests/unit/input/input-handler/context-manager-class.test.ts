@@ -9,24 +9,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   InputContextManager,
-  type KeyBinding,
   InputContext,
   MAX_KEY_EVENT_DEPTH,
 } from '../../../../input/input-handler/context-manager';
-
-function registerTestBinding(
-  manager: InputContextManager,
-  context: InputContext,
-  binding: Omit<KeyBinding, 'actionId' | 'description' | 'help'> &
-    Partial<Pick<KeyBinding, 'actionId' | 'description' | 'help'>>
-): void {
-  manager.registerBinding(context, {
-    ...binding,
-    actionId: binding.actionId ?? `test.${binding.key}.${JSON.stringify(binding.modifiers ?? {})}`,
-    description: binding.description ?? 'Test binding',
-    help: binding.help ?? false,
-  });
-}
+import { registerTestBinding } from './context-manager-test-utils';
 
 describe('InputContextManager', () => {
   let manager: InputContextManager;
@@ -704,8 +690,7 @@ describe('InputContextManager', () => {
     it('should pass through unhandled keys in permissive contexts', () => {
       const handler = vi.fn();
 
-      // Register a handler in a lower priority context
-      registerTestBinding(manager, InputContext.UI_INTERACTION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: '[',
         handler,
       });
@@ -715,9 +700,8 @@ describe('InputContextManager', () => {
       const event = new KeyboardEvent('keydown', { key: '[' });
       const handled = manager.handleKeyEvent(event, 'down');
 
-      // Should handle the key since it's registered and allowed
       expect(handled).toBe(true);
-      expect(handler).toHaveBeenCalled();
+      expect(handler).toHaveBeenCalledTimes(1);
     });
   });
 
