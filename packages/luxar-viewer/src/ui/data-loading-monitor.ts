@@ -1121,6 +1121,7 @@ export class DataLoadingMonitor {
       this.getGlobalStats(),
       this.getCacheMetrics(),
       () => {
+        // Badge tooltips read visible counts directly from the aliased tree nodes.
         this.sceneGraphModel.syncVisibleCountsIntoTree();
         updateSceneGraphBadges(
           this.contentContainer!,

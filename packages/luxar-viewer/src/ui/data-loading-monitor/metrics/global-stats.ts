@@ -37,6 +37,13 @@ export function aggregateGlobalStats({
   let totalLoads = 0;
   let totalQueryTime = 0;
   let activeSpatial = 0;
+
+  // Per-loader metrics drive genuine per-loader throughput only
+  // (cumulative loaded, memory, query stats). Dataset totals and visible
+  // counts are sourced from the scene graph below — symmetric across all
+  // four geometry types. Progressive multi-LOD nodes connect as a single
+  // loader (their adapter re-paths inner events to the node path), so each
+  // node contributes exactly one entry here — no per-LOD double-counting.
   const isSpatialType = (type: string | undefined): boolean =>
     type === 'point-spatial-index' ||
     type === 'lines-spatial-index' ||
