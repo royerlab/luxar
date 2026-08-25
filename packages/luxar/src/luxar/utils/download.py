@@ -1390,7 +1390,7 @@ def download_zip_member(
     from requests.adapters import HTTPAdapter
     from urllib3.util.retry import Retry
 
-    from luxar.utils.demos import _validate_zip_member_path
+    from luxar.utils.zip_safety import _validate_zip_member_path
 
     _validate_zip_member_path(member)
     output_path = Path(output_path)

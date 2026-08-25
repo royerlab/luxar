@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar._zarr_compat import ZARR_FORMAT
 from luxar.cli.utils import find_available_port
-from luxar.utils.demos import create_lorenz_attractor
+from luxar.utils.scenes import create_lorenz_attractor
 
 #: The served document carrying a node's attributes / group record / array
 #: record, for the format Luxar currently writes. Format 3 folds all three into

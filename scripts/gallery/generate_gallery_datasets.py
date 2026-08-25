@@ -129,7 +129,7 @@ def _git_lfs_input_missing(meta: dict[str, Any]) -> bool:
         return False
 
     try:
-        from luxar.utils.demos import is_lfs_pointer
+        from luxar.utils.lfs import is_lfs_pointer
     except ImportError:
         return False
     return any(not path.exists() or is_lfs_pointer(path) for path in paths)
