@@ -1161,9 +1161,11 @@ def validate_frame_count(n_frames: int) -> int:
 
 
 def validate_star_count(n_stars: int) -> int:
-    """Reject empty populations before entering the numerical pipeline."""
-    if n_stars < 1:
-        raise ValueError("--stars must be at least 1")
+    """Reject populations too small to produce an HII-region sample."""
+    if n_stars < 2:
+        raise ValueError(
+            "--stars must be at least 2 to include a star below the 3rd age percentile"
+        )
     return n_stars
 
 

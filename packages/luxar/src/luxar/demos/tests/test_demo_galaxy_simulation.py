@@ -57,14 +57,14 @@ def test_validate_frame_count_rejects_overlapping_discrete_frames(
         _demo.validate_frame_count(n_frames)
 
 
-@pytest.mark.parametrize("n_stars", [1, 100_000])
-def test_validate_star_count_accepts_positive_counts(n_stars: int) -> None:
+@pytest.mark.parametrize("n_stars", [2, 100_000])
+def test_validate_star_count_accepts_buildable_counts(n_stars: int) -> None:
     assert _demo.validate_star_count(n_stars) == n_stars
 
 
-@pytest.mark.parametrize("n_stars", [-1, 0])
-def test_validate_star_count_rejects_non_positive_counts(n_stars: int) -> None:
-    with pytest.raises(ValueError, match="--stars must be at least 1"):
+@pytest.mark.parametrize("n_stars", [-1, 0, 1])
+def test_validate_star_count_rejects_counts_without_hii_regions(n_stars: int) -> None:
+    with pytest.raises(ValueError, match="at least 2.*below the 3rd age percentile"):
         _demo.validate_star_count(n_stars)
 
 
@@ -76,9 +76,9 @@ def test_main_validates_frames_before_building(monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_main_validates_stars_before_building(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(sys, "argv", [str(_DEMO_PATH), "--stars=0", "--no-serve"])
+    monkeypatch.setattr(sys, "argv", [str(_DEMO_PATH), "--stars=1", "--no-serve"])
 
-    with pytest.raises(ValueError, match="--stars must be at least 1"):
+    with pytest.raises(ValueError, match="at least 2.*below the 3rd age percentile"):
         _demo.main()
 
 
