@@ -51,6 +51,15 @@ module.exports = {
       from: { path: '^src/(?!input/)' },
       to: { path: '^src/input/input-handler(?:\\.ts|/)' },
     },
+    {
+      name: 'input-no-data-runtime',
+      severity: 'error',
+      comment:
+        'The input package owns interaction wiring, not data loading. ' +
+        'Runtime loading orchestration belongs in the scene or data layer.',
+      from: { path: '^src/input/' },
+      to: { path: '^src/data/' },
+    },
     // ─── Layer order ──────────────────────────────────────────────
     // Each rule says: "if `from` matches src/X/, `to` must NOT match
     // src/{higher_layer}/". dependencyTypes filter excludes type-only

@@ -250,6 +250,10 @@ thread. Conventions:
   the public `input/index.ts` facade instead. Type-only imports and tests are
   exempt from that mechanical check but should preserve the same boundary.
 
+  The `input-no-data-runtime` rule rejects runtime imports from `input/` into
+  `data/` at severity `error`; type-only imports are exempt. Loading orchestration
+  belongs in `scene/`, not the interaction-wiring package.
+
 ## 11. Types
 
 - `any` is allowed only with an inline `// eslint-disable-next-line
