@@ -740,6 +740,7 @@ export class LuxarApp {
 
   /** Resolve the active chord label for a registered action, if available. */
   shortcutForAction(actionId: string): string | undefined {
+    if (!this.isInitialized && !this.isInitializing) return undefined;
     return this.inputHandler?.getShortcutLabel(actionId);
   }
 

@@ -522,8 +522,9 @@ export class InputContextManager {
       if (event.key === 'Escape') {
         return this.dispatchEscapeFromTypingContext(event, type);
       }
-      // Block all other keys while typing
-      return true;
+      // Block new actions while typing, but let keyup cleanup fall through so
+      // a key held before focus moved cannot remain latched.
+      if (type === 'down') return true;
     }
 
     // Get the current context configuration

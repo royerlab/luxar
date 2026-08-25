@@ -601,6 +601,9 @@ describe('LuxarApp', () => {
 
       expect(app.shortcutForAction('annotation.accept')).toBe('Shift+X');
       expect(mockInputHandler.getShortcutLabel).toHaveBeenCalledWith('annotation.accept');
+
+      app.dispose();
+      expect(app.shortcutForAction('annotation.accept')).toBeUndefined();
     });
 
     it('should initialize dimension sliders after loading', async () => {

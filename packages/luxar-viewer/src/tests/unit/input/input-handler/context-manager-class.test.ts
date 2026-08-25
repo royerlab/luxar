@@ -811,6 +811,9 @@ describe('InputContextManager', () => {
       });
 
       manager.setEnabled(false);
+      const input = document.createElement('input');
+      document.body.appendChild(input);
+      input.focus();
       const keydown = new KeyboardEvent('keydown', { key: 'w' });
       const keyup = new KeyboardEvent('keyup', { key: 'w' });
 
