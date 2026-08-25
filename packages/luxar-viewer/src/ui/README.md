@@ -737,6 +737,10 @@ Napari-inspired per-layer control panel. See [`./layers/README.md`](./layers/REA
 
 **Keyboard Shortcut:** `L` to toggle
 
+The panel contains navigation and menu keys used by its own controls so they do
+not also trigger scene actions. Because it is non-modal, unrelated viewer
+shortcuts continue to work while a panel control has focus; Escape still closes.
+
 ---
 
 ## Theming System

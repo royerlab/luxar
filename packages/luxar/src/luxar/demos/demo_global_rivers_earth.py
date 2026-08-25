@@ -249,7 +249,7 @@ def _download_sources() -> tuple[Path, Path]:
     """Download HydroRIVERS + ETOPO into the cache (resumable). Returns their paths."""
     import zipfile
 
-    from luxar.utils.download import robust_download
+    from luxar.demos import robust_download
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     etopo = CACHE_DIR / "etopo_2022_60s.tif"

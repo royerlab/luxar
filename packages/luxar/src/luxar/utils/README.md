@@ -87,6 +87,15 @@ Robust download utilities with retry logic, resume capability, and progress trac
 - `warn_if_quarantined(target, ...)`: Print that notice and return the paths. Called from `robust_download()` so a user about to re-fetch a multi-gigabyte artifact is told that a rejected earlier copy is sitting next to it — instead of watching a huge download silently start over
 - `QUARANTINE_SUFFIX`: The `.corrupt` suffix used when a cached artifact fails validation (see `demos.cache_computed`). A quarantined file is never reused
 
+### `remote_zip.py`
+HTTP-range ZIP access for extracting one remote archive member without downloading
+the entire archive. `download_zip_member()` reads the end record and central
+directory, streams only the selected member, and verifies its size and CRC before
+atomically promoting the completed output.
+
+**Key Functions:**
+- `download_zip_member(url, member, output_path, ...)`: Validate the member path with `zip_safety._validate_zip_member_path`, then extract it through HTTP Range requests. A 64 MiB central-directory ceiling blocks forged metadata from buffering an entire archive, while the default 256 GiB uncompressed-member ceiling bounds decompression output
+
 ### `lod_breakpoints.py`
 Streaming-ladder breakpoint math, shared by all three geometries (Points, Lines,
 GSplats). An additive (streaming) ladder cuts an importance-ordered element
@@ -135,7 +144,7 @@ source of truth for how each dataset is obtained, its license, and its per-file
 sha256.
 
 **Key Functions:**
-- `ensure_dataset(name, ...)`: Resolve a dataset's files to local paths, cache -> in-repo Git LFS -> Zenodo. A manifest checksum is authoritative at every step: bytes that fail are quarantined (`.corrupt`) and never returned, so a stale download can never be resumed onto corrupt bytes. There are TWO contracts — `sha256` describes the copy this repo ships, the optional `hosted_sha256` describes what the Zenodo record serves. Bytes already in hand are accepted if they satisfy EITHER (hosted preferred, and taking the local one is reported); only the download leg is strict, on the hosted digest. Splitting them is what keeps a truthful hosted pin from breaking a working checkout — which is what used to force Zenodo publication onto the critical path of every demo-data PR
+- `ensure_dataset(name, ...)`: Resolve a dataset's files to local paths, cache -> in-repo Git LFS -> Zenodo. Two live contracts describe current bytes: `sha256` for the copy this repo ships and optional `hosted_sha256` for what the Zenodo record serves. Bytes already in hand prefer hosted, then local (reported when they differ); only the download leg is strict on the hosted digest. A cached copy matching the newest `superseded_sha256` is a third, weaker verdict, reused only when no in-repo copy or download route can replace it and reported as out of date. Bytes matching none of these are quarantined (`.corrupt`) and never returned, so a stale download can never resume onto corrupt bytes. Splitting the live contracts is what keeps a truthful hosted pin from breaking a working checkout — which is what used to force Zenodo publication onto the critical path of every demo-data PR
 - `load_dataset_gsplats(name, ...)`: Mirror of `demos.load_precomputed_gsplats` (returns `GSplatData`, `None` on recompute) sourced through `ensure_dataset` — the one-line swap for migrating a demo. Only `zenodo`-bucket datasets are eligible
 - `load_manifest()` / `dataset_spec(name)`: Read the packaged manifest. The parse is memoised but each call returns an independent copy, so mutating the result (or a nested spec) cannot poison later readers; `clear_manifest_cache()` drops the parse after the manifest is rewritten on disk
 - `local_fit_path(name, filename)`: Where a demo's OWN locally computed stand-in belongs — `~/.cache/luxar/<name>/local/<filename>`. The cache dir is shared with the fetch but the two namespaces are not: `<name>/<filename>` is the manifest's destination, and `ensure_dataset` quarantines anything there that matches neither pinned digest — which a local refit never does, so one stored under the hosted name is destroyed and recomputed on every launch (#1618)
@@ -337,4 +346,4 @@ External:
 - `numpy`: Array operations
 - `arbol`: Progress display in demos and downloads
 - `torch`: Device availability probing in `device.py`
-- `requests` / `urllib3`: HTTP downloads with retry (lazily imported in `download.py`)
+- `requests` / `urllib3`: HTTP downloads with retry (lazily imported in `download.py` and `remote_zip.py`)

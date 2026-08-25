@@ -790,9 +790,6 @@ export class DimensionSliders {
       // preventDefault: don't scroll the page, and don't let Ctrl+wheel
       // zoom it (requires { passive: false }).
       event.preventDefault();
-      // stopPropagation: the window-level wheel handler (FOV zoom +
-      // animation poke) does not check event targets.
-      event.stopPropagation();
       // Shift+wheel on a standard mouse arrives as a HORIZONTAL scroll
       // (the browser swaps the axis, leaving deltaY = 0) — read whichever
       // axis carries the motion.

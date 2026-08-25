@@ -1,9 +1,9 @@
 /**
  * Comprehensive Smoke Tests for ALL Example Datasets
  *
- * CRITICAL: This test suite loads a hand-maintained subset of example datasets,
- * minus the ones parked in `KNOWN_FLAKY_LARGE_DATASETS`; #2121 tracks full
- * generated-dataset coverage. It validates:
+ * CRITICAL: This test suite loads every generated example dataset EXCEPT the
+ * ones parked in `KNOWN_FLAKY_LARGE_DATASETS` below (each with its documented
+ * reason), and validates:
  * - No console errors
  * - No WebGL errors
  * - Renderable geometry loaded successfully
@@ -17,7 +17,12 @@
  */
 
 import { test, expect } from './fixtures';
+import { resolve } from 'node:path';
 import type { DebugState } from '../../core/app/debug/debug-state';
+import {
+  discoverExampleDatasets,
+  validateExampleDatasetReferences,
+} from '../../../tools/example-smoke-inventory';
 import {
   waitForLuxarReady,
   getLuxarState,
@@ -28,54 +33,20 @@ import {
 // Base URL for examples (served by HTTP server on port 9000)
 const EXAMPLES_BASE = 'http://localhost:9000/datasets/examples';
 
-// Hand-maintained subset of datasets/examples/.
-const ALL_EXAMPLES = [
-  'build_example_manual.luxar.zarr',
-  'build_example_structured.luxar.zarr',
-  'dense_cubic_gradient_example.luxar.zarr',
-  'dense_grid_5d_example.luxar.zarr',
-  'dimension_navigation_example.luxar.zarr',
-  'dimension_sliders_5d_example.luxar.zarr',
-  'gsplats_basic_example.luxar.zarr', // gsplats leaf (v3.0 node tree)
-  'gsplats_lod_example.luxar.zarr', // gsplats kind=lod (substitutive hierarchy)
-  'hierarchy_example.luxar.zarr',
-  'lines_basic_example.luxar.zarr',
-  'multiple_objects_example.luxar.zarr',
-  'nd_points_example.luxar.zarr',
-  'partition_of_lod_example.luxar.zarr', // nested kind=partition of kind=lod (points)
-  'partition_only_example.luxar.zarr', // kind=partition (points)
-  'performance_benchmark_example.luxar.zarr',
-  'point_spacing_example.luxar.zarr',
-  'progressive_writing_example.luxar.zarr',
-  'radius_basic_example.luxar.zarr',
-  'radius_showcase_example.luxar.zarr',
-  'radius_slicing_example.luxar.zarr',
-  'rainbow_sphere_4d_example.luxar.zarr',
-  'rainbow_sphere_spiral_example.luxar.zarr',
-  'rendering_attributes_example.luxar.zarr',
-  'rendering_modes_example.luxar.zarr',
-  'scene_dimensions_example.luxar.zarr',
-  'sharpness_showcase_example.luxar.zarr', // CRITICAL: Exposed LUT scalar bug
-  'simple_nd_example.luxar.zarr',
-  'single_point_example.luxar.zarr',
-  'spatial_index_demo_example.luxar.zarr',
-  'temporal_spiral_sphere_4d_example.luxar.zarr',
-  'time_series_4d_example.luxar.zarr',
-  'transform_example.luxar.zarr',
-];
-
 // Known-flaky large datasets that require investigation. These have edge
 // cases with effective-radius filtering or WebGL buffer issues — tracked
 // for the post-decomposition points-spatial-index-loader work.
-const KNOWN_FLAKY_LARGE_DATASETS = [
-  'temporal_spiral_sphere_4d_example.luxar.zarr', // 102M points - effective radius filtering edge case
-  'time_series_4d_example.luxar.zarr', // Large 4D - occasional WebGL buffer issues
+const KNOWN_FLAKY_LARGE_DATASETS = {
+  'temporal_spiral_sphere_4d_example.luxar.zarr':
+    '102M points; effective-radius filtering edge case.',
+  'time_series_4d_example.luxar.zarr': 'Large 4D dataset with occasional WebGL buffer failures.',
   // 196 MB on disk; the headless chromium worker pool exhausts
   // ERR_INSUFFICIENT_RESOURCES decoding it in parallel with the rest
   // of the suite. Smoke coverage is provided by smaller fixtures;
   // re-enable once we ship a downsized progressive_writing example or
   // sequential-mode override for oversized fixtures.
-  'progressive_writing_example.luxar.zarr',
+  'progressive_writing_example.luxar.zarr':
+    '196 MB; parallel headless Chromium workers exhaust decode resources.',
   // 1.5M points (a 1M-point CubicArray group plus a 500k background star
   // field). Parked for HEADROOM, not for #1724:
   // re-measured with frame pacing in place it loads and passes with zero
@@ -86,15 +57,34 @@ const KNOWN_FLAKY_LARGE_DATASETS = [
   // headroom under this suite's `mode: 'parallel'`. So it stays parked
   // pending a sequential-mode override for million-point examples or a
   // downsized fixture, not pending a viewer fix.
-  'dense_cubic_gradient_example.luxar.zarr',
-];
+  'dense_cubic_gradient_example.luxar.zarr':
+    '1.5M points; passes alone in 50s but lacks headroom under parallel contention.',
+} as const;
+
+const ALL_EXAMPLES = discoverExampleDatasets(
+  resolve(import.meta.dirname, '../../../../../datasets/examples'),
+  KNOWN_FLAKY_LARGE_DATASETS
+);
 
 // Geometry-only datasets have no point clouds.
 const DATASETS_ALLOW_ZERO_POINTS = [
   'lines_basic_example.luxar.zarr', // Lines geometry only - no point clouds
+  'lines_indexed_example.luxar.zarr', // Lines geometry only - no point clouds
+  'lines_partition_and_sampling_example.luxar.zarr', // Lines geometry only - no point clouds
+  'lines_primitive_qa_example.luxar.zarr', // Lines geometry only - no point clouds
+  'lines_substitutive_lod_example.luxar.zarr', // Lines geometry only - no point clouds
   'gsplats_basic_example.luxar.zarr', // GSplats geometry only - no point clouds (totalPoints=0)
+  'gsplats_fit_volume_example.luxar.zarr', // GSplats geometry only - no point clouds (totalPoints=0)
   'gsplats_lod_example.luxar.zarr', // GSplats kind=lod - no point clouds (totalPoints=0)
+  'mesh_basic_example.luxar.zarr', // Mesh geometry only - no point clouds (totalPoints=0)
 ];
+
+validateExampleDatasetReferences(
+  ALL_EXAMPLES,
+  KNOWN_FLAKY_LARGE_DATASETS,
+  DATASETS_ALLOW_ZERO_POINTS,
+  'Example smoke zero-points allowance'
+);
 
 test.describe('ALL Examples - Systematic Smoke Tests', () => {
   // Configure for parallel execution to speed up testing.
@@ -107,11 +97,7 @@ test.describe('ALL Examples - Systematic Smoke Tests', () => {
   test.describe.configure({ mode: 'parallel', timeout: 120000 });
 
   for (const example of ALL_EXAMPLES) {
-    // Skip known-flaky large datasets
-    const isFlaky = KNOWN_FLAKY_LARGE_DATASETS.includes(example);
-    const testFn = isFlaky ? test.skip : test;
-
-    testFn(`should load ${example} without errors`, async ({ page }) => {
+    test(`should load ${example} without errors`, async ({ page }) => {
       console.log(`\n[Smoke Test] Testing: ${example}`);
 
       // Navigate to example with debug interface
@@ -156,6 +142,7 @@ test.describe('ALL Examples - Systematic Smoke Tests', () => {
 
       // Get scene state
       const state: DebugState = await getLuxarState(page);
+      const allowZeroPoints = DATASETS_ALLOW_ZERO_POINTS.includes(example);
       const geometryTypes = [
         { label: 'points', nodes: state.pointClouds, total: state.totalPoints },
         { label: 'line', nodes: state.lineMeshes, total: state.totalLines },
@@ -178,7 +165,6 @@ test.describe('ALL Examples - Systematic Smoke Tests', () => {
       }
 
       // Verify data loaded (allow 0 points for datasets that may legitimately have none)
-      const allowZeroPoints = DATASETS_ALLOW_ZERO_POINTS.includes(example);
       if (!allowZeroPoints) {
         expect(state.totalPoints).toBeGreaterThan(0);
       }
@@ -249,6 +235,21 @@ test.describe('ALL Examples - Systematic Smoke Tests', () => {
 
 test.describe('Critical Examples - Deep Validation', () => {
   // Deep validation for examples that exposed bugs
+
+  test('mesh_basic - should report its rendered triangles', async ({ page }) => {
+    await page.goto(`/?src=${EXAMPLES_BASE}/mesh_basic_example.luxar.zarr&debug&no-opfs`);
+    await waitForLuxarReady(page, 60000);
+
+    await assertNoConsoleErrors(page);
+
+    const state: DebugState = await getLuxarState(page);
+
+    expect(state.meshNodes).toHaveLength(1);
+    expect(state.meshNodes[0].triangleCount).toBe(4);
+    expect(state.meshNodes[0].flatNormal).toBe(true);
+    expect(state.totalTriangles).toBe(4);
+    expect(state.totalElements).toBe(4);
+  });
 
   test('sharpness_showcase - should render all point clouds', async ({ page }) => {
     await page.goto(`/?src=${EXAMPLES_BASE}/sharpness_showcase_example.luxar.zarr&debug&no-opfs`);

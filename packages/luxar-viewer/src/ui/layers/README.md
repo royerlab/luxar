@@ -104,6 +104,8 @@ with LuxarZarrCompiler("scene.luxar.zarr") as c:
 ### Viewer
 
 Press **L** to toggle the Layers panel (Escape closes when focus is inside the panel).
+Keys used by panel controls (arrows, Home/End/Page Up/Page Down, Enter/Space, and
+menu keys) stay inside the panel, while unrelated viewer shortcuts remain available.
 
 - **Click** a layer to select it
 - **Ctrl/Cmd+Click** to toggle additional layers

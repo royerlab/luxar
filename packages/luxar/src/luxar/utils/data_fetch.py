@@ -19,8 +19,9 @@ publication onto the critical path of every demo-data PR. ``hosted_sha256`` is
 usually absent, and then the two contracts are one.
 
 Resolution order for a ``zenodo`` dataset (per file). A checksum is the authority
-at every step — bytes matching NEITHER contract are quarantined, never returned,
-and the download leg is strict on the hosted digest specifically:
+at every step. Bytes matching neither live contract are quarantined unless they
+match the most recent ``superseded_sha256`` and no source can replace them; the
+download leg remains strict on the hosted digest specifically:
 
     1. Local cache ``~/.cache/luxar/<dataset>/<file>``, if it verifies.
     2. In-repo git-LFS copy ``demos/data/<dir>/<file>``, where ``<dir>`` is the
@@ -50,6 +51,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+from collections.abc import Sequence
 from functools import lru_cache
 from pathlib import Path
 from types import TracebackType
@@ -326,6 +328,7 @@ def ensure_dataset(
                     record,
                     verbose,
                     hosted_sha=entry.get("hosted_sha256"),
+                    superseded=tuple(entry.get("superseded_sha256") or ()),
                 )
             )
     return resolved
@@ -347,45 +350,102 @@ def _matches(path: Path, expected: Optional[str], verbose: bool) -> bool:
     )
 
 
+def _contract_candidates(
+    sha: Optional[str], hosted_sha: Optional[str], superseded: Sequence[str] = ()
+) -> list[tuple[str, str]]:
+    """Acceptable digests in priority order, de-duplicated.
+
+    A digest repeated across roles is checked once and reported under the
+    strongest role that names it, so a pin that is simultaneously current and
+    listed as superseded never reads as out of date.
+
+    Only the LAST superseded entry is offered, even though the manifest keeps the
+    full history: the list's effect IS how far back "acceptable" reaches, and the
+    oldest entry is the likeliest to be genuinely wrong. Anything older than one
+    generation degrades to a build failure — loud and recoverable — rather than
+    to a silently stale artifact.
+    """
+    candidates: list[tuple[str, str]] = []
+    for digest, kind in (
+        (hosted_sha, "hosted"),
+        (sha, "local"),
+        *((d, "superseded") for d in list(superseded or ())[-1:]),
+    ):
+        if digest and all(digest != known for known, _ in candidates):
+            candidates.append((digest, kind))
+    return candidates
+
+
 def _accepted_contract(
-    path: Path, sha: Optional[str], hosted_sha: Optional[str], verbose: bool
+    path: Path,
+    sha: Optional[str],
+    hosted_sha: Optional[str],
+    verbose: bool,
+    superseded: Sequence[str] = (),
 ) -> Optional[str]:
-    """Which contract *path* satisfies: ``"hosted"``, ``"local"``, or None.
+    """Which contract *path* satisfies: hosted, local, superseded, or None.
 
     Hosted is tried first so the canonical answer is the one reported when both
     would match — which is every case where the two pins agree.
+
+    ``"superseded"`` is a deliberately WEAKER verdict: those are digests this
+    project pinned in an EARLIER generation, so bytes matching one are known-good
+    data that is merely out of date, not corruption. That distinction is the whole
+    point of recording them — without it a re-pinned dataset with no fetch route
+    is indistinguishable from a corrupt one, and the only safe response to
+    ambiguity is to quarantine, which destroys the last copy in existence. Only
+    :func:`_resolve_from_cache` may act on this verdict, and only as a last
+    resort.
     """
-    if hosted_sha is None:
-        return "local" if _matches(path, sha, verbose) else None
-    if sha is None or hosted_sha == sha:
-        return "hosted" if _matches(path, hosted_sha, verbose) else None
+    candidates = _contract_candidates(sha, hosted_sha, superseded)
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        digest, kind = candidates[0]
+        return kind if _matches(path, digest, verbose) else None
     if not path.is_file():
         return None
 
+    return _verdict_from_one_pass(path, candidates, verbose)
+
+
+def _verdict_from_one_pass(
+    path: Path, candidates: list[tuple[str, str]], verbose: bool
+) -> Optional[str]:
+    """Hash *path* ONCE and report which candidate it matches, if any.
+
+    Used when more than one digest is acceptable, so the file is not read once
+    per candidate.
+    """
     with asection(f"Verifying {path.name}") if verbose else _null_ctx():
         if verbose:
             aprint("Computing SHA256...")
-        digest = hashlib.sha256()
+        state = hashlib.sha256()
         with open(path, "rb") as file:
             for chunk in iter(lambda: file.read(8192 * 128), b""):
-                digest.update(chunk)
-        actual = digest.hexdigest()
+                state.update(chunk)
+        actual = state.hexdigest()
 
-        if actual == hosted_sha:
-            accepted = "hosted"
-        elif actual == sha:
-            accepted = "local"
-        else:
-            if verbose:
-                aprint("❌ SHA256 mismatch!")
-                aprint(f"   Expected hosted:  {hosted_sha}")
-                aprint(f"   Expected in-repo: {sha}")
-                aprint(f"   Actual:           {actual}")
-            return None
+        for digest, kind in candidates:
+            if actual == digest:
+                if verbose:
+                    aprint(f"✓ SHA256 verified ({kind}): {actual}")
+                return kind
 
         if verbose:
-            aprint(f"✓ SHA256 verified: {actual}")
-        return accepted
+            # Keep the historical labels: "hosted:" / "in-repo:" name the
+            # CONTRACT rather than the internal verdict string, and the existing
+            # reporting test reads them.
+            aprint("❌ SHA256 mismatch!")
+            label = {
+                "hosted": "hosted:",
+                "local": "in-repo:",
+                "superseded": "superseded:",
+            }
+            for digest, kind in candidates:
+                aprint(f"   Expected {label[kind]:<12s}{digest}")
+            aprint(f"   {'Actual:':<21s}{actual}")
+        return None
 
 
 def _resolve_from_cache(
@@ -395,6 +455,9 @@ def _resolve_from_cache(
     hosted_sha: Optional[str],
     unverifiable: bool,
     verbose: bool,
+    superseded: Sequence[str] = (),
+    irreplaceable: bool = False,
+    source_remedy: str = "",
 ) -> Optional[Path]:
     """Step 1: reuse the cached copy, or quarantine it and return None.
 
@@ -417,8 +480,24 @@ def _resolve_from_cache(
         if verbose:
             aprint(f"✓ Cached (UNVERIFIED — no sha256 in manifest): {fname}")
         return dest
-    accepted = _accepted_contract(dest, sha, hosted_sha, verbose)
-    if accepted:
+    accepted = _accepted_contract(dest, sha, hosted_sha, verbose, superseded)
+    if accepted == "superseded":
+        # Known-good bytes from an earlier generation. Keep them ONLY when there
+        # is nothing better to be had: quarantining here would destroy the last
+        # copy in existence and leave the dataset unobtainable, which is how a
+        # re-pin bricked a hosted-only demo (see the changelog). When any route
+        # to the current bytes exists we fall through and take it instead.
+        if irreplaceable:
+            aprint(
+                f"⚠️  Using a SUPERSEDED copy of {fname}: it matches a digest this "
+                "project pinned previously, and no current copy is immediately "
+                f"available. {source_remedy} The record is not published. It is "
+                "out of date, not corrupt."
+            )
+            return dest
+        if verbose:
+            aprint(f"↻ Cached copy of {fname} is superseded; fetching the current one")
+    elif accepted:
         _report_contract(
             accepted, "✓ Cached (sha256 verified):", fname, sha, hosted_sha, verbose
         )
@@ -469,6 +548,7 @@ def _ensure_one(
     record: Manifest,
     verbose: bool,
     hosted_sha: Optional[str] = None,
+    superseded: Sequence[str] = (),
 ) -> Path:
     """Resolve one file: cache → in-repo LFS → Zenodo, checksum-authoritative.
 
@@ -485,10 +565,13 @@ def _ensure_one(
     ``hosted_sha`` is optional and usually absent; when it is, the two contracts
     are one and the behaviour is exactly as before.
 
-    Bytes already in hand are accepted if they satisfy EITHER contract, in that
-    order of preference — hosted (canonical, silent), then local (usable, with a
-    one-line notice that the record holds something newer). Both legs that can
-    supply such bytes have to agree on this: the cache slot is keyed on
+    Bytes already in hand prefer the two live contracts in order — hosted
+    (canonical, silent), then local (usable, with a one-line notice that the
+    record holds something newer). A cached copy matching the most recent
+    ``superseded_sha256`` is a third, weaker verdict: it is reused only when no
+    in-repo copy or download route can replace it, and is reported as out of
+    date. Both legs that can supply live bytes have to agree on the live
+    contracts: the cache slot is keyed on
     ``(dataset, variant, basename)`` and nothing else, with no record of which
     source filled it, so a cache leg stricter than the leg that wrote it would
     quarantine its own copy and re-make it on every single run.
@@ -504,7 +587,8 @@ def _ensure_one(
 
     The checksum authority at every step:
 
-    * a cached file that fails it is QUARANTINED and never reused. The previous
+    * a cached file matching neither live contract is QUARANTINED unless it
+      matches the newest superseded digest and is irreplaceable. The previous
       version fell through to step 2 instead, where a (size, mtime) staleness
       test could not see an in-place corruption and returned the bad file;
     * a copy taken from the in-repo git-LFS tree is verified AFTER copying, so
@@ -525,16 +609,46 @@ def _ensure_one(
     unverifiable = sha is None and hosted_sha is None
 
     # ── 1. Local cache ──────────────────────────────────────────────────────
-    cached = _resolve_from_cache(dest, fname, sha, hosted_sha, unverifiable, verbose)
+    # Decide UP FRONT whether the current bytes are obtainable at all, because
+    # the cache leg's quarantine is irreversible and must not fire on a file it
+    # cannot replace. This is the ordering bug that bricked a hosted-only demo:
+    # the old flow quarantined first and discovered "no source" afterwards.
+    # Same shape as #854, where a quarantine on a stale EXPECTATION destroyed a
+    # good file and looped; there the fix was to stop quarantining, and here the
+    # superseded list is what lets us tell "out of date" from "corrupt".
+    lfs_file = lfs_dir / fname
+    has_repo_copy = lfs_file.is_file() and not is_lfs_pointer(lfs_file)
+    url = zenodo_file_url(record, fname)
+    irreplaceable = not has_repo_copy and not url
+    if lfs_file.exists():
+        source_remedy = "In a source checkout, run `git lfs pull`."
+    elif not _DEMOS_DATA_DIR.exists():
+        source_remedy = (
+            "This installed package ships no demo payloads. If this archive has "
+            "an in-repo copy, use a source checkout and run `git lfs pull`."
+        )
+    else:
+        source_remedy = "This archive is hosted-only and has no in-repo Git LFS copy."
+
+    cached = _resolve_from_cache(
+        dest,
+        fname,
+        sha,
+        hosted_sha,
+        unverifiable,
+        verbose,
+        superseded=superseded,
+        irreplaceable=irreplaceable,
+        source_remedy=source_remedy,
+    )
     if cached is not None:
         return cached
 
     # INVARIANT from here on: `dest` does not exist.
 
     # ── 2. In-repo git-LFS copy (the migration fallback) ────────────────────
-    lfs_file = lfs_dir / fname
     inrepo_is_bad = False
-    if lfs_file.is_file() and not is_lfs_pointer(lfs_file):
+    if has_repo_copy:
         if verbose:
             aprint(f"Copying {fname} from packaged data to cache")
         # Atomic: a Ctrl-C mid-copy must not leave a truncated file under the
@@ -576,7 +690,6 @@ def _ensure_one(
         )
 
     # ── 3. Zenodo (only once the record URL is populated) ───────────────────
-    url = zenodo_file_url(record, fname)
     if url:
         if verbose:
             aprint(f"↓ Fetching {fname} from Zenodo")
@@ -596,15 +709,6 @@ def _ensure_one(
             "good copy to fall back to. Re-pull the LFS object, or regenerate the "
             "manifest if the data was intentionally updated."
         )
-    if lfs_file.exists():
-        source_remedy = "In a source checkout, run `git lfs pull`."
-    elif not _DEMOS_DATA_DIR.exists():
-        source_remedy = (
-            "This installed package ships no demo payloads. If this archive has "
-            "an in-repo copy, use a source checkout and run `git lfs pull`."
-        )
-    else:
-        source_remedy = "This archive is hosted-only and has no in-repo Git LFS copy."
     raise DatasetUnavailable(
         f"{fname} is not cached (any cached copy failed its checksum and was "
         "quarantined), not available from the in-repo Git LFS copy, and the "

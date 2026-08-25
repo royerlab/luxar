@@ -563,7 +563,7 @@ def open_lsm() -> Any:
 
     tifffile = require_module("tifffile")
 
-    from luxar.utils.download import robust_download
+    from luxar.demos import robust_download
 
     with asection("Zebrafish LSM (Zenodo 1211599)"):
         CACHE_DIR.mkdir(parents=True, exist_ok=True)

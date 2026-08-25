@@ -466,12 +466,18 @@
         {
           "name": "neuromast_membranes.gsplats.zarr.zip",
           "sha256": "ceaa9a41feb872d6ee7698a18742d36a26c9b7bf5e5b7c77b5c762fc90445e18",
-          "bytes": 71081858
+          "bytes": 71081858,
+          "superseded_sha256": [
+            "160f19215921c0dff8728477f8a8fd3a433ae5cce50735e7c5c11113e9a2ec31"
+          ]
         },
         {
           "name": "neuromast_nuclei.gsplats.zarr.zip",
           "sha256": "89e3be6eb19b2b3bce322403b1f18bfeba2313dc354bd710a42048068b095677",
-          "bytes": 65289118
+          "bytes": 65289118,
+          "superseded_sha256": [
+            "726c580619288a227bb02ad5c12a5ae52ee16ededd335f0be4407307bba0a5f1"
+          ]
         }
       ]
     },
@@ -523,7 +529,10 @@
             {
               "name": "h2afva_253tp.gsplats.zarr.zip",
               "sha256": "77d42e8478e6ac581c801915ef31c94eba736fe0560f60cf4356462c3eb2db35",
-              "bytes": 9253211541
+              "bytes": 9253211541,
+              "superseded_sha256": [
+                "46621b393d4a49421987ee400ce0be08b73d4da03441230bc6f59ff31917214e"
+              ]
             }
           ]
         }
@@ -540,7 +549,10 @@
         {
           "name": "droso_gastrulation.gsplats.zarr.zip",
           "sha256": "7e0b6ba49d763e298d833d80b1cff11134480c6b3d8a2b392e63d4a745eae68b",
-          "bytes": 2286979
+          "bytes": 2286979,
+          "superseded_sha256": [
+            "64367624736b06e4cd26a2578809f142716affad68ce3df1cbbbb802c8afa1af"
+          ]
         }
       ]
     },
@@ -555,7 +567,10 @@
         {
           "name": "h2afva_tp234.gsplats.zarr.zip",
           "sha256": "db5df445beee4f44eb4bb350c4b70b1d8ecb1eeb5828e32445a35a2020a01678",
-          "bytes": 20810618
+          "bytes": 20810618,
+          "superseded_sha256": [
+            "abc4f8731824b8e2c9767e8e517357db19b998cb5299c9c9197ce1b4bea41dbd"
+          ]
         }
       ]
     },
@@ -570,22 +585,34 @@
         {
           "name": "h2afva_full.gsplats.zarr.zip",
           "sha256": "e9591d7ca35639fa549054e5ef63af69bacae97ef0b9d02d42f946f939de6a00",
-          "bytes": 17812123
+          "bytes": 17812123,
+          "superseded_sha256": [
+            "1d5ac0077db38de43807e4e303d275dffe6c98b48e539a096dc4972067db44bf"
+          ]
         },
         {
           "name": "h2afva_quarter.gsplats.zarr.zip",
           "sha256": "34678b87e542713b8cc3057328c10067ce8386d9c2ffb75d55f96e1c14b30077",
-          "bytes": 4615935
+          "bytes": 4615935,
+          "superseded_sha256": [
+            "3727b6194202fb43527928c967429bf2e1ba42f9aa50877a44b9c5bacd29c0a6"
+          ]
         },
         {
           "name": "h2afva_tenth.gsplats.zarr.zip",
           "sha256": "907223cfad01db2a50a7610b67faa43b06b4a29afc44ecb892db504d065290dc",
-          "bytes": 1947537
+          "bytes": 1947537,
+          "superseded_sha256": [
+            "6851f6585149b02d5e7f955e9c7501140fccb512f37d3e2ec20ec36024e34a47"
+          ]
         },
         {
           "name": "h2afva_twentieth.gsplats.zarr.zip",
           "sha256": "038fb96024d8160e1214ebde3bb0d227e2d60d0622bdfb13f3edd73d6a24bd9d",
-          "bytes": 1010680
+          "bytes": 1010680,
+          "superseded_sha256": [
+            "8f13588289145d92a24423215b5896b679a286c52d04a9854b61b9be1d8e004a"
+          ]
         }
       ]
     },

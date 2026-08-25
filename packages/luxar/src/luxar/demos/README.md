@@ -390,9 +390,9 @@ A spiral galaxy integrated from its own mass model rather than drawn along logar
 
 Replaces the former `demo_5d_spiral_galaxy.py`, which scattered points along fixed logarithmic curves and rotated the whole picture rigidly — the material-arm model the winding problem rules out.
 
-**Run**: `luxar demo run galaxy_simulation [-- --stars=N] [-- --frames=N]`
+**Run**: `luxar demo run galaxy_simulation [-- --stars=N] [-- --frames=N]` — 100k disc stars over 241 frames of 2 Myr by default (29.7M points, 218 MB, ~1.3 min). Radii and per-point gain track the sample density, so `--stars` changes the weight of the scene rather than how bright it looks.
 
-**Demonstrates**: 4D data (X, Y, Z, Time) with the stellar-age split exposed as five toggleable layers rather than a slicing dimension, `extend_to_all` for the time-independent halo, physically derived rotation curves and orbit frequencies, and blackbody colour synthesis.
+**Demonstrates**: 4D data (X, Y, Z, Time) with the stellar-age split exposed as five toggleable layers rather than a slicing dimension, a **discrete** time axis so the slider snaps to the 2 Myr frame grid instead of stranding the view between frames, `extend_to_all` for the time-independent halo, physically derived rotation curves and orbit frequencies, and blackbody colour synthesis.
 
 ---
 
@@ -1244,6 +1244,9 @@ from luxar.demos import (
     add_demo_caption,  # standard bottom-right caption + DEMO_META credit
     launch_viewer,  # serve + open viewer (serve_args=[...] to pass e.g. --profile)
     cached_download,  # download once into ~/.cache/luxar/<name>/, skip-if-present
+    robust_download,  # retry/resume a direct download to a chosen path
+    download_with_checksum,  # direct download plus sha256 verification
+    download_zip_member,  # fetch one member from a remote zip via HTTP ranges
     cache_computed,  # cache an expensive result (UMAP, field) — versioned, param-keyed
     require_local_data,  # gate LFS-tracked local data (clear "git lfs pull" message)
     require_module,  # gate an OPTIONAL dependency at its point of use (see #7)
@@ -1274,21 +1277,22 @@ Pass `cache_dir=` when the demo takes a `--cache-dir` override and the result
 belongs beside the raw downloads it came from (`demo_caida_as_topology` does
 this) — that directory is then used verbatim and `name` is unused.
 
-`cache_computed` writes atomically and quarantines a corrupt cache to `.corrupt`
-instead of crashing. A quarantined file is never reused, so
-`luxar.utils.download.warn_if_quarantined()` (called from `robust_download()`,
-the shared download chokepoint) reports its path and size before a re-fetch
-starts — a demo that pulls a multi-gigabyte artifact should not silently restart
-the download. Use `find_quarantined_files()` / `format_quarantine_notice()` when
-a demo needs the same information inside its own error message.
+`cache_computed` writes atomically and quarantines a corrupt cache to
+`.corrupt` instead of crashing. A quarantined file is never reused, so
+`warn_if_quarantined()` (called from `robust_download()`, the shared download
+chokepoint) reports its path and size before a re-fetch starts — a demo that
+pulls a multi-gigabyte artifact should not silently restart the download. Use
+`find_quarantined_files()` / `format_quarantine_notice()` when a demo needs the
+same information inside its own error message.
 
 Sibling demos are importable normally
 (`from luxar.demos.demo_x import helper`) — no `importlib` file-path tricks.
 
-`luxar.demos` is the ONLY spelling for these helpers: never import
-the guarded concern modules under `luxar.utils`, `luxar.utils.data_fetch`, or
-private demo helpers such as `luxar.demos._support._fields` directly from a
-demo, even though that is where they live. The authoritative guarded set is
+`luxar.demos` is the ONLY spelling for these helpers: never import the guarded
+concern modules under `luxar.utils` (including `luxar.utils.data_fetch`,
+`luxar.utils.download`, and `luxar.utils.remote_zip`) or private demo helpers
+such as `luxar.demos._support._fields` directly from a demo, even though that is
+where they live. The authoritative guarded set is
 `tests/test_demo_import_spelling.py`'s `DEEP_MODULES`. That test fails the build
 on every deep spelling, including relative forms, in every demo module here and
 in the three `gsplats/**/demos` trees, and also on a name the barrel does not

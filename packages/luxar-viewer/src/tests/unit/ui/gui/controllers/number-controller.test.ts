@@ -99,16 +99,16 @@ describe('NumberController', () => {
       expect(object.value).toBeCloseTo(49.99, 9); // unchanged
     });
 
-    it('wheel does not reach the window (the FOV handler must not see the coarse tier)', () => {
+    it('wheel bubbles to the window after the coarse tier is applied', () => {
       const slider = controller.domElement.querySelector('.luxar-gui__slider') as HTMLInputElement;
+      document.body.appendChild(controller.domElement);
       const windowSpy = vi.fn();
       window.addEventListener('wheel', windowSpy);
       slider.dispatchEvent(
         new WheelEvent('wheel', { deltaY: -120, ctrlKey: true, bubbles: true, cancelable: true })
       );
       window.removeEventListener('wheel', windowSpy);
-      expect(windowSpy).not.toHaveBeenCalled();
-      // The step still applied — the guard only stops the event, not the tier.
+      expect(windowSpy).toHaveBeenCalledTimes(1);
       expect(object.value).toBeCloseTo(51, 9);
     });
 

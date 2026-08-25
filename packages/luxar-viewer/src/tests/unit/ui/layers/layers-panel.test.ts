@@ -3401,6 +3401,62 @@ describe('LayersPanel — filter + context-menu lifecycle across dataset reloads
     panel.dispose();
   });
 
+  it('contains panel-control keys while unrelated viewer shortcuts still bubble', () => {
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeManyLayerSceneGraph());
+    panel.show();
+
+    const opacitySlider = container.querySelector<HTMLInputElement>('.luxar-layers-panel__slider');
+    const rangeSlider = container.querySelector<HTMLInputElement>('.luxar-range-slider__input');
+    const closeButton = container.querySelector<HTMLButtonElement>('.luxar-layers-panel__close');
+    const eyeButton = container.querySelector<HTMLButtonElement>('.luxar-layer-row__eye');
+    expect(opacitySlider).not.toBeNull();
+    expect(rangeSlider).not.toBeNull();
+    expect(closeButton).not.toBeNull();
+    expect(eyeButton).not.toBeNull();
+
+    const controls = [opacitySlider!, rangeSlider!, closeButton!, eyeButton!];
+
+    const globalHandler = vi.fn();
+    window.addEventListener('keydown', globalHandler);
+    try {
+      for (const slider of [opacitySlider!, rangeSlider!]) {
+        for (const event of [
+          new KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }),
+          new KeyboardEvent('keydown', {
+            key: 'ArrowDown',
+            shiftKey: true,
+            bubbles: true,
+            cancelable: true,
+          }),
+        ]) {
+          slider!.dispatchEvent(event);
+          expect(event.defaultPrevented).toBe(false);
+        }
+      }
+
+      for (const control of controls) {
+        control.dispatchEvent(new KeyboardEvent('keydown', { key: 'PageDown', bubbles: true }));
+      }
+      expect(globalHandler).not.toHaveBeenCalled();
+
+      for (const control of controls) {
+        control.dispatchEvent(new KeyboardEvent('keydown', { key: ']', bubbles: true }));
+      }
+      opacitySlider!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      expect(globalHandler.mock.calls.map(([event]) => (event as KeyboardEvent).key)).toEqual([
+        ']',
+        ']',
+        ']',
+        ']',
+        'Escape',
+      ]);
+    } finally {
+      window.removeEventListener('keydown', globalHandler);
+      panel.dispose();
+    }
+  });
+
   it('right-clicking a text field inside the panel leaves the native menu alone', () => {
     // The delegated handler suppresses the native menu everywhere on the
     // glass surface, but a text field has no replacement verbs of ours —

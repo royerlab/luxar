@@ -1391,6 +1391,77 @@ def test_load_dataset_bundle_verifies_the_outer_zip_then_extracts(
     assert loaded[0][1]["stamp"] == expected_stamp
 
 
+def test_load_dataset_bundle_refreshes_frames_after_superseded_bundle_is_replaced(
+    tmp_path, monkeypatch
+):
+    """A superseded extraction must not inherit the current bundle's stamp."""
+    from luxar.gsplats import gsplat_data
+    from luxar.utils import bundles
+
+    monkeypatch.setattr(
+        gsplat_data.GSplatData,
+        "load",
+        classmethod(lambda cls, path, **kwargs: path.read_bytes()),
+    )
+
+    cache_root = tmp_path / "cache"
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    bundle_name = "b.gsplats.zarr.zip"
+    frame_name = "frame0.gsplats.zarr.zip"
+    cached_bundle = cache_root / "bundle_ds" / bundle_name
+    cached_bundle.parent.mkdir(parents=True)
+    _write_bundle(cached_bundle, {frame_name: b"old-frame"})
+    old_digest = hashlib.sha256(cached_bundle.read_bytes()).hexdigest()
+
+    current_bundle = tmp_path / "current.zip"
+    _write_bundle(current_bundle, {frame_name: b"current-frame-is-longer"})
+    current_digest = hashlib.sha256(current_bundle.read_bytes()).hexdigest()
+    manifest = {
+        "schema_version": 1,
+        "records": {"r": {"published": False}},
+        "datasets": {
+            "bundle_ds": {
+                "bucket": "zenodo",
+                "record": "r",
+                "license": "cc0-1.0",
+                "dir": "bundle_ds",
+                "files": [
+                    {
+                        "name": bundle_name,
+                        "sha256": current_digest,
+                        "bytes": current_bundle.stat().st_size,
+                        "superseded_sha256": [old_digest],
+                    }
+                ],
+            }
+        },
+    }
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", repo_root)
+
+    assert bundles.load_dataset_bundle(
+        "bundle_ds",
+        bundle_name,
+        [frame_name],
+        cache_root=cache_root,
+        manifest=manifest,
+        verbose=False,
+    ) == [b"old-frame"]
+
+    repo_bundle = repo_root / "bundle_ds" / bundle_name
+    repo_bundle.parent.mkdir()
+    repo_bundle.write_bytes(current_bundle.read_bytes())
+
+    assert bundles.load_dataset_bundle(
+        "bundle_ds",
+        bundle_name,
+        [frame_name],
+        cache_root=cache_root,
+        manifest=manifest,
+        verbose=False,
+    ) == [b"current-frame-is-longer"]
+
+
 def test_load_dataset_bundle_rejects_a_bundle_that_is_not_a_manifest_file(
     tmp_path, monkeypatch
 ):
@@ -1797,14 +1868,19 @@ def test_regeneration_adds_no_hosted_key_where_there_was_none(tmp_path, monkeypa
     (data / "kidney_ch0.gsplats.zarr.zip").write_bytes(b"kidney-bytes")
     monkeypatch.setattr(mod, "DATA_DIR", tmp_path / "data")
 
+    # The committed pin must MATCH the bytes on disk here. A mismatch is a
+    # legitimate pin change, which now records the outgoing digest as
+    # `superseded_sha256` — correct behaviour, but a different subject than the
+    # one this test is about, and conflating them would make the assertion below
+    # untestable.
     committed = {
         "datasets": {
             "gsplats_kidney": {
                 "files": [
                     {
                         "name": "kidney_ch0.gsplats.zarr.zip",
-                        "sha256": "a" * 64,
-                        "bytes": 1,
+                        "sha256": hashlib.sha256(b"kidney-bytes").hexdigest(),
+                        "bytes": len(b"kidney-bytes"),
                     }
                 ]
             }
@@ -1812,6 +1888,7 @@ def test_regeneration_adds_no_hosted_key_where_there_was_none(tmp_path, monkeypa
     }
     entry = mod.build(committed, prune=False)["datasets"]["gsplats_kidney"]["files"][0]
     assert "hosted_sha256" not in entry
+    assert "superseded_sha256" not in entry, "an unchanged pin recorded history"
     assert list(entry) == ["name", "sha256", "bytes"], "entry key order changed"
 
 
@@ -1939,3 +2016,335 @@ def test_a_hosted_only_pin_accepts_the_bytes_it_describes(fake_repo, monkeypatch
     )
     assert path == dest
     assert find_quarantined_files(dest) == []
+
+
+# ---------------------------------------------------------------------------
+# `superseded_sha256`: a re-pin must never brick a dataset
+#
+# #1734 re-pinned `gsplats_3d_drosophila_gastrulation` to the bytes its Zenodo
+# record holds. Every existing cache held the previous generation, there is no
+# in-repo copy, and the record is an unpublished draft — so the cache was
+# quarantined as a mismatch and the demo became unbuildable by anyone. Ten of
+# thirty datasets are hosted-only, so this was a class, not an incident.
+#
+# Same shape as #854, where `cached_download` quarantined a COMPLETE file
+# against a stale `expected_size` and re-downloaded it forever. There the fix
+# was to stop quarantining. Here a digest mismatch is ambiguous — corrupt and
+# superseded look identical — so the previous digests are recorded to tell them
+# apart, and only then is the quarantine relaxed.
+# ---------------------------------------------------------------------------
+
+
+def _pin_superseded(manifest, dataset="gsplats_toy", digests=()):
+    entry = manifest["datasets"][dataset]["files"][0]
+    entry["superseded_sha256"] = list(digests)
+    return entry
+
+
+def test_a_superseded_cache_is_kept_when_nothing_can_replace_it(fake_repo, monkeypatch):
+    """The droso case exactly: re-pinned, no in-repo copy, record unpublished.
+
+    Quarantining here destroys the last copy in existence and leaves the dataset
+    unobtainable. Keeping it is the only outcome that is not strictly worse.
+    """
+    manifest, cache = fake_repo
+    entry = manifest["datasets"]["gsplats_toy"]["files"][0]
+    old_digest = entry["sha256"]
+    # Seed the cache with the OLD generation, then re-pin to a new one.
+    dest = cache / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+    dest.parent.mkdir(parents=True)
+    dest.write_bytes(b"toy-splat-bytes")
+    entry["sha256"] = "9" * 64
+    entry["superseded_sha256"] = [old_digest]
+    # No in-repo copy, and no Zenodo URL: irreplaceable.
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", cache / "does-not-exist")
+
+    (path,) = ensure_dataset(
+        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+    )
+
+    assert path == dest
+    assert path.read_bytes() == b"toy-splat-bytes"
+    assert find_quarantined_files(dest) == [], "the last copy was destroyed"
+
+
+def test_a_superseded_cache_with_an_lfs_pointer_names_git_lfs(fake_repo, capsys):
+    """An unpulled current copy is obtainable by hydrating its LFS pointer."""
+    manifest, cache = fake_repo
+    entry = manifest["datasets"]["gsplats_toy"]["files"][0]
+    old_digest = entry["sha256"]
+    dest = cache / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+    dest.parent.mkdir(parents=True)
+    dest.write_bytes(b"toy-splat-bytes")
+    entry["sha256"] = "9" * 64
+    entry["superseded_sha256"] = [old_digest]
+    payload = data_fetch._DEMOS_DATA_DIR / "gsplats_toy" / dest.name
+    payload.write_text(
+        f"version https://git-lfs.github.com/spec/v1\noid sha256:{'0' * 64}\nsize 15\n"
+    )
+
+    (path,) = ensure_dataset(
+        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+    )
+
+    assert path == dest
+    notice = capsys.readouterr().out
+    assert "git lfs pull" in notice
+    assert "hosted-only" not in notice
+
+
+def test_a_superseded_cache_is_replaced_when_a_route_exists(fake_repo, monkeypatch):
+    """Keeping it is a LAST resort, not a preference.
+
+    If the current bytes are obtainable, the superseded copy must lose — otherwise
+    a stale cache would pin a machine to an old generation forever.
+    """
+    manifest, cache = fake_repo
+    entry = manifest["datasets"]["gsplats_toy"]["files"][0]
+    old_digest = entry["sha256"]
+    dest = cache / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+    dest.parent.mkdir(parents=True)
+    dest.write_bytes(b"toy-splat-bytes")
+    entry["superseded_sha256"] = [old_digest]
+    # Re-pin to whatever the in-repo copy hashes to, so step 2 is a live route.
+    payload = data_fetch._DEMOS_DATA_DIR / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+    payload.write_bytes(b"NEWER-generation")
+    entry["sha256"] = _sha256(payload)
+
+    (path,) = ensure_dataset(
+        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+    )
+
+    assert path.read_bytes() == b"NEWER-generation", "kept a superseded copy anyway"
+    assert [p.name for p in find_quarantined_files(dest)] == [dest.name + ".corrupt"]
+
+
+def test_a_superseded_cache_is_replaced_when_zenodo_is_reachable(
+    fake_repo, monkeypatch
+):
+    """A live download route also makes the superseded cache replaceable."""
+    manifest, cache = fake_repo
+    entry = manifest["datasets"]["gsplats_toy"]["files"][0]
+    old_digest = entry["sha256"]
+    dest = cache / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+    dest.parent.mkdir(parents=True)
+    dest.write_bytes(b"toy-splat-bytes")
+    entry["superseded_sha256"] = [old_digest]
+    entry["sha256"] = hashlib.sha256(b"NEWER-generation").hexdigest()
+    manifest["records"]["cc-by"]["base_url"] = "https://example.invalid/files"
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", cache / "does-not-exist")
+
+    def _fake_download(url, output_path, expected_sha256=None, **kw):
+        Path(output_path).write_bytes(b"NEWER-generation")
+        return Path(output_path)
+
+    monkeypatch.setattr("luxar.utils.download.download_with_checksum", _fake_download)
+
+    (path,) = ensure_dataset(
+        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+    )
+
+    assert path.read_bytes() == b"NEWER-generation", "kept a superseded copy anyway"
+    assert [p.name for p in find_quarantined_files(dest)] == [dest.name + ".corrupt"]
+
+
+def test_corrupt_bytes_are_still_quarantined_even_when_irreplaceable(
+    fake_repo, monkeypatch
+):
+    """The relaxation must not become "accept anything when stuck".
+
+    Bytes matching NO recorded digest are corruption, and serving them would be
+    worse than failing. This is why the previous digests had to be recorded
+    rather than the checksum simply loosened.
+    """
+    manifest, cache = fake_repo
+    entry = manifest["datasets"]["gsplats_toy"]["files"][0]
+    entry["superseded_sha256"] = ["a" * 64]  # names something else entirely
+    dest = cache / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+    dest.parent.mkdir(parents=True)
+    dest.write_bytes(b"corrupted-bytes")
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", cache / "does-not-exist")
+
+    with pytest.raises(DatasetUnavailable):
+        ensure_dataset(
+            "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+        )
+    assert [p.name for p in find_quarantined_files(dest)] == [dest.name + ".corrupt"]
+
+
+def test_using_a_superseded_copy_is_announced(fake_repo, monkeypatch, capsys):
+    """Serving out-of-date data silently is how a stale tile gets published."""
+    manifest, cache = fake_repo
+    entry = manifest["datasets"]["gsplats_toy"]["files"][0]
+    old_digest = entry["sha256"]
+    dest = cache / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+    dest.parent.mkdir(parents=True)
+    dest.write_bytes(b"toy-splat-bytes")
+    entry["sha256"] = "9" * 64
+    entry["superseded_sha256"] = [old_digest]
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", cache / "does-not-exist")
+
+    ensure_dataset("gsplats_toy", manifest=manifest, cache_root=cache, verbose=False)
+
+    out = capsys.readouterr().out
+    assert "SUPERSEDED" in out, out
+    assert "not corrupt" in out, out
+
+
+def test_the_superseded_verdict_ranks_below_both_contracts(fake_repo):
+    """A digest that is current must never be reported as superseded."""
+    payload = data_fetch._DEMOS_DATA_DIR / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+    current = _sha256(payload)
+    # The same digest named as BOTH current and superseded: current must win.
+    assert (
+        data_fetch._accepted_contract(payload, current, None, False, [current])
+        == "local"
+    )
+    assert (
+        data_fetch._accepted_contract(payload, None, current, False, [current])
+        == "hosted"
+    )
+
+
+def test_only_the_most_recent_generation_is_accepted(fake_repo, monkeypatch):
+    """The manifest keeps the whole history; acceptance reaches back exactly one.
+
+    The list's effect IS how far back "acceptable" reaches, and the oldest entry
+    is the likeliest to be genuinely wrong. Anything older than one generation
+    degrades to a build failure — loud and recoverable — rather than to a
+    silently stale artifact.
+    """
+    manifest, cache = fake_repo
+    entry = manifest["datasets"]["gsplats_toy"]["files"][0]
+    ancient = entry["sha256"]  # what the cache actually holds
+    dest = cache / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+    dest.parent.mkdir(parents=True)
+    dest.write_bytes(b"toy-splat-bytes")
+    entry["sha256"] = "9" * 64
+    # Two generations of history: the cached bytes are the OLDER one.
+    entry["superseded_sha256"] = [ancient, "8" * 64]
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", cache / "does-not-exist")
+
+    with pytest.raises(DatasetUnavailable):
+        ensure_dataset(
+            "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+        )
+
+    # Reachable again the moment that digest becomes the most recent entry.
+    entry["superseded_sha256"] = ["8" * 64, ancient]
+    dest.write_bytes(b"toy-splat-bytes")
+    (path,) = ensure_dataset(
+        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+    )
+    assert path.read_bytes() == b"toy-splat-bytes"
+
+
+@pytest.mark.skipif(not GEN_SCRIPT.exists(), reason=_NO_SCRIPT)
+def test_a_changed_pin_records_the_outgoing_digest(tmp_path, monkeypatch):
+    """The generator must capture history at the moment it is still knowable.
+
+    When a visible in-repo pin changes, the outgoing digest is what every
+    existing cache holds. If regeneration does not record it while those bytes
+    are available, the information is gone and a re-pin can strand every cache.
+    """
+    mod = _load_generator()
+    data = tmp_path / "data" / "gsplats_kidney"
+    data.mkdir(parents=True)
+    (data / "kidney_ch0.gsplats.zarr.zip").write_bytes(b"NEW-generation")
+    monkeypatch.setattr(mod, "DATA_DIR", tmp_path / "data")
+
+    outgoing = hashlib.sha256(b"OLD-generation").hexdigest()
+    committed = {
+        "datasets": {
+            "gsplats_kidney": {
+                "files": [
+                    {
+                        "name": "kidney_ch0.gsplats.zarr.zip",
+                        "sha256": outgoing,
+                        "bytes": len(b"OLD-generation"),
+                    }
+                ]
+            }
+        }
+    }
+    entry = mod.build(committed, prune=False)["datasets"]["gsplats_kidney"]["files"][0]
+
+    assert entry["sha256"] == hashlib.sha256(b"NEW-generation").hexdigest()
+    assert entry["superseded_sha256"] == [outgoing]
+
+    # Idempotent: regenerating again must not duplicate the entry.
+    again = mod.build(
+        {"datasets": {"gsplats_kidney": {"files": [entry]}}}, prune=False
+    )["datasets"]["gsplats_kidney"]["files"][0]
+    assert again["superseded_sha256"] == [outgoing], "history duplicated on re-run"
+
+
+@pytest.mark.skipif(not GEN_SCRIPT.exists(), reason=_NO_SCRIPT)
+def test_a_reverted_pin_moves_the_outgoing_digest_to_the_end(tmp_path, monkeypatch):
+    """The newest superseded generation must remain the final history entry."""
+    mod = _load_generator()
+    data = tmp_path / "data" / "gsplats_kidney"
+    data.mkdir(parents=True)
+    payload = data / "kidney_ch0.gsplats.zarr.zip"
+    monkeypatch.setattr(mod, "DATA_DIR", tmp_path / "data")
+
+    def _regenerate(previous, generation):
+        payload.write_bytes(generation)
+        return mod.build(previous, prune=False)["datasets"]["gsplats_kidney"]["files"][
+            0
+        ]
+
+    digest_a = hashlib.sha256(b"A").hexdigest()
+    digest_b = hashlib.sha256(b"B").hexdigest()
+    initial = {
+        "datasets": {
+            "gsplats_kidney": {
+                "files": [
+                    {
+                        "name": payload.name,
+                        "sha256": digest_a,
+                        "bytes": 1,
+                    }
+                ]
+            }
+        }
+    }
+
+    pin_b = _regenerate(initial, b"B")
+    pin_a = _regenerate({"datasets": {"gsplats_kidney": {"files": [pin_b]}}}, b"A")
+    pin_c = _regenerate({"datasets": {"gsplats_kidney": {"files": [pin_a]}}}, b"C")
+
+    assert pin_b["superseded_sha256"] == [digest_a]
+    assert pin_a["superseded_sha256"] == [digest_a, digest_b]
+    assert pin_c["superseded_sha256"] == [digest_b, digest_a]
+
+
+@pytest.mark.skipif(not GEN_SCRIPT.exists(), reason=_NO_SCRIPT)
+def test_a_hosted_only_repin_history_must_be_authored_before_regeneration(
+    tmp_path, monkeypatch
+):
+    """Without bytes on disk, regeneration cannot discover the outgoing pin."""
+    mod = _load_generator()
+    monkeypatch.setattr(mod, "DATA_DIR", tmp_path / "data")
+    repinned = {
+        "datasets": {
+            "gsplats_3d_drosophila_gastrulation": {
+                "files": [
+                    {
+                        "name": "droso_gastrulation.gsplats.zarr.zip",
+                        "sha256": "b" * 64,
+                        "bytes": 2,
+                    }
+                ]
+            }
+        }
+    }
+
+    entry = mod.build(repinned, prune=False)["datasets"][
+        "gsplats_3d_drosophila_gastrulation"
+    ]["files"][0]
+
+    assert (
+        entry == repinned["datasets"]["gsplats_3d_drosophila_gastrulation"]["files"][0]
+    )
+    assert "superseded_sha256" not in entry
