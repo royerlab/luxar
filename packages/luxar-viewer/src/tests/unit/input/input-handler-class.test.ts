@@ -16,6 +16,7 @@
  *   - clearDimensionUI is a no-op when no dimension UI exists
  *   - clearDimensionUI removes the sceneDimsManager listener
  *   - init() idempotency
+ *   - control-type changes keep keyboard routing in sync
  *   - dispose() without init (no listeners to clean up)
  *   - dispose() idempotency
  *
@@ -23,7 +24,7 @@
  *   - init() side effects (window/canvas listener registration); covered
  *     by E2E spec keyboard-input-system.spec.ts
  *   - initDimensionSliders / showDimensionSliders / setDimensionPosition
- *   - keyboard binding dispatch
+ *   - broader keyboard binding dispatch
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -378,6 +379,66 @@ describe('InputHandler.init — idempotency', () => {
       expect(addSpy.mock.calls.length).toBe(firstCount);
     } finally {
       addSpy.mockRestore();
+      handler.dispose();
+    }
+  });
+});
+
+describe('InputHandler — control-type routing', () => {
+  it('routes a bare fly chord after ControlsManager.setControlType("fly") alone', () => {
+    type ControlsEvent = { type: 'change' | 'start'; controlType?: 'orbit' | 'fly' | 'ortho' };
+    type ControlsListener = (event: ControlsEvent) => void;
+
+    const sceneManager = makeSceneManagerStub();
+    const listeners = new Map<string, Set<ControlsListener>>();
+    const flyHandleKeyDown = vi.fn();
+    const flyHandleKeyUp = vi.fn();
+    let controlType: 'orbit' | 'fly' | 'ortho' = 'orbit';
+    const controls = sceneManager.controls as unknown as {
+      addEventListener(type: string, listener: ControlsListener): void;
+      removeEventListener(type: string, listener: ControlsListener): void;
+      setControlType(type: 'orbit' | 'fly' | 'ortho'): void;
+      getControlType(): 'orbit' | 'fly' | 'ortho';
+      getFlyControls(): {
+        handleKeyDown: typeof flyHandleKeyDown;
+        handleKeyUp: typeof flyHandleKeyUp;
+      } | null;
+    };
+    controls.addEventListener = (type, listener) => {
+      const eventListeners = listeners.get(type) ?? new Set<ControlsListener>();
+      eventListeners.add(listener);
+      listeners.set(type, eventListeners);
+    };
+    controls.removeEventListener = (type, listener) => {
+      listeners.get(type)?.delete(listener);
+    };
+    controls.setControlType = (type) => {
+      controlType = type;
+      for (const listener of listeners.get('change') ?? []) {
+        listener({ type: 'change', controlType: type });
+      }
+    };
+    controls.getControlType = () => controlType;
+    controls.getFlyControls = () =>
+      controlType === 'fly'
+        ? { handleKeyDown: flyHandleKeyDown, handleKeyUp: flyHandleKeyUp }
+        : null;
+
+    const handler = new InputHandler(
+      sceneManager,
+      makeAnimationControllerStub(),
+      makePerformanceMonitorStub(),
+      makeDebugConsoleStub()
+    );
+
+    try {
+      handler.init();
+      controls.setControlType('fly');
+
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'w' }));
+
+      expect(flyHandleKeyDown).toHaveBeenCalledTimes(1);
+    } finally {
       handler.dispose();
     }
   });

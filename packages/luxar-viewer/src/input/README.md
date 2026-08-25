@@ -5,16 +5,16 @@
 
 ## Overview
 
-`InputHandler` is the only public symbol of this package. The rest of the
-tree is private: the binding table, the context manager, the
-dimension-navigation lifecycle, the window-event handler, and the
+`InputHandler`, `KeyAction`, and `KeyActionId` are the public symbols of this
+package. The rest of the tree is private: the binding table, the context
+manager, the dimension-navigation lifecycle, the window-event handler, and the
 command bodies all live one level deeper under `input-handler/`.
 
 External callers (`core/app.ts`, `types/window.d.ts`) import the
 orchestrator class:
 
 ```typescript
-import { InputHandler } from '../input/input-handler';
+import { InputHandler, KeyAction, type KeyActionId } from '../input/input-handler';
 ```
 
 Nothing else is part of the public API of this package.

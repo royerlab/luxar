@@ -49,15 +49,15 @@ export interface ControlModeCtx {
  * {@link setControlMode} (explicit target).
  */
 function applyControlType(ctx: ControlModeCtx, newType: ControlType): void {
-  // Use sceneManager.setControlType for ortho (handles camera swap)
-  ctx.sceneManager.setControlType(newType);
-
   // Update input context based on control mode
   if (newType === 'fly') {
     ctx.contextManager.setContext(InputContext.FLY_CONTROLS);
   } else {
     ctx.contextManager.setContext(InputContext.NAVIGATION);
   }
+
+  // Use sceneManager.setControlType for ortho (handles camera swap)
+  ctx.sceneManager.setControlType(newType);
 
   // Sync rendering controls if they exist, then PERSIST the new mode.
   // syncCurrentState pulls the live control type into settings.controlType but

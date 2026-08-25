@@ -47,7 +47,7 @@ import type { DimensionSliders } from '../ui/dimension-sliders';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
 import type { DebugConsole } from '../ui/debug-console';
 import type { PerformanceMonitor } from '../ui/performance-monitor';
-import { InputContextManager } from './input-handler/context-manager';
+import { InputContext, InputContextManager } from './input-handler/context-manager';
 import {
   computeDimensionStep,
   resolveSelectedDimension,
@@ -500,13 +500,23 @@ export class InputHandler {
     // the bare method reference at construction time would freeze
     // the listener to the original closure.
     const startAnimation = (): void => this.animationController.startAnimation();
+    const syncInputContext = (event?: { controlType?: ControlType }): void => {
+      const { controlType } = event ?? {};
+      if (!controlType) return;
+      const context = controlType === 'fly' ? InputContext.FLY_CONTROLS : InputContext.NAVIGATION;
+      if (this.contextManager.getContext() !== context) {
+        this.contextManager.setContext(context);
+      }
+    };
 
     this.sceneManager.controls.addEventListener('start', startAnimation);
     this.sceneManager.controls.addEventListener('change', startAnimation);
+    this.sceneManager.controls.addEventListener('change', syncInputContext);
 
     this.eventListeners.push(
       () => this.sceneManager.controls.removeEventListener('start', startAnimation),
-      () => this.sceneManager.controls.removeEventListener('change', startAnimation)
+      () => this.sceneManager.controls.removeEventListener('change', startAnimation),
+      () => this.sceneManager.controls.removeEventListener('change', syncInputContext)
     );
   }
 

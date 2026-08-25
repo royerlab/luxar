@@ -5,7 +5,6 @@ Keyboard binding table split per context.
 - `register-all.ts` — public entry point + the three `KeyBindings*` types
   (deps, commands, panel getters). Imported by the orchestrator.
 - `actions.ts` — stable action identifiers used for rebinding and label lookup.
-- `actions.ts` — stable action identifiers used for rebinding and label lookup.
 - `navigation-bindings.ts` — every NAVIGATION-context application binding
   (orbit-mode UI shortcuts: H, P, R, V, I, F, C, B, T, G, N,
   M (cycle data loading monitor), O, [, ],
