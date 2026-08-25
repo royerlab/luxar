@@ -53,6 +53,12 @@ directly with `pnpm` or `npx`.
 | `lines_basic_example.py` | `add_lines` with `line_type` of `polyline`, `segments`, `loop`. |
 | `lines_indexed_example.py` | `line_type='indexed'` with an explicit `indices` array. |
 
+### Mesh
+
+| File | What it teaches |
+|---|---|
+| `mesh_basic_example.py` | `add_mesh` with triangle faces, flat shading, and per-vertex colours. |
+
 ### Rendering attributes
 
 | File | What it teaches |
