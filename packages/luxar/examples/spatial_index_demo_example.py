@@ -31,6 +31,38 @@ from arbol import aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.utils.paths import get_examples_output_dir
 
+TIME_RANGE = (0.0, 10.0)
+TIME_STEP = 0.5
+CHANNEL_RANGE = (0.0, 2.0)
+CHANNEL_STEP = 1.0
+
+
+def create_dimensions() -> Dimensions:
+    """Create the dimension metadata shared with cluster generation."""
+    return Dimensions(
+        [
+            Dimension("x", unit="um", display=True, range=(-60, 60)),
+            Dimension("y", unit="um", display=True, range=(-60, 60)),
+            Dimension("z", unit="um", display=True, range=(-60, 60)),
+            Dimension(
+                "time",
+                unit="s",
+                display=False,
+                range=TIME_RANGE,
+                step=TIME_STEP,
+                discrete=True,
+            ),
+            Dimension(
+                "channel",
+                unit="ch",
+                display=False,
+                range=CHANNEL_RANGE,
+                step=CHANNEL_STEP,
+                discrete=True,
+            ),
+        ]
+    )
+
 
 def create_5d_clusters(n_clusters: int = 10, points_per_cluster: int = 500) -> tuple:
     """Create clustered 5D point data.
@@ -53,8 +85,11 @@ def create_5d_clusters(n_clusters: int = 10, points_per_cluster: int = 500) -> t
     cluster_centers = np.random.uniform(-50, 50, (n_clusters, 5)).astype(np.float32)
 
     # Ensure clusters are distributed across time and channel dimensions
-    cluster_centers[:, 3] = np.linspace(0, 10, n_clusters)  # Time: 0-10
-    cluster_centers[:, 4] = np.random.choice([0, 1, 2], n_clusters)  # Channel: 0-2
+    cluster_centers[:, 3] = np.linspace(*TIME_RANGE, n_clusters)
+    channel_values = np.arange(
+        CHANNEL_RANGE[0], CHANNEL_RANGE[1] + CHANNEL_STEP, CHANNEL_STEP
+    )
+    cluster_centers[:, 4] = np.random.choice(channel_values, n_clusters)
 
     for i, center in enumerate(cluster_centers):
         # Create points around this cluster center
@@ -74,7 +109,7 @@ def create_5d_clusters(n_clusters: int = 10, points_per_cluster: int = 500) -> t
             np.float32
         )
 
-        # Add some large radius points that span multiple time slices
+        # Add some large-radius points to emphasize cluster structure.
         if i % 3 == 0:
             # Every third cluster has some large-radius points
             large_indices = np.random.choice(points_per_cluster, size=50, replace=False)
@@ -137,30 +172,7 @@ def main():
             f"   Spatial index: {'DISABLED' if args.no_spatial_index else 'ENABLED'}"
         )
 
-        # Define 5D dimensions
-        dims = Dimensions(
-            [
-                Dimension("x", unit="um", display=True, range=(-60, 60)),
-                Dimension("y", unit="um", display=True, range=(-60, 60)),
-                Dimension("z", unit="um", display=True, range=(-60, 60)),
-                Dimension(
-                    "time",
-                    unit="s",
-                    display=False,
-                    range=(0, 10),
-                    step=0.5,
-                    discrete=True,
-                ),
-                Dimension(
-                    "channel",
-                    unit="ch",
-                    display=False,
-                    range=(0, 2),
-                    step=1,
-                    discrete=True,
-                ),
-            ]
-        )
+        dims = create_dimensions()
         aprint(f"Defined {len(dims)} dimensions for 5D navigation")
 
     with asection("5D Clustered Data Generation"):
@@ -214,7 +226,7 @@ def main():
                 ),
                 observe=[
                     "Distinct clusters appear and disappear as you step through time.",
-                    "Large-radius points stay visible across several adjacent slices.",
+                    "Each cluster stays within one discrete time/channel slice.",
                     "Navigation stays smooth despite the 5D point count.",
                 ],
                 observe_label="Look for",
@@ -246,7 +258,7 @@ def main():
         aprint("🎮 Navigation tips:")
         aprint("   - Press 1 then [ ] to navigate through time")
         aprint("   - Press 2 then [ ] to navigate channels")
-        aprint("   - Notice how large-radius points remain visible across slices")
+        aprint("   - Notice how clusters appear in one discrete slice at a time")
 
         if not args.no_spatial_index:
             aprint("💡 Try comparing with non-indexed version:")

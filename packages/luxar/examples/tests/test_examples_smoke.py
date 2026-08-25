@@ -99,6 +99,22 @@ def _parametrize_stems(stems: Iterable[str]) -> list[pytest.param]:
     return params
 
 
+def test_spatial_index_demo_dimensions_match_generation_contract():
+    """Authored discrete metadata stays coupled to generation constants."""
+    module = _load_example("spatial_index_demo_example")
+
+    dimensions = {
+        dimension.name: dimension for dimension in module.create_dimensions().dimensions
+    }
+
+    assert dimensions["time"].range == module.TIME_RANGE
+    assert dimensions["time"].step == module.TIME_STEP
+    assert dimensions["time"].discrete is True
+    assert dimensions["channel"].range == module.CHANNEL_RANGE
+    assert dimensions["channel"].step == module.CHANNEL_STEP
+    assert dimensions["channel"].discrete is True
+
+
 _ALL_STEMS = [s for s in _discover_example_stems() if s not in HEAVY_EXAMPLES]
 
 
