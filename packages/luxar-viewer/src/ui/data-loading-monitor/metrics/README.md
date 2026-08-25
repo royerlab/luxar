@@ -3,8 +3,9 @@
 Pure helpers that the data-loading monitor's main file calls each
 poll tick to turn raw event streams and provider snapshots into the
 `CacheMetrics`, `GlobalStats`, `MemoryMetrics`, and `RatesSnapshot`
-shapes its tabs render. Keeping the math here makes the monitor's main file a thin dispatcher and lets
-these helpers be unit-tested without DOM, timers, or tab state.
+shapes its tabs render. Keeping the math here makes the monitor's main
+file a thin dispatcher and lets these helpers be unit-tested without
+DOM, timers, or tab state.
 
 ## Files
 

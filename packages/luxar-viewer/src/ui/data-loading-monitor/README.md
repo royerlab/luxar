@@ -99,11 +99,11 @@ timing panel's per-operation explanations live in the `TOOLTIPS` map in
 ## Contracts and invariants
 
 - **Templates produce structure, updaters patch values.**
-  The concern modules under `templates/` paint the full HTML on a tab switch or a structural
-  change; the per-tick updaters under `tabs/` only rewrite values via
-  `data-field` selectors. If a
-  selector misses, the updater returns `false` and the orchestrator
-  rebuilds via the matching template module.
+  The concern modules under `templates/` paint the full HTML on a tab
+  switch or a structural change; the per-tick updaters under `tabs/`
+  only rewrite values via `data-field` selectors. If a selector misses,
+  the updater returns `false` and the orchestrator rebuilds via the
+  matching template module.
 - **`EventQueue.drain()` is atomic** — the internal array is
   reassigned in one step so producers pushing concurrently never
   observe a half-drained queue.
