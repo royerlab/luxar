@@ -824,6 +824,9 @@ spatial-query constants, gallery exposure thresholds, and fixture-staleness exit
 code from those sources. The classifier names only those consumed files rather
 than broad `src/config/`, `src/rendering/`, or `tools/` prefixes, so unrelated
 viewer changes remain TypeScript-only and do not pull in the Python matrix.
+The docs gate has no corresponding hole: it already owns every viewer TypeScript
+source under `src/`, while `tools/example-fixture-freshness.ts` is outside both
+the documentation checker's viewer scan and TypeDoc's entry points.
 A check whose own inputs are unclassified is a check that skips for exactly the
 change it exists to catch. `.github/workflows/ci.yml` selects **all four**
 domains: it defines how every suite is invoked, so an edit that breaks a command
