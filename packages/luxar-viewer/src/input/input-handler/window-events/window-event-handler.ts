@@ -157,9 +157,9 @@ export class WindowEventHandler {
    *
    *   - For canvas-originated events, poke the animation loop so the
    *     scene keeps rendering during continuous wheel input.
-   *   - On Ctrl+wheel / Cmd+wheel, intercept the event for FOV
-   *     control and `preventDefault` so the page doesn't also try to
-   *     zoom. The FOV wheel path is gated to a perspective camera: in
+   *   - On Ctrl+wheel / Cmd+wheel, suppress page zoom across the viewer
+   *     container, but apply FOV control only to canvas-originated events.
+   *     The FOV wheel path is gated to a perspective camera: in
    *     ortho the orbit controls own modifier-wheel (and trackpad-pinch)
    *     zoom. `updateFOV` now persists the perspective FOV stash even in
    *     ortho for DELIBERATE reset/zarr/panel applies, so the interactive

@@ -86,7 +86,8 @@ Ctrl/Cmd+wheel FOV path is the one global pointer listener, so although it is
 registered on `window`, it changes FOV and pokes rendering only for events whose
 composed origin is the scene canvas. Modifier-wheel page zoom is still
 suppressed anywhere inside the viewer container, while host-page UI outside an
-embedded viewer is untouched. Widgets do not need to stop propagation.
+embedded viewer is untouched. Wheel-sensitive widgets no longer need to stop
+propagation.
 
 ### Layer 2 — control implementations (`controls/`)
 
