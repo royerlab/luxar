@@ -6,6 +6,31 @@ and the eye loses the shape — the fold structure of a fractal, the lobes of a
 cloud, the interior of a light-sheet fit. This package computes the shape cues a
 shaded renderer would get for free, so an author can write them into the scene.
 
+## Emissivity as a function of ambient illumination
+
+This is not decoration bolted onto the renderer — it is the missing half of the
+transport the renderer already implements.
+
+Emission–absorption rendering has two terms. Luxar's blending modes supply the
+attenuation one: radiance is absorbed on its way *out* to the eye. The emission
+term is the other, and for matter that is **lit from outside** rather than
+genuinely glowing, the physically correct source is `albedo × incident
+irradiance` — and the incident irradiance at a point is exactly what ambient
+occlusion measures. So an emissive scene is best read as one whose *emissivity is
+a function of ambient illumination*, and this package computes that function.
+
+Three consequences, which is why the API looks the way it does:
+
+- The result belongs multiplied into the **emission** (colour × intensity), never
+  into opacity or absorption — those are the *other* term.
+- It **composes with** an absorbing blending mode rather than double-counting it.
+  `volumetric` answers "what is in front of what", which changes as the camera
+  moves; occlusion answers "how much environment can reach here", which does not.
+- **`strength` is physical, not taste.** `1 - strength` is the *indirect* ambient
+  — multiply-scattered light that reaches even a fully enclosed point. It is the
+  same quantity `demo_volumetric_cloud` spends three tuned radiance terms on, and
+  that `demo_mandelbulb` writes as its ambient floor of 0.32.
+
 ## The dividing line
 
 > **Bake what the geometry knows. Leave to the shader what the camera knows.**

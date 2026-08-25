@@ -379,11 +379,16 @@ AO_RADIUS_NM = 6.0
 #: cells one cell would be ~2 nm and a 6 nm radius only three cells wide.
 AO_GRID_CELLS = 128
 
-#: How much of the CPK colour occlusion may take. Kept moderate on purpose — the
-#: colours are a CATEGORICAL element encoding (C grey, N blue, O red, S yellow),
-#: and multiplying by a scalar preserves hue while changing only lightness, so
-#: element identity survives. It is still a real cost to the encoding, which is
-#: why the term is gentle rather than dramatic.
+#: Fraction of the ambient illumination that is DIRECT, and so occludable;
+#: `1 - AO_STRENGTH` is the indirect, multiply-scattered ambient that reaches even
+#: a fully buried atom. A physical split rather than a taste knob — the emissive
+#: colour IS the emission term, and for matter lit from outside that term is
+#: albedo x incident irradiance.
+#:
+#: Kept moderate for a second reason here: the colours are a CATEGORICAL element
+#: encoding (C grey, N blue, O red, S yellow), and multiplying by a scalar
+#: preserves hue while changing only lightness, so element identity survives — but
+#: it is still a real cost to the encoding.
 AO_STRENGTH = 0.55
 
 

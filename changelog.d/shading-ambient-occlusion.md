@@ -60,10 +60,17 @@ a categorical hue encoding, a scalar multiplier changes lightness while leaving
 element identity readable. Both demos normalize against the term's own maximum,
 so occlusion is spent on contrast instead of dimming an authored exposure.
 
-`atp_synthase` is deliberately left alone. It renders `volumetric` at kappa 2.5
-precisely so its packed interior reads as density, and emission–absorption
-already occludes by depth; baking an occlusion term on top would double-count
-that and work against what the demo is for.
+`atp_synthase` gains the same burial shading. It renders `volumetric`, which
+might look like double-counting, and the reason it is not is the framing the
+package is built on: **emissivity is a function of ambient illumination.**
+Emission–absorption transport has two terms; the blending mode supplies the
+outgoing attenuation, and for matter lit from outside rather than glowing the
+emission term is `albedo × incident irradiance` — which is exactly what ambient
+occlusion measures. In-scattered source and outgoing attenuation are halves of
+one equation, not two darkenings. That also fixes what `strength` means:
+`1 - strength` is the indirect, multiply-scattered ambient that reaches even a
+fully enclosed element, the same quantity the cloud demo spends three tuned
+radiance terms on and the mandelbulb writes as its ambient floor of 0.32.
 
 The multiplier is premultiplied into linear-light colour, which is the only route
 available today. Carrying it as a per-element attribute so the viewer could scale

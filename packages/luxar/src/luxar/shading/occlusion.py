@@ -5,6 +5,29 @@ that neighbouring geometry exists, so a dense shell accumulates into a flat glow
 and the eye loses the shape. Ambient occlusion restores it by darkening elements
 that sit inside the mass and leaving exposed ones bright.
 
+Emissivity as a function of ambient illumination
+------------------------------------------------
+The useful way to read this is that it is not decoration bolted onto the
+renderer, but the missing half of the transport it already implements.
+Emission-absorption rendering has two terms. Luxar's blending modes supply the
+attenuation one: radiance is absorbed on its way OUT to the eye. The emission
+term is the other, and for matter that is **lit from outside** rather than
+genuinely glowing, the physically correct source is ``albedo x incident
+irradiance`` — and the incident irradiance at a point is precisely what ambient
+occlusion measures, the fraction of the surrounding environment that can reach
+it. So an emissive scene is best understood as one whose emissivity is a function
+of ambient illumination, and this module computes that function.
+
+Three consequences follow, and they are why the API looks the way it does. The
+result belongs multiplied into the **emission** (colour x intensity), never into
+opacity or absorption, which are the other term. It composes with an absorbing
+blending mode rather than double-counting it, because in-scattered source and
+outgoing attenuation are different halves of one equation. And ``strength``
+stops being a taste knob: ``1 - strength`` is the *indirect* ambient, the
+multiply-scattered light that reaches even a fully enclosed point, which is the
+same quantity ``demo_volumetric_cloud`` spends three tuned radiance terms on and
+that ``demo_mandelbulb`` writes as its ambient floor of 0.32.
+
 Why this belongs at authoring time
 ----------------------------------
 Occlusion is a scalar function of the geometry alone — "how enclosed is this
@@ -391,7 +414,10 @@ def bake_ambient_occlusion(
             :data:`AUTO_TARGET_TRANSMITTANCE`, which is the default because it
             makes the bake independent of the mass units and of how densely the
             object was sampled.
-        strength: Scales the darkening; ``0.0`` returns all ones.
+        strength: Fraction of the ambient illumination that is DIRECT, and so
+            occludable; ``1 - strength`` is the indirect, multiply-scattered
+            ambient that reaches even a fully enclosed element. ``0.0`` returns
+            all ones (everything reached by indirect light alone).
         floor: Lower clamp, so fully enclosed elements keep some brightness.
 
     Returns:

@@ -190,10 +190,12 @@ SHADING = "smooth"
 #: responds to the contacts between cells rather than to the slab as a whole.
 AO_RADIUS_UM = 4.0
 
-#: How much of the albedo occlusion may take. Lower than the library default
-#: because this rides ON TOP of the material's own diffuse shading rather than
-#: standing in for it — the two multiply, and at full strength the contacts go
-#: to near-black.
+#: Fraction of the ambient illumination that is DIRECT, and so occludable;
+#: `1 - AO_STRENGTH` is the indirect, multiply-scattered ambient reaching even a
+#: fully enclosed vertex. Lower than the library default because mesh is the one
+#: type that ALREADY has a direct light: the material's key term supplies its own
+#: directional component, so this stands in only for the ambient part of the
+#: illumination rather than for all of it. At full strength the contacts go black.
 AO_STRENGTH = 0.45
 
 FLAGS = parse_demo_flags()
