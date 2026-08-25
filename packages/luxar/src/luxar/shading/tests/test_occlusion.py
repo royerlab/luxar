@@ -871,7 +871,25 @@ def test_rejects_non_finite_spatial_positions(bad_value):
         bake_ambient_occlusion(positions)
 
 
+@pytest.mark.parametrize("bad_value", [np.nan, np.inf, -np.inf])
+def test_rejects_non_finite_normals(bad_value):
+    positions = _ball(100, seed=33)
+    normals = positions.copy()
+    normals[0, 1] = bad_value
+    with pytest.raises(ValueError, match="normals must be finite"):
+        bake_ambient_occlusion(positions, normals=normals)
+
+
 def test_rejects_mismatched_group_by():
     positions = _ball(100, seed=22)
     with pytest.raises(ValueError, match="group_by must have shape"):
         bake_ambient_occlusion(positions, group_by=np.zeros(50, dtype=int))
+
+
+@pytest.mark.parametrize("bad_value", [np.nan, np.inf, -np.inf])
+def test_rejects_non_finite_group_by(bad_value):
+    positions = _ball(100, seed=34)
+    groups = np.zeros(len(positions))
+    groups[0] = bad_value
+    with pytest.raises(ValueError, match="group_by must be finite"):
+        bake_ambient_occlusion(positions, group_by=groups)

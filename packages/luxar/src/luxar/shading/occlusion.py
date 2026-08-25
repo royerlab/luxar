@@ -555,6 +555,12 @@ def bake_ambient_occlusion(
             raise ValueError(
                 f"group_by must have shape ({n_elements},), got {groups.shape}"
             )
+        try:
+            groups_are_finite = bool(np.all(np.isfinite(groups)))
+        except TypeError as exc:
+            raise ValueError("group_by must contain finite numeric labels") from exc
+        if not groups_are_finite:
+            raise ValueError("group_by must be finite")
         for label in np.unique(groups):
             where = np.flatnonzero(groups == label)
             columns[where] = _group_columns(
@@ -773,6 +779,8 @@ def _validated_normals(
     arr = np.asarray(normals, dtype=np.float64)
     if arr.shape != (n_elements, 3):
         raise ValueError(f"normals must have shape ({n_elements}, 3), got {arr.shape}")
+    if not np.all(np.isfinite(arr)):
+        raise ValueError("normals must be finite")
     lengths = np.linalg.norm(arr, axis=1, keepdims=True)
     # Zero-length rows are kept as zeros rather than rejected; a distance-field
     # gradient legitimately vanishes at a critical point, and
