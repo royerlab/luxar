@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import io
 import subprocess
 import sys
 import urllib.error
@@ -248,6 +249,52 @@ def test_rejected_credential_markers_match_the_zenodo_producer(
         module.fetch_deposition("21912280", "rejected-token")
 
     assert str(exc_info.value).startswith(audit_module._REJECTED_CREDENTIAL_MARKERS)
+
+
+@pytest.mark.parametrize("failure", ["url", "timeout", "json"])
+def test_zenodo_transport_failures_remain_warnings(monkeypatch, failure: str) -> None:
+    producer = SCRIPT.with_name("zenodo_migration_audit.py")
+    spec = importlib.util.spec_from_file_location("zenodo_migration_audit", producer)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setattr(sys, "argv", [str(producer)])
+    spec.loader.exec_module(module)
+
+    if failure == "json":
+        monkeypatch.setattr(
+            module.urllib.request,
+            "urlopen",
+            lambda *args, **kwargs: io.BytesIO(b"not json"),
+        )
+    else:
+        error = (
+            urllib.error.URLError("temporary DNS failure")
+            if failure == "url"
+            else TimeoutError("read timed out")
+        )
+        monkeypatch.setattr(
+            module.urllib.request,
+            "urlopen",
+            lambda *args, **kwargs: (_ for _ in ()).throw(error),
+        )
+
+    with pytest.raises(SystemExit) as exc_info:
+        module.fetch_deposition("21912280", "configured-token")
+
+    output = str(exc_info.value)
+    assert output.startswith("Zenodo request failed for deposition 21912280:")
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 1, "", output),
+    )
+
+    result = audit_module.run_audit(
+        audit_module.AUDITS[2], env={"ZENODO_TOKEN": "configured-token"}
+    )
+
+    assert result.level is audit_module.Level.WARNING
+    assert result.detail == "exited 1"
 
 
 def test_auth_failure_text_without_required_env_remains_a_warning(monkeypatch) -> None:
