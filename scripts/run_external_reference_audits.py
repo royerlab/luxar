@@ -20,7 +20,9 @@ from __future__ import annotations
 import html
 import os
 import re
-import subprocess
+
+# The commands are fixed below and are never passed through a shell.
+import subprocess  # nosec B404
 import sys
 from dataclasses import dataclass
 from enum import IntEnum
@@ -72,6 +74,11 @@ _DEMO_LEVELS = {
     "CONFIG": Level.ERROR,
 }
 _LEVEL_PATTERN = re.compile(r"^\[([A-Z]+)]", re.MULTILINE)
+_COMMAND_ERROR_MARKERS = (
+    "No rule to make target",
+    "Traceback (most recent call last):",
+    "command not found",
+)
 
 
 def _level_from_output(output: str) -> Level:
@@ -96,14 +103,17 @@ def run_audit(
         command_env = dict(env)
         for name in _SENSITIVE_ENV.difference(audit.required_env):
             command_env.pop(name, None)
+        # Every argv comes from the constant AUDITS registry.
         completed = subprocess.run(
             audit.command,
             check=False,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout_seconds,
             env=command_env,
-        )
+        )  # nosec B603
     except (OSError, subprocess.TimeoutExpired) as error:
         return Result(audit, Level.ERROR, str(error), "")
 
@@ -111,8 +121,8 @@ def run_audit(
         part.rstrip() for part in (completed.stdout, completed.stderr) if part
     )
     if completed.returncode != 0:
-        missing_target = "No rule to make target" in output
-        level = Level.ERROR if missing_target else Level.WARNING
+        command_error = any(marker in output for marker in _COMMAND_ERROR_MARKERS)
+        level = Level.ERROR if command_error else Level.WARNING
         return Result(audit, level, f"exited {completed.returncode}", output)
 
     level = _level_from_output(output) if audit.parse_levels else Level.PASS
@@ -135,9 +145,8 @@ def render_summary(results: Sequence[Result]) -> str:
         "| --- | --- | --- |",
     ]
     for result in results:
-        lines.append(
-            f"| {result.audit.name} | **{result.level.name}** | {result.detail} |"
-        )
+        detail = result.detail.replace("|", "\\|").replace("\n", " ")
+        lines.append(f"| {result.audit.name} | **{result.level.name}** | {detail} |")
     for result in results:
         output = result.output
         if len(output) > MAX_SUMMARY_OUTPUT_CHARS:
@@ -162,8 +171,11 @@ def main() -> int:
     summary = render_summary(results)
     print(summary, end="")
     if summary_path := os.environ.get("GITHUB_STEP_SUMMARY"):
-        with Path(summary_path).open("a") as summary_file:
-            summary_file.write(summary)
+        try:
+            with Path(summary_path).open("a") as summary_file:
+                summary_file.write(summary)
+        except OSError as error:
+            print(f"Could not write GitHub summary: {error}", file=sys.stderr)
     return 0
 
 

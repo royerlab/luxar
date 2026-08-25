@@ -107,6 +107,20 @@ def test_nonzero_audit_is_reported_without_stopping_later_audits(monkeypatch) ->
     ]
 
 
+def test_command_traceback_is_a_configuration_error(monkeypatch) -> None:
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], 1, "", "Traceback (most recent call last):\nValueError"
+        ),
+    )
+
+    result = audit_module.run_audit(audit_module.AUDITS[0], env={})
+
+    assert result.level is audit_module.Level.ERROR
+
+
 def test_main_writes_the_same_visible_summary_and_always_exits_zero(
     monkeypatch, tmp_path, capsys
 ) -> None:
@@ -137,6 +151,27 @@ def test_summary_escapes_and_bounds_command_output() -> None:
     assert "earlier characters omitted" in summary
     assert "&lt;/pre&gt;" in summary
     assert dangerous not in summary
+
+
+def test_summary_escapes_table_delimiters_and_newlines() -> None:
+    result = audit_module.Result(
+        audit_module.AUDITS[0], audit_module.Level.ERROR, "bad | config\nline", ""
+    )
+
+    summary = audit_module.render_summary([result])
+
+    assert "bad \\| config line" in summary
+
+
+def test_unwritable_summary_does_not_make_the_audit_gate(monkeypatch, tmp_path) -> None:
+    results = [
+        audit_module.Result(audit, audit_module.Level.PASS, "clean", "")
+        for audit in audit_module.AUDITS
+    ]
+    monkeypatch.setattr(audit_module, "run_audit", lambda audit: results.pop(0))
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(tmp_path))
+
+    assert audit_module.main() == 0
 
 
 def test_weekly_workflow_is_manual_read_only_and_uses_the_aggregator() -> None:
