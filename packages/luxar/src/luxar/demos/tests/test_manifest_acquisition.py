@@ -79,11 +79,6 @@ def _hosted_gsplat_datasets() -> dict[str, Any]:
 _NOT_YET_DECLARED = {
     # Refit still in flight.
     "gsplats_flylight_mcfo_63x",
-    # The two variants are different temporal subsets of one acquisition (51tp
-    # is every fifth frame, fitted independently), so what the dataset as a
-    # whole was fitted from needs stating per variant, not once. Declared with
-    # the refit that replaces the superseded 51tp build.
-    "h2afva",
     # Cache-only datasets: hosted, but no in-repo copy to probe, so their
     # acquisitions are declared when their sources are next opened.
     "gsplats_3d_drosophila_gastrulation",
@@ -109,6 +104,7 @@ _STORED_BYTES_PENDING = {
     "gsplats_multichannel",
     "gsplats_dapi",
     "gsplats_celegans",
+    "h2afva",
 }
 
 
