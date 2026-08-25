@@ -602,6 +602,26 @@ test.describe('Keyboard Input System - Browser Shortcuts Protection', () => {
 });
 
 test.describe('Keyboard Input System - Escape Key', () => {
+  test('Escape should close a control-rail flyout and restore focus', async ({ page }) => {
+    await page.goto(`/?src=${DATASETS.sliders5D}&debug`);
+    await waitForLuxarReady(page);
+
+    const viewOptions = page.getByRole('button', { name: 'View options' });
+    await viewOptions.click();
+
+    const flyout = page.getByRole('group', { name: 'View options options' });
+    await expect(flyout).toBeVisible();
+
+    const firstOption = flyout.getByRole('button').first();
+    await firstOption.focus();
+    await expect(firstOption).toBeFocused();
+
+    await page.keyboard.press('Escape');
+
+    await expect(flyout).toHaveCount(0);
+    await expect(viewOptions).toBeFocused();
+  });
+
   test('Escape should close help overlay', async ({ page }) => {
     await page.goto(`/?src=${DATASETS.sliders5D}&debug`);
     await waitForLuxarReady(page);
