@@ -176,9 +176,10 @@ DEMO_LINK_AUDITS_BY_HOST: dict[str, dict[str, Any]] = {
         "mode": "body-marker",
         # The byname page is a Drupal shell that fetches its result client-side,
         # so a bogus name answers 200 with a body carrying no object data at all
-        # and differing only in the echoed name and the per-request form tokens.
-        # Its own UI route rejects a plain GET, so this probes the sibling name
-        # resolver, which omits the Preferred block when nothing resolves.
+        # and differing only in the echoed name and the per-request Drupal
+        # tokens. Its own data route is not reachable from outside the page, so
+        # this probes the sibling name resolver, which omits the Preferred
+        # block when nothing resolves.
         "url_template": "https://ned.ipac.caltech.edu/srs/ObjectLookup?name={value}",
         "good": "PGC17223",
         "bad": "LUXARNOSUCH2089",
@@ -187,13 +188,15 @@ DEMO_LINK_AUDITS_BY_HOST: dict[str, dict[str, Any]] = {
     },
     "scholar.google.com": {
         "mode": "human",
-        # A result-container class does discriminate here, but the probe cannot
-        # be run: after a few dozen requests Google serves this user agent a 200
-        # bot-check page and then 429s for minutes, which the audit reads as
-        # "good and bad both rejected" — i.e. it reports a moved route. The
-        # cheaper markers are out too: the query is echoed back on a miss, and
-        # result titles are term-bolded so a queried title is never contiguous.
-        "reason": "repeated probes are served a bot check and then 429, faking a moved route",
+        # A result-container class does discriminate a hit from a miss here, so
+        # the obstacle is not the marker but the rate limiter: this user agent
+        # is served real results at first, then a bot check and sustained 429s
+        # once the address is flagged, and the flagged state outlasts a run. The
+        # audit reads that as "good and bad both rejected" — a moved route — so
+        # its verdict would track Google's throttling, not the URL. (The cheap
+        # markers are out anyway: the query is echoed back on a miss, and result
+        # titles are term-bolded, so a queried title is never contiguous.)
+        "reason": "a probe sees Google's rate limiter rather than the route",
         "verified_in": "#2091",
         "last_checked": "2026-08-24",
     },
