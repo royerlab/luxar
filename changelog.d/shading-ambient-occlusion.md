@@ -101,7 +101,20 @@ which is what a surface sampled as points is made of — attenuates only by
 `exp(-k)`, so at any `k` gentle enough to keep solid regions readable a *wall*
 passes about half the light, and raising `k` until walls block properly
 over-darkens everywhere thick. There is no `k` that serves both. Auto calibration
-is inverted per mode so both aim at the same declared target. The gyroid demo,
-being a surface, uses it: at the shipped 48-direction hemisphere default,
-contrast rises from 0.113 to 0.127 (about 13%; about a fifth at a matched median),
-while the minimum falls from 0.127 to 0.054.
+is inverted per mode so both aim at the same declared target. On the gyroid
+reference surface at the shipped 48-direction hemisphere default, opaque
+contrast is 0.127 against 0.113 for density (about 13%; about a fifth at a
+matched median), while the minimum falls from 0.127 to 0.054.
+
+The original A/B demo was recast and renamed. `ambient_occlusion` became
+`exotic_surfaces`: a subject-centric demo where occlusion makes the subject
+legible rather than being the advertised subject. Eighteen surfaces occupy a
+3x3 grid split across a hidden two-category `family` axis — nine
+triply-periodic minimal surfaces and nine algebraic surfaces, most of them
+extremal. Stepping the axis swaps the whole wall and explanatory overlay.
+
+`family` is categorical, so it has exactly two discrete stops. Every surface is
+credited on screen, and the demo cites the nodal-approximation technique used by
+the nine TPMS. Normals come from one central-difference routine checked against
+the gyroid's closed-form gradient, and every equation has a non-empty,
+non-space-filling zero-set test.
