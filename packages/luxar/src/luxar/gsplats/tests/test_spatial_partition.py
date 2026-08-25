@@ -244,14 +244,18 @@ def test_partition_file_grafts_into_a_scene():
 
 def test_partition_graft_recovers_missing_bsp_tree_from_disjoint_parts():
     """A legacy partition without stored planes recovers an exact scene tree."""
-    from dataclasses import replace
-
     from luxar import Dimensions, LuxarZarrCompiler
     from luxar.core.group.partition import serialized_bsp_tree_separates
-    from luxar.gsplats.tree import center_bounds
+    from luxar.gsplats.tree import GSplatLodGroup, center_bounds
 
-    source = _clustered(40).to_spatial_partition(max_elements=40)
-    legacy = replace(source, bsp_tree=None)
+    partitioned = _clustered(40).to_spatial_partition(max_elements=40)
+    legacy = GSplatPartition(
+        children=[
+            GSplatLodGroup(children=[child, child]) for child in partitioned.children
+        ],
+        max_elements=partitioned.max_elements,
+    )
+    assert all(isinstance(child, GSplatLodGroup) for child in legacy.children)
 
     with tempfile.TemporaryDirectory() as tmp:
         part = Path(tmp) / "legacy.gsplats.zarr"

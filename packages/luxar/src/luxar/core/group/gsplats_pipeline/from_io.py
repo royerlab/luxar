@@ -29,9 +29,32 @@ from .from_data import (
 )
 
 if TYPE_CHECKING:
+    from luxar.gsplats.tree import GSplatPartition
+
     from ...gsplats import GSplats
     from ...node import Node
     from ..group import Group
+
+
+def _grafted_partition_bsp_tree(
+    node: "GSplatPartition",
+) -> Optional[Dict[str, Any]]:
+    """Return stored or exactly recoverable split planes for a partition."""
+    if node.bsp_tree is not None:
+        return node.bsp_tree
+
+    from luxar.core.group.partition import (
+        reconstruct_serialized_bsp_tree,
+        serialized_bsp_tree_separates,
+    )
+    from luxar.gsplats.tree import center_bounds
+
+    child_bounds = [center_bounds(child) for child in node.children]
+    if any(bounds is None for bounds in child_bounds):
+        return None
+    boxes = [bounds for bounds in child_bounds if bounds is not None]
+    recovered = reconstruct_serialized_bsp_tree(boxes)
+    return recovered if serialized_bsp_tree_separates(recovered, boxes) else None
 
 
 def add_gsplats_from_file_impl(
@@ -854,11 +877,7 @@ def graft_gsplat_node(
     if isinstance(node, GSplatPartition):
         # Local import: the sibling `GSplatLodGroup` branch above imports this
         # too, but that branch does not run on this path.
-        from luxar.core.group.partition import (
-            reconstruct_serialized_bsp_tree,
-            serialized_bsp_tree_separates,
-        )
-        from luxar.gsplats.tree import center_bounds, total_splats
+        from luxar.gsplats.tree import total_splats
 
         partition_attrs = dict(wrapper_attrs)
         # Carry the BSP split planes into the scene so the viewer keeps its
@@ -866,14 +885,7 @@ def graft_gsplat_node(
         # stored tree; recover one only when the child bounds admit an exact
         # separating BSP. Overlapping/interlocking parts keep the viewer's
         # centroid fallback rather than receiving an invented ordering.
-        bsp_tree = node.bsp_tree
-        if bsp_tree is None:
-            child_bounds = [center_bounds(child) for child in node.children]
-            if all(bounds is not None for bounds in child_bounds):
-                boxes = [bounds for bounds in child_bounds if bounds is not None]
-                recovered = reconstruct_serialized_bsp_tree(boxes)
-                if serialized_bsp_tree_separates(recovered, boxes):
-                    bsp_tree = recovered
+        bsp_tree = _grafted_partition_bsp_tree(node)
         if bsp_tree is not None:
             partition_attrs["bsp_tree"] = bsp_tree
         # `max_elements` is a per-part CAP, so only a capped splitter sets it
