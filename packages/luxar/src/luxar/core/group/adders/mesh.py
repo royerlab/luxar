@@ -59,7 +59,7 @@ from ..compositing import (
     sync_custom_colormap_attr,
     unnest_add_error,
 )
-from ..dim_order import apply_dim_order_positions
+from ..dim_order import apply_dim_order_orientation, apply_dim_order_positions
 from ..partition import is_requested, reject_mismatched_partition_parent
 
 if TYPE_CHECKING:
@@ -921,6 +921,26 @@ def add_mesh_impl(
             faces if isinstance(faces, np.ndarray) else np.asarray(faces)
         )
         n_faces = int(faces_arr.size // 3)
+
+        # Carry the ORIENTATION data through the same change of basis the
+        # vertices just went through (#2141). `apply_dim_order_positions` above
+        # renumbered the coordinate COLUMNS; `normals` describes a direction in
+        # those columns and `faces`'s corner order encodes surface orientation,
+        # so both are invalidated by a permutation that nothing else corrects.
+        # GSplats does the identical pairing for its Cholesky factors
+        # (`adders/gsplats.py`, positions then `apply_dim_order_cholesky`).
+        #
+        # Placement is load-bearing, and it is why ONE call serves all four
+        # structural routes below (flat leaf, partition=, substitutive_lod=,
+        # additive_lod=): every one of them reads these three locals, and every
+        # recursive re-entry into this function passes `dim_order=None`, so the
+        # transform runs exactly once. It also sits ABOVE `validate_mesh_arrays`
+        # / `_validate_partition_sources` / the writer's `_validate_normal_pair`,
+        # all of which range-check `normal_dims` against the post-dim_order
+        # `ndim` — so what they validate is the remapped triple.
+        normals, normal_dims, faces_arr = apply_dim_order_orientation(
+            normals, normal_dims, faces_arr, scene, dim_order
+        )
 
         aprint(
             f"Adding mesh node '{name}' with {n_vertices:,} vertices and "
