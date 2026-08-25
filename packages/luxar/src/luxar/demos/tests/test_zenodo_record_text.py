@@ -718,6 +718,11 @@ def test_no_measurement_is_stale_against_its_own_digest(
     )
 
 
+def test_committed_measurements_match_the_hosted_manifest_pins(gen: Any) -> None:
+    manifest = json.loads(gen.MANIFEST.read_text())
+    assert gen._stale_characteristics(manifest) == []
+
+
 def test_a_record_quotes_the_size_a_reader_will_download(gen: Any) -> None:
     """`bytes` is the repo's copy; `hosted_bytes` is the record's.
 
