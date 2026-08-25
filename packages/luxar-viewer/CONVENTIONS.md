@@ -102,16 +102,16 @@ through `log.custom(emoji, module, message)`.
 
 ## 5. Error handling
 
-| Mechanism     | Use when                                          | Example                                           |
-| ------------- | ------------------------------------------------- | ------------------------------------------------- |
-| `throw`       | Unrecoverable invariant violation at JS boundary  | `validateNDArrays` rejecting a malformed buffer   |
-| `Result<T,E>` | Recoverable with a typed error code               | Cache miss vs network error vs corrupt vs aborted |
-| `log.warning` | Degraded behaviour, app continues                 | localStorage quota exceeded                       |
-| `log.error`   | Unexpected failure, app continues but UX impacted | WebGL context lost (with rebuild scheduled)       |
+| Mechanism    | Use when                                                | Example                                                |
+| ------------ | ------------------------------------------------------- | ------------------------------------------------------ |
+| `throw`      | Unrecoverable invariant violation at JS boundary       | `validateNDArrays` rejecting a malformed buffer        |
+| `Result<T,E>`| Recoverable with a typed error code                    | Cache miss vs network error vs corrupt vs aborted      |
+| `log.warning`| Degraded behaviour, app continues                      | localStorage quota exceeded                            |
+| `log.error`  | Unexpected failure, app continues but UX impacted      | WebGL context lost (with rebuild scheduled)           |
 
 Avoid `throw` for "the network was slow" — that is a `Result<…>`.
 Avoid `Result<…>` for "the input is structurally invalid" — that is a
-`throw`. The boundary is whether the caller can plausibly _recover_.
+`throw`. The boundary is whether the caller can plausibly *recover*.
 
 ## 6. Resource lifecycle
 
@@ -136,9 +136,7 @@ class FooManager {
     FooManager.instance = undefined;
   }
 
-  dispose(): void {
-    /* ... idempotent ... */
-  }
+  dispose(): void { /* ... idempotent ... */ }
 }
 ```
 
@@ -236,7 +234,7 @@ thread. Conventions:
   `controls/`) may be imported anywhere. Type-only imports are exempt
   — they're erased at compile time.
 
-  Note: `rendering` sits _below_ `data` because rendering primitives
+  Note: `rendering` sits *below* `data` because rendering primitives
   (materials, geometries, GPU buffer pools) are foundational
   building blocks that the data layer assembles into meshes. This
   order matches the actual dependency direction in the codebase.
@@ -255,7 +253,7 @@ thread. Conventions:
 ## 11. Types
 
 - `any` is allowed only with an inline `// eslint-disable-next-line
-@typescript-eslint/no-explicit-any` and a justification comment.
+  @typescript-eslint/no-explicit-any` and a justification comment.
   See `eslint.config.js` for which directories enforce the rule.
 - Prefer `unknown` over `any` when typing callback args / external
   data. Narrow with type guards.
