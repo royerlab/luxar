@@ -343,7 +343,7 @@ dependencies = [
 #
 # CI has set these since the self-hosted runner landed. Its original `-n 4`
 # benchmark took the suite from 45.5/44.0/47.5 min to 15.8/16.6/16.9 for the
-# SAME 6261 passed / 288 skipped and 86.44% coverage; CI now uses `-n 3` to fit
+# SAME 6261 passed / 288 skipped and 86.44% coverage; CI now uses `-n 2` to fit
 # the runner's 12 GiB memory cap. Neither thread pinning nor process parallelism
 # buys the same result alone. None of the thread pin reached `hatch run test`,
 # the documented pre-push gate, until now.
@@ -391,7 +391,7 @@ NUMEXPR_NUM_THREADS = "{env:NUMEXPR_NUM_THREADS:1}"
 # above — ci.yml's note is explicit that neither works without the other.
 test = "pytest -n {env:LUXAR_PYTEST_JOBS:6} --dist loadfile {args:packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests scripts/tests}"
 # NOT parallelised here: this is the script CI runs, and ci.yml already injects
-# `-n 3` via PYTEST_ADDOPTS on the 16-core self-hosted box while deliberately
+# `-n 2` via PYTEST_ADDOPTS on the 16-core self-hosted box while deliberately
 # keeping the 2-core hosted runners serial (four workers each importing
 # torch/napari/scipy OOM-killed the runner agent there). Hardcoding `-n` would
 # override that per-machine choice from the wrong place. Set PYTEST_ADDOPTS

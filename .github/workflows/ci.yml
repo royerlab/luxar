@@ -552,7 +552,7 @@ jobs:
       # 45.5/44.0/47.5 min to 15.8/16.6/16.9 with the same 6261 passed / 288
       # skipped and 86.44% coverage, but CPU quota is not the only bound.
       #
-      # Do NOT "improve" `-n 3` to `-n auto`. xdist's auto reads os.cpu_count(),
+      # Do NOT "improve" `-n 2` to `-n auto`. xdist's auto reads os.cpu_count(),
       # which inside the runner container reports the HOST's 16 -- not the 4-CPU
       # cgroup quota (sched_getaffinity says 16 too; only /sys/fs/cgroup/cpu.max
       # tells the truth). `auto` would start 16 workers per leg against 4 CPUs.
@@ -567,8 +567,9 @@ jobs:
       # Worker count must fit both the MACHINE and the runner cgroup. Four
       # coverage-traced workers plus the controller repeatedly reached the
       # obsidian slot's exact 12 GiB memory.max; one held 3.14 leg then lost its
-      # whole process tree at 15% with exit 143. Three workers leave one import-
-      # heavy worker's worth of headroom while still using the 4-CPU quota.
+      # whole process tree at 15% with exit 143. Three workers still reached
+      # 12.59 GB in a matching capped run (9.60 GB anonymous RSS), leaving under
+      # 300 MB. Two workers retain parallelism without running at the hard limit.
       #
       # `-n 4` on a GitHub-hosted VM killed all three legs at 97-98% complete
       # with exit 143 + "the runner has received a shutdown signal" -- four
@@ -579,7 +580,7 @@ jobs:
       # Hosted stays serial (21.3/23.8/23.4 min). PYTEST_ADDOPTS is read by
       # pytest itself, so the shared `test-cov` script stays machine-agnostic
       # for local use.
-      PYTEST_ADDOPTS: ${{ needs.pick-runner.outputs.label == 'obsidian' && '-n 3' || '' }}
+      PYTEST_ADDOPTS: ${{ needs.pick-runner.outputs.label == 'obsidian' && '-n 2' || '' }}
     steps:
       - name: Free disk space (hosted-runner fallback)
         # The full suite exhausts the ~14 GB GitHub-hosted runner and fails with

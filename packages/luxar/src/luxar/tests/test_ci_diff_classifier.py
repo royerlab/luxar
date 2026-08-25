@@ -383,7 +383,7 @@ def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
         for index, arg in enumerate(obsidian_args[:-1])
         if arg == "-n"
     ]
-    assert worker_flags == [3], (
+    assert worker_flags == [2], (
         "python-tests must leave memory headroom in obsidian's 12 GiB runner slot"
     )
 
