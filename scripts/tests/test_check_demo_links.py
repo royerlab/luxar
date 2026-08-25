@@ -235,6 +235,23 @@ def test_api_override_cannot_probe_an_unrelated_host() -> None:
     )
 
 
+def test_api_override_rejects_an_unrelated_two_label_suffix() -> None:
+    checker = CHECKER
+    spec = {
+        "mode": "status",
+        "url_template": "https://www.ox.ac.uk/api/{value}",
+        "good": "known",
+        "bad": "missing",
+    }
+
+    result = checker.audit_destination("www.ebi.ac.uk", spec, lambda _url: None)
+
+    assert result == checker.AuditResult(
+        "CONFIG",
+        "probe host 'www.ox.ac.uk' does not match destination 'www.ebi.ac.uk'",
+    )
+
+
 def test_empty_json_count_path_counts_top_level_results() -> None:
     checker = CHECKER
     spec = {"mode": "json-count", "count_path": ()}
