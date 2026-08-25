@@ -36,9 +36,9 @@ CANONICAL_LINKS_BY_HOST = {
         {
             "https://simbad.cds.unistra.fr/simbad/sim-basic?Ident=Betelgeuse",
             "https://simbad.cds.unistra.fr/simbad/sim-basic?Ident=Rigel",
-            "https://simbad.cds.unistra.fr/simbad/sim-basic?Ident=Sun",
         }
     ),
+    "science.nasa.gov": frozenset({"https://science.nasa.gov/sun/"}),
     "ssd.jpl.nasa.gov": frozenset(
         {"https://ssd.jpl.nasa.gov/tools/sbdb_lookup.html#/?sstr={hover_key}"}
     ),
@@ -109,9 +109,14 @@ DEMO_LINK_AUDITS_BY_HOST: dict[str, dict[str, Any]] = {
     },
     "simbad.cds.unistra.fr": {
         "mode": "body-marker",
-        "good": ("Betelgeuse", "Rigel", "Sun"),
+        "good": ("Betelgeuse", "Rigel"),
         "bad": "LUXAR_NO_SUCH_STAR_2089",
-        "good_marker": ("<h1>Betelgeuse", "<h1>Rigel", "<h1>Sun"),
+        "good_marker": ("<h1>Betelgeuse", "<h1>Rigel"),
+    },
+    "science.nasa.gov": {
+        "mode": "status",
+        "good": ("sun",),
+        "bad": "luxar-no-such-sun-2089",
     },
     "ssd.jpl.nasa.gov": {
         "mode": "human",
