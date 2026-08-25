@@ -243,11 +243,37 @@ in Hα.
 The five stellar-age bins are **layers**, not a navigable dimension. As a
 dimension the viewer opens on one bin and the galaxy shows up as the few percent
 of stars that happen to be young; as layers the default view is the whole
-galaxy and the Layers panel still isolates any bin. The frame count is likewise
-odd on purpose: the viewer opens a non-displayed dimension at the midpoint of
-its range and a point only matches a slice it sits exactly on, so an even count
-puts the midpoint between two frames and the whole time-resolved scene renders
-empty — which it did, at 21,911 of 6.5M points, until the grid was fixed.
+galaxy and the Layers panel still isolates any bin.
+
+Time is a **discrete** dimension, and that is the whole ballgame for a scene
+whose points exist only on frames. Declared continuous (and spatial) it got a
+slider with 1000 free positions and an opening position at the midpoint of its
+range, while a point still only matched a slice it sat exactly on — so every
+stop between two frames matched nothing at all. Measured at 225.12 Myr, drag
+position 469 of 1000: the five disc layers, the HII regions and the bulge all
+went to zero points and the static halo and globulars were the entire scene.
+Keeping the frame count odd only rescued the opening frame; the first mouse drag
+emptied it again. Discrete snaps both the slider and the keyboard onto the frame
+grid, so every reachable stop is a frame that has stars in it, and the frame
+count no longer has to be odd.
+
+The grid itself is now **2 Myr, over 241 frames**. 20 Myr was not merely jumpy:
+on this rotation curve a star at 2 kpc advances 120 deg between frames, past the
+half-turn limit, so the inner disc could read as turning the wrong way — in a
+demo whose entire subject is differential rotation. At 2 Myr the same orbit
+advances 12 deg, 8 kpc advances 3.8, and the pattern 2.7, and at the viewer's
+default 10 fps the loop runs 24 s instead of 2.5.
+
+Since the whole disc is duplicated per frame, that resolution is paid for
+linearly — 241 frames at the old 400k stars came to 118.6M points and 828 MB, and
+it was not worth it. The budget goes to time instead: the default disc is now
+**100k stars**, so the scene is 29.7M points and 218 MB, builds in 1.3 min, and
+puts 139k points on screen per frame. A quarter of the stars would ordinarily be
+a quarter of the light, so radii and per-point gain now scale with the sample
+density (`density_scale`, a cube-root of the thinning): mean luminance on matched
+headless frames moves from 0.039 to 0.044 rather than to a quarter of it, and
+nothing clips. `--stars` and `--frames` both remain, and neither touches the
+physics.
 
 #### 4D fractals: four times the resolution, and no more haze
 

@@ -390,9 +390,9 @@ A spiral galaxy integrated from its own mass model rather than drawn along logar
 
 Replaces the former `demo_5d_spiral_galaxy.py`, which scattered points along fixed logarithmic curves and rotated the whole picture rigidly — the material-arm model the winding problem rules out.
 
-**Run**: `luxar demo run galaxy_simulation [-- --stars=N] [-- --frames=N]`
+**Run**: `luxar demo run galaxy_simulation [-- --stars=N] [-- --frames=N]` — 100k disc stars over 241 frames of 2 Myr by default (29.7M points, 218 MB, ~1.3 min). Radii and per-point gain track the sample density, so `--stars` changes the weight of the scene rather than how bright it looks.
 
-**Demonstrates**: 4D data (X, Y, Z, Time) with the stellar-age split exposed as five toggleable layers rather than a slicing dimension, `extend_to_all` for the time-independent halo, physically derived rotation curves and orbit frequencies, and blackbody colour synthesis.
+**Demonstrates**: 4D data (X, Y, Z, Time) with the stellar-age split exposed as five toggleable layers rather than a slicing dimension, a **discrete** time axis so the slider snaps to the 2 Myr frame grid instead of stranding the view between frames, `extend_to_all` for the time-independent halo, physically derived rotation curves and orbit frequencies, and blackbody colour synthesis.
 
 ---
 
