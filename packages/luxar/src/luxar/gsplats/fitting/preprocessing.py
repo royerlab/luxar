@@ -885,8 +885,6 @@ def _add_grid_fallback_seeds(
     # Generate grid points
     ranges = [np.arange(spacing // 2, s, spacing) for s in shape]
 
-    import itertools
-
     grid_coords: np.ndarray = _regular_grid_coords(ranges, ndim)
 
     # Remove grid points too close to existing seeds (if any exist)
@@ -924,10 +922,7 @@ def _add_grid_fallback_seeds(
         spacing_dense = max(1, int((volume / (needed * 2)) ** (1.0 / ndim)))
         final_spacing = float(spacing_dense)  # Update to denser spacing
         ranges_dense = [np.arange(0, s, spacing_dense) for s in shape]
-        grid_coords_dense: list[tuple[Any, ...]] = []
-        for coords in itertools.product(*ranges_dense):
-            grid_coords_dense.append(coords)
-        grid_coords = np.array(grid_coords_dense, dtype=float)
+        grid_coords = _regular_grid_coords(ranges_dense, ndim)
 
     # Sort by intensity and take top N
     if len(grid_coords) > 0:
