@@ -162,7 +162,9 @@ the `add_*` call or it is lost. Five things about that round-trip surprise peopl
   rather than spreading it across the LUT, you are over-accumulated and want
   `opacity`. A frame whose bright regions are genuinely clipped flat is the
   window's problem. With explicit `colors=`, the pair is a direct color gain and
-  offset, but using it for exposure also shifts the authored colors; use `opacity`.
+  offset: a `[0, hi]` window is pure gain (the same thing `opacity` does), while
+  any nonzero `lo` carries an offset that shifts the authored colors. Prefer
+  `opacity`, which the panel round-trips as exposure rather than as a window.
 - **`absorption` (volumetric blending) is optical depth and ACCUMULATES along the
   ray**, so the right value depends on how deep the object is, not on how bright it
   is. It is not portable between datasets: a value tuned on a 170 µm brain will
