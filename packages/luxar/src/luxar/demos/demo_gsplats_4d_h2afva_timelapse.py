@@ -13,11 +13,12 @@ four splat budgets, this is the recording as a TIMELAPSE — the axis the other
 two hold fixed.
 
 STRUCTURE:
-    ``kind=partition`` of 44 spatial parts, each carrying its own progressive
-    (stream) ladder, exactly like the single-stack companion. The viewer
-    frustum-culls whole parts you are not looking at and refines the rest
-    progressively; the stacked time axis is a hard coarsening barrier, so no
-    coarse splat ever blends two timepoints together.
+    ``kind=partition`` of 44 spatial parts. Each part is an adaptive LOD group
+    with four substitutive levels (64x, 16x, 4x, and full resolution), and each
+    level carries a four-step stream ladder. The viewer frustum-culls whole
+    parts, selects coarser or finer levels by screen coverage, and progressively
+    streams the selected level; the stacked time axis is a hard coarsening
+    barrier, so no coarse splat ever blends two timepoints together.
 
 DATA SOURCE & CITATIONS:
     Royer lab, CZ Biohub San Francisco (zebrahub). Raw acquisition:
@@ -45,7 +46,7 @@ ANISOTROPY AND UNITS:
     The single-stack companion ships microns, because its archive had the
     lateral pitch (0.40625 um) folded in as a second uniform scale. This
     archive does not, and grafting cannot apply one — converting would mean a
-    ``gsplat transform --scale 0.40625,0.40625,0.40625`` pass over the whole
+    ``gsplat transform --scale 0.40625,0.40625,0.40625,1`` pass over the whole
     1.87 GB fit, which changes its bytes and therefore its published checksum.
     That is a data-side change, not a scene-authoring one, so the axes here are
     honest about being pixels. At the companion's calibration (0.40625 um
@@ -55,9 +56,9 @@ PIPELINE (provenance of the bundled gsplats — NOT re-run here):
     1. Fit the full 253-timepoint ``h2afva/fused`` timelapse
        (``h2afva_253tp.gsplats.zarr``).
     2. Slice every fifth timepoint and renumber the stacked axis
-       -> ``h2afva_51tp.gsplats.zarr``, 44 content-balanced parts, each with a
-       stream ladder.
-    3. ``gsplat transform --scale 4,1,1`` -> isotropic proportions.
+       -> ``h2afva_51tp.gsplats.zarr``, 44 content-balanced parts with four
+       substitutive LOD levels and a four-step stream ladder inside each level.
+    3. ``gsplat transform --scale 4,1,1,1`` -> isotropic proportions.
 
     The 51-frame fit is the manifest's default variant precisely because the
     full 253-frame one is 9.25 GB; this is the same recording at a fifth of the
@@ -66,6 +67,7 @@ PIPELINE (provenance of the bundled gsplats — NOT re-run here):
 USAGE:
     python -m luxar.demos.demo_gsplats_4d_h2afva_timelapse
     python -m luxar.demos.demo_gsplats_4d_h2afva_timelapse --no-serve
+    python -m luxar.demos.demo_gsplats_4d_h2afva_timelapse --serve-only
 """
 
 DEMO_META = {
@@ -73,8 +75,8 @@ DEMO_META = {
     "title": "4D Zebrafish Embryogenesis (h2afva timelapse)",
     "description": (
         "Zebrafish embryogenesis as a 4D Gaussian-splat timelapse: 51 timepoints "
-        "of histone-labelled nuclei in 44 frustum-culled, progressively-streamed "
-        "spatial parts."
+        "of histone-labelled nuclei in 44 frustum-culled spatial parts with "
+        "adaptive coarse-to-fine LOD and per-level streaming."
     ),
     "category": "microscopy",
     "geometry": "gsplats",
@@ -105,6 +107,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar._zarr_compat import read_node_attrs
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
     add_demo_caption,
@@ -112,6 +115,7 @@ from luxar.demos import (
     launch_viewer,
     parse_demo_flags,
 )
+from luxar.gsplats.io._archive import read_archive_root_attrs
 from luxar.gsplats.io.load_gsplats import load_gsplat_node
 from luxar.gsplats.tree import center_bounds
 from luxar.utils.paths import get_demos_output_dir
@@ -129,15 +133,21 @@ NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
 
 #: Original-recording stride: one step of the Time axis is five acquisition
-#: timepoints. Recorded in the archive as `source_stride`; kept here so the
-#: caption can state it without opening the store.
+#: timepoints. Cross-checked against the archive before authoring the caption.
 SOURCE_STRIDE = 5
+
+
+def _read_source_attrs(data_path: Path) -> dict:
+    """Read source-root attrs from a directory or compressed archive."""
+    if data_path.is_dir():
+        return read_node_attrs(data_path) or {}
+    return read_archive_root_attrs(data_path)
 
 
 def resolve_data() -> Path:
     """Resolve the fitted 51-timepoint gsplats: cache -> in-repo -> Zenodo."""
     with asection("Resolving h2afva 51tp gsplats"):
-        paths = ensure_dataset(DATASET)
+        paths = ensure_dataset(DATASET, variant="51tp")
         aprint(f"Data: {paths[0]}")
         return paths[0]
 
@@ -150,6 +160,19 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
         aprint(f"Scene bounds: min={np.round(bmin, 1)} max={np.round(bmax, 1)}")
 
         n_frames = int(round(float(bmax[3]) - float(bmin[3]))) + 1
+        archive_attrs = _read_source_attrs(data_path)
+        recorded_stride = archive_attrs.get("source_stride")
+        if recorded_stride is not None and recorded_stride != SOURCE_STRIDE:
+            raise ValueError(
+                "h2afva archive source_stride does not match the demo: "
+                f"expected {SOURCE_STRIDE}, got {recorded_stride!r}"
+            )
+        source_timepoints = archive_attrs.get("source_timepoints")
+        if source_timepoints is not None and len(source_timepoints) != n_frames:
+            raise ValueError(
+                "h2afva archive source_timepoints do not match its time bounds: "
+                f"expected {n_frames}, got {len(source_timepoints)}"
+            )
         aprint(f"Timepoints: {n_frames} (every {SOURCE_STRIDE}th of the recording)")
 
         # Center columns are (Z, Y, X, T). Spatial units are lateral pixels —
@@ -201,27 +224,25 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                 f"Zebrafish embryo nuclei (histone H2A variant label) across "
                 f"{n_frames} timepoints of the zebrahub h2afva light-sheet "
                 f"recording — every {SOURCE_STRIDE}th frame of 253 — fitted as "
-                "Gaussian splats in 44 spatial parts. Each part carries a "
-                "progressive ladder and is frustum-culled independently; the time "
-                "axis is a coarsening barrier, so no coarse splat blends two "
-                "timepoints. Step Time to watch the body axis form. Press L for "
-                "the Layers panel."
+                "Gaussian splats in 44 spatial parts. Each part has adaptive "
+                "coarse-to-fine LOD with a stream ladder inside every level and is "
+                "frustum-culled independently; the time axis is a coarsening "
+                "barrier, so no coarse splat blends two timepoints. Step Time to "
+                "watch the body axis form. Press L for the Layers panel."
             )
 
             with asection(f"Adding gsplats (44-part partition, {n_frames} frames)"):
-                # The archive already carries the presentation this dataset was
-                # dialled in with — volumetric compositing and absorption 1.34,
-                # the same pair the single-stack companion settled on. Grafting
-                # inherits them, so they are deliberately NOT re-specified here:
-                # restating them would silently fork the two demos the next time
-                # either is retuned.
+                # This archive has no BSP split planes, so the viewer can only
+                # order its 44 parts by centroid. Keep the additive mode used for
+                # the validated gallery build: unlike volumetric compositing, it
+                # is order-independent and cannot pop at part seams during orbit.
                 scene.add_gsplats_from_file(
                     name="zebrafish_nuclei_4d",
                     path=str(data_path),
-                    # `plasma`, as on the single-stack companion: on
-                    # emission–absorption the bright end carries the near
-                    # surface, and plasma's yellow-to-magenta ramp separates the
-                    # nuclei from the tissue behind them.
+                    blending_mode="additive",
+                    # `plasma`, as on the single-stack companion: its
+                    # yellow-to-magenta ramp keeps the bright nuclei distinct
+                    # from the dimmer body signal behind them.
                     colormap="plasma",
                     # On a COLORMAPPED node `intensity`/`offset` ARE the scalar
                     # window feeding the LUT (`intensity = 1/(hi-lo)`,
@@ -238,19 +259,16 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                     #
                     # A p90 floor was tried on the theory that the dim 90% was
                     # haze flattening the silhouette at tile size. It rendered
-                    # WORSE — dimmer and bluer, with less structure — because
-                    # under emission-absorption those dim splats accumulate into
-                    # the body itself. Raising the floor deletes the embryo, not
-                    # a veil over it. Measured amplitudes: p50 0.00050,
-                    # p90 0.0036, p99 0.032, p99.9 0.057, peak 0.200.
+                    # WORSE — dimmer and bluer, with less structure. The dim
+                    # splats are body signal, not a veil to remove. Measured
+                    # amplitudes: p50 0.00050, p90 0.0036, p99 0.032,
+                    # p99.9 0.057, peak 0.200.
                     intensity=17.57,
                     offset=-0.00879,
                     gamma=2.2,
-                    # Stated explicitly even though the archive carries it:
-                    # `test_demo_layers` reads the module SOURCE, so a demo that
-                    # inherits its layer flag looks like one with no toggleable
-                    # layer. blending_mode / absorption stay inherited — those
-                    # are the pair that would silently fork from the companion.
+                    # Grafting carries none of the archive's root attrs, so the
+                    # layer flag must be authored here. `test_demo_layers` also
+                    # reads the module source to enforce that contract.
                     layer=True,
                 )
 
