@@ -76,16 +76,16 @@ Each subdirectory contains pre-fitted `.gsplats.zarr.zip` files for one demo:
 | `gsplats_visible_human_head/` | 3D Visible Human head, true-color cryosections (NLM) | 1 `.gsplats.zarr.zip` + `vh_head_colors.npz` (per-splat RGB, indexed positionally against the fit; regenerated from a 636 x 451 x 896 volume matching the stored centers' extent, with a color distribution within TV distance 0.0065 of the original sidecar; verified on load at agreement 1.0, #1670) |
 | `gsplats_flylight_mcfo_63x/` | 3D *Drosophila* whole brain, MultiColor FlpOut (Janelia FlyLight, 63x) | 1 `.gsplats.zarr.zip` (~8 MB) |
 | `gsplats_nexrad_supercell/` | 4D NEXRAD Oklahoma convective evening incl. the El Reno tornadic supercell (KTLX, 2013-05-31 21Z - 06-01 03Z) | 1 bundle zip with 82 volume scans (~9.6 MB) |
-| _(not bundled)_ `gsplats_4d_neuromast_2ch` | 4D two-channel neuromast timelapse | 2 channel `.gsplats.zarr` (~220 MB unzipped) — **not in Git LFS**; the zips (133 MB) are in the `cc-by` record and pinned in the manifest, and the demo reads the unzipped pair from a local store |
+| _(not bundled)_ `gsplats_4d_neuromast_2ch` | 4D two-channel neuromast timelapse | 2 channel `.gsplats.zarr` (~220 MB unzipped) — **not in Git LFS**; the zips (136.4 MB) are in the `cc-by` record and pinned in the manifest, and the demo reads the unzipped pair from a local store |
 
 > **Note — uploads.** The neuromast pair, both h2afva timelapse variants, the
 > h2afva single-stack and decimation files, and the other hosted-only datasets
-> are uploaded and pinned in the manifest.
-> `scripts/zenodo_migration_audit.py --live` verifies that every pin matches the
-> current draft records. All three
-> records are still unsubmitted, so each carries `published: false` and the
-> fetch derives no public URL from its record id. Publishing the records and
-> enabling their manifest URLs is the remaining record-side step.
+> are uploaded and pinned in the manifest, except `gsplats_cell_tracking`, which
+> remains marked `pending_upload`. `scripts/zenodo_migration_audit.py --live`
+> verifies that every declared pin matches the current draft records. All three
+> records are still unsubmitted, so each carries `published: false` and the fetch
+> derives no public URL from its record id. Publishing the records and enabling
+> their manifest URLs is the remaining record-side step.
 
 ### Other Data Files (top level)
 

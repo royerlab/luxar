@@ -216,7 +216,7 @@ def test_pending_upload_flag_matches_the_file_lists():
 
 
 def test_h2afva_has_light_default_and_full_variant():
-    """The 11.4 GB timelapse ships as an opt-in; the demo default is the light cut."""
+    """The 9.3 GB timelapse ships as an opt-in; the demo default is the light cut."""
     variants = load_manifest()["datasets"]["h2afva"]["variants"]
     assert set(variants) == {"51tp", "253tp"}
     assert variants["51tp"]["default"] is True
@@ -802,9 +802,7 @@ def test_unpulled_lfs_pointer_names_the_available_remedies(fake_repo):
     manifest, cache = fake_repo
     payload = data_fetch._DEMOS_DATA_DIR / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
     payload.write_text(
-        "version https://git-lfs.github.com/spec/v1\n"
-        f"oid sha256:{'0' * 64}\n"
-        "size 15\n"
+        f"version https://git-lfs.github.com/spec/v1\noid sha256:{'0' * 64}\nsize 15\n"
     )
 
     with pytest.raises(FileNotFoundError) as exc_info:

@@ -418,6 +418,14 @@ DATASETS: dict[str, dict] = {
         license="cc-by-4.0",
         source="h2afva zebrafish histone light-sheet timelapse (Royer lab)",
         attribution="Royer lab, CZ Biohub SF (CC BY 4.0).",
+        acquisition=dict(
+            description=(
+                "the full 253-timepoint h2afva light-sheet timelapse; the 51tp "
+                "variant is every fifth frame from the same fit"
+            ),
+            comparable=True,
+            stored_bytes=None,
+        ),
         # Both variants are uploaded and pinned, so there is no `pending_upload`
         # here. The 51tp file that used to be a SUPERSEDED build — pre-isotropic
         # (z extent 405 raw voxels instead of 1620), no substitutive LOD levels,
