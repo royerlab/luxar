@@ -73,6 +73,7 @@ def test_normalize_amplitudes_uses_one_robust_in_place_scale() -> None:
             rtol=2e-6,
             atol=2e-6,
         )
+        assert np.all(sublod.amplitudes >= 0.0)
         assert id(sublod.amplitudes) == array_id
     assert fine.amplitudes[-1] > 1.0, "the hot outlier must not set scene exposure"
     assert coarse.stats == {"marker": "coarse"}
@@ -150,3 +151,25 @@ def test_create_luxar_scene_preserves_partition_structure(tmp_path: Path) -> Non
             rtol=2e-3,
             atol=2e-3,
         )
+
+
+def test_create_luxar_scene_keeps_matrix_amplitudes_non_negative(
+    tmp_path: Path,
+) -> None:
+    raw = np.array([5.0] + [480.0] * 1000, dtype=np.float32)
+    source = tmp_path / "input.gsplats.zarr"
+    output = tmp_path / "scene.luxar.zarr"
+    write_gsplats_tree(
+        source,
+        GSplatLeaf([_sublod(raw, marker="matrix")]),
+        ordering="none",
+        encoding_mode=EncodingMode.PRECISION,
+    )
+
+    _demo.create_luxar_scene(source, output)
+
+    root = zarr.open_group(str(output), mode="r")
+    stored = root["drosophila_nuclei"]
+    decoded = ArrayDecoder().decode(stored["amplitudes"], root)
+    assert np.all(decoded >= 0.0)
+    assert decoded.min() == 0.0

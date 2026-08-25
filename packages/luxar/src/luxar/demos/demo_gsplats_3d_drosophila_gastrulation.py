@@ -239,9 +239,10 @@ def normalize_amplitudes(node: GSplatNode) -> tuple[float, float]:
         if not amps.flags.writeable:
             amps = np.array(amps, copy=True)
             object.__setattr__(s, "amplitudes", amps)
+        np.subtract(amps, np.float32(lo), out=amps, casting="unsafe")
         np.multiply(amps, scale, out=amps, casting="unsafe")
-        if lo != 0.0 or out_lo != 0.0:
-            amps += np.float32(out_lo - lo * scale)
+        if out_lo != 0.0:
+            amps += np.float32(out_lo)
     return lo, hi
 
 
