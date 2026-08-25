@@ -124,7 +124,7 @@ def create_5d_clusters(n_clusters: int = 10, points_per_cluster: int = 500) -> t
         )
 
         # Use a stride coprime with the 3-channel cycle so every channel gets
-        # large-radius points.
+        # large-radius points (for --clusters >= 5).
         if i % 2 == 0:
             large_indices = np.random.choice(points_per_cluster, size=50, replace=False)
             cluster_radii[large_indices] = np.random.uniform(3.0, 5.0, 50)
