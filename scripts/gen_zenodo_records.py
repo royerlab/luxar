@@ -408,6 +408,7 @@ def refresh_characteristics(
     """
     existing = load_characteristics()
     measured: dict[str, Any] = {}
+    pinned_digests: dict[str, Optional[str]] = {}
     seen: set[str] = set()
     for dataset, entry in sorted(manifest["datasets"].items()):
         if entry.get("bucket") != "zenodo":
@@ -415,6 +416,7 @@ def refresh_characteristics(
         for variant, spec in _files_of(entry):
             key = _char_key(dataset, variant, spec["name"])
             seen.add(key)
+            pinned_digests[key] = _pinned_digest(spec)
             path = _locate(dataset, entry, variant, spec["name"], extra_root)
             info = _read_archive(path) if path else None
             if info is None:
@@ -448,8 +450,15 @@ def refresh_characteristics(
 
     read = len(measured)
     retained = 0
-    for key, old_entry in existing.items():
-        if key in measured and not _outranks(measured[key], old_entry):
+    for key, new_entry in list(measured.items()):
+        old_entry = existing.get(key)
+        if new_entry.get("measured_sha256") != pinned_digests.get(key):
+            if old_entry is None:
+                del measured[key]
+            else:
+                measured[key] = old_entry
+                retained += 1
+        elif old_entry is not None and not _outranks(new_entry, old_entry):
             measured[key] = old_entry
             retained += 1
     preserved = {k: v for k, v in existing.items() if k in seen and k not in measured}

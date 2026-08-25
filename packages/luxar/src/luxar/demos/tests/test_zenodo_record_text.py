@@ -554,6 +554,47 @@ def test_a_staged_measurement_is_not_clobbered_by_a_local_refresh(
     assert written["n_splats"] == 999
 
 
+def test_an_unpinned_local_measurement_cannot_replace_an_absent_figure(
+    gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A deliberate absence must survive refreshes from superseded bytes."""
+    key = "ds/a.gsplats.zarr.zip"
+    absent = {
+        key: {
+            "n_splats": None,
+            "psnr_db": None,
+            "foreground_psnr_db": None,
+            "topology": None,
+            "measured_from": None,
+            "measured_sha256": None,
+        }
+    }
+    monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
+    monkeypatch.setattr(gen, "load_characteristics", lambda: absent)
+    monkeypatch.setattr(gen, "_locate", lambda *a, **k: tmp_path / "local.zip")
+    monkeypatch.setattr(gen, "_sha256_of", lambda p: "l" * 64)
+    monkeypatch.setattr(
+        gen,
+        "_read_archive",
+        lambda p: {"n_splats": 111, "psnr_db": 30.0, "topology": "single level"},
+    )
+    manifest = _fake_manifest(
+        [
+            _entry(
+                "a.gsplats.zarr.zip",
+                "l" * 64,
+                hosted_sha256="h" * 64,
+            )
+        ]
+    )
+
+    counts = gen.refresh_characteristics(manifest)
+
+    assert counts == (1, 1, 0)
+    written = json.loads((tmp_path / "chars.json").read_text())["archives"][key]
+    assert written == absent[key]
+
+
 def test_refresh_preserves_entries_whose_archive_is_absent(
     gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -590,7 +631,7 @@ def test_a_prefix_matching_cache_path_is_not_labelled_staged(
     monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
     monkeypatch.setattr(gen, "_locate", lambda *args: cache_archive)
     monkeypatch.setattr(gen, "_read_archive", lambda path: {"n_splats": 7})
-    monkeypatch.setattr(gen, "_sha256_of", lambda path: "digest")
+    monkeypatch.setattr(gen, "_sha256_of", lambda path: "a" * 64)
 
     gen.refresh_characteristics(
         _fake_manifest([_entry(cache_archive.name, "a" * 64)]), staged_root
@@ -721,6 +762,17 @@ def test_no_measurement_is_stale_against_its_own_digest(
 def test_committed_measurements_match_the_hosted_manifest_pins(gen: Any) -> None:
     manifest = json.loads(gen.MANIFEST.read_text())
     assert gen._stale_characteristics(manifest) == []
+
+
+def test_every_committed_measurement_names_a_manifest_archive(gen: Any) -> None:
+    manifest = json.loads(gen.MANIFEST.read_text())
+    manifest_keys = {
+        gen._char_key(dataset, variant, spec["name"])
+        for dataset, entry in manifest["datasets"].items()
+        if entry.get("bucket") == "zenodo"
+        for variant, spec in gen._files_of(entry)
+    }
+    assert set(gen.load_characteristics()) <= manifest_keys
 
 
 def test_a_record_quotes_the_size_a_reader_will_download(gen: Any) -> None:

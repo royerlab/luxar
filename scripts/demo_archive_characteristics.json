@@ -347,7 +347,7 @@
       "measured_from": "staged",
       "measured_sha256": "b4cf131a85e35a356187fd606f9af917080b06dc7de010ff0448ef5982cc90e9"
     },
-    "gsplats_multichannel/organoids_ch0.gsplats.zarr.zip": {
+    "gsplats_multichannel/blastocyst_ch0.gsplats.zarr.zip": {
       "n_splats": 12916,
       "ndim": 3,
       "format_version": "3.4",
@@ -366,7 +366,7 @@
       "measured_from": "staged",
       "measured_sha256": "763d4eff6b307e6a200a8e33611a168a0906d88e80a680b0303f8c3d2dff53c8"
     },
-    "gsplats_multichannel/organoids_ch1.gsplats.zarr.zip": {
+    "gsplats_multichannel/blastocyst_ch1.gsplats.zarr.zip": {
       "n_splats": 13941,
       "ndim": 3,
       "format_version": "3.4",
