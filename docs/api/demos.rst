@@ -14,4 +14,4 @@ are implementation details and should not be imported directly by demos.
 
 .. autoclass:: luxar.demos.FlowField
    :members:
-   :no-index:
+   :exclude-members: vectors, grid_min, grid_max, spacing, cache_key

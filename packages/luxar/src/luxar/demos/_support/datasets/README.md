@@ -14,7 +14,7 @@ Resolve a published dataset through the public demo API:
 ```python
 from luxar.demos import ensure_dataset
 
-volume_path, = ensure_dataset("example_dataset")
+(volume_path,) = ensure_dataset("example_dataset")
 ```
 
 ## Key Functions
@@ -36,6 +36,18 @@ volume_path, = ensure_dataset("example_dataset")
   missing or unreadable local fits so callers rebuild them. They raise for an
   empty file list or a partition store, because neither can be repaired by
   repeatedly taking the same refit path.
+- `load_precomputed_gsplats()` loads precomputed GSplat data from Git LFS or
+  cache.
+- `load_precomputed_bundle()` loads a precomputed bundle ZIP for timelapse
+  demos. It raises `BundleMemberNotFound` when a verified bundle does not
+  contain the requested per-frame member; see the exception docstring for the
+  distinction from manifest lookup failures.
+- `is_lfs_pointer()` checks whether a file is a Git LFS pointer rather than the
+  materialized payload.
+- `voxel_sampled_payload_agreement()` measures whether same-voxel splat pairs
+  carry identical payload rows, catching sidecars that became misindexed when
+  `save()` reordered splats. It returns `None` when too few pairs exist to
+  judge.
 
 `data_fetch.py` owns manifest resolution and local-fit namespaces. `cache.py`
 owns cache paths, metadata, and quarantine behavior. `bundles.py` loads shipped

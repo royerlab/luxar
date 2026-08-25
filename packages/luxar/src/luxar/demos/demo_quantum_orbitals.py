@@ -487,7 +487,7 @@ def fit_orbitals(grid_size: int, seeds: int, iters: int) -> GSplatData:
     if iters < 1:
         raise ValueError(f"--iters must be at least 1, got {iters}")
 
-    # Deliberately NOT calling utils.device.warn_if_no_cuda_gpu() here, though
+    # Deliberately NOT calling luxar.demos.warn_if_no_cuda_gpu() here, though
     # the heavyweight gsplat demos all do: its banner warns that fitting "can
     # take hours instead of minutes" and points at "shipped precomputed data".
     # Neither applies — these eight 96³ fits measure ~2 min total on MPS and

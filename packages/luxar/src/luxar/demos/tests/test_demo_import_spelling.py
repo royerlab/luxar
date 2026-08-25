@@ -123,7 +123,7 @@ DEEP_PARENTS = frozenset(parent for parent, _ in DEEP_PAIRS)
 #: The barrel itself — the one module that is *supposed* to import deeply.
 BARREL = "luxar.demos"
 
-#: The ONE module exempt from the rule, by repo-relative PATH rather than by
+#: The one module exempt by repo-relative PATH rather than by
 #: file name: the barrel is what must import deeply. The bare ``__init__.py``
 #: package markers in the gsplats trees are not barrels and get no exemption —
 #: nothing about being an ``__init__`` justifies a deep import. The barrel is put
@@ -210,6 +210,9 @@ def _deep_imports(path: Path) -> list[str]:
     Walks ``ast.Import`` as well as ``ast.ImportFrom`` — the same two node types
     ``test_demos_dependencies`` walks, and for the same reason: checking only
     one of them leaves the other spelling invisible.
+
+    A module under ``_support/`` may import its ``_support`` siblings, but its
+    imports of every other deep module remain guarded.
     """
     support_source = "_support" in path.parts
 
@@ -470,7 +473,10 @@ def test_resolver_refuses_a_path_outside_the_package(tmp_path: Path) -> None:
     """A verdict or an explanation — never a bare ``tuple.index`` ValueError."""
     stray = tmp_path / "not_a_package" / "demo_stray.py"
     stray.parent.mkdir(parents=True)
-    stray.write_text("from ..utils.viewer import launch_viewer\n", encoding="utf-8")
+    stray.write_text(
+        "from ..demos._support.runtime.viewer import launch_viewer\n",
+        encoding="utf-8",
+    )
 
     node = next(
         n
