@@ -129,7 +129,8 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
     (
         "packages/luxar-viewer/src/data/attrs-composer.ts",
         "py",
-        "test_blending_warnings.py parses the scene-root blending default",
+        "test_blending_warnings.py parses the scene-root exclusion from the "
+        "attrs-inheritance chain",
     ),
     (
         "packages/luxar-viewer/src/data/loaders/spatial-query/tolerance-computer.ts",
@@ -149,7 +150,7 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
     (
         "packages/luxar-viewer/src/rendering/materials/mesh/appearance.ts",
         "py",
-        "test_blending_warnings.py parses the mesh blending default",
+        "test_blending_warnings.py parses MESH_SUPPORTED_BLENDING_MODES",
     ),
     (
         "packages/luxar-viewer/src/rendering/node-factory/create-points-node.ts",
