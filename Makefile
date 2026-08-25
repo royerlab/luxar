@@ -10,7 +10,7 @@
         test-e2e test-e2e-smoke test-perf-e2e \
         clean-all clean-python clean-viewer clean-examples clean-cache clean-setup enable-pre-commit run-pre-commit \
         check-all check-typescript check-rust check-knip check-wasm-deps setup-dev \
-        check-docs check-docs-verbose check-docs-external-links check-demo-links clean-docs build-docs build-typedoc serve-docs \
+        check-docs check-docs-verbose check-docs-external-links check-demo-links check-zenodo-live check-external-references clean-docs build-docs build-typedoc serve-docs \
         demo run-demos run-examples serve-examples serve-dataset install-viewer-deps viewer build-viewer build-viewer-lib rebuild-viewer \
         install-rust build-wasm clean-wasm generate-readme-demos generate-readme-images generate-doc-images \
 	generate-gallery-datasets generate-gallery \
@@ -883,6 +883,12 @@ check-docs-external-links:  ## Opt-in external HTTP link audit (not a required C
 
 check-demo-links:  ## Opt-in demo click-through audit (reports only; never a CI gate)
 	$(HATCH) run python scripts/check_demo_links.py
+
+check-zenodo-live:  ## Opt-in live Zenodo manifest-pin audit (not a required CI gate)
+	python3 scripts/zenodo_migration_audit.py --live
+
+check-external-references:  ## Run all network-backed reference audits (report-only)
+	$(HATCH) run python scripts/run_external_reference_audits.py
 
 clean-docs:  ## Clean built documentation
 	@echo "🧹 Cleaning documentation build artifacts..."
