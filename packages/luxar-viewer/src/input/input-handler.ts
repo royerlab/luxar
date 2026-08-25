@@ -58,8 +58,6 @@ import { WindowEventHandler } from './input-handler/window-events/window-event-h
 import { registerAllKeyBindings } from './input-handler/key-bindings/register-all';
 import type { RegisteredShortcutBindings } from '../types/shortcut-help';
 import { KeyAction, type KeyActionId } from './input-handler/key-bindings/actions';
-
-export { KeyAction, type KeyActionId };
 import type {
   KeyBindingsCommands,
   KeyBindingsPanelGetters,
@@ -85,6 +83,8 @@ import {
   type ViewerStateExportCtx,
 } from './input-handler/commands/viewer-state-export';
 import { log, Modules } from '../utils/log';
+
+export { KeyAction, type KeyActionId };
 
 // Re-export DimensionSlidersFactory so external callers (e.g. core/app.ts)
 // can keep importing it from '../input/input-handler' unchanged.

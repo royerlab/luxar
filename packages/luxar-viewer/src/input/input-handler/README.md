@@ -81,6 +81,11 @@ input-handler/
 4. Construct `PanelCoordinator` (`commands/`) so Escape and the
    panel-cycle binding have a single drain.
 
+The active input context is derived from the live control type through the
+ControlsManager `change` listener. Control-mode commands also set the context
+directly as a defensive backstop, but new control-type callers only need to use
+`SceneManager.setControlType()`.
+
 Binding handlers consume an event by default. A synchronous `false` declines
 it so passthrough can continue to lower-priority contexts; async handlers are
 always treated as handled. `preventDefault` runs only after a handler accepts

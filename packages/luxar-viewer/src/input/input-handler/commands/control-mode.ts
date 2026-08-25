@@ -53,7 +53,7 @@ function applyControlType(ctx: ControlModeCtx, newType: ControlType): void {
   ctx.sceneManager.setControlType(newType);
 
   // ControlsManager change events normally synchronize this first. Keep the
-  // direct update for callers that invoke the command before InputHandler init.
+  // command correct on its own as a defensive backstop around that listener.
   const context = newType === 'fly' ? InputContext.FLY_CONTROLS : InputContext.NAVIGATION;
   if (ctx.contextManager.getContext() !== context) {
     ctx.contextManager.setContext(context);

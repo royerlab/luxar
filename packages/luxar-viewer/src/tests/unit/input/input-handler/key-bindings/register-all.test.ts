@@ -65,7 +65,7 @@ function makeCommands(): KeyBindingsCommands {
     toggleHelp: vi.fn(),
     toggleDimensionSliders: vi.fn(),
     toggleDatasetBrowser: vi.fn(),
-    openElementMenu: vi.fn(),
+    openElementMenu: vi.fn((event: KeyboardEvent) => event.preventDefault()),
     togglePerformanceStats: vi.fn(),
     toggleRenderingControls: vi.fn(),
     toggleControlMode: vi.fn(),
@@ -383,12 +383,14 @@ describe('registerAllKeyBindings — NAVIGATION command dispatch', () => {
       const bodyEvent = new KeyboardEvent('keydown', { cancelable: true });
       contextMenu.handler(bodyEvent);
       expect(commands.openElementMenu).toHaveBeenCalledWith(bodyEvent);
+      expect(bodyEvent.defaultPrevented).toBe(true);
 
       canvas.tabIndex = 0;
       canvas.focus();
       const canvasEvent = new KeyboardEvent('keydown', { shiftKey: true, cancelable: true });
       shiftF10.handler(canvasEvent);
       expect(commands.openElementMenu).toHaveBeenCalledWith(canvasEvent);
+      expect(canvasEvent.defaultPrevented).toBe(true);
 
       button.focus();
       const buttonEvent = new KeyboardEvent('keydown', { cancelable: true });

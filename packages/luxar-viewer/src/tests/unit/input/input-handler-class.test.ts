@@ -385,7 +385,7 @@ describe('InputHandler.init — idempotency', () => {
 });
 
 describe('InputHandler — control-type routing', () => {
-  it('routes a bare fly chord after ControlsManager.setControlType("fly") alone', () => {
+  it('keeps fly routing after mode-switch and forwarded change events', () => {
     type ControlsEvent = { type: 'change' | 'start'; controlType?: 'orbit' | 'fly' | 'ortho' };
     type ControlsListener = (event: ControlsEvent) => void;
 
@@ -434,6 +434,9 @@ describe('InputHandler — control-type routing', () => {
     try {
       handler.init();
       controls.setControlType('fly');
+      for (const listener of listeners.get('change') ?? []) {
+        listener({ type: 'change' });
+      }
 
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'w' }));
 

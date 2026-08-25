@@ -29,6 +29,7 @@ input/
     ├── context-manager/
     │   └── routing-rules.ts                  # isKeyAllowedInContext + sortContextsByPriority
     ├── key-bindings/                         # The whole key→command table
+    │   ├── actions.ts                        # Stable action identifiers
     │   ├── register-all.ts                   # Entry point + KeyBindings{Deps,Commands,PanelGetters}
     │   ├── navigation-bindings.ts            # Orbit-mode UI shortcuts (H/P/R/V/F/C/L/M/[/]/digits/…)
     │   ├── fly-bindings.ts                   # WASD + arrows + Shift speed boost (FLY_CONTROLS)
