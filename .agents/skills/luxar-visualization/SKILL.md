@@ -163,10 +163,10 @@ the `add_*` call or it is lost. Five things about that round-trip surprise peopl
   `opacity`. A frame whose bright regions are genuinely clipped flat is the
   window's problem. With explicit `colors=`, the pair is a direct color gain and
   offset: a `[0, hi]` window is pure pre-gamma gain. Under additive at
-  `gamma=1`, that is indistinguishable from lowering `opacity`; under
-  `volumetric`, `opacity` also lowers optical depth and coverage. Any nonzero
-  `lo` carries an offset that shifts the authored colors. Prefer `opacity`, which
-  the panel round-trips as exposure rather than as a window.
+  `gamma=1`, it scales RGB like lowering `opacity`; under `volumetric`, `opacity`
+  also lowers optical depth and coverage. Any nonzero `lo` carries an offset that
+  shifts the authored colors. Prefer `opacity`, which the panel round-trips as
+  exposure rather than as a window.
 - **`absorption` (volumetric blending) is optical depth and ACCUMULATES along the
   ray**, so the right value depends on how deep the object is, not on how bright it
   is. It is not portable between datasets: a value tuned on a 170 µm brain will
