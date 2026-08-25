@@ -1,3 +1,9 @@
+/**
+ * Memory-stat aggregation for DataLoadingMonitor. Render and incremental
+ * memory-tab paths call this leaf through the orchestrator's retained
+ * getMemoryMetrics delegator.
+ */
+
 import { POOLED_GEOMETRY_TYPES } from '../../../types/data-monitor-types';
 import type { AccumulatorProvider, MemoryMetrics } from '../../../types/data-monitor-types';
 
