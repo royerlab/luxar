@@ -136,6 +136,92 @@ describe('InputContextManager', () => {
     });
   });
 
+  describe('custom context lifecycle', () => {
+    it('registers a copied config and routes push → handle → pop with explicit fallback', () => {
+      const allowedKeys = ['x'];
+      const fallbackContexts = [InputContext.NAVIGATION];
+      manager.registerContext('annotation', {
+        priority: 5,
+        passthrough: true,
+        allowedKeys,
+        fallbackContexts,
+      });
+      const annotationHandler = vi.fn();
+      const navigationHandler = vi.fn();
+      registerTestBinding(manager, 'annotation', { key: 'x', handler: annotationHandler });
+      registerTestBinding(manager, InputContext.NAVIGATION, {
+        key: 'h',
+        handler: navigationHandler,
+      });
+
+      allowedKeys.splice(0, allowedKeys.length, 'y');
+      fallbackContexts.length = 0;
+      manager.pushContext('annotation');
+
+      expect(manager.handleKeyEvent(new KeyboardEvent('keydown', { key: 'x' }), 'down')).toBe(true);
+      expect(manager.handleKeyEvent(new KeyboardEvent('keydown', { key: 'h' }), 'down')).toBe(true);
+      expect(annotationHandler).toHaveBeenCalledOnce();
+      expect(navigationHandler).toHaveBeenCalledOnce();
+      manager.popContext();
+      expect(manager.getContext()).toBe(InputContext.NAVIGATION);
+    });
+
+    it('rejects duplicate custom and built-in context names', () => {
+      manager.registerContext('annotation', { priority: 5 });
+      expect(() => manager.registerContext('annotation', { priority: 6 })).toThrow(
+        'Input context "annotation" is already registered'
+      );
+      expect(() => manager.registerContext(InputContext.TYPING, { priority: 1 })).toThrow(
+        'Input context "typing" is already registered'
+      );
+    });
+
+    it('unregisters custom bindings and rejects later activation', () => {
+      manager.registerContext('annotation', { priority: 5 });
+      registerTestBinding(manager, 'annotation', { key: 'x', handler: vi.fn() });
+      manager.pushContext('annotation');
+      manager.popContext();
+      manager.unregisterContext('annotation');
+
+      expect(manager.getRegisteredShortcutBindings().has('annotation')).toBe(false);
+      expect(() => manager.pushContext('annotation')).toThrow(
+        'Input context "annotation" is not registered'
+      );
+      expect(() => manager.unregisterContext(InputContext.NAVIGATION)).toThrow(
+        'Built-in input context "navigation" cannot be unregistered'
+      );
+    });
+
+    it('reset removes custom contexts as well as their bindings', () => {
+      manager.registerContext('annotation', { priority: 5 });
+      registerTestBinding(manager, 'annotation', { key: 'x', handler: vi.fn() });
+      manager.reset();
+
+      expect(() => manager.setContext('annotation')).toThrow(
+        'Input context "annotation" is not registered'
+      );
+      expect(manager.getRegisteredShortcutBindings().has('annotation')).toBe(false);
+    });
+
+    it('keeps built-in Escape precedence while typing', () => {
+      const navigationEscape = vi.fn();
+      const customEscape = vi.fn();
+      manager.registerContext('annotation', { priority: 100 });
+      registerTestBinding(manager, InputContext.NAVIGATION, {
+        key: 'Escape',
+        handler: navigationEscape,
+      });
+      registerTestBinding(manager, 'annotation', { key: 'Escape', handler: customEscape });
+      manager.setContext(InputContext.TYPING);
+
+      expect(manager.handleKeyEvent(new KeyboardEvent('keydown', { key: 'Escape' }), 'down')).toBe(
+        true
+      );
+      expect(navigationEscape).toHaveBeenCalledOnce();
+      expect(customEscape).not.toHaveBeenCalled();
+    });
+  });
+
   describe('key binding registration', () => {
     it('reports canonical registered binding keys by context', () => {
       registerTestBinding(manager, InputContext.NAVIGATION, {

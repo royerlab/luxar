@@ -6,3 +6,10 @@
 export { InputHandler, KeyAction } from './input-handler';
 export type { ControlRailHandle, DimensionSlidersFactory, KeyActionId } from './input-handler';
 export { InputContext } from './input-handler/context-manager';
+export type { ContextConfig, KeyBinding } from './input-handler/context-manager';
+export type {
+  RegisteredShortcutBinding,
+  RegisteredShortcutBindings,
+  ShortcutHelpMetadata,
+  ShortcutHelpSectionId,
+} from '../types/shortcut-help';

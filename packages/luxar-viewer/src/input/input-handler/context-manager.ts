@@ -77,13 +77,14 @@ export interface KeyBinding {
  * Context configuration
  */
 export interface ContextConfig {
-  name: string;
+  /** Optional display name used by diagnostics. Defaults to the context identifier. */
+  name?: string;
   priority: number; // Higher priority contexts override lower ones
   allowedKeys?: string[]; // Base or canonical binding keys handled by this context
   blockedKeys?: string[]; // Canonical binding keys never handled by this context
   passthrough?: boolean; // If true, unhandled keys pass to lower contexts
   /** Ordered contexts consulted when this context declines a key. */
-  fallbackContexts?: InputContext[];
+  fallbackContexts?: string[];
   /** Rebuild `allowedKeys` from this context's live registrations. */
   allowRegisteredBindings?: boolean;
 }
@@ -127,11 +128,12 @@ export interface ContextConfig {
  * ```
  */
 export class InputContextManager {
-  private currentContext: InputContext = InputContext.NAVIGATION;
-  private contextStack: InputContext[] = [];
+  private currentContext: string = InputContext.NAVIGATION;
+  private contextStack: string[] = [];
   private bindings = new Map<string, Map<string, KeyBinding>>();
   private actionBindings = new Map<string, Map<string, string>>();
-  private contextConfigs = new Map<InputContext, ContextConfig>();
+  private contextConfigs = new Map<string, ContextConfig>();
+  private readonly builtInContexts = new Set<string>(Object.values(InputContext));
   private enabled = true;
 
   /**
@@ -165,6 +167,7 @@ export class InputContextManager {
    * @private
    */
   private initializeContexts(): void {
+    this.contextConfigs.clear();
     this.contextConfigs.set(InputContext.NAVIGATION, {
       name: 'Navigation',
       priority: 0,
@@ -197,6 +200,32 @@ export class InputContextManager {
     });
   }
 
+  /** Register a custom input context. Context identifiers must be unique. */
+  public registerContext(context: string, config: ContextConfig): void {
+    if (!context) throw new Error('Input context identifier cannot be empty');
+    if (this.contextConfigs.has(context)) {
+      throw new Error(`Input context "${context}" is already registered`);
+    }
+    this.contextConfigs.set(context, this.copyContextConfig(context, config));
+  }
+
+  /** Remove a custom context and all bindings registered under it. */
+  public unregisterContext(context: string): void {
+    if (this.builtInContexts.has(context)) {
+      throw new Error(`Built-in input context "${context}" cannot be unregistered`);
+    }
+    if (!this.contextConfigs.has(context)) return;
+    if (this.currentContext === context || this.contextStack.includes(context)) {
+      throw new Error(`Input context "${context}" cannot be unregistered while active`);
+    }
+    this.contextConfigs.delete(context);
+    this.bindings.delete(context);
+    this.actionBindings.delete(context);
+    for (const config of this.contextConfigs.values()) {
+      config.fallbackContexts = config.fallbackContexts?.filter((fallback) => fallback !== context);
+    }
+  }
+
   /**
    * Push a new context onto the stack, saving current context.
    *
@@ -217,7 +246,7 @@ export class InputContextManager {
    * // Back to previous context
    * ```
    */
-  public pushContext(context: InputContext): void {
+  public pushContext(context: string): void {
     if (this.currentContext !== context) {
       this.contextStack.push(this.currentContext);
       this.setContext(context);
@@ -266,7 +295,8 @@ export class InputContextManager {
    * contextManager.setContext(InputContext.NAVIGATION);
    * ```
    */
-  public setContext(context: InputContext): void {
+  public setContext(context: string): void {
+    this.requireRegisteredContext(context);
     const oldContext = this.currentContext;
     this.currentContext = context;
 
@@ -283,7 +313,7 @@ export class InputContextManager {
    *
    * @returns Current context enum value (NAVIGATION, FLY_CONTROLS, etc.)
    */
-  public getContext(): InputContext {
+  public getContext(): string {
     return this.currentContext;
   }
 
@@ -329,7 +359,8 @@ export class InputContextManager {
    * });
    * ```
    */
-  public registerBinding(context: InputContext, binding: KeyBinding): void {
+  public registerBinding(context: string, binding: KeyBinding): void {
+    this.requireRegisteredContext(context);
     const contextKey = context;
     if (!this.bindings.has(contextKey)) {
       this.bindings.set(contextKey, new Map());
@@ -360,6 +391,13 @@ export class InputContextManager {
     contextBindings.set(bindingKey, binding);
     contextActions.set(actionKey, bindingKey);
     this.recomputeContextFilters();
+    const config = this.contextConfigs.get(context)!;
+    if (!this.isKeyAllowedInContext(binding.key, bindingKey, config)) {
+      log.warning(
+        Modules.INPUT_CONTEXT,
+        `Key binding ${bindingKey} is unreachable in context ${context}`
+      );
+    }
   }
 
   /**
@@ -386,7 +424,7 @@ export class InputContextManager {
    * ```
    */
   public unregisterBinding(
-    context: InputContext,
+    context: string,
     key: string,
     modifiers?: KeyBinding['modifiers']
   ): void {
@@ -551,9 +589,9 @@ export class InputContextManager {
    * `tryLowerContexts` does would skip it.
    */
   private dispatchEscapeFromTypingContext(event: KeyboardEvent, type: 'down' | 'up'): boolean {
-    const sortedContexts = Array.from(this.contextConfigs.entries()).sort(
-      (a, b) => (b[1].priority ?? 0) - (a[1].priority ?? 0)
-    );
+    const sortedContexts = Array.from(this.contextConfigs.entries())
+      .filter(([context]) => this.builtInContexts.has(context))
+      .sort((a, b) => (b[1].priority ?? 0) - (a[1].priority ?? 0));
 
     for (const [context] of sortedContexts) {
       const contextBindings = this.bindings.get(context);
@@ -794,15 +832,15 @@ export class InputContextManager {
    * ```
    */
   public getDebugInfo(): {
-    currentContext: InputContext;
-    contextStack: InputContext[];
-    registeredBindings: Map<InputContext, RegisteredShortcutBinding[]>;
+    currentContext: string;
+    contextStack: string[];
+    registeredBindings: Map<string, RegisteredShortcutBinding[]>;
   } {
-    const registeredBindings = new Map<InputContext, RegisteredShortcutBinding[]>();
+    const registeredBindings = new Map<string, RegisteredShortcutBinding[]>();
 
     this.bindings.forEach((bindings, context) => {
       registeredBindings.set(
-        context as InputContext,
+        context,
         Array.from(bindings.entries()).map(([key, binding]) => ({
           actionId: binding.actionId,
           actionParameter: binding.actionParameter,
@@ -853,7 +891,7 @@ export class InputContextManager {
    *
    * @param context - Context whose bindings should be cleared
    */
-  public clearContextBindings(context: InputContext): void {
+  public clearContextBindings(context: string): void {
     this.bindings.delete(context);
     this.actionBindings.delete(context);
     this.recomputeContextFilters();
@@ -866,14 +904,31 @@ export class InputContextManager {
    * to NAVIGATION context. Useful when reinitializing the application
    * or cleaning up for testing.
    *
-   * Does NOT reset context configurations (those remain from initialization).
+   * Restores the built-in context configurations and removes custom contexts.
    */
   public reset(): void {
     this.currentContext = InputContext.NAVIGATION;
     this.contextStack = [];
     this.bindings.clear();
     this.actionBindings.clear();
+    this.initializeContexts();
     this.recomputeContextFilters();
+  }
+
+  private copyContextConfig(context: string, config: ContextConfig): ContextConfig {
+    return {
+      ...config,
+      name: config.name ?? context,
+      allowedKeys: config.allowedKeys ? [...config.allowedKeys] : undefined,
+      blockedKeys: config.blockedKeys ? [...config.blockedKeys] : undefined,
+      fallbackContexts: config.fallbackContexts ? [...config.fallbackContexts] : undefined,
+    };
+  }
+
+  private requireRegisteredContext(context: string): void {
+    if (!this.contextConfigs.has(context)) {
+      throw new Error(`Input context "${context}" is not registered`);
+    }
   }
 
   private recomputeContextFilters(): void {
