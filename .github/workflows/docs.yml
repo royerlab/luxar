@@ -42,7 +42,8 @@ jobs:
 
       # Sphinx publishes these four LFS-tracked screenshots. Fetch them
       # explicitly instead of smudging every demo dataset and gallery asset in
-      # the repository on each main promotion.
+      # the repository on each main promotion. The empty exclude neutralizes
+      # any inherited lfs.fetchexclude so the include list is authoritative.
       - name: Fetch documentation LFS assets
         run: git lfs pull --include="docs/images/docs/basic-3d-pointcloud.png,docs/images/docs/gsplats-scene.png,docs/images/docs/nd-navigation-sliders.png,docs/images/docs/viewer-ui-overview.png" --exclude=""
 
