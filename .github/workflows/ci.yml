@@ -132,7 +132,9 @@ jobs:
             # (test_docs_command_coverage.py), and the root and demos README files
             # (test_readme_demo_docs.py, test_demo_import_spelling.py). Markdown
             # alone runs only docs-quality, so these need explicit Python ownership.
-            printf '%s\n' "$changed" | grep -qE '(\.py$|^Makefile$|^README\.md$|^pyproject\.toml$|\.(pyx|pxd|cu|cuh)$|^scripts/complexity_baseline\.json$|^scripts/gallery/manifest\.json$|^docs/guides/user/CLI_REFERENCE\.md$|^format-contract/|^packages/luxar/src/luxar/demos/(README\.md$|data)|^packages/luxar-viewer/(package\.json$|src/tests/(global-setup\.ts|README\.md)$|src/types/format-contract\.ts$|tests/fixtures/README\.md$))' && dom_py=true || true
+            # test_docs_workflow.py also parses docs.yml and derives the published
+            # LFS candidate set from .gitattributes, so both are Python gate inputs.
+            printf '%s\n' "$changed" | grep -qE '(\.py$|^Makefile$|^README\.md$|^pyproject\.toml$|\.(pyx|pxd|cu|cuh)$|^\.gitattributes$|^scripts/complexity_baseline\.json$|^scripts/gallery/manifest\.json$|^docs/guides/user/CLI_REFERENCE\.md$|^format-contract/|^\.github/workflows/docs\.yml$|^packages/luxar/src/luxar/demos/(README\.md$|data)|^packages/luxar-viewer/(package\.json$|src/tests/(global-setup\.ts|README\.md)$|src/types/format-contract\.ts$|tests/fixtures/README\.md$))' && dom_py=true || true
             # TS domain = the WHOLE viewer package (its py fixture-generators feed TS tests -> hierarchy) + root TS config
             printf '%s\n' "$changed" | grep -qE '(^packages/luxar-viewer/|^tsconfig[^/]*\.json$|(^|/)vitest[^/]*\.(ts|js|mjs)$)' && dom_ts=true || true
             printf '%s\n' "$changed" | grep -qE '(\.rs$|^wasm/|(^|/)Cargo\.(toml|lock)$)' && dom_rust=true || true
