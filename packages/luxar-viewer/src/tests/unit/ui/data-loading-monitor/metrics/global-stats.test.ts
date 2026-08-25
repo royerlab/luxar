@@ -48,10 +48,7 @@ describe('aggregateGlobalStats', () => {
     const snapshots = new Map([
       ['/lod/0', metrics('/lod/0', 'point-spatial-index')],
       ['/lod/1', metrics('/lod/1', 'point-spatial-index')],
-      [
-        '/lod/metadata',
-        metrics('/lod/metadata', 'metadata' as unknown as LoaderMetrics['type']),
-      ],
+      ['/lod/metadata', metrics('/lod/metadata', 'metadata' as unknown as LoaderMetrics['type'])],
     ]);
     const params = {
       metrics: snapshots,
