@@ -407,15 +407,15 @@ def test_scheduled_ci_supplies_a_green_window_every_three_hours(
         "one scheduled window must retain the full daily Python matrix"
     )
 
-    scheduled_hours: set[int] = set()
+    scheduled_hours: list[int] = []
     for schedule in schedules:
         minute, hour, day, month, weekday = schedule.split()
         assert (minute, day, month, weekday) == ("17", "*", "*", "*")
         if hour == "*/3":
-            scheduled_hours.update(range(0, 24, 3))
+            scheduled_hours.extend(range(0, 24, 3))
         else:
-            scheduled_hours.update(int(value) for value in hour.split(","))
-    assert scheduled_hours == set(range(0, 24, 3))
+            scheduled_hours.extend(int(value) for value in hour.split(","))
+    assert sorted(scheduled_hours) == list(range(0, 24, 3))
 
 
 def _run_pick_runner(
