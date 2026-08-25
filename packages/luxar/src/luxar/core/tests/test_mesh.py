@@ -948,6 +948,8 @@ def test_reveal_ladder_budget_is_charged_as_a_sum(tmp_path, monkeypatch) -> None
                 normal_dims=[0, 1, 2],
                 additive_lod={"n_lods": 2},
             )
+    root = zarr.open_group(str(store), mode="r")
+    assert list(root.groups()) == [], "the refused ladder was partly written"
 
 
 def test_dim_order_winding_warning_is_silent_when_frame_has_no_preimage(
