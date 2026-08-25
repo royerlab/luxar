@@ -8,6 +8,10 @@ the sprite/exposure arithmetic that made the previous version of this demo
 illegible cannot come back.
 """
 
+import os
+import subprocess
+import sys
+
 import numpy as np
 import pytest
 from scipy.spatial import cKDTree
@@ -68,6 +72,30 @@ def test_numerical_normals_match_the_one_analytic_gradient_we_have():
     analytic /= np.linalg.norm(analytic, axis=1, keepdims=True)
 
     np.testing.assert_allclose(numeric, analytic, atol=1e-6)
+
+
+def test_surface_sampling_is_stable_across_python_hash_seeds():
+    """The baked dataset must not move between Python processes."""
+    script = """
+import hashlib
+from luxar.demos.demo_exotic_surfaces import SURFACES, sample_surface
+positions, _, _ = sample_surface(SURFACES[6], 44)
+print(hashlib.sha256(positions.tobytes()).hexdigest())
+"""
+    digests = []
+    for hash_seed in ("1", "2"):
+        env = os.environ.copy()
+        env["PYTHONHASHSEED"] = hash_seed
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        digests.append(result.stdout.strip())
+
+    assert digests[0] == digests[1]
 
 
 # ---------------------------------------------------------------------------

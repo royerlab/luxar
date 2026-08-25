@@ -112,6 +112,7 @@ DEMO_META = {
 
 import sys
 import tempfile
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Tuple
@@ -671,7 +672,8 @@ def sample_surface(
     spacing = float(coords[1] - coords[0])
     # Jitter off the lattice: a regular grid through a smooth surface produces
     # visible moire terracing.
-    rng = np.random.default_rng(abs(hash(surface.key)) % (2**32))
+    seed = zlib.crc32(surface.key.encode("utf-8"))
+    rng = np.random.default_rng(seed)
     samples += rng.uniform(-0.3 * spacing, 0.3 * spacing, samples.shape)
 
     values = surface.field(samples)
