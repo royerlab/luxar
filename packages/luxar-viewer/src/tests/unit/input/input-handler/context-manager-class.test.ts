@@ -210,6 +210,9 @@ describe('InputContextManager', () => {
       expect(() => manager.pushContext('missing')).toThrow(
         'Input context "missing" is not registered'
       );
+      expect(() => registerTestBinding(manager, 'missing', { key: 'x', handler: vi.fn() })).toThrow(
+        'Input context "missing" is not registered'
+      );
       expect(manager.getDebugInfo().contextStack).toEqual([]);
       expect(manager.getContext()).toBe(InputContext.NAVIGATION);
     });
