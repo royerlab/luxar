@@ -817,7 +817,13 @@ ratchet's only input that carries no Python extension),
 `scripts/gallery/manifest.json` (cross-validated against the demo registry) and
 `docs/guides/user/CLI_REFERENCE.md` (drift-guarded against the live Typer app),
 plus the root `README.md` and `packages/luxar/src/luxar/demos/README.md` guarded
-against the live demo registry and exported helper inventory.
+against the live demo registry and exported helper inventory. A narrow set of
+viewer TypeScript files is also `dom_py`: Python contract tests parse the live
+camera and rendering defaults, blending modes, element-texture capacity, LOD and
+spatial-query constants, gallery exposure thresholds, and fixture-staleness exit
+code from those sources. The classifier names only those consumed files rather
+than broad `src/config/`, `src/rendering/`, or `tools/` prefixes, so unrelated
+viewer changes remain TypeScript-only and do not pull in the Python matrix.
 A check whose own inputs are unclassified is a check that skips for exactly the
 change it exists to catch. `.github/workflows/ci.yml` selects **all four**
 domains: it defines how every suite is invoked, so an edit that breaks a command

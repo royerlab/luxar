@@ -42,8 +42,8 @@ import yaml
 REPO = Path(__file__).resolve().parents[5]
 WORKFLOW = REPO / ".github/workflows/ci.yml"
 
-#: One row per gate input that carries NO classified source extension, so the only
-#: thing standing between it and a silent skip is an explicit pattern alternative.
+#: One row per gate input whose required domain is not guaranteed by its ordinary
+#: source extension or package path, so an explicit pattern alternative is required.
 #: ``(path, domain, why)`` — the reason is quoted back in the failure message.
 #:
 #: Not every row is load-bearing to the same degree: some are matched by a broad
@@ -116,6 +116,77 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "scripts/check_version_consistency.py pins it to the Python version",
     ),
     (
+        "packages/luxar-viewer/src/config/sections/camera/data.ts",
+        "py",
+        "test_viewer_config.py and test_demos_cinematic_mode.py parse its FOV "
+        "presets and defaults",
+    ),
+    (
+        "packages/luxar-viewer/src/config/sections/rendering-controls/data.ts",
+        "py",
+        "test_demos_cinematic_mode.py parses its default FOV",
+    ),
+    (
+        "packages/luxar-viewer/src/data/attrs-composer.ts",
+        "py",
+        "test_blending_warnings.py parses the scene-root blending default",
+    ),
+    (
+        "packages/luxar-viewer/src/data/loaders/spatial-query/tolerance-computer.ts",
+        "py",
+        "test_ordering_gsplats.py parses the continuous-dimension tolerance",
+    ),
+    (
+        "packages/luxar-viewer/src/rendering/blending-state.ts",
+        "py",
+        "test_blending_warnings.py parses the normal-mode depth-write threshold",
+    ),
+    (
+        "packages/luxar-viewer/src/rendering/element-texture-layout.ts",
+        "py",
+        "test_element_cap_warning.py parses the element-texture capacity inputs",
+    ),
+    (
+        "packages/luxar-viewer/src/rendering/materials/mesh/appearance.ts",
+        "py",
+        "test_blending_warnings.py parses the mesh blending default",
+    ),
+    (
+        "packages/luxar-viewer/src/rendering/node-factory/create-points-node.ts",
+        "py",
+        "test_blending_warnings.py parses the points blending default",
+    ),
+    (
+        "packages/luxar-viewer/src/rendering/node-factory/create-lines-node.ts",
+        "py",
+        "test_blending_warnings.py parses the lines blending default",
+    ),
+    (
+        "packages/luxar-viewer/src/rendering/node-factory/create-gsplats-node.ts",
+        "py",
+        "test_blending_warnings.py parses the gsplats blending default",
+    ),
+    (
+        "packages/luxar-viewer/src/rendering/node-factory/create-mesh-node.ts",
+        "py",
+        "test_blending_warnings.py parses the mesh-node blending default",
+    ),
+    (
+        "packages/luxar-viewer/src/scene/lod-group-registry.ts",
+        "py",
+        "LOD and biodiversity contract tests parse the live screen-coverage constants",
+    ),
+    (
+        "packages/luxar-viewer/src/tests/screenshots/exposure-policy.ts",
+        "py",
+        "test_score_exposure.py parses the capture harness thresholds",
+    ),
+    (
+        "packages/luxar-viewer/tools/example-fixture-freshness.ts",
+        "py",
+        "test_run_examples.py pins the shared stale-fixture exit code",
+    ),
+    (
         "packages/luxar-viewer/src/types/format-contract.ts",
         "py",
         "the generated TypeScript half `check-contract` judges",
@@ -152,6 +223,15 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
 #: these the table above proves nothing: a pattern that matched everything would
 #: satisfy every positive row.
 NON_DOMAIN_PATHS: list[str] = ["CHANGELOG.md", "docs/index.rst"]
+
+#: Viewer sources with no Python consumer. These must remain TypeScript-only so
+#: adding a few contract inputs cannot silently turn whole viewer subtrees into
+#: ``dom_py`` and make pure-viewer PRs pay for the Python matrix.
+NON_PYTHON_DOMAIN_PATHS: list[str] = [
+    "packages/luxar-viewer/src/config/sections/adaptive-dpr/data.ts",
+    "packages/luxar-viewer/src/rendering/display-range.ts",
+    "packages/luxar-viewer/tools/example-smoke-inventory.ts",
+]
 
 #: The docs gate's own negative control: real tracked files that must NOT set
 #: ``docs_relevant``. Kept separate from ``NON_DOMAIN_PATHS`` because the two
@@ -288,6 +368,18 @@ def test_a_prose_only_change_claims_no_language_domain(
     assert not _classifies(pattern, path), (
         f"{path} sets dom_{domain} — the pattern has become a catch-all, which "
         f"makes every dom_{domain} assertion in this file meaningless"
+    )
+
+
+@pytest.mark.parametrize("path", NON_PYTHON_DOMAIN_PATHS)
+def test_unconsumed_viewer_sources_do_not_claim_the_python_domain(
+    workflow: str, path: str
+) -> None:
+    """Cross-language ownership must stay narrower than whole viewer subtrees."""
+    assert (REPO / path).exists(), f"{path} moved; update this test"
+    assert not _classifies(_domain_patterns(workflow)["py"], path), (
+        f"{path} sets dom_py even though no Python gate reads it; narrow the "
+        "cross-language viewer pattern"
     )
 
 
