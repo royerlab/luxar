@@ -739,17 +739,17 @@ omit = [
     "*/tests/*",                              # test code, not shipped logic
     "*/__init__.py",                          # re-export shims
     "*/demos/*",                              # demo scripts (import-smoke-tested; main() bodies aren't a coverage target)
-    "*/utils/bundles.py",                     # demo support helpers split from the former demos.py
-    "*/utils/cache.py",
-    "*/utils/colors.py",
-    "*/utils/device.py",
-    "*/utils/flags.py",
-    "*/utils/lfs.py",
-    "*/utils/payload_agreement.py",
-    "*/utils/provenance.py",
-    "*/utils/scenes.py",
-    "*/utils/viewer.py",
-    "*/utils/zip_safety.py",
+    "*/luxar/utils/bundles.py",               # demo support helpers split from the former demos.py
+    "*/luxar/utils/cache.py",
+    "*/luxar/utils/colors.py",
+    "*/luxar/utils/device.py",
+    "*/luxar/utils/flags.py",
+    "*/luxar/utils/lfs.py",
+    "*/luxar/utils/payload_agreement.py",
+    "*/luxar/utils/provenance.py",
+    "*/luxar/utils/scenes.py",
+    "*/luxar/utils/viewer.py",
+    "*/luxar/utils/zip_safety.py",
     "*/gsplats/demos/*",                      # research demos (run-on-import; compile-smoke-tested only)
     "*/gsplats/models/gsplats/cuda/*",        # hardware-gated CUDA extension
     "*/gsplats/models/gsplats/metal/*",       # hardware-gated Metal extension

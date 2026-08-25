@@ -1,11 +1,10 @@
 """One spelling for the shared demo helpers: ``from luxar.demos import …``.
 
-Before the utility split, ``luxar/demos/__init__.py`` re-exported the shared
-plumbing (``launch_viewer``, ``parse_demo_flags``, ``cached_download``, …) out
-of ``luxar/utils/demos.py`` and ``luxar/utils/data_fetch.py``, and
-also fronts selected demo-owned helpers from private modules such as
-``demos/_support/_fields.py``. ``demos/README.md`` §6 documents the barrel as
-the way to reach them. Even so,
+``luxar/demos/__init__.py`` is the barrel that re-exports shared plumbing from
+the guarded concern modules under ``luxar/utils`` (historically a single
+``luxar/utils/demos.py``) and ``luxar/utils/data_fetch.py``, and selected
+demo-owned helpers from private modules such as ``demos/_support/_fields.py``.
+``demos/README.md`` §6 documents the barrel as the way to reach them. Even so,
 38 demo scripts reached *past* the barrel with ``from luxar.utils.demos import
 …``. Only 12 of them had to: 4 needed ``is_lfs_pointer`` and 8
 ``print_data_provenance``, neither of which the barrel re-exported. The other 26
@@ -50,7 +49,10 @@ from __future__ import annotations
 
 import ast
 import re
+import tomllib
 from pathlib import Path
+
+from coverage.files import GlobMatcher
 
 import luxar.demos as demos_barrel
 
@@ -266,6 +268,26 @@ def _barrel_allowed_names() -> set[str]:
     barrel_dir = Path(demos_barrel.__file__).resolve().parent
     bound = {n for n in demos_barrel.__all__ if hasattr(demos_barrel, n)}
     return bound | {p.stem for p in barrel_dir.glob("*.py")}
+
+
+def test_coverage_omits_only_the_split_demo_utilities() -> None:
+    """Coverage exclusions must not hide same-named production utilities."""
+    pyproject = LUXAR_DIR.parents[3] / "pyproject.toml"
+    config = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    omit = config["tool"]["coverage"]["run"]["omit"]
+
+    split_modules = {
+        f"{module.removeprefix('luxar.utils.')}.py"
+        for module in DEEP_MODULES
+        if module.startswith("luxar.utils.")
+    } - {"data_fetch.py"}
+    split_patterns = {f"*/luxar/utils/{module}" for module in split_modules}
+    assert split_patterns <= set(omit)
+
+    matcher = GlobMatcher(split_patterns)
+    for module in split_modules:
+        assert matcher.match(str(LUXAR_DIR / "utils" / module))
+        assert not matcher.match(str(LUXAR_DIR / "gsplats" / "utils" / module))
 
 
 def test_no_demo_module_reaches_past_the_barrel() -> None:

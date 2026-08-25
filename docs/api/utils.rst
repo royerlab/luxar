@@ -66,8 +66,8 @@ Dataset Fetching
 ----------------
 
 Manifest-driven fetch-on-demand for demo datasets. Re-exported (with the demo
-generators above) through the ``luxar.demos`` barrel, which is the spelling demos
-use — see ``packages/luxar/src/luxar/demos/README.md`` §6.
+utility modules above) through the ``luxar.demos`` barrel, which is the spelling
+demos use — see ``packages/luxar/src/luxar/demos/README.md`` §6.
 
 .. automodule:: luxar.utils.data_fetch
    :members:
