@@ -8,48 +8,38 @@ tone curve. That measured +2.35 EV is now baked into the scene's viewer config,
 which triples the mean frame luminance (4.8 → 14.4 on an A/B of the same scene)
 while leaving highlight clipping unchanged at 0.01% of the frame.
 
-Exposure is the right lever here rather than the splat amplitudes: the writer
-derives each channel's display window *from* those amplitudes, so scaling them
-globally cancels out and the render does not move at all.
+The scene uses viewer exposure rather than rewriting the fitted amplitudes. A
+writer-derived display window would compensate the LUT lookup after an amplitude
+rescale, but the stored amplitude also scales emitted radiance and volumetric
+optical depth, so that rewrite would still change the render.
 
 #### Drosophila gastrulation demo is no longer one saturated pink shell
 
 The embryo rendered as a featureless, fully clipped magenta silhouette — no
-cephalic furrow, no midgut invagination, no individual nuclei. There were two
-causes, an authoring one and an exposure one.
+cephalic furrow, no midgut invagination, no individual nuclei. This fit stores
+raw detector-count amplitudes from 5 to 798, while the scene authored the scalar
+display window `[0, 1]`, so every splat also landed at the top of the LUT.
 
-The authoring one: this fit's amplitudes are raw detector counts running 5 to
-798, and the scene authored a bare `intensity=1.0`, which on a colormapped node
-does not mean "gain of one" — it states the scalar display window `[0, 1]`. Every
-splat in the dataset was therefore past the top of the LUT and clipped flat. Note
-that the scene authors `intensity=1.0` again today and that is now correct, for
-the reason below: the amplitudes it windows are themselves in `[0, 1]`.
+The amplitudes are now **robustly normalised at authoring time**, with the pooled
+99.9th percentile across the whole additive ladder mapped to 1.0. One shared
+factor preserves the relative brightness of every streaming prefix; a per-rung
+factor would make each upgrade render at a different exposure. Values above the
+reference percentile remain above 1.0, so a single hot splat cannot darken the
+whole scene. Constant-amplitude data maps to 1.0 instead of being left in raw
+detector counts. The loaded arrays are rewritten in place so the authored
+per-rung metadata used by LOD upgrades survives, and nested partition/LOD trees
+are grafted with the same structure as `add_gsplats_from_file`.
 
-The amplitudes are now **normalised to `[0, 1]` at authoring time**, with one
-shared min-max factor across the whole additive ladder — a per-rung factor would
-rescale the rungs against each other and make every streaming prefix render as a
-different exposure. The display window is then simply the identity
-(`intensity=1.0` / `offset=0.0`), which now genuinely means the full data range,
-so the appearance args can be read without converting detector counts in your
-head. The normalisation is derived from the fit being loaded rather than
-hardcoded, so a refit moves with the data, and it is written into the loaded
-arrays in place rather than rebuilt through the `additive_sublods=` constructor,
-which would drop the authored per-rung metadata the viewer's LOD upgrades read.
-
-The exposure one, which is the half that actually blew the frame out: in
-`volumetric` blending each pixel accumulates emission along the whole ray, so
-what you see is a *sum* over every splat behind it, while the display window only
-picks each splat's LUT index. The window therefore cannot govern the total, and
-no value of it repairs an over-accumulated frame — widening it dims and blues the
-whole object rather than exposing it (measured: footprint 15.3% → 12.0% of frame,
-mean luminance 76 → 35 at the top of the slider's range). What does govern the
-total is **opacity, now 0.41**, which scales each splat's contribution. Absorption
-is then only responsible for the depth cue — how much the near shell occludes the
-far one — and sits at **0.57**; the two are not interchangeable, and an earlier
-revision of this batch conflated them, moving absorption while leaving opacity at
-1.0. Blending itself goes from `normal` (alpha-over) to `volumetric`, which is
-what a single fluorescence channel wants, and the scene's `exposure` returns to
-neutral, since there is no longer a stop to make up.
+That normalisation is the primary exposure change: the stored amplitude scales
+both emitted radiance and volumetric optical depth. The display window only
+compensates the LUT lookup. The scene authors **`[0, 1.153]`** on the robust
+normalised scale (`intensity≈0.8675`, `offset=0`), which preserves the previous
+fit's measured colour mapping after moving the reference from max 798 to p99.9
+512. Opacity is a further trim at **0.262**, compensated by the same scale change
+so the current fit keeps its accumulated radiance and optical depth. Absorption
+then controls how quickly that depth builds and remains **0.57**. Blending itself
+goes from `normal` (alpha-over) to `volumetric`, which is what a single
+fluorescence channel wants, and scene exposure stays neutral.
 
 Individual nuclei now read as discrete blobs across the whole shell, and the
 cephalic furrow and posterior pit are both legible. Pixels using magma's warm
@@ -60,10 +50,10 @@ contained no amber at all, despite the comment claiming it spread the nuclei
 The scene also authors its **opening camera and auto-rotation** rather than taking
 the default whole-scene fit, which left the embryo small in a lot of black. The
 embryo's long axis is centre column 1 and so already maps to world Y, i.e.
-screen-vertical; the camera backs off along the shallowest axis until that long
-axis subtends 0.85 of the half-frame, solved from the data's own bounding box so a
-refit reframes itself, and pulled in for the cinematic lens. Because auto-rotation
-orbits the up axis, the spin runs about the embryo's own length.
+screen-vertical; the camera backs off along +world Z until that long axis
+subtends 0.85 of the half-frame, solved from the data's own bounding box so a
+refit reframes itself, and pulled in for the cinematic lens. Because
+auto-rotation orbits the up axis, the spin runs about the embryo's own length.
 
 #### Rainbow sphere opens filling the frame, already turning
 
