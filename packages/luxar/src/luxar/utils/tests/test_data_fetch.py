@@ -2090,7 +2090,7 @@ def test_a_superseded_cache_with_an_lfs_pointer_names_git_lfs(fake_repo, capsys)
     assert path == dest
     notice = capsys.readouterr().out
     assert "git lfs pull" in notice
-    assert "no in-repo copy" not in notice
+    assert "hosted-only" not in notice
 
 
 def test_a_superseded_cache_is_replaced_when_a_route_exists(fake_repo, monkeypatch):
