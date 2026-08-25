@@ -99,8 +99,6 @@ def test_unknown_demo_marker_does_not_override_known_levels() -> None:
 
 def test_demo_level_contract_matches_the_producer() -> None:
     producer = SCRIPT.with_name("check_demo_links.py")
-    if not producer.exists():
-        pytest.skip("check-demo-links is introduced by PR #2091")
     tree = ast.parse(producer.read_text())
     producer_levels = {
         node.value
@@ -267,7 +265,7 @@ def test_auth_failure_text_without_required_env_remains_a_warning(monkeypatch) -
     assert result.level is audit_module.Level.WARNING
 
 
-def test_missing_make_target_is_not_available_on_this_checkout(monkeypatch) -> None:
+def test_missing_demo_make_target_is_a_configuration_error(monkeypatch) -> None:
     monkeypatch.setattr(
         subprocess,
         "run",
@@ -278,8 +276,8 @@ def test_missing_make_target_is_not_available_on_this_checkout(monkeypatch) -> N
 
     result = audit_module.run_audit(audit_module.AUDITS[1], env={})
 
-    assert result.level is audit_module.Level.NOTICE
-    assert result.detail == "not available on this checkout"
+    assert result.level is audit_module.Level.ERROR
+    assert result.detail == "exited 2"
 
 
 def test_missing_established_make_target_is_a_configuration_error(monkeypatch) -> None:
@@ -427,7 +425,12 @@ def test_weekly_workflow_is_manual_read_only_and_uses_the_aggregator() -> None:
         "group": "external-reference-audits",
         "cancel-in-progress": "false",
     }
-    steps = workflow["jobs"]["audit"]["steps"]
+    audit_job = workflow["jobs"]["audit"]
+    assert audit_job["timeout-minutes"] == "65"
+    steps = audit_job["steps"]
+    free_disk = next(step for step in steps if step.get("name") == "Free disk space")
+    assert free_disk["if"] == "runner.environment == 'github-hosted'"
+    assert "/usr/local/lib/android" in free_disk["run"]
     run_steps = [step["run"] for step in steps if "run" in step]
     assert "python scripts/run_external_reference_audits.py" in run_steps
     audit_step = next(

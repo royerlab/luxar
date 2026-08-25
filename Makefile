@@ -890,7 +890,6 @@ check-zenodo-live:  ## Opt-in live Zenodo manifest-pin audit (not a required CI 
 check-external-references:  ## Run all network-backed reference audits (report-only)
 	$(HATCH) run python scripts/run_external_reference_audits.py
 
-
 clean-docs:  ## Clean built documentation
 	@echo "🧹 Cleaning documentation build artifacts..."
 	rm -rf docs/_build/

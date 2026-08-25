@@ -15,8 +15,19 @@ concurrency:
 jobs:
   audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    timeout-minutes: 65
     steps:
+      - name: Free disk space
+        # The default Hatch env includes the demo audit's heavy optional
+        # dependencies and can exhaust a GitHub-hosted runner (#1816).
+        if: runner.environment == 'github-hosted'
+        working-directory: ${{ github.workspace }}
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /opt/hostedtoolcache/CodeQL \
+            /usr/share/dotnet /opt/ghc /usr/local/share/boost 2>/dev/null || true
+          sudo docker image prune --all --force 2>/dev/null || true
+          df -h /
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         id: setup-python

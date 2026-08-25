@@ -144,16 +144,6 @@ def run_audit(
 
     output = _captured_output(completed.stdout, completed.stderr)
     if completed.returncode != 0:
-        # Compatibility until #2091 lands; remove once check-demo-links is on dev.
-        if audit.command == ("make", "check-demo-links") and (
-            "No rule to make target" in output
-        ):
-            return Result(
-                audit,
-                Level.NOTICE,
-                "not available on this checkout",
-                output,
-            )
         command_error = any(marker in output for marker in _COMMAND_ERROR_MARKERS)
         rejected_credentials = bool(audit.required_env) and any(
             marker in output for marker in _REJECTED_CREDENTIAL_MARKERS
