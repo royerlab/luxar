@@ -38,7 +38,13 @@ import { AnimationController } from '../scene/animation/animation-controller';
 import type { DimensionAnimationManager } from '../scene/animation/dimension-animation-manager';
 import { notifier } from '../utils/cross-layer/notifier';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
-import { InputContext, InputContextManager } from './input-handler/context-manager';
+import {
+  InputContext,
+  InputContextManager,
+  type ContextConfig,
+  type InputContextId,
+  type KeyBinding,
+} from './input-handler/context-manager';
 import {
   computeDimensionStep,
   resolveSelectedDimension,
@@ -702,6 +708,40 @@ export class InputHandler {
   /** Registered bindings used to build the keyboard-shortcut overlay. */
   public getRegisteredShortcutBindings(): RegisteredShortcutBindings {
     return this.contextManager.getRegisteredShortcutBindings();
+  }
+
+  /** Register a custom keyboard-routing context. */
+  public registerContext(context: InputContextId, config: ContextConfig): void {
+    this.contextManager.registerContext(context, config);
+  }
+
+  /** Remove a custom keyboard-routing context and its bindings. */
+  public unregisterContext(context: InputContextId): void {
+    this.contextManager.unregisterContext(context);
+  }
+
+  /** Register a binding in a built-in or custom context. */
+  public registerBinding(context: InputContextId, binding: KeyBinding): void {
+    this.contextManager.registerBinding(context, binding);
+  }
+
+  /** Remove a binding from a built-in or custom context. */
+  public unregisterBinding(
+    context: InputContextId,
+    key: string,
+    modifiers?: KeyBinding['modifiers']
+  ): void {
+    this.contextManager.unregisterBinding(context, key, modifiers);
+  }
+
+  /** Activate a nested input context until {@link popContext} is called. */
+  public pushContext(context: InputContextId): void {
+    this.contextManager.pushContext(context);
+  }
+
+  /** Restore the context active before the latest {@link pushContext}. */
+  public popContext(): void {
+    this.contextManager.popContext();
   }
 
   /** Resolve the active binding label for a registered action. */
