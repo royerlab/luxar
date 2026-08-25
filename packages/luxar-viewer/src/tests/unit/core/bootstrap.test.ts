@@ -336,6 +336,13 @@ describe('bootstrapStandalone', () => {
       // showError is exposed so visual-regression specs can drive the
       // error dialog directly (see bootstrap.ts:195-203 comment).
       expect(typeof window.__luxarDebug?.showError).toBe('function');
+      window.__luxarDebug?.showError?.('Debug failure');
+      const [, resolveShortcut, shortcutActions] = mocks.showError.mock.calls[0];
+      expect(shortcutActions).toEqual({
+        datasetBrowser: 'dataset-browser.toggle',
+        help: 'help.toggle',
+      });
+      expect(resolveShortcut(shortcutActions.help)).toBe('F1');
     });
 
     it('seeds window.__luxarDebug when localStorage[luxar.debug] is "true"', async () => {
@@ -480,7 +487,12 @@ describe('bootstrapStandalone', () => {
 
       expect(mocks.showError).toHaveBeenCalledTimes(1);
       expect(mocks.showError.mock.calls[0][0]).toMatch(/Failed to start the application/i);
-      expect(mocks.showError.mock.calls[0][1]('help.toggle')).toBe('F1');
+      const [, resolveShortcut, shortcutActions] = mocks.showError.mock.calls[0];
+      expect(shortcutActions).toEqual({
+        datasetBrowser: 'dataset-browser.toggle',
+        help: 'help.toggle',
+      });
+      expect(resolveShortcut(shortcutActions.help)).toBe('F1');
     });
   });
 

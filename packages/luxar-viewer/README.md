@@ -116,13 +116,18 @@ app.resize();
 const blob = await app.screenshot({ format: 'png' }); // 'png' | 'webp' | 'jpeg'
 
 // Keyboard input
-app.registerContext('annotation', { priority: 100, passthrough: true });
+app.registerContext('annotation', {
+  priority: 100,
+  passthrough: true,
+  fallbackContexts: ['navigation'],
+  allowRegisteredBindings: true,
+});
 app.registerBinding('annotation', {
   actionId: 'annotation.accept',
   key: 'x',
   handler: acceptAnnotation,
   description: 'Accept annotation',
-  help: { section: 'tools', group: 'Annotation' },
+  help: { section: 'panels', group: 'Annotation', order: 200 },
 });
 app.pushContext('annotation');
 app.popContext();

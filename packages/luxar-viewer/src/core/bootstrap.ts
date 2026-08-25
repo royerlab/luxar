@@ -327,7 +327,11 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
       app,
       consoleInterceptor,
       version: '1.0.0',
-      showError: (message) => showError(message, shortcutForAction),
+      showError: (message) =>
+        showError(message, shortcutForAction, {
+          datasetBrowser: KeyAction.toggleDatasetBrowser,
+          help: KeyAction.toggleHelp,
+        }),
     };
     log.custom(LogEmoji.CONSOLE, Modules.LUXAR, 'Debug interface available at window.__luxarDebug');
   }
@@ -338,7 +342,11 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     log.error(Modules.LUXAR, `Failed to start Luxar application: ${getErrorMessage(error)}`, error);
     showError(
       'Failed to start the application. Please check the console for details.',
-      shortcutForAction
+      shortcutForAction,
+      {
+        datasetBrowser: KeyAction.toggleDatasetBrowser,
+        help: KeyAction.toggleHelp,
+      }
     );
     throw error;
   }
