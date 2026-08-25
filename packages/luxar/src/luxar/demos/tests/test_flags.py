@@ -3,7 +3,7 @@
 import sys
 from pathlib import Path
 
-from luxar.utils import flags as flag_utils
+from luxar.demos._support.runtime import flags as flag_utils
 
 
 def test_parse_int_arg_equals_space_and_default():

@@ -12,7 +12,7 @@ from arbol import aprint, asection
 
 from .cache import _DEFAULT_CACHE_ROOT, _cache_is_stale
 from .lfs import _DEMOS_DATA_DIR, _unshippable_reason, _validate_lfs_files
-from .zip_safety import _safe_extract_zip_member, _validate_zip_member_path
+from ..downloads.zip_safety import _safe_extract_zip_member, _validate_zip_member_path
 
 
 class BundleMemberNotFound(FileNotFoundError):
@@ -26,7 +26,7 @@ class BundleMemberNotFound(FileNotFoundError):
     contain, and recomputing is the correct answer.
 
     It is the bundle-side counterpart of
-    :class:`~luxar.utils.data_fetch.DatasetUnavailable` (#1618): both mean "the
+    :class:`~luxar.demos._support.datasets.data_fetch.DatasetUnavailable` (#1618): both mean "the
     bytes are not obtainable", so a demo may answer either with its own rebuild,
     while every other ``FileNotFoundError`` around a fetch stays a fault that
     must propagate.
@@ -56,7 +56,7 @@ def load_precomputed_gsplats(
         List of :class:`GSplatData` in the same order as *file_names*,
         or ``None`` when the caller should recompute.
     """
-    from ..gsplats.gsplat_data import GSplatData
+    from ....gsplats.gsplat_data import GSplatData
 
     if recompute:
         return None
@@ -153,7 +153,7 @@ def load_dataset_bundle(
 
     Same contract -- a list of ``GSplatData`` in the requested order, or ``None``
     when the caller must build the data itself -- but the OUTER bundle is resolved
-    through :func:`luxar.utils.data_fetch.ensure_dataset`, so it is checksum-
+    through :func:`luxar.demos._support.datasets.data_fetch.ensure_dataset`, so it is checksum-
     verified against the manifest (cache -> in-repo git-LFS -> Zenodo) instead of
     copied unverified out of the working tree.
 
@@ -335,7 +335,7 @@ def _extract_bundle_and_load(
     because :func:`ensure_dataset` does not report which generation matched, and
     the key falls back to the bundle's ``(size, mtime)``.
     """
-    from ..gsplats.gsplat_data import GSplatData
+    from ....gsplats.gsplat_data import GSplatData
 
     cache_dir.mkdir(parents=True, exist_ok=True)
 

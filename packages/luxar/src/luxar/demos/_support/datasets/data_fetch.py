@@ -68,10 +68,11 @@ from .cache import _DEFAULT_CACHE_ROOT
 from .lfs import _DEMOS_DATA_DIR, is_lfs_pointer
 
 #: Packaged manifest, resolved the same way ``lfs._DEMOS_DATA_DIR`` is: this
-#: module lives in ``luxar/utils/`` and the manifest ships in ``luxar/demos/``.
+#: module lives below ``luxar/demos/_support/`` and the manifest ships in
+#: ``luxar/demos/``.
 #: Anchored to ``__file__`` rather than derived from ``_DEMOS_DATA_DIR`` so it
 #: stays reachable once R17 step 4 removes the data tree.
-MANIFEST_PATH = Path(__file__).resolve().parent.parent / "demos" / "data_manifest.json"
+MANIFEST_PATH = Path(__file__).resolve().parents[2] / "data_manifest.json"
 
 #: A decoded JSON object out of the manifest — the manifest itself, a dataset
 #: spec, a Zenodo record, or a single file entry. The values are heterogeneous
@@ -341,7 +342,7 @@ def _matches(path: Path, expected: Optional[str], verbose: bool) -> bool:
     so a missing digest is excluded here rather than left to a short-circuit that
     a later edit could drop.
     """
-    from .download import verify_file_checksum
+    from ..downloads.download import verify_file_checksum
 
     return (
         expected is not None
@@ -465,7 +466,7 @@ def _resolve_from_cache(
     ``dest`` does not exist, so nothing wrong can be trusted or promoted in its
     place (``robust_download`` would otherwise resume onto stale bytes).
     """
-    from .download import quarantine_file
+    from ..downloads.download import quarantine_file
 
     if not dest.exists():
         return None
@@ -601,8 +602,8 @@ def _ensure_one(
     Quarantining in step 1 keeps that clean regardless: below it, ``dest`` does
     not exist, so nothing wrong can be trusted or promoted in its place.
     """
-    from .atomic_copy import atomic_copy_file
-    from .download import download_with_checksum, quarantine_file
+    from ....utils.atomic_copy import atomic_copy_file
+    from ..downloads.download import download_with_checksum, quarantine_file
 
     # The record's bytes if we know them, else the only digest we have.
     download_sha = hosted_sha or sha
@@ -881,7 +882,7 @@ def load_local_fit_gsplats_at(
             recipe/loader mismatch in the demo, and only a code change fixes it.
             :func:`load_dataset_gsplats` translates the same error.
     """
-    from ..gsplats.gsplat_data import GSplatData
+    from ....gsplats.gsplat_data import GSplatData
 
     if not paths:
         # `[]` would otherwise sail through as a successful load of nothing, and
@@ -947,7 +948,7 @@ def load_dataset_gsplats(
     manifest: Optional[Manifest] = None,
     verbose: bool = True,
 ) -> Optional[list[Any]]:
-    """Manifest-driven stand-in for :func:`luxar.utils.bundles.load_precomputed_gsplats`.
+    """Manifest-driven stand-in for :func:`luxar.demos._support.datasets.bundles.load_precomputed_gsplats`.
 
     Same contract as the helper it is meant to replace — a list of ``GSplatData``
     in the requested order, or ``None`` when the caller must build the data
@@ -986,7 +987,7 @@ def load_dataset_gsplats(
         * **Bundle datasets.** ``gsplats_celegans`` ships one outer zip holding
           many per-frame files; the manifest addresses the bundle, not its
           members. That demo stays on
-          :func:`~luxar.utils.bundles.load_precomputed_bundle`. (``gsplats_zebrafish``
+          :func:`~luxar.demos._support.datasets.bundles.load_precomputed_bundle`. (``gsplats_zebrafish``
           was one until it moved to a single stacked 4D archive, which this
           function serves.)
         * **Runtime-computed file lists** that are not manifest entries. A
@@ -1014,7 +1015,7 @@ def load_dataset_gsplats(
     if recompute:
         return None
 
-    from ..gsplats.gsplat_data import GSplatData
+    from ....gsplats.gsplat_data import GSplatData
 
     try:
         paths = ensure_dataset(

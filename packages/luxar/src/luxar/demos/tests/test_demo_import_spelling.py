@@ -1,10 +1,9 @@
 """One spelling for the shared demo helpers: ``from luxar.demos import …``.
 
 ``luxar/demos/__init__.py`` is the barrel that re-exports shared plumbing from
-the guarded concern modules under ``luxar/utils`` (historically a single
-``luxar/utils/demos.py``), ``luxar/utils/data_fetch.py``,
-``luxar/utils/download.py``, and ``luxar/utils/remote_zip.py``, and selected
-demo-owned helpers from private modules such as ``demos/_support/_fields.py``.
+the guarded concern modules under ``demos/_support`` (historically spread
+across ``luxar/utils``), plus selected demo-owned helpers such as
+``demos/_support/_fields.py``.
 ``demos/README.md`` §6 documents the barrel as the way to reach them. Even so,
 38 demo scripts reached *past* the barrel with ``from luxar.utils.demos import
 …``. Only 12 of them had to: 4 needed ``is_lfs_pointer`` and 8
@@ -24,10 +23,10 @@ produced the second spelling in the first place, and a guard is the only thing
 that turns that gap into a failure instead of into another deep import.
 
 Every deep *spelling* counts, not just the one the demos happened to use:
-``import luxar.utils.viewer``, ``… as ud`` and ``from luxar.utils import viewer``
-reach the same module and are checked too (see
+``import luxar.demos._support.runtime.viewer``, ``… as ud`` and ``from
+luxar.demos._support.runtime import viewer`` reach the same module and are checked too (see
 :func:`test_the_guard_detects_every_deep_spelling`). The boundary is import
-STATEMENTS — a dynamic ``importlib.import_module("luxar.utils.viewer")`` is out
+STATEMENTS — a dynamic ``importlib.import_module("luxar.demos._support.runtime.viewer")`` is out
 of scope, as it is for every AST lint in this directory.
 
 BOTH detectors are exercised against synthetic trees as well as against the real
@@ -41,7 +40,7 @@ private lives in (``test_demo_meta`` deep-imports ``_DEFAULT_CACHE_ROOT`` to pin
 that ``registry.DEMO_CACHE_ROOT`` duplicates it, while the concern suites
 import their owning utility modules directly), and a re-export barrel cannot
 serve either need. Deep imports elsewhere in the package — a few
-unit tests building a Lorenz fixture, ``utils/remote_zip.py`` reaching for a
+unit tests building a Lorenz fixture, the download helpers collaborating with a
 zip-path private, and others — are out of scope for the same reason: the barrel
 is a demo-authoring convenience, not a package-wide facade.
 """
@@ -93,28 +92,29 @@ MIN_GSPLAT_DEMO_MODULES = 25
 #: directly from a demo — under any spelling — is the drift this module fails on.
 SPLIT_DEMO_UTILITY_MODULES = frozenset(
     {
-        "luxar.utils.bundles",
-        "luxar.utils.cache",
         "luxar.utils.colors",
-        "luxar.utils.device",
-        "luxar.utils.flags",
-        "luxar.utils.lfs",
-        "luxar.utils.payload_agreement",
-        "luxar.utils.provenance",
         "luxar.utils.scenes",
-        "luxar.utils.viewer",
-        "luxar.utils.zip_safety",
     }
 )
 DEEP_MODULES = SPLIT_DEMO_UTILITY_MODULES | {
     "luxar.demos._support._fields",
-    "luxar.utils.data_fetch",
-    "luxar.utils.download",
-    "luxar.utils.remote_zip",
+    "luxar.demos._support.datasets.bundles",
+    "luxar.demos._support.datasets.cache",
+    "luxar.demos._support.datasets.data_fetch",
+    "luxar.demos._support.datasets.lfs",
+    "luxar.demos._support.datasets.payload_agreement",
+    "luxar.demos._support.downloads.download",
+    "luxar.demos._support.downloads.remote_zip",
+    "luxar.demos._support.downloads.zip_safety",
+    "luxar.demos._support.runtime.device",
+    "luxar.demos._support.runtime.flags",
+    "luxar.demos._support.runtime.provenance",
+    "luxar.demos._support.runtime.viewer",
 }
 
-#: ``(package, leaf)`` PAIRS, so ``from luxar.utils import viewer`` is recognised
-#: (it binds the same module object as ``import luxar.utils.viewer``) without a
+#: ``(package, leaf)`` PAIRS, so ``from luxar.demos._support.runtime import
+#: viewer`` is recognised
+#: (it binds the same module object as ``import luxar.demos._support.runtime.viewer``) without a
 #: cross product: were a deep module added in another package, this must not turn
 #: ``from luxar.io import demos`` into a false positive.
 DEEP_PAIRS = frozenset(tuple(m.rsplit(".", 1)) for m in DEEP_MODULES)
@@ -211,6 +211,9 @@ def _deep_imports(path: Path) -> list[str]:
     ``test_demos_dependencies`` walks, and for the same reason: checking only
     one of them leaves the other spelling invisible.
     """
+    if "_support" in path.parts:
+        return []
+
     hits: list[tuple[int, str]] = []
     for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"), str(path))):
         if isinstance(node, ast.Import):
@@ -225,8 +228,8 @@ def _deep_imports(path: Path) -> list[str]:
             if module in DEEP_MODULES:
                 hits.append((node.lineno, f"from {module} import …"))
             elif module in DEEP_PARENTS:
-                # `from luxar.utils import viewer` — the module itself is the
-                # imported NAME here, so the check has to look at the names.
+                # `from luxar.demos._support.runtime import viewer` — the module
+                # itself is the imported NAME, so inspect the imported names.
                 hits += [
                     (node.lineno, f"from {module} import {a.name}")
                     for a in node.names
@@ -322,23 +325,24 @@ def test_the_guard_detects_every_deep_spelling(tmp_path: Path) -> None:
     The real trees pass, so this is the only thing standing between the guard
     and a silent regression in its own detector. It caught a real one: an
     earlier version walked ``ast.ImportFrom`` alone, which let ``import
-    luxar.utils.viewer`` and ``from luxar.utils import viewer`` through.
+    luxar.demos._support.runtime.viewer`` and ``from
+    luxar.demos._support.runtime import viewer`` through.
     """
     fake = tmp_path / "luxar" / "demos" / "demo_fake.py"
     fake.parent.mkdir(parents=True)
     deep = [
-        "import luxar.utils.viewer",
-        "import luxar.utils.viewer as ud",
-        "import luxar.utils.data_fetch",
+        "import luxar.demos._support.runtime.viewer",
+        "import luxar.demos._support.runtime.viewer as ud",
+        "import luxar.demos._support.datasets.data_fetch",
         "import luxar.demos._support._fields",
-        "from luxar.utils.viewer import launch_viewer",
-        "from luxar.utils.data_fetch import ensure_dataset",
+        "from luxar.demos._support.runtime.viewer import launch_viewer",
+        "from luxar.demos._support.datasets.data_fetch import ensure_dataset",
         "from luxar.demos._support._fields import FlowField",
-        "from luxar.utils import viewer as ud2",
-        "from luxar.utils import data_fetch",
+        "from luxar.demos._support.runtime import viewer as ud2",
+        "from luxar.demos._support.datasets import data_fetch",
         "from luxar.demos._support import _fields",
-        "from ..utils.viewer import parse_demo_flags",
-        "from ..utils import viewer as ud3",
+        "from ._support.runtime.viewer import parse_demo_flags",
+        "from ._support.runtime import viewer as ud3",
         "from ._support._fields import cubic_bounds",
     ]
     fine = [
@@ -393,10 +397,10 @@ def test_relative_spellings_resolve(tmp_path: Path) -> None:
     fake = tmp_path / "luxar" / "demos" / "demo_fake.py"
     fake.parent.mkdir(parents=True)
     source = (
-        "from ..utils.viewer import launch_viewer\n"
-        "from ..utils.data_fetch import ensure_dataset\n"
+        "from ._support.runtime.viewer import launch_viewer\n"
+        "from ._support.datasets.data_fetch import ensure_dataset\n"
         "from .registry import iter_demos\n"
-        "from luxar.utils.flags import parse_demo_flags\n"
+        "from luxar.demos._support.runtime.flags import parse_demo_flags\n"
     )
     fake.write_text(source, encoding="utf-8")
 
@@ -407,10 +411,10 @@ def test_relative_spellings_resolve(tmp_path: Path) -> None:
         if isinstance(node, ast.ImportFrom)
     ]
     assert resolved == [
-        "luxar.utils.viewer",
-        "luxar.utils.data_fetch",
+        "luxar.demos._support.runtime.viewer",
+        "luxar.demos._support.datasets.data_fetch",
         "luxar.demos.registry",
-        "luxar.utils.flags",
+        "luxar.demos._support.runtime.flags",
     ]
     assert sum(module in DEEP_MODULES for module in resolved) == 3
 

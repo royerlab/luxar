@@ -28,7 +28,7 @@ from pathlib import Path
 
 import pytest
 
-from luxar.utils.download import robust_download
+from luxar.demos._support.downloads.download import robust_download
 
 
 def _wants_gzip(accept_encoding: str | None) -> bool:

@@ -101,11 +101,23 @@ EXCLUDED = frozenset({"__init__.py", "_dependencies.py"})
 REQUIRED_SHARED_HELPERS = frozenset(
     {
         "_caption.py",
-        "_fields.py",
         "_graph_common.py",
         "_interop_common.py",
         "_roundtrip_common.py",
-        "_umap_utils.py",
+        "_support/_fields.py",
+        "_support/_umap_utils.py",
+        "_support/datasets/bundles.py",
+        "_support/datasets/cache.py",
+        "_support/datasets/data_fetch.py",
+        "_support/datasets/lfs.py",
+        "_support/datasets/payload_agreement.py",
+        "_support/downloads/download.py",
+        "_support/downloads/remote_zip.py",
+        "_support/downloads/zip_safety.py",
+        "_support/runtime/device.py",
+        "_support/runtime/flags.py",
+        "_support/runtime/provenance.py",
+        "_support/runtime/viewer.py",
     }
 )
 
@@ -124,16 +136,17 @@ def scanned_demo_modules(demos_dir: Path | None = None) -> list[Path]:
     root = DEMOS_DIR if demos_dir is None else demos_dir
     paths = sorted(
         [p for p in root.glob("*.py") if p.name not in EXCLUDED]
-        + [p for p in (root / "_support").glob("*.py") if p.name != "__init__.py"]
+        + [p for p in (root / "_support").rglob("*.py") if p.name != "__init__.py"]
     )
     names = {p.name for p in paths}
+    relative_paths = {p.relative_to(root).as_posix() for p in paths}
 
     n_demos = sum(1 for name in names if name.startswith("demo_"))
     assert n_demos >= MIN_DEMO_MODULES, (
         f"found only {n_demos} demo_*.py modules under {root} (expected at "
         f"least {MIN_DEMO_MODULES}) — discovery or the package layout changed"
     )
-    missing = REQUIRED_SHARED_HELPERS - names
+    missing = REQUIRED_SHARED_HELPERS - relative_paths
     assert not missing, (
         f"shared helper module(s) {sorted(missing)} are not in the scanned set "
         f"— the dependency guards would no longer cover them"

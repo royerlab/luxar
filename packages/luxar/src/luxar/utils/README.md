@@ -1,6 +1,9 @@
 # Utils Package
 
-The `utils` package provides utility functions for common operations in Luxar, including array manipulation, atomic directory copies, robust downloads, and demo data generation.
+The `utils` package provides cross-cutting utility functions for Luxar, including
+array manipulation, atomic directory copies, LOD policy, paths, and reusable
+scene generators. Demo-owned downloads, dataset resolution, and runtime helpers
+live under `luxar.demos` and are imported through that package's public barrel.
 
 ## Quick Start
 
@@ -75,27 +78,6 @@ success, so the destination either exists in full or not at all. Used by
 **Key Functions:**
 - `atomic_copytree(src, dst)`: Copy `src` to `dst` atomically. `dst` must not already exist (the caller clears it for overwrite, matching `shutil.copytree`). Cleans up the temp dir and re-raises on failure.
 
-### `download.py`
-Robust download utilities with retry logic, resume capability, and progress tracking.
-
-**Key Functions:**
-- `robust_download()`: Download a file from a URL with automatic retry (exponential backoff), partial download resume via HTTP Range requests, progress tracking with ETA, and file-size verification. Bytes are staged in a sibling `<dest>.part` and atomically promoted onto the destination only once complete and size-verified, so a file at the destination is complete by construction; resumes are validated with `If-Range` against the ETag/Last-Modified recorded in a `<dest>.part.validator` sidecar, so a remote that changed is re-fetched clean instead of spliced
-- `verify_file_checksum()`: Verify a file's integrity against an expected MD5 and/or SHA256 hash
-- `download_with_checksum()`: Combine `robust_download()` with checksum verification, deleting the file if the checksum fails
-- `find_quarantined_files(target)`: Return the `.corrupt` files associated with a cache *file* (both the `foo.npy.corrupt` and `foo.corrupt` quarantine conventions) or every `*.corrupt` inside a cache *directory*
-- `format_quarantine_notice(paths, ...)`: Build an actionable multi-line notice naming each quarantined path, its size, and what to do about it (empty string when there is nothing to report)
-- `warn_if_quarantined(target, ...)`: Print that notice and return the paths. Called from `robust_download()` so a user about to re-fetch a multi-gigabyte artifact is told that a rejected earlier copy is sitting next to it — instead of watching a huge download silently start over
-- `QUARANTINE_SUFFIX`: The `.corrupt` suffix used when a cached artifact fails validation (see `demos.cache_computed`). A quarantined file is never reused
-
-### `remote_zip.py`
-HTTP-range ZIP access for extracting one remote archive member without downloading
-the entire archive. `download_zip_member()` reads the end record and central
-directory, streams only the selected member, and verifies its size and CRC before
-atomically promoting the completed output.
-
-**Key Functions:**
-- `download_zip_member(url, member, output_path, ...)`: Validate the member path with `zip_safety._validate_zip_member_path`, then extract it through HTTP Range requests. A 64 MiB central-directory ceiling blocks forged metadata from buffering an entire archive, while the default 256 GiB uncompressed-member ceiling bounds decompression output
-
 ### `lod_breakpoints.py`
 Streaming-ladder breakpoint math, shared by all three geometries (Points, Lines,
 GSplats). An additive (streaming) ladder cuts an importance-ordered element
@@ -137,34 +119,17 @@ Path utilities for Luxar dataset generation.
 - `get_examples_output_dir()`: Resolve the centralized `datasets/examples/` output directory
 - `get_demos_output_dir()`: Resolve the centralized `datasets/demos/` output directory
 
-### `data_fetch.py`
-Manifest-driven demo-dataset resolution (R17: retiring in-repo Git LFS in favour
-of fetch-on-demand from Zenodo). Reads `demos/data_manifest.json` — the single
-source of truth for how each dataset is obtained, its license, and its per-file
-sha256.
-
-**Key Functions:**
-- `ensure_dataset(name, ...)`: Resolve a dataset's files to local paths, cache -> in-repo Git LFS -> Zenodo. Two live contracts describe current bytes: `sha256` for the copy this repo ships and optional `hosted_sha256` for what the Zenodo record serves. Bytes already in hand prefer hosted, then local (reported when they differ); only the download leg is strict on the hosted digest. A cached copy matching the newest `superseded_sha256` is a third, weaker verdict, reused only when no in-repo copy or download route can replace it and reported as out of date. Bytes matching none of these are quarantined (`.corrupt`) and never returned, so a stale download can never resume onto corrupt bytes. Splitting the live contracts is what keeps a truthful hosted pin from breaking a working checkout — which is what used to force Zenodo publication onto the critical path of every demo-data PR
-- `load_dataset_gsplats(name, ...)`: Mirror of `demos.load_precomputed_gsplats` (returns `GSplatData`, `None` on recompute) sourced through `ensure_dataset` — the one-line swap for migrating a demo. Only `zenodo`-bucket datasets are eligible
-- `load_manifest()` / `dataset_spec(name)`: Read the packaged manifest. The parse is memoised but each call returns an independent copy, so mutating the result (or a nested spec) cannot poison later readers; `clear_manifest_cache()` drops the parse after the manifest is rewritten on disk
-- `local_fit_path(name, filename)`: Where a demo's OWN locally computed stand-in belongs — `~/.cache/luxar/<name>/local/<filename>`. The cache dir is shared with the fetch but the two namespaces are not: `<name>/<filename>` is the manifest's destination, and `ensure_dataset` quarantines anything there that matches neither pinned digest — which a local refit never does, so one stored under the hosted name is destroyed and recomputed on every launch (#1618)
-- `load_local_fit_gsplats(name, file_names)`: Load a previous run's own local fit from that namespace, or `None` when the caller must (re)build it — `None` also when a requested file is missing or unreadable, reported loudly since the only recovery for unchecksummed local bytes is the refit. Two things raise instead: a multi-part store (`kind=partition`), because rebuilding would write the same unloadable shape and refit on every launch, and an empty `file_names`, because `[]` is neither a loaded set nor "rebuild it" and would sail through the caller's `is not None` test
-- `load_local_fit_gsplats_at(paths)`: The same door for paths the caller already holds. A demo that publishes a module-level `LOCAL_FIT` constant and writes its refit through it must READ through it too, or the two halves can be pointed at different files
-- Raises `DatasetNotFound` for an unknown key and `LocalComputeDataset` for data we cannot redistribute (the caller builds it locally). `DatasetUnavailable` (a `FileNotFoundError` subclass) is the narrow "not obtainable from anywhere yet" case a demo may route around by computing its own stand-in; every other `FileNotFoundError` here is a fault (unknown file name, missing packaged manifest, an in-repo copy matching neither pinned digest) and must propagate
-
 ### Demo support modules
-Concern-owned scene, data, cache, CLI, and viewer helpers re-exported through
-``luxar.demos`` for demo authors. Reusable scene generators remain public through
-``luxar.utils``.
+Demo-only download, dataset, and runtime helpers moved to
+`luxar.demos._support`. They are re-exported through `luxar.demos`; demo authors
+must use that barrel rather than private module paths. See the README in each
+support package for its ownership boundary and quick start. Reusable scene
+generators and color assembly remain public through `luxar.utils`.
 
 **Key Functions:**
 - `scenes.py`: `create_lorenz_attractor()`, `create_random_spheres()`, and
   `create_time_series_demo()` reusable scene generators
-- `viewer.py`: `launch_viewer()` and stable `demo_ports()` allocation
-- `bundles.py`: Precomputed GSplat and bundle loading
-- `cache.py`, `lfs.py`, `zip_safety.py`: Cache and packaged-data plumbing
-- `flags.py`, `device.py`, `provenance.py`: Demo CLI/runtime helpers
-- `colors.py`, `payload_agreement.py`: Color assembly and fit-QA helpers
+- `colors.py`: Color assembly shared outside executable demos
 
 **Public barrel highlights:**
 

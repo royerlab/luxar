@@ -228,7 +228,7 @@ def robust_download(
         ValueError: If downloaded file size doesn't match expected size
 
     Example:
-        >>> from luxar.utils.download import robust_download
+        >>> from luxar.demos._support.downloads.download import robust_download
         >>> path = robust_download(
         ...     "https://example.com/large_dataset.zip",
         ...     Path("data/dataset.zip"),

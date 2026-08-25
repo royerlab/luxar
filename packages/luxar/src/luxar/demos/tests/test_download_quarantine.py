@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from luxar.utils.download import (
+from luxar.demos._support.downloads.download import (
     QUARANTINE_SUFFIX,
     _format_bytes,
     find_quarantined_files,
