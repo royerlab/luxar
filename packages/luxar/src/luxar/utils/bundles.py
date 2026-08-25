@@ -212,8 +212,10 @@ def load_dataset_bundle(
             )
         bundle_path = by_name[bundle_name]
         # The digest ensure_dataset just verified is the exact staleness key for
-        # the extracted frames. None only when the manifest entry carries no
-        # local or hosted digest, which falls back to the (size, mtime) stamp.
+        # the extracted frames unless the entry has superseded history. In that
+        # case ensure_dataset may have served an older digest without exposing
+        # which one matched, so use the bundle's (size, mtime) stamp rather than
+        # falsely stamping those frames with the current pin.
         #
         # There are TWO contracts now (`sha256` = the repo's copy,
         # `hosted_sha256` = the record's), and `ensure_dataset` accepts bytes
@@ -224,11 +226,15 @@ def load_dataset_bundle(
         # no spurious re-extraction for datasets that never diverged.
         files, _ = resolve_variant(name, dataset_spec(name, manifest), None)
         entry = next((e for e in files if e.get("name") == bundle_name), {})
-        sha = entry.get("sha256")
-        hosted = entry.get("hosted_sha256")
-        sha = sha or hosted
-        if sha and hosted and hosted != sha:
-            sha = f"{sha}+{hosted}"
+        superseded = entry.get("superseded_sha256")
+        stamp = None
+        if not superseded:
+            sha = entry.get("sha256")
+            hosted = entry.get("hosted_sha256")
+            sha = sha or hosted
+            if sha and hosted and hosted != sha:
+                sha = f"{sha}+{hosted}"
+            stamp = f"sha256:{sha}" if sha else None
         # ensure_dataset already verified the sha256, so an LFS-pointer check
         # would be checking the wrong thing about an already-trusted file.
         return _extract_bundle_and_load(
@@ -237,7 +243,7 @@ def load_dataset_bundle(
             bundle_path.parent,
             file_names,
             validate_lfs=False,
-            stamp=f"sha256:{sha}" if sha else None,
+            stamp=stamp,
             verbose=verbose,
         )
 

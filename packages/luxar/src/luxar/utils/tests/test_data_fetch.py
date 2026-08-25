@@ -1391,6 +1391,77 @@ def test_load_dataset_bundle_verifies_the_outer_zip_then_extracts(
     assert loaded[0][1]["stamp"] == expected_stamp
 
 
+def test_load_dataset_bundle_refreshes_frames_after_superseded_bundle_is_replaced(
+    tmp_path, monkeypatch
+):
+    """A superseded extraction must not inherit the current bundle's stamp."""
+    from luxar.gsplats import gsplat_data
+    from luxar.utils import bundles
+
+    monkeypatch.setattr(
+        gsplat_data.GSplatData,
+        "load",
+        classmethod(lambda cls, path, **kwargs: path.read_bytes()),
+    )
+
+    cache_root = tmp_path / "cache"
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    bundle_name = "b.gsplats.zarr.zip"
+    frame_name = "frame0.gsplats.zarr.zip"
+    cached_bundle = cache_root / "bundle_ds" / bundle_name
+    cached_bundle.parent.mkdir(parents=True)
+    _write_bundle(cached_bundle, {frame_name: b"old-frame"})
+    old_digest = hashlib.sha256(cached_bundle.read_bytes()).hexdigest()
+
+    current_bundle = tmp_path / "current.zip"
+    _write_bundle(current_bundle, {frame_name: b"current-frame-is-longer"})
+    current_digest = hashlib.sha256(current_bundle.read_bytes()).hexdigest()
+    manifest = {
+        "schema_version": 1,
+        "records": {"r": {"published": False}},
+        "datasets": {
+            "bundle_ds": {
+                "bucket": "zenodo",
+                "record": "r",
+                "license": "cc0-1.0",
+                "dir": "bundle_ds",
+                "files": [
+                    {
+                        "name": bundle_name,
+                        "sha256": current_digest,
+                        "bytes": current_bundle.stat().st_size,
+                        "superseded_sha256": [old_digest],
+                    }
+                ],
+            }
+        },
+    }
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", repo_root)
+
+    assert bundles.load_dataset_bundle(
+        "bundle_ds",
+        bundle_name,
+        [frame_name],
+        cache_root=cache_root,
+        manifest=manifest,
+        verbose=False,
+    ) == [b"old-frame"]
+
+    repo_bundle = repo_root / "bundle_ds" / bundle_name
+    repo_bundle.parent.mkdir()
+    repo_bundle.write_bytes(current_bundle.read_bytes())
+
+    assert bundles.load_dataset_bundle(
+        "bundle_ds",
+        bundle_name,
+        [frame_name],
+        cache_root=cache_root,
+        manifest=manifest,
+        verbose=False,
+    ) == [b"current-frame-is-longer"]
+
+
 def test_load_dataset_bundle_rejects_a_bundle_that_is_not_a_manifest_file(
     tmp_path, monkeypatch
 ):
