@@ -36,11 +36,13 @@
  *
  * The demo list is `scripts/gallery/manifest.json` (shared with the Python
  * dataset generator). Demos whose dataset is absent are skipped (not failed).
- * Restrict to a subset with `GALLERY_ONLY=id1,id2 pnpm gallery`.
+ * Restrict to manifest ids with `GALLERY_ONLY=id1,id2 pnpm gallery`, or use
+ * `GALLERY_ONLY=readme` for the media embedded in the root README.
  *
  * Usage:
  *   pnpm gallery                 # capture every demo with a dataset on disk
  *   GALLERY_ONLY=lorenz pnpm gallery
+ *   GALLERY_ONLY=readme pnpm gallery
  *
  * Prerequisites:
  *   - Datasets present:  hatch run python scripts/gallery/generate_gallery_datasets.py
@@ -74,10 +76,12 @@ import {
   type BorderSample,
   type CropFraming,
 } from './crop-policy';
+import { resolveGalleryOnly } from './gallery-selection';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, '../../../../..');
 const MANIFEST_PATH = path.join(REPO_ROOT, 'scripts/gallery/manifest.json');
+const README_PATH = path.join(REPO_ROOT, 'README.md');
 const OUTPUT_DIR = path.join(REPO_ROOT, 'docs/images/gallery');
 
 // Dedicated ports (not the default 5173/9876) so a concurrent agent's dev
@@ -225,13 +229,17 @@ function loadManifest(): DemoEntry[] {
   let demos = raw.demos;
   const only = process.env.GALLERY_ONLY;
   if (only) {
-    const wanted = new Set(
-      only
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean)
+    const selection = resolveGalleryOnly(
+      only,
+      fs.readFileSync(README_PATH, 'utf-8'),
+      demos.map((demo) => demo.id)
     );
-    demos = demos.filter((d) => wanted.has(d.id));
+    if (selection.unknownTokens.length > 0) {
+      console.warn(
+        `[gallery] GALLERY_ONLY did not match manifest ids: ${selection.unknownTokens.join(', ')}`
+      );
+    }
+    demos = demos.filter((demo) => selection.wantedIds.has(demo.id));
   }
   return demos;
 }
