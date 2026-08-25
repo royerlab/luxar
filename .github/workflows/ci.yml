@@ -283,9 +283,10 @@ jobs:
   # On push/nightly, max-parallel deliberately holds one Python leg queued
   # while two Python legs and TypeScript occupy the three slots. GitHub reports
   # that held leg as `queued` with the `obsidian` label (observed 2026-08-24).
-  # The capacity value reaches 0 when no slot is idle. When this run is wholly
-  # queued behind other runs, their in-progress obsidian jobs are an additional
-  # liveness signal. The watchdog fails plumbing errors toward NOT cancelling.
+  # The capacity value reaches 0 when no slot is idle. A zero-capacity or stale
+  # publisher therefore falls through to a periodic repository-wide job scan;
+  # two scans with no active obsidian work are required before cancellation.
+  # The watchdog fails plumbing errors toward NOT cancelling.
   queue-watchdog:
     needs: [pick-runner]
     if: needs.pick-runner.outputs.label == 'obsidian'
@@ -311,6 +312,8 @@ jobs:
           end=$(( start + 10 * 60 ))
           materialize_end=$(( start + 3 * 60 ))
           seen_obsidian=0
+          liveness_poll=0
+          no_activity_checks=0
           while true; do
             now=$(date +%s)
             if [ "$now" -ge "$end" ]; then break; fi
@@ -353,10 +356,6 @@ jobs:
               echo "obsidian-routed jobs are not visible yet; retrying"
               sleep 30; continue
             fi
-            if [ -n "$running" ]; then
-              echo "this run has active obsidian jobs ($running); still queued: $queued"
-              sleep 30; continue
-            fi
             heartbeat=$(gh api "repos/${GITHUB_REPOSITORY}/actions/variables/LUXAR_CI_HEARTBEAT" \
               2>/dev/null) || heartbeat=""
             hb=$(echo "$heartbeat" | jq -r '.value // "unreadable"') || hb="unreadable"
@@ -369,17 +368,29 @@ jobs:
             if ! echo "$hb" | grep -qE '^[0-9]+$'; then hb=0; fi
             capacity_age=$(( now - hb ))
             if [ "$hb" -gt 0 ] && [ "$capacity_age" -ge -30 ] && [ "$capacity_age" -lt 180 ]; then
+              no_activity_checks=0
               echo "capacity heartbeat is ${capacity_age}s old; still queued: $queued"
               sleep 30; continue
             fi
             update_age=$(( now - hb_updated ))
+            publisher_fresh=0
             if [ "$update_age" -ge -30 ] && [ "$update_age" -lt 180 ]; then
-              echo "heartbeat publisher refreshed ${update_age}s ago (capacity=$hb); still queued: $queued"
+              publisher_fresh=1
+            fi
+            if [ "$publisher_fresh" -eq 1 ] && [ -n "$running" ]; then
+              no_activity_checks=0
+              echo "publisher is fresh and this run has active obsidian jobs ($running); still queued: $queued"
+              sleep 30; continue
+            fi
+            liveness_poll=$(( liveness_poll + 1 ))
+            if [ $(( liveness_poll % 3 )) -ne 0 ]; then
+              echo "waiting for the next repository liveness scan (publisher age ${update_age}s, capacity=$hb); still queued: $queued"
               sleep 30; continue
             fi
             other_runs=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?status=in_progress&per_page=100" \
               2>/dev/null) || other_runs=""
             if [ -z "$other_runs" ]; then
+              no_activity_checks=0
               echo "run liveness unreadable; not cancelling on a fluke — retrying"
               sleep 30; continue
             fi
@@ -397,14 +408,21 @@ jobs:
               if [ -n "$other_running" ]; then break; fi
             done
             if [ "$other_running" = "__api_error__" ]; then
+              no_activity_checks=0
               echo "job liveness unreadable; not cancelling on a fluke — retrying"
               sleep 30; continue
             fi
             if [ -n "$other_running" ]; then
+              no_activity_checks=0
               echo "other runs have active obsidian jobs ($other_running); still queued: $queued"
               sleep 30; continue
             fi
-            echo "::error::obsidian has no active jobs and its heartbeat publisher is stale (update age ${update_age}s, capacity=$hb) with jobs still queued ($queued) — cancelling the run; re-run all jobs to route to GitHub-hosted"
+            no_activity_checks=$(( no_activity_checks + 1 ))
+            if [ "$no_activity_checks" -lt 2 ]; then
+              echo "no active obsidian jobs found; requiring a second consecutive check before cancellation"
+              sleep 30; continue
+            fi
+            echo "::error::obsidian has no active jobs on two consecutive checks (publisher age ${update_age}s, capacity=$hb) with jobs still queued ($queued) — cancelling the run; re-run all jobs to route to GitHub-hosted"
             gh api -X POST "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/cancel"
             # The cancel sweeps this job too; don't fall through to success
             # while it lands.

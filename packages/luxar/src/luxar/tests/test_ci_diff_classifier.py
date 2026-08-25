@@ -468,6 +468,7 @@ else:
         ("0", "ubuntu-latest"),
         ("700", "ubuntu-latest"),
         ("1031", "ubuntu-latest"),
+        ("not-a-number", "ubuntu-latest"),
     ],
 )
 def test_pick_runner_routes_same_repo_on_fresh_capacity_heartbeat(
@@ -481,6 +482,7 @@ def test_pick_runner_routes_same_repo_on_fresh_capacity_heartbeat(
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert label == expected
+    assert "integer expression expected" not in result.stderr
 
 
 @pytest.mark.parametrize("api_error", ["runs", "jobs"])
@@ -771,22 +773,33 @@ def test_queue_watchdog_keeps_held_matrix_leg_covered_while_siblings_run(
     workflow: str, tmp_path: Path
 ) -> None:
     """A zero capacity heartbeat is expected after the three slots are admitted."""
+    running = [
+        _obsidian_job("typescript-tests", "in_progress"),
+        _obsidian_job("python-tests (3.12)", "in_progress"),
+        _obsidian_job("python-tests (3.13)", "in_progress"),
+        _obsidian_job("python-tests (3.14)", "queued"),
+    ]
     snapshots = [
-        [
-            _obsidian_job("typescript-tests", "in_progress"),
-            _obsidian_job("python-tests (3.12)", "in_progress"),
-            _obsidian_job("python-tests (3.13)", "in_progress"),
-            _obsidian_job("python-tests (3.14)", "queued"),
-        ],
+        running,
+        running,
+        running,
         [
             _obsidian_job("typescript-tests", "completed"),
             _obsidian_job("python-tests (3.14)", "in_progress"),
         ],
     ]
-    result, calls, cancelled = _run_queue_watchdog(workflow, tmp_path, snapshots)
+    result, calls, cancelled = _run_queue_watchdog(
+        workflow,
+        tmp_path,
+        snapshots,
+        heartbeat_snapshots=[_heartbeat("0", 1)],
+        other_run_active=True,
+        date_step=30,
+    )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert calls == 2
+    assert calls == 4
+    assert "other runs have active obsidian jobs" in result.stdout
     assert not cancelled, "busy capacity was mistaken for a dead obsidian host"
 
 
@@ -794,8 +807,11 @@ def test_queue_watchdog_accepts_fresh_positive_heartbeat_without_running_sibling
     workflow: str, tmp_path: Path
 ) -> None:
     """An idle live host may have queued work before a runner picks it up."""
+    queued = [_obsidian_job("python-tests (3.12)", "queued")]
     snapshots = [
-        [_obsidian_job("python-tests (3.12)", "queued")],
+        queued,
+        queued,
+        queued,
         [_obsidian_job("python-tests (3.12)", "in_progress")],
     ]
     result, calls, cancelled = _run_queue_watchdog(
@@ -806,32 +822,51 @@ def test_queue_watchdog_accepts_fresh_positive_heartbeat_without_running_sibling
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert calls == 2
+    assert calls == 4
     assert "capacity heartbeat is 0s old" in result.stdout
     assert not cancelled
 
 
-def test_queue_watchdog_accepts_fresh_zero_capacity_publisher_without_scanning_runs(
+def test_queue_watchdog_cancels_fresh_zero_capacity_without_active_jobs(
     workflow: str, tmp_path: Path
 ) -> None:
-    """A live saturated publisher must short-circuit repository run scanning."""
-    snapshots = [
-        [_obsidian_job("python-tests (3.12)", "queued")],
-        [_obsidian_job("python-tests (3.12)", "in_progress")],
+    """A live publisher alone cannot prove its runner containers are healthy."""
+    queued = [_obsidian_job("python-tests (3.12)", "queued")]
+    heartbeats = [_heartbeat("0", epoch) for epoch in range(1030, 1210, 30)]
+    result, calls, cancelled = _run_queue_watchdog(
+        workflow,
+        tmp_path,
+        [queued] * 6,
+        heartbeat_snapshots=heartbeats,
+        date_step=30,
+    )
+
+    assert result.returncode == 1
+    assert calls == 6
+    assert "no active jobs on two consecutive checks" in result.stdout
+    assert cancelled
+
+
+def test_queue_watchdog_cancels_stale_publisher_despite_own_running_job(
+    workflow: str, tmp_path: Path
+) -> None:
+    """GitHub job state cannot substitute for a live heartbeat publisher."""
+    queued_and_running = [
+        _obsidian_job("python-tests (3.12)", "in_progress"),
+        _obsidian_job("python-tests (3.14)", "queued"),
     ]
     result, calls, cancelled = _run_queue_watchdog(
         workflow,
         tmp_path,
-        snapshots,
-        heartbeat_snapshots=[_heartbeat("0", 1000)],
-        run_api_error=True,
+        [queued_and_running] * 6,
+        heartbeat_snapshots=[_heartbeat("0", 1)],
+        date_step=30,
     )
 
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert calls == 2
-    assert "heartbeat publisher refreshed 0s ago" in result.stdout
-    assert "run liveness unreadable" not in result.stdout
-    assert not cancelled
+    assert result.returncode == 1
+    assert calls == 6
+    assert "no active jobs on two consecutive checks" in result.stdout
+    assert cancelled
 
 
 def test_queue_watchdog_reloads_fresh_heartbeat_while_jobs_remain_queued(
@@ -856,7 +891,10 @@ def test_queue_watchdog_reloads_fresh_heartbeat_while_jobs_remain_queued(
     assert not cancelled
 
 
-@pytest.mark.parametrize("heartbeat", [_heartbeat("0", 1), _heartbeat("1", 1)])
+@pytest.mark.parametrize(
+    "heartbeat",
+    [_heartbeat("0", 1), _heartbeat("1", 1), _heartbeat("not-a-number", 1)],
+)
 def test_queue_watchdog_cancels_stale_heartbeat_without_active_jobs(
     workflow: str, tmp_path: Path, heartbeat: dict[str, str]
 ) -> None:
@@ -867,8 +905,9 @@ def test_queue_watchdog_cancels_stale_heartbeat_without_active_jobs(
     )
 
     assert result.returncode == 1
-    assert calls == 1
-    assert "heartbeat publisher is stale" in result.stdout
+    assert calls == 6
+    assert "no active jobs on two consecutive checks" in result.stdout
+    assert "integer expression expected" not in result.stderr
     assert cancelled
 
 
@@ -910,8 +949,11 @@ def test_queue_watchdog_fails_heartbeat_read_open(
     workflow: str, tmp_path: Path
 ) -> None:
     """An unreadable publisher update must not cancel queued obsidian work."""
+    queued = [_obsidian_job("python-tests (3.12)", "queued")]
     snapshots = [
-        [_obsidian_job("python-tests (3.12)", "queued")],
+        queued,
+        queued,
+        queued,
         [_obsidian_job("python-tests (3.12)", "in_progress")],
     ]
     result, calls, cancelled = _run_queue_watchdog(
@@ -919,7 +961,7 @@ def test_queue_watchdog_fails_heartbeat_read_open(
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert calls == 2
+    assert calls == 4
     assert "heartbeat unreadable" in result.stdout
     assert not cancelled
 
@@ -928,8 +970,11 @@ def test_queue_watchdog_accepts_fresh_zero_heartbeat_when_every_job_is_queued(
     workflow: str, tmp_path: Path
 ) -> None:
     """Other runs may saturate every slot while this run remains wholly queued."""
+    queued = [_obsidian_job("python-tests (3.12)", "queued")]
     snapshots = [
-        [_obsidian_job("python-tests (3.12)", "queued")],
+        queued,
+        queued,
+        queued,
         [_obsidian_job("python-tests (3.12)", "in_progress")],
     ]
     result, calls, cancelled = _run_queue_watchdog(
@@ -941,7 +986,7 @@ def test_queue_watchdog_accepts_fresh_zero_heartbeat_when_every_job_is_queued(
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert calls == 2
+    assert calls == 4
     assert "other runs have active obsidian jobs" in result.stdout
     assert not cancelled
 
@@ -954,8 +999,11 @@ def test_queue_watchdog_fails_liveness_reads_open(
     workflow: str, tmp_path: Path, api_error: str, expected_message: str
 ) -> None:
     """An unreadable cross-run signal must never cancel queued obsidian work."""
+    queued = [_obsidian_job("python-tests (3.12)", "queued")]
     snapshots = [
-        [_obsidian_job("python-tests (3.12)", "queued")],
+        queued,
+        queued,
+        queued,
         [_obsidian_job("python-tests (3.12)", "in_progress")],
     ]
     result, calls, cancelled = _run_queue_watchdog(
@@ -969,7 +1017,7 @@ def test_queue_watchdog_fails_liveness_reads_open(
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert calls == 2
+    assert calls == 4
     assert expected_message in result.stdout
     assert not cancelled
 
