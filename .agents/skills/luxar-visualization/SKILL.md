@@ -154,6 +154,14 @@ the `add_*` call or it is lost. Four things about that round-trip surprise peopl
 - **`opacity` is the exposure lever, and it wants to be tiny** (1e-2 is normal).
   Scaling the amplitudes instead does nothing — the viewer normalises by the stored
   maximum.
+- **The display window is NOT an exposure lever, and reaching for it first is the
+  classic wrong turn.** Under `volumetric` (or any sum projection) a pixel
+  accumulates along the ray, so brightness is a sum over every element behind it
+  while the window only picks each element's LUT index — it cannot govern the sum.
+  The symptom that tells the two apart: if widening the window *dims the whole
+  object toward the colormap's dark foot and shrinks its footprint* rather than
+  spreading it across the LUT, you are over-accumulated and want `opacity`. A frame
+  whose bright regions are genuinely clipped flat is the window's problem.
 - **`absorption` (volumetric blending) is optical depth and ACCUMULATES along the
   ray**, so the right value depends on how deep the object is, not on how bright it
   is. It is not portable between datasets: a value tuned on a 170 µm brain will
@@ -178,6 +186,20 @@ scene = compiler.create_scene(
         camera=CameraConfig(position=(cx, cy, cz + d), target=(cx, cy, cz), fov=47.0),
     ),
 )
+```
+
+**In a bundled demo this exact call fails a required test.** Demos run under the
+cinematic 35 mm preset, and `test_demos_cinematic_mode.py` refuses an authored
+pose that pins `fov`/`fov_preset` or that is not visibly composed for the 63°
+lens. So in `luxar/demos/` leave the FOV unset and pass the position through
+`_cinematic_camera.pull_in`, INLINE — the check reads the AST, so a pose assigned
+to a local first does not count:
+
+```python
+from luxar.demos._cinematic_camera import VIEWER_DEFAULT_FOV_DEG, pull_in
+
+eye = (cx, cy, cz + d)  # d solved at VIEWER_DEFAULT_FOV_DEG, as above
+camera = CameraConfig(position=pull_in(eye, centre), target=centre)
 ```
 
 Two decisions this formula makes explicit:
