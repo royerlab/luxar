@@ -20,7 +20,7 @@ from ...validation.nd_transforms import (
 
 @dataclass(frozen=True)
 class WorldBoundsLeaf:
-    """One geometry leaf and its transform-expanded world-space bounds."""
+    """One geometry leaf, its author-facing owner, and world-space bounds."""
 
     path: str
     geometry_type: str
@@ -28,6 +28,7 @@ class WorldBoundsLeaf:
     blending_mode: str | None = None
     opacity: float = 1.0
     lod_branches: tuple[tuple[str, str], ...] = ()
+    owner_path: str | None = None
 
 
 @dataclass
@@ -64,6 +65,7 @@ class _WorldBoundsCollector:
         blending_mode: str | None,
         opacity: float,
         lod_branches: tuple[tuple[str, str], ...],
+        owner_path: str | None,
     ) -> None:
         node_type = attrs.get("type")
         # Keep this keyed to the format contract: a newly authorable geometry
@@ -90,6 +92,7 @@ class _WorldBoundsCollector:
                 blending_mode,
                 min(1.0, max(0.0, opacity)),
                 lod_branches,
+                owner_path or group.path,
             )
         )
 
@@ -102,9 +105,16 @@ class _WorldBoundsCollector:
         blending_mode: str | None,
         opacity: float,
         lod_branches: tuple[tuple[str, str], ...],
+        owner_path: str | None,
         is_root: bool = False,
     ) -> None:
         attrs = dict(group.attrs)
+        node_owner_path = owner_path
+        if node_owner_path is None and (
+            attrs.get("type") in GEOMETRY_TYPES
+            or attrs.get("kind") in {"lod", "partition"}
+        ):
+            node_owner_path = group.path
         node_blending_mode = blending_mode
         node_opacity = opacity
         if not (is_root and attrs.get("type") == "scene"):
@@ -134,6 +144,7 @@ class _WorldBoundsCollector:
             node_blending_mode,
             node_opacity,
             lod_branches,
+            node_owner_path,
         )
         for child_name in sorted(group.group_keys()):
             child_lod_branches = lod_branches
@@ -147,6 +158,7 @@ class _WorldBoundsCollector:
                 node_blending_mode,
                 node_opacity,
                 child_lod_branches,
+                node_owner_path,
             )
 
 
@@ -261,6 +273,7 @@ def collect_world_bounds(store: zarr.Group) -> list[WorldBoundsLeaf]:
         None,
         1.0,
         (),
+        None,
         is_root=True,
     )
     return collector.leaves

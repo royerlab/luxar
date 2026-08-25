@@ -63,6 +63,10 @@ def _leaf(
     return group
 
 
+def _warning_output(output: str) -> str:
+    return "\n".join(line for line in output.splitlines() if "⚠️" in line)
+
+
 def test_viewer_default_modes_match_python_contract() -> None:
     assert set(DEFAULT_BLENDING_MODE_BY_GEOMETRY) == set(GEOMETRY_TYPES)
     files = {
@@ -231,6 +235,82 @@ def test_compiler_finalize_reports_default_points_mesh_hazard(
     assert "blending_mode" not in store["mesh"].attrs
 
 
+def test_additive_lod_chunks_do_not_warn_against_their_parent(
+    tmp_path: Path, capsys
+) -> None:
+    output_path = tmp_path / "scene.luxar.zarr"
+    positions = np.random.default_rng(0).uniform(0.0, 1.0, (12, 3)).astype(np.float32)
+    with LuxarZarrCompiler(output_path) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_points(
+            "cloud",
+            positions,
+            blending_mode="normal",
+            additive_lod={"n_lods": 3},
+        )
+
+    assert "overlapping order-dependent nodes" not in capsys.readouterr().out
+
+
+def test_additive_lod_warning_names_parent_once(tmp_path: Path, capsys) -> None:
+    output_path = tmp_path / "scene.luxar.zarr"
+    positions = np.random.default_rng(1).uniform(0.0, 1.0, (12, 3)).astype(np.float32)
+    vertices = np.array(
+        [[-1.0, -1.0, -1.0], [2.0, -1.0, -1.0], [-1.0, 2.0, -1.0], [-1.0, -1.0, 2.0]],
+        dtype=np.float32,
+    )
+    faces = np.array([[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]], dtype=np.uint32)
+    with LuxarZarrCompiler(output_path) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_points("cloud", positions, additive_lod={"n_lods": 3})
+        scene.add_mesh("surface", vertices, faces)
+
+    output = _warning_output(capsys.readouterr().out)
+    assert output.count("mix depth-ignoring and depth-writing geometry") == 1
+    assert "'cloud' (additive)" in output
+    assert "cloud/additive_" not in output
+
+
+def test_partitioned_node_warning_names_parent_once(tmp_path: Path, capsys) -> None:
+    output_path = tmp_path / "scene.luxar.zarr"
+    positions = np.random.default_rng(2).uniform(0.0, 1.0, (12, 3)).astype(np.float32)
+    vertices = np.array(
+        [[-1.0, -1.0, -1.0], [2.0, -1.0, -1.0], [-1.0, 2.0, -1.0], [-1.0, -1.0, 2.0]],
+        dtype=np.float32,
+    )
+    faces = np.array([[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]], dtype=np.uint32)
+    with LuxarZarrCompiler(output_path) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_points("cloud", positions, partition={"max_elements": 3})
+        scene.add_mesh("surface", vertices, faces)
+
+    output = _warning_output(capsys.readouterr().out)
+    assert output.count("mix depth-ignoring and depth-writing geometry") == 1
+    assert "'cloud' (additive)" in output
+    assert "cloud/part_" not in output
+
+
+def test_separate_partitioned_nodes_warn_separately(tmp_path: Path, capsys) -> None:
+    output_path = tmp_path / "scene.luxar.zarr"
+    positions = np.random.default_rng(3).uniform(0.0, 1.0, (12, 3)).astype(np.float32)
+    vertices = np.array(
+        [[-1.0, -1.0, -1.0], [2.0, -1.0, -1.0], [-1.0, 2.0, -1.0], [-1.0, -1.0, 2.0]],
+        dtype=np.float32,
+    )
+    faces = np.array([[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]], dtype=np.uint32)
+    with LuxarZarrCompiler(output_path) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_points("cloud_a", positions, partition={"max_elements": 3})
+        scene.add_points("cloud_b", positions + 0.1, partition={"max_elements": 3})
+        scene.add_mesh("surface", vertices, faces)
+
+    output = _warning_output(capsys.readouterr().out)
+    assert output.count("mix depth-ignoring and depth-writing geometry") == 2
+    assert "'cloud_a' (additive)" in output
+    assert "'cloud_b' (additive)" in output
+    assert "/part_" not in output
+
+
 def test_effective_opacity_and_nearest_blend_setter_drive_depth_writes(capsys) -> None:
     root = _root()
     holder = root.create_group("holder")
@@ -318,6 +398,14 @@ def test_overlapping_sorted_nodes_warn_but_lod_alternatives_do_not(capsys) -> No
     root = _root()
     _leaf(root, "surface", "points", blending_mode="normal")
     _leaf(root, "volume", "gsplats", blending_mode="volumetric")
+
+    warn_overlapping_blending(root)
+
+    output = capsys.readouterr().out
+    assert "'surface' (normal)" in output
+    assert "'volume' (volumetric)" in output
+
+    root = _root()
     lod = root.create_group("lod")
     lod.attrs["kind"] = "lod"
     _leaf(lod, "coarse", "points", blending_mode="normal")
@@ -325,10 +413,7 @@ def test_overlapping_sorted_nodes_warn_but_lod_alternatives_do_not(capsys) -> No
 
     warn_overlapping_blending(root)
 
-    output = capsys.readouterr().out
-    assert "'surface' (normal)" in output
-    assert "'volume' (volumetric)" in output
-    assert "'lod/coarse' (normal) and 'lod/fine' (normal)" not in output
+    assert capsys.readouterr().out == ""
 
 
 def test_partially_overlapping_sorted_nodes_do_not_warn(capsys) -> None:

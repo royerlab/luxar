@@ -30,6 +30,10 @@ class _BlendLeaf:
     lod_branches: tuple[tuple[str, str], ...]
     mode_explicit: bool = False
 
+    @property
+    def owner_path(self) -> str:
+        return self.leaf.owner_path or self.leaf.path
+
 
 def _effective_leaf(leaf: WorldBoundsLeaf) -> _BlendLeaf:
     mode = leaf.blending_mode
@@ -146,6 +150,8 @@ def warn_overlapping_blending(
     warned_additive: set[str] = set()
     warned_sorted: set[str] = set()
     for left, right in _candidate_pairs(leaves, displayed_dimensions):
+        if left.owner_path == right.owner_path:
+            continue
         if not _can_coexist(left, right) or not _intersects(
             left.leaf, right.leaf, displayed_dimensions
         ):
@@ -157,13 +163,13 @@ def warn_overlapping_blending(
             right.mode == "additive" and not right.mode_explicit and left_writes
         ):
             additive = left if left.mode == "additive" else right
-            if additive.leaf.path in warned_additive:
+            if additive.owner_path in warned_additive:
                 continue
             writer = right if additive is left else left
-            warned_additive.add(additive.leaf.path)
+            warned_additive.add(additive.owner_path)
             aprint(
-                f"  ⚠️  overlapping nodes '{additive.leaf.path}' ({additive.mode}) and "
-                f"'{writer.leaf.path}' ({writer.mode}) mix depth-ignoring and "
+                f"  ⚠️  overlapping nodes '{additive.owner_path}' ({additive.mode}) and "
+                f"'{writer.owner_path}' ({writer.mode}) mix depth-ignoring and "
                 "depth-writing geometry; use blending_mode='luminous' on the "
                 "additive node unless X-ray rendering is intentional."
             )
@@ -176,11 +182,11 @@ def warn_overlapping_blending(
             and _internally_sorted(right)
             and (_contains(left.leaf, right.leaf) or _contains(right.leaf, left.leaf))
         ):
-            if left.leaf.path in warned_sorted or right.leaf.path in warned_sorted:
+            if left.owner_path in warned_sorted or right.owner_path in warned_sorted:
                 continue
-            warned_sorted.update((left.leaf.path, right.leaf.path))
+            warned_sorted.update((left.owner_path, right.owner_path))
             aprint(
-                f"  ⚠️  overlapping order-dependent nodes '{left.leaf.path}' ({left.mode}) "
-                f"and '{right.leaf.path}' ({right.mode}) have view-dependent cross-node "
+                f"  ⚠️  overlapping order-dependent nodes '{left.owner_path}' ({left.mode}) "
+                f"and '{right.owner_path}' ({right.mode}) have view-dependent cross-node "
                 "order; make one node additive or separate their bounds."
             )
