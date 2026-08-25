@@ -1,3 +1,9 @@
+/**
+ * Incremental Memory-tab updater. Patches GPU buffer-pool and accumulator
+ * telemetry into the stable structure painted by `../templates/memory.ts`.
+ * Returns `false` when that structure is absent so the monitor can rebuild it.
+ */
+
 import type { MemoryMetrics } from '../../../types/data-monitor-types';
 import { POOLED_GEOMETRY_TYPES } from '../../../types/data-monitor-types';
 import { formatNumber } from '../templates/format';
@@ -9,6 +15,7 @@ export function updateMemoryTab(container: HTMLElement | null, metrics: MemoryMe
   if (!container) return false;
   if (!container.querySelector('[data-field="memory-total"]')) return false;
 
+  // GPU pool table
   if (metrics.gpuPool) {
     for (const type of POOLED_GEOMETRY_TYPES) {
       const typeStats = metrics.gpuPool.byType[type];
@@ -34,6 +41,7 @@ export function updateMemoryTab(container: HTMLElement | null, metrics: MemoryMe
     );
   }
 
+  // Accumulator table
   for (const type of POOLED_GEOMETRY_TYPES) {
     const stats = metrics.accumulators[type];
     const hasData = stats !== null && stats.capacity > 0;
@@ -42,6 +50,7 @@ export function updateMemoryTab(container: HTMLElement | null, metrics: MemoryMe
     const growsElement = container.querySelector(`[data-field="acc-${type}-grows"]`);
     if (growsElement) {
       growsElement.textContent = hasData ? `${stats.growthEvents}` : '—';
+      // Update warning class for high growth events (clear when <= 5)
       updateColorClass(
         growsElement as HTMLElement,
         hasData && stats.growthEvents > 5 ? getColorClass('warning') : ''
@@ -49,6 +58,8 @@ export function updateMemoryTab(container: HTMLElement | null, metrics: MemoryMe
     }
   }
 
+  // Accumulator summary. Iterate the shared pooled-geometry list so newly
+  // pooled kinds participate without another hardcoded total.
   const totalAccumulatorMemory = POOLED_GEOMETRY_TYPES.reduce(
     (total, type) => total + (metrics.accumulators[type]?.memoryMB ?? 0),
     0

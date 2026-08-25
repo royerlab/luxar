@@ -1,3 +1,10 @@
+/**
+ * Incremental Overview-tab updater. The renderer paints the stable card,
+ * progress-bar, and scene-graph structure once; this module patches the
+ * per-tick values and invokes the caller-owned badge refresh only after the
+ * expected structure is present.
+ */
+
 import type { CacheMetrics, GlobalStats } from '../../../types/data-monitor-types';
 import { formatBytes, formatNumber, getCacheMemoryColorClass } from '../templates/format';
 import { countColorClass } from '../templates/primitives';
@@ -19,7 +26,12 @@ export function updateOverviewTab(
     container.querySelector('[data-field="visible-splats"]');
   if (!anyPrimaryField) return false;
 
+  // Single-type layouts use " total" suffix in subtitle (matches template rendering)
   const suffix = [hasPoints, hasLines, hasGSplats].filter(Boolean).length === 1 ? ' total' : '';
+
+  // Count cards: value text plus the state color (neutral with data,
+  // dimmed at zero — matches `countColorClass` in the initial render,
+  // so a card doesn't stay dimmed after points scroll into view).
   const patchCount = (field: string, visible: number, dataset: number) => {
     const percent = dataset > 0 ? ((visible / dataset) * 100).toFixed(1) : '0';
     patchField(container, field, formatNumber(visible));
@@ -34,6 +46,10 @@ export function updateOverviewTab(
   patchField(container, 'memory-used', formatBytes(cacheMetrics.totalCacheMemory));
   patchField(container, 'query-speed', `${stats.avgQueryTime.toFixed(0)}ms`);
   patchField(container, 'query-rate', `${stats.queriesPerSecond.toFixed(1)}/sec`);
+  // "DATA LOADED" card: cumulative bytes delivered across all tiers
+  // (L1 + L2 + network), so it stays informative on a warm/cache-served
+  // reload where `bytesTransferred` is legitimately 0. The subtitle
+  // breaks out how much of that came over the network plus live bandwidth.
   const network = cacheMetrics.network;
   const dataLoaded = network ? (network.totalBytesServed ?? network.bytesTransferred) : 0;
   patchField(container, 'network-bytes', network ? formatBytes(dataLoaded) : '0B');
