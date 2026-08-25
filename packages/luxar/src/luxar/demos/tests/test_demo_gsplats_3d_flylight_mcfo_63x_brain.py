@@ -237,3 +237,87 @@ class TestServeCallSite:
             _demo.main()
 
         spy.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Levelling angle
+# ---------------------------------------------------------------------------
+class _FakeSub:
+    def __init__(self, centers, amplitudes):
+        self.centers = centers
+        self.amplitudes = amplitudes
+
+
+class _FakeLeaf:
+    def __init__(self, subs):
+        self.additive_sublods = subs
+
+
+def _tilted_cloud(angle_deg: float, n: int = 20000, seed: int = 0) -> _FakeLeaf:
+    """An elongated cloud tilted by ``angle_deg`` in the (col 0, col 1) plane.
+
+    Column 2 is the narrow axis, matching the shipped archive (extents
+    663 x 303 x 167 um), so columns 0/1 are the view plane.
+    """
+    import math
+
+    rng = np.random.default_rng(seed)
+    long_ = rng.normal(0.0, 100.0, n)
+    short = rng.normal(0.0, 20.0, n)
+    thin = rng.normal(0.0, 5.0, n)
+    t = math.radians(angle_deg)
+    x = long_ * math.cos(t) - short * math.sin(t)
+    y = long_ * math.sin(t) + short * math.cos(t)
+    centers = np.stack([x, y, thin], axis=1).astype(np.float32)
+    return _FakeLeaf([_FakeSub(centers, np.ones(n, dtype=np.float32))])
+
+
+def _inplane_ratio(centers: np.ndarray) -> float:
+    spread = centers.max(axis=0) - centers.min(axis=0)
+    widest = np.sort(spread)[-2:]
+    return float(widest[1] / widest[0])
+
+
+@pytest.mark.parametrize("tilt", [0.0, 20.0, 48.84, -30.0, 70.0])
+def test_levelling_angle_recovers_the_tilt_and_actually_levels(
+    monkeypatch, tilt: float
+) -> None:
+    """The returned angle must undo the tilt for ANY tilt, including past 45 deg.
+
+    Regression test for a real bug: the angle was originally derived in the plane
+    of "the two widest axes". Past ~45 degrees the second axis becomes the wider
+    one, the x/y roles swap, and the result is off by exactly 90 degrees — a
+    70-degree tilt came back as -20, and levelling made the in-plane extent ratio
+    WORSE (2.30 -> 1.15). `transform --rotate-z` acts on columns 0/1 regardless
+    of which happens to be wider, so the plane must be fixed, not sorted.
+    """
+    import math
+
+    import luxar.gsplats.tree as tree_mod
+
+    leaf = _tilted_cloud(tilt)
+    monkeypatch.setattr(tree_mod, "iter_leaves", lambda node: [node])
+
+    angle = _demo.levelling_angle_deg(leaf)
+    assert angle == pytest.approx(-tilt, abs=0.5), (
+        f"expected about {-tilt} to undo a {tilt} deg tilt, got {angle}"
+    )
+
+    centers = np.asarray(leaf.additive_sublods[0].centers, dtype=np.float64)
+    t = math.radians(angle)
+    x, y = centers[:, 0], centers[:, 1]
+    rotated = np.stack(
+        [
+            x * math.cos(t) - y * math.sin(t),
+            x * math.sin(t) + y * math.cos(t),
+            centers[:, 2],
+        ],
+        axis=1,
+    )
+    # Levelling must leave the cloud elongated in the view plane. The bound is
+    # the load-bearing half of this test: the buggy version scored 1.15 here on a
+    # 70-degree tilt. (Not asserted as a strict increase: for an already-level
+    # cloud the empirical principal axis sits ~0.04 deg off the nominal one, so
+    # rotating onto it can shave a hair off the axis-aligned extent.)
+    assert _inplane_ratio(rotated) > 4.0
+    assert _inplane_ratio(rotated) >= 0.99 * _inplane_ratio(centers)

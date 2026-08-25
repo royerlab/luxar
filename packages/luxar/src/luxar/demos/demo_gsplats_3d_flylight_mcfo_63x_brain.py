@@ -184,8 +184,14 @@ from luxar.demos import (
     ensure_dataset,
     launch_viewer,
     parse_demo_flags,
+    require_module,
 )
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
+from luxar.demos._h5j import (
+    decode_h5j_channel,
+    reference_channel_index,
+    signal_channel_indices,
+)
 from luxar.gsplats.io.load_gsplats import load_gsplat_node
 from luxar.gsplats.tree import center_bounds
 from luxar.utils.paths import get_demos_output_dir
@@ -276,6 +282,7 @@ CAGE_OPACITY = 0.18
 FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
+RECOMPUTE = FLAGS["recompute"]
 
 
 # =============================================================================
@@ -295,14 +302,371 @@ def camera_distance(width: float, height: float, half_depth: float) -> float:
 
 
 # =============================================================================
+# Recompute (--recompute): rebuild the archive from Janelia's raw H5J
+# =============================================================================
+# This pipeline used to exist only as prose in the docstring above, which is why
+# the shipped archive carried no PSNR: once the working directory looked gone
+# there was no way to re-measure it. A levelled, micron-scaled archive CANNOT be
+# scored after the fact against a voxel-grid volume, so the quality figures have
+# to be stamped at fit time — which means the fit has to be reproducible.
+#
+#: Public S3, no credentials. This URL plus the code below is the whole recipe.
+H5J_URL = (
+    "https://janelia-flylight-imagery.s3.amazonaws.com/Annotator%20Gen1%20MCFO/"
+    "VT019012/VT019012-20140423_20_D5-f-63x-brain-GAL4-unaligned_stack.h5j"
+)
+H5J_NAME = "VT019012-20140423_20_D5-f-63x-brain-GAL4-unaligned_stack.h5j"
+H5J_SHA256 = "189595b1013af62f71158556fab75ae535c9a8d3765138fa9a462583f09eed98"
+
+#: Percentile the signal channels are balanced at, for the composite and again
+#: for the per-splat colour. High enough to sit in real signal, low enough not
+#: to ride on one hot voxel.
+BALANCE_PERCENTILE = 99.99
+
+CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_flylight_mcfo_63x"
+
+
+def _luxar(*args: str) -> None:
+    """Run one ``luxar`` CLI command in-process.
+
+    The recompute path drives the CLI rather than the fitting API deliberately.
+    ``gsplat fit --tiling content`` resolves the background floor ONCE against
+    the whole volume before it plans boxes; handing ``auto`` to the planner
+    directly re-estimates it per box crop, and abutting boxes that subtract
+    different pedestals show up as brightness steps at box boundaries.
+    Reproducing that resolution here would be a second copy of it, free to drift.
+    """
+    from luxar.cli import app
+
+    aprint(f"$ luxar {' '.join(args)}")
+    try:
+        app(list(args))
+    except SystemExit as exc:  # the CLI exits even on success
+        if exc.code not in (0, None):
+            raise RuntimeError(
+                f"`luxar {' '.join(args)}` failed with exit code {exc.code}"
+            ) from exc
+
+
+def fetch_h5j() -> Path:
+    """Download Janelia's stitched H5J, or reuse a verified cached copy."""
+    import hashlib
+
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    target = CACHE_DIR / H5J_NAME
+    if target.is_file():
+        aprint(f"H5J cached: {target} ({target.stat().st_size:,} bytes)")
+        return target
+
+    requests = require_module("requests")
+    with asection(f"Fetching {H5J_NAME}"):
+        partial = target.with_name(target.name + ".part")
+        digest = hashlib.sha256()
+        done = 0
+        with requests.get(H5J_URL, stream=True, timeout=120) as r:
+            r.raise_for_status()
+            with open(partial, "wb") as fh:
+                for chunk in r.iter_content(chunk_size=1 << 22):
+                    fh.write(chunk)
+                    digest.update(chunk)
+                    done += len(chunk)
+        got = digest.hexdigest()
+        aprint(f"  {done:,} bytes, sha256 {got[:16]}…")
+        if got != H5J_SHA256:
+            partial.unlink(missing_ok=True)
+            raise RuntimeError(
+                f"{H5J_NAME} hash mismatch: got {got}, expected {H5J_SHA256}. "
+                "Refusing a source that is not the sample this demo describes."
+            )
+        partial.rename(target)
+    return target
+
+
+def build_composite(h5j_path: Path, out_zarr: Path) -> None:
+    """Gain-balance the SIGNAL channels and store their per-voxel maximum.
+
+    The composite is fitted ONCE rather than each channel separately. An MCFO
+    hue is the RATIO of the three channels at the SAME voxels; three independent
+    fits scatter the three colours across three different splat sets and the hue
+    — the entire point of MultiColor FlpOut — is destroyed.
+
+    The reference channel is excluded, identified from the file's own
+    ``channel_spec`` rather than by index: at 10-19% occupancy against ~0.1% for
+    the signal, sweeping nc82 in would let it dominate the splat budget.
+
+    Gains are DERIVED here rather than hardcoded. The shipped run recorded
+    ``[1.3133, 1.0, 1.1720]`` for this sample, but a constant would silently be
+    wrong for any other — and an earlier attempt's recorded gains
+    (``[1.2339, 1.5959, 1.0]``, from p99.99 values in the *thousands*) came from
+    16-bit raw tiles, not from this 8-bit H5J at all.
+    """
+    from luxar._zarr_compat import create_array, open_group
+
+    with asection("Building the gain-balanced composite"):
+        signal = signal_channel_indices(h5j_path)
+        aprint(
+            f"signal channels {signal}, "
+            f"reference channel {reference_channel_index(h5j_path)} (excluded)"
+        )
+
+        chans = [decode_h5j_channel(h5j_path, c) for c in signal]
+        tops = [float(np.percentile(c, BALANCE_PERCENTILE)) for c in chans]
+        ceiling = max(tops)
+        gains = [ceiling / t if t > 0 else 1.0 for t in tops]
+        aprint(
+            f"p{BALANCE_PERCENTILE} {[round(t, 1) for t in tops]} "
+            f"gains {[round(g, 4) for g in gains]}"
+        )
+
+        composite = np.zeros(chans[0].shape, dtype=np.float32)
+        for c, g in zip(chans, gains):
+            np.maximum(composite, c.astype(np.float32) * np.float32(g), out=composite)
+        del chans
+        aprint(
+            f"composite {composite.shape} max {composite.max():.1f} "
+            f"nonzero {100.0 * np.count_nonzero(composite) / composite.size:.2f}%"
+        )
+        with asection(f"Writing {out_zarr.name}"):
+            grp = open_group(str(out_zarr), mode="w")
+            create_array(
+                grp,
+                "composite",
+                data=np.rint(composite).astype(np.uint16),
+                chunks=(64, 256, 256),
+                compressor="zstd",
+            )
+
+
+def colour_from_channels(h5j_path: Path, fit_path: Path, out_path: Path) -> None:
+    """Give every splat the MCFO hue of the voxel it sits on.
+
+    The fit is monochrome — it was made against the composite — so colour is
+    applied afterwards by sampling the three signal channels at each splat's own
+    centre. Sampling per splat is what preserves the hue: an MCFO colour is the
+    ratio of the three channels at ONE location.
+
+    Channels are sampled one at a time and released; three 3.2 Gvoxel float
+    channels held together would be ~39 GB.
+    """
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    with asection("Colouring splats from the three signal channels"):
+        data = GSplatData.load(str(fit_path))
+        centres = np.asarray(data.centers, dtype=np.float64)
+        n = centres.shape[0]
+        aprint(f"{n:,} splats to colour")
+
+        signal = signal_channel_indices(h5j_path)
+        rgb = np.zeros((n, len(signal)), dtype=np.float32)
+        idx = np.rint(centres).astype(np.int64)
+        for slot, ch in enumerate(signal):
+            vol = decode_h5j_channel(h5j_path, ch)
+            sel = idx.copy()
+            for ax in range(3):
+                np.clip(sel[:, ax], 0, vol.shape[ax] - 1, out=sel[:, ax])
+            rgb[:, slot] = vol[sel[:, 0], sel[:, 1], sel[:, 2]]
+            del vol
+
+        for slot in range(rgb.shape[1]):
+            top = float(np.percentile(rgb[:, slot], BALANCE_PERCENTILE))
+            if top > 0:
+                rgb[:, slot] /= top
+        np.clip(rgb, 0.0, 1.0, out=rgb)
+
+        uncoloured = int(np.count_nonzero(rgb.max(axis=1) == 0))
+        share = rgb.sum(axis=0)
+        share = share / max(share.sum(), 1e-9)
+        aprint(
+            f"colour share {np.round(100.0 * share, 1).tolist()}%, "
+            f"{100.0 * uncoloured / n:.3f}% uncoloured"
+        )
+
+        # Demo colours are LINEAR light, not sRGB - the viewer applies the
+        # transfer curve itself.
+        data.colors = np.rint(rgb * 255.0).astype(np.uint8)
+        data.save(str(out_path))
+        aprint(f"wrote {out_path}")
+
+
+def levelling_angle_deg(node) -> float:
+    """Degrees about the view axis that bring the specimen level.
+
+    The brain lies DIAGONALLY on the imaging canvas — the canvas is square
+    because it is the union of five square tile positions, not because the
+    specimen is — so an unlevelled scene frames empty corners.
+
+    The angle is the amplitude-weighted principal axis of the splat cloud in the
+    view plane. It is DATA-DERIVED and moves with any refit, so it must be
+    recomputed rather than carried as a constant (the shipped run used 48.84).
+    """
+    from luxar.gsplats.tree import iter_leaves
+
+    # Columns 0 and 1, because that is the plane `transform --rotate-z` acts on
+    # (--spatial-dims defaults to 0,1,2 and the listed order assigns X/Y/Z).
+    # Picking "the two widest axes" instead is WRONG and silently so: past ~45
+    # degrees of tilt the second axis becomes the wider one, the roles swap, and
+    # the returned angle is off by exactly 90 degrees. Measured on synthetic
+    # clouds, a 70-degree tilt came back as -20 and levelling made the in-plane
+    # extent ratio WORSE (2.30 -> 1.15) instead of better.
+    xs, ys, ws, thin = [], [], [], []
+    for leaf in iter_leaves(node):
+        for s in leaf.additive_sublods:
+            c = np.asarray(s.centers, dtype=np.float64)
+            xs.append(c[:, 0])
+            ys.append(c[:, 1])
+            ws.append(np.asarray(s.amplitudes, dtype=np.float64).ravel())
+            thin.append(c.max(axis=0) - c.min(axis=0))
+    spread = np.max(np.asarray(thin), axis=0)
+    if int(np.argmin(spread)) != 2:
+        aprint(
+            f"  WARNING: column 2 is not the narrowest axis (extents "
+            f"{np.round(spread, 0).tolist()}), so columns 0/1 may not be the "
+            "view plane; the levelling angle would rotate the wrong pair."
+        )
+    x, y, w = np.concatenate(xs), np.concatenate(ys), np.concatenate(ws)
+    w = w / w.sum()
+    x = x - (w * x).sum()
+    y = y - (w * y).sum()
+    cxx = float((w * x * x).sum())
+    cyy = float((w * y * y).sum())
+    cxy = float((w * x * y).sum())
+    return -math.degrees(0.5 * math.atan2(2.0 * cxy, cxx - cyy))
+
+
+def recompute_archive() -> Path:
+    """Rebuild the fitted archive from the raw H5J and return its path.
+
+    Each stage writes into the demo cache, so an interrupted run resumes at the
+    first missing artifact instead of starting over. The FIT is the stage that
+    matters for provenance: it stamps ``psnr_db`` and ``foreground_psnr_db``.
+    """
+    composite_zarr = CACHE_DIR / "composite.zarr"
+    cal_json = CACHE_DIR / "cal_h5j.json"
+    fit_path = CACHE_DIR / "fit.gsplats.zarr"
+    coloured = CACHE_DIR / "fit_coloured.gsplats.zarr"
+    laddered = CACHE_DIR / "fit_stream.gsplats.zarr"
+    faced = CACHE_DIR / "fit_faceon.gsplats.zarr"
+    scaled = CACHE_DIR / "fit_um.gsplats.zarr"
+    final = CACHE_DIR / "flylight_mcfo_63x.gsplats.zarr"
+
+    with asection("Recomputing the FlyLight 63x archive from the raw H5J"):
+        h5j = fetch_h5j()
+
+        if not composite_zarr.exists():
+            build_composite(h5j, composite_zarr)
+        else:
+            aprint(f"composite present: {composite_zarr}")
+
+        if not cal_json.exists():
+            _luxar(
+                "gsplat",
+                "cal",
+                str(composite_zarr),
+                str(cal_json),
+                "--array-key",
+                "composite",
+                "--auto-region",
+                "--feature-metric",
+                "edges",
+                "--k-star-metric",
+                "gain",
+                "--device",
+                "cuda",
+            )
+
+        if not fit_path.exists():
+            _luxar(
+                "gsplat",
+                "fit",
+                str(composite_zarr),
+                str(fit_path),
+                "--array-key",
+                "composite",
+                "--tiling",
+                "content",
+                "--cal",
+                str(cal_json),
+                "--flat",
+                "--floor",
+                "auto",
+                "--device",
+                "cuda",
+            )
+
+        if not coloured.exists():
+            colour_from_channels(h5j, fit_path, coloured)
+
+        if not laddered.exists():
+            _luxar(
+                "gsplat",
+                "lod",
+                str(coloured),
+                str(laddered),
+                "--recipe",
+                "stream",
+                "--target-ms",
+                "200",
+            )
+
+        # Orientation: rotate FIRST, scale in a SECOND call. A single
+        # invocation applies --scale BEFORE --rotate-*, which would put the
+        # 0.38 um axial pitch onto a lateral axis.
+        if not faced.exists():
+            _luxar("gsplat", "transform", str(laddered), str(faced), "--rotate-y", "90")
+        if not scaled.exists():
+            _luxar(
+                "gsplat",
+                "transform",
+                str(faced),
+                str(scaled),
+                "--scale",
+                ",".join(str(v) for v in VOXEL_UM),
+            )
+
+        if not final.exists():
+            node, _ = load_gsplat_node(str(scaled))
+            angle = levelling_angle_deg(node)
+            bmin, bmax = center_bounds(node)
+            aprint(f"levelling angle {angle:.2f} deg (shipped run: 48.84)")
+            _luxar(
+                "gsplat",
+                "transform",
+                str(scaled),
+                str(final),
+                "--rotate-z",
+                f"{angle:.2f}",
+            )
+            levelled, _ = load_gsplat_node(str(final))
+            lmin, lmax = center_bounds(levelled)
+            ext = np.round(np.asarray(lmax) - np.asarray(lmin), 0)
+            aprint(
+                f"bbox {np.round(np.asarray(bmax) - np.asarray(bmin), 0)} -> {ext} um "
+                "(shipped run levelled 483x508 -> 663x303x167)"
+            )
+            wide = np.sort(ext)[-2:]
+            if wide[1] / max(wide[0], 1.0) < 1.5:
+                aprint(
+                    "  WARNING: the levelled bbox is not elongated. Check the "
+                    "--rotate-z sign against the 663x303 reference before shipping."
+                )
+        aprint(f"Archive: {final}")
+        return final
+
+
+# =============================================================================
 # Data loading
 # =============================================================================
 def resolve_data() -> Path:
-    """Resolve the fitted gsplats: cache -> in-repo copy -> Zenodo.
+    """Resolve the fitted gsplats: recompute, else cache -> in-repo -> Zenodo.
 
     ``ensure_dataset`` verifies the manifest sha256 at every step, so a partial
-    or corrupted copy is never handed back.
+    or corrupted copy is never handed back. With ``--recompute`` the archive is
+    rebuilt from Janelia's raw H5J instead (see :func:`recompute_archive`) —
+    which is the only way to obtain its quality figures, since they are stamped
+    at fit time and cannot be recovered from the levelled store afterwards.
     """
+    if RECOMPUTE:
+        return recompute_archive()
     with asection("Resolving FlyLight MCFO gsplats"):
         paths = ensure_dataset(DATASET)
         aprint(f"Data: {paths[0]}")
