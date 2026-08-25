@@ -3,9 +3,9 @@
  * Guard: the element-menu command's dispatched event name stays equal to
  * `OPEN_ELEMENT_MENU_EVENT` (issue #1917).
  *
- * The input layer cannot import the core-layer constant, so this focused
- * integration test exercises the command surface and observes the actual
- * CustomEvent rather than scanning source text.
+ * The input layer cannot import the core-layer constant, so the event name is
+ * necessarily written twice. A mismatch fails silently while the mouse path
+ * still works; this file checks the command event plus the two binding guards.
  */
 import { describe, it, expect, vi } from 'vitest';
 import { InputHandler } from '../../../../../input/input-handler';

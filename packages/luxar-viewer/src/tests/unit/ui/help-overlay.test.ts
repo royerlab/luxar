@@ -110,6 +110,44 @@ describe('showHelpOverlay - Memory Leak Prevention', () => {
       },
     });
     const bindings = contextManager.getRegisteredShortcutBindings();
+    const groups = Array.from(bindings.values())
+      .flat()
+      .flatMap((binding) => (binding.help ? [binding.help.group] : []));
+    expect(new Set(groups)).toEqual(
+      new Set([
+        'dimension-step',
+        'dimension-select',
+        'toggle-help',
+        'toggle-dimensions',
+        'dataset-browser',
+        'element-menu',
+        'performance',
+        'rendering',
+        'scale-bar',
+        'colormap-legend',
+        'overlays',
+        'recording',
+        'screenshot',
+        'layers',
+        'debug-console',
+        'data-monitor',
+        'recenter-camera',
+        'control-mode',
+        'inertial-mode',
+        'cinematic',
+        'fullscreen',
+        'escape',
+        'export-viewer-state',
+        'fly-move',
+        'fly-roll',
+        'fly-vertical',
+        'fly-look',
+        'fly-speed',
+        'animation-toggle',
+        'animation-bounds',
+        'animation-speed',
+      ])
+    );
     showHelpOverlay(bindings);
     const text = Array.from(
       document.querySelectorAll<HTMLElement>('.luxar-help-overlay__desc')
@@ -124,6 +162,29 @@ describe('showHelpOverlay - Memory Leak Prevention', () => {
     for (const description of expected.values()) {
       expect(text.filter((entry) => entry === description)).toHaveLength(1);
     }
+  });
+
+  it('derives a single-chord help chip from a rebound action', () => {
+    const contextManager = new InputContextManager();
+    contextManager.registerBinding(InputContext.NAVIGATION, {
+      actionId: 'help.toggle',
+      key: 'h',
+      handler: vi.fn(),
+      description: 'Toggle help overlay',
+      help: { section: 'basics', group: 'toggle-help', order: 1 },
+    });
+    contextManager.registerBinding(InputContext.NAVIGATION, {
+      actionId: 'help.toggle',
+      key: 'z',
+      handler: vi.fn(),
+      description: 'Toggle help overlay',
+      help: { section: 'basics', group: 'toggle-help', order: 1 },
+    });
+
+    showHelpOverlay(contextManager.getRegisteredShortcutBindings());
+    const keys = Array.from(document.querySelectorAll('kbd')).map((key) => key.textContent);
+    expect(keys).toContain('Z');
+    expect(keys).not.toContain('H');
   });
 
   it('omits keyboard rows absent from the live registration snapshot', () => {

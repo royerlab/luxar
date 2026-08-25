@@ -64,7 +64,7 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
     handler: () => commands.toggleHelp(),
     preventDefault: true,
     description: 'Toggle help overlay',
-    help: { section: 'basics', group: 'toggle-help', keys: ['H'], order: 50 },
+    help: { section: 'basics', group: 'toggle-help', order: 50 },
   });
 
   // Dimension sliders
@@ -77,7 +77,6 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
     help: {
       section: 'dimensions',
       group: 'toggle-dimensions',
-      keys: ['N'],
       order: 40,
     },
   });
@@ -89,7 +88,7 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
     handler: () => commands.toggleDatasetBrowser(),
     preventDefault: true,
     description: 'Toggle dataset browser',
-    help: { section: 'basics', group: 'dataset-browser', keys: ['O'], order: 40 },
+    help: { section: 'basics', group: 'dataset-browser', order: 40 },
   });
 
   // Element context menu at the current hover (issue #1917) — the keyboard
@@ -147,7 +146,7 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
     handler: () => commands.togglePerformanceStats(),
     preventDefault: true,
     description: 'Toggle performance stats',
-    help: { section: 'panels', group: 'performance', keys: ['P'], order: 50 },
+    help: { section: 'panels', group: 'performance', order: 50 },
   });
 
   // Rendering controls (only without modifiers)
@@ -162,7 +161,7 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
     },
     preventDefault: false,
     description: 'Toggle rendering controls',
-    help: { section: 'panels', group: 'rendering', keys: ['R'], order: 10 },
+    help: { section: 'panels', group: 'rendering', order: 10 },
   });
 
   // Scale bar overlay
@@ -172,7 +171,7 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
     handler: () => panels.getScaleBar()?.toggle(),
     preventDefault: true,
     description: 'Toggle scale bar',
-    help: { section: 'panels', group: 'scale-bar', keys: ['B'], order: 80 },
+    help: { section: 'panels', group: 'scale-bar', order: 80 },
   });
 
   // Colormap legend overlay
@@ -182,7 +181,7 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
     handler: () => panels.getColormapLegend()?.toggle(),
     preventDefault: true,
     description: 'Toggle colormap legend',
-    help: { section: 'panels', group: 'colormap-legend', keys: ['J'], order: 90 },
+    help: { section: 'panels', group: 'colormap-legend', order: 90 },
   });
 
   // Screen-space overlays toggle
@@ -192,7 +191,7 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
     handler: () => panels.getOverlayManager()?.toggle(),
     preventDefault: true,
     description: 'Toggle overlays',
-    help: { section: 'panels', group: 'overlays', keys: ['U'], order: 100 },
+    help: { section: 'panels', group: 'overlays', order: 100 },
   });
 
   // Recording panel toggle
@@ -201,8 +200,8 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
     key: 't',
     handler: () => panels.getRecordingPanel()?.toggle(),
     preventDefault: true,
-    description: 'Toggle recording panel',
-    help: { section: 'panels', group: 'recording', keys: ['T'], order: 60 },
+    description: 'Recording panel (screenshot / video)',
+    help: { section: 'panels', group: 'recording', order: 60 },
   });
 
   // Quick screenshot
@@ -212,7 +211,7 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
     handler: () => panels.getRecordingPanel()?.captureScreenshot(),
     preventDefault: true,
     description: 'Quick screenshot',
-    help: { section: 'panels', group: 'screenshot', keys: ['G'], order: 70 },
+    help: { section: 'panels', group: 'screenshot', order: 70 },
   });
 
   // Layers panel (L key without modifiers).
@@ -231,7 +230,7 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
     },
     preventDefault: false,
     description: 'Toggle layers panel',
-    help: { section: 'panels', group: 'layers', keys: ['L'], order: 20 },
+    help: { section: 'panels', group: 'layers', order: 20 },
   });
 
   // Debug console (Ctrl+L)
@@ -248,7 +247,7 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
     },
     preventDefault: true,
     description: 'Toggle debug console',
-    help: { section: 'panels', group: 'debug-console', keys: ['Ctrl', 'L'], order: 120 },
+    help: { section: 'panels', group: 'debug-console', order: 120 },
   });
 
   // Data loading monitor (M key, no modifiers)
@@ -262,8 +261,8 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
       }
     },
     preventDefault: false,
-    description: 'Cycle data loading monitor',
-    help: { section: 'panels', group: 'data-monitor', keys: ['M'], order: 40 },
+    description: 'Data monitor (mini / expanded / off)',
+    help: { section: 'panels', group: 'data-monitor', order: 40 },
   });
 
   // Recenter camera (F key, no modifiers)
@@ -278,7 +277,7 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
     },
     preventDefault: false,
     description: 'Recenter camera on scene',
-    help: { section: 'basics', group: 'recenter-camera', keys: ['F'], order: 20 },
+    help: { section: 'basics', group: 'recenter-camera', order: 20 },
   });
 
   // Toggle control mode (V key, no modifiers)
@@ -293,7 +292,7 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
     },
     preventDefault: false,
     description: 'Cycle control mode (orbit/fly/ortho)',
-    help: { section: 'basics', group: 'control-mode', keys: ['V'], order: 30 },
+    help: { section: 'basics', group: 'control-mode', order: 30 },
   });
 
   // Toggle inertial mode (I key, no modifiers)
@@ -308,7 +307,7 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
     },
     preventDefault: false,
     description: 'Toggle inertial mode (fly controls)',
-    help: { section: 'fly', group: 'inertial-mode', keys: ['I'], order: 60 },
+    help: { section: 'fly', group: 'inertial-mode', order: 60 },
   });
 
   // Toggle cinematic mode (C key, no modifiers)
@@ -322,8 +321,8 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
       }
     },
     preventDefault: false,
-    description: 'Toggle cinematic mode',
-    help: { section: 'panels', group: 'cinematic', keys: ['C'], order: 110 },
+    description: 'Cinematic mode (bloom / noise / vignette / lens)',
+    help: { section: 'panels', group: 'cinematic', order: 110 },
   });
 
   // Fullscreen toggle (Space, context-aware)
@@ -338,7 +337,7 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
     },
     preventDefault: false,
     description: 'Toggle fullscreen',
-    help: { section: 'basics', group: 'fullscreen', keys: ['Space'], order: 10 },
+    help: { section: 'basics', group: 'fullscreen', order: 10 },
   });
 
   // Escape key — context-aware panel closing
@@ -348,7 +347,7 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
     handler: () => commands.handleEscape(),
     preventDefault: true,
     description: 'Close panels / Exit fullscreen',
-    help: { section: 'basics', group: 'escape', keys: ['Esc'], order: 60 },
+    help: { section: 'basics', group: 'escape', order: 60 },
   });
 
   // Export viewer state (Ctrl+Shift+S)
@@ -365,7 +364,6 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
     help: {
       section: 'panels',
       group: 'export-viewer-state',
-      keys: ['Ctrl', '⇧', 'S'],
       order: 130,
     },
   });

@@ -28,7 +28,7 @@ import type { PerformanceMonitor } from '../../../ui/performance-monitor';
 import type { LayersPanel } from '../../../ui/layers';
 import type { DebugConsole } from '../../../ui/debug-console';
 import type { RecordingPanel } from '../../../ui/recording-panel';
-import { KeyAction, type KeyActionId } from '../../../input/input-handler/key-bindings/actions';
+import { KeyAction, type KeyActionId } from '../../../input/input-handler';
 
 /** Everything the rail item closures reference (all constructed by the pipeline). */
 export interface RailItemsDeps {

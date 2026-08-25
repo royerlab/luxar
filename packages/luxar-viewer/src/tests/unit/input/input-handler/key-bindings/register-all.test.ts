@@ -25,12 +25,7 @@ import {
 import {
   InputContext,
   InputContextManager,
-  type ContextConfig,
 } from '../../../../../input/input-handler/context-manager';
-import {
-  canonicalizeBindingKey,
-  isKeyAllowedInContext,
-} from '../../../../../input/input-handler/context-manager/routing-rules';
 import type { SceneManager } from '../../../../../scene/scene-manager';
 import type { DebugConsole } from '../../../../../ui/debug-console';
 import type { ShortcutHelpMetadata } from '../../../../../types/shortcut-help';
@@ -206,16 +201,6 @@ function setupRealContextManager() {
   return { contextManager, commands, flyHandleKeyDown, flyHandleKeyUp };
 }
 
-function bindingKey(binding: CapturedBinding): string {
-  const modifiers = binding.modifiers ?? {};
-  const parts = [binding.key];
-  if (modifiers.ctrl) parts.push('ctrl');
-  if (modifiers.shift) parts.push('shift');
-  if (modifiers.alt) parts.push('alt');
-  if (modifiers.meta) parts.push('meta');
-  return canonicalizeBindingKey(parts.join('+'));
-}
-
 function findBinding(
   bindings: CapturedBinding[],
   context: InputContext,
@@ -307,24 +292,6 @@ describe('registerAllKeyBindings — structure', () => {
 
     for (const actionId of railActions) {
       expect(contextManager.getShortcutLabel(actionId), actionId).toBeDefined();
-    }
-  });
-
-  it('registers only bindings admitted by their stock context filters', () => {
-    const { bindings } = setup();
-    const contextManager = new InputContextManager();
-    const configs = (
-      contextManager as unknown as {
-        contextConfigs: Map<InputContext, ContextConfig>;
-      }
-    ).contextConfigs;
-
-    for (const binding of bindings) {
-      const config = configs.get(binding.context)!;
-      expect(
-        isKeyAllowedInContext(binding.key, config, bindingKey(binding)),
-        `${binding.context}:${bindingKey(binding)}`
-      ).toBe(true);
     }
   });
 
@@ -427,6 +394,7 @@ describe('registerAllKeyBindings — NAVIGATION command dispatch', () => {
       const buttonEvent = new KeyboardEvent('keydown', { cancelable: true });
       contextMenu.handler(buttonEvent);
       expect(commands.openElementMenu).toHaveBeenCalledTimes(2);
+      expect(buttonEvent.defaultPrevented).toBe(false);
     } finally {
       canvas.remove();
       button.remove();

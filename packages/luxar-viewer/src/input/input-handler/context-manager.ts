@@ -49,7 +49,9 @@ export enum InputContext {
  * Key binding configuration
  */
 export interface KeyBinding {
+  /** Stable action identity, independent of the registered chord. */
   actionId: string;
+  /** Optional discriminator for parameterized actions sharing one identity. */
   actionParameter?: string | number;
   key: string;
   modifiers?: {
@@ -67,6 +69,7 @@ export interface KeyBinding {
   keyupHandler?: (event: KeyboardEvent) => boolean | void | Promise<void>;
   preventDefault?: boolean;
   description: string;
+  /** Shortcut-overlay metadata, or an explicit opt-out. */
   help: ShortcutHelpMetadata | false;
 }
 
@@ -79,9 +82,10 @@ export interface ContextConfig {
   allowedKeys?: string[]; // Base or canonical binding keys handled by this context
   blockedKeys?: string[]; // Canonical binding keys never handled by this context
   passthrough?: boolean; // If true, unhandled keys pass to lower contexts
+  /** Ordered contexts consulted when this context declines a key. */
   fallbackContexts?: InputContext[];
+  /** Rebuild `allowedKeys` from this context's live registrations. */
   allowRegisteredBindings?: boolean;
-  blockBindingsFrom?: InputContext[];
 }
 
 /**
@@ -152,7 +156,7 @@ export class InputContextManager {
    * Initialize default context configurations with priorities and key filters.
    *
    * Sets up four predefined contexts:
-   * - NAVIGATION (priority 0): Default mode, blocks WASD keys
+   * - NAVIGATION (priority 0): Default orbit-navigation mode
    * - FLY_CONTROLS (priority 1): Enables WASD + arrow keys for fly mode
    * - TYPING (priority 10): Highest priority, blocks all shortcuts
    * - UI_INTERACTION (priority 5): For UI panels
@@ -164,7 +168,6 @@ export class InputContextManager {
       name: 'Navigation',
       priority: 0,
       passthrough: false,
-      blockBindingsFrom: [InputContext.FLY_CONTROLS],
     });
 
     // Fly controls context - WASD movement active
@@ -350,24 +353,12 @@ export class InputContextManager {
       contextActions.delete(this.getActionKey(existingBinding));
     }
     if (existingActionBindingKey && existingActionBindingKey !== bindingKey) {
-      log.warning(
-        Modules.INPUT_CONTEXT,
-        `Key binding action conflict in ${context}: ${actionKey} is already registered`
-      );
       contextBindings.delete(existingActionBindingKey);
     }
 
     contextBindings.set(bindingKey, binding);
     contextActions.set(actionKey, bindingKey);
     this.recomputeContextFilters();
-
-    const config = this.contextConfigs.get(contextKey);
-    if (config && !this.isKeyAllowedInContext(binding.key, bindingKey, config)) {
-      log.warning(
-        Modules.INPUT_CONTEXT,
-        `Key binding ${bindingKey} in ${context} is unreachable under its context filters`
-      );
-    }
   }
 
   /**
@@ -815,6 +806,7 @@ export class InputContextManager {
           actionId: binding.actionId,
           actionParameter: binding.actionParameter,
           key,
+          shortcutLabel: formatShortcutLabel(key),
           description: binding.description,
           help: binding.help,
         }))
@@ -833,11 +825,18 @@ export class InputContextManager {
     return this.getDebugInfo().registeredBindings;
   }
 
+  /** Resolve an action label in the active context, then its explicit fallbacks. */
   public getShortcutLabel(actionId: string): string | undefined {
-    for (const actions of this.actionBindings.values()) {
+    const contexts = [
+      this.currentContext,
+      ...(this.contextConfigs.get(this.currentContext)?.fallbackContexts ?? []),
+    ];
+    for (const context of contexts) {
+      const actions = this.actionBindings.get(context);
+      if (!actions) continue;
       for (const [actionKey, bindingKey] of actions) {
         if (actionKey === actionId || actionKey.startsWith(`${actionId}:`)) {
-          return this.formatShortcutLabel(bindingKey);
+          return formatShortcutLabel(bindingKey);
         }
       }
     }
@@ -882,30 +881,33 @@ export class InputContextManager {
       if (contextConfig.allowRegisteredBindings) {
         contextConfig.allowedKeys = Array.from(ownKeys);
       }
-      if (contextConfig.blockBindingsFrom) {
-        contextConfig.blockedKeys = contextConfig.blockBindingsFrom.flatMap((source) =>
-          Array.from(this.bindings.get(source)?.keys() ?? []).filter((key) => !ownKeys.has(key))
-        );
-      }
     }
   }
+}
 
-  private formatShortcutLabel(bindingKey: string): string {
-    if (bindingKey === ' ') return 'Space';
-    const parts = bindingKey.split('+');
-    const modifierOrder = ['ctrl', 'meta', 'alt', 'shift'];
-    return [
-      ...modifierOrder.filter((modifier) => parts.includes(modifier)),
-      ...parts.filter((part) => !modifierOrder.includes(part)),
-    ]
-      .map((part) => {
-        if (part === 'ctrl') return 'Ctrl';
-        if (part === 'shift') return 'Shift';
-        if (part === 'alt') return 'Alt';
-        if (part === 'meta') return 'Meta';
-        if (part === 'escape') return 'Esc';
-        return part.length === 1 ? part.toUpperCase() : part;
-      })
-      .join('+');
-  }
+/** Format a canonical binding key for user-facing shortcut labels. */
+function formatShortcutLabel(bindingKey: string): string {
+  const labels: Record<string, string> = {
+    ' ': 'Space',
+    alt: 'Alt',
+    arrowdown: 'ArrowDown',
+    arrowleft: 'ArrowLeft',
+    arrowright: 'ArrowRight',
+    arrowup: 'ArrowUp',
+    contextmenu: 'ContextMenu',
+    ctrl: 'Ctrl',
+    end: 'End',
+    escape: 'Esc',
+    home: 'Home',
+    meta: 'Meta',
+    shift: 'Shift',
+  };
+  const parts = bindingKey.split('+');
+  const modifierOrder = ['ctrl', 'meta', 'alt', 'shift'];
+  return [
+    ...modifierOrder.filter((modifier) => parts.includes(modifier)),
+    ...parts.filter((part) => !modifierOrder.includes(part)),
+  ]
+    .map((part) => labels[part] ?? part.toUpperCase())
+    .join('+');
 }

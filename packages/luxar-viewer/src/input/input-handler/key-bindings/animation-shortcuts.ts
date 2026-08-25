@@ -65,7 +65,7 @@ export class AnimationShortcuts {
       handler: () => this.toggleSelectedDimensionPlayback(),
       preventDefault: true,
       description: 'Play / pause dimension animation',
-      help: { section: 'dimensions', group: 'animation-toggle', keys: ['K'], order: 50 },
+      help: { section: 'dimensions', group: 'animation-toggle', order: 50 },
     });
 
     // Home — Jump to start

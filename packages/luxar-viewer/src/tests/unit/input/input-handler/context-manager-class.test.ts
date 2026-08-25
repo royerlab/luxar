@@ -13,7 +13,6 @@ import {
   InputContext,
   MAX_KEY_EVENT_DEPTH,
 } from '../../../../input/input-handler/context-manager';
-import { log } from '../../../../utils/log';
 
 function registerTestBinding(
   manager: InputContextManager,
@@ -61,7 +60,7 @@ describe('InputContextManager', () => {
       // `false` would otherwise be hidden behind two "returns false"
       // outcomes that look identical.
       //
-      // Use 'h' — 'a' is in flyModeKeys (blocked in NAVIGATION).
+      // Use a stock navigation shortcut.
       const handler = vi.fn();
       registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'h',
@@ -90,20 +89,6 @@ describe('InputContextManager', () => {
       const event3 = new KeyboardEvent('keydown', { key: 'h' });
       expect(manager.handleKeyEvent(event3, 'down')).toBe(true);
       expect(handler).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  describe('binding registration', () => {
-    it('keeps registered bindings reachable when deriving context filters', () => {
-      const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
-
-      registerTestBinding(manager, InputContext.FLY_CONTROLS, {
-        key: 'w',
-        handler: vi.fn(),
-      });
-
-      expect(warning).not.toHaveBeenCalled();
-      warning.mockRestore();
     });
   });
 
@@ -204,6 +189,42 @@ describe('InputContextManager', () => {
       expect(second).toHaveBeenCalledOnce();
       expect(manager.getShortcutLabel('test.rebind')).toBe('J');
     });
+
+    it.each([
+      ['F10', undefined, 'F10'],
+      ['Home', undefined, 'Home'],
+      ['End', undefined, 'End'],
+      ['ArrowUp', { shift: true }, 'Shift+ArrowUp'],
+      ['ContextMenu', undefined, 'ContextMenu'],
+      [' ', { shift: true }, 'Shift+Space'],
+    ])('formats %s bindings for display', (key, modifiers, expected) => {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
+        actionId: 'test.format',
+        key,
+        modifiers,
+        handler: vi.fn(),
+      });
+
+      expect(manager.getShortcutLabel('test.format')).toBe(expected);
+    });
+
+    it('resolves duplicate actions from the active context before fallbacks', () => {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
+        actionId: 'test.shared',
+        key: 'n',
+        handler: vi.fn(),
+      });
+      registerTestBinding(manager, InputContext.FLY_CONTROLS, {
+        actionId: 'test.shared',
+        key: 'f',
+        handler: vi.fn(),
+      });
+
+      manager.setContext(InputContext.FLY_CONTROLS);
+      expect(manager.getShortcutLabel('test.shared')).toBe('F');
+      manager.setContext(InputContext.NAVIGATION);
+      expect(manager.getShortcutLabel('test.shared')).toBe('N');
+    });
     it('should register key bindings', () => {
       const handler = vi.fn();
 
@@ -246,7 +267,7 @@ describe('InputContextManager', () => {
         handler,
         preventDefault: true,
       });
-      // Use 'h' (not in flyModeKeys → not in NAVIGATION blockedKeys).
+      // Use a stock navigation shortcut.
       const event = new KeyboardEvent('keydown', { key: 'h' });
       const handled = manager.handleKeyEvent(event, 'down');
       expect(handled).toBe(true);
@@ -634,22 +655,26 @@ describe('InputContextManager', () => {
       expect(handler).toHaveBeenCalled();
     });
 
-    it('should respect blocked keys', () => {
-      // NAVIGATION context blocks WASD keys
+    it('dispatches a NAVIGATION binding that shares a chord with FLY_CONTROLS', () => {
       manager.setContext(InputContext.NAVIGATION);
 
-      const handler = vi.fn();
+      const navigationHandler = vi.fn();
+      const flyHandler = vi.fn();
+      registerTestBinding(manager, InputContext.NAVIGATION, {
+        key: 'w',
+        handler: navigationHandler,
+      });
       registerTestBinding(manager, InputContext.FLY_CONTROLS, {
         key: 'w',
-        handler,
+        handler: flyHandler,
       });
 
       const event = new KeyboardEvent('keydown', { key: 'w' });
       const handled = manager.handleKeyEvent(event, 'down');
 
-      // Should be blocked
-      expect(handled).toBe(false);
-      expect(handler).not.toHaveBeenCalled();
+      expect(handled).toBe(true);
+      expect(navigationHandler).toHaveBeenCalledOnce();
+      expect(flyHandler).not.toHaveBeenCalled();
     });
   });
 
@@ -851,7 +876,7 @@ describe('InputContextManager', () => {
       });
 
       // Stand in FLY_CONTROLS (priority 1, passthrough). 'h' is not
-      // in flyModeKeys/arrows allowedKeys so it falls through.
+      // in the FLY_CONTROLS registered-chord allowlist, so it falls through.
       manager.setContext(InputContext.FLY_CONTROLS);
 
       const event = new KeyboardEvent('keydown', { key: 'h' });
@@ -1277,43 +1302,7 @@ describe('InputContextManager', () => {
     });
   });
 
-  describe('NAVIGATION context allows Shift [input.md G20]', () => {
-    // input.md G20[P5]: flyModeKeysWithoutShift filters Shift OUT of
-    // NAVIGATION's blockedKeys. No test directly asserts that Shift is
-    // allowed in NAVIGATION. A regression that re-added Shift to the
-    // blocklist would survive (Shift+wheel uses WindowEventHandler, not
-    // this manager).
-    it('[G20] Shift is NOT in NAVIGATION blockedKeys (probed via private field cast)', () => {
-      // We pin the contract by reading the private contextConfigs map
-      // directly via cast rather than via a dispatch test: a regression
-      // that re-added 'Shift' to NAVIGATION's blockedKeys list would
-      // surface here even if dispatch behaviour shifted independently.
-      const configs = (
-        manager as unknown as {
-          contextConfigs: Map<InputContext, { blockedKeys?: string[] }>;
-        }
-      ).contextConfigs;
-      const navConfig = configs.get(InputContext.NAVIGATION);
-      const blocked = navConfig?.blockedKeys ?? [];
-      expect(blocked).not.toContain('Shift');
-    });
-
-    it('[G20] WASD keys ARE blocked in NAVIGATION (sanity that the filter is correct)', () => {
-      // Symmetric to G20: pin that the OTHER fly-mode keys (WASD) ARE
-      // blocked in NAVIGATION. This guards the test from a mutation that
-      // empties the blockedKeys array entirely (which would let G20 pass
-      // for the wrong reason).
-      const flyHandler = vi.fn();
-      registerTestBinding(manager, InputContext.FLY_CONTROLS, {
-        key: 'w',
-        handler: flyHandler,
-      });
-      const event = new KeyboardEvent('keydown', { key: 'w' });
-      const handled = manager.handleKeyEvent(event, 'down');
-      expect(handled).toBe(false);
-      expect(flyHandler).not.toHaveBeenCalled();
-    });
-
+  describe('NAVIGATION context allows modified bindings [input.md G20]', () => {
     it('dispatches a modified NAVIGATION binding when the bare key is blocked', () => {
       const navigationHandler = vi.fn();
       const flyHandler = vi.fn();

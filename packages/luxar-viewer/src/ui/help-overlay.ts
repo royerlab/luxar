@@ -119,7 +119,7 @@ function getRegisteredHelpEntries(
       groups.add(binding.help.group);
       const sectionEntries = entries.get(binding.help.section) ?? [];
       sectionEntries.push({
-        keys: [...binding.help.keys],
+        keys: binding.help.keys ? [...binding.help.keys] : [binding.shortcutLabel ?? binding.key],
         label: binding.description,
         order: binding.help.order,
       });

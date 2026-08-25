@@ -57,6 +57,9 @@ import { PanelCoordinator } from './input-handler/commands/panel-coordinator';
 import { WindowEventHandler } from './input-handler/window-events/window-event-handler';
 import { registerAllKeyBindings } from './input-handler/key-bindings/register-all';
 import type { RegisteredShortcutBindings } from '../types/shortcut-help';
+import { KeyAction, type KeyActionId } from './input-handler/key-bindings/actions';
+
+export { KeyAction, type KeyActionId };
 import type {
   KeyBindingsCommands,
   KeyBindingsPanelGetters,
@@ -551,7 +554,7 @@ export class InputHandler {
    * system. Bindings are organized by input context:
    * - NAVIGATION: Default orbit mode shortcuts
    * - FLY_CONTROLS: WASD movement keys for fly mode
-   * - All contexts: Passthrough allows global shortcuts to work everywhere
+   * - Explicit fallback contexts: shared shortcuts remain reachable where intended
    *
    * Called during init() to set up the complete keyboard interface.
    *
@@ -674,7 +677,8 @@ export class InputHandler {
     return this.contextManager.getRegisteredShortcutBindings();
   }
 
-  public getShortcutLabel(actionId: string): string | undefined {
+  /** Resolve the active binding label for a registered action. */
+  public getShortcutLabel(actionId: KeyActionId): string | undefined {
     return this.contextManager.getShortcutLabel(actionId);
   }
 

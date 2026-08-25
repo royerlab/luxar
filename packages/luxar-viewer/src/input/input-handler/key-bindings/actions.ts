@@ -1,3 +1,5 @@
+/** Stable action identifiers shared by bindings and shortcut-label consumers. */
+/** Stable action identifiers shared by bindings and shortcut-label consumers. */
 export const KeyAction = {
   navigateDimension: 'dimension.navigate',
   selectDimension: 'dimension.select',
@@ -30,4 +32,5 @@ export const KeyAction = {
   flySpeedBoost: 'fly.speed-boost',
 } as const;
 
+/** Union of built-in action identifiers accepted by the viewer façade. */
 export type KeyActionId = (typeof KeyAction)[keyof typeof KeyAction];

@@ -124,14 +124,13 @@ Lifecycle:
    - Global orbit-mode shortcut → `navigation-bindings.ts`.
    - Fly-mode movement key → `fly-bindings.ts`.
    - Animation playback shortcut → `animation-shortcuts.ts`.
-2. Add the command to `KeyBindingsCommands` in `register-all.ts`.
-3. Implement the command on `InputHandler` (typically a 1–3 line delegate
+2. Register its stable id in `key-bindings/actions.ts`, then provide the
+   required `actionId`, `description`, and `help` fields on the binding. Use
+   `help: { section, group, order }` for a single chord, add `keys` only for a
+   grouped multi-chord row, or use `help: false` for an intentional opt-out.
+3. Add the command to `KeyBindingsCommands` in `register-all.ts`.
+4. Implement the command on `InputHandler` (typically a 1–3 line delegate
    into a helper under `commands/`).
-4. If the shortcut should appear in the help overlay, add its row to
-   `HELP_SECTIONS` in `ui/help-overlay.ts` with a
-   `bindings: [{ context, key }]` reference. Use the canonical key form
-   (lowercase, with `+`-separated parts sorted); a missing reference or the
-   wrong context/key fails `tests/unit/ui/help-overlay.test.ts`.
 
 ## Adding a new optional panel
 

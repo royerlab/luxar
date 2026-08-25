@@ -24,7 +24,10 @@ input-handler/
   `UI_INTERACTION`), the `KeyBinding` /
   `ContextConfig` interfaces, and the `MAX_KEY_EVENT_DEPTH = 10`
   recursion cap. This is the routing table the orchestrator pushes
-  contexts onto and the per-context bindings are registered into.
+  contexts onto and the per-context bindings are registered into. Bindings
+  require a stable action id, description, and explicit help metadata or
+  opt-out. Contexts can derive an allowlist from their registered chords and
+  name explicit fallback contexts for shared shortcuts.
   Pure-function helpers live one level down in `context-manager/`.
 
 ## Subpackages
@@ -82,6 +85,10 @@ Binding handlers consume an event by default. A synchronous `false` declines
 it so passthrough can continue to lower-priority contexts; async handlers are
 always treated as handled. `preventDefault` runs only after a handler accepts
 the event, so declining leaves browser behavior untouched.
+
+NAVIGATION no longer reserves fly chords globally: an embedder can register
+its own `w/a/s/d/q/e` actions there, while the stock fly bindings remain scoped
+to FLY_CONTROLS.
 
 Optional setters (`setRenderingControls`, `setRecordingPanel`, etc.) are
 called by `core/app.ts` as panels are constructed; each one forwards
