@@ -42,6 +42,8 @@ def _grafted_partition_bsp_tree(
     """Return stored or exactly recoverable planes and report recovery."""
     if node.bsp_tree is not None:
         return node.bsp_tree
+    if len(node.children) < 2:
+        return None
 
     from arbol import aprint
 

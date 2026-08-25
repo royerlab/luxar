@@ -318,6 +318,28 @@ def test_partition_graft_leaves_overlapping_parts_without_bsp_tree(
         )
 
 
+def test_single_part_graft_does_not_report_recovered_split_planes(
+    capsys: pytest.CaptureFixture[str],
+):
+    """A one-part wrapper needs no split plane or recovery message."""
+    from luxar import Dimensions, LuxarZarrCompiler
+
+    single_part = GSplatPartition(children=[_clustered(5).tree])
+
+    with tempfile.TemporaryDirectory() as tmp:
+        part = Path(tmp) / "single.gsplats.zarr"
+        write_gsplats_tree(part, single_part, ordering="none")
+
+        scene_path = Path(tmp) / "scene.luxar.zarr"
+        with LuxarZarrCompiler(scene_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_gsplats_from_file(name="g", path=part)
+
+        grafted = zarr.open_group(str(scene_path), mode="r")["g"]
+        assert "bsp_tree" not in grafted.attrs
+        assert "Recovered BSP split planes" not in capsys.readouterr().out
+
+
 def test_grafting_a_partition_rejects_dim_order():
     """A graft preserves the file's own coordinates — dim_order/fill cannot be
     applied to a partition/nested file, and must raise clearly (not silently
