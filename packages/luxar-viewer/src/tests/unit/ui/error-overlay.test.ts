@@ -59,6 +59,45 @@ describe('showError - ARIA Attributes', () => {
     expect(message?.textContent).toBe('Custom error message');
   });
 
+  it('uses authored labels without a registry and live labels when one is available', () => {
+    showError('Fallback labels');
+    expect(
+      Array.from(document.querySelectorAll('.luxar-error-dialog__guidance-kbd')).map(
+        (element) => element.textContent
+      )
+    ).toEqual(['O', 'H']);
+
+    const shortcutForAction = vi.fn((actionId: string) => {
+      if (actionId === 'dataset-browser.toggle') return 'Shift+O';
+      if (actionId === 'help.toggle') return 'F1';
+      return undefined;
+    });
+    showError('Live labels', shortcutForAction, {
+      datasetBrowser: 'dataset-browser.toggle',
+      help: 'help.toggle',
+    });
+
+    expect(
+      Array.from(document.querySelectorAll('.luxar-error-dialog__guidance-kbd')).map(
+        (element) => element.textContent
+      )
+    ).toEqual(['Shift+O', 'F1']);
+    expect(shortcutForAction).toHaveBeenCalledTimes(2);
+  });
+
+  it('falls back from empty labels and escapes resolver output', () => {
+    showError('Safe labels', (actionId) => (actionId === 'dataset-browser.toggle' ? '' : '<F1>'), {
+      datasetBrowser: 'dataset-browser.toggle',
+      help: 'help.toggle',
+    });
+
+    const labels = Array.from(
+      document.querySelectorAll<HTMLElement>('.luxar-error-dialog__guidance-kbd')
+    );
+    expect(labels.map((element) => element.textContent)).toEqual(['O', '<F1>']);
+    expect(labels[1]?.children).toHaveLength(0);
+  });
+
   it('renders the header icon as a decorative inline SVG, not a text glyph', () => {
     // The ⚠️ emoji this replaced was announced by screen readers and drew
     // in a platform-dependent font. The SVG must be aria-hidden (the title

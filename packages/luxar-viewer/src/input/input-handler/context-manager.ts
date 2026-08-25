@@ -459,8 +459,8 @@ export class InputContextManager {
    *
    * Routes the event through the context system to find and execute the
    * appropriate handler. Processing order:
-   * 1. Check if manager is enabled
-   * 2. Check if in typing context (blocks most keys)
+   * 1. Check if manager is enabled (keydown only)
+   * 2. Check if in typing context (blocks most keydown events)
    * 3. Check if key is allowed in current context
    * 4. Look for registered binding in current context
    * 5. If passthrough is enabled, try the declared fallback contexts
@@ -486,7 +486,9 @@ export class InputContextManager {
    * ```
    */
   public handleKeyEvent(event: KeyboardEvent, type: 'down' | 'up'): boolean {
-    if (!this.enabled) return false;
+    // Disabling suppresses new keydown actions, but keyup handlers must still
+    // run so held-state bindings (notably fly movement) cannot remain latched.
+    if (!this.enabled && type === 'down') return false;
 
     // Re-entrance guard: a misbehaving binding handler that triggers
     // another keyboard event through this manager could otherwise
@@ -520,8 +522,9 @@ export class InputContextManager {
       if (event.key === 'Escape') {
         return this.dispatchEscapeFromTypingContext(event, type);
       }
-      // Block all other keys while typing
-      return true;
+      // Block new actions while typing, but let keyup cleanup fall through so
+      // a key held before focus moved cannot remain latched.
+      if (type === 'down') return true;
     }
 
     // Get the current context configuration
@@ -817,10 +820,10 @@ export class InputContextManager {
   /**
    * Enable or disable the entire context manager.
    *
-   * When disabled, handleKeyEvent() immediately returns false without
-   * processing. Useful for temporarily suspending all context-based
-   * input handling (e.g., during initialization or modal dialogs that
-   * need to bypass the context system).
+   * When disabled, keydown events return false without processing. Keyup
+   * handlers still run so stateful bindings can release held input. Useful
+   * for temporarily suspending context-based input handling without leaving
+   * movement or modifier state latched.
    *
    * @param enabled - true to enable context management, false to disable
    */

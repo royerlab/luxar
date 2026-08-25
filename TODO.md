@@ -517,8 +517,8 @@ to ship after). Sequencing is at the bottom.
 - **R18 [LAUNCH] — Documentation: content pass + confirm it's publicly
   viewable.** The **hosting is already wired**: `.github/workflows/docs.yml`
   builds Sphinx (Python API) + typedoc (viewer) and deploys to **GitHub Pages**
-  (`https://royerlab.github.io/luxar/`) on every push to `main` touching
-  `docs/**` or the sources. Two gaps remain for day one:
+  (`https://royerlab.github.io/luxar/`) daily and on manual dispatch, publishing
+  the latest promoted `main` content. Two gaps remain for day one:
   - **Publicly viewable:** the repo is still private, so the Pages site isn't
     reachable by outsiders yet. Confirm it goes live when the repo is made public
     (or enable/verify Pages visibility), and that the built site actually renders

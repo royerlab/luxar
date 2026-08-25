@@ -8,8 +8,17 @@
  */
 
 import { config } from '../config';
+import { escapeHtml } from '../utils/escape-html';
 import { trapFocus } from './help-overlay/focus-trap';
 import { getViewerContainer } from '../utils/viewer-container';
+
+/** Resolve a registered action id to its currently active display chord. */
+export type ShortcutForAction = (actionId: string) => string | undefined;
+
+export interface ErrorShortcutActions {
+  datasetBrowser: string;
+  help: string;
+}
 
 /**
  * Warning-triangle glyph in the rail icon contract (24×24, geometry-only,
@@ -55,8 +64,15 @@ function releaseActiveTrap(): void {
  * `config.ui.timings.errorAutoDismissMs`, and traps keyboard focus while open.
  *
  * @param message Human-readable error text to display to the user.
+ * @param shortcutForAction Optional live shortcut-label lookup.
+ * @param shortcutActions Action ids to resolve. Authored labels are used when
+ * input has not been initialized yet or an action is unbound.
  */
-export function showError(message: string) {
+export function showError(
+  message: string,
+  shortcutForAction?: ShortcutForAction,
+  shortcutActions?: ErrorShortcutActions
+) {
   // Remove any existing error messages first — and cancel the timer
   // + release the focus trap that the previous showError() scheduled
   // (otherwise it would fire against an already-removed element and
@@ -111,6 +127,12 @@ export function showError(message: string) {
 
   const guidanceList = document.createElement('div');
   guidanceList.className = 'luxar-error-dialog__guidance-content';
+  const datasetBrowserShortcut = escapeHtml(
+    (shortcutActions && shortcutForAction?.(shortcutActions.datasetBrowser)) || 'O'
+  );
+  const helpShortcut = escapeHtml(
+    (shortcutActions && shortcutForAction?.(shortcutActions.help)) || 'H'
+  );
   guidanceList.innerHTML = `
     <div class="luxar-error-dialog__guidance-item">
       <strong>1. Add dataset to URL</strong><br/>
@@ -120,7 +142,7 @@ export function showError(message: string) {
     </div>
     <div class="luxar-error-dialog__guidance-item">
       <strong>2. Or browse available datasets</strong><br/>
-      <span class="luxar-error-dialog__guidance-description">Press <kbd class="luxar-error-dialog__guidance-kbd">O</kbd> key to open dataset browser</span>
+      <span class="luxar-error-dialog__guidance-description">Press <kbd class="luxar-error-dialog__guidance-kbd">${datasetBrowserShortcut}</kbd> key to open dataset browser</span>
     </div>
     <div class="luxar-error-dialog__guidance-item">
       <strong>3. Dataset format</strong><br/>
@@ -128,7 +150,7 @@ export function showError(message: string) {
     </div>
     <div class="luxar-error-dialog__guidance-item">
       <strong>4. Need help?</strong><br/>
-      <span class="luxar-error-dialog__guidance-description">Press <kbd class="luxar-error-dialog__guidance-kbd">H</kbd> to see all keyboard shortcuts</span>
+      <span class="luxar-error-dialog__guidance-description">Press <kbd class="luxar-error-dialog__guidance-kbd">${helpShortcut}</kbd> to see all keyboard shortcuts</span>
     </div>
   `;
 
