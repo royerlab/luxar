@@ -601,6 +601,24 @@ def _write(tmp_path: Path, fn) -> "object":
     return out
 
 
+def _payload_groups(level) -> list:
+    additive = sorted(k for k in level.keys() if k.startswith("additive_"))
+    return [level[name] for name in additive] if additive else [level]
+
+
+def _payload_count(level, array_name: str) -> int:
+    return sum(int(group[array_name].shape[0]) for group in _payload_groups(level))
+
+
+def _payload_scalar(level, array_name: str) -> float:
+    values = {
+        float(np.asarray(group[array_name]).ravel()[0])
+        for group in _payload_groups(level)
+    }
+    assert len(values) == 1
+    return values.pop()
+
+
 def test_globe_writer_builds_partition_of_lod(tmp_path: Path) -> None:
     """The shape is a kind=partition of per-tile kind=lod ladders.
 
@@ -617,6 +635,7 @@ def test_globe_writer_builds_partition_of_lod(tmp_path: Path) -> None:
     out = _write(tmp_path, build)
     n_tiles, coarsest = holder["result"]
     assert n_tiles >= 2  # a real tiling, or the fills-screen anchor is wrong
+    assert coarsest < 0.3 * len(pos)
 
     root = open_group(str(out), mode="r")
     wrapper = root["earth"]
@@ -657,12 +676,12 @@ def test_globe_coarse_levels_seal_the_shell_with_a_sqrt_radius(
     part = root["earth"]["part_0"]
     children = sorted(k for k in part.keys() if k.startswith("child_"))
     finest = part[children[-1]]
-    n_finest = finest["positions"].shape[0]
-    r_finest = float(np.asarray(finest["radii"]).ravel()[0])
+    n_finest = _payload_count(finest, "positions")
+    r_finest = _payload_scalar(finest, "radii")
     for name in children[:-1]:
         level = part[name]
-        n = level["positions"].shape[0]
-        r = float(np.asarray(level["radii"]).ravel()[0])
+        n = _payload_count(level, "positions")
+        r = _payload_scalar(level, "radii")
         assert r == pytest.approx(r_finest * seal_margin(n, n_finest), rel=1e-5)
         assert r > r_finest  # coarser really is fatter
 
@@ -688,74 +707,75 @@ def test_currents_writer_keeps_ribbons_atomic_and_widens_linearly(
             write_current_parts(s, verts, colors, n_paths, n_vertices, tile_size=50),
         ),
     )
-    n_tiles, _ = holder["r"]
+    n_tiles, coarsest = holder["r"]
     assert n_tiles >= 2
+    assert coarsest < 0.3 * n_paths * (n_vertices - 1)
 
     root = open_group(str(out), mode="r")
     wrapper = root["currents"]
     assert wrapper.attrs["kind"] == "partition"
+    assert wrapper.attrs["layer"] is True
     assert wrapper.attrs["blending_mode"] == "normal"
+    assert wrapper.attrs["opacity"] == pytest.approx(LINE_OPACITY)
     total_finest = 0
     for name in (k for k in wrapper.keys() if k.startswith("part_")):
         part = wrapper[name]
         assert part.attrs["kind"] == "lod"
         children = sorted(k for k in part.keys() if k.startswith("child_"))
         finest = part[children[-1]]
-        n_v_finest = finest["vertices"].shape[0]
+        n_v_finest = _payload_count(finest, "vertices")
         assert n_v_finest % n_vertices == 0  # whole ribbons only
-        w_finest = float(np.asarray(finest["widths"]).ravel()[0])
+        w_finest = _payload_scalar(finest, "widths")
         total_finest += n_v_finest // n_vertices
         for child in children[:-1]:
             level = part[child]
-            n_v = level["vertices"].shape[0]
+            n_v = _payload_count(level, "vertices")
             assert n_v % n_vertices == 0  # whole ribbons at every level too
-            w = float(np.asarray(level["widths"]).ravel()[0])
+            w = _payload_scalar(level, "widths")
             ribbons_finest = n_v_finest // n_vertices
             ribbons = n_v // n_vertices
             assert w == pytest.approx(w_finest * ribbons_finest / ribbons, rel=1e-5)
     assert total_finest == n_paths  # the partition conserves every ribbon
 
 
-def test_partition_of_lod_bounds_residency_at_the_opening_view() -> None:
-    """The coarsest-everywhere total must be a small fraction of the finest.
+def test_writers_specialize_streaming_for_coarser_siblings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stored ladders start near their coarser sibling, not one shared base."""
+    monkeypatch.setattr(demo_ocean_currents_earth, "LOD_STREAM_CHUNK", 100)
+    pos, colors = _tiny_globe()
+    vertices, line_colors, n_paths, n_vertices = _tiny_ribbons()
 
-    This is the number #2155 is about: `partition=` alone left all 19.4M
-    elements resident at the whole-globe pose because nothing was outside the
-    frustum. The ladder is what bounds it, and the bound is a pure function of
-    the ladder shape, so it is checkable without building the real scene.
-    """
-    thinning = LOD_COMPRESSION ** (LOD_LEVELS - 1)
-    assert thinning >= 4  # at least a 4x cut once every tile is at its coarsest
-    globe_coarsest = N_GLOBE / thinning
-    current_coarsest = N_SEEDS * N_STEPS / thinning
-    finest = N_GLOBE + N_SEEDS * N_STEPS
-    assert globe_coarsest + current_coarsest <= finest / thinning + 1
-    assert globe_coarsest + current_coarsest < 0.3 * finest
+    def build(scene) -> None:
+        write_globe_parts(scene, pos, colors, tile_size=len(pos))
+        write_current_parts(
+            scene,
+            vertices,
+            line_colors,
+            n_paths,
+            n_vertices,
+            tile_size=n_paths,
+        )
 
+    out = _write(tmp_path, build)
+    root = open_group(str(out), mode="r")
 
-def test_layer_appearance_matches_the_authored_intent() -> None:
-    """The globe is an OPAQUE backdrop; the ribbons are translucent over it.
+    part = root["earth"]["part_0"]
+    children = sorted(k for k in part.keys() if k.startswith("child_"))
+    first_chunks = []
+    for child in children:
+        level = part[child]
+        assert "positions" not in level
+        first_chunks.append(int(level["additive_0"].attrs["n_points"]))
 
-    `opaque` is the only mode that leaves the viewer's sorted transparent set
-    and the only one that unconditionally depth-writes, so it is the only one
-    that reliably composites *under* the ribbons in front of it. The ribbons
-    stay `normal` (additive ignores depth, so far-side currents would bleed
-    across the continents) at the tuned opacity.
+    assert first_chunks == [100, 500, 1000]
 
-    Both now ride on the kind=partition WRAPPER rather than on a leaf: the
-    wrapper is the node marked `layer=True`, so it is the one the Layers panel
-    reads to seed this layer's controls, and it is the one whose compositing
-    attrs push down to every tile and level.
-    """
-    source = Path(demo_ocean_currents_earth.__file__).read_text()
-    globe = source.split("def write_globe_parts(")[1].split("def write_current_parts(")[
-        0
+    part = root["currents"]["part_0"]
+    children = sorted(k for k in part.keys() if k.startswith("child_"))
+    first_chunks = [
+        int(part[child]["additive_0"].attrs["n_vertices"]) for child in children
     ]
-    currents = source.split("def write_current_parts(")[1].split("def build_scene(")[0]
-    assert 'blending_mode="opaque"' in globe
-    assert 'blending_mode="normal"' in currents
-    assert "layer=True" in globe and "layer=True" in currents
-    assert LINE_OPACITY == pytest.approx(0.77)
+    assert first_chunks == [102, 300, 600]
 
 
 def test_seeds_land_only_in_moving_water() -> None:

@@ -142,6 +142,7 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.group.compositing import position_bounds_from_array
 from luxar.core.group.lod.group import (
     coverage_fractions,
+    level_additive_lod,
     partitioned_coverage_fractions,
 )
 from luxar.core.group.partition import bsp_leaf_parts, spatial_bsp_tree
@@ -261,6 +262,7 @@ LOD_LEVELS: Final = 3  # finest + 2 coarser
 #: opening shot. At 2 the coarsest is 1/4 density, still a 4x residency cut,
 #: and the shell holds together.
 LOD_COMPRESSION: Final = 2
+LOD_STREAM_CHUNK: Final = 20_000
 
 # Tile sizes. Both are chosen so a tile's FINEST level sits comfortably under
 # its element-texture cap (asserted in `check_tile_budget`), and so the two
@@ -581,9 +583,8 @@ def level_subset(n: int, count: int, seed: int) -> np.ndarray:
         seed: Per-(layer, tile, level) seed — see :func:`level_seed`.
 
     Returns:
-        Sorted int64 indices into ``[0, n)``. Sorted so a level keeps the
-        original spatial (and therefore chunk) ordering, which is what keeps a
-        partial load coherent.
+        Sorted int64 indices into ``[0, n)``. Sorting is deterministic and
+        cheap; the compiler establishes the stored Hilbert chunk order.
     """
     if count >= n:
         return np.arange(n, dtype=np.int64)
@@ -843,7 +844,12 @@ def write_globe_parts(
                 # A geometric `stream:` ladder gives a fast first paint where a
                 # stratified sampler would dump the whole level into one final
                 # commit.
-                additive_lod=dict(counts="stream:20000", method="random", seed=0),
+                additive_lod=level_additive_lod(
+                    dict(counts=f"stream:{LOD_STREAM_CHUNK}", method="random", seed=0),
+                    level_n=count,
+                    compression_factor=LOD_COMPRESSION,
+                    is_coarsest=(level == 0),
+                ),
             )
     return len(parts), coarsest
 
@@ -914,7 +920,12 @@ def write_current_parts(
                 indices=polyline_segment_indices(int(sub.size), n_vertices),
                 line_type="indexed",
                 coverage_fraction=float(cover),
-                additive_lod=dict(counts="stream:20000", method="random", seed=0),
+                additive_lod=level_additive_lod(
+                    dict(counts=f"stream:{LOD_STREAM_CHUNK}", method="random", seed=0),
+                    level_n=int(sub.size) * n_vertices,
+                    compression_factor=LOD_COMPRESSION,
+                    is_coarsest=(level == 0),
+                ),
             )
     return len(parts), coarsest
 
@@ -957,10 +968,8 @@ def build_scene(hycom_path: Path, marble_path: Path, output_path: Path) -> Path:
         taper = np.linspace(0.15, 1.0, n_vertices, dtype=np.float32) ** 1.5
         alpha = np.tile(taper, (n_paths, 1)).ravel()
         colors = np.column_stack([rgb, alpha]).astype(np.float32)
-        indices = polyline_segment_indices(n_paths, n_vertices)
-        aprint(
-            f"{n_paths:,} ribbons, {len(indices) // 2:,} segments, {total:,} vertices"
-        )
+        n_segments = n_paths * (n_vertices - 1)
+        aprint(f"{n_paths:,} ribbons, {n_segments:,} segments, {total:,} vertices")
 
     with asection("Writing scene"):
         dims = Dimensions(

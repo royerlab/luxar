@@ -669,7 +669,8 @@
       "category": "geoscience",
       "script": "demo_ocean_currents_earth.py",
       "dataset": "datasets/demos/ocean_currents_earth.luxar.zarr",
-      "citation": "HYCOM GOFS 3.1 (Chassignet et al. 2007); NASA Blue Marble"
+      "citation": "HYCOM GOFS 3.1 (Chassignet et al. 2007); NASA Blue Marble",
+      "lodFinest": false
     },
     {
       "id": "zebrahub_velocity_streamlines",
