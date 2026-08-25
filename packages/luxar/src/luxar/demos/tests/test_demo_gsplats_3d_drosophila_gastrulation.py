@@ -7,9 +7,10 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 import zarr
 
-from luxar.encoding import EncodingMode
+from luxar.encoding import ArrayDecoder, EncodingMode
 from luxar.gsplats.gsplat_data import AdditiveSubLOD
 from luxar.gsplats.io.save_gsplats import write_gsplats_tree
 from luxar.gsplats.tree import GSplatLeaf, GSplatPartition
@@ -108,11 +109,12 @@ def test_robust_scale_compensation_preserves_approved_appearance() -> None:
     )
 
 
-def test_add_gsplat_node_preserves_partition_structure(tmp_path: Path) -> None:
+def test_create_luxar_scene_preserves_partition_structure(tmp_path: Path) -> None:
+    raw_parts = [np.array([1.0, 2.0]), np.array([3.0, 4.0])]
     partition = GSplatPartition(
         children=[
-            GSplatLeaf([_sublod(np.array([1.0, 2.0]), marker="left")]),
-            GSplatLeaf([_sublod(np.array([3.0, 4.0]), marker="right")]),
+            GSplatLeaf([_sublod(raw_parts[0], marker="left")]),
+            GSplatLeaf([_sublod(raw_parts[1], marker="right")]),
         ]
     )
     source = tmp_path / "input.gsplats.zarr"
@@ -126,9 +128,25 @@ def test_add_gsplat_node_preserves_partition_structure(tmp_path: Path) -> None:
 
     _demo.create_luxar_scene(source, output)
 
-    stored = zarr.open_group(str(output), mode="r")["drosophila_nuclei"]
+    root = zarr.open_group(str(output), mode="r")
+    stored = root["drosophila_nuclei"]
     assert stored.attrs["kind"] == "partition"
     assert stored.attrs["blending_mode"] == "volumetric"
     assert stored.attrs["opacity"] == _demo.GSPLAT_OPACITY
+    assert stored.attrs["intensity"] == pytest.approx(1.0 / _demo.DISPLAY_WINDOW_TOP)
     assert stored.attrs["layer"] is True
     assert set(stored.group_keys()) == {"part_0", "part_1"}
+
+    pooled = np.concatenate(raw_parts).astype(np.float64)
+    lo = float(pooled.min())
+    hi = float(np.percentile(pooled, _demo.AMPLITUDE_REFERENCE_PERCENTILE))
+    decoder = ArrayDecoder()
+    for index, raw in enumerate(raw_parts):
+        decoded = decoder.decode(stored[f"part_{index}"]["amplitudes"], root)
+        expected = (raw - lo) / (hi - lo)
+        np.testing.assert_allclose(
+            np.sort(decoded),
+            np.sort(expected),
+            rtol=2e-3,
+            atol=2e-3,
+        )

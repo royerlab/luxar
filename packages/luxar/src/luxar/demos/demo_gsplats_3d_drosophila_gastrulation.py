@@ -112,7 +112,7 @@ from luxar.demos import (
 from luxar.demos._cinematic_camera import VIEWER_DEFAULT_FOV_DEG, pull_in
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.io.load_gsplats import load_gsplat_node
-from luxar.gsplats.tree import center_bounds, is_matrix_shaped, iter_leaves
+from luxar.gsplats.tree import GSplatNode, center_bounds, is_matrix_shaped, iter_leaves
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -143,10 +143,10 @@ VOXEL_UM = (1.93, 0.40625, 0.40625)
 AMPLITUDE_NORM_RANGE = (0.0, 1.0)
 AMPLITUDE_REFERENCE_PERCENTILE = 99.9
 
-# Display window top, on the robust normalised scale. The previous max-based
-# normalisation used 0.737; the ratio compensates for moving this fit's reference
-# from max 798 to p99.9 512, preserving its measured LUT mapping while making a
-# future hot outlier unable to darken the entire scene.
+# Display window top, on the robust normalised scale. The original 0.737 window
+# was chosen in a live Layers-panel session on the approved render. On this fit,
+# the compensated top maps back to 5 + 1.153 * (512 - 5) ~= 589 detector counts:
+# deliberately above p99.9 512, before clipping the hotter outliers toward 798.
 DISPLAY_WINDOW_TOP = 0.737 * (798.0 - 5.0) / (512.0 - 5.0)
 
 # In `volumetric` blending each pixel accumulates emission along the whole ray,
@@ -192,7 +192,7 @@ def resolve_data() -> Path:
 # =============================================================================
 # Scene construction
 # =============================================================================
-def normalize_amplitudes(node) -> tuple[float, float]:
+def normalize_amplitudes(node: GSplatNode) -> tuple[float, float]:
     """Robustly normalise the tree's amplitudes in place.
 
     Returns the ``(lo, reference_hi)`` count range that was mapped to
