@@ -45,6 +45,9 @@ def create_5d_clusters(n_clusters: int = 10, points_per_cluster: int = 500) -> t
     Returns:
         Tuple of (positions, colors, radii)
     """
+    # Examples are also test fixtures; keep the generated store reproducible.
+    np.random.seed(1)
+
     positions = []
     colors = []
     radii = []
@@ -53,14 +56,18 @@ def create_5d_clusters(n_clusters: int = 10, points_per_cluster: int = 500) -> t
     cluster_centers = np.random.uniform(-50, 50, (n_clusters, 5)).astype(np.float32)
 
     # Ensure clusters are distributed across time and channel dimensions
-    cluster_centers[:, 3] = np.linspace(0, 10, n_clusters)  # Time: 0-10
-    cluster_centers[:, 4] = np.random.choice([0, 1, 2], n_clusters)  # Channel: 0-2
+    cluster_centers[:, 3] = np.round(np.linspace(0, 10, n_clusters) / 0.5) * 0.5
+    cluster_centers[:, 4] = np.arange(n_clusters) % 3
 
     for i, center in enumerate(cluster_centers):
         # Create points around this cluster center
         cluster_points = np.random.randn(points_per_cluster, 5).astype(np.float32)
-        cluster_points *= [2, 2, 2, 0.2, 0.1]  # Different spreads per dimension
+        cluster_points[:, :3] *= 2
+        cluster_points[:, 3] = np.random.uniform(-0.1, 0.1, points_per_cluster)
+        cluster_points[:, 4] = np.random.uniform(-0.2, 0.2, points_per_cluster)
         cluster_points += center
+        cluster_points[:, 3] = np.clip(cluster_points[:, 3], 0, 10)
+        cluster_points[:, 4] = np.clip(cluster_points[:, 4], 0, 2)
 
         # Assign colors based on cluster
         hue = i / n_clusters
@@ -101,8 +108,6 @@ def create_5d_clusters(n_clusters: int = 10, points_per_cluster: int = 500) -> t
 
 def main():
     """Create spatial index demonstration dataset."""
-    np.random.seed(1)
-
     parser = argparse.ArgumentParser(description="Create spatial index demo dataset")
     parser.add_argument(
         "--no-spatial-index",

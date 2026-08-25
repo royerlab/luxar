@@ -30,6 +30,7 @@ import sys
 from pathlib import Path
 from typing import Iterable
 
+import numpy as np
 import pytest
 
 import luxar.utils.paths as luxar_paths
@@ -97,6 +98,28 @@ def _parametrize_stems(stems: Iterable[str]) -> list[pytest.param]:
             marks = (pytest.mark.slow,)
         params.append(pytest.param(stem, marks=marks))
     return params
+
+
+@pytest.mark.parametrize("n_clusters", [8, 19, 40])
+def test_spatial_index_demo_discrete_coordinates_stay_navigable(n_clusters):
+    """The initial slice stays populated and all discrete values stay on-grid."""
+    module = _load_example("spatial_index_demo_example")
+
+    positions, colors, radii = module.create_5d_clusters(n_clusters, 100)
+    repeated = module.create_5d_clusters(n_clusters, 100)
+
+    for actual, expected in zip((positions, colors, radii), repeated, strict=True):
+        np.testing.assert_array_equal(actual, expected)
+
+    time_offset = np.abs(positions[:, 3] - np.round(positions[:, 3] / 0.5) * 0.5)
+    channel_offset = np.abs(positions[:, 4] - np.round(positions[:, 4]))
+    initial_slice = (np.abs(positions[:, 3]) <= 0.125) & (
+        np.abs(positions[:, 4]) <= 0.25
+    )
+
+    assert np.all(time_offset <= 0.125)
+    assert np.all(channel_offset <= 0.25)
+    assert np.count_nonzero(initial_slice) > 0
 
 
 _ALL_STEMS = [s for s in _discover_example_stems() if s not in HEAVY_EXAMPLES]
