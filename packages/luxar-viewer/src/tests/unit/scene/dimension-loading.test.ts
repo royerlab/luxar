@@ -92,6 +92,9 @@ describe('updateAllNDNodes', () => {
 
       await updateAllNDNodes(ctx);
 
+      expect(updateSceneForDimensions).toHaveBeenCalledWith(dims, expect.anything(), undefined, {
+        frameBudgetMs: 60,
+      });
       expect(prefetchSceneForDimensions).toHaveBeenCalledTimes(1);
       const [predictedDims, , loaderId, opts] = (
         prefetchSceneForDimensions as ReturnType<typeof vi.fn>
