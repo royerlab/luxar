@@ -88,7 +88,8 @@ def _canonical_probe_templates(templates: frozenset[str]) -> tuple[str, ...]:
 
 
 def _same_destination_family(host: str, probe_host: str) -> bool:
-    return probe_host == host or probe_host.endswith("." + host.split(".", 1)[1])
+    suffix = host if host.count(".") < 2 else host.split(".", 1)[1]
+    return probe_host == host or probe_host.endswith("." + suffix)
 
 
 def _literal_probe_template(templates: tuple[str, ...], values: tuple[Any, ...]) -> str:

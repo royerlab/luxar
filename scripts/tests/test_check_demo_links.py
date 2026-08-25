@@ -237,18 +237,48 @@ def test_api_override_cannot_probe_an_unrelated_host() -> None:
 
 def test_api_override_rejects_an_unrelated_two_label_suffix() -> None:
     checker = CHECKER
-    spec = {
+    four_label_spec = {
         "mode": "status",
         "url_template": "https://www.ox.ac.uk/api/{value}",
         "good": "known",
         "bad": "missing",
     }
+    two_label_spec = {
+        "mode": "status",
+        "url_template": "https://evil.org/api/{value}",
+        "good": "known",
+        "bad": "missing",
+    }
 
-    result = checker.audit_destination("www.ebi.ac.uk", spec, lambda _url: None)
+    four_label_result = checker.audit_destination(
+        "www.ebi.ac.uk", four_label_spec, lambda _url: None
+    )
+    two_label_result = checker.audit_destination(
+        "doi.org", two_label_spec, lambda _url: None
+    )
 
-    assert result == checker.AuditResult(
+    assert four_label_result == checker.AuditResult(
         "CONFIG",
         "probe host 'www.ox.ac.uk' does not match destination 'www.ebi.ac.uk'",
+    )
+    assert two_label_result == checker.AuditResult(
+        "CONFIG", "probe host 'evil.org' does not match destination 'doi.org'"
+    )
+
+
+def test_dotless_destination_host_reports_invalid_override_as_config() -> None:
+    checker = CHECKER
+    spec = {
+        "mode": "status",
+        "url_template": "https://other/api/{value}",
+        "good": "known",
+        "bad": "missing",
+    }
+
+    result = checker.audit_destination("localhost", spec, lambda _url: None)
+
+    assert result == checker.AuditResult(
+        "CONFIG", "probe host 'other' does not match destination 'localhost'"
     )
 
 
