@@ -310,30 +310,9 @@ describe('InputHandler — optional setters', () => {
   });
 
   it('setLayersPanel stores the reference on the private layersPanel slot', () => {
-    const setFocusContextHandlers = vi.fn();
-    const panel = { dispose: vi.fn(), setFocusContextHandlers };
+    const panel = { dispose: vi.fn() };
     handler.setLayersPanel(panel as never);
     expect((handler as unknown as HandlerSlots).layersPanel).toBe(panel);
-    const handlers = setFocusContextHandlers.mock.calls[0][0] as {
-      activate(): void;
-      deactivate(): void;
-    };
-    handlers.activate();
-    expect(
-      (
-        handler as unknown as {
-          contextManager: { getContext(): InputContext };
-        }
-      ).contextManager.getContext()
-    ).toBe(InputContext.UI_INTERACTION);
-    handlers.deactivate();
-    expect(
-      (
-        handler as unknown as {
-          contextManager: { getContext(): InputContext };
-        }
-      ).contextManager.getContext()
-    ).toBe(InputContext.NAVIGATION);
   });
 
   it('setDatasetBrowser forwards (undefined → browser → undefined) to panelCoordinator', () => {
@@ -553,7 +532,7 @@ describe('InputHandler — PanelCoordinator forwarding', () => {
       }
     ).panelCoordinator;
     const spy = vi.spyOn(coordinator, 'setRecordingPanel');
-    const panel = { dispose: vi.fn(), setFocusContextHandlers: vi.fn() };
+    const panel = { dispose: vi.fn() };
     handler.setRecordingPanel(panel as never);
     expect(spy).toHaveBeenCalledWith(panel);
   });
@@ -566,7 +545,7 @@ describe('InputHandler — PanelCoordinator forwarding', () => {
       }
     ).panelCoordinator;
     const spy = vi.spyOn(coordinator, 'setLayersPanel');
-    const panel = { dispose: vi.fn(), setFocusContextHandlers: vi.fn() };
+    const panel = { dispose: vi.fn() };
     handler.setLayersPanel(panel as never);
     expect(spy).toHaveBeenCalledWith(panel);
   });

@@ -189,7 +189,7 @@ export class InputContextManager {
     this.contextConfigs.set(InputContext.UI_INTERACTION, {
       name: 'UI Interaction',
       priority: 5,
-      passthrough: false,
+      passthrough: true,
     });
 
     // Dimension navigation context
@@ -442,18 +442,8 @@ export class InputContextManager {
   }
 
   private handleKeyEventInternal(event: KeyboardEvent, type: 'down' | 'up'): boolean {
-    const isTyping = this.isTypingContext();
-    // Escape is the one global UI command that must remain reachable from
-    // non-passthrough text/UI contexts so PanelCoordinator can close them.
-    if (
-      event.key === 'Escape' &&
-      (isTyping || this.currentContext === InputContext.UI_INTERACTION)
-    ) {
-      return this.dispatchEscapeAcrossContexts(event, type);
-    }
-
     // Check if we're in a typing context
-    if (isTyping) {
+    if (this.isTypingContext()) {
       // Escape from a typing context (e.g. focus inside the
       // dataset-browser manual-path field, debug-console filter input)
       // must still close the panel. Look up the Escape binding in the
@@ -461,6 +451,9 @@ export class InputContextManager {
       // match. Going through the normal dispatch path would re-enter
       // this branch, and `tryLowerContexts` alone would skip the
       // current context where Escape is usually registered.
+      if (event.key === 'Escape') {
+        return this.dispatchEscapeFromTypingContext(event, type);
+      }
       // Block all other keys while typing
       return true;
     }
@@ -550,7 +543,7 @@ export class InputContextManager {
    * @private
    */
   /**
-   * Dispatch Escape from a non-passthrough text/UI context.
+   * Dispatch Escape from a typing context.
    *
    * Walks all contexts in priority order (including the current one)
    * and fires the first matching Escape binding. Mirrors the dispatch
@@ -559,7 +552,7 @@ export class InputContextManager {
    * default current context), so excluding the current context like
    * `tryLowerContexts` does would skip it.
    */
-  private dispatchEscapeAcrossContexts(event: KeyboardEvent, type: 'down' | 'up'): boolean {
+  private dispatchEscapeFromTypingContext(event: KeyboardEvent, type: 'down' | 'up'): boolean {
     const sortedContexts = Array.from(this.contextConfigs.entries()).sort(
       (a, b) => (b[1].priority ?? 0) - (a[1].priority ?? 0)
     );

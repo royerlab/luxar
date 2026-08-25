@@ -47,7 +47,7 @@ import type { DimensionSliders } from '../ui/dimension-sliders';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
 import type { DebugConsole } from '../ui/debug-console';
 import type { PerformanceMonitor } from '../ui/performance-monitor';
-import { InputContext, InputContextManager } from './input-handler/context-manager';
+import { InputContextManager } from './input-handler/context-manager';
 import {
   computeDimensionStep,
   resolveSelectedDimension,
@@ -292,10 +292,6 @@ export class InputHandler {
 
   setLayersPanel(panel: LayersPanel): void {
     this.layersPanel = panel;
-    panel.setFocusContextHandlers({
-      activate: () => this.contextManager.pushContext(InputContext.UI_INTERACTION),
-      deactivate: () => this.contextManager.popContext(),
-    });
     // Forward to PanelCoordinator so Escape (the shortcut the panel's
     // close button advertises via aria-keyshortcuts) actually closes
     // the panel. Without this, Escape only flows through key-bindings
@@ -635,7 +631,7 @@ export class InputHandler {
     // even when focus is inside a text input — e.g. the dataset-browser
     // manual-path field, the debug-console filter input. The typing-
     // context Escape path dispatches through NAVIGATION bindings (see
-    // InputContextManager.dispatchEscapeAcrossContexts); this
+    // InputContextManager.dispatchEscapeFromTypingContext); this
     // exception is what routes Escape into the panel-close flow when
     // focus is inside an input.
     if (this.isTypingInInput() && event.key !== 'Escape') {

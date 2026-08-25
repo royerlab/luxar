@@ -38,11 +38,6 @@ import { LayerControls } from './layer-controls';
 
 export { applyColorAdjustments, isColormapActive, type LuxarMaterial } from './luxar-material';
 
-export interface FocusContextHandlers {
-  activate(): void;
-  deactivate(): void;
-}
-
 /**
  * Visibility-toggle glyphs — stroke SVG in the rail-icon style (currentColor,
  * round caps), replacing the old eye emoji so the toggle themes with the
@@ -108,8 +103,6 @@ export class LayersPanel {
   private noMatchesEl: HTMLElement | null = null;
   private filterText = '';
   private visible = false;
-  private focusContextHandlers: FocusContextHandlers | null = null;
-  private focusContextActive = false;
   /**
    * Tracks every event listener attached during buildPanel/renderList
    * so clear()/dispose() can tear them all down with a single call.
@@ -272,7 +265,6 @@ export class LayersPanel {
 
   hide(): void {
     if (!this.panelEl) return;
-    this.deactivateFocusContext();
     // The menu is mounted on the viewer container, not the panel — hiding
     // the panel (L key / rail while a menu is open) must not strand a
     // floating menu over a hidden panel.
@@ -300,25 +292,6 @@ export class LayersPanel {
 
   isVisible(): boolean {
     return this.visible;
-  }
-
-  /** Wire the input-router context used while keyboard focus is inside the panel. */
-  setFocusContextHandlers(handlers: FocusContextHandlers | null): void {
-    this.deactivateFocusContext();
-    this.focusContextHandlers = handlers;
-    if (this.panelEl?.contains(document.activeElement)) this.activateFocusContext();
-  }
-
-  private activateFocusContext(): void {
-    if (this.focusContextActive) return;
-    this.focusContextActive = true;
-    this.focusContextHandlers?.activate();
-  }
-
-  private deactivateFocusContext(): void {
-    if (!this.focusContextActive) return;
-    this.focusContextActive = false;
-    this.focusContextHandlers?.deactivate();
   }
 
   /**
@@ -657,7 +630,6 @@ export class LayersPanel {
   }
 
   private clear(): void {
-    this.deactivateFocusContext();
     // Unsubscribe from state changes to prevent ghost callbacks
     if (this.unsubscribeState) {
       this.unsubscribeState();
@@ -713,11 +685,6 @@ export class LayersPanel {
     panel.style.zIndex = String(config.ui.zIndex.layersPanel);
     panel.style.display = 'none'; // Hidden by default
     this.panelEl = panel;
-    this.events.on(panel, 'focusin', () => this.activateFocusContext());
-    this.events.on(panel, 'focusout', (event) => {
-      const next = (event as FocusEvent).relatedTarget as Node | null;
-      if (!next || !panel.contains(next)) this.deactivateFocusContext();
-    });
 
     // Header
     const header = document.createElement('div');
