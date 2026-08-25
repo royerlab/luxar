@@ -57,6 +57,18 @@ def test_validate_frame_count_rejects_overlapping_discrete_frames(
         _demo.validate_frame_count(n_frames)
 
 
+def test_max_frame_count_tracks_span_and_discrete_membership_tolerance() -> None:
+    assert _demo.MAX_FRAME_COUNT == math.ceil(
+        _demo.T_SPAN_MYR / _demo.DISCRETE_MEMBERSHIP_TOLERANCE
+    )
+    assert _demo.time_step(_demo.MAX_FRAME_COUNT) > (
+        _demo.DISCRETE_MEMBERSHIP_TOLERANCE
+    )
+    assert _demo.time_step(_demo.MAX_FRAME_COUNT + 1) <= (
+        _demo.DISCRETE_MEMBERSHIP_TOLERANCE
+    )
+
+
 @pytest.mark.parametrize("n_stars", [2, 100_000])
 def test_validate_star_count_accepts_buildable_counts(n_stars: int) -> None:
     assert _demo.validate_star_count(n_stars) == n_stars
@@ -127,12 +139,12 @@ def test_time_axis_is_discrete_so_every_slider_stop_is_a_frame(n_frames: int) ->
     assert dim.step == pytest.approx(_demo.T_SPAN_MYR / (n_frames - 1))
 
 
-@pytest.mark.parametrize("n_frames", [3, 24, 25, 101])
+@pytest.mark.parametrize("n_frames", [3, 23, 24, 25, 101])
 def test_frame_times_sit_exactly_on_the_snap_grid(n_frames: int) -> None:
     """`k * step` in binary, not merely close to it.
 
-    The viewer snaps to `round(v / step) * step` and only fetches within a
-    quarter step of the snapped value, so an off-grid plane is unreachable.
+    23 is a mutation-sensitive case: `linspace` ends at 480.0 while the snap
+    grid's final `k * step` is 479.99999999999994.
     """
     dim = _demo.time_dimension(n_frames)
     times = _demo.frame_times(n_frames)
@@ -142,7 +154,7 @@ def test_frame_times_sit_exactly_on_the_snap_grid(n_frames: int) -> None:
         assert t == k * dim.step  # exact, abs=0.0
 
 
-@pytest.mark.parametrize("n_frames", [3, 24, 25, 101])
+@pytest.mark.parametrize("n_frames", [3, 23, 24, 25, 101])
 def test_time_range_ends_on_the_last_frame(n_frames: int) -> None:
     """So the final stop is reachable, whatever `(n - 1) * step` rounds to."""
     dim = _demo.time_dimension(n_frames)

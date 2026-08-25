@@ -75,7 +75,7 @@ WHAT IS ACTUALLY COMPUTED
    scattering as they age: ``sigma_R ~ age^0.33``. A star's epicyclic amplitude
    is ``sigma_R / kappa``, so this is not a cosmetic choice — it *derives* the
    most recognisable fact about spiral galaxies, that **the arms are a young
-   population**. Step the Age dimension and watch the arms sharpen to knife
+   population**. Solo the youngest age layer and watch the arms sharpen to knife
    edges in the youngest bin and dissolve into a smooth disc in the oldest.
    Vertical thickness is heated the same way, so the old disc is also the thick
    one.
@@ -145,6 +145,7 @@ DEMO_META = {
     "citation": None,
 }
 
+import math
 import sys
 import tempfile
 from pathlib import Path
@@ -298,7 +299,8 @@ DUST_REDDENING = (0.75, 1.00, 1.42)
 #: rescued only the OPENING frame — the first mouse drag emptied it again.
 T_SPAN_MYR = 480.0
 T_FRAMES = 241
-MAX_FRAME_COUNT = 960
+DISCRETE_MEMBERSHIP_TOLERANCE = 0.5
+MAX_FRAME_COUNT = math.ceil(T_SPAN_MYR / DISCRETE_MEMBERSHIP_TOLERANCE)
 
 
 def time_step(n_frames: int) -> float:
@@ -310,9 +312,9 @@ def frame_times(n_frames: int) -> np.ndarray:
     """Frame times in Myr, built as `k * step` so they sit EXACTLY on the grid.
 
     Not `linspace`: the viewer snaps a discrete dimension to
-    `round(value / step) * step` and only fetches within a quarter step of the
-    snapped position, so the data planes have to be on that grid in binary, not
-    merely close to it. `arange(n) * step` is that grid by construction.
+    `round(value / step) * step`, so the stored planes use the same `k * step`
+    arithmetic. The last product can round just below or above `T_SPAN_MYR`;
+    `time_dimension` therefore uses that actual last frame as the range maximum.
     """
     return np.arange(n_frames, dtype=np.float64) * time_step(n_frames)
 
