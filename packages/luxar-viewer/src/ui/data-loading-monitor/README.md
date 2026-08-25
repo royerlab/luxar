@@ -14,6 +14,7 @@ timing panel.
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `templates/`           | HTML-string templates split by concern: shared primitives and formatting, Overview, Cache, Memory, Insights, and scene-graph rendering.                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `advisor.ts`           | `LoadingAdvisor` — consumes `MonitorEvent`s and rolled-up `LoaderMetrics` / `MemoryMetrics` and emits `Recommendation`s (slow query, slow load, high query time, low query efficiency, high error rate, low GPU reuse rate, excessive accumulator growth, …).                                                                                                                                                                                                                                                                                           |
+| `cache-actions.ts`     | Cache-clear workflows for L0, SliceCache, L1, L2, and all tiers, including destructive confirmation, completion toasts, and the orchestrator refresh callback.                                                                                                                                                                                                                                                                                                                                                                                          |
 | `event-queue.ts`       | Generic `EventQueue<T>` — bounded ring buffer with non-blocking `push` and atomic `drain()` used to decouple loader event producers from the polling consumer.                                                                                                                                                                                                                                                                                                                                                                                          |
 | `polling-loop.ts`      | `PollingLoop` — restartable interval timer. Errors thrown from `onTick` are logged via `utils/log` and never stop the loop.                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `providers.ts`         | `MonitorProviderRegistry` — stateful owner of the scene-scoped provider slots and live LOD/draw-order snapshots. It remains private to the parent monitor and marks the orchestrator's structure dirty when provider changes require a repaint.                                                                                                                                                                                                                                                                                                         |
@@ -30,13 +31,13 @@ LoaderMonitor events ──► EventQueue ──► PollingLoop.onTick ─┐
                                                             │
                 ┌──────────────────────────────────────────┘
                 ▼
-     metrics/rates.ts + metrics/cache.ts   (roll up rates & cache state)
+     metrics/*   (roll up rates, cache, global, and memory state)
                 │
                 ▼
    templates/* (full repaint)   ◄──┐
                 │                  │ structure missing
                 ▼                  │
-   tabs/cache.ts (incremental)  ───┘ patch-by-`data-field`
+   tabs/* (incremental)  ───────┘ patch-by-`data-field`
                 │
                 ▼
         advisor.ts (emits Recommendations into the Insights tab)
@@ -99,8 +100,8 @@ timing panel's per-operation explanations live in the `TOOLTIPS` map in
 
 - **Templates produce structure, updaters patch values.**
   The concern modules under `templates/` paint the full HTML on a tab switch or a structural
-  change; `tabs/cache.ts` (and the per-tick updaters in the
-  orchestrator) only rewrite values via `data-field` selectors. If a
+  change; the per-tick updaters under `tabs/` only rewrite values via
+  `data-field` selectors. If a
   selector misses, the updater returns `false` and the orchestrator
   rebuilds via the matching template module.
 - **`EventQueue.drain()` is atomic** — the internal array is

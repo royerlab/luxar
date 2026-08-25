@@ -39,6 +39,21 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
 // for the rolling per-second fields.
 ```
 
+```typescript
+// global-stats.ts
+export function aggregateGlobalStats(params: AggregateGlobalStatsParams): GlobalStats;
+// Pure: returns a fresh GlobalStats object and does not mutate its inputs.
+// `params.loaders` supplies both the reusable path set and the loader count,
+// so the two values cannot drift or consume a single-use iterator.
+```
+
+```typescript
+// memory.ts
+export function aggregateMemoryMetrics(params: MemoryMetricsParams): MemoryMetrics;
+// Pure: reads the optional GPU-pool and accumulator providers and returns
+// a fresh MemoryMetrics object without mutating the registry or snapshots.
+```
+
 `cache.ts` also exports three small input-shape interfaces —
 `CacheRatesSnapshot` (the subset of the rolling rates the aggregator
 reads: `queriesPerSec` / `loadsPerSec` / `bandwidth`), `L0Provider`
