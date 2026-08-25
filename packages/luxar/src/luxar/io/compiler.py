@@ -120,6 +120,11 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         ...     positions = np.random.randn(10000, 3).astype(np.float32)
         ...     scene.add_points('points', positions)
 
+        Compile directly to a single-file archive:
+        >>> with LuxarZarrCompiler('output.luxar.zarr.zip') as compiler:
+        ...     scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        ...     scene.add_points('points', positions)
+
         With HDR colors and custom dimensions:
         >>> dims = Dimensions([
         ...     Dimension('x', unit='um'),
@@ -196,7 +201,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             aprint(f"📁 Using temporary directory: {self._store_path}")
         else:
             requested = Path(store_path)
-            if requested.name.lower().endswith(".zarr.zip"):
+            if requested.name.endswith(".zarr.zip"):
                 inner_path = requested.with_name(requested.name[:-4])
                 normalized = normalize_zarr_path(inner_path, ".luxar.zarr")
                 self._archive_path = Path(f"{normalized}.zip")

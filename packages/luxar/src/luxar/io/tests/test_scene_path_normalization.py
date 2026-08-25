@@ -61,8 +61,10 @@ class TestSceneExtensionNormalization:
         assert requested.is_file()
         assert not (tmp_path / "scene.luxar.zarr.zip.luxar.zarr").exists()
         with zipfile.ZipFile(requested) as archive:
-            assert archive.namelist() == sorted(archive.namelist())
-            assert "zarr.json" in archive.namelist()
+            names = archive.namelist()
+            assert names == sorted(names)
+            assert len(names) == len(set(names))
+            assert "zarr.json" in names
             assert all(
                 info.compress_type == zipfile.ZIP_STORED for info in archive.infolist()
             )
