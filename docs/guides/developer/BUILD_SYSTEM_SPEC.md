@@ -858,23 +858,28 @@ runs everything. The same trade as the per-PR Python matrix below: found on
 |-------|-------------|
 | `pull_request` | `3.12` — the floor, and the one required status context |
 | `push` to `dev` | `3.12`, `3.13`, `3.14` |
-| `schedule` (every three hours at `:17`) | `3.12` — the promotion-required context |
+| daily `schedule` (`09:17` UTC) | `3.12`, `3.13`, `3.14` |
+| other `schedule` windows (every three hours at `:17`) | `3.12` — the promotion-required context |
 
 3.12 is the FLOOR (`requires-python = ">=3.12"`, what zarr 3.2+ requires) and is
 what the required `python-tests (3.12)` status context names, so it runs on every
 event. `>=3.12` has no ceiling, though: 3.13 and 3.14 are supported, `install-hatch`
 explicitly prefers them, and a developer's `hatch env` picks the newest interpreter
-on the box. Every merge push therefore runs exactly the versions the wheel's
-classifiers advertise — "declared" and "tested" are kept identical by
-construction, because a claimed-but-never-exercised version is the same species of
-lie as an untested 3.10 claim would be. Scheduled runs have a different job: they
-supply an uncancellable green commit for `dev` -> `main` promotion every three
-hours, so they run only the required 3.12 leg rather than adding two unnecessary
-Python legs to each window. On obsidian, `max-parallel: 2` starts two push legs
-while leaving capacity for `typescript-tests`; the final Python leg follows, while
-the short `release-readiness` and `wheel-viewer` checks run independently on
-GitHub-hosted runners. (If newer interpreters ever become deliberately unsupported,
-the honest fix is a `requires-python` upper bound, not a quiet single-leg matrix.)
+on the box. Every merge push and the daily 09:17 UTC schedule therefore run exactly
+the versions the wheel's classifiers advertise — "declared" and "tested" are kept
+identical by construction, because a claimed-but-never-exercised version is the
+same species of lie as an untested 3.10 claim would be. The other seven scheduled
+runs supply a green commit for `dev` -> `main` promotion every three hours with only
+the required 3.12 leg. On obsidian, `max-parallel: 2` starts two full-matrix legs
+while leaving capacity for `typescript-tests`; the final Python leg follows. Every
+scheduled window also runs short checks on GitHub-hosted runners, and `pick-runner`
+routes the long Python/TypeScript legs to hosted runners when obsidian has neither
+fresh capacity nor work in flight. Five of the twelve scheduled runs measured on
+2026-08-25 took that billed path, so the added cadence costs obsidian queue depth or
+hosted minutes according to routing; one daily pair of extra Python legs is small
+beside the seven new windows' roughly 250–280 hosted minutes/day at that observed
+rate. (If newer interpreters ever become deliberately unsupported, the honest fix
+is a `requires-python` upper bound, not a quiet single-leg matrix.)
 
 This is also why the version-equality assertion in the job matters: it proves each
 leg really ran the interpreter it claims, rather than whatever pipx picked — the
@@ -889,9 +894,12 @@ Scheduled runs sit in their own `concurrency` group: they share
 `cancel-in-progress` let whichever started second cancel the other. A merge
 landing mid-schedule killed the scheduled run; a cron firing over an in-flight merge
 killed that merge's push run, which is the only place the new `dev` commit gets
-the full matrix at all. The three-hour cron fires the whole workflow rather than
-`python-tests` alone — a schedule event has no PR base, so change detection
-selects the full suite and the documentation gate as well.
+the full matrix at all. Scheduled runs still share a group with each other, so a
+window that remains in flight three hours later is cancelled by its successor; the
+observed 68-minute runtime leaves comfortable headroom, and a lost window retries
+three hours later. The cron fires the whole workflow rather than `python-tests`
+alone — a schedule event has no PR base, so change detection selects the full suite
+and the documentation gate as well.
 
 ## Architecture Notes
 

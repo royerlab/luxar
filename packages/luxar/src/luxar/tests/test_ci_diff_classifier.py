@@ -400,21 +400,22 @@ def test_scheduled_ci_supplies_a_green_window_every_three_hours(
     workflow: str,
 ) -> None:
     """Promotion must not depend on a merge-free hour appearing by chance."""
+    # BaseLoader preserves the YAML 1.1 ``on`` key instead of coercing it to True.
     parsed = yaml.load(workflow, Loader=yaml.BaseLoader)
-    assert parsed["on"]["schedule"] == [{"cron": "17 */3 * * *"}]
-
-
-def test_only_dev_pushes_run_the_full_python_version_matrix(workflow: str) -> None:
-    """Frequent scheduled runs should produce required contexts, not extra legs."""
-    jobs = yaml.safe_load(workflow)["jobs"]
-    matrix = re.sub(
-        r"\s+", "", jobs["python-tests"]["strategy"]["matrix"]["python-version"]
+    schedules = [entry["cron"] for entry in parsed["on"]["schedule"]]
+    assert "17 9 * * *" in schedules, (
+        "one scheduled window must retain the full daily Python matrix"
     )
-    assert matrix == (
-        "${{(github.event_name=='push')"
-        '&&fromJSON(\'["3.12","3.13","3.14"]\')'
-        "||fromJSON('[\"3.12\"]')}}"
-    )
+
+    scheduled_hours: set[int] = set()
+    for schedule in schedules:
+        minute, hour, day, month, weekday = schedule.split()
+        assert (minute, day, month, weekday) == ("17", "*", "*", "*")
+        if hour == "*/3":
+            scheduled_hours.update(range(0, 24, 3))
+        else:
+            scheduled_hours.update(int(value) for value in hour.split(","))
+    assert scheduled_hours == set(range(0, 24, 3))
 
 
 def _run_pick_runner(
