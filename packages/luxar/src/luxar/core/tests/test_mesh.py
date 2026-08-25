@@ -996,6 +996,36 @@ def test_dim_order_orientation_reaches_every_structural_route(
         assert list(frame) == [0, 1, 2], f"{test_id}/{path}: frame not remapped"
 
 
+def test_add_mesh_refuses_a_mesh_over_the_viewers_decode_budget(
+    tmp_path, monkeypatch
+) -> None:
+    """The budget gate is WIRED into `add_mesh`, not merely defined.
+
+    The arithmetic is unit-tested in `test_mesh_validation.py`; what cannot be
+    checked there is whether anything calls it. Authoring a genuinely over-budget
+    mesh would mean allocating half a gigabyte of test fixture, so the ceiling is
+    shrunk instead — the validator reads the constant at call time, so a tiny
+    budget makes a four-vertex tetrahedron over-budget and proves the path runs.
+
+    Asserts on the store as well as the exception: a fail-fast gate that raises
+    AFTER writing arrays would leave a half-built node behind, which is the
+    failure mode `validate_mesh_arrays` exists to prevent. Checked on disk rather
+    than through `LuxarScene.load`, which refuses the whole store as incomplete
+    (the writer exited before finalizing) and so cannot tell a node that was
+    never created from one that was half-written.
+    """
+    monkeypatch.setattr(
+        "luxar.typing_utils.constants.MESH_DECODE_BUDGET_BYTES", 16, raising=True
+    )
+    store = tmp_path / "over.luxar.zarr"
+    with pytest.raises(ValueError, match="over the viewer"):
+        with LuxarZarrCompiler(store) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_mesh("m", _V, _F)
+    root = zarr.open_group(str(store), mode="r")
+    assert "m" not in dict(root.groups()), "the refused node was partly written"
+
+
 @pytest.mark.filterwarnings("ignore:Dimension 't' has range")
 def test_extend_to_all_on_a_mesh(tmp_path) -> None:
     """A mesh stays visible across a named non-displayed dimension.

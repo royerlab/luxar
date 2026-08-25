@@ -17,10 +17,15 @@ import numpy as np
 import pytest
 
 from luxar import Dimensions, LuxarZarrCompiler
-from luxar.typing_utils.constants import MAX_MESH_VERTICES
+from luxar.typing_utils.constants import (
+    MAX_MESH_VERTICES,
+    MESH_DECODE_BUDGET_BYTES,
+    MESH_DECODED_BYTES_PER_VALUE,
+)
 from luxar.validation import ValidationError
 from luxar.validation.base import (
     validate_faces_for_writing,
+    validate_mesh_decode_budget,
     validate_normal_dims_for_writing,
     validate_normals_for_writing,
     validate_vertices_for_writing,
@@ -434,3 +439,90 @@ def test_broadcast_color_and_scalar_accepted(tmp_path) -> None:
             "m2", _TETRA_V, _TETRA_F, scalars=0.5, colormap="viridis"
         )
         assert other.has_scalars
+
+
+# --- decode budget (#2145) --------------------------------------------------
+#
+# The write-time twin of the viewer's per-node admission ceiling. It charges only
+# the DECODED term, which makes it a strict lower bound on the loader's accounting
+# — see `validate_mesh_decode_budget`'s docstring for why under-counting is the
+# only safe direction for a hard error. These tests pin both ends of that: it
+# fires when it provably must, and it does NOT fire one value below.
+
+_BUDGET_VALUES = MESH_DECODE_BUDGET_BYTES // MESH_DECODED_BYTES_PER_VALUE
+
+
+def _largest_fitting_face_count(n_vertices: int, n_dims: int) -> int:
+    """The most triangles that still fit, given the vertex block's cost."""
+    return (_BUDGET_VALUES - n_vertices * n_dims) // 3
+
+
+def test_decode_budget_accepts_the_largest_mesh_that_fits() -> None:
+    """The boundary case must PASS, or the gate is a false-rejection machine.
+
+    This is the more important half of the pair. A hard error that over-counts
+    refuses stores the viewer would happily load — a worse bug than the one the
+    gate fixes — so the acceptance test ships alongside the rejection test rather
+    than after it.
+    """
+    n_vertices, n_dims = 1_000_000, 3
+    validate_mesh_decode_budget(
+        n_vertices, n_dims, _largest_fitting_face_count(n_vertices, n_dims)
+    )
+
+
+@pytest.mark.parametrize(
+    "factory,error_pattern,test_id",
+    [
+        (
+            lambda: validate_mesh_decode_budget(
+                1_000_000, 3, _largest_fitting_face_count(1_000_000, 3) + 1
+            ),
+            "over the viewer",
+            "one_triangle_past_the_budget",
+        ),
+        (
+            # Normals are a third of a vertex block on their own, so a mesh that
+            # fits WITHOUT them can fail WITH them. A gate that ignored optional
+            # channels would pass this.
+            lambda: validate_mesh_decode_budget(
+                40_000_000,
+                3,
+                4_000_000,
+                normals=np.zeros((40_000_000, 3), dtype=np.float32),
+            ),
+            "over the viewer",
+            "normals_push_it_over",
+        ),
+        (
+            # A BROADCAST colour stores one row and decodes to n_vertices rows.
+            # Charging the stored row would under-count by ~4 bytes per vertex,
+            # which is exactly the trap the loader's decoded term exists to close.
+            lambda: validate_mesh_decode_budget(
+                43_000_000, 3, 1_000_000, colors=(1.0, 0.0, 0.0)
+            ),
+            "over the viewer",
+            "broadcast_colour_charged_at_its_expansion",
+        ),
+    ],
+)
+def test_decode_budget_rejections(factory, error_pattern, test_id) -> None:
+    """Each over-budget mesh is refused before anything reaches disk."""
+    with pytest.raises(ValidationError, match=error_pattern):
+        factory()
+
+
+def test_decode_budget_message_names_the_remedy_and_the_undercount() -> None:
+    """The message has to say what to do, and admit it is a lower bound.
+
+    A user who splits to just under the reported figure and is refused again
+    would reasonably call the first message a lie, so it says outright that the
+    real footprint is larger.
+    """
+    with pytest.raises(ValidationError) as excinfo:
+        validate_mesh_decode_budget(
+            1_000_000, 3, _largest_fitting_face_count(1_000_000, 3) + 1
+        )
+    text = str(excinfo.value)
+    assert "counts only decoded bytes" in text
+    assert "per node" in text

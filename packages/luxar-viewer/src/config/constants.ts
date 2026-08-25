@@ -107,12 +107,23 @@ export const MAX_MESH_VERTICES = 134217728;
  * Per-node ceiling, in bytes, on what a mesh node is allowed to *declare*
  * before the loader will fetch any of it. Default 512 MiB.
  *
- * Viewer-only: there is no Python twin, because the write side cannot know
- * what a tab can survive. The viewer loads arbitrary `?src=` URLs, and the
- * mesh loader is whole-node (`docs/specs/MESH_NODE_SPEC.md` §7) — it fetches
- * and decodes every array in full — so a hostile or corrupt store could
- * otherwise exhaust tab memory before the per-node `LoaderError` containment
- * is ever reachable.
+ * This value is the viewer's own policy: the write side cannot know what a tab
+ * can survive, and this gate's primary job is one the writer can never help
+ * with. The viewer loads arbitrary `?src=` URLs, and the mesh loader is
+ * whole-node (`docs/specs/MESH_NODE_SPEC.md` §7) — it fetches and decodes every
+ * array in full — so a hostile or corrupt store could otherwise exhaust tab
+ * memory before the per-node `LoaderError` containment is ever reachable.
+ *
+ * MIRROR: `MESH_DECODE_BUDGET_BYTES` in
+ * `packages/luxar/src/luxar/typing_utils/constants.py` holds the same value.
+ * That is a PARTIAL write-time twin, added because the two purposes above are
+ * separable: policing hostile stores is this gate's alone, but refusing to
+ * AUTHOR a store that provably exceeds the ceiling is something `add_mesh` can
+ * do, and should — a bound enforced only here surfaces in a browser, far from
+ * the call that caused it. The twin is deliberately weaker: it charges only the
+ * decoded term, so it is a strict lower bound on the accounting below and can
+ * never refuse a node this gate would admit. See
+ * `validate_mesh_decode_budget`. If you change this value, change that one.
  *
  * Three quantities are checked against this, all from `.zarray` metadata alone:
  * every array's stored footprint, what each one DECODES to, and each array's
