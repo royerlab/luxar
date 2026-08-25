@@ -56,7 +56,8 @@ describe('discoverExampleDatasets', () => {
   });
 
   it('explains how to generate examples when the directory is missing', () => {
-    const missingRoot = join(tmpdir(), 'luxar-missing-example-smoke-directory');
+    const missingRoot = examplesRoot();
+    rmSync(missingRoot, { recursive: true });
 
     expect(() => discoverExampleDatasets(missingRoot, {})).toThrow(
       /Examples directory not found.*make run-examples/
