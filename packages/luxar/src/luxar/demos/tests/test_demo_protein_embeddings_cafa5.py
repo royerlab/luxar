@@ -682,6 +682,14 @@ class TestGenerateLandscape:
 
 
 class TestSyntheticAccessions:
+    def test_synthetic_ids_do_not_author_dead_search_links(self, capsys) -> None:
+        attrs = demo._uniprot_link_attrs(
+            [f"{demo.SYNTHETIC_ID_PREFIX}{i}" for i in range(3)]
+        )
+
+        assert attrs == {}
+        assert "no reliable per-protein link" in capsys.readouterr().out
+
     def test_synthetic_ids_skip_the_lookup_entirely(
         self, tmp_path: Path, monkeypatch
     ) -> None:

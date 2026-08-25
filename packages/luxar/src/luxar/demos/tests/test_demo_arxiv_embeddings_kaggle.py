@@ -1003,15 +1003,21 @@ class TestDoiLinks:
             assert attrs["link"] == "https://doi.org/{hover_key}"
             assert not attrs.get("has_keys")
 
-    def test_a_bundle_without_ids_builds_with_no_links(
+    def test_a_bundle_without_ids_falls_back_to_a_label_search(
         self, monkeypatch, capsys, tmp_path
     ) -> None:
-        """A cache written before ids were stored must lose the links, not the
-        scene.
+        """A cache written before ids were stored degrades to a label search.
 
         Rebuilding that bundle costs a 40 GB PCA stream plus a UMAP over 3.29M
-        points, so it is honoured rather than invalidated — which only works if
-        the missing field degrades instead of raising.
+        points, so it is still honoured rather than invalidated — the missing
+        field must degrade, never raise.
+
+        What changed is WHAT it degrades to. Dropping the link attributes
+        entirely left every point hovering a title and doing nothing on click,
+        which is indistinguishable from a demo that never had a destination and
+        is invisible to every other check: the scene is valid, the labels are
+        real. The title is a usable query even when the DOI is unavailable, so
+        the fallback is a search rather than silence.
         """
         import zarr
 
@@ -1032,11 +1038,21 @@ class TestDoiLinks:
             for name in sorted(root.keys())
             if hasattr(root[name], "attrs")
         ]
+        # No node may claim a DOI it cannot fill, and none may carry keys —
+        # but a labelled node must offer the title-search fallback instead of
+        # nothing at all.
+        linked = 0
         for name, attrs in nodes:
-            assert "link" not in attrs, name
-            assert "copy" not in attrs, name
             assert not attrs.get("has_keys"), name
+            link = attrs.get("link")
+            if link is None:
+                continue
+            assert "doi.org" not in link, name
+            assert link == "https://scholar.google.com/scholar?q={hover_label}", name
+            assert attrs.get("copy") == "{hover_label}", name
+            linked += 1
+        assert linked, "expected the fallback search link on at least one node"
 
         # The scene is otherwise intact: labels still work, points still exist.
         assert any(attrs.get("has_labels") for _, attrs in nodes)
-        assert "skipping DOI links" in capsys.readouterr().out
+        assert "using Scholar label search" in capsys.readouterr().out

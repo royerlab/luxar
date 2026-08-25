@@ -66,8 +66,31 @@ CANONICAL_LINKS_BY_HOST = {
     "www.proteinatlas.org": frozenset(
         {"https://www.proteinatlas.org/search/{hover_key}"}
     ),
+    # NED resolves "PGC<number>" by name; cosmicflows keys its galaxies on the
+    # Principal Galaxies Catalogue number because its hover LABEL is the basin
+    # of attraction, which tens of thousands of galaxies share and which
+    # therefore resolves nothing.
+    "ned.ipac.caltech.edu": frozenset(
+        {"https://ned.ipac.caltech.edu/byname?objname={hover_key}"}
+    ),
+    # Decorated-label search, for the arXiv/bioRxiv/medRxiv corpus specifically. The
+    # per-paper DOI (doi.org above) is the real destination; this is the
+    # fallback for a cached bundle that predates stored ids, where the only
+    # per-point identity is the hover label. Scholar rather than arXiv search
+    # because that corpus spans all three preprint servers.
+    "scholar.google.com": frozenset(
+        {"https://scholar.google.com/scholar?q={hover_label}"}
+    ),
+    # The /uniprotkb/<accession>/entry form is the canonical deep link and is
+    # what both protein demos use when real accessions are available. The
+    # ?query= search form is the reviewed fallback for an ESM3 cache that
+    # supplies no accessions. Its query is the clean protein-name key, not the
+    # decorated hover label that UniProt's parser rejects.
     "www.uniprot.org": frozenset(
-        {"https://www.uniprot.org/uniprotkb/{hover_key}/entry"}
+        {
+            "https://www.uniprot.org/uniprotkb/{hover_key}/entry",
+            "https://www.uniprot.org/uniprotkb?query={hover_key}",
+        }
     ),
     "www.youtube.com": frozenset(
         {"https://www.youtube.com/results?search_query={hover_key}"}
