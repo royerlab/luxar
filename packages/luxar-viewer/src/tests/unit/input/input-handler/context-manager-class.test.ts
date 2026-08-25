@@ -298,13 +298,17 @@ describe('InputContextManager', () => {
         handler: navigationEscape,
       });
       registerTestBinding(manager, 'annotation', { key: 'Escape', handler: customEscape });
-      manager.setContext(InputContext.TYPING);
+      manager.pushContext('annotation');
+      const input = document.createElement('input');
+      document.body.appendChild(input);
+      input.focus();
 
       expect(manager.handleKeyEvent(new KeyboardEvent('keydown', { key: 'Escape' }), 'down')).toBe(
         true
       );
       expect(navigationEscape).toHaveBeenCalledOnce();
       expect(customEscape).not.toHaveBeenCalled();
+      input.remove();
     });
 
     it('ignores inactive custom Escape bindings when built-in handlers decline', () => {
