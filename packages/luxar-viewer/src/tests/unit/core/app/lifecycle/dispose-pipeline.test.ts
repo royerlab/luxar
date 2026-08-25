@@ -327,21 +327,33 @@ describe('runDisposePipeline', () => {
       expect(order).toEqual(['browser-close', 'clear-browser-ref', 'input-dispose']);
     });
 
-    it('clears the control-rail handle on input-handler BEFORE input-handler dispose', () => {
+    it('clears the control-rail handle FIRST in the control-rail block', () => {
       // The input handler holds the rail for routed-keydown notification and
-      // Escape, and every rail item closure captures the scene manager and the
-      // panels. An embedder that keeps a disposed app would otherwise pin that
-      // whole graph until a re-init happens to overwrite the field.
+      // Escape; clearing releases the ControlRail instance itself (detached
+      // DOM, button map, overlay, hint) so a disposed-but-retained app cannot
+      // pin it. It must run before the rail's own dispose(): the block is one
+      // safeDispose closure, so a throwing dispose() would otherwise strand a
+      // half-disposed rail on the handler. Pinning the FULL block sequence (not
+      // just an interval before input-dispose) is what fails if the statement
+      // drifts into the datasetBrowser or inputHandler block instead.
       const s = makeStubs();
       const order: string[] = [];
-      s.controlRail.dispose.mockImplementation(() => order.push('rail-dispose'));
       s.inputHandler.setControlRail.mockImplementation(() => order.push('clear-rail-ref'));
+      s.controlRail.dispose.mockImplementation(() => order.push('rail-dispose'));
+      s.clears.controlRail.mockImplementation(() => order.push('clear-rail-field'));
       s.inputHandler.dispose.mockImplementation(() => order.push('input-dispose'));
 
       runDisposePipeline(makePorts(s));
 
-      expect(s.inputHandler.setControlRail).toHaveBeenCalledWith(undefined);
-      expect(order).toEqual(['rail-dispose', 'clear-rail-ref', 'input-dispose']);
+      // Explicitly `undefined`, not a bare setControlRail() — the latter also
+      // satisfies toHaveBeenCalledWith(undefined), so pin the arity too.
+      expect(s.inputHandler.setControlRail.mock.calls).toEqual([[undefined]]);
+      expect(order).toEqual([
+        'clear-rail-ref',
+        'rail-dispose',
+        'clear-rail-field',
+        'input-dispose',
+      ]);
     });
   });
 

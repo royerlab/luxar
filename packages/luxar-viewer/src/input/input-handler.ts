@@ -301,6 +301,14 @@ export class InputHandler {
     this.panelCoordinator.setLayersPanel(panel);
   }
 
+  /**
+   * Adopt the control rail (or `undefined` to clear it on dispose, the
+   * contract the app's teardown relies on). Two duties: the handler keeps the
+   * rail so a keydown the router reports as handled can notify it
+   * (`handleRoutedKeyDown` — dismisses the first-run hint, refreshes
+   * active-state), and forwards it to PanelCoordinator so the Escape flow
+   * closes the rail's flyout/popover in the right priority order.
+   */
   setControlRail(rail: ControlRailHandle | undefined): void {
     this.controlRail = rail;
     this.panelCoordinator.setControlRail(rail);

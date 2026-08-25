@@ -112,10 +112,10 @@ describe('element-menu keybinding ↔ canvas-actions listener', () => {
   });
 
   it('does not route when focus is on a panel control', () => {
-    // The layers panel binds these same two keys on its own row listener and
-    // calls preventDefault() but NOT stopPropagation(), so the event reaches
-    // the window handler too. `openContextMenu` is module-global, so an
-    // ungated route would close the layer menu and open the canvas one.
+    // Layer rows bind these same two keys, but the guard matters beyond that:
+    // when the panel is reached by mouse, a cached scene pick can remain while
+    // focus sits outside the canvas, and `openContextMenu` is module-global —
+    // so an ungated route would open a canvas menu over unrelated UI.
     const openElementMenu = vi.fn();
     const contextManager = registerBindings(canvas, openElementMenu);
     const button = document.createElement('button');
