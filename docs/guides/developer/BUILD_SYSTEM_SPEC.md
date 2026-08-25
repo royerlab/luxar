@@ -833,7 +833,7 @@ wedging. `docs-quality`, the fifth required context, is gated separately on
 `docs_relevant` — a docs-only change is documentation-relevant by definition,
 so it runs the full Sphinx and TypeDoc gate, which is the point.
 
-A push to `dev`, a nightly run, or an empty diff has no PR base and selects
+A push to `dev`, a scheduled run, or an empty diff has no PR base and selects
 every domain. The gate **fails safe**: each condition is written
 `dom_x != 'false'`, so if the `changes` job itself dies its outputs read empty
 and every suite runs. (Writing them `== 'true'` would invert that — a broken
@@ -858,37 +858,38 @@ runs everything. The same trade as the per-PR Python matrix below: found on
 |-------|-------------|
 | `pull_request` | `3.12` — the floor, and the one required status context |
 | `push` to `dev` | `3.12`, `3.13`, `3.14` |
-| nightly `schedule` (09:17 UTC) | `3.12`, `3.13`, `3.14` |
+| `schedule` (every three hours at `:17`) | `3.12` — the promotion-required context |
 
 3.12 is the FLOOR (`requires-python = ">=3.12"`, what zarr 3.2+ requires) and is
 what the required `python-tests (3.12)` status context names, so it runs on every
 event. `>=3.12` has no ceiling, though: 3.13 and 3.14 are supported, `install-hatch`
 explicitly prefers them, and a developer's `hatch env` picks the newest interpreter
-on the box. So the off-PR set is exactly the set of versions the wheel's
+on the box. Every merge push therefore runs exactly the versions the wheel's
 classifiers advertise — "declared" and "tested" are kept identical by
 construction, because a claimed-but-never-exercised version is the same species of
-lie as an untested 3.10 claim would be. Finding a break within 24h is the trade
-against spending three legs on every PR, on a box with three self-hosted slots.
-On obsidian, `max-parallel: 2` starts two Python legs while reserving the third
-slot for `typescript-tests`; the final Python leg follows, while the short
-`release-readiness` and `wheel-viewer` checks run independently on GitHub-hosted
-runners. (If newer interpreters ever become deliberately unsupported, the honest
-fix is a `requires-python` upper bound, not a quiet single-leg matrix.)
+lie as an untested 3.10 claim would be. Scheduled runs have a different job: they
+supply an uncancellable green commit for `dev` -> `main` promotion every three
+hours, so they run only the required 3.12 leg rather than adding two unnecessary
+Python legs to each window. On obsidian, `max-parallel: 2` starts two push legs
+while leaving capacity for `typescript-tests`; the final Python leg follows, while
+the short `release-readiness` and `wheel-viewer` checks run independently on
+GitHub-hosted runners. (If newer interpreters ever become deliberately unsupported,
+the honest fix is a `requires-python` upper bound, not a quiet single-leg matrix.)
 
 This is also why the version-equality assertion in the job matters: it proves each
 leg really ran the interpreter it claims, rather than whatever pipx picked — the
 defect behind issue #839, where all three legs silently ran the same version.
 
-The nightly and push runs differ from a PR run in *scope* as well: neither has a PR
+Scheduled and push runs differ from a PR run in *scope* as well: neither has a PR
 base, so the `changes` job cannot path-filter and selects the whole suite plus the
 documentation gate.
 
 Scheduled runs sit in their own `concurrency` group: they share
 `refs/heads/dev` with merge-triggered runs, so under one shared group
 `cancel-in-progress` let whichever started second cancel the other. A merge
-landing mid-nightly killed the nightly; a cron firing over an in-flight merge
+landing mid-schedule killed the scheduled run; a cron firing over an in-flight merge
 killed that merge's push run, which is the only place the new `dev` commit gets
-the full matrix at all. The cron fires the whole workflow rather than
+the full matrix at all. The three-hour cron fires the whole workflow rather than
 `python-tests` alone — a schedule event has no PR base, so change detection
 selects the full suite and the documentation gate as well.
 

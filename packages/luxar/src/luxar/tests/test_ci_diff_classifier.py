@@ -396,6 +396,27 @@ def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
     )
 
 
+def test_scheduled_ci_supplies_a_green_window_every_three_hours(
+    workflow: str,
+) -> None:
+    """Promotion must not depend on a merge-free hour appearing by chance."""
+    parsed = yaml.load(workflow, Loader=yaml.BaseLoader)
+    assert parsed["on"]["schedule"] == [{"cron": "17 */3 * * *"}]
+
+
+def test_only_dev_pushes_run_the_full_python_version_matrix(workflow: str) -> None:
+    """Frequent scheduled runs should produce required contexts, not extra legs."""
+    jobs = yaml.safe_load(workflow)["jobs"]
+    matrix = re.sub(
+        r"\s+", "", jobs["python-tests"]["strategy"]["matrix"]["python-version"]
+    )
+    assert matrix == (
+        "${{(github.event_name=='push')"
+        "&&fromJSON('[\"3.12\",\"3.13\",\"3.14\"]')"
+        "||fromJSON('[\"3.12\"]')}}"
+    )
+
+
 def _run_pick_runner(
     workflow: str,
     tmp_path: Path,
