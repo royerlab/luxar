@@ -233,7 +233,7 @@ test('zipped vs directory cold open', async ({ browser }) => {
       row.totalPoints,
       `${variant.label} loaded ${row.totalPoints} points but ` +
         `${VARIANTS[0].label} loaded ${baseline.totalPoints} — the variants are not ` +
-        `the same scene, so their timings are not comparable`
+        'the same scene, so their timings are not comparable'
     ).toBe(baseline.totalPoints);
     expect(row.pointClouds, `${variant.label}: node count differs`).toBe(baseline.pointClouds);
   }

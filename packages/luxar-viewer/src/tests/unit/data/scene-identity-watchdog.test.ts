@@ -61,9 +61,7 @@ describe('SceneIdentityWatchdog', () => {
       false
     );
     expect(
-      SceneIdentityWatchdog.isWatchable(
-        'https://example.com/SCENE.LUXAR.ZARR.ZIP?token=abc#view'
-      )
+      SceneIdentityWatchdog.isWatchable('https://example.com/SCENE.LUXAR.ZARR.ZIP?token=abc#view')
     ).toBe(false);
     expect(SceneIdentityWatchdog.isWatchable('https://example.com/scene.luxar.zarr')).toBe(true);
   });
