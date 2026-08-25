@@ -9,18 +9,28 @@ from typing import Any
 import yaml
 
 REPO = Path(__file__).resolve().parents[5]
+DOCS = REPO / "docs"
 WORKFLOW = REPO / ".github/workflows/docs.yml"
-DOCS_LFS_ASSETS = {
-    "docs/images/docs/basic-3d-pointcloud.png",
-    "docs/images/docs/gsplats-scene.png",
-    "docs/images/docs/nd-navigation-sliders.png",
-    "docs/images/docs/viewer-ui-overview.png",
-}
 
 
 def _workflow() -> dict[str, Any]:
     """Load the Pages workflow as structured YAML."""
     return yaml.safe_load(WORKFLOW.read_text())
+
+
+def _published_lfs_assets() -> set[str]:
+    """Find LFS-tracked screenshots referenced by Sphinx source files."""
+    sources = [
+        source
+        for source in DOCS.rglob("*")
+        if source.suffix in {".md", ".rst"} and "_build" not in source.parts
+    ]
+    published = set()
+    for asset in (DOCS / "images/docs").glob("*.png"):
+        docs_relative = asset.relative_to(DOCS).as_posix()
+        if any(docs_relative in source.read_text() for source in sources):
+            published.add(asset.relative_to(REPO).as_posix())
+    return published
 
 
 def test_pages_checkout_does_not_smudge_the_whole_lfs_repository() -> None:
@@ -42,7 +52,7 @@ def test_pages_fetches_only_the_lfs_assets_published_by_sphinx() -> None:
     match = re.search(r'git lfs pull --include="([^"]+)" --exclude=""', fetch["run"])
 
     assert match is not None
-    assert set(match.group(1).split(",")) == DOCS_LFS_ASSETS
+    assert set(match.group(1).split(",")) == _published_lfs_assets()
 
 
 def test_pages_cancels_deployments_superseded_by_newer_main_promotions() -> None:
