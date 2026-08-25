@@ -222,6 +222,35 @@ describe('buildRailItems', () => {
   });
 
   describe('Navigation render hook', () => {
+    it('keeps the registry-derived shortcut in the rendered tooltip and aria-label', () => {
+      const deps = makeDeps({ controlType: 'orbit' });
+      deps.shortcutForAction = vi.fn((actionId) =>
+        actionId === KeyAction.toggleControlMode ? 'Z' : undefined
+      );
+      const nav = buildRailItems(deps).find((item: ControlRailItem) => item.id === 'nav')!;
+      const btn = makeButtonEl();
+
+      nav.render!(btn);
+
+      expect(btn.querySelector('.luxar-control-rail__tip kbd')?.textContent).toBe('Z');
+      expect(btn.getAttribute('aria-label')).toContain('(Z)');
+    });
+
+    it('omits shortcut markup when the registry has no control-mode label', () => {
+      const nav = buildRailItems(makeDeps({ controlType: 'orbit' })).find(
+        (item: ControlRailItem) => item.id === 'nav'
+      )!;
+      const btn = makeButtonEl();
+
+      nav.render!(btn);
+
+      expect(btn.querySelector('.luxar-control-rail__tip kbd')).toBeNull();
+      expect(btn.querySelector('.luxar-control-rail__tip')?.textContent).toBe('Navigation · Orbit');
+      expect(btn.getAttribute('aria-label')).toBe(
+        'Navigation: Orbit — click for fly, right-click for options'
+      );
+    });
+
     it('shows the ortho 2×2 grid icon + "Ortho" tooltip when the mode is ortho', () => {
       const nav = buildRailItems(makeDeps({ controlType: 'ortho' })).find(
         (i: ControlRailItem) => i.id === 'nav'

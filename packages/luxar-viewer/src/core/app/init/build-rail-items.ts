@@ -65,6 +65,7 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
     debugConsole,
     recordingPanel,
   } = deps;
+  const controlModeShortcut = shortcutForAction(KeyAction.toggleControlMode);
 
   // Rendering, Layers, and Recording all dock at the same spot beside the
   // rail (left: 73px), so the rail opens ONE floating surface at a time —
@@ -129,7 +130,7 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
       // the current mode's parameters. The icon mirrors the live control mode.
       id: 'nav',
       title: 'Navigation',
-      shortcut: shortcutForAction(KeyAction.toggleControlMode),
+      shortcut: controlModeShortcut,
       icon: RAIL_ICONS.navOrbit,
       activate: () => ui.commands.toggleControlMode(),
       render: (btn) => {
@@ -147,14 +148,22 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
         // `type` is a fixed enum (orbit|fly|ortho) — safe to interpolate.
         const modeLabel = type.charAt(0).toUpperCase() + type.slice(1);
         const next = nextControlType(type); // next mode a click would select
+        const shortcutLabel = controlModeShortcut ? ` (${controlModeShortcut})` : '';
         btn.setAttribute(
           'aria-label',
-          `Navigation: ${modeLabel} — click for ${next} (V), right-click for options`
+          `Navigation: ${modeLabel} — click for ${next}${shortcutLabel}, right-click for options`
         );
         // The button icon is cryptic on its own, so name the current mode in
         // the hover tooltip too: e.g. "Navigation · Orbit  V".
         const tip = btn.querySelector('.luxar-control-rail__tip');
-        if (tip) tip.innerHTML = `Navigation · ${modeLabel}<kbd>V</kbd>`;
+        if (tip) {
+          tip.textContent = `Navigation · ${modeLabel}`;
+          if (controlModeShortcut) {
+            const shortcut = document.createElement('kbd');
+            shortcut.textContent = controlModeShortcut;
+            tip.appendChild(shortcut);
+          }
+        }
       },
       popover: {
         trigger: 'context',
