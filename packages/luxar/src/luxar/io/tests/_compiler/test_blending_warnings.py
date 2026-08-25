@@ -250,6 +250,31 @@ def test_effective_opacity_and_nearest_blend_setter_drive_depth_writes(capsys) -
     assert "holder/opaque_line" in output
 
 
+def test_depth_writing_sorted_nodes_do_not_warn(capsys) -> None:
+    root = _root()
+    _leaf(
+        root,
+        "outer",
+        "lines",
+        maximum=[10.0, 10.0, 10.0],
+        blending_mode="normal",
+        opacity=1.0,
+    )
+    _leaf(
+        root,
+        "inner",
+        "lines",
+        minimum=[1.0, 1.0, 1.0],
+        maximum=[2.0, 2.0, 2.0],
+        blending_mode="normal",
+        opacity=1.0,
+    )
+
+    warn_overlapping_blending(root)
+
+    assert capsys.readouterr().out == ""
+
+
 @pytest.mark.parametrize("geometry_type", ["points", "gsplats"])
 def test_normal_points_and_gsplats_never_count_as_depth_writers(
     geometry_type: str, capsys
