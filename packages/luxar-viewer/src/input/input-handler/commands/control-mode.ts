@@ -13,28 +13,9 @@ import { InputContext, type InputContextManager } from '../context-manager';
 import type { SceneManager } from '../../../scene/scene-manager';
 import type { RenderingControlsHandle } from '../panel-capabilities';
 
-// Camera control modes the V key cycles through. Re-exported from the canonical
-// domain definition (controls/types.ts) so there is a single source of truth.
-export type { ControlType } from '../../../controls/types';
-import type { ControlType } from '../../../controls/types';
-
-/**
- * Return the next control type in the cycle: orbit → fly → ortho → orbit.
- * Defensive: any unknown current mode (shouldn't happen in production)
- * resets to `orbit`.
- */
-export function nextControlType(current: ControlType | string): ControlType {
-  switch (current) {
-    case 'orbit':
-      return 'fly';
-    case 'fly':
-      return 'ortho';
-    case 'ortho':
-      return 'orbit';
-    default:
-      return 'orbit';
-  }
-}
+// Re-export the canonical control-mode domain surface for existing consumers.
+export { nextControlType, type ControlType } from '../../../controls/types';
+import { nextControlType, type ControlType } from '../../../controls/types';
 
 export interface ControlModeCtx {
   sceneManager: SceneManager;
