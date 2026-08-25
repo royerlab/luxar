@@ -817,6 +817,19 @@
       "citation": "Lange et al. 2024 (Zebrahub)"
     },
     {
+      "id": "gsplats_4d_h2afva_timelapse",
+      "title": "4D Zebrafish Embryogenesis (h2afva timelapse)",
+      "geometry": "gsplats",
+      "category": "microscopy",
+      "script": "demo_gsplats_4d_h2afva_timelapse.py",
+      "dataset": "datasets/demos/gsplats_4d_h2afva_timelapse.luxar.zarr",
+      "timelapse": {
+        "framePoint": 0.9
+      },
+      "citation": "Lange et al. 2024 (Zebrahub)",
+      "fillTarget": 0.9
+    },
+    {
       "id": "gsplats_3d_decimation_study",
       "title": "Splat Decimation Study (zebrafish embryo)",
       "geometry": "gsplats",
