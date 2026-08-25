@@ -2,20 +2,12 @@ import type { AsyncReadable } from '../data/zarr';
 import { SegmentedLRUCache } from './multi-level-caching-store/segmented-lru-cache';
 import { OPFSStore, type CachedDatasetSummary } from './multi-level-caching-store/opfs-store';
 import { BandwidthWindow } from './multi-level-caching-store/bandwidth-window';
-import {
-  buildUrl,
-  fetchWithRetry,
-  hashUrl,
-  mergeAbortSignals,
-  type FetchResponseScope,
-} from './multi-level-caching-store/fetch-retry';
-import {
-  ValidationQueue,
-  getRemoteContentHash,
-  type QueueEntry,
-} from './multi-level-caching-store/validation-queue';
+import { hashUrl, mergeAbortSignals } from './multi-level-caching-store/fetch-retry';
+import { ValidationQueue, type QueueEntry } from './multi-level-caching-store/validation-queue';
 import type { ChunkPrefetcher } from './chunk-prefetcher';
 import { OpfsWriteQueue } from './multi-level-caching-store/opfs-write-queue';
+import type { ChunkSource } from './chunk-source';
+import { HttpChunkSource } from './chunk-source/http-chunk-source';
 import { log, Modules } from '../utils/log';
 import { config } from '../config';
 import { type Result, ok, err, isErr } from '../utils/result';
@@ -72,7 +64,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
   private l1Cache: SegmentedLRUCache;
   private l2Store: OPFSStore | null = null;
   private prefetcher: ChunkPrefetcher | null = null;
-  private baseUrl: string;
+  private source: ChunkSource;
   private l2MaxSize: number;
   private enabled: boolean;
   // Deliberate L2 skip (?no-opfs): distinct from `enabled` (which kills L1 too).
@@ -167,8 +159,10 @@ export class MultiLevelCachingStore implements AsyncReadable {
   private static readonly BANDWIDTH_WINDOW_MS = 10_000;
   private bandwidth = new BandwidthWindow(MultiLevelCachingStore.BANDWIDTH_WINDOW_MS);
 
-  constructor(baseUrl: string, options?: MultiLevelCachingStoreOptions) {
-    this.baseUrl = baseUrl;
+  constructor(source: string | ChunkSource, options?: MultiLevelCachingStoreOptions) {
+    // A bare string still means "a directory store at this URL" — every
+    // existing call site and test passes one, and none of them changed.
+    this.source = typeof source === 'string' ? new HttpChunkSource(source) : source;
 
     this.enabled = !(options?.noCache ?? false);
     this.noOpfs = options?.noOpfs ?? false;
@@ -278,13 +272,13 @@ export class MultiLevelCachingStore implements AsyncReadable {
     }
 
     // Generate dataset ID from URL and create L2 store
-    const datasetId = await hashUrl(this.baseUrl);
+    const datasetId = await hashUrl(this.source.identity);
     // dispose() may have landed while we awaited hashUrl above. At that point
     // this.l2Store is still null, so dispose() tore nothing down; bail before
     // constructing an OPFSStore that nobody would ever dispose (leak + its
     // orphan-cleanup deletes would run after dispose).
     if (this.disposed) return;
-    this.l2Store = new OPFSStore(datasetId, this.baseUrl, this.l2MaxSize);
+    this.l2Store = new OPFSStore(datasetId, this.source.describe, this.l2MaxSize);
 
     await this.l2Store.init();
     // dispose() may have landed while we awaited l2Store.init(); dispose()
@@ -580,45 +574,34 @@ export class MultiLevelCachingStore implements AsyncReadable {
     // signal (and bypassed coalescing in getResult), forward that too
     // so per-caller cancellation actually aborts the resource.
     const fetchAbort = mergeAbortSignals(this.dataAbort.signal, callerSignal);
-    let fetched: FetchResponseScope | undefined;
     try {
-      try {
-        fetched = await fetchWithRetry(buildUrl(this.baseUrl, key), {
-          signal: fetchAbort.signal,
-        });
-      } catch (error) {
-        const cause = error instanceof Error ? error : new Error(String(error));
-        return { result: err({ kind: 'NetworkError', cause }), source: 'network' };
-      }
+      const outcome = await this.source.get(key, fetchAbort.signal);
 
       if (this.disposed || this.dataAbort.signal.aborted || callerSignal?.aborted) {
         return { result: err({ kind: 'Aborted' }), source: 'network' };
       }
-      if (!fetched) {
-        if (this.disposed || this.dataAbort.signal.aborted || callerSignal?.aborted) {
-          return { result: err({ kind: 'Aborted' }), source: 'network' };
-        }
+      if (outcome.kind === 'aborted') {
+        return { result: err({ kind: 'Aborted' }), source: 'network' };
+      }
+      if (outcome.kind === 'error') {
         return {
-          result: err({
-            kind: 'NetworkError',
-            cause: new Error(`fetch exhausted retries for ${key}`),
-          }),
+          result: err({ kind: 'NetworkError', cause: outcome.cause }),
           source: 'network',
         };
       }
-
-      const { response } = fetched;
-      if (!response.ok) {
+      if (outcome.kind === 'missing') {
         return { result: err({ kind: 'Missing' }), source: 'missing' };
       }
 
-      const data = new Uint8Array(await response.arrayBuffer());
+      const { data } = outcome;
 
       // Aggregate network counters (one per actual fetch — pendingGets
       // ensures this body runs at most once per key per concurrent wave).
+      // `bytesOverWire` rather than `data.byteLength`: they are equal over
+      // plain HTTP, and differ for a source whose transport compresses.
       this.networkRequestCount++;
-      this.networkBytesTransferred += data.byteLength;
-      this.bandwidth.record(data.byteLength);
+      this.networkBytesTransferred += outcome.bytesOverWire;
+      this.bandwidth.record(outcome.bytesOverWire);
 
       // CRIT-5: if validateCache aborted this in-flight get between the
       // arrayBuffer() resolve and now (content-hash mismatch raced an
@@ -658,7 +641,6 @@ export class MultiLevelCachingStore implements AsyncReadable {
 
       return { result: ok(data), source: 'network' };
     } finally {
-      fetched?.dispose();
       fetchAbort.dispose();
     }
   }
@@ -695,7 +677,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
 
   private async doValidateCache(signal: AbortSignal): Promise<void> {
     try {
-      const remoteToken = await getRemoteContentHash(this.baseUrl, {
+      const remoteToken = await this.source.probeIdentityToken({
         signal,
         timeoutMsOverride: config.dataLoading.network.validationTimeoutMs,
       });
