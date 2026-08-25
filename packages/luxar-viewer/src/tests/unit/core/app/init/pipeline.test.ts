@@ -121,9 +121,13 @@ vi.mock('../../../../../ui/resolution-indicator', () => ({
     reset: vi.fn(),
   })),
 }));
-vi.mock('../../../../../input/input-handler', () => ({
-  InputHandler: vi.fn(),
-}));
+vi.mock('../../../../../input/input-handler', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../../../input/input-handler')>();
+  return {
+    KeyAction: actual.KeyAction,
+    InputHandler: vi.fn(),
+  };
+});
 vi.mock('../../../../../ui/dimension-sliders', () => ({
   DimensionSliders: vi.fn(),
 }));

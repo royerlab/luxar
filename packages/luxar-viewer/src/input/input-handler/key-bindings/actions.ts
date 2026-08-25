@@ -1,4 +1,7 @@
-/** Stable action identifiers shared by bindings and shortcut-label consumers. */
+/**
+ * Stable keyboard action vocabulary shared by registration and UI consumers.
+ */
+
 /** Stable action identifiers shared by bindings and shortcut-label consumers. */
 export const KeyAction = {
   navigateDimension: 'dimension.navigate',
