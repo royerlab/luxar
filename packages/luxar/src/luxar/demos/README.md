@@ -644,7 +644,7 @@ HYCOM surface-current streamlines (220k connected ribbons, coloured by speed) dr
 
 **Requires**: Internet access on first run (~72 MB: HYCOM GLBy0.08 surface u/v + Blue Marble texture; cached under `~/.cache/luxar/ocean_currents_earth/`).
 
-**Demonstrates**: Mixed Points+Lines geometry, fixed-arc-length RK4 streamline advection with along-segment land masking, per-vertex RGBA comet-tail fading, indexed Lines topology under the viewer's per-node vertex ceiling, `stream:` additive LOD for fast first paint on an 8M-point globe.
+**Demonstrates**: Mixed Points+Lines geometry, fixed-arc-length RK4 streamline advection with along-segment land masking, per-vertex RGBA comet-tail fading, indexed Lines topology under the viewer's per-node vertex ceiling, and **partition-of-LOD on both layers** — each is a `kind=partition` of 16 per-tile `kind=lod` ladders, which is what keeps the opening whole-globe view at 5.47M resident elements instead of 19.44M (`partition=` alone bounds node size but not residency: every part is drawn and only frustum-culled). Coarse levels are fewer whole elements with a compensating `sqrt` point radius / linear ribbon width, so a streamline still looks like a streamline. The scene is ~546 MB on disk against ~290 MB for a flat build — substitutive LOD stores levels, not deltas; `LOD_COMPRESSION` / `LOD_LEVELS` move that balance.
 
 ---
 
