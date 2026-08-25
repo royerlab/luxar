@@ -1061,6 +1061,64 @@ they are rejected on points, lines, Gaussian splats, and groups.
 - **Shape:** `(V,)` — per-vertex colormap scalars; declared via `has_scalars` /
   `scalar_data_range` / `colormap` (see *Scalar Colormap Attributes* below).
 
+#### nD slicing: whole-triangle cull
+
+A mesh slices differently from the other three geometry types, and the difference
+is visible. Points, Lines and GSplats are collections of independent elements, so
+slicing keeps or drops each element on its own — and Lines goes further, *clipping*
+a segment that straddles the slice and interpolating its attributes at the cut. A
+triangle cannot be handled that way cheaply: cutting one against an nD slab yields
+a polygon that has to be re-triangulated, with new vertices and interpolated
+attributes, every frame the slice moves.
+
+Luxar does not do that. The rule is:
+
+> A triangle is drawn **iff all three of its vertices** fall inside the slice slab.
+
+Two consequences follow, and both are worth knowing before you author a mesh with
+hidden dimensions.
+
+**A cut surface has a ragged edge.** Because whole triangles are kept or dropped,
+the boundary follows triangle edges rather than the slice plane. On a
+well-tessellated surface sliced with a slab comparable to its edge length this
+reads as a slightly jagged edge. On a *coarse* mesh with a thin slab it can drop
+whole regions — if no triangle has all three vertices inside, nothing is drawn.
+
+**On a continuous hidden dimension you get a slab, not a section.** There is no
+interpolation, so there is no such thing as an exact cross-section: what you see is
+"the surface near this slice", of finite thickness. The viewer says so once per
+node, by name, in an `info` log line.
+
+`slab_tolerance` is the control over that thickness:
+
+```python
+scene.add_mesh(
+    "surface", vertices, faces,
+    normals=normals, normal_dims=[0, 1, 2],
+    slab_tolerance=2.5,   # slab is 2.5 CELLS thick; default 1.0
+)
+```
+
+It is measured in cells of the hidden dimension's own `step`, must be strictly
+positive, and defaults to one cell. Raising it thickens the slab (more surface
+shown, more of it away from the slice); lowering it thins the slab toward the
+degenerate case above. It applies **only** to *continuous* hidden dimensions — a
+*discrete* one (time, channel, or any axis with `categories`) uses a half-cell
+membership rule instead and ignores the attr. Discrete hidden dimensions are the
+dominant real case for a mesh, and they have none of the problems in this section:
+a timepoint either matches or it does not.
+
+Mesh is the only geometry type whose slab is tunable, and the reason is that it has
+nothing to measure. The other three derive their tolerance from a per-element
+extent — a point's `radii`, a line's `widths`, a splat's truncated `sigma` — that a
+mesh vertex simply does not have, so the thickness is chosen rather than read off
+the data.
+
+If your mesh's hidden dimensions are continuous *and* spatial, and you need a true
+planar section, a mesh node is the wrong representation today — fit the volume as
+Gaussian splats instead, which slice exactly. Exact nD triangle clipping is a
+deliberate non-goal for now; see `docs/specs/MESH_NODE_SPEC.md` §5 and §9.
+
 Per-vertex labels (`label_offsets`/`label_bytes`), keys
 (`key_offsets`/`key_bytes`), and image labels
 (`image_label_offsets`/`image_label_bytes`) use the same CSR-style layout as

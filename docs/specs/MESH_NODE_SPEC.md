@@ -408,6 +408,70 @@ Gated behind a minimum face count so tiny test meshes stay quiet, and routed thr
 
 ---
 
+### 3.7 `dim_order` and orientation data
+
+`add_mesh(dim_order=[...])` is a change of basis: it renumbers the vertex
+**columns** into the scene's dimension order (and widens them to the scene's
+`ndim`, filling any dimension the caller did not name). This section exists
+because that operation was unspecified until #2141, and the omission was not
+harmless — it produced a silently wrong store.
+
+A mesh carries **two** arrays that describe a direction in those columns, and both
+must be carried through the same map:
+
+| Array | Why the permutation invalidates it |
+|---|---|
+| `normals` | Component `k` is positionally bound to `normal_dims[k]` (§3.4). Renumber the columns and the label no longer names the axis the component describes. |
+| `faces` | Corner order encodes surface orientation (§3.2). Since `cross(Ra, Rb) = det(R)·R·cross(a, b)`, an **orientation-reversing** permutation negates the geometric normal while leaving the stored winding alone. |
+
+This is the same obligation gsplats has for its Cholesky factors, and the shape of
+the fix is the same: the positions transform gets a companion
+(`apply_dim_order_orientation`, beside `apply_dim_order_cholesky`), keyed on the
+identical forward map `dim_mapping[i] = scene_names.index(dim_order[i])`. Points
+and Lines carry no orientation data, which is why one call is correct for them —
+the asymmetry is in the data model, not an oversight in their adders.
+
+**Rules, in order:**
+
+1. **`normal_dims` is remapped, and the components are permuted to match.** The
+   remap alone would already be *correct* — the component still describes the same
+   physical axis, now under its scene number — but it can leave the triple
+   non-ascending, and the viewer uses stored normals only when `normal_dims`
+   equals `displayDims` **in order** (§3.4), with `displayDims` always built
+   ascending. So the triple is sorted and the components follow it. Without that
+   sort a `dim_order` mesh would silently render on the flat-normal fallback: no
+   error, no warning, just no smooth shading.
+2. **Winding is flipped iff the map restricted to the frame is odd.** The frame is
+   `sorted(normal_dims)` (§3.2), so the parity that matters is that of
+   `[dim_mapping[d] for d in sorted(normal_dims)]`. Exactly two of each triangle's
+   three indices are swapped; swapping all three is a rotation and changes nothing.
+3. **Both are skipped when `normals` is absent** — not as an optimization but
+   because nothing is decidable: §3.2 makes `sorted(normal_dims)` the *only*
+   declared winding frame ("there is no other signal for which three axes the
+   author wound against"), and the viewer already renders such a mesh `DoubleSide`
+   regardless of `double_sided` (§5.4). Flipping on a guess would be worse than
+   not flipping.
+4. **A `normal_dims` entry that indexes no authored column is refused.** Without
+   `dim_order` it is range-checked against the scene width and passes; with
+   `dim_order` it is provably meaningless, and admitting it would bind a component
+   to an axis the caller never supplied.
+
+`faces` is still **not** reindexed, and that remains correct for the reason the
+`add_mesh` docstring gives: it addresses vertex *rows*, and `dim_order` permutes
+*columns*, so a row index names the same physical vertex afterwards. The lesson of
+#2141 is that this was the whole of the reasoning — `faces` was considered as
+indices and never as orientation.
+
+**Applied once, above the structural branches.** The transform runs in
+`add_mesh_impl` before the `partition=` / `substitutive_lod=` / `additive_lod=`
+dispatch, and every recursive re-entry passes `dim_order=None`, so all four routes
+inherit it exactly once. Downstream needs no changes: `split_mesh_by_faces`
+relabels indices without touching corner order, and `decimate` / `qem`
+**re-derive** normals from the stored winding, so a flipped input yields correctly
+flipped coarse levels.
+
+---
+
 ## 4. Python API
 
 ```python
@@ -543,6 +607,13 @@ A surface cut by a slice shows a **ragged, triangle-quantized boundary** rather 
 cut. For a well-tessellated mesh sliced with a tolerance comparable to the edge length this reads as a
 slightly jagged edge; for a coarse mesh with a thin tolerance it can drop whole regions. This is a real
 visual limitation and must be documented in the user guide, not glossed.
+
+**Discharged in #2144**, and worth recording how long it took: this sentence carried no §8 checklist
+item, so for six phases it was neither ticked nor missed. `docs/guides/user/LUXAR_ZARR_FORMAT.md` §5
+now carries an *nD slicing: whole-triangle cull* subsection (the rule, the ragged edge, the thick slab,
+`slab_tolerance`, and when to reach for gsplats instead) and `VIEWER_GUIDE.md`'s nD Navigation section
+cross-references it — every other rule there describes per-element visibility, which is exactly what a
+mesh does not do. A "must" in this document with no checklist item behind it is a "maybe".
 
 It is the right v1 trade: it costs **~140 LOC of new kernel** instead of ~1500, requires no
 re-triangulation, no new vertices, and no attribute interpolation machinery.
@@ -1082,8 +1153,9 @@ by behavior tests instead — e.g. §8's stored-normal view-space-transform chec
 `#define` (the sibling `line-max`, `point-max`, `gsplat-normal-premult`) or a runtime-uniform branch the
 TSL path bakes per graph (`gsplat-opaque`, from gsplat's runtime `uProjectionMode` split). Note the
 harness (`tsl-codegen-snapshot.spec.ts`) asserts **both stages** of every variant unconditionally, so
-each variant is a `.vertex` + `.fragment` snapshot pair — the shipped inventory is 37 such pairs, i.e.
-74 files under `src/tests/__codegen__/`.
+each variant is a `.vertex` + `.fragment` snapshot pair — the shipped inventory is 39 such pairs, i.e.
+78 files under `src/tests/__codegen__/`. (This count drifts as OTHER types gain variants; mesh's own six
+pairs are the part this section is responsible for. It read 37/74 until #2144 corrected it.)
 Mesh's per-mode emissions (§6.2) are therefore separately snapshotted — and note the mesh **default is
 `opaque`**, unlike the siblings whose default is the alpha-weighted `additive`. New variants — six, i.e.
 twelve snapshot files: `mesh` (the `opaque` default — alpha cutout, §6.2), `mesh-additive` (the

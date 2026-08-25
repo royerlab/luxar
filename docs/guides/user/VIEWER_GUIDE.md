@@ -327,6 +327,21 @@ pre-aggregate before export. See
 [LUXAR_ZARR_FORMAT.md → Viewer Constraints and Performance](LUXAR_ZARR_FORMAT.md#viewer-constraints-and-performance)
 for details.
 
+### Mesh nodes slice by whole triangles
+
+Every rule above describes per-element visibility, which is what Points, Lines
+and GSplats do. A **Mesh** is different: it draws a triangle only when *all
+three* of its vertices fall inside the slice window, so a cut surface has a
+ragged, triangle-following edge rather than a clean planar one, and on a
+*continuous* hidden dimension it shows a slab of finite thickness rather than an
+exact cross-section. A coarse mesh with a narrow window can drop whole regions.
+
+Discrete hidden dimensions — time, channel, anything categorical, which is the
+usual case for a mesh — are unaffected: a timepoint either matches or it does
+not. For the continuous case the slab thickness is authored per node via
+`slab_tolerance`. See
+[LUXAR_ZARR_FORMAT.md → nD slicing: whole-triangle cull](LUXAR_ZARR_FORMAT.md#nd-slicing-whole-triangle-cull).
+
 ---
 
 ## Animation Playback
