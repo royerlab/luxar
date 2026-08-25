@@ -231,18 +231,17 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
             )
 
             with asection(f"Adding gsplats (44-part partition, {n_frames} frames)"):
-                # Grafting does not copy root appearance attrs, so restate the
-                # volumetric/absorption pair explicitly to match the archive and
-                # the single-stack companion.
+                # This archive has no BSP split planes, so the viewer can only
+                # order its 44 parts by centroid. Keep the additive mode used for
+                # the validated gallery build: unlike volumetric compositing, it
+                # is order-independent and cannot pop at part seams during orbit.
                 scene.add_gsplats_from_file(
                     name="zebrafish_nuclei_4d",
                     path=str(data_path),
-                    blending_mode="volumetric",
-                    absorption=1.34,
-                    # `plasma`, as on the single-stack companion: on
-                    # emission–absorption the bright end carries the near
-                    # surface, and plasma's yellow-to-magenta ramp separates the
-                    # nuclei from the tissue behind them.
+                    blending_mode="additive",
+                    # `plasma`, as on the single-stack companion: its
+                    # yellow-to-magenta ramp keeps the bright nuclei distinct
+                    # from the dimmer body signal behind them.
                     colormap="plasma",
                     # On a COLORMAPPED node `intensity`/`offset` ARE the scalar
                     # window feeding the LUT (`intensity = 1/(hi-lo)`,
@@ -259,11 +258,10 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                     #
                     # A p90 floor was tried on the theory that the dim 90% was
                     # haze flattening the silhouette at tile size. It rendered
-                    # WORSE — dimmer and bluer, with less structure — because
-                    # under emission-absorption those dim splats accumulate into
-                    # the body itself. Raising the floor deletes the embryo, not
-                    # a veil over it. Measured amplitudes: p50 0.00050,
-                    # p90 0.0036, p99 0.032, p99.9 0.057, peak 0.200.
+                    # WORSE — dimmer and bluer, with less structure. The dim
+                    # splats are body signal, not a veil to remove. Measured
+                    # amplitudes: p50 0.00050, p90 0.0036, p99 0.032,
+                    # p99.9 0.057, peak 0.200.
                     intensity=17.57,
                     offset=-0.00879,
                     gamma=2.2,

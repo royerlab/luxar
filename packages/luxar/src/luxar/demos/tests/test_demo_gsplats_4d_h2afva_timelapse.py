@@ -102,14 +102,14 @@ def test_resolve_data_requests_the_51tp_variant(monkeypatch, tmp_path) -> None:
     assert calls == [(_demo.DATASET, "51tp")]
 
 
-def test_scene_restates_the_archive_blending_and_display_window(tmp_path) -> None:
+def test_scene_uses_order_independent_blending_and_display_window(tmp_path) -> None:
     source = _write_source(tmp_path / "source.gsplats.zarr")
     output = _demo.create_luxar_scene(source, tmp_path / "scene.luxar.zarr")
 
     root = zarr.open_group(str(output), mode="r")
     attrs = dict(root["zebrafish_nuclei_4d"].attrs)
-    assert attrs["blending_mode"] == "volumetric"
-    assert attrs["absorption"] == pytest.approx(1.34)
+    assert attrs["blending_mode"] == "additive"
+    assert "absorption" not in attrs
     assert attrs["intensity"] == pytest.approx(17.57)
     assert attrs["offset"] == pytest.approx(-0.00879)
     assert -attrs["offset"] / attrs["intensity"] == pytest.approx(0.00050, abs=1e-6)
