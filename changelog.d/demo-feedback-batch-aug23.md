@@ -15,29 +15,55 @@ globally cancels out and the render does not move at all.
 #### Drosophila gastrulation demo is no longer one saturated pink shell
 
 The embryo rendered as a featureless, fully clipped magenta silhouette — no
-cephalic furrow, no midgut invagination, no individual nuclei. The cause was the
-display window. This fit's amplitudes are raw detector counts running 5 to 798,
-and the scene authored a bare `intensity=1.0`, which on a colormapped node does
-not mean "gain of one" — it states the scalar display window `[0, 1]`. Every
-splat in the dataset was therefore past the top of the LUT and clipped flat.
+cephalic furrow, no midgut invagination, no individual nuclei. There were two
+causes, an authoring one and an exposure one.
 
-The window is now derived from the fit itself: `[min, p99.9]` pulled down to 30%
-of its span, about the 88th percentile, which spreads the nuclei across magma's
-violet-to-amber body with nothing saturated (measured: the writer's own full
-robust window leaves the median splat at ~13% and reads too dark, 20% starts
-clipping the brightest nuclei). It is computed from the loaded data rather than
-hardcoded, so a refit moves it with the fit. `gamma` goes back to 1.0 — with a
-correct window there are no midtones left to rescue and the old 2.2 curve only
-flattened them — and the scene opens +1 EV to recover the stop the
-deliberately-unclipped window gives up.
+The authoring one: this fit's amplitudes are raw detector counts running 5 to
+798, and the scene authored a bare `intensity=1.0`, which on a colormapped node
+does not mean "gain of one" — it states the scalar display window `[0, 1]`. Every
+splat in the dataset was therefore past the top of the LUT and clipped flat. Note
+that the scene authors `intensity=1.0` again today and that is now correct, for
+the reason below: the amplitudes it windows are themselves in `[0, 1]`.
 
-Blending goes from `normal` (alpha-over) to `volumetric`, which is what a single
-fluorescence channel wants. The previous comment justified alpha-over with a
-measurement that `volumetric` needed absorption ≥ 12 before the far side stopped
-bleeding through; that was measured while the window was broken and every splat
-was clipped flat, leaving no tonal range for anything but brute absorption to
-separate near from far. With the window fixed, the depth cue is back at
-absorption 1.0.
+The amplitudes are now **normalised to `[0, 1]` at authoring time**, with one
+shared min-max factor across the whole additive ladder — a per-rung factor would
+rescale the rungs against each other and make every streaming prefix render as a
+different exposure. The display window is then simply the identity
+(`intensity=1.0` / `offset=0.0`), which now genuinely means the full data range,
+so the appearance args can be read without converting detector counts in your
+head. The normalisation is derived from the fit being loaded rather than
+hardcoded, so a refit moves with the data, and it is written into the loaded
+arrays in place rather than rebuilt through the `additive_sublods=` constructor,
+which would drop the authored per-rung metadata the viewer's LOD upgrades read.
+
+The exposure one, which is the half that actually blew the frame out: in
+`volumetric` blending each pixel accumulates emission along the whole ray, so
+what you see is a *sum* over every splat behind it, while the display window only
+picks each splat's LUT index. The window therefore cannot govern the total, and
+no value of it repairs an over-accumulated frame — widening it dims and blues the
+whole object rather than exposing it (measured: footprint 15.3% → 12.0% of frame,
+mean luminance 76 → 35 at the top of the slider's range). What does govern the
+total is **opacity, now 0.41**, which scales each splat's contribution. Absorption
+is then only responsible for the depth cue — how much the near shell occludes the
+far one — and sits at **0.57**; the two are not interchangeable, and an earlier
+revision of this batch conflated them, moving absorption while leaving opacity at
+1.0. Blending itself goes from `normal` (alpha-over) to `volumetric`, which is
+what a single fluorescence channel wants, and the scene's `exposure` returns to
+neutral, since there is no longer a stop to make up.
+
+Individual nuclei now read as discrete blobs across the whole shell, and the
+cephalic furrow and posterior pit are both legible. Pixels using magma's warm
+upper body go from **0.00%** of the frame to a few percent — the old render
+contained no amber at all, despite the comment claiming it spread the nuclei
+"across magma's violet-to-amber body".
+
+The scene also authors its **opening camera and auto-rotation** rather than taking
+the default whole-scene fit, which left the embryo small in a lot of black. The
+embryo's long axis is centre column 1 and so already maps to world Y, i.e.
+screen-vertical; the camera backs off along the shallowest axis until that long
+axis subtends 0.85 of the half-frame, solved from the data's own bounding box so a
+refit reframes itself, and pulled in for the cinematic lens. Because auto-rotation
+orbits the up axis, the spin runs about the embryo's own length.
 
 #### Rainbow sphere opens filling the frame, already turning
 

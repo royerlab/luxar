@@ -102,15 +102,17 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.core.viewer_config import ViewerConfig
+from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import (
     add_demo_caption,
     ensure_dataset,
     launch_viewer,
     parse_demo_flags,
 )
+from luxar.demos._cinematic_camera import VIEWER_DEFAULT_FOV_DEG, pull_in
+from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.io.load_gsplats import load_gsplat_node
-from luxar.gsplats.tree import center_bounds
+from luxar.gsplats.tree import center_bounds, iter_leaves
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -126,16 +128,44 @@ SCENE_NAME = "gsplats_3d_drosophila_gastrulation.luxar.zarr"
 # ranges are read off the data, but the UNITS are ours to declare.
 VOXEL_UM = (1.93, 0.40625, 0.40625)
 
-# Display window: the fraction of this fit's own robust amplitude range
-# ``[min, p99.9]`` the scene opens on. These amplitudes are raw detector counts
-# (p50 ~ 70, p99.9 ~ 512), not a normalised [0, 1] signal, so the window has to
-# be derived from the data — authoring a bare ``intensity=1.0`` states the
-# window [0, 1] and puts EVERY splat past the top of the LUT. Measured on this
-# fit: 1.0 (the writer's own robust default) leaves the median splat at ~13% of
-# the window and the embryo is too dark to read, 0.2 starts clipping the
-# brightest nuclei flat, and 0.3 — about the 88th percentile — spreads the
-# nuclei across magma's violet-to-amber body with nothing saturated.
-DISPLAY_WINDOW_FRACTION = 0.30
+# The fitted archive stores amplitudes as RAW DETECTOR COUNTS (min 5.0, p50 70,
+# p99.9 512, max 798). This scene normalises them to [0, 1] at authoring time so
+# the display window below reads as a plain fraction of the data rather than as
+# detector counts. Min-max over the WHOLE ladder with ONE shared factor (see
+# `normalize_amplitudes`) — a per-sub-LOD factor would rescale the rungs against
+# each other and make every streaming prefix render at a different exposure.
+#
+# Note that this is a presentation convenience, NOT an exposure control:
+# normalising the amplitudes and widening the window to match are the same map,
+# since what reaches the LUT is ``(a - lo) / (hi - lo)`` and scaling ``a``, ``lo``
+# and ``hi`` together leaves it identical. For exposure see :data:`GSPLAT_OPACITY`.
+AMPLITUDE_NORM_RANGE = (0.0, 1.0)
+
+# Display window top, as a fraction of the normalised amplitude range. Authored
+# explicitly rather than left to the loader's own scalar-range derivation, so the
+# window this scene opens on is the one stated here. A FRACTION rather than an
+# absolute value, so it stays meaningful whatever amplitudes the next fit brings.
+DISPLAY_WINDOW_TOP = 0.737
+
+# OPACITY is this scene's exposure control. In `volumetric` blending each pixel
+# accumulates emission along the whole ray, so what you see is a sum over every
+# splat behind it — and the display window, which only picks each splat's LUT
+# index, cannot govern that sum. Scaling the per-splat emission can: at 0.41 the
+# accumulated radiance lands inside the tone curve, which is what lets individual
+# nuclei read as discrete blobs rather than merging into one violet shell.
+#
+# Absorption then only has to supply the depth cue — how much the near shell
+# occludes the far one — so it can stay well below 1.
+GSPLAT_OPACITY = 0.41
+GSPLAT_ABSORPTION = 0.57
+
+# Opening camera. The embryo is a prolate ellipsoid whose long axis is centre
+# column 1 -> world Y, i.e. already screen-vertical, and auto-rotation orbits
+# about the world up axis, so the spin runs about the embryo's own long axis.
+# Framing is authored at the VIEWER's default FOV and then pulled in for the
+# cinematic 63 mm lens (see `_cinematic_camera.pull_in`).
+CAMERA_FRAME_FILL = 0.85  # share of the half-frame the long axis subtends
+AUTO_ROTATE_SPEED = 2.5
 
 FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
@@ -160,22 +190,44 @@ def resolve_data() -> Path:
 # =============================================================================
 # Scene construction
 # =============================================================================
-def display_window(node) -> tuple[float, float]:
-    """The ``[lo, hi]`` amplitude window this scene opens on.
+def normalize_amplitudes(node) -> tuple[float, float]:
+    """Min-max the tree's amplitudes into :data:`AMPLITUDE_NORM_RANGE`, in place.
 
-    Mirrors the writer's own robust window — ``[min, p99.9]``, not ``[min,
-    max]``, because gsplat amplitudes are heavily right-skewed — then pulls the
-    top down by :data:`DISPLAY_WINDOW_FRACTION`. Derived from the fit that is
-    actually being loaded rather than hardcoded, so a refit (a different K, a
-    different floor) moves the window with the data instead of stranding it.
+    Returns the ``(lo, hi)`` count range that was mapped, so the caller can
+    report what the normalisation actually consumed.
+
+    ONE shared factor across every sub-LOD of every leaf, derived from the pooled
+    min/max: the additive rungs are prefixes of one splat set, so rescaling them
+    independently would change their relative brightness and make each prefix
+    render as a different exposure. Derived from the fit being loaded rather than
+    hardcoded, so a refit moves with the data.
+
+    Rewritten IN PLACE into the loaded arrays rather than rebuilt into a fresh
+    ``GSplatData``: the sub-LOD containers are frozen and reconstructing one
+    through the ``additive_sublods=`` constructor drops the authored per-rung meta
+    that the ``_node`` fast path carries straight off disk (coverage_fraction,
+    the energy stamps the viewer's LOD upgrades read). Mutating the amplitude
+    arrays touches only the values being normalised.
     """
-    amps = np.concatenate(
-        [np.asarray(s.amplitudes, dtype=np.float64) for s in node.additive_sublods]
+    sublods = [s for leaf in iter_leaves(node) for s in leaf.additive_sublods]
+    pooled = np.concatenate(
+        [np.asarray(s.amplitudes, dtype=np.float64) for s in sublods]
     )
-    lo = float(amps.min())
-    hi = lo + (float(np.percentile(amps, 99.9)) - lo) * DISPLAY_WINDOW_FRACTION
-    if not hi > lo:  # degenerate (constant amplitudes) — fall back to the max
-        hi = max(float(amps.max()), lo + 1e-6)
+    lo = float(pooled.min())
+    hi = float(pooled.max())
+    out_lo, out_hi = AMPLITUDE_NORM_RANGE
+    span = hi - lo
+    if not span > 0:  # degenerate (constant amplitudes) — nothing to stretch
+        return lo, hi
+    scale = (out_hi - out_lo) / span
+    for s in sublods:
+        amps = s.amplitudes
+        if not amps.flags.writeable:
+            amps = np.array(amps, copy=True)
+            object.__setattr__(s, "amplitudes", amps)
+        np.multiply(amps, scale, out=amps, casting="unsafe")
+        if lo != 0.0 or out_lo != 0.0:
+            amps += np.float32(out_lo - lo * scale)
     return lo, hi
 
 
@@ -184,14 +236,31 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
     with asection("Creating Drosophila gastrulation scene"):
         node, _ = load_gsplat_node(str(data_path))
         bmin, bmax = center_bounds(node)
-        win_lo, win_hi = display_window(node)
-        win_span = win_hi - win_lo
-        aprint(f"Display window: [{win_lo:.1f}, {win_hi:.1f}] counts")
+        amp_lo, amp_hi = normalize_amplitudes(node)
+        splats = GSplatData.from_tree(node)
+        aprint(
+            f"Amplitudes normalised: [{amp_lo:.1f}, {amp_hi:.1f}] counts -> "
+            f"{AMPLITUDE_NORM_RANGE}"
+        )
         aprint(f"Scene bounds (um): min={np.round(bmin, 1)} max={np.round(bmax, 1)}")
         aprint(
             f"Embryo extent: {bmax[1] - bmin[1]:.0f} um long, "
             f"{bmax[2] - bmin[2]:.0f} um wide"
         )
+
+        # Opening pose. Centre column 1 is the embryo's long axis and maps to
+        # world Y, so it is already screen-vertical and auto-rotation (which
+        # orbits the up axis) spins the embryo about its own length. The camera
+        # backs off along world Z — the shallowest axis, so the silhouette shows
+        # the full length and width — far enough that the long axis subtends
+        # CAMERA_FRAME_FILL of the half-frame. Solved from the data's own bbox
+        # rather than pinned, so a refit or a re-scaled fit reframes itself.
+        centre = tuple(float(v) for v in (bmin + bmax) / 2.0)
+        half_len = float(bmax[1] - bmin[1]) / 2.0
+        half_fov = np.radians(VIEWER_DEFAULT_FOV_DEG / 2.0)
+        cam_dist = (half_len / CAMERA_FRAME_FILL) / float(np.tan(half_fov))
+        cam_eye = (centre[0], centre[1], centre[2] + cam_dist)
+        aprint(f"Camera: target {np.round(centre, 1)} distance {cam_dist:.0f} um")
 
         # Center columns are (Z, Y, X) — the fit's array order — so the
         # Dimensions list must follow that exact order. All three are spatial
@@ -214,11 +283,18 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
                 dimensions=dims,
-                # exposure is in LOG2 STOPS. The window below is deliberately
-                # set so nothing clips, which leaves the frame a stop or so
-                # under; +1 puts it back without touching the tonal spread.
+                # exposure is in LOG2 STOPS and stays neutral: with the emission
+                # itself scaled by `GSPLAT_OPACITY` the frame already lands inside
+                # the tone curve, so there is no stop to make up.
                 viewer_config=ViewerConfig(
-                    cinematic_mode=True, tone_mapping="ACES", exposure=1.0
+                    cinematic_mode=True,
+                    tone_mapping="ACES",
+                    exposure=0.0,
+                    auto_rotate=True,
+                    auto_rotate_speed=AUTO_ROTATE_SPEED,
+                    camera=CameraConfig(
+                        position=pull_in(cam_eye, centre), target=centre
+                    ),
                 ),
                 citation=DEMO_META["citation"],
             )
@@ -232,40 +308,30 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
             )
 
             with asection("Adding gsplats"):
-                scene.add_gsplats_from_file(
+                scene.add_gsplats_from_data(
                     name="drosophila_nuclei",
-                    path=str(data_path),
+                    result=splats,
                     # `volumetric` emission-absorption. This is a single
                     # fluorescence channel, which is exactly what that mode is
-                    # for, and at absorption 1.0 the near shell of nuclei still
-                    # reads in front of the far one without the object going
-                    # dark.
+                    # for.
                     #
-                    # This used to be `normal` (alpha-over), citing a measurement
-                    # that `volumetric` needed absorption >= 12 before the far
-                    # side stopped bleeding through. That measurement was taken
-                    # while the display window below was broken and every splat
-                    # was clipped flat at the top of the LUT — with no tonal
-                    # range left, nothing but brute absorption could separate
-                    # near from far. Once the window is right the depth cue comes
-                    # back at absorption 1.0.
+                    # `volumetric` emission-absorption, which is what a single
+                    # fluorescence channel wants. Opacity and absorption do
+                    # different jobs and are not interchangeable: opacity scales
+                    # how much radiance each splat contributes (total exposure),
+                    # absorption governs how much the near shell occludes the far
+                    # one (depth cue). See :data:`GSPLAT_OPACITY`.
                     blending_mode="volumetric",
-                    absorption=1.0,
-                    opacity=1.0,
+                    absorption=GSPLAT_ABSORPTION,
+                    opacity=GSPLAT_OPACITY,
                     colormap="magma",
                     # On a COLORMAPPED node `intensity`/`offset` are the scalar
                     # display WINDOW, not a post-LUT gain: the viewer recovers
-                    # `[-offset/i, (1-offset)/i]` (rendering/display-range.ts
-                    # ::computeDisplayRange). These amplitudes are raw detector
-                    # counts running 5 -> 798, so the previous `intensity=1.0`
-                    # stated the window [0, 1] and drove EVERY splat past the top
-                    # of the LUT — the embryo rendered as one saturated pink
-                    # shell with no structure at all. The window is now derived
-                    # from the data (see `display_window`), and `gamma` goes back
-                    # to 1.0: with a correct window there are no midtones left to
-                    # rescue, and the 2.2 curve only flattened them.
-                    intensity=1.0 / win_span,
-                    offset=-win_lo / win_span,
+                    # it as `[-offset/i, (1-offset)/i]`. Amplitudes arrive
+                    # normalised to [0, 1], so this states the window
+                    # `[0, DISPLAY_WINDOW_TOP]`.
+                    intensity=1.0 / DISPLAY_WINDOW_TOP,
+                    offset=0.0,
                     gamma=1.0,
                     layer=True,
                 )
