@@ -283,7 +283,7 @@ def download_cafa5_dataset(output_dir: Path) -> Path:
     """
     import zipfile
 
-    from luxar.utils.download import robust_download
+    from luxar.demos import robust_download
 
     dataset_zip = output_dir / "cafa5_prott5.zip"
 

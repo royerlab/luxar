@@ -131,12 +131,12 @@ from luxar.demos import (
     launch_viewer,
     parse_demo_flags,
     require_module,
+    robust_download,
     warn_if_no_cuda_gpu,
 )
 from luxar.demos._lod_policy import save_with_lod
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
-from luxar.utils.download import robust_download
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================

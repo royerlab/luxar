@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 import requests
 
-from luxar.utils.download import (
+from luxar.utils.remote_zip import (
     _EOCD_TAIL_BYTES,
     _MAX_CENTRAL_DIR_BYTES,
     _parse_remote_zip_directory,

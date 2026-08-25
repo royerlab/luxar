@@ -112,7 +112,7 @@ Arbol.max_depth = 5
 
 def fetch_member() -> Path:
     """Range-extract the L-level PLY member from the remote release archive."""
-    from luxar.utils.download import download_zip_member
+    from luxar.demos import download_zip_member
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     with asection("Range-extracting cluster fly PLY from release archive"):

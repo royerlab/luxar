@@ -263,7 +263,7 @@ def download_celegans_data() -> Path:
     Returns:
         Path to downloaded ZIP file.
     """
-    from luxar.utils.download import robust_download
+    from luxar.demos import robust_download
 
     zip_path = CACHE_DIR / "mskcc_confocal.zip"
 

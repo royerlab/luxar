@@ -2,7 +2,8 @@
 
 ``luxar/demos/__init__.py`` is the barrel that re-exports shared plumbing from
 the guarded concern modules under ``luxar/utils`` (historically a single
-``luxar/utils/demos.py``) and ``luxar/utils/data_fetch.py``, and selected
+``luxar/utils/demos.py``), ``luxar/utils/data_fetch.py``,
+``luxar/utils/download.py``, and ``luxar/utils/remote_zip.py``, and selected
 demo-owned helpers from private modules such as ``demos/_support/_fields.py``.
 ``demos/README.md`` §6 documents the barrel as the way to reach them. Even so,
 38 demo scripts reached *past* the barrel with ``from luxar.utils.demos import
@@ -40,7 +41,7 @@ private lives in (``test_demo_meta`` deep-imports ``_DEFAULT_CACHE_ROOT`` to pin
 that ``registry.DEMO_CACHE_ROOT`` duplicates it, while the concern suites
 import their owning utility modules directly), and a re-export barrel cannot
 serve either need. Deep imports elsewhere in the package — a few
-unit tests building a Lorenz fixture, ``utils/download.py`` reaching for a
+unit tests building a Lorenz fixture, ``utils/remote_zip.py`` reaching for a
 zip-path private, and others — are out of scope for the same reason: the barrel
 is a demo-authoring convenience, not a package-wide facade.
 """
@@ -108,6 +109,8 @@ SPLIT_DEMO_UTILITY_MODULES = frozenset(
 DEEP_MODULES = SPLIT_DEMO_UTILITY_MODULES | {
     "luxar.demos._support._fields",
     "luxar.utils.data_fetch",
+    "luxar.utils.download",
+    "luxar.utils.remote_zip",
 }
 
 #: ``(package, leaf)`` PAIRS, so ``from luxar.utils import viewer`` is recognised
