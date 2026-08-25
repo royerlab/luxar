@@ -230,7 +230,7 @@ export function getMaxElementCapacityPerNode(layout: ElementTextureLayout): numb
  * COMPACT REGION rather than a thin scatter — it reads as a hole in the data,
  * not as degraded quality. That is indistinguishable from a broken dataset
  * unless the message stands out from the couple of hundred ordinary log lines
- * a scene load emits (#1098, where an ocean-currents node lost the North
+ * a scene load emits (#1957, where an ocean-currents node lost the North
  * Atlantic and the one `console.warn` saying so went unnoticed).
  *
  * The Python writers warn about the same overflow at AUTHORING time
@@ -239,11 +239,15 @@ export function getMaxElementCapacityPerNode(layout: ElementTextureLayout): numb
  * load-time backstop: it knows the REAL device bound and fires for any store,
  * however it was produced.
  */
-export function clampElementCapacity(requested: number, layout: ElementTextureLayout): number {
+export function clampElementCapacity(
+  requested: number,
+  layout: ElementTextureLayout,
+  reportLoss = true
+): number {
   const max = getMaxElementCapacityPerNode(layout);
   if (requested <= max) return requested;
   const key = `${layout.label}:${requested}`;
-  if (!warnedCapacityClamp.has(key)) {
+  if (reportLoss && !warnedCapacityClamp.has(key)) {
     warnedCapacityClamp.add(key);
     const noun = layout.label.charAt(0).toUpperCase() + layout.label.slice(1);
     log.error(
@@ -317,8 +321,8 @@ export const SPLAT_TEXTURE_LAYOUT: ElementTextureLayout = {
 export const SPLAT_FLOATS_PER_SPLAT = SPLAT_TEXTURE_LAYOUT.floatsPerElement;
 
 /** Clamp a requested splat capacity (see {@link clampElementCapacity}). */
-export function clampSplatCapacity(requested: number): number {
-  return clampElementCapacity(requested, SPLAT_TEXTURE_LAYOUT);
+export function clampSplatCapacity(requested: number, reportLoss = true): number {
+  return clampElementCapacity(requested, SPLAT_TEXTURE_LAYOUT, reportLoss);
 }
 
 // ---------------------------------------------------------------------------
@@ -339,8 +343,8 @@ export const POINT_TEXTURE_LAYOUT: ElementTextureLayout = {
 export const POINT_FLOATS_PER_POINT = POINT_TEXTURE_LAYOUT.floatsPerElement;
 
 /** Clamp a requested point capacity (see {@link clampElementCapacity}). */
-export function clampPointCapacity(requested: number): number {
-  return clampElementCapacity(requested, POINT_TEXTURE_LAYOUT);
+export function clampPointCapacity(requested: number, reportLoss = true): number {
+  return clampElementCapacity(requested, POINT_TEXTURE_LAYOUT, reportLoss);
 }
 
 // ---------------------------------------------------------------------------
@@ -361,6 +365,6 @@ export const LINE_TEXTURE_LAYOUT: ElementTextureLayout = {
 export const LINE_FLOATS_PER_SEGMENT = LINE_TEXTURE_LAYOUT.floatsPerElement;
 
 /** Clamp a requested segment capacity (see {@link clampElementCapacity}). */
-export function clampLineCapacity(requested: number): number {
-  return clampElementCapacity(requested, LINE_TEXTURE_LAYOUT);
+export function clampLineCapacity(requested: number, reportLoss = true): number {
+  return clampElementCapacity(requested, LINE_TEXTURE_LAYOUT, reportLoss);
 }

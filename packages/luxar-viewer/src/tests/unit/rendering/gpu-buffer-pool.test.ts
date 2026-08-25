@@ -2,7 +2,7 @@
  * Unit tests for GPU Buffer Pool
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   GPUBufferPool,
   __setMinInstanceCapacityForTesting,
@@ -14,8 +14,10 @@ import { getSplatTexture } from '../../../rendering/gsplat-geometry';
 import { getPointTexture } from '../../../rendering/point-geometry';
 import { getLineTexture } from '../../../rendering/line-geometry';
 import {
+  configureElementTextureLayout,
   LINE_FLOATS_PER_SEGMENT,
   POINT_FLOATS_PER_POINT,
+  resetElementTextureLayoutForTests,
 } from '../../../rendering/element-texture-layout';
 import {
   writeSortedIndexOrdering,
@@ -68,7 +70,23 @@ describe('GPUBufferPool', () => {
     pool = new GPUBufferPool(20, 300); // maxPoolSize=20, evictionFrames=300
   });
 
+  afterEach(() => {
+    resetElementTextureLayoutForTests();
+  });
+
   describe('Points Geometry', () => {
+    it('reports only element loss, not clamped allocation headroom', () => {
+      configureElementTextureLayout(16); // point cap = 15*16/3 = 80
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      pool.acquirePointsGeometry('healthy', 60); // 1.5x headroom clamps from 90 to 80
+      expect(errors).not.toHaveBeenCalled();
+
+      pool.acquirePointsGeometry('oversized', 100); // real loss: 20 points
+      expect(errors).toHaveBeenCalledTimes(1);
+      expect(String(errors.mock.calls[0][0])).toContain('last 20 points');
+    });
+
     it('should allocate new geometry on first request', () => {
       const geom = pool.acquirePointsGeometry('node1', 1000);
       expect(geom).toBeInstanceOf(THREE.InstancedBufferGeometry);
