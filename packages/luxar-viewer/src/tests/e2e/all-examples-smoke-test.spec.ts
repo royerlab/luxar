@@ -156,10 +156,19 @@ test.describe('ALL Examples - Systematic Smoke Tests', () => {
 
       // Get scene state
       const state: DebugState = await getLuxarState(page);
+      const geometryTypes = [
+        { label: 'points', nodes: state.pointClouds, total: state.totalPoints },
+        { label: 'line', nodes: state.lineMeshes, total: state.totalLines },
+        { label: 'gsplat', nodes: state.gsplatMeshes, total: state.totalGSplats },
+        { label: 'mesh', nodes: state.meshNodes, total: state.totalTriangles },
+      ];
+      const zeroGeometryTypes = geometryTypes.filter(
+        (geometryType) => geometryType.nodes.length > 0 && geometryType.total === 0
+      );
 
-      // Debug: If no geometry loaded, dump console logs to help diagnose
-      if (state.totalElements === 0) {
-        console.error(`\n[${example}] ⚠️ No geometry loaded! Dumping console logs:`);
+      // Debug: If geometry is wholly or partially missing, dump console logs to diagnose
+      if (state.totalElements === 0 || zeroGeometryTypes.length > 0) {
+        console.error(`\n[${example}] ⚠️ Geometry missing! Dumping console logs:`);
         consoleMessages.logs.slice(-50).forEach((log, i) => {
           console.error(`  [LOG ${i}] ${log}`);
         });
@@ -181,13 +190,8 @@ test.describe('ALL Examples - Systematic Smoke Tests', () => {
       // A strict per-node assertion is not valid: nd_points_example has a visible
       // /Reference5D node with pointCount=0 while its sibling carries all 820 points,
       // and hidden LOD nodes can also legitimately report zero. Per-type totals still
-      // catch a geometry loader silently producing no elements.
-      const geometryTypes = [
-        { label: 'points', nodes: state.pointClouds, total: state.totalPoints },
-        { label: 'line', nodes: state.lineMeshes, total: state.totalLines },
-        { label: 'gsplat', nodes: state.gsplatMeshes, total: state.totalGSplats },
-        { label: 'mesh', nodes: state.meshNodes, total: state.totalTriangles },
-      ];
+      // catch a geometry loader silently producing no elements. This assumes each type
+      // present in the current corpus has elements in the initial slice.
       for (const geometryType of geometryTypes) {
         if (geometryType.nodes.length > 0) {
           expect(
