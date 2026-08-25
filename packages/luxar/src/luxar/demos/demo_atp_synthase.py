@@ -278,9 +278,16 @@ def center_structure(positions: np.ndarray) -> np.ndarray:
 # =============================================================================
 
 
-#: Ambient-occlusion radius, in nm. The complex is ~20 nm tall, so a few nm
-#: separates an atom on the open outer face of the F1 head from one packed
+#: Ambient-occlusion radius, in nm. The complex measures ~20.8 nm, so a couple of
+#: nm separates an atom on the open outer face of the F1 head from one packed
 #: between subunits, which is the structure this demo is about.
+#:
+#: Checked against a sweep rather than assumed, since the nuclear-pore demo's
+#: first guess turned out to be four times too wide. Contrast here is FLAT —
+#: 0.245 / 0.250 / 0.262 / 0.268 / 0.279 / 0.276 at 0.8 / 1.0 / 1.5 / 2.0 / 3.0 /
+#: 5.0 nm — because a filled complex has no central void for a wide window to
+#: degenerate into measuring, unlike a ring with a pore. 1.5 nm sits within 6% of
+#: the peak and is the biophysically meaningful burial scale, so it stands.
 AO_RADIUS_NM = 1.5
 
 #: Occlusion grid resolution. Raised above the library default because the

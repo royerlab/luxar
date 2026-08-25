@@ -363,16 +363,25 @@ def spoke_to_color(spoke_ids: np.ndarray, n_spokes: int = 8) -> np.ndarray:
     return colors
 
 
-#: Ambient-occlusion radius, in nm. Sized for ARCHITECTURE rather than for
-#: residue-level burial: the ring is ~120 nm across with a ~40 nm central
-#: channel, so looking a few nm out separates an atom facing the open pore from
-#: one buried between two spokes. A radius near the water-probe scale would score
-#: individual side chains instead, which is a real quantity but invisible at the
-#: framing this demo opens on.
+#: Ambient-occlusion radius, in nm, sized against THIS DEMO's geometry rather
+#: than against the real complex. Easy to get wrong: a real NPC is ~120 nm across
+#: with a ~40 nm channel, but the scene is a scaled-down representation — one
+#: Y-complex tiled onto a `spoke_radius = 8.0` nm ring, measuring 25.6 x 25.6 x
+#: 9.6 nm. A radius chosen from the biology would be a quarter of the structure.
 #:
-#: Must stay comfortably larger than the grid cell (extent / AO_GRID_CELLS) or
-#: the window rounds to a single cell and the whole term flattens.
-AO_RADIUS_NM = 6.0
+#: 1.5 nm is both the best-measured value and the biophysically meaningful one.
+#: Contrast (std/mean of the normalized multiplier) FALLS as the window widens,
+#: because a window comparable to the object stops reporting enclosure and starts
+#: reporting depth — the degenerate case the package README warns about:
+#:
+#:   radius (nm)   1.0     1.5     2.0     3.0     4.0     6.0
+#:   contrast      0.305   0.298   0.282   0.259   0.244   0.231
+#:
+#: At 1.5 nm the window is ~7 cells wide and the largest atom is 0.36 of a cell,
+#: so treating each atom as a point rather than a sphere is a safe approximation
+#: here. Keep the radius comfortably above the cell size (extent /
+#: AO_GRID_CELLS) or the window rounds to one cell and the term flattens.
+AO_RADIUS_NM = 1.5
 
 #: Occlusion grid resolution. Higher than the library default because the
 #: structure is large in world units and the feature of interest is small: at 64

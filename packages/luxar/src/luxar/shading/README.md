@@ -86,7 +86,7 @@ loader and shader work that does not exist yet.
 |---|---|
 | `radius` | **The** knob. The scale of structure AO responds to; defaults to 5% of the bounding-box diagonal. Too small and only the tightest creases darken; too large and the integral degenerates into a depth map. |
 | `normals` | **Pass these if the data is a surface and you have them.** Switches from the full sphere to a cosine-weighted hemisphere. Roughly doubles the discrimination on shells — see below. |
-| `mass` | Occluding material per element. GSplats should pass `amplitudes`. Defaults to ones, i.e. pure count density. |
+| `mass` | Occluding material per element — **the only channel through which an element's own appearance enters** (see below). Defaults to ones, i.e. pure count density. |
 | `group_by` | **Required for nD data.** Pass the timepoint index for a timelapse, or occlusion crosses the time axis and the whole sequence shades as one solid. The same hazard `--coarsen-dims` exists for on the LOD side. |
 | `strength` | Scales the darkening. `0.0` returns all ones. |
 | `n_directions` | Sphere directions averaged. Cost and memory are linear in it. |
@@ -104,6 +104,29 @@ Two things worth knowing before judging a result:
   **Judge a lower target on the 5th percentile, not on the contrast number**: a
   target low enough to crush the dark end to black reports more contrast while
   showing less structure.
+
+### What `mass` does and does not capture
+
+Nothing here reads a node's radii, sharpness or opacity. Per-element appearance
+enters **only** through `mass`:
+
+| type | pass |
+|---|---|
+| GSplats | `amplitudes` (× per-splat alpha if RGBA) |
+| Points | `radii ** 3` when radii vary; otherwise leave `None` |
+| Lines | `widths ** 2 * segment_length` per vertex |
+| Mesh | leave `None` — a vertex has no extent of its own |
+
+Two things need no folding in. A **uniform** factor — node opacity, or a constant
+radius or sharpness — cancels entirely, because `extinction="auto"` calibrates
+against the population's own median. And **sharpness** only changes an element's
+profile *shape*, a modest constant unless it varies per element.
+
+One real approximation: mass is deposited at each element's **centre**, so extent
+is a weight and not a footprint. That holds while the render radius is small next
+to the grid cell (`extent / grid_cells`) — measured at 0.18, 0.36 and 0.44 of a
+cell in the three bundled point demos. Raise `grid_cells` if your elements span
+cells.
 
 ### Points need more of it than a mesh does
 

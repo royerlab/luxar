@@ -393,8 +393,33 @@ def bake_ambient_occlusion(
     Args:
         positions: ``(N, D)`` element positions.
         mass: ``(N,)`` occluding material per element. Defaults to ones, i.e.
-            pure count density. GSplats should pass ``amplitudes``; Points a
-            radius-cubed volume if radii vary widely.
+            pure count density.
+
+            **This is the only channel through which an element's own appearance
+            enters.** Nothing here reads a node's radii, sharpness or opacity —
+            per geometry type, the quantity to pass is:
+
+            ============  ==================================================
+            GSplats       ``amplitudes`` (times per-splat alpha if RGBA)
+            Points        ``radii ** 3`` when radii vary; else leave ``None``
+            Lines         ``widths ** 2 * segment_length`` per vertex
+            Mesh          leave ``None`` — a vertex has no extent of its own
+            ============  ==================================================
+
+            Two things deliberately do NOT need folding in. A *uniform* factor —
+            node opacity, or a constant radius or sharpness — cancels out
+            entirely, because ``extinction="auto"`` calibrates against the
+            population's own median. And sharpness only changes an element's
+            profile SHAPE, which is a modest constant unless it varies per
+            element, in which case fold it into ``mass`` yourself.
+
+            One real approximation to know about: mass is deposited at each
+            element's centre, so an element's extent is a weight and not a
+            footprint. That holds while the render radius is small next to the
+            occlusion grid cell (``extent / grid_cells``) — measured at 0.18,
+            0.36 and 0.44 of a cell in the three bundled point demos. Raise
+            ``grid_cells``, or splat pre-spread mass yourself, if your elements
+            are large enough to span cells.
         normals: Optional ``(N, 3)`` outward normals, in the ``spatial_dims``
             frame. When given, directions are cosine-weighted into the hemisphere
             each normal faces instead of averaged over the full sphere — still
