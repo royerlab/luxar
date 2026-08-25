@@ -180,6 +180,7 @@ def test_decode_budget_matches_the_viewer_ceiling() -> None:
     accepts, while a higher one would weaken the fail-fast guarantee.
     """
     assert MESH_DECODE_BUDGET_BYTES == 512 * 1024 * 1024
+    assert MESH_DECODED_BYTES_PER_VALUE == 4
 
 
 # =============================================================================

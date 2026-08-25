@@ -17,6 +17,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { MAX_MESH_VERTICES, MESH_DECODE_BUDGET_BYTES } from '../../../config/constants';
+import { DECODED_BYTES_PER_VALUE } from '../../../data/mesh/preflight';
 
 describe('MAX_MESH_VERTICES', () => {
   it('is 2^27, the pick vote-key stride', () => {
@@ -73,5 +74,15 @@ describe('MESH_DECODE_BUDGET_BYTES', () => {
     // a failure here rather than a silently stale comment.
     expect(maxVerticesFrom3DFloat32Budget).toBeGreaterThan(20_000_000);
     expect(maxVerticesFrom3DFloat32Budget).toBeLessThan(25_000_000);
+  });
+});
+
+describe('DECODED_BYTES_PER_VALUE', () => {
+  it('matches the Python write-time lower bound', () => {
+    // MIRROR: MESH_DECODED_BYTES_PER_VALUE in
+    // packages/luxar/src/luxar/typing_utils/constants.py must hold this value.
+    // If you change one, change the other — a Python test pins that side
+    // (validation/tests/test_mesh_validation.py::test_decode_budget_matches_the_viewer_ceiling).
+    expect(DECODED_BYTES_PER_VALUE).toBe(4);
   });
 });

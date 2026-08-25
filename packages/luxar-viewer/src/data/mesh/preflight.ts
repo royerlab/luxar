@@ -619,6 +619,11 @@ function rejectMesh(path: string, message: string): never {
   throw new LoaderError('Validation', path, new Error(message));
 }
 
+// MIRROR: MESH_DECODED_BYTES_PER_VALUE in
+// packages/luxar/src/luxar/typing_utils/constants.py must hold this value.
+// If you change one, change the other; tests pin both sides.
+export const DECODED_BYTES_PER_VALUE = 4;
+
 /**
  * Run the Stage-1 metadata preflight.
  *
@@ -696,7 +701,6 @@ export async function preflightMesh(
   // logically uint32 but the INDEX encoder narrows it to the smallest unsigned dtype
   // that fits, while an external int64 store costs 8 bytes per index — so a
   // canonical 4 would be wrong in both directions.
-  const DECODED_BYTES_PER_VALUE = 4;
   // The running sum over arrays, WITHOUT the max-chunk term — that term is folded
   // in once, below, to produce `peakBytes` (the quantity actually compared against
   // the budget and returned as `accountedBytes`). Named distinctly from the
