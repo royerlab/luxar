@@ -163,10 +163,13 @@ def run_audit(
 
 
 def render_summary(results: Sequence[Result]) -> str:
+    worst_level = max((result.level for result in results), default=Level.PASS)
     lines = [
         "# External reference audits",
         "",
         "These network-backed checks are report-only and never gate merges.",
+        "",
+        f"**Worst level: {worst_level.name}**",
         "",
         "| Audit | Level | Detail |",
         "| --- | --- | --- |",
@@ -193,9 +196,22 @@ def render_summary(results: Sequence[Result]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def render_annotations(results: Sequence[Result]) -> str:
+    lines = []
+    for result in results:
+        if result.level is Level.PASS:
+            continue
+        command = "error" if result.level is Level.ERROR else "warning"
+        message = f"{result.audit.name}: {result.level.name} - {result.detail}"
+        message = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+        lines.append(f"::{command} title=External reference audit::{message}")
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
 def main() -> int:
     results = [run_audit(audit) for audit in AUDITS]
     summary = render_summary(results)
+    print(render_annotations(results), end="")
     print(summary, end="")
     if summary_path := os.environ.get("GITHUB_STEP_SUMMARY"):
         try:

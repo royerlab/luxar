@@ -91,6 +91,8 @@ make check-docs   # REQUIRED gate mirror: completeness + TypeDoc ratchets +
                   # warning-fatal Sphinx. A new file under docs/ must be listed
                   # in a docs/index.rst toctree or this goes red.
 make check-docs-external-links  # opt-in external HTTP link audit (not a gate)
+make check-zenodo-live          # opt-in live Zenodo manifest-pin audit (not a gate)
+make check-external-references  # aggregate external audits (report-only, non-gating)
 make check-knip   # REPORT only (non-gating): unused viewer files/exports/deps
 make format-all   # Format all code (Python, TypeScript, Rust, Go, CUDA)
 

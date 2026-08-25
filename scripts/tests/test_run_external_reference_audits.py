@@ -239,9 +239,40 @@ def test_main_writes_the_same_visible_summary_and_always_exits_zero(
     assert audit_module.main() == 0
 
     stdout = capsys.readouterr().out
-    assert summary_path.read_text() == stdout
+    summary = summary_path.read_text()
+    assert stdout.endswith(summary)
+    assert stdout.count("::warning title=External reference audit::") == 3
+    assert "**Worst level: WARNING**" in summary
     assert stdout.count("**WARNING**") == 3
     assert "report-only and never gate merges" in stdout
+
+
+def test_annotations_surface_non_pass_levels_and_escape_commands() -> None:
+    results = [
+        audit_module.Result(
+            audit_module.AUDITS[0], audit_module.Level.PASS, "clean", ""
+        ),
+        audit_module.Result(
+            audit_module.AUDITS[0],
+            audit_module.Level.NOTICE,
+            "skipped%\nnot configured",
+            "",
+        ),
+        audit_module.Result(
+            audit_module.AUDITS[1], audit_module.Level.WARNING, "stale", ""
+        ),
+        audit_module.Result(
+            audit_module.AUDITS[2], audit_module.Level.ERROR, "broken", ""
+        ),
+    ]
+
+    annotations = audit_module.render_annotations(results)
+
+    assert annotations.count("::warning title=External reference audit::") == 2
+    assert annotations.count("::error title=External reference audit::") == 1
+    assert "skipped%25%0Anot configured" in annotations
+    assert len(annotations.splitlines()) == 3
+    assert "PASS" not in annotations
 
 
 def test_summary_escapes_and_bounds_command_output() -> None:
@@ -287,6 +318,10 @@ def test_weekly_workflow_is_manual_read_only_and_uses_the_aggregator() -> None:
     assert workflow["on"]["workflow_dispatch"] == ""
     assert workflow["on"]["schedule"] == [{"cron": "43 10 * * 1"}]
     assert workflow["permissions"] == {"contents": "read"}
+    assert workflow["concurrency"] == {
+        "group": "external-reference-audits",
+        "cancel-in-progress": "false",
+    }
     steps = workflow["jobs"]["audit"]["steps"]
     run_steps = [step["run"] for step in steps if "run" in step]
     assert "python scripts/run_external_reference_audits.py" in run_steps
@@ -294,3 +329,13 @@ def test_weekly_workflow_is_manual_read_only_and_uses_the_aggregator() -> None:
         step for step in steps if step.get("name") == "Run report-only audits"
     )
     assert audit_step["env"] == {"ZENODO_TOKEN": "${{ secrets.ZENODO_TOKEN }}"}
+    setup_python = next(
+        step
+        for step in steps
+        if step.get("uses", "").startswith("actions/setup-python@")
+    )
+    assert setup_python["id"] == "setup-python"
+    install_hatch = next(step for step in steps if step.get("name") == "Install Hatch")
+    assert install_hatch["run"] == (
+        'pipx install hatch --python "${{ steps.setup-python.outputs.python-path }}"'
+    )

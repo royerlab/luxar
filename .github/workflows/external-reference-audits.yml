@@ -10,7 +10,7 @@ permissions:
 
 concurrency:
   group: external-reference-audits
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   audit:
@@ -19,10 +19,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        id: setup-python
         with:
           python-version: '3.12'
       - name: Install Hatch
-        run: pipx install hatch
+        run: pipx install hatch --python "${{ steps.setup-python.outputs.python-path }}"
       - name: Run report-only audits
         env:
           ZENODO_TOKEN: ${{ secrets.ZENODO_TOKEN }}
