@@ -148,9 +148,10 @@ test.describe('ALL Examples - Systematic Smoke Tests', () => {
 
       // Get scene state
       const state = await getLuxarState(page);
+      const allowZeroPoints = DATASETS_ALLOW_ZERO_POINTS.includes(example);
 
       // Debug: If no points loaded, dump console logs to help diagnose
-      if (state.totalPoints === 0) {
+      if (state.totalPoints === 0 && !allowZeroPoints) {
         console.error(`\n[${example}] ⚠️ No points loaded! Dumping console logs:`);
         consoleMessages.logs.slice(-50).forEach((log, i) => {
           console.error(`  [LOG ${i}] ${log}`);
@@ -161,7 +162,6 @@ test.describe('ALL Examples - Systematic Smoke Tests', () => {
       }
 
       // Verify data loaded (allow 0 points for datasets that may legitimately have none)
-      const allowZeroPoints = DATASETS_ALLOW_ZERO_POINTS.includes(example);
       if (!allowZeroPoints) {
         expect(state.totalPoints).toBeGreaterThan(0);
       }
@@ -172,7 +172,7 @@ test.describe('ALL Examples - Systematic Smoke Tests', () => {
       // when both sides were zero.
       if (state.pointClouds && state.pointClouds.length > 0) {
         expect(state.pointClouds.length).toBeGreaterThan(0);
-      } else if (!allowZeroPoints) {
+      } else {
         const renderableCount = await page.evaluate(() => {
           const debug = (window as any).__luxarDebug;
           if (!debug?.scene) return 0;
