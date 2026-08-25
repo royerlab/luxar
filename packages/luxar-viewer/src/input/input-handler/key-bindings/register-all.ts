@@ -37,6 +37,8 @@ export interface KeyBindingsCommands {
   selectDimension(index: number): void;
   toggleHelp(): void;
   toggleDimensionSliders(): void;
+  toggleDatasetBrowser(): void;
+  openElementMenu(event: KeyboardEvent): void;
   togglePerformanceStats(): void;
   toggleRenderingControls(): void;
   toggleControlMode(): void;

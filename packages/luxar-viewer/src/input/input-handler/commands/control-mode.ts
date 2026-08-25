@@ -33,11 +33,11 @@ function applyControlType(ctx: ControlModeCtx, newType: ControlType): void {
   // Use sceneManager.setControlType for ortho (handles camera swap)
   ctx.sceneManager.setControlType(newType);
 
-  // Update input context based on control mode
-  if (newType === 'fly') {
-    ctx.contextManager.setContext(InputContext.FLY_CONTROLS);
-  } else {
-    ctx.contextManager.setContext(InputContext.NAVIGATION);
+  // ControlsManager change events normally synchronize this first. Keep the
+  // command correct on its own as a defensive backstop around that listener.
+  const context = newType === 'fly' ? InputContext.FLY_CONTROLS : InputContext.NAVIGATION;
+  if (ctx.contextManager.getContext() !== context) {
+    ctx.contextManager.setContext(context);
   }
 
   // Sync rendering controls if they exist, then PERSIST the new mode.

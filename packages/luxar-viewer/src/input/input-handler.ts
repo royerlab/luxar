@@ -38,7 +38,7 @@ import { AnimationController } from '../scene/animation/animation-controller';
 import type { DimensionAnimationManager } from '../scene/animation/dimension-animation-manager';
 import { notifier } from '../utils/cross-layer/notifier';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
-import { InputContextManager } from './input-handler/context-manager';
+import { InputContext, InputContextManager } from './input-handler/context-manager';
 import {
   computeDimensionStep,
   resolveSelectedDimension,
@@ -48,6 +48,7 @@ import { PanelCoordinator } from './input-handler/commands/panel-coordinator';
 import { WindowEventHandler } from './input-handler/window-events/window-event-handler';
 import { registerAllKeyBindings } from './input-handler/key-bindings/register-all';
 import type { RegisteredShortcutBindings } from '../types/shortcut-help';
+import { KeyAction, type KeyActionId } from './input-handler/key-bindings/actions';
 import type {
   KeyBindingsCommands,
   KeyBindingsPanelGetters,
@@ -83,7 +84,8 @@ import type {
   ToggleableHandle,
 } from './input-handler/panel-capabilities';
 
-// Re-export DimensionSlidersFactory through the package facade.
+// Re-exported through the package facade (`input/index.ts`).
+export { KeyAction, type KeyActionId };
 export type { DimensionSlidersFactory } from './input-handler/panel-capabilities';
 
 /**
@@ -496,13 +498,23 @@ export class InputHandler {
     // the bare method reference at construction time would freeze
     // the listener to the original closure.
     const startAnimation = (): void => this.animationController.startAnimation();
+    const syncInputContext = (event?: { controlType?: ControlType }): void => {
+      const { controlType } = event ?? {};
+      if (!controlType) return;
+      const context = controlType === 'fly' ? InputContext.FLY_CONTROLS : InputContext.NAVIGATION;
+      if (this.contextManager.getContext() !== context) {
+        this.contextManager.setContext(context);
+      }
+    };
 
     this.sceneManager.controls.addEventListener('start', startAnimation);
     this.sceneManager.controls.addEventListener('change', startAnimation);
+    this.sceneManager.controls.addEventListener('change', syncInputContext);
 
     this.eventListeners.push(
       () => this.sceneManager.controls.removeEventListener('start', startAnimation),
-      () => this.sceneManager.controls.removeEventListener('change', startAnimation)
+      () => this.sceneManager.controls.removeEventListener('change', startAnimation),
+      () => this.sceneManager.controls.removeEventListener('change', syncInputContext)
     );
   }
 
@@ -550,7 +562,7 @@ export class InputHandler {
    * system. Bindings are organized by input context:
    * - NAVIGATION: Default orbit mode shortcuts
    * - FLY_CONTROLS: WASD movement keys for fly mode
-   * - All contexts: Passthrough allows global shortcuts to work everywhere
+   * - Explicit fallback contexts: shared shortcuts remain reachable where intended
    *
    * Called during init() to set up the complete keyboard interface.
    *
@@ -569,6 +581,11 @@ export class InputHandler {
       selectDimension: (index) => this.selectDimension(index),
       toggleHelp: () => this.toggleHelp(),
       toggleDimensionSliders: () => this.toggleDimensionSliders(),
+      toggleDatasetBrowser: () => window.dispatchEvent(new CustomEvent('open-dataset-browser')),
+      openElementMenu: (event) => {
+        event.preventDefault();
+        window.dispatchEvent(new CustomEvent('luxar-open-element-menu'));
+      },
       togglePerformanceStats: () => this.togglePerformanceStats(),
       toggleRenderingControls: () => this.toggleRenderingControls(),
       toggleControlMode: () => this.toggleControlMode(),
@@ -666,6 +683,11 @@ export class InputHandler {
   /** Registered bindings used to build the keyboard-shortcut overlay. */
   public getRegisteredShortcutBindings(): RegisteredShortcutBindings {
     return this.contextManager.getRegisteredShortcutBindings();
+  }
+
+  /** Resolve the active binding label for a registered action. */
+  public getShortcutLabel(actionId: KeyActionId): string | undefined {
+    return this.contextManager.getShortcutLabel(actionId);
   }
 
   /**
