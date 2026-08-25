@@ -679,6 +679,16 @@ class Scene(Group):
 
         aprint(f"Exporting scene from {source} to {destination}")
         writer.finalize()
+        finalized_source = Path(self.get_store_path()).resolve()
+        if destination == finalized_source:
+            return
+        if finalized_source != source:
+            if not finalized_source.is_dir():
+                raise ValueError(
+                    "Scene backing store finalized to an archive and cannot be "
+                    f"copied as a directory: {finalized_source}"
+                )
+            source = finalized_source
         # CL-1: atomic copy — a failure mid-copy leaves no half-written
         # zarr store at `destination`.
         atomic_copytree(source, destination)
