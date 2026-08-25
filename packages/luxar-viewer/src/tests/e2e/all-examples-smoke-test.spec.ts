@@ -250,6 +250,7 @@ test.describe('Critical Examples - Deep Validation', () => {
 
     expect(state.meshNodes).toHaveLength(1);
     expect(state.meshNodes[0].triangleCount).toBe(4);
+    expect(state.meshNodes[0].flatNormal).toBe(true);
     expect(state.totalTriangles).toBe(4);
     expect(state.totalElements).toBe(4);
   });

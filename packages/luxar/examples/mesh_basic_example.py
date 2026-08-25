@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
-"""Create a small shaded tetrahedron mesh example."""
+"""Mesh Basic Example — a minimal shaded tetrahedron.
+
+This example demonstrates:
+- Creating a triangle surface with ``add_mesh``.
+- Flat, view-anchored shading without a lighting rig.
+- Per-vertex RGB colours interpolated across each face.
+"""
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint
 
 from luxar import Dimensions, LuxarZarrCompiler
@@ -37,8 +44,18 @@ def main() -> None:
             vertices,
             faces,
             colors=colors,
-            shading="smooth",
             layer=True,
+        )
+        add_explainer(
+            scene,
+            title="Basic mesh",
+            body="A tetrahedron built from four vertices and four triangular faces, "
+            "using Luxar's light-free flat shading.",
+            observe=[
+                "Four crisp triangular faces form a closed surface.",
+                "The shading needs no authored lights or normals.",
+                "Vertex colours blend smoothly across each face.",
+            ],
         )
 
     aprint(f"Created mesh example: {output_path}")
