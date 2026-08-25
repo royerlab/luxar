@@ -181,6 +181,95 @@ above) — mask it yourself with `gsplats.rendering.render_to_volume_tensor` plu
 `metrics.compute_psnr`
 (both torch; `render_to_volume` returns NumPy, which `compute_psnr` rejects).
 
+### Scoring a STACKED or TRANSFORMED archive (read before `gsplat compare`)
+
+Five separate wrong numbers were produced in one day by the same mistake:
+**comparing two things held under different conventions.** None looked like an
+error — each produced a plausible dB that a reader would simply believe. Check
+all five before you trust a `compare`.
+
+**1. Score a stacked 4D archive PER TIMEPOINT, never whole.** The stacked axis is
+the LAST centre column in a `.gsplats.zarr`; the source movie is almost always
+time-FIRST. Compared whole, the two are misaligned and the fit looks mediocre
+rather than mis-sliced. Measured on the same neuromast archive with the same code:
+
+| | PSNR | foreground | SSIM |
+|---|---|---|---|
+| stacked 4D, compared whole | 28.60 | 17.57 | 0.651 |
+| per timepoint | **50.92** | **50.26** | **0.992** |
+
+33 dB of foreground understatement, and the wrong number is the believable one.
+
+**2. `dim_order` is the slicing order; the scene's `Dimensions` list is not.** A
+scene's `Dimensions` are ordered for SCREEN mapping (x/y/z) and may deliberately
+differ from the centre columns — e.g. `dim_order = ["Z","Y","X","Time"]` beside a
+`Dimensions` list of X, Y, Z, Time. Slice on `dim_order`. And check what the
+stacked column HOLDS: it is often a physical value (minutes, µm) rather than an
+index, so `frame = round(value / step)`.
+
+**3. Score before any spatial transform. "It was only a scale" is not a defence.**
+Fitted centres are usually voxel indices; a shipped archive has often been scaled
+to physical units and recentred. Comparing the transformed archive against an
+untransformed reference cost **16 dB** on a drosophila store whose transform was
+a PURE DIAGONAL SCALE:
+
+| | PSNR | foreground | SSIM |
+|---|---|---|---|
+| pre-transform fit vs voxel-grid reference | 44.94 | 40.94 | 0.968 |
+| post-transform vs the SAME reference | 28.78 | 24.33 | 0.541 |
+| hosted archive (post) vs the SAME reference | 28.77 | 24.22 | 0.536 |
+
+That third row is the control worth copying: an independent refit and the shipped
+archive agreeing to 0.01 dB is what proves the collapse is the TRANSFORM and not
+the fit. Without it the 16 dB reads as a real quality difference — it was
+initially reported as a "+16 dB improvement", pure confound.
+
+Rotations and centring are worse still (a flylight archive was unrecoverable at
+correlation 0.17/0.07), and whether an explicit inverse recovers the score
+exactly is untested. So: **score at fit time and stamp the result.** If you must
+score later, invert the transform explicitly and prove it with a control like row
+three — do not assume a diagonal scale is harmless.
+
+**4. Fixing ONE convention mismatch and getting a different wrong number is not
+progress.** A radar archive stacked three independent faults, and each fix
+revealed the next:
+
+1. The archive was on grid `b-160,140,-110,190,0,18` and the reference on
+   `b…,0.25,18.25` — a mismatched pair, because `ls | head -1` picked the
+   reference.
+2. The reference was raw dBZ with a −999 no-data fill. Global PSNR came out at
+   3.5 dB and Otsu put the foreground threshold at −996.9, so "foreground" was
+   50% of empty sky.
+3. With BOTH fixed — matched grid, and the demo's actual mapping
+   `clip(dBZ − 20, 0, 50) / 50` — it still scored 16.41 / 6.70 dB, because the
+   archive's centres are in **km** while the reference is voxel-indexed.
+
+Masking the fill was necessary and nowhere near sufficient. The only reason the
+third fault was found is that 6.70 dB was *implausible* for a known-good archive.
+**Carry a prior for what the number should be, and keep digging while it is
+violated** — a wrong-but-less-wrong number is the most expensive state to stop in.
+
+**5. Never assign an axis ROLE from a data-dependent property.** A levelling
+rotation derived in the plane of "the two widest axes" is correct only until the
+tilt passes ~45°, at which point the second axis becomes the wider one, the roles
+swap, and the angle comes out 90° off: a synthetic 70° tilt was measured as −20°
+and "levelling" made the cloud LESS elongated (in-plane ratio 2.30 → 1.15). It
+passed ruff, mypy, the complexity ratchet and the existing tests. Fix roles by
+the convention the consumer uses, and exercise any such derivation against
+synthetic inputs whose answer you already know.
+
+**6. Never compare a preprocessed fit against its own preprocessed input.** It is
+excellent by construction. Score against the original — see "Denoising before a
+fit" for the subtler version, where the mask itself is the thing that lies.
+
+Quality stamps are the way out of most of this, but **check whether they exist
+before relying on them**: they are written per fit by `fit`, and coverage is
+uneven downstream. `combine_as_new_dimension` + `build_recipe` do not propagate
+per-part stats to the stacked root (the fits carry `psnr_db` /
+`foreground_psnr_db`; the archive root reports none), and `batch-fit` tiles were
+never stamped at all. Absent stamps mean re-measurement, and re-measurement means
+every trap above.
+
 ### Denoising before a fit (`luxar gsplat denoise`, or your own filter)
 
 Removing noise before fitting is often worth it: a fit spends its splat budget on
@@ -258,6 +347,7 @@ An index into the measured sections, not a substitute for them.
 | Symptom | Reach for |
 | --- | --- |
 | Thin/faint structure missing | start with `--floor auto`, never a higher floor; on a near-all-zero stack also test `--floor none` — "Background floor suppression" above — then raise K |
+| `compare` says a known-good archive is mediocre | you compared a stacked 4D store whole, or across a transform — "Scoring a STACKED or TRANSFORMED archive" |
 | Noise survives a denoising pass that measured well | you measured displacement, not removal — "Denoising before a fit"; on isolated-voxel noise use a component-size filter |
 | Background haze survives | the viewer's display window and opacity — same section; or `filter --soft-highpass p90` (the `luxar-gsplat-edit` skill) |
 | Thin filaments render as chains of beads | the six-knob schedule under "BOTH entry points default to 1000 iters" below. NOT more seeds (measured *worse*), and NOT a preset: a preset moves `n_iters`, `early_stop_patience` and `max_eccentricity` — but nothing on this schedule, so `enable_dynamic_ops`, `patience` (the plateau LR-decay one, default 15, NOT `early_stop_patience`) and `l1_diag` all stay where they are and you must set them yourself |
@@ -305,6 +395,10 @@ Each of these has burned a whole fit cycle. Check them before you launch a long 
   tell "deleted" from "moved one voxel". Judge a filter on a MIP or in 3D (a single
   slice hides it), and prefer a filter that moves nothing. See "Denoising before a
   fit".
+- **A stacked 4D archive compared WHOLE is mis-sliced, not badly fitted.** The
+  stacked axis is the last centre column; the source movie is time-first. Measured
+  cost on one archive: foreground 17.57 dB compared whole vs 50.26 dB per
+  timepoint. Score per timepoint. See "Scoring a STACKED or TRANSFORMED archive".
 - **Score against the ORIGINAL, and on the foreground.** Global PSNR on a
   97–99%-empty stack is flattered by the empty part and barely moves; foreground
   (say, above 10% of max) and a dim band (1–10%) are where the answer lives. Never
