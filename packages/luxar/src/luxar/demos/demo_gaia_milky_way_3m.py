@@ -631,7 +631,8 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
                 labels=[SUN_LABEL],
                 # One marker, one fixed destination: a single-element node needs
                 # no `keys=` at all, since there is nothing per-element to
-                # substitute. SIMBAD is the canonical object page (#1917).
+                # substitute. NASA's Sun page replaces SIMBAD, whose catalogue
+                # does not resolve solar-system objects.
                 link="https://science.nasa.gov/sun/",
                 copy="Sun",
                 layer=True,
