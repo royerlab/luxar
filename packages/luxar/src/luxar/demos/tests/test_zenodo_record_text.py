@@ -677,7 +677,29 @@ def test_refresh_reports_and_discards_an_unpinned_read_without_a_fallback(
     )
 
     assert counts == (1, 0, 1, 0)
-    assert key not in json.loads((tmp_path / "chars.json").read_text())["archives"]
+    archives = json.loads((tmp_path / "chars.json").read_text())["archives"]
+    assert archives[key] == {
+        "n_splats": None,
+        "ndim": None,
+        "format_version": None,
+        "topology": None,
+        "psnr_db": None,
+        "foreground_psnr_db": None,
+        "foreground_fraction": None,
+        "source_shape": None,
+        "source_dtype": None,
+        "source_bytes": None,
+        "frames": None,
+        "measured_from": None,
+        "measured_sha256": None,
+    }
+    (row,) = gen._dataset_rows(
+        "ds",
+        _fake_manifest([_entry("a.gsplats.zarr.zip", "p" * 64)])["datasets"]["ds"],
+        archives,
+    )
+    assert row["splats"] == gen._ABSENT
+    assert row["topology"] == gen._ABSENT
 
 
 def test_refresh_summary_distinguishes_rejected_and_retained_reads(

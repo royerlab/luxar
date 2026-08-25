@@ -415,7 +415,21 @@ def _retain_preferred_measurements(
         if new_entry.get("measured_sha256") != pinned_digest:
             rejected += 1
             if old_entry is None:
-                del measured[key]
+                measured[key] = {
+                    "n_splats": None,
+                    "ndim": None,
+                    "format_version": None,
+                    "topology": None,
+                    "psnr_db": None,
+                    "foreground_psnr_db": None,
+                    "foreground_fraction": None,
+                    "source_shape": None,
+                    "source_dtype": None,
+                    "source_bytes": None,
+                    "frames": None,
+                    "measured_from": None,
+                    "measured_sha256": None,
+                }
             else:
                 measured[key] = old_entry
         elif (
