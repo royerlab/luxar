@@ -588,8 +588,10 @@ describe('DimensionSliders — wheel stepping + Step context-menu section', () =
     const track = document.querySelector('.luxar-dimension-slider__track')!;
     const windowSpy = vi.fn();
     window.addEventListener('wheel', windowSpy);
+    vi.mocked(sceneDimsManager.setDimensionValue).mockClear();
     track.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, bubbles: true, cancelable: true }));
     expect(windowSpy).toHaveBeenCalledTimes(1);
+    expect(sceneDimsManager.setDimensionValue).toHaveBeenCalledWith(3, 6);
     window.removeEventListener('wheel', windowSpy);
     sliders.dispose();
   });
