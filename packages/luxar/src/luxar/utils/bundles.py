@@ -163,8 +163,10 @@ def load_dataset_bundle(
     staleness logic as the in-repo path, so a re-migrated bundle still refreshes
     its extracted frames rather than pinning the first extraction — and here the
     staleness key is the manifest **digest** rather than the in-repo path's
-    ``(size, mtime)`` guess, since a re-upload that happened to preserve both
-    would otherwise keep serving the previous extraction.
+    ``(size, mtime)`` guess, unless the entry has superseded history. In that
+    case :func:`ensure_dataset` may have served an earlier generation without
+    reporting which digest matched, so the resolved bundle's ``(size, mtime)``
+    is used instead.
 
     Args:
         name: Manifest dataset key (e.g. ``"gsplats_zebrafish"``).
@@ -328,9 +330,10 @@ def _extract_bundle_and_load(
     what stops a re-migrated bundle serving stale frames, so both paths must use
     the same copy rather than a lookalike.
 
-    *stamp* overrides the staleness key. The manifest-driven caller passes the
-    verified sha256, which identifies the bundle exactly; without one the key
-    falls back to the bundle's ``(size, mtime)``.
+    *stamp* overrides the staleness key. The manifest-driven caller passes a
+    digest unless the entry has superseded history; then it leaves *stamp* unset
+    because :func:`ensure_dataset` does not report which generation matched, and
+    the key falls back to the bundle's ``(size, mtime)``.
     """
     from ..gsplats.gsplat_data import GSplatData
 
