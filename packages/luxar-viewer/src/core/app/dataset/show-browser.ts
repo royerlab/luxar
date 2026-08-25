@@ -4,7 +4,7 @@ import { showToast } from '../../../ui/toast';
 import { replaceBrowserDataSourceUrl } from '../../../config/url-params';
 import { log, Modules } from '../../../utils/log';
 import { getViewerContainer } from '../../../utils/viewer-container';
-import type { InputHandler } from '../../../input';
+import { KeyAction, type InputHandler } from '../../../input';
 
 /**
  * Open the dataset browser modal. Returns the new instance so the
@@ -34,6 +34,7 @@ export interface ShowDatasetBrowserPorts {
    */
   isSwitchInFlight: () => boolean;
   loadDataset: (src: string) => Promise<void>;
+  shortcutForAction: (actionId: string) => string | undefined;
   onClose: () => void;
 }
 
@@ -82,7 +83,10 @@ export function showDatasetBrowser(ports: ShowDatasetBrowserPorts): DatasetBrows
       return ports.loadDataset(cleanUrl).catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
         log.error(Modules.LUXAR, `loadDataset failed for ${cleanUrl}: ${message}`, error);
-        showError(`Failed to load dataset: ${message}`);
+        showError(`Failed to load dataset: ${message}`, ports.shortcutForAction, {
+          datasetBrowser: KeyAction.toggleDatasetBrowser,
+          help: KeyAction.toggleHelp,
+        });
         throw error;
       });
     },

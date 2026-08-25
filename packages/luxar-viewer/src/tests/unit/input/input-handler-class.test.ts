@@ -710,6 +710,36 @@ describe('InputHandler — PanelCoordinator forwarding', () => {
     }
   });
 
+  it('routes a held-key release after focus moves into a text input', () => {
+    const handler = makeHandler();
+    const keydownHandler = vi.fn();
+    const keyupHandler = vi.fn();
+    handler.init();
+    handler.registerBinding(InputContext.FLY_CONTROLS, {
+      actionId: 'test.fly.release',
+      key: 'x',
+      handler: keydownHandler,
+      keyupHandler,
+      description: 'Test fly release',
+      help: false,
+    });
+    handler.pushContext(InputContext.FLY_CONTROLS);
+
+    try {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'x' }));
+      const input = document.createElement('input');
+      document.body.appendChild(input);
+      input.focus();
+      window.dispatchEvent(new KeyboardEvent('keyup', { key: 'x' }));
+
+      expect(keydownHandler).toHaveBeenCalledTimes(1);
+      expect(keyupHandler).toHaveBeenCalledTimes(1);
+    } finally {
+      handler.dispose();
+      document.body.innerHTML = '';
+    }
+  });
+
   it('setScaleBar / setColormapLegend / setOverlayManager do NOT forward', () => {
     // Sanity: these setters only store local references. If
     // panelCoordinator forwarding is added, update this test alongside.
