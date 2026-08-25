@@ -19,10 +19,12 @@ DOCS_LFS_ASSETS = {
 
 
 def _workflow() -> dict[str, Any]:
+    """Load the Pages workflow as structured YAML."""
     return yaml.safe_load(WORKFLOW.read_text())
 
 
 def test_pages_checkout_does_not_smudge_the_whole_lfs_repository() -> None:
+    """Keep the checkout from downloading every repository LFS object."""
     steps = _workflow()["jobs"]["build"]["steps"]
     checkout = next(
         step for step in steps if step.get("uses", "").startswith("actions/checkout@")
@@ -32,6 +34,7 @@ def test_pages_checkout_does_not_smudge_the_whole_lfs_repository() -> None:
 
 
 def test_pages_fetches_only_the_lfs_assets_published_by_sphinx() -> None:
+    """Fetch the four published screenshots without pulling unrelated payloads."""
     steps = _workflow()["jobs"]["build"]["steps"]
     fetch = next(
         step for step in steps if step.get("name") == "Fetch documentation LFS assets"
@@ -43,6 +46,7 @@ def test_pages_fetches_only_the_lfs_assets_published_by_sphinx() -> None:
 
 
 def test_pages_cancels_deployments_superseded_by_newer_main_promotions() -> None:
+    """Do not serialize stale Pages builds behind newer main promotions."""
     concurrency = _workflow()["concurrency"]
 
     assert concurrency == {"group": "pages", "cancel-in-progress": True}
