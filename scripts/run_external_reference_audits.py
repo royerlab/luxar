@@ -89,9 +89,9 @@ _REJECTED_CREDENTIAL_MARKERS = (
 )
 
 
-def _level_from_output(output: str) -> Level:
+def _level_from_output(output: str) -> Level | None:
     levels = [_DEMO_LEVELS[match] for match in _LEVEL_PATTERN.findall(output)]
-    return max(levels, default=Level.ERROR)
+    return max(levels) if levels else None
 
 
 def _captured_output(*parts: str | bytes | None) -> str:
@@ -162,11 +162,18 @@ def run_audit(
         return Result(audit, level, f"exited {completed.returncode}", output)
 
     level = _level_from_output(output) if audit.parse_levels else Level.PASS
+    if level is None:
+        return Result(
+            audit,
+            Level.ERROR,
+            "completed with invalid report levels",
+            output,
+        )
     details = {
         Level.PASS: "completed without findings",
         Level.NOTICE: "completed with human checks",
         Level.WARNING: "completed with findings",
-        Level.ERROR: "completed with invalid report levels",
+        Level.ERROR: "completed with configuration findings",
     }
     return Result(audit, level, details[level], output)
 

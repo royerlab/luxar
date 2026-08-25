@@ -4,6 +4,7 @@ import ast
 import importlib.util
 import subprocess
 import sys
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -67,6 +68,27 @@ def test_demo_audit_cannot_silently_report_no_destinations(monkeypatch) -> None:
     result = audit_module.run_audit(audit_module.AUDITS[1], env={})
 
     assert result.level is audit_module.Level.ERROR
+
+
+def test_demo_configuration_findings_are_not_reported_as_parse_failures(
+    monkeypatch,
+) -> None:
+    outputs = iter(("[CONFIG] manifest missing\n", ""))
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], 0, next(outputs), ""
+        ),
+    )
+
+    configuration = audit_module.run_audit(audit_module.AUDITS[1], env={})
+    invalid_report = audit_module.run_audit(audit_module.AUDITS[1], env={})
+
+    assert configuration.level is audit_module.Level.ERROR
+    assert configuration.detail == "completed with configuration findings"
+    assert invalid_report.level is audit_module.Level.ERROR
+    assert invalid_report.detail == "completed with invalid report levels"
 
 
 def test_unknown_demo_marker_does_not_override_known_levels() -> None:
@@ -203,6 +225,31 @@ def test_rejected_required_credential_is_a_configuration_error(
     )
 
     assert result.level is audit_module.Level.ERROR
+
+
+@pytest.mark.parametrize(
+    ("status", "reason"), [(401, "UNAUTHORIZED"), (403, "FORBIDDEN")]
+)
+def test_rejected_credential_markers_match_the_zenodo_producer(
+    monkeypatch, status: int, reason: str
+) -> None:
+    producer = SCRIPT.with_name("zenodo_migration_audit.py")
+    spec = importlib.util.spec_from_file_location("zenodo_migration_audit", producer)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setattr(sys, "argv", [str(producer)])
+    spec.loader.exec_module(module)
+    error = urllib.error.HTTPError("https://example.invalid", status, reason, {}, None)
+    monkeypatch.setattr(
+        module.urllib.request,
+        "urlopen",
+        lambda *args, **kwargs: (_ for _ in ()).throw(error),
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        module.fetch_deposition("21912280", "rejected-token")
+
+    assert str(exc_info.value).startswith(audit_module._REJECTED_CREDENTIAL_MARKERS)
 
 
 def test_auth_failure_text_without_required_env_remains_a_warning(monkeypatch) -> None:
