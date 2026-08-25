@@ -192,16 +192,29 @@ scene = compiler.create_scene(
 **In a bundled demo this exact call fails a required test.** Demos run under the
 cinematic 35 mm preset, and `test_demos_cinematic_mode.py` refuses an authored
 pose that pins `fov`/`fov_preset` or that is not visibly composed for the 63°
-lens. So in `luxar/demos/` leave the FOV unset and pass the position through
-`_cinematic_camera.pull_in`, INLINE — the check reads the AST, so a pose assigned
-to a local first does not count:
+lens. So in `luxar/demos/` leave the FOV unset and derive the distance at
+`CINEMATIC_FOV_DEG` directly:
 
 ```python
-from luxar.demos._cinematic_camera import VIEWER_DEFAULT_FOV_DEG, pull_in
+import math
 
-eye = (cx, cy, cz + d)  # d solved at VIEWER_DEFAULT_FOV_DEG, as above
-camera = CameraConfig(position=pull_in(eye, centre), target=centre)
+from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
+
+half_fov = math.radians(CINEMATIC_FOV_DEG) / 2
+d = (
+    max(
+        (W / fill) / (2 * math.tan(half_fov) * aspect),
+        (H / fill) / (2 * math.tan(half_fov)),
+    )
+    + depth / 2
+)
+camera = CameraConfig(position=(cx, cy, cz + d), target=centre)
 ```
+
+The guard also recognises an inline `position=pull_in(...)` when carrying over an
+empirically tuned distance from another FOV. For a derived distance, importing
+`CINEMATIC_FOV_DEG` or `framing_scale` vouches for the module and lets the pose use
+a local variable normally.
 
 Two decisions this formula makes explicit:
 
