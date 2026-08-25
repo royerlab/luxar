@@ -19,7 +19,10 @@
 import { test, expect } from './fixtures';
 import { resolve } from 'node:path';
 import type { DebugState } from '../../core/app/debug/debug-state';
-import { discoverExampleDatasets } from '../../../tools/example-smoke-inventory';
+import {
+  discoverExampleDatasets,
+  validateExampleDatasetReferences,
+} from '../../../tools/example-smoke-inventory';
 import {
   waitForLuxarReady,
   getLuxarState,
@@ -81,6 +84,13 @@ const DATASETS_ALLOW_ZERO_POINTS = [
   'gsplats_lod_example.luxar.zarr', // GSplats kind=lod - no point clouds (totalPoints=0)
   'mesh_basic_example.luxar.zarr', // Mesh geometry only - no point clouds (totalPoints=0)
 ];
+
+validateExampleDatasetReferences(
+  ALL_EXAMPLES,
+  KNOWN_FLAKY_LARGE_DATASETS,
+  DATASETS_ALLOW_ZERO_POINTS,
+  'Example smoke zero-points allowance'
+);
 
 test.describe('ALL Examples - Systematic Smoke Tests', () => {
   // Configure for parallel execution to speed up testing.
@@ -157,7 +167,7 @@ test.describe('ALL Examples - Systematic Smoke Tests', () => {
       }
       // Some datasets are lines-only or gsplats-only and have no pointClouds.
       // For those, verify the scene has at least one renderable node of any
-      // supported type (points, lines, or gsplats). The previous assertion of
+      // supported type. The previous assertion of
       // `totalPoints + pointClouds.length >= 0` was structurally always-true
       // when both sides were zero.
       if (state.pointClouds && state.pointClouds.length > 0) {
@@ -170,9 +180,10 @@ test.describe('ALL Examples - Systematic Smoke Tests', () => {
           debug.scene.traverse((obj: any) => {
             const nodeType = obj?.userData?.nodeType;
             if (
-              obj.userData?.nodeType === 'points' ||
+              nodeType === 'points' ||
               nodeType === 'lines' ||
-              nodeType === 'gsplats'
+              nodeType === 'gsplats' ||
+              nodeType === 'mesh'
             ) {
               count += 1;
             }

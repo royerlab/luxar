@@ -2,7 +2,10 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { discoverExampleDatasets } from '../../../../tools/example-smoke-inventory';
+import {
+  discoverExampleDatasets,
+  validateExampleDatasetReferences,
+} from '../../../../tools/example-smoke-inventory';
 
 const temporaryDirectories: string[] = [];
 
@@ -50,5 +53,39 @@ describe('discoverExampleDatasets', () => {
         'alpha_example.luxar.zarr': '   ',
       })
     ).toThrow(/alpha_example.*reason/);
+  });
+
+  it('explains how to generate examples when the directory is missing', () => {
+    const missingRoot = join(tmpdir(), 'luxar-missing-example-smoke-directory');
+
+    expect(() => discoverExampleDatasets(missingRoot, {})).toThrow(
+      /Examples directory not found.*make run-examples/
+    );
+  });
+});
+
+describe('validateExampleDatasetReferences', () => {
+  it('accepts covered and excluded datasets but rejects stale references', () => {
+    const exclusions = {
+      'excluded_example.luxar.zarr': 'Too large for the parallel smoke worker pool.',
+    };
+
+    expect(() =>
+      validateExampleDatasetReferences(
+        ['covered_example.luxar.zarr'],
+        exclusions,
+        ['covered_example.luxar.zarr', 'excluded_example.luxar.zarr'],
+        'zero-points allowance'
+      )
+    ).not.toThrow();
+
+    expect(() =>
+      validateExampleDatasetReferences(
+        ['covered_example.luxar.zarr'],
+        exclusions,
+        ['missing_example.luxar.zarr'],
+        'zero-points allowance'
+      )
+    ).toThrow(/zero-points allowance.*missing_example.*not present/);
   });
 });

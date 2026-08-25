@@ -1,4 +1,4 @@
-import { readdirSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 
 export type ExampleSmokeExclusions = Readonly<Record<string, string>>;
 
@@ -6,6 +6,12 @@ export function discoverExampleDatasets(
   examplesRoot: string,
   exclusions: ExampleSmokeExclusions
 ): string[] {
+  if (!existsSync(examplesRoot)) {
+    throw new Error(
+      `Examples directory not found: ${examplesRoot}. Run "make run-examples" from the repository root.`
+    );
+  }
+
   const datasets = readdirSync(examplesRoot, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && entry.name.endsWith('.luxar.zarr'))
     .map((entry) => entry.name)
@@ -23,4 +29,19 @@ export function discoverExampleDatasets(
   }
 
   return datasets.filter((dataset) => !excluded.has(dataset));
+}
+
+export function validateExampleDatasetReferences(
+  datasets: readonly string[],
+  exclusions: ExampleSmokeExclusions,
+  references: readonly string[],
+  description: string
+): void {
+  const generated = new Set([...datasets, ...Object.keys(exclusions)]);
+
+  for (const dataset of references) {
+    if (!generated.has(dataset)) {
+      throw new Error(`${description} ${dataset} is not present in the generated example corpus`);
+    }
+  }
 }
