@@ -172,10 +172,10 @@ jobs:
   # lives in royerlab/luxar-ci, whose README records why each piece is shaped the
   # way it is. Nothing in this file works without that kit deployed.
   #
-  # obsidian publishes the repo variable LUXAR_CI_HEARTBEAT (epoch seconds) once a
-  # minute via its `luxar-ci-heartbeat.timer`. It is a CAPACITY heartbeat: a live
-  # timestamp value requires at least one idle obsidian runner, a backing container
-  # present locally, and disk headroom; otherwise the value is 0. The
+  # obsidian publishes the repo variable LUXAR_CI_HEARTBEAT (epoch seconds)
+  # once a minute via its `luxar-ci-heartbeat.timer`. It is a CAPACITY heartbeat:
+  # a live timestamp value requires at least one idle obsidian runner, a backing
+  # container present locally, and disk headroom; otherwise the value is 0. The
   # cross-checks are load-bearing: a crash-looping slot still reads "active" to
   # systemd, and a runner killed before de-registration still reads "online" to
   # GitHub. A positive value is both capacity and liveness; while the value is 0,
@@ -302,11 +302,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           # Self-bounded below the job timeout. If jobs are STILL queued when
-          # the window closes but obsidian stayed live the whole time,
-          # the box is busy, not dead (3 slots; 4 obsidian-routed test jobs on a
-          # push or the nightly, 2 on a PR — and a merge landing during the
-          # nightly now queues both sets at once, since the two no longer cancel
-          # each other — draining) — leave the run alone.
+          # the window closes but obsidian stayed live the whole time, the box is
+          # busy, not dead (3 slots; 4 obsidian-routed test jobs on a push or the
+          # nightly, 2 on a PR — and a merge landing during the nightly now
+          # queues both sets at once, since the two no longer cancel each other
+          # — draining) — leave the run alone.
           start=$(date +%s)
           end=$(( start + 10 * 60 ))
           materialize_end=$(( start + 3 * 60 ))
