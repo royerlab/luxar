@@ -89,7 +89,7 @@ is the slow exception).
 git clone https://github.com/royerlab/luxar.git
 cd luxar
 make setup-dev          # Auto-installs Node.js, pnpm, Hatch (no sudo)
-luxar demo              # Browse the 85 bundled demos
+luxar demo              # Browse the 86 bundled demos
 luxar demo run lorenz   # Run one — generates the data and opens the viewer
 ```
 
@@ -103,26 +103,27 @@ That last command generates a Lorenz attractor and opens the viewer:
 geometry, what it needs, and whether you have already built it:
 
 ```
-🎬 85 Luxar demos  ·  74 built  ·  8 cached  ·  3 not generated yet
+🎬 86 Luxar demos  ·  75 built  ·  8 cached  ·  3 not generated yet
 
  ASTRONOMY ───────────────────────────────────────────────────────────── 6 demos
- ✓  2  asteroids_solar_system                  points+lines  300 MB
- ✓ 11  cosmicflows_laniakea                    points+lines  25 MB
- • 14  desi_galaxies                           points        73 MB git-lfs
+ ✓  3  asteroids_solar_system                  points+lines  300 MB
+ ✓ 12  cosmicflows_laniakea                    points+lines  25 MB
+ • 15  desi_galaxies                           points        73 MB git-lfs
 
  MEDICAL ─────────────────────────────────────────────────────────────── 4 demos
- ✓ 16  dmri_tractography                       lines         588 MB
- • 24  gsplats_2d_cmu1_pathology               gsplats       150 MB GPU? git-lfs
+ ✓ 17  dmri_tractography                       lines         588 MB
+ • 25  gsplats_2d_cmu1_pathology               gsplats       150 MB GPU? git-lfs
 
- SYNTHETIC ──────────────────────────────────────────────────────────── 19 demos
- ✓  9  cloud                                   points
-   10  collision                               points
+ SYNTHETIC ──────────────────────────────────────────────────────────── 20 demos
+ ✓  1  ambient_occlusion                       points
+ ✓ 10  cloud                                   points
+   11  collision                               points
  ...
 
  ✓ built   • inputs cached   (blank) not generated yet
  GPU/GPU? = required/optional     git-lfs kaggle manual = data you supply
 
- Run      luxar demo run <key|#>                e.g. luxar demo run cloud
+ Run      luxar demo run <key|#>                e.g. luxar demo run ambient_occlusion
  Details  luxar demo info <key|#>
  Filter   luxar demo list -c astronomy -g gsplats
  Deps     luxar demo deps                       --install fixes what it reports

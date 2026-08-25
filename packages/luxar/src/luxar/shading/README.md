@@ -1,0 +1,153 @@
+# `luxar.shading` — appearance baked from geometry
+
+Luxar's Points, Lines and GSplats are **emissive**: their shaders know nothing
+about neighbouring geometry. A dense shell therefore accumulates into a flat glow
+and the eye loses the shape — the fold structure of a fractal, the lobes of a
+cloud, the interior of a light-sheet fit. This package computes the shape cues a
+shaded renderer would get for free, so an author can write them into the scene.
+
+## The dividing line
+
+> **Bake what the geometry knows. Leave to the shader what the camera knows.**
+
+Ambient occlusion is a scalar function of the geometry alone — *how enclosed is
+this element* — so the value computed once offline is correct from every camera.
+That is what makes it safe to bake.
+
+A **key light is not offered here, on purpose.** Baking one fixes it in world
+space, so orbiting to the unlit side darkens the scene for no reason. A key light
+has to follow the viewer, which makes it a material concern; the mesh shader
+already does this properly with a view-space key direction.
+
+This package also sits on the *appearance* side of Luxar's data/appearance split.
+A `.gsplats.zarr` is a reconstruction; colormaps, tone mapping and occlusion are
+authored on the way into a scene. Baking occlusion here rather than into the
+gsplat store keeps it from becoming another per-element sidecar that `reencode`,
+`lod`, `decimate` and refits have to carry, reorder or invalidate — and it means
+the caller still holds the scene's `Dimensions` and can say which axes are
+spatial.
+
+## Quick Start
+
+```python
+import numpy as np
+from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.shading import bake_ambient_occlusion
+
+shade = bake_ambient_occlusion(positions, mass=amplitudes)
+
+with LuxarZarrCompiler(out) as compiler:
+    scene = compiler.create_scene(dimensions=dims)
+    scene.add_gsplats(
+        "Specimen",
+        centers=centers,
+        amplitudes=amplitudes,
+        cholesky_factors=cholesky,
+        colors=(base_colors * shade[:, None]).astype(np.float32),
+        blending_mode="volumetric",
+        layer=True,
+    )
+```
+
+`shade` is a **multiplier** in `[0, 1]`: `1.0` out in the open, lower where an
+element is enclosed. Multiplying it into linear-light colour is the zero-machinery
+route available today. Carrying it as a separate per-element attribute so the
+viewer can scale it live is the better long-term contract, and needs format,
+loader and shader work that does not exist yet.
+
+## Knobs that matter
+
+| Argument | Why you would touch it |
+|---|---|
+| `radius` | **The** knob. The scale of structure AO responds to; defaults to 5% of the bounding-box diagonal. Too small and only the tightest creases darken; too large and the integral degenerates into a depth map. |
+| `normals` | **Pass these if the data is a surface and you have them.** Switches from the full sphere to a cosine-weighted hemisphere. Roughly doubles the discrimination on shells — see below. |
+| `mass` | Occluding material per element. GSplats should pass `amplitudes`. Defaults to ones, i.e. pure count density. |
+| `group_by` | **Required for nD data.** Pass the timepoint index for a timelapse, or occlusion crosses the time axis and the whole sequence shades as one solid. The same hazard `--coarsen-dims` exists for on the LOD side. |
+| `strength` | Scales the darkening. `0.0` returns all ones. |
+| `n_directions` | Sphere directions averaged. Cost and memory are linear in it. |
+
+Two things worth knowing before judging a result:
+
+- **AO always lowers mean brightness**, so authored exposure has to absorb it —
+  `shade.mean()` is the factor to compensate for. A frame that merely looks
+  crisper may just be darker; compare against the unshaded original.
+- `extinction="auto"` (the default) solves for the value that puts the median
+  element mid-range, which makes the same call work unchanged on a 50k-point
+  sketch and a 3M-splat fit, whatever the mass units.
+
+## Method
+
+A windowed Beer–Lambert column integral over a spherical direction set. For each
+direction: splat mass onto a grid aligned to it, integrate density along that axis
+over a finite `radius` window (exclusive of the element's own cell), and take
+`exp(-tau)`. The ambient term is the mean transmittance over all directions.
+
+### Volumetric or surface? Pass `normals` if you have them
+
+Averaged over the full sphere the integral needs **no surface normals**, and
+nothing here invents any — normals estimated by local PCA are meaningless for a
+volumetric point cloud, so the default simply does without.
+
+But that default is the *volumetric* reading of occlusion, and it under-serves
+surfaces. On a thin shell every element is surrounded by the same in-plane
+material, which dominates the sphere average and washes the signal out. Supplying
+normals switches to a cosine-weighted hemisphere. Measured against the
+Mandelbulb's own distance-estimator AO over its 27k surface points:
+
+| occlusion radius | full sphere | cosine hemisphere |
+|---|---|---|
+| 0.05 | +0.31 | **+0.61** |
+| 0.20 | +0.44 | **+0.68** |
+
+So: volumetric data (light-sheet fits, clouds, fractal interiors) → leave
+`normals` alone. Surfaces where you already hold orientations (mesh normals,
+marching-cubes gradients, a distance-field gradient) → pass them. Either way the
+result is view-independent; a normal describes the surface, not the camera.
+
+The **finite window** is what makes this occlusion rather than a depth map. An
+unbounded integral reports how deep an element sits inside the whole object, so
+two elements at equal depth read identically however differently shaped their
+surroundings are — exactly the flat-sheet-versus-crevice confusion AO exists to
+resolve. `directional_optical_depth(..., radius=None)` is the unbounded form, and
+is the right tool only when the direction is a real light that belongs to the
+subject.
+
+Three details differ from the same integral written for a single light, and all
+three are corrections rather than preferences:
+
+- The anti-banding blur runs **only across the two axes transverse to the ray**.
+  Blurring *along* it smears an element's own mass into the adjacent slices, which
+  the integral then counts — so every element partly occludes itself and the whole
+  field picks up a constant pedestal that has to be dialled back out with a magic
+  strength and floor. Transverse-only keeps the self-exclusion exact; an open-space
+  probe measures exactly zero.
+- The **cell size is fixed once** from the data extent and reused for every
+  direction. Deriving it per direction from that direction's own rotated bounding
+  box — the natural thing to write when there is only one direction — makes each
+  direction integrate at its own scale and biases the mean.
+- That blur **clamps at the grid edge** instead of wrapping, so mass on one face
+  of the object cannot leak onto the opposite one.
+
+The column is also normalized into units of *cells of typical material
+traversed*, which is what keeps `extinction` an O(1) knob instead of a
+per-dataset constant in the thousands that shifts with the element count. It stays
+a **sum** over the window and not a mean: dividing by the window would make a
+one-cell-thick sheet — which is what a surface-sampled point cloud is made of —
+block only `1/window` of the light, and block less the wider the radius.
+
+Reference: the transmittance-toward-a-direction formulation follows Harris &
+Lastra (2001), *Real-Time Cloud Rendering*, computed on a grid rather than by
+rendering from the light's point of view — which suits a caller that already holds
+every element as an array.
+
+## Related
+
+- `packages/luxar/src/luxar/demos/demo_mandelbulb.py` — bakes distance-field AO
+  from the fractal's own distance estimator. Strictly better than a density field
+  *when you have an analytic oracle*, and inapplicable when you do not.
+- `packages/luxar/src/luxar/demos/demo_volumetric_cloud.py` — an unbounded
+  optical-depth integral toward a sun, plus sky and ground terms. Correctly
+  demo-local: its sun is part of the subject, and its density normalization is
+  tied to how the parcels were seeded.
+- `packages/luxar-viewer/src/rendering/materials/mesh/appearance.ts` — the mesh
+  material's view-space key light, i.e. the other side of the dividing line.

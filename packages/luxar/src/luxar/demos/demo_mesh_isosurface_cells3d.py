@@ -29,6 +29,14 @@ explicit ``normal_dims``, so the surfaces come out smooth-shaded rather than
 faceted. Compare with ``shading="flat"`` (which reads screen-space derivatives
 instead) by editing ``SHADING`` below.
 
+**Baked occlusion.** The material's key light says which way a face *turns*, not
+how *enclosed* it is, so the crevice where two cells touch comes out as brightly
+lit as the open outer wall. ``luxar.shading.bake_ambient_occlusion`` supplies the
+missing term, using the same marching-cubes normals to restrict the integral to
+the hemisphere each vertex faces, and it is multiplied into the per-vertex albedo.
+It is a property of the geometry rather than of the view, so it holds as the
+camera orbits. Set ``AO_STRENGTH = 0.0`` to see the surfaces without it.
+
 **Opaque by default.** Mesh defaults to ``opaque``, unlike the other three types'
 ``additive`` — the only blending mode that is unconditionally correct without
 per-triangle depth sorting, and what a surface should look like. Nuclei sitting
@@ -64,8 +72,9 @@ WORKFLOW:
    surface dominated by shot noise, not biology
 3. **Extract** an isosurface per channel with ``skimage.measure.marching_cubes``,
    in micrometres via its ``spacing`` argument
-4. **Add** each as a ``layer=True`` mesh node with its gradient normals
-5. **Visualize** — toggle layers in the Layers panel (press L)
+4. **Bake** per-vertex ambient occlusion from those same normals
+5. **Add** each as a ``layer=True`` mesh node with its gradient normals
+6. **Visualize** — toggle layers in the Layers panel (press L)
 
 No GPU and no fitting step, which makes this the cheapest end-to-end demo of any
 Luxar geometry type: marching cubes is CPU-only and takes a few seconds.
@@ -124,6 +133,7 @@ from luxar.demos import (
 )
 from luxar.demos._cinematic_camera import pull_in
 from luxar.encoding import EncodingMode
+from luxar.shading import bake_ambient_occlusion
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -147,9 +157,9 @@ SMOOTH_SIGMA = 1.0
 #: the first thing to reach for if you retarget this to other data.
 ISOLEVEL_FRACTION = 0.35
 
-#: Per-channel appearance. Colours are flat per layer on purpose: with a uniform
-#: albedo, everything you see is the SHADING, which is what distinguishes mesh
-#: from the three emissive types.
+#: Per-channel base colour. One hue per layer, so the only variation across a
+#: surface comes from the two shading terms — the material's runtime key light
+#: and the baked occlusion multiplied into the albedo by `_occluded_albedo`.
 CHANNELS = [
     {
         "index": 0,
@@ -172,6 +182,19 @@ CHANNELS = [
 #: "smooth" uses the marching-cubes gradient normals; "flat" ignores them and
 #: shades from screen-space derivatives (faceted — one normal per triangle).
 SHADING = "smooth"
+
+#: Ambient-occlusion radius, in µm. The mesh material's key light is a single
+#: direction, so it shades which way a face turns but not how *enclosed* it is:
+#: the gap between two touching cells and the open outer wall come out equally
+#: lit. Occlusion is the missing term. 4 µm is well under a cell diameter, so it
+#: responds to the contacts between cells rather than to the slab as a whole.
+AO_RADIUS_UM = 4.0
+
+#: How much of the albedo occlusion may take. Lower than the library default
+#: because this rides ON TOP of the material's own diffuse shading rather than
+#: standing in for it — the two multiply, and at full strength the contacts go
+#: to near-black.
+AO_STRENGTH = 0.45
 
 FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
@@ -236,6 +259,56 @@ def extract_isosurface(volume: np.ndarray, name: str) -> tuple:
             np.ascontiguousarray(faces, dtype=np.uint32),
             np.ascontiguousarray(normals, dtype=np.float32),
         )
+
+
+# =============================================================================
+# Baked occlusion
+# =============================================================================
+
+
+def _occluded_albedo(
+    channel: dict, vertices: np.ndarray, normals: np.ndarray
+) -> np.ndarray:
+    """Per-vertex albedo: the channel colour darkened where the surface is enclosed.
+
+    Baked **per channel**, so a surface is only occluded by itself. Letting the
+    two channels occlude each other would be more physical — nuclei do sit inside
+    membranes — but each channel is an independently toggleable layer, and a
+    cross-baked nucleus would keep wearing membrane-shaped shadows after the
+    membrane layer was switched off. Same reasoning as baking a timelapse
+    per-timepoint rather than across the time axis.
+
+    The marching-cubes gradient normals are passed straight through, which puts
+    the bake on the cosine-hemisphere path: this is a surface, and on a surface
+    the full sphere is diluted by the in-plane material every vertex shares.
+
+    Args:
+        channel: One :data:`CHANNELS` entry.
+        vertices: ``(V, 3)`` vertex positions in (z, y, x) µm.
+        normals: ``(V, 3)`` unit outward normals, same frame.
+
+    Returns:
+        ``(V, 3)`` float32 linear-light albedo.
+    """
+    occlusion = bake_ambient_occlusion(
+        vertices,
+        normals=normals,
+        radius=AO_RADIUS_UM,
+        strength=AO_STRENGTH,
+    )
+
+    # Rescale so the most exposed vertex keeps the channel colour untouched.
+    # Occlusion always costs mean brightness, and letting it fall on the whole
+    # surface would dim the demo relative to the exposure it was authored at;
+    # normalizing against the term's own top end spends it on CONTRAST instead.
+    normalized = occlusion / max(float(occlusion.max()), 1e-6)
+    aprint(
+        f"  {channel['name']}: occlusion raw "
+        f"[{occlusion.min():.3f}, {occlusion.max():.3f}] "
+        f"-> normalized [{normalized.min():.3f}, 1.000]"
+    )
+    base = np.asarray(channel["color"], dtype=np.float32)
+    return (base[None, :] * normalized[:, None]).astype(np.float32)
 
 
 # =============================================================================
@@ -318,13 +391,13 @@ def create_scene(output_path) -> None:
                     channel["name"],
                     vertices - centre,
                     faces,
+                    colors=_occluded_albedo(channel, vertices, normals),
                     normals=normals,
                     # The three axes the normals describe. Explicit rather than
                     # implied: for an nD mesh "the first three dimensions" is
                     # exactly the wrong guess (a (t, x, y, z) mesh's normals
                     # describe x/y/z, not t/x/y), so the attr is required.
                     normal_dims=[0, 1, 2],
-                    colors=np.array([channel["color"]], dtype=np.float32),
                     shading=SHADING,
                     opacity=channel["opacity"],
                     # Toggleable in the Layers panel (press L).

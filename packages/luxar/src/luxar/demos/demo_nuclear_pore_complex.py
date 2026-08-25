@@ -104,6 +104,7 @@ from arbol import aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import add_demo_caption, cached_download, launch_viewer
+from luxar.shading import bake_ambient_occlusion
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -362,6 +363,87 @@ def spoke_to_color(spoke_ids: np.ndarray, n_spokes: int = 8) -> np.ndarray:
     return colors
 
 
+#: Ambient-occlusion radius, in nm. Sized for ARCHITECTURE rather than for
+#: residue-level burial: the ring is ~120 nm across with a ~40 nm central
+#: channel, so looking a few nm out separates an atom facing the open pore from
+#: one buried between two spokes. A radius near the water-probe scale would score
+#: individual side chains instead, which is a real quantity but invisible at the
+#: framing this demo opens on.
+#:
+#: Must stay comfortably larger than the grid cell (extent / AO_GRID_CELLS) or
+#: the window rounds to a single cell and the whole term flattens.
+AO_RADIUS_NM = 6.0
+
+#: Occlusion grid resolution. Higher than the library default because the
+#: structure is large in world units and the feature of interest is small: at 64
+#: cells one cell would be ~2 nm and a 6 nm radius only three cells wide.
+AO_GRID_CELLS = 128
+
+#: How much of the CPK colour occlusion may take. Kept moderate on purpose — the
+#: colours are a CATEGORICAL element encoding (C grey, N blue, O red, S yellow),
+#: and multiplying by a scalar preserves hue while changing only lightness, so
+#: element identity survives. It is still a real cost to the encoding, which is
+#: why the term is gentle rather than dramatic.
+AO_STRENGTH = 0.55
+
+
+def _apply_burial_shading(
+    colors: np.ndarray, positions: np.ndarray, radii: np.ndarray
+) -> np.ndarray:
+    """Darken atoms by how enclosed they are, and report the range.
+
+    Ambient occlusion over a sphere of directions is a close correlate of an
+    atom's **burial** — the fraction of directions from which solvent could reach
+    it. That makes this more than decoration here: the darkening tracks a real
+    biophysical property. It is a correlate and not a measurement, though; a
+    solvent-accessible surface area wants a probe rolled over the van der Waals
+    surface (Shrake-Rupley), not a density integral, so nothing downstream should
+    read these numbers as SASA.
+
+    No normals are passed. An all-atom structure is not a thin shell — it is a
+    filled volume several atoms thick — so there is no surface orientation to
+    face, and the full sphere is the right reading. It is also what makes the
+    result symmetric under the demo's own 8-fold rotation.
+
+    Occlusion is deliberately baked on the SYMMETRIZED structure, so neighbouring
+    spokes occlude each other. That contact is real, both spokes are in one node,
+    and there is no layer toggle that could leave a shadow behind.
+
+    Args:
+        colors: ``(N, 3)`` float32 linear-light CPK colours.
+        positions: ``(N, 3)`` atom positions in nm.
+        radii: ``(N,)`` per-atom radii; cubed to weight big atoms as more matter.
+
+    Returns:
+        ``(N, 3)`` float32 colours, occlusion-multiplied.
+    """
+    occlusion = bake_ambient_occlusion(
+        positions,
+        mass=(radii.astype(np.float64) ** 3),
+        radius=AO_RADIUS_NM,
+        grid_cells=AO_GRID_CELLS,
+        strength=AO_STRENGTH,
+    )
+
+    # Rescale so the LEAST buried atom keeps its colour untouched. Nothing in a
+    # structure this dense is ever fully unoccluded — the raw term tops out
+    # around 0.95 and averages 0.77 — so applying it directly would dim the whole
+    # complex by roughly a quarter and quietly undo the exposure this demo was
+    # authored at. Occlusion always costs mean brightness and something has to
+    # absorb it; here the cheapest place is the term's own top end, which spends
+    # it entirely on CONTRAST between exposed and buried atoms and leaves peak
+    # brightness where it was. It also makes the reading explicitly relative,
+    # which is the honest description of it anyway.
+    normalized = occlusion / max(float(occlusion.max()), 1e-6)
+    aprint(
+        f"✓ Burial shading (ambient occlusion, r={AO_RADIUS_NM} nm): "
+        f"raw [{occlusion.min():.3f}, {occlusion.max():.3f}] "
+        f"-> normalized [{normalized.min():.3f}, 1.000]"
+    )
+    aprint("  The least-buried atoms keep their CPK colour; buried atoms darken.")
+    return (colors * normalized[:, None]).astype(np.float32)
+
+
 def element_to_color(
     elements: np.ndarray, is_backbone: np.ndarray = None
 ) -> np.ndarray:
@@ -568,6 +650,8 @@ def generate_nuclear_pore_complex(
             aprint(f"  N: {1.55 * 0.1 * 0.4:.3f} nm")
             aprint(f"  O: {1.52 * 0.1 * 0.4:.3f} nm")
             aprint(f"  S: {1.80 * 0.1 * 0.4:.3f} nm")
+
+            colors = _apply_burial_shading(colors, sym_positions, radii)
 
         # Write to Zarr
         with asection("Creating Luxar scene"):
