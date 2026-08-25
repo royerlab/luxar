@@ -1290,9 +1290,9 @@ Sibling demos are importable normally
 
 `luxar.demos` is the ONLY spelling for these helpers: never import guarded
 `luxar.demos._support.*` concern modules (including dataset, download, and
-remote-ZIP support) or private demo helpers
-such as `luxar.demos._support._fields` directly from a demo, even though that is
-where they live. The authoritative guarded set is
+remote-ZIP support), `luxar.utils.colors`, `luxar.utils.scenes`, or private demo
+helpers such as `luxar.demos._support._fields` directly from a demo, even though
+that is where they live. The authoritative guarded set is
 `tests/test_demo_import_spelling.py`'s `DEEP_MODULES`. That test fails the build
 on every deep spelling, including relative forms, in every demo module here and
 in the three `gsplats/**/demos` trees, and also on a name the barrel does not

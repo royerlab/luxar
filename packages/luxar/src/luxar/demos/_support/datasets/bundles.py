@@ -153,7 +153,7 @@ def load_dataset_bundle(
 
     Same contract -- a list of ``GSplatData`` in the requested order, or ``None``
     when the caller must build the data itself -- but the OUTER bundle is resolved
-    through :func:`luxar.demos._support.datasets.data_fetch.ensure_dataset`, so it is checksum-
+    through :func:`luxar.demos.ensure_dataset`, so it is checksum-
     verified against the manifest (cache -> in-repo git-LFS -> Zenodo) instead of
     copied unverified out of the working tree.
 

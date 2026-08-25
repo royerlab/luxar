@@ -57,7 +57,7 @@ def cached_download(
 ) -> Path:
     """Download ``url`` once into ``~/.cache/luxar/<name>/<filename>``.
 
-    Reuses :func:`luxar.demos._support.downloads.download.robust_download` /
+    Reuses :func:`luxar.demos.robust_download` /
     :func:`download_with_checksum` (retry, resume, checksum), but adds the
     skip-if-already-present behaviour a cache needs: a complete cached file is
     returned without touching the network.

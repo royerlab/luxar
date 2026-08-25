@@ -948,7 +948,7 @@ def load_dataset_gsplats(
     manifest: Optional[Manifest] = None,
     verbose: bool = True,
 ) -> Optional[list[Any]]:
-    """Manifest-driven stand-in for :func:`luxar.demos._support.datasets.bundles.load_precomputed_gsplats`.
+    """Manifest-driven stand-in for :func:`luxar.demos.load_precomputed_gsplats`.
 
     Same contract as the helper it is meant to replace — a list of ``GSplatData``
     in the requested order, or ``None`` when the caller must build the data
@@ -987,7 +987,7 @@ def load_dataset_gsplats(
         * **Bundle datasets.** ``gsplats_celegans`` ships one outer zip holding
           many per-frame files; the manifest addresses the bundle, not its
           members. That demo stays on
-          :func:`~luxar.demos._support.datasets.bundles.load_precomputed_bundle`. (``gsplats_zebrafish``
+          :func:`~luxar.demos.load_precomputed_bundle`. (``gsplats_zebrafish``
           was one until it moved to a single stacked 4D archive, which this
           function serves.)
         * **Runtime-computed file lists** that are not manifest entries. A
