@@ -27,7 +27,6 @@ class WorldBoundsLeaf:
     bounds: dict[str, list[float]]
     blending_mode: str | None = None
     opacity: float = 1.0
-    lod_branches: tuple[tuple[str, str], ...] = ()
     owner_path: str | None = None
 
 
@@ -64,7 +63,6 @@ class _WorldBoundsCollector:
         has_matrix: bool,
         blending_mode: str | None,
         opacity: float,
-        lod_branches: tuple[tuple[str, str], ...],
         owner_path: str | None,
     ) -> None:
         node_type = attrs.get("type")
@@ -91,7 +89,6 @@ class _WorldBoundsCollector:
                 transformed,
                 blending_mode,
                 min(1.0, max(0.0, opacity)),
-                lod_branches,
                 owner_path or group.path,
             )
         )
@@ -104,7 +101,6 @@ class _WorldBoundsCollector:
         has_matrix: bool,
         blending_mode: str | None,
         opacity: float,
-        lod_branches: tuple[tuple[str, str], ...],
         owner_path: str | None,
         is_root: bool = False,
     ) -> None:
@@ -143,13 +139,9 @@ class _WorldBoundsCollector:
             node_has_matrix,
             node_blending_mode,
             node_opacity,
-            lod_branches,
             node_owner_path,
         )
         for child_name in sorted(group.group_keys()):
-            child_lod_branches = lod_branches
-            if attrs.get("kind") == "lod":
-                child_lod_branches += ((group.path, child_name),)
             self.walk(
                 group[child_name],
                 chain,
@@ -157,7 +149,6 @@ class _WorldBoundsCollector:
                 node_has_matrix,
                 node_blending_mode,
                 node_opacity,
-                child_lod_branches,
                 node_owner_path,
             )
 
@@ -230,7 +221,7 @@ def collect_world_bounds(store: zarr.Group) -> list[WorldBoundsLeaf]:
 
     Walks the zarr tree, composes the world-space transform chain for each leaf
     node, and applies it to the per-node (local) position bounds. The same pass
-    carries effective compositing attrs and LOD branch ancestry for finalize
+    carries effective compositing attrs and the author-facing owner for finalize
     consumers that need them.
 
     Two independent transform families are composed down the hierarchy
@@ -272,7 +263,6 @@ def collect_world_bounds(store: zarr.Group) -> list[WorldBoundsLeaf]:
         False,
         None,
         1.0,
-        (),
         None,
         is_root=True,
     )

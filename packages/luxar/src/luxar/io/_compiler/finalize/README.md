@@ -310,10 +310,14 @@ intersection: an empirical scan found pairwise partial overlap too noisy for a
 warning authors would keep reading. The final rule set produced one rolled-up
 order warning in `multiple_objects_example.luxar.zarr` across 56 materialized
 demo/example stores. Non-displayed dimensions use inclusive interval overlap,
-while displayed dimensions require positive extent; different children of one
-`kind=lod` group are mutually exclusive and are never compared. Candidate pairs
-are sweep-pruned on a displayed axis, and repeated pairwise hits are rolled up
-when either node was already reported so enveloping nodes cannot flood the log.
+while displayed dimensions require positive extent. Every physical leaf resolves
+to its author-facing owner: the first geometry node or `kind=lod` /
+`kind=partition` wrapper above it. Leaves sharing an owner are never compared,
+and warning names and deduplication use that owner so implementation-level LOD
+chunks and partition parts report once as the node the author wrote. Candidate
+pairs are sweep-pruned on a displayed axis, and repeated pairwise hits are rolled
+up when either owner was already reported so enveloping nodes cannot flood the
+log.
 
 ### `validation.prune_childless_wrappers(store) -> None`
 

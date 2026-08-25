@@ -522,7 +522,6 @@ def test_spatial_sweep_prunes_disjoint_leaf_pairs() -> None:
             ),
             mode="normal",
             opacity=1.0,
-            lod_branches=(),
         )
         for index in range(1000)
     ]

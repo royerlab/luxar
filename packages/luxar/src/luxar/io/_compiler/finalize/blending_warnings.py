@@ -27,7 +27,6 @@ class _BlendLeaf:
     leaf: WorldBoundsLeaf
     mode: str
     opacity: float
-    lod_branches: tuple[tuple[str, str], ...]
     mode_explicit: bool = False
 
     @property
@@ -52,15 +51,7 @@ def _effective_leaf(leaf: WorldBoundsLeaf) -> _BlendLeaf:
         leaf,
         resolved,
         leaf.opacity,
-        leaf.lod_branches,
         mode_explicit=mode is not None,
-    )
-
-
-def _can_coexist(left: _BlendLeaf, right: _BlendLeaf) -> bool:
-    left_branches = dict(left.lod_branches)
-    return all(
-        left_branches.get(path, branch) == branch for path, branch in right.lod_branches
     )
 
 
@@ -152,9 +143,7 @@ def warn_overlapping_blending(
     for left, right in _candidate_pairs(leaves, displayed_dimensions):
         if left.owner_path == right.owner_path:
             continue
-        if not _can_coexist(left, right) or not _intersects(
-            left.leaf, right.leaf, displayed_dimensions
-        ):
+        if not _intersects(left.leaf, right.leaf, displayed_dimensions):
             continue
 
         left_writes = _depth_writes(left)
