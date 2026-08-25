@@ -20,6 +20,12 @@ def _workflow() -> dict[str, Any]:
     return yaml.safe_load(WORKFLOW.read_text())
 
 
+def _workflow_triggers() -> dict[str, Any]:
+    """Load workflow triggers without YAML 1.1 coercing ``on`` to true."""
+    workflow = yaml.load(WORKFLOW.read_text(), Loader=yaml.BaseLoader)
+    return workflow["on"]
+
+
 def _published_lfs_assets() -> set[str]:
     """Find LFS-tracked assets referenced by Sphinx source files."""
     sources = [
@@ -41,6 +47,24 @@ def _published_lfs_assets() -> set[str]:
             if any(docs_relative in source.read_text() for source in sources):
                 published.add(asset.relative_to(REPO).as_posix())
     return published
+
+
+def test_pages_publishes_daily_or_on_demand_not_on_main_push() -> None:
+    """Decouple paid documentation builds from main promotion cadence."""
+    assert _workflow_triggers() == {
+        "workflow_dispatch": "",
+        "schedule": [{"cron": "37 10 * * *"}],
+    }
+
+
+def test_pages_publishes_promoted_main_content() -> None:
+    """Scheduled runs start on dev, but the published site must come from main."""
+    steps = _workflow()["jobs"]["build"]["steps"]
+    checkout = next(
+        step for step in steps if step.get("uses", "").startswith("actions/checkout@")
+    )
+
+    assert checkout.get("with", {}).get("ref") == "main"
 
 
 def test_pages_checkout_does_not_smudge_the_whole_lfs_repository() -> None:
