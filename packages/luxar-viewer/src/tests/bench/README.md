@@ -14,15 +14,16 @@ Useful env vars: `LUXAR_BENCH_REPEATS` (default 3), `LUXAR_BENCH_VARIANTS`
 
 ## Reference run
 
-One headless Chromium repeat on the small generated fixtures produced:
+One headless Chromium run (median of three repeats) on the default generated fixtures
+(1,081 members, 5.3 MB) produced:
 
 | variant       | ready (ms) | requests | bytes (kB) | long tasks (ms) | central dir (kB) |
 | ------------- | ---------: | -------: | ---------: | --------------: | ---------------: |
-| directory     |       7398 |       87 |      102.8 |            1374 |                — |
-| zip (STORED)  |       7817 |      116 |      203.7 |            1411 |              5.0 |
-| zip (DEFLATE) |       7636 |      116 |      140.4 |            1369 |              5.0 |
+| directory     |      18803 |     1208 |       5800 |           16606 |                — |
+| zip (STORED)  |      20086 |     1684 |       9281 |           18039 |             74.3 |
+| zip (DEFLATE) |      19002 |     1684 |       8568 |           17213 |             74.3 |
 
-This run shows the archive path at about 1.3× the requests and up to about 2×
+This run shows the archive path at about 1.4× the requests and up to about 1.6×
 the transferred bytes of the equivalent uncached directory path. Treat these
 as reference deltas, not portable absolute timings; regenerate them on the
 target machine before making the Phase 2 cache decision.
