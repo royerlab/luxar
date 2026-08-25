@@ -1062,6 +1062,13 @@ are rejected on points, lines, Gaussian splats, and groups.
 - **Shape:** `(V,)` — per-vertex colormap scalars; declared via `has_scalars` /
   `scalar_data_range` / `colormap` (see *Scalar Colormap Attributes* below).
 
+Per-vertex labels (`label_offsets`/`label_bytes`), keys
+(`key_offsets`/`key_bytes`), and image labels
+(`image_label_offsets`/`image_label_bytes`) use the same CSR-style layout as
+Points (see *Per-Element Labels* and *Per-Element Keys*).
+
+**Not written for a mesh node:** no spatial index (`ordering` is always `"none"`).
+
 #### nD slicing: whole-triangle cull
 
 A mesh slices differently from the other three geometry types, and the difference
@@ -1120,12 +1127,6 @@ planar section, a mesh node is the wrong representation today — fit the volume
 Gaussian splats instead, which slice exactly. Exact nD triangle clipping is a
 deliberate non-goal for now; see `docs/specs/MESH_NODE_SPEC.md` §5 and §9.
 
-Per-vertex labels (`label_offsets`/`label_bytes`), keys
-(`key_offsets`/`key_bytes`), and image labels
-(`image_label_offsets`/`image_label_bytes`) use the same CSR-style layout as
-Points (see *Per-Element Labels* and *Per-Element Keys*).
-
-**Not written for a mesh node:** no spatial index (`ordering` is always `"none"`).
 
 **Additive sub-LOD subgroups (`additive_<i>/`) ARE written, but only for a reveal.**
 A prefix of an index buffer is a holed surface, not a coarse one, so the ladder is
