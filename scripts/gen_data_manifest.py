@@ -674,9 +674,22 @@ def _prev_files(prev: dict, name: str, variant: Optional[str] = None) -> list[di
 #: is dropped loudly by the drift gate instead of carried forever.
 _HOSTED_KEYS = ("hosted_sha256", "hosted_bytes")
 
+#: Digests this project pinned in an EARLIER generation, newest last.
+#:
+#: Recorded so a re-pin can never brick a dataset. When a pin changes, every
+#: cache still holds the old bytes; without a record of what those were,
+#: `data_fetch` cannot tell "out of date" from "corrupt" and must quarantine —
+#: which destroys the last copy of a hosted-only dataset whose record is not yet
+#: published. That is what #1734 did to `gsplats_3d_drosophila_gastrulation`.
+#:
+#: Unbounded and append-only: a flat list of 64-char hashes is a few hundred
+#: bytes even after many re-pins, and capping it would reintroduce exactly the
+#: stranding it prevents for anyone who skipped a generation.
+_SUPERSEDED_KEY = "superseded_sha256"
+
 
 def _carry_hosted(found: list[dict], committed: list[dict]) -> list[dict]:
-    """Re-attach each entry's hosted-artifact keys from the committed manifest.
+    """Re-attach hosted keys, and record a changed pin as superseded.
 
     The generator can only ever compute the digest of the copy IN THIS REPO —
     ``_checksum`` reads the git-LFS pointer's oid or hashes the bytes. What the
@@ -694,15 +707,33 @@ def _carry_hosted(found: list[dict], committed: list[dict]) -> list[dict]:
     which is what keeps a regeneration byte-identical for the datasets that have
     no hosted pin.
     """
-    hosted = {
-        e["name"]: {k: e[k] for k in _HOSTED_KEYS if e.get(k) is not None}
-        for e in committed
-        if e.get("name")
-    }
-    hosted = {name: keys for name, keys in hosted.items() if keys}
-    if not hosted:
-        return found
-    return [{**e, **hosted[e["name"]]} if e.get("name") in hosted else e for e in found]
+    prev = {e["name"]: e for e in committed if e.get("name")}
+    out = []
+    for entry in found:
+        old_entry = prev.get(entry.get("name"))
+        if old_entry is None:
+            out.append(entry)
+            continue
+        merged = dict(entry)
+        for key in _HOSTED_KEYS:
+            if old_entry.get(key) is not None:
+                merged[key] = old_entry[key]
+        # Carry the history forward, and EXTEND it when this regeneration changes
+        # the pin: the outgoing digest is what every existing cache holds, and it
+        # is the only thing that later distinguishes superseded from corrupt.
+        history = list(old_entry.get(_SUPERSEDED_KEY) or ())
+        outgoing = old_entry.get("sha256")
+        if (
+            outgoing
+            and merged.get("sha256")
+            and outgoing != merged["sha256"]
+            and outgoing not in history
+        ):
+            history.append(outgoing)
+        if history:
+            merged[_SUPERSEDED_KEY] = history
+        out.append(merged)
+    return out
 
 
 def _files_for(name: str, spec: dict, prev: dict, *, prune: bool) -> list[dict]:

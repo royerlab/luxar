@@ -50,6 +50,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+from collections.abc import Sequence
 from functools import lru_cache
 from pathlib import Path
 from types import TracebackType
@@ -326,6 +327,7 @@ def ensure_dataset(
                     record,
                     verbose,
                     hosted_sha=entry.get("hosted_sha256"),
+                    superseded=tuple(entry.get("superseded_sha256") or ()),
                 )
             )
     return resolved
@@ -347,45 +349,102 @@ def _matches(path: Path, expected: Optional[str], verbose: bool) -> bool:
     )
 
 
+def _contract_candidates(
+    sha: Optional[str], hosted_sha: Optional[str], superseded: Sequence[str] = ()
+) -> list[tuple[str, str]]:
+    """Acceptable digests in priority order, de-duplicated.
+
+    A digest repeated across roles is checked once and reported under the
+    strongest role that names it, so a pin that is simultaneously current and
+    listed as superseded never reads as out of date.
+
+    Only the LAST superseded entry is offered, even though the manifest keeps the
+    full history: the list's effect IS how far back "acceptable" reaches, and the
+    oldest entry is the likeliest to be genuinely wrong. Anything older than one
+    generation degrades to a build failure — loud and recoverable — rather than
+    to a silently stale artifact.
+    """
+    candidates: list[tuple[str, str]] = []
+    for digest, kind in (
+        (hosted_sha, "hosted"),
+        (sha, "local"),
+        *((d, "superseded") for d in list(superseded or ())[-1:]),
+    ):
+        if digest and all(digest != known for known, _ in candidates):
+            candidates.append((digest, kind))
+    return candidates
+
+
 def _accepted_contract(
-    path: Path, sha: Optional[str], hosted_sha: Optional[str], verbose: bool
+    path: Path,
+    sha: Optional[str],
+    hosted_sha: Optional[str],
+    verbose: bool,
+    superseded: Sequence[str] = (),
 ) -> Optional[str]:
-    """Which contract *path* satisfies: ``"hosted"``, ``"local"``, or None.
+    """Which contract *path* satisfies: hosted, local, superseded, or None.
 
     Hosted is tried first so the canonical answer is the one reported when both
     would match — which is every case where the two pins agree.
+
+    ``"superseded"`` is a deliberately WEAKER verdict: those are digests this
+    project pinned in an EARLIER generation, so bytes matching one are known-good
+    data that is merely out of date, not corruption. That distinction is the whole
+    point of recording them — without it a re-pinned dataset with no fetch route
+    is indistinguishable from a corrupt one, and the only safe response to
+    ambiguity is to quarantine, which destroys the last copy in existence. Only
+    :func:`_resolve_from_cache` may act on this verdict, and only as a last
+    resort.
     """
-    if hosted_sha is None:
-        return "local" if _matches(path, sha, verbose) else None
-    if sha is None or hosted_sha == sha:
-        return "hosted" if _matches(path, hosted_sha, verbose) else None
+    candidates = _contract_candidates(sha, hosted_sha, superseded)
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        digest, kind = candidates[0]
+        return kind if _matches(path, digest, verbose) else None
     if not path.is_file():
         return None
 
+    return _verdict_from_one_pass(path, candidates, verbose)
+
+
+def _verdict_from_one_pass(
+    path: Path, candidates: list[tuple[str, str]], verbose: bool
+) -> Optional[str]:
+    """Hash *path* ONCE and report which candidate it matches, if any.
+
+    Used when more than one digest is acceptable, so the file is not read once
+    per candidate.
+    """
     with asection(f"Verifying {path.name}") if verbose else _null_ctx():
         if verbose:
             aprint("Computing SHA256...")
-        digest = hashlib.sha256()
+        state = hashlib.sha256()
         with open(path, "rb") as file:
             for chunk in iter(lambda: file.read(8192 * 128), b""):
-                digest.update(chunk)
-        actual = digest.hexdigest()
+                state.update(chunk)
+        actual = state.hexdigest()
 
-        if actual == hosted_sha:
-            accepted = "hosted"
-        elif actual == sha:
-            accepted = "local"
-        else:
-            if verbose:
-                aprint("❌ SHA256 mismatch!")
-                aprint(f"   Expected hosted:  {hosted_sha}")
-                aprint(f"   Expected in-repo: {sha}")
-                aprint(f"   Actual:           {actual}")
-            return None
+        for digest, kind in candidates:
+            if actual == digest:
+                if verbose:
+                    aprint(f"✓ SHA256 verified ({kind}): {actual}")
+                return kind
 
         if verbose:
-            aprint(f"✓ SHA256 verified: {actual}")
-        return accepted
+            # Keep the historical labels: "hosted:" / "in-repo:" name the
+            # CONTRACT rather than the internal verdict string, and the existing
+            # reporting test reads them.
+            aprint("❌ SHA256 mismatch!")
+            label = {
+                "hosted": "hosted:",
+                "local": "in-repo:",
+                "superseded": "superseded:",
+            }
+            for digest, kind in candidates:
+                aprint(f"   Expected {label[kind]:<12s}{digest}")
+            aprint(f"   Actual       {actual}")
+        return None
 
 
 def _resolve_from_cache(
@@ -395,6 +454,8 @@ def _resolve_from_cache(
     hosted_sha: Optional[str],
     unverifiable: bool,
     verbose: bool,
+    superseded: Sequence[str] = (),
+    irreplaceable: bool = False,
 ) -> Optional[Path]:
     """Step 1: reuse the cached copy, or quarantine it and return None.
 
@@ -417,8 +478,24 @@ def _resolve_from_cache(
         if verbose:
             aprint(f"✓ Cached (UNVERIFIED — no sha256 in manifest): {fname}")
         return dest
-    accepted = _accepted_contract(dest, sha, hosted_sha, verbose)
-    if accepted:
+    accepted = _accepted_contract(dest, sha, hosted_sha, verbose, superseded)
+    if accepted == "superseded":
+        # Known-good bytes from an earlier generation. Keep them ONLY when there
+        # is nothing better to be had: quarantining here would destroy the last
+        # copy in existence and leave the dataset unobtainable, which is how a
+        # re-pin bricked a hosted-only demo (see the changelog). When any route
+        # to the current bytes exists we fall through and take it instead.
+        if irreplaceable:
+            aprint(
+                f"⚠️  Using a SUPERSEDED copy of {fname}: it matches a digest this "
+                "project pinned previously, and the current bytes are not "
+                "obtainable (no in-repo copy, and the record is not published). "
+                "It is out of date, not corrupt."
+            )
+            return dest
+        if verbose:
+            aprint(f"↻ Cached copy of {fname} is superseded; fetching the current one")
+    elif accepted:
         _report_contract(
             accepted, "✓ Cached (sha256 verified):", fname, sha, hosted_sha, verbose
         )
@@ -469,6 +546,7 @@ def _ensure_one(
     record: Manifest,
     verbose: bool,
     hosted_sha: Optional[str] = None,
+    superseded: Sequence[str] = (),
 ) -> Path:
     """Resolve one file: cache → in-repo LFS → Zenodo, checksum-authoritative.
 
@@ -525,7 +603,27 @@ def _ensure_one(
     unverifiable = sha is None and hosted_sha is None
 
     # ── 1. Local cache ──────────────────────────────────────────────────────
-    cached = _resolve_from_cache(dest, fname, sha, hosted_sha, unverifiable, verbose)
+    # Decide UP FRONT whether the current bytes are obtainable at all, because
+    # the cache leg's quarantine is irreversible and must not fire on a file it
+    # cannot replace. This is the ordering bug that bricked a hosted-only demo:
+    # the old flow quarantined first and discovered "no source" afterwards.
+    # Same shape as #854, where a quarantine on a stale EXPECTATION destroyed a
+    # good file and looped; there the fix was to stop quarantining, and here the
+    # superseded list is what lets us tell "out of date" from "corrupt".
+    lfs_candidate = lfs_dir / fname
+    has_repo_copy = lfs_candidate.is_file() and not is_lfs_pointer(lfs_candidate)
+    irreplaceable = not has_repo_copy and not zenodo_file_url(record, fname)
+
+    cached = _resolve_from_cache(
+        dest,
+        fname,
+        sha,
+        hosted_sha,
+        unverifiable,
+        verbose,
+        superseded=superseded,
+        irreplaceable=irreplaceable,
+    )
     if cached is not None:
         return cached
 
